@@ -290,7 +290,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     '[[ ! -e "$trusted_resolver_root" && ! -L "$trusted_resolver_root" ]]',
   ]);
 
-  const bases = requireStep(errors, steps, "Resolve exact platform base images");
+  const bases = requireStep(errors, steps, "Resolve digest-pinned platform base images");
   requireValues(errors, `${JOB_ID} exact base resolution`, record(bases?.env), {
     DCODE_BASE_CONTRACT:
       "${{ needs.base-image-publication.outputs.dcode_base_contract }}",
@@ -407,7 +407,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     "Validate candidate activation contract",
     "Resolve reviewed Hermes platform base image",
     "Remove trusted Hermes resolver checkout",
-    "Resolve exact platform base images",
+    "Resolve digest-pinned platform base images",
     "Start isolated protected managed-image registry",
     "Build exact all-agent protected managed images",
     "Run every exact managed-image contract directly",

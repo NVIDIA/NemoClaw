@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-e2e
-description: Dispatches and reports trusted GitHub Actions E2E runs. Use for focused, full, exact staging Launchable, manual PR, and release-decision requests.
+description: Dispatches and reports trusted GitHub Actions E2E runs. Use for focused, full, staging Launchable, manual PR, and release-decision requests.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -12,30 +12,30 @@ Use `.github/workflows/e2e.yaml` from trusted `main`. Do not substitute local li
 
 Push runs publish `Relevant E2E`. Only a full manual run publishes `Release qualification`. That
 aggregate reports the full suite; it does not decide whether a tag can proceed. A generic E2E
-request does not authorize `Exact staging Brev Launchable`.
+request does not authorize `Staging Brev Launchable`.
 
 ## Route the Request
 
 - For E2E against a pull request revision, read and follow [Manual PR Runs](references/manual-pr.md).
-- To dispatch ordinary, focused, exact staging Launchable, or full E2E on `main`, read and follow
+- To dispatch ordinary, focused, staging Launchable, or full E2E on `main`, read and follow
   [Main Runs](references/main-runs.md) and the Launchable boundary below.
 - For a release decision inspection, use the section below. Do not load a dispatch reference unless the maintainer requests a new run.
 
-## Exact Staging Brev Launchable Boundary
+## Staging Brev Launchable Boundary
 
-`Exact staging Brev Launchable` runs only for a trusted manual dispatch against `main`. Launchable
+`Staging Brev Launchable` runs only for a trusted manual dispatch against `main`. Launchable
 mode selects only that job. Full mode adds it to the default E2E selection. The trusted workflow
 requires repository `maintain` or `admin` permission before the job's source checkout.
 
-The job builds the exact candidate image, deploys the standing Launchable, and verifies all of these
+The job builds the candidate image, deploys the standing Launchable, and verifies all of these
 results before it succeeds:
 
-- environment access and the exact booted image;
+- environment access and the booted image;
 - the candidate SHA, image-repository SHA, baked checkout with no uncommitted changes, and absence of runtime overrides;
 - hosted and sandbox inference through the preinstalled full E2E suite; and
 - Brev workspace deletion and confirmed absence.
 
-`Exact staging Brev Launchable` reads these credentials from repository Actions secrets:
+`Staging Brev Launchable` reads these credentials from repository Actions secrets:
 
 - `BREV_API_KEY` authenticates the trusted host-side Brev CLI for workspace operations in the
   organization identified by `BREV_ORG_ID`. Candidate code does not receive this API key.
@@ -78,13 +78,13 @@ gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
   --jq 'map(select(.displayTitle | startswith("E2E full main"))) | first'
 ```
 
-Inspect `Release qualification`, `Exact staging Brev Launchable`, and every other job that is not
+Inspect `Release qualification`, `Staging Brev Launchable`, and every other job that is not
 successful:
 
 ```bash
 gh run view <run-id> --attempt <attempt> --repo NVIDIA/NemoClaw \
   --json jobs --jq '[.jobs[] |
-    select(.name == "Release qualification" or .name == "Exact staging Brev Launchable" or
+    select(.name == "Release qualification" or .name == "Staging Brev Launchable" or
       .status != "completed" or
       (.conclusion != null and .conclusion != "success")) |
     {name,status,conclusion,startedAt,completedAt,url}]'
@@ -96,7 +96,7 @@ jobs. Do not perform that legacy scan.
 
 Dispatch and verify new PR and `main` runs only through the selected reference above. Those references
 own permission checks, selector validation, candidate resolution, correlation IDs, bounded run lookup,
-exact-SHA binding, result verification, credential boundaries, and resource cleanup. Do not
+SHA binding, result verification, credential boundaries, and resource cleanup. Do not
 reconstruct those commands here.
 
 The PR reference also owns the native-runtime producer's first-attempt, ephemeral-runner, unprivileged
@@ -106,7 +106,7 @@ account, Docker isolation, evidence, and cleanup requirements.
 
 Return:
 
-- exact `createdAt`, `startedAt`, and `updatedAt` values, labeling `updatedAt` as last updated;
+- Exact `createdAt`, `startedAt`, and `updatedAt` values, labeling `updatedAt` as last updated;
 - workflow attempt;
 - age at inspection time calculated from `createdAt`;
 - tested commit SHA;

@@ -95,6 +95,23 @@ function requireFragments(
   }
 }
 
+function requireUniqueShellAssignment(
+  errors: string[],
+  owner: string,
+  source: unknown,
+  variable: string,
+  expected: string,
+): void {
+  const script = typeof source === "string" ? source : "";
+  const assignments = script
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => !line.startsWith("#") && line.startsWith(`${variable}=`));
+  if (!isDeepStrictEqual(assignments, [expected])) {
+    errors.push(`${owner} must assign ${variable} exactly once through the Node.js binary stream`);
+  }
+}
+
 export function validateCliArtifactRestoreAction(
   actionPath = DEFAULT_RESTORE_ACTION_PATH,
 ): string[] {
@@ -179,6 +196,13 @@ export function validateCliArtifactRestoreAction(
     errors.push("CLI artifact restore action must pass validated identity to payload verification");
   }
   requireFragments(errors, "CLI artifact payload verification", restore?.run, [
+    "sha256_file() {",
+    "node --input-type=module --eval",
+    'import { createHash } from "node:crypto"',
+    'import { createReadStream } from "node:fs"',
+    'for await (const chunk of createReadStream(process.argv[1])) hash.update(chunk)',
+    'process.stdout.write(hash.digest("hex"))',
+    'lockfile_sha256="$(sha256_file package-lock.json)"',
     ".candidate.sha == $candidateSha",
     ".candidate.sourceTree == $sourceTree",
     ".candidate.lockfileSha256 == $lockfileSha256",
@@ -187,6 +211,7 @@ export function validateCliArtifactRestoreAction(
     ".workflow.runAttempt == $runAttempt",
     ".build.sourceRevision == $candidateSha",
     ".payload.sha256 == $payloadSha256",
+    'actual_payload_sha256="$(sha256_file "$payload")"',
     '[[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]',
     '*) echo "::error::CLI artifact contains an unsafe member',
     "CLI artifact contains a link or special file",
@@ -207,6 +232,25 @@ export function validateCliArtifactRestoreAction(
     'mv "$restore_dir/dist" "$GITHUB_WORKSPACE/dist"',
     'node "$GITHUB_WORKSPACE/bin/nemoclaw.js" --version',
   ]);
+  requireUniqueShellAssignment(
+    errors,
+    "CLI artifact payload verification",
+    restore?.run,
+    "lockfile_sha256",
+    'lockfile_sha256="$(sha256_file package-lock.json)"',
+  );
+  requireUniqueShellAssignment(
+    errors,
+    "CLI artifact payload verification",
+    restore?.run,
+    "actual_payload_sha256",
+    'actual_payload_sha256="$(sha256_file "$payload")"',
+  );
+  if (typeof restore?.run === "string" && restore.run.includes("sha256sum")) {
+    errors.push(
+      "CLI artifact payload verification must hash files through the pinned Node.js binary stream",
+    );
+  }
   return errors;
 }
 
@@ -344,7 +388,9 @@ function validateConsumer(
   jobSteps: WorkflowStep[],
 ): void {
   let expectedNeeds: string | string[] = CLI_ARTIFACT_PRODUCER_JOB;
-  if (jobName === "mcp-bridge-dev") {
+  if (jobName === "external-gateway-health") {
+    expectedNeeds = [CLI_ARTIFACT_PRODUCER_JOB, "package-openshell-sdk"];
+  } else if (jobName === "mcp-bridge-dev") {
     expectedNeeds = ["base-image-publication", CLI_ARTIFACT_PRODUCER_JOB, "openshell-dev-artifact"];
   } else if (
     [
