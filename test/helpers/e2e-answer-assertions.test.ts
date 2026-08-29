@@ -49,6 +49,8 @@ describe("E2E answer assertions", () => {
     "Tool call: read returned 56",
     'The answer is 56.\n{"type":"function","function":{"name":"read","parameters":{}}}',
     'The answer is 56.\n{"type":"function","function":{"name":"read","parameters":{',
+    String.raw`The answer is 56.
+{"ty\u0070e":"funct\u0069on","funct\u0069on":{"name":"read"`,
     'The answer is 56.\n[{"name":"read","description":"Returns data"}]',
   ])("rejects tool-call output containing the expected answer: %s (#10215)", (output) => {
     expect(containsAnswer(output, "56"), output).toBe(false);

@@ -35,7 +35,7 @@ function collectOpenClawAssistantText(
 ): void {
   if (value == null || visited.has(value)) return;
   if (typeof value === "string") {
-    if (value.trim()) parts.push(value.trim());
+    if (value.trim()) parts.push(value);
     return;
   }
   if (typeof value !== "object") return;
@@ -57,10 +57,10 @@ function collectOpenClawAssistantText(
   }
 }
 
-export function parseOpenClawAgentText(raw: string): string {
-  if (containsToolCallOutput(raw) || openClawAgentIncompleteTurnSignal(raw)) return "";
+function openClawAgentTextParts(raw: string): string[] {
+  if (containsToolCallOutput(raw) || openClawAgentIncompleteTurnSignal(raw)) return [];
   const documents = parseOpenClawJsonDocuments(raw);
-  if (documents.some(containsToolCallStructure)) return "";
+  if (documents.some(containsToolCallStructure)) return [];
   const parts: string[] = [];
   for (const document of documents) {
     const response = openClawAgentResponseRecord(document);
@@ -68,6 +68,17 @@ export function parseOpenClawAgentText(raw: string): string {
       collectOpenClawAssistantText(response.payloads, parts, new Set());
     }
   }
-  const reply = parts.join("\n");
+  return parts;
+}
+
+export function parseOpenClawAgentText(raw: string): string {
+  const reply = openClawAgentTextParts(raw)
+    .map((part) => part.trim())
+    .join("\n");
   return containsToolCallOutput(reply) ? "" : reply;
+}
+
+export function isExactOpenClawAgentText(raw: string, expected: string): boolean {
+  const parts = openClawAgentTextParts(raw);
+  return parts.length === 1 && parts[0] === expected;
 }

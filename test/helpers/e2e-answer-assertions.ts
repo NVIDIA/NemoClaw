@@ -48,9 +48,16 @@ function containsStructuredToolOutput(text: string): boolean {
   }
 }
 
+function decodeAsciiJsonUnicodeEscapes(text: string): string {
+  return text.replace(/\\u([0-9a-f]{4})/giu, (escape, hex: string) => {
+    const codePoint = Number.parseInt(hex, 16);
+    return codePoint <= 0x7f ? String.fromCodePoint(codePoint) : escape;
+  });
+}
+
 export function containsToolCallOutput(text: string): boolean {
   const trimmed = text.trim();
-  const jsonLike = trimmed.replace(/^```(?:json)?\s*/iu, "");
+  const jsonLike = decodeAsciiJsonUnicodeEscapes(trimmed.replace(/^```(?:json)?\s*/iu, ""));
   const containsJsonToolField =
     /"(?:arguments|input|input_schema|param|parameters|tool_use)"\s*:/u.test(jsonLike) ||
     /"(?:function|function_call)"\s*:\s*(?!null\b)/u.test(jsonLike) ||
