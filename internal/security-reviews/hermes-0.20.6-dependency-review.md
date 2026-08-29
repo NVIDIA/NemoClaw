@@ -96,10 +96,15 @@ compatibility probes remain unchanged.
 
 The broad 0.19.0 dependency patch is no longer carried forward. Hermes 0.20.6
 already routes memory-provider installation through `tools.lazy_deps.install_specs`
-and already contains the selected security versions. The remaining source
-patch changes only the Hindsight plugin declaration from
-`hindsight-client>=0.6.1` to `hindsight-client==0.6.1`. This keeps runtime
-resolution aligned with the separately hash-verified offline 0.6.1 probe.
+and already contains the selected security versions. The source patch changes
+the Hindsight plugin declaration from `hindsight-client>=0.6.1` to
+`hindsight-client==0.6.1`. This keeps runtime resolution aligned with the
+separately hash-verified offline 0.6.1 probe.
+
+Hermes 0.20.6 resolves agent-browser through an npx fallback instead of the
+root dependency graph. The source patch changes `agent-browser@^0.26.0` to
+`agent-browser@0.26.0`. The base build warms that package in the sandbox user's
+npx cache and verifies the cached version without network access.
 
 No new supported integration is introduced. Optional upstream features remain
 subject to their existing NVIDIA/NemoClaw product and policy gates.

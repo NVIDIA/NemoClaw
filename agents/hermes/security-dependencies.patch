@@ -4,8 +4,9 @@
 # Pins the remaining NemoClaw dependency policy difference in the checksum-
 # pinned Hermes v2026.8.27 source. Hermes 0.20.6 already carries the reviewed
 # Python security floors and routes memory-provider installation through its
-# managed lazy target. Keep the Hindsight bridge exact so runtime resolution
-# cannot drift beyond the separately verified offline compatibility probe.
+# managed lazy target. Keep the Hindsight bridge and upstream agent-browser
+# fallback exact so runtime resolution cannot drift beyond the separately
+# verified build-time probes.
 diff --git a/plugins/memory/hindsight/plugin.yaml b/plugins/memory/hindsight/plugin.yaml
 --- a/plugins/memory/hindsight/plugin.yaml
 +++ b/plugins/memory/hindsight/plugin.yaml
@@ -18,3 +19,21 @@ diff --git a/plugins/memory/hindsight/plugin.yaml b/plugins/memory/hindsight/plu
  requires_env: []
  hooks:
    - on_session_end
+diff --git a/tools/browser_tool.py b/tools/browser_tool.py
+--- a/tools/browser_tool.py
++++ b/tools/browser_tool.py
+@@ -957,8 +957,7 @@ NPX_AGENT_BROWSER_SENTINEL = "npx agent-browser"
+-# Pinned to match scripts/install.sh / scripts/install.ps1's
+-# "agent-browser@^0.26.0" managed install so a git-clone install resolving
+-# agent-browser via bare npx gets the same version as a managed install,
+-# instead of floating latest with no integrity check. Update both together.
+-AGENT_BROWSER_NPX_SPEC = "agent-browser@^0.26.0"
+-
+-
++# NemoClaw pins the npx fallback to the reviewed 0.26.0 release so managed
++# image execution cannot float to a later registry version. Update the image
++# warm-cache and offline probes with this source authority.
++AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"
++
++
+ def _is_npx_agent_browser_sentinel(browser_cmd: str) -> bool:

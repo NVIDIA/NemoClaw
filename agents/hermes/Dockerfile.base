@@ -424,7 +424,10 @@ RUN printf '%s\n' \
 # final image when selected.
 # New Hermes integrations should be installed by the agent workflow when they
 # are enabled rather than shipped in the base image by default.
-# Root Node dependencies provide Hermes browser tooling such as agent-browser.
+# Hermes 0.20.6 deliberately keeps agent-browser outside the root workspace
+# graph and resolves the exact NemoClaw-pinned package through npx. Warm that
+# package in the sandbox user's runtime cache below so browser startup does not
+# require a registry fetch.
 # The WhatsApp adapter ships a separate Node project under
 # scripts/whatsapp-bridge whose dependencies Hermes otherwise installs lazily
 # on the first `hermes whatsapp` run. That lazy `npm install` targets
@@ -615,12 +618,24 @@ RUN --network=none install -d -o sandbox -g sandbox -m 0750 \
 ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \
     HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
+
+# Hermes 0.20.6 removed agent-browser from its root dependency graph. Prove
+# that the patched source selects the exact npx fallback, warm the sandbox
+# user's cache, then prove the cached package works without network access.
+RUN HOME=/sandbox \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        /opt/hermes/.venv/bin/python -c \
+        'from tools import browser_tool; assert browser_tool.AGENT_BROWSER_NPX_SPEC == "agent-browser@0.26.0"; assert browser_tool._find_agent_browser() == browser_tool.NPX_AGENT_BROWSER_SENTINEL; assert browser_tool.warm_agent_browser_npx_cache()'
+RUN --network=none agent_browser_version="$( \
+        HOME=/sandbox npm_config_offline=true \
+            /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+            /usr/local/bin/npx --ignore-scripts --prefer-offline -y \
+            agent-browser@0.26.0 --version \
+    )" \
+    && test "${agent_browser_version}" = 'agent-browser 0.26.0'
+
 RUN /usr/local/bin/hermes --version \
     && /usr/local/bin/hermes acp --check \
-    && test -x /opt/hermes/node_modules/.bin/agent-browser \
-    && /opt/hermes/node_modules/.bin/agent-browser --version \
-    && /opt/hermes/.venv/bin/python -c \
-        'from tools import browser_tool; expected = "/opt/hermes/node_modules/.bin/agent-browser"; assert browser_tool._find_agent_browser() == expected' \
     && test -s "${HERMES_TUI_DIR}/dist/entry.js" \
     && test -s "${HERMES_WEB_DIST}/index.html" \
     && test ! -e /opt/hermes/.node_modules.runtime \
