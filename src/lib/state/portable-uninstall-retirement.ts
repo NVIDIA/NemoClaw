@@ -33,7 +33,6 @@ const MAX_UINT64 = (1n << 64n) - 1n;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 
 export const PORTABLE_RETIREMENT_STATE_ENTRIES = Object.values(NAMES);
-export const PORTABLE_CONFIGURATION_CLEANUP_RECOVERY_PREFIX = ".portable-cleanup-v1-";
 
 export function isPortableUninstallMissingPathError(error: unknown): boolean {
   return isErrnoException(error) && error.code === "ENOENT";
@@ -256,9 +255,10 @@ function sameStat(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
 /**
  * Read one portable authority directory.
  *
- * `permitAnyMode` is for abandoned cleanup state alone. Those directories may
- * predate NemoClaw's owner-private mode, so mode cannot establish authority.
- * Owner, symlink, link-count, identity, and entry-count checks still apply.
+ * `permitAnyMode` is for the uninstall leftover check alone, which reads a
+ * directory an abandoned run left behind rather than one NemoClaw created, so
+ * the owner-private requirement cannot apply to it. The owner, symlink, link
+ * count, identity and entry-count checks still bound what it can read.
  */
 export function readPortableAuthorityDirectory(
   directory: string,
@@ -301,19 +301,6 @@ export function readPortableAuthorityDirectory(
     if (descriptor !== null) fs.closeSync(descriptor);
   }
 }
-
-/** Keep onboarding, rebuild, and Portable lifecycle cleanup from bypassing ordinary recovery. */
-export function assertNoPortableConfigurationCleanupRecovery(configRoot: string): void {
-  const recovery = readPortableAuthorityDirectory(configRoot, false, true).entries.find((entry) =>
-    entry.startsWith(PORTABLE_CONFIGURATION_CLEANUP_RECOVERY_PREFIX),
-  );
-  if (recovery) {
-    throw new Error(
-      "Portable configuration cleanup recovery is incomplete; rerun full uninstall before onboarding, sandbox rebuild, or Portable lifecycle uninstall",
-    );
-  }
-}
-
 export function samePortableAuthorityDirectory(
   left: PortableAuthorityDirectorySnapshot,
   right: PortableAuthorityDirectorySnapshot,

@@ -26,9 +26,7 @@ import {
   runPortableRuntimeCleanupTransaction,
   type PortableRuntimeCleanupInput,
 } from "./portable-runtime-cleanup";
-import { withPortableOnboardRetirementBoundary } from "../../onboard/portable-retirement-authority";
 import {
-  PORTABLE_CONFIGURATION_CLEANUP_RECOVERY_PREFIX,
   preparePortableRetirement,
   publishAndRetirePortableEvidence,
 } from "../../state/portable-uninstall-retirement";
@@ -183,21 +181,6 @@ function admissionFailureScope(prefix: string) {
   };
 }
 
-function stageBoundPortableConfigurationRecovery(homeDir: string): string {
-  const configRoot = path.join(homeDir, ".config/nemoclaw");
-  const abandoned = path.join(configRoot, "abandoned-portable");
-  fs.mkdirSync(abandoned, { mode: 0o700, recursive: true });
-  fs.writeFileSync(path.join(abandoned, "containers.conf"), "[containers]\n", { mode: 0o600 });
-  const identity = fs.lstatSync(abandoned, { bigint: true });
-  const recovery = path.join(
-    configRoot,
-    `${PORTABLE_CONFIGURATION_CLEANUP_RECOVERY_PREFIX}bound-${String(identity.dev)}-${String(identity.ino)}-${String(identity.uid)}-ABC123`,
-  );
-  fs.mkdirSync(recovery, { mode: 0o700 });
-  fs.renameSync(abandoned, path.join(recovery, "portable"));
-  return recovery;
-}
-
 function admissionFailureDeps(scope: ReturnType<typeof admissionFailureScope>): UninstallRunDeps {
   return {
     commandExists: () => false,
@@ -249,19 +232,6 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
   it.each<[string, EvidenceMutation]>([
     ["receipt without configuration", (home, state) => writeAdmissionReceipt(home, state)],
     [
-      "forged configuration cleanup",
-      (home) => {
-        const target = path.join(
-          home,
-          ".config/nemoclaw/portable",
-          `.containers.conf.portable-uninstall-${"e".repeat(64)}.cleanup`,
-        );
-        fs.mkdirSync(path.dirname(target), { mode: 0o700, recursive: true });
-        fs.writeFileSync(target, "unknown", { mode: 0o600 });
-        return target;
-      },
-    ],
-    [
       "retirement record with replacement authority",
       (home, state) => {
         const receipt = writeAdmissionReceipt(home, state);
@@ -287,17 +257,9 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
       (_home, state) => symlinkEvidence(path.join(state, "portable-demo-lifecycle"), state),
     ],
     [
-      "symlinked configuration root",
-      (home, state) => symlinkEvidence(path.join(home, ".config/nemoclaw/portable"), state),
-    ],
-    [
       "excess receipt entries",
       (_home, state) =>
         directoryEvidence(path.join(state, "portable-demo-lifecycle"), 0o700, 1_025),
-    ],
-    [
-      "excess configuration entries",
-      (home) => directoryEvidence(path.join(home, ".config/nemoclaw/portable"), 0o700, 1_025),
     ],
   ])("rejects %s before generic effects (#9189)", (_case, mutate) => {
     const scope = admissionFailureScope("nemoclaw-portable-admission-");
@@ -320,53 +282,6 @@ describe("portable runtime cleanup in the uninstall run plan", testTimeoutOption
     ).toBe(true);
     expect(fs.readFileSync(scope.registry, "utf8")).toBe(expectedRegistry);
     expect(fs.existsSync(evidence)).toBe(true);
-  });
-
-  it("rejects onboarding and rebuild while ordinary cleanup recovery remains (#10545)", async () => {
-    const scope = admissionFailureScope("nemoclaw-portable-lifecycle-recovery-");
-    const recovery = stageBoundPortableConfigurationRecovery(scope.homeDir);
-    const operation = vi.fn();
-
-    await expect(
-      withPortableOnboardRetirementBoundary(
-        {
-          homeDir: scope.homeDir,
-          registryFile: scope.registry,
-          sessionFile: path.join(scope.stateDir, "onboard-session.json"),
-          stateDir: scope.stateDir,
-        },
-        operation,
-        {
-          loadRegistry: () => ({ defaultSandbox: null, sandboxes: {} }),
-          withLifecycleLock: async (_sandboxName, lockedOperation) => await lockedOperation(),
-        },
-      ),
-    ).rejects.toThrow(/cleanup recovery is incomplete/);
-
-    expect(operation).not.toHaveBeenCalled();
-    expect(fs.existsSync(path.join(recovery, "portable", "containers.conf"))).toBe(true);
-  });
-
-  it("does not recursively remove ordinary recovery during Portable uninstall (#10545)", () => {
-    const scope = admissionFailureScope("nemoclaw-portable-uninstall-recovery-");
-    const recovery = stageBoundPortableConfigurationRecovery(scope.homeDir);
-    scope.rmSync.mockImplementation((target, options) => fs.rmSync(target, options));
-    scope.runPortableCleanup.mockReturnValue({
-      registryRemoved: true,
-      sandboxContainersRemoved: 0,
-      selectorsRemoved: [],
-    });
-
-    const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, destroyUserData: false, keepOpenShell: false },
-      {
-        ...admissionFailureDeps(scope),
-        hasPortableRuntimeCleanup: () => true,
-      },
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(fs.existsSync(path.join(recovery, "portable", "containers.conf"))).toBe(true);
   });
 
   it.each<[string, string, DeferredMutation]>([

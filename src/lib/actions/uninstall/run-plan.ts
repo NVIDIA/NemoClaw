@@ -97,12 +97,9 @@ import {
 } from "./plan";
 import {
   HERMES_PORTABLE_UNINSTALL_JOURNAL_FILE,
-  assertNoPortableConfigurationCleanupRecovery,
-  finalizeAbandonedPortableConfigurationRemoval,
   hasPortableRuntimeCleanup,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
   portableRetirementPreservationEntries,
-  removeAbandonedPortableConfiguration,
   runPortableRuntimeCleanupTransaction,
   type PortableRuntimeCleanupInput,
   type PortableRuntimeCleanupResult,
@@ -472,25 +469,6 @@ function removePathExcept(
   }
   deps.log(`Removed contents of ${target} (preserved: ${preserved.join(", ")})`);
   return true;
-}
-
-function removeOrdinaryNemoclawConfiguration(
-  paths: UninstallPaths,
-  runtime: UninstallRuntime,
-  priorOutcome: boolean,
-): boolean {
-  const recoveryEntry = removeAbandonedPortableConfiguration(
-    path.join(paths.nemoclawConfigDir, "portable"),
-  );
-  if (!recoveryEntry) {
-    removePath(paths.nemoclawConfigDir, runtime);
-    return priorOutcome;
-  }
-  if (!removePathExcept(paths.nemoclawConfigDir, ["portable", recoveryEntry], runtime)) {
-    return false;
-  }
-  finalizeAbandonedPortableConfigurationRemoval(paths.nemoclawConfigDir, recoveryEntry);
-  return priorOutcome;
 }
 
 function removeFileWithOptionalSudo(target: string, deps: UninstallRuntime): void {
@@ -3254,7 +3232,6 @@ function executePlan(
           }
         } else runtime.log("Keeping OpenShell configuration used by the default gateway service.");
         if (portableRuntimeCleanup) {
-          assertNoPortableConfigurationCleanupRecovery(paths.nemoclawConfigDir);
           const portableConfigDir = path.join(paths.nemoclawConfigDir, "portable");
           const portableConfigEntries = ["containers.conf", ...portableRetirementEntries.config];
           if (
@@ -3265,7 +3242,7 @@ function executePlan(
           )
             ok = false;
           if (!removePathExcept(paths.nemoclawConfigDir, ["portable"], runtime)) ok = false;
-        } else ok = removeOrdinaryNemoclawConfiguration(paths, runtime, ok);
+        } else if (!removePathExcept(paths.nemoclawConfigDir, ["portable"], runtime)) ok = false;
       }
     }
   }

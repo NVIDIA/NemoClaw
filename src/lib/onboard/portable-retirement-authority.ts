@@ -15,7 +15,6 @@ import {
 } from "../state/onboard-session";
 import { assertHermesPortableUninstallCompleteForOnboarding } from "../state/hermes-portable-uninstall/journal";
 import {
-  assertNoPortableConfigurationCleanupRecovery,
   inspectPortableOnboardSupersession,
   inspectPortableRetirementRecovery,
   PORTABLE_RETIREMENT_STATE_ENTRIES,
@@ -214,11 +213,13 @@ function verifyAuthority(
     throw new Error("Completed onboarding registry authority is incomplete");
   const portableStateRoot = path.join(boundary.homeDir, ".nemoclaw");
   const receiptDirectory = path.join(portableStateRoot, "portable-demo-lifecycle");
-  const configDirectory = readPortableAuthorityDirectory(
-    path.join(boundary.homeDir, ".config/nemoclaw/portable"),
-    expected === "portable",
-    expected === "default",
-  );
+  const inspectConfig = expected === "portable" || recovery !== null;
+  const configDirectory = inspectConfig
+    ? readPortableAuthorityDirectory(
+        path.join(boundary.homeDir, ".config/nemoclaw/portable"),
+        expected === "portable",
+      )
+    : null;
   const receiptDirectoryBefore = readPortableAuthorityDirectory(
     receiptDirectory,
     expected === "portable",
@@ -245,14 +246,12 @@ function verifyAuthority(
   const receiptEntries = receiptDirectoryBefore.entries.filter(
     (entry) => !receiptArtifacts.has(entry),
   );
-  const configEntries = configDirectory.entries.filter((entry) => !configArtifacts.has(entry));
+  const configEntries =
+    configDirectory?.entries.filter((entry) => !configArtifacts.has(entry)) ?? [];
   if (expected === "default") {
     if (checkpoint.runtimeAuthority.kind !== "unset" || receiptEntries.length || receipts.length)
       throw new Error("Completed ordinary onboarding has portable receipt authority");
-    if (
-      configEntries.length &&
-      (recovery !== null || !isDeepStrictEqual(configEntries, ["containers.conf"]))
-    )
+    if (recovery !== null && configEntries.length)
       throw new Error("Completed ordinary onboarding has portable configuration authority");
   } else {
     const basename = `${createHash("sha256").update(sandboxName).digest("hex")}.json`;
@@ -289,7 +288,7 @@ function verifyAuthority(
     )
       throw new Error("Completed portable onboarding authority is incomplete");
   }
-  rejectUnknownRetirementArtifacts(boundary.homeDir, recovery, true, expected === "default");
+  rejectUnknownRetirementArtifacts(boundary.homeDir, recovery, true, false, inspectConfig);
 }
 
 function artifactDirectory(homeDir: string, root: "config" | "receipt" | "registry"): string {
@@ -304,22 +303,23 @@ function rejectUnknownRetirementArtifacts(
   homeDir: string,
   recovery: PortableRetirementRecovery | null,
   required = true,
-  permitConfigAnyMode = false,
+  permitAnyMode = false,
+  inspectConfig = true,
 ): void {
-  const configDirectory = path.join(homeDir, ".config/nemoclaw/portable");
   const directories = new Map<string, Set<string>>([
     [path.join(homeDir, ".nemoclaw"), new Set(PORTABLE_RETIREMENT_STATE_ENTRIES)],
     [path.join(homeDir, ".nemoclaw/portable-demo-lifecycle"), new Set()],
-    [configDirectory, new Set()],
+    [path.join(homeDir, ".config/nemoclaw/portable"), new Set()],
   ]);
   for (const artifact of recovery?.artifacts ?? [])
     directories.get(artifactDirectory(homeDir, artifact.root))!.add(artifact.basename);
   for (const [directory, allowed] of directories) {
+    if (!inspectConfig && directory === path.join(homeDir, ".config/nemoclaw/portable")) continue;
     if (
       readPortableAuthorityDirectory(
         directory,
         required && directory === path.join(homeDir, ".nemoclaw"),
-        permitConfigAnyMode && directory === configDirectory,
+        permitAnyMode,
       ).entries.some((name) => PORTABLE_ARTIFACT_NAME.test(name) && !allowed.has(name))
     )
       throw new Error("Onboarding state contains an unknown portable uninstall artifact");
@@ -422,7 +422,6 @@ async function recover(
   boundary: PortableOnboardRetirementBoundary,
   deps: PortableRetirementAuthorityDeps,
 ): Promise<void> {
-  assertNoPortableConfigurationCleanupRecovery(path.join(boundary.homeDir, ".config/nemoclaw"));
   readPortableAuthorityDirectory(boundary.stateDir, false);
   let recovery: PortableRetirementRecovery | null;
   try {
@@ -476,17 +475,14 @@ async function recover(
  * - An onboarding session that never reached a runtime.
  * - A missing onboarding session.
  * - A missing state directory.
- * - A portable configuration directory abandoned by an earlier run whose only
- *   entry is `containers.conf`.
+ * - A portable configuration directory abandoned by an earlier run.
  *
- * Ordinary uninstall then removes the state directory and the portable
- * configuration directory for those states. Other configuration entries stop
- * uninstall before cleanup. That answer still refuses an unknown portable
- * uninstall artifact. It still requires mode 0700 on the state directory and on
- * the receipt directory, because only the leftover check reads a directory whose
- * mode NemoClaw never set. Every read refuses a directory whose entries it cannot
- * list, through a symlink, an owner other than the current user, or an entry
- * count above the cap.
+ * Ordinary uninstall preserves an ambient portable configuration directory and
+ * removes the remaining NemoClaw configuration. That answer still refuses an
+ * unknown portable uninstall artifact in lifecycle state. It still requires mode
+ * 0700 on the state directory and receipt directory. Every authority read refuses
+ * a directory whose entries it cannot list, a symlink, an owner other than the
+ * current user, or an entry count above the cap.
  */
 export function hasPortableUninstallAuthority(
   boundary: PortableOnboardRetirementBoundary,
@@ -499,7 +495,7 @@ export function hasPortableUninstallAuthority(
   );
   const recovery = inspectPortableRetirementRecovery(boundary.homeDir);
   if (!recovery && !receiptDirectory.entries.length) {
-    rejectUnknownRetirementArtifacts(boundary.homeDir, null, false, true);
+    rejectUnknownRetirementArtifacts(boundary.homeDir, null, false, true, false);
     const sessionBytes = readPortableAuthoritySnapshot(boundary.sessionFile);
     if (sessionBytes) {
       const raw = strictJson(sessionBytes, "Onboarding session");

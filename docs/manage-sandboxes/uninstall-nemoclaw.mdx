@@ -208,27 +208,14 @@ Fresh state roots and already scoped configurations continue to use the state-ro
 The legacy `default` namespace is not isolated across gateways, so it cannot satisfy the scoped-uninstall proof while sibling gateways remain.
 Scoped uninstall stops before it deletes a sandbox, registry row, or gateway registration and preserves the selected gateway's runtime evidence and local state.
 Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.
-A full uninstall for the portable experimental profile detects ownership only from durable lifecycle state.
-When no Portable lifecycle receipt or retirement record exists, full uninstall can run ordinary cleanup for an abandoned `~/.config/nemoclaw/portable/` directory.
-This path covers an incomplete or absent onboarding session and an absent state directory.
-Ordinary cleanup accepts the directory only when `containers.conf` is its sole entry.
-That entry must be a current-user-owned, single-link regular file.
-An unexpected entry or a mismatch in file type, ownership, link count, or cleanup identity makes uninstall exit nonzero.
-Uninstall preserves the remaining configuration and recovery state for a rerun.
-Ordinary cleanup records durable progress under `~/.config/nemoclaw/` with a `.portable-cleanup-v1-pending-*`, `.portable-cleanup-v1-bound-*`, or `.portable-cleanup-v1-removed-*` directory.
-Rerunning full uninstall resumes that recorded phase.
-An empty `.portable-cleanup-v1-pending-*` directory contains no quarantined configuration.
-If the original directory is absent or has a different identity, full uninstall retires the empty marker and preserves any replacement `portable/` directory.
-While any `.portable-cleanup-v1-*` recovery remains, NemoClaw stops onboarding and sandbox rebuild before either operation starts.
-Portable lifecycle uninstall also stops rather than recursively removing the recovery.
-Rerun full uninstall to resume or finalize ordinary cleanup before you run another Portable lifecycle operation.
-If an unrelated replacement `portable/` directory appears after the original directory is bound to recovery, uninstall preserves the replacement.
-Removal requires a policy-verified absolute `python3` interpreter.
-NemoClaw verifies its canonical path, file type, ownership, permissions, and read and execute access.
-NemoClaw does not search `PATH` for this helper.
-If no interpreter passes the policy, uninstall exits nonzero and preserves the recovery state.
-Install or repair Python at an accepted location from [Prerequisites](../../get-started/prerequisites#software), then rerun full uninstall.
-Uninstall still stops before cleanup for an unknown Portable uninstall artifact or a completed Portable onboarding session whose lifecycle receipt is missing.
+Full uninstall detects Portable ownership only from durable lifecycle state.
+When no Portable lifecycle receipt or retirement record exists, full uninstall preserves `~/.config/nemoclaw/portable/` unchanged and completes ordinary cleanup.
+This preservation also applies with `--destroy-user-data`.
+This path covers incomplete or absent onboarding and an absent state directory.
+It also covers completed ordinary onboarding after an earlier Portable attempt.
+Ambient content at that path does not establish Portable lifecycle authority or block ordinary uninstall.
+Inspect or remove the preserved path before a later Portable onboarding attempt.
+Uninstall still stops before cleanup for an unknown Portable uninstall artifact in lifecycle state or a completed Portable onboarding session whose lifecycle receipt is missing.
 It records the initial lifecycle receipts and sandbox registry state for comparison.
 NemoClaw first acquires the process-bound portable host lock at `~/.nemoclaw-portable-host.lock`.
 This host-wide fence coordinates portable onboarding, rebuild, and uninstall.
