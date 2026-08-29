@@ -7,7 +7,15 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  type OnboardEntryOptionsDeps,
+  resolveOnboardEntryOptions,
+} from "../onboard/entry-options";
 import { migrateLegacyPortState } from "./legacy-port-migration";
+import {
+  listRetainedSandboxRecoveryRecords,
+  recordRetainedSandboxRecovery,
+} from "./onboard-session/retained-sandbox-recovery";
 
 const homes: string[] = [];
 
@@ -32,7 +40,7 @@ afterEach(() => {
 });
 
 describe("legacy non-default gateway state migration", () => {
-  it("partitions a selected registry and moves identity-bound session, credentials, and snapshots", () => {
+  it("moves a recovery-only session and its retained recovery authority", () => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");
     const selected = path.join(shared, "gateways", "9123");
@@ -56,8 +64,20 @@ describe("legacy non-default gateway state migration", () => {
     });
     writeJson(path.join(shared, "onboard-session.json"), {
       sandboxName: "port-box",
-      status: "in_progress",
+      status: "recovery_required",
       metadata: { gatewayName: "nemoclaw-9123" },
+    });
+    recordRetainedSandboxRecovery(path.join(shared, "retained-sandbox-recovery.json"), {
+      sandboxName: "port-box",
+      sandboxIdentityFingerprint: "a".repeat(64),
+      gatewayName: "nemoclaw-9123",
+      gatewayPort: 9123,
+      lifecycleGeneration: "generation-1",
+      verifiedEffectivePolicyIdentity: null,
+      createAttemptNonce: "b".repeat(62),
+      policyCreationReceipt: null,
+      reason: "retained_after_sandbox_creation_failure",
+      recordedAt: "2026-08-29T00:00:00.000Z",
     });
     writeJson(path.join(shared, "credentials.json"), { NVIDIA_API_KEY: "legacy-secret" });
     writeJson(path.join(shared, "usage-notice.json"), { acceptedVersion: "1" });
@@ -80,6 +100,36 @@ describe("legacy non-default gateway state migration", () => {
     ).toEqual(["port-box"]);
     expect(fs.existsSync(path.join(shared, "onboard-session.json"))).toBe(false);
     expect(fs.existsSync(path.join(selected, "onboard-session.json"))).toBe(true);
+    expect(fs.existsSync(path.join(shared, "retained-sandbox-recovery.json"))).toBe(false);
+    const recoveryRecords = listRetainedSandboxRecoveryRecords(
+      path.join(selected, "retained-sandbox-recovery.json"),
+    );
+    expect(recoveryRecords.map((record) => record.sandboxName)).toEqual(["port-box"]);
+    const entryDeps: OnboardEntryOptionsDeps = {
+      isNonInteractive: () => false,
+      validateName: (name) => name,
+      reservedSandboxNames: new Set(),
+      cliDisplayName: () => "NemoClaw",
+      getNameValidationGuidance: () => [],
+      error: vi.fn(),
+      exitProcess: vi.fn(() => {
+        throw new Error("blocked retained recovery name");
+      }),
+    };
+    expect(() =>
+      resolveOnboardEntryOptions(
+        {
+          opts: { fresh: true, sandboxName: "port-box" },
+          env: {},
+          stdinIsTty: true,
+          stdoutIsTty: true,
+          persistedSessionStatus: "recovery_required",
+          persistedRecoverySandboxName: "port-box",
+          retainedRecoverySandboxNames: recoveryRecords.map((record) => record.sandboxName),
+        },
+        entryDeps,
+      ),
+    ).toThrow("blocked retained recovery name");
     expect(fs.existsSync(path.join(shared, "credentials.json"))).toBe(false);
     expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
     expect(fs.existsSync(path.join(shared, "usage-notice.json"))).toBe(true);

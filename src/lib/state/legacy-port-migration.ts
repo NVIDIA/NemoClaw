@@ -27,6 +27,7 @@ const MIGRATION_LOCK_STALE_MS = 10_000;
 const STALE_MIGRATION_INTENT_PATTERN =
   /^\.gateway-state-migration\.(?:preparing|completed)\.[1-9][0-9]*\.[1-9][0-9]*$/;
 const MAX_MIGRATABLE_JSON_BYTES = 16 * 1024 * 1024;
+const RETAINED_SANDBOX_RECOVERY_ENTRY = "retained-sandbox-recovery.json";
 const LEGACY_BUNDLE_ENTRIES = [
   "backups",
   "blueprints",
@@ -38,10 +39,11 @@ const LEGACY_BUNDLE_ENTRIES = [
   "ollama-proxy-token",
   "onboard-failures",
   "openrouter-runtime-adapter.pid",
+  RETAINED_SANDBOX_RECOVERY_ENTRY,
   "state",
   "usage-notice.json",
 ] as const;
-const SESSION_BOUND_ENTRIES = ["credentials.json"] as const;
+const SESSION_BOUND_ENTRIES = ["credentials.json", RETAINED_SANDBOX_RECOVERY_ENTRY] as const;
 const HOST_SHARED_BUNDLE_ENTRIES = [
   "ollama-auth-proxy.pid",
   "ollama-proxy-port",
@@ -540,6 +542,13 @@ function applyMigrationIntent(
   }
 
   migrateSandboxBackups(home, sharedRoot, selectedRoot, intent.metadata.sandboxBackupNames);
+  if (intent.metadata.bundleEntries.includes(RETAINED_SANDBOX_RECOVERY_ENTRY)) {
+    resumeMovePath(
+      home,
+      path.join(sharedRoot, RETAINED_SANDBOX_RECOVERY_ENTRY),
+      path.join(selectedRoot, RETAINED_SANDBOX_RECOVERY_ENTRY),
+    );
+  }
   if (intent.metadata.moveSession) {
     resumeMovePath(
       home,
@@ -553,6 +562,7 @@ function applyMigrationIntent(
   }
 
   for (const entry of intent.metadata.bundleEntries) {
+    if (entry === RETAINED_SANDBOX_RECOVERY_ENTRY) continue;
     resumeMovePath(home, path.join(sharedRoot, entry), path.join(selectedRoot, entry));
   }
 
