@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   ),
   stopNimContainer: vi.fn(),
   stopNimContainerByName: vi.fn(),
+  stopAgentForwardPortsForStop: vi.fn(),
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
@@ -50,6 +51,10 @@ vi.mock("../../core/wait", () => ({
 vi.mock("../../inference/nim", () => ({
   stopNimContainer: mocks.stopNimContainer,
   stopNimContainerByName: mocks.stopNimContainerByName,
+}));
+
+vi.mock("../../tunnel/agent-forward-stop", () => ({
+  stopAgentForwardPortsForStop: mocks.stopAgentForwardPortsForStop,
 }));
 
 vi.mock("../../state/registry", async (importOriginal) => ({
@@ -941,6 +946,9 @@ describe("rebuild destroy phase", () => {
   it("journals the delete boundary before the destructive command (#7734)", async () => {
     const order: string[] = [];
     const recreateJournal = stubRecreateJournal();
+    mocks.stopAgentForwardPortsForStop.mockImplementation(() => {
+      order.push("forward:stop");
+    });
     vi.mocked(recreateJournal.markDeleting).mockImplementation(() => {
       order.push("journal:deleting");
     });
@@ -966,7 +974,7 @@ describe("rebuild destroy phase", () => {
       onDeleted: vi.fn(),
     });
 
-    expect(order).toEqual(["journal:deleting", "openshell:delete"]);
+    expect(order).toEqual(["forward:stop", "journal:deleting", "openshell:delete"]);
   });
 
   it("reattaches MCP providers when the delete boundary cannot be journaled (#7734)", async () => {
