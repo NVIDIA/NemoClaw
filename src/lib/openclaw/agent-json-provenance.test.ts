@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  openClawAgentHasCompletedReply,
   openClawAgentResponseRecord,
   openClawAgentIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
@@ -64,6 +65,50 @@ describe("openClawAgentResponseRecord", () => {
 });
 
 describe("openClawAgentJsonProvenanceLines", () => {
+  it("accepts only assistant conversational completion payloads", () => {
+    expect(
+      openClawAgentHasCompletedReply(
+        JSON.stringify({ payloads: [{ role: "assistant", text: "42" }], meta: {} }),
+      ),
+    ).toBe(true);
+    expect(
+      [
+        { role: "user", text: "echoed prompt" },
+        { role: "system", text: "system prompt" },
+        { role: "assistant", text: JSON.stringify({ name: "read", parameters: { path: "x" } }) },
+        { role: "assistant", text: JSON.stringify({ name: "read", input: { path: "x" } }) },
+        { role: "assistant", text: `tool_call: {"name":"read","param":` },
+      ].map((payload) =>
+        openClawAgentHasCompletedReply(JSON.stringify({ payloads: [payload], meta: {} })),
+      ),
+    ).toEqual([false, false, false, false, false]);
+    expect(
+      openClawAgentHasCompletedReply(
+        JSON.stringify({
+          payloads: [
+            { role: "assistant", text: `Use this example: {"input":"example","parameters":{}}` },
+          ],
+          meta: {},
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      openClawAgentHasCompletedReply(
+        `${JSON.stringify({ payloads: [{ role: "assistant", text: "done" }], meta: {} })}\n` +
+          `tool_call: {"name":"read","param":`,
+      ),
+    ).toBe(false);
+    expect(
+      openClawAgentHasCompletedReply(
+        JSON.stringify({
+          payloads: [{ role: "assistant", text: "done" }],
+          messages: [{ tool_calls: [{ name: "read" }] }],
+          meta: {},
+        }),
+      ),
+    ).toBe(false);
+  });
+
   it("returns no provenance for plain successful assistant payloads", () => {
     expect(
       openClawAgentJsonProvenanceLines(JSON.stringify({ result: { payloads: [{ text: "42" }] } })),
@@ -133,6 +178,7 @@ describe("openClawAgentJsonProvenanceLines", () => {
     const rawBearer = "secretbearertoken1234567890";
     const rawPassword = "hunter2-password-value";
     const rawPrivateKey = "private-key-material-that-must-not-leak";
+    const rawUrlSecret = "url-secret-value";
     const privateKeyEnvelope = [
       ["-----BEGIN", "PRIVATE KEY-----"].join(" "),
       rawPrivateKey,
@@ -151,6 +197,7 @@ describe("openClawAgentJsonProvenanceLines", () => {
               `Authorization: Bearer ${rawBearer}`,
               `password: ${rawPassword}`,
               privateKeyEnvelope,
+              `https://user:${rawUrlSecret}@example.invalid/path?access_token=${rawUrlSecret}#${rawUrlSecret}`,
             ].join("\n"),
           },
         ],
@@ -164,6 +211,7 @@ describe("openClawAgentJsonProvenanceLines", () => {
     expect(lines[0]).not.toContain(rawBearer);
     expect(lines[0]).not.toContain(rawPassword);
     expect(lines[0]).not.toContain(rawPrivateKey);
+    expect(lines[0]).not.toContain(rawUrlSecret);
   });
 
   it("redacts URL credentials in failed tools and untrusted child excerpts", () => {

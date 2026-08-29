@@ -3,6 +3,7 @@
 
 import { isStdinTty } from "../../../core/stdin";
 import {
+  openClawAgentHasCompletedReply,
   openClawAgentIncompleteTurnSignal,
   type OpenClawIncompleteTurnSignal,
   openClawAgentJsonProvenanceLines,
@@ -40,6 +41,7 @@ export type AgentJsonPassthroughDeps = {
   getGatewayName?: (sandboxName: string) => string | null;
   stdinIsTty?: () => boolean;
   provenanceLines?: (raw: string) => string[];
+  completedReply?: (raw: string) => boolean;
   incompleteTurnSignal?: (raw: string) => OpenClawIncompleteTurnSignal | null;
   runDispatch?: AgentDispatchRunner;
 };
@@ -124,6 +126,10 @@ export async function runAgentJsonPassthrough(
     } else {
       writeIncompleteAgentTurnFailure(proc, sandboxName, incompleteTurn.markers);
     }
+    return proc.exit(INCOMPLETE_AGENT_TURN_EXIT_CODE);
+  }
+  if (code === 0 && !(deps.completedReply ?? openClawAgentHasCompletedReply)(stdout)) {
+    writeIncompleteAgentTurnFailure(proc, sandboxName, ["missing completed conversational reply"]);
     return proc.exit(INCOMPLETE_AGENT_TURN_EXIT_CODE);
   }
   return proc.exit(code);
