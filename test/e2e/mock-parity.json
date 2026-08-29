@@ -494,6 +494,7 @@
     },
     {
       "live": "test/e2e/live/mcp-bridge.test.ts",
+      "liveSources": ["test/e2e/live/mcp-bridge-cleanup.ts"],
       "fast": [
         "src/lib/actions/sandbox/mcp-bridge-adapter-registration.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-adapter-teardown.test.ts",
@@ -501,6 +502,7 @@
         "src/lib/actions/sandbox/mcp-bridge-provider.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/mcp-bridge-cleanup.test.ts",
         "test/e2e/support/mcp-bridge-hermes-lifecycle.test.ts",
         "test/e2e/support/mcp-bridge-onboard-env.test.ts",
         "test/e2e/support/mcp-bridge-reliability.test.ts",

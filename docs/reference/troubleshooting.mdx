@@ -206,10 +206,29 @@ Onboarding preflight prints this warning before the first image pull and then co
 NemoClaw reads the config from `$DOCKER_CONFIG/config.json` when `DOCKER_CONFIG` is set, and from `~/.docker/config.json` otherwise.
 On WSL, NemoClaw probes the credential helper with a read-only `list` call instead of relying on session markers, because WSLg can set `DISPLAY` in every WSL shell.
 
-To work around a failed pull, resume onboarding with an isolated Docker config so every remaining image pull bypasses the unavailable helper:
+On WSL, NemoClaw automatically uses a temporary credential-free Docker configuration for public managed image pulls, generated image builds, GPU probes, and local-inference probe images when all of these conditions apply:
+
+- The current Docker context is `default` and `DOCKER_HOST` is unset.
+- The client configuration selects the Docker Desktop credential helper.
+- The read-only helper probe fails.
+- The operation does not require registry credentials.
+
+NemoClaw does not modify your Docker client configuration.
+It removes the temporary directory after the Docker operation.
+If cleanup fails, the warning prints the exact credential-free directory; wait for Docker to finish using it, then remove that directory.
+
+An explicit Docker host, a non-default context, a responsive helper, a custom Dockerfile, and an operation that might require private-registry credentials continue to use the configured Docker client state.
+Restore the Docker Desktop session or helper access for those operations.
+
+For a public-image-only retry outside the automatic WSL path, resume onboarding with a temporary isolated configuration:
 
 ```bash
-DOCKER_CONFIG=$(mktemp -d) $$nemoclaw onboard --resume
+(
+  set -eu
+  temporary_docker_config="$(mktemp -d)"
+  trap 'rm -rf -- "$temporary_docker_config"' EXIT
+  DOCKER_CONFIG="$temporary_docker_config" $$nemoclaw onboard --resume
+)
 ```
 
 Alternatively, temporarily remove the `credsStore` entry from the Docker client config named above, then rerun `$$nemoclaw onboard`.
@@ -1671,8 +1690,8 @@ Follow these steps to reconnect.
    $$nemoclaw tunnel start
    ```
 
-   OpenShell-managed channel messaging handles Telegram, Discord, Slack, WeChat, and WhatsApp at onboarding, not through a separate bridge process from `$$nemoclaw tunnel start`.
-   WeChat and WhatsApp are experimental.
+   OpenShell-managed channel messaging is configured during onboarding, not through a separate bridge process from `$$nemoclaw tunnel start`.
+   Use `$$nemoclaw <name> channels list` to inspect the configured channels and [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) for each channel's support status.
    To pause a single bridge without destroying the sandbox, use `$$nemoclaw <name> channels stop <channel>`.
 
 </AgentOnly>
@@ -2540,7 +2559,7 @@ $$nemoclaw <name> status
 
 <AgentOnly variant="openclaw,hermes">
 
-### Agent fails at runtime after onboarding succeeds with a compatible endpoint
+### Compatible endpoint fails sandbox validation or later at runtime
 
 Some OpenAI-compatible servers (such as SGLang) expose `/v1/responses` but their
 streaming mode is incomplete.
@@ -2560,8 +2579,17 @@ $$nemoclaw onboard
 If you previously set `NEMOCLAW_PREFERRED_API=openai-responses` to force the
 Responses API, unset it before re-running onboard.
 
-When you enable Telegram messaging with an OpenAI-compatible endpoint, onboarding also checks `inference.local` from inside the sandbox.
-If that smoke check fails, fix the compatible-endpoint base URL, credentials, model, or network route before testing the Telegram bot again.
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
+Every OpenClaw onboarding run with an OpenAI-compatible endpoint sends a validation request through `inference.local` from inside the sandbox, even when you select no messaging channel.
+If that sandbox validation request fails, fix the compatible-endpoint base URL, credentials, model, or network route before continuing onboarding.
+Messaging setup is not the root cause.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
 
 Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone.
 It patches the config at container startup but does not update the Dockerfile ARG baked into the image.
@@ -2739,15 +2767,14 @@ Run the equivalent host-side command instead:
 
 ```bash
 $$nemoclaw <sandbox> channels list
-$$nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>
-$$nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
+$$nemoclaw <sandbox> channels add <channel>
+$$nemoclaw <sandbox> channels remove <channel>
 ```
 
 `channels add` registers credentials with the OpenShell gateway and `channels remove` clears them.
 Both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`, or any run without a terminal on stdin), the commands stage the change and leave the rebuild to a follow-up `$$nemoclaw <sandbox> rebuild`.
-WeChat and WhatsApp are experimental.
-Review [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
+Review [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) for the supported channel IDs, prerequisites, and experimental status before enabling a channel.
 
 WeChat captures its bot token through a host-side QR scan during `$$nemoclaw onboard` or `channels add wechat`.
 You scan the iLink QR from WeChat on your phone and NemoClaw registers the captured token with the OpenShell gateway.
