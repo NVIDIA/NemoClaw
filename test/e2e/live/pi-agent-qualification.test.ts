@@ -16,6 +16,7 @@ import { outputContainsSandbox, resultText, shellQuote } from "../fixtures/clien
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
+  sandboxAccessEnv,
   trustedSandboxShellScript,
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
@@ -436,7 +437,7 @@ test(
     progress.phase("prove Pi policy and credential boundaries");
     const security = await sandbox.exec(SANDBOX_NAME, ["node", "-e", SECURITY_PROBE], {
       artifactName: "pi-security-boundary",
-      env,
+      env: sandboxAccessEnv(),
       timeoutMs: 60_000,
     });
     expect(security.exitCode, resultText(security)).toBe(0);
