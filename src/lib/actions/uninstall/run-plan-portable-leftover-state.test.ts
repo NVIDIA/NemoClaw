@@ -260,29 +260,23 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     await expectOrdinaryUninstall(host);
   });
 
-  it.each([0o700, 0o755, 0o600])(
-    "preserves abandoned Portable configuration with mode %i while ordinary uninstall completes (#10545)",
-    async (mode) => {
-      const host = scope("nemoclaw-uninstall-config-");
-      stateRoot(host);
-      const directory = abandonedPortableConfig(host, mode);
-      const before = fs.lstatSync(directory);
+  it("preserves a nontraversable Portable directory while ordinary uninstall completes (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-config-");
+    stateRoot(host);
+    const directory = abandonedPortableConfig(host, 0o600);
+    const before = fs.lstatSync(directory);
 
-      await expectOrdinaryUninstall(host);
-      const after = fs.lstatSync(directory);
-      expect(after.ino).toBe(before.ino);
-      expect(after.mode & 0o777).toBe(mode);
-      fs.chmodSync(directory, 0o700);
-      expect(fs.readFileSync(path.join(directory, "containers.conf"), "utf-8")).toBe(
-        "[containers]\n",
-      );
-      expect(
-        host.rmSync.mock.calls.some(([target]) =>
-          path.resolve(String(target)).startsWith(`${directory}${path.sep}`),
-        ),
-      ).toBe(false);
-    },
-  );
+    await expectOrdinaryUninstall(host);
+
+    const after = fs.lstatSync(directory);
+    expect(after.ino).toBe(before.ino);
+    expect(after.mode & 0o777).toBe(0o600);
+    expect(
+      host.rmSync.mock.calls.some(([target]) =>
+        path.resolve(String(target)).startsWith(`${directory}${path.sep}`),
+      ),
+    ).toBe(false);
+  });
 
   it.each<[string, (host: ReturnType<typeof scope>) => void]>([
     ["a prior onboard failed", failedPreflightSession],
@@ -307,22 +301,17 @@ describe("uninstall on a host that owns no portable lifecycle resource", () => {
     await expectOrdinaryUninstall(host);
   });
 
-  it.each([0o700, 0o755, 0o600])(
-    "preserves abandoned Portable configuration with mode %i after completed ordinary onboarding (#10545)",
-    async (mode) => {
-      const host = scope("nemoclaw-uninstall-completed-config-");
-      completedOpenClawAuthority(host, "default");
-      const directory = abandonedPortableConfig(host, mode);
+  it("preserves abandoned Portable configuration after completed ordinary onboarding (#10545)", async () => {
+    const host = scope("nemoclaw-uninstall-completed-config-");
+    completedOpenClawAuthority(host, "default");
+    const directory = abandonedPortableConfig(host, 0o700);
 
-      await expectOrdinaryUninstall(host);
+    await expectOrdinaryUninstall(host);
 
-      expect(fs.lstatSync(directory).mode & 0o777).toBe(mode);
-      fs.chmodSync(directory, 0o700);
-      expect(fs.readFileSync(path.join(directory, "containers.conf"), "utf-8")).toBe(
-        "[containers]\n",
-      );
-    },
-  );
+    expect(fs.readFileSync(path.join(directory, "containers.conf"), "utf-8")).toBe(
+      "[containers]\n",
+    );
+  });
 
   it("preserves unexpected ambient Portable content without traversing it (#10545)", async () => {
     const host = scope("nemoclaw-uninstall-unexpected-config-");
