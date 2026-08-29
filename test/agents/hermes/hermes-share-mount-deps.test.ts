@@ -378,8 +378,20 @@ function runHermesInstallLayer(
 }
 
 describe("Hermes share mount package parity (#2947)", () => {
-  it("makes the virtual environment readable before the sandbox-user lazy-package probe (#8613)", () => {
+  it("builds the readable virtual environment from system Python before the sandbox-user probe (#8613)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-system-python-"));
+
+    try {
+      const command = extractHermesInstallCommand(dockerfile);
+      const { calls, result } = runHermesInstallLayer(command, tmp);
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toContain(
+        "uv sync --python /usr/bin/python3.13 --no-managed-python --frozen --no-dev --extra messaging --extra mcp --no-cache",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
     expectReadableVenvBeforeSandboxProbe(dockerfile);
   });
 
