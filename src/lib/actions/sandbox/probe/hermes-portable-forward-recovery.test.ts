@@ -275,7 +275,12 @@ describe("Hermes Portable connect composition", () => {
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
     });
-    configureMissingHermesForwardCapture(harness, { initialStatus: "dead" });
+    configureMissingHermesForwardCapture(harness, {
+      initialStatus: "dead",
+      afterStart: () => {
+        expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+      },
+    });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
