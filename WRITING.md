@@ -25,7 +25,7 @@ Apply this guide to changed explanatory text in:
 - Contributor guidance, agent guidance, and user documentation.
 
 Do not apply word or sentence rules to quoted user or external text.
-Do not apply them to code, identifiers, commands, URLs, or generated content.
+Do not apply them to code, identifiers, commands, URLs, or generated files.
 Preserve the accuracy of that content.
 
 ### Agent-Written Text
