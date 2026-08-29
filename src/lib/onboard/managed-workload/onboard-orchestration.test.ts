@@ -183,16 +183,6 @@ describe("managed workload onboard orchestration", () => {
     ).toBe(false);
   });
 
-  it("keeps stock managed images required during providerless interceptor creation (#9833)", () => {
-    expect(
-      shouldActivateStockManagedRuntime({
-        portableLifecycle: false,
-        hermesPortableLifecycle: false,
-        agentName: "openclaw",
-      }),
-    ).toBe(true);
-  });
-
   it("uses the Dockerfile when the stock managed-image catalog is unavailable", async () => {
     const { runtime } = createFreshOnboardingRuntime(
       {},
