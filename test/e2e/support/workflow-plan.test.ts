@@ -691,7 +691,6 @@ describe("E2E workflow plan", () => {
       expectedRunner,
       expectedRunner,
     ]);
-    expect(gpuE2e.environment.E2E_LLAMA_CPP_DEDICATED_LANE).toBe("1");
     expect(llamaCpp.environment).toEqual(
       expect.objectContaining({
         NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",

@@ -1,19 +1,92 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
+import {
+  configSet,
+  extractDotpath,
+  readSandboxConfig,
+  resolveAgentConfig,
+} from "../sandbox/config";
 
-import { sandboxConfigSyncArgs } from "./config-sync";
+type WebSearchSelection = { fetchEnabled?: boolean } | null;
+
+interface OpenClawWebSearchReuseDeps {
+  readEnabled(sandboxName: string): unknown;
+  disable(sandboxName: string): Promise<void>;
+}
+
+const defaultWebSearchReuseDeps: OpenClawWebSearchReuseDeps = {
+  readEnabled: (sandboxName) => {
+    const target = resolveAgentConfig(sandboxName);
+    if (target.agentName !== "openclaw") {
+      throw new Error(
+        `Cannot reconcile OpenClaw web search for '${sandboxName}': the sandbox runs '${target.agentName}'.`,
+      );
+    }
+    return extractDotpath(readSandboxConfig(sandboxName, target), "tools.web.search.enabled");
+  },
+  disable: (sandboxName) =>
+    configSet(sandboxName, {
+      key: "tools.web.search.enabled",
+      value: "false",
+      restart: true,
+    }),
+};
+
+/**
+ * Onboarding can reuse an already-ready sandbox without rerunning the image
+ * generator. Apply a newly disabled web-search choice to the live OpenClaw
+ * config through its guarded config writer on both fresh and resumed reuse.
+ */
+export async function reconcileOpenClawWebSearchForReuse(
+  sandboxName: string,
+  webSearchConfig: WebSearchSelection,
+  revalidatePolicyRequirements?: (operation: string) => void,
+  deps: OpenClawWebSearchReuseDeps = defaultWebSearchReuseDeps,
+): Promise<void> {
+  if (webSearchConfig?.fetchEnabled === true) return;
+  if (deps.readEnabled(sandboxName) !== true) return;
+  revalidatePolicyRequirements?.(`disable OpenClaw web search in sandbox '${sandboxName}'`);
+  await deps.disable(sandboxName);
+}
+
+export interface ConfigureOpenclawSandboxDeps {
+  syncNemoClawConfigInSandbox(
+    sandboxName: string,
+    provider: string,
+    model: string,
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ): void;
+  reconcileWebSearch(
+    sandboxName: string,
+    webSearchConfig: WebSearchSelection,
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ): Promise<void>;
+}
+
+export function createConfigureOpenclawSandbox(deps: ConfigureOpenclawSandboxDeps) {
+  return async function configureOpenclawSandbox(
+    sandboxName: string,
+    model: string,
+    provider: string,
+    webSearchConfig: WebSearchSelection,
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ): Promise<void> {
+    deps.syncNemoClawConfigInSandbox(sandboxName, provider, model, revalidatePolicyRequirements);
+    await deps.reconcileWebSearch(sandboxName, webSearchConfig, revalidatePolicyRequirements);
+  };
+}
 
 export interface OpenclawSetupDeps {
   step(n: number, total: number, msg: string): void;
   agentProductName(): string;
-  getProviderSelectionConfig(provider: string, model: string): unknown | null;
-  buildSandboxConfigSyncScript(config: any): string;
-  writeSandboxConfigSyncFile(script: string): string;
-  run(argv: string[], options: Record<string, unknown>): unknown;
-  openshellArgv(args: string[]): string[];
-  cleanupTempDir(file: string, prefix: string): void;
+  configureOpenclawSandbox(
+    sandboxName: string,
+    model: string,
+    provider: string,
+    webSearchConfig: WebSearchSelection,
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ): Promise<void>;
 }
 
 export function createOpenclawSetup(deps: OpenclawSetupDeps) {
@@ -21,29 +94,18 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
     sandboxName: string,
     model: string,
     provider: string,
+    webSearchConfig: WebSearchSelection,
     revalidatePolicyRequirements?: (operation: string) => void,
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
 
-    const selectionConfig = deps.getProviderSelectionConfig(provider, model);
-    if (selectionConfig) {
-      const sandboxConfig = {
-        ...(selectionConfig as Record<string, unknown>),
-        onboardedAt: new Date().toISOString(),
-      };
-      const script = deps.buildSandboxConfigSyncScript(sandboxConfig);
-      const scriptFile = deps.writeSandboxConfigSyncFile(script);
-      try {
-        const scriptContent = fs.readFileSync(scriptFile, "utf-8");
-        deps.run(deps.openshellArgv(sandboxConfigSyncArgs(sandboxName)), {
-          stdio: ["pipe", "ignore", "inherit"],
-          input: scriptContent,
-        });
-      } finally {
-        deps.cleanupTempDir(scriptFile, "nemoclaw-sync");
-      }
-    }
-
+    await deps.configureOpenclawSandbox(
+      sandboxName,
+      model,
+      provider,
+      webSearchConfig,
+      revalidatePolicyRequirements,
+    );
     revalidatePolicyRequirements?.(`publish OpenClaw setup for sandbox '${sandboxName}'`);
     console.log(`  ✓ ${deps.agentProductName()} gateway launched inside sandbox`);
   };

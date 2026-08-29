@@ -142,7 +142,7 @@ describe("Teams policy preset", () => {
     ).toThrow("already has a different credential binding");
   });
 
-  it("keeps Hermes Teams and Outlook unbound when no bridge provider exists", () => {
+  it("binds the Hermes Teams login endpoints to its bridge provider (#10079)", () => {
     const composed = policies.mergePresetNamesIntoPolicy(
       "version: 1\nnetwork_policies: {}\n",
       ["outlook", "teams"],
@@ -155,9 +155,15 @@ describe("Teams policy preset", () => {
     const teamsLogin = parsed.network_policies.teams.endpoints.find(
       (endpoint: { host?: string }) => endpoint.host === "login.microsoftonline.com",
     );
+    const teamsBotLogin = parsed.network_policies.teams.endpoints.find(
+      (endpoint: { host?: string }) => endpoint.host === "login.botframework.com",
+    );
 
-    expect(outlookLogin).not.toHaveProperty("credential_binding");
-    expect(teamsLogin).not.toHaveProperty("credential_binding");
+    expect(teamsLogin.credential_binding).toEqual({
+      provider: "hermes-outlook-teams-bridge",
+    });
+    expect(teamsBotLogin.credential_binding).toEqual(teamsLogin.credential_binding);
+    expect(outlookLogin.credential_binding).toEqual(teamsLogin.credential_binding);
   });
 
   it("uses agent-specific preset content for Hermes Teams", () => {

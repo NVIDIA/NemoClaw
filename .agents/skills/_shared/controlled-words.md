@@ -192,7 +192,7 @@ other literal identifiers.
 | `local inference` | Technical noun | Inference served by a model runtime that the operator runs locally. | hosted inference, local model when the service is intended |
 | `managed inference` | Technical noun | Inference routed through OpenShell so the sandbox does not hold the upstream provider credential. | direct inference, hosted inference |
 | `model capability` | Technical noun | A supported model behavior, such as tool calls, reasoning, or web search. | feature without naming the model behavior |
-| `model ID` | Technical noun | The provider-defined identifier used to select a model. | model name when an exact identifier is required |
+| `model ID` | Technical noun | The provider-defined identifier used to select a model. | model name when an identifier is required |
 | `Model Router` | Product component name | The host-side router that selects among configured upstream models. | model gateway, router when the component is not clear |
 | `output token` | Technical noun | A token generated in a model response. | completion token unless the API uses that field name |
 | `provider credential` | Technical noun | A credential registered with OpenShell for one inference provider. | API key when the credential type is not known |
@@ -217,7 +217,7 @@ other literal identifiers.
 | `credential-bearing` | Adjective | Contains or can expose credential material. | secret when the content can include more than one secret type |
 | `credential binding` | Technical noun | Metadata that associates a managed route or placeholder with a stored credential. | credential, mapping |
 | `credential custody` | Technical noun | Responsibility for storing and controlling access to a credential value. | credential ownership |
-| `credential-free` | Adjective | Contains no credential material and does not grant credential access. | safe, non-secret when absence of credentials is the exact claim |
+| `credential-free` | Adjective | Contains no credential material and does not grant credential access. | safe, non-secret when absence of credentials is the claim |
 | `credential placeholder` | Technical noun | A non-secret value that OpenShell replaces with a credential at an approved request boundary. | fake key, dummy credential |
 | `credential rewrite` | Technical noun | Replacement of a credential placeholder with a stored credential during an approved request. | credential injection, secret substitution |
 | `deny by default`; `deny-by-default` | Technical phrase; adjective | Block access unless a rule explicitly allows it. Use the hyphenated form before a noun. | default deny, closed by default |
@@ -337,7 +337,7 @@ For a persistence claim, name the applicable `stop` and `start`, `restart`, `reb
 | `code-changing PR` | Technical noun | A PR that changes executable code, build inputs, policy, or behavior-affecting configuration. | code PR, feature PR |
 | `commit` | Technical noun or verb | A Git revision, or the act of recording one. | change when a specific revision is intended |
 | `commit SHA` | Technical noun | The immutable Git object identifier for a commit. | commit ID, hash when the object type matters |
-| `commit under review` | Technical noun | The commit whose diff and evidence the reviewer evaluates. | exact head, review head, reviewed head |
+| `commit under review` | Technical noun | The commit whose diff and evidence the reviewer evaluates. | head, review head, reviewed head |
 | `contributor` | Technical noun | A person or agent that proposes or authors a repository change. | developer, submitter |
 | `docs build` | Technical noun | The repository command and result that validate and render the documentation source. | docs test, site build |
 | `documentation-only PR` | Technical noun | A PR whose diff changes explanatory documentation but no executable or behavior-affecting source. | docs PR when scope is not clear |
@@ -372,10 +372,10 @@ For a persistence claim, name the applicable `stop` and `start`, `restart`, `reb
 | `source page` | Technical noun | An author-maintained documentation file from which one or more pages are built. | generated page, canonical page |
 | `source test` | Technical noun | A test that imports and exercises project source rather than compiled artifacts. | unit test when test scope is intended, package contract |
 | `supported surface` | Technical noun | A user-facing integration, workflow, configuration, or behavior accepted under the product scope gate. | feature, solution without support approval |
-| `target version` | Technical noun | The exact release version to which work is assigned. | next release, current version |
+| `target version` | Technical noun | The release version to which work is assigned. | next release, current version |
 | `test` | Technical noun or verb | A repeatable executable evaluation of specified behavior, or the act of running it. | check when no behavior executes, validation when input conformance is intended |
 | `test title` | Technical noun | The behavior-oriented name of a test, with any issue reference in a final suffix. | test name when title conventions are intended |
-| `tested` | Adjective | Has named test evidence for an exact revision, setup, and environment. Testing alone does not establish product support. | supported, works |
+| `tested` | Adjective | Has named test evidence for a revision, setup, and environment. Testing alone does not establish product support. | supported, works |
 | `unit test` | Technical noun | A test of one source unit with external dependencies isolated. | integration test, source test when import origin is intended |
 | `user approval` | Technical noun | Explicit consent from the affected user for a named action and scope. It does not establish product support, and product approval does not replace it. | accepted issue, accepted design decision, implied consent |
 | `user-visible change` | Technical noun | A change to a command, output, configuration, workflow, or supported behavior. | improvement without the changed behavior |
@@ -395,24 +395,24 @@ A result can support more than one claim only when its evidence meets each defin
 | Operational | `readiness check` | A service or resource meets named criteria to begin its intended work. | Broader reliability, compatibility, or support. |
 | Operational | `validation request` | One authenticated request succeeded for the named endpoint, API family, model, and request shape. | Broader API conformance, other requests or models, reliability, or support. |
 | Evidence | `verification` | Evidence confirms the stated result for the named revision and environment. | Compatibility or support unless the evidence and decision establish them. |
-| Evidence | `tested` | The exact revision, setup, and environment have named test evidence. | Compatibility beyond the tested criteria or support. |
+| Evidence | `tested` | The revision, setup, and environment have named test evidence. | Compatibility beyond the tested criteria or support. |
 | Technical | `compatible` | The named technical contract is satisfied. | Product support. |
 | Product | `supported` | The product surface has accepted ownership, lifecycle, compatibility, security, and validation expectations. | User approval for a specific action. |
 
-Exact product states remain valid technical terms. For example, use the OpenShell sandbox phase
+Product states remain valid technical terms. For example, use the OpenShell sandbox phase
 `Ready` with its documented capitalization. Do not use `ready` as a general approval judgment.
 
 ## Maintain the List
 
 The list has no fixed entry count. Expand it when repository usage proves that a term needs control,
-and remove an entry when the project no longer uses its concept or exact form. The section boundaries
+and remove an entry when the project no longer uses its concept or form. The section boundaries
 help writers find terms; they do not create separate vocabularies.
 
 Add or change an entry only when it does at least one of these things:
 
 - Resolves a recurring ambiguity across repository surfaces.
 - Separates concepts whose difference affects behavior, security, support, or evidence.
-- Preserves an exact product name or text form.
+- Preserves a product name or text form.
 
 For each entry:
 

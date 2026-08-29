@@ -9,16 +9,17 @@ import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 describe("applyOnboardVmDnsMonkeypatch", () => {
   it("logs applied only when the onboard VM DNS monkeypatch changes files", () => {
     const changedLogs: string[] = [];
+    const applyChanged = vi.fn(() => ({
+      attempted: true,
+      changed: true,
+      ok: true,
+      status: "applied" as const,
+    }));
     applyOnboardVmDnsMonkeypatch(
       "demo",
-      { openshellDriver: "vm" },
+      { gatewayPort: 9123, openshellDriver: "vm" },
       {
-        apply: () => ({
-          attempted: true,
-          changed: true,
-          ok: true,
-          status: "applied",
-        }),
+        apply: applyChanged,
         log: (message) => changedLogs.push(message),
         warn: (message) => changedLogs.push(message),
       },
@@ -41,6 +42,11 @@ describe("applyOnboardVmDnsMonkeypatch", () => {
     );
 
     expect(changedLogs).toEqual(["  ✓ Applied OpenShell VM DNS monkeypatch"]);
+    expect(applyChanged).toHaveBeenCalledWith(
+      "demo",
+      { gatewayPort: 9123, openshellDriver: "vm" },
+      expect.any(Object),
+    );
     expect(unchangedLogs).toEqual(["  OpenShell VM DNS monkeypatch already present"]);
     expect(unchangedLogs.join("\n")).not.toContain("Applied");
   });
