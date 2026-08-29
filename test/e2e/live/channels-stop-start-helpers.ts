@@ -11,6 +11,7 @@ import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-ch
 import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/runtime.ts";
 import * as credentialProviderRegistrationModule from "../../../src/lib/onboard/credential-provider-registration.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
+import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -99,6 +100,9 @@ const credentialProviderRegistration = (
 ) as CredentialProviderRegistrationModule;
 const credentialProviderRegistrationDependencies =
   credentialProviderRegistration.credentialProviderRegistrationDependencies as ProviderDependencies;
+const legacyProviderDependencies = (
+  "default" in legacyProvidersModule ? legacyProvidersModule.default : legacyProvidersModule
+) as ProviderDependencies;
 const statePaths = (
   "default" in statePathsModule ? statePathsModule.default : statePathsModule
 ) as StatePathsModule;
@@ -127,6 +131,7 @@ interface GooglechatCredentialFixtureDependencies {
   >;
   readonly ensureProfiles?: typeof ensureMessagingBridgeProfiles;
   readonly providerDependencies?: ProviderDependencies;
+  readonly legacyProviderDependencies?: ProviderDependencies;
   readonly root?: string;
   readonly run?: typeof runOpenshell;
 }
@@ -228,11 +233,19 @@ export function installGooglechatCredentialFixture(
   };
   const providerDependencies =
     dependencies.providerDependencies ?? credentialProviderRegistrationDependencies;
+  const effectiveLegacyProviderDependencies =
+    dependencies.legacyProviderDependencies ??
+    (dependencies.providerDependencies ? providerDependencies : legacyProviderDependencies);
   const root = dependencies.root ?? ROOT;
   const run = dependencies.run ?? runOpenshell;
-  const original = providerDependencies.upsertMessagingProviders;
+  const originalRegistrationUpsert = providerDependencies.upsertMessagingProviders;
+  const originalLegacyUpsert = effectiveLegacyProviderDependencies.upsertMessagingProviders;
 
-  providerDependencies.upsertMessagingProviders = (tokenDefs, providerRun, options = {}) => {
+  const fixtureUpsert: ProviderDependencies["upsertMessagingProviders"] = (
+    tokenDefs,
+    providerRun,
+    options = {},
+  ) => {
     const fixtureTokenDefs = tokenDefs.filter(({ name }) => name === expectedName);
     const fixtureTokenDef = fixtureTokenDefs[0];
     if (
@@ -245,7 +258,9 @@ export function installGooglechatCredentialFixture(
 
     const delegatedTokenDefs = tokenDefs.filter(({ name }) => name !== expectedName);
     const delegatedProviderNames =
-      delegatedTokenDefs.length === 0 ? [] : original(delegatedTokenDefs, providerRun, options);
+      delegatedTokenDefs.length === 0
+        ? []
+        : originalLegacyUpsert(delegatedTokenDefs, providerRun, options);
     const baseRun = providerRun ?? run;
     const revalidate = () =>
       options.revalidateSandboxIdentity?.(
@@ -298,9 +313,12 @@ export function installGooglechatCredentialFixture(
     const registered = new Set([...delegatedProviderNames, expectedName]);
     return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
   };
+  providerDependencies.upsertMessagingProviders = fixtureUpsert;
+  effectiveLegacyProviderDependencies.upsertMessagingProviders = fixtureUpsert;
 
   const restore = () => {
-    providerDependencies.upsertMessagingProviders = original;
+    providerDependencies.upsertMessagingProviders = originalRegistrationUpsert;
+    effectiveLegacyProviderDependencies.upsertMessagingProviders = originalLegacyUpsert;
   };
   return Object.assign(restore, { upsertMessagingProviders: directUpsert });
 }

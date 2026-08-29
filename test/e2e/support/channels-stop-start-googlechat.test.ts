@@ -346,6 +346,59 @@ describe("channels stop/start Google Chat live composition", () => {
     },
   );
 
+  it("intercepts both registration and legacy provider boundaries during rebuild", () => {
+    const sandboxName = "e2e-oc-ch-cycle";
+    const expectedName = `${sandboxName}-googlechat-bridge`;
+    const delegatedName = `${sandboxName}-slack-bridge`;
+    const registrationOriginal = vi.fn(() => []);
+    const legacyOriginal = vi.fn(() => [delegatedName]);
+    const providerDependencies: FixtureProviderDependencies = {
+      upsertMessagingProviders: registrationOriginal,
+    };
+    const legacyProviderDependencies: FixtureProviderDependencies = {
+      upsertMessagingProviders: legacyOriginal,
+    };
+    const run = vi.fn((args: string[]) => ({
+      status: args[1] === "get" ? 1 : 0,
+    })) as unknown as FixtureRunner;
+    const restore = installGooglechatCredentialFixture(sandboxName, "openclaw", {
+      ensureProfiles: vi.fn(),
+      providerDependencies,
+      legacyProviderDependencies,
+      root: "/repo",
+      run,
+    });
+
+    expect(providerDependencies.upsertMessagingProviders).toBe(
+      legacyProviderDependencies.upsertMessagingProviders,
+    );
+    expect(
+      providerDependencies.upsertMessagingProviders(
+        [
+          {
+            name: delegatedName,
+            envKey: "SLACK_BOT_TOKEN",
+            token: "e2e-fake-slack-token",
+            providerType: "nemoclaw-mcp-v1",
+          },
+          {
+            name: expectedName,
+            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+            token: null,
+            providerType: "google-chat-bridge",
+          },
+        ],
+        run,
+      ),
+    ).toEqual([delegatedName, expectedName]);
+    expect(registrationOriginal).not.toHaveBeenCalled();
+    expect(legacyOriginal).toHaveBeenCalledOnce();
+
+    restore();
+    expect(providerDependencies.upsertMessagingProviders).toBe(registrationOriginal);
+    expect(legacyProviderDependencies.upsertMessagingProviders).toBe(legacyOriginal);
+  });
+
   it.each([
     [
       {},

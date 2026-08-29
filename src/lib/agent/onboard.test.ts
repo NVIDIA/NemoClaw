@@ -673,6 +673,20 @@ describe("handleAgentSetup guards", () => {
     });
     expect(script).toContain("[ -e '/usr/local/bin/hermes' ] && [ ! -x '/usr/local/bin/hermes' ]");
   });
+
+  it("distinguishes an unobservable sandbox exec from a missing binary", () => {
+    const result = verifyAgentBinaryAvailable(
+      "alpha",
+      makeAgent({ name: "pi", binary_path: "/usr/local/bin/pi" }),
+      () => null,
+    );
+
+    expect(result).toEqual({
+      available: false,
+      reason: "unobservable",
+      binaryPath: "/usr/local/bin/pi",
+    });
+  });
 });
 
 describe("collectHermesStartupDiagnostics", () => {

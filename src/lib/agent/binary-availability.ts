@@ -10,7 +10,7 @@ export type AgentBinaryAvailability =
   | { available: true }
   | {
       available: false;
-      reason: "not_found" | "not_executable" | "path_mismatch";
+      reason: "not_found" | "not_executable" | "path_mismatch" | "unobservable";
       binaryPath?: string;
       resolvedPath?: string;
     };
@@ -57,6 +57,9 @@ export function verifyAgentBinaryAvailable(
   if (checkStatus === "ok") {
     return { available: true };
   }
+  if (!marker) {
+    return { available: false, reason: "unobservable", binaryPath: binaryPath || undefined };
+  }
   if (binaryPath && checkStatus) {
     const mismatch = checkStatus.match(/^path_mismatch:(.+)$/);
     if (mismatch) {
@@ -85,6 +88,9 @@ export function describeAgentBinaryFailure(
   }
   if (result.reason === "not_executable") {
     return `${agent.displayName} configured binary '${result.binaryPath}' is not executable inside sandbox '${sandboxName}'`;
+  }
+  if (result.reason === "unobservable") {
+    return `${agent.displayName} binary availability could not be observed inside sandbox '${sandboxName}'`;
   }
   return `${agent.displayName} binary '${executable}' is missing inside sandbox '${sandboxName}'`;
 }

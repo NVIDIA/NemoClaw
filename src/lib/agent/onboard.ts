@@ -296,6 +296,30 @@ function resolveAgentHealthProbeUrl(
   );
 }
 
+const AGENT_BINARY_OBSERVATION_ATTEMPTS = 5;
+const AGENT_BINARY_OBSERVATION_DELAY_SECONDS = 0.5;
+
+/** Retry only an unobservable read-only exec while a newly Ready sandbox settles. */
+function waitForAgentBinaryObservation(
+  sandboxName: string,
+  agent: AgentDefinition,
+  runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],
+  wait: (seconds: number) => void,
+) {
+  let result = verifyAgentBinaryAvailable(sandboxName, agent, runCaptureOpenshell);
+  for (
+    let attempt = 1;
+    !result.available &&
+    result.reason === "unobservable" &&
+    attempt < AGENT_BINARY_OBSERVATION_ATTEMPTS;
+    attempt += 1
+  ) {
+    wait(AGENT_BINARY_OBSERVATION_DELAY_SECONDS);
+    result = verifyAgentBinaryAvailable(sandboxName, agent, runCaptureOpenshell);
+  }
+  return result;
+}
+
 /**
  * Handle the full agent setup step (step 7) including resume detection.
  * For non-OpenClaw agents: writes config into the sandbox and verifies
@@ -326,6 +350,13 @@ export async function handleAgentSetup(
     agent.name === "langchain-deepagents-code" && captureOpenshell
       ? captureOpenshell
       : runCaptureOpenshell;
+  const waitForBinaryObservation = () =>
+    waitForAgentBinaryObservation(
+      sandboxName,
+      agent,
+      runCaptureOpenshell,
+      ctx.sleepSeconds ?? sleep,
+    );
 
   const syncNemoClawConfig = (): void => {
     revalidateSandboxIdentity?.(`synchronize agent configuration in sandbox '${sandboxName}'`);
@@ -345,11 +376,7 @@ export async function handleAgentSetup(
 
   if (resume && sandboxName) {
     if (isTerminalAgent(agent)) {
-      const binaryAvailability = verifyAgentBinaryAvailable(
-        sandboxName,
-        agent,
-        runCaptureOpenshell,
-      );
+      const binaryAvailability = waitForBinaryObservation();
       if (binaryAvailability.available) {
         syncNemoClawConfig();
         const smokeResult = runAgentSmokeCommands(sandboxName, agent, runSmokeCapture);
@@ -371,9 +398,7 @@ export async function handleAgentSetup(
                 revalidateSandboxIdentity,
               ),
           });
-          revalidateSandboxIdentity?.(
-            `record resumed agent setup for sandbox '${sandboxName}'`,
-          );
+          revalidateSandboxIdentity?.(`record resumed agent setup for sandbox '${sandboxName}'`);
           skippedStepMessage("agent_setup", sandboxName);
           await recordStepComplete("agent_setup", { sandboxName, provider, model });
           return;
@@ -402,9 +427,7 @@ export async function handleAgentSetup(
         // to the Dockerfile's zero-byte placeholder. Mirrors the OpenClaw
         // path in src/lib/onboard.ts. Fixes #3999 for non-OpenClaw agents.
         syncNemoClawConfig();
-        revalidateSandboxIdentity?.(
-          `record resumed agent setup for sandbox '${sandboxName}'`,
-        );
+        revalidateSandboxIdentity?.(`record resumed agent setup for sandbox '${sandboxName}'`);
         skippedStepMessage("agent_setup", sandboxName);
         await recordStepComplete("agent_setup", { sandboxName, provider, model });
         return;
@@ -416,7 +439,7 @@ export async function handleAgentSetup(
   await startRecordedStep("agent_setup", { sandboxName, provider, model });
   step(7, 8, `Setting up ${agent.displayName} inside sandbox`);
 
-  const binaryAvailability = verifyAgentBinaryAvailable(sandboxName, agent, runCaptureOpenshell);
+  const binaryAvailability = waitForBinaryObservation();
   if (!binaryAvailability.available) {
     await failAgentSetup(
       sandboxName,

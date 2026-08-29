@@ -50,6 +50,7 @@ import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
+import { materializeRebuildPolicyHandoff } from "./rebuild-policy-handoff";
 function cancelRecoveryIdentity(
   liveExists: boolean,
   requireVerifiedCreateBoundary: () => VerifiedSandboxCreateBoundary,
@@ -83,19 +84,15 @@ function bindRebuildPolicySourceProvidersToCreateIntent(
     : intent;
 }
 
-/** Use the exact live OpenShell policy handoff for this replacement create. */
+/** Preserve OpenShell's live policy while adding only replacement filesystem access. */
 function selectRebuildCreatePolicy(
   policySourcePath: string,
   generatedPolicy: import("../initial-policy").InitialSandboxPolicy,
 ): import("../initial-policy").InitialSandboxPolicy {
-  const source = fs.readFileSync(policySourcePath, "utf8");
-  return {
-    ...generatedPolicy,
-    policyPath: policySourcePath,
-    appliedPresets: [],
-    credentialBindingProviders: getCredentialBindingProviders(source),
-    sourceBytes: Buffer.from(source),
-  };
+  return materializeRebuildPolicyHandoff({
+    livePolicyPath: policySourcePath,
+    replacementPolicy: generatedPolicy,
+  });
 }
 
 export function createOnboardCreatedSandboxRegistrationWithManagedLifecycle(input: {

@@ -608,7 +608,7 @@ test(
       resumable: paused.resumable,
       machineState: paused.machine.state,
     });
-    expect(paused.status).toBe("in_progress");
+    expect(paused.status).toBe("failed");
     expect(paused.resumable).toBe(true);
     expect(paused.machine.state).toBe("post_verify");
 
