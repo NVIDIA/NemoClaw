@@ -33,12 +33,17 @@ const OPENCLAW_CONTAINER_KEYS = [
   "segments",
 ] as const;
 
+function isOpenClawResponseDocument(value: unknown): value is OpenClawAgentJsonDocument {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return ["payloads", "result", "response", "choices", "messages", "output", "outputs", "data"].some(
+    (key) => Object.hasOwn(record, key),
+  );
+}
+
 function openClawAgentJsonDocuments(value: unknown): OpenClawAgentJsonDocument[] {
   const values = Array.isArray(value) ? value : [value];
-  return values.filter(
-    (entry): entry is OpenClawAgentJsonDocument =>
-      typeof entry === "object" && entry !== null && !Array.isArray(entry),
-  );
+  return values.filter(isOpenClawResponseDocument);
 }
 
 export function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonDocument[] {

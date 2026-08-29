@@ -20,6 +20,11 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("");
   });
 
+  it("ignores standalone JSON log records without a response envelope", () => {
+    expect(parseOpenClawAgentText('progress {"text":"42"}')).toBe("");
+    expect(parseOpenClawAgentText('progress {"text":"42"}\nstatus {"content":"42"}')).toBe("");
+  });
+
   it("accepts a log-framed agent-output payload", () => {
     expect(
       parseOpenClawAgentText(
