@@ -20,9 +20,14 @@ import {
   parseInstalledSlackProof,
   SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
 } from "../live/messaging-providers-slack-runtime-proof.ts";
+import {
+  parseInstalledWechatProof,
+  WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE,
+} from "../live/messaging-providers-wechat-runtime-proof.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
+const FAKE_WECHAT_API = path.resolve(import.meta.dirname, "../lib/fake-wechat-api.mts");
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -287,6 +292,25 @@ describe("messaging provider installed-runtime proofs", () => {
     );
   });
 
+  it("keeps the installed WeChat runtime proof executable and strict", () => {
+    const syntax = spawnSync(process.execPath, ["--input-type=module", "--check"], {
+      encoding: "utf8",
+      input: WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE,
+    });
+    expect(syntax.status, syntax.stderr).toBe(0);
+    const proof = {
+      ok: true as const,
+      proof: "openclaw-weixin-runtime-send" as const,
+      accountId: "e2e-fake-account-12345",
+      messageId: "openclaw-weixin:123-abc",
+      pluginVersion: "2.4.3",
+    };
+    expect(parseInstalledWechatProof(`diagnostic\n${JSON.stringify(proof)}`)).toEqual(proof);
+    expect(() => parseInstalledWechatProof(JSON.stringify({ ...proof, accountId: "" }))).toThrow(
+      /did not emit a valid result/u,
+    );
+  });
+
   it("redacts Telegram tokens from fake API captures", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-telegram-redaction-"));
     const portFile = path.join(dir, "port");
@@ -340,6 +364,78 @@ describe("messaging provider installed-runtime proofs", () => {
         path: "/bot[redacted]/sendMessage",
         tokenMatchesExpected: true,
         tokenRedacted: true,
+      });
+    } finally {
+      child.kill("SIGTERM");
+      await new Promise<void>((resolve) =>
+        child.exitCode !== null ? resolve() : child.once("exit", () => resolve()),
+      );
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it("redacts WeChat tokens from fake iLink API captures", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-wechat-redaction-"));
+    const portFile = path.join(dir, "port");
+    const captureFile = path.join(dir, "capture.jsonl");
+    const token = "test-secret-wechat-ilink-token";
+    const child = spawn(process.execPath, ["--experimental-strip-types", FAKE_WECHAT_API], {
+      env: {
+        ...process.env,
+        FAKE_WECHAT_API_HOST: "127.0.0.1",
+        FAKE_WECHAT_API_PORT: "0",
+        FAKE_WECHAT_API_PORT_FILE: portFile,
+        FAKE_WECHAT_API_CAPTURE_FILE: captureFile,
+        FAKE_WECHAT_API_EXPECTED_TOKEN: token,
+        FAKE_WECHAT_API_EXPECTED_TARGET: "e2e-user@im.wechat",
+        FAKE_WECHAT_API_EXPECTED_TEXT: "redaction proof",
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    try {
+      await waitFor(() => fs.existsSync(portFile), `fake WeChat API did not start: ${stderr}`);
+      const port = parseRuntimeProofPort(fs.readFileSync(portFile, "utf8").trim());
+      const response = await fetch(`http://127.0.0.1:${port}/ilink/bot/sendmessage`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          authorizationtype: "ilink_bot_token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          msg: {
+            to_user_id: "e2e-user@im.wechat",
+            context_token: "test-context",
+            item_list: [{ text_item: { text: "redaction proof" } }],
+          },
+          base_info: { channel_version: "2.4.3", bot_agent: "OpenClaw" },
+        }),
+      });
+      expect(response.status).toBe(200);
+      await waitFor(
+        () => fs.readFileSync(captureFile, "utf8").includes("/ilink/bot/sendmessage"),
+        `fake WeChat API did not capture the request: ${stderr}`,
+      );
+      const capture = fs.readFileSync(captureFile, "utf8");
+      expect(capture).not.toContain(token);
+      const request = capture
+        .trim()
+        .split(/\n+/u)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find((row) => row.event === "request");
+      expect(request).toMatchObject({
+        path: "/ilink/bot/sendmessage",
+        tokenMatchesExpected: true,
+        tokenLooksPlaceholder: false,
+        tokenRedacted: true,
+        targetMatchesExpected: true,
+        textMatchesExpected: true,
       });
     } finally {
       child.kill("SIGTERM");

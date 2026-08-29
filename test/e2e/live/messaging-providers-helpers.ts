@@ -598,8 +598,9 @@ export async function startFakeDockerApi(
   host: HostCliClient,
   cleanup: (name: string, run: () => Promise<void>) => void,
   options: {
-    kind: "slack" | "telegram" | "discord-gateway" | "discord-message";
+    kind: "slack" | "telegram" | "wechat" | "discord-gateway" | "discord-message";
     imageScript: string;
+    nodeArgs?: readonly string[];
     containerPrefix: string;
     portEnv: string;
     portFileEnv: string;
@@ -644,6 +645,7 @@ export async function startFakeDockerApi(
     `${FAKE_LIB_DIR}:/opt/nemoclaw-e2e:ro`,
     "node:22-bookworm-slim",
     "node",
+    ...(options.nodeArgs ?? []),
     `/opt/nemoclaw-e2e/${options.imageScript}`,
   );
 
