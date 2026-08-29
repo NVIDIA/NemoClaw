@@ -149,7 +149,7 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("");
   });
 
-  it("extracts visible payload text without accepting echoed user or tool content", () => {
+  it("rejects envelopes mixing assistant text with echoed tool content", () => {
     expect(
       parseOpenClawAgentText(
         JSON.stringify({
@@ -161,7 +161,7 @@ describe("OpenClaw agent-output fixture", () => {
           meta: {},
         }),
       ),
-    ).toBe("ASSISTANT_RESULT");
+    ).toBe("");
     expect(
       parseOpenClawAgentText(
         JSON.stringify({
