@@ -460,10 +460,14 @@ function renderTrace(input: {
   const latestRevision = revisionObserved === null ? null : Math.max(opened, revisionObserved);
   const automationSettled = optionalTime(input.report?.events?.automationSettled);
   const approved = optionalTime(input.report?.events?.firstFinalHeadApproval);
-  const observedComplete =
+  const observedGate =
     automationSettled !== null && approved !== null
       ? Math.max(automationSettled, approved)
       : (automationSettled ?? approved);
+  const observedComplete =
+    latestRevision === null || observedGate === null
+      ? null
+      : Math.max(latestRevision, observedGate);
   addSpan(events, {
     name: "Waiting for latest revision",
     category: "pr.readiness",
