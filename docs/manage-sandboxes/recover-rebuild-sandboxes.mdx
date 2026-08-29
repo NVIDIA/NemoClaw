@@ -105,6 +105,25 @@ If gate reacquisition or cron validation fails, `recover` exits nonzero and reta
 
 Portable Hermes recovery follows the exact receipt-bound start, authenticated-health, and rollback contract in the [`recover` command reference](../../reference/commands#nemoclaw-name-recover).
 
+### Recover Portable Published Ollama
+
+When an active Portable Hermes sandbox uses a published receipt-owned Ollama runner, use one of these commands to recover it:
+
+```bash
+$$nemoclaw <sandbox-name> recover
+$$nemoclaw <sandbox-name> connect --probe-only
+```
+
+These commands verify the published inference receipt, sandbox registry, provider and lifecycle authority, recovery journal, and exact Podman runtime identity.
+They verify and reuse an already-running exact runner without restarting it.
+When the exact runner is stopped, they resume only that runner; they do not select another runtime, model, network, or provider.
+Missing authority, a same-name replacement, or other drift stops recovery before NemoClaw treats another resource as the runner.
+Success requires a final route proof from inside the sandbox.
+
+Ordinary `connect` and direct `launch` do not resume the runner.
+If a check fails after recovery starts a stopped runner, NemoClaw returns the runner to stopped and returns the registry to its prior state.
+If the output says that restoration could not be proved, preserve the current Portable state and do not run another recovery probe or `launch` until you inspect the recorded runtime and registry authority.
+
 Use `gateway restart` when you intentionally need a supported Hermes gateway to reload runtime configuration or plugins.
 
 ```bash
