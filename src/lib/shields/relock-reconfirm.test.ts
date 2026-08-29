@@ -155,8 +155,8 @@ describe("resolveSettleMs", () => {
     expect(resolveSettleMs()).toBe(10_000);
   });
 
-  it.each(["0", "-500", "0.5", "   ", "invalid"])(
-    "keeps the production settle window for a non-positive or invalid env value (%s)",
+  it.each(["0", "-500", "0.5", "1.5", "750.1", "   ", "invalid"])(
+    "keeps the production settle window for a non-positive, fractional, blank, or invalid env value (%s)",
     (value) => {
       delete process.env.VITEST;
       process.env.NODE_ENV = "production";

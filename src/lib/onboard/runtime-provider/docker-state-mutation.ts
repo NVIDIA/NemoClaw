@@ -103,7 +103,17 @@ const POSITIVE_DECIMAL = /^[1-9][0-9]*$/u;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const helperTransportPoll = new Int32Array(new SharedArrayBuffer(4));
 
-export const DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE = String.raw`
+export interface DockerStateMutationHelperTransportBrokerSourceOptions {
+  readonly root: string;
+  readonly expectedUid: number;
+  readonly expectedGid: number;
+  readonly activateTimeoutSeconds: number;
+}
+
+export function createDockerStateMutationHelperTransportBrokerSource(
+  options: DockerStateMutationHelperTransportBrokerSourceOptions,
+): string {
+  return String.raw`
 import fcntl
 import hashlib
 import json
@@ -115,9 +125,11 @@ import subprocess
 import sys
 import time
 
-ROOT = "/run/nemoclaw/runtime-state-mutation"
+ROOT = ${JSON.stringify(options.root)}
+EXPECTED_UID = ${options.expectedUid}
+EXPECTED_GID = ${options.expectedGid}
 MAXIMUM = 128 * 1024
-TIMEOUTS = {"acquire": 30, "assert": 30, "publish": 900, "recover": 900, "rollback": 900, "activate": ${DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS / 1000}, "release": ${HELPER_RELEASE_TIMEOUT_MS / 1000}}
+TIMEOUTS = {"acquire": 30, "assert": 30, "publish": 900, "recover": 900, "rollback": 900, "activate": ${options.activateTimeoutSeconds}, "release": ${HELPER_RELEASE_TIMEOUT_MS / 1000}}
 IDENTITY = re.compile(r"[a-f0-9]{64}\Z")
 INCOMING = re.compile(r"([a-f0-9]{64})\.(acquire|assert|publish|recover|rollback|activate|release)\.incoming\Z")
 PUBLICATION_SETTLE_SECONDS = 5
@@ -127,7 +139,8 @@ def fail(code):
 
 def directory(path):
     metadata = os.lstat(path)
-    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0 or
+    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != EXPECTED_UID or
+        metadata.st_gid != EXPECTED_GID or
         stat.S_IMODE(metadata.st_mode) != 0o700):
         fail("transport-directory-invalid")
 
@@ -152,7 +165,8 @@ def private_file(path):
         before = os.fstat(descriptor)
         payload = os.read(descriptor, MAXIMUM + 1)
         after = os.fstat(descriptor)
-        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_gid != 0 or
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != EXPECTED_UID or
+            before.st_gid != EXPECTED_GID or
             stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1 or
             len(payload) > MAXIMUM or os.read(descriptor, 1) or
             (before.st_dev, before.st_ino, before.st_mode, before.st_nlink, before.st_uid,
@@ -251,7 +265,8 @@ def run_helper(action, request):
         metadata = os.lstat(helper)
     except FileNotFoundError:
         fail("helper-file-missing")
-    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0 or
+    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != EXPECTED_UID or
+        metadata.st_gid != EXPECTED_GID or
         stat.S_IMODE(metadata.st_mode) & 0o022):
         fail("helper-file-invalid")
     deadline = time.monotonic() + TIMEOUTS[action]
@@ -392,6 +407,15 @@ while True:
             pass
     time.sleep(0.05)
 `;
+}
+
+export const DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE =
+  createDockerStateMutationHelperTransportBrokerSource({
+    root: HELPER_TRANSPORT_ROOT,
+    expectedUid: 0,
+    expectedGid: 0,
+    activateTimeoutSeconds: DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS / 1000,
+  });
 
 type HelperAction =
   | "acquire"

@@ -69,9 +69,10 @@ export interface RelockReconfirmResult {
 /**
  * Resolve the settle window (ms) between applying a lock and re-confirming it.
  *
- * Reads `NEMOCLAW_SHIELDS_SETTLE_MS`, defaulting to 750ms. Positive values are
- * capped at 10000ms; invalid or non-positive values use the default. Returns 0
- * only under Vitest so suites don't incur real blocking waits.
+ * Reads `NEMOCLAW_SHIELDS_SETTLE_MS`, defaulting to 750ms. Positive whole
+ * numbers are capped at 10000ms; invalid, fractional, or non-positive values
+ * use the default. Returns 0 only under Vitest so suites don't incur real
+ * blocking waits.
  */
 export function resolveSettleMs(): number {
   // VITEST is the precise test signal (Vitest always sets it). Do NOT key off
@@ -85,14 +86,10 @@ export function resolveSettleMs(): number {
     return DEFAULT_SETTLE_MS;
   }
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) {
+  if (!Number.isInteger(parsed) || parsed <= 0) {
     return DEFAULT_SETTLE_MS;
   }
-  const settleMs = Math.trunc(parsed);
-  if (settleMs <= 0) {
-    return DEFAULT_SETTLE_MS;
-  }
-  return Math.min(MAX_SETTLE_MS, settleMs);
+  return Math.min(MAX_SETTLE_MS, parsed);
 }
 
 /**

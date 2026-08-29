@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -26,7 +26,7 @@ import {
 import { createDockerOperationAuthority } from "./docker-operation-authority";
 import {
   DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS,
-  DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE,
+  createDockerStateMutationHelperTransportBrokerSource,
   createDockerStateMutationOwner,
   createDockerStateMutationSurface,
 } from "./docker-state-mutation";
@@ -77,197 +77,179 @@ async function waitForPath(filePath: string, timeoutMs: number): Promise<void> {
   throw new Error(`timed out waiting for ${path.basename(filePath)}`);
 }
 
+type BrokerAction =
+  | "acquire"
+  | "assert"
+  | "publish"
+  | "recover"
+  | "rollback"
+  | "activate"
+  | "release";
+
+interface BrokerResponse {
+  readonly schemaVersion: number;
+  readonly action: BrokerAction;
+  readonly identity: string;
+  readonly status: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+async function createBrokerRuntime(
+  helperSource: (root: string) => string,
+  activateTimeoutSeconds = 0.25,
+) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-mutation-broker-"));
+  const helper = path.join(root, "helper.py");
+  const transaction = randomBytes(32).toString("hex");
+  const session = path.join(root, transaction);
+  const uid = process.getuid?.() ?? 0;
+  const gid = process.getgid?.() ?? 0;
+  const brokerSource = createDockerStateMutationHelperTransportBrokerSource({
+    root,
+    expectedUid: uid,
+    expectedGid: gid,
+    activateTimeoutSeconds,
+  });
+  fs.writeFileSync(helper, helperSource(root), { mode: 0o500 });
+  const broker = spawn("python3", ["-I", "-c", brokerSource, helper, transaction], {
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const brokerExit = new Promise<void>((resolve, reject) => {
+    broker.once("exit", () => resolve());
+    broker.once("error", reject);
+  });
+  let brokerStderr = "";
+  broker.stderr.setEncoding("utf8");
+  broker.stderr.on("data", (chunk: string) => {
+    brokerStderr += chunk;
+  });
+
+  try {
+    await waitForPath(path.join(session, "ready"), 2_000);
+  } catch (error: unknown) {
+    broker.kill("SIGTERM");
+    await brokerExit;
+    fs.rmSync(root, { force: true, recursive: true });
+    throw error;
+  }
+
+  return {
+    helper,
+    root,
+    session,
+    transaction,
+    stderr: () => brokerStderr,
+    close: async () => {
+      broker.kill("SIGTERM");
+      await brokerExit;
+      fs.rmSync(root, { force: true, recursive: true });
+    },
+  };
+}
+
+async function sendBrokerRequest(
+  runtime: Awaited<ReturnType<typeof createBrokerRuntime>>,
+  action: BrokerAction,
+): Promise<{ readonly elapsedMs: number; readonly response: BrokerResponse }> {
+  const request = Buffer.from(
+    `${JSON.stringify({ action, transactionId: runtime.transaction })}\n`,
+    "utf8",
+  );
+  const identity = createHash("sha256").update(request).digest("hex");
+  const responsePath = path.join(runtime.session, `${identity}.response`);
+  const startedAt = Date.now();
+  fs.writeFileSync(path.join(runtime.session, `${identity}.${action}.incoming`), request, {
+    mode: 0o600,
+  });
+  await waitForPath(responsePath, 1_500);
+  return {
+    elapsedMs: Date.now() - startedAt,
+    response: JSON.parse(fs.readFileSync(responsePath, "utf8")) as BrokerResponse,
+  };
+}
+
+function brokerFailureCode(response: BrokerResponse): string {
+  return (JSON.parse(response.stderr) as { code: string }).code;
+}
+
 afterEach(() => {
   cleanupDockerStateMutationRoots();
 });
 
 describe("Docker runtime-provider state mutation surface", () => {
-  it("preserves safe broker diagnostics after request validation", () => {
-    const definitionsEnd = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.indexOf(
-      "\nhelper = sys.argv[1]\n",
+  it("publishes safe full-broker diagnostics after request validation", async () => {
+    const runtime = await createBrokerRuntime(
+      () => `import os,sys
+action = sys.argv[1]
+if action == "acquire":
+    os.write(2, b"raw helper failure")
+    raise SystemExit(2)
+if action == "assert":
+    os.write(2, b"unexpected helper stderr")
+if action == "publish":
+    os.write(1, b"\\xff")
+`,
     );
-    expect(definitionsEnd).toBeGreaterThan(0);
-    const definitions = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.slice(
-      0,
-      definitionsEnd,
-    );
-    const probe = `${definitions}
-helper = "/definitely-missing/nemoclaw-runtime-state-mutation-control.py"
+
+    try {
+      const failed = await sendBrokerRequest(runtime, "acquire");
+      expect(brokerFailureCode(failed.response)).toBe("helper-process-failed");
+
+      const protocol = await sendBrokerRequest(runtime, "assert");
+      expect(brokerFailureCode(protocol.response)).toBe("helper-protocol-stderr");
+
+      const encoding = await sendBrokerRequest(runtime, "publish");
+      expect(brokerFailureCode(encoding.response)).toBe("transport-response-encoding-invalid");
+
+      fs.unlinkSync(runtime.helper);
+      const missing = await sendBrokerRequest(runtime, "recover");
+      expect(brokerFailureCode(missing.response)).toBe("helper-file-missing");
+      expect(runtime.stderr(), runtime.stderr()).toBe("");
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("bounds signal replay and terminates the full helper process group (#10155)", async () => {
+    let leakedChildMarker = "";
+    const runtime = await createBrokerRuntime((root) => {
+      const countPath = path.join(root, "helper-count");
+      leakedChildMarker = path.join(root, "leaked-child");
+      return `import os,signal,sys,time
+count_path = ${JSON.stringify(countPath)}
+leaked_child_marker = ${JSON.stringify(leakedChildMarker)}
+if sys.argv[1] != "activate":
+    raise SystemExit(0)
 try:
-    run_helper("acquire", b"{}\\n")
-except (OSError, RuntimeError, UnicodeError, ValueError) as error:
-    missing_helper = post_validation_failure_code(error)
-print(json.dumps({
-    "missingHelper": missing_helper,
-    "permission": post_validation_failure_code(PermissionError()),
-    "encoding": post_validation_failure_code(UnicodeDecodeError("utf-8", b"x", 0, 1, "invalid")),
-    "invalidResponse": post_validation_failure_code(ValueError()),
-    "helperProcess": json.loads(normalize_helper_stderr("acquire", 2, b"raw python error"))["code"],
-    "helperProtocol": json.loads(normalize_helper_stderr("acquire", 0, b"unexpected stderr"))["code"],
-    "timeout": json.loads(failure_stderr("acquire", "helper-timeout"))["code"],
-    "activateTimeoutSeconds": TIMEOUTS["activate"],
-}, separators=(",", ":")))
+    with open(count_path, "r", encoding="utf-8") as stream:
+        count = int(stream.read())
+except FileNotFoundError:
+    count = 0
+with open(count_path, "w", encoding="utf-8") as stream:
+    stream.write(str(count + 1))
+if count == 0:
+    time.sleep(0.2)
+    os.kill(os.getpid(), signal.SIGKILL)
+if os.fork() == 0:
+    time.sleep(0.35)
+    with open(leaked_child_marker, "w", encoding="utf-8") as stream:
+        stream.write("helper process group survived")
+    os._exit(0)
+time.sleep(30)
 `;
-
-    expect(
-      JSON.parse(
-        execFileSync("python3", ["-I", "-c", probe], {
-          encoding: "utf8",
-          timeout: 5_000,
-        }),
-      ),
-    ).toEqual({
-      missingHelper: "helper-file-missing",
-      permission: "transport-permission-denied",
-      encoding: "transport-response-encoding-invalid",
-      invalidResponse: "transport-response-invalid",
-      helperProcess: "helper-process-failed",
-      helperProtocol: "helper-protocol-stderr",
-      timeout: "helper-timeout",
-      activateTimeoutSeconds: DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS / 1000,
-    });
-  });
-
-  it("terminates the isolated helper process group before reporting a timeout", () => {
-    const definitionsEnd = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.indexOf(
-      "\nhelper = sys.argv[1]\n",
-    );
-    const definitions = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.slice(
-      0,
-      definitionsEnd,
-    );
-    const probe = `${definitions}
-import tempfile
-root = tempfile.mkdtemp(prefix="nemoclaw-helper-timeout-")
-helper = os.path.join(root, "helper.py")
-with open(helper, "w", encoding="utf-8") as stream:
-    stream.write("import os,time\\n")
-    stream.write("if os.fork() == 0: time.sleep(30)\\n")
-    stream.write("time.sleep(30)\\n")
-original_lstat = os.lstat
-class RootHelperMetadata:
-    st_mode = stat.S_IFREG | 0o555
-    st_uid = 0
-    st_gid = 0
-os.lstat = lambda target: RootHelperMetadata() if target == helper else original_lstat(target)
-TIMEOUTS["activate"] = 0.05
-try:
-    run_helper("activate", b"{}\\n")
-except subprocess.TimeoutExpired:
-    print("helper-timeout")
-`;
-
-    expect(
-      execFileSync("python3", ["-I", "-c", probe], {
-        encoding: "utf8",
-        timeout: 5_000,
-      }).trim(),
-    ).toBe("helper-timeout");
-  });
-
-  it("keeps the signal replay inside one activation broker deadline (#10155)", () => {
-    const definitionsEnd = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.indexOf(
-      "\nhelper = sys.argv[1]\n",
-    );
-    const definitions = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.slice(
-      0,
-      definitionsEnd,
-    );
-    const probe = `${definitions}
-import types
-helper = "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py"
-os.lstat = lambda _path: types.SimpleNamespace(
-    st_mode=stat.S_IFREG | 0o444, st_uid=0, st_gid=0)
-ticks = iter((100.0, 100.0, 325.0))
-time.monotonic = lambda: next(ticks)
-timeouts = []
-class FakeProcess:
-    def __init__(self, args, **_kwargs):
-        self.args = args
-        self.pid = 1
-        self.returncode = -9 if not timeouts else 0
-    def communicate(self, _request, timeout):
-        timeouts.append(timeout)
-        return (b"", b"")
-subprocess.Popen = FakeProcess
-run_helper("activate", b"{}\\n")
-print(json.dumps(timeouts))
-`;
-
-    expect(
-      JSON.parse(
-        execFileSync("python3", ["-I", "-c", probe], {
-          encoding: "utf8",
-          timeout: 5_000,
-        }),
-      ),
-    ).toEqual([485, 260]);
-  });
-
-  it("publishes a bounded activation timeout after the helper deadline (#10155)", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-mutation-broker-"));
-    const helper = path.join(root, "slow-helper.py");
-    const transaction = randomBytes(32).toString("hex");
-    const session = path.join(root, transaction);
-    const uid = process.getuid?.() ?? 0;
-    const gid = process.getgid?.() ?? 0;
-    const brokerSource = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.replace(
-      'ROOT = "/run/nemoclaw/runtime-state-mutation"',
-      `ROOT = ${JSON.stringify(root)}`,
-    )
-      .replace(/"activate": [0-9.]+/u, '"activate": 0.05')
-      .replaceAll(
-        "metadata.st_uid != 0 or metadata.st_gid != 0",
-        `metadata.st_uid != ${uid} or metadata.st_gid != ${gid}`,
-      )
-      .replaceAll(
-        "before.st_uid != 0 or before.st_gid != 0",
-        `before.st_uid != ${uid} or before.st_gid != ${gid}`,
-      );
-    fs.writeFileSync(helper, "import time\ntime.sleep(1)\n", { mode: 0o500 });
-    const broker = spawn("python3", ["-I", "-c", brokerSource, helper, transaction], {
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    const brokerExit = new Promise<void>((resolve, reject) => {
-      broker.once("exit", () => resolve());
-      broker.once("error", reject);
-    });
-    let brokerStderr = "";
-    broker.stderr.setEncoding("utf8");
-    broker.stderr.on("data", (chunk: string) => {
-      brokerStderr += chunk;
     });
 
     try {
-      await waitForPath(path.join(session, "ready"), 2_000);
-      const request = Buffer.from(
-        `${JSON.stringify({ action: "activate", transactionId: transaction })}\n`,
-        "utf8",
-      );
-      const identity = createHash("sha256").update(request).digest("hex");
-      const responsePath = path.join(session, `${identity}.response`);
-      const startedAt = Date.now();
-      fs.writeFileSync(path.join(session, `${identity}.activate.incoming`), request, {
-        mode: 0o600,
-      });
-      await waitForPath(responsePath, 1_000);
-
-      const response = JSON.parse(fs.readFileSync(responsePath, "utf8"));
-      expect(response).toEqual({
-        schemaVersion: 1,
-        action: "activate",
-        identity,
-        status: 1,
-        stdout: "",
-        stderr:
-          '{"schemaVersion":1,"action":"activate","status":"failed","code":"helper-timeout"}\n',
-      });
-      expect(Date.now() - startedAt).toBeLessThan(500);
-      expect(brokerStderr, brokerStderr).toBe("");
+      const result = await sendBrokerRequest(runtime, "activate");
+      expect(result.response).toMatchObject({ action: "activate", status: 1, stdout: "" });
+      expect(brokerFailureCode(result.response)).toBe("helper-timeout");
+      expect(result.elapsedMs).toBeLessThan(400);
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      expect(fs.existsSync(leakedChildMarker)).toBe(false);
+      expect(runtime.stderr(), runtime.stderr()).toBe("");
     } finally {
-      broker.kill("SIGTERM");
-      await brokerExit;
-      fs.rmSync(root, { force: true, recursive: true });
+      await runtime.close();
     }
   });
 
