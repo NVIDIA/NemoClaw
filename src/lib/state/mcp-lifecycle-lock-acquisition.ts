@@ -45,6 +45,12 @@ import { resolveNemoclawStateDir } from "./paths";
 const DEFAULT_POLL_INTERVAL_MS = 100;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const DEFAULT_CORRUPT_LOCK_GRACE_MS = 30_000;
+const AUTO_RESTORE_DEADLINE_OWNER_EXITED_REASON =
+  "An auto-restore deadline owner exited before its recovery operation completed";
+
+function ownerGoneBeforeTakeoverReason(targetLabel: string, ownerPid: number | undefined): string {
+  return `The ${targetLabel} owner PID ${String(ownerPid)} was already gone before takeover`;
+}
 
 type CorruptGenerationTracker = CorruptGenerationState;
 
@@ -298,16 +304,10 @@ function parseLegacyCompletedAutoRestoreContainment(
 ): ContainedCompletedAutoRestoreGeneration | null {
   if (!reason) return null;
   let target: ContainedCompletedAutoRestoreGeneration["target"] | null = null;
-  if (
-    reason.startsWith(
-      "An auto-restore deadline owner exited before its recovery operation completed; ",
-    )
-  ) {
+  if (reason.startsWith(`${AUTO_RESTORE_DEADLINE_OWNER_EXITED_REASON}; `)) {
     target = "deadline";
   } else if (
-    reason.startsWith(
-      `The sandbox mutation owner PID ${String(ownerPid)} was already gone before takeover; `,
-    )
+    reason.startsWith(`${ownerGoneBeforeTakeoverReason("sandbox mutation", ownerPid)}; `)
   ) {
     target = "main";
   }
@@ -355,9 +355,7 @@ function recoverCompletedAutoRestoreGatesSync(
   lockPath: string,
   sandboxName: string,
   takeoverToken: string,
-  recovery: NonNullable<
-    McpLifecycleDeadlineFenceSyncOptions["completedAutoRestoreRecovery"]
-  >,
+  recovery: NonNullable<McpLifecycleDeadlineFenceSyncOptions["completedAutoRestoreRecovery"]>,
 ): void {
   recovery.assertAuthority();
   const main = readMcpLifecycleLockObservationSync(lockPath);
@@ -391,9 +389,7 @@ function recoverCompletedAutoRestoreGatesSync(
   }
 
   if (containment) {
-    if (
-      !isExactStaleCompletedAutoRestoreOwner(containment, sandboxName, takeoverToken)
-    ) {
+    if (!isExactStaleCompletedAutoRestoreOwner(containment, sandboxName, takeoverToken)) {
       refuseCompletedAutoRestoreRecovery(
         lockPath,
         "the containment generation is active, foreign, or unrelated",
@@ -418,10 +414,7 @@ function recoverCompletedAutoRestoreGatesSync(
         "the containment record protects a stale-lock reaper",
       );
     }
-    if (
-      structuredGeneration &&
-      structuredGeneration.ownerPid !== recovery.ownerPid
-    ) {
+    if (structuredGeneration && structuredGeneration.ownerPid !== recovery.ownerPid) {
       refuseCompletedAutoRestoreRecovery(
         lockPath,
         "the contained lifecycle owner does not match the abandoned timer",
@@ -440,21 +433,14 @@ function recoverCompletedAutoRestoreGatesSync(
         target.ino !== contained.ino ||
         target.owner?.token !== contained.token)
     ) {
-      refuseCompletedAutoRestoreRecovery(
-        lockPath,
-        "the contained lifecycle generation changed",
-      );
+      refuseCompletedAutoRestoreRecovery(lockPath, "the contained lifecycle generation changed");
     }
   }
 
   const reclaim = (targetPath: string, observation: LockObservation | null, label: string) => {
     if (!observation) return;
     if (
-      !reclaimStaleMcpLifecycleLockGenerationSync(
-        targetPath,
-        observation,
-        recovery.assertAuthority,
-      )
+      !reclaimStaleMcpLifecycleLockGenerationSync(targetPath, observation, recovery.assertAuthority)
     ) {
       refuseCompletedAutoRestoreRecovery(lockPath, `the ${label} generation changed`);
     }
@@ -800,7 +786,7 @@ async function acquireMcpLifecycleLock(
           stateDir,
           deadlineObservation,
           "deadline",
-          "An auto-restore deadline owner exited before its recovery operation completed",
+          AUTO_RESTORE_DEADLINE_OWNER_EXITED_REASON,
           assertBeforeDeadline,
         );
         continue;
@@ -1017,7 +1003,7 @@ function acquireMcpLifecycleLockSync(
           options.stateDir,
           deadlineObservation,
           "deadline",
-          "An auto-restore deadline owner exited before its recovery operation completed",
+          AUTO_RESTORE_DEADLINE_OWNER_EXITED_REASON,
           assertBeforeDeadline,
         );
         continue;
@@ -1376,7 +1362,7 @@ async function acquireDeadlineFence(
         options.stateDir ?? resolveNemoclawStateDir(),
         decision.observation,
         "deadline",
-        "An auto-restore deadline owner exited before its recovery operation completed",
+        AUTO_RESTORE_DEADLINE_OWNER_EXITED_REASON,
       );
       continue;
     }
@@ -1494,7 +1480,7 @@ function acquireDeadlineFenceSync(
         options.stateDir,
         decision.observation,
         "deadline",
-        "An auto-restore deadline owner exited before its recovery operation completed",
+        AUTO_RESTORE_DEADLINE_OWNER_EXITED_REASON,
       );
       continue;
     }
@@ -1575,7 +1561,7 @@ async function clearDeadlineProtectedPath(
         stateDir,
         observed,
         targetPath.endsWith(".reaper") ? "reaper" : "main",
-        `The ${targetLabel} owner PID ${String(owner?.pid)} was already gone before takeover`,
+        ownerGoneBeforeTakeoverReason(targetLabel, owner?.pid),
       );
       throw durableMcpLifecycleContainmentFailure(
         new Error(
@@ -1689,7 +1675,7 @@ function clearDeadlineProtectedPathSync(
         stateDir,
         observed,
         targetPath.endsWith(".reaper") ? "reaper" : "main",
-        `The ${targetLabel} owner PID ${String(owner?.pid)} was already gone before takeover`,
+        ownerGoneBeforeTakeoverReason(targetLabel, owner?.pid),
       );
       throw durableMcpLifecycleContainmentFailure(
         new Error(

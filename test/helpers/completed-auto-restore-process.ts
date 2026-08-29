@@ -25,29 +25,34 @@ async function runChild(
   child.stderr?.on("data", (chunk: Buffer) => {
     stderr += chunk.toString("utf8");
   });
-  const exited = new Promise<void>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code) =>
-      code === 0
-        ? resolve()
-        : reject(new Error(`${label} child exited ${String(code)}: ${stderr}`)),
-    );
-  });
-  const producedEvidence = new Promise<void>((resolve, reject) => {
+  const completed = new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const settle = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolve();
+    };
     const timeout = setTimeout(
-      () => reject(new Error(`${label} child did not report ${expectedLine}: ${stderr}`)),
+      () => settle(new Error(`${label} child did not report ${expectedLine}: ${stderr}`)),
       CHILD_TIMEOUT_MS,
     );
-    const inspect = () => {
-      if (!stdout.split(/\r?\n/u).includes(expectedLine)) return;
-      clearTimeout(timeout);
-      resolve();
-    };
-    child.stdout?.on("data", inspect);
-    inspect();
+    child.once("error", (error) => settle(error));
+    child.once("exit", (code) => {
+      if (code !== 0) {
+        settle(new Error(`${label} child exited ${String(code)}: ${stderr}`));
+        return;
+      }
+      if (!stdout.split(/\r?\n/u).includes(expectedLine)) {
+        settle(new Error(`${label} child exited before reporting ${expectedLine}: ${stderr}`));
+        return;
+      }
+      settle();
+    });
   });
   try {
-    await Promise.all([producedEvidence, exited]);
+    await completed;
   } finally {
     if (child.exitCode === null) child.kill("SIGKILL");
   }
