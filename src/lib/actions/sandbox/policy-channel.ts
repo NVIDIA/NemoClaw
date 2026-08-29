@@ -1719,13 +1719,11 @@ function isSafeChannelStatePath(p: string): boolean {
 
 const CHANNEL_CLEAR_SENTINEL = "NEMOCLAW_CHANNEL_CLEAR_OK";
 
-// Wipe the durable per-channel state inside the sandbox before rebuild so
-// the state_dirs backup does not restore an auth blob the operator just
-// asked NemoClaw to forget. Returns true when no cleanup was needed OR
-// when the in-sandbox rm produced our success sentinel; false otherwise.
-// Tries `openshell sandbox exec` first and falls back to SSH for transient
-// wrapper hiccups (mirrors the pattern in process-recovery.ts:286-296).
-// Fixes #3998.
+/**
+ * Wipe durable channel state before rebuild can preserve an obsolete auth blob.
+ * OpenShell exec runs first, followed by SSH and the stopped WeChat Docker fallback.
+ * Fixes #3998.
+ */
 function clearSandboxChannelDurableState(sandboxName: string, channelName: string): boolean {
   const agent = resolveAgentForSandbox(sandboxName);
   const paths = getSandboxChannelStatePaths(agent, channelName).filter(isSafeChannelStatePath);

@@ -184,14 +184,14 @@ describe("privileged sandbox exec routing", () => {
     const results = [
       {
         status: 0,
-        stdout: `${containerId}\t${imageId}\tfalse\n`,
+        stdout: `${containerId}\t${imageId}\tfalse\t[{"Destination":"/sandbox","RW":true}]\n`,
         stderr: "",
         error: null,
       },
       { status: 0, stdout: "", stderr: "", error: null },
       {
         status: 0,
-        stdout: `${containerId}\t${imageId}\tfalse\n`,
+        stdout: `${containerId}\t${imageId}\tfalse\t[{"Destination":"/sandbox","RW":true}]\n`,
         stderr: "",
         error: null,
       },
@@ -265,6 +265,38 @@ describe("privileged sandbox exec routing", () => {
 
     expect(captureDocker).not.toHaveBeenCalled();
     expect(runDocker).not.toHaveBeenCalled();
+  });
+
+  it("refuses cleanup when the stopped container has no writable sandbox mount", () => {
+    const containerId = "a".repeat(64);
+    const imageId = `sha256:${"b".repeat(64)}`;
+    const runDocker = vi.fn((_args: readonly string[]) => {
+      return {
+        status: 0,
+        stdout: `${containerId}\t${imageId}\tfalse\t[]\n`,
+        stderr: "",
+        error: null,
+      } as const;
+    });
+
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: () => `${containerId}\topenshell-alpha\n`,
+        dockerRun: runDocker,
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(
+          clearStoppedDockerSandboxChannelState("alpha", [
+            "/sandbox/.openclaw/wechat",
+            "/sandbox/.openclaw/openclaw-weixin",
+          ]),
+        ).toBe(false);
+      },
+    );
+
+    expect(runDocker).toHaveBeenCalledOnce();
   });
 
   it("rejects ambiguous labeled running containers", () => {

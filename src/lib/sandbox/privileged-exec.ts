@@ -213,6 +213,7 @@ function findDirectSandboxContainer(sandboxName: string): string | null {
   return selectDirectSandboxContainer(sandboxName, output, names);
 }
 
+/** Select one label-owned container across all states and reject GPU rollback siblings. */
 function findStoppedDirectSandboxContainer(sandboxName: string): string | null {
   const names = registeredSandboxNames(sandboxName);
   const output = dockerCapture(
@@ -236,29 +237,52 @@ function findStoppedDirectSandboxContainer(sandboxName: string): string | null {
 }
 
 type InspectedStoppedContainer = {
+  readonly hasWritableSandboxMount: boolean;
   readonly id: string;
   readonly image: string;
   readonly running: boolean;
 };
 
+/** Read immutable image, lifecycle, and shared-state mount data for one container ID. */
 function inspectStoppedContainer(containerId: string): InspectedStoppedContainer | null {
   const result = dockerRun(
-    ["inspect", "--format", "{{.Id}}\t{{.Image}}\t{{.State.Running}}", containerId],
+    [
+      "inspect",
+      "--format",
+      "{{.Id}}\t{{.Image}}\t{{.State.Running}}\t{{json .Mounts}}",
+      containerId,
+    ],
     OFFLINE_DOCKER_OPERATION_OPTIONS,
   );
   if (result.status !== 0 || typeof result.stdout !== "string") return null;
-  const [id, image, running, ...unexpected] = result.stdout.trim().split("\t");
+  const [id, image, running, mountsJson, ...unexpected] = result.stdout.trim().split("\t");
   if (
     unexpected.length > 0 ||
     !id ||
     !FULL_CONTAINER_ID_RE.test(id) ||
     !image ||
     !isImmutableDockerImageId(image) ||
+    !mountsJson ||
     (running !== "true" && running !== "false")
   ) {
     return null;
   }
-  return { id, image, running: running === "true" };
+  let mounts: unknown;
+  try {
+    mounts = JSON.parse(mountsJson);
+  } catch {
+    return null;
+  }
+  const hasWritableSandboxMount =
+    Array.isArray(mounts) &&
+    mounts.some(
+      (mount) =>
+        typeof mount === "object" &&
+        mount !== null &&
+        (mount as Record<string, unknown>).Destination === "/sandbox" &&
+        (mount as Record<string, unknown>).RW === true,
+    );
+  return { hasWritableSandboxMount, id, image, running: running === "true" };
 }
 
 /** Clear OpenClaw WeChat state without starting a failed Docker sandbox. */
@@ -281,7 +305,14 @@ function clearStoppedDockerSandboxChannelState(
       const containerId = findStoppedDirectSandboxContainer(sandboxName);
       if (!containerId) return false;
       const inspected = inspectStoppedContainer(containerId);
-      if (!inspected || inspected.running || inspected.id !== containerId) return false;
+      if (
+        !inspected ||
+        inspected.running ||
+        inspected.id !== containerId ||
+        !inspected.hasWritableSandboxMount
+      ) {
+        return false;
+      }
       const cleared = dockerRun(
         [
           "run",
@@ -317,7 +348,9 @@ function clearStoppedDockerSandboxChannelState(
       );
       if (cleared.status !== 0) return false;
       const confirmed = inspectStoppedContainer(containerId);
-      return confirmed?.id === inspected.id && !confirmed.running;
+      return (
+        confirmed?.id === inspected.id && confirmed.hasWritableSandboxMount && !confirmed.running
+      );
     });
   } catch {
     return false;

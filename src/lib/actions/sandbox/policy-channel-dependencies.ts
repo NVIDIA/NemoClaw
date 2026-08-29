@@ -65,6 +65,7 @@ function gatewayRunner(gatewayName: string): typeof runOpenshell {
  * onboarding and rebuild modules at policy-channel import time.
  */
 export const policyChannelDependencies = {
+  /** Use a stopped Docker volume only when the sandbox entrypoint blocks normal cleanup. */
   clearStoppedDockerSandboxChannelState(sandboxName: string, paths: readonly string[]): boolean {
     const cleanup = require("../../sandbox/privileged-exec") as PrivilegedExecModule;
     return cleanup.clearStoppedDockerSandboxChannelState(sandboxName, paths);
