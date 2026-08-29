@@ -99,7 +99,8 @@ function collectAgentText(value: unknown, parts: string[], visited: Set<unknown>
   if (["user", "tool", "function"].includes(String(record.role))) return;
   if (
     ["tool_use", "function"].includes(String(record.type)) ||
-    record.tool_calls != null ||
+    (record.tool_calls != null &&
+      (!Array.isArray(record.tool_calls) || record.tool_calls.length > 0)) ||
     record.function_call != null ||
     record.function != null
   ) {

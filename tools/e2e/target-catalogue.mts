@@ -742,7 +742,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("gpu-hermes-response-validation", {
-    displayName: "Response validation: Hermes rejects tool-call leakage through GPU Ollama",
+    displayName: "Response validation: rejects Hermes tool-call output through GPU Ollama",
     agentRuntime: "hermes",
     environmentOrInferenceEndpoint: "NVIDIA GPU runner; local Ollama",
     profile: "standard",
