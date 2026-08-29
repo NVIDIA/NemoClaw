@@ -15,6 +15,7 @@ import {
   readShieldsTimerRecoveryCandidate,
   readShieldsTimerTakeoverToken,
   readTimerProcessStartIdentity,
+  sameShieldsTimerMarkerGeneration,
   type ShieldsTimerMarker,
   shieldsTimerMarkerPath,
 } from "../state/mcp-lifecycle-lock/shields-timer-authority";
@@ -246,25 +247,7 @@ function clearTimerMarker(sandboxName: string): ClearTimerMarkerResult {
   }
 }
 
-function sameTimerMarkerGeneration(
-  current: ShieldsTimerMarker | null,
-  expected: ShieldsTimerMarker,
-): boolean {
-  return (
-    current?.pid === expected.pid &&
-    current.sandboxName === expected.sandboxName &&
-    current.snapshotPath === expected.snapshotPath &&
-    current.restoreAt === expected.restoreAt &&
-    current.processToken === expected.processToken &&
-    current.timerProcessStartIdentity === expected.timerProcessStartIdentity &&
-    current.allowLegacyHermesProtocol === expected.allowLegacyHermesProtocol &&
-    current.agentName === expected.agentName &&
-    current.configPath === expected.configPath &&
-    current.configDir === expected.configDir &&
-    current.leaseOwnerPid === expected.leaseOwnerPid &&
-    current.leaseOwnerStartIdentity === expected.leaseOwnerStartIdentity
-  );
-}
+const sameTimerMarkerGeneration = sameShieldsTimerMarkerGeneration;
 
 function clearTimerMarkerGeneration(
   sandboxName: string,

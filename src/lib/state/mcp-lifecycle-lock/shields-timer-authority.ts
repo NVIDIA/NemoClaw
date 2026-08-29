@@ -26,6 +26,7 @@ export interface ShieldsTimerMarker {
 }
 
 export interface ShieldsTimerRecoveryCandidate {
+  artifactPaths: string[];
   marker: ShieldsTimerMarker;
   markerPath: string;
   quarantined: boolean;
@@ -113,6 +114,36 @@ function completedTimerMarkerPrefix(markerPath: string): string {
   return `${path.basename(markerPath)}.completed-`;
 }
 
+export function sameShieldsTimerMarkerGeneration(
+  current: ShieldsTimerMarker | null,
+  expected: ShieldsTimerMarker,
+): boolean {
+  return (
+    current?.pid === expected.pid &&
+    current.sandboxName === expected.sandboxName &&
+    current.snapshotPath === expected.snapshotPath &&
+    current.restoreAt === expected.restoreAt &&
+    current.processToken === expected.processToken &&
+    current.timerProcessStartIdentity === expected.timerProcessStartIdentity &&
+    current.allowLegacyHermesProtocol === expected.allowLegacyHermesProtocol &&
+    current.agentName === expected.agentName &&
+    current.configPath === expected.configPath &&
+    current.configDir === expected.configDir &&
+    current.leaseOwnerPid === expected.leaseOwnerPid &&
+    current.leaseOwnerStartIdentity === expected.leaseOwnerStartIdentity
+  );
+}
+
+function ambiguousRecoveryArtifactsError(
+  sandboxName: string,
+  stateDir: string,
+  artifactPaths: readonly string[],
+): Error {
+  return new Error(
+    `Automatic Shields timer recovery stopped for sandbox '${sandboxName}' in state directory '${stateDir}' because its recovery artifacts are invalid or represent different generations. Stop all NemoClaw processes for this sandbox. Inspect each artifact and record its PID, process token, restore deadline, snapshot path, and process-start identity: ${artifactPaths.map((artifactPath) => `'${artifactPath}'`).join(", ")}. Remove only an artifact whose exact process generation is proven obsolete, then rerun Shields status.`,
+  );
+}
+
 export function hasShieldsTimerRecoveryArtifact(
   sandboxName: string,
   stateDir = resolveNemoclawStateDir(),
@@ -147,15 +178,22 @@ export function readShieldsTimerRecoveryCandidate(
   }
   const candidates = [...(fs.existsSync(markerPath) ? [markerPath] : []), ...quarantinePaths];
   if (candidates.length === 0) return null;
-  if (candidates.length !== 1) {
-    throw new Error(`Multiple Shields timer recovery artifacts exist for sandbox '${sandboxName}'`);
+  const markers = candidates.map((candidatePath) => readShieldsTimerMarkerFile(candidatePath));
+  const marker = markers[0];
+  if (
+    !marker ||
+    marker.sandboxName !== sandboxName ||
+    markers.some(
+      (candidate) =>
+        candidate?.sandboxName !== sandboxName ||
+        !sameShieldsTimerMarkerGeneration(candidate, marker),
+    )
+  ) {
+    throw ambiguousRecoveryArtifactsError(sandboxName, stateDir, candidates);
   }
   const candidatePath = candidates[0];
-  const marker = readShieldsTimerMarkerFile(candidatePath);
-  if (!marker || marker.sandboxName !== sandboxName) {
-    throw new Error(`Invalid Shields timer recovery artifact '${candidatePath}'`);
-  }
   return {
+    artifactPaths: candidates,
     marker,
     markerPath: candidatePath,
     quarantined: candidatePath !== markerPath,

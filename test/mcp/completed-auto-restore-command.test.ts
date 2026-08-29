@@ -392,6 +392,55 @@ describe("completed auto-restore command admission", () => {
     },
   );
 
+  it("retires multiple exact completed marker artifacts (#10094)", async () => {
+    const orphan = await reproduceCompletedAutoRestoreContainment(
+      stateDir,
+      "alpha",
+      "5".repeat(32),
+    );
+    writeShieldsUpState(stateDir, "alpha");
+    const artifacts = [`${orphan.markerPath}.completed-a`, `${orphan.markerPath}.completed-b`];
+    fs.renameSync(orphan.markerPath, artifacts[0]);
+    fs.copyFileSync(artifacts[0], artifacts[1], fs.constants.COPYFILE_EXCL);
+
+    await expect(StatusCommand.run(["alpha"], process.cwd())).resolves.toBeUndefined();
+
+    expect(StatusCommand.entered).toBe(true);
+    expect(artifacts.map((artifact) => fs.existsSync(artifact))).toEqual([false, false]);
+  });
+
+  it("fails closed with exact remediation for distinct completed artifacts (#10094)", async () => {
+    const orphan = await reproduceCompletedAutoRestoreContainment(
+      stateDir,
+      "alpha",
+      "6".repeat(32),
+    );
+    writeShieldsUpState(stateDir, "alpha");
+    const artifacts = [`${orphan.markerPath}.completed-a`, `${orphan.markerPath}.completed-b`];
+    fs.renameSync(orphan.markerPath, artifacts[0]);
+    const changed = JSON.parse(fs.readFileSync(artifacts[0], "utf8"));
+    changed.restoreAt = new Date(Date.now() - 120_000).toISOString();
+    fs.writeFileSync(artifacts[1], JSON.stringify(changed));
+
+    const remediation = new RegExp(
+      [
+        "Automatic Shields timer recovery stopped",
+        stateDir,
+        "Stop all NemoClaw processes",
+        artifacts[0],
+        artifacts[1],
+        "Remove only an artifact whose exact process generation is proven obsolete",
+      ]
+        .map((text) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+        .join(".*"),
+      "su",
+    );
+
+    await expect(StatusCommand.run(["alpha"], process.cwd())).rejects.toThrow(remediation);
+    expect(StatusCommand.entered).toBe(false);
+    expect(artifacts.map((artifact) => fs.existsSync(artifact))).toEqual([true, true]);
+  });
+
   it("clears the child timeout when the timer process exits early (#10094)", async () => {
     vi.useFakeTimers();
 

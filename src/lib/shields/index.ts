@@ -2324,6 +2324,7 @@ function inspectExpiredAutoRestoreMarker(sandboxName: string): TimerMarker | nul
 }
 
 type CompletedAutoRestoreMarker = {
+  artifactPaths: string[];
   marker: TimerMarker & { processToken: string };
   markerPath: string;
   quarantined: boolean;
@@ -2344,9 +2345,9 @@ function inspectCompletedAbandonedAutoRestoreMarker(
     candidate = readShieldsTimerRecoveryCandidate(sandboxName, stateDir);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw completedAutoRestoreRecoveryError(
-      sandboxName,
-      `Completed auto-restore cleanup artifacts are ambiguous: ${detail}`,
+    throw new Error(
+      `${detail} Then rerun ${CLI_NAME} ${sandboxName} shields status after completing that exact remediation.`,
+      { cause: error },
     );
   }
   if (!candidate) return null;
@@ -2400,7 +2401,10 @@ function withCompletedAbandonedAutoRestoreFence<T>(
       currentState._isCorrupt ||
       currentState.shieldsDown !== false ||
       fs.existsSync(shieldsDownTransitionPath(sandboxName, marker.processToken, stateDir)) ||
-      currentCandidate?.markerPath !== candidate.markerPath ||
+      currentCandidate?.artifactPaths.length !== candidate.artifactPaths.length ||
+      candidate.artifactPaths.some(
+        (artifactPath, index) => currentCandidate?.artifactPaths[index] !== artifactPath,
+      ) ||
       !sameTimerMarkerGeneration(currentCandidate?.marker ?? null, marker) ||
       !isShieldsTimerMarkerAbandoned(marker)
     ) {
@@ -2425,18 +2429,15 @@ function withCompletedAbandonedAutoRestoreFence<T>(
         assertAuthority: assertCompletedAuthority,
       },
       onReleased: () => {
-        const result = clearTimerMarkerGeneration(
-          sandboxName,
-          marker,
-          stateDir,
-          candidate.markerPath,
-        );
-        if (result.warning) console.warn(`  ${result.warning}`);
-        if (result.retainedPath) {
-          throw completedAutoRestoreRecoveryError(
-            sandboxName,
-            `Completed auto-restore cleanup retained '${result.retainedPath}' for retry`,
-          );
+        for (const artifactPath of candidate.artifactPaths) {
+          const result = clearTimerMarkerGeneration(sandboxName, marker, stateDir, artifactPath);
+          if (result.warning) console.warn(`  ${result.warning}`);
+          if (result.retainedPath) {
+            throw completedAutoRestoreRecoveryError(
+              sandboxName,
+              `Completed auto-restore cleanup retained '${result.retainedPath}' for retry`,
+            );
+          }
         }
       },
     },
