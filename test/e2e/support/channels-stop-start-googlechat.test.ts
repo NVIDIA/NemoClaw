@@ -48,6 +48,7 @@ describe("channels stop/start Google Chat live composition", () => {
           NODE_NO_WARNINGS: "1",
         },
         timeout: 10_000,
+        killSignal: "SIGKILL",
       },
     );
 
