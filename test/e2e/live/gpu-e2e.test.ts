@@ -413,7 +413,7 @@ exit 1`,
 );
 
 test(
-  "Hermes rejects tool-call output from initial, resumed, and continued GPU Ollama replies (#10215)",
+  "Hermes GPU Ollama initial, resumed, and continued replies contain expected answers without tool-call output (#10215)",
   {
     timeout: HERMES_RESPONSE_TIMEOUT_MS,
     meta: {

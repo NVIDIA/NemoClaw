@@ -220,6 +220,23 @@ function collectUntrustedChildProvenance(raw: string, docs: unknown[]): string[]
   return lines;
 }
 
+function parseCompleteJsonLines(raw: string, incompleteStart: number): unknown[] {
+  const firstNewline = raw.indexOf("\n", incompleteStart);
+  if (firstNewline < 0) return [];
+  const docs: unknown[] = [];
+  for (const line of raw.slice(firstNewline + 1).split(/\r?\n/u)) {
+    const candidate = line.trim();
+    if (!candidate.startsWith("{") && !candidate.startsWith("[")) continue;
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      docs.push(...(Array.isArray(parsed) ? parsed : [parsed]));
+    } catch {
+      // A complete later record can still follow this malformed line.
+    }
+  }
+  return docs;
+}
+
 function parseLogPrefixedJsonDocuments(raw: string): unknown[] {
   const docs: unknown[] = [];
   let start: number | null = null;
@@ -252,6 +269,7 @@ function parseLogPrefixedJsonDocuments(raw: string): unknown[] {
       }
     }
   }
+  if (start !== null) docs.push(...parseCompleteJsonLines(raw, start));
   return docs;
 }
 

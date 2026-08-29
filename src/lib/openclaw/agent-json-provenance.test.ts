@@ -33,6 +33,17 @@ describe("parseOpenClawJsonDocuments", () => {
     expect(parseOpenClawJsonDocuments('progress {not-json}\n{"text":"incomplete"')).toEqual([]);
   });
 
+  it("recovers a complete response record after an unclosed log fragment", () => {
+    const response = {
+      status: "timeout",
+      result: { payloads: [{ text: "partial" }], meta: { timeoutPhase: "provider" } },
+    };
+    const raw = `tool {"name":"read"\n${JSON.stringify(response)}`;
+
+    expect(parseOpenClawJsonDocuments(raw)).toEqual([response]);
+    expect(openClawAgentIncompleteTurnSignal(raw)?.timeoutPhase).toBe("provider");
+  });
+
   it("fails closed in linear time for a long incomplete brace-rich stream", () => {
     expect(parseOpenClawJsonDocuments("{".repeat(10_000))).toEqual([]);
   });
