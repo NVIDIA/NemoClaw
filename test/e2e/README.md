@@ -193,7 +193,7 @@ The matrix disables `fail-fast`.
 The first macOS shard has a 60-minute budget for live E2E; the other shards have 30 minutes.
 The first WSL shard has a 180-minute budget for root-required contracts and live E2E; the other shards have 90 minutes.
 The unprivileged WSL suite excludes `test/runtime/sandbox/jetson-device-group-bootstrap.test.ts`;
-that root-dependent contract runs in Linux CI lanes with the required host facilities.
+the Ubuntu 24.04 `CI / Pull Request` CLI coverage shards run that Docker-backed integration contract.
 
 On shard 1, the workflow runs focused macOS and WSL live E2E only when the run tests `main` and Docker is available.
 Otherwise, the workflow records the skip and retains the platform contract evidence.
