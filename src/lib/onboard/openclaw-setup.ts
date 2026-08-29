@@ -1,15 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import {
   configSet,
   extractDotpath,
   readSandboxConfig,
   resolveAgentConfig,
 } from "../sandbox/config";
-import { sandboxConfigSyncArgs } from "./config-sync";
 
 type WebSearchSelection = { fetchEnabled?: boolean } | null;
 
@@ -56,12 +53,12 @@ export async function reconcileOpenClawWebSearchForReuse(
 export interface OpenclawSetupDeps {
   step(n: number, total: number, msg: string): void;
   agentProductName(): string;
-  getProviderSelectionConfig(provider: string, model: string): unknown | null;
-  buildSandboxConfigSyncScript(config: any): string;
-  writeSandboxConfigSyncFile(script: string): string;
-  run(argv: string[], options: Record<string, unknown>): unknown;
-  openshellArgv(args: string[]): string[];
-  cleanupTempDir(file: string, prefix: string): void;
+  syncNemoClawConfigInSandbox(
+    sandboxName: string,
+    provider: string,
+    model: string,
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ): void;
   reconcileWebSearch(
     sandboxName: string,
     webSearchConfig: WebSearchSelection,
@@ -79,27 +76,12 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
 
-    const selectionConfig = deps.getProviderSelectionConfig(provider, model);
-    if (selectionConfig) {
-      const sandboxConfig = {
-        ...(selectionConfig as Record<string, unknown>),
-        onboardedAt: new Date().toISOString(),
-      };
-      const script = deps.buildSandboxConfigSyncScript(sandboxConfig);
-      const scriptFile = deps.writeSandboxConfigSyncFile(script);
-      try {
-        const scriptContent = fs.readFileSync(scriptFile, "utf-8");
-        revalidatePolicyRequirements?.(
-          `synchronize OpenClaw config in sandbox '${sandboxName}'`,
-        );
-        deps.run(deps.openshellArgv(sandboxConfigSyncArgs(sandboxName)), {
-          stdio: ["pipe", "ignore", "inherit"],
-          input: scriptContent,
-        });
-      } finally {
-        deps.cleanupTempDir(scriptFile, "nemoclaw-sync");
-      }
-    }
+    deps.syncNemoClawConfigInSandbox(
+      sandboxName,
+      provider,
+      model,
+      revalidatePolicyRequirements,
+    );
 
     await deps.reconcileWebSearch(
       sandboxName,

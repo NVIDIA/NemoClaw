@@ -2583,12 +2583,7 @@ const syncNemoClawConfigInSandbox = createNemoClawConfigSync({
 const setupOpenclaw = openclawSetup.createOpenclawSetup({
   step,
   agentProductName,
-  getProviderSelectionConfig,
-  buildSandboxConfigSyncScript,
-  writeSandboxConfigSyncFile,
-  run,
-  openshellArgv,
-  cleanupTempDir,
+  syncNemoClawConfigInSandbox,
   reconcileWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
 });
 
