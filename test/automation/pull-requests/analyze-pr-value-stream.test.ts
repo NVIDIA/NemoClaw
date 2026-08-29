@@ -568,6 +568,7 @@ describe("pull request value-stream analysis", () => {
     const firstBlocked = new Promise<void>((resolve) => {
       resumeFirst = resolve;
     });
+    vi.useFakeTimers();
     const firstPublication = publishStagedDirectory({
       staging: first,
       destination,
@@ -579,6 +580,11 @@ describe("pull request value-stream analysis", () => {
     });
     await firstEnteredValidation;
     expect(await reclaimStalePublicationLock(lock, Date.now() + 6 * 60 * 1_000)).toBe(false);
+    const heartbeatBefore = (await stat(lock)).mtimeMs;
+    await vi.advanceTimersByTimeAsync(2 * 60 * 1_000);
+    vi.useRealTimers();
+    await vi.waitUntil(async () => (await stat(lock)).mtimeMs > heartbeatBefore);
+    expect((await stat(lock)).mtimeMs).toBeGreaterThan(heartbeatBefore);
     resumeFirst();
     await firstPublication;
     await publishStagedDirectory({ staging: second, destination, lock });
