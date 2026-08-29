@@ -4,7 +4,11 @@
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as policies from "../policy";
 import * as tiers from "../policy/tiers";
-import { PERSONAL_OPEN_INTERNET_PRESET_NAME, PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
+import {
+  PERSONAL_OPEN_INTERNET_PRESET_NAME,
+  PERSONAL_POLICY_TIER_NAME,
+  type TierDefinition,
+} from "../policy/tiers";
 import {
   filterSetupPolicyPresetNamesForAgent,
   filterSetupPolicyPresetsForAgent,
@@ -85,7 +89,7 @@ type PoliciesApi = {
 };
 type TiersApi = {
   resolveTierPresets(tierName: string): Preset[];
-  getTier(tierName: string): unknown;
+  getTier(tierName: string): TierDefinition | null;
 };
 
 export type SetupPresetSuggestionOptions = {
@@ -248,6 +252,7 @@ export function computeSetupPresetSuggestions(
   } = options;
   const known = Array.isArray(options.knownPresetNames) ? new Set(options.knownPresetNames) : null;
   const supportOptions = { webSearchSupported: options.webSearchSupported };
+  const tier = deps.tiers.getTier(tierName);
   const suggestions = pruneInactiveMessagingPolicyPresets(
     deps.tiers
       .resolveTierPresets(tierName)
@@ -258,6 +263,8 @@ export function computeSetupPresetSuggestions(
           !isStaleBuiltinWebSearchPolicyPreset(name, {
             webSearchConfig,
             customPresetNames: options.customPresetNames,
+            tier,
+            agent,
           }),
       )
       .filter(
@@ -290,6 +297,8 @@ export function computeSetupPresetSuggestions(
       isStaleBuiltinWebSearchPolicyPreset(name, {
         webSearchConfig,
         customPresetNames: options.customPresetNames,
+        tier,
+        agent,
       })
     ) {
       return;

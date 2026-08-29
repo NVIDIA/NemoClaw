@@ -613,10 +613,10 @@ describe("policy tier setup", () => {
   });
 
   // Declining web search on re-onboard reuse must not narrow an egress preset
-  // the applied tier itself defaults. Both reuse entry points carry the applied
-  // set forward through `appliedForPreservation`, so both are covered here.
+  // the applied tier itself defaults. The non-interactive Balanced path is
+  // owned by onboard-preset-diff.test.ts; this matrix covers distinct tier and
+  // interactive-selection behavior.
   it.each([
-    { tier: "balanced", nonInteractive: true, preserved: true },
     { tier: "balanced", nonInteractive: false, preserved: true },
     { tier: "open", nonInteractive: true, preserved: true },
     { tier: "restricted", nonInteractive: true, preserved: false },
