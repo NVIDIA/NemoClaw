@@ -15,7 +15,7 @@ describe("E2E answer assertions", () => {
     expect(containsAnswer("The answer is 4\n2.", "42")).toBe(true);
   });
 
-  it("requires numeric answer boundaries (#10215)", () => {
+  it("rejects numeric answers embedded in other numbers (#10215)", () => {
     expect(containsAnswer("156", "56")).toBe(false);
     expect(containsAnswer("560", "56")).toBe(false);
     expect(containsAnswer("The result is [5\n6].", "56")).toBe(true);

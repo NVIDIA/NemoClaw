@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-interface OpenClawAgentJsonDocument {
+export interface OpenClawAgentJsonDocument {
   payloads?: Array<{ text?: unknown }>;
-  result?: { payloads?: Array<{ text?: unknown }> };
+  result?: { meta?: unknown; payloads?: Array<{ text?: unknown }> };
 }
 
-function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonDocument[] {
+export function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonDocument[] {
   try {
     const parsed = JSON.parse(raw) as OpenClawAgentJsonDocument | OpenClawAgentJsonDocument[];
     return Array.isArray(parsed) ? parsed : [parsed];

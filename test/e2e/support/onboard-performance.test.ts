@@ -498,7 +498,7 @@ describe("onboard performance evidence", () => {
   it("records missing OpenClaw duration metadata as unavailable", () => {
     expect(
       extractOpenClawAgentDurationEvidence(
-        JSON.stringify({ result: { payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }] } }),
+        `progress\n${JSON.stringify({ result: { payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }] } })}`,
       ),
     ).toEqual({ reason: "missing", status: "unavailable" });
   });
@@ -506,7 +506,7 @@ describe("onboard performance evidence", () => {
   it("records malformed OpenClaw duration metadata as unavailable", () => {
     expect(
       extractOpenClawAgentDurationEvidence(
-        JSON.stringify({ result: { meta: { durationMs: "8916" } } }),
+        `progress\n${JSON.stringify({ result: { meta: { durationMs: "8916" } } })}`,
       ),
     ).toEqual({ reason: "malformed", status: "unavailable" });
   });

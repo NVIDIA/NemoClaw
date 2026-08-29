@@ -15,6 +15,7 @@ import { expect } from "../fixtures/e2e-test.ts";
 import type { E2EInferenceAdapter } from "../fixtures/inference-adapter.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import { parseOpenClawAgentJsonDocuments } from "../fixtures/openclaw-agent-output.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -148,44 +149,6 @@ async function runCleanupStep(
   }
 }
 
-function parseJsonObjectAt(output: string, start: number): unknown {
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = start; index < output.length; index += 1) {
-    const char = output[index];
-    const state = updateJsonScanState({ depth, inString, escaped }, char);
-    depth = state.depth;
-    inString = state.inString;
-    escaped = state.escaped;
-    if (depth === 0 && char === "}") {
-      try {
-        return JSON.parse(output.slice(start, index + 1));
-      } catch {
-        return undefined;
-      }
-    }
-  }
-  return undefined;
-}
-
-function updateJsonScanState(
-  state: { depth: number; inString: boolean; escaped: boolean },
-  char: string,
-): { depth: number; inString: boolean; escaped: boolean } {
-  const inStringEscaped = state.inString && state.escaped;
-  const startsEscape = state.inString && !state.escaped && char === "\\";
-  const endsString = state.inString && !state.escaped && char === '"';
-  const startsString = !state.inString && char === '"';
-  const opensObject = !state.inString && char === "{";
-  const closesObject = !state.inString && char === "}";
-  return {
-    depth: state.depth + (opensObject ? 1 : 0) - (closesObject ? 1 : 0),
-    inString: startsString || (state.inString && !endsString),
-    escaped: startsEscape || (state.escaped && !inStringEscaped),
-  };
-}
-
 export type OpenClawAgentDurationEvidence =
   | { durationMs: number; status: "available" }
   | { reason: "malformed" | "missing"; status: "unavailable" };
@@ -203,12 +166,8 @@ export function extractOpenClawAgentDurationEvidence(
   output: string,
 ): OpenClawAgentDurationEvidence {
   let malformed = false;
-  for (let start = output.indexOf("{"); start >= 0; start = output.indexOf("{", start + 1)) {
-    const parsed = parseJsonObjectAt(output, start);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
-    const result = (parsed as Record<string, unknown>).result;
-    if (!result || typeof result !== "object" || Array.isArray(result)) continue;
-    const meta = (result as Record<string, unknown>).meta;
+  for (const document of parseOpenClawAgentJsonDocuments(output)) {
+    const meta = document.result?.meta;
     if (meta === undefined) continue;
     if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
       malformed = true;
