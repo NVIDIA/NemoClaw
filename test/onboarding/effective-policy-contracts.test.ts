@@ -535,6 +535,7 @@ describe("effective built-in policy contracts", () => {
         expect.arrayContaining([
           "/usr/bin/python3*",
           "/usr/bin/python3.13",
+          "/opt/hermes/.venv/bin/python3",
           "/opt/hermes/.venv/bin/python",
         ]),
       );

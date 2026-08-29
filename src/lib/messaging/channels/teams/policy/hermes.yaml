@@ -88,4 +88,5 @@ network_policies:
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3* }
       - { path: /usr/bin/python3.13 }
+      - { path: /opt/hermes/.venv/bin/python3 }
       - { path: /opt/hermes/.venv/bin/python }
