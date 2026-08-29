@@ -2,21 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { createOpenclawSetup, reconcileOpenClawWebSearchForReuse } from "./openclaw-setup";
+import {
+  createConfigureOpenclawSandbox,
+  createOpenclawSetup,
+  reconcileOpenClawWebSearchForReuse,
+} from "./openclaw-setup";
 
 describe("OpenClaw sandbox setup", () => {
-  it("delegates config sync before web-search reconciliation", async () => {
+  it("shares config sync before web-search reconciliation", async () => {
     const syncNemoClawConfigInSandbox = vi.fn();
     const reconcileWebSearch = vi.fn(async () => undefined);
     const revalidatePolicyRequirements = vi.fn();
-    const setup = createOpenclawSetup({
-      step: vi.fn(),
-      agentProductName: () => "OpenClaw",
+    const configureOpenclawSandbox = createConfigureOpenclawSandbox({
       syncNemoClawConfigInSandbox,
       reconcileWebSearch,
     });
 
-    await setup("spark-box", "model", "provider", null, revalidatePolicyRequirements);
+    await configureOpenclawSandbox(
+      "spark-box",
+      "model",
+      "provider",
+      null,
+      revalidatePolicyRequirements,
+    );
 
     expect(syncNemoClawConfigInSandbox).toHaveBeenCalledExactlyOnceWith(
       "spark-box",
@@ -34,24 +42,41 @@ describe("OpenClaw sandbox setup", () => {
     );
   });
 
+  it("delegates fresh setup to shared OpenClaw configuration", async () => {
+    const configureOpenclawSandbox = vi.fn(async () => undefined);
+    const revalidatePolicyRequirements = vi.fn();
+    const setup = createOpenclawSetup({
+      step: vi.fn(),
+      agentProductName: () => "OpenClaw",
+      configureOpenclawSandbox,
+    });
+
+    await setup("spark-box", "model", "provider", null, revalidatePolicyRequirements);
+
+    expect(configureOpenclawSandbox).toHaveBeenCalledExactlyOnceWith(
+      "spark-box",
+      "model",
+      "provider",
+      null,
+      revalidatePolicyRequirements,
+    );
+  });
+
   it("withholds setup success when policy authority changes during config sync (#9833)", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const reconcileWebSearch = vi.fn(async () => undefined);
     try {
       const setup = createOpenclawSetup({
         step: vi.fn(),
         agentProductName: () => "OpenClaw",
-        syncNemoClawConfigInSandbox: () => {
+        configureOpenclawSandbox: async () => {
           throw new Error("policy authority changed");
         },
-        reconcileWebSearch,
       });
 
       await expect(setup("spark-box", "model", "provider", null)).rejects.toThrow(
         "policy authority changed",
       );
 
-      expect(reconcileWebSearch).not.toHaveBeenCalled();
       expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
     } finally {
       log.mockRestore();
@@ -97,12 +122,10 @@ describe("fresh OpenClaw reuse web search reconciliation", () => {
     const readEnabled = vi.fn(() => true);
     const disable = vi.fn(async () => undefined);
 
-    await reconcileOpenClawWebSearchForReuse(
-      "alpha",
-      { fetchEnabled: true },
-      undefined,
-      { readEnabled, disable },
-    );
+    await reconcileOpenClawWebSearchForReuse("alpha", { fetchEnabled: true }, undefined, {
+      readEnabled,
+      disable,
+    });
 
     expect(readEnabled).not.toHaveBeenCalled();
     expect(disable).not.toHaveBeenCalled();

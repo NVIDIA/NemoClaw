@@ -44,7 +44,6 @@ const dcodeAutoApprovalFlow: typeof import("./onboard/dcode-auto-approval") = re
 const observabilityPolicy: typeof import("./onboard/observability-policy-presets") = require("./onboard/observability-policy-presets");
 const observabilityCommandFlag: typeof import("./onboard/observability-command-flag") = require("./onboard/observability-command-flag");
 const inferenceRouteHelpers: typeof import("./onboard/inference-route") = require("./onboard/inference-route");
-const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
   abortNonInteractive,
 }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
@@ -70,9 +69,7 @@ const {
   verifyCompatibleEndpointSandboxSmoke,
 }: typeof import("./onboard/compatible-endpoint-smoke") = require("./onboard/compatible-endpoint-smoke");
 const {
-  buildSandboxConfigSyncScript,
   createNemoClawConfigSync,
-  writeSandboxConfigSyncFile,
 }: typeof import("./onboard/config-sync") = require("./onboard/config-sync");
 const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inference") = require("./onboard/docker-gpu-local-inference");
 const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create") = require("./onboard/docker-gpu-sandbox-create");
@@ -2580,11 +2577,15 @@ const syncNemoClawConfigInSandbox = createNemoClawConfigSync({
   openshellArgv,
 });
 
+const configureOpenclawSandbox = openclawSetup.createConfigureOpenclawSandbox({
+  syncNemoClawConfigInSandbox,
+  reconcileWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
+});
+
 const setupOpenclaw = openclawSetup.createOpenclawSetup({
   step,
   agentProductName,
-  syncNemoClawConfigInSandbox,
-  reconcileWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
+  configureOpenclawSandbox,
 });
 
 const {
@@ -3321,9 +3322,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             ...{ step, runCaptureOpenshell, captureOpenshell, revalidatePolicyRequirements },
             openshellShellCommand,
             openshellBinary: getOpenshellBinary(),
-            buildSandboxConfigSyncScript,
-            writeSandboxConfigSyncFile,
-            cleanupTempDir,
             startRecordedStep,
             recordStepComplete,
             recordStepFailed,
@@ -3344,8 +3342,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           recordStateSkipped,
           startRecordedStep,
           setupOpenclaw,
-          syncNemoClawConfigInSandbox,
-          reconcileOpenclawWebSearch: openclawSetup.reconcileOpenClawWebSearchForReuse,
+          configureOpenclawSandbox,
           recordStepComplete,
           toSessionUpdates: (updates) =>
             toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
@@ -3488,7 +3485,6 @@ module.exports = {
   buildGatewayBootstrapSecretsScript,
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
-  buildSandboxConfigSyncScript,
   buildSandboxGpuCreateArgs,
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
@@ -3613,7 +3609,6 @@ module.exports = {
   hydrateCredentialEnv,
   pruneKnownHostsEntries,
   shouldIncludeBuildContextPath,
-  writeSandboxConfigSyncFile,
   patchStagedDockerfile,
   ensureOllamaAuthProxy,
   fetchGatewayAuthTokenFromSandbox,

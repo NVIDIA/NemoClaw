@@ -27,8 +27,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
     recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
     setupOpenclaw: vi.fn(async () => undefined),
-    syncConfig: vi.fn(),
-    reconcileWebSearch: vi.fn(async () => undefined),
+    configureOpenclaw: vi.fn(async () => undefined),
     complete: vi.fn(async (stepName: string, updates: SessionUpdates = {}) => {
       session.steps[stepName].status = "complete";
       Object.assign(session, updates);
@@ -48,8 +47,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       recordStateSkipped: calls.recordSkip,
       startRecordedStep: calls.startStep,
       setupOpenclaw: calls.setupOpenclaw,
-      syncNemoClawConfigInSandbox: calls.syncConfig,
-      reconcileOpenclawWebSearch: calls.reconcileWebSearch,
+      configureOpenclawSandbox: calls.configureOpenclaw,
       recordStepComplete: calls.complete,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       ...overrides,
@@ -214,13 +212,13 @@ describe("handleAgentSetupState", () => {
     });
     expect(calls.startStep).not.toHaveBeenCalled();
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
-    expect(calls.syncConfig).toHaveBeenCalledWith(
+    expect(calls.configureOpenclaw).toHaveBeenCalledWith(
       "my-assistant",
-      "provider",
       "model",
+      "provider",
+      null,
       undefined,
     );
-    expect(calls.reconcileWebSearch).toHaveBeenCalledWith("my-assistant", null, undefined);
     expect(calls.complete).toHaveBeenCalledWith(
       "openclaw",
       expect.objectContaining({
@@ -245,7 +243,7 @@ describe("handleAgentSetupState", () => {
     });
   });
 
-  it("reconciles disabled web search after config sync on ready resume", async () => {
+  it("delegates shared OpenClaw configuration before ready-resume completion", async () => {
     const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(() => true) });
     const revalidatePolicyRequirements = vi.fn();
 
@@ -256,44 +254,39 @@ describe("handleAgentSetupState", () => {
       revalidatePolicyRequirements,
     });
 
-    expect(calls.reconcileWebSearch).toHaveBeenCalledExactlyOnceWith(
+    expect(calls.configureOpenclaw).toHaveBeenCalledExactlyOnceWith(
       "my-assistant",
+      "model",
+      "provider",
       { fetchEnabled: false },
       revalidatePolicyRequirements,
     );
-    expect(calls.syncConfig).toHaveBeenCalledExactlyOnceWith(
-      "my-assistant",
-      "provider",
-      "model",
-      revalidatePolicyRequirements,
-    );
-    expect(calls.syncConfig.mock.invocationCallOrder[0]).toBeLessThan(
-      calls.reconcileWebSearch.mock.invocationCallOrder[0],
-    );
-    expect(calls.reconcileWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(calls.configureOpenclaw.mock.invocationCallOrder[0]).toBeLessThan(
       calls.recordSkip.mock.invocationCallOrder[0],
     );
-    expect(calls.reconcileWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(calls.configureOpenclaw.mock.invocationCallOrder[0]).toBeLessThan(
       calls.complete.mock.invocationCallOrder[0],
     );
   });
 
   it("does not complete ready resume when config-sync authority revalidation fails", async () => {
     const configExec = vi.fn();
-    const syncNemoClawConfigInSandbox = vi.fn(
+    const configureOpenclawSandbox = vi.fn(
       (
         sandboxName: string,
-        _provider: string,
         _model: string,
+        _provider: string,
+        _webSearchConfig: { fetchEnabled?: boolean } | null,
         revalidate?: (operation: string) => void,
-      ) => {
+      ): Promise<void> => {
         revalidate?.(`synchronize OpenClaw config in sandbox '${sandboxName}'`);
         configExec();
+        return Promise.resolve();
       },
     );
     const { deps, calls } = createDeps({
       isOpenclawReady: vi.fn(() => true),
-      syncNemoClawConfigInSandbox,
+      configureOpenclawSandbox,
     });
     const revalidationSteps = new Map([
       [
@@ -316,7 +309,6 @@ describe("handleAgentSetupState", () => {
     ).rejects.toThrow("policy authority changed");
 
     expect(configExec).not.toHaveBeenCalled();
-    expect(calls.reconcileWebSearch).not.toHaveBeenCalled();
     expect(calls.recordSkip).not.toHaveBeenCalled();
     expect(calls.complete).not.toHaveBeenCalled();
   });
@@ -342,7 +334,7 @@ describe("handleAgentSetupState", () => {
       null,
       undefined,
     );
-    expect(calls.syncConfig).not.toHaveBeenCalled();
+    expect(calls.configureOpenclaw).not.toHaveBeenCalled();
     expect(calls.complete).toHaveBeenCalledWith(
       "openclaw",
       expect.objectContaining({

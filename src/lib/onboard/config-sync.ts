@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import type { ProviderSelectionConfig } from "../inference/config";
-import { cleanupTempDir, secureTempFile } from "./temp-files";
 
 export interface RunSandboxConfigSyncDeps {
   getSelectionConfig: () => ProviderSelectionConfig | null;
@@ -24,8 +21,7 @@ export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
     sandboxName: string,
     provider: string,
     model: string,
-    revalidatePolicyRequirements: (operation: string) => void =
-      skipPolicyRequirementRevalidation,
+    revalidatePolicyRequirements: (operation: string) => void = skipPolicyRequirementRevalidation,
   ): void {
     runSandboxConfigSync(sandboxName, {
       getSelectionConfig: () => deps.getProviderSelectionConfig(provider, model),
@@ -54,13 +50,7 @@ export function runSandboxConfigSync(sandboxName: string, deps: RunSandboxConfig
   if (!selectionConfig) return;
   const sandboxConfig = { ...selectionConfig, onboardedAt: new Date().toISOString() };
   const script = buildSandboxConfigSyncScript(sandboxConfig);
-  const scriptFile = writeSandboxConfigSyncFile(script);
-  try {
-    const scriptContent = fs.readFileSync(scriptFile, "utf-8");
-    deps.runConnectScript(sandboxName, scriptContent);
-  } finally {
-    cleanupTempDir(scriptFile, "nemoclaw-sync");
-  }
+  deps.runConnectScript(sandboxName, script);
 }
 
 export function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionConfig): string {
@@ -97,10 +87,4 @@ if [ -d "$config_dir" ]; then
 fi
 exit
 `.trim();
-}
-
-export function writeSandboxConfigSyncFile(script: string): string {
-  const scriptFile = secureTempFile("nemoclaw-sync", ".sh");
-  fs.writeFileSync(scriptFile, `${script}\n`, { mode: 0o600 });
-  return scriptFile;
 }

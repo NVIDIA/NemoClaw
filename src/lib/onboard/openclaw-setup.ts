@@ -50,9 +50,7 @@ export async function reconcileOpenClawWebSearchForReuse(
   await deps.disable(sandboxName);
 }
 
-export interface OpenclawSetupDeps {
-  step(n: number, total: number, msg: string): void;
-  agentProductName(): string;
+export interface ConfigureOpenclawSandboxDeps {
   syncNemoClawConfigInSandbox(
     sandboxName: string,
     provider: string,
@@ -61,6 +59,31 @@ export interface OpenclawSetupDeps {
   ): void;
   reconcileWebSearch(
     sandboxName: string,
+    webSearchConfig: WebSearchSelection,
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ): Promise<void>;
+}
+
+export function createConfigureOpenclawSandbox(deps: ConfigureOpenclawSandboxDeps) {
+  return async function configureOpenclawSandbox(
+    sandboxName: string,
+    model: string,
+    provider: string,
+    webSearchConfig: WebSearchSelection,
+    revalidatePolicyRequirements?: (operation: string) => void,
+  ): Promise<void> {
+    deps.syncNemoClawConfigInSandbox(sandboxName, provider, model, revalidatePolicyRequirements);
+    await deps.reconcileWebSearch(sandboxName, webSearchConfig, revalidatePolicyRequirements);
+  };
+}
+
+export interface OpenclawSetupDeps {
+  step(n: number, total: number, msg: string): void;
+  agentProductName(): string;
+  configureOpenclawSandbox(
+    sandboxName: string,
+    model: string,
+    provider: string,
     webSearchConfig: WebSearchSelection,
     revalidatePolicyRequirements?: (operation: string) => void,
   ): Promise<void>;
@@ -76,15 +99,10 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
   ): Promise<void> {
     deps.step(7, 8, `Setting up ${deps.agentProductName()} inside sandbox`);
 
-    deps.syncNemoClawConfigInSandbox(
+    await deps.configureOpenclawSandbox(
       sandboxName,
-      provider,
       model,
-      revalidatePolicyRequirements,
-    );
-
-    await deps.reconcileWebSearch(
-      sandboxName,
+      provider,
       webSearchConfig,
       revalidatePolicyRequirements,
     );
