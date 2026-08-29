@@ -35,6 +35,8 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        credential_binding:
+          provider: "{sandboxName}-wechat-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -42,6 +44,8 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        credential_binding:
+          provider: "{sandboxName}-wechat-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }

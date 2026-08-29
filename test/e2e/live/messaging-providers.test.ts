@@ -578,9 +578,9 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       redactionValues,
     );
     check(
-      wechatCredentialFile.includes("openshell:resolve:env:WECHAT_BOT_TOKEN") &&
+      /"token"\s*:\s*"openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN"/.test(wechatCredentialFile) &&
         !wechatCredentialFile.includes(state.tokens.wechat),
-      "M-W9: WeChat account file uses L7-resolved placeholder",
+      "M-W9: WeChat account file uses the revision-scoped L7-resolved placeholder",
     );
     const wechatIndex = await sandboxOutput(
       sandbox,

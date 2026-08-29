@@ -69,7 +69,7 @@ export const wechatManifest = {
       placeholder: "openshell:resolve:env:WECHAT_BOT_TOKEN",
     },
   ],
-  // The Hermes policy binds the endpointless provider. Apply it before boot
+  // Both agent policies bind the endpointless provider. Apply it before boot
   // so OpenShell injects WECHAT_BOT_TOKEN into the agent process environment.
   policyPresets: [{ name: "wechat", policyKeys: ["wechat_bridge"], requiredAtCreate: true }],
   render: [

@@ -505,6 +505,9 @@ describe("effective built-in policy contracts", () => {
         protocol: "rest",
         enforcement: "enforce",
       });
+      expect(endpoint.credential_binding).toEqual({
+        provider: "effective-policy-wechat-bridge",
+      });
       expect(methods(endpoint)).toEqual(["GET", "POST"]);
     }
   });
