@@ -454,6 +454,33 @@ describe("pull request value-stream analysis", () => {
     );
   });
 
+  test("validates freshness after publication lock contention (#10542)", async () => {
+    const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-contention-"));
+    temporaryDirectories.push(publicationRoot);
+    const destination = path.join(publicationRoot, "pr-42");
+    const staging = path.join(publicationRoot, "staging");
+    const lock = destination + ".lock";
+    await Promise.all([mkdir(destination), mkdir(staging), mkdir(lock)]);
+    await Promise.all([
+      writeFile(path.join(destination, "manifest.json"), "current"),
+      writeFile(path.join(staging, "manifest.json"), "stale"),
+    ]);
+    const publication = publishStagedDirectory({
+      staging,
+      destination,
+      lock,
+      validate: async () => {
+        throw new Error("pull request head changed during lifetime analysis");
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await rm(lock, { recursive: true });
+    await expect(publication).rejects.toThrow("pull request head changed during lifetime analysis");
+    await expect(readFile(path.join(destination, "manifest.json"), "utf8")).resolves.toBe(
+      "current",
+    );
+  });
+
   test("reclaims stale publication locks but preserves active locks (#10542)", async () => {
     const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-lock-"));
     temporaryDirectories.push(publicationRoot);

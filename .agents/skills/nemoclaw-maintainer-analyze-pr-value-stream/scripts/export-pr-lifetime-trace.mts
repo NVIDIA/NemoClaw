@@ -713,11 +713,13 @@ export async function publishStagedDirectory(input: {
   staging: string;
   destination: string;
   lock: string;
+  validate?: () => Promise<void>;
 }): Promise<void> {
   await acquirePublicationLock(input.lock);
   const backup = input.staging + "-previous";
   let movedPrevious = false;
   try {
+    await input.validate?.();
     try {
       await rename(input.destination, backup);
       movedPrevious = true;
@@ -836,13 +838,15 @@ export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeA
     ]);
     await validateChromeTrace(tracePath);
     await writeFile(manifestPath, manifest, { mode: 0o600 });
-    const currentPull = await readPull(input);
-    if (currentPull.headRefOid !== pull.headRefOid)
-      throw new Error("pull request head changed during lifetime analysis");
     await publishStagedDirectory({
       staging,
       destination: directory,
       lock: directory + ".lock",
+      validate: async () => {
+        const currentPull = await readPull(input);
+        if (currentPull.headRefOid !== pull.headRefOid)
+          throw new Error("pull request head changed during lifetime analysis");
+      },
     });
   } catch (error) {
     await rm(staging, { recursive: true, force: true });
