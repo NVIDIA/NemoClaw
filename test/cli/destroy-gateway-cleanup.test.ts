@@ -8,6 +8,11 @@ import { describe, expect, it } from "vitest";
 
 import { runWithEnv, testTimeoutOptions } from "./helpers";
 
+const LIVE_DOCKER_IDENTITY = `#!/bin/sh
+case "$*" in *'.Label '*) printf 'aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n' ;; esac
+exit 0
+`;
+
 describe("CLI dispatch", () => {
   it(
     "uses the platform gateway default when the last sandbox is destroyed (#2166, #4662)",
@@ -606,7 +611,7 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
-    fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(localBin, "docker"), LIVE_DOCKER_IDENTITY, { mode: 0o755 });
 
     const r = runWithEnv("alpha destroy --yes", {
       HOME: home,
@@ -681,7 +686,7 @@ describe("CLI dispatch", () => {
         ].join("\n"),
         { mode: 0o755 },
       );
-      fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "docker"), LIVE_DOCKER_IDENTITY, { mode: 0o755 });
       fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
       fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 

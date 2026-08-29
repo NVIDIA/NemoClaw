@@ -429,17 +429,24 @@ describe("ManifestCompiler", () => {
       "teams:~/.hermes/.env",
       "teams:~/.hermes/config.yaml",
     ]);
-    expect(JSON.stringify(plan.agentRender)).toContain(
-      "WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN",
-    );
-    expect(JSON.stringify(plan.agentRender)).toContain(
-      "TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
-    );
-    // No channel declares a runtime env alias any more. Slack's was retired
-    // once OpenShell 0.0.106 bound SLACK_* to the policy endpoint: the alias
-    // carries no revision, so the binding refuses it. The alias machinery
-    // itself stays in agents/hermes/runtime-config-guard.py.
-    expect(plan.runtimeSetup?.envAliases).toEqual([]);
+    expect(JSON.stringify(plan.agentRender)).not.toContain("WEIXIN_TOKEN=");
+    expect(JSON.stringify(plan.agentRender)).not.toContain("TEAMS_CLIENT_SECRET=");
+    expect(plan.runtimeSetup?.envAliases).toEqual([
+      {
+        channelId: "wechat",
+        envKey: "WECHAT_BOT_TOKEN",
+        targetEnvKey: "WEIXIN_TOKEN",
+        match: "^openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN$",
+        value: "openshell:resolve:env:WECHAT_BOT_TOKEN",
+      },
+      {
+        channelId: "teams",
+        envKey: "MSTEAMS_APP_PASSWORD",
+        targetEnvKey: "TEAMS_CLIENT_SECRET",
+        match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+        value: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+      },
+    ]);
     expect(plan.buildSteps).toEqual([
       {
         channelId: "teams",
@@ -449,16 +456,6 @@ describe("ManifestCompiler", () => {
         value: {
           manager: "hermes-uv-pip",
           spec: "microsoft-teams-apps==2.0.13.4",
-        },
-      },
-      {
-        channelId: "teams",
-        kind: "package-install",
-        outputId: "hermesAiohttpPackage",
-        required: true,
-        value: {
-          manager: "hermes-uv-pip",
-          spec: "aiohttp==3.14.3",
         },
       },
     ]);
