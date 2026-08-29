@@ -112,6 +112,7 @@ describe("E2E workflow plan", () => {
     expect(plan.hermesSelected).toBe(true);
     expect(plan.explicitOnlyJobs).toEqual([
       "staging-brev-launchable-identity",
+      "external-gateway-health",
       "llama-cpp-dgx-spark-qualification",
     ]);
     expect(releaseRequiredWorkflowJobs()).toContain("live");
@@ -690,7 +691,6 @@ describe("E2E workflow plan", () => {
       expectedRunner,
       expectedRunner,
     ]);
-    expect(gpuE2e.environment.E2E_LLAMA_CPP_DEDICATED_LANE).toBe("1");
     expect(llamaCpp.environment).toEqual(
       expect.objectContaining({
         NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",

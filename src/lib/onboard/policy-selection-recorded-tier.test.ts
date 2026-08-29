@@ -26,7 +26,15 @@ function createPolicySelectionHarness(controlPlaneReady = true) {
       resolveTierPresets: vi.fn((tierName: string) =>
         tierName === "balanced" ? [{ name: "observability-otlp-local" }] : [],
       ),
-      getTier: vi.fn(() => ({})),
+      getTier: vi.fn((tierName: string) => ({
+        name: tierName,
+        label: tierName,
+        description: "test tier",
+        presets:
+          tierName === "balanced"
+            ? [{ name: "observability-otlp-local", access: "read" as const }]
+            : [],
+      })),
     },
     localInferenceProviders: [],
     step: vi.fn(),

@@ -201,8 +201,8 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
 });
 
 describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)", () => {
-  // These exercise the real tiers.yaml through classifyPresetProvenance (no tier
-  // stub): `brave` is a Balanced default, and Restricted lists no such default.
+  // These exercise canonical tiers.yaml membership without a tier stub: `brave`
+  // is a Balanced default, and Restricted lists no such default.
 
   it("preserves brave on reuse when it is a Balanced-tier default and web search is off", () => {
     const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
@@ -261,6 +261,26 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
     expect(result.policyPresets).toEqual(["npm"]);
     expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
   });
+
+  it.each(["hermes", "langchain-deepagents-code"])(
+    "prunes OpenClaw-only brave from a Balanced-tier %s resume",
+    (agent) => {
+      const result = preparePolicyPresetResumeSelection(
+        { policies: policies({ applied: ["npm", "brave"] }) },
+        "alpha",
+        {
+          recordedPolicyPresets: ["npm", "brave"],
+          agent,
+          webSearchConfig: null,
+          webSearchSupported: true,
+          tierName: "balanced",
+        },
+      );
+
+      expect(result.policyPresets).toEqual(["npm"]);
+      expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    },
+  );
 });
 
 describe("preparePolicyPresetResumeSelection observability reconciliation", () => {

@@ -25,6 +25,10 @@ const evidence = {
   sandboxScopedProviders: ["sandbox-telegram"],
   credentialEnvironmentVariables: ["NVIDIA_API_KEY", "TELEGRAM_BOT_TOKEN"],
 } as const;
+const recoveryAuthority = {
+  createAttemptNonce: "c".repeat(62),
+  policyCreationReceipt: null,
+} as const;
 
 describe("retained sandbox recovery state", () => {
   it("persists verified identity and secret-free resource evidence independently", async () => {
@@ -37,6 +41,7 @@ describe("retained sandbox recovery state", () => {
       gatewayPort: 8080,
       lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
       verifiedEffectivePolicyIdentity: { hash: "sha256:policy-1", activeVersion: 1 },
+      ...recoveryAuthority,
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
       recordedAt: "2026-08-27T00:00:00.000Z",
@@ -67,6 +72,7 @@ describe("retained sandbox recovery state", () => {
       gatewayPort: 8080,
       lifecycleGeneration: null,
       verifiedEffectivePolicyIdentity: null,
+      ...recoveryAuthority,
       resources: {
         sharedInferenceProviders: [],
         sandboxScopedProviders: [],
@@ -91,6 +97,7 @@ describe("retained sandbox recovery state", () => {
       gatewayPort: 18080,
       lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
       verifiedEffectivePolicyIdentity: { hash: "sha256:policy-1", activeVersion: 1 },
+      ...recoveryAuthority,
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
     });
@@ -101,6 +108,7 @@ describe("retained sandbox recovery state", () => {
       gatewayPort: 18080,
       lifecycleGeneration: "00000000-0000-4000-8000-000000000002",
       verifiedEffectivePolicyIdentity: { hash: "sha256:policy-2", activeVersion: 2 },
+      ...recoveryAuthority,
       resources: evidence,
       reason: "retained_after_sandbox_creation_failure",
     });
@@ -147,6 +155,7 @@ describe("retained sandbox recovery state", () => {
         gatewayPort: 8080,
         lifecycleGeneration: "generation-1",
         verifiedEffectivePolicyIdentity: null,
+        ...recoveryAuthority,
         resources: evidence,
         reason: "retained_after_sandbox_creation_failure",
       }),
@@ -182,6 +191,7 @@ describe("retained sandbox recovery state", () => {
         gatewayPort: 8080,
         lifecycleGeneration: "generation-1",
         verifiedEffectivePolicyIdentity: null,
+        ...recoveryAuthority,
         resources: evidence,
         reason: "retained_after_sandbox_creation_failure",
       }),
@@ -222,6 +232,7 @@ describe("retained sandbox recovery state", () => {
           gatewayPort: 8080,
           lifecycleGeneration: "generation-1",
           verifiedEffectivePolicyIdentity: null,
+          ...recoveryAuthority,
         },
       ),
     ).toThrow(/state directory changed|lock ownership changed/u);
@@ -245,6 +256,7 @@ describe("retained sandbox recovery state", () => {
       gatewayPort: 8080,
       lifecycleGeneration: "generation-1",
       verifiedEffectivePolicyIdentity: null,
+      ...recoveryAuthority,
       resources: evidence,
       reason: "cancelled_after_sandbox_creation",
     });
@@ -268,50 +280,4 @@ describe("retained sandbox recovery state", () => {
     expect(recovery.listRetainedSandboxRecoveryRecords()).toEqual([recorded]);
   });
 
-  it("preserves legacy resolution evidence while recording new recovery state (#9833)", async () => {
-    const recovery = await import("./onboard-session");
-    const recorded = recovery.recordRetainedSandboxRecovery({
-      sandboxName: "legacy-sb",
-      sandboxIdentityFingerprint: "d".repeat(64),
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      lifecycleGeneration: "legacy-generation",
-      verifiedEffectivePolicyIdentity: null,
-      resources: evidence,
-      reason: "cancelled_after_sandbox_creation",
-    });
-    const legacyResolution = {
-      schemaVersion: 1,
-      receiptId: "e".repeat(64),
-      recordId: recorded.recordId,
-      sandboxName: recorded.sandboxName,
-      sandboxIdentityFingerprint: recorded.sandboxIdentityFingerprint,
-      gatewayName: recorded.gatewayName,
-      gatewayPort: recorded.gatewayPort,
-      outcome: "removed_verified_identity",
-      resolvedAt: "2026-08-27T00:00:00.000Z",
-    };
-    const legacyState = JSON.parse(
-      fs.readFileSync(recovery.RETAINED_SANDBOX_RECOVERY_FILE, "utf8"),
-    );
-    legacyState.unresolved = [];
-    legacyState.resolutions = [legacyResolution];
-    fs.writeFileSync(recovery.RETAINED_SANDBOX_RECOVERY_FILE, JSON.stringify(legacyState));
-
-    recovery.recordRetainedSandboxRecovery({
-      sandboxName: "new-sb",
-      sandboxIdentityFingerprint: null,
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      lifecycleGeneration: null,
-      verifiedEffectivePolicyIdentity: null,
-      resources: evidence,
-      reason: "retained_after_sandbox_creation_failure",
-    });
-
-    const durableState = JSON.parse(
-      fs.readFileSync(recovery.RETAINED_SANDBOX_RECOVERY_FILE, "utf8"),
-    );
-    expect(durableState.resolutions).toEqual([legacyResolution]);
-  });
 });

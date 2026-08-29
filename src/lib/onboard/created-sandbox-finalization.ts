@@ -242,6 +242,7 @@ export function completeOrdinaryOnboardSandboxCreation(
   input: {
     readonly sandboxName: string;
     readonly sandboxWasLiveDefault: boolean;
+    readonly gatewayPort: number;
     readonly runtimeFields: RegistrationSeed["runtimeFields"];
     readonly messagingProviders: readonly string[];
     readonly liveExists: boolean;
@@ -275,7 +276,7 @@ export function completeOrdinaryOnboardSandboxCreation(
   }
   (deps.applyVmDnsMonkeypatch ?? applyOnboardVmDnsMonkeypatch)(
     input.sandboxName,
-    input.runtimeFields,
+    { ...input.runtimeFields, gatewayPort: input.gatewayPort },
     { revalidatePolicyAuthority: deps.revalidatePolicyAuthority },
   );
   for (const provider of input.messagingProviders) {

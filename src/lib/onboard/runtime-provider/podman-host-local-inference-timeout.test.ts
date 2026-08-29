@@ -16,6 +16,7 @@ function operationAndRuntime(
     engine: harness.engine,
     env: harness.env,
     acceleration: harness.operationAcceleration,
+    probeCleanupTiming: harness.probeCleanupTiming,
     authorityStore: harness.authorityStore,
     routeAuthorityStore: harness.routeAuthorityStore,
     onFailureEvidence: harness.onFailureEvidence,
