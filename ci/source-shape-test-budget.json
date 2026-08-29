@@ -243,7 +243,7 @@
     },
     {
       "file": "test/install/installer-homebrew-formula-reuse-trust.test.ts",
-      "test": "accepts the prospective dev MUSL sandbox template with its trusted digest",
+      "test": "accepts the reviewed %s OpenShell 0.0.106 installer template",
       "category": "security"
     },
     {

@@ -75,6 +75,37 @@ function restoreFlatInstallTestPaths(source: string): string {
   );
 }
 
+function bindMacosInstallMethod(source: string): string {
+  const marker = `HOMEBREW_TAP="nvidia/openshell"
+HOMEBREW_FORMULA_NAME="openshell"`;
+  const methodBinding = `${marker}
+MACOS_INSTALL_METHOD="\${_NEMOCLAW_OPENSHELL_INSTALL_METHOD:-auto}"
+case "$MACOS_INSTALL_METHOD" in
+  auto) ;;
+  homebrew)
+    [ "$OS" = "Darwin" ] || fail "The Homebrew OpenShell installation method is valid only on macOS."
+    command -v brew >/dev/null 2>&1 \\
+      || fail "The selected Homebrew OpenShell installation method became unavailable before installation."
+    ;;
+  standalone)
+    [ "$OS" = "Darwin" ] || fail "The standalone macOS OpenShell installation method is valid only on macOS."
+    ! command -v brew >/dev/null 2>&1 \\
+      || fail "Homebrew appeared after standalone OpenShell installation was selected; refusing an ambiguous installation method."
+    ;;
+  *) fail "The internal macOS OpenShell installation method is invalid." ;;
+esac`;
+  expect(source.split(marker), "Homebrew install-method marker").toHaveLength(2);
+  return source.replace(marker, methodBinding);
+}
+
+function unbindMacosInstallMethod(source: string): string {
+  const marker = `HOMEBREW_TAP="nvidia/openshell"
+HOMEBREW_FORMULA_NAME="openshell"`;
+  const bound = bindMacosInstallMethod(marker);
+  expect(source.split(bound), "bound Homebrew install-method marker").toHaveLength(2);
+  return source.replace(bound, marker);
+}
+
 function selectDevMuslSandboxTemplate(source: string): string {
   const grouped = `    case "$ARCH_LABEL" in
       x86_64)
@@ -115,16 +146,11 @@ function runTrustCheck(source: string) {
     [
       "--experimental-strip-types",
       path.join(REPO_ROOT, "scripts/checks/extract-installer-pins.mts"),
-      "--blueprint",
-      path.join(REPO_ROOT, "nemoclaw-blueprint/blueprint.yaml"),
-      "--installer",
-      installer,
-      "--brev-installer",
-      path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
-      "--supervisor-runtime",
-      path.join(REPO_ROOT, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
-      "--format",
-      "json",
+      "--blueprint", path.join(REPO_ROOT, "nemoclaw-blueprint/blueprint.yaml"),
+      "--installer", installer,
+      "--brev-installer", path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
+      "--supervisor-runtime", path.join(REPO_ROOT, "src/lib/onboard/docker-driver-gateway-runtime.ts"),
+      "--format", "json",
     ],
     { encoding: "utf8" },
   );
@@ -132,55 +158,39 @@ function runTrustCheck(source: string) {
 
 function expectTrustedTemplate(source: string, digest: string): void {
   const result = runTrustCheck(source);
-
   expect(result.status, result.stderr).toBe(0);
-  const records = JSON.parse(result.stdout) as Array<{
-    operationalTemplateSha256: string;
-    source: string;
-  }>;
-  const installerTemplateDigests = new Set(
-    records
-      .filter((record) => record.source === "installer")
-      .map((record) => record.operationalTemplateSha256),
-  );
-  expect(installerTemplateDigests).toEqual(new Set([digest]));
+  const records = JSON.parse(result.stdout) as Array<{ operationalTemplateSha256: string; source: string }>;
+  expect(new Set(records.filter((record) => record.source === "installer").map((record) => record.operationalTemplateSha256))).toEqual(new Set([digest]));
 }
 
 describe("installer Homebrew formula reuse trust", () => {
-  const previousTemplate = restoreFlatInstallTestPaths(INSTALLER_SOURCE);
+  const unboundTemplate = unbindMacosInstallMethod(INSTALLER_SOURCE);
+  const previousTemplate = restoreFlatInstallTestPaths(unboundTemplate);
   const baseTemplate = removeHomebrewFormulaReuseRepair(previousTemplate);
-  const templates = [
+
+  it.each([
     ["downstream", TRUSTED_V00106_TEMPLATE_DIGESTS[0], baseTemplate],
     ["strings preflight", TRUSTED_V00106_TEMPLATE_DIGESTS[1], addStringsPreflight(baseTemplate)],
     ["formula repair", TRUSTED_V00106_TEMPLATE_DIGESTS[2], previousTemplate],
-    ["grouped install tests", TRUSTED_V00106_TEMPLATE_DIGESTS[3], INSTALLER_SOURCE],
-  ] as const;
-
-  it.each(templates)("accepts the %s template with digest %s", (_label, digest, source) => {
+    ["grouped install tests", TRUSTED_V00106_TEMPLATE_DIGESTS[3], unboundTemplate],
+    ["dev MUSL sandbox", TRUSTED_V00106_TEMPLATE_DIGESTS[8], unboundTemplate],
+    ["dev MUSL sandbox with flat test paths", TRUSTED_V00106_TEMPLATE_DIGESTS[9], previousTemplate],
+    ["method-bound dev MUSL sandbox", TRUSTED_V00106_TEMPLATE_DIGESTS[10], INSTALLER_SOURCE],
+  ] as const)("accepts the reviewed %s template with digest %s", (_label, digest, source) => {
     expectTrustedTemplate(source, digest);
   });
 
-  // source-shape-contract: security -- Exact prospective installer bytes must be base-authorized before trusted CI can admit the dependent runtime change
   it("accepts the prospective dev MUSL sandbox template with its trusted digest", () => {
-    const prospectiveTemplate = selectDevMuslSandboxTemplate(INSTALLER_SOURCE);
-    expect(prospectiveTemplate).toContain(
-      'if [ "$RESOLVED_CHANNEL" = "dev" ]; then\n      SANDBOX_LIBC="musl"',
-    );
+    const prospectiveTemplate = selectDevMuslSandboxTemplate(unboundTemplate);
     expectTrustedTemplate(prospectiveTemplate, TRUSTED_V00106_TEMPLATE_DIGESTS[8]);
-    expectTrustedTemplate(
-      restoreFlatInstallTestPaths(prospectiveTemplate),
-      TRUSTED_V00106_TEMPLATE_DIGESTS[9],
-    );
+    expectTrustedTemplate(restoreFlatInstallTestPaths(prospectiveTemplate), TRUSTED_V00106_TEMPLATE_DIGESTS[9]);
   });
 
-  it("rejects an unlisted template", () => {
-    const result = runTrustCheck(
-      INSTALLER_SOURCE.replace(
-        'info "Detected $OS_LABEL ($ARCH_LABEL)"',
-        'info "Detected $OS_LABEL ($ARCH_LABEL)"\n# unlisted installer template',
-      ),
-    );
-
+  it.each([
+    ["method-bound dev MUSL sandbox with flat test paths", bindMacosInstallMethod(restoreFlatInstallTestPaths(unboundTemplate))],
+    ["mutated dev MUSL sandbox", INSTALLER_SOURCE.replace('info "Detected $OS_LABEL ($ARCH_LABEL)"', 'info "Detected $OS_LABEL ($ARCH_LABEL)"\n# unlisted installer template')],
+  ] as const)("rejects the unreviewed %s template", (_label, source) => {
+    const result = runTrustCheck(source);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("installer operational template is not base-trusted");
   });
