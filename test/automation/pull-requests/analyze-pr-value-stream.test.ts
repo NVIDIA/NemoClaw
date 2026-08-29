@@ -209,6 +209,11 @@ describe("pull request value-stream analysis", () => {
     expect(trace.traceEvents).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "Pull request opened for review", ph: "i" }),
+        expect.objectContaining({
+          name: "Waiting for latest revision",
+          cat: "pr.readiness",
+          ph: "X",
+        }),
         expect.objectContaining({ name: "job", cat: "ci.queue", ph: "X" }),
         expect.objectContaining({ name: "job", cat: "ci.execution", ph: "X" }),
         expect.objectContaining({ name: "step", cat: "ci.step", ph: "X" }),

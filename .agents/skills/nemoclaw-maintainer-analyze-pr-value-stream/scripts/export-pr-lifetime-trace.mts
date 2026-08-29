@@ -400,6 +400,7 @@ async function readLifecycle(
 }
 
 function renderTrace(input: {
+  report: any;
   pull: any;
   commits: Commit[];
   runs: Run[];
@@ -412,6 +413,7 @@ function renderTrace(input: {
   addMetadata(events, metadata, 1, 1, "PR #" + input.pull.number, "Lifecycle");
   addMetadata(events, metadata, 2, 1, "Author activity", input.pull.author?.login ?? "author");
   addMetadata(events, metadata, 3, 1, "Feedback and reviews", "Comments and reviews");
+  addMetadata(events, metadata, 4, 1, "PR readiness", "Observed readiness path");
   let lifecycleEvents = 0;
   const instant = (entry: Parameters<typeof addInstant>[1]): void => {
     lifecycleEvents += 1;
@@ -428,6 +430,40 @@ function renderTrace(input: {
     pid: 1,
     tid: 1,
     args: { state: input.pull.state, url: input.pull.url },
+  });
+  const revisionObserved = optionalTime(input.report?.events?.latestRevisionObserved?.at);
+  const latestRevision = revisionObserved === null ? null : Math.max(opened, revisionObserved);
+  const automationSettled = optionalTime(input.report?.events?.automationSettled);
+  const approved = optionalTime(input.report?.events?.firstFinalHeadApproval);
+  const ready =
+    automationSettled !== null && approved !== null ? Math.max(automationSettled, approved) : null;
+  addSpan(events, {
+    name: "Waiting for latest revision",
+    category: "pr.readiness",
+    start: opened,
+    end: latestRevision,
+    pid: 4,
+    tid: 1,
+  });
+  addSpan(events, {
+    name: "Waiting for automation and approval",
+    category: "pr.readiness",
+    start: latestRevision,
+    end: ready,
+    pid: 4,
+    tid: 1,
+    args: {
+      automationSettled: input.report?.events?.automationSettled ?? null,
+      approvedAt: input.report?.events?.firstFinalHeadApproval ?? null,
+    },
+  });
+  addSpan(events, {
+    name: "Ready to merge",
+    category: "pr.readiness",
+    start: ready,
+    end: merged ?? observedEnd,
+    pid: 4,
+    tid: 1,
   });
   instant({
     name: "Pull request opened" + (input.pull.isDraft ? " as draft" : " for review"),
@@ -982,6 +1018,7 @@ export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeA
     readLifecycle(input),
   ]);
   const rendered = renderTrace({
+    report: input.report,
     pull,
     commits,
     runs: runsCollection.rows,
