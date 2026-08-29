@@ -217,6 +217,9 @@ if action == "acquire":
 if action == "assert":
     os.write(2, b"unexpected helper stderr")
 if action == "publish":
+    os.write(2, b'{"schemaVersion":1,"action":"publish","status":"failed","code":"publisher-guard-failed"}\\n')
+    raise SystemExit(1)
+if action == "rollback":
     os.write(1, b"\\xff")
 `,
     );
@@ -228,7 +231,10 @@ if action == "publish":
       const protocol = await sendBrokerRequest(runtime, "assert");
       expect(brokerFailureCode(protocol.response)).toBe("helper-protocol-stderr");
 
-      const encoding = await sendBrokerRequest(runtime, "publish");
+      const publisher = await sendBrokerRequest(runtime, "publish");
+      expect(brokerFailureCode(publisher.response)).toBe("publisher-guard-failed");
+
+      const encoding = await sendBrokerRequest(runtime, "rollback");
       expect(brokerFailureCode(encoding.response)).toBe("transport-response-encoding-invalid");
 
       fs.unlinkSync(runtime.helper);

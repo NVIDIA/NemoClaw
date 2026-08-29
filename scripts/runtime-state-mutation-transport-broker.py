@@ -250,36 +250,6 @@ def normalize_helper_stderr(action: str, status_code: int, stderr: bytes) -> byt
     return failure_stderr(action, code).encode("utf-8")
 
 
-def publisher_phase_failure(action: str, stderr: bytes) -> bytes:
-    if action != "publish":
-        return stderr
-    try:
-        failure = json.loads(stderr.decode("utf-8", "strict"))
-        if (
-            not isinstance(failure, dict)
-            or failure.get("schemaVersion") != 1
-            or failure.get("action") != "publish"
-            or failure.get("status") != "failed"
-            or failure.get("code") != "publisher-guard-failed"
-        ):
-            return stderr
-        journal = json.loads(
-            private_file(
-                "/var/lib/nemoclaw/runtime-state-mutation/hermes-publisher.json"
-            ).decode("utf-8", "strict")
-        )
-        operation = journal.get("operation") if isinstance(journal, dict) else None
-        phase = operation.get("phase") if isinstance(operation, dict) else None
-        if phase not in ("intent", "begun", "state-applied", "top-applied"):
-            return stderr
-        failure["code"] = "publisher-guard-" + phase + "-failed"
-        return (
-            json.dumps(failure, ensure_ascii=True, separators=(",", ":")) + "\n"
-        ).encode("utf-8")
-    except (OSError, RuntimeError, UnicodeError, ValueError):
-        return stderr
-
-
 def run_helper(action: str, request: bytes) -> subprocess.CompletedProcess[bytes]:
     try:
         metadata = os.lstat(HELPER)
@@ -406,8 +376,7 @@ def serve(transaction: str) -> None:
                     if completed.returncode >= 0
                     else 128 - completed.returncode
                 )
-                stderr = publisher_phase_failure(action, completed.stderr)
-                stderr = normalize_helper_stderr(action, status_code, stderr)
+                stderr = normalize_helper_stderr(action, status_code, completed.stderr)
                 response = response_payload(
                     action,
                     identity,
