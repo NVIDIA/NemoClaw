@@ -103,7 +103,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
-    pattern: /(?:^|\/)internal\/security-reviews\/hermes-0\.19\.0-dependency-review\.md$/,
+    pattern: /(?:^|\/)internal\/security-reviews\/hermes-0\.20\.6-dependency-review\.md$/,
     testsToRun: runTests("test/agents/hermes/hermes-dependency-review.test.ts"),
   },
   {

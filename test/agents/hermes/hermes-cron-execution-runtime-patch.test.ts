@@ -21,7 +21,10 @@ const fixtures: string[] = [];
 const upstreamExecutions = `\
 from hermes_constants import get_hermes_home
 
-EXECUTIONS_FILE = get_hermes_home().resolve() / "cron" / "executions.db"
+EXECUTIONS_FILE = None
+
+def _connect():
+    path = EXECUTIONS_FILE or (get_hermes_home().resolve() / "cron" / "executions.db")
 `;
 
 const upstreamBackup = `\
@@ -62,7 +65,7 @@ describe("Hermes cron execution runtime patch", () => {
     const first = runPatcher(files.executions, files.backup);
     expect(first.status, first.stderr).toBe(0);
     expect(fs.readFileSync(files.executions, "utf8")).toContain(
-      'get_hermes_home().resolve() / "runtime" / "cron-executions.db"',
+      'path = EXECUTIONS_FILE or (get_hermes_home().resolve() / "runtime" / "cron-executions.db")',
     );
     expect(fs.readFileSync(files.backup, "utf8")).toContain('"runtime/cron-executions.db"');
     expect(fs.readFileSync(files.executions, "utf8")).not.toContain('/ "cron" / "executions.db"');
@@ -90,8 +93,8 @@ describe("Hermes cron execution runtime patch", () => {
   it("rejects a partially applied pair instead of splitting the runtime contract", () => {
     const files = fixtureFiles({
       executions: upstreamExecutions.replace(
-        '/ "cron" / "executions.db"',
-        '/ "runtime" / "cron-executions.db"',
+        '/ "cron" / "executions.db")',
+        '/ "runtime" / "cron-executions.db")',
       ),
     });
 
@@ -108,11 +111,11 @@ describe("Hermes cron execution runtime patch", () => {
     expect(dockerfile).toContain(`ARG NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256=${digest}`);
     expect(dockerfile).toContain(
       "ARG NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256=" +
-        "b37215a27a453191420622f78dc8962fa44feac2521a6f51d71b18831e7cacb7",
+        "b4a685a901abdffe2d1232099b3c27391775775a7011d52c90276cb15d3fd75d",
     );
     expect(dockerfile).toContain(
       "ARG NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256=" +
-        "1bcef6f736f1d52055837789f24becdba4a670f0a1abb5ac9973b1a1a7306f35",
+        "b0838c1f2e120d8f97076c6321297077edc1f150dc6d4b84ba3d13327fcbb156",
     );
     expect(dockerfile).toContain(
       "COPY agents/hermes/patch-cron-execution-runtime.py " +

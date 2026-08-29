@@ -12,6 +12,7 @@ const ROOT = path.resolve(import.meta.dirname, "../../..");
 const PATCHER = path.join(ROOT, "agents", "hermes", "patch-neutral-platform-env-activation.py");
 
 const UPSTREAM_FIXTURE = `import logging
+import math
 import os
 import json
 from dataclasses import dataclass, field

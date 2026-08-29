@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Compose NemoClaw's rebuild drain with pinned Hermes operator drain control.
 
-Hermes v2026.7.20 / 0.19.0 scopes its operator marker to one container epoch.
+Hermes v2026.8.27 / 0.20.6 scopes its operator marker to one container epoch.
 That is correct for operator lifecycle actions, but a NemoClaw rebuild marker
 must survive replacement gateway and container restarts until restored scripts
 and cron jobs are revalidated. Keep those two owners on separate paths and OR
@@ -22,18 +22,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-OLD_MARKER_ANCHOR = '''_DRAIN_REQUEST_FILENAME = ".drain_request.json"
-
-
-@functools.lru_cache(maxsize=1)
-'''
+OLD_MARKER_ANCHOR = '_DRAIN_REQUEST_FILENAME = ".drain_request.json"'
 NEW_MARKER_ANCHOR = '''_DRAIN_REQUEST_FILENAME = ".drain_request.json"
 _NEMOCLAW_CRON_RESTORE_DRAIN_PATH = Path(
     "/sandbox/.nemoclaw/hermes-cron-restore-drain.json"
 )
-
-
-@functools.lru_cache(maxsize=1)
 '''
 
 OLD_OPERATOR_HEADER = '''def drain_requested(*, home: Optional[Path] = None) -> bool:

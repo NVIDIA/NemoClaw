@@ -1,6 +1,6 @@
 {
   "adapter_version": 1,
-  "upstream_cli_version": "0.19.0",
+  "upstream_cli_version": "0.20.6",
   "managed_commands": ["chat"],
   "session_name_coalescer": {
     "module": "hermes_cli.main",
@@ -128,7 +128,7 @@
         "hermes [(-p|--profile) PROFILE] ((-r|--resume) SESSION|(-c|--continue) [SESSION]) (-z|--oneshot) PROMPT [CHAT_OPTION ...]",
         "hermes [--profile=PROFILE] (--resume=SESSION|--continue[=SESSION]) --oneshot=PROMPT [CHAT_OPTION ...]"
       ],
-      "reason": "Hermes 0.19 stores a top-level resumed or continued one-shot turn in a new session instead of the selected or most recent session.",
+      "reason": "Hermes 0.20.6 stores a top-level resumed or continued one-shot turn in a new session instead of the selected or most recent session.",
       "source_fix_constraint": "The affected session persistence implementation belongs to Hermes. The durable source fix must land in Hermes before NemoClaw removes this translation.",
       "removal_condition": "Hermes appends top-level resumed and continued one-shot turns to the selected or most recent session."
     },
@@ -143,7 +143,7 @@
         "hermes [TOP_LEVEL_OPTION ...] chat [CHAT_OPTION ...] MODEL_OPTION [CHAT_OPTION ...] PROVIDER_OPTION [CHAT_OPTION ...]"
       ],
       "ambiguity_rule": "A top-level session name must be one argv value. The adapter rejects separate provider and model flags after an unquoted multi-word session name because a later positional can be an upstream command.",
-      "reason": "Hermes 0.19 does not resolve the OpenShell credential placeholder when provider and model are separate.",
+      "reason": "Hermes 0.20.6 does not resolve the OpenShell credential placeholder when provider and model are separate.",
       "source_fix_constraint": "The affected credential-resolution implementation belongs to Hermes. The durable source fix must land in Hermes before NemoClaw removes this translation.",
       "removal_condition": "Hermes resolves OpenShell credential placeholders for separate provider and model flags."
     }

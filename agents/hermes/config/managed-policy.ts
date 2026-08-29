@@ -49,7 +49,7 @@ export const MANAGED_IMAGE_HERMES_SUPPORTED_PLATFORMS = [
   "google_chat",
 ] as const;
 
-// Hermes v0.19.0 also packages platform plugins and built-in adapters that are
+// Hermes v0.20.6 also packages platform plugins and built-in adapters that are
 // not yet supported by NemoClaw's messaging manifests. A neutral managed image
 // must explicitly disable the complete installed surface, while keeping this
 // list separate from the supported/activatable contract above.

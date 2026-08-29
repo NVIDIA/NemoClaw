@@ -4,7 +4,8 @@
 """Patch SessionDB.__init__ to use in-memory temp store for SQLite FK processing.
 
 Source-of-truth note for this localized Hermes runtime patch:
-  - Invalid state: Hermes v0.19.0 SessionDB does not set PRAGMA temp_store=MEMORY,
+  - Invalid state: Hermes v0.20.6 SessionDB does not set
+    PRAGMA temp_store=MEMORY,
     so SQLite falls back to file-based temp storage when processing FK constraints
     (for example, the ON DELETE CASCADE on session_model_usage -> sessions). When
     `hermes sessions delete` is invoked through OpenShell sandbox execution —
@@ -17,7 +18,7 @@ Source-of-truth note for this localized Hermes runtime patch:
     context allows the file-based temp store.
   - Value being patched: pinned/prebuilt `/opt/hermes/hermes_state.py`
     `SessionDB.__init__` connection setup block; specifically, the statement
-    immediately following `apply_wal_with_fallback()` that enables FK enforcement.
+    immediately following `apply_database_pragmas()` that enables FK enforcement.
     `PRAGMA temp_store=MEMORY` is inserted before `PRAGMA foreign_keys=ON` so the
     in-memory store is active before any FK-constrained write.
   - Source-fix constraint: NemoClaw layers a sandbox image on top of the
@@ -41,11 +42,11 @@ import argparse
 from pathlib import Path
 
 OLD = (
-    'apply_wal_with_fallback(self._conn, db_label="state.db")\n'
+    'apply_database_pragmas(self._conn, db_label="state.db")\n'
     '                self._conn.execute("PRAGMA foreign_keys=ON")'
 )
 NEW = (
-    'apply_wal_with_fallback(self._conn, db_label="state.db")\n'
+    'apply_database_pragmas(self._conn, db_label="state.db")\n'
     '                self._conn.execute("PRAGMA temp_store=MEMORY")\n'
     '                self._conn.execute("PRAGMA foreign_keys=ON")'
 )

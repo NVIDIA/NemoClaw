@@ -216,7 +216,7 @@ function runHermesArchiveLayer(
       '    [ "$4" = "$security_patch" ] || [ "$4" = "$whatsapp_proxy_patch" ]',
       "  fi",
       "}",
-      `export HERMES_VERSION=${JSON.stringify(input.version ?? "v2026.7.20")}`,
+      `export HERMES_VERSION=${JSON.stringify(input.version ?? "v2026.8.27")}`,
       `export HERMES_TARBALL_SHA256=${JSON.stringify(expectedChecksum ?? checksum)}`,
       command,
     ].join("\n"),
@@ -412,8 +412,8 @@ describe("Hermes share mount package parity (#2947)", () => {
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toEqual(["curl http:429", "sleep 1", "curl http:200"]);
       expect(urls).toEqual([
-        "https://github.com/NousResearch/hermes-agent/archive/refs/tags/v2026.7.20.tar.gz",
-        "https://github.com/NousResearch/hermes-agent/archive/refs/tags/v2026.7.20.tar.gz",
+        "https://github.com/NousResearch/hermes-agent/archive/refs/tags/v2026.8.27.tar.gz",
+        "https://github.com/NousResearch/hermes-agent/archive/refs/tags/v2026.8.27.tar.gz",
       ]);
       expect(result.stderr.split("\n").filter((line) => line.startsWith("Hermes archive"))).toEqual(
         [

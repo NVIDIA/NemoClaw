@@ -85,7 +85,9 @@ def _load_show_reasoning():
     # Fallback True — keep in sync with DEFAULT_CONFIG display.show_reasoning
     # (this loader reads the raw user YAML without the DEFAULT_CONFIG merge).
     return bool((_load_cfg().get("display") or {}).get("show_reasoning", True))
+`;
 
+const tuiConfigFixture = `\
 def _get_reasoning_status(cfg):
     return (
         "show"
@@ -121,7 +123,7 @@ def _refresh():
 `;
 
 function patchSource(
-  kind: "config" | "browser" | "gateway" | "cli" | "tui" | "agent" | "main",
+  kind: "config" | "browser" | "gateway" | "cli" | "tui" | "tui_config" | "agent" | "main",
   source: string,
 ) {
   const harness = `\
@@ -199,13 +201,22 @@ describe("Hermes profile policy defaults", () => {
     expect(result.stdout).toContain("NemoClaw compatibility override");
   });
 
-  it("keeps both raw TUI reasoning fallbacks private", () => {
+  it("keeps the raw TUI server reasoning fallback private", () => {
     const result = patchSource("tui", tuiFixture);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.match(/get[(]"show_reasoning", False[)]/gu)).toHaveLength(2);
+    expect(result.stdout.match(/get[(]"show_reasoning", False[)]/gu)).toHaveLength(1);
     expect(result.stdout).not.toContain('.get("show_reasoning", True)');
-    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(2);
+    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(1);
+  });
+
+  it("keeps the raw TUI config reasoning fallback private", () => {
+    const result = patchSource("tui_config", tuiConfigFixture);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('get("show_reasoning", False)');
+    expect(result.stdout).not.toContain('.get("show_reasoning", True)');
+    expect(result.stdout).toContain("NemoClaw compatibility override");
   });
 
   it("keeps all agent commentary fallbacks private", () => {
@@ -309,13 +320,14 @@ module._verify_session_reset_policy(reset_policy, expected)
 
   it.each(
     [
-        "172b78ecb923048859ca177d96f5b010b44ec74bb1d13553577ff49bde1a071d",
-        "02b4a0a0c8fc8b204c8f818dff1dd64295a817e5543b8a643198bcedbfbbcba2",
-        "7221ee05798566ca7cf570035615a9b29034cf92ce5a6eaa5eec0693040c08aa",
-        "cbcf1780174a03b225508244575915225a36502f54ad4cddf1da644d9174fec4",
-        "5d00832327e4362ac75032f95003e1fa49aead4756cf7927dcfd66447b205a59",
-        "85b7cb13d6e6306e75d5eec46f193433df680425533b7d35ee99e0f7eab9512a",
-        "d6bf89a33fb708376a7ab354cff8081a3c3726dbfb91d84bbb679cd667db596c",
+        "3fa2c9f02a76d77602f9b09b7b01f72ca45a40eea92dbac33cc3a1fc5071bff8",
+        "66008422f53a218dd7be5b1f5f3573a92254b75abba6f99f84e111e03a3e1b36",
+        "d88dcda8c5a14b79d84afcc1d5784c165858ab5d6f289ba59fe421502d2c63a3",
+        "85c95927002a77602b0fb0384413357b6ee0149dfc5b31e048c29d59654a22a9",
+        "6fdeca2133b22a88c527a63764eb201c24a27fc2e894045e9bdb647f89ea7d26",
+        "883168664a89bcf8954bbe486b672ab01c96fc0c06c88acdaf21559905a60276",
+        "fb4ee75ebcf12bd9bc014d212c7abc110e1afbcf0c2cb79caa7230dd58006911",
+        "2ffe5fae39e8962a086d4eea7ec26c3f1d29f2bb8a97422d5606eecaa2b3f116",
       ],
   )(
     "hash-binds the reviewed source patch and probes a real config-less profile [%s]",

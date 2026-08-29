@@ -90,7 +90,7 @@ describe("Hermes doctor and config hash boundary", () => {
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(
-        "installed Hermes 0.20.0 but Hermes v0.19.0 compatibility workarounds are still installed",
+        "installed Hermes 0.20.0 but Hermes v0.20.6 compatibility workarounds are still installed",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

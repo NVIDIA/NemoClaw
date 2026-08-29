@@ -16,9 +16,9 @@ homepage: "https://github.com/NousResearch/hermes-agent"
 install_method: curl  # curl install.sh | bash
 binary_path: /usr/local/bin/hermes
 version_command: "hermes --version"
-expected_version: "0.19.0"
-# Hermes reports semver from `hermes --version` (for example, `0.19.0`) even
-# though its GitHub release cadence is calendar-based (`v2026.7.20`). Declaring the
+expected_version: "0.20.6"
+# Hermes reports semver from `hermes --version` (for example, `0.20.6`) even
+# though its GitHub release cadence is calendar-based (`v2026.8.27`). Declaring the
 # scheme keeps the staleness check off the shape heuristic when a manifest
 # could otherwise straddle both schemes (#6049).
 version_scheme: semver

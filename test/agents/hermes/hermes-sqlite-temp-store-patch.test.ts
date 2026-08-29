@@ -14,11 +14,11 @@ const patcher = path.join(root, "agents", "hermes", "patch-hermes-sqlite-temp-st
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
 const fixtures: string[] = [];
 
-const walSetup = 'apply_wal_with_fallback(self._conn, db_label="state.db")';
+const pragmaSetup = 'apply_database_pragmas(self._conn, db_label="state.db")';
 const tempStore = '                self._conn.execute("PRAGMA temp_store=MEMORY")';
 const foreignKeys = '                self._conn.execute("PRAGMA foreign_keys=ON")';
-const unpatchedSource = `${walSetup}\n${foreignKeys}\n`;
-const patchedSource = `${walSetup}\n${tempStore}\n${foreignKeys}\n`;
+const unpatchedSource = `${pragmaSetup}\n${foreignKeys}\n`;
+const patchedSource = `${pragmaSetup}\n${tempStore}\n${foreignKeys}\n`;
 
 function fixtureFile(source: string): string {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-sqlite-temp-store-"));
@@ -62,7 +62,7 @@ describe("Hermes SQLite temp-store patch", () => {
 
   it.each([
     ["duplicate", `${patchedSource}${tempStore}\n`],
-    ["partial", `${walSetup}\n${tempStore}\n`],
+    ["partial", `${pragmaSetup}\n${tempStore}\n`],
     ["misplaced", `${tempStore}\n${unpatchedSource}`],
   ])("rejects a %s temp-store patch (#8301)", (_case, source) => {
     const stateModule = fixtureFile(source);

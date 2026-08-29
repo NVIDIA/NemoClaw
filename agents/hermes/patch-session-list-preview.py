@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Patch pinned Hermes v0.19.0 session-list previews to show the latest user turn.
+"""Patch pinned Hermes v0.20.6 session-list previews to show the latest user turn.
 
 Source-of-truth note for this localized Hermes runtime patch:
-  - Invalid state: Hermes v0.19.0 computes `sessions list` preview text from
+  - Invalid state: Hermes v0.20.6 computes `sessions list` preview text from
     the first user message, but #5254's resumed/continued one-shot UX expects
     the original row to reflect the latest appended turn.
   - Value being patched: pinned/prebuilt `/opt/hermes/hermes_state.py`
@@ -29,7 +29,7 @@ from pathlib import Path
 
 OLD = "ORDER BY m.timestamp, m.id LIMIT 1"
 NEW = "ORDER BY m.timestamp DESC, m.id DESC LIMIT 1"
-EXPECTED_OCCURRENCES = 6
+EXPECTED_OCCURRENCES = 5
 
 
 def patch_file(path: Path) -> None:

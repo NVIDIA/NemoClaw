@@ -16,9 +16,11 @@ it("stores Hermes dashboard pairing state in the gateway session directory (#818
   fs.mkdirSync(path.dirname(source), { recursive: true });
   fs.writeFileSync(
     source,
-    `${"\n".repeat(8109)}def _whatsapp_session_path() -> Path:\n` +
+    `${"\n".repeat(9722)}def _whatsapp_session_path() -> Path:\n` +
       "    from hermes_constants import get_hermes_dir\n\n" +
-      '    return get_hermes_dir("platforms/whatsapp/session", "whatsapp/session")\n\n',
+      '    return get_hermes_dir("platforms/whatsapp/session", "whatsapp/session")\n\n\n' +
+      "def _whatsapp_phone_from_identifier(value: Any) -> str | None:\n" +
+      "    return None\n",
   );
 
   try {
