@@ -26,9 +26,10 @@ homes. It also fixes independent config copies and loaders that bypass
 * ``hermes_cli.main`` independently defaults update backups and CUA refresh
   on when configuration is missing or unreadable.
 
-Every input file is bound to the exact upstream v2026.8.27 source hash before
-any edit. A Hermes upgrade must deliberately refresh these hashes and source
-shapes instead of silently carrying the patch forward.
+Every input file is bound to its exact reviewed v2026.8.27 source state before
+any edit. The browser source hash includes NemoClaw's preceding exact
+``agent-browser`` dependency pin. A Hermes upgrade must deliberately refresh
+these hashes and source shapes instead of silently carrying the patch forward.
 
 Delete this compatibility patch only when the pinned Hermes release applies
 the managed-policy values to a config-less named profile across
@@ -57,7 +58,7 @@ from managed_policy import (  # noqa: E402
 
 EXPECTED_SOURCE_SHA256 = {
     "config": "3fa2c9f02a76d77602f9b09b7b01f72ca45a40eea92dbac33cc3a1fc5071bff8",
-    "browser": "66008422f53a218dd7be5b1f5f3573a92254b75abba6f99f84e111e03a3e1b36",
+    "browser": "b43608826bb10f9bf919ca97757bf36fc95247bd8b14fa8626a113c639cfd73e",
     "gateway": "d88dcda8c5a14b79d84afcc1d5784c165858ab5d6f289ba59fe421502d2c63a3",
     "cli": "85c95927002a77602b0fb0384413357b6ee0149dfc5b31e048c29d59654a22a9",
     "tui": "6fdeca2133b22a88c527a63764eb201c24a27fc2e894045e9bdb647f89ea7d26",

@@ -15,6 +15,14 @@ const root = path.join(import.meta.dirname, "../../..");
 const patcher = path.join(root, "agents", "hermes", "patch-profile-policy-defaults.py");
 const imageBuildProbes = path.join(root, "agents", "hermes", "image-build-probes.py");
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
+const dockerfileBase = fs.readFileSync(
+  path.join(root, "agents", "hermes", "Dockerfile.base"),
+  "utf8",
+);
+const securityDependenciesPatch = fs.readFileSync(
+  path.join(root, "agents", "hermes", "security-dependencies.patch"),
+  "utf8",
+);
 const POLICY_SETTINGS: HermesBuildSettings = {
   model: "test-model",
   baseUrl: "https://inference.local/v1",
@@ -321,7 +329,7 @@ module._verify_session_reset_policy(reset_policy, expected)
   it.each(
     [
         "3fa2c9f02a76d77602f9b09b7b01f72ca45a40eea92dbac33cc3a1fc5071bff8",
-        "66008422f53a218dd7be5b1f5f3573a92254b75abba6f99f84e111e03a3e1b36",
+        "b43608826bb10f9bf919ca97757bf36fc95247bd8b14fa8626a113c639cfd73e",
         "d88dcda8c5a14b79d84afcc1d5784c165858ab5d6f289ba59fe421502d2c63a3",
         "85c95927002a77602b0fb0384413357b6ee0149dfc5b31e048c29d59654a22a9",
         "6fdeca2133b22a88c527a63764eb201c24a27fc2e894045e9bdb647f89ea7d26",
@@ -348,4 +356,18 @@ module._verify_session_reset_policy(reset_policy, expected)
       expect(dockerfile).toMatch(/image-build-probes[.]py\s+profile-policy/u);
     },
   );
+
+  it("binds browser policy after the exact agent-browser dependency pin", () => {
+    const patcherSource = fs.readFileSync(patcher, "utf8");
+
+    expect(securityDependenciesPatch).toContain(
+      'AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"',
+    );
+    expect(dockerfileBase.indexOf("git -C /opt/hermes apply /tmp/hermes-security-dependencies.patch"))
+      .toBeGreaterThanOrEqual(0);
+    expect(patcherSource).toContain(
+      '"browser": "b43608826bb10f9bf919ca97757bf36fc95247bd8b14fa8626a113c639cfd73e"',
+    );
+    expect(dockerfile.indexOf("patch-profile-policy-defaults.py")).toBeGreaterThanOrEqual(0);
+  });
 });
