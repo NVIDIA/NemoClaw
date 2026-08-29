@@ -47,6 +47,7 @@ const TASK_VERSION = "pi-read-v1";
 const LIVE_TIMEOUT_MS = 90 * 60_000;
 const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
 const PI_INTERACTIVE_READY_MARKER = "Press ctrl+o to show full startup help";
+const PI_INTERACTIVE_COMPLETE_MARKER = "↑";
 const SECURITY_PROBE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -261,14 +262,14 @@ async function runInteractiveTask(
     progress,
     rules: [
       { trigger: PI_INTERACTIVE_READY_MARKER, response: `${prompt}\r` },
-      { trigger: token, response: "\u0004" },
+      { trigger: PI_INTERACTIVE_COMPLETE_MARKER, response: "\u0004" },
     ],
     timeoutMs: PI_COMMAND_TIMEOUT_MS,
   });
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
   expect(result.timedOut).toBe(false);
-  expect(result.firedTriggers).toContain(PI_INTERACTIVE_READY_MARKER);
-  expect(result.firedTriggers).toContain(token);
+    expect(result.firedTriggers).toContain(PI_INTERACTIVE_READY_MARKER);
+    expect(result.firedTriggers).toContain(PI_INTERACTIVE_COMPLETE_MARKER);
   expect(result.output).toContain(token);
   expect(result.exitCode).toBe(0);
 }
