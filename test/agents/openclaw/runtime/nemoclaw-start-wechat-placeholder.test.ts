@@ -15,6 +15,8 @@ const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
 interface WechatRefreshFixture {
   readonly account: Record<string, unknown>;
+  readonly accountInodeAfter: number;
+  readonly accountInodeBefore: number;
   readonly result: ReturnType<typeof spawnSync>;
 }
 
@@ -34,6 +36,7 @@ function runWechatRefresh(
   env: Record<string, string>,
   enabled = true,
   mutateAccount?: (paths: { accountPath: string; tmpDir: string }) => void,
+  configOwner = "sandbox",
 ): WechatRefreshFixture {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-placeholder-"));
   const openclawDir = path.join(tmpDir, ".openclaw");
@@ -49,6 +52,7 @@ function runWechatRefresh(
   );
   fs.chmodSync(accountPath, 0o600);
   mutateAccount?.({ accountPath, tmpDir });
+  const accountInodeBefore = fs.statSync(accountPath).ino;
   const refresh = extractShellFunctionFromSource(
     src,
     "refresh_openclaw_provider_placeholders",
@@ -58,7 +62,7 @@ function runWechatRefresh(
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      "openclaw_config_dir_owner() { printf 'sandbox'; }",
+      `openclaw_config_dir_owner() { printf '${configOwner}'; }`,
       "prepare_openclaw_config_for_write() { :; }",
       "restore_openclaw_config_after_write() { :; }",
       refresh,
@@ -74,7 +78,8 @@ function runWechatRefresh(
       timeout: 5000,
     });
     const account = JSON.parse(fs.readFileSync(accountPath, "utf-8"));
-    return { account, result };
+    const accountInodeAfter = fs.statSync(accountPath).ino;
+    return { account, accountInodeAfter, accountInodeBefore, result };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -101,6 +106,34 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
 
     expect(run.result.status, String(run.result.stderr)).toBe(0);
     expect(run.account.token).toBe(scoped);
+  });
+
+  it("leaves an already-current placeholder untouched", () => {
+    const scoped = "openshell:resolve:env:v51_WECHAT_BOT_TOKEN";
+    const run = runWechatRefresh(scoped, { WECHAT_BOT_TOKEN: scoped });
+
+    expect(run.result.status, String(run.result.stderr)).toBe(0);
+    expect(run.account.token).toBe(scoped);
+    expect(run.accountInodeAfter).toBe(run.accountInodeBefore);
+    expect(run.result.stderr).not.toContain("Refreshed WeChat account provider placeholder");
+  });
+
+  it("refreshes a stale account placeholder while openclaw.json is sealed", () => {
+    const scoped = "openshell:resolve:env:v51_WECHAT_BOT_TOKEN";
+    const run = runWechatRefresh(
+      "openshell:resolve:env:v42_WECHAT_BOT_TOKEN",
+      { WECHAT_BOT_TOKEN: scoped },
+      true,
+      undefined,
+      "root",
+    );
+
+    expect(run.result.status, String(run.result.stderr)).toBe(0);
+    expect(run.account.token).toBe(scoped);
+    expect(run.result.stderr).toContain(
+      "Shields are up; preserving sealed openclaw.json provider placeholders unchanged",
+    );
+    expect(run.result.stderr).not.toContain(scoped);
   });
 
   it.each([
@@ -162,6 +195,18 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
       "group-readable",
       ({ accountPath }: { accountPath: string }) => fs.chmodSync(accountPath, 0o640),
       "managed account file is accessible outside its owner",
+    ],
+    [
+      "symlinked account-directory",
+      ({ accountPath, tmpDir }: { accountPath: string; tmpDir: string }) => {
+        const accountsDir = path.dirname(accountPath);
+        const outsideDir = path.join(tmpDir, "outside-accounts");
+        fs.mkdirSync(outsideDir);
+        fs.renameSync(accountPath, path.join(outsideDir, "primary.json"));
+        fs.rmdirSync(accountsDir);
+        fs.symlinkSync(outsideDir, accountsDir);
+      },
+      "managed account directory is missing or unsafe",
     ],
   ])("refuses a %s account file without replacing its token", (_name, mutate, message) => {
     const run = runWechatRefresh(

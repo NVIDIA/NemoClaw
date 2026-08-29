@@ -1543,18 +1543,13 @@ refresh_openclaw_provider_placeholders() {
   local hash_file="/sandbox/.openclaw/.config-hash"
   [ -f "$config_file" ] || return 0
 
-  if [ "$(openclaw_config_dir_owner "$(dirname "$config_file")")" = "root" ]; then
-    printf '[config] Shields are up; preserving sealed provider placeholders unchanged\n' >&2
-    return 0
-  fi
-
   # The Tencent WeChat plugin reads its credential from a separate account
   # file, outside openclaw.json. Refresh that file through descriptor-relative,
   # no-follow operations so its identity-bound endpoint receives the exact
   # revision-scoped placeholder without persisting the raw bot token.
   refresh_openclaw_wechat_account_placeholder() {
 
-    python3 - "$config_file" <<'PYWECHATPLACEHOLDER'
+    python3 -I - "$config_file" <<'PYWECHATPLACEHOLDER'
 import json
 import os
 import re
@@ -1736,6 +1731,12 @@ finally:
         os.close(descriptor)
 PYWECHATPLACEHOLDER
   }
+
+  if [ "$(openclaw_config_dir_owner "$(dirname "$config_file")")" = "root" ]; then
+    printf '[config] Shields are up; preserving sealed openclaw.json provider placeholders unchanged\n' >&2
+    refresh_openclaw_wechat_account_placeholder || return $?
+    return 0
+  fi
 
   local keys
   keys="$(
@@ -2067,8 +2068,9 @@ PYPLACEHOLDERS
 
   restore_openclaw_config_after_write "$config_file" "$hash_file"
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
-  printf '%s\n' "$_placeholder_report" | grep -qx 'wechat-active=1' \
-    && refresh_openclaw_wechat_account_placeholder
+  if printf '%s\n' "$_placeholder_report" | grep -qx 'wechat-active=1'; then
+    refresh_openclaw_wechat_account_placeholder || return $?
+  fi
   return 0
 }
 
