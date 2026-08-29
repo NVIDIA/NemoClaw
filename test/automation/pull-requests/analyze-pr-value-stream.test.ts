@@ -74,11 +74,14 @@ const scenario = process.env.VALUE_STREAM_SCENARIO;
 const sha = "a".repeat(40);
 const review = (state,time) => ({state,submittedAt:time,author:{login:"reviewer"},commit:{oid:sha}});
 const reviews = scenario === "approval-restored" ? [review("APPROVED","2026-01-01T00:02:45Z"),review("CHANGES_REQUESTED","2026-01-01T00:03:00Z"),review("APPROVED","2026-01-01T00:03:15Z")] : scenario === "approval-revoked" ? [review("APPROVED","2026-01-01T00:02:45Z"),review("CHANGES_REQUESTED","2026-01-01T00:03:00Z")] : [];
-const pull = {number:42,url:"https://example.test/pr/42",state:scenario.startsWith("approval-") ? "MERGED" : "OPEN",isDraft:false,createdAt:"2026-01-01T00:01:00Z",mergedAt:scenario.startsWith("approval-") ? "2026-01-01T00:04:00Z" : null,baseRefName:"main",headRefName:"topic",headRefOid:sha,commits:[{oid:sha,committedDate:"2026-01-01T00:00:00Z"}],reviews};
+const pull = {number:42,url:"https://example.test/pr/42",state:scenario.startsWith("approval-") ? "MERGED" : "OPEN",isDraft:false,createdAt:"2026-01-01T00:01:00Z",updatedAt:"2026-01-01T00:04:00Z",mergedAt:scenario.startsWith("approval-") ? "2026-01-01T00:04:00Z" : null,author:{login:"author"},assignees:[],baseRefName:"main",headRefName:"topic",headRefOid:sha,commits:[{oid:sha,authoredDate:"2026-01-01T00:00:00Z",committedDate:"2026-01-01T00:00:00Z",messageHeadline:"change"}],reviews};
 const run = (id) => ({id,event:"push",head_sha:sha,created_at:"2026-01-01T00:00:30Z",run_started_at:scenario === "queued" ? null : "2026-01-01T00:00:31Z",updated_at:"2026-01-01T00:03:00Z",status:scenario === "queued" ? "queued" : "completed",conclusion:scenario === "queued" ? null : "success",name:"CI PR #42"});
 let value;
 if (args.startsWith("pr view")) value = pull;
 else if (args.includes("required_status_checks")) value = scenario === "wrong-app" || scenario === "app-status-denied" ? {contexts:[],checks:[{context:"required-a",app_id:7}]} : scenario === "any-app" || scenario === "early-check" ? {contexts:[],checks:[{context:"required-a",app_id:-1}]} : scenario.startsWith("legacy-") ? {contexts:["legacy-required"],checks:[]} : {contexts:["required-a", "required-b"],checks:[]};
+else if (args.includes("issues/42/timeline")) value = [{id:41,event:"assigned",created_at:"2026-01-01T00:01:05Z",actor:"author",commit_id:null,label:null,requested_reviewer:null,rename:null}];
+else if (args.includes("issues/42/comments")) value = [{id:42,created_at:"2026-01-01T00:01:10Z",updated_at:"2026-01-01T00:01:10Z",user:"reviewer",html_url:""}];
+else if (args.includes("pulls/42/comments")) value = [{id:43,created_at:"2026-01-01T00:01:20Z",updated_at:"2026-01-01T00:01:20Z",user:"reviewer",path:"src/example.ts",line:1,commit_id:sha,html_url:"",in_reply_to_id:null}];
 else if (args.includes("actions/runs?")) value = scenario === "fallback" ? [] : scenario === "truncated" ? [run(11),run(12)] : [run(11)];
 else if (args.includes("/actions/runs/11/jobs")) value = {total_count:1,jobs:[{id:21,name:scenario.startsWith("artifact") ? "cli-test-shards (1)" : "job",status:scenario === "queued" ? "queued" : "completed",conclusion:scenario === "queued" ? null : "success",created_at:"2026-01-01T00:00:31Z",started_at:scenario === "queued" ? null : "2026-01-01T00:00:32Z",completed_at:scenario === "queued" ? null : "2026-01-01T00:02:00Z",runner_name:null,runner_group_name:null,labels:[],html_url:"",steps:[{number:1,name:"step",status:scenario === "queued" ? "queued" : "completed",conclusion:scenario === "queued" ? null : "success",started_at:scenario === "queued" ? null : "2026-01-01T00:00:33Z",completed_at:scenario === "queued" ? null : "2026-01-01T00:01:00Z"}]}]};
 else if (args.includes("/actions/runs/12/jobs")) value = {total_count:0,jobs:[]};
@@ -113,7 +116,7 @@ async function run(scenario: string, extra: string[] = []) {
       "--no-warnings",
       analyzer,
       "--workdir",
-      root,
+      fake.directory,
       "--number",
       "42",
       ...extra,
@@ -131,7 +134,10 @@ async function run(scenario: string, extra: string[] = []) {
       reject: false,
     },
   );
-  return Object.assign(result, { ghCalls: await readFile(fake.logPath, "utf8") });
+  return Object.assign(result, {
+    directory: fake.directory,
+    ghCalls: await readFile(fake.logPath, "utf8"),
+  });
 }
 
 afterEach(async () => {
@@ -171,7 +177,41 @@ describe("pull request value-stream analysis", () => {
     expect(report.automation.checksConsidered).toBe(2);
     expect(report.automation.firstCheckCreatedAt).toBe("2026-01-01T00:00:35.000Z");
     expect(report.automation.triggerDelaySeconds).toBe(5);
-    expect(result.ghCalls.match(/^pr view /gmu)).toHaveLength(1);
+    expect(result.ghCalls.match(/^pr view /gmu)).toHaveLength(2);
+    expect(report.lifetime).toMatchObject({
+      revisions: 1,
+      workflowRuns: 1,
+      jobs: 1,
+      truncated: false,
+    });
+    const summaryPath = path.resolve(result.directory, report.lifetime.summary);
+    const tracePath = path.resolve(result.directory, report.lifetime.trace);
+    const manifestPath = path.resolve(result.directory, report.lifetime.manifest);
+    expect(JSON.parse(await readFile(summaryPath, "utf8"))).toEqual(report);
+    const trace = JSON.parse(await readFile(tracePath, "utf8"));
+    expect(trace.traceEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "Pull request opened for review", ph: "i" }),
+        expect.objectContaining({ name: "job", cat: "ci.queue", ph: "X" }),
+        expect.objectContaining({ name: "job", cat: "ci.execution", ph: "X" }),
+        expect.objectContaining({ name: "step", cat: "ci.step", ph: "X" }),
+        expect.objectContaining({ name: "Inline feedback added", cat: "review.feedback" }),
+      ]),
+    );
+    expect(
+      trace.traceEvents.every(
+        (event: { ts?: number; dur?: number }) =>
+          (event.ts === undefined || Number.isSafeInteger(event.ts)) &&
+          (event.dur === undefined || (Number.isSafeInteger(event.dur) && event.dur >= 0)),
+      ),
+    ).toBe(true);
+    expect(JSON.parse(await readFile(manifestPath, "utf8"))).toMatchObject({
+      schemaVersion: 1,
+      repository: "NVIDIA/NemoClaw",
+      pullRequest: 42,
+      headSha: "a".repeat(40),
+      completeness: { workflowRuns: "complete", jobs: "complete", lifecycle: "complete" },
+    });
   });
 
   test("uses commit timestamps when retained workflow runs are absent (#10542)", async () => {

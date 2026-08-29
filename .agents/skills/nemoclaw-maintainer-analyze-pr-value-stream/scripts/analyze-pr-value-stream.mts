@@ -8,6 +8,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { exportLifetimeTrace, type LifetimeArtifacts } from "./export-pr-lifetime-trace.mts";
+
 const execFileAsync = promisify(execFile);
 const MAX_GH_OUTPUT = 10_000_000;
 const MAX_JSON_OUTPUT = 4_000_000;
@@ -26,6 +28,7 @@ type Input = {
 
 export type ValueStreamReport = {
   measuredAt: string;
+  lifetime?: LifetimeArtifacts;
   repository: string;
   number: number;
   url: string;
@@ -1498,7 +1501,17 @@ function parseArguments(argv: string[]): Input {
 }
 
 async function main(): Promise<void> {
-  const report = await analyzePrValueStream(parseArguments(process.argv.slice(2)));
+  const input = parseArguments(process.argv.slice(2));
+  const normalized = normalizeAnalysisInput(input);
+  const report = await collectValueStreamReport(normalized);
+  const lifetime = await exportLifetimeTrace({
+    workdir: normalized.workdir,
+    repository: normalized.repository,
+    number: normalized.number,
+    report,
+    githubRead: async (args) => runGithubCli({ workdir: normalized.workdir, args }),
+  });
+  void lifetime;
   const output = `${JSON.stringify(report, null, 2)}\n`;
   if (Buffer.byteLength(output) > MAX_JSON_OUTPUT)
     throw new Error("value-stream JSON exceeded the 4 MB output bound");

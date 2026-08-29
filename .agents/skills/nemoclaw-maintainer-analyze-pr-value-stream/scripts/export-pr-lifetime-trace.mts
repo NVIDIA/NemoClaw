@@ -1,0 +1,747 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+import { validateChromeTrace } from "./validate-chrome-trace.mts";
+
+const MAX_PAGES = 10;
+const MAX_REVISIONS = 250;
+const MAX_WORKFLOW_RUNS = 2_000;
+const MAX_JOBS = 10_000;
+const MAX_TRACE_EVENTS = 250_000;
+const MAX_TRACE_BYTES = 100_000_000;
+const PAGE_SIZE = 100;
+const READ_CONCURRENCY = 8;
+
+type GithubRead = (args: string[]) => Promise<{ stdout: string }>;
+
+type TraceEvent = {
+  name: string;
+  cat?: string;
+  ph: "M" | "i" | "X";
+  ts?: number;
+  dur?: number;
+  pid: number;
+  tid: number;
+  s?: "t";
+  args: Record<string, string | number | boolean | null>;
+};
+
+type Commit = {
+  oid: string;
+  authoredAt: number;
+  committedAt: number;
+  subject: string;
+};
+
+type Run = {
+  id: number;
+  event: string;
+  head_sha: string;
+  created_at: string;
+  run_started_at: string | null;
+  updated_at: string;
+  status: string;
+  conclusion: string | null;
+  name: string;
+  html_url: string;
+};
+
+export type LifetimeArtifacts = {
+  directory: string;
+  summary: string;
+  trace: string;
+  traceEvents: number;
+  lifecycleEvents: number;
+  revisions: number;
+  workflowRuns: number;
+  jobs: number;
+  externalChecks: number;
+  manifest: string;
+  truncated: false;
+  caveats: string[];
+};
+
+type ExportInput = {
+  workdir: string;
+  repository: string;
+  number: number;
+  report: unknown;
+  githubRead: GithubRead;
+};
+
+function parseTime(value: unknown, label: string): number {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value)))
+    throw new Error(label + " was not a valid timestamp");
+  return Date.parse(value);
+}
+
+function optionalTime(value: unknown): number | null {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null;
+}
+
+function micros(milliseconds: number): number {
+  return Math.round(milliseconds * 1_000);
+}
+
+function boundedText(value: unknown, maximum = 300): string {
+  return typeof value === "string" ? value.slice(0, maximum) : "";
+}
+
+function validateArray(value: unknown, label: string): any[] {
+  if (!Array.isArray(value)) throw new Error(label + " response was not an array");
+  return value;
+}
+
+async function readPages(input: {
+  githubRead: GithubRead;
+  endpoint: string;
+  projection: string;
+  label: string;
+}): Promise<{ rows: any[]; truncated: boolean }> {
+  const rows: any[] = [];
+  for (let page = 1; page <= MAX_PAGES; page += 1) {
+    const separator = input.endpoint.includes("?") ? "&" : "?";
+    const result = await input.githubRead([
+      "api",
+      input.endpoint + separator + "per_page=" + PAGE_SIZE + "&page=" + page,
+      "--jq",
+      input.projection,
+    ]);
+    const pageRows = validateArray(JSON.parse(result.stdout), input.label);
+    rows.push(...pageRows);
+    if (pageRows.length < PAGE_SIZE) return { rows, truncated: false };
+  }
+  return { rows, truncated: true };
+}
+
+async function mapBounded<T, R>(values: T[], operation: (value: T) => Promise<R>): Promise<R[]> {
+  const result: R[] = [];
+  for (let index = 0; index < values.length; index += READ_CONCURRENCY) {
+    result.push(
+      ...(await Promise.all(values.slice(index, index + READ_CONCURRENCY).map(operation))),
+    );
+  }
+  return result;
+}
+
+function addMetadata(
+  events: TraceEvent[],
+  pid: number,
+  tid: number,
+  processName: string,
+  threadName: string,
+): void {
+  if (
+    !events.some((event) => event.ph === "M" && event.name === "process_name" && event.pid === pid)
+  )
+    events.push({ name: "process_name", ph: "M", pid, tid: 0, args: { name: processName } });
+  if (
+    !events.some(
+      (event) =>
+        event.ph === "M" && event.name === "thread_name" && event.pid === pid && event.tid === tid,
+    )
+  )
+    events.push({ name: "thread_name", ph: "M", pid, tid, args: { name: threadName } });
+}
+
+function addInstant(
+  events: TraceEvent[],
+  input: {
+    name: string;
+    category: string;
+    at: number;
+    pid: number;
+    tid: number;
+    args?: TraceEvent["args"];
+  },
+): void {
+  events.push({
+    name: input.name,
+    cat: input.category,
+    ph: "i",
+    s: "t",
+    ts: micros(input.at),
+    pid: input.pid,
+    tid: input.tid,
+    args: input.args ?? {},
+  });
+}
+
+function addSpan(
+  events: TraceEvent[],
+  input: {
+    name: string;
+    category: string;
+    start: number | null;
+    end: number | null;
+    pid: number;
+    tid: number;
+    args?: TraceEvent["args"];
+  },
+): void {
+  if (input.start === null) return;
+  if (input.end === null || input.end < input.start) {
+    addInstant(events, {
+      name: input.name + " — timing incomplete",
+      category: input.category,
+      at: input.start,
+      pid: input.pid,
+      tid: input.tid,
+      args: { ...(input.args ?? {}), timingIncomplete: true },
+    });
+    return;
+  }
+  events.push({
+    name: input.name,
+    cat: input.category,
+    ph: "X",
+    ts: micros(input.start),
+    dur: micros(input.end - input.start),
+    pid: input.pid,
+    tid: input.tid,
+    args: input.args ?? {},
+  });
+}
+
+function normalizeCommits(pull: any): Commit[] {
+  const rows = validateArray(pull?.commits, "pull request commits");
+  if (rows.length < 1 || rows.length > MAX_REVISIONS)
+    throw new Error("lifetime trace requires between 1 and " + MAX_REVISIONS + " revisions");
+  return rows.map((commit: any) => ({
+    oid: String(commit?.oid ?? ""),
+    authoredAt: parseTime(commit?.authoredDate ?? commit?.committedDate, "commit authoredDate"),
+    committedAt: parseTime(commit?.committedDate, "commit committedDate"),
+    subject:
+      boundedText(commit?.messageHeadline, 200) ||
+      "Commit " + String(commit?.oid ?? "").slice(0, 8),
+  }));
+}
+
+async function readPull(input: ExportInput): Promise<any> {
+  const result = await input.githubRead([
+    "pr",
+    "view",
+    String(input.number),
+    "--repo",
+    input.repository,
+    "--json",
+    "number,url,state,isDraft,createdAt,mergedAt,updatedAt,author,assignees,baseRefName,headRefName,headRefOid,commits,reviews",
+  ]);
+  const pull = JSON.parse(result.stdout);
+  if (pull?.number !== input.number || typeof pull?.url !== "string")
+    throw new Error("GitHub pull request response did not match the lifetime trace contract");
+  return pull;
+}
+
+async function readRuns(
+  input: ExportInput,
+  branch: string,
+  commitIds: Set<string>,
+): Promise<{ rows: Run[]; truncated: boolean }> {
+  const collection = await readPages({
+    githubRead: input.githubRead,
+    endpoint: "repos/" + input.repository + "/actions/runs?branch=" + encodeURIComponent(branch),
+    projection:
+      "[.workflow_runs[] | {id,event,head_sha,created_at,run_started_at,updated_at,status,conclusion,name,html_url}]",
+    label: "workflow runs",
+  });
+  if (collection.truncated) throw new Error("workflow history exceeded the bounded lifetime pages");
+  const rows = collection.rows.filter(
+    (run) => commitIds.has(run?.head_sha) && Number.isSafeInteger(run?.id),
+  );
+  if (rows.length > MAX_WORKFLOW_RUNS)
+    throw new Error("lifetime workflow history exceeded " + MAX_WORKFLOW_RUNS + " runs");
+  return { rows: rows as Run[], truncated: collection.truncated };
+}
+
+async function readJobs(input: ExportInput, runs: Run[]): Promise<any[]> {
+  const groups = await mapBounded(runs, async (run) => {
+    const result = await input.githubRead([
+      "api",
+      "repos/" + input.repository + "/actions/runs/" + run.id + "/jobs?per_page=100",
+      "--jq",
+      "{total_count,jobs:[.jobs[] | {id,name,status,conclusion,created_at,started_at,completed_at,runner_name,runner_group_name,labels,html_url,steps}]}",
+    ]);
+    const payload = JSON.parse(result.stdout);
+    const jobs = validateArray(payload?.jobs, "workflow jobs");
+    if (Number(payload?.total_count) > jobs.length)
+      throw new Error("workflow " + run.id + " exceeded the 100-job lifetime trace bound");
+    return jobs.map((job) => ({ ...job, run }));
+  });
+  const jobs = groups.flat();
+  if (jobs.length > MAX_JOBS)
+    throw new Error("lifetime workflow history exceeded " + MAX_JOBS + " jobs");
+  return jobs;
+}
+
+async function readExternalChecks(input: ExportInput, commits: Commit[]): Promise<any[]> {
+  const groups = await mapBounded(commits, async (commit) => {
+    const collection = await readPages({
+      githubRead: input.githubRead,
+      endpoint: "repos/" + input.repository + "/commits/" + commit.oid + "/check-runs",
+      projection:
+        "[.check_runs[] | {id,name,status,conclusion,created_at,started_at,completed_at,html_url,app:{id:.app.id,slug:.app.slug}}]",
+      label: "check runs",
+    });
+    if (collection.truncated)
+      throw new Error("check runs exceeded the bounded lifetime pages for " + commit.oid);
+    return collection.rows
+      .filter((check) => check?.app?.slug !== "github-actions")
+      .map((check) => ({ ...check, commit }));
+  });
+  return groups.flat();
+}
+
+async function readLifecycle(
+  input: ExportInput,
+): Promise<{ timeline: any[]; comments: any[]; inline: any[]; truncated: boolean }> {
+  const [timeline, comments, inline] = await Promise.all([
+    readPages({
+      githubRead: input.githubRead,
+      endpoint: "repos/" + input.repository + "/issues/" + input.number + "/timeline",
+      projection:
+        "[.[] | {id,event,created_at,actor:(.actor.login // null),commit_id,label:(.label.name // null),requested_reviewer:(.requested_reviewer.login // null),rename}]",
+      label: "pull request timeline",
+    }),
+    readPages({
+      githubRead: input.githubRead,
+      endpoint: "repos/" + input.repository + "/issues/" + input.number + "/comments",
+      projection: "[.[] | {id,created_at,updated_at,user:(.user.login // null),html_url}]",
+      label: "pull request comments",
+    }),
+    readPages({
+      githubRead: input.githubRead,
+      endpoint: "repos/" + input.repository + "/pulls/" + input.number + "/comments",
+      projection:
+        "[.[] | {id,created_at,updated_at,user:(.user.login // null),path,line,commit_id,html_url,in_reply_to_id}]",
+      label: "pull request review comments",
+    }),
+  ]);
+  return {
+    timeline: timeline.rows,
+    comments: comments.rows,
+    inline: inline.rows,
+    truncated: timeline.truncated || comments.truncated || inline.truncated,
+  };
+}
+
+function renderTrace(input: {
+  pull: any;
+  commits: Commit[];
+  runs: Run[];
+  jobs: any[];
+  externalChecks: any[];
+  lifecycle: Awaited<ReturnType<typeof readLifecycle>>;
+}): { events: TraceEvent[]; lifecycleEvents: number } {
+  const events: TraceEvent[] = [];
+  addMetadata(events, 1, 1, "PR #" + input.pull.number, "Lifecycle");
+  addMetadata(events, 2, 1, "Author activity", input.pull.author?.login ?? "author");
+  addMetadata(events, 3, 1, "Feedback and reviews", "Comments and reviews");
+  let lifecycleEvents = 0;
+  const instant = (entry: Parameters<typeof addInstant>[1]): void => {
+    lifecycleEvents += 1;
+    addInstant(events, entry);
+  };
+  const opened = parseTime(input.pull.createdAt, "pull request createdAt");
+  const merged = optionalTime(input.pull.mergedAt);
+  const observedEnd = merged ?? optionalTime(input.pull.updatedAt);
+  addSpan(events, {
+    name: "Pull request lifetime",
+    category: "pr.lifecycle",
+    start: opened,
+    end: observedEnd,
+    pid: 1,
+    tid: 1,
+    args: { state: input.pull.state, url: input.pull.url },
+  });
+  instant({
+    name: "Pull request opened" + (input.pull.isDraft ? " as draft" : " for review"),
+    category: "pr.lifecycle",
+    at: opened,
+    pid: 1,
+    tid: 1,
+    args: { actor: input.pull.author?.login ?? null, url: input.pull.url, state: input.pull.state },
+  });
+  for (const row of input.lifecycle.timeline) {
+    const at = optionalTime(row?.created_at);
+    if (at === null || ["commented", "reviewed", "committed"].includes(String(row?.event)))
+      continue;
+    instant({
+      name: String(row.event).replaceAll("_", " "),
+      category: "pr.timeline",
+      at,
+      pid: 1,
+      tid: 1,
+      args: {
+        actor: row.actor ?? null,
+        label: row.label ?? null,
+        requestedReviewer: row.requested_reviewer ?? null,
+        renameFrom: row.rename?.from ?? null,
+        renameTo: row.rename?.to ?? null,
+      },
+    });
+  }
+  for (const review of validateArray(input.pull.reviews ?? [], "pull request reviews")) {
+    const submitted = optionalTime(review?.submittedAt);
+    if (submitted === null) continue;
+    instant({
+      name: "Review " + String(review.state ?? "submitted").toLowerCase(),
+      category: "review.submission",
+      at: submitted,
+      pid: 3,
+      tid: 1,
+      args: { actor: review.author?.login ?? null, commit: review.commit?.oid ?? null },
+    });
+  }
+  for (const row of input.lifecycle.comments) {
+    const created = optionalTime(row.created_at);
+    if (created !== null)
+      instant({
+        name: "Comment added",
+        category: "review.comment",
+        at: created,
+        pid: 3,
+        tid: 1,
+        args: { id: row.id, actor: row.user, url: row.html_url ?? null },
+      });
+    const updated = optionalTime(row.updated_at);
+    if (created !== null && updated !== null && updated !== created)
+      instant({
+        name: "Comment updated",
+        category: "review.comment",
+        at: updated,
+        pid: 3,
+        tid: 1,
+        args: { id: row.id, actor: row.user, url: row.html_url ?? null },
+      });
+  }
+  const feedback: { at: number; row: any }[] = [];
+  for (const row of input.lifecycle.inline) {
+    const created = optionalTime(row.created_at);
+    if (created !== null) {
+      feedback.push({ at: created, row });
+      instant({
+        name: "Inline feedback added",
+        category: "review.feedback",
+        at: created,
+        pid: 3,
+        tid: 1,
+        args: {
+          id: row.id,
+          actor: row.user,
+          path: boundedText(row.path, 500),
+          line: row.line ?? null,
+          commit: row.commit_id ?? null,
+          url: row.html_url ?? null,
+        },
+      });
+    }
+    const updated = optionalTime(row.updated_at);
+    if (created !== null && updated !== null && updated !== created)
+      instant({
+        name: "Inline feedback updated",
+        category: "review.feedback",
+        at: updated,
+        pid: 3,
+        tid: 1,
+        args: { id: row.id, actor: row.user, url: row.html_url ?? null },
+      });
+  }
+  const firstRuns = new Map<string, Run>();
+  for (const run of input.runs
+    .slice()
+    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))) {
+    if (!firstRuns.has(run.head_sha)) firstRuns.set(run.head_sha, run);
+  }
+  for (const [index, commit] of input.commits.entries()) {
+    const pid = 1_000 + index;
+    addMetadata(events, pid, 1, "Revision " + commit.oid.slice(0, 8), "Workflows");
+    instant({
+      name: commit.subject,
+      category: "author.commit",
+      at: commit.authoredAt,
+      pid: 2,
+      tid: 1,
+      args: { commit: commit.oid },
+    });
+    const firstRun = firstRuns.get(commit.oid);
+    if (firstRun) {
+      const pushed = parseTime(firstRun.created_at, "workflow createdAt");
+      instant({
+        name: "Commit push observed",
+        category: "author.push",
+        at: pushed,
+        pid: 2,
+        tid: 1,
+        args: { commit: commit.oid, source: "first exact-commit workflow" },
+      });
+      addSpan(events, {
+        name: "Commit publication",
+        category: "author.publish",
+        start: commit.authoredAt,
+        end: pushed,
+        pid: 2,
+        tid: 1_000 + index,
+        args: { commit: commit.oid, causality: "not-established" },
+      });
+      const firstFeedback = feedback.find(
+        (entry) => entry.at >= pushed && entry.row.commit_id === commit.oid,
+      );
+      if (firstFeedback) {
+        addSpan(events, {
+          name: "Waiting for actionable feedback",
+          category: "author.waiting-for-feedback",
+          start: pushed,
+          end: firstFeedback.at,
+          pid: 2,
+          tid: 2_000 + index,
+          args: { commit: commit.oid, feedbackId: firstFeedback.row.id },
+        });
+      }
+    }
+  }
+  for (const [index, entry] of feedback.entries()) {
+    const nextCommit = input.commits.find((commit) => commit.authoredAt > entry.at);
+    if (!nextCommit) continue;
+    addSpan(events, {
+      name: "Feedback to next author change",
+      category: "author.response",
+      start: entry.at,
+      end: nextCommit.authoredAt,
+      pid: 2,
+      tid: 3_000 + index,
+      args: {
+        feedbackId: entry.row.id,
+        nextCommit: nextCommit.oid,
+        relationship: "next-author-change",
+        causality: "not-established",
+      },
+    });
+  }
+  for (const [index, run] of input.runs.entries()) {
+    const commitIndex = input.commits.findIndex((commit) => commit.oid === run.head_sha);
+    const pid = 1_000 + Math.max(0, commitIndex);
+    const tid = 10 + index;
+    addMetadata(events, pid, tid, "Revision " + run.head_sha.slice(0, 8), run.name + " #" + run.id);
+    addSpan(events, {
+      name: run.name,
+      category: "ci.workflow",
+      start: optionalTime(run.created_at),
+      end: optionalTime(run.updated_at),
+      pid,
+      tid,
+      args: {
+        runId: run.id,
+        event: run.event,
+        status: run.status,
+        conclusion: run.conclusion,
+        url: run.html_url,
+      },
+    });
+  }
+  for (const [jobIndex, job] of input.jobs.entries()) {
+    const commitIndex = input.commits.findIndex((commit) => commit.oid === job.run.head_sha);
+    const pid = 1_000 + Math.max(0, commitIndex);
+    const tid = 10_000 + jobIndex;
+    addMetadata(
+      events,
+      pid,
+      tid,
+      "Revision " + job.run.head_sha.slice(0, 8),
+      job.run.name + " / " + job.name,
+    );
+    const created = optionalTime(job.created_at);
+    const started = optionalTime(job.started_at);
+    const completed = optionalTime(job.completed_at);
+    addSpan(events, {
+      name: job.name,
+      category: "ci.queue",
+      start: created,
+      end: started,
+      pid,
+      tid,
+      args: {
+        jobId: job.id,
+        runner: job.runner_name ?? null,
+        runnerGroup: job.runner_group_name ?? null,
+      },
+    });
+    addSpan(events, {
+      name: job.name,
+      category: "ci.execution",
+      start: started,
+      end: completed,
+      pid,
+      tid,
+      args: {
+        jobId: job.id,
+        status: job.status,
+        conclusion: job.conclusion,
+        url: job.html_url ?? null,
+      },
+    });
+    for (const [stepIndex, step] of validateArray(job.steps ?? [], "workflow steps").entries()) {
+      const stepTid = 1_000_000 + jobIndex * 1_000 + stepIndex;
+      addMetadata(
+        events,
+        pid,
+        stepTid,
+        "Revision " + job.run.head_sha.slice(0, 8),
+        job.name + " / " + step.name,
+      );
+      addSpan(events, {
+        name: step.name,
+        category: "ci.step",
+        start: optionalTime(step.started_at),
+        end: optionalTime(step.completed_at),
+        pid,
+        tid: stepTid,
+        args: {
+          jobId: job.id,
+          number: step.number,
+          status: step.status,
+          conclusion: step.conclusion,
+        },
+      });
+    }
+  }
+  for (const [index, check] of input.externalChecks.entries()) {
+    const commitIndex = input.commits.findIndex((commit) => commit.oid === check.commit.oid);
+    const pid = 1_000 + Math.max(0, commitIndex);
+    const tid = 50_000 + index;
+    addMetadata(events, pid, tid, "Revision " + check.commit.oid.slice(0, 8), "External checks");
+    addSpan(events, {
+      name: check.name,
+      category: "ci.external-check",
+      start: optionalTime(check.started_at ?? check.created_at),
+      end: optionalTime(check.completed_at),
+      pid,
+      tid,
+      args: {
+        checkId: check.id,
+        app: check.app?.slug ?? null,
+        status: check.status,
+        conclusion: check.conclusion,
+        url: check.html_url ?? null,
+      },
+    });
+  }
+  events.sort(
+    (a, b) =>
+      (a.ts ?? -1) - (b.ts ?? -1) || a.pid - b.pid || a.tid - b.tid || a.name.localeCompare(b.name),
+  );
+  if (events.length > MAX_TRACE_EVENTS)
+    throw new Error("lifetime trace exceeded " + MAX_TRACE_EVENTS + " events");
+  return { events, lifecycleEvents };
+}
+
+async function writeAtomic(file: string, content: string): Promise<void> {
+  const temporary = file + ".tmp-" + process.pid;
+  await writeFile(temporary, content, { mode: 0o600 });
+  await rename(temporary, file);
+}
+
+export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeArtifacts> {
+  const pull = await readPull(input);
+  const expectedHead = (input.report as { headSha?: unknown }).headSha;
+  if (typeof expectedHead !== "string" || pull.headRefOid !== expectedHead)
+    throw new Error("pull request head changed during lifetime analysis");
+  const commits = normalizeCommits(pull);
+  const runsCollection = await readRuns(
+    input,
+    pull.headRefName,
+    new Set(commits.map((commit) => commit.oid)),
+  );
+  const [jobs, externalChecks, lifecycle] = await Promise.all([
+    readJobs(input, runsCollection.rows),
+    readExternalChecks(input, commits),
+    readLifecycle(input),
+  ]);
+  const rendered = renderTrace({
+    pull,
+    commits,
+    runs: runsCollection.rows,
+    jobs,
+    externalChecks,
+    lifecycle,
+  });
+  const caveats = [
+    "GitHub does not expose a canonical branch-created timestamp. The first exact-commit workflow is the observable push signal.",
+    "GitHub does not expose pull request description edit history. The trace cannot reconstruct description edits.",
+    "Feedback-to-change spans identify the next author change. They do not establish causality.",
+  ];
+  if (lifecycle.truncated)
+    throw new Error("pull request lifecycle exceeded the bounded lifetime pages");
+  const relativeDirectory = path.join(
+    ".nemoclaw-maintainer",
+    "pr-value-stream",
+    "pr-" + input.number,
+  );
+  const directory = path.resolve(input.workdir, relativeDirectory);
+  const tracePath = path.join(directory, "trace.json");
+  const summaryPath = path.join(directory, "summary.json");
+  const manifestPath = path.join(directory, "manifest.json");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const generatedAt = new Date().toISOString();
+  const trace =
+    JSON.stringify(
+      {
+        traceEvents: rendered.events,
+        displayTimeUnit: "ms",
+        metadata: { repository: input.repository, pullRequest: input.number, generatedAt, caveats },
+      },
+      null,
+      2,
+    ) + "\n";
+  if (Buffer.byteLength(trace) > MAX_TRACE_BYTES)
+    throw new Error("lifetime trace exceeded the 100 MB output bound");
+  const artifacts: LifetimeArtifacts = {
+    directory: relativeDirectory,
+    summary: path.join(relativeDirectory, "summary.json"),
+    trace: path.join(relativeDirectory, "trace.json"),
+    manifest: path.join(relativeDirectory, "manifest.json"),
+    traceEvents: rendered.events.length,
+    lifecycleEvents: rendered.lifecycleEvents,
+    revisions: commits.length,
+    workflowRuns: runsCollection.rows.length,
+    jobs: jobs.length,
+    externalChecks: externalChecks.length,
+    truncated: false,
+    caveats,
+  };
+  Object.assign(input.report as object, { lifetime: artifacts });
+  const summary = JSON.stringify(input.report, null, 2) + "\n";
+  const manifest =
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        repository: input.repository,
+        pullRequest: input.number,
+        headSha: pull.headRefOid,
+        generatedAt,
+        files: { summary: "summary.json", trace: "trace.json" },
+        bytes: { summary: Buffer.byteLength(summary), trace: Buffer.byteLength(trace) },
+        completeness: {
+          revisions: "complete",
+          workflowRuns: "complete",
+          jobs: "complete",
+          checks: "complete",
+          lifecycle: "complete",
+        },
+      },
+      null,
+      2,
+    ) + "\n";
+  try {
+    await Promise.all([writeAtomic(tracePath, trace), writeAtomic(summaryPath, summary)]);
+    await validateChromeTrace(tracePath);
+    await writeAtomic(manifestPath, manifest);
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
+  return artifacts;
+}
