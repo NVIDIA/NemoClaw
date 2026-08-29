@@ -7,7 +7,7 @@ import type { ConnectHarness } from "./connect-flow-test-harness";
 type ForwardRecord = {
   owner: string;
   reachable: boolean;
-  status: "dead" | "running";
+  status: "active" | "dead" | "running" | "stopped";
 };
 
 function forwardList(records: ReadonlyMap<number, ForwardRecord>): string {
@@ -21,7 +21,9 @@ function forwardList(records: ReadonlyMap<number, ForwardRecord>): string {
 
 export function createHermesPortableForwardRecoveryFixture({
   ports = [18_789],
+  active = [],
   running = [],
+  stopped = [],
   occupied = [],
   malformedList = false,
   listStatus = 0,
@@ -32,7 +34,9 @@ export function createHermesPortableForwardRecoveryFixture({
   listOutput,
 }: {
   ports?: readonly number[];
+  active?: readonly number[];
   running?: readonly number[];
+  stopped?: readonly number[];
   occupied?: readonly number[];
   malformedList?: boolean;
   listStatus?: number;
@@ -43,8 +47,14 @@ export function createHermesPortableForwardRecoveryFixture({
   listOutput?: string;
 } = {}) {
   const records = new Map<number, ForwardRecord>();
+  for (const port of active) {
+    records.set(port, { owner: "alpha", reachable: true, status: "active" });
+  }
   for (const port of running) {
     records.set(port, { owner: "alpha", reachable: true, status: "running" });
+  }
+  for (const port of stopped) {
+    records.set(port, { owner: "alpha", reachable: false, status: "stopped" });
   }
   for (const port of occupied) {
     records.set(port, { owner: "beta", reachable: true, status: "running" });

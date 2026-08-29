@@ -46,6 +46,28 @@ describe("Hermes Portable probe-only forward recovery", () => {
     expect(fixture.rollbackCalls).toEqual([]);
   });
 
+  it("keeps exact active forwards verification-only", () => {
+    const fixture = createRecoveryFixture({ ports: [18_789, 8_642], active: [18_789, 8_642] });
+
+    expect(recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
+      kind: "verified",
+      restoredPorts: [],
+    });
+    expect(fixture.currentCalls).toEqual([["forward", "list", "--gateway", "nemoclaw"]]);
+    expect(fixture.rollbackCalls).toEqual([]);
+  });
+
+  it("restores an exact stopped forward", () => {
+    const fixture = createRecoveryFixture({ stopped: [18_789] });
+
+    expect(recoverHermesPortableLaunchForwards(fixture.input)).toEqual({
+      kind: "restored",
+      restoredPorts: [18_789],
+    });
+    expect(fixture.currentCalls.filter((args) => args[1] === "start")).toHaveLength(1);
+    expect(fixture.rollbackCalls).toEqual([]);
+  });
+
   it("accepts a returned nonzero start only after the exact owner settles healthy", () => {
     const fixture = createRecoveryFixture({ startStatus: 1 });
 
@@ -80,7 +102,7 @@ describe("Hermes Portable probe-only forward recovery", () => {
   });
 
   it.each([
-    ["PID", "alpha 127.0.0.1 18789 not-a-pid running"],
+    ["active PID", "alpha 127.0.0.1 18789 not-a-pid active"],
     ["bind", "alpha not-an-address 18789 12345 running"],
     ["port", "alpha 127.0.0.1 70000 12345 running"],
     ["status", "alpha 127.0.0.1 18789 12345 uncertain"],
@@ -108,20 +130,32 @@ describe("Hermes Portable probe-only forward recovery", () => {
   });
 
   it("rejects ambiguous duplicate rows before mutation", () => {
-    const fixture = createRecoveryFixture({ running: [18_789] });
+    const fixture = createRecoveryFixture({ active: [18_789] });
     Object.assign(fixture.input.deps, {
       captureCurrent: () => ({
         status: 0,
         output:
           "SANDBOX BIND PORT PID STATUS\n" +
-          "alpha 127.0.0.1 18789 12345 running\n" +
-          "alpha 127.0.0.1 18789 12346 running",
+          "alpha 127.0.0.1 18789 12345 active\n" +
+          "alpha 127.0.0.1 18789 12346 active",
       }),
     });
 
     expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
       expect.objectContaining({ failure: "forward-state-unavailable" }),
     );
+    expect(fixture.rollbackCalls).toEqual([]);
+  });
+
+  it("rejects a foreign active owner before mutation", () => {
+    const fixture = createRecoveryFixture({
+      listOutput: "SANDBOX BIND PORT PID STATUS\nbeta 127.0.0.1 18789 12345 active",
+    });
+
+    expect(() => recoverHermesPortableLaunchForwards(fixture.input)).toThrow(
+      expect.objectContaining({ failure: "forward-occupied" }),
+    );
+    expect(fixture.currentCalls.some((args) => ["start", "stop"].includes(args[1]!))).toBe(false);
     expect(fixture.rollbackCalls).toEqual([]);
   });
 

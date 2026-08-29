@@ -4,7 +4,11 @@
 import { isIP } from "node:net";
 
 import { parseForwardList } from "../../../state/sandbox-session";
-import { classifySandboxForwardHealth, isLocalForwardReachable } from "../forward-health";
+import {
+  classifySandboxForwardHealth,
+  isLiveSandboxForwardStatus,
+  isLocalForwardReachable,
+} from "../forward-health";
 
 const FORWARD_SETTLEMENT_TIMEOUT_MS = 3_000;
 const FORWARD_SETTLEMENT_INTERVAL_MS = 100;
@@ -92,7 +96,7 @@ function isSupportedForwardRow(parts: readonly string[]): boolean {
     /^\d+$/u.test(pidValue) &&
     Number.isSafeInteger(pid) &&
     pid > 0 &&
-    ["running", "stopped"].includes(status.toLowerCase())
+    (isLiveSandboxForwardStatus(status.toLowerCase()) || status.toLowerCase() === "stopped")
   );
 }
 
