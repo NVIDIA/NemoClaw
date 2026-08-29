@@ -504,6 +504,25 @@ describe("pull request value-stream analysis", () => {
     await expect(stat(backup)).rejects.toThrow();
   });
 
+  test("reports non-destructive recovery for multiple interrupted backups (#10542)", async () => {
+    const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-multiple-backups-"));
+    temporaryDirectories.push(publicationRoot);
+    const destination = path.join(publicationRoot, "pr-42");
+    const first = path.join(publicationRoot, ".pr-42-staging-first-previous");
+    const second = path.join(publicationRoot, ".pr-42-staging-second-previous");
+    await Promise.all([mkdir(first), mkdir(second)]);
+    await expect(
+      publishStagedDirectory({
+        staging: path.join(publicationRoot, "missing"),
+        destination,
+        lock: destination + ".lock",
+      }),
+    ).rejects.toThrow(
+      `inspect each manifest.json, then rename exactly one complete candidate to the destination without deleting the others: ${first}, ${second}`,
+    );
+    await expect(Promise.all([stat(first), stat(second)])).resolves.toHaveLength(2);
+  });
+
   test("preserves published artifacts when freshness validation fails (#10542)", async () => {
     const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-contention-"));
     temporaryDirectories.push(publicationRoot);

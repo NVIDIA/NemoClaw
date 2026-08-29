@@ -868,7 +868,10 @@ async function recoverInterruptedPublication(
   }
   if (!destinationExists && backups.length > 1)
     throw new Error(
-      "multiple interrupted lifetime artifact backups require recovery: " + backups.join(", "),
+      "multiple interrupted lifetime artifact backups require recovery; destination " +
+        destination +
+        "; inspect each manifest.json, then rename exactly one complete candidate to the destination without deleting the others: " +
+        backups.join(", "),
     );
   await requirePublicationLockOwnership(lock, token);
   await Promise.all(backups.map((backup) => rm(backup, { recursive: true, force: true })));
