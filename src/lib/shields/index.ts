@@ -2472,7 +2472,9 @@ function withExpiredAutoRestoreDeadlineFence<T>(
         !sameTimerMarkerGeneration(readTimerMarker(sandboxName), completedMarker) ||
         !isShieldsTimerDeadlineAbandoned(sandboxName, STATE_DIR)
       ) {
-        throw new Error("Completed auto-restore recovery authority changed");
+        throw new Error(
+          `Completed auto-restore recovery authority changed for sandbox '${sandboxName}'. Rerun \`${CLI_NAME} ${sandboxName} shields status\`. Do not modify lifecycle-lock or timer files while recovery may be active.`,
+        );
       }
     };
     return withMcpLifecycleDeadlineFenceSync(

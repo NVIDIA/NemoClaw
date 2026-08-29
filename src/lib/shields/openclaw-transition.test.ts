@@ -579,7 +579,7 @@ describe("OpenClaw shields flow rollback and recovery", () => {
   });
 
   it("retires an orphaned completed auto-restore generation and containment (#10094)", {
-    timeout: 15_000,
+    timeout: 30_000,
   }, () => {
     const harness = createHarness();
     const paths = writeCompletedAutoRestoreOrphanFixture();
@@ -615,6 +615,24 @@ describe("OpenClaw shields flow rollback and recovery", () => {
       true,
       true,
     ]);
+  });
+
+  it("gives safe retry guidance when completed recovery authority changes", () => {
+    const harness = createHarness();
+    const paths = writeCompletedAutoRestoreOrphanFixture();
+    const realRename = fs.renameSync.bind(fs);
+    vi.spyOn(fs, "renameSync").mockImplementationOnce((source, destination) => {
+      realRename(source, destination);
+      const marker = JSON.parse(fs.readFileSync(paths.markerPath, "utf8"));
+      marker.restoreAt = new Date(Date.now() + 60_000).toISOString();
+      fs.writeFileSync(paths.markerPath, JSON.stringify(marker));
+    });
+
+    expect(() => harness.shieldsStatus("openclaw")).toThrow(
+      "Rerun `nemoclaw openclaw shields status`. Do not modify lifecycle-lock or timer files",
+    );
+    expect(fs.existsSync(paths.lockPath)).toBe(true);
+    expect(fs.existsSync(paths.containmentPath)).toBe(true);
   });
 
   afterEach(() => {

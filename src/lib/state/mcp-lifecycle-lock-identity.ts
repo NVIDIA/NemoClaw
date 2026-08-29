@@ -27,6 +27,14 @@ export interface McpLifecycleLockOwner {
   acquiredAt: string;
   /** Exact stale-generation evidence recorded by a durable containment owner. */
   containmentReason?: string;
+  /** Machine-readable generation protected by a durable containment owner. */
+  containedGeneration?: {
+    target: "main" | "deadline" | "reaper";
+    dev: number;
+    ino: number;
+    token: string;
+    ownerPid: number | null;
+  };
 }
 
 export interface LockObservation {
@@ -53,6 +61,27 @@ const processIdentityCache = new Map<number, { checkedAt: number; identity: stri
 export function isMcpLifecycleLockOwner(value: unknown): value is McpLifecycleLockOwner {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Record<string, unknown>;
+  const containedGeneration = candidate.containedGeneration;
+  const generation = containedGeneration as Record<string, unknown>;
+  const hasValidContainedGeneration =
+    containedGeneration === undefined ||
+    (containedGeneration !== null &&
+      typeof containedGeneration === "object" &&
+      (generation.target === "main" ||
+        generation.target === "deadline" ||
+        generation.target === "reaper") &&
+      typeof generation.dev === "number" &&
+      Number.isSafeInteger(generation.dev) &&
+      generation.dev >= 0 &&
+      typeof generation.ino === "number" &&
+      Number.isSafeInteger(generation.ino) &&
+      generation.ino >= 0 &&
+      typeof generation.token === "string" &&
+      generation.token.length > 0 &&
+      (generation.ownerPid === null ||
+        (typeof generation.ownerPid === "number" &&
+          Number.isSafeInteger(generation.ownerPid) &&
+          generation.ownerPid > 0)));
   return (
     candidate.version === LOCK_SCHEMA_VERSION &&
     typeof candidate.sandboxName === "string" &&
@@ -72,7 +101,8 @@ export function isMcpLifecycleLockOwner(value: unknown): value is McpLifecycleLo
     candidate.token.length > 0 &&
     typeof candidate.acquiredAt === "string" &&
     (candidate.containmentReason === undefined ||
-      typeof candidate.containmentReason === "string")
+      typeof candidate.containmentReason === "string") &&
+    hasValidContainedGeneration
   );
 }
 
