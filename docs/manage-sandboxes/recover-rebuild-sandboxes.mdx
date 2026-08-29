@@ -121,8 +121,26 @@ Missing authority, a same-name replacement, or other drift stops recovery before
 Success requires a final route proof from inside the sandbox.
 
 Ordinary `connect` and direct `launch` do not resume the runner.
-If a check fails after recovery starts a stopped runner, NemoClaw returns the runner to stopped and returns the registry to its prior state.
-If the output says that restoration could not be proved, preserve the current Portable state and do not run another recovery probe or `launch` until you inspect the recorded runtime and registry authority.
+If a check fails after recovery starts a stopped runner, NemoClaw restores the runner and registry to their prior states or reports that restoration could not be proved.
+
+<Warning title="Unproved Rollback">
+If the output says that restoration could not be proved, save the complete recovery output.
+Run these read-only checks:
+
+```bash
+$$nemoclaw <sandbox-name> status
+$$nemoclaw <sandbox-name> doctor
+```
+
+Save both results.
+The expected status line is `Portable lifecycle phase: active`.
+The expected doctor line is `Portable lifecycle: agent=Hermes; phase=active`.
+These results prove only that the lifecycle receipt and sandbox registry agree.
+They do not prove that the Podman runner returned to stopped.
+Preserve the applicable sandbox registry and `~/.nemoclaw/portable-inference/<sandbox-digest>/` directory described in [Host Files and State](../../reference/host-files-and-state).
+Do not edit that state, change the Podman runtime directly, or run `connect --probe-only`, `recover`, or `launch`.
+Ask a NemoClaw maintainer to inspect the retained runtime and registry authority before you take another recovery action.
+</Warning>
 
 Use `gateway restart` when you intentionally need a supported Hermes gateway to reload runtime configuration or plugins.
 

@@ -3,6 +3,40 @@
  * SPDX-License-Identifier: Apache-2.0
  */}
 
+## v0.0.116
+
+NemoClaw v0.0.116 improves compatible endpoint validation, Portable Hermes inference recovery, sandbox lifecycle safety, managed images, Windows Subsystem for Linux (WSL) onboarding, managed local inference, and experimental Hermes channel credentials.
+It also preserves recorded network-policy intent during sandbox reuse and rebuild.
+
+- OpenClaw compatible endpoint onboarding now validates `inference.local` from inside the sandbox even when no messaging channel is selected, and an unreachable route stops onboarding before final deployment verification.
+  `inference set` can reuse a recorded loopback no-auth endpoint without replacing its provider, and reasoning-only responses receive one bounded larger-budget content attempt before failure.
+  Related changes: [PR #10458](https://github.com/NVIDIA/NemoClaw/pull/10458), [PR #10531](https://github.com/NVIDIA/NemoClaw/pull/10531), and [PR #10540](https://github.com/NVIDIA/NemoClaw/pull/10540).
+- `nemohermes <name> recover` and `nemohermes <name> connect --probe-only` now recover only the published receipt-owned Portable Ollama runner.
+  They verify an already-running runner without restarting it, resume the recorded stopped runner once, and require a final in-sandbox route proof.
+  If a later check fails, recovery attempts to return the stopped runner and registry to their prior state and reports when either restoration cannot be proved.
+  Related change: [PR #10505](https://github.com/NVIDIA/NemoClaw/pull/10505).
+- Uninstall now creates fresh snapshots for eligible registered non-Portable sandboxes before deletion unless `--destroy-user-data` is selected.
+  It honors `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR`, preserves abandoned Portable configuration without treating it as lifecycle authority, and stops before cleanup when backup, lifecycle-lock, ownership, or registration checks fail.
+  Related changes: [PR #10231](https://github.com/NVIDIA/NemoClaw/pull/10231), [PR #10550](https://github.com/NVIDIA/NemoClaw/pull/10550), and [PR #10562](https://github.com/NVIDIA/NemoClaw/pull/10562).
+- Sandbox creation and reuse now retain verified sandbox identity, policy, provider, credential, and lifecycle authority across retries and process restarts.
+  Same-name replacements and authority drift stop mutation, while managed-image registration tolerates a transient non-`Ready` report only when durable sandbox identity still matches.
+  Related changes: [PR #10510](https://github.com/NVIDIA/NemoClaw/pull/10510) and [PR #10512](https://github.com/NVIDIA/NemoClaw/pull/10512).
+- Sandbox destruction can recover an expired Shields auto-restore timer only when its process is gone or its recorded start identity no longer matches.
+  Live or unverifiable timer ownership remains fail-closed, and destruction skips pre-delete hardening only after Docker proves the sandbox container is absent.
+  Related change: [PR #10225](https://github.com/NVIDIA/NemoClaw/pull/10225).
+- Hermes Portable images now select the reviewed multi-platform base that matches their OpenSSL 3.5.7 package inventory, and OpenClaw images install checksum-pinned libevent 2.1.13 on AMD64 and ARM64.
+  Related changes: [PR #10532](https://github.com/NVIDIA/NemoClaw/pull/10532) and [PR #10526](https://github.com/NVIDIA/NemoClaw/pull/10526).
+- On WSL, public managed image pulls, generated image builds, GPU probes, and local inference probe pulls use a temporary credential-free Docker configuration when the default Docker Desktop credential helper is unavailable.
+  Managed local inference now waits for disposable Podman probe identities to disappear after one removal command, and llama.cpp image-pull failures report a fixed layer, code, and exit status without exposing raw pull output.
+  Related changes: [PR #10470](https://github.com/NVIDIA/NemoClaw/pull/10470), [PR #10554](https://github.com/NVIDIA/NemoClaw/pull/10554), and [PR #10561](https://github.com/NVIDIA/NemoClaw/pull/10561).
+- Re-onboarding or rebuilding an OpenClaw sandbox with a recorded Balanced or Open tier now keeps an already-applied `brave` preset when web search is disabled or switched to Tavily Search.
+  Restricted and unknown tiers, unsupported agents, and custom preset ownership retain their existing fail-closed reconciliation behavior.
+  Related change: [PR #10457](https://github.com/NVIDIA/NemoClaw/pull/10457).
+- For the experimental Hermes WeChat and Microsoft Teams channels, managed startup now maps revision-scoped OpenShell credential placeholders to the environment names Hermes reads.
+  Only matching revision-scoped placeholders are copied.
+  Raw or identityless runtime values are ignored, while malformed or channel-unbound aliases stop startup; both channels remain experimental.
+  Related change: [PR #10563](https://github.com/NVIDIA/NemoClaw/pull/10563).
+
 ## v0.0.115
 
 NemoClaw v0.0.115 strengthens Portable Hermes recovery, sandbox lifecycle authority, managed messaging credentials, and installer recovery.
