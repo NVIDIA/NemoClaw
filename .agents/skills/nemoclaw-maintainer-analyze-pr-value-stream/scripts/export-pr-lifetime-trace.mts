@@ -889,7 +889,12 @@ export async function publishStagedDirectory(input: {
 }): Promise<void> {
   const token = await acquirePublicationLock(input.lock, input.track, input.release);
   const heartbeat = setInterval(() => {
-    void utimes(input.lock, new Date(), new Date()).catch(() => undefined);
+    void lockOwnershipMatches(input.lock, token)
+      .then((owned) => {
+        if (owned) return utimes(input.lock, new Date(), new Date());
+        clearInterval(heartbeat);
+      })
+      .catch(() => undefined);
   }, PUBLICATION_LOCK_STALE_MS / 3);
   const backup = input.staging + "-previous";
   let movedPrevious = false;
