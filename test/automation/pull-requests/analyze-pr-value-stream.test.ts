@@ -214,6 +214,18 @@ describe("pull request value-stream analysis", () => {
           cat: "pr.readiness",
           ph: "X",
         }),
+        expect.objectContaining({
+          name: "Active revision",
+          cat: "pr.counter",
+          ph: "C",
+          args: { value: 1 },
+        }),
+        expect.objectContaining({
+          name: "Open review requests",
+          cat: "pr.counter",
+          ph: "C",
+          args: { value: 1 },
+        }),
         expect.objectContaining({ name: "job", cat: "ci.queue", ph: "X" }),
         expect.objectContaining({ name: "job", cat: "ci.execution", ph: "X" }),
         expect.objectContaining({ name: "step", cat: "ci.step", ph: "X" }),

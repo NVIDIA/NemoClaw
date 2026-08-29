@@ -22,6 +22,7 @@ type ValidatedEvent = {
   dur?: unknown;
   pid?: unknown;
   tid?: unknown;
+  args?: unknown;
 };
 
 export async function validateChromeTrace(
@@ -32,7 +33,7 @@ export async function validateChromeTrace(
   const tracks = new Map<string, { ts: number; dur: number; name: string }[]>();
   const metadata = new Set<string>();
   for (const raw of payload.traceEvents as ValidatedEvent[]) {
-    if (typeof raw.name !== "string" || !["M", "i", "X"].includes(String(raw.ph)))
+    if (typeof raw.name !== "string" || !["C", "M", "i", "X"].includes(String(raw.ph)))
       throw new Error("trace event used an unsupported Chrome trace phase");
     if (!Number.isSafeInteger(raw.pid) || !Number.isSafeInteger(raw.tid))
       throw new Error("trace event pid and tid must be safe integers");
@@ -44,6 +45,17 @@ export async function validateChromeTrace(
     }
     if (!Number.isSafeInteger(raw.ts))
       throw new Error("timed trace event must have a safe timestamp");
+    if (raw.ph === "C") {
+      if (
+        raw.args === null ||
+        typeof raw.args !== "object" ||
+        Object.values(raw.args).some(
+          (value) => typeof value !== "number" || !Number.isFinite(value),
+        )
+      )
+        throw new Error("counter trace event args must be finite numbers");
+      continue;
+    }
     if (raw.ph !== "X") continue;
     if (!Number.isSafeInteger(raw.dur) || Number(raw.dur) < 0)
       throw new Error("complete trace event must have a nonnegative safe duration");
@@ -80,7 +92,7 @@ type GithubRead = (args: string[]) => Promise<{ stdout: string }>;
 type TraceEvent = {
   name: string;
   cat?: string;
-  ph: "M" | "i" | "X";
+  ph: "C" | "M" | "i" | "X";
   ts?: number;
   dur?: number;
   pid: number;
@@ -230,6 +242,17 @@ function addInstant(
     tid: input.tid,
     args: input.args ?? {},
   });
+}
+
+function addCounter(
+  events: TraceEvent[],
+  name: string,
+  at: number,
+  value: number,
+  pid: number,
+  tid: number,
+): void {
+  events.push({ name, cat: "pr.counter", ph: "C", ts: micros(at), pid, tid, args: { value } });
 }
 
 function addSpan(
@@ -414,6 +437,8 @@ function renderTrace(input: {
   addMetadata(events, metadata, 2, 1, "Author activity", input.pull.author?.login ?? "author");
   addMetadata(events, metadata, 3, 1, "Feedback and reviews", "Comments and reviews");
   addMetadata(events, metadata, 4, 1, "PR readiness", "Observed readiness path");
+  addMetadata(events, metadata, 5, 1, "PR counters", "Active revision");
+  addMetadata(events, metadata, 5, 2, "PR counters", "Open review requests");
   let lifecycleEvents = 0;
   const instant = (entry: Parameters<typeof addInstant>[1]): void => {
     lifecycleEvents += 1;
@@ -517,6 +542,21 @@ function renderTrace(input: {
     });
     openRequests.delete(reviewer);
   }
+  const requestChanges = input.lifecycle.timeline
+    .filter((row: any) =>
+      ["review_requested", "review_request_removed"].includes(String(row?.event)),
+    )
+    .map((row: any) => ({
+      at: optionalTime(row?.created_at),
+      delta: row.event === "review_requested" ? 1 : -1,
+    }))
+    .filter((row: any) => row.at !== null)
+    .sort((left: any, right: any) => left.at - right.at);
+  let requests = 0;
+  for (const change of requestChanges) {
+    requests = Math.max(0, requests + change.delta);
+    addCounter(events, "Open review requests", Number(change.at), requests, 5, 2);
+  }
   for (const [reviewer, request] of openRequests)
     addSpan(events, {
       name: "Review requested: " + reviewer,
@@ -604,6 +644,8 @@ function renderTrace(input: {
     const firstRun = firstRuns.get(commit.oid);
     return firstRun ? parseTime(firstRun.created_at, "workflow createdAt") : commit.authoredAt;
   });
+  for (const [index, at] of revisionStarts.entries())
+    addCounter(events, "Active revision", at, index + 1, 5, 1);
   for (const [index, commit] of input.commits.entries()) {
     const pid = 1_000 + index;
     addSpan(events, {
