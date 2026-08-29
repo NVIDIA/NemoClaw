@@ -101,8 +101,8 @@ function inspectMxcHost(
         `Windows x64 build ${assessment.windowsBuild} and OpenShell ${attachment.distribution.version} ` +
         "match the inactive attachment contract.",
       hint:
-        "This check does not enable MXC. Maintainers must qualify the accepted OpenShell " +
-        "distribution and required live E2E coverage before adding production selection.",
+        "This check does not enable MXC. Maintainers must accept a stable OpenShell distribution " +
+        "and complete required live E2E coverage before adding production selection.",
     };
   } catch (error) {
     return {
