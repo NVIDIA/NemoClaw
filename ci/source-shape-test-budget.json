@@ -247,11 +247,6 @@
       "category": "security"
     },
     {
-      "file": "test/install/installer-homebrew-formula-reuse-trust.test.ts",
-      "test": "rejects an unlisted OpenShell 0.0.106 installer template",
-      "category": "security"
-    },
-    {
       "file": "test/mcp/mcp-tool-discovery-image-contract.test.ts",
       "test": "pins the reviewed image runtime artifacts exactly",
       "category": "security"
