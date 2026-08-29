@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  containsToolCallOutput,
-  containsToolCallStructure,
-} from "../../src/lib/openclaw/agent-reply-validation.ts";
-
-export { containsToolCallOutput, containsToolCallStructure };
+import { containsToolCallOutput } from "../../src/lib/openclaw/agent-reply-validation.ts";
 
 export function compactAnswerText(text: string): string {
   return text.replace(/\s+/g, "");

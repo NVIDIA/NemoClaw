@@ -9,6 +9,8 @@ export function containsToolCallStructure(value: unknown): boolean {
   const record = value as Record<string, unknown>;
   const role = String(record.role).replaceAll("_", "-").toLowerCase();
   if (
+    role === "tool" ||
+    role === "function" ||
     role === "toolresult" ||
     role === "tool-result" ||
     ["tool_use", "tool_result", "tool-result", "function"].includes(String(record.type)) ||

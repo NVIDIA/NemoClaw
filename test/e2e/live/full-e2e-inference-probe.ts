@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { resolveMaxTokensField } from "../../../src/lib/inference/max-tokens-field.ts";
-import { containsAnswer, containsToolCallStructure } from "../../helpers/e2e-answer-assertions.ts";
+import { containsToolCallStructure } from "../../../src/lib/openclaw/agent-reply-validation.ts";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 
 const ARITHMETIC_PROMPT = "What is 6 multiplied by 7? Reply with only the integer, no extra words.";
 

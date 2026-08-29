@@ -99,6 +99,17 @@ describe("openClawAgentJsonProvenanceLines", () => {
       ),
     ).toBe(false);
     expect(
+      ["tool", "function"].map((role) =>
+        openClawAgentHasCompletedReply(
+          JSON.stringify({
+            payloads: [{ role: "assistant", text: "done" }],
+            messages: [{ role, content: "tool output" }],
+            meta: {},
+          }),
+        ),
+      ),
+    ).toEqual([false, false]);
+    expect(
       openClawAgentHasCompletedReply(
         JSON.stringify({
           payloads: [{ role: "assistant", text: "done" }],

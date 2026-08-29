@@ -562,6 +562,32 @@ describe("runAgentJsonPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(143);
   });
 
+  it("fails a completed envelope followed by malformed tool-call output", async () => {
+    const payload =
+      `${JSON.stringify({ payloads: [{ role: "assistant", text: "done" }], meta: {} })}\n` +
+      `{"type":"function","function":`;
+    const runDispatch = vi.fn(async () => ({
+      status: 0,
+      signal: null,
+      stdout: payload,
+      stderr: "",
+    }));
+    const { exit, proc, stderr, stdout } = makeProc();
+
+    await expect(
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        runDispatch,
+        stdinIsTty: () => false,
+      }),
+    ).rejects.toThrow("__exit:1");
+
+    expect(stdout.join("")).toBe(payload);
+    expect(stderr.join("")).toContain("did not complete");
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it("fails loud and keeps stdout empty when the dispatch delivers nothing", async () => {
     const runDispatch = vi.fn(async () => ({
       status: 0,

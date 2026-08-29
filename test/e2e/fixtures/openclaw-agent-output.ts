@@ -8,7 +8,7 @@ import {
 import {
   containsToolCallOutput,
   containsToolCallStructure,
-} from "../../helpers/e2e-answer-assertions.ts";
+} from "../../../src/lib/openclaw/agent-reply-validation.ts";
 
 export interface OpenClawAgentJsonDocument {
   [key: string]: unknown;

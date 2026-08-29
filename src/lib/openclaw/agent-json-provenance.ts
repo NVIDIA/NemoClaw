@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { containsToolCallStructure } from "./agent-reply-validation";
+import { containsToolCallOutput, containsToolCallStructure } from "./agent-reply-validation";
 
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
 import { redactFullWithUrls } from "../security/redact";
@@ -370,7 +370,7 @@ function payloadHasConversationalText(value: unknown): boolean {
 
 /** Return true only when the final parsed record carries a conversational payload. */
 export function openClawAgentHasCompletedReply(raw: string): boolean {
-  if (/^\s*tool[ _-]?calls?\s*:/imu.test(raw)) return false;
+  if (containsToolCallOutput(raw)) return false;
   const final = parseOpenClawJsonDocuments(raw).at(-1);
   if (!isObjectRecord(final)) return false;
   const response = openClawAgentResponseRecord(final);
