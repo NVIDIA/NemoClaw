@@ -2053,15 +2053,6 @@ if updated != config:
         json.dump(updated, f, indent=2)
         f.write("\n")
 
-channels = updated.get("channels") if isinstance(updated, dict) else None
-wechat = channels.get("openclaw-weixin") if isinstance(channels, dict) else None
-if isinstance(wechat, dict) and wechat.get("enabled") is not False:
-    accounts = wechat.get("accounts")
-    if isinstance(accounts, dict) and any(
-        isinstance(account, dict) and account.get("enabled") is not False
-        for account in accounts.values()
-    ):
-        print("wechat-active=1")
 if refreshed:
     print("refreshed=" + ",".join(sorted(refreshed)))
 for warning in warnings:
@@ -2086,9 +2077,7 @@ PYPLACEHOLDERS
 
   restore_openclaw_config_after_write "$config_file" "$hash_file"
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
-  if printf '%s\n' "$_placeholder_report" | grep -qx 'wechat-active=1'; then
-    refresh_openclaw_wechat_account_placeholder || return $?
-  fi
+  refresh_openclaw_wechat_account_placeholder || return $?
   return 0
 }
 
