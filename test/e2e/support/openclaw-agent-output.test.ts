@@ -119,6 +119,18 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("");
     expect(
       parseOpenClawAgentText(
+        JSON.stringify({ type: "tool_result", tool_call_id: "call-1", content: "56" }),
+      ),
+    ).toBe("");
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          response: { items: [{ type: "tool-result", toolCallId: "call-2", content: "56" }] },
+        }),
+      ),
+    ).toBe("");
+    expect(
+      parseOpenClawAgentText(
         JSON.stringify({
           choices: [{ message: { role: "assistant", content: "56", tool_calls: [{}] } }],
         }),
