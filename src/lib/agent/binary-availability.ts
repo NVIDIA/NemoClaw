@@ -16,6 +16,7 @@ export type AgentBinaryAvailability =
       reason: "not_found" | "not_executable" | "path_mismatch" | "unobservable";
       binaryPath?: string;
       resolvedPath?: string;
+      transportStatus?: number | null;
     };
 
 const AGENT_BINARY_CHECK_PREFIX = "NEMOCLAW_AGENT_BINARY_CHECK:";
@@ -62,7 +63,12 @@ export function verifyAgentBinaryAvailable(
     { ignoreError: true, includeStderr: true },
   );
   if (typeof result !== "string" && result?.status !== 0) {
-    return { available: false, reason: "unobservable", binaryPath: binaryPath || undefined };
+    return {
+      available: false,
+      reason: "unobservable",
+      binaryPath: binaryPath || undefined,
+      ...(result ? { transportStatus: result.status ?? null } : {}),
+    };
   }
   const status = (typeof result === "string" ? result : result?.output)?.trim() ?? "";
   const marker = status
@@ -106,7 +112,10 @@ export function describeAgentBinaryFailure(
     return `${agent.displayName} configured binary '${result.binaryPath}' is not executable inside sandbox '${sandboxName}'`;
   }
   if (result.reason === "unobservable") {
-    return `${agent.displayName} binary availability could not be observed inside sandbox '${sandboxName}'`;
+    const status = Object.hasOwn(result, "transportStatus")
+      ? ` (OpenShell exec status ${String(result.transportStatus)})`
+      : "";
+    return `${agent.displayName} binary availability could not be observed inside sandbox '${sandboxName}'${status}`;
   }
   return `${agent.displayName} binary '${executable}' is missing inside sandbox '${sandboxName}'`;
 }

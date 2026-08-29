@@ -709,6 +709,7 @@ describe("handleAgentSetup guards", () => {
       available: false,
       reason: "unobservable",
       binaryPath: "/usr/local/bin/pi",
+      transportStatus: 1,
     });
   });
 
