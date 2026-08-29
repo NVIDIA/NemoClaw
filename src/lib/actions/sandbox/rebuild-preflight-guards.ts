@@ -314,6 +314,26 @@ export function getRebuildSandboxEntryOrBail(
   return sb;
 }
 
+/** Block rebuild before any live-state probe or cleanup can bypass retained recovery. */
+export function blockRebuildOnRetainedSandboxRecovery(
+  sandboxName: string,
+  bail: RebuildBail,
+): boolean {
+  const retainedRecovery = onboardSession
+    .listRetainedSandboxRecoveryRecords()
+    .find((record) => record.sandboxName === sandboxName);
+  if (!retainedRecovery) return false;
+
+  console.error(
+    `  Rebuild cannot use retained sandbox '${sandboxName}' while recovery record '${retainedRecovery.recordId}' is unresolved. No sandbox or Docker resources were removed.`,
+  );
+  console.error(
+    `  Run '${CLI_NAME} ${sandboxName} destroy --yes'. If OpenShell still reports the sandbox present, follow destroy's create-attempt label guidance for identity-bound administrator removal.`,
+  );
+  bail(`Retained sandbox recovery blocks rebuild for '${sandboxName}'.`, 1);
+  return true;
+}
+
 /** Keep the pending baseline-policy transaction guard identical at every rebuild boundary. */
 export function blockRebuildOnPendingBaselineTransition(
   sandboxEntry: RebuildSandboxEntry,
