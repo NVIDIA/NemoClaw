@@ -334,7 +334,7 @@ async function readJobs(input: ExportInput, runs: Run[]): Promise<any[]> {
   const groups = await mapBounded(runs, async (run) => {
     const result = await input.githubRead([
       "api",
-      "repos/" + input.repository + "/actions/runs/" + run.id + "/jobs?per_page=100",
+      "repos/" + input.repository + "/actions/runs/" + run.id + "/jobs?filter=all&per_page=100",
       "--jq",
       "{total_count,jobs:[.jobs[] | {id,name,status,conclusion,created_at,started_at,completed_at,runner_name,runner_group_name,labels,html_url,steps}]}",
     ]);
@@ -826,7 +826,11 @@ async function acquirePublicationLock(lock: string): Promise<string> {
   throw new Error("timed out waiting for active lifetime artifact publication lock: " + lock);
 }
 
-async function recoverInterruptedPublication(destination: string): Promise<void> {
+async function recoverInterruptedPublication(
+  destination: string,
+  lock: string,
+  token: string,
+): Promise<void> {
   const parent = path.dirname(destination);
   const prefix = "." + path.basename(destination) + "-staging-";
   const backups = (await readdir(parent))
@@ -841,6 +845,7 @@ async function recoverInterruptedPublication(destination: string): Promise<void>
   }
   if (!destinationExists && backups.length === 1) {
     try {
+      await requirePublicationLockOwnership(lock, token);
       await rename(backups[0], destination);
       return;
     } catch (error) {
@@ -856,6 +861,7 @@ async function recoverInterruptedPublication(destination: string): Promise<void>
     throw new Error(
       "multiple interrupted lifetime artifact backups require recovery: " + backups.join(", "),
     );
+  await requirePublicationLockOwnership(lock, token);
   await Promise.all(backups.map((backup) => rm(backup, { recursive: true, force: true })));
 }
 
@@ -875,7 +881,7 @@ export async function publishStagedDirectory(input: {
   const backup = input.staging + "-previous";
   let movedPrevious = false;
   try {
-    await recoverInterruptedPublication(input.destination);
+    await recoverInterruptedPublication(input.destination, input.lock, token);
     await input.validate?.();
     await requirePublicationLockOwnership(input.lock, token);
     try {
@@ -900,6 +906,24 @@ export async function publishStagedDirectory(input: {
     if (await lockOwnershipMatches(input.lock, token))
       await rm(input.lock, { recursive: true, force: true });
     input.release?.(input.lock);
+  }
+}
+
+export async function cleanupLifetimeStaging(
+  staging: string,
+  original: unknown,
+  remove: typeof rm = rm,
+): Promise<void> {
+  try {
+    await remove(staging, { recursive: true, force: true });
+  } catch (cleanupError) {
+    throw new Error(
+      String(original) +
+        "; failed to remove retained lifetime staging directory " +
+        staging +
+        "; remove it manually: " +
+        String(cleanupError),
+    );
   }
 }
 
@@ -1013,7 +1037,7 @@ export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeA
       },
     });
   } catch (error) {
-    await rm(staging, { recursive: true, force: true });
+    await cleanupLifetimeStaging(staging, error);
     input.releaseTemporaryPath?.(staging);
     throw error;
   }

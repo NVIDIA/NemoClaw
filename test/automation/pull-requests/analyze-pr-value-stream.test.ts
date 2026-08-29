@@ -20,6 +20,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { cleanupArtifactDirectory } from "../../../.agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/analyze-pr-value-stream.mts";
 import {
+  cleanupLifetimeStaging,
   publishStagedDirectory,
   reclaimStalePublicationLock,
   validateChromeTrace,
@@ -576,6 +577,18 @@ describe("pull request value-stream analysis", () => {
     await utimes(lock, stale, stale);
     expect(await reclaimStalePublicationLock(lock)).toBe(true);
     await expect(stat(lock)).rejects.toThrow();
+  });
+
+  test("reports retained staging path without hiding publication failure (#10542)", async () => {
+    const staging = "/tmp/value-stream-retained-staging";
+    const remove = vi.fn(async () => {
+      throw new Error("permission denied");
+    });
+    await expect(
+      cleanupLifetimeStaging(staging, new Error("publication failed"), remove),
+    ).rejects.toThrow(
+      "publication failed; failed to remove retained lifetime staging directory " + staging,
+    );
   });
 
   test("accepts a valid synthetic Chrome trace (#10542)", async () => {
