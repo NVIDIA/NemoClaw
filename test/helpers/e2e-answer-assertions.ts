@@ -12,8 +12,9 @@ export function containsToolCallStructure(value: unknown): boolean {
 
   const record = value as Record<string, unknown>;
   if (
-    record.type === "tool_use" ||
-    record.type === "function" ||
+    ["tool_use", "tool_result", "tool-result", "function"].includes(String(record.type)) ||
+    record.tool_call_id != null ||
+    record.toolCallId != null ||
     record.function != null ||
     record.function_call != null ||
     (record.tool_calls != null &&
