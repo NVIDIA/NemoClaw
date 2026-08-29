@@ -556,8 +556,12 @@ function appendAuditEntryBestEffort(entry: Parameters<typeof appendAuditEntry>[0
   }
 }
 
-function shieldsDownTransitionPath(sandboxName: string, processToken: string): string {
-  return path.join(STATE_DIR, `shields-transition-${sandboxName}-${processToken}.json`);
+function shieldsDownTransitionPath(
+  sandboxName: string,
+  processToken: string,
+  stateDir = STATE_DIR,
+): string {
+  return path.join(stateDir, `shields-transition-${sandboxName}-${processToken}.json`);
 }
 
 function shieldsDownForwardPolicyPath(sandboxName: string, processToken: string): string {
@@ -842,8 +846,9 @@ function requireShieldsDownForwardPolicy(transition: ShieldsDownTransition): str
 function readShieldsDownTransition(
   sandboxName: string,
   processToken: string,
+  stateDir = STATE_DIR,
 ): ShieldsDownTransition | null {
-  const transitionPath = shieldsDownTransitionPath(sandboxName, processToken);
+  const transitionPath = shieldsDownTransitionPath(sandboxName, processToken, stateDir);
   try {
     const value = JSON.parse(fs.readFileSync(transitionPath, "utf-8"));
     if (!isShieldsDownTransition(value)) return null;
@@ -1755,8 +1760,8 @@ const DEFAULT_TIMEOUT_SECONDS = DEFAULT_SECONDS;
 // State helpers — read/write shields state per sandbox
 // ---------------------------------------------------------------------------
 
-function stateFilePath(sandboxName: string): string {
-  return path.join(STATE_DIR, `shields-${sandboxName}.json`);
+function stateFilePath(sandboxName: string, stateDir = STATE_DIR): string {
+  return path.join(stateDir, `shields-${sandboxName}.json`);
 }
 
 function externalPolicyRecoveryArtifactPath(sandboxName: string): string {
@@ -2182,8 +2187,8 @@ function describeShieldsMode(mode: ShieldsPostureMode): Omit<ShieldsPosture, "st
   }
 }
 
-function loadShieldsState(sandboxName: string): LoadedShieldsState {
-  const filePath = stateFilePath(sandboxName);
+function loadShieldsState(sandboxName: string, stateDir = STATE_DIR): LoadedShieldsState {
+  const filePath = stateFilePath(sandboxName, stateDir);
   if (!fs.existsSync(filePath)) return { _hasStateFile: false };
   try {
     const contents = fs.readFileSync(filePath, "utf-8");
@@ -2318,14 +2323,83 @@ function inspectExpiredAutoRestoreMarker(sandboxName: string): TimerMarker | nul
 
 function inspectCompletedAbandonedAutoRestoreMarker(
   sandboxName: string,
+  stateDir = STATE_DIR,
 ): (TimerMarker & { processToken: string }) | null {
-  const state = loadShieldsState(sandboxName);
+  const state = loadShieldsState(sandboxName, stateDir);
   if (state._isCorrupt || state.shieldsDown !== false) return null;
-  const marker = readTimerMarker(sandboxName);
+  const marker = readTimerMarker(sandboxName, stateDir);
   if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) return null;
-  if (!isShieldsTimerDeadlineAbandoned(sandboxName, STATE_DIR)) return null;
-  if (readShieldsDownTransition(sandboxName, marker.processToken)) return null;
+  if (!isShieldsTimerDeadlineAbandoned(sandboxName, stateDir)) return null;
+  if (fs.existsSync(shieldsDownTransitionPath(sandboxName, marker.processToken, stateDir))) {
+    return null;
+  }
   return marker as TimerMarker & { processToken: string };
+}
+
+function withCompletedAbandonedAutoRestoreFence<T>(
+  sandboxName: string,
+  marker: TimerMarker & { processToken: string },
+  operation: () => T,
+  stateDir: string,
+): T {
+  const assertCompletedAuthority = () => {
+    const currentState = loadShieldsState(sandboxName, stateDir);
+    if (
+      currentState._isCorrupt ||
+      currentState.shieldsDown !== false ||
+      fs.existsSync(shieldsDownTransitionPath(sandboxName, marker.processToken, stateDir)) ||
+      !sameTimerMarkerGeneration(readTimerMarker(sandboxName, stateDir), marker) ||
+      !isShieldsTimerDeadlineAbandoned(sandboxName, stateDir)
+    ) {
+      throw new Error(
+        `Completed auto-restore recovery authority changed for sandbox '${sandboxName}'. Rerun \`${CLI_NAME} ${sandboxName} shields status\`. Do not modify lifecycle-lock or timer files while recovery may be active.`,
+      );
+    }
+  };
+  return withMcpLifecycleDeadlineFenceSync(
+    sandboxName,
+    marker.processToken,
+    () => {
+      assertCompletedAuthority();
+      return operation();
+    },
+    {
+      stateDir,
+      throwOnCommittedContainment: true,
+      completedAutoRestoreRecovery: {
+        ownerPid: marker.pid,
+        assertAuthority: assertCompletedAuthority,
+      },
+      onReleased: () => {
+        const result = clearTimerMarkerGeneration(sandboxName, marker, stateDir);
+        if (result.warning) console.warn(`  ${result.warning}`);
+      },
+    },
+  );
+}
+
+function recoverCompletedAutoRestoreBeforeCommand(
+  sandboxName: string,
+  stateDir = resolveShieldsStateDir(),
+): boolean {
+  validateName(sandboxName, "sandbox name");
+  let recovered = false;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const marker = inspectCompletedAbandonedAutoRestoreMarker(sandboxName, stateDir);
+    if (!marker) return recovered;
+    withCompletedAbandonedAutoRestoreFence(sandboxName, marker, () => undefined, stateDir);
+    recovered = true;
+    const remaining = readTimerMarker(sandboxName, stateDir);
+    if (!remaining) return true;
+    if (!sameTimerMarkerGeneration(remaining, marker)) {
+      throw new Error(
+        `Completed auto-restore cleanup found replacement timer authority for sandbox '${sandboxName}'. Rerun \`${CLI_NAME} ${sandboxName} shields status\`. Do not modify lifecycle-lock or timer files while recovery may be active.`,
+      );
+    }
+  }
+  throw new Error(
+    `Completed auto-restore timer cleanup did not finish for sandbox '${sandboxName}'. Rerun \`${CLI_NAME} ${sandboxName} shields status\`. Do not modify lifecycle-lock or timer files while recovery may be active.`,
+  );
 }
 
 function inspectExpiredAutoRestoreTakeover(
@@ -2463,40 +2537,14 @@ function withExpiredAutoRestoreDeadlineFence<T>(
 ): T {
   const completedMarker = inspectCompletedAbandonedAutoRestoreMarker(sandboxName);
   if (completedMarker) {
-    const assertCompletedAuthority = () => {
-      const currentState = loadShieldsState(sandboxName);
-      if (
-        currentState._isCorrupt ||
-        currentState.shieldsDown !== false ||
-        readShieldsDownTransition(sandboxName, completedMarker.processToken) ||
-        !sameTimerMarkerGeneration(readTimerMarker(sandboxName), completedMarker) ||
-        !isShieldsTimerDeadlineAbandoned(sandboxName, STATE_DIR)
-      ) {
-        throw new Error(
-          `Completed auto-restore recovery authority changed for sandbox '${sandboxName}'. Rerun \`${CLI_NAME} ${sandboxName} shields status\`. Do not modify lifecycle-lock or timer files while recovery may be active.`,
-        );
-      }
-    };
-    return withMcpLifecycleDeadlineFenceSync(
+    return withCompletedAbandonedAutoRestoreFence(
       sandboxName,
-      completedMarker.processToken,
+      completedMarker,
       () => {
-        assertCompletedAuthority();
         assertCommandAvailable?.();
         return operation(false);
       },
-      {
-        stateDir: STATE_DIR,
-        throwOnCommittedContainment: true,
-        completedAutoRestoreRecovery: {
-          ownerPid: completedMarker.pid,
-          assertAuthority: assertCompletedAuthority,
-        },
-        onReleased: () => {
-          const result = clearTimerMarkerGeneration(sandboxName, completedMarker);
-          if (result.warning) console.warn(`  ${result.warning}`);
-        },
-      },
+      STATE_DIR,
     );
   }
   const expiredMarker = inspectExpiredAutoRestoreMarker(sandboxName);
@@ -7005,6 +7053,7 @@ export {
   MAX_TIMEOUT_SECONDS,
   parseDuration,
   prepareAutoRestoreTransitionTakeover,
+  recoverCompletedAutoRestoreBeforeCommand,
   repairMutableConfigPerms,
   resolvePersistedAutoRestoreTarget,
   restoreLockedStateDirStartupAccess,

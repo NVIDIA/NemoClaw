@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { Command, Flags, type Interfaces } from "@oclif/core";
 import {
   assertHermesPortableCommandSupported,
@@ -13,6 +16,8 @@ import { hasHermesPortableReceiptCandidate } from "../onboard/experimental/herme
 import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
 import { isDeferredShieldsExit } from "../shields/deferred-exit";
+import { resolveShieldsStateDir } from "../shields/transition-lock";
+import { readShieldsTimerMarker } from "../state/mcp-lifecycle-lock/shields-timer-authority";
 import {
   assertNoHermesPortableHostAuthority,
   withCurrentPortableHostFence,
@@ -30,6 +35,19 @@ export { HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE };
 export { assertHermesPortableCommandUnavailable };
 export const withSandboxCommandLifecycleLock = withMcpLifecycleLock;
 export { HERMES_PORTABLE_UNSUPPORTED_DOCTOR_FIX_MESSAGE };
+
+function mayNeedCompletedAutoRestoreRecovery(sandboxName: string): boolean {
+  const stateDir = resolveShieldsStateDir();
+  if (!readShieldsTimerMarker(sandboxName, stateDir)) return false;
+  try {
+    const state = JSON.parse(
+      fs.readFileSync(path.join(stateDir, `shields-${sandboxName}.json`), "utf8"),
+    ) as Record<string, unknown>;
+    return state.shieldsDown === false;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Shared oclif base for NemoClaw commands.
@@ -112,12 +130,17 @@ export abstract class NemoClawCommand extends Command {
       }
       return super._run<T>();
     };
-    const runWithLifecycleFence = () =>
-      commandId === "sandbox:destroy"
+    const runWithLifecycleFence = async () => {
+      if (mayNeedCompletedAutoRestoreRecovery(sandboxName)) {
+        const { recoverCompletedAutoRestoreBeforeCommand } = await import("../shields");
+        recoverCompletedAutoRestoreBeforeCommand(sandboxName);
+      }
+      return await (commandId === "sandbox:destroy"
         ? withMcpLifecycleLock(sandboxName, runLocked, {
             recoverAbandonedExpiredTimer: true,
           })
-        : withMcpLifecycleLock(sandboxName, runLocked);
+        : withMcpLifecycleLock(sandboxName, runLocked));
+    };
     if (
       this.isProbeOnlyConnect(commandId) &&
       hasHermesPortableReceiptCandidate(sandboxName, defaultPortableDemoStateDir(process.env))

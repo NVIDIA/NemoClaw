@@ -46,12 +46,12 @@ function processInspectionDeadlineReached(deadline: number): boolean {
   return performance.now() >= deadline;
 }
 
-function timerMarkerPath(sandboxName: string): string {
-  return shieldsTimerMarkerPath(sandboxName);
+function timerMarkerPath(sandboxName: string, stateDir?: string): string {
+  return shieldsTimerMarkerPath(sandboxName, stateDir);
 }
 
-function readTimerMarker(sandboxName: string): ShieldsTimerMarker | null {
-  return readShieldsTimerMarker(sandboxName);
+function readTimerMarker(sandboxName: string, stateDir?: string): ShieldsTimerMarker | null {
+  return readShieldsTimerMarker(sandboxName, stateDir);
 }
 
 function readAutoRestoreTakeoverToken(sandboxName: string): string | undefined {
@@ -80,12 +80,16 @@ function timerAuthoritySha256(marker: ShieldsTimerMarker): string {
     .digest("hex");
 }
 
-function timerAuthorizationProofPath(sandboxName: string, processToken: string): string {
+function timerAuthorizationProofPath(
+  sandboxName: string,
+  processToken: string,
+  stateDir?: string,
+): string {
   if (!/^[0-9a-f]{32}$/.test(processToken)) {
     throw new Error("Invalid timer authorization process token");
   }
   return path.join(
-    path.dirname(timerMarkerPath(sandboxName)),
+    path.dirname(timerMarkerPath(sandboxName, stateDir)),
     `shields-timer-authorization-${sandboxName}-${processToken}.json`,
   );
 }
@@ -199,10 +203,11 @@ function hasExactTimerAuthorizationProof(marker: ShieldsTimerMarker): boolean {
 function removeTimerAuthorizationProof(
   sandboxName: string,
   processToken: string | undefined,
+  stateDir?: string,
 ): void {
   if (!processToken || !/^[0-9a-f]{32}$/.test(processToken)) return;
   try {
-    fs.rmSync(timerAuthorizationProofPath(sandboxName, processToken), { force: true });
+    fs.rmSync(timerAuthorizationProofPath(sandboxName, processToken, stateDir), { force: true });
   } catch {
     // Best effort. A proof cannot grant authority without its exact marker.
   }
@@ -261,8 +266,9 @@ function sameTimerMarkerGeneration(
 function clearTimerMarkerGeneration(
   sandboxName: string,
   expected: ShieldsTimerMarker,
+  stateDir?: string,
 ): ClearTimerMarkerResult {
-  const markerPath = timerMarkerPath(sandboxName);
+  const markerPath = timerMarkerPath(sandboxName, stateDir);
   const quarantinePath = `${markerPath}.completed-${String(process.pid)}-${Date.now().toString(16)}`;
   try {
     fs.renameSync(markerPath, quarantinePath);
@@ -276,22 +282,51 @@ function clearTimerMarkerGeneration(
   }
 
   if (sameTimerMarkerGeneration(readShieldsTimerMarkerFile(quarantinePath), expected)) {
-    fs.unlinkSync(quarantinePath);
-    removeTimerAuthorizationProof(sandboxName, expected.processToken);
-    const directoryFd = fs.openSync(path.dirname(markerPath), "r");
     try {
-      fs.fsyncSync(directoryFd);
-    } finally {
-      fs.closeSync(directoryFd);
+      fs.unlinkSync(quarantinePath);
+      removeTimerAuthorizationProof(sandboxName, expected.processToken, stateDir);
+      const directoryFd = fs.openSync(path.dirname(markerPath), "r");
+      try {
+        fs.fsyncSync(directoryFd);
+      } finally {
+        fs.closeSync(directoryFd);
+      }
+      return { cleared: true };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (!fs.existsSync(quarantinePath)) {
+        return {
+          cleared: false,
+          warning: `Removed completed Shields timer marker '${markerPath}', but could not confirm durable cleanup: ${detail}`,
+        };
+      }
+      try {
+        fs.linkSync(quarantinePath, markerPath);
+        fs.unlinkSync(quarantinePath);
+        return {
+          cleared: false,
+          warning: `Could not remove completed Shields timer marker '${markerPath}'; restored it for retry: ${detail}`,
+        };
+      } catch (restoreError) {
+        const restoreDetail =
+          restoreError instanceof Error ? restoreError.message : String(restoreError);
+        return {
+          cleared: false,
+          warning: `Could not remove completed Shields timer marker '${markerPath}' or restore it; retained '${quarantinePath}' for recovery: ${detail}; ${restoreDetail}`,
+        };
+      }
     }
-    return { cleared: true };
   }
 
   try {
     fs.linkSync(quarantinePath, markerPath);
     fs.unlinkSync(quarantinePath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      cleared: false,
+      warning: `Shields timer authority changed while retiring completed marker '${markerPath}'; retained '${quarantinePath}' for recovery: ${detail}`,
+    };
   }
   return {
     cleared: false,

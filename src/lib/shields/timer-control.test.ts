@@ -36,6 +36,7 @@ describe("process inspection deadlines", () => {
 
 describe("timer marker generation cleanup", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 
@@ -76,6 +77,34 @@ describe("timer marker generation cleanup", () => {
       warning: expect.stringContaining("authority changed"),
     });
     expect(readTimerMarker("alpha")).toEqual(replacement);
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("restores the completed marker for retry when its unlink fails", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "timer-marker-unlink-failure-"));
+    vi.stubEnv("HOME", home);
+    const expected = marker("alpha", "c".repeat(32));
+    const markerPath = timerMarkerPath("alpha");
+    fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+    fs.writeFileSync(markerPath, JSON.stringify(expected));
+    const realUnlink = fs.unlinkSync.bind(fs);
+    vi.spyOn(fs, "unlinkSync")
+      .mockImplementationOnce(() => {
+        const error = new Error("injected unlink failure") as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      })
+      .mockImplementation(realUnlink);
+
+    expect(clearTimerMarkerGeneration("alpha", expected)).toMatchObject({
+      cleared: false,
+      warning: expect.stringContaining("restored it for retry"),
+    });
+    expect(readTimerMarker("alpha")).toEqual(expected);
+    expect(
+      fs.readdirSync(path.dirname(markerPath)).filter((name) => name.includes(".completed-")),
+    ).toEqual([]);
+    expect(clearTimerMarkerGeneration("alpha", expected)).toEqual({ cleared: true });
     fs.rmSync(home, { recursive: true, force: true });
   });
 });
