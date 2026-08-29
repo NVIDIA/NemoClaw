@@ -797,18 +797,17 @@ async function requirePublicationLockOwnership(lock: string, token: string): Pro
 async function acquirePublicationLock(
   lock: string,
   track?: (path: string, cleanup?: () => Promise<void>) => void,
+  release?: (path: string) => void,
 ): Promise<string> {
   for (let attempt = 0; attempt < 300; attempt += 1) {
+    const token = randomUUID();
+    const candidate = lock + ".candidate-" + token;
+    await mkdir(candidate);
+    track?.(candidate);
     try {
-      const token = randomUUID();
-      await mkdir(lock);
-      track?.(lock, async () => {
-        if (await lockOwnershipMatches(lock, token))
-          await rm(lock, { recursive: true, force: true });
-      });
       const startIdentity = await processStartIdentity(process.pid);
       await writeFile(
-        path.join(lock, "owner.json"),
+        path.join(candidate, "owner.json"),
         JSON.stringify({
           token,
           pid: process.pid,
@@ -817,9 +816,18 @@ async function acquirePublicationLock(
         }) + "\n",
         { mode: 0o600 },
       );
+      await rename(candidate, lock);
+      release?.(candidate);
+      track?.(lock, async () => {
+        if (await lockOwnershipMatches(lock, token))
+          await rm(lock, { recursive: true, force: true });
+      });
       return token;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      await rm(candidate, { recursive: true, force: true });
+      release?.(candidate);
+      if (!["EEXIST", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? ""))
+        throw error;
       if (await reclaimStalePublicationLock(lock)) continue;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
@@ -874,7 +882,7 @@ export async function publishStagedDirectory(input: {
   track?: (path: string, cleanup?: () => Promise<void>) => void;
   release?: (path: string) => void;
 }): Promise<void> {
-  const token = await acquirePublicationLock(input.lock, input.track);
+  const token = await acquirePublicationLock(input.lock, input.track, input.release);
   const heartbeat = setInterval(() => {
     void utimes(input.lock, new Date(), new Date()).catch(() => undefined);
   }, PUBLICATION_LOCK_STALE_MS / 3);
