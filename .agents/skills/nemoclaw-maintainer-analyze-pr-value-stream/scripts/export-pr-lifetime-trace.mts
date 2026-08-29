@@ -127,24 +127,25 @@ async function mapBounded<T, R>(values: T[], operation: (value: T) => Promise<R>
   return result;
 }
 
+type MetadataIndex = { processes: Set<number>; threads: Set<string> };
+
 function addMetadata(
   events: TraceEvent[],
+  index: MetadataIndex,
   pid: number,
   tid: number,
   processName: string,
   threadName: string,
 ): void {
-  if (
-    !events.some((event) => event.ph === "M" && event.name === "process_name" && event.pid === pid)
-  )
+  if (!index.processes.has(pid)) {
+    index.processes.add(pid);
     events.push({ name: "process_name", ph: "M", pid, tid: 0, args: { name: processName } });
-  if (
-    !events.some(
-      (event) =>
-        event.ph === "M" && event.name === "thread_name" && event.pid === pid && event.tid === tid,
-    )
-  )
+  }
+  const threadKey = pid + ":" + tid;
+  if (!index.threads.has(threadKey)) {
+    index.threads.add(threadKey);
     events.push({ name: "thread_name", ph: "M", pid, tid, args: { name: threadName } });
+  }
 }
 
 function addInstant(
@@ -206,12 +207,18 @@ function addSpan(
   });
 }
 
+function validateObjectId(value: unknown): string {
+  if (typeof value !== "string" || !/^[0-9a-f]{40,64}$/u.test(value))
+    throw new Error("pull request commit had an invalid object ID");
+  return value;
+}
+
 function normalizeCommits(pull: any): Commit[] {
   const rows = validateArray(pull?.commits, "pull request commits");
   if (rows.length < 1 || rows.length > MAX_REVISIONS)
     throw new Error("lifetime trace requires between 1 and " + MAX_REVISIONS + " revisions");
   return rows.map((commit: any) => ({
-    oid: String(commit?.oid ?? ""),
+    oid: validateObjectId(commit?.oid),
     authoredAt: parseTime(commit?.authoredDate ?? commit?.committedDate, "commit authoredDate"),
     committedAt: parseTime(commit?.committedDate, "commit committedDate"),
     subject:
@@ -337,9 +344,10 @@ function renderTrace(input: {
   lifecycle: Awaited<ReturnType<typeof readLifecycle>>;
 }): { events: TraceEvent[]; lifecycleEvents: number } {
   const events: TraceEvent[] = [];
-  addMetadata(events, 1, 1, "PR #" + input.pull.number, "Lifecycle");
-  addMetadata(events, 2, 1, "Author activity", input.pull.author?.login ?? "author");
-  addMetadata(events, 3, 1, "Feedback and reviews", "Comments and reviews");
+  const metadata: MetadataIndex = { processes: new Set(), threads: new Set() };
+  addMetadata(events, metadata, 1, 1, "PR #" + input.pull.number, "Lifecycle");
+  addMetadata(events, metadata, 2, 1, "Author activity", input.pull.author?.login ?? "author");
+  addMetadata(events, metadata, 3, 1, "Feedback and reviews", "Comments and reviews");
   let lifecycleEvents = 0;
   const instant = (entry: Parameters<typeof addInstant>[1]): void => {
     lifecycleEvents += 1;
@@ -450,6 +458,7 @@ function renderTrace(input: {
         args: { id: row.id, actor: row.user, url: row.html_url ?? null },
       });
   }
+  feedback.sort((left, right) => left.at - right.at);
   const firstRuns = new Map<string, Run>();
   for (const run of input.runs
     .slice()
@@ -458,7 +467,7 @@ function renderTrace(input: {
   }
   for (const [index, commit] of input.commits.entries()) {
     const pid = 1_000 + index;
-    addMetadata(events, pid, 1, "Revision " + commit.oid.slice(0, 8), "Workflows");
+    addMetadata(events, metadata, pid, 1, "Revision " + commit.oid.slice(0, 8), "Workflows");
     instant({
       name: commit.subject,
       category: "author.commit",
@@ -503,8 +512,11 @@ function renderTrace(input: {
       }
     }
   }
+  const commitsByAuthoredAt = input.commits
+    .slice()
+    .sort((left, right) => left.authoredAt - right.authoredAt);
   for (const [index, entry] of feedback.entries()) {
-    const nextCommit = input.commits.find((commit) => commit.authoredAt > entry.at);
+    const nextCommit = commitsByAuthoredAt.find((commit) => commit.authoredAt > entry.at);
     if (!nextCommit) continue;
     addSpan(events, {
       name: "Feedback to next author change",
@@ -525,7 +537,14 @@ function renderTrace(input: {
     const commitIndex = input.commits.findIndex((commit) => commit.oid === run.head_sha);
     const pid = 1_000 + Math.max(0, commitIndex);
     const tid = 10 + index;
-    addMetadata(events, pid, tid, "Revision " + run.head_sha.slice(0, 8), run.name + " #" + run.id);
+    addMetadata(
+      events,
+      metadata,
+      pid,
+      tid,
+      "Revision " + run.head_sha.slice(0, 8),
+      run.name + " #" + run.id,
+    );
     addSpan(events, {
       name: run.name,
       category: "ci.workflow",
@@ -548,6 +567,7 @@ function renderTrace(input: {
     const tid = 10_000 + jobIndex;
     addMetadata(
       events,
+      metadata,
       pid,
       tid,
       "Revision " + job.run.head_sha.slice(0, 8),
@@ -587,6 +607,7 @@ function renderTrace(input: {
       const stepTid = 1_000_000 + jobIndex * 1_000 + stepIndex;
       addMetadata(
         events,
+        metadata,
         pid,
         stepTid,
         "Revision " + job.run.head_sha.slice(0, 8),
@@ -612,7 +633,14 @@ function renderTrace(input: {
     const commitIndex = input.commits.findIndex((commit) => commit.oid === check.commit.oid);
     const pid = 1_000 + Math.max(0, commitIndex);
     const tid = 50_000 + index;
-    addMetadata(events, pid, tid, "Revision " + check.commit.oid.slice(0, 8), "External checks");
+    addMetadata(
+      events,
+      metadata,
+      pid,
+      tid,
+      "Revision " + check.commit.oid.slice(0, 8),
+      "External checks",
+    );
     addSpan(events, {
       name: check.name,
       category: "ci.external-check",
@@ -712,8 +740,8 @@ export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeA
     truncated: false,
     caveats,
   };
-  Object.assign(input.report as object, { lifetime: artifacts });
-  const summary = JSON.stringify(input.report, null, 2) + "\n";
+  const summary =
+    JSON.stringify({ ...(input.report as object), lifetime: artifacts }, null, 2) + "\n";
   const manifest =
     JSON.stringify(
       {

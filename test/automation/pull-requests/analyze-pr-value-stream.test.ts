@@ -77,7 +77,7 @@ const reviews = scenario === "approval-restored" ? [review("APPROVED","2026-01-0
 const pull = {number:42,url:"https://example.test/pr/42",state:scenario.startsWith("approval-") ? "MERGED" : "OPEN",isDraft:false,createdAt:"2026-01-01T00:01:00Z",updatedAt:"2026-01-01T00:04:00Z",mergedAt:scenario.startsWith("approval-") ? "2026-01-01T00:04:00Z" : null,author:{login:"author"},assignees:[],baseRefName:"main",headRefName:"topic",headRefOid:sha,commits:[{oid:sha,authoredDate:"2026-01-01T00:00:00Z",committedDate:"2026-01-01T00:00:00Z",messageHeadline:"change"}],reviews};
 const run = (id) => ({id,event:"push",head_sha:sha,created_at:"2026-01-01T00:00:30Z",run_started_at:scenario === "queued" ? null : "2026-01-01T00:00:31Z",updated_at:"2026-01-01T00:03:00Z",status:scenario === "queued" ? "queued" : "completed",conclusion:scenario === "queued" ? null : "success",name:"CI PR #42"});
 let value;
-if (args.startsWith("pr view")) value = pull;
+if (args.startsWith("pr view")) value = scenario === "head-race" && fs.readFileSync(process.env.VALUE_STREAM_LOG,"utf8").match(/^pr view /gmu).length > 1 ? {...pull,headRefOid:"b".repeat(40)} : pull;
 else if (args.includes("required_status_checks")) value = scenario === "wrong-app" || scenario === "app-status-denied" ? {contexts:[],checks:[{context:"required-a",app_id:7}]} : scenario === "any-app" || scenario === "early-check" ? {contexts:[],checks:[{context:"required-a",app_id:-1}]} : scenario.startsWith("legacy-") ? {contexts:["legacy-required"],checks:[]} : {contexts:["required-a", "required-b"],checks:[]};
 else if (args.includes("issues/42/timeline")) value = [{id:41,event:"assigned",created_at:"2026-01-01T00:01:05Z",actor:"author",commit_id:null,label:null,requested_reviewer:null,rename:null}];
 else if (args.includes("issues/42/comments")) value = [{id:42,created_at:"2026-01-01T00:01:10Z",updated_at:"2026-01-01T00:01:10Z",user:"reviewer",html_url:""}];
@@ -177,7 +177,6 @@ describe("pull request value-stream analysis", () => {
     expect(report.automation.checksConsidered).toBe(2);
     expect(report.automation.firstCheckCreatedAt).toBe("2026-01-01T00:00:35.000Z");
     expect(report.automation.triggerDelaySeconds).toBe(5);
-    expect(result.ghCalls.match(/^pr view /gmu)).toHaveLength(2);
     expect(report.lifetime).toMatchObject({
       revisions: 1,
       workflowRuns: 1,
@@ -212,6 +211,15 @@ describe("pull request value-stream analysis", () => {
       headSha: "a".repeat(40),
       completeness: { workflowRuns: "complete", jobs: "complete", lifecycle: "complete" },
     });
+  });
+
+  test("removes lifetime artifacts when the pull request head changes (#10542)", async () => {
+    const result = await run("head-race", ["--max-test-artifacts", "0"]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("pull request head changed during lifetime analysis");
+    await expect(
+      stat(path.join(result.directory, ".nemoclaw-maintainer/pr-value-stream/pr-42")),
+    ).rejects.toThrow();
   });
 
   test("uses commit timestamps when retained workflow runs are absent (#10542)", async () => {

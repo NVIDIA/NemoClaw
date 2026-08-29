@@ -1504,14 +1504,13 @@ async function main(): Promise<void> {
   const input = parseArguments(process.argv.slice(2));
   const normalized = normalizeAnalysisInput(input);
   const report = await collectValueStreamReport(normalized);
-  const lifetime = await exportLifetimeTrace({
+  report.lifetime = await exportLifetimeTrace({
     workdir: normalized.workdir,
     repository: normalized.repository,
     number: normalized.number,
     report,
     githubRead: async (args) => runGithubCli({ workdir: normalized.workdir, args }),
   });
-  void lifetime;
   const output = `${JSON.stringify(report, null, 2)}\n`;
   if (Buffer.byteLength(output) > MAX_JSON_OUTPUT)
     throw new Error("value-stream JSON exceeded the 4 MB output bound");
