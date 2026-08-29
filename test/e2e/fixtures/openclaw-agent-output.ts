@@ -33,17 +33,12 @@ const OPENCLAW_CONTAINER_KEYS = [
   "segments",
 ] as const;
 
-function isOpenClawResponseDocument(value: unknown): value is OpenClawAgentJsonDocument {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return ["payloads", "result", "response", "choices", "messages", "output", "outputs", "data"].some(
-    (key) => Object.hasOwn(record, key),
-  );
-}
-
 function openClawAgentJsonDocuments(value: unknown): OpenClawAgentJsonDocument[] {
   const values = Array.isArray(value) ? value : [value];
-  return values.filter(isOpenClawResponseDocument);
+  return values.filter(
+    (entry): entry is OpenClawAgentJsonDocument =>
+      typeof entry === "object" && entry !== null && !Array.isArray(entry),
+  );
 }
 
 export function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonDocument[] {
@@ -68,8 +63,9 @@ function collectOpenClawAssistantText(
   }
 
   const record = value as Record<string, unknown>;
-  const role = String(record.role).replaceAll("_", "-").toLowerCase();
-  if (["user", "tool", "function", "toolresult", "tool-result"].includes(role)) return;
+  const role =
+    typeof record.role === "string" ? record.role.replaceAll("_", "-").toLowerCase() : "";
+  if (role && role !== "assistant") return;
   for (const key of OPENCLAW_TEXT_KEYS) {
     collectOpenClawAssistantText(record[key], parts, visited);
   }

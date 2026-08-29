@@ -457,7 +457,10 @@ describe("onboard performance evidence", () => {
   it("records OpenClaw internal-agent duration with an explicit availability state", () => {
     expect(
       buildOpenClawFirstTurnLatencyEvidence(
-        `progress\n${JSON.stringify({ result: { meta: { durationMs: 8_916 } } })}`,
+        `progress\n${JSON.stringify({
+          status: "ok",
+          result: { payloads: [], meta: { durationMs: 8_916 } },
+        })}`,
         10_125,
       ),
     ).toEqual({
@@ -466,10 +469,29 @@ describe("onboard performance evidence", () => {
     });
   });
 
+  it("reads local OpenClaw duration metadata from the shared response envelope", () => {
+    expect(
+      extractOpenClawAgentDurationEvidence(
+        JSON.stringify({ payloads: [{ text: "ready" }], meta: { durationMs: 4_200 } }),
+      ),
+    ).toEqual({ durationMs: 4_200, status: "available" });
+  });
+
+  it("ignores duration metadata nested in an event record", () => {
+    expect(
+      extractOpenClawAgentDurationEvidence(
+        JSON.stringify({ event: "progress", data: { meta: { durationMs: 4_200 } } }),
+      ),
+    ).toEqual({ reason: "missing", status: "unavailable" });
+  });
+
   it("records missing OpenClaw duration metadata as unavailable", () => {
     expect(
       extractOpenClawAgentDurationEvidence(
-        `progress\n${JSON.stringify({ result: { payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }] } })}`,
+        `progress\n${JSON.stringify({
+          payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }],
+          meta: {},
+        })}`,
       ),
     ).toEqual({ reason: "missing", status: "unavailable" });
   });
@@ -477,7 +499,7 @@ describe("onboard performance evidence", () => {
   it("records malformed OpenClaw duration metadata as unavailable", () => {
     expect(
       extractOpenClawAgentDurationEvidence(
-        `progress\n${JSON.stringify({ result: { meta: { durationMs: "8916" } } })}`,
+        `progress\n${JSON.stringify({ payloads: [], meta: { durationMs: "8916" } })}`,
       ),
     ).toEqual({ reason: "malformed", status: "unavailable" });
   });

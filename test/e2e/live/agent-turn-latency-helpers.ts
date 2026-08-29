@@ -3,6 +3,7 @@
 
 import path from "node:path";
 
+import { openClawAgentResponseRecord } from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -167,7 +168,7 @@ export function extractOpenClawAgentDurationEvidence(
 ): OpenClawAgentDurationEvidence {
   let malformed = false;
   for (const document of parseOpenClawAgentJsonDocuments(output)) {
-    const meta = document.result?.meta;
+    const meta = openClawAgentResponseRecord(document)?.meta;
     if (meta === undefined) continue;
     if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
       malformed = true;

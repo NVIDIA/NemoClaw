@@ -153,6 +153,14 @@ describe("OpenClaw agent-output fixture", () => {
         }),
       ),
     ).toBe("ASSISTANT_RESULT");
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          payloads: [{ role: "system", content: "42" }],
+          meta: {},
+        }),
+      ),
+    ).toBe("");
   });
 
   it("rejects structured tool-call records as reply evidence", () => {
