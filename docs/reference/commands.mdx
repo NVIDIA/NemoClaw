@@ -455,7 +455,7 @@ When that result is resumable, NemoClaw keeps the session `in_progress` at its l
 #### Recover a retained sandbox
 
 If onboarding cannot complete after sandbox creation, NemoClaw preserves the sandbox.
-When OpenShell returns a create-attempt label, NemoClaw records it and prints the exact `ai.nvidia.nemoclaw.create-attempt=<value>` selector.
+When available, NemoClaw records and prints the create-attempt label as the exact `ai.nvidia.nemoclaw.create-attempt=<value>` selector.
 When available, NemoClaw also records a durable identity fingerprint and verified policy evidence for recovery.
 Automatic and explicit resume, reuse, recreation, and fresh onboarding with that sandbox name remain blocked.
 When the recovery record contains a durable identity fingerprint, run `$$nemoclaw <sandbox-name> destroy` to attempt identity-bound recovery.
@@ -464,7 +464,7 @@ If OpenShell still reports the sandbox present, destroy preserves the record and
 A foreign container, changed identity, failed Docker probe, or ambiguous recovery record stops cleanup and preserves the record.
 If OpenShell did not return a durable identity fingerprint, `destroy` cannot complete recovery.
 If the terminal output includes a create-attempt label, ask an OpenShell administrator to resolve it to one exact sandbox and use an identity-bound recovery or removal procedure.
-If OpenShell returned neither a durable identity fingerprint nor a create-attempt label, automatic recovery is unavailable. Preserve the terminal output and ask an OpenShell administrator to identify the exact sandbox from gateway or controller evidence.
+If neither a durable identity fingerprint nor a create-attempt label is available, automatic recovery is unavailable. Preserve the terminal output and ask an OpenShell administrator to identify the exact sandbox from gateway or controller evidence.
 If NemoClaw reports that it could not save the recovery evidence, preserve the terminal output. Give the administrator its create-attempt label when present; otherwise ask them to identify the exact sandbox from gateway or controller evidence.
 Do not delete the retained sandbox manually by mutable name.
 To onboard another sandbox while the record remains unresolved, supply a different explicit name:
