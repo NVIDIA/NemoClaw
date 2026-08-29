@@ -18,7 +18,10 @@ import { describe, expect, it } from "vitest";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
 const PREVIOUS_COMMAND_ARTIFACT = "dist/commands/deploy.js";
+const PREVIOUS_COMMAND_DECLARATION = "dist/commands/deploy.d.ts";
+const PREVIOUS_COMMAND_SOURCE_MAP = "dist/commands/deploy.js.map";
 const PREVIOUS_ACTION_ARTIFACT = "dist/lib/actions/deploy.js";
+const PREVIOUS_ACTION_DECLARATION_MAP = "dist/lib/actions/deploy.d.ts.map";
 const PREVIOUS_IMPLEMENTATION_ARTIFACT = "dist/lib/deploy/index.js";
 
 describe("CLI source-checkout upgrade build", () => {
@@ -82,13 +85,22 @@ describe("CLI source-checkout upgrade build", () => {
       );
 
       const previousCommandPath = path.join(fixtureRoot, PREVIOUS_COMMAND_ARTIFACT);
+      const previousCommandDeclarationPath = path.join(fixtureRoot, PREVIOUS_COMMAND_DECLARATION);
+      const previousCommandSourceMapPath = path.join(fixtureRoot, PREVIOUS_COMMAND_SOURCE_MAP);
       const previousActionPath = path.join(fixtureRoot, PREVIOUS_ACTION_ARTIFACT);
+      const previousActionDeclarationMapPath = path.join(
+        fixtureRoot,
+        PREVIOUS_ACTION_DECLARATION_MAP,
+      );
       const previousImplementationPath = path.join(fixtureRoot, PREVIOUS_IMPLEMENTATION_ARTIFACT);
       mkdirSync(path.dirname(previousCommandPath), { recursive: true });
       mkdirSync(path.dirname(previousActionPath), { recursive: true });
       mkdirSync(path.dirname(previousImplementationPath), { recursive: true });
       writeFileSync(previousCommandPath, "module.exports = {};\n");
+      writeFileSync(previousCommandDeclarationPath, "export {};\n");
+      writeFileSync(previousCommandSourceMapPath, "{}\n");
       writeFileSync(previousActionPath, "module.exports = {};\n");
+      writeFileSync(previousActionDeclarationMapPath, "{}\n");
       writeFileSync(previousImplementationPath, "module.exports = {};\n");
 
       const staleMetadataPath = path.join(
@@ -111,7 +123,12 @@ describe("CLI source-checkout upgrade build", () => {
       expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0);
 
       expect(existsSync(previousCommandPath), PREVIOUS_COMMAND_ARTIFACT).toBe(false);
+      expect(existsSync(previousCommandDeclarationPath), PREVIOUS_COMMAND_DECLARATION).toBe(false);
+      expect(existsSync(previousCommandSourceMapPath), PREVIOUS_COMMAND_SOURCE_MAP).toBe(false);
       expect(existsSync(previousActionPath), PREVIOUS_ACTION_ARTIFACT).toBe(false);
+      expect(existsSync(previousActionDeclarationMapPath), PREVIOUS_ACTION_DECLARATION_MAP).toBe(
+        false,
+      );
       expect(existsSync(previousImplementationPath), PREVIOUS_IMPLEMENTATION_ARTIFACT).toBe(false);
       const routing = spawnSync(
         process.execPath,
