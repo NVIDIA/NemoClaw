@@ -90,7 +90,9 @@ const scenario = process.env.VALUE_STREAM_SCENARIO;
 const sha = "a".repeat(40);
 const review = (state,time) => ({state,submittedAt:time,author:{login:"reviewer"},commit:{oid:sha}});
 const reviews = scenario === "approval-restored" ? [review("APPROVED","2026-01-01T00:02:45Z"),review("CHANGES_REQUESTED","2026-01-01T00:03:00Z"),review("APPROVED","2026-01-01T00:03:15Z")] : scenario === "approval-revoked" ? [review("APPROVED","2026-01-01T00:02:45Z"),review("CHANGES_REQUESTED","2026-01-01T00:03:00Z")] : [];
-const pull = {number:42,url:"https://example.test/pr/42",state:scenario.startsWith("approval-") ? "MERGED" : "OPEN",isDraft:false,createdAt:"2026-01-01T00:01:00Z",updatedAt:"2026-01-01T00:04:00Z",mergedAt:scenario.startsWith("approval-") ? "2026-01-01T00:04:00Z" : null,author:{login:"author"},assignees:[],baseRefName:"main",headRefName:"topic",headRefOid:sha,commits:[{oid:sha,authoredDate:"2026-01-01T00:00:00Z",committedDate:"2026-01-01T00:00:00Z",messageHeadline:"change"}],reviews};
+const laterSha = "b".repeat(40);
+const responseCommits = [{oid:sha,authoredDate:"2026-01-01T00:00:00Z",committedDate:"2026-01-01T00:00:00Z",messageHeadline:"change"},{oid:laterSha,authoredDate:"2026-01-01T00:01:30Z",committedDate:"2026-01-01T00:01:30Z",messageHeadline:"response"}];
+const pull = {number:42,url:"https://example.test/pr/42",state:scenario.startsWith("approval-") ? "MERGED" : "OPEN",isDraft:false,createdAt:"2026-01-01T00:01:00Z",updatedAt:"2026-01-01T00:04:00Z",mergedAt:scenario.startsWith("approval-") ? "2026-01-01T00:04:00Z" : null,author:{login:"author"},assignees:[],baseRefName:"main",headRefName:"topic",headRefOid:scenario === "feedback-response" ? laterSha : sha,commits:scenario === "feedback-response" ? responseCommits : [responseCommits[0]],reviews};
 const run = (id) => ({id,event:"push",head_sha:sha,created_at:"2026-01-01T00:00:30Z",run_started_at:scenario === "queued" ? null : "2026-01-01T00:00:31Z",updated_at:"2026-01-01T00:03:00Z",status:scenario === "queued" ? "queued" : "completed",conclusion:scenario === "queued" ? null : "success",name:"CI PR #42"});
 let value;
 if (args.startsWith("pr view")) { const calls=fs.readFileSync(process.env.VALUE_STREAM_LOG,"utf8").match(/^pr view /gmu).length; value = (scenario === "head-race" && calls > 1) || (scenario === "final-head-race" && calls > 2) ? {...pull,headRefOid:"b".repeat(40)} : pull; }
@@ -254,6 +256,23 @@ describe("pull request value-stream analysis", () => {
       confidence: "low",
     });
     expect(report.events.latestRevisionObserved.source).toBe("head commit committedDate fallback");
+  });
+
+  test("links feedback to the next author change (#10542)", async () => {
+    const result = await run("feedback-response");
+    const report = JSON.parse(result.stdout);
+    const trace = JSON.parse(
+      await readFile(path.resolve(result.directory, report.lifetime.trace), "utf8"),
+    );
+    expect(trace.traceEvents).toContainEqual(
+      expect.objectContaining({
+        name: "Feedback to next author change",
+        cat: "author.response",
+        ts: Date.parse("2026-01-01T00:01:20Z") * 1_000,
+        dur: 10_000_000,
+        args: expect.objectContaining({ feedbackId: 43, nextCommit: "b".repeat(40) }),
+      }),
+    );
   });
 
   test("keeps queued runs jobs and steps with nullable timing fields (#10542)", async () => {

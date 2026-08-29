@@ -766,14 +766,8 @@ export async function reclaimStalePublicationLock(
   if (owner && Number.isSafeInteger(owner.pid) && Number(owner.pid) > 0) {
     const observedIdentity = await processStartIdentity(Number(owner.pid));
     if (observedIdentity !== null && observedIdentity === owner.startIdentity) return false;
-    if (observedIdentity === null) {
-      try {
-        process.kill(Number(owner.pid), 0);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ESRCH") owner = null;
-      }
-      if (owner !== null) return false;
-    }
+    // On hosts without process start identities, the stale heartbeat is the fence.
+    if (observedIdentity === null) owner = null;
   }
   const stale = lock + ".stale-" + process.pid + "-" + now;
   try {
