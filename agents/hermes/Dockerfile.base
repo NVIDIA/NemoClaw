@@ -622,7 +622,7 @@ ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
 
 # Hermes 0.20.6 removed agent-browser from its root dependency graph. Prove
 # that the patched source selects the exact npx fallback. Cache the exact
-# registry package, bind its observed integrity to the reviewed lockfile, then
+# registry package, bind its cached integrity to the reviewed lockfile, then
 # prove the cached package works without network access.
 RUN HOME=/sandbox \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
@@ -633,7 +633,6 @@ RUN chown -R sandbox:sandbox /tmp/nemoclaw-agent-browser-runtime \
         /tmp/nemoclaw-agent-browser-runtime/npm-userconfig \
     && install -o sandbox -g sandbox -m 0400 /dev/null \
         /tmp/nemoclaw-agent-browser-runtime/npm-globalconfig \
-    && expected_browser_integrity='sha512-pdqSfjwbFSp+qnwlb2g23e9wXveIOfMi19xpPA9xZUbzEAUp6W4YBZj6Ybj8z4M7WkcbGDDYc+oDIHDt9R3EDQ==' \
     && HOME=/sandbox npm_config_cache=/sandbox/.npm \
         npm_config_registry=https://registry.npmjs.org/ \
         npm_config_userconfig=/tmp/nemoclaw-agent-browser-runtime/npm-userconfig \
@@ -641,8 +640,13 @@ RUN chown -R sandbox:sandbox /tmp/nemoclaw-agent-browser-runtime \
         npm_config_ignore_scripts=true \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /usr/local/bin/npm cache add agent-browser@0.26.0 \
-    && registry_browser_integrity="$( \
-        HOME=/sandbox npm_config_cache=/sandbox/.npm \
+    && locked_browser_integrity="$( \
+        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+            /usr/local/bin/node -e \
+            'const fs = require("node:fs"); const lock = JSON.parse(fs.readFileSync("/tmp/nemoclaw-agent-browser-runtime/package-lock.json", "utf8")); const integrity = lock.packages?.["node_modules/agent-browser"]?.integrity; if (typeof integrity !== "string" || integrity.length === 0) process.exit(1); process.stdout.write(integrity)' \
+    )" \
+    && cached_browser_integrity="$( \
+        HOME=/sandbox npm_config_cache=/sandbox/.npm npm_config_offline=true \
             npm_config_registry=https://registry.npmjs.org/ \
             npm_config_userconfig=/tmp/nemoclaw-agent-browser-runtime/npm-userconfig \
             npm_config_globalconfig=/tmp/nemoclaw-agent-browser-runtime/npm-globalconfig \
@@ -650,7 +654,7 @@ RUN chown -R sandbox:sandbox /tmp/nemoclaw-agent-browser-runtime \
             /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
             /usr/local/bin/npm view agent-browser@0.26.0 dist.integrity \
     )" \
-    && test "${registry_browser_integrity}" = "${expected_browser_integrity}" \
+    && test "${cached_browser_integrity}" = "${locked_browser_integrity}" \
     && HOME=/sandbox npm_config_cache=/sandbox/.npm \
         npm_config_registry=https://registry.npmjs.org/ \
         npm_config_userconfig=/tmp/nemoclaw-agent-browser-runtime/npm-userconfig \

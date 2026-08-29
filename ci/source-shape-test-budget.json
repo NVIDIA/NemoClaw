@@ -97,6 +97,11 @@
       "category": "security"
     },
     {
+      "file": "test/agents/hermes/hermes-share-mount-deps.test.ts",
+      "test": "binds the cached Hermes agent-browser fallback to its lock before offline use",
+      "category": "security"
+    },
+    {
       "file": "test/agents/hermes/hermes-runtime-config-guard-topology.test.ts",
       "test": "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
       "category": "security"

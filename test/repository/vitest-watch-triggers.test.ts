@@ -227,6 +227,7 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
       "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",
+      "test/agents/hermes/hermes-dependency-review.test.ts",
       "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/download-hermes-source-archive.sh")).toEqual([

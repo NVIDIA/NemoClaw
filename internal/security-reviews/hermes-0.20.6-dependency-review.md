@@ -114,11 +114,12 @@ separately hash-verified offline 0.6.1 probe.
 Hermes 0.20.6 resolves agent-browser through an npx fallback instead of the
 root dependency graph. The source patch changes `agent-browser@^0.26.0` to
 `agent-browser@0.26.0`. A reviewed npm lockfile binds the package archive and
-integrity. The base image caches the exact-version packument and archive,
-compares the registry integrity with the reviewed lockfile value, and runs
-lockfile-backed `npm ci --ignore-scripts`. The base then verifies the cached
-version without network access. The final image inherits that immutable source
-and cache boundary and repeats only the network-disabled version probe.
+integrity. The base image caches the exact-version packument and archive, then
+reads its integrity without network access and requires it to match the reviewed
+lockfile. Lockfile-backed `npm ci --ignore-scripts` then verifies the archive.
+The base verifies the cached version without network access. The final image
+inherits that immutable source and cache boundary and repeats only the
+network-disabled version probe.
 
 No new supported integration is introduced. Optional upstream features remain
 subject to their existing NVIDIA/NemoClaw product and policy gates.

@@ -138,6 +138,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
         return [
           "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
           "src/lib/onboard/managed-startup-profile.test.ts",
+          "test/agents/hermes/hermes-dependency-review.test.ts",
           "test/agents/hermes/hermes-mcp-runtime-capability.test.ts",
         ];
       }

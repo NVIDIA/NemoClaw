@@ -78,13 +78,16 @@ function extractHermesRuntimeGuard(dockerfile: string): string {
     .replace(/\\\n/g, " ");
 }
 
-function extractAgentBrowserCacheCommands(dockerfile: string): string {
+function extractAgentBrowserCacheBlock(dockerfile: string): string {
   const warmStart = dockerfile.indexOf("RUN HOME=/sandbox");
   const runtimeGuard = dockerfile.indexOf("RUN /usr/local/bin/hermes --version", warmStart);
   expect(warmStart).toBeGreaterThanOrEqual(0);
   expect(runtimeGuard).toBeGreaterThan(warmStart);
-  return dockerfile
-    .slice(warmStart, runtimeGuard)
+  return dockerfile.slice(warmStart, runtimeGuard);
+}
+
+function extractAgentBrowserCacheCommands(dockerfile: string): string {
+  return extractAgentBrowserCacheBlock(dockerfile)
     .replace(/^RUN\s+/, "")
     .replace(/\nRUN\s+(?:--network=none\s+)?/gu, " &&\n")
     .replace(/\\\n/g, " ")
@@ -765,7 +768,8 @@ describe("Hermes share mount package parity (#2947)", () => {
     }
   });
 
-  it("seeds the exact Hermes agent-browser fallback from its lock before offline use", () => {
+  // source-shape-contract: security -- The image must retain the sandbox privilege drop and network-disabled offline probe around the reviewed browser package.
+  it("binds the cached Hermes agent-browser fallback to its lock before offline use", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-agent-browser-"));
     const fixtureRoot = path.join(tmp, "source");
@@ -867,8 +871,8 @@ describe("Hermes share mount package parity (#2947)", () => {
           '    : > "$npm_config_cache/exact-packument"',
           "    ;;",
           '  "view agent-browser@0.26.0 dist.integrity")',
-          '    [ -f "$npm_config_cache/exact-packument" ]',
-          "    printf 'sha512-pdqSfjwbFSp+qnwlb2g23e9wXveIOfMi19xpPA9xZUbzEAUp6W4YBZj6Ybj8z4M7WkcbGDDYc+oDIHDt9R3EDQ==\\n'",
+          '    [ "${npm_config_offline:-}" = "true" ]',
+          '    printf "%s\\n" "$CACHED_BROWSER_INTEGRITY"',
           "    ;;",
           '  "ci --prefix $EXPECTED_RUNTIME --ignore-scripts --no-audit --no-fund")',
           '    grep -Fq \'"agent-browser": "0.26.0"\' "$EXPECTED_RUNTIME/package-lock.json"',
@@ -904,6 +908,24 @@ describe("Hermes share mount package parity (#2947)", () => {
         { mode: 0o700 },
       );
 
+      const rawCommand = extractAgentBrowserCacheBlock(dockerfile);
+      expect(rawCommand).toContain("RUN --network=none agent_browser_version=");
+      expect(
+        Array.from(
+          rawCommand.matchAll(
+            /\/usr\/bin\/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \\\n\s+(\/\S+)/gu,
+          ),
+          (match) => match[1],
+        ),
+      ).toEqual([
+        "/opt/hermes/.venv/bin/python",
+        "/usr/local/bin/npm",
+        "/usr/local/bin/node",
+        "/usr/local/bin/npm",
+        "/usr/local/bin/npm",
+        "/usr/local/bin/npx",
+      ]);
+
       const command = extractAgentBrowserCacheCommands(dockerfile)
         .replaceAll("/tmp/nemoclaw-agent-browser-runtime", lockedRuntime)
         .replaceAll(`chown -R sandbox:sandbox ${lockedRuntime}`, "true")
@@ -918,15 +940,37 @@ describe("Hermes share mount package parity (#2947)", () => {
           "",
         )
         .replaceAll("/opt/hermes/.venv/bin/python", fakePython)
+        .replaceAll("/usr/local/bin/node", process.execPath)
         .replaceAll("/usr/local/bin/npm", fakeNpm)
         .replaceAll("/usr/local/bin/npx", fakeNpx);
+
+      const commandEnvironment = {
+        PATH: "/usr/bin:/bin",
+        EXPECTED_HOME: sandboxHome,
+        EXPECTED_RUNTIME: lockedRuntime,
+        NPM_CALL_LOG: npmCallLog,
+      };
+      const rejected = spawnSync("bash", ["-euo", "pipefail", "-c", command], {
+        encoding: "utf-8",
+        env: {
+          ...commandEnvironment,
+          CACHED_BROWSER_INTEGRITY: "sha512-substituted",
+        },
+      });
+
+      expect(rejected.status).not.toBe(0);
+      expect(fs.readFileSync(npmCallLog, "utf-8").trim().split("\n")).toEqual([
+        "cache add agent-browser@0.26.0",
+        "view agent-browser@0.26.0 dist.integrity",
+      ]);
+
+      fs.writeFileSync(npmCallLog, "");
       const ran = spawnSync("bash", ["-euo", "pipefail", "-c", command], {
         encoding: "utf-8",
         env: {
-          PATH: "/usr/bin:/bin",
-          EXPECTED_HOME: sandboxHome,
-          EXPECTED_RUNTIME: lockedRuntime,
-          NPM_CALL_LOG: npmCallLog,
+          ...commandEnvironment,
+          CACHED_BROWSER_INTEGRITY:
+            "sha512-pdqSfjwbFSp+qnwlb2g23e9wXveIOfMi19xpPA9xZUbzEAUp6W4YBZj6Ybj8z4M7WkcbGDDYc+oDIHDt9R3EDQ==",
         },
       });
 
