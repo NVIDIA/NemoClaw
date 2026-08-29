@@ -7,12 +7,12 @@ import {
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
   OPENSHELL_SANDBOX_WORKSPACE_LABEL,
+  inspectDockerSandboxNameLabeledContainers,
 } from "../../onboard/openshell-docker-sandbox-containers";
 import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { sanitizeReadinessText } from "../../readiness/sanitize";
 import {
   type DockerSandboxIdentityObservation,
-  inspectDockerSandboxIdentities,
 } from "../../adapters/docker/inspect";
 import {
   classifyOpenShellSandboxPresence,
@@ -62,19 +62,11 @@ export type DestroyContainerIdentityProof = {
   identities?: readonly SandboxNameLabeledContainer[];
 };
 
-function observeDockerSandboxIdentities(sandboxName: string): DockerSandboxIdentityObservation {
-  return inspectDockerSandboxIdentities(`${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`, {
-    managedBy: OPENSHELL_MANAGED_BY_LABEL,
-    workspace: OPENSHELL_SANDBOX_WORKSPACE_LABEL,
-    sandboxId: OPENSHELL_SANDBOX_ID_LABEL,
-  });
-}
-
 /** Read the host observation consumed by the pure identity classifier. */
 export function observeDestroyContainerIdentity(
   sandboxName: string,
 ): DockerSandboxIdentityObservation {
-  return observeDockerSandboxIdentities(sandboxName);
+  return inspectDockerSandboxNameLabeledContainers(sandboxName);
 }
 
 /**

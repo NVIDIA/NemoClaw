@@ -122,7 +122,7 @@ type ExactDockerContainerCleanupDeps = {
   forceRemove?: (containerId: string) => { status?: number | null };
 };
 
-function inspectDockerSandboxNameLabeledContainers(
+export function inspectDockerSandboxNameLabeledContainers(
   sandboxName: string,
 ): DockerSandboxIdentityObservation {
   return inspectDockerSandboxIdentities(`${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`, {

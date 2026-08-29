@@ -1014,13 +1014,23 @@ async function destroySandboxUnlocked(
     deleteSucceededOrAlreadyGone &&
     retainedRecoveryAuthority
   ) {
+    let recoveryResolved: boolean;
     try {
-      onboardSession.resolveRetainedSandboxRecovery(retainedRecoveryAuthority);
+      recoveryResolved = onboardSession.resolveRetainedSandboxRecovery(retainedRecoveryAuthority);
     } catch (error) {
       console.error(
         `  Sandbox '${sandboxName}' resources are gone, but NemoClaw could not clear its retained recovery record: ${redactDestroyError(error)}`,
       );
       console.error(`  Re-run '${CLI_NAME} ${sandboxName} destroy --yes' to finish local cleanup.`);
+      requestSandboxDestroyExit(1);
+    }
+    if (!recoveryResolved) {
+      console.error(
+        `  Sandbox '${sandboxName}' resources are gone, but its retained recovery authority was no longer current, so local recovery cleanup was not confirmed.`,
+      );
+      console.error(
+        `  NemoClaw preserved any current recovery state. Resolve the recovery record conflict, then re-run '${CLI_NAME} ${sandboxName} destroy --yes'.`,
+      );
       requestSandboxDestroyExit(1);
     }
   }

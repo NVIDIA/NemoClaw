@@ -257,6 +257,48 @@ describe("destroySandbox retained recovery flow", () => {
   );
 
   it(
+    "does not report success when retained recovery retirement loses authority (#10547)",
+    { timeout: 30_000 },
+    async () => {
+      const recovery = retainedRecoveryRecord();
+      const bootstrapContainerId = "b".repeat(64);
+      const harness = createDestroyHarness({
+        sandboxPresent: false,
+        dockerOrphanIds: [bootstrapContainerId],
+        dockerRunResult: {
+          status: 0,
+          stdout: `${bootstrapContainerId}\topenshell\tdefault\tsb-alpha`,
+        },
+        registryEntryOverrides: {
+          lifecycleGeneration: recovery.lifecycleGeneration!,
+          lifecycleLiveIdentityFingerprint: recovery.sandboxIdentityFingerprint!,
+        },
+        retainedRecoveryRecords: [recovery],
+      });
+      harness.resolveRetainedSandboxRecoverySpy.mockReturnValue(false);
+
+      await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+        "process.exit(1)",
+      );
+
+      expect(harness.resolveRetainedSandboxRecoverySpy).toHaveBeenCalledWith(recovery);
+      expect(harness.errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("local recovery cleanup was not confirmed"),
+      );
+      expect(harness.errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Resolve the recovery record conflict"),
+      );
+      expect(
+        harness.logSpy.mock.calls.some(([message]) =>
+          String(message).includes("Sandbox 'alpha' destroyed"),
+        ),
+      ).toBe(false);
+      expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    },
+  );
+
+  it(
     "selects only the retained record matching observed Docker identity without a registry row (#10547)",
     { timeout: 30_000 },
     async () => {
