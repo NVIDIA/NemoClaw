@@ -110,7 +110,7 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
         redact: String,
         classify: classify as never,
       }),
-    ).toEqual({ identity });
+    ).toEqual({ identities: [identity] });
   });
 
   it("does not probe or block a non-Docker runtime provider", () => {
@@ -120,7 +120,7 @@ describe("assertUnambiguousDestroyContainerIdentity (#8999)", () => {
       redact: String,
       classify: classify as never,
     });
-    expect(proceed).toEqual({ identity: undefined });
+    expect(proceed).toEqual({});
     expect(classify).not.toHaveBeenCalled();
   });
 

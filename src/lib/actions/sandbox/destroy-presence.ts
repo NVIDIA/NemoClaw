@@ -4,15 +4,16 @@
 import {
   OPENSHELL_SANDBOX_ID_LABEL,
   OPENSHELL_SANDBOX_NAME_LABEL,
-  removeExactOpenShellDockerSandboxContainer,
+  OPENSHELL_SANDBOX_WORKSPACE_LABEL,
+  inspectDockerSandboxNameLabeledContainers,
   resolveOpenShellSandboxOwnershipLabel,
 } from "../../onboard/openshell-docker-sandbox-containers";
+import { fingerprintOpenShellSandboxId } from "../../adapters/openshell/sandbox-identity";
 import { sanitizeReadinessText } from "../../readiness/sanitize";
 import type { SandboxEntry } from "../../state/registry";
 import type { RuntimeProviderDestroyIdentityReceipt } from "../../onboard/runtime-provider/contract";
 import {
   type DockerSandboxIdentityObservation,
-  inspectDockerSandboxIdentities,
 } from "../../adapters/docker/inspect";
 import {
   registeredRuntimeProviderSupportsContainerEngineOperation,
@@ -22,9 +23,6 @@ import {
   classifyOpenShellSandboxPresence,
   type OpenShellSandboxPresence,
 } from "../../adapters/openshell/sandbox-presence";
-
-/** Workspace label OpenShell stamps on every managed sandbox container. */
-export const OPENSHELL_SANDBOX_WORKSPACE_LABEL = "openshell.ai/sandbox-workspace";
 
 const IDENTITY_VALUE_MAX_LENGTH = 256;
 const IDENTITY_DIAGNOSTIC_MAX_LENGTH = 500;
@@ -40,6 +38,7 @@ export type SandboxNameLabeledContainer = {
 /** Verdict for whether destroy resolved one complete managed container identity. */
 export type DestroyContainerIdentityVerdict =
   | { status: "clear"; identity: SandboxNameLabeledContainer | null }
+  | { status: "recovery"; identities: SandboxNameLabeledContainer[] }
   | { status: "probe-failed"; detail: string }
   | {
       status: "ambiguous";
@@ -58,39 +57,27 @@ export type AssertUnambiguousDestroyIdentityDeps = {
     sandboxName: string,
   ) => RuntimeProviderDestroyIdentityReceipt;
   captureProviderIdentityByName?: (sandboxName: string) => RuntimeProviderDestroyIdentityReceipt;
+  retainedSandboxIdentityFingerprint?: string;
   cliName?: string;
-  classify?: (sandboxName: string) => DestroyContainerIdentityVerdict;
+  classify?: (
+    sandboxName: string,
+    retainedSandboxIdentityFingerprint?: string,
+  ) => DestroyContainerIdentityVerdict;
   error?: (message: string) => void;
 };
 
 export type DestroyContainerIdentityProof = {
-  identity: SandboxNameLabeledContainer | null | undefined;
+  // `undefined` delegates identity gating to the runtime provider. An empty
+  // array records confirmed Docker absence; other arrays contain the exact
+  // immutable Docker identities qualified for this destroy operation.
+  identities?: readonly SandboxNameLabeledContainer[];
   providerIdentity?: RuntimeProviderDestroyIdentityReceipt;
 };
-
-function observeDockerSandboxIdentities(sandboxName: string): DockerSandboxIdentityObservation {
-  const ownership = resolveOpenShellSandboxOwnershipLabel();
-  return inspectDockerSandboxIdentities(`${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`, {
-    managedBy: ownership.label,
-    workspace: OPENSHELL_SANDBOX_WORKSPACE_LABEL,
-    sandboxId: OPENSHELL_SANDBOX_ID_LABEL,
-  });
-}
-
 /** Read the host observation consumed by the pure identity classifier. */
 export function observeDestroyContainerIdentity(
   sandboxName: string,
 ): DockerSandboxIdentityObservation {
-  return observeDockerSandboxIdentities(sandboxName);
-}
-
-/** Retire only the provider runtime bound to the pre-destroy identity proof. */
-export function removeExactDestroyContainerIdentity(
-  sandboxName: string,
-  expectedIdentity: SandboxNameLabeledContainer,
-  log: (message: string) => void,
-): void {
-  removeExactOpenShellDockerSandboxContainer(sandboxName, expectedIdentity.id, log);
+  return inspectDockerSandboxNameLabeledContainers(sandboxName);
 }
 
 /**
@@ -101,6 +88,7 @@ export function removeExactDestroyContainerIdentity(
 export function classifyDestroyContainerIdentity(
   sandboxName: string,
   observation: DockerSandboxIdentityObservation,
+  retainedSandboxIdentityFingerprint?: string,
 ): DestroyContainerIdentityVerdict {
   if (observation.status === "probe-failed") {
     return {
@@ -137,6 +125,30 @@ export function classifyDestroyContainerIdentity(
       managed,
     };
   }
+  if (managed.length > 0 && retainedSandboxIdentityFingerprint !== undefined) {
+    const identityMatches = managed.every(
+      (row) =>
+        row.workspace.length > 0 &&
+        row.sandboxId.length > 0 &&
+        fingerprintOpenShellSandboxId(row.sandboxId) === retainedSandboxIdentityFingerprint,
+    );
+    const oneWorkspace = new Set(managed.map((row) => row.workspace)).size === 1;
+    if (!identityMatches || !oneWorkspace) {
+      return {
+        status: "ambiguous",
+        sandboxName,
+        reason: "one or more managed containers do not match the retained sandbox identity",
+        foreign,
+        managed,
+      };
+    }
+    if (managed.length > 1) {
+      return {
+        status: "recovery",
+        identities: [...managed].sort((left, right) => left.id.localeCompare(right.id)),
+      };
+    }
+  }
   if (managed.length !== 1) {
     return {
       status: "ambiguous",
@@ -164,21 +176,6 @@ export function classifyDestroyContainerIdentity(
     };
   }
   return { status: "clear", identity };
-}
-
-/** Require the same immutable container row, including the already-absent state. */
-export function isSameDestroyContainerIdentity(
-  expected: SandboxNameLabeledContainer | null,
-  verdict: DestroyContainerIdentityVerdict,
-): boolean {
-  if (verdict.status !== "clear") return false;
-  if (expected === null || verdict.identity === null) return expected === verdict.identity;
-  return (
-    expected.id === verdict.identity.id &&
-    expected.managedBy === verdict.identity.managedBy &&
-    expected.workspace === verdict.identity.workspace &&
-    expected.sandboxId === verdict.identity.sandboxId
-  );
 }
 
 /** Human-readable lines describing an ambiguous-identity refusal. */
@@ -233,34 +230,6 @@ export function assertUnambiguousDestroyContainerIdentity(
     (provider?.cleanup.supported === true
       ? provider.cleanup.captureDestroyIdentityByName
       : undefined);
-  if (deps.sandbox && captureProviderIdentity) {
-    try {
-      return {
-        identity: undefined,
-        providerIdentity: captureProviderIdentity(deps.sandbox, sandboxName),
-      };
-    } catch (error) {
-      const detail = deps.redact(error instanceof Error ? error.message : String(error));
-      (deps.error ?? ((message: string) => console.error(`  ${message}`)))(
-        `Refusing to destroy sandbox '${sandboxName}': Runtime provider identity could not be inspected (${detail}). No sandbox resources were removed.`,
-      );
-      return false;
-    }
-  }
-  if (!deps.sandbox && captureProviderIdentityByName) {
-    try {
-      return {
-        identity: undefined,
-        providerIdentity: captureProviderIdentityByName(sandboxName),
-      };
-    } catch (error) {
-      const detail = deps.redact(error instanceof Error ? error.message : String(error));
-      (deps.error ?? ((message: string) => console.error(`  ${message}`)))(
-        `Refusing to destroy sandbox '${sandboxName}': Runtime provider identity could not be inspected (${detail}). No sandbox resources were removed.`,
-      );
-      return false;
-    }
-  }
   if (
     !provider ||
     !registeredRuntimeProviderSupportsContainerEngineOperation(
@@ -268,30 +237,49 @@ export function assertUnambiguousDestroyContainerIdentity(
       "gateway-inspection",
     )
   ) {
-    return { identity: undefined };
+    return { identities: undefined };
   }
+  let providerOwnsIdentity =
+    deps.captureProviderIdentity !== undefined || deps.captureProviderIdentityByName !== undefined;
   try {
-    // Exact identity inspection below is the retained default-engine
-    // compatibility guard. Socket-backed providers prove and remove their
-    // own runtime identity through the selected bundle's cleanup surface.
-    if (
+    providerOwnsIdentity ||= Boolean(
       provider.gateway.prepareHostRuntime({
         environment: process.env,
         platform: process.platform,
-      }).socketPath !== null
-    ) {
-      return { identity: undefined };
-    }
+      }).socketPath !== null,
+    );
   } catch {
-    return { identity: undefined };
+    return { identities: undefined };
+  }
+  const error = deps.error ?? ((message: string) => console.error(`  ${message}`));
+  if (providerOwnsIdentity) {
+    try {
+      const providerIdentity =
+        deps.sandbox && captureProviderIdentity
+          ? captureProviderIdentity(deps.sandbox, sandboxName)
+          : captureProviderIdentityByName?.(sandboxName);
+      return providerIdentity ? { identities: undefined, providerIdentity } : { identities: undefined };
+    } catch (captureError) {
+      const detail = deps.redact(
+        captureError instanceof Error ? captureError.message : String(captureError),
+      );
+      error(
+        `Refusing to destroy sandbox '${sandboxName}': Runtime provider identity could not be inspected (${detail}). No sandbox resources were removed.`,
+      );
+      return false;
+    }
   }
   const classify =
     deps.classify ??
-    ((name: string) =>
-      classifyDestroyContainerIdentity(name, observeDestroyContainerIdentity(name)));
-  const error = deps.error ?? ((message: string) => console.error(`  ${message}`));
-
-  const verdict = classify(sandboxName);
+    ((name: string, retainedSandboxIdentityFingerprint?: string) =>
+      classifyDestroyContainerIdentity(
+        name,
+        observeDestroyContainerIdentity(name),
+        retainedSandboxIdentityFingerprint,
+      ));
+  const verdict = deps.retainedSandboxIdentityFingerprint
+    ? classify(sandboxName, deps.retainedSandboxIdentityFingerprint)
+    : classify(sandboxName);
   if (verdict.status === "ambiguous") {
     for (const line of formatAmbiguousDestroyIdentity(verdict, deps.cliName ?? "nemoclaw")) {
       error(line);
@@ -306,7 +294,14 @@ export function assertUnambiguousDestroyContainerIdentity(
     );
     return false;
   }
-  return { identity: verdict.identity };
+  return {
+    identities:
+      verdict.status === "recovery"
+        ? verdict.identities
+        : verdict.identity === null
+          ? []
+          : [verdict.identity],
+  };
 }
 
 /** Compare provider-owned identity proofs across two destroy checkpoints. */
@@ -326,12 +321,21 @@ export function isSameDestroyContainerIdentityProof(
       left.ownershipSha256 === right.ownershipSha256
     );
   }
-  if (expected.identity === undefined || actual.identity === undefined) {
-    return expected.identity === actual.identity;
+  const expectedIdentities = expected.identities;
+  const actualIdentities = actual.identities;
+  if (expectedIdentities === undefined || actualIdentities === undefined) {
+    return expectedIdentities === actualIdentities;
   }
-  return isSameDestroyContainerIdentity(expected.identity, {
-    status: "clear",
-    identity: actual.identity,
+  if (expectedIdentities.length !== actualIdentities.length) return false;
+  return expectedIdentities.every((identity, index) => {
+    const candidate = actualIdentities[index];
+    return (
+      candidate !== undefined &&
+      identity.id === candidate.id &&
+      identity.managedBy === candidate.managedBy &&
+      identity.workspace === candidate.workspace &&
+      identity.sandboxId === candidate.sandboxId
+    );
   });
 }
 
