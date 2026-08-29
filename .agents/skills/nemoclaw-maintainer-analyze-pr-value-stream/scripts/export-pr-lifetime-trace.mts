@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { validateChromeTrace } from "./validate-chrome-trace.mts";
@@ -14,6 +14,7 @@ const MAX_TRACE_EVENTS = 250_000;
 const MAX_TRACE_BYTES = 100_000_000;
 const PAGE_SIZE = 100;
 const READ_CONCURRENCY = 8;
+const PUBLICATION_LOCK_STALE_MS = 5 * 60 * 1_000;
 
 type GithubRead = (args: string[]) => Promise<{ stdout: string }>;
 
@@ -666,17 +667,46 @@ function renderTrace(input: {
   return { events, lifecycleEvents };
 }
 
+export async function reclaimStalePublicationLock(
+  lock: string,
+  now = Date.now(),
+): Promise<boolean> {
+  let lockStat;
+  try {
+    lockStat = await stat(lock);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  if (now - lockStat.mtimeMs <= PUBLICATION_LOCK_STALE_MS) return false;
+  const stale = lock + ".stale-" + process.pid + "-" + now;
+  try {
+    await rename(lock, stale);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  await rm(stale, { recursive: true, force: true });
+  return true;
+}
+
 async function acquirePublicationLock(lock: string): Promise<void> {
   for (let attempt = 0; attempt < 300; attempt += 1) {
     try {
       await mkdir(lock);
+      await writeFile(
+        path.join(lock, "owner.json"),
+        JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }) + "\n",
+        { mode: 0o600 },
+      );
       return;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (await reclaimStalePublicationLock(lock)) continue;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
-  throw new Error("timed out waiting for lifetime artifact publication lock");
+  throw new Error("timed out waiting for active lifetime artifact publication lock: " + lock);
 }
 
 export async function publishStagedDirectory(input: {
@@ -806,6 +836,9 @@ export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeA
     ]);
     await validateChromeTrace(tracePath);
     await writeFile(manifestPath, manifest, { mode: 0o600 });
+    const currentPull = await readPull(input);
+    if (currentPull.headRefOid !== pull.headRefOid)
+      throw new Error("pull request head changed during lifetime analysis");
     await publishStagedDirectory({
       staging,
       destination: directory,

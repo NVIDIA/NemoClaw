@@ -58,7 +58,7 @@ Do not describe a fallback branch timestamp as exact. Do not claim causal attrib
 
 ## Trust boundaries
 
-The script performs no GitHub writes. It invokes executables with argument arrays, bounds GitHub output, pagination, revisions, workflow runs, jobs, trace events, artifact sizes, and file sizes, and rejects malformed or incomplete required history.
+The script performs no GitHub writes. It invokes executables with argument arrays, bounds GitHub output, pagination, revisions, workflow runs, jobs, trace events, artifact sizes, and file sizes, and rejects malformed or incomplete required history. Lifetime artifact publication uses a per-PR lock. An active publication waits for up to 30 seconds; a lock left untouched for more than five minutes is treated as orphaned and reclaimed automatically. A timeout reports the exact active lock path for diagnosis.
 
 GitHub does not expose canonical branch-creation timestamps or pull request description edit history. The trace uses the first retained exact-commit workflow as an observable push signal and records that limitation. Draft transitions appear only when GitHub's timeline returns them.
 

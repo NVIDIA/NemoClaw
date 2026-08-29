@@ -1,7 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -9,7 +19,11 @@ import { execa } from "execa";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { cleanupArtifactDirectory } from "../../../.agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/analyze-pr-value-stream.mts";
-import { publishStagedDirectory } from "../../../.agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/export-pr-lifetime-trace.mts";
+import {
+  publishStagedDirectory,
+  reclaimStalePublicationLock,
+} from "../../../.agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/export-pr-lifetime-trace.mts";
+import { validateChromeTrace } from "../../../.agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/validate-chrome-trace.mts";
 
 const root = path.resolve(import.meta.dirname, "../../..");
 const analyzer = path.join(
@@ -78,7 +92,7 @@ const reviews = scenario === "approval-restored" ? [review("APPROVED","2026-01-0
 const pull = {number:42,url:"https://example.test/pr/42",state:scenario.startsWith("approval-") ? "MERGED" : "OPEN",isDraft:false,createdAt:"2026-01-01T00:01:00Z",updatedAt:"2026-01-01T00:04:00Z",mergedAt:scenario.startsWith("approval-") ? "2026-01-01T00:04:00Z" : null,author:{login:"author"},assignees:[],baseRefName:"main",headRefName:"topic",headRefOid:sha,commits:[{oid:sha,authoredDate:"2026-01-01T00:00:00Z",committedDate:"2026-01-01T00:00:00Z",messageHeadline:"change"}],reviews};
 const run = (id) => ({id,event:"push",head_sha:sha,created_at:"2026-01-01T00:00:30Z",run_started_at:scenario === "queued" ? null : "2026-01-01T00:00:31Z",updated_at:"2026-01-01T00:03:00Z",status:scenario === "queued" ? "queued" : "completed",conclusion:scenario === "queued" ? null : "success",name:"CI PR #42"});
 let value;
-if (args.startsWith("pr view")) value = scenario === "head-race" && fs.readFileSync(process.env.VALUE_STREAM_LOG,"utf8").match(/^pr view /gmu).length > 1 ? {...pull,headRefOid:"b".repeat(40)} : pull;
+if (args.startsWith("pr view")) { const calls=fs.readFileSync(process.env.VALUE_STREAM_LOG,"utf8").match(/^pr view /gmu).length; value = (scenario === "head-race" && calls > 1) || (scenario === "final-head-race" && calls > 2) ? {...pull,headRefOid:"b".repeat(40)} : pull; }
 else if (args.includes("required_status_checks")) value = scenario === "wrong-app" || scenario === "app-status-denied" ? {contexts:[],checks:[{context:"required-a",app_id:7}]} : scenario === "any-app" || scenario === "early-check" ? {contexts:[],checks:[{context:"required-a",app_id:-1}]} : scenario.startsWith("legacy-") ? {contexts:["legacy-required"],checks:[]} : {contexts:["required-a", "required-b"],checks:[]};
 else if (args.includes("issues/42/timeline")) value = [{id:41,event:"assigned",created_at:"2026-01-01T00:01:05Z",actor:"author",commit_id:null,label:null,requested_reviewer:null,rename:null}];
 else if (args.includes("issues/42/comments")) value = [{id:42,created_at:"2026-01-01T00:01:10Z",updated_at:"2026-01-01T00:01:10Z",user:"reviewer",html_url:""}];
@@ -216,6 +230,15 @@ describe("pull request value-stream analysis", () => {
 
   test("removes lifetime artifacts when the pull request head changes (#10542)", async () => {
     const result = await run("head-race");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("pull request head changed during lifetime analysis");
+    await expect(
+      stat(path.join(result.directory, ".nemoclaw-maintainer/pr-value-stream/pr-42")),
+    ).rejects.toThrow();
+  });
+
+  test("does not replace artifacts when the head changes before publication (#10542)", async () => {
+    const result = await run("final-head-race");
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("pull request head changed during lifetime analysis");
     await expect(
@@ -429,6 +452,66 @@ describe("pull request value-stream analysis", () => {
     await expect(readFile(path.join(destination, "manifest.json"), "utf8")).resolves.toBe(
       "complete",
     );
+  });
+
+  test("reclaims stale publication locks but preserves active locks (#10542)", async () => {
+    const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-lock-"));
+    temporaryDirectories.push(publicationRoot);
+    const lock = path.join(publicationRoot, "pr-42.lock");
+    await mkdir(lock);
+    expect(await reclaimStalePublicationLock(lock)).toBe(false);
+    const stale = new Date(Date.now() - 6 * 60 * 1_000);
+    await utimes(lock, stale, stale);
+    expect(await reclaimStalePublicationLock(lock)).toBe(true);
+    await expect(stat(lock)).rejects.toThrow();
+  });
+
+  test("accepts a valid synthetic Chrome trace (#10542)", async () => {
+    const trace = path.join(
+      await mkdtemp(path.join(tmpdir(), "value-stream-trace-")),
+      "trace.json",
+    );
+    temporaryDirectories.push(path.dirname(trace));
+    await writeFile(
+      trace,
+      JSON.stringify({
+        traceEvents: [{ name: "valid", ph: "X", ts: 1, dur: 2, pid: 1, tid: 1, args: {} }],
+      }),
+    );
+    await expect(validateChromeTrace(trace)).resolves.toEqual({ events: 1, tracks: 1 });
+  });
+
+  test("rejects an unsupported Chrome trace phase (#10542)", async () => {
+    const trace = path.join(
+      await mkdtemp(path.join(tmpdir(), "value-stream-trace-")),
+      "trace.json",
+    );
+    temporaryDirectories.push(path.dirname(trace));
+    await writeFile(
+      trace,
+      JSON.stringify({
+        traceEvents: [{ name: "invalid", ph: "s", ts: 1, pid: 1, tid: 1, args: {} }],
+      }),
+    );
+    await expect(validateChromeTrace(trace)).rejects.toThrow("unsupported Chrome trace phase");
+  });
+
+  test("rejects crossing complete Chrome trace events (#10542)", async () => {
+    const trace = path.join(
+      await mkdtemp(path.join(tmpdir(), "value-stream-trace-")),
+      "trace.json",
+    );
+    temporaryDirectories.push(path.dirname(trace));
+    await writeFile(
+      trace,
+      JSON.stringify({
+        traceEvents: [
+          { name: "outer", ph: "X", ts: 1, dur: 5, pid: 1, tid: 1, args: {} },
+          { name: "crossing", ph: "X", ts: 3, dur: 5, pid: 1, tid: 1, args: {} },
+        ],
+      }),
+    );
+    await expect(validateChromeTrace(trace)).rejects.toThrow("crossing complete events");
   });
 
   test("rejects removed user-controlled truncation options before GitHub access (#10542)", async () => {
