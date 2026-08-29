@@ -22,6 +22,7 @@ type ValidatedEvent = {
   dur?: unknown;
   pid?: unknown;
   tid?: unknown;
+  args?: unknown;
 };
 
 export async function validateChromeTrace(
@@ -32,7 +33,7 @@ export async function validateChromeTrace(
   const tracks = new Map<string, { ts: number; dur: number; name: string }[]>();
   const metadata = new Set<string>();
   for (const raw of payload.traceEvents as ValidatedEvent[]) {
-    if (typeof raw.name !== "string" || !["M", "i", "X"].includes(String(raw.ph)))
+    if (typeof raw.name !== "string" || !["C", "M", "i", "X"].includes(String(raw.ph)))
       throw new Error("trace event used an unsupported Chrome trace phase");
     if (!Number.isSafeInteger(raw.pid) || !Number.isSafeInteger(raw.tid))
       throw new Error("trace event pid and tid must be safe integers");
@@ -44,6 +45,17 @@ export async function validateChromeTrace(
     }
     if (!Number.isSafeInteger(raw.ts))
       throw new Error("timed trace event must have a safe timestamp");
+    if (raw.ph === "C") {
+      if (
+        raw.args === null ||
+        typeof raw.args !== "object" ||
+        Object.values(raw.args).some(
+          (value) => typeof value !== "number" || !Number.isFinite(value),
+        )
+      )
+        throw new Error("counter trace event args must be finite numbers");
+      continue;
+    }
     if (raw.ph !== "X") continue;
     if (!Number.isSafeInteger(raw.dur) || Number(raw.dur) < 0)
       throw new Error("complete trace event must have a nonnegative safe duration");
@@ -80,7 +92,7 @@ type GithubRead = (args: string[]) => Promise<{ stdout: string }>;
 type TraceEvent = {
   name: string;
   cat?: string;
-  ph: "M" | "i" | "X";
+  ph: "C" | "M" | "i" | "X";
   ts?: number;
   dur?: number;
   pid: number;
@@ -91,7 +103,7 @@ type TraceEvent = {
 
 type Commit = {
   oid: string;
-  authoredAt: number;
+  committedAt: number;
   subject: string;
 };
 
@@ -232,6 +244,17 @@ function addInstant(
   });
 }
 
+function addCounter(
+  events: TraceEvent[],
+  name: string,
+  at: number,
+  value: number,
+  pid: number,
+  tid: number,
+): void {
+  events.push({ name, cat: "pr.counter", ph: "C", ts: micros(at), pid, tid, args: { value } });
+}
+
 function addSpan(
   events: TraceEvent[],
   input: {
@@ -280,7 +303,7 @@ function normalizeCommits(pull: any): Commit[] {
     throw new Error("lifetime trace requires between 1 and " + MAX_REVISIONS + " revisions");
   return rows.map((commit: any) => ({
     oid: validateObjectId(commit?.oid),
-    authoredAt: parseTime(commit?.authoredDate ?? commit?.committedDate, "commit authoredDate"),
+    committedAt: parseTime(commit?.committedDate, "commit committedDate"),
     subject:
       boundedText(commit?.messageHeadline, 200) ||
       "Commit " + String(commit?.oid ?? "").slice(0, 8),
@@ -374,7 +397,7 @@ async function readLifecycle(
       githubRead: input.githubRead,
       endpoint: "repos/" + input.repository + "/issues/" + input.number + "/timeline",
       projection:
-        "[.[] | {id,event,created_at,actor:(.actor.login // null),commit_id,label:(.label.name // null),requested_reviewer:(.requested_reviewer.login // null),rename}]",
+        "[.[] | {id,event,created_at,actor:(.actor.login // null),commit_id,label:(.label.name // null),requested_reviewer:(.requested_reviewer.login // null),requested_team:(.requested_team.slug // null),rename}]",
       label: "pull request timeline",
     }),
     readPages({
@@ -400,6 +423,7 @@ async function readLifecycle(
 }
 
 function renderTrace(input: {
+  report: any;
   pull: any;
   commits: Commit[];
   runs: Run[];
@@ -412,6 +436,9 @@ function renderTrace(input: {
   addMetadata(events, metadata, 1, 1, "PR #" + input.pull.number, "Lifecycle");
   addMetadata(events, metadata, 2, 1, "Author activity", input.pull.author?.login ?? "author");
   addMetadata(events, metadata, 3, 1, "Feedback and reviews", "Comments and reviews");
+  addMetadata(events, metadata, 4, 1, "PR readiness", "Observed readiness path");
+  addMetadata(events, metadata, 5, 1, "PR counters", "Current revision ordinal");
+  addMetadata(events, metadata, 5, 2, "PR counters", "Open review requests");
   let lifecycleEvents = 0;
   const instant = (entry: Parameters<typeof addInstant>[1]): void => {
     lifecycleEvents += 1;
@@ -428,6 +455,47 @@ function renderTrace(input: {
     pid: 1,
     tid: 1,
     args: { state: input.pull.state, url: input.pull.url },
+  });
+  const revisionObserved = optionalTime(input.report?.events?.latestRevisionObserved?.at);
+  const latestRevision = revisionObserved === null ? null : Math.max(opened, revisionObserved);
+  const automationSettled = optionalTime(input.report?.events?.automationSettled);
+  const approved = optionalTime(input.report?.events?.firstFinalHeadApproval);
+  const observedGate =
+    automationSettled !== null && approved !== null
+      ? Math.max(automationSettled, approved)
+      : (automationSettled ?? approved);
+  const observedComplete =
+    latestRevision === null || observedGate === null
+      ? null
+      : Math.max(latestRevision, observedGate);
+  addSpan(events, {
+    name: "Waiting for latest revision",
+    category: "pr.readiness",
+    start: opened,
+    end: latestRevision,
+    pid: 4,
+    tid: 1,
+  });
+  addSpan(events, {
+    name: "Waiting for observed automation or approval",
+    category: "pr.readiness",
+    start: latestRevision,
+    end: observedComplete,
+    pid: 4,
+    tid: 1,
+    args: {
+      automationSettled: input.report?.events?.automationSettled ?? null,
+      approvedAt: input.report?.events?.firstFinalHeadApproval ?? null,
+    },
+  });
+  addSpan(events, {
+    name: "Observed automation or approval complete",
+    category: "pr.readiness",
+    start: observedComplete,
+    end: merged ?? observedEnd,
+    pid: 4,
+    tid: 1,
+    args: { mergeabilityEstablished: false },
   });
   instant({
     name: "Pull request opened" + (input.pull.isDraft ? " as draft" : " for review"),
@@ -451,11 +519,69 @@ function renderTrace(input: {
         actor: row.actor ?? null,
         label: row.label ?? null,
         requestedReviewer: row.requested_reviewer ?? null,
+        requestedTeam: row.requested_team ?? null,
         renameFrom: row.rename?.from ?? null,
         renameTo: row.rename?.to ?? null,
       },
     });
   }
+  const openRequests = new Map<string, { at: number; id: number | null; tid: number }[]>();
+  let nextRequestTrack = 2;
+  let requestCount = 0;
+  for (const row of input.lifecycle.timeline) {
+    const kind = typeof row?.requested_reviewer === "string" ? "user" : "team";
+    const reviewer = row?.requested_reviewer ?? row?.requested_team;
+    const at = optionalTime(row?.created_at);
+    if (typeof reviewer !== "string" || at === null) continue;
+    const key = kind + ":" + reviewer;
+    const pending = openRequests.get(key) ?? [];
+    if (row.event === "review_requested") {
+      const request = { at, id: row.id ?? null, tid: nextRequestTrack++ };
+      pending.push(request);
+      openRequests.set(key, pending);
+      requestCount += 1;
+      addMetadata(
+        events,
+        metadata,
+        3,
+        request.tid,
+        "Feedback and reviews",
+        "Review request: " + key,
+      );
+      addCounter(events, "Open review requests", at, requestCount, 5, 2);
+      continue;
+    }
+    if (row.event !== "review_request_removed" || pending.length === 0) continue;
+    const request = pending.shift()!;
+    if (pending.length === 0) openRequests.delete(key);
+    requestCount -= 1;
+    addSpan(events, {
+      name: "Review requested: " + key,
+      category: "review.request",
+      start: request.at,
+      end: at,
+      pid: 3,
+      tid: request.tid,
+      args: {
+        reviewer: key,
+        requestEventId: request.id,
+        terminalEventId: row.id ?? null,
+        terminalState: "removed",
+      },
+    });
+    addCounter(events, "Open review requests", at, requestCount, 5, 2);
+  }
+  for (const [reviewer, pending] of openRequests)
+    for (const request of pending)
+      addSpan(events, {
+        name: "Review requested: " + reviewer,
+        category: "review.request",
+        start: request.at,
+        end: observedEnd,
+        pid: 3,
+        tid: request.tid,
+        args: { reviewer, requestEventId: request.id, terminalState: "open" },
+      });
   for (const review of validateArray(input.pull.reviews ?? [], "pull request reviews")) {
     const submitted = optionalTime(review?.submittedAt);
     if (submitted === null) continue;
@@ -529,13 +655,36 @@ function renderTrace(input: {
     .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))) {
     if (!firstRuns.has(run.head_sha)) firstRuns.set(run.head_sha, run);
   }
+  const revisionStarts = input.commits.map((commit) => {
+    const firstRun = firstRuns.get(commit.oid);
+    return firstRun ? parseTime(firstRun.created_at, "workflow createdAt") : commit.committedAt;
+  });
+  for (const [index, at] of revisionStarts.entries())
+    addCounter(events, "Current revision ordinal", at, index + 1, 5, 1);
   for (const [index, commit] of input.commits.entries()) {
     const pid = 1_000 + index;
+    addSpan(events, {
+      name: "Revision " + (index + 1) + " current",
+      category: "pr.revision-epoch",
+      start: revisionStarts[index],
+      end: revisionStarts[index + 1] ?? observedEnd,
+      pid,
+      tid: 2,
+      args: {
+        commit: commit.oid,
+        ordinal: index + 1,
+        subject: commit.subject,
+        current: index === input.commits.length - 1,
+        startSource: firstRuns.has(commit.oid)
+          ? "first exact-commit workflow"
+          : "commit committed timestamp",
+      },
+    });
     addMetadata(events, metadata, pid, 1, "Revision " + commit.oid.slice(0, 8), "Workflows");
     instant({
       name: commit.subject,
       category: "author.commit",
-      at: commit.authoredAt,
+      at: commit.committedAt,
       pid: 2,
       tid: 1,
       args: { commit: commit.oid },
@@ -554,7 +703,7 @@ function renderTrace(input: {
       addSpan(events, {
         name: "Commit publication",
         category: "author.publish",
-        start: commit.authoredAt,
+        start: commit.committedAt,
         end: pushed,
         pid: 2,
         tid: 1_000 + index,
@@ -565,7 +714,7 @@ function renderTrace(input: {
       );
       if (firstFeedback) {
         addSpan(events, {
-          name: "Waiting for actionable feedback",
+          name: "Waiting for inline feedback",
           category: "author.waiting-for-feedback",
           start: pushed,
           end: firstFeedback.at,
@@ -578,15 +727,15 @@ function renderTrace(input: {
   }
   const commitsByAuthoredAt = input.commits
     .slice()
-    .sort((left, right) => left.authoredAt - right.authoredAt);
+    .sort((left, right) => left.committedAt - right.committedAt);
   for (const [index, entry] of feedback.entries()) {
-    const nextCommit = commitsByAuthoredAt.find((commit) => commit.authoredAt > entry.at);
+    const nextCommit = commitsByAuthoredAt.find((commit) => commit.committedAt > entry.at);
     if (!nextCommit) continue;
     addSpan(events, {
       name: "Feedback to next author change",
       category: "author.response",
       start: entry.at,
-      end: nextCommit.authoredAt,
+      end: nextCommit.committedAt,
       pid: 2,
       tid: 3_000 + index,
       args: {
@@ -764,8 +913,14 @@ export async function reclaimStalePublicationLock(
   if (owner && Number.isSafeInteger(owner.pid) && Number(owner.pid) > 0) {
     const observedIdentity = await processStartIdentity(Number(owner.pid));
     if (observedIdentity !== null && observedIdentity === owner.startIdentity) return false;
-    // On hosts without process start identities, the stale heartbeat is the fence.
-    if (observedIdentity === null) owner = null;
+    if (observedIdentity === null || owner.startIdentity == null) {
+      try {
+        process.kill(Number(owner.pid), 0);
+        return false;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false;
+      }
+    }
   }
   const stale = lock + ".stale-" + process.pid + "-" + now;
   try {
@@ -792,20 +947,32 @@ async function requirePublicationLockOwnership(lock: string, token: string): Pro
     throw new Error("lifetime artifact publication lock ownership changed: " + lock);
 }
 
+async function reclaimStaleLockCandidates(lock: string): Promise<void> {
+  const parent = path.dirname(lock);
+  const prefix = path.basename(lock) + ".candidate-";
+  let entries: string[] = [];
+  try {
+    entries = await readdir(parent);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  for (const entry of entries)
+    if (entry.startsWith(prefix)) await reclaimStalePublicationLock(path.join(parent, entry));
+}
+
 async function acquirePublicationLock(
   lock: string,
   track?: (path: string, cleanup?: () => Promise<void>) => void,
   release?: (path: string) => void,
 ): Promise<string> {
+  await reclaimStaleLockCandidates(lock);
   for (let attempt = 0; attempt < 300; attempt += 1) {
     const token = randomUUID();
     const candidate = lock + ".candidate-" + token;
     await mkdir(candidate);
     track?.(candidate, async () => {
-      if (await lockOwnershipMatches(candidate, token))
-        await rm(candidate, { recursive: true, force: true });
-      else if (await lockOwnershipMatches(lock, token))
-        await rm(lock, { recursive: true, force: true });
+      await rm(candidate, { recursive: true, force: true });
+      if (await lockOwnershipMatches(lock, token)) await rm(lock, { recursive: true, force: true });
     });
     try {
       const startIdentity = await processStartIdentity(process.pid);
@@ -873,7 +1040,7 @@ async function recoverInterruptedPublication(
     throw new Error(
       "multiple interrupted lifetime artifact backups require recovery; destination " +
         destination +
-        "; inspect each manifest.json, then rename exactly one complete candidate to the destination without deleting the others: " +
+        "; for each candidate, verify summary.json and trace.json exist and match the byte sizes in manifest.json; then rename exactly one verified candidate to the destination without deleting the others: " +
         backups.join(", "),
     );
   await requirePublicationLockOwnership(lock, token);
@@ -961,6 +1128,7 @@ export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeA
     readLifecycle(input),
   ]);
   const rendered = renderTrace({
+    report: input.report,
     pull,
     commits,
     runs: runsCollection.rows,
