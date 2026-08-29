@@ -91,13 +91,13 @@ const sha = "a".repeat(40);
 const review = (state,time) => ({state,submittedAt:time,author:{login:"reviewer"},commit:{oid:sha}});
 const reviews = scenario === "approval-restored" ? [review("APPROVED","2026-01-01T00:02:45Z"),review("CHANGES_REQUESTED","2026-01-01T00:03:00Z"),review("APPROVED","2026-01-01T00:03:15Z")] : scenario === "approval-revoked" ? [review("APPROVED","2026-01-01T00:02:45Z"),review("CHANGES_REQUESTED","2026-01-01T00:03:00Z")] : [];
 const laterSha = "b".repeat(40);
-const responseCommits = [{oid:sha,authoredDate:"2026-01-01T00:00:00Z",committedDate:"2026-01-01T00:00:00Z",messageHeadline:"change"},{oid:laterSha,authoredDate:"2026-01-01T00:01:30Z",committedDate:"2026-01-01T00:01:30Z",messageHeadline:"response"}];
+const responseCommits = [{oid:sha,authoredDate:"2026-01-01T00:00:00Z",committedDate:"2026-01-01T00:00:00Z",messageHeadline:"change"},{oid:laterSha,authoredDate:"2026-01-01T00:00:10Z",committedDate:"2026-01-01T00:01:30Z",messageHeadline:"response"}];
 const pull = {number:42,url:"https://example.test/pr/42",state:scenario.startsWith("approval-") ? "MERGED" : "OPEN",isDraft:false,createdAt:"2026-01-01T00:01:00Z",updatedAt:"2026-01-01T00:04:00Z",mergedAt:scenario.startsWith("approval-") ? "2026-01-01T00:04:00Z" : null,author:{login:"author"},assignees:[],baseRefName:"main",headRefName:"topic",headRefOid:scenario === "feedback-response" ? laterSha : sha,commits:scenario === "feedback-response" ? responseCommits : [responseCommits[0]],reviews};
 const run = (id) => ({id,event:"push",head_sha:sha,created_at:"2026-01-01T00:00:30Z",run_started_at:scenario === "queued" ? null : "2026-01-01T00:00:31Z",updated_at:"2026-01-01T00:03:00Z",status:scenario === "queued" ? "queued" : "completed",conclusion:scenario === "queued" ? null : "success",name:"CI PR #42"});
 let value;
 if (args.startsWith("pr view")) { const calls=fs.readFileSync(process.env.VALUE_STREAM_LOG,"utf8").match(/^pr view /gmu).length; value = (scenario === "head-race" && calls > 1) || (scenario === "final-head-race" && calls > 1) ? {...pull,headRefOid:"b".repeat(40)} : pull; }
 else if (args.includes("required_status_checks")) value = scenario === "wrong-app" || scenario === "app-status-denied" ? {contexts:[],checks:[{context:"required-a",app_id:7}]} : scenario === "any-app" || scenario === "early-check" ? {contexts:[],checks:[{context:"required-a",app_id:-1}]} : scenario.startsWith("legacy-") ? {contexts:["legacy-required"],checks:[]} : {contexts:["required-a", "required-b"],checks:[]};
-else if (args.includes("issues/42/timeline")) value = [{id:41,event:"assigned",created_at:"2026-01-01T00:01:05Z",actor:"author",commit_id:null,label:null,requested_reviewer:null,rename:null}];
+else if (args.includes("issues/42/timeline")) value = [{id:41,event:"assigned",created_at:"2026-01-01T00:01:05Z",actor:"author",commit_id:null,label:null,requested_reviewer:null,requested_team:null,rename:null},{id:44,event:"review_requested",created_at:"2026-01-01T00:01:15Z",actor:"author",commit_id:null,label:null,requested_reviewer:"reviewer",requested_team:null,rename:null},{id:46,event:"review_requested",created_at:"2026-01-01T00:01:25Z",actor:"author",commit_id:null,label:null,requested_reviewer:null,requested_team:"maintainers",rename:null},{id:45,event:"review_request_removed",created_at:"2026-01-01T00:01:45Z",actor:"author",commit_id:null,label:null,requested_reviewer:"reviewer",requested_team:null,rename:null},{id:47,event:"review_request_removed",created_at:"2026-01-01T00:01:55Z",actor:"author",commit_id:null,label:null,requested_reviewer:null,requested_team:"maintainers",rename:null}];
 else if (args.includes("issues/42/comments")) value = [{id:42,created_at:"2026-01-01T00:01:10Z",updated_at:"2026-01-01T00:01:10Z",user:"reviewer",html_url:""}];
 else if (args.includes("pulls/42/comments")) value = [{id:43,created_at:"2026-01-01T00:01:20Z",updated_at:"2026-01-01T00:01:20Z",user:"reviewer",path:"src/example.ts",line:1,commit_id:sha,html_url:"",in_reply_to_id:null}];
 else if (args.includes("actions/runs?")) value = scenario === "fallback" ? [] : scenario === "truncated" ? [run(11),run(12)] : [run(11)];
@@ -209,10 +209,40 @@ describe("pull request value-stream analysis", () => {
     expect(trace.traceEvents).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "Pull request opened for review", ph: "i" }),
+        expect.objectContaining({
+          name: "Waiting for latest revision",
+          cat: "pr.readiness",
+          ph: "X",
+        }),
+        expect.objectContaining({
+          name: "Current revision ordinal",
+          cat: "pr.counter",
+          ph: "C",
+          args: { value: 1 },
+        }),
+        expect.objectContaining({
+          name: "Open review requests",
+          cat: "pr.counter",
+          ph: "C",
+          args: { value: 1 },
+        }),
         expect.objectContaining({ name: "job", cat: "ci.queue", ph: "X" }),
         expect.objectContaining({ name: "job", cat: "ci.execution", ph: "X" }),
         expect.objectContaining({ name: "step", cat: "ci.step", ph: "X" }),
         expect.objectContaining({ name: "Inline feedback added", cat: "review.feedback" }),
+        expect.objectContaining({
+          name: "Review requested: user:reviewer",
+          cat: "review.request",
+          ph: "X",
+          dur: 30_000_000,
+          args: expect.objectContaining({ terminalState: "removed" }),
+        }),
+        expect.objectContaining({
+          name: "Revision 1 current",
+          cat: "pr.revision-epoch",
+          ph: "X",
+          args: expect.objectContaining({ ordinal: 1, current: true }),
+        }),
       ]),
     );
     expect(
@@ -461,6 +491,9 @@ describe("pull request value-stream analysis", () => {
     const manifest = await readFile(path.join(destination, "manifest.json"), "utf8");
     await expect(readFile(path.join(destination, "summary.json"), "utf8")).resolves.toBe(manifest);
     await expect(readFile(path.join(destination, "trace.json"), "utf8")).resolves.toBe(manifest);
+    expect(
+      (await readdir(publicationRoot)).filter((entry) => entry.includes(".lock.candidate-")),
+    ).toEqual([]);
   });
 
   test("restores a completed lifetime artifact set when staged publication fails (#10542)", async () => {
@@ -518,7 +551,7 @@ describe("pull request value-stream analysis", () => {
         lock: destination + ".lock",
       }),
     ).rejects.toThrow(
-      `inspect each manifest.json, then rename exactly one complete candidate to the destination without deleting the others: ${first}, ${second}`,
+      `for each candidate, verify summary.json and trace.json exist and match the byte sizes in manifest.json; then rename exactly one verified candidate to the destination without deleting the others: ${first}, ${second}`,
     );
     await expect(Promise.all([stat(first), stat(second)])).resolves.toHaveLength(2);
   });
@@ -591,6 +624,22 @@ describe("pull request value-stream analysis", () => {
     await expect(readFile(path.join(destination, "manifest.json"), "utf8")).resolves.toBe("second");
   });
 
+  test("reclaims stale unpublished lock candidates (#10542)", async () => {
+    const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-candidate-"));
+    temporaryDirectories.push(publicationRoot);
+    const destination = path.join(publicationRoot, "pr-42");
+    const lock = destination + ".lock";
+    const candidate = lock + ".candidate-abandoned";
+    const staging = path.join(publicationRoot, "staging");
+    await mkdir(candidate);
+    await mkdir(staging);
+    await writeFile(path.join(staging, "manifest.json"), "complete");
+    const stale = new Date(Date.now() - 6 * 60 * 1_000);
+    await utimes(candidate, stale, stale);
+    await publishStagedDirectory({ staging, destination, lock });
+    await expect(stat(candidate)).rejects.toThrow();
+  });
+
   test("reclaims stale publication locks but preserves active locks (#10542)", async () => {
     const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-lock-"));
     temporaryDirectories.push(publicationRoot);
@@ -608,6 +657,8 @@ describe("pull request value-stream analysis", () => {
     expect(await reclaimStalePublicationLock(lock)).toBe(false);
     const stale = new Date(Date.now() - 6 * 60 * 1_000);
     await utimes(lock, stale, stale);
+    expect(await reclaimStalePublicationLock(lock)).toBe(false);
+    await writeFile(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid }));
     expect(await reclaimStalePublicationLock(lock)).toBe(false);
     await writeFile(
       path.join(lock, "owner.json"),
