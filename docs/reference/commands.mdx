@@ -1422,6 +1422,14 @@ If Ollama does not become healthy within 30 seconds, the command identifies the 
 The command does not take over a system service or an unrelated user-managed Ollama daemon.
 </AgentOnly>
 
+<AgentOnly variant="hermes">
+For an active Portable Hermes sandbox with a published receipt-owned Ollama runner, only `connect --probe-only` can resume the exact stopped runner.
+An ordinary `connect` does not recover it.
+The probe verifies an already-running exact runner without restarting it, refuses missing, replaced, or drifted authority instead of selecting an alternate runtime, and reports success only after the final in-sandbox inference route passes.
+If recovery changed a stopped runner and a later check fails, NemoClaw restores the prior stopped state.
+When it cannot prove that restoration, preserve the current Portable state and do not run another recovery probe or `launch` until you inspect the recorded runtime and registry authority.
+</AgentOnly>
+
 Before reading or changing the live OpenShell gateway inference route, `connect` verifies the shared provider and sandbox metadata.
 When the live route differs and the metadata is compatible, `connect` warns and re-points the route to the target sandbox's recorded provider and model.
 Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for provider-global identity, route drift, and hard-error recovery.
@@ -1955,6 +1963,11 @@ Before it reports success, every completion path verifies the authenticated prox
 </AgentOnly>
 
 <AgentOnly variant="hermes">
+
+For a published receipt-owned Portable Ollama runner, `recover` uses the same exact-runtime recovery contract as [`connect --probe-only`](#$$nemoclaw-name-connect).
+It verifies an already-running runner without restarting it, resumes only the exact stopped runner, and requires the final in-sandbox inference route to pass.
+It does not select an alternate runtime, model, network, or provider.
+If rollback to the prior stopped state cannot be proved after a failure, do not run another recovery probe or `launch` until you inspect the recorded Portable authority.
 
 For an active Portable Hermes receipt, `recover` starts only the exact receipt-owned Podman container when it is stopped.
 If authenticated health is not ready after that start, recovery launches the receipt-owned `nemoclaw-start` command once and waits for authenticated Hermes health.
@@ -4284,7 +4297,7 @@ For a remote server, connect through SSH and run `openshell term` on that server
 
 Start optional host auxiliary services.
 This is the cloudflared tunnel when `cloudflared` is installed, which exposes the dashboard with a public URL.
-Channel messaging (Telegram, Discord, Slack) is not started here; it is configured during `$$nemoclaw onboard` and runs through OpenShell-managed constructs.
+Channel messaging is not started here; it is configured during `$$nemoclaw onboard` and runs through OpenShell-managed constructs.
 
 ```bash
 $$nemoclaw tunnel start
