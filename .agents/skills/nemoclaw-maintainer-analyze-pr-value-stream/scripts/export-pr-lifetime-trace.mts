@@ -103,7 +103,7 @@ type TraceEvent = {
 
 type Commit = {
   oid: string;
-  authoredAt: number;
+  committedAt: number;
   subject: string;
 };
 
@@ -303,7 +303,7 @@ function normalizeCommits(pull: any): Commit[] {
     throw new Error("lifetime trace requires between 1 and " + MAX_REVISIONS + " revisions");
   return rows.map((commit: any) => ({
     oid: validateObjectId(commit?.oid),
-    authoredAt: parseTime(commit?.authoredDate ?? commit?.committedDate, "commit authoredDate"),
+    committedAt: parseTime(commit?.committedDate, "commit committedDate"),
     subject:
       boundedText(commit?.messageHeadline, 200) ||
       "Commit " + String(commit?.oid ?? "").slice(0, 8),
@@ -460,8 +460,10 @@ function renderTrace(input: {
   const latestRevision = revisionObserved === null ? null : Math.max(opened, revisionObserved);
   const automationSettled = optionalTime(input.report?.events?.automationSettled);
   const approved = optionalTime(input.report?.events?.firstFinalHeadApproval);
-  const ready =
-    automationSettled !== null && approved !== null ? Math.max(automationSettled, approved) : null;
+  const observedComplete =
+    automationSettled !== null && approved !== null
+      ? Math.max(automationSettled, approved)
+      : (automationSettled ?? approved);
   addSpan(events, {
     name: "Waiting for latest revision",
     category: "pr.readiness",
@@ -471,10 +473,10 @@ function renderTrace(input: {
     tid: 1,
   });
   addSpan(events, {
-    name: "Waiting for automation and approval",
+    name: "Waiting for observed automation or approval",
     category: "pr.readiness",
     start: latestRevision,
-    end: ready,
+    end: observedComplete,
     pid: 4,
     tid: 1,
     args: {
@@ -483,12 +485,13 @@ function renderTrace(input: {
     },
   });
   addSpan(events, {
-    name: "Ready to merge",
+    name: "Observed automation or approval complete",
     category: "pr.readiness",
-    start: ready,
+    start: observedComplete,
     end: merged ?? observedEnd,
     pid: 4,
     tid: 1,
+    args: { mergeabilityEstablished: false },
   });
   instant({
     name: "Pull request opened" + (input.pull.isDraft ? " as draft" : " for review"),
@@ -518,61 +521,63 @@ function renderTrace(input: {
       },
     });
   }
-  const openRequests = new Map<string, { at: number; id: number | null; tid: number }>();
+  const openRequests = new Map<string, { at: number; id: number | null; tid: number }[]>();
   let nextRequestTrack = 2;
+  let requestCount = 0;
   for (const row of input.lifecycle.timeline) {
+    const kind = typeof row?.requested_reviewer === "string" ? "user" : "team";
     const reviewer = row?.requested_reviewer ?? row?.requested_team;
     const at = optionalTime(row?.created_at);
     if (typeof reviewer !== "string" || at === null) continue;
+    const key = kind + ":" + reviewer;
+    const pending = openRequests.get(key) ?? [];
     if (row.event === "review_requested") {
-      const tid = nextRequestTrack++;
-      openRequests.set(reviewer, { at, id: row.id ?? null, tid });
-      addMetadata(events, metadata, 3, tid, "Feedback and reviews", "Review request: " + reviewer);
+      const request = { at, id: row.id ?? null, tid: nextRequestTrack++ };
+      pending.push(request);
+      openRequests.set(key, pending);
+      requestCount += 1;
+      addMetadata(
+        events,
+        metadata,
+        3,
+        request.tid,
+        "Feedback and reviews",
+        "Review request: " + key,
+      );
+      addCounter(events, "Open review requests", at, requestCount, 5, 2);
+      continue;
     }
-    if (row.event !== "review_request_removed") continue;
-    const request = openRequests.get(reviewer);
-    if (request === undefined) continue;
+    if (row.event !== "review_request_removed" || pending.length === 0) continue;
+    const request = pending.shift()!;
+    if (pending.length === 0) openRequests.delete(key);
+    requestCount -= 1;
     addSpan(events, {
-      name: "Review requested: " + reviewer,
+      name: "Review requested: " + key,
       category: "review.request",
       start: request.at,
       end: at,
       pid: 3,
       tid: request.tid,
       args: {
-        reviewer,
+        reviewer: key,
         requestEventId: request.id,
         terminalEventId: row.id ?? null,
         terminalState: "removed",
       },
     });
-    openRequests.delete(reviewer);
+    addCounter(events, "Open review requests", at, requestCount, 5, 2);
   }
-  const requestChanges = input.lifecycle.timeline
-    .filter((row: any) =>
-      ["review_requested", "review_request_removed"].includes(String(row?.event)),
-    )
-    .map((row: any) => ({
-      at: optionalTime(row?.created_at),
-      delta: row.event === "review_requested" ? 1 : -1,
-    }))
-    .filter((row: any) => row.at !== null)
-    .sort((left: any, right: any) => left.at - right.at);
-  let requests = 0;
-  for (const change of requestChanges) {
-    requests = Math.max(0, requests + change.delta);
-    addCounter(events, "Open review requests", Number(change.at), requests, 5, 2);
-  }
-  for (const [reviewer, request] of openRequests)
-    addSpan(events, {
-      name: "Review requested: " + reviewer,
-      category: "review.request",
-      start: request.at,
-      end: observedEnd,
-      pid: 3,
-      tid: request.tid,
-      args: { reviewer, requestEventId: request.id, terminalState: "open" },
-    });
+  for (const [reviewer, pending] of openRequests)
+    for (const request of pending)
+      addSpan(events, {
+        name: "Review requested: " + reviewer,
+        category: "review.request",
+        start: request.at,
+        end: observedEnd,
+        pid: 3,
+        tid: request.tid,
+        args: { reviewer, requestEventId: request.id, terminalState: "open" },
+      });
   for (const review of validateArray(input.pull.reviews ?? [], "pull request reviews")) {
     const submitted = optionalTime(review?.submittedAt);
     if (submitted === null) continue;
@@ -648,7 +653,7 @@ function renderTrace(input: {
   }
   const revisionStarts = input.commits.map((commit) => {
     const firstRun = firstRuns.get(commit.oid);
-    return firstRun ? parseTime(firstRun.created_at, "workflow createdAt") : commit.authoredAt;
+    return firstRun ? parseTime(firstRun.created_at, "workflow createdAt") : commit.committedAt;
   });
   for (const [index, at] of revisionStarts.entries())
     addCounter(events, "Current revision ordinal", at, index + 1, 5, 1);
@@ -675,7 +680,7 @@ function renderTrace(input: {
     instant({
       name: commit.subject,
       category: "author.commit",
-      at: commit.authoredAt,
+      at: commit.committedAt,
       pid: 2,
       tid: 1,
       args: { commit: commit.oid },
@@ -694,7 +699,7 @@ function renderTrace(input: {
       addSpan(events, {
         name: "Commit publication",
         category: "author.publish",
-        start: commit.authoredAt,
+        start: commit.committedAt,
         end: pushed,
         pid: 2,
         tid: 1_000 + index,
@@ -718,15 +723,15 @@ function renderTrace(input: {
   }
   const commitsByAuthoredAt = input.commits
     .slice()
-    .sort((left, right) => left.authoredAt - right.authoredAt);
+    .sort((left, right) => left.committedAt - right.committedAt);
   for (const [index, entry] of feedback.entries()) {
-    const nextCommit = commitsByAuthoredAt.find((commit) => commit.authoredAt > entry.at);
+    const nextCommit = commitsByAuthoredAt.find((commit) => commit.committedAt > entry.at);
     if (!nextCommit) continue;
     addSpan(events, {
       name: "Feedback to next author change",
       category: "author.response",
       start: entry.at,
-      end: nextCommit.authoredAt,
+      end: nextCommit.committedAt,
       pid: 2,
       tid: 3_000 + index,
       args: {
@@ -904,8 +909,14 @@ export async function reclaimStalePublicationLock(
   if (owner && Number.isSafeInteger(owner.pid) && Number(owner.pid) > 0) {
     const observedIdentity = await processStartIdentity(Number(owner.pid));
     if (observedIdentity !== null && observedIdentity === owner.startIdentity) return false;
-    // On hosts without process start identities, the stale heartbeat is the fence.
-    if (observedIdentity === null) owner = null;
+    if (observedIdentity === null) {
+      try {
+        process.kill(Number(owner.pid), 0);
+        return false;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false;
+      }
+    }
   }
   const stale = lock + ".stale-" + process.pid + "-" + now;
   try {

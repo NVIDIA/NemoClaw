@@ -91,7 +91,7 @@ const sha = "a".repeat(40);
 const review = (state,time) => ({state,submittedAt:time,author:{login:"reviewer"},commit:{oid:sha}});
 const reviews = scenario === "approval-restored" ? [review("APPROVED","2026-01-01T00:02:45Z"),review("CHANGES_REQUESTED","2026-01-01T00:03:00Z"),review("APPROVED","2026-01-01T00:03:15Z")] : scenario === "approval-revoked" ? [review("APPROVED","2026-01-01T00:02:45Z"),review("CHANGES_REQUESTED","2026-01-01T00:03:00Z")] : [];
 const laterSha = "b".repeat(40);
-const responseCommits = [{oid:sha,authoredDate:"2026-01-01T00:00:00Z",committedDate:"2026-01-01T00:00:00Z",messageHeadline:"change"},{oid:laterSha,authoredDate:"2026-01-01T00:01:30Z",committedDate:"2026-01-01T00:01:30Z",messageHeadline:"response"}];
+const responseCommits = [{oid:sha,authoredDate:"2026-01-01T00:00:00Z",committedDate:"2026-01-01T00:00:00Z",messageHeadline:"change"},{oid:laterSha,authoredDate:"2026-01-01T00:00:10Z",committedDate:"2026-01-01T00:01:30Z",messageHeadline:"response"}];
 const pull = {number:42,url:"https://example.test/pr/42",state:scenario.startsWith("approval-") ? "MERGED" : "OPEN",isDraft:false,createdAt:"2026-01-01T00:01:00Z",updatedAt:"2026-01-01T00:04:00Z",mergedAt:scenario.startsWith("approval-") ? "2026-01-01T00:04:00Z" : null,author:{login:"author"},assignees:[],baseRefName:"main",headRefName:"topic",headRefOid:scenario === "feedback-response" ? laterSha : sha,commits:scenario === "feedback-response" ? responseCommits : [responseCommits[0]],reviews};
 const run = (id) => ({id,event:"push",head_sha:sha,created_at:"2026-01-01T00:00:30Z",run_started_at:scenario === "queued" ? null : "2026-01-01T00:00:31Z",updated_at:"2026-01-01T00:03:00Z",status:scenario === "queued" ? "queued" : "completed",conclusion:scenario === "queued" ? null : "success",name:"CI PR #42"});
 let value;
@@ -231,7 +231,7 @@ describe("pull request value-stream analysis", () => {
         expect.objectContaining({ name: "step", cat: "ci.step", ph: "X" }),
         expect.objectContaining({ name: "Inline feedback added", cat: "review.feedback" }),
         expect.objectContaining({
-          name: "Review requested: reviewer",
+          name: "Review requested: user:reviewer",
           cat: "review.request",
           ph: "X",
           dur: 30_000_000,
