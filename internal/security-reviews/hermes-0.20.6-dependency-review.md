@@ -29,6 +29,8 @@ or a missing Brev shadow as qualification.
 | Target source | `5fc308a70719a83cccdbba4c0e39c23f5a8239d5` |
 | Target source archive SHA-256 | `e622723b5bf3cd6c1db974d92d32242f1cb63f61c1112b6f708b34d619ef0fc7` |
 | Target npm integrity cross-check | `sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq15YvnSyiNvsTOWNBi6t3shFpIg+H7+9MJsOiSkg==` |
+| Target base image | `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:1cd5ba5ba0c7e6837dfc3d54130a21471cee76a6fa6d1cbdea686aa746eb3f73` |
+| Base image publication | NVIDIA/NemoClaw run `33249017773`, source `2bbd3d33c22b363a39736aee0dfe61f43974de4b` |
 | NemoPin comparison base | `4e0e663a9a4cf6bac8df8972ea23dfc26ce3c309` |
 | NVIDIA/NemoClaw authoring base | `b12bede8bfa5bc7a8c083f54fc79a4f5663b81df` |
 | NemoPin handoff manifest | `sha256:ec3f152824a843b9970aa8342de0ad15289d99899af06e6eb94baec8e29e5744` |
@@ -36,6 +38,8 @@ or a missing Brev shadow as qualification.
 The source archive and package cross-check remain separate inputs. The image
 build consumes the checksum-pinned source archive. The npm value detects a
 release-identity mismatch; it is not the source used to assemble the image.
+The trusted base-image workflow published and verified the listed Linux amd64
+and arm64 manifest before the final Hermes image selected it.
 
 ## Semantic migration
 

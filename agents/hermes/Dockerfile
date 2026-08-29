@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:d30f58b0374c7d281df07c126cc257baaf63eb051264a575b96099ec037d5e5d
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:1cd5ba5ba0c7e6837dfc3d54130a21471cee76a6fa6d1cbdea686aa746eb3f73
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 # BuildKit supplies this automatic platform argument. The Portable staged

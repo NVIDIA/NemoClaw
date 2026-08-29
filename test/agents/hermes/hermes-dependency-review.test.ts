@@ -21,6 +21,9 @@ const review = fs.readFileSync(
   path.join(root, "internal/security-reviews/hermes-0.20.6-dependency-review.md"),
   "utf8",
 );
+const targetBaseImage =
+  "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:1cd5ba5ba0c7e6837dfc3d54130a21471cee76a6fa6d1cbdea686aa746eb3f73";
+const targetBaseSource = "2bbd3d33c22b363a39736aee0dfe61f43974de4b";
 const securityDependenciesPatch = fs.readFileSync(
   path.join(root, "agents/hermes/security-dependencies.patch"),
   "utf8",
@@ -68,6 +71,7 @@ describe("Hermes 0.20.6 dependency review", () => {
     );
     expect(arg("NODE_VERSION")).toBe("24.18.1");
     expect(arg("UV_VERSION")).toBe("0.11.33");
+    expect(dockerfile).toContain(`ARG BASE_IMAGE=${targetBaseImage}`);
 
     expect(manifest).toContain('expected_version: "0.20.6"');
     expect(manifest).toContain("path: runtime/cron-executions.db\n    strategy: sqlite_backup");
@@ -76,6 +80,10 @@ describe("Hermes 0.20.6 dependency review", () => {
     expect(review).toContain("`b12bede8bfa5bc7a8c083f54fc79a4f5663b81df`");
     expect(review).toContain(
       "`sha256:ec3f152824a843b9970aa8342de0ad15289d99899af06e6eb94baec8e29e5744`",
+    );
+    expect(review).toContain(`| Target base image | \`${targetBaseImage}\` |`);
+    expect(review).toContain(
+      `| Base image publication | NVIDIA/NemoClaw run \`33249017773\`, source \`${targetBaseSource}\` |`,
     );
     expect(review).toContain("five exact preview queries");
     expect(review).toContain("Unresolved upgrade-created high-impact concerns: `0`");
