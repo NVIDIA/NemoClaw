@@ -60,7 +60,8 @@ function collectOpenClawAssistantText(
   }
 
   const record = value as Record<string, unknown>;
-  if (["user", "tool", "function"].includes(String(record.role))) return;
+  const role = String(record.role).replaceAll("_", "-").toLowerCase();
+  if (["user", "tool", "function", "toolresult", "tool-result"].includes(role)) return;
   for (const key of OPENCLAW_TEXT_KEYS) {
     collectOpenClawAssistantText(record[key], parts, visited);
   }

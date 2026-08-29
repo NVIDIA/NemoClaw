@@ -140,6 +140,14 @@ describe("OpenClaw agent-output fixture", () => {
       ),
     ).toBe("");
     expect(
+      parseOpenClawAgentText(JSON.stringify({ messages: [{ role: "toolResult", content: "56" }] })),
+    ).toBe("");
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({ messages: [{ role: "tool-result", content: "56" }] }),
+      ),
+    ).toBe("");
+    expect(
       parseOpenClawAgentText(
         JSON.stringify({
           choices: [{ message: { role: "assistant", content: "56", tool_calls: [{}] } }],

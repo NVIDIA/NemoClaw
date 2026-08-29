@@ -11,7 +11,10 @@ export function containsToolCallStructure(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(containsToolCallStructure);
 
   const record = value as Record<string, unknown>;
+  const role = String(record.role).replaceAll("_", "-").toLowerCase();
   if (
+    role === "toolresult" ||
+    role === "tool-result" ||
     ["tool_use", "tool_result", "tool-result", "function"].includes(String(record.type)) ||
     record.tool_call_id != null ||
     record.toolCallId != null ||
