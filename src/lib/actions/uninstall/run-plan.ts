@@ -79,7 +79,9 @@ import {
   type GatewayRegistryEntry,
   listGatewayStateRoots,
   readGatewayRegistryFile,
+  releaseManagedGatewayStateLifecycleLock,
   registryEntryGatewayPort,
+  tryAcquireManagedGatewayStateLifecycleLock,
   withRegistryLockAt,
 } from "../../state/gateway-registry";
 import {
@@ -3092,41 +3094,55 @@ function prepareOpenShellCleanup(
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
 ): OpenShellCleanupDisposition {
-  if (
-    !isUnusedConfiguredGatewayReservation(
-      paths,
-      options,
-      runtime,
-      teardownAuthority,
-      portableRuntimeCleanup,
-    )
-  )
-    return canBeginOpenShellCleanup(
-      paths,
-      options,
-      runtime,
-      scopedToSelectedGateway,
-      teardownAuthority,
-      portableRuntimeCleanup,
-    )
-      ? "normal"
-      : "blocked";
-  if (!(runtime.isPortFree ?? isHostPortFree)(GATEWAY_PORT)) {
+  const configuredStateDir = runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
+  const stateLifecycleLock = configuredStateDir
+    ? tryAcquireManagedGatewayStateLifecycleLock(paths.selectedGatewayLocalStateDir)
+    : undefined;
+  if (stateLifecycleLock === null) {
     runtime.warn(
-      `No gateway resources were created, but gateway port ${String(GATEWAY_PORT)} has a listener. The unused configured gateway state reservation was preserved; inspect and stop the listener, then rerun uninstall after the port is free.`,
+      "The configured gateway state directory is owned by an active onboarding lifecycle; preserving it. Wait for onboarding to finish, then rerun uninstall.",
     );
     return "blocked";
   }
-  if (!removePath(paths.selectedGatewayLocalStateDir, runtime)) {
-    runtime.warn(
-      "The configured gateway state reservation changed during validation; preserving current state for retry.",
+  try {
+    if (
+      !isUnusedConfiguredGatewayReservation(
+        paths,
+        options,
+        runtime,
+        teardownAuthority,
+        portableRuntimeCleanup,
+      )
+    )
+      return canBeginOpenShellCleanup(
+        paths,
+        options,
+        runtime,
+        scopedToSelectedGateway,
+        teardownAuthority,
+        portableRuntimeCleanup,
+      )
+        ? "normal"
+        : "blocked";
+    if (!(runtime.isPortFree ?? isHostPortFree)(GATEWAY_PORT)) {
+      runtime.warn(
+        `No gateway resources were created, but gateway port ${String(GATEWAY_PORT)} has a listener. The unused configured gateway state reservation was preserved; inspect and stop the listener, then rerun uninstall after the port is free.`,
+      );
+      return "blocked";
+    }
+    if (!removePath(paths.selectedGatewayLocalStateDir, runtime)) {
+      runtime.warn(
+        "The configured gateway state reservation changed during validation; preserving current state for retry.",
+      );
+      return "blocked";
+    }
+    runtime.log(
+      "Removed the unused configured gateway state reservation; no gateway resources were created.",
     );
-    return "blocked";
+    return "reservation-removed";
+  } finally {
+    if (stateLifecycleLock) releaseManagedGatewayStateLifecycleLock(stateLifecycleLock);
   }
-  runtime.log(
-    "Removed the unused configured gateway state reservation; no gateway resources were created.",
-  );
-  return "reservation-removed";
 }
 
 function executePlan(

@@ -15,6 +15,7 @@ import * as gatewayBinding from "../gateway-binding";
 import { createDockerDriverGatewayStart } from "./docker-driver-start";
 import { createGatewayRecoveryOrchestration } from "./recovery";
 import { createGatewayRegistration } from "./registration";
+import * as gatewayStateLifecycleLock from "./state-lifecycle-lock";
 
 const runResult = (status = 0) =>
   ({ status, stdout: "", stderr: "" }) as ReturnType<typeof import("../../runner").run>;
@@ -124,6 +125,9 @@ describe("gateway lifecycle late binding", () => {
           stateDir,
         }),
       ).toBeNull();
+      expect(
+        gatewayStateLifecycleLock.tryAcquireManagedGatewayStateLifecycleLock(stateDir),
+      ).toBeNull();
       return { OPENSHELL_SERVER_PORT: String(port) };
     });
     const start = createDockerDriverGatewayStart({
@@ -209,6 +213,9 @@ describe("gateway lifecycle late binding", () => {
           stateDir,
         }),
       ).toBeNull();
+      const releasedLifecycleLock =
+        gatewayStateLifecycleLock.acquireManagedGatewayStateLifecycleLock(stateDir);
+      gatewayStateLifecycleLock.releaseManagedGatewayStateLifecycleLock(releasedLifecycleLock);
 
       const unsafeStateDir = path.join(root, "operator-data");
       fs.mkdirSync(unsafeStateDir, { mode: 0o700 });
@@ -234,7 +241,7 @@ describe("gateway lifecycle late binding", () => {
           path.join(writableStateDir, gatewayBinding.MANAGED_GATEWAY_STATE_ROOT_MARKER),
         ),
       ).toBe(false);
-      expect(fs.readdirSync(writableStateDir)).toEqual([]);
+      expect(fs.existsSync(writableStateDir)).toBe(false);
       expect(getDockerDriverGatewayEnv).toHaveBeenCalledTimes(1);
       expect(managedStart).toHaveBeenCalledTimes(1);
     } finally {

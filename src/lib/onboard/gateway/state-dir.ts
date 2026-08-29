@@ -5,12 +5,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
-import { DEFAULT_GATEWAY_PORT } from "../../core/ports";
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
 
-export { DEFAULT_GATEWAY_PORT } from "../../core/ports";
+export { DEFAULT_GATEWAY_PORT, GATEWAY_PORT };
 
 export const BASE_GATEWAY_STATE_DIR_NAME = "openshell-docker-gateway";
 export const MANAGED_GATEWAY_STATE_ROOT_MARKER = ".nemoclaw-managed-gateway-state.json";
+export const MANAGED_GATEWAY_STATE_LIFECYCLE_LOCK_SUFFIX = ".nemoclaw-lifecycle.lock";
 const MANAGED_GATEWAY_STATE_ROOT_MARKER_MAX_BYTES = 4096;
 
 export class UnsafeGatewayStateDirectoryError extends Error {
@@ -54,6 +55,18 @@ export function resolveGatewayStateDirForPort(options: {
   return resolved;
 }
 
+export function resolveGatewayLogPathForPort(options: {
+  configured?: string;
+  home: string;
+  port: number;
+}): string {
+  return path.join(resolveGatewayStateDirForPort(options), "openshell-gateway.log");
+}
+
+export function managedGatewayStateLifecycleLockPath(stateDir: string): string {
+  return `${path.resolve(stateDir)}${MANAGED_GATEWAY_STATE_LIFECYCLE_LOCK_SUFFIX}`;
+}
+
 interface ManagedGatewayStateRootTarget {
   gatewayName: string;
   gatewayPort: number;
@@ -93,6 +106,11 @@ function stateRootParentOwnershipFailure(stateDir: string): string | null {
     return "the gateway state directory's parent is not a trusted real directory without group or world write access";
   }
   return null;
+}
+
+export function assertManagedGatewayStateDirectoryParentTrusted(stateDir: string): void {
+  const parentFailure = stateRootParentOwnershipFailure(stateDir);
+  if (parentFailure) throw new Error(`Unsafe gateway state directory: ${parentFailure}.`);
 }
 
 function stateRootMarkerOwnershipFailure(target: ManagedGatewayStateRootTarget): string | null {
@@ -170,8 +188,7 @@ export function ensureManagedGatewayStateRoot(
     fs.mkdirSync(stateDir, { mode: 0o700, recursive: true });
     fs.chmodSync(stateDir, 0o700);
   }
-  const parentFailure = stateRootParentOwnershipFailure(stateDir);
-  if (parentFailure) throw new Error(`Unsafe gateway state directory: ${parentFailure}.`);
+  assertManagedGatewayStateDirectoryParentTrusted(stateDir);
   const markerPath = path.join(stateDir, MANAGED_GATEWAY_STATE_ROOT_MARKER);
   if (fs.existsSync(markerPath)) {
     const failure = stateRootMarkerOwnershipFailure({ ...target, stateDir });
