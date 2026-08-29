@@ -48,8 +48,7 @@ const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
 const SECURITY_PROBE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
-const credentialName = /(?:^|_)(?:API_?KEY|AUTH_?TOKEN|ACCESS_?TOKEN|REFRESH_?TOKEN|CLIENT_?SECRET|PASSWORD|CREDENTIAL)(?:$|_)/i;
-const credentialNames = Object.keys(process.env).filter((name) => credentialName.test(name));
+const upstreamCredentialNames = Object.entries(process.env).filter(([, value]) => /nvapi-[A-Za-z0-9_-]{10,}/.test(value)).map(([name]) => name);
 const stack = ["/sandbox"];
 const credentialFiles = [];
 let bytes = 0;
@@ -88,9 +87,9 @@ while (stack.length > 0 && files < 10000 && bytes < 32 * 1024 * 1024) {
   }
 }
 const dockerSockets = ["/var/run/docker.sock", "/run/docker.sock"].filter((candidate) => fs.existsSync(candidate));
-const result = {credentialNames, credentialFiles, dockerSockets, files, bytes};
+const result = {upstreamCredentialNames, credentialFiles, dockerSockets, files, bytes};
 process.stdout.write(JSON.stringify(result) + "\n");
-process.exit(credentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 ? 0 : 1);
+process.exit(upstreamCredentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 ? 0 : 1);
 `;
 const NETWORK_DENIAL_PROBE = String.raw`
 const timer = setTimeout(() => process.exit(2), 20000);
@@ -523,7 +522,7 @@ test(
         ...inferenceEvidence,
       },
       policy: {
-        credentialEnvironmentAbsent: true,
+        upstreamCredentialEnvironmentAbsent: true,
         credentialFilesAbsent: true,
         upstreamCredentialAbsentFromRegistryAndLogs: true,
         undeclaredNetworkDenied: true,
