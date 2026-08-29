@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { validateChromeTrace } from "./validate-chrome-trace.mts";
@@ -666,10 +666,44 @@ function renderTrace(input: {
   return { events, lifecycleEvents };
 }
 
-async function writeAtomic(file: string, content: string): Promise<void> {
-  const temporary = file + ".tmp-" + process.pid;
-  await writeFile(temporary, content, { mode: 0o600 });
-  await rename(temporary, file);
+async function acquirePublicationLock(lock: string): Promise<void> {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    try {
+      await mkdir(lock);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  throw new Error("timed out waiting for lifetime artifact publication lock");
+}
+
+export async function publishStagedDirectory(input: {
+  staging: string;
+  destination: string;
+  lock: string;
+}): Promise<void> {
+  await acquirePublicationLock(input.lock);
+  const backup = input.staging + "-previous";
+  let movedPrevious = false;
+  try {
+    try {
+      await rename(input.destination, backup);
+      movedPrevious = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    try {
+      await rename(input.staging, input.destination);
+    } catch (error) {
+      if (movedPrevious) await rename(backup, input.destination);
+      throw error;
+    }
+    if (movedPrevious) await rm(backup, { recursive: true, force: true });
+  } finally {
+    await rm(input.lock, { recursive: true, force: true });
+  }
 }
 
 export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeArtifacts> {
@@ -709,10 +743,7 @@ export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeA
     "pr-" + input.number,
   );
   const directory = path.resolve(input.workdir, relativeDirectory);
-  const tracePath = path.join(directory, "trace.json");
-  const summaryPath = path.join(directory, "summary.json");
-  const manifestPath = path.join(directory, "manifest.json");
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const parentDirectory = path.dirname(directory);
   const generatedAt = new Date().toISOString();
   const trace =
     JSON.stringify(
@@ -763,12 +794,25 @@ export async function exportLifetimeTrace(input: ExportInput): Promise<LifetimeA
       null,
       2,
     ) + "\n";
+  await mkdir(parentDirectory, { recursive: true, mode: 0o700 });
+  const staging = await mkdtemp(path.join(parentDirectory, ".pr-" + input.number + "-staging-"));
+  const tracePath = path.join(staging, "trace.json");
+  const summaryPath = path.join(staging, "summary.json");
+  const manifestPath = path.join(staging, "manifest.json");
   try {
-    await Promise.all([writeAtomic(tracePath, trace), writeAtomic(summaryPath, summary)]);
+    await Promise.all([
+      writeFile(tracePath, trace, { mode: 0o600 }),
+      writeFile(summaryPath, summary, { mode: 0o600 }),
+    ]);
     await validateChromeTrace(tracePath);
-    await writeAtomic(manifestPath, manifest);
+    await writeFile(manifestPath, manifest, { mode: 0o600 });
+    await publishStagedDirectory({
+      staging,
+      destination: directory,
+      lock: directory + ".lock",
+    });
   } catch (error) {
-    await rm(directory, { recursive: true, force: true });
+    await rm(staging, { recursive: true, force: true });
     throw error;
   }
   return artifacts;

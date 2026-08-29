@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -9,6 +9,7 @@ import { execa } from "execa";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { cleanupArtifactDirectory } from "../../../.agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/analyze-pr-value-stream.mts";
+import { publishStagedDirectory } from "../../../.agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/export-pr-lifetime-trace.mts";
 
 const root = path.resolve(import.meta.dirname, "../../..");
 const analyzer = path.join(
@@ -169,7 +170,7 @@ describe("pull request value-stream analysis", () => {
   });
 
   test("returns a complete bounded report through mocked process boundaries (#10542)", async () => {
-    const result = await run("complete", ["--max-test-artifacts", "0"]);
+    const result = await run("complete");
     expect(result.exitCode, result.stderr).toBe(0);
     const report = JSON.parse(result.stdout);
     expect(report.events.automationSettled).toBe("2026-01-01T00:02:40.000Z");
@@ -214,7 +215,7 @@ describe("pull request value-stream analysis", () => {
   });
 
   test("removes lifetime artifacts when the pull request head changes (#10542)", async () => {
-    const result = await run("head-race", ["--max-test-artifacts", "0"]);
+    const result = await run("head-race");
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("pull request head changed during lifetime analysis");
     await expect(
@@ -223,7 +224,7 @@ describe("pull request value-stream analysis", () => {
   });
 
   test("uses commit timestamps when retained workflow runs are absent (#10542)", async () => {
-    const report = JSON.parse((await run("fallback", ["--max-test-artifacts", "0"])).stdout);
+    const report = JSON.parse((await run("fallback")).stdout);
     expect(report.events.firstBranchPush).toMatchObject({
       source: "first commit committedDate fallback",
       confidence: "low",
@@ -232,7 +233,7 @@ describe("pull request value-stream analysis", () => {
   });
 
   test("keeps queued runs jobs and steps with nullable timing fields (#10542)", async () => {
-    const report = JSON.parse((await run("queued", ["--max-test-artifacts", "0"])).stdout);
+    const report = JSON.parse((await run("queued")).stdout);
     const queuedRun = report.waterfall.runs[0];
     expect(queuedRun).toMatchObject({ startedAt: null, queueSeconds: null, durationSeconds: null });
     expect(queuedRun.jobs[0]).toMatchObject({
@@ -249,7 +250,7 @@ describe("pull request value-stream analysis", () => {
   });
 
   test("does not settle automation when a required exact-head check is absent (#10542)", async () => {
-    const report = JSON.parse((await run("incomplete", ["--max-test-artifacts", "0"])).stdout);
+    const report = JSON.parse((await run("incomplete")).stdout);
     expect(report.events.automationSettled).toBeNull();
     expect(report.caveats).toContain(
       "Automation is not settled because at least one configured required check is absent, pending, or unsuccessful on the exact head.",
@@ -257,55 +258,47 @@ describe("pull request value-stream analysis", () => {
   });
 
   test("does not satisfy an app-bound required check with another GitHub App (#10542)", async () => {
-    const report = JSON.parse((await run("wrong-app", ["--max-test-artifacts", "0"])).stdout);
+    const report = JSON.parse((await run("wrong-app")).stdout);
     expect(report.events.automationSettled).toBeNull();
     expect(report.automation.checksConsidered).toBe(0);
   });
 
   test("accepts any provider for an unrestricted required check (#10542)", async () => {
-    const report = JSON.parse((await run("any-app", ["--max-test-artifacts", "0"])).stdout);
+    const report = JSON.parse((await run("any-app")).stdout);
     expect(report.events.automationSettled).toBe("2026-01-01T00:02:30.000Z");
     expect(report.automation.checksConsidered).toBe(1);
   });
 
   test("settles automation from an earlier exact-commit check run (#10542)", async () => {
-    const report = JSON.parse((await run("early-check", ["--max-test-artifacts", "0"])).stdout);
+    const report = JSON.parse((await run("early-check")).stdout);
     expect(report.events.automationSettled).toBe("2026-01-01T00:00:20.000Z");
   });
 
   test("settles automation from an earlier exact-commit legacy status (#10542)", async () => {
-    const report = JSON.parse((await run("legacy-status", ["--max-test-artifacts", "0"])).stdout);
+    const report = JSON.parse((await run("legacy-status")).stdout);
     expect(report.events.automationSettled).toBe("2026-01-01T00:00:20.000Z");
     expect(report.automation.firstCheckCreatedAt).toBe("2026-01-01T00:00:04.000Z");
   });
 
   test("skips legacy status permission when app-bound checks are sufficient (#10542)", async () => {
-    const report = JSON.parse(
-      (await run("app-status-denied", ["--max-test-artifacts", "0"])).stdout,
-    );
+    const report = JSON.parse((await run("app-status-denied")).stdout);
     expect(report.events.automationSettled).toBe("2026-01-01T00:02:30.000Z");
   });
 
   test("finds a required legacy status on the second bounded page (#10542)", async () => {
-    const report = JSON.parse(
-      (await run("legacy-paginated", ["--max-test-artifacts", "0"])).stdout,
-    );
+    const report = JSON.parse((await run("legacy-paginated")).stdout);
     expect(report.events.automationSettled).toBe("2026-01-01T00:00:20.000Z");
   });
 
   test("uses the restored final-head approval after a later change request (#10542)", async () => {
-    const report = JSON.parse(
-      (await run("approval-restored", ["--max-test-artifacts", "0"])).stdout,
-    );
+    const report = JSON.parse((await run("approval-restored")).stdout);
     expect(report.events.firstFinalHeadApproval).toBe("2026-01-01T00:03:15.000Z");
     expect(report.elapsed.approvalDelaySeconds).toBe(35);
     expect(report.elapsed.mergeLagAfterReadySeconds).toBe(45);
   });
 
   test("omits a final-head approval superseded by a change request (#10542)", async () => {
-    const report = JSON.parse(
-      (await run("approval-revoked", ["--max-test-artifacts", "0"])).stdout,
-    );
+    const report = JSON.parse((await run("approval-revoked")).stdout);
     expect(report.events.firstFinalHeadApproval).toBeNull();
     expect(report.elapsed.approvalDelaySeconds).toBeNull();
   });
@@ -389,14 +382,59 @@ describe("pull request value-stream analysis", () => {
     expect(JSON.stringify(report)).not.toContain("secret-token");
   });
 
-  test("marks the waterfall truncated at the configured run bound (#10542)", async () => {
-    const report = JSON.parse(
-      (await run("truncated", ["--max-automation-runs", "1", "--max-test-artifacts", "0"])).stdout,
+  test("publishes each concurrent lifetime artifact set without mixing files (#10542)", async () => {
+    const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-publish-"));
+    temporaryDirectories.push(publicationRoot);
+    const destination = path.join(publicationRoot, "pr-42");
+    const first = path.join(publicationRoot, "first");
+    const second = path.join(publicationRoot, "second");
+    await Promise.all([mkdir(first), mkdir(second)]);
+    await Promise.all(
+      [first, second].flatMap((directory, index) =>
+        ["summary.json", "trace.json", "manifest.json"].map((file) =>
+          writeFile(path.join(directory, file), String(index)),
+        ),
+      ),
     );
-    expect(report.waterfall).toMatchObject({
-      runsAvailable: 2,
-      runsIncluded: 1,
-      runsTruncated: true,
-    });
+    await Promise.all([
+      publishStagedDirectory({ staging: first, destination, lock: destination + ".lock" }),
+      publishStagedDirectory({ staging: second, destination, lock: destination + ".lock" }),
+    ]);
+    const manifest = await readFile(path.join(destination, "manifest.json"), "utf8");
+    await expect(readFile(path.join(destination, "summary.json"), "utf8")).resolves.toBe(manifest);
+    await expect(readFile(path.join(destination, "trace.json"), "utf8")).resolves.toBe(manifest);
+  });
+
+  test("restores a completed lifetime artifact set when staged publication fails (#10542)", async () => {
+    const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-restore-"));
+    temporaryDirectories.push(publicationRoot);
+    const destination = path.join(publicationRoot, "pr-42");
+    await mkdir(destination);
+    await Promise.all(
+      ["summary.json", "trace.json", "manifest.json"].map((file) =>
+        writeFile(path.join(destination, file), "complete"),
+      ),
+    );
+    await expect(
+      publishStagedDirectory({
+        staging: path.join(publicationRoot, "missing-staging"),
+        destination,
+        lock: destination + ".lock",
+      }),
+    ).rejects.toThrow();
+    await expect(readFile(path.join(destination, "summary.json"), "utf8")).resolves.toBe(
+      "complete",
+    );
+    await expect(readFile(path.join(destination, "trace.json"), "utf8")).resolves.toBe("complete");
+    await expect(readFile(path.join(destination, "manifest.json"), "utf8")).resolves.toBe(
+      "complete",
+    );
+  });
+
+  test("rejects removed user-controlled truncation options before GitHub access (#10542)", async () => {
+    const result = await run("complete", ["--max-automation-runs", "1"]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("unknown argument: --max-automation-runs");
+    expect(result.ghCalls).toBe("");
   });
 });

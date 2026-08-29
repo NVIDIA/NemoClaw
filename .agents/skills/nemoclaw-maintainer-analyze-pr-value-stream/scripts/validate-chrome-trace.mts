@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 type Event = {
   name?: unknown;
@@ -55,13 +53,3 @@ export async function validateChromeTrace(file: string): Promise<{
   }
   return { events: payload.traceEvents.length, tracks: tracks.size };
 }
-
-const invokedPath = process.argv[1];
-if (
-  invokedPath &&
-  process.argv[2] &&
-  import.meta.url === pathToFileURL(path.resolve(invokedPath)).href
-)
-  validateChromeTrace(process.argv[2]).then((result) =>
-    process.stdout.write(JSON.stringify(result) + "\n"),
-  );

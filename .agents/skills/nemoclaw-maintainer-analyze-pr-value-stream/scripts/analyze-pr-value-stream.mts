@@ -13,17 +13,17 @@ import { exportLifetimeTrace, type LifetimeArtifacts } from "./export-pr-lifetim
 const execFileAsync = promisify(execFile);
 const MAX_GH_OUTPUT = 10_000_000;
 const MAX_JSON_OUTPUT = 4_000_000;
+const MAX_RUN_PAGES = 3;
+const MAX_CHECK_PAGES = 3;
+const MAX_AUTOMATION_RUNS = 50;
+const MAX_TEST_ARTIFACTS = 12;
+const TOP_TESTS_PER_SHARD = 10;
 
 type Input = {
   workdir: string;
   number: number;
   repository?: string;
   targetMinutes?: number;
-  maxRunPages?: number;
-  maxCheckPages?: number;
-  maxAutomationRuns?: number;
-  maxTestArtifacts?: number;
-  topTestsPerShard?: number;
 };
 
 export type ValueStreamReport = {
@@ -286,11 +286,11 @@ function normalizeAnalysisInput(input: Input): AnalysisOptions {
     number: input.number,
     repository,
     targetMinutes,
-    maxRunPages: boundedInteger(input.maxRunPages ?? 3, "maxRunPages", 1, 10),
-    maxCheckPages: boundedInteger(input.maxCheckPages ?? 3, "maxCheckPages", 1, 10),
-    maxAutomationRuns: boundedInteger(input.maxAutomationRuns ?? 50, "maxAutomationRuns", 1, 100),
-    maxTestArtifacts: boundedInteger(input.maxTestArtifacts ?? 12, "maxTestArtifacts", 0, 24),
-    topTestsPerShard: boundedInteger(input.topTestsPerShard ?? 10, "topTestsPerShard", 1, 25),
+    maxRunPages: MAX_RUN_PAGES,
+    maxCheckPages: MAX_CHECK_PAGES,
+    maxAutomationRuns: MAX_AUTOMATION_RUNS,
+    maxTestArtifacts: MAX_TEST_ARTIFACTS,
+    topTestsPerShard: TOP_TESTS_PER_SHARD,
   };
 }
 
@@ -1462,17 +1462,7 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
 }
 
 function parseArguments(argv: string[]): Input {
-  const allowed = new Set([
-    "workdir",
-    "number",
-    "repository",
-    "target-minutes",
-    "max-run-pages",
-    "max-check-pages",
-    "max-automation-runs",
-    "max-test-artifacts",
-    "top-tests-per-shard",
-  ]);
+  const allowed = new Set(["workdir", "number", "repository", "target-minutes"]);
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
@@ -1492,11 +1482,6 @@ function parseArguments(argv: string[]): Input {
     number,
     repository: values.get("repository"),
     targetMinutes: numeric("target-minutes"),
-    maxRunPages: numeric("max-run-pages"),
-    maxCheckPages: numeric("max-check-pages"),
-    maxAutomationRuns: numeric("max-automation-runs"),
-    maxTestArtifacts: numeric("max-test-artifacts"),
-    topTestsPerShard: numeric("top-tests-per-shard"),
   };
 }
 
