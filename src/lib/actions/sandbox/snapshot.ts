@@ -41,11 +41,6 @@ import {
 } from "../../onboard/gateway-binding";
 import { findAvailableHermesApiPort, HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
-import {
-  isDcodeAgent,
-  OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
-} from "../../onboard/observability-policy-presets";
-import { normalizePolicyTierName } from "../../onboard/policy-tier-suppression";
 import { cleanupTempDir, secureTempFile } from "../../onboard/temp-files";
 import * as policies from "../../policy";
 import { buildPolicyGetArgs } from "../../policy/commands";

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { describe } from "vitest";
@@ -817,7 +816,6 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
     },
     async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
       const hosted = await assertPrerequisites(host, secrets, skip);
-      const apiKey = hosted.apiKey;
       await artifacts.target.declare({
         id: "common-egress-agent",
         case: "hermes-open-public-reference",

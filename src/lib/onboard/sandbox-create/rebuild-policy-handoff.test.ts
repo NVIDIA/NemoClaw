@@ -22,6 +22,21 @@ function tempPolicy(name: string, source: string): string {
   return policyPath;
 }
 
+function readPrivatePolicy(policyPath: string): { mode: number; policy: unknown } {
+  const descriptor = fs.openSync(
+    policyPath,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    return {
+      mode: fs.fstatSync(descriptor).mode & 0o777,
+      policy: YAML.parse(fs.readFileSync(descriptor, "utf8")),
+    };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
@@ -145,8 +160,9 @@ seccomp:
     });
 
     expect(handoff.policyPath).not.toBe(livePath);
-    expect(fs.statSync(handoff.policyPath).mode & 0o777).toBe(0o600);
-    expect(YAML.parse(fs.readFileSync(handoff.policyPath, "utf8"))).toMatchObject({
+    const materialized = readPrivatePolicy(handoff.policyPath);
+    expect(materialized.mode).toBe(0o600);
+    expect(materialized.policy).toMatchObject({
       filesystem_policy: { read_only: ["/usr", "/run/replacement"] },
       network_policies: { host_edit: {}, replacement: {} },
     });

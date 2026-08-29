@@ -50,7 +50,6 @@ import {
   sandboxVersion,
   shields,
   sourceSandboxGateway,
-  tempFiles,
 } from "./rebuild-flow-harness";
 
 export {
