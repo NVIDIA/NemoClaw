@@ -55,6 +55,50 @@ describe("Hermes Portable connect recovery errors", () => {
     expect(output).not.toContain("Hermes Portable inference recovery for 'alpha' failed");
   });
 
+  it("verifies a compatible-endpoint route without Ollama recovery", async () => {
+    const entry = {
+      name: "alpha",
+      agent: "hermes",
+      provider: "compatible-endpoint",
+      model: "descriptor/model",
+      policies: [],
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+    } as never;
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: entry,
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: descriptor/model\n",
+      inferenceProbeResponses: ["OK 200"],
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      portableRecoveryResult: { kind: "already-running" },
+      readinessDecision: {
+        kind: "accepted",
+        category: "accepted",
+        agent: { name: "hermes" },
+        sb: entry,
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.registryEntries[0]?.hostLocalInferenceReceipt).toBeUndefined();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledWith(
+      ["inference", "get", "-g", "nemoclaw"],
+      expect.objectContaining({ openshellBinary: "/usr/bin/openshell" }),
+    );
+    expect(
+      harness.captureResolvedOpenshellSpy.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "exec",
+      ),
+    ).toBe(true);
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       "authority drift",
