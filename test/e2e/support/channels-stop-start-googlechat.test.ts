@@ -30,29 +30,31 @@ type FixtureProviderDependencies = {
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 
 describe("channels stop/start Google Chat live composition", () => {
-  it("loads the fixture through the standalone live-E2E process boundary", () => {
+  it("runs sandbox validation through the exact live-E2E process boundary", () => {
     const result = spawnSync(
       process.execPath,
       [
-        "--import",
-        "tsx",
-        "-e",
-        [
-          'import("./test/e2e/live/channels-stop-start-googlechat-entry.ts")',
-          "  .then((module) => console.log(typeof module.installGooglechatCredentialFixture))",
-          "  .catch((error) => { console.error(error); process.exitCode = 1; });",
-        ].join("\n"),
+        path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs"),
+        path.join(REPO_ROOT, "test/e2e/live/channels-stop-start-googlechat-entry.ts"),
+        "production-openclaw",
       ],
       {
         cwd: REPO_ROOT,
         encoding: "utf8",
-        env: { ...process.env, NODE_NO_WARNINGS: "1" },
+        env: {
+          ...process.env,
+          GOOGLECHAT_AUDIENCE: "https://example.test/googlechat",
+          NEMOCLAW_CHANNELS_STOP_START_AGENT: "openclaw",
+          NODE_NO_WARNINGS: "1",
+        },
         timeout: 10_000,
       },
     );
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("function");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "channels-stop-start live test is destructive and only accepts openclaw sandbox names with prefix e2e-oc-ch-; got production-openclaw",
+    );
   });
 
   it("grants a process-local audience capability to the exact live sandbox", async () => {
