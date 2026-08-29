@@ -2,11 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../../adapters/openshell/timeouts";
+import {
+  OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "../../../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../../../agent/defs";
 import { isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import * as agentRuntime from "../../../agent/runtime";
 import { runAgentSmokeCommands } from "../../../agent/terminal-smoke";
+import {
+  observeSandboxOnGateway,
+  type SandboxRecreateObserver,
+} from "../../../onboard/sandbox-recreate-probe";
 import type { SandboxEntry } from "../../../state/registry";
 import {
   buildSandboxInferenceRouteProbeArgs,
@@ -47,6 +54,43 @@ export interface LaunchReadinessHealthDeps {
     gatewayName: string,
   ) => ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
   inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
+}
+
+export type LaunchReadinessBoundCapture = (
+  args: string[],
+  options?: NonNullable<Parameters<typeof captureOpenshell>[1]>,
+) => LaunchReadinessCaptureResult;
+
+/** Route every OpenShell-backed readiness observation through one bound capture owner. */
+export function createBoundLaunchReadinessDeps(
+  capture: LaunchReadinessBoundCapture,
+): LaunchReadinessHealthDeps & { observeSandbox: SandboxRecreateObserver } {
+  return {
+    capture: (args) =>
+      capture(args, {
+        ignoreError: true,
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      }),
+    observeSandbox: (target) => observeSandboxOnGateway(target, capture),
+    gatewayHealth: (sandboxName, gatewayName) =>
+      isSandboxGatewayRunningForStatus(sandboxName, gatewayName, {
+        capture: async (args, options) =>
+          capture(args, {
+            ...options,
+            timeout: options?.timeout ?? OPENSHELL_PROBE_TIMEOUT_MS,
+          }),
+      }),
+    forwardsHealthy: (sandboxName, gatewayName) =>
+      areSandboxLaunchForwardsHealthy(sandboxName, gatewayName, capture),
+    inferenceProbe: (sandboxName, agent, gatewayName) =>
+      parseSandboxInferenceRouteProbeResult(
+        capture(buildSandboxInferenceRouteProbeArgs(sandboxName, agent, gatewayName), {
+          ignoreError: true,
+          includeStreams: true,
+          timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
+        }),
+      ),
+  };
 }
 
 export class LaunchReadinessObservationError extends Error {

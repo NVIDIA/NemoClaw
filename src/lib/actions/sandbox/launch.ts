@@ -19,8 +19,8 @@ import {
   wrapExecCommandWithRuntimeEnv,
 } from "./exec";
 import {
-  buildHermesPortableCommandAuthority,
   inspectPortableAgentReceiptDisposition,
+  qualifyHermesPortableOperatingCommandAuthority,
   recoverPortableDemoSandboxLifecycleForConnect,
   withSandboxLifecycleLock as withSandboxMutationLock,
 } from "./gateway-state";
@@ -70,13 +70,14 @@ async function launchAgentWithPortableAuthority(
     });
   };
   const runHermesPortableAgent = async (gatewayName: string): Promise<void> => {
-    const commandAuthority = buildHermesPortableCommandAuthority(sandboxName);
+    const commandAuthority = qualifyHermesPortableOperatingCommandAuthority(sandboxName);
     const options = {
       tty: true,
       stdin: true,
       timeoutSeconds: 0,
       subprocessEnv: commandAuthority.env,
     } as const;
+    commandAuthority.assertCurrent();
     const result = await runSandboxExecChild(
       commandAuthority.executablePath,
       buildOpenshellExecArgs(
@@ -132,13 +133,24 @@ async function launchAgentWithPortableAuthority(
     if (recovery.kind === "not-installed") {
       throw new Error("Hermes portable lifecycle authority disappeared before agent launch.");
     }
-    const finalRecovery = recoverPortableDemoSandboxLifecycleForConnect(
-      sandboxName,
-      registered,
-      gatewayName,
-    );
-    if (finalRecovery.kind === "not-installed") {
-      throw new Error("Hermes portable lifecycle authority disappeared at agent launch.");
+    const finalReceipt = inspectPortableAgentReceiptDisposition(sandboxName);
+    const finalRegistered = readSandbox(sandboxName);
+    if (
+      finalReceipt.kind !== "hermes" ||
+      finalReceipt.phase !== "active" ||
+      !finalRegistered ||
+      finalRegistered.agent !== "hermes" ||
+      finalRegistered.gatewayName !== registered.gatewayName ||
+      finalRegistered.lifecycleGeneration !== registered.lifecycleGeneration ||
+      finalRegistered.lifecycleLiveIdentityFingerprint !==
+        registered.lifecycleLiveIdentityFingerprint ||
+      finalRegistered.openshellDriver !== registered.openshellDriver ||
+      finalRegistered.openshellVersion !== registered.openshellVersion ||
+      finalReceipt.gatewayName !== registered.gatewayName ||
+      finalReceipt.lifecycleGeneration !== registered.lifecycleGeneration ||
+      finalReceipt.liveIdentityFingerprint !== registered.lifecycleLiveIdentityFingerprint
+    ) {
+      throw new Error("Hermes portable lifecycle authority changed at agent launch.");
     }
     await runHermesPortableAgent(gatewayName);
   });

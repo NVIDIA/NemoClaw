@@ -48,6 +48,7 @@ import {
 } from "./auto-pair-approval";
 import {
   captureLaunchReadiness,
+  createBoundLaunchReadinessDeps,
   LaunchReadinessEvidenceError,
   type LaunchReadinessFailedCheck,
   type LaunchReadinessHealthDeps,
@@ -71,6 +72,7 @@ import {
 } from "./launch-readiness/openclaw-pairing-qualification";
 
 export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/timing";
+export { createBoundLaunchReadinessDeps };
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
 const ALLOWED_OPENSHELL_DRIVERS = new Set(["docker", "kubernetes", "vm"]);

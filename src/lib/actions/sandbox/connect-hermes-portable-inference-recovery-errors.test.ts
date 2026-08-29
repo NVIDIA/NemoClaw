@@ -61,6 +61,9 @@ describe("Hermes Portable connect recovery errors", () => {
       agent: "hermes",
       provider: "compatible-endpoint",
       model: "descriptor/model",
+      endpointUrl: "https://example.test/v1/chat/completions",
+      preferredInferenceApi: "openai-completions",
+      credentialEnv: "COMPATIBLE_API_KEY",
       policies: [],
       openshellDriver: "docker",
       gatewayName: "nemoclaw",
@@ -75,13 +78,12 @@ describe("Hermes Portable connect recovery errors", () => {
       inferenceProbeResponses: ["OK 200"],
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
       portableRecoveryResult: { kind: "already-running" },
-      readinessDecision: {
-        kind: "accepted",
-        category: "accepted",
-        agent: { name: "hermes" },
-        sb: entry,
-      },
     });
+    harness.requalifyPortableAgentAuthoritySpy.mockReturnValue({
+      kind: "already-current",
+      snapshot: {},
+      assertCurrent: vi.fn(),
+    } as never);
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
@@ -96,7 +98,7 @@ describe("Hermes Portable connect recovery errors", () => {
         ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "exec",
       ),
     ).toBe(true);
-    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
   });
 
   it.each([
