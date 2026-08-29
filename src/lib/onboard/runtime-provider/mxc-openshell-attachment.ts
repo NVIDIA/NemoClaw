@@ -9,6 +9,8 @@ import { cloneAndDeepFreeze } from "../../core/immutable";
 
 export const MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION = 3 as const;
 export const MXC_OPENSHELL_DISTRIBUTION_AUTHORITY_CONTRACT_VERSION = 1 as const;
+export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID =
+  "openshell-v0-0-24-mxc-v0-7-0-rc1-qualification" as const;
 
 const PROVIDER_ID = "mxc";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -45,7 +47,8 @@ interface MxcOpenShellAttachmentExpectation {
 
 export type MxcOpenShellDistributionAcceptance = "qualification" | "accepted";
 
-export type MxcOpenShellDistributionProfileId = string;
+export type MxcOpenShellDistributionProfileId =
+  typeof MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID;
 
 export interface MxcOpenShellAttachmentObservation extends MxcOpenShellAttachmentExpectation {
   readonly distributionRoot: string;
@@ -61,7 +64,7 @@ export interface MxcOpenShellAttachmentAuthority {
   readonly providerId: "mxc";
   readonly mode: "attach-existing";
   readonly acceptance: MxcOpenShellDistributionAcceptance;
-  readonly distributionProfileId: MxcOpenShellDistributionProfileId | "test-fixture";
+  readonly distributionProfileId: MxcOpenShellDistributionProfileId;
   readonly acceptedIdentitySha256: string;
 }
 
@@ -78,7 +81,7 @@ export interface MxcOpenShellAttachmentReceipt {
   readonly providerId: "mxc";
   readonly mode: "attach-existing";
   readonly acceptance: MxcOpenShellDistributionAcceptance;
-  readonly distributionProfileId: MxcOpenShellDistributionProfileId | "test-fixture";
+  readonly distributionProfileId: MxcOpenShellDistributionProfileId;
   readonly authoritySha256: string;
   readonly distribution: ExactDistributionIdentity & { readonly root: string };
   readonly components: {
@@ -109,6 +112,39 @@ const DISTRIBUTION_AUTHORITIES = new WeakMap<
   MxcOpenShellDistributionAuthority,
   MxcOpenShellAttachmentAuthority
 >();
+
+/** Immutable development checkpoint supplied by the OpenShell/MXC team. */
+export const MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE = cloneAndDeepFreeze({
+  profileId: MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
+  acceptance: "qualification" as const,
+  compatibility: {
+    nativeArchitecture: "x64" as const,
+    backend: "process_container" as const,
+    mxcVersion: "0.7.0-rc1",
+  },
+  expectation: {
+    distribution: {
+      version: "0.0.24",
+      revision: "e1b48323e4efcb560900508bdcd76d2b5d216678",
+      sha256: "296ba2677f8f692b1c3f14b4fae6bb2a75d52f94c071ec2ebdf676405a80613d",
+    },
+    components: {
+      cliSha256: "23d00a88daa5f2aa6151d9112a6845e843ca1e08cbaf55f8eaa337b72dd9155a",
+      gatewaySha256: "62b3e231f5d40c5d178d08172ddb65536f124bdb8c7c04d90fb9dca50a5ac137",
+      wxcExecSha256: "6049c64723af1173c3739dc6cd6b2f33f6c021bb2832c4216233cba7f71aee9a",
+    },
+    gateway: {
+      configSha256: "1c86a32a52d068677b5140975c6b870d5ed46dc553500ebb790b58e207ac7290",
+      driver: "mxc" as const,
+      backend: "process_container" as const,
+    },
+  },
+});
+
+const DISTRIBUTION_PROFILES = {
+  [MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID]:
+    MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE,
+} as const;
 
 function record(value: unknown, label: string): Record<string, unknown> {
   if (
@@ -347,13 +383,19 @@ function createDistributionAuthority(
 }
 
 /**
- * Create authority only after OpenShell publishes an accepted immutable distribution record.
+ * Create qualification authority from one provider-owned immutable development checkpoint.
  *
- * No accepted Windows distribution is currently registered. Prototype measurements and host
- * observations therefore fail closed instead of becoming provider authority.
+ * Stable-release acceptance remains a separate record and decision. Host observations cannot add
+ * or replace a record in this catalogue.
  */
-export function createMxcOpenShellDistributionAuthority(): MxcOpenShellDistributionAuthority {
-  throw new MxcOpenShellAttachmentError("accepted distribution authority is unavailable");
+export function createMxcOpenShellDistributionAuthority(
+  profileId: MxcOpenShellDistributionProfileId,
+): MxcOpenShellDistributionAuthority {
+  if (!Object.hasOwn(DISTRIBUTION_PROFILES, profileId)) {
+    throw new MxcOpenShellAttachmentError("distribution profile is not provider-owned");
+  }
+  const profile = DISTRIBUTION_PROFILES[profileId];
+  return createDistributionAuthority(profile.profileId, profile.acceptance, profile.expectation);
 }
 
 /** Resolve the opaque attachment capability carried by a provider-owned distribution authority. */
@@ -368,49 +410,6 @@ export function resolveMxcOpenShellDistributionAuthority(
     throw new MxcOpenShellAttachmentError("distribution authority is not provider-owned");
   }
   return attachmentAuthority;
-}
-
-/**
- * Create the fixed, non-production authority used by attachment contract tests.
- *
- * The caller may vary only the SemVer value under test. Component identities stay fixed so this
- * helper cannot turn caller-observed digests into accepted provider authority.
- */
-export function createMxcOpenShellAttachmentTestAuthority(
-  version: string,
-): MxcOpenShellAttachmentAuthority {
-  return createMxcOpenShellAttachmentAuthority(
-    testExpectation(version),
-    "qualification",
-    "test-fixture",
-  );
-}
-
-/** Create a fixed synthetic distribution authority for deterministic tests only. */
-export function createMxcOpenShellDistributionTestAuthority(
-  version: string,
-): MxcOpenShellDistributionAuthority {
-  return createDistributionAuthority("test-fixture", "qualification", testExpectation(version));
-}
-
-function testExpectation(version: string): MxcOpenShellAttachmentExpectation {
-  return {
-    distribution: {
-      version,
-      revision: "a".repeat(40),
-      sha256: "1".repeat(64),
-    },
-    components: {
-      cliSha256: "2".repeat(64),
-      gatewaySha256: "3".repeat(64),
-      wxcExecSha256: "4".repeat(64),
-    },
-    gateway: {
-      configSha256: "5".repeat(64),
-      driver: "mxc",
-      backend: "process_container",
-    },
-  };
 }
 
 function acceptedIdentity(authority: unknown): Readonly<{

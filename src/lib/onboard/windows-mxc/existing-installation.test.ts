@@ -18,6 +18,7 @@ vi.mock("./native-host-facts", () => ({
 
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../runtime-provider/current";
 import type { MxcNativeArtifactControlPlane } from "../runtime-provider/mxc-bootstrap-operations";
+import { MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID } from "../runtime-provider/mxc-openshell-attachment";
 import {
   mxcOpenShellAttachmentDigestMap,
   mxcOpenShellAttachmentObservationRequest,
@@ -67,7 +68,7 @@ describe("inactive native Windows OpenShell MXC existing-installation compositio
       contractVersion: 3,
       providerId: "mxc",
       acceptance: "qualification",
-      distributionProfileId: "test-fixture",
+      distributionProfileId: MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
       distribution: { root: "C:\\OpenShell" },
       components: {
         wxcExec: {
