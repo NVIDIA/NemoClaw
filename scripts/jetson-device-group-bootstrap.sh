@@ -54,6 +54,10 @@ for gid in "${gids[@]}"; do
     if [ -z "$group_name" ] || [ "$resolved_gid" != "$gid" ] || [ -n "$extra" ]; then
       fail "device group record is invalid"
     fi
+    case "$group_name" in
+      video | render) ;;
+      *) fail "existing device group is not approved" ;;
+    esac
     create_group=0
   fi
   group_names+=("$group_name")

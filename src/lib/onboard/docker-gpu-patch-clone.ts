@@ -33,6 +33,8 @@ type DockerStructuredMount = NonNullable<
 >[number];
 
 export const DOCKER_GPU_PATCH_NETWORK_ENV = "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK";
+export const MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE =
+  "/usr/local/bin/nemoclaw-managed-bootstrap";
 
 export function dockerContainerName(inspect: DockerContainerInspect): string {
   const raw = String(inspect.Name || "")
@@ -589,11 +591,14 @@ export function buildDockerGpuCloneRunArgs(
     sandboxCommand,
     options.containerCommand,
   );
-  const bootstrapPlan = resolveJetsonDeviceGroupBootstrap({
-    agent: labels[NEMOCLAW_MANAGED_AGENT_LABEL],
-    deviceGroupGids: extraGroupGids,
-    supervisorArgv: [groupBootstrapTarget, ...targetCommandArgs],
-  });
+  const bootstrapPlan =
+    replacementEntrypoint === MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE
+      ? null
+      : resolveJetsonDeviceGroupBootstrap({
+          agent: labels[NEMOCLAW_MANAGED_AGENT_LABEL],
+          deviceGroupGids: extraGroupGids,
+          supervisorArgv: [groupBootstrapTarget, ...targetCommandArgs],
+        });
   const [selectedEntrypoint, ...commandArgs] = bootstrapPlan?.supervisorArgv ?? [
     groupBootstrapTarget,
     ...targetCommandArgs,

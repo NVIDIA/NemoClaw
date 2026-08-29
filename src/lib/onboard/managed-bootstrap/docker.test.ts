@@ -3,6 +3,7 @@
 
 import { assert, describe, expect, it, vi } from "vitest";
 import { JETSON_DEVICE_GROUP_BOOTSTRAP } from "../docker-gpu-jetson-groups";
+import { MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE } from "../docker-gpu-patch-clone";
 import {
   MANAGED_BOOTSTRAP_IDENTITY_ENV,
   ManagedBootstrapDurableCommitCleanupPendingError,
@@ -218,7 +219,7 @@ describe("Docker managed bootstrap adapter", () => {
   });
 
   it("preserves Jetson device groups through the managed supervisor handoff (#7610)", async () => {
-    const fake = fixture({ agent: "openclaw" });
+    const fake = fixture({ agent: "openclaw", managedImageAgentLabel: "openclaw" });
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
     const { handle, request } = authority("openclaw");
     const discovered = await adapter.discoverHeldWorkload({
@@ -242,6 +243,14 @@ describe("Docker managed bootstrap adapter", () => {
       }),
     ).resolves.toMatchObject({ preparedRuntimeId: NEW_ID });
     expect(fake.replacement?.HostConfig?.GroupAdd).toEqual(["44", "110"]);
+    expect(fake.replacement?.Config?.Entrypoint).toEqual([
+      MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE,
+    ]);
+    const replacementCommand = fake.replacement?.Config?.Cmd;
+    assert(Array.isArray(replacementCommand));
+    expect(replacementCommand.filter((entry) => entry === JETSON_DEVICE_GROUP_BOOTSTRAP)).toEqual([
+      JETSON_DEVICE_GROUP_BOOTSTRAP,
+    ]);
     expect(fake.replacement?.Config?.Cmd?.slice(-7)).toEqual([
       JETSON_DEVICE_GROUP_BOOTSTRAP,
       "--device-group-gids",

@@ -23,6 +23,7 @@ import {
 import {
   buildDockerGpuCloneRunArgs,
   dockerContainerName,
+  MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE,
   shouldOmitOpenShellOciImageUser,
 } from "../docker-gpu-patch-clone";
 import {
@@ -128,7 +129,7 @@ const DOCKER_DRIVER_ID = "docker";
 const MAX_RECOVERY_FAILURE_DETAIL_BYTES = 8 * 1024;
 const OPENSHELL_DRIVER_IDLE_COMMAND = "sleep infinity";
 
-export const MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE = "/usr/local/bin/nemoclaw-managed-bootstrap";
+export { MANAGED_BOOTSTRAP_TRAMPOLINE_EXECUTABLE };
 
 function boundedRecoveryFailureDetail(error: unknown): string {
   const raw = (error instanceof Error ? error.message : String(error)).replaceAll("\0", "�");

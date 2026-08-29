@@ -143,7 +143,7 @@ printf 'SUPERVISOR_EXECUTED\n'
     `#!/bin/bash
 set -uo pipefail
 printf '1000 44\n' >/test-state/memberships
-printf '44:video\n' >/test-state/group-map
+printf '44:%s\n' "\${TEST_EXISTING_GROUP_NAME:-video}" >/test-state/group-map
 case "\${TEST_GROUP_DATABASE:-regular}" in
   regular) ;;
   symlink) /bin/ln -s /tmp/nemoclaw-missing-group /etc/group ;;
@@ -246,9 +246,10 @@ function runBootstrap(args: readonly string[], options: BootstrapRunOptions = {}
   });
   expect(result.error, result.error?.message).toBeUndefined();
   const parsed = parseFixtureState(String(result.stdout));
+  const existingGroupName = options.environment?.TEST_EXISTING_GROUP_NAME ?? "video";
   return {
     after: parsed.state,
-    before: INITIAL_STATE,
+    before: { ...INITIAL_STATE, groupMap: `44:${existingGroupName}\n` },
     status: result.status,
     stderr: String(result.stderr),
     stdout: parsed.stdout,
@@ -385,6 +386,18 @@ suite("Jetson device-group bootstrap", () => {
 
     expect(run.status).toBe(1);
     expect(run.stderr).toContain("Jetson device-group bootstrap: device group record is invalid");
+    expectNoMutation(run);
+  });
+
+  it("rejects an unapproved existing group before account mutation (#7610)", () => {
+    const run = runBootstrap(["--device-group-gids", "44", "--", SUPERVISOR], {
+      environment: { TEST_EXISTING_GROUP_NAME: "shadow" },
+    });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain(
+      "Jetson device-group bootstrap: existing device group is not approved",
+    );
     expectNoMutation(run);
   });
 

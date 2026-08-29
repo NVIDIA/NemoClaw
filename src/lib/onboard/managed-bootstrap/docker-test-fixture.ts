@@ -6,6 +6,7 @@ import fs from "node:fs";
 import { expect, vi } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { NEMOCLAW_MANAGED_AGENT_LABEL } from "../docker-gpu-jetson-groups";
 import type { DockerContainerInspect } from "../docker-gpu-patch-types";
 import { encodeManagedStartupProfile, type ManagedStartupAgent } from "../managed-startup/profile";
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
@@ -81,6 +82,7 @@ export type DockerFixtureOptions = {
     Readonly<Record<DockerManagedBootstrapJournalPhase, Error>>
   >;
   readonly lostAcknowledgements?: readonly DockerFixtureAcknowledgement[];
+  readonly managedImageAgentLabel?: ManagedStartupAgent;
   readonly ownerId?: string;
   readonly replacementEnvironment?: (environment: readonly string[]) => readonly string[];
   readonly sharedState?: "committed" | "none" | "pending";
@@ -120,7 +122,10 @@ export const sandbox = {
   driverId: "docker",
 };
 
-function originalInspect(inputs = agentInputs()): DockerContainerInspect {
+function originalInspect(
+  inputs = agentInputs(),
+  managedImageAgentLabel?: ManagedStartupAgent,
+): DockerContainerInspect {
   return {
     Id: OLD_ID,
     Image: CONFIG_ID,
@@ -139,6 +144,9 @@ function originalInspect(inputs = agentInputs()): DockerContainerInspect {
         "openshell.ai/managed-by": "openshell",
         "openshell.ai/sandbox-name": "alpha",
         "openshell.ai/sandbox-id": "sandbox-alpha",
+        ...(managedImageAgentLabel
+          ? { [NEMOCLAW_MANAGED_AGENT_LABEL]: managedImageAgentLabel }
+          : {}),
         ...inputs.metadata,
       },
       Entrypoint: [SUPERVISOR[0]],
@@ -220,7 +228,10 @@ export function parseFixtureDockerUlimits(
 }
 
 export function fixture(options: DockerFixtureOptions = {}) {
-  let original: DockerContainerInspect | null = originalInspect(agentInputs(options.agent));
+  let original: DockerContainerInspect | null = originalInspect(
+    agentInputs(options.agent),
+    options.managedImageAgentLabel,
+  );
   if (options.dockerCliSerializationDefaults) {
     Object.assign(original.Config!, {
       AttachStdin: false,
