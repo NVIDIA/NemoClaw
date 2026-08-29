@@ -18,6 +18,8 @@ import {
 
 export const MXC_OPENSHELL_CREATE_REQUEST_CONTRACT_VERSION = 1 as const;
 
+const ISSUED_REQUESTS = new WeakSet<object>();
+
 export interface MxcOpenShellCreateRequest {
   readonly contractVersion: typeof MXC_OPENSHELL_CREATE_REQUEST_CONTRACT_VERSION;
   readonly providerId: "mxc";
@@ -72,6 +74,13 @@ export class MxcOpenShellCreateRequestError extends Error {
   }
 }
 
+/** Reject structurally valid request lookalikes that were not projected from a qualified plan. */
+export function requireIssuedMxcOpenShellCreateRequest(value: MxcOpenShellCreateRequest): void {
+  if (typeof value !== "object" || value === null || !ISSUED_REQUESTS.has(value)) {
+    throw new MxcOpenShellCreateRequestError("request was not issued by the MXC provider");
+  }
+}
+
 function sha256Json(value: object): string {
   return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
 }
@@ -115,7 +124,9 @@ export function projectMxcOpenShellCreateRequest(
     hostEnvironmentReferences,
     environment: plan.environment,
   };
-  return cloneAndDeepFreeze({ ...identity, requestSha256: sha256Json(identity) });
+  const request = cloneAndDeepFreeze({ ...identity, requestSha256: sha256Json(identity) });
+  ISSUED_REQUESTS.add(request);
+  return request;
 }
 
 /**
