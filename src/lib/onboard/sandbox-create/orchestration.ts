@@ -12,6 +12,7 @@ import {
 } from "../../adapters/openshell/policy-authority";
 import type { SandboxPolicyAuthority } from "../../adapters/openshell/policy-authority";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
+import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-identity";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
@@ -33,6 +34,11 @@ import type {
 } from "../managed-workload/hermes-state-volume";
 import type { OwnedSandboxRecreateRuntime } from "../onboard-recreate-journal";
 import type { SandboxGpuConfig } from "../sandbox-gpu-mode";
+import { cliName } from "../branding";
+import type {
+  CreatedSandboxLifecycle,
+  CreatedSandboxLifecycleRegistration,
+} from "../sandbox-recreate-transaction";
 import type { PortableOnboardRuntimeContext } from "../session-bootstrap";
 import type {
   InferenceRouteReservationAuthority,
@@ -65,6 +71,43 @@ function cancelRecoveryIdentity(
   return {
     lifecycleLiveIdentityFingerprint: requireVerifiedPolicyGate().lifecycleLiveIdentityFingerprint,
   };
+}
+
+export function createOnboardCreatedSandboxRegistrationWithManagedLifecycle(input: {
+  readonly sandboxName: string;
+  readonly managedBootstrap: boolean;
+  readonly sandboxGpuEnabled: boolean;
+  readonly createdLifecycle: CreatedSandboxLifecycle;
+  readonly getRecordedRegistration: () => CreatedSandboxLifecycleRegistration;
+  readonly createRegistration: SandboxCreateOrchestrationRuntime["createOnboardCreatedSandboxRegistration"];
+  readonly registration: Omit<
+    Parameters<SandboxCreateOrchestrationRuntime["createOnboardCreatedSandboxRegistration"]>[0],
+    "createdLifecycle"
+  >;
+}) {
+  let createdLifecycle = input.createdLifecycle;
+  if (input.managedBootstrap) {
+    const capture = input.sandboxGpuEnabled
+      ? input.createdLifecycle.capture
+      : ({ lifecycleGeneration }: Pick<SandboxEntry, "lifecycleGeneration">) => {
+          const recordedRegistration = input.getRecordedRegistration();
+          if (lifecycleGeneration !== recordedRegistration.lifecycleGeneration) {
+            throw new Error(
+              `Cannot register sandbox '${input.sandboxName}': lifecycle setup did not preserve its generation.`,
+            );
+          }
+          return recordedRegistration;
+        };
+    createdLifecycle = {
+      ...input.createdLifecycle,
+      capture,
+      revalidate: (registration) =>
+        input.createdLifecycle.revalidate(registration, {
+          allowNotReadyWithMatchingIdentity: true,
+        }),
+    };
+  }
+  return input.createRegistration({ ...input.registration, createdLifecycle });
 }
 
 /** Persist one create-attempt recovery message through the onboard session owner. */
@@ -174,9 +217,11 @@ export function persistPostCreateRecovery(input: {
   ) => unknown | null;
 }): void {
   const message =
+    `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${input.recoveryContext.createAttemptNonce}. ` +
     `Sandbox '${input.sandboxName}' was retained after ${input.stage} failed. ` +
     `Gateway '${input.gatewayName}'. Lifecycle generation '${input.lifecycleGeneration}'. ` +
     "Do not delete the sandbox by mutable name; preserve it for identity-bound administrator recovery.";
+  console.error(`  ${message}`);
   let persisted = false;
   try {
     persisted = persistRetainedSandboxRecoveryMessage(
@@ -563,10 +608,7 @@ export function reconcileCreatedHermesCredentialEnvironment(
     deps.revalidatePolicyAuthority(
       `reconciling Hermes messaging credentials for sandbox '${input.sandboxName}'`,
     );
-    const reconciliation = deps.reconcileCredentialEnv(
-      input.plan,
-      deps.revalidatePolicyAuthority,
-    );
+    const reconciliation = deps.reconcileCredentialEnv(input.plan, deps.revalidatePolicyAuthority);
     deps.revalidatePolicyAuthority(
       `confirming Hermes messaging credential reconciliation for sandbox '${input.sandboxName}'`,
     );
@@ -614,6 +656,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
   readonly revalidate: (sandboxIsLive: boolean, operation: string) => void;
   readonly create: (verifyCreatedSandbox: (created: Created) => Promise<string>) => Promise<Result>;
   readonly captureCreatedSandboxIdentity: (created: Created) => string;
+  readonly captureCreatedSandboxCreateAttemptNonce?: (created: Created) => string;
   readonly persistCreatedSandboxIdentity: (created: Created, exactIdentity: string) => void;
   readonly revalidateCreatedSandboxIdentity: (expectedIdentity: string, operation: string) => void;
   readonly verifyCreatedPolicy: (created: Created, exactIdentity: string) => Evidence;
@@ -644,6 +687,7 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
 }): Promise<Result> {
   input.revalidate(false, `creating sandbox '${input.sandboxName}'`);
   let exactIdentity: string | null = null;
+  let createAttemptNonce: string | null = null;
   let observedPolicyEvidence: Evidence | null = null;
   let observedCreatedSandbox: Created | null = null;
   let cleanupAttempted = false;
@@ -667,10 +711,15 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
     const identityGuidance = exactIdentity
       ? `Durable sandbox identity fingerprint: ${exactIdentity}. Use it only to compare the surviving sandbox with the failed create.`
       : "OpenShell did not return a durable sandbox identity fingerprint for comparison.";
+    const createAttemptGuidance = createAttemptNonce
+      ? `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}. `
+      : "";
     const recoveryGuidance =
+      createAttemptGuidance +
       `NemoClaw left sandbox '${input.sandboxName}' in place after post-create verification or finalization failed. ` +
       `${identityGuidance} NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox. ` +
-      "Do not delete the sandbox by mutable sandbox name. Ask the OpenShell administrator to inspect the surviving sandbox and use an identity-bound recovery or removal procedure.";
+      `Do not delete the sandbox by mutable sandbox name. Run '${cliName()} ${input.sandboxName} destroy' to use the retained identity. ` +
+      "If destroy cannot prove that identity, stop. Ask the OpenShell administrator to inspect the surviving sandbox and use an identity-bound recovery or removal procedure.";
     const compensationErrors: unknown[] = [];
     if (input.persistRetainedSandboxRecovery) {
       try {
@@ -696,6 +745,16 @@ export async function runSandboxCreateWithPolicyAuthorityChecks<
   const verifyCreatedSandbox = async (created: Created): Promise<string> => {
     observedCreatedSandbox = created;
     try {
+      const capturedCreateAttemptNonce = input.captureCreatedSandboxCreateAttemptNonce?.(created);
+      if (
+        capturedCreateAttemptNonce !== undefined &&
+        !/^[0-9a-f]{62}$/u.test(capturedCreateAttemptNonce)
+      ) {
+        throw new Error(
+          `OpenShell did not return one exact create-attempt label for sandbox '${input.sandboxName}'.`,
+        );
+      }
+      createAttemptNonce = capturedCreateAttemptNonce ?? null;
       const capturedIdentity = input.captureCreatedSandboxIdentity(created);
       if (!/^[0-9a-f]{64}$/u.test(capturedIdentity)) {
         throw new Error(
@@ -2293,6 +2352,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       }
       return policySourcePath;
     };
+    let managedBootstrapCreateFinished = false;
     const revalidateCreatedSandboxIdentity = (
       expectedIdentity: string,
       operation: string,
@@ -2304,6 +2364,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           lifecycleLiveIdentityFingerprint: expectedIdentity,
         },
         getSandboxRecreateObservation,
+        { allowNotReadyWithMatchingIdentity: managedBootstrapCreateFinished },
       );
     };
     const requireVerifiedPolicyGate = (): NonNullable<typeof verifiedPolicyGate> => {
@@ -2553,10 +2614,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             sandboxName,
             message,
             ...(exactIdentity ? { sandboxIdentityFingerprint: exactIdentity } : {}),
-            recoveryContext: retainedSandboxRecoveryContext(
-              verifiedPolicyGate,
-              createAttemptNonce,
-            ),
+            recoveryContext: retainedSandboxRecoveryContext(verifiedPolicyGate, createAttemptNonce),
           },
           onboardSession.markRetainedSandboxRecovery,
         ),
@@ -2590,6 +2648,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         captureCreatedSandboxIdentity: (
           identity: import("../sandbox-gpu-create-flow").CreatedSandboxIdentity,
         ) => identity.liveIdentityFingerprint,
+        captureCreatedSandboxCreateAttemptNonce: (
+          identity: import("../sandbox-gpu-create-flow").CreatedSandboxIdentity,
+        ) => identity.createAttemptNonce,
         persistCreatedSandboxIdentity: (_identity, exactIdentity) =>
           persistCreatedSandboxIdentity(exactIdentity),
         revalidateCreatedSandboxIdentity,
@@ -2682,8 +2743,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               await runDeferredProviderEffects(context);
             }
           : undefined,
-        create: (verifyCreatedSandbox) =>
-          sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
+        create: async (verifyCreatedSandbox) => {
+          const created = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
             {
               sandboxName,
               ...(resumeVerifiedCreateInput
@@ -2723,6 +2784,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               terminalAgent: agentDefs.isTerminalAgent(agent),
               managedBootstrap,
               verifyCreatedSandboxBeforeEffects: async (identity) => {
+                managedBootstrapCreateFinished = managedBootstrap !== null;
                 await verifyCreatedSandbox(identity);
               },
               revalidateVerifiedSandboxBeforeEffect: (operation) =>
@@ -2736,7 +2798,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               openshellArgv,
               verifyDirectSandboxGpu: createGpuVerifier,
             },
-          ),
+          );
+          return created;
+        },
       });
     };
 
@@ -2827,13 +2891,27 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       preparedSandboxWorkload,
       note,
     );
-    const completeCreatedSandboxRegistration = createOnboardCreatedSandboxRegistration({
-      completion: createdSandboxCompletion,
-      createdLifecycle: createdSandboxLifecycle,
-      cleanupBuildContext,
-      manageDashboard,
-      sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
-    });
+    // Managed bootstrap can invalidate OpenShell's cached Ready state after it
+    // replaces the container. Registry publication stays bound to the durable
+    // sandbox identity recorded before that replacement.
+    const completeCreatedSandboxRegistration =
+      createOnboardCreatedSandboxRegistrationWithManagedLifecycle({
+        sandboxName,
+        managedBootstrap: managedBootstrap !== null,
+        sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
+        createdLifecycle: createdSandboxLifecycle,
+        getRecordedRegistration: () =>
+          requireDurableCreatedSandboxIdentity(
+            requireVerifiedPolicyGate().lifecycleLiveIdentityFingerprint,
+          ),
+        createRegistration: createOnboardCreatedSandboxRegistration,
+        registration: {
+          completion: createdSandboxCompletion,
+          cleanupBuildContext,
+          manageDashboard,
+          sandboxGpuEnabled: effectiveSandboxGpuConfig.sandboxGpuEnabled,
+        },
+      });
 
     const providerPreparationInput = {
       openshellDriver: sandboxRuntimeFields.openshellDriver,
@@ -3002,6 +3080,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           {
             sandboxName,
             sandboxWasLiveDefault,
+            gatewayPort: GATEWAY_PORT,
             runtimeFields: sandboxRuntimeFields,
             messagingProviders,
             liveExists,

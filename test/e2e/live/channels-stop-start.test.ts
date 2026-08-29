@@ -19,7 +19,7 @@ test(
         "validate active channel integrations",
         "disable channels and rebuild sandbox",
         "re-enable channels, rebuild sandbox, and validate lifecycle state",
-        "remove Google Chat and validate provider cleanup",
+        "remove WeChat, Microsoft Teams, and Google Chat and validate cleanup",
       ],
     },
   },

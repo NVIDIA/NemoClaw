@@ -39,6 +39,14 @@ afterEach(() => {
 });
 
 describe("cross-process onboard lock", () => {
+  it("releases its lock when legacy-state migration already owns the handshake", () => {
+    const migrationLock = path.join(tempHome, ".nemoclaw", ".gateway-state-migration.lock");
+    fs.mkdirSync(migrationLock, { recursive: true });
+
+    expect(session.acquireOnboardLock("nemoclaw onboard").acquired).toBe(false);
+    expect(fs.existsSync(session.LOCK_FILE)).toBe(false);
+  });
+
   it("rejects caller-asserted onboarding lock ownership without a live descriptor (#9833)", async () => {
     const authority = await import("../onboard/portable-retirement-authority");
 
@@ -346,11 +354,6 @@ describe("cross-process onboard lock", () => {
           verifiedEffectivePolicyIdentity: null,
           createAttemptNonce: "c".repeat(62),
           policyCreationReceipt: null,
-          resources: {
-            sharedInferenceProviders: [],
-            sandboxScopedProviders: [],
-            credentialEnvironmentVariables: [],
-          },
           reason: "retained_after_sandbox_creation_failure",
         });
         process.stdout.write(JSON.stringify({ ok: true, recordId: recorded.recordId }));

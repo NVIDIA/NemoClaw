@@ -22,7 +22,7 @@ NemoClaw refuses the policy set when:
 - An external authority owns the policy.
 
 For external authority, preset requests only verify the effective policy.
-NemoClaw requires the exact preset entries before it reports success.
+NemoClaw requires the effective policy to contain exactly the requested preset entries before it reports success.
 NemoClaw does not set policy or record preset or custom-policy attribution.
 The external authority must supply a missing or changed entry.
 
@@ -35,10 +35,9 @@ canonical JSON SHA-256 digest and network policy keys. The first status can
 report no artifact. Run `nemoclaw <sandbox> shields up` once to create and
 report the complete recovery artifact. The artifact contains no credential
 values. It contains the saved restrictive policy and current managed MCP policy
-entries, which may include credential bindings. Apply the artifact as the exact
-policy through the external authority; do not reconstruct it from the digest
-or key list. Then rerun `nemoclaw <sandbox> shields up`. NemoClaw verifies the
-exact effective policy and locks configuration. If policy changes during the
+entries, which may include credential bindings. Apply the artifact as the complete policy through the external authority; do not reconstruct it from the digest
+or key list. Then rerun `nemoclaw <sandbox> shields up`. NemoClaw verifies that the
+effective policy equals the artifact and locks configuration. If policy changes during the
 lock, NemoClaw records the verified config lock and keeps Shields down until
 policy recovery succeeds.
 

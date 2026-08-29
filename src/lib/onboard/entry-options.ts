@@ -282,7 +282,7 @@ export function resolveOnboardEntryOptions(
   deps: OnboardEntryOptionsDeps,
 ): ResolvedOnboardEntryOptions {
   const explicitResume = input.opts.resume === true;
-  const fresh = input.opts.fresh === true;
+  let fresh = input.opts.fresh === true;
   // The mutual-exclusion error applies only to the explicit flags — a leftover
   // in_progress session combined with an explicit `--fresh` is not a conflict
   // (fresh wins, see below), so it must not trip this guard.
@@ -348,7 +348,7 @@ export function resolveOnboardEntryOptions(
         "  Onboarding cannot continue while a retained sandbox recovery record is unresolved without an explicit different sandbox name.",
       );
       deps.error(
-        "  Use --fresh --name <new-name>; the retained sandbox recovery record stays unresolved.",
+        "  Use --name <new-name>; the retained sandbox recovery record stays unresolved.",
       );
       deps.exitProcess(1);
     }
@@ -357,13 +357,20 @@ export function resolveOnboardEntryOptions(
         `  Onboarding cannot use retained sandbox '${recoveryEntryName}' while its identity-bound recovery record is unresolved.`,
       );
       deps.error(
-        "  Automatic and explicit resume, reuse, recreation, and same-name fresh onboarding remain disabled; NemoClaw has no supported operation to clear this recovery record.",
+        `  Run the destroy command for retained sandbox '${recoveryEntryName}' to remove the verified failed attempt; resume, reuse, recreation, and same-name fresh onboarding remain disabled until destroy completes.`,
       );
       deps.exitProcess(1);
     }
   }
   if (input.persistedSessionStatus === "recovery_required") {
     const recoverySandboxName = input.persistedRecoverySandboxName?.trim() || null;
+    const canStartDifferentSandbox =
+      !explicitResume &&
+      recoverySandboxName !== null &&
+      requestedSandboxName !== null &&
+      requestedSandboxName !== recoverySandboxName &&
+      retainedRecoverySandboxNames.has(recoverySandboxName);
+    if (!fresh && canStartDifferentSandbox) fresh = true;
     if (!fresh) {
       deps.error(
         `  Onboarding cannot continue because cancellation preserved sandbox '${recoverySandboxName ?? "unknown"}' in recovery-only state.`,
@@ -372,7 +379,7 @@ export function resolveOnboardEntryOptions(
         "  Automatic and explicit resume, reuse, and recreation are disabled to protect the retained sandbox.",
       );
       deps.error(
-        "  Use --fresh --name <new-name>; the retained sandbox recovery record stays unresolved.",
+        "  Use --name <new-name> to start another sandbox. The retained sandbox recovery record stays unresolved.",
       );
       deps.exitProcess(1);
     }
