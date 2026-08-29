@@ -252,7 +252,6 @@ async function runInteractiveTask(
   progress: TestProgress,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const token = "NEMOCLAW_PI_INTERACTIVE_V1_OK";
   const prompt =
     "Join these four fragments with underscores and reply with only the result: NEMOCLAW, PI, INTERACTIVE, OK. Do not use tools.";
   const result = await driveInteractiveCommand({
@@ -270,7 +269,7 @@ async function runInteractiveTask(
   expect(result.timedOut).toBe(false);
   expect(result.firedTriggers).toContain(PI_INTERACTIVE_READY_MARKER);
   expect(result.firedTriggers).toContain(PI_INTERACTIVE_COMPLETE_MARKER);
-  expect(result.visibleOutput).toContain(token);
+  expect(result.visibleOutput).toContain("To resume this session: pi --session ");
   expect(result.exitCode).toBe(0);
 }
 
