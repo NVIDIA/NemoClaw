@@ -76,8 +76,6 @@ COPY scripts/lib/bundled-npm-package.mts /scripts/lib/bundled-npm-package.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
-COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependencies.patch
-COPY agents/hermes/agent-browser-runtime/package.json agents/hermes/agent-browser-runtime/package-lock.json /scripts/agent-browser-runtime/
 
 FROM scratch AS hermes-agent-payload
 
@@ -253,48 +251,20 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 # one final-image layer while preserving metadata on existing parent paths.
 COPY --from=hermes-npm-patch-payload / /
 
-# A published base can lag the source patch in Dockerfile.base. Apply the
-# remaining exact Hindsight and agent-browser requirements when needed, then
-# verify both pins and Hermes 0.20.6's upstream managed lazy-install route.
-RUN if ! grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml; then \
-        git -C /opt/hermes apply --check \
-            --include=plugins/memory/hindsight/plugin.yaml \
-            /scripts/hermes-security-dependencies.patch; \
-        git -C /opt/hermes apply \
-            --include=plugins/memory/hindsight/plugin.yaml \
-            /scripts/hermes-security-dependencies.patch; \
-    fi \
-    && if ! grep -Fqx 'AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"' /opt/hermes/tools/browser_tool.py; then \
-        git -C /opt/hermes apply --check \
-            --include=tools/browser_tool.py \
-            /scripts/hermes-security-dependencies.patch; \
-        git -C /opt/hermes apply \
-            --include=tools/browser_tool.py \
-            /scripts/hermes-security-dependencies.patch; \
-    fi \
-    && grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/memory_setup.py \
+# The immutable selected base owns the reviewed Hindsight and agent-browser
+# patches and the sandbox user's npm cache. Verify that inherited boundary
+# without adding a second network-capable install owner in the final image.
+RUN grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fq 'outcome = install_specs(missing, timeout=120)' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
     && grep -Fqx 'AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"' /opt/hermes/tools/browser_tool.py \
-    && rm /scripts/hermes-security-dependencies.patch
-
-# Seed the sandbox user's npx cache from the reviewed lockfile. npm verifies
-# every archive against package-lock.json before the network-disabled probe.
-RUN chown -R sandbox:sandbox /scripts/agent-browser-runtime \
-    && HOME=/sandbox npm_config_cache=/sandbox/.npm \
-        /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
-        /usr/local/bin/npm ci \
-            --prefix /scripts/agent-browser-runtime \
-            --ignore-scripts --no-audit --no-fund \
-    && rm -rf /scripts/agent-browser-runtime/node_modules \
     && agent_browser_version="$( \
         HOME=/sandbox npm_config_cache=/sandbox/.npm npm_config_offline=true \
             /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
             /usr/local/bin/npx --ignore-scripts --prefer-offline -y \
             agent-browser@0.26.0 --version \
     )" \
-    && test "$agent_browser_version" = 'agent-browser 0.26.0' \
-    && rm -rf /scripts/agent-browser-runtime
+    && test "$agent_browser_version" = 'agent-browser 0.26.0'
 
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix from the
@@ -1456,7 +1426,6 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/managed_policy.py \
     && check_absent /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py \
     && check_absent /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py \
-    && check_absent /scripts/agent-browser-runtime \
     && check_absent /root/.npm \
     && check_absent /root/.cache/electron \
     && check_absent /root/.cache/node-gyp \

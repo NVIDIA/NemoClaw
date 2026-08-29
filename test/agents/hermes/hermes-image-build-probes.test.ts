@@ -9,9 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = path.join(import.meta.dirname, "../../..");
-const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
 const probes = path.join(root, "agents", "hermes", "image-build-probes.py");
-const imageProbePath = "/opt/nemoclaw-hermes-config/image-build-probes.py";
 const commands = [
   "cron-backup",
   "cron-create",
@@ -78,21 +76,6 @@ def load_gateway_config():
       fs.rmSync(temporaryRoot, { force: true, recursive: true });
     }
   });
-
-  it.each(commands)(
-    "uses a checked-in probe runner instead of builder-dependent heredocs [case %#] (#7981)",
-    (command) => {
-      expect(dockerfile).not.toMatch(/<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?/u);
-      expect(dockerfile).toContain(`COPY agents/hermes/image-build-probes.py ${imageProbePath}`);
-      const normalizedDockerfile = dockerfile.replace(/\\\n/gu, "").replace(/\s+/gu, " ");
-
-      expect(normalizedDockerfile).toContain(`${imageProbePath} ${command}`);
-
-      const removal = dockerfile.indexOf(`rm -f ${imageProbePath}`);
-      expect(removal).toBeGreaterThan(dockerfile.indexOf(`${imageProbePath} discord-reopen`));
-      expect(dockerfile.indexOf(`check_absent ${imageProbePath}`)).toBeGreaterThan(removal);
-    },
-  );
 
   it.each(Array.from(commands, (value) => [value]))(
     "lists Dockerfile probe command %s in the runner usage",

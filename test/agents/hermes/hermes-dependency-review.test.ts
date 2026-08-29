@@ -126,7 +126,8 @@ describe("Hermes 0.20.6 dependency review", () => {
     expect(dockerfile).toContain(
       "mcp_tool._ensure_mcp_sdk() or sys.exit",
     );
-    expect(dockerfile).toContain("--include=plugins/memory/hindsight/plugin.yaml");
+    expect(dockerfileBase).toContain("/tmp/hermes-security-dependencies.patch");
+    expect(dockerfile).not.toContain("--include=plugins/memory/hindsight/plugin.yaml");
     expect(dockerfile).not.toContain("--include=hermes_cli/memory_setup.py");
     expect(dockerfile).toContain(
       "grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/memory_setup.py",
@@ -154,8 +155,10 @@ describe("Hermes 0.20.6 dependency review", () => {
     expect(dockerfileBase).toContain("/usr/local/bin/npm ci");
     expect(dockerfileBase).toContain("--prefix /tmp/nemoclaw-agent-browser-runtime");
     expect(dockerfileBase).toContain("--ignore-scripts --no-audit --no-fund");
-    expect(dockerfile).toContain("--include=tools/browser_tool.py");
-    expect(dockerfile).toContain("--prefix /scripts/agent-browser-runtime");
+    expect(dockerfile).not.toContain("/scripts/hermes-security-dependencies.patch");
+    expect(dockerfile).not.toContain("--prefix /scripts/agent-browser-runtime");
+    expect(dockerfile).toContain("npm_config_offline=true");
+    expect(dockerfile).toContain("agent-browser@0.26.0 --version");
     expect(dockerfile).toContain(
       "ADD --checksum=sha256:a20c97b37910b6550d5ea50fbcc2d4187defe58cd57070b73863d069419c9440 https://files.pythonhosted.org/packages/77/c1/6e422f34e569cf8e18df68d1939c81c099d2b61e4f7d9621c8a77560799c/pydantic_settings-2.14.2-py3-none-any.whl /pydantic_settings-2.14.2-py3-none-any.whl",
     );
