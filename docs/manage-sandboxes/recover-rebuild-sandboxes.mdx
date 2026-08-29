@@ -107,7 +107,7 @@ Portable Hermes recovery follows the exact receipt-bound start, authenticated-he
 
 ### Recover Portable Published Ollama
 
-When an active Portable Hermes sandbox uses a published receipt-owned Ollama runner, use one of these commands to recover it:
+When an active Portable Hermes sandbox uses the `ollama-local` provider and a published receipt-owned Ollama runner, use one of these commands to recover it:
 
 ```bash
 $$nemoclaw <sandbox-name> recover
@@ -120,6 +120,7 @@ When the exact runner is stopped, they resume only that runner; they do not sele
 Missing authority, a same-name replacement, or other drift stops recovery before NemoClaw treats another resource as the runner.
 Success requires a final route proof from inside the sandbox.
 
+For another Portable Hermes provider, `recover` and `connect --probe-only` verify the recorded inference route and required forwards without requiring an Ollama receipt or starting an Ollama runner.
 Ordinary `connect` and direct `launch` do not resume the runner.
 If a check fails after recovery starts a stopped runner, NemoClaw restores the runner and registry to their prior states or reports that restoration could not be proved.
 

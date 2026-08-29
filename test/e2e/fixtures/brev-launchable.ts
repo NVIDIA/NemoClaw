@@ -55,6 +55,9 @@ export interface BrevLaunchableFixtureOptions {
 const IMAGE_REPOSITORY = "brevdev/nemoclaw-image";
 const IMAGE_WORKFLOW = "build-launchable-e2e-image.yml";
 const DEFAULT_POLL_MS = 15_000;
+const BREV_EXEC_READY_CAPTURE_LIMIT_BYTES = 4 * 1024;
+const BREV_EXEC_READY_DIAGNOSTIC_LIMIT_CHARACTERS = 2 * 1024;
+const DIAGNOSTIC_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 const DEFAULT_BREV_WORKSPACE_CREATE_RECONCILE_TIMEOUT_MS = 2 * 60_000;
 export const DEFAULT_BREV_STAGING_HANDOFF_COMMAND_TIMEOUT_MS = 60_000;
 export const DEFAULT_BREV_STAGING_HANDOFF_TIMEOUT_MS =
@@ -194,17 +197,38 @@ export class BrevLaunchableFixture {
     timeoutMs = DEFAULT_BREV_EXEC_READY_TIMEOUT_MS,
   ): Promise<void> {
     const deadline = Date.now() + timeoutMs;
+    let attempts = 0;
+    let lastResult: ShellProbeResult | undefined;
     while (Date.now() < deadline) {
+      attempts += 1;
       const remaining = deadline - Date.now();
       const result = await this.exec(ownership, "true", {
         artifactName: "brev-exec-readiness",
+        captureLimitBytes: BREV_EXEC_READY_CAPTURE_LIMIT_BYTES,
         persistArtifacts: false,
         timeoutMs: Math.min(30_000, remaining),
       });
       if (result.exitCode === 0) return;
+      lastResult = result;
       await delay(Math.min(this.pollMs, Math.max(1, deadline - Date.now())));
     }
-    throw new Error("Brev exec readiness timed out");
+    const lastAttempt = lastResult
+      ? {
+          diagnostic: boundedReadinessDiagnostic(this.secrets.redact(resultText(lastResult))),
+          exitCode: lastResult.exitCode,
+          signal: lastResult.signal,
+          timedOut: lastResult.timedOut,
+        }
+      : undefined;
+    await this.artifacts.writeJson("brev-exec-readiness-failure.json", {
+      attempts,
+      lastAttempt,
+      workspaceId: ownership.id,
+      workspaceName: ownership.name,
+    });
+    throw new Error(
+      `Brev exec readiness timed out after ${attempts} attempts: ${lastAttempt?.diagnostic ?? "no command result"}`,
+    );
   }
 
   private async exec(
@@ -481,6 +505,16 @@ export class BrevLaunchableFixture {
       env: { PATH: this.path, ...(options.env ?? {}), HOME: this.home },
     });
   }
+}
+
+function boundedReadinessDiagnostic(value: string): string {
+  const sanitized = value.replace(DIAGNOSTIC_CONTROL_CHARACTERS, " ").replace(/\s+/gu, " ").trim();
+  if (!sanitized) return "no output";
+  if (sanitized.length <= BREV_EXEC_READY_DIAGNOSTIC_LIMIT_CHARACTERS) return sanitized;
+  const omitted = sanitized.length - BREV_EXEC_READY_DIAGNOSTIC_LIMIT_CHARACTERS;
+  return `[Brev exec diagnostic omitted ${omitted} earlier characters] ${sanitized.slice(
+    -BREV_EXEC_READY_DIAGNOSTIC_LIMIT_CHARACTERS,
+  )}`;
 }
 
 function normalizeWorkspace(value: unknown): BrevWorkspaceRecord | null {
