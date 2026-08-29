@@ -4,15 +4,40 @@
 import { waitUntil } from "../core/wait";
 import { envInt } from "./env";
 import {
+  isSandboxBridgeGatewayReachable,
+  verifySandboxBridgeGatewayReachableOrExit,
+} from "./gateway-sandbox-reachability";
+import {
   createReadinessWaitOptions,
   formatReadinessDeadline,
   getLegacyPollDeadlineBudgetMs,
 } from "./readiness-wait";
+import type { SandboxGpuCreateFlowInput } from "./sandbox-gpu-create-flow";
 import { addTraceEvent, withDashboardReadinessTrace, withSandboxReadinessTrace } from "./tracing";
 
 type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string;
 
 export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE";
+
+export async function verifySelectedSandboxBridgeReachability(
+  input: SandboxGpuCreateFlowInput,
+): Promise<void> {
+  const managedBootstrap = input.managedBootstrap;
+  const reachabilityImpl = managedBootstrap
+    ? (options: Parameters<typeof isSandboxBridgeGatewayReachable>[0]) => {
+        const gatewayRuntime = managedBootstrap.runtimeProvider.gateway.prepareHostRuntime({
+          environment: input.hostEnv ?? process.env,
+          platform: process.platform,
+        });
+        return isSandboxBridgeGatewayReachable({ ...options, gatewayRuntime });
+      }
+    : undefined;
+  await verifySandboxBridgeGatewayReachableOrExit(true, {
+    skip: false,
+    port: input.gatewayPort,
+    ...(reachabilityImpl ? { reachabilityImpl } : {}),
+  });
+}
 
 /*
  * Create/readiness Error-phase debounce.

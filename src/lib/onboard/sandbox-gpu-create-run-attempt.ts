@@ -25,10 +25,6 @@ import { classifySandboxCreateFailure } from "../validation";
 import { reportSandboxCreateFailure } from "./created-sandbox-failure";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
-import {
-  isSandboxBridgeGatewayReachable,
-  verifySandboxBridgeGatewayReachableOrExit,
-} from "./gateway-sandbox-reachability";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
 import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
 import { enforceManagedBootstrapRecoveryForSandbox } from "./managed-bootstrap/adapter";
@@ -376,25 +372,8 @@ class ManagedBootstrapCreateStreamFailure extends Error {
   }
 }
 
-export async function verifySelectedSandboxBridgeReachability(
-  input: SandboxGpuCreateFlowInput,
-): Promise<void> {
-  const managedBootstrap = input.managedBootstrap;
-  const reachabilityImpl = managedBootstrap
-    ? (options: Parameters<typeof isSandboxBridgeGatewayReachable>[0]) => {
-        const gatewayRuntime = managedBootstrap.runtimeProvider.gateway.prepareHostRuntime({
-          environment: input.hostEnv ?? process.env,
-          platform: process.platform,
-        });
-        return isSandboxBridgeGatewayReachable({ ...options, gatewayRuntime });
-      }
-    : undefined;
-  await verifySandboxBridgeGatewayReachableOrExit(true, {
-    skip: false,
-    port: input.gatewayPort,
-    ...(reachabilityImpl ? { reachabilityImpl } : {}),
-  });
-}
+export const verifySelectedSandboxBridgeReachability =
+  sandboxReadinessTracing.verifySelectedSandboxBridgeReachability;
 
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
