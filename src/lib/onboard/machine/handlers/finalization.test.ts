@@ -458,7 +458,7 @@ describe("finalization handlers", () => {
 
     expect(calls.dashboard).not.toHaveBeenCalled();
     // The sandbox reached finalization (policies confirmed), so it stays the default
-    // even when post-policy verification flakes — only a pre-policy cancel rolls back.
+    // even when post-identity verification flakes — only a pre-policy cancel rolls back.
     expect(calls.setDefaultSandbox).toHaveBeenCalledWith("my-assistant");
   });
 

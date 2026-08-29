@@ -93,17 +93,17 @@ export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   fromRef: string;
   policylessCreate?: boolean;
-  /** Keep provider mutations and attachments behind the exact post-create policy gate. */
-  deferSandboxEffectsUntilPolicyVerification?: boolean;
+  /** Keep provider mutations and attachments behind the exact post-create identity gate. */
+  deferSandboxEffectsUntilIdentityVerification?: boolean;
   managedStateMount?: ManagedHermesStateVolumeMount | null;
   messagingTokenDefs: MessagingTokenDef[];
-  runProviderPreDeleteCleanup(verifyLivePolicyRequirements?: (operation: string) => void): void;
+  runProviderPreDeleteCleanup(revalidateSandboxIdentity?: (operation: string) => void): void;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
     options: {
       replaceExisting: true;
       allowedSandboxes: readonly [string];
-      verifyLivePolicyRequirements?(operation: string): void;
+      revalidateSandboxIdentity?(operation: string): void;
     },
   ): string[];
   getHermesToolGatewayProviderName(sandboxName: string): string;

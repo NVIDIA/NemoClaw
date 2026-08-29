@@ -59,17 +59,17 @@ describe("applyOnboardVmDnsMonkeypatch", () => {
       ok: true,
       status: "applied" as const,
     }));
-    const verifyLivePolicyRequirements = vi.fn(() => {
-      throw new Error("policy requirements changed");
+    const revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("sandbox identity changed");
     });
 
     expect(() =>
       applyOnboardVmDnsMonkeypatch(
         "demo",
         { openshellDriver: "vm" },
-        { apply, log, verifyLivePolicyRequirements },
+        { apply, log, revalidateSandboxIdentity },
       ),
-    ).toThrow("policy requirements changed");
+    ).toThrow("sandbox identity changed");
 
     expect(apply).toHaveBeenCalledOnce();
     expect(log).not.toHaveBeenCalled();

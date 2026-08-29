@@ -283,7 +283,7 @@ describe("sandbox destroy host-local inference transaction", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      deleteOutput: expect.stringContaining("Pending policy verification sandbox identity"),
+      deleteOutput: expect.stringContaining("Pending create sandbox identity"),
     });
     expect(runOpenshell).not.toHaveBeenCalled();
     expect(stopInferenceResources).not.toHaveBeenCalled();

@@ -77,7 +77,7 @@ describe("credential prompt navigation helpers", () => {
     }
   });
 
-  it("rechecks policy requirements after the credential prompt before persistence (#9833)", async () => {
+  it("rechecks sandbox identity after the credential prompt before persistence (#9833)", async () => {
     const prompt = vi
       .spyOn(credentials, "readCredentialPrompt")
       .mockResolvedValue({ kind: "credential", value: "new-secret" });
@@ -89,11 +89,11 @@ describe("credential prompt navigation helpers", () => {
         envName: "NEMOCLAW_TEST_POLICY_CREDENTIAL",
         label: "Policy credential",
         exitOnboardFromPrompt: () => process.exit(1),
-        verifyLivePolicyRequirements: () => {
-          throw new Error("live policy requirements changed before the selected route");
+        revalidateSandboxIdentity: () => {
+          throw new Error("Sandbox identity changed before the selected route");
         },
       }),
-    ).rejects.toThrow(/live policy requirements changed before/u);
+    ).rejects.toThrow(/Sandbox identity changed before/u);
 
     expect(prompt).toHaveBeenCalledOnce();
     expect(saveCredential).not.toHaveBeenCalled();
@@ -102,7 +102,7 @@ describe("credential prompt navigation helpers", () => {
   });
 
   it.each(["configured", "bridged"] as const)(
-    "stops Model Router %s credential persistence when policy requirements changes (#9833)",
+    "stops Model Router %s credential persistence when sandbox identity changes (#9833)",
     async (source) => {
       const saveCredential = vi.fn();
       const stageRouterProviderKeyBridge = vi.fn();
@@ -116,8 +116,8 @@ describe("credential prompt navigation helpers", () => {
         preferredInferenceApi: null,
         nimContainer: null,
         allowToolsIncompatible: false,
-        verifyLivePolicyRequirements: () => {
-          throw new Error("live policy requirements changed before the selected route");
+        revalidateSandboxIdentity: () => {
+          throw new Error("Sandbox identity changed before the selected route");
         },
       } satisfies SetupNimSelectionState;
 
@@ -151,7 +151,7 @@ describe("credential prompt navigation helpers", () => {
             returningToProviderSelection: () => false,
           },
         }),
-      ).rejects.toThrow(/live policy requirements changed before/u);
+      ).rejects.toThrow(/Sandbox identity changed before/u);
 
       expect(saveCredential).not.toHaveBeenCalled();
       expect(stageRouterProviderKeyBridge).not.toHaveBeenCalled();

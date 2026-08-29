@@ -102,12 +102,12 @@ describe("host-local route-only policy selection", () => {
     deps.isNonInteractive.mockReturnValue(false);
     deps.selectTierPresetsAndAccess.mockResolvedValue([{ name: "npm", access: "read" }]);
     const refusePresetMutation = () => {
-      throw new Error("policy requirements changed");
+      throw new Error("sandbox identity changed");
     };
     const policyChecks = new Map([
       ["apply policy presets to sandbox 'alpha'", refusePresetMutation],
     ]);
-    const verifyLivePolicyRequirements = vi.fn((operation: string) =>
+    const revalidateSandboxIdentity = vi.fn((operation: string) =>
       policyChecks.get(operation)?.(),
     );
 
@@ -116,9 +116,9 @@ describe("host-local route-only policy selection", () => {
         selectedPresets: null,
         provider: null,
         excludedPresets: ["local-inference"],
-        verifyLivePolicyRequirements,
+        revalidateSandboxIdentity,
       }),
-    ).rejects.toThrow("policy requirements changed");
+    ).rejects.toThrow("sandbox identity changed");
 
     expect(deps.selectTierPresetsAndAccess).toHaveBeenCalledOnce();
     expect(syncPresetSelection).not.toHaveBeenCalled();
@@ -128,7 +128,7 @@ describe("host-local route-only policy selection", () => {
     const { deps, syncPresetSelection } = createHarness();
     const onSelection = vi.fn();
     syncPresetSelection.mockImplementation(() => {
-      throw new Error("policy requirements changed");
+      throw new Error("sandbox identity changed");
     });
 
     await expect(
@@ -136,25 +136,25 @@ describe("host-local route-only policy selection", () => {
         selectedPresets: ["npm"],
         onSelection,
       }),
-    ).rejects.toThrow("policy requirements changed");
+    ).rejects.toThrow("sandbox identity changed");
 
     expect(onSelection).not.toHaveBeenCalled();
   });
 
   it("refuses resumed preset synchronization when authority changes (#9833)", async () => {
     const { deps, syncPresetSelection } = createHarness();
-    const verifyLivePolicyRequirements = vi.fn(() => {
-      throw new Error("policy requirements changed");
+    const revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("sandbox identity changed");
     });
 
     await expect(
       setupPoliciesWithSelection(deps, "alpha", {
         selectedPresets: ["npm"],
-        verifyLivePolicyRequirements,
+        revalidateSandboxIdentity,
       }),
-    ).rejects.toThrow("policy requirements changed");
+    ).rejects.toThrow("sandbox identity changed");
 
-    expect(verifyLivePolicyRequirements).toHaveBeenCalledWith(
+    expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
       "reapply selected policy presets to sandbox 'alpha'",
     );
     expect(syncPresetSelection).not.toHaveBeenCalled();

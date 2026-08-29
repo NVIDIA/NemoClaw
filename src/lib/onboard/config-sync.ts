@@ -14,19 +14,19 @@ export interface NemoClawConfigSyncDeps {
   openshellArgv(args: string[]): string[];
 }
 
-const skipPolicyRequirementRevalidation = (_operation: string): void => undefined;
+const skipSandboxIdentityRevalidation = (_operation: string): void => undefined;
 
 export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
   return function syncNemoClawConfigInSandbox(
     sandboxName: string,
     provider: string,
     model: string,
-    revalidatePolicyRequirements: (operation: string) => void = skipPolicyRequirementRevalidation,
+    revalidateSandboxIdentity: (operation: string) => void = skipSandboxIdentityRevalidation,
   ): void {
     runSandboxConfigSync(sandboxName, {
       getSelectionConfig: () => deps.getProviderSelectionConfig(provider, model),
       runConnectScript: (name, scriptContent) => {
-        revalidatePolicyRequirements(`synchronize OpenClaw config in sandbox '${name}'`);
+        revalidateSandboxIdentity(`synchronize OpenClaw config in sandbox '${name}'`);
         deps.run(deps.openshellArgv(sandboxConfigSyncArgs(name)), {
           stdio: ["pipe", "ignore", "inherit"],
           input: scriptContent,

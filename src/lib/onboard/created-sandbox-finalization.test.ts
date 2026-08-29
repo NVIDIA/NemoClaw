@@ -86,7 +86,7 @@ describe("new sandbox cancellation recovery", () => {
           markCancellationRecovery,
           dockerInfoFormat: () => "",
           runCapture: () => "",
-          verifyLivePolicyRequirements: vi.fn(),
+          revalidateSandboxIdentity: vi.fn(),
           applyVmDnsMonkeypatch: vi.fn(),
         },
       ),
@@ -456,7 +456,7 @@ describe("created DCode sandbox finalization", () => {
         dashboardRemoteBindPrepared: false,
         getVerifiedCreateBoundary: () => verifiedCreateBoundary,
         getVerifiedCreateRegistrationAuthority: () => verifiedCreate,
-        verifyLivePolicyRequirements: vi.fn(),
+        revalidateSandboxIdentity: vi.fn(),
       },
       null,
       "build-1",
@@ -502,8 +502,6 @@ describe("created DCode sandbox finalization", () => {
         sandboxName: input.sandboxName,
         lifecycleGeneration: input.lifecycleGeneration,
         sandboxIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
-        policyHash: "sha256:effective",
-        policyVersion: 1,
       })),
     ] as unknown as Parameters<typeof createOnboardCreatedSandboxCompletion>;
     const completion = createOnboardCreatedSandboxCompletion(...completionArgs);

@@ -263,17 +263,17 @@ describe("blueprint policy convenience", () => {
     );
   });
 
-  it("persists gateway and requested additions without policy ownership state", async () => {
+  it("persists the gateway without storing requested policy additions", async () => {
     await actionApply("default", blueprint());
     const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"));
     const plan = JSON.parse(planEntry?.[1].content ?? "{}");
     expect(plan.gateway).toEqual({ name: "test-gateway", host: "127.0.0.1", port: 8080 });
-    expect(plan.policy_additions).toEqual(additions);
+    expect(plan).not.toHaveProperty("policy_additions");
     expect(plan).not.toHaveProperty("policy_authority");
     expect(plan).not.toHaveProperty("policy_transition");
   });
 
-  it("reconcile rereads OpenShell and applies missing requirements", async () => {
+  it("reconcile leaves policy entirely with OpenShell", async () => {
     const runId = "reconcile-live";
     const directory = runDirectory(runId);
     store.set(directory, { type: "dir" });
@@ -283,13 +283,16 @@ describe("blueprint policy convenience", () => {
         run_id: runId,
         sandbox_name: "test-sandbox",
         gateway: { name: "test-gateway", host: "127.0.0.1", port: 8080 },
-        policy_additions: additions,
       }),
     });
+    const writes: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      writes.push(String(chunk));
+      return true;
+    });
     await actionReconcile(runId);
-    expect((livePolicy.network_policies as Record<string, unknown>).nim_service).toEqual(
-      additions.nim_service,
-    );
+    expect((livePolicy.network_policies as Record<string, unknown>).nim_service).toBeUndefined();
+    expect(writes.join("")).toContain("policy is managed directly by OpenShell");
   });
 
   it("status omits legacy policy lifecycle fields", async () => {
@@ -307,7 +310,7 @@ describe("blueprint policy convenience", () => {
     });
     actionStatus(runId);
     const output = writes.join("");
-    expect(output).toContain('"policy_additions"');
+    expect(output).not.toContain('"policy_additions"');
     expect(output).not.toContain("policy_authority");
     expect(output).not.toContain("policy_transition");
   });

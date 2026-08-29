@@ -189,8 +189,8 @@ export interface SandboxStateOptions<
   /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
   authoritativeResumeConfig?: boolean;
   /** Internal rebuild tier that must govern create-time and resumed policy selection. */
-  /** Keep provider and credential effects behind the exact post-create policy gate. */
-  deferSandboxEffectsUntilPolicyVerification?: boolean;
+  /** Keep provider and credential effects behind the exact post-create identity gate. */
+  deferSandboxEffectsUntilIdentityVerification?: boolean;
   /** Endpoint source to preserve during an authoritative rebuild. */
   endpointSource?: InferenceEndpointSource | null;
   /** Internal rebuild target fingerprint recorded by the journal opened before deletion. */
@@ -310,7 +310,7 @@ export interface SandboxStateOptions<
       agent: Agent;
       requiredBindings: readonly CheckpointProviderBinding[];
       replaceExisting?: boolean;
-      verifyLivePolicyRequirements?(operation: string): void;
+      revalidateSandboxIdentity?(operation: string): void;
     }): Promise<readonly CheckpointProviderBinding[]>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
@@ -476,9 +476,9 @@ function compatibleEndpointReasoningForCreateIntent(
 }
 
 function deferredSandboxEffectsIntent(enabled: boolean): {
-  readonly deferSandboxEffectsUntilPolicyVerification?: true;
+  readonly deferSandboxEffectsUntilIdentityVerification?: true;
 } {
-  return enabled ? { deferSandboxEffectsUntilPolicyVerification: true } : {};
+  return enabled ? { deferSandboxEffectsUntilIdentityVerification: true } : {};
 }
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
@@ -491,12 +491,12 @@ export function apfCreateIntentFields(
   requested: boolean,
 ): Pick<
   CompleteSandboxCreateIntent,
-  "apfInterceptorRequested" | "deferSandboxEffectsUntilPolicyVerification"
+  "apfInterceptorRequested" | "deferSandboxEffectsUntilIdentityVerification"
 > {
   return requested
     ? {
         apfInterceptorRequested: true,
-        deferSandboxEffectsUntilPolicyVerification: true,
+        deferSandboxEffectsUntilIdentityVerification: true,
       }
     : {};
 }
@@ -1499,7 +1499,7 @@ class SandboxStateFlow<
     session: Session | null,
     force = false,
     replaceExisting = false,
-    verifiedPolicyRevalidation?: (operation: string) => void,
+    verifiedIdentityRevalidation?: (operation: string) => void,
   ): Promise<void> {
     if (
       !this.resumesSandboxPrompts ||
@@ -1537,7 +1537,7 @@ class SandboxStateFlow<
     const registeredProviders = await this.deps.withGatewayRouteMutationLock(
       this.options.gatewayName,
       async () => {
-        verifiedPolicyRevalidation?.(
+        verifiedIdentityRevalidation?.(
           `register credential providers for sandbox ${JSON.stringify(sandboxName)}`,
         );
         const staged = await this.deps.stageSandboxCredentialProviders({
@@ -1547,8 +1547,8 @@ class SandboxStateFlow<
           agent: this.options.agent,
           requiredBindings,
           ...(replaceExisting ? { replaceExisting: true } : {}),
-          ...(verifiedPolicyRevalidation
-            ? { verifyLivePolicyRequirements: verifiedPolicyRevalidation }
+          ...(verifiedIdentityRevalidation
+            ? { revalidateSandboxIdentity: verifiedIdentityRevalidation }
             : {}),
         });
         const stagedProviderNames = new Set<string>();
@@ -1592,7 +1592,7 @@ class SandboxStateFlow<
     registryAuthoritySnapshot: RegistryMessagingAuthority,
     force: boolean,
     replaceExisting: boolean,
-    verifiedPolicyRevalidation?: (operation: string) => void,
+    verifiedIdentityRevalidation?: (operation: string) => void,
   ): Promise<void> {
     if (state.selectedMessagingChannels.length === 0) return;
     const stage = async () => {
@@ -1608,7 +1608,7 @@ class SandboxStateFlow<
         state.session,
         force,
         replaceExisting,
-        verifiedPolicyRevalidation,
+        verifiedIdentityRevalidation,
       );
     };
     if (this.deps.withSandboxMutationLock) {
@@ -1626,7 +1626,7 @@ class SandboxStateFlow<
     registryMessagingAuthority: RegistryMessagingAuthority,
     forceMessagingProviderRegistration: boolean,
     replaceExistingMessagingProviders: boolean,
-    verifiedPolicyRevalidation?: (operation: string) => void,
+    verifiedIdentityRevalidation?: (operation: string) => void,
   ): Promise<SandboxStepState<WebSearchConfig>> {
     await this.registerCompletedCredentialProviders(
       sandboxName,
@@ -1639,7 +1639,7 @@ class SandboxStateFlow<
       state.session,
       false,
       false,
-      verifiedPolicyRevalidation,
+      verifiedIdentityRevalidation,
     );
     let nextState = this.checkpointProviderEffectGroup(
       state,
@@ -1653,7 +1653,7 @@ class SandboxStateFlow<
       registryMessagingAuthority,
       forceMessagingProviderRegistration,
       replaceExistingMessagingProviders,
-      verifiedPolicyRevalidation,
+      verifiedIdentityRevalidation,
     );
     nextState = this.checkpointProviderEffectGroup(
       nextState,
@@ -1717,7 +1717,7 @@ class SandboxStateFlow<
     staleExtraProviders: readonly string[],
     resourceProfile: ResourceProfile | null,
     hermesToolGateways: readonly string[],
-    deferSandboxEffectsUntilPolicyVerification: boolean,
+    deferSandboxEffectsUntilIdentityVerification: boolean,
   ): Promise<CompleteSandboxCreateIntent> {
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const resolved = await this.deps.resolveSandboxCreateIntent({
@@ -1752,7 +1752,7 @@ class SandboxStateFlow<
       isDcodeAgent((this.options.agent as { name?: string } | null)?.name)
         ? { dcodeAutoApprovalMode: this.dcodeAutoApprovalMode }
         : {}),
-      ...deferredSandboxEffectsIntent(deferSandboxEffectsUntilPolicyVerification),
+      ...deferredSandboxEffectsIntent(deferSandboxEffectsUntilIdentityVerification),
       ...(this.options.rebuildPreservedEnv
         ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
         : {}),
@@ -1815,9 +1815,9 @@ class SandboxStateFlow<
     }
   }
 
-  private deferSandboxEffectsUntilPolicyVerification(): boolean {
+  private deferSandboxEffectsUntilIdentityVerification(): boolean {
     return (
-      this.options.deferSandboxEffectsUntilPolicyVerification === true ||
+      this.options.deferSandboxEffectsUntilIdentityVerification === true ||
       this.options.apfInterceptorRequested === true
     );
   }
@@ -2049,10 +2049,10 @@ class SandboxStateFlow<
     messagingPlan: SandboxMessagingPlan | null,
     registryMessagingAuthoritySnapshot: RegistryMessagingAuthority,
     decision: SandboxCreationDecision,
-    deferSandboxEffectsUntilPolicyVerification: boolean,
+    deferSandboxEffectsUntilIdentityVerification: boolean,
     activateVerifiedCredentialProviders?: (
       state: SandboxStepState<WebSearchConfig>,
-      verifyLivePolicyRequirements: (operation: string) => void,
+      revalidateSandboxIdentity: (operation: string) => void,
     ) => Promise<SandboxStepState<WebSearchConfig>>,
   ): Promise<SandboxStepState<WebSearchConfig>> {
     const resourceSelection = await this.resolveResourceProfile(initialState);
@@ -2090,7 +2090,7 @@ class SandboxStateFlow<
         extraProviderPlan.staleExtraProviders,
         resourceProfile,
         effectiveHermesToolGateways,
-        deferSandboxEffectsUntilPolicyVerification,
+        deferSandboxEffectsUntilIdentityVerification,
       );
       this.assertProviderlessApfCreatePlan(createIntent);
       const providerlessApf =
@@ -2117,7 +2117,7 @@ class SandboxStateFlow<
 
       let sandboxName: string;
       try {
-        if (this.options.fresh && !deferSandboxEffectsUntilPolicyVerification) {
+        if (this.options.fresh && !deferSandboxEffectsUntilIdentityVerification) {
           this.deps.stopStaleDashboardListenersForSandbox(
             this.deps.listRegistrySandboxes().sandboxes,
             requestedSandboxName,
@@ -2174,7 +2174,7 @@ class SandboxStateFlow<
                       }
                       state = await activateVerifiedCredentialProviders(
                         state,
-                        verifiedContext.verifyLivePolicyRequirements,
+                        verifiedContext.revalidateSandboxIdentity,
                       );
                     },
                   ]
@@ -2405,7 +2405,7 @@ class SandboxStateFlow<
     nextState = this.checkpointMessaging(nextState, messaging);
     const activateCredentialProviders = (
       state: SandboxStepState<WebSearchConfig>,
-      verifiedPolicyRevalidation?: (operation: string) => void,
+      verifiedIdentityRevalidation?: (operation: string) => void,
     ) =>
       this.activateCredentialProvidersForCreate(
         state,
@@ -2419,7 +2419,7 @@ class SandboxStateFlow<
           messaging.plan,
         ),
         this.ownsDeletedSandboxRecreate(nextState, requestedSandboxName),
-        verifiedPolicyRevalidation,
+        verifiedIdentityRevalidation,
       );
     // A create-time policy with credential bindings cannot be installed before
     // those providers are attached. For ordinary managed creation, register the
@@ -2429,7 +2429,7 @@ class SandboxStateFlow<
     const hasCreateTimeCredentialBindings =
       webSearchProviderBindings.length > 0 || messagingProviderBindings.length > 0;
     const deferCredentialProviderEffects =
-      this.deferSandboxEffectsUntilPolicyVerification() && !hasCreateTimeCredentialBindings;
+      this.deferSandboxEffectsUntilIdentityVerification() && !hasCreateTimeCredentialBindings;
     if (!deferCredentialProviderEffects) {
       nextState = await activateCredentialProviders(nextState);
     }

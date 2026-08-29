@@ -170,13 +170,13 @@ describe("handleAgentSetupState", () => {
 
   it("delegates shared OpenClaw configuration before ready-resume completion", async () => {
     const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(() => true) });
-    const revalidatePolicyRequirements = vi.fn();
+    const revalidateSandboxIdentity = vi.fn();
 
     await handleAgentSetupState({
       ...baseOptions(deps),
       resume: true,
       webSearchConfig: { fetchEnabled: false },
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     });
 
     expect(calls.configureOpenclaw).toHaveBeenCalledExactlyOnceWith(
@@ -184,7 +184,7 @@ describe("handleAgentSetupState", () => {
       "model",
       "provider",
       { fetchEnabled: false },
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     );
     expect(calls.configureOpenclaw.mock.invocationCallOrder[0]).toBeLessThan(
       calls.recordSkip.mock.invocationCallOrder[0],
@@ -217,11 +217,11 @@ describe("handleAgentSetupState", () => {
       [
         "synchronize OpenClaw config in sandbox 'my-assistant'",
         () => {
-          throw new Error("policy authority changed");
+          throw new Error("sandbox identity changed");
         },
       ],
     ]);
-    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+    const revalidateSandboxIdentity = vi.fn((operation: string) =>
       revalidationSteps.get(operation)?.(),
     );
 
@@ -229,9 +229,9 @@ describe("handleAgentSetupState", () => {
       handleAgentSetupState({
         ...baseOptions(deps),
         resume: true,
-        revalidatePolicyRequirements,
+        revalidateSandboxIdentity,
       }),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("sandbox identity changed");
 
     expect(configExec).not.toHaveBeenCalled();
     expect(calls.recordSkip).not.toHaveBeenCalled();

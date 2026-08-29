@@ -114,7 +114,7 @@ const {
       replaceExisting?: boolean;
       allowedSandboxes?: readonly string[];
       requireExactBinding?: boolean;
-      verifyLivePolicyRequirements?(operation: string): void;
+      revalidateSandboxIdentity?(operation: string): void;
     },
   ) => { ok: boolean; status?: number; message?: string; reason?: string };
   upsertMessagingProviders: (
@@ -129,7 +129,7 @@ const {
       allowedSandboxes?: readonly string[];
       bestEffort?: boolean;
       replaceExisting?: boolean;
-      verifyLivePolicyRequirements?(operation: string): void;
+      revalidateSandboxIdentity?(operation: string): void;
       requireExactBindings?: boolean;
     },
   ) => string[];
@@ -929,13 +929,13 @@ describe("onboard provider helpers", () => {
     ]);
   });
 
-  it("revalidates policy requirements before each messaging provider mutation (#9833)", () => {
+  it("revalidates sandbox identity before each messaging provider mutation (#9833)", () => {
     const commands: string[] = [];
     const revalidationSteps = [
       () => undefined,
       () => undefined,
       () => {
-        throw new Error("policy requirements changed between providers");
+        throw new Error("sandbox identity changed between providers");
       },
     ];
 
@@ -951,21 +951,21 @@ describe("onboard provider helpers", () => {
             ? { status: 1, stdout: "", stderr: "" }
             : { status: 0, stdout: "", stderr: "" };
         },
-        { verifyLivePolicyRequirements: () => revalidationSteps.shift()?.() },
+        { revalidateSandboxIdentity: () => revalidationSteps.shift()?.() },
       ),
-    ).toThrow(/policy requirements changed between providers/);
+    ).toThrow(/sandbox identity changed between providers/);
     expect(commands).toEqual([
       "provider get alpha-first",
       "provider create --name alpha-first --type generic --credential FIRST_TOKEN",
     ]);
   });
 
-  it("rechecks policy requirements after a provider probe and before its mutation (#9833)", () => {
+  it("rechecks sandbox identity after a provider probe and before its mutation (#9833)", () => {
     const commands: string[] = [];
     const revalidationSteps = [
       () => undefined,
       () => {
-        throw new Error("policy requirements changed after provider probe");
+        throw new Error("sandbox identity changed after provider probe");
       },
     ];
 
@@ -980,9 +980,9 @@ describe("onboard provider helpers", () => {
           commands.push(command.join(" "));
           return { status: 1, stdout: "", stderr: "not found" };
         },
-        { verifyLivePolicyRequirements: () => revalidationSteps.shift()?.() },
+        { revalidateSandboxIdentity: () => revalidationSteps.shift()?.() },
       ),
-    ).toThrow(/policy requirements changed after provider probe/u);
+    ).toThrow(/sandbox identity changed after provider probe/u);
     expect(commands).toEqual(["provider get alpha-discord-bridge"]);
   });
 
@@ -1086,7 +1086,7 @@ describe("onboard provider helpers", () => {
     const configureRefreshes = vi
       .spyOn(messagingBridgeProvider, "configureMessagingBridgeRefreshes")
       .mockImplementation(() => {
-        throw new Error("policy requirements changed");
+        throw new Error("sandbox identity changed");
       });
     try {
       expect(() =>
@@ -1097,7 +1097,7 @@ describe("onboard provider helpers", () => {
         ),
       ).toThrow(
         expect.objectContaining({
-          message: expect.stringMatching(/policy requirements changed.*alpha-bridge/isu),
+          message: expect.stringMatching(/sandbox identity changed.*alpha-bridge/isu),
           mutatedProviderNames: ["alpha-bridge"],
         }),
       );

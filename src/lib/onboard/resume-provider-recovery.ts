@@ -38,9 +38,9 @@ export type ResumeProviderRecoveryDeps = {
     label: string,
     helpUrl: string | null,
     validator: (value: string) => string | null,
-    verifyLivePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ) => Promise<unknown>;
-  verifyLivePolicyRequirements?: (operation: string) => void;
+  revalidateSandboxIdentity?: (operation: string) => void;
   validateNvidiaApiKeyValue: (key: string, credentialEnv: string) => string | null;
 };
 
@@ -142,7 +142,7 @@ export async function ensureResumeProviderReady(
       `${providerLabel} API key`,
       helpUrl,
       (value) => deps.validateNvidiaApiKeyValue(value, resolvedCredentialEnv),
-      deps.verifyLivePolicyRequirements,
+      deps.revalidateSandboxIdentity,
     );
   } else {
     deps.note(`  [resume] Provider '${provider}' is missing from the gateway; recreating it.`);

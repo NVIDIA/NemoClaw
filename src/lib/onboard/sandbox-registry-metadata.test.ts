@@ -261,11 +261,11 @@ describe("sandbox registry metadata", () => {
     );
 
     const helpers = await makeHelpers("docker");
-    const verifyLivePolicyRequirements = vi
+    const revalidateSandboxIdentity = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
-        throw new Error("policy requirements changed");
+        throw new Error("sandbox identity changed");
       });
 
     expect(() =>
@@ -277,14 +277,14 @@ describe("sandbox registry metadata", () => {
         18789,
         true,
         null,
-        verifyLivePolicyRequirements,
+        revalidateSandboxIdentity,
       ),
-    ).toThrow("policy requirements changed");
+    ).toThrow("sandbox identity changed");
 
     const persisted = JSON.parse(readFileSync(registryFile, "utf8"));
     expect(persisted.sandboxes.alpha.model).toBe("new-model");
     expect(persisted.defaultSandbox).toBe("beta");
-    expect(verifyLivePolicyRequirements).toHaveBeenCalledTimes(2);
+    expect(revalidateSandboxIdentity).toHaveBeenCalledTimes(2);
   });
 
   it("persists a reused terminal sandbox without a dashboard port for host allocation (#7020)", async () => {

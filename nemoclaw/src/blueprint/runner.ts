@@ -107,7 +107,6 @@ type RollbackPlanSource = {
   inference?: unknown;
   identity?: unknown;
   gateway?: unknown;
-  policy_additions?: unknown;
 };
 type ReconciliationPlanSource = RollbackPlanSource;
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
@@ -847,10 +846,7 @@ async function applyBlueprintPolicyAdditions(
   );
 }
 
-function readConfiguredSandboxPolicy(): {
-  path: string;
-  policy: UnknownRecord;
-} | null {
+function readConfiguredSandboxPolicy(): { path: string } | null {
   const path = process.env.OPENSHELL_SANDBOX_POLICY?.trim();
   if (!path) return null;
   let raw: string;
@@ -860,7 +856,8 @@ function readConfiguredSandboxPolicy(): {
     throw new Error("The configured NemoClaw sandbox policy could not be read");
   }
   try {
-    return { path, policy: parseOpenShellPolicy(raw).policy };
+    parseOpenShellPolicy(raw);
+    return { path };
   } catch {
     throw new Error("The configured NemoClaw sandbox policy is invalid");
   }
@@ -1022,7 +1019,6 @@ interface PersistedRunPlan {
   sandbox_name: string;
   sandbox_created_by_apply: boolean;
   inference_provider_created_by_apply: boolean;
-  policy_additions: PolicyAdditions;
   gateway: GatewayBinding;
   inference: SafeInferencePlan;
   identity?: RuntimeIdentityReceipt;
@@ -1040,7 +1036,6 @@ type StatusRunPlan = {
   sandbox_name?: string;
   sandbox_created_by_apply?: boolean;
   inference_provider_created_by_apply?: boolean;
-  policy_additions?: PolicyAdditions;
   gateway?: GatewayBinding;
   inference?: SafeInferencePlan;
   identity?: RuntimeIdentityReceipt;
@@ -1118,7 +1113,6 @@ function buildPersistedRunPlan(args: {
   sandboxName: string;
   sandboxCreatedByApply: boolean;
   inferenceProviderCreatedByApply: boolean;
-  policyAdditions: PolicyAdditions;
   gateway: GatewayBinding;
   inferenceCfg: InferenceProfile;
   runtimeIdentityReceipt?: RuntimeIdentityReceipt;
@@ -1130,7 +1124,6 @@ function buildPersistedRunPlan(args: {
     sandbox_name: args.sandboxName,
     sandbox_created_by_apply: args.sandboxCreatedByApply,
     inference_provider_created_by_apply: args.inferenceProviderCreatedByApply,
-    policy_additions: args.policyAdditions,
     gateway: args.gateway,
     inference: buildSafeInferencePlan(args.inferenceCfg),
     timestamp: args.timestamp,
@@ -1205,9 +1198,6 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
     safePlan.inference_provider_created_by_apply = source.inference_provider_created_by_apply;
   }
 
-  if (isPolicyAdditions(source.policy_additions)) {
-    safePlan.policy_additions = source.policy_additions;
-  }
   if (source.gateway !== undefined && !isGatewayBinding(source.gateway)) return null;
   if (isGatewayBinding(source.gateway)) safePlan.gateway = source.gateway;
 
@@ -1376,11 +1366,6 @@ export async function actionApply(
   const policyGateway = await inspectActiveGatewayBinding();
   const globalPolicy = await inspectBlueprintPolicy(policyGateway.name);
   const configuredSandboxPolicy = globalPolicy ? null : readConfiguredSandboxPolicy();
-  if (!globalPolicy && !configuredSandboxPolicy) {
-    throw new Error(
-      "A configured NemoClaw sandbox policy is required before the blueprint can create or mutate resources.",
-    );
-  }
   const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
   mkdirSync(stateDir, { recursive: true });
 
@@ -1396,7 +1381,6 @@ export async function actionApply(
         sandboxName,
         sandboxCreatedByApply,
         inferenceProviderCreatedByApply,
-        policyAdditions,
         gateway: policyGateway,
         inferenceCfg,
         runtimeIdentityReceipt,
@@ -1475,15 +1459,6 @@ export async function actionApply(
       persistRunPlan();
     }
 
-    const observedPolicy = await requireLivePolicy();
-    if (configuredSandboxPolicy) {
-      try {
-        assertPolicyRequirementContainment(observedPolicy, configuredSandboxPolicy.policy);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        throw new Error(`The current OpenShell policy omits create-time requirements: ${detail}.`);
-      }
-    }
     persistRunPlan();
 
     if (runtimeIdentityConfig) {
@@ -1785,7 +1760,6 @@ export async function actionReconcile(rid: string): Promise<void> {
   }
 
   let sandboxName: string;
-  let additions: PolicyAdditions;
   let gateway: GatewayBinding;
   try {
     const parsedPlan: unknown = JSON.parse(readFileSync(join(stateDir, "plan.json"), "utf-8"));
@@ -1796,10 +1770,6 @@ export async function actionReconcile(rid: string): Promise<void> {
     sandboxName = readRollbackSandboxName(plan);
     if (!isGatewayBinding(plan.gateway)) throw new Error("gateway binding is invalid");
     gateway = plan.gateway;
-    if (!isPolicyAdditions(plan.policy_additions)) {
-      throw new Error("policy additions are invalid");
-    }
-    additions = withoutProviderComposedPolicies(plan.policy_additions);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Cannot read reconciliation plan for run ${rid}: ${detail}`);
@@ -1808,8 +1778,9 @@ export async function actionReconcile(rid: string): Promise<void> {
   if (endpoint.host !== gateway.host || endpoint.port !== gateway.port) {
     throw new Error("Cannot reconcile the blueprint: the OpenShell gateway binding changed.");
   }
-  await applyBlueprintPolicyAdditions(gateway, sandboxName, additions, stateDir);
-  log(`Blueprint policy requirements for run ${rid} are present in OpenShell.`);
+  log(
+    `Run ${rid} targets sandbox '${sandboxName}', whose policy is managed directly by OpenShell; NemoClaw has no stored policy intent to reconcile.`,
+  );
 }
 
 export async function actionRollback(rid: string): Promise<void> {

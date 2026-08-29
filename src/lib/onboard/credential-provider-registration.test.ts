@@ -7,6 +7,7 @@ import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
 import {
+  credentialProviderRegistrationDependencies,
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
 } from "./credential-provider-registration";
@@ -90,6 +91,26 @@ function sandboxInput(bindings: ReturnType<typeof requiredBindings>) {
 }
 
 describe("credential provider registration", () => {
+  it("resolves the provider upsert dependency when registration executes", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn();
+    const deps = registrationDeps(runOpenshell, session);
+    const registration = createCredentialProviderRegistration(deps);
+    const tokenDefs: MessagingTokenDef[] = [
+      { name: "alpha-googlechat-bridge", envKey: "GOOGLE_CHAT_ACCESS_TOKEN", token: null },
+    ];
+    const upsert = vi
+      .spyOn(credentialProviderRegistrationDependencies, "upsertMessagingProviders")
+      .mockReturnValue(["alpha-googlechat-bridge"]);
+
+    try {
+      expect(registration.upsertMessagingProviders(tokenDefs)).toEqual(["alpha-googlechat-bridge"]);
+      expect(upsert).toHaveBeenCalledExactlyOnceWith(tokenDefs, deps.runOpenshell, {});
+    } finally {
+      upsert.mockRestore();
+    }
+  });
+
   it.each([
     { condition: "matches", endpoints: [], expected: true },
     {
@@ -783,7 +804,7 @@ describe("credential provider registration", () => {
       registration.stageSandboxCredentialProviders(
         {
           ...sandboxInput(requiredBindings([tokenDef])),
-          verifyLivePolicyRequirements: () => {
+          revalidateSandboxIdentity: () => {
             throw new Error("authority changed");
           },
         },
@@ -810,7 +831,7 @@ describe("credential provider registration", () => {
       { name: "alpha-first", envKey: "FIRST_TOKEN", token: "first-secret" },
       { name: "alpha-second", envKey: "SECOND_TOKEN", token: "second-secret" },
     ];
-    const verifyLivePolicyRequirements = vi.fn((operation: string) =>
+    const revalidateSandboxIdentity = vi.fn((operation: string) =>
       operation === 'inspect or change provider "alpha-second"'
         ? refuseAuthorityChange()
         : undefined,
@@ -820,7 +841,7 @@ describe("credential provider registration", () => {
       registration.stageSandboxCredentialProviders(
         {
           ...sandboxInput(requiredBindings(tokenDefs)),
-          verifyLivePolicyRequirements,
+          revalidateSandboxIdentity,
         },
         async () => ({ messagingTokenDefs: tokenDefs }),
       ),
@@ -847,7 +868,7 @@ describe("credential provider registration", () => {
     const deps = registrationDeps(runOpenshell, session);
     deps.stagedLegacyValues = new Map([["DISCORD_BOT_TOKEN", DISCORD_SECRET]]);
     const registration = createCredentialProviderRegistration(deps);
-    const verifyLivePolicyRequirements = vi
+    const revalidateSandboxIdentity = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => undefined)
@@ -862,7 +883,7 @@ describe("credential provider registration", () => {
             token: DISCORD_SECRET,
           },
         ],
-        { verifyLivePolicyRequirements },
+        { revalidateSandboxIdentity },
       ),
     ).toThrow("authority changed");
 

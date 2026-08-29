@@ -61,7 +61,7 @@ export type CreatedSandboxFinalizationOptions = {
 };
 
 export type CreatedSandboxFinalizationDeps = {
-  verifyLivePolicyRequirements?(operation: string): void;
+  revalidateSandboxIdentity?(operation: string): void;
   discoverFreshOpenClawImagePluginInstalls(
     sandboxName: string,
   ): OpenClawManagedExtensionDiscoveryResult;
@@ -134,7 +134,7 @@ export interface CreatedSandboxCompletionOptions {
       chatUiUrl: string,
       options: {
         rollbackSandboxOnFailure: true;
-        verifyLivePolicyRequirements?: (operation: string) => void;
+        revalidateSandboxIdentity?: (operation: string) => void;
       },
     ) => number;
     readonly getForwardPort: (chatUiUrl: string) => string;
@@ -143,7 +143,7 @@ export interface CreatedSandboxCompletionOptions {
       state: HermesDashboardOnboardState,
       sandboxName: string,
       rollback: true,
-      verifyLivePolicyRequirements?: (operation: string) => void,
+      revalidateSandboxIdentity?: (operation: string) => void,
     ) => void;
   };
   readonly workload: Omit<
@@ -258,13 +258,13 @@ export function completeOrdinaryOnboardSandboxCreation(
     readonly markCancellationRecovery: (sandboxName: string) => unknown;
     readonly dockerInfoFormat: Parameters<typeof warnIfLandlockUnsupported>[0]["dockerInfoFormat"];
     readonly runCapture: Parameters<typeof warnIfLandlockUnsupported>[0]["runCapture"];
-    readonly verifyLivePolicyRequirements: (operation: string) => void;
+    readonly revalidateSandboxIdentity: (operation: string) => void;
     readonly applyVmDnsMonkeypatch?: typeof applyOnboardVmDnsMonkeypatch;
   },
 ): string {
-  deps.verifyLivePolicyRequirements(`completing sandbox '${input.sandboxName}'`);
+  deps.revalidateSandboxIdentity(`completing sandbox '${input.sandboxName}'`);
   restoreDefaultAfterRecreate(deps.setDefault, input.sandboxName, input.sandboxWasLiveDefault);
-  deps.verifyLivePolicyRequirements(`starting DNS setup for sandbox '${input.sandboxName}'`);
+  deps.revalidateSandboxIdentity(`starting DNS setup for sandbox '${input.sandboxName}'`);
   if (input.runtimeFields.openshellDriver === "kubernetes") {
     console.log("  Setting up sandbox DNS proxy...");
     deps.runFile(
@@ -272,17 +272,17 @@ export function completeOrdinaryOnboardSandboxCreation(
       [path.join(deps.scriptsDir, "setup-dns-proxy.sh"), deps.gatewayName, input.sandboxName],
       { ignoreError: true },
     );
-    deps.verifyLivePolicyRequirements(`applying DNS settings for sandbox '${input.sandboxName}'`);
+    deps.revalidateSandboxIdentity(`applying DNS settings for sandbox '${input.sandboxName}'`);
   }
   (deps.applyVmDnsMonkeypatch ?? applyOnboardVmDnsMonkeypatch)(
     input.sandboxName,
     { ...input.runtimeFields, gatewayPort: input.gatewayPort },
-    { verifyLivePolicyRequirements: deps.verifyLivePolicyRequirements },
+    { revalidateSandboxIdentity: deps.revalidateSandboxIdentity },
   );
   for (const provider of input.messagingProviders) {
     if (!deps.providerExistsInGateway(provider)) printMessagingProviderMissing(provider);
   }
-  deps.verifyLivePolicyRequirements(`reporting sandbox '${input.sandboxName}' creation success`);
+  deps.revalidateSandboxIdentity(`reporting sandbox '${input.sandboxName}' creation success`);
   console.log(`  ✓ Sandbox '${input.sandboxName}' created`);
   warnIfLandlockUnsupported(deps);
   if (!input.liveExists) {
@@ -368,7 +368,7 @@ export function createCreatedSandboxCompletionActions(
       },
       created.runtimePatch,
       () =>
-        deps.verifyLivePolicyRequirements?.(
+        deps.revalidateSandboxIdentity?.(
           `committing GPU capability for sandbox '${options.finalization.sandboxName}'`,
         ),
     );
@@ -380,14 +380,14 @@ export function createCreatedSandboxCompletionActions(
   }
   async function finalizeDashboard(): Promise<void> {
     await options.dashboard.releasePort();
-    deps.verifyLivePolicyRequirements?.(
+    deps.revalidateSandboxIdentity?.(
       `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
     );
     dashboardPort = options.dashboard.ensureForward(options.finalization.sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
-      verifyLivePolicyRequirements: deps.verifyLivePolicyRequirements,
+      revalidateSandboxIdentity: deps.revalidateSandboxIdentity,
     });
-    deps.verifyLivePolicyRequirements?.(
+    deps.revalidateSandboxIdentity?.(
       `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
     );
     if (dashboardPort !== Number(options.dashboard.getForwardPort(chatUiUrl))) {
@@ -395,16 +395,16 @@ export function createCreatedSandboxCompletionActions(
     }
     process.env.CHAT_UI_URL = chatUiUrl;
     hermesDashboardState = options.dashboard.resolveHermesState(dashboardPort);
-    deps.verifyLivePolicyRequirements?.(
+    deps.revalidateSandboxIdentity?.(
       `configuring Hermes dashboard capability for sandbox '${options.finalization.sandboxName}'`,
     );
     options.dashboard.ensureHermesForward(
       hermesDashboardState,
       options.finalization.sandboxName,
       true,
-      deps.verifyLivePolicyRequirements,
+      deps.revalidateSandboxIdentity,
     );
-    deps.verifyLivePolicyRequirements?.(
+    deps.revalidateSandboxIdentity?.(
       `recording Hermes dashboard capability for sandbox '${options.finalization.sandboxName}'`,
     );
   }
@@ -429,22 +429,22 @@ export function createCreatedSandboxCompletionActions(
         options.registration.gatewayPort,
         verifiedLifecycle,
       );
-      deps.verifyLivePolicyRequirements?.(
+      deps.revalidateSandboxIdentity?.(
         `finalizing verified policy for sandbox '${options.finalization.sandboxName}'`,
       );
       if (providerGpuDisposition === "created") {
-        deps.verifyLivePolicyRequirements?.(
+        deps.revalidateSandboxIdentity?.(
           `committing GPU capability for sandbox '${options.finalization.sandboxName}'`,
         );
         await verifyCreatedProviderGpu(created!);
       } else if (providerGpuDisposition === "hermes") {
-        deps.verifyLivePolicyRequirements?.(
+        deps.revalidateSandboxIdentity?.(
           `recording GPU capability for sandbox '${options.finalization.sandboxName}'`,
         );
         recordHermesGpuProof();
       }
       if (manageDashboard) {
-        deps.verifyLivePolicyRequirements?.(
+        deps.revalidateSandboxIdentity?.(
           `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
         );
         await finalizeDashboard();
@@ -463,7 +463,7 @@ export function createCreatedSandboxCompletionActions(
         options.registration.gatewayPort,
         finalLifecycle,
       );
-      deps.verifyLivePolicyRequirements?.(
+      deps.revalidateSandboxIdentity?.(
         `publishing sandbox '${options.finalization.sandboxName}' registry authority`,
       );
       return finalizeCreatedSandbox(
@@ -593,7 +593,7 @@ type OnboardPreparedPolicy = Pick<
   readonly getVerifiedCreateRegistrationAuthority: () => NonNullable<
     CreatedSandboxRegistrationInput["verifiedCreate"]
   >;
-  readonly verifyLivePolicyRequirements: (operation: string) => void;
+  readonly revalidateSandboxIdentity: (operation: string) => void;
 };
 
 /** Assemble the exact post-Ready owners without adding an onboarding decision. */
@@ -724,7 +724,7 @@ export function createOnboardCreatedSandboxCompletion(
       note,
       error: console.error,
       exitProcess: (code) => process.exit(code),
-      verifyLivePolicyRequirements: preparedPolicy.verifyLivePolicyRequirements,
+      revalidateSandboxIdentity: preparedPolicy.revalidateSandboxIdentity,
     },
   );
 }
@@ -762,7 +762,7 @@ export function finalizeCreatedSandbox(
         ? "  Restoring workspace state from pre-upgrade backup..."
         : "  Restoring workspace state from pre-recreate backup...",
     );
-    deps.verifyLivePolicyRequirements?.(`restoring files for sandbox '${options.sandboxName}'`);
+    deps.revalidateSandboxIdentity?.(`restoring files for sandbox '${options.sandboxName}'`);
     const restore = deps.restoreRecreatedSandboxState(
       options.sandboxName,
       options.restoreBackupPath,
@@ -774,7 +774,7 @@ export function finalizeCreatedSandbox(
           : {}),
       },
     );
-    deps.verifyLivePolicyRequirements?.(
+    deps.revalidateSandboxIdentity?.(
       `reporting restored state for sandbox '${options.sandboxName}'`,
     );
     if (restore.success) {
@@ -852,6 +852,6 @@ export function finalizeCreatedSandbox(
     }
   }
 
-  deps.verifyLivePolicyRequirements?.(`registering sandbox '${options.sandboxName}'`);
+  deps.revalidateSandboxIdentity?.(`registering sandbox '${options.sandboxName}'`);
   return deps.register(freshOpenClawImagePluginInstalls);
 }

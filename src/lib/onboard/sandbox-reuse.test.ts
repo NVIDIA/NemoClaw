@@ -141,19 +141,19 @@ describe("applyReusedSandboxDashboardState", () => {
   });
 
   it("passes the receipt check into dashboard forwarding after release (#9833)", async () => {
-    const verifyLivePolicyRequirements = vi
+    const revalidateSandboxIdentity = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
-        throw new Error("live policy requirements changed before the dashboard entry");
+        throw new Error("Sandbox identity changed before the dashboard entry");
       });
     const ensureDashboardForward = vi.fn(
       (
         _sandboxName: string,
         _chatUiUrl: string,
-        options?: { verifyLivePolicyRequirements?: (operation: string) => void },
+        options?: { revalidateSandboxIdentity?: (operation: string) => void },
       ) => {
-        options?.verifyLivePolicyRequirements?.("start the dashboard forward");
+        options?.revalidateSandboxIdentity?.("start the dashboard forward");
         return 18790;
       },
     );
@@ -189,9 +189,9 @@ describe("applyReusedSandboxDashboardState", () => {
         },
         updateSandbox,
         updateReusedSandboxMetadata,
-        verifyLivePolicyRequirements,
+        revalidateSandboxIdentity,
       }),
-    ).rejects.toThrow(/live policy requirements changed before/u);
+    ).rejects.toThrow(/Sandbox identity changed before/u);
 
     expect(ensureDashboardForward).toHaveBeenCalledOnce();
     expect(env.CHAT_UI_URL).toBeUndefined();
@@ -201,13 +201,13 @@ describe("applyReusedSandboxDashboardState", () => {
   });
 
   it("rechecks after Hermes forwarding before reuse metadata (#9833)", () => {
-    const verifyLivePolicyRequirements = vi
+    const revalidateSandboxIdentity = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
-        throw new Error("live policy requirements changed before the dashboard entry");
+        throw new Error("Sandbox identity changed before the dashboard entry");
       });
     const ensureForState = vi.fn();
     const updateReusedSandboxMetadata = vi.fn();
@@ -239,9 +239,9 @@ describe("applyReusedSandboxDashboardState", () => {
         },
         updateSandbox,
         updateReusedSandboxMetadata,
-        verifyLivePolicyRequirements,
+        revalidateSandboxIdentity,
       }),
-    ).toThrow(/live policy requirements changed before/u);
+    ).toThrow(/Sandbox identity changed before/u);
 
     expect(ensureForState).toHaveBeenCalledOnce();
     expect(updateReusedSandboxMetadata).not.toHaveBeenCalled();

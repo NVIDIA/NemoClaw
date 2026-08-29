@@ -80,7 +80,7 @@ export type SandboxCreatePlan = {
   sandboxGpuLogMessage: string | null;
   /** One-shot provider activation owned by the post-create verification boundary. */
   activateDeferredProviderEffects:
-    | ((verifyLivePolicyRequirements: (operation: string) => void) => readonly string[])
+    | ((revalidateSandboxIdentity: (operation: string) => void) => readonly string[])
     | null;
 };
 
@@ -281,7 +281,7 @@ export function materializeSandboxCreatePlan({
   intent,
   fromRef,
   policylessCreate = false,
-  deferSandboxEffectsUntilPolicyVerification = false,
+  deferSandboxEffectsUntilIdentityVerification = false,
   managedStateMount,
   messagingTokenDefs,
   runProviderPreDeleteCleanup,
@@ -337,7 +337,7 @@ export function materializeSandboxCreatePlan({
     intent.policy.activeMessagingChannels,
     intent.disabledChannelNames,
   );
-  if (deferSandboxEffectsUntilPolicyVerification) {
+  if (deferSandboxEffectsUntilIdentityVerification) {
     assertDeferredProviderPlanSupported(intent, plannedMessagingProviders, initialSandboxPolicy);
   }
   if (!policylessCreate) {
@@ -354,15 +354,15 @@ export function materializeSandboxCreatePlan({
   }
 
   const activateProviderEffects = (
-    verifyLivePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): readonly string[] => {
-    runProviderPreDeleteCleanup(verifyLivePolicyRequirements);
+    runProviderPreDeleteCleanup(revalidateSandboxIdentity);
     const activatedMessagingProviders = filterMessagingProvidersForSandboxCreate(
       [
         ...upsertMessagingProviders(enabledMessagingTokenDefs, {
           replaceExisting: true,
           allowedSandboxes: [intent.sandboxName],
-          ...(verifyLivePolicyRequirements ? { verifyLivePolicyRequirements } : {}),
+          ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
         }),
         ...intent.reusableMessagingProviders,
       ],
@@ -385,7 +385,7 @@ export function materializeSandboxCreatePlan({
     }
     return [...createProviders];
   };
-  if (!deferSandboxEffectsUntilPolicyVerification) {
+  if (!deferSandboxEffectsUntilIdentityVerification) {
     for (const provider of activateProviderEffects()) {
       createArgs.push("--provider", provider);
     }
@@ -399,7 +399,7 @@ export function materializeSandboxCreatePlan({
     gpuRoutePlan: intent.gpuRoutePlan,
     compatibilityPolicyPath,
     sandboxGpuLogMessage: intent.sandboxGpuLogMessage,
-    activateDeferredProviderEffects: deferSandboxEffectsUntilPolicyVerification
+    activateDeferredProviderEffects: deferSandboxEffectsUntilIdentityVerification
       ? activateProviderEffects
       : null,
   };

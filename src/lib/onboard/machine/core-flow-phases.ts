@@ -333,7 +333,7 @@ export function createSandboxOnboardFlowPhase<
       hermesPortableLifecycle: options.hermesPortableLifecycle === true,
       apfInterceptorRequested: options.apfInterceptorRequested === true,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
-      deferSandboxEffectsUntilPolicyVerification: options.apfInterceptorRequested === true,
+      deferSandboxEffectsUntilIdentityVerification: options.apfInterceptorRequested === true,
 
       recreateJournalTargetIntentFingerprint: options.recreateJournalTargetIntentFingerprint,
       endpointSource: endpointProvenance.endpointSource,

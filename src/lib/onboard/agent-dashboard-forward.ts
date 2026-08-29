@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isPolicyObservationError } from "../adapters/openshell/policy-state";
 import { DASHBOARD_PORT, HERMES_OPENAI_API_PORT } from "../core/ports";
 import {
   type DashboardRuntimeAgent,
@@ -23,7 +22,7 @@ export type EnsureDashboardForward = (
   options?: {
     preserveSandboxPorts?: Array<number | string>;
     allowPortReallocation?: boolean;
-    verifyLivePolicyRequirements?: (operation: string) => void;
+    revalidateSandboxIdentity?: (operation: string) => void;
     onForwardStarted?: (port: number) => void;
   },
 ) => number;
@@ -43,7 +42,7 @@ export async function ensureAgentDashboardForward(options: {
   hermesApiPort?: number | null;
   preserveForwardPorts?: readonly (number | null | undefined)[];
   beforeForwardPort?: (port: number) => Promise<void> | void;
-  verifyLivePolicyRequirements?: (operation: string) => void;
+  revalidateSandboxIdentity?: (operation: string) => void;
   compensateDashboardForward?: (port: number) => void;
   warn?: (message: string) => void;
 }): Promise<number> {
@@ -56,7 +55,7 @@ export async function ensureAgentDashboardForward(options: {
     hermesApiPort,
     preserveForwardPorts = [],
     beforeForwardPort,
-    verifyLivePolicyRequirements,
+    revalidateSandboxIdentity,
     compensateDashboardForward,
     warn = (message: string) => console.warn(message),
   } = options;
@@ -69,11 +68,22 @@ export async function ensureAgentDashboardForward(options: {
     if (!startedForwardPorts.includes(port)) startedForwardPorts.push(port);
   };
   const startedForwardCallback =
-    verifyLivePolicyRequirements && compensateDashboardForward ? recordStartedForward : undefined;
+    revalidateSandboxIdentity && compensateDashboardForward ? recordStartedForward : undefined;
   const restoreChatUiUrl = (): void => {
     if (previousChatUiUrl === undefined) delete process.env.CHAT_UI_URL;
     else process.env.CHAT_UI_URL = previousChatUiUrl;
   };
+  let identityFailure: unknown = null;
+  const revalidateIdentity = revalidateSandboxIdentity
+    ? (operation: string): void => {
+        try {
+          revalidateSandboxIdentity(operation);
+        } catch (error) {
+          identityFailure = error;
+          throw error;
+        }
+      }
+    : undefined;
 
   try {
     // The manifest names the agent's default API port. This sandbox owns its own,
@@ -112,10 +122,10 @@ export async function ensureAgentDashboardForward(options: {
     const actualAgentDashboardPort = ensureDashboardForward(sandboxName, requestedDashboardUrl, {
       preserveSandboxPorts: preservePorts,
       ...(startedForwardCallback ? { onForwardStarted: startedForwardCallback } : {}),
-      ...(verifyLivePolicyRequirements ? { verifyLivePolicyRequirements } : {}),
+      ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
     });
     if (!usesFixedApiPort) {
-      verifyLivePolicyRequirements?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
+      revalidateIdentity?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
       process.env.CHAT_UI_URL = replaceUrlPort(requestedDashboardUrl, actualAgentDashboardPort);
     }
 
@@ -132,10 +142,10 @@ export async function ensureAgentDashboardForward(options: {
           preserveSandboxPorts: portsToPreserve,
           allowPortReallocation: false,
           ...(startedForwardCallback ? { onForwardStarted: startedForwardCallback } : {}),
-          ...(verifyLivePolicyRequirements ? { verifyLivePolicyRequirements } : {}),
+          ...(revalidateIdentity ? { revalidateSandboxIdentity: revalidateIdentity } : {}),
         });
       } catch (err) {
-        if (isPolicyObservationError(err)) throw err;
+        if (err === identityFailure) throw err;
         warn(
           `  ! Could not start optional agent port forward ${port}: ${
             err instanceof Error ? err.message : String(err)
@@ -144,19 +154,17 @@ export async function ensureAgentDashboardForward(options: {
       }
     }
 
-    verifyLivePolicyRequirements?.(
-      `report successful dashboard forwarding for sandbox '${sandboxName}'`,
-    );
+    revalidateIdentity?.(`report successful dashboard forwarding for sandbox '${sandboxName}'`);
     return actualAgentDashboardPort;
   } catch (error) {
-    if (isPolicyObservationError(error)) {
+    if (error === identityFailure) {
       restoreChatUiUrl();
       for (const port of [...startedForwardPorts].reverse()) {
         try {
           compensateDashboardForward?.(port);
         } catch (cleanupError) {
           warn(
-            `  ! Could not stop dashboard forward ${String(port)} after policy verification failure: ${
+            `  ! Could not stop dashboard forward ${String(port)} after identity verification failure: ${
               cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
             }`,
           );

@@ -71,14 +71,6 @@ describe("fresh create identity", () => {
       expectedOutcome: "identity-mismatch-refusal" as const,
     },
     {
-      title: "surfaces retained sandbox recovery through the public error message (#9833)",
-      apfInterceptorRequested: true,
-      provider: null,
-      model: null,
-      agent: null,
-      expectedOutcome: "post-create-authority-refusal" as const,
-    },
-    {
       title: "retains recovery state when the create runner fails after verification (#9833)",
       apfInterceptorRequested: true,
       provider: null,
@@ -184,10 +176,6 @@ describe("fresh create identity", () => {
       const dockerExecPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "adapters", "docker", "exec.ts"),
       );
-      const policyMergePath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "policy", "merge.ts"),
-      );
-
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
 
@@ -224,10 +212,8 @@ const mismatchedSandboxId = createdSandbox.state.sandboxId + "-mismatch";
 let sandboxListCalls = 0;
 let dockerPsCalls = 0;
 let registeredSandbox = null;
-let effectivePolicy = {};
 let credentialReadCalls = 0;
 let identityMismatchGetCalls = 0;
-let policyVerificationCalls = 0;
 let routeReservationCalls = 0;
 const keepAlive = setInterval(() => {}, 1000);
 const apfInterceptorRequested = ${JSON.stringify(apfInterceptorRequested)};
@@ -244,9 +230,6 @@ const cancelAfterCreate = cancellationSelector !== null;
 const recoveryReentry = process.env.NEMOCLAW_RECOVERY_REENTRY || "";
 const identityMismatchRefusal = ${JSON.stringify(expectedOutcome === "identity-mismatch-refusal")};
 const stagedMessagingRefusal = ${JSON.stringify(expectedOutcome === "staged-messaging-refusal")};
-const postCreateAuthorityRefusal = ${JSON.stringify(
-        expectedOutcome === "post-create-authority-refusal",
-      )};
 const postCreateRunnerRefusal = ${JSON.stringify(expectedOutcome === "post-create-runner-refusal")};
 const postCreateRegistrationRefusal = ${JSON.stringify(
         expectedOutcome === "post-create-registration-refusal" ||
@@ -293,7 +276,7 @@ runner.run = (command, opts = {}) => {
 	    if (postCreatePolicyChange && registeredSandbox) {
 	      throw new Error("final onboarding policy check failed");
 	    }
-	    return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: effectivePolicy });
+	    return JSON.stringify({ scope: "sandbox", sandbox: "my-assistant", status: "effective", policy_source: "sandbox", hash: "fixture-policy", active_version: 1, policy: {} });
 	  }
 	  if (cmd.includes("sandbox get") || cmd.includes("sandbox list")) {
 	    lifecycleObservationCommands.push(cmd);
@@ -389,15 +372,6 @@ runner.run = (command, opts = {}) => {
 	  sessionId: "session-owner",
 	  apfInterceptorRequested,
 	  getSandbox: (name) => retainedRegistryEntry ?? durableGetSandbox(name),
-	  onVerifyCreatedPolicy: (input) => {
-	    policyVerificationCalls += 1;
-	    if (postCreateAuthorityRefusal) {
-	      throw new Error("external policy requirements changed");
-	    }
-	    effectivePolicy = require(${policyMergePath}).parseOpenShellPolicy(
-	      fs.readFileSync(input.policySourcePath, "utf8"),
-	    ).policy;
-	  },
 	  registerSandbox: (entry) => {
 	    if (postCreateRegistrationRefusal) {
 	      throw new Error("registry publication failed");
@@ -525,7 +499,6 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     credentialReadCalls,
     identityMismatchGetCalls,
     mismatchedSandboxId,
-    policyVerificationCalls,
     routeReservationCalls,
     checkpointReadCalls,
     registryMutationCalls,
@@ -533,7 +506,6 @@ const writePayload = (sandboxName, creationError, exitCode = 0) => {
     recoveryRegistryEntry: registry.getSandbox("my-assistant"),
     savedSession:
       cancelAfterCreate ||
-      postCreateAuthorityRefusal ||
       postCreateRunnerRefusal ||
       postCreateRegistrationRefusal ||
       postCreatePolicyChange
@@ -624,7 +596,7 @@ if (${JSON.stringify(
 	    ...(apfInterceptorRequested
 	      ? {
 	          apfInterceptorRequested: true,
-	          deferSandboxEffectsUntilPolicyVerification: true,
+	          deferSandboxEffectsUntilIdentityVerification: true,
 	        }
 	      : {}),
 	    recreate: false,
@@ -834,7 +806,6 @@ if (${JSON.stringify(
         assert.match(payload.creationError, /automatic sandbox cleanup was not safe/u);
         assert.notEqual(payload.mismatchedSandboxId, payload.sandboxId);
         assert.ok(payload.identityMismatchGetCalls >= 1);
-        assert.equal(payload.policyVerificationCalls, 0);
         assert.equal(payload.registeredSandbox, null);
         assert.equal(payload.credentialReadCalls, 0);
         assert.deepEqual(payload.registryMutationCalls, []);
@@ -845,41 +816,6 @@ if (${JSON.stringify(
           ),
           false,
         );
-      };
-      const assertPostCreateAuthorityRefusal = () => {
-        assert.equal(payload.sandboxName, null);
-        assert.equal(payload.sandboxCreated, true);
-        assert.equal(payload.deleted, false);
-        assert.match(payload.creationError, /left sandbox 'my-assistant' in place/u);
-        assert.match(payload.creationError, new RegExp(identityFingerprint, "u"));
-        assert.match(
-          payload.creationError,
-          /did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox/u,
-        );
-        assert.match(payload.creationError, /Do not delete the sandbox by mutable sandbox name/u);
-        assert.match(
-          payload.creationError,
-          /Ask the OpenShell administrator.*identity-bound recovery or removal procedure/u,
-        );
-        assert.equal(payload.savedSession.status, "recovery_required");
-        assert.equal(payload.savedSession.resumable, false);
-        assert.equal(
-          payload.savedSession.cancellationRecovery.reason,
-          "retained_after_sandbox_creation_failure",
-        );
-        assert.equal(
-          payload.savedSession.cancellationRecovery.sandboxIdentityFingerprint,
-          identityFingerprint,
-        );
-        assert.equal(payload.retainedRecoveryRecords.length, 1);
-        const record = payload.retainedRecoveryRecords[0];
-        assert.equal(record.sandboxName, "my-assistant");
-        assert.equal(record.sandboxIdentityFingerprint, identityFingerprint);
-        assert.equal(record.identityWasUnavailable, false);
-        assert.equal(record.gatewayName, "nemoclaw-18080");
-        assert.equal(record.gatewayPort, 18080);
-        assert.match(record.lifecycleGeneration, /^[0-9a-f-]{36}$/u);
-        assert.equal(record.reason, "retained_after_sandbox_creation_failure");
       };
       const assertPostCreateRunnerRefusal = () => {
         assert.equal(payload.sandboxName, null);
@@ -1114,7 +1050,6 @@ if (${JSON.stringify(
         "resolved-agent-refusal": assertUnsupportedAgentRefusal,
         "providerless-apf": assertProviderlessApfCreation,
         "identity-mismatch-refusal": assertIdentityMismatchRefusal,
-        "post-create-authority-refusal": assertPostCreateAuthorityRefusal,
         "post-create-runner-refusal": assertPostCreateRunnerRefusal,
         "post-create-registration-refusal": assertPostCreateRegistrationRefusal,
         "post-create-registration-recovery-readback-failure":

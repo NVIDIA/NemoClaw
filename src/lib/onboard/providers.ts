@@ -501,18 +501,18 @@ function providerExistsInGateway(name, _runOpenshell) {
 }
 
 /**
- * Recheck current OpenShell policy requirements before each provider command.
+ * Recheck current OpenShell sandbox identity before each provider command.
  * Commands in one provider operation can be separated by
  * probes and recovery work, so one outer check is not sufficient.
  * @param {Function} runOpenshell
- * @param {((operation: string) => void)|undefined} verifyLivePolicyRequirements
+ * @param {((operation: string) => void)|undefined} revalidateSandboxIdentity
  * @param {string} operation
  * @returns {Function}
  */
-function policyRequirementsCheckedRunner(runOpenshell, verifyLivePolicyRequirements, operation) {
-  if (!verifyLivePolicyRequirements) return runOpenshell;
+function identityCheckedRunner(runOpenshell, revalidateSandboxIdentity, operation) {
+  if (!revalidateSandboxIdentity) return runOpenshell;
   return (...args) => {
-    verifyLivePolicyRequirements(operation);
+    revalidateSandboxIdentity(operation);
     return runOpenshell(...args);
   };
 }
@@ -534,13 +534,13 @@ function policyRequirementsCheckedRunner(runOpenshell, verifyLivePolicyRequireme
  * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
  * @param {Record<string, string>} env - Environment variables for the openshell command.
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, knownExists?: boolean, allowedSandboxes?: readonly string[], requireExactBinding?: boolean, allowExtendedCredentialKeys?: boolean, credentialEnvs?: string[], verifyLivePolicyRequirements?: (operation: string) => void}} options - Optional replacement controls.
+ * @param {{replaceExisting?: boolean, knownExists?: boolean, allowedSandboxes?: readonly string[], requireExactBinding?: boolean, allowExtendedCredentialKeys?: boolean, credentialEnvs?: string[], revalidateSandboxIdentity?: (operation: string) => void}} options - Optional replacement controls.
  * @returns {{ ok: boolean, status?: number, message?: string, reason?: string }}
  */
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
-  const runOpenshell = policyRequirementsCheckedRunner(
+  const runOpenshell = identityCheckedRunner(
     _runOpenshell,
-    options.verifyLivePolicyRequirements,
+    options.revalidateSandboxIdentity,
     `inspect or change provider ${JSON.stringify(name)}`,
   );
   const exists = options.knownExists ?? providerExistsInGateway(name, runOpenshell);
@@ -716,13 +716,13 @@ function assertCredentialFamilyProviderBindings(tokenDefs, runOpenshell, options
  * of terminating the CLI.
  * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string, additionalCredentials?: Array<{envKey: string, token: string|null}>}>} tokenDefs
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean, bestEffort?: boolean, allowedSandboxes?: readonly string[], requireExactBindings?: boolean, verifyLivePolicyRequirements?: (operation: string) => void}} options - Forwarded to every upsertProvider call.
+ * @param {{replaceExisting?: boolean, bestEffort?: boolean, allowedSandboxes?: readonly string[], requireExactBindings?: boolean, revalidateSandboxIdentity?: (operation: string) => void}} options - Forwarded to every upsertProvider call.
  * @returns {string[]} Provider names that were upserted.
  */
 function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
-  const runMessagingBridgeOpenshell = policyRequirementsCheckedRunner(
+  const runMessagingBridgeOpenshell = identityCheckedRunner(
     _runOpenshell,
-    options.verifyLivePolicyRequirements,
+    options.revalidateSandboxIdentity,
     "inspect or change a messaging bridge provider",
   );
   assertCredentialFamilyProviderBindings(tokenDefs, runMessagingBridgeOpenshell, options);
@@ -830,7 +830,7 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
           replaceExisting: Boolean(options.replaceExisting),
           knownExists,
           allowedSandboxes: options.allowedSandboxes,
-          verifyLivePolicyRequirements: options.verifyLivePolicyRequirements,
+          revalidateSandboxIdentity: options.revalidateSandboxIdentity,
           requireExactBinding: Boolean(
             requiresFamilyBinding || (options.requireExactBindings && providerType),
           ),

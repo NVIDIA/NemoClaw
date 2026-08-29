@@ -84,8 +84,8 @@ export interface ProviderInferenceSetupOptions {
   reservationSessionId?: string;
   /** Recheck recorded-route ownership after acquiring route mutation locks. */
   isRecordedProviderRecoveryAuthorized?: () => boolean;
-  /** Recheck live OpenShell policy requirements at each inference mutation edge. */
-  verifyLivePolicyRequirements?: (operation: string) => void;
+  /** Recheck live OpenShell sandbox identity at each inference mutation edge. */
+  revalidateSandboxIdentity?: (operation: string) => void;
   /** Operation-scoped provider request selected for this onboarding attempt. */
   hostLocalInference?: HostLocalInferenceStartupSelection;
   /** Proxy token prepared after configuration review; avoids repeating host mutations in setup. */
@@ -183,7 +183,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       ) => GatewayRouteDiscoveryConstraints,
       canProbeRoute?: (provider: string) => boolean,
       recoverySessionId?: string | null,
-      verifyLivePolicyRequirements?: (
+      revalidateSandboxIdentity?: (
         route: ProviderInferenceProbeRoute,
         operation: string,
       ) => void,
@@ -212,12 +212,12 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       gatewayName: string,
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
-      verifyLivePolicyRequirements?: (operation: string) => void,
+      revalidateSandboxIdentity?: (operation: string) => void,
     ): Promise<{ forceInferenceSetup: boolean; credentialEnv: string | null }>;
     ensureManagedLlamaCppResumeReady(
       provider: string | null | undefined,
       sandboxName: string | null | undefined,
-      verifyLivePolicyRequirements?: (operation: string) => void,
+      revalidateSandboxIdentity?: (operation: string) => void,
     ): Promise<boolean>;
     isResumeProviderSurfaceReady(
       gatewayName: string,

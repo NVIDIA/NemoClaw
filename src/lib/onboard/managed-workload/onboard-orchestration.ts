@@ -362,7 +362,7 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
   readonly plan: {
     readonly intent: SandboxCreateIntent;
     readonly policylessCreate?: boolean;
-    readonly deferSandboxEffectsUntilPolicyVerification?: boolean;
+    readonly deferSandboxEffectsUntilIdentityVerification?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
     readonly runProviderPreDeleteCleanup: MaterializeSandboxCreatePlanInput["runProviderPreDeleteCleanup"];
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
@@ -436,8 +436,8 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     intent: input.plan.intent,
     fromRef,
     policylessCreate: input.plan.policylessCreate,
-    deferSandboxEffectsUntilPolicyVerification:
-      input.plan.deferSandboxEffectsUntilPolicyVerification,
+    deferSandboxEffectsUntilIdentityVerification:
+      input.plan.deferSandboxEffectsUntilIdentityVerification,
     messagingTokenDefs: [...messagingTokenDefs],
     runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,

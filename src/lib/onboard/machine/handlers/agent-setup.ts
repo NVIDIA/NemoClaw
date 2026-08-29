@@ -16,7 +16,7 @@ export interface AgentSetupStateOptions<Agent> {
   session: Session | null;
   hermesAuthMethod: string | null;
   hermesToolGateways: string[];
-  revalidatePolicyRequirements?: (operation: string) => void;
+  revalidateSandboxIdentity?: (operation: string) => void;
   deps: {
     handleAgentSetup(
       sandboxName: string,
@@ -46,14 +46,14 @@ export interface AgentSetupStateOptions<Agent> {
       model: string,
       provider: string,
       webSearchConfig: WebSearchSelection,
-      revalidatePolicyRequirements?: (operation: string) => void,
+      revalidateSandboxIdentity?: (operation: string) => void,
     ): Promise<void>;
     configureOpenclawSandbox(
       sandboxName: string,
       model: string,
       provider: string,
       webSearchConfig: WebSearchSelection,
-      revalidatePolicyRequirements?: (operation: string) => void,
+      revalidateSandboxIdentity?: (operation: string) => void,
     ): Promise<void>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -75,7 +75,7 @@ export async function handleAgentSetupState<Agent>({
   session,
   hermesAuthMethod,
   hermesToolGateways,
-  revalidatePolicyRequirements,
+  revalidateSandboxIdentity,
   deps,
 }: AgentSetupStateOptions<Agent>): Promise<AgentSetupStateResult> {
   if (agent) {
@@ -104,15 +104,15 @@ export async function handleAgentSetupState<Agent>({
   const resumeOpenclaw = resume && sandboxName && deps.isOpenclawReady(sandboxName);
   if (resumeOpenclaw) {
     deps.skippedStepMessage("openclaw", sandboxName);
-    revalidatePolicyRequirements?.(`synchronize OpenClaw in sandbox '${sandboxName}'`);
+    revalidateSandboxIdentity?.(`synchronize OpenClaw in sandbox '${sandboxName}'`);
     await deps.configureOpenclawSandbox(
       sandboxName,
       model,
       provider,
       webSearchConfig,
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     );
-    revalidatePolicyRequirements?.(`record resumed OpenClaw setup for sandbox '${sandboxName}'`);
+    revalidateSandboxIdentity?.(`record resumed OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStateSkipped("openclaw", { reason: "resume", sandboxName });
     await deps.recordStepComplete(
       "openclaw",
@@ -120,15 +120,15 @@ export async function handleAgentSetupState<Agent>({
     );
   } else {
     await deps.startRecordedStep("openclaw", { sandboxName, provider, model });
-    revalidatePolicyRequirements?.(`configure OpenClaw in sandbox '${sandboxName}'`);
+    revalidateSandboxIdentity?.(`configure OpenClaw in sandbox '${sandboxName}'`);
     await deps.setupOpenclaw(
       sandboxName,
       model,
       provider,
       webSearchConfig,
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     );
-    revalidatePolicyRequirements?.(`complete OpenClaw setup for sandbox '${sandboxName}'`);
+    revalidateSandboxIdentity?.(`complete OpenClaw setup for sandbox '${sandboxName}'`);
     await deps.recordStepComplete(
       "openclaw",
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),

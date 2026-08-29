@@ -762,19 +762,6 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     require.cache[registryPath].exports = registry;
   }
 
-  const policyRequirementsPath = require.resolve(
-    path.resolve(__dirname, "../../src/lib/onboard/sandbox-create/live-policy-requirements.ts"),
-  );
-  const policyRequirements = require(policyRequirementsPath);
-  Object.defineProperties(policyRequirements, {
-    verifyLiveCreatedSandboxPolicyRequirements: {
-      configurable: true,
-      enumerable: true,
-      writable: true,
-      value: (input) => options.onVerifyCreatedPolicy?.(input),
-    },
-  });
-  require.cache[policyRequirementsPath].exports = policyRequirements;
   const prepareCreateIntent = () => {
     const onboardSession = require(
       path.resolve(__dirname, "../../src/lib/state/onboard-session.ts"),

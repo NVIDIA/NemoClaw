@@ -109,13 +109,15 @@ describe("runner error paths", () => {
     expect(mockExeca.mock.calls.some(([, args]) => args?.[0] === "sandbox")).toBe(false);
   });
 
-  it("rejects an explicitly blank configured sandbox policy", async () => {
+  it("lets OpenShell decide creation when no sandbox policy is configured", async () => {
     vi.stubEnv("OPENSHELL_SANDBOX_POLICY", "  ");
 
-    await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-      /configured NemoClaw sandbox policy is required/,
+    await expect(actionApply("default", minimalBlueprint())).resolves.toBeUndefined();
+    const create = mockExeca.mock.calls.find(
+      ([, args]) => args?.[0] === "sandbox" && args?.[1] === "create",
     );
-    expect(mockExeca.mock.calls.some(([, args]) => args?.[0] === "sandbox")).toBe(false);
+    expect(create).toBeDefined();
+    expect(create?.[1]).not.toContain("--policy");
   });
 
   it("rejects an unreadable configured sandbox policy", async () => {
@@ -157,17 +159,8 @@ describe("runner error paths", () => {
     ["non-object plan", "[]", /JSON object/],
     [
       "invalid gateway",
-      JSON.stringify({ sandbox_name: "sb", gateway: "wrong", policy_additions: {} }),
+      JSON.stringify({ sandbox_name: "sb", gateway: "wrong" }),
       /gateway binding is invalid/,
-    ],
-    [
-      "invalid policy additions",
-      JSON.stringify({
-        sandbox_name: "sb",
-        gateway: { name: "test-gateway", host: "127.0.0.1", port: 8080 },
-        policy_additions: [],
-      }),
-      /policy additions are invalid/,
     ],
   ])("rejects a reconciliation receipt with %s", async (_name, contents, expected) => {
     const runDir = `${FAKE_HOME}/.nemoclaw/state/runs/nc-invalid`;
@@ -177,7 +170,7 @@ describe("runner error paths", () => {
     await expect(actionReconcile("nc-invalid")).rejects.toThrow(expected);
   });
 
-  it("accepts an empty policy requirement without a policy mutation", async () => {
+  it("reports OpenShell policy ownership without a policy mutation", async () => {
     const runDir = `${FAKE_HOME}/.nemoclaw/state/runs/nc-empty`;
     addDir(runDir);
     addFile(
@@ -185,14 +178,13 @@ describe("runner error paths", () => {
       JSON.stringify({
         sandbox_name: "sb",
         gateway: { name: "test-gateway", host: "127.0.0.1", port: 8080 },
-        policy_additions: {},
       }),
     );
     captureStdout();
 
     await actionReconcile("nc-empty");
 
-    expect(stdoutCapture.text()).toContain("requirements for run nc-empty are present");
+    expect(stdoutCapture.text()).toContain("policy is managed directly by OpenShell");
     expect(mockExeca.mock.calls.some(([, args]) => args?.[0] === "policy")).toBe(false);
   });
 
@@ -204,7 +196,6 @@ describe("runner error paths", () => {
       JSON.stringify({
         sandbox_name: "sb",
         gateway: { name: "test-gateway", host: "127.0.0.1", port: 8080 },
-        policy_additions: {},
       }),
     );
     mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>

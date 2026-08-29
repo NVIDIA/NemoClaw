@@ -902,7 +902,6 @@ describe("runner", () => {
         [
           "inference",
           "inference_provider_created_by_apply",
-          "policy_additions",
           "gateway",
           "profile",
           "run_id",
@@ -1258,7 +1257,6 @@ describe("runner", () => {
         },
         sandbox_name: "sb",
         sandbox_created_by_apply: true,
-        policy_additions: {},
         inference: {
           provider_type: "openai",
           provider_name: "secret-provider",

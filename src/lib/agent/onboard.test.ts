@@ -307,7 +307,7 @@ describe("agent setup session boundaries", () => {
   function createAgentSetupContext(
     runCaptureOpenshell: OnboardContext["runCaptureOpenshell"] = vi.fn(() => ""),
     timing: Pick<OnboardContext, "now" | "sleepSeconds"> = {},
-    policyRequirements: Pick<OnboardContext, "verifyLivePolicyRequirements"> = {},
+    identityBoundary: Pick<OnboardContext, "revalidateSandboxIdentity"> = {},
   ) {
     return {
       context: {
@@ -320,7 +320,7 @@ describe("agent setup session boundaries", () => {
         recordStepFailed: vi.fn(async () => undefined),
         skippedStepMessage: vi.fn(),
         ...timing,
-        ...policyRequirements,
+        ...identityBoundary,
       },
     };
   }
@@ -432,7 +432,7 @@ describe("agent setup session boundaries", () => {
     expect(context.recordStepFailed).not.toHaveBeenCalled();
   });
 
-  it("refuses completion when policy requirements changes during the gateway wait (#9833)", async () => {
+  it("refuses completion when sandbox identity changes during the gateway wait (#9833)", async () => {
     let nowMs = 0;
     const sleepSeconds = vi.fn((seconds: number) => {
       nowMs += seconds * 1000;
@@ -442,18 +442,16 @@ describe("agent setup session boundaries", () => {
       .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok")
       .mockReturnValueOnce("");
     const refuseCompletion = () => {
-      throw new Error("policy requirements changed");
+      throw new Error("sandbox identity changed");
     };
     const policyChecks = new Map([
       ["record completed agent setup for sandbox 'sandbox-x'", refuseCompletion],
     ]);
-    const verifyLivePolicyRequirements = vi.fn((operation: string) =>
-      policyChecks.get(operation)?.(),
-    );
+    const revalidateSandboxIdentity = vi.fn((operation: string) => policyChecks.get(operation)?.());
     const { context } = createAgentSetupContext(
       runCaptureOpenshell,
       { now: () => nowMs, sleepSeconds },
-      { verifyLivePolicyRequirements },
+      { revalidateSandboxIdentity },
     );
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -469,7 +467,7 @@ describe("agent setup session boundaries", () => {
         null,
         context,
       ),
-    ).rejects.toThrow("policy requirements changed");
+    ).rejects.toThrow("sandbox identity changed");
 
     expect(sleepSeconds).toHaveBeenCalledWith(0.25);
     expect(context.recordStepComplete).not.toHaveBeenCalled();

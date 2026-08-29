@@ -446,7 +446,7 @@ describe("provider inference host-local startup selection", () => {
           _assertRouteCompatible,
           _canProbeRoute,
           _recoverySessionId,
-          verifyLivePolicyRequirements,
+          revalidateSandboxIdentity,
         ) => {
           const selection = {
             ...baseSelection,
@@ -457,8 +457,8 @@ describe("provider inference host-local startup selection", () => {
             credentialEnv: null,
             preferredInferenceApi: "openai-completions",
           };
-          expect(verifyLivePolicyRequirements).toBeTypeOf("function");
-          verifyLivePolicyRequirements!(selection, "install managed local runtime");
+          expect(revalidateSandboxIdentity).toBeTypeOf("function");
+          revalidateSandboxIdentity!(selection, "install managed local runtime");
           return selection;
         },
       );

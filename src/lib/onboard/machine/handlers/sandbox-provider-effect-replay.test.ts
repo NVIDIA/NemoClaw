@@ -71,9 +71,9 @@ describe("handleSandboxState provider effect replay", () => {
     const createSandbox = vi.fn(async (...args: unknown[]) => {
       events.push("sandbox-create");
       const createIntent = args.at(-1) as {
-        deferSandboxEffectsUntilPolicyVerification?: boolean;
+        deferSandboxEffectsUntilIdentityVerification?: boolean;
       };
-      expect(createIntent.deferSandboxEffectsUntilPolicyVerification).toBeUndefined();
+      expect(createIntent.deferSandboxEffectsUntilIdentityVerification).toBeUndefined();
       return "my-assistant";
     });
     const session = createSession({ sandboxName: "my-assistant", agent: "hermes" });

@@ -997,7 +997,7 @@ export async function settlePortableOpenClawPairing(
   sandboxName: string,
   options: {
     readonly portableRequired?: boolean;
-    readonly verifyLivePolicyRequirements?: (operation: string) => void;
+    readonly revalidateSandboxIdentity?: (operation: string) => void;
   } = {},
   deps: LaunchReadinessDeps = {},
 ): Promise<PortableOpenClawPairingSettlementResult> {
@@ -1012,7 +1012,7 @@ export async function settlePortableOpenClawPairing(
     deps.observeOpenClawPairingSettlement ?? observeOpenClawPairingSettlement;
   const runProducer = deps.runPortablePairingProducer ?? runPortableOpenClawPairingRequestProducer;
   const runApproval = deps.runPortablePairingApproval ?? runPortableOpenClawPairingApproval;
-  const verifyLivePolicyRequirements = options.verifyLivePolicyRequirements;
+  const revalidateSandboxIdentity = options.revalidateSandboxIdentity;
   const now = deps.now ?? (() => performance.now());
   const sleep =
     deps.sleep ??
@@ -1035,7 +1035,7 @@ export async function settlePortableOpenClawPairing(
       options.portableRequired === true &&
       portableLifecycleReceiptMatchesGeneration(firstReceipt, firstEntry.lifecycleGeneration)
     ) {
-      verifyLivePolicyRequirements?.(`update the recorded agent for sandbox '${sandboxName}'`);
+      revalidateSandboxIdentity?.(`update the recorded agent for sandbox '${sandboxName}'`);
       if (!updateSandbox(sandboxName, { agent: "openclaw" })) {
         return incompletePortablePairing("portable-runtime-identity-invalid");
       }
@@ -1106,7 +1106,7 @@ export async function settlePortableOpenClawPairing(
       }
       const first = initial.value;
       if (first.state === "settled") {
-        verifyLivePolicyRequirements?.(
+        revalidateSandboxIdentity?.(
           `publish settled Portable OpenClaw pairing for sandbox '${sandboxName}'`,
         );
         return { kind: "settled" };
@@ -1114,12 +1114,12 @@ export async function settlePortableOpenClawPairing(
 
       // A canonical pending transition is the producer's completed output.
       if (first.state === "pairing-only") {
-        verifyLivePolicyRequirements?.(
+        revalidateSandboxIdentity?.(
           `request Portable OpenClaw pairing for sandbox '${sandboxName}'`,
         );
         runProducer(sandboxName, target.gatewayName);
       }
-      verifyLivePolicyRequirements?.(
+      revalidateSandboxIdentity?.(
         `approve Portable OpenClaw pairing for sandbox '${sandboxName}'`,
       );
       runApproval(sandboxName, target.gatewayName, first.deviceIdentitySha256);
@@ -1151,7 +1151,7 @@ export async function settlePortableOpenClawPairing(
       if (final.kind !== "observed") {
         return incompletePortablePairing("portable-pairing-incomplete");
       }
-      verifyLivePolicyRequirements?.(
+      revalidateSandboxIdentity?.(
         `publish settled Portable OpenClaw pairing for sandbox '${sandboxName}'`,
       );
       return { kind: "settled" };

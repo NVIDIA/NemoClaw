@@ -56,8 +56,8 @@ export type ModelValidationResult = ModelValidationSuccess | ModelValidationFail
 export interface SandboxCreateIntent {
   /** Complete secret-free create plan resolved by the onboarding machine. */
   readonly resolved?: import("./sandbox-create-intent-types").SandboxCreateIntent;
-  /** Defer provider, credential, and attachment effects until the created sandbox is verified. */
-  readonly deferSandboxEffectsUntilPolicyVerification?: true;
+  /** Defer provider, credential, and attachment effects until the created sandbox identity is verified. */
+  readonly deferSandboxEffectsUntilIdentityVerification?: true;
   readonly recreate: boolean;
   /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
   readonly apfInterceptorRequested?: true;
@@ -103,12 +103,12 @@ export interface VerifiedSandboxCreateBoundary {
   readonly route: import("./docker-gpu-route").SelectedDockerGpuRoute;
 }
 
-/** Exact context made available after OpenShell confirms the create requirements. */
+/** Exact context made available after OpenShell confirms the created sandbox identity. */
 export interface VerifiedSandboxCreateEffectsContext extends VerifiedSandboxCreateBoundary {
-  readonly verifyLivePolicyRequirements: (operation: string) => void;
+  readonly revalidateSandboxIdentity: (operation: string) => void;
 }
 
-/** Ephemeral effects that may run only after OpenShell confirms the create requirements. */
+/** Ephemeral effects that may run only after OpenShell confirms the created sandbox identity. */
 export type VerifiedSandboxCreateEffects = (
   context: VerifiedSandboxCreateEffectsContext,
 ) => Promise<void>;

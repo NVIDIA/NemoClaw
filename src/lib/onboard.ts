@@ -3095,7 +3095,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               assertRouteCompatible,
               canProbeRoute,
               recoverySessionId,
-              verifyLivePolicyRequirements,
+              revalidateSandboxIdentity,
             ) =>
               setupNim(
                 g,
@@ -3107,7 +3107,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 assertRouteCompatible,
                 canProbeRoute,
                 recoverySessionId,
-                verifyLivePolicyRequirements,
+                revalidateSandboxIdentity,
               ),
             setupInference,
             resolveHostLocalInferenceStartupSelection:

@@ -23,22 +23,22 @@ describe("createSandboxForwardStopper", () => {
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("rechecks policy requirements after the forward read and before stop (#9833)", () => {
+  it("rechecks sandbox identity after the forward read and before stop (#9833)", () => {
     const runOpenshell = vi.fn();
     const runCaptureOpenshell = vi.fn().mockReturnValue("");
-    const verifyLivePolicyRequirements = vi.fn(() => {
-      throw new Error("policy requirements changed");
+    const revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("sandbox identity changed");
     });
     const stopForward = createSandboxForwardStopper({
       runOpenshell,
       runCaptureOpenshell,
       sandboxName: "my-sandbox",
-      verifyLivePolicyRequirements,
+      revalidateSandboxIdentity,
     });
 
-    expect(() => stopForward(18789)).toThrow("policy requirements changed");
+    expect(() => stopForward(18789)).toThrow("sandbox identity changed");
     expect(runCaptureOpenshell).toHaveBeenCalledOnce();
-    expect(verifyLivePolicyRequirements).toHaveBeenCalledOnce();
+    expect(revalidateSandboxIdentity).toHaveBeenCalledOnce();
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 });

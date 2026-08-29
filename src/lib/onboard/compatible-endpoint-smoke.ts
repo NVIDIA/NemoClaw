@@ -111,7 +111,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
   /** Force the provider-neutral inference.local proof for any supported agent. */
   forceCanonicalRoute?: boolean;
   hostLocalInferenceProofAuthority?: HostLocalInferenceSandboxProofAuthority;
-  /** Recheck policy state after the sandbox proof and before success output. */
+  /** Recheck sandbox identity after the sandbox proof and before success output. */
   beforeSuccess?: () => void;
 }): void {
   const agentName = options.agent?.name || "openclaw";

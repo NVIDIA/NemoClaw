@@ -513,7 +513,7 @@ const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
   createFixture,
 );
 createArgs[15] = {
-  deferSandboxEffectsUntilPolicyVerification: true,
+  deferSandboxEffectsUntilIdentityVerification: true,
   recreate: false,
   toolDisclosure: "progressive",
   observabilityEnabled: false,

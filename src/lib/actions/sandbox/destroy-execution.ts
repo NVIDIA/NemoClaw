@@ -317,14 +317,14 @@ export async function executeSandboxDestroy({
       if (!getSandbox) {
         return {
           status: "probe-failed",
-          subject: "Pending policy verification sandbox identity",
+          subject: "Pending create sandbox identity",
           detail: "an exact registry reader is unavailable",
         };
       }
       const readCurrentCheckpoint = () => getSandbox(sandboxName)?.pendingCreateIdentity;
       try {
         if (!isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateIdentity)) {
-          return { status: "changed", subject: "Pending policy verification authority" };
+          return { status: "changed", subject: "Pending create identity" };
         }
         const inspectIdentity =
           deps.inspectOpenShellSandboxIdentityFingerprint ??
@@ -339,14 +339,14 @@ export async function executeSandboxDestroy({
         ) {
           return {
             status: "changed",
-            subject: "Pending policy verification sandbox identity",
+            subject: "Pending create sandbox identity",
           };
         }
         return { status: "match" };
       } catch (error) {
         return {
           status: "probe-failed",
-          subject: "Pending policy verification sandbox identity",
+          subject: "Pending create sandbox identity",
           detail: redactDestroyError(error),
         };
       }
