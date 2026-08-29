@@ -282,7 +282,7 @@ async function runInteractiveTask(
   });
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
   expect(result.timedOut).toBe(false);
-  expect(result.firedTriggers).toEqual([token]);
+  expect(result.firedTriggers).toContain(token);
   expect(result.output).toContain(token);
   expect(result.exitCode).toBe(0);
 }

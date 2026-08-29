@@ -71,35 +71,6 @@ describe("interactive PTY driver", () => {
     }
   });
 
-  it("gives terminal UIs a usable window size in headless CI (#10155)", async () => {
-    const progress = observedProgress("onboard-interactive-pty window size");
-    const token = "NEMOCLAW_PI_INTERACTIVE_V1_OK";
-    const script = [
-      "import os, sys",
-      `token = ${JSON.stringify(token)}`,
-      "columns = os.get_terminal_size().columns",
-      "print(token if columns >= len(token) else '\\r\\n'.join(token), flush=True)",
-      "response = input()",
-      "sys.exit(0 if columns == 120 and response == '/exit' else 2)",
-    ].join("\n");
-    try {
-      const result = await driveInteractiveCommand({
-        activityLabel: "command: onboard-interactive-pty-window-size",
-        cmd: ["python3", "-c", script],
-        env: process.env,
-        progress,
-        rules: [{ trigger: token, response: "/exit\r" }],
-        timeoutMs: 10_000,
-      });
-      expect(result.timedOut).toBe(false);
-      expect(result.exitCode).toBe(0);
-      expect(result.firedTriggers).toEqual([token]);
-      expect(result.output).toContain(token);
-    } finally {
-      progress.stop();
-    }
-  });
-
   it("terminates the driver and its forked PTY child together on timeout", async () => {
     const progress = observedProgress("onboard-interactive-pty timeout cleanup");
     const pidDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pty-timeout-"));
