@@ -288,7 +288,7 @@ async function runInteractiveTask(
     ],
     env,
     progress,
-    rules: [{ trigger: token, response: "/exit\r" }],
+    rules: [{ trigger: token, response: "\u0004" }],
     timeoutMs: PI_COMMAND_TIMEOUT_MS,
   });
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
