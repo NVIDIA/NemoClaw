@@ -50,7 +50,7 @@ export interface DriveInteractiveCommandOptions {
 // node-pty. The child's own deadline is generous; the Node-side timer
 // below is the enforced hard bound and SIGKILLs the whole process tree.
 const PTY_DRIVER_SCRIPT = `
-import json, os, pty, select, signal, sys, time
+import json, os, pty, re, select, signal, sys, time
 
 # Read from stdin, not argv: the payload embeds every scripted response,
 # including any credential a rule supplies (e.g. an onboard API key), and a
@@ -93,6 +93,7 @@ os.set_blocking(fd, False)
 deadline = time.monotonic() + timeout_s
 fired = [False] * len(rules)
 exit_code = None
+terminal_controls = re.compile(r"\\x1b(?:\\[[0-?]*[ -/]*[@-~]|(?:\\]|_).*?(?:\\x07|\\x1b\\\\))", re.DOTALL)
 while time.monotonic() < deadline:
     ready, _, _ = select.select([fd], [], [], 0.2)
     if ready:
@@ -111,7 +112,7 @@ while time.monotonic() < deadline:
         output.extend(chunk)
         sys.stdout.buffer.write(chunk)
         sys.stdout.flush()
-    text = output.decode("utf-8", errors="ignore")
+    text = terminal_controls.sub("", output.decode("utf-8", errors="ignore"))
     for i, rule in enumerate(rules):
         if fired[i]:
             continue
