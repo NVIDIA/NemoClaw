@@ -13,7 +13,6 @@ import {
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import type { AgentTurnInference } from "../live/agent-turn-latency-helpers.ts";
 import {
-  bestEffortPreclean,
   cleanupTurnSandboxes,
   installSandbox,
   turnLatencyInstallAttemptCount,
@@ -394,21 +393,43 @@ describe("live test progress", () => {
     });
   });
 
-  it("keeps cleanup exception payloads out of live console diagnostics", async () => {
+  it("aborts pre-clean on a nonzero command and identifies its redacted artifact", async () => {
+    const failed = failedProbe("opaque-cleanup-secret");
+    failed.artifacts.result = "artifacts/cleanup-openclaw-destroy.json";
+    const host = {
+      command: vi.fn<HostCliClient["command"]>(async () => failed),
+    } as unknown as HostCliClient;
+    const sandbox = {
+      openshell: vi.fn<SandboxClient["openshell"]>(async () => successfulProbe()),
+    } as unknown as SandboxClient;
+
+    await expect(cleanupTurnSandboxes(host, sandbox, fakeInference())).rejects.toThrow(
+      "cleanup failed (destroy openclaw sandbox); see artifacts/cleanup-openclaw-destroy.json",
+    );
+    expect(sandbox.openshell).not.toHaveBeenCalled();
+  });
+
+  it("aborts an install retry when cleanup throws without exposing its payload", async () => {
     const secret = "opaque-cleanup-exception-secret";
-    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    try {
-      await expect(
-        bestEffortPreclean("destroy OpenClaw sandbox", async () => {
-          throw new Error(secret);
-        }),
-      ).resolves.toBe(false);
-      expect(warning).toHaveBeenCalledWith(
-        "best-effort cleanup failed (destroy OpenClaw sandbox); see redacted command artifacts",
-      );
-      expect(JSON.stringify(warning.mock.calls)).not.toContain(secret);
-    } finally {
-      warning.mockRestore();
-    }
+    const command = vi.fn<HostCliClient["command"]>(async () =>
+      failedProbe("Chat Completions API validation failed: request timed out"),
+    );
+    const host = { command } as unknown as HostCliClient;
+    const cleanupBeforeRetry = vi.fn(async () => {
+      throw new Error(secret);
+    });
+
+    const error = await installSandbox(
+      host,
+      "e2e-openclaw-turn-latency",
+      "openclaw",
+      fakeInference(),
+      cleanupBeforeRetry,
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).not.toContain(secret);
+    expect(command).toHaveBeenCalledOnce();
+    expect(cleanupBeforeRetry).toHaveBeenCalledOnce();
   });
 });

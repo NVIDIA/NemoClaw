@@ -87,16 +87,20 @@ export function env(
   return inference.env(base);
 }
 
-export async function bestEffortPreclean(
-  label: string,
-  run: () => Promise<unknown>,
-): Promise<boolean> {
-  try {
-    await run();
-    return true;
-  } catch {
-    console.warn(`best-effort cleanup failed (${label}); see redacted command artifacts`);
-    return false;
+function cleanupArtifact(result: unknown): string {
+  if (!result || typeof result !== "object") return "redacted command artifact";
+  const artifacts = (result as { artifacts?: { result?: unknown } }).artifacts;
+  return typeof artifacts?.result === "string" ? artifacts.result : "redacted command artifact";
+}
+
+function requireCleanupSuccess(label: string, result: unknown): void {
+  if (
+    result &&
+    typeof result === "object" &&
+    "exitCode" in result &&
+    (result as { exitCode: unknown }).exitCode !== 0
+  ) {
+    throw new Error(`cleanup failed (${label}); see ${cleanupArtifact(result)}`);
   }
 }
 
@@ -124,7 +128,7 @@ function startProgressActivity(progress: AgentTurnProgress | undefined, label: s
   };
 }
 
-async function runBestEffortCleanupStep(
+async function runCleanupStep(
   label: string,
   run: () => Promise<unknown>,
   progress?: AgentTurnProgress,
@@ -132,8 +136,13 @@ async function runBestEffortCleanupStep(
   emitProgressEvent(progress, `${label} started`);
   const finishActivity = startProgressActivity(progress, `cleanup: ${label}`);
   try {
-    const succeeded = await bestEffortPreclean(label, run);
-    emitProgressEvent(progress, `${label} ${succeeded ? "passed" : "failed"}`);
+    const result = await run();
+    requireCleanupSuccess(label, result);
+    emitProgressEvent(progress, `${label} passed`);
+  } catch (error) {
+    emitProgressEvent(progress, `${label} failed`);
+    if (error instanceof Error && error.message.startsWith("cleanup failed (")) throw error;
+    throw new Error(`cleanup failed (${label}); see redacted command artifacts`, { cause: error });
   } finally {
     finishActivity();
   }
@@ -348,7 +357,11 @@ export async function installSandbox(
         emitProgressEvent(progress, `${attemptLabel} cleanup before retry passed`);
       } catch (error) {
         emitProgressEvent(progress, `${attemptLabel} cleanup before retry failed`);
-        throw error;
+        if (error instanceof Error && error.message.startsWith("cleanup failed (")) throw error;
+        throw new Error(
+          `cleanup failed (${agent}-install-attempt-${attempt}-retry); see redacted command artifacts`,
+          { cause: error },
+        );
       } finally {
         finishCleanupActivity();
       }
@@ -374,12 +387,12 @@ export async function cleanupTurnSandboxes(
     [OPENCLAW_SANDBOX, "openclaw"],
     [HERMES_SANDBOX, "hermes"],
   ] as const) {
-    await runBestEffortCleanupStep(
+    await runCleanupStep(
       `destroy ${agent} sandbox`,
       () => cleanupTurnSandbox(host, name, agent, inference, progress),
       progress,
     );
-    await runBestEffortCleanupStep(
+    await runCleanupStep(
       `delete ${agent} sandbox`,
       () =>
         sandbox.openshell(["sandbox", "delete", name], {
@@ -391,7 +404,7 @@ export async function cleanupTurnSandboxes(
       progress,
     );
   }
-  await runBestEffortCleanupStep(
+  await runCleanupStep(
     "stop Hermes API forward",
     () =>
       sandbox.openshell(["forward", "stop", "8642"], {
@@ -402,7 +415,7 @@ export async function cleanupTurnSandboxes(
       }),
     progress,
   );
-  await runBestEffortCleanupStep(
+  await runCleanupStep(
     "destroy OpenShell gateway",
     () =>
       sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
@@ -429,13 +442,16 @@ export async function cleanupTurnSandbox(
     timeoutMs: 120_000,
   });
   const output = resultText(result);
-  expect(
-    result.exitCode === 0 ||
-      /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu.test(
-        output,
-      ),
-    `cleanup ${agent} sandbox ${name}: ${output}`,
-  ).toBe(true);
+  if (
+    result.exitCode !== 0 &&
+    !/Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu.test(
+      output,
+    )
+  ) {
+    throw new Error(
+      `cleanup failed (destroy ${agent} sandbox); see ${cleanupArtifact(result)}`,
+    );
+  }
 }
 
 export async function route(
