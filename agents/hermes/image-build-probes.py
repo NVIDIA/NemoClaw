@@ -170,12 +170,18 @@ def verify_neutral_platform_inertness() -> None:
 
 
 def verify_cron_runtime_source() -> None:
-    from cron.executions import EXECUTIONS_FILE
+    from cron.executions import EXECUTIONS_FILE, _connect
     from hermes_cli.backup import _QUICK_STATE_FILES
     from hermes_constants import get_hermes_home
 
     expected = get_hermes_home().resolve() / "runtime" / "cron-executions.db"
-    assert EXECUTIONS_FILE == expected
+    assert EXECUTIONS_FILE is None
+    connection = _connect()
+    try:
+        databases = connection.execute("PRAGMA database_list").fetchall()
+    finally:
+        connection.close()
+    assert databases == [(0, "main", str(expected))], databases
     assert "runtime/cron-executions.db" in _QUICK_STATE_FILES
     assert "cron/executions.db" not in _QUICK_STATE_FILES
 
