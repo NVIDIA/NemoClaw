@@ -94,6 +94,14 @@ describe("runtime state mutation controller", () => {
     expect(harnessResult.unknown_writer).toBe("unreadable-writer-process");
   });
 
+  it("rescans a replaced transient writer under its new identity (#9485)", () => {
+    expect(harnessResult.replacement_writer_signals).toEqual([
+      ["222", 15],
+      ["333", 15],
+    ]);
+    expect(harnessResult.replacement_writer_scans_remaining).toBe(0);
+  });
+
   it("publishes, rolls an activated fence back, and recovers every durable phase (#7744)", () => {
     expect(harnessResult).toMatchObject({
       publish: "published",

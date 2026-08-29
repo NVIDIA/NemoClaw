@@ -2668,7 +2668,7 @@ def _exclude_writers(
     term_deadline = time.monotonic() + TERM_SECONDS
     kill_deadline = term_deadline + KILL_SECONDS
     stable = 0
-    signalled: set[tuple[int, str, int]] = set()
+    signalled: set[tuple[object, ...]] = set()
     allowed_by_pid = _allowed_writer_map(allowed)
     while True:
         writers = _capture_writer_processes(writer_uids)
@@ -2694,9 +2694,16 @@ def _exclude_writers(
             _fail("writer-exclusion-timeout")
         requested = signal.SIGTERM if now < term_deadline else signal.SIGKILL
         for writer in unexpected:
-            identity = (writer.pid, writer.start_identity, requested)
+            identity = (*writer.identity_key(), requested)
             if identity not in signalled:
-                _signal_exact_process(writer, requested)
+                try:
+                    _signal_exact_process(writer, requested)
+                except ControlError as error:
+                    # Unexpected writers are census observations, not durable
+                    # fence identities. Never signal a replacement through a
+                    # stale observation; the next scan binds its full identity.
+                    if error.code != "writer-pid-reused":
+                        raise
                 signalled.add(identity)
         time.sleep(POLL_SECONDS)
 

@@ -610,14 +610,33 @@ intruder = process(42, "S", 1, "222", 1000, (b"writer",), 142)
 scans = [(stopped_start, intruder), (stopped_start,), (stopped_start,), (stopped_start,)]
 writer_signals = []
 control._capture_writer_processes = lambda _uids: scans.pop(0)
-control._signal_exact_process = lambda selected, requested: writer_signals.append(
-    [selected.pid, requested]
+control._signal_exact_process = lambda selected, requested: (
+    writer_signals.append([selected.pid, requested]) or True
 )
 control.TERM_SECONDS = 5
 control.KILL_SECONDS = 5
 real_exclude_writers((1000, 1001), (control._process_reference(stopped_start),))
 results["writer_signals"] = writer_signals
 results["writer_scans_remaining"] = len(scans)
+replacement = process(42, "S", 1, "333", 1000, (b"replacement",), 143)
+replacement_scans = [
+    (stopped_start, intruder),
+    (stopped_start, replacement),
+    (stopped_start,),
+    (stopped_start,),
+    (stopped_start,),
+]
+replacement_signals = []
+control._capture_writer_processes = lambda _uids: replacement_scans.pop(0)
+def signal_replaced_writer(selected, requested):
+    replacement_signals.append([selected.start_identity, requested])
+    if selected.start_identity == intruder.start_identity:
+        control._fail("writer-pid-reused")
+    return True
+control._signal_exact_process = signal_replaced_writer
+real_exclude_writers((1000, 1001), (control._process_reference(stopped_start),))
+results["replacement_writer_signals"] = replacement_signals
+results["replacement_writer_scans_remaining"] = len(replacement_scans)
 control._capture_writer_processes = lambda _uids: (intruder,)
 control.TERM_SECONDS = 0
 control.KILL_SECONDS = 0
