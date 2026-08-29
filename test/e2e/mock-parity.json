@@ -206,6 +206,7 @@
     },
     {
       "live": "test/e2e/live/network-policy.test.ts",
+      "liveSources": ["test/e2e/live/policy-list-state.ts"],
       "fast": [
         "src/lib/actions/sandbox/policy-channel-add-drift.test.ts",
         "test/channels/channels-add-preset.test.ts",
@@ -298,6 +299,7 @@
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/snapshot-command-host-local-authority.test.ts",
         "test/e2e/support/snapshot-commands-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -360,6 +362,7 @@
     {
       "live": "test/e2e/live/common-egress-agent.test.ts",
       "fast": [
+        "src/lib/policy/policy-live-state.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/common-egress-agent-helpers.test.ts"
@@ -488,6 +491,7 @@
     },
     {
       "live": "test/e2e/live/mcp-bridge.test.ts",
+      "liveSources": ["test/e2e/live/mcp-bridge-sandbox.ts"],
       "fast": [
         "src/lib/actions/sandbox/mcp-bridge-policy.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-adapter-registration.test.ts",
@@ -586,6 +590,7 @@
     {
       "live": "test/e2e/live/openshell-gateway-upgrade.test.ts",
       "fast": [
+        "test/e2e/support/e2e-live-target-gating.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -600,6 +605,7 @@
     },
     {
       "live": "test/e2e/live/rebuild-hermes.test.ts",
+      "liveSources": ["test/e2e/live/rebuild-hermes-host-policy.ts"],
       "fast": [
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",

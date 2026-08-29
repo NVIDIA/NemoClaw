@@ -1238,6 +1238,7 @@ jobs:
       PLATFORM: ${{ matrix.platform }}
       PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
       REPOSITORY: ghcr.io/nvidia/nemoclaw/pi-sandbox
+      # Qualification receipts compare image sources with the PR head, never GitHub's synthetic merge.
       SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps: &pi_candidate_steps
       - name: Checkout

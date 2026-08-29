@@ -242,9 +242,7 @@ const cancellationSelector = ${JSON.stringify(
       )};
 const cancelAfterCreate = cancellationSelector !== null;
 const recoveryReentry = process.env.NEMOCLAW_RECOVERY_REENTRY || "";
-const identityMismatchRefusal = ${JSON.stringify(
-        expectedOutcome === "identity-mismatch-refusal",
-      )};
+const identityMismatchRefusal = ${JSON.stringify(expectedOutcome === "identity-mismatch-refusal")};
 const stagedMessagingRefusal = ${JSON.stringify(expectedOutcome === "staged-messaging-refusal")};
 const postCreateAuthorityRefusal = ${JSON.stringify(
         expectedOutcome === "post-create-authority-refusal",
@@ -839,9 +837,7 @@ if (${JSON.stringify(
         assert.equal(payload.policyVerificationCalls, 0);
         assert.equal(payload.registeredSandbox, null);
         assert.equal(payload.credentialReadCalls, 0);
-        assert.deepEqual(payload.registryMutationCalls, [
-          { operation: "update", name: "my-assistant" },
-        ]);
+        assert.deepEqual(payload.registryMutationCalls, []);
         assert.deepEqual(providerEffectCommands, []);
         assert.equal(
           payload.commandNames.some((command: string) =>
