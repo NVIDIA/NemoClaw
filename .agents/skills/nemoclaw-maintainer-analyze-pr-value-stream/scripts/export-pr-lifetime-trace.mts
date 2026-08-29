@@ -529,8 +529,29 @@ function renderTrace(input: {
     .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))) {
     if (!firstRuns.has(run.head_sha)) firstRuns.set(run.head_sha, run);
   }
+  const revisionStarts = input.commits.map((commit) => {
+    const firstRun = firstRuns.get(commit.oid);
+    return firstRun ? parseTime(firstRun.created_at, "workflow createdAt") : commit.authoredAt;
+  });
   for (const [index, commit] of input.commits.entries()) {
     const pid = 1_000 + index;
+    addSpan(events, {
+      name: "Revision " + (index + 1) + " current",
+      category: "pr.revision-epoch",
+      start: revisionStarts[index],
+      end: revisionStarts[index + 1] ?? observedEnd,
+      pid,
+      tid: 2,
+      args: {
+        commit: commit.oid,
+        ordinal: index + 1,
+        subject: commit.subject,
+        current: index === input.commits.length - 1,
+        startSource: firstRuns.has(commit.oid)
+          ? "first exact-commit workflow"
+          : "commit authored timestamp",
+      },
+    });
     addMetadata(events, metadata, pid, 1, "Revision " + commit.oid.slice(0, 8), "Workflows");
     instant({
       name: commit.subject,

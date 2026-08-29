@@ -213,6 +213,12 @@ describe("pull request value-stream analysis", () => {
         expect.objectContaining({ name: "job", cat: "ci.execution", ph: "X" }),
         expect.objectContaining({ name: "step", cat: "ci.step", ph: "X" }),
         expect.objectContaining({ name: "Inline feedback added", cat: "review.feedback" }),
+        expect.objectContaining({
+          name: "Revision 1 current",
+          cat: "pr.revision-epoch",
+          ph: "X",
+          args: expect.objectContaining({ ordinal: 1, current: true }),
+        }),
       ]),
     );
     expect(
