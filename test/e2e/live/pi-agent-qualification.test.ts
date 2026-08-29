@@ -262,6 +262,7 @@ async function runInteractiveTask(
     progress,
     rules: [
       { trigger: PI_INTERACTIVE_READY_MARKER, response: `${prompt}\r` },
+      { trigger: token, response: "" },
       { trigger: PI_INTERACTIVE_COMPLETE_MARKER, response: "\u0004" },
     ],
     timeoutMs: PI_COMMAND_TIMEOUT_MS,
@@ -269,9 +270,9 @@ async function runInteractiveTask(
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
   expect(result.timedOut).toBe(false);
     expect(result.firedTriggers).toContain(PI_INTERACTIVE_READY_MARKER);
+    expect(result.firedTriggers).toContain(token);
     expect(result.firedTriggers).toContain(PI_INTERACTIVE_COMPLETE_MARKER);
-  expect(result.output).toContain(token);
-  expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(0);
 }
 
 function registryDocument(): Record<string, unknown> {
