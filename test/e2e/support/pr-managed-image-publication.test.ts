@@ -40,14 +40,9 @@ function requestFor(candidateRepository: string, imageChanged: boolean) {
       `/repos/${CANONICAL_REPOSITORY}/pulls/${PR_NUMBER}`,
       {
         state: "open",
-        changed_files: 1,
         base: { sha: BASE_SHA, repo: { full_name: CANONICAL_REPOSITORY } },
         head: { sha: CANDIDATE_SHA, repo: { full_name: candidateRepository } },
       },
-    ],
-    [
-      `/repos/${CANONICAL_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100&page=1`,
-      [{ filename: "docs/guide.mdx" }],
     ],
     [
       `/repos/${CANONICAL_REPOSITORY}/git/commits/${BASE_SHA}`,

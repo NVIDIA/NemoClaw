@@ -203,7 +203,7 @@ function validatePr(
   );
 }
 
-/** Select a trusted managed image or the candidate Dockerfile path. */
+/** Select the managed-image or local-Dockerfile source for a validated PR. */
 export async function resolvePrManagedImageSource(
   input: {
     readonly baseSha: string;

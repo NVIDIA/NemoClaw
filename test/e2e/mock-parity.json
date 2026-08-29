@@ -138,13 +138,15 @@
     },
     {
       "live": "test/e2e/live/full-e2e.test.ts",
+      "liveSources": ["test/e2e/live/full-e2e-workload-evidence.ts"],
       "fast": [
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
         "test/e2e/support/onboard-performance.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/managed-image-receipt.test.ts"
       ]
     },
     {
@@ -243,7 +245,8 @@
     },
     {
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
-      "liveOnlyReason": "Requires a real OpenShell dashboard forward on a remote Brev host to prove all-interface bind behavior after background connect."
+      "liveSources": ["test/e2e/live/dashboard-connect-handoff.ts"],
+      "fast": ["test/e2e/support/dashboard-connect-handoff.test.ts"]
     },
     {
       "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
@@ -312,6 +315,7 @@
     },
     {
       "live": "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
+      "liveSources": ["test/e2e/live/bedrock-runtime-compatible-anthropic-raw-command.ts"],
       "fast": [
         "test/e2e/support/bedrock-runtime-compatible-anthropic-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
