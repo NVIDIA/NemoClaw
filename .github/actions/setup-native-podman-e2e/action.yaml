@@ -145,6 +145,7 @@ runs:
         ensure_subordinate_range /etc/subgid --add-subgids
 
         podman_command=("$podman_executable")
+        podman_service_exec="$podman_executable system service --time=0"
         if [[ -r /sys/module/apparmor/parameters/enabled ]] && grep -q '^Y' /sys/module/apparmor/parameters/enabled; then
           profile="$RUNNER_TEMP/nemoclaw-native-podman-e2e.apparmor"
           pasta_profile="$RUNNER_TEMP/nemoclaw-native-pasta-e2e.apparmor"
@@ -157,7 +158,9 @@ runs:
             '}' >"$profile"
           sudo apparmor_parser -r "$profile"
           command -v aa-exec >/dev/null
-          podman_command=(aa-exec -p nemoclaw-native-podman-e2e -- "$podman_executable")
+          aa_exec_path="$(command -v aa-exec)"
+          podman_command=("$aa_exec_path" -p nemoclaw-native-podman-e2e -- "$podman_executable")
+          podman_service_exec="$aa_exec_path -p nemoclaw-native-podman-e2e -- $podman_executable system service --time=0"
           printf '%s\n' \
             'abi <abi/4.0>,' \
             'include <tunables/global>' \
@@ -204,13 +207,50 @@ runs:
         export CONTAINERS_STORAGE_CONF="$storage_config"
         export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus"
         export XDG_RUNTIME_DIR="$runtime_directory"
-        service_log="$RUNNER_TEMP/native-podman-e2e-service.log"
-        "${podman_command[@]}" system service --time=0 "unix://$socket_path" >"$service_log" 2>&1 &
-        service_pid="$!"
+        service_name=nemoclaw-native-podman-e2e
+        service_environment="$RUNNER_TEMP/native-podman-e2e-service.env"
+        service_unit_directory="$HOME/.config/systemd/user"
+        service_unit="$service_unit_directory/$service_name.service"
+        socket_unit="$service_unit_directory/$service_name.socket"
+        install -d -m 0700 "$service_unit_directory"
+        printf '%s\n' \
+          "CONTAINERS_CONF=$containers_config" \
+          "CONTAINERS_STORAGE_CONF=$storage_config" \
+          "DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime_directory/bus" \
+          "PATH=$toolchain_install_root/bin:$PATH" \
+          "XDG_RUNTIME_DIR=$runtime_directory" >"$service_environment"
+        chmod 0600 "$service_environment"
+        printf '%s\n' \
+          '[Unit]' \
+          'Description=NemoClaw native Podman E2E API service' \
+          "Requires=$service_name.socket" \
+          "After=$service_name.socket dbus.socket" \
+          '' \
+          '[Service]' \
+          'Type=exec' \
+          'Delegate=true' \
+          'KillMode=process' \
+          'Environment=PODMAN_SYSTEMD_UNIT=%n' \
+          "EnvironmentFile=$service_environment" \
+          "ExecStart=$podman_service_exec" >"$service_unit"
+        printf '%s\n' \
+          '[Unit]' \
+          'Description=NemoClaw native Podman E2E API socket' \
+          '' \
+          '[Socket]' \
+          "ListenStream=$socket_path" \
+          'SocketMode=0600' \
+          'DirectoryMode=0700' \
+          'RemoveOnStop=true' \
+          "Service=$service_name.service" >"$socket_unit"
+        chmod 0600 "$service_unit" "$socket_unit"
+        /usr/bin/systemctl --user daemon-reload
+        /usr/bin/systemctl --user start "$service_name.socket"
+        /usr/bin/systemctl --user is-active --quiet "$service_name.socket"
         service_ready=false
         for attempt in $(seq 1 30); do
           if "${podman_command[@]}" --url "unix://$socket_path" info --format json \
-            >"$RUNNER_TEMP/native-podman-e2e-info.json" 2>>"$service_log"; then
+            >"$RUNNER_TEMP/native-podman-e2e-info.json" 2>/dev/null; then
             service_ready=true
             break
           fi
@@ -220,12 +260,17 @@ runs:
         done
         if [[ "$service_ready" != true ]]; then
           echo "::error::Native Podman API service did not become ready" >&2
-          cat "$service_log" >&2
+          /usr/bin/systemctl --user status "$service_name.socket" "$service_name.service" \
+            --no-pager --full >&2 || true
+          /usr/bin/journalctl --user --unit "$service_name.service" --no-pager --lines=100 >&2 || true
           sudo dmesg | grep -E 'apparmor=.*DENIED' | tail -n 20 >&2 || true
-          wait "$service_pid" || true
           exit 1
         fi
         [[ -S "$socket_path" ]]
+        /usr/bin/systemctl --user is-active --quiet "$service_name.service"
+        service_pid="$(/usr/bin/systemctl --user show "$service_name.service" --property=MainPID --value)"
+        [[ "$service_pid" =~ ^[1-9][0-9]*$ ]]
+        [[ "$(curl --fail --silent --show-error --noproxy '*' --unix-socket "$socket_path" http://localhost/_ping)" == "OK" ]]
         jq -e '
           (.host.security.rootless // .Host.Security.Rootless) == true and
           ((.host.cgroupVersion // .Host.CgroupVersion) | ascii_downcase) == "v2" and
