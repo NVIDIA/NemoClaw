@@ -624,6 +624,22 @@ describe("pull request value-stream analysis", () => {
     await expect(readFile(path.join(destination, "manifest.json"), "utf8")).resolves.toBe("second");
   });
 
+  test("reclaims stale unpublished lock candidates (#10542)", async () => {
+    const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-candidate-"));
+    temporaryDirectories.push(publicationRoot);
+    const destination = path.join(publicationRoot, "pr-42");
+    const lock = destination + ".lock";
+    const candidate = lock + ".candidate-abandoned";
+    const staging = path.join(publicationRoot, "staging");
+    await mkdir(candidate);
+    await mkdir(staging);
+    await writeFile(path.join(staging, "manifest.json"), "complete");
+    const stale = new Date(Date.now() - 6 * 60 * 1_000);
+    await utimes(candidate, stale, stale);
+    await publishStagedDirectory({ staging, destination, lock });
+    await expect(stat(candidate)).rejects.toThrow();
+  });
+
   test("reclaims stale publication locks but preserves active locks (#10542)", async () => {
     const publicationRoot = await mkdtemp(path.join(tmpdir(), "value-stream-lock-"));
     temporaryDirectories.push(publicationRoot);

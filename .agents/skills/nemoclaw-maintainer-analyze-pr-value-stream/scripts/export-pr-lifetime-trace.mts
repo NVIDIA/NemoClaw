@@ -947,11 +947,25 @@ async function requirePublicationLockOwnership(lock: string, token: string): Pro
     throw new Error("lifetime artifact publication lock ownership changed: " + lock);
 }
 
+async function reclaimStaleLockCandidates(lock: string): Promise<void> {
+  const parent = path.dirname(lock);
+  const prefix = path.basename(lock) + ".candidate-";
+  let entries: string[] = [];
+  try {
+    entries = await readdir(parent);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  for (const entry of entries)
+    if (entry.startsWith(prefix)) await reclaimStalePublicationLock(path.join(parent, entry));
+}
+
 async function acquirePublicationLock(
   lock: string,
   track?: (path: string, cleanup?: () => Promise<void>) => void,
   release?: (path: string) => void,
 ): Promise<string> {
+  await reclaimStaleLockCandidates(lock);
   for (let attempt = 0; attempt < 300; attempt += 1) {
     const token = randomUUID();
     const candidate = lock + ".candidate-" + token;
