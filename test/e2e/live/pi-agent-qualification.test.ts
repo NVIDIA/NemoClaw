@@ -274,7 +274,18 @@ async function runInteractiveTask(
     "Join these five fragments with underscores and reply with only the result: NEMOCLAW, PI, INTERACTIVE, V1, OK. Do not use tools.";
   const result = await driveInteractiveCommand({
     activityLabel: "command: pi-interactive-qualification",
-    cmd: [host.commandPath, SANDBOX_NAME, "exec", "--", "pi", "--no-approve", prompt],
+    cmd: [
+      host.commandPath,
+      SANDBOX_NAME,
+      "exec",
+      "--tty",
+      "--",
+      "sh",
+      "-c",
+      'stty rows 40 cols 120 && exec pi --no-approve "$1"',
+      "nemoclaw-pi-interactive",
+      prompt,
+    ],
     env,
     progress,
     rules: [{ trigger: token, response: "/exit\r" }],
