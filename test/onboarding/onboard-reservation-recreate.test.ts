@@ -93,30 +93,27 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const events = [];
-let sandboxDeleted = false;
-let sandboxRecreated = false;
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+  lifecycleState: "created",
+  phase: "NotReady",
+});
 runner.run = (command) => {
   const cmd = _n(command);
   events.push({ kind: "run", cmd });
   const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (cmd.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
-  if (cmd.includes("sandbox delete")) sandboxDeleted = true;
-  if (cmd.includes("sandbox list")) {
-    return { status: 0, stdout: "No sandboxes found.\n" };
+  if (cmd.includes("sandbox delete")) {
+    createdSandbox.delete();
+    return { status: 0 };
   }
-  return cmd.includes("sandbox get") && cmd.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID + "\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runCapture = (command) => {
   const cmd = _n(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
-  if (createdIdentity !== null) return createdIdentity;
-  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) return sandboxRecreated ? ["my-assistant", "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10)) : sandboxDeleted ? "" : ["my-assistant", "Id: " + fixtureMocks.ONBOARD_CREATED_SANDBOX_ID].join(String.fromCharCode(10));
-  if (cmd.includes("sandbox list")) {
-    return sandboxRecreated ? "my-assistant Ready" : sandboxDeleted ? "" : "my-assistant NotReady";
-  }
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
@@ -177,7 +174,7 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
   sessionId: "session-owner",
   getSandbox: registry.getSandbox,
   removeSandbox,
-  sourceSandboxId: fixtureMocks.ONBOARD_CREATED_SANDBOX_ID,
+  sourceSandboxId: createdSandbox.state.sandboxId,
 });
 
 const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
@@ -190,13 +187,17 @@ policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
 });
 
 childProcess.spawn = (...args) => {
-  sandboxRecreated = true;
+  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
+  if (command.includes("sandbox create")) {
+    createdSandbox.recreate(args.flat());
+    createdSandbox.setPhase("Ready");
+  }
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
   child.pid = 4246;
-  events.push({ kind: "spawn", cmd: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]) });
+  events.push({ kind: "spawn", cmd: command });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -449,19 +450,17 @@ if (mode === "resume" && scenario === "changed-checkpoint") {
   };
 }
 
-let sandboxCreated = mode === "resume";
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+  sandboxId: "sbx-resumable-create",
+  lifecycleState: mode === "resume" ? "created" : "absent",
+});
 let createChild = null;
 runner.run = (command) => {
   const cmd = normalize(command);
   const profile = fixtureMocks.mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profile !== null) return profile;
-  if (cmd.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from(sandboxCreated ? "my-assistant Ready\n" : "No sandboxes found.\n"), stderr: Buffer.alloc(0) };
-  }
-  if (cmd.includes("sandbox get") && cmd.includes("my-assistant") && sandboxCreated) {
-    return { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-resumable-create\n"), stderr: Buffer.alloc(0) };
-  }
-  return { status: 0 };
+  return createdSandbox.run(command) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
   const cmd = normalize(command);
@@ -477,15 +476,8 @@ runner.runCapture = (command) => {
       policy: {},
     });
   }
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command, {
-    sandboxName: "my-assistant",
-    sandboxId: "sbx-resumable-create",
-  });
-  if (createdIdentity !== null) return createdIdentity;
-  if (cmd.includes("sandbox get") && cmd.includes("my-assistant")) {
-    return sandboxCreated ? ["my-assistant", "Id: sbx-resumable-create"].join(String.fromCharCode(10)) : "";
-  }
-  if (cmd.includes("sandbox list")) return sandboxCreated ? "my-assistant Ready" : "";
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   const mocked = fixtureMocks.mockOnboardRunCapture(command, { defaultCurlOutput: "ok" });
   return mocked === null ? "" : mocked;
@@ -501,8 +493,10 @@ process.kill = (pid, signal) => {
 };
 childProcess.spawn = (...args) => {
   const command = normalize([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
-  if (command.includes("sandbox create")) fs.appendFileSync(createCountPath, "create\n");
-  sandboxCreated = true;
+  if (command.includes("sandbox create")) {
+    fs.appendFileSync(createCountPath, "create\n");
+    createdSandbox.create(args.flat());
+  }
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();

@@ -346,12 +346,13 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
       expectedSupervisorArgv: ["/mxc/supervisor"],
     };
-    const deps = createDeps();
+    const sandboxId = "mxc-alpha";
+    const deps = createDeps(sandboxId);
     const adapterOverride = {} as never;
     deps.createManagedBootstrapAdapter = vi.fn(() => adapterOverride);
-    deps.runOpenshell = vi.fn(() => readySandboxGetResult("alpha-sandbox-id"));
+    deps.runOpenshell = vi.fn(() => readySandboxGetResult(sandboxId));
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
-      args[1] === "get" ? "ID: alpha-sandbox-id\n" : "alpha Ready",
+      args[1] === "get" ? `ID: ${sandboxId}\n` : "alpha Ready",
     );
     recoverUnfinished.mockRejectedValueOnce(new Error("unfinished recovery failed"));
 
@@ -422,7 +423,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
     expect(errorOutput()).toContain("recovery stopped before sandbox 'alpha' was created");
     expect(errorOutput()).toContain("Transaction");
-    expect(errorOutput()).toContain("durable sandbox ID mxc-alpha");
+    expect(errorOutput()).toContain(`durable sandbox ID ${sandboxId}`);
     expect(errorOutput()).toContain("OpenShell's sandbox get command");
     expect(errorOutput()).toContain("never delete a runtime by mutable sandbox name");
     expect(errorOutput()).toContain("Authorization: Bearer <REDACTED>");
