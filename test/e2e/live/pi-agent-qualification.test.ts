@@ -261,7 +261,7 @@ async function runInteractiveTask(
     progress,
     rules: [
       { trigger: PI_INTERACTIVE_READY_MARKER, response: `${prompt}\r` },
-      { trigger: token, response: "/exit\r" },
+      { trigger: token, response: "\u0004" },
     ],
     timeoutMs: PI_COMMAND_TIMEOUT_MS,
   });
