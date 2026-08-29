@@ -6,17 +6,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { extractShellFunctionFromSource } from "../../../helpers/shell-source";
 
-const START_SCRIPT = path.join(import.meta.dirname, "../../../..", "scripts/nemoclaw-start.sh");
+const REFRESH_HELPER = path.join(
+  import.meta.dirname,
+  "../../../..",
+  "scripts/lib/refresh-openclaw-wechat-placeholder.py",
+);
 const CANONICAL = "openshell:resolve:env:WECHAT_BOT_TOKEN";
 const SAVED_AT = "2026-08-29T00:00:00.000Z";
-const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
 interface WechatRefreshFixture {
   readonly account: Record<string, unknown>;
   readonly config: OpenClawTestConfig;
-  readonly configHash: string;
   readonly result: ReturnType<typeof spawnSync>;
 }
 
@@ -50,14 +51,12 @@ function runWechatRefresh(
   env: Record<string, string>,
   enabled: boolean | null = true,
   mutateAccount?: (paths: { accountPath: string; configPath: string; tmpDir: string }) => void,
-  configOwner = "sandbox",
   accountEnabled: boolean | null = true,
 ): WechatRefreshFixture {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-placeholder-"));
   const openclawDir = path.join(tmpDir, ".openclaw");
   const accountPath = path.join(openclawDir, "openclaw-weixin", "accounts", "primary.json");
   const configPath = path.join(openclawDir, "openclaw.json");
-  const scriptPath = path.join(tmpDir, "run.sh");
   fs.mkdirSync(path.dirname(accountPath), { recursive: true });
   fs.writeFileSync(
     configPath,
@@ -70,37 +69,16 @@ function runWechatRefresh(
   );
   fs.chmodSync(accountPath, 0o600);
   mutateAccount?.({ accountPath, configPath, tmpDir });
-  const refresh = extractShellFunctionFromSource(
-    src,
-    "refresh_openclaw_provider_placeholders",
-  ).replaceAll("/sandbox/.openclaw", openclawDir);
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `openclaw_config_dir_owner() { printf '${configOwner}'; }`,
-      "prepare_openclaw_config_for_write() { :; }",
-      "restore_openclaw_config_after_write() { :; }",
-      refresh,
-      "refresh_openclaw_provider_placeholders",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
 
   try {
-    const result = spawnSync("bash", [scriptPath], {
+    const result = spawnSync("python3", ["-I", REFRESH_HELPER, configPath], {
       encoding: "utf-8",
       env: { PATH: process.env.PATH || "", ...env },
       timeout: 5000,
     });
     const account = JSON.parse(fs.readFileSync(accountPath, "utf-8"));
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as OpenClawTestConfig;
-    const configHashPath = path.join(openclawDir, ".config-hash");
-    const configHash = fs.existsSync(configHashPath)
-      ? fs.readFileSync(configHashPath, "utf-8")
-      : "";
-    return { account, config, configHash, result };
+    return { account, config, result };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -129,14 +107,7 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
 
   it("refreshes the account when active WeChat config omits the account enabled field", () => {
     const scoped = "openshell:resolve:env:v42_WECHAT_BOT_TOKEN";
-    const run = runWechatRefresh(
-      CANONICAL,
-      { WECHAT_BOT_TOKEN: scoped },
-      true,
-      undefined,
-      "sandbox",
-      null,
-    );
+    const run = runWechatRefresh(CANONICAL, { WECHAT_BOT_TOKEN: scoped }, true, undefined, null);
 
     expect(run.result.status, String(run.result.stderr)).toBe(0);
     expect(run.account.token).toBe(scoped);
@@ -161,21 +132,15 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     expect(run.result.stderr).not.toContain("Refreshed WeChat account provider placeholder");
   });
 
-  it("refreshes a stale account placeholder while openclaw.json is sealed", () => {
+  it("refreshes a stale account placeholder without mutating openclaw.json", () => {
     const scoped = "openshell:resolve:env:v51_WECHAT_BOT_TOKEN";
-    const run = runWechatRefresh(
-      "openshell:resolve:env:v42_WECHAT_BOT_TOKEN",
-      { WECHAT_BOT_TOKEN: scoped },
-      true,
-      undefined,
-      "root",
-    );
+    const run = runWechatRefresh("openshell:resolve:env:v42_WECHAT_BOT_TOKEN", {
+      WECHAT_BOT_TOKEN: scoped,
+    });
 
     expect(run.result.status, String(run.result.stderr)).toBe(0);
     expect(run.account.token).toBe(scoped);
-    expect(run.result.stderr).toContain(
-      "Shields are up; preserving sealed openclaw.json provider placeholders unchanged",
-    );
+    expect(run.config).toEqual(wechatConfig(true));
     expect(run.result.stderr).not.toContain(scoped);
   });
 
@@ -205,7 +170,7 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     expect(run.result.stderr).not.toContain(rawToken);
   });
 
-  it("rejects an invalid WeChat placeholder before updating another provider", () => {
+  it("rejects an invalid WeChat placeholder without updating another provider", () => {
     const telegramCanonical = "openshell:resolve:env:TELEGRAM_BOT_TOKEN";
     const run = runWechatRefresh(
       CANONICAL,
@@ -225,10 +190,9 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
 
     expect(run.result.status).toBe(1);
     expect(run.config.channels.telegram?.accounts.default.botToken).toBe(telegramCanonical);
-    expect(run.configHash).toBe("");
   });
 
-  it("rejects an unsafe WeChat account before updating another provider", () => {
+  it("rejects an unsafe WeChat account without updating another provider", () => {
     const telegramCanonical = "openshell:resolve:env:TELEGRAM_BOT_TOKEN";
     const run = runWechatRefresh(
       CANONICAL,
@@ -250,7 +214,6 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     expect(run.result.status).toBe(1);
     expect(run.account.token).toBe(CANONICAL);
     expect(run.config.channels.telegram?.accounts.default.botToken).toBe(telegramCanonical);
-    expect(run.configHash).toBe("");
   });
 
   it("leaves the account untouched while the channel is stopped", () => {
