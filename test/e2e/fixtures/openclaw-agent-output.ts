@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export interface OpenClawAgentJsonDocument {
-  payloads?: Array<{ text?: unknown }>;
+  [key: string]: unknown;
   result?: { meta?: unknown; payloads?: Array<{ text?: unknown }> };
 }
 
@@ -66,11 +66,45 @@ export function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonD
   return documents;
 }
 
+const TEXT_KEYS = ["text", "content", "reasoning_content"] as const;
+const CONTAINER_KEYS = [
+  "result",
+  "payloads",
+  "payload",
+  "messages",
+  "choices",
+  "response",
+  "data",
+  "output",
+  "outputs",
+  "items",
+  "segments",
+  "delta",
+  "message",
+] as const;
+
+function collectAgentText(value: unknown, parts: string[], visited: Set<unknown>): void {
+  if (value === null || value === undefined || visited.has(value)) return;
+  if (typeof value === "string") {
+    if (value.trim()) parts.push(value.trim());
+    return;
+  }
+  if (typeof value !== "object") return;
+  visited.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) collectAgentText(item, parts, visited);
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.role === "user") return;
+  for (const key of TEXT_KEYS) collectAgentText(record[key], parts, visited);
+  for (const key of CONTAINER_KEYS) collectAgentText(record[key], parts, visited);
+}
+
 export function parseOpenClawAgentText(raw: string): string {
-  return parseOpenClawAgentJsonDocuments(raw)
-    .flatMap((document) => document.payloads ?? document.result?.payloads ?? [])
-    .map((payload) => payload.text)
-    .filter((value): value is string => typeof value === "string")
-    .join("\n")
-    .trim();
+  const parts: string[] = [];
+  for (const document of parseOpenClawAgentJsonDocuments(raw)) {
+    collectAgentText(document, parts, new Set());
+  }
+  return parts.join("\n");
 }
