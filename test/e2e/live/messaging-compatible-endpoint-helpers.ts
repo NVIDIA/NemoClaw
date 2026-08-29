@@ -14,7 +14,6 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
-import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 
 export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {

@@ -30,7 +30,7 @@ export function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonD
   for (let index = 0; index < raw.length; index += 1) {
     const character = raw[index];
     if (start < 0) {
-      if (character === "{") {
+      if (character === "{" || character === "[") {
         start = index;
         depth = 1;
       }
@@ -46,8 +46,8 @@ export function parseOpenClawAgentJsonDocuments(raw: string): OpenClawAgentJsonD
       inString = true;
       continue;
     }
-    if (character === "{") depth += 1;
-    else if (character === "}") depth -= 1;
+    if (character === "{" || character === "[") depth += 1;
+    else if (character === "}" || character === "]") depth -= 1;
     if (depth !== 0) continue;
 
     try {
@@ -99,9 +99,9 @@ function collectAgentText(value: unknown, parts: string[], visited: Set<unknown>
   if (["user", "tool", "function"].includes(String(record.role))) return;
   if (
     ["tool_use", "function"].includes(String(record.type)) ||
-    "tool_calls" in record ||
-    "function_call" in record ||
-    "function" in record
+    record.tool_calls != null ||
+    record.function_call != null ||
+    record.function != null
   ) {
     return;
   }

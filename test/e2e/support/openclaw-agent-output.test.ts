@@ -27,6 +27,14 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("NEMOCLAW_E2E_READY_6002");
   });
 
+  it("accepts a log-framed array of agent-output payloads", () => {
+    expect(
+      parseOpenClawAgentText(
+        `progress\n${JSON.stringify([{ payloads: [{ text: "ARRAY_REPLY" }] }])}`,
+      ),
+    ).toBe("ARRAY_REPLY");
+  });
+
   it("joins top-level payload fragments", () => {
     expect(
       parseOpenClawAgentText(
@@ -78,6 +86,16 @@ describe("OpenClaw agent-output fixture", () => {
         JSON.stringify({ response: { function: { name: "read" }, payload: { text: "56" } } }),
       ),
     ).toBe("");
+  });
+
+  it("accepts an assistant reply with null tool metadata", () => {
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "42", tool_calls: null } }],
+        }),
+      ),
+    ).toBe("42");
   });
 
   it("fails closed in linear time for a long incomplete brace-rich stream", () => {
