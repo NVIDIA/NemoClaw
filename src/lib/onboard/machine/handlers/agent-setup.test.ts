@@ -214,7 +214,12 @@ describe("handleAgentSetupState", () => {
     });
     expect(calls.startStep).not.toHaveBeenCalled();
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
-    expect(calls.syncConfig).toHaveBeenCalledWith("my-assistant", "provider", "model");
+    expect(calls.syncConfig).toHaveBeenCalledWith(
+      "my-assistant",
+      "provider",
+      "model",
+      undefined,
+    );
     expect(calls.reconcileWebSearch).toHaveBeenCalledWith("my-assistant", null, undefined);
     expect(calls.complete).toHaveBeenCalledWith(
       "openclaw",
@@ -256,6 +261,12 @@ describe("handleAgentSetupState", () => {
       { fetchEnabled: false },
       revalidatePolicyRequirements,
     );
+    expect(calls.syncConfig).toHaveBeenCalledExactlyOnceWith(
+      "my-assistant",
+      "provider",
+      "model",
+      revalidatePolicyRequirements,
+    );
     expect(calls.syncConfig.mock.invocationCallOrder[0]).toBeLessThan(
       calls.reconcileWebSearch.mock.invocationCallOrder[0],
     );
@@ -265,6 +276,49 @@ describe("handleAgentSetupState", () => {
     expect(calls.reconcileWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
       calls.complete.mock.invocationCallOrder[0],
     );
+  });
+
+  it("does not complete ready resume when config-sync authority revalidation fails", async () => {
+    const configExec = vi.fn();
+    const syncNemoClawConfigInSandbox = vi.fn(
+      (
+        sandboxName: string,
+        _provider: string,
+        _model: string,
+        revalidate?: (operation: string) => void,
+      ) => {
+        revalidate?.(`synchronize OpenClaw config in sandbox '${sandboxName}'`);
+        configExec();
+      },
+    );
+    const { deps, calls } = createDeps({
+      isOpenclawReady: vi.fn(() => true),
+      syncNemoClawConfigInSandbox,
+    });
+    const revalidationSteps = new Map([
+      [
+        "synchronize OpenClaw config in sandbox 'my-assistant'",
+        () => {
+          throw new Error("policy authority changed");
+        },
+      ],
+    ]);
+    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+      revalidationSteps.get(operation)?.(),
+    );
+
+    await expect(
+      handleAgentSetupState({
+        ...baseOptions(deps),
+        resume: true,
+        revalidatePolicyRequirements,
+      }),
+    ).rejects.toThrow("policy authority changed");
+
+    expect(configExec).not.toHaveBeenCalled();
+    expect(calls.reconcileWebSearch).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
   });
 
   it("runs OpenClaw setup and skips agent_setup for the default agent", async () => {

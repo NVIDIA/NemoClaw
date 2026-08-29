@@ -57,6 +57,7 @@ describe("OpenClaw sandbox setup", () => {
     const scriptFile = path.join(tempDir, "sync.sh");
     fs.writeFileSync(scriptFile, "set -e\n", { mode: 0o600 });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const run = vi.fn();
     try {
       const setup = createOpenclawSetup({
         step: vi.fn(),
@@ -64,7 +65,7 @@ describe("OpenClaw sandbox setup", () => {
         getProviderSelectionConfig: () => ({ provider: "vllm-local" }),
         buildSandboxConfigSyncScript: () => "set -e",
         writeSandboxConfigSyncFile: () => scriptFile,
-        run: vi.fn(),
+        run,
         openshellArgv: (args) => ["/usr/bin/openshell", ...args],
         cleanupTempDir: vi.fn(),
         reconcileWebSearch: vi.fn(async () => undefined),
@@ -76,6 +77,7 @@ describe("OpenClaw sandbox setup", () => {
         }),
       ).rejects.toThrow("policy authority changed");
 
+      expect(run).not.toHaveBeenCalled();
       expect(log.mock.calls.flat().join("\n")).not.toContain("gateway launched");
     } finally {
       log.mockRestore();

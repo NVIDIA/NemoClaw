@@ -11,6 +11,35 @@ export interface RunSandboxConfigSyncDeps {
   runConnectScript: (sandboxName: string, scriptContent: string) => void;
 }
 
+export interface NemoClawConfigSyncDeps {
+  getProviderSelectionConfig(provider: string, model: string): ProviderSelectionConfig | null;
+  run(argv: string[], options: Record<string, unknown>): unknown;
+  openshellArgv(args: string[]): string[];
+}
+
+const skipPolicyRequirementRevalidation = (_operation: string): void => undefined;
+
+export function createNemoClawConfigSync(deps: NemoClawConfigSyncDeps) {
+  return function syncNemoClawConfigInSandbox(
+    sandboxName: string,
+    provider: string,
+    model: string,
+    revalidatePolicyRequirements: (operation: string) => void =
+      skipPolicyRequirementRevalidation,
+  ): void {
+    runSandboxConfigSync(sandboxName, {
+      getSelectionConfig: () => deps.getProviderSelectionConfig(provider, model),
+      runConnectScript: (name, scriptContent) => {
+        revalidatePolicyRequirements(`synchronize OpenClaw config in sandbox '${name}'`);
+        deps.run(deps.openshellArgv(sandboxConfigSyncArgs(name)), {
+          stdio: ["pipe", "ignore", "inherit"],
+          input: scriptContent,
+        });
+      },
+    });
+  };
+}
+
 /** Run config sync without allocating the interactive sandbox terminal transport. */
 export function sandboxConfigSyncArgs(sandboxName: string): string[] {
   return ["sandbox", "exec", "-n", sandboxName, "--no-tty", "--", "bash", "-s"];

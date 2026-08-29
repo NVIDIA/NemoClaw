@@ -52,7 +52,12 @@ export interface AgentSetupStateOptions<Agent> {
       webSearchConfig: WebSearchSelection,
       revalidatePolicyRequirements?: (operation: string) => void,
     ): Promise<void>;
-    syncNemoClawConfigInSandbox(sandboxName: string, provider: string, model: string): void;
+    syncNemoClawConfigInSandbox(
+      sandboxName: string,
+      provider: string,
+      model: string,
+      revalidatePolicyRequirements?: (operation: string) => void,
+    ): void;
     reconcileOpenclawWebSearch(
       sandboxName: string,
       webSearchConfig: WebSearchSelection,
@@ -118,7 +123,12 @@ export async function handleAgentSetupState<Agent>({
   if (resumeOpenclaw) {
     deps.skippedStepMessage("openclaw", sandboxName);
     revalidatePolicyRequirements?.(`synchronize OpenClaw in sandbox '${sandboxName}'`);
-    deps.syncNemoClawConfigInSandbox(sandboxName, provider, model);
+    deps.syncNemoClawConfigInSandbox(
+      sandboxName,
+      provider,
+      model,
+      revalidatePolicyRequirements,
+    );
     await deps.reconcileOpenclawWebSearch(
       sandboxName,
       webSearchConfig,

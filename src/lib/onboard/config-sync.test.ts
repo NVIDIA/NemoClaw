@@ -6,10 +6,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildSandboxConfigSyncScript,
+  createNemoClawConfigSync,
   sandboxConfigSyncArgs,
   writeSandboxConfigSyncFile,
 } from "./config-sync";
@@ -56,6 +57,36 @@ function modeBits(file: string): number {
 }
 
 describe("sandbox config sync helpers", () => {
+  it("revalidates policy authority immediately before sandbox execution", () => {
+    const run = vi.fn();
+    const revalidatePolicyRequirements = vi.fn(() => {
+      throw new Error("policy authority changed");
+    });
+    const syncConfig = createNemoClawConfigSync({
+      getProviderSelectionConfig: () => ({
+        endpointType: "custom",
+        endpointUrl: "https://inference.local/v1",
+        ncpPartner: null,
+        model: "model",
+        profile: "inference-local",
+        credentialEnv: "OPENAI_API_KEY",
+        provider: "provider",
+        providerLabel: "Provider",
+      }),
+      run,
+      openshellArgv: (args) => ["openshell", ...args],
+    });
+
+    expect(() =>
+      syncConfig("spark-box", "provider", "model", revalidatePolicyRequirements),
+    ).toThrow("policy authority changed");
+
+    expect(revalidatePolicyRequirements).toHaveBeenCalledExactlyOnceWith(
+      "synchronize OpenClaw config in sandbox 'spark-box'",
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("uses noninteractive sandbox exec for stdin scripts", () => {
     expect(sandboxConfigSyncArgs("spark-box")).toEqual([
       "sandbox",
