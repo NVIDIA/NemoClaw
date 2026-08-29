@@ -11,6 +11,13 @@ import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-bou
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
+const DEFAULT_LIVE_HELPER_PATH = join(
+  REPO_ROOT,
+  "test",
+  "e2e",
+  "live",
+  "external-gateway-health-helpers.ts",
+);
 const PACKAGE_JOB = "package-openshell-sdk";
 const HEALTH_JOB = "external-gateway-health";
 const CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
@@ -184,7 +191,7 @@ function validateHealthJob(errors: string[], job: WorkflowJob): void {
     E2E_JOB: "1",
     E2E_NON_INTERACTIVE: undefined,
     E2E_OBSERVABLE_OUTCOME:
-      "The reviewed SDK observes exact public gateway health over explicit HTTPS and CA",
+      "The exact Blueprint Runner observes public gateway health over explicit HTTPS and CA",
     E2E_TARGET_ID: HEALTH_JOB,
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106",
@@ -276,8 +283,48 @@ function validateHealthJob(errors: string[], job: WorkflowJob): void {
   requireOrder(errors, steps, run.name ?? "", upload.name ?? "");
 }
 
+export function validateExternalGatewayHealthHelper(source: string): string[] {
+  const errors: string[] = [];
+  const required = [
+    'path.join(process.cwd(), "dist", "lib", "blueprint-runner.js")',
+    '"status", "--external-target"',
+    "NEMOCLAW_BLUEPRINT_PATH: blueprintRoot",
+  ];
+  if (required.some((fragment) => !source.includes(fragment))) {
+    errors.push("external gateway health helper must run exact Blueprint Runner external status");
+  }
+  if (
+    !source.includes("const address = externalHostAddress();") ||
+    !source.includes('bind_address = "${address}:${String(port)}"') ||
+    !source.includes('"--server-san", address')
+  ) {
+    errors.push(
+      "external gateway health helper must bind the gateway certificate to a non-loopback address",
+    );
+  }
+  if (
+    !source.includes('operation: "external-gateway-health.tcp-readiness"') ||
+    !source.includes("maxAttempts: 10,")
+  ) {
+    errors.push("external gateway health helper must retain the bounded readiness retry");
+  }
+  if (!source.includes('runner: "dist/lib/blueprint-runner.js"')) {
+    errors.push("external gateway health helper must record the exact Runner artifact identity");
+  }
+  if (!source.includes("artifacts.addRedactionValues([stateDir]);")) {
+    errors.push("external gateway health helper must redact its private fixture path");
+  }
+  if (source.includes("@nvidia/openshell-sdk")) {
+    errors.push(
+      "external gateway health helper must not bypass the Runner with a direct SDK import",
+    );
+  }
+  return errors;
+}
+
 export function validateExternalGatewayHealthWorkflow(
   workflow: ExternalGatewayHealthWorkflow,
+  liveHelperSource = readFileSync(DEFAULT_LIVE_HELPER_PATH, "utf8"),
 ): string[] {
   const errors: string[] = [];
   const packageJob = workflow.jobs[PACKAGE_JOB];
@@ -286,11 +333,16 @@ export function validateExternalGatewayHealthWorkflow(
   else validatePackageJob(errors, packageJob);
   if (!healthJob) errors.push(`workflow is missing ${HEALTH_JOB}`);
   else validateHealthJob(errors, healthJob);
+  errors.push(...validateExternalGatewayHealthHelper(liveHelperSource));
   return errors;
 }
 
 export function validateExternalGatewayHealthWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
+  liveHelperPath = DEFAULT_LIVE_HELPER_PATH,
 ): string[] {
-  return validateExternalGatewayHealthWorkflow(readExternalGatewayHealthWorkflow(workflowPath));
+  return validateExternalGatewayHealthWorkflow(
+    readExternalGatewayHealthWorkflow(workflowPath),
+    readFileSync(liveHelperPath, "utf8"),
+  );
 }

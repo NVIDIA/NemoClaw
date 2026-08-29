@@ -6,33 +6,18 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import YAML from "yaml";
 
-import { ensureDockerDriverGatewayLocalTlsBundle } from "../../../dist/lib/onboard/docker-driver-gateway-local-tls";
+import { getDockerDriverGatewayLocalTlsBundle } from "../../../dist/lib/onboard/docker-driver-gateway-local-tls";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
+import { runBoundedRetry } from "../fixtures/retry-policy.ts";
 
 export const EXTERNAL_GATEWAY_HEALTH_TIMEOUT_MS = 3 * 60_000;
-const HEALTH_TIMEOUT_MS = 5_000;
-
-type OpenShellHealthClient = Readonly<{
-  raw: Readonly<{
-    health(
-      request: Record<string, never>,
-      options: Readonly<{ signal: AbortSignal }>,
-    ): Promise<unknown>;
-  }>;
-}>;
-
-type OpenShellSdkModule = Readonly<{
-  OpenShellClient: Readonly<{
-    connect(options: Readonly<{ gateway: string; caCert: Buffer }>): Promise<OpenShellHealthClient>;
-  }>;
-}>;
-
 type ScenarioFixtures = Readonly<{
   artifacts: ArtifactSink;
   cleanup: CleanupRegistry;
@@ -58,11 +43,11 @@ function resolveGatewayBin(): string | null {
   return result.status === 0 && result.stdout.trim() ? result.stdout.trim() : null;
 }
 
-function pickPort(): Promise<number> {
+function pickPort(host: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(0, host, () => {
       const address = server.address();
       if (!address || typeof address === "string") {
         server.close(() => reject(new Error("failed to allocate a TCP port")));
@@ -77,6 +62,15 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function externalHostAddress(): string {
+  for (const addresses of Object.values(os.networkInterfaces())) {
+    for (const address of addresses ?? []) {
+      if (address.family === "IPv4" && !address.internal) return address.address;
+    }
+  }
+  throw new Error("a non-loopback IPv4 address is required for external gateway health");
+}
+
 async function stopGateway(gateway: ChildProcess): Promise<void> {
   if (gateway.exitCode !== null) return;
   gateway.kill("SIGTERM");
@@ -87,45 +81,86 @@ async function stopGateway(gateway: ChildProcess): Promise<void> {
   gateway.kill("SIGKILL");
 }
 
-async function loadSdk(): Promise<OpenShellSdkModule> {
-  const packageName: string = "@nvidia/openshell-sdk";
-  const loaded = (await import(packageName)) as Partial<OpenShellSdkModule>;
-  if (!loaded.OpenShellClient || typeof loaded.OpenShellClient.connect !== "function") {
-    throw new Error("the reviewed OpenShell SDK client export is unavailable");
+function parseRunnerStatus(output: string): Record<string, unknown> {
+  const jsonStart = output.indexOf("{");
+  if (jsonStart < 0) throw new Error("Blueprint Runner status did not produce JSON");
+  const parsed: unknown = JSON.parse(output.slice(jsonStart));
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Blueprint Runner status did not produce a JSON mapping");
   }
-  return loaded as OpenShellSdkModule;
+  return parsed as Record<string, unknown>;
 }
 
-async function waitForPublicHealth(options: {
-  caCert: Buffer;
-  endpoint: string;
-  gateway: ChildProcess;
-}): Promise<Readonly<{ status: unknown; version: unknown }>> {
-  const deadline = Date.now() + 60_000;
-  const sdk = await loadSdk();
-  const client = await sdk.OpenShellClient.connect({
-    gateway: options.endpoint,
-    caCert: options.caCert,
+type PortObservation = Readonly<{ errorCode?: string; ready: boolean }>;
+
+function observeGatewayPort(host: string, port: number): Promise<PortObservation> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port });
+    socket.setTimeout(1_000);
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve({ ready: true });
+    });
+    socket.once("error", (error: NodeJS.ErrnoException) => {
+      socket.destroy();
+      resolve({ errorCode: error.code ?? "unknown", ready: false });
+    });
+    socket.once("timeout", () => {
+      socket.destroy();
+      resolve({ errorCode: "timeout", ready: false });
+    });
   });
-  while (Date.now() < deadline) {
-    if (options.gateway.exitCode !== null) {
-      throw new Error("OpenShell gateway exited before the public health check completed");
-    }
-    try {
-      const result = await client.raw.health(
-        {},
-        { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) },
-      );
-      if (typeof result === "object" && result !== null && !Array.isArray(result)) {
-        const health = result as Record<string, unknown>;
-        if (health.version) return { status: health.status, version: health.version };
+}
+
+async function waitForGatewayPort(options: {
+  address: string;
+  artifacts: ArtifactSink;
+  gateway: ChildProcess;
+  port: number;
+}): Promise<void> {
+  const execution = await runBoundedRetry({
+    operation: "external-gateway-health.tcp-readiness",
+    owner: "openshell-gateway",
+    idempotence: "read-only",
+    maxAttempts: 10,
+    delayMs: 1_000,
+    onEvidence: async (evidence) => {
+      await options.artifacts.writeJson("external-gateway-readiness-retry.json", evidence);
+    },
+    run: () =>
+      options.gateway.exitCode === null
+        ? observeGatewayPort(options.address, options.port)
+        : Promise.resolve({ errorCode: "gateway-exited", ready: false }),
+    classify: (value, error) => {
+      if (error !== undefined || !value) {
+        return { outcome: "failed", failureClass: "deterministic" };
       }
-    } catch {
-      // The gateway can refuse connections until its listener is ready.
-    }
-    await delay(250);
+      if (value.ready) return { outcome: "passed" };
+      return {
+        outcome: "failed",
+        failureClass: value.errorCode === "ECONNREFUSED" ? "transient-external" : "deterministic",
+      };
+    },
+  });
+  if (execution.outcome !== "passed") {
+    throw new Error("OpenShell gateway did not open its configured listener");
   }
-  throw new Error("OpenShell gateway public health did not become available");
+}
+
+function runBlueprintRunnerHealth(blueprintRoot: string): Record<string, unknown> {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(process.cwd(), "dist", "lib", "blueprint-runner.js"), "status", "--external-target"],
+    {
+      encoding: "utf8",
+      env: { ...process.env, NEMOCLAW_BLUEPRINT_PATH: blueprintRoot },
+      killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10_000,
+    },
+  );
+  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  return parseRunnerStatus(result.stdout);
 }
 
 export async function runExternalGatewayHealthScenario({
@@ -147,12 +182,25 @@ export async function runExternalGatewayHealthScenario({
   expect(version.status, `${version.stdout}\n${version.stderr}`).toBe(0);
   expect(`${version.stdout}\n${version.stderr}`).toContain(OPENSHELL_V0106_QUALIFICATION.version);
 
-  const port = await pickPort();
+  const address = externalHostAddress();
+  const port = await pickPort(address);
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-external-health-"));
+  artifacts.addRedactionValues([stateDir]);
   cleanup.add("remove external gateway health state", () =>
     fs.rmSync(stateDir, { recursive: true, force: true }),
   );
-  const tls = ensureDockerDriverGatewayLocalTlsBundle({ gatewayBin: gatewayBin!, stateDir });
+  const tls = getDockerDriverGatewayLocalTlsBundle(stateDir);
+  const certificate = spawnSync(
+    gatewayBin!,
+    ["generate-certs", "--output-dir", tls.localTlsDir, "--server-san", address],
+    {
+      encoding: "utf8",
+      killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15_000,
+    },
+  );
+  expect(certificate.status, `${certificate.stdout}\n${certificate.stderr}`).toBe(0);
   const configPath = path.join(stateDir, "gateway.toml");
   fs.writeFileSync(
     configPath,
@@ -161,7 +209,7 @@ export async function runExternalGatewayHealthScenario({
       "version = 1",
       "",
       "[openshell.gateway]",
-      `bind_address = "127.0.0.1:${String(port)}"`,
+      `bind_address = "${address}:${String(port)}"`,
       "compute_drivers = []",
       "disable_tls = false",
       "",
@@ -200,17 +248,45 @@ export async function runExternalGatewayHealthScenario({
   cleanup.add("stop external gateway health gateway", () => stopGateway(gateway));
 
   try {
-    progress.phase("observe public health through the reviewed SDK");
-    const health = await waitForPublicHealth({
-      caCert: fs.readFileSync(tls.caPath),
-      endpoint: `https://127.0.0.1:${String(port)}`,
+    const blueprintRoot = path.join(stateDir, "blueprint");
+    const authenticationPath = path.join(stateDir, "authentication");
+    fs.mkdirSync(blueprintRoot);
+    fs.writeFileSync(authenticationPath, "unused-public-health-credential\n", { mode: 0o600 });
+    fs.writeFileSync(
+      path.join(blueprintRoot, "blueprint.yaml"),
+      YAML.stringify({
+        version: "1.0.0",
+        min_openshell_version: OPENSHELL_V0106_QUALIFICATION.version,
+        max_openshell_version: OPENSHELL_V0106_QUALIFICATION.version,
+        openshell_target: {
+          endpoint: `https://${address}:${String(port)}`,
+          workspace: "default",
+          expected_release: OPENSHELL_V0106_QUALIFICATION.version,
+          lifecycle: "external",
+          trust: { ca_file: tls.caPath },
+          authentication: { credential_file: authenticationPath },
+        },
+      }),
+      { mode: 0o600 },
+    );
+
+    progress.phase("observe public health through the exact Blueprint Runner artifact");
+    await waitForGatewayPort({
+      address,
+      artifacts,
       gateway,
+      port,
     });
-    expect(health.version).toBe(OPENSHELL_V0106_QUALIFICATION.version);
-    expect(health.status).toBe(1);
+    const status = runBlueprintRunnerHealth(blueprintRoot);
+    expect(status.compatibility).toBe("compatible");
+    expect(status.gateway).toEqual({
+      release: OPENSHELL_V0106_QUALIFICATION.version,
+      status: "healthy",
+    });
     await artifacts.writeJson("external-gateway-health.json", {
       expectedRelease: OPENSHELL_V0106_QUALIFICATION.version,
-      reportedRelease: health.version,
+      reportedRelease: OPENSHELL_V0106_QUALIFICATION.version,
+      runner: "dist/lib/blueprint-runner.js",
       status: "healthy",
       transport: "https-explicit-ca",
     });

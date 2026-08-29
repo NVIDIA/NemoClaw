@@ -20,7 +20,10 @@ vi.mock("node:fs", async (importOriginal) => ({
   ...fsMocks,
 }));
 
-import { buildSanitizedExternalOpenShellTargetPlan } from "./openshell-external-target-boundary.cjs";
+import {
+  buildSanitizedExternalOpenShellTargetPlan,
+  withExternalOpenShellTargetCa,
+} from "./openshell-external-target-boundary.cjs";
 
 const CA_FILE = "/var/run/openshell-target/private-ca.pem";
 const AUTHENTICATION_FILE = "/var/run/openshell-target/private-authentication";
@@ -149,6 +152,20 @@ describe("external OpenShell target boundary", () => {
     expect(rendered).not.toContain(AUTHENTICATION_CONTENTS);
     expect(rendered).not.toContain("BEGIN CERTIFICATE");
     expect(rendered).not.toMatch(/mtls|oidc/iu);
+    expect(Object.isFrozen(plan)).toBe(true);
+  });
+
+  it("passes validated CA bytes without reading authentication contents (#9872)", async () => {
+    const result = await withExternalOpenShellTargetCa(
+      externalTarget(),
+      COMPATIBILITY,
+      async (plan, caContents) => ({ plan, caContents }),
+    );
+
+    expect(result.plan.endpoint).toBe("https://openshell.example.test:8443");
+    expect(result.caContents.toString("utf8")).toBe(CA_PEM);
+    expect(readFilePaths).toContain(CA_FILE);
+    expect(readFilePaths).not.toContain(AUTHENTICATION_FILE);
   });
 
   it.each([

@@ -109,7 +109,8 @@ function writeCliArchive(
 ): void {
   const dist = path.join(context.payloadRoot, "dist");
   const shared = path.join(context.payloadRoot, "nemoclaw", "dist", "shared");
-  fs.mkdirSync(dist);
+  fs.mkdirSync(path.join(dist, "lib"), { recursive: true });
+  fs.mkdirSync(path.join(dist, "nemoclaw", "blueprint"), { recursive: true });
   fs.mkdirSync(shared, { recursive: true });
   fs.writeFileSync(
     path.join(dist, "nemoclaw.js"),
@@ -122,7 +123,12 @@ function writeCliArchive(
       sourceRevision: context.buildIdentitySha,
     })}\n`,
   );
+  fs.writeFileSync(path.join(dist, "lib", "blueprint-runner.js"), "export {};\n");
+  fs.writeFileSync(path.join(dist, "nemoclaw", "package.json"), '{"type":"module"}\n');
+  fs.writeFileSync(path.join(dist, "nemoclaw", "blueprint", "runner.js"), "export {};\n");
+  fs.writeFileSync(path.join(shared, "openshell-gateway-health-sdk.js"), "export {};\n");
   for (const boundary of [
+    "openshell-observation-boundary.cjs",
     "openshell-policy-boundary.cjs",
     "sandbox-name.cjs",
     "snapshot-sanitizer-boundary.cjs",
@@ -645,6 +651,17 @@ describe("exact-commit CLI artifact workflow boundary", () => {
           path.join(fixture.workspace, "nemoclaw", "dist", "shared", "sandbox-name.cjs"),
         ),
       ).toBe(true);
+      expect(
+        fs.existsSync(path.join(fixture.workspace, "dist", "lib", "blueprint-runner.js")),
+      ).toBe(true);
+      expect(
+        fs.existsSync(path.join(fixture.workspace, "dist", "nemoclaw", "blueprint", "runner.js")),
+      ).toBe(true);
+      expect(
+        JSON.parse(
+          fs.readFileSync(path.join(fixture.workspace, "dist", "nemoclaw", "package.json"), "utf8"),
+        ),
+      ).toEqual({ type: "module" });
     } finally {
       fixture.cleanup();
     }
@@ -741,6 +758,11 @@ describe("exact-commit CLI artifact workflow boundary", () => {
           path.join(fixture.workspace, "nemoclaw", "dist", "shared", "sandbox-name.cjs"),
         ),
       ).toBe(true);
+      expect(
+        JSON.parse(
+          fs.readFileSync(path.join(fixture.workspace, "dist", "nemoclaw", "package.json"), "utf8"),
+        ),
+      ).toEqual({ type: "module" });
 
       expect(
         fs
@@ -891,7 +913,13 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       CONTENT_ADDRESSED_ARTIFACT_NAME,
       UNBOUND_ARTIFACT_NAME,
     );
-    packageStep.run = packageStep.run!.replace("sandbox-name.cjs", "missing-boundary.cjs");
+    packageStep.run = packageStep
+      .run!.replace("openshell-gateway-health-sdk.js", "missing-gateway-health-sdk.js")
+      .replace("openshell-observation-boundary.cjs", "missing-observation-boundary.cjs")
+      .replace("sandbox-name.cjs", "missing-boundary.cjs");
+    packageStep.run = packageStep
+      .run!.replaceAll("dist/nemoclaw/package.json", "dist/nemoclaw/missing-package.json")
+      .replace('.type == "module"', '.type == "commonjs"');
     const uploadStep = requireStep(workflow, "generate-matrix", CLI_ARTIFACT_PUBLISH_STEP);
     uploadStep.uses = "actions/upload-artifact@v7";
 
@@ -900,7 +928,11 @@ describe("exact-commit CLI artifact workflow boundary", () => {
         "generate-matrix must expose exact cli_artifact_provenance provenance",
         "CLI artifact package step must bind candidate and trusted workflow identities explicitly",
         `CLI artifact package step must contain ${CONTENT_ADDRESSED_ARTIFACT_NAME}`,
+        "CLI artifact package step must contain openshell-gateway-health-sdk.js",
+        "CLI artifact package step must contain openshell-observation-boundary.cjs",
         "CLI artifact package step must contain sandbox-name.cjs",
+        "CLI artifact package step must contain dist/nemoclaw/package.json",
+        'CLI artifact package step must contain .type == "module"',
         "CLI artifact upload must use the immutable content-addressed upload contract",
       ]),
     );

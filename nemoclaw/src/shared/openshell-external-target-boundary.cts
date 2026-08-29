@@ -28,18 +28,23 @@ interface ExternalOpenShellTarget {
 }
 
 export interface OpenShellCompatibilityRange {
-  minVersion: string;
-  maxVersion: string;
+  readonly minVersion: string;
+  readonly maxVersion: string;
 }
 
 export interface SanitizedExternalOpenShellTargetPlan {
-  endpoint: string;
-  workspace: string;
-  expected_release: string;
-  lifecycle: "external";
-  authentication_source: "file";
-  ca_fingerprint: string;
+  readonly endpoint: string;
+  readonly workspace: string;
+  readonly expected_release: string;
+  readonly lifecycle: "external";
+  readonly authentication_source: "file";
+  readonly ca_fingerprint: string;
 }
+
+type ValidatedExternalOpenShellTarget = Readonly<{
+  caContents: Buffer;
+  plan: SanitizedExternalOpenShellTargetPlan;
+}>;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -307,10 +312,10 @@ function validateCaBundle(contents: Buffer): readonly Buffer[] {
  * Validate one explicit external target and return only its non-secret identity.
  * File paths remain inside this boundary, and authentication contents are not read.
  */
-export function buildSanitizedExternalOpenShellTargetPlan(
+function validateExternalOpenShellTarget(
   value: unknown,
   compatibility: OpenShellCompatibilityRange,
-): SanitizedExternalOpenShellTargetPlan {
+): ValidatedExternalOpenShellTarget {
   const target = parseTarget(value);
   assertCompatibleRelease(target.expected_release, compatibility);
 
@@ -328,11 +333,34 @@ export function buildSanitizedExternalOpenShellTargetPlan(
     caFingerprint.update(certificate);
   }
   return {
-    endpoint: target.endpoint,
-    workspace: target.workspace,
-    expected_release: target.expected_release,
-    lifecycle: "external",
-    authentication_source: "file",
-    ca_fingerprint: `sha256:${caFingerprint.digest("hex")}`,
+    caContents,
+    plan: Object.freeze({
+      endpoint: target.endpoint,
+      workspace: target.workspace,
+      expected_release: target.expected_release,
+      lifecycle: "external",
+      authentication_source: "file",
+      ca_fingerprint: `sha256:${caFingerprint.digest("hex")}`,
+    }),
   };
+}
+
+export function buildSanitizedExternalOpenShellTargetPlan(
+  value: unknown,
+  compatibility: OpenShellCompatibilityRange,
+): SanitizedExternalOpenShellTargetPlan {
+  return validateExternalOpenShellTarget(value, compatibility).plan;
+}
+
+/**
+ * Give one caller the validated CA bytes without exposing either input path.
+ * Authentication contents remain unread because this boundary inspects only their file metadata.
+ */
+export async function withExternalOpenShellTargetCa<T>(
+  value: unknown,
+  compatibility: OpenShellCompatibilityRange,
+  useTarget: (plan: SanitizedExternalOpenShellTargetPlan, caContents: Buffer) => Promise<T>,
+): Promise<T> {
+  const validated = validateExternalOpenShellTarget(value, compatibility);
+  return useTarget(validated.plan, Buffer.from(validated.caContents));
 }

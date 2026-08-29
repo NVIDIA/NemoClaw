@@ -17,7 +17,10 @@ const stdoutCapture = createStdoutCapture();
 const mockExeca = vi.fn();
 const externalTargetBoundaryMocks = vi.hoisted(() => ({
   buildSanitizedExternalOpenShellTargetPlan: vi.fn(),
+  withExternalOpenShellTargetCa: vi.fn(),
 }));
+const observeHealth = vi.fn();
+const gatewayHealthObserver = { observeHealth };
 
 vi.mock("node:os", () => ({ homedir: () => FAKE_HOME }));
 
@@ -87,6 +90,10 @@ function seedExternalTarget(): void {
   addFile("blueprint.yaml", YAML.stringify(externalTargetBlueprint()));
 }
 
+function runMain(argv: string[]): Promise<void> {
+  return main(argv, { gatewayHealthObserver });
+}
+
 describe("Blueprint Runner external OpenShell target", () => {
   beforeEach(() => {
     store.clear();
@@ -96,6 +103,14 @@ describe("Blueprint Runner external OpenShell target", () => {
     externalTargetBoundaryMocks.buildSanitizedExternalOpenShellTargetPlan.mockReturnValue(
       SANITIZED_TARGET_PLAN,
     );
+    externalTargetBoundaryMocks.withExternalOpenShellTargetCa.mockImplementation(
+      async (_target, _compatibility, useTarget) =>
+        useTarget(SANITIZED_TARGET_PLAN, Buffer.from("public-ca-certificate")),
+    );
+    observeHealth.mockResolvedValue({
+      ok: true,
+      value: { status: "healthy", release: "0.0.106" },
+    });
     delete process.env.NEMOCLAW_BLUEPRINT_PATH;
     vi.spyOn(process.stdout, "write").mockImplementation(stdoutCapture.write);
   });
@@ -109,7 +124,7 @@ describe("Blueprint Runner external OpenShell target", () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_MANAGEMENT", "/private/ambient-gateway-management.json");
     seedExternalTarget();
 
-    await main(["plan", "--dry-run"]);
+    await runMain(["plan", "--dry-run"]);
 
     expect(stdoutCapture.jsonOutput()).toEqual({
       run_id: expect.stringMatching(/^nc-/),
@@ -136,7 +151,7 @@ describe("Blueprint Runner external OpenShell target", () => {
   it("rejects apply before any subprocess or run-state effect (#9872)", async () => {
     seedExternalTarget();
 
-    await expect(main(["apply"])).rejects.toThrow(
+    await expect(runMain(["apply"])).rejects.toThrow(
       /External OpenShell target apply is not available/,
     );
 
@@ -146,11 +161,70 @@ describe("Blueprint Runner external OpenShell target", () => {
     expect([...store.keys()].join("\n")).not.toContain("plan.json");
   });
 
+  it("reports explicit public gateway health without ambient or authentication access (#9872)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient-gateway.invalid");
+    vi.stubEnv("NEMOCLAW_GATEWAY_MANAGEMENT", "/private/ambient-gateway-management.json");
+    seedExternalTarget();
+
+    await runMain(["status", "--external-target"]);
+
+    expect(stdoutCapture.jsonOutput()).toEqual({
+      run_id: expect.stringMatching(/^nc-/),
+      openshell_target: SANITIZED_TARGET_PLAN,
+      gateway: { status: "healthy", release: "0.0.106" },
+      compatibility: "compatible",
+    });
+    expect(externalTargetBoundaryMocks.withExternalOpenShellTargetCa).toHaveBeenCalledWith(
+      externalTargetBlueprint().openshell_target as Record<string, unknown>,
+      { minVersion: "0.0.106", maxVersion: "0.0.106" },
+      expect.any(Function),
+    );
+    expect(observeHealth).toHaveBeenCalledWith({
+      target: SANITIZED_TARGET_PLAN,
+      caBundle: Uint8Array.from(Buffer.from("public-ca-certificate")),
+      timeoutMs: 5_000,
+    });
+    expect(mockExeca).not.toHaveBeenCalled();
+    expect(mockedValidateEndpoint).not.toHaveBeenCalled();
+    const output = stdoutCapture.text();
+    expect(output).not.toContain(EXTERNAL_CA_FILE);
+    expect(output).not.toContain(EXTERNAL_AUTHENTICATION_FILE);
+    expect(output).not.toContain("ambient-gateway");
+  });
+
+  it("fails closed when the root OpenShell observer is not injected (#9872)", async () => {
+    seedExternalTarget();
+
+    await expect(main(["status", "--external-target"])).rejects.toThrow(
+      "The external OpenShell gateway observer is unavailable.",
+    );
+
+    expect(observeHealth).not.toHaveBeenCalled();
+    expect(externalTargetBoundaryMocks.withExternalOpenShellTargetCa).not.toHaveBeenCalled();
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["run receipt", ["status", "--external-target", "--run-id", "existing"]],
+    ["managed profile", ["status", "--external-target", "--profile", "default"]],
+    ["another action", ["plan", "--external-target"]],
+  ])(
+    "rejects external status with %s options before the health call (#9872)",
+    async (_name, argv) => {
+      seedExternalTarget();
+
+      await expect(runMain(argv)).rejects.toThrow();
+
+      expect(observeHealth).not.toHaveBeenCalled();
+      expect(mockExeca).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects an inference endpoint override before any effect (#9872)", async () => {
     seedExternalTarget();
 
     await expect(
-      main(["plan", "--endpoint-url", "https://override.example.test/v1"]),
+      runMain(["plan", "--endpoint-url", "https://override.example.test/v1"]),
     ).rejects.toThrow(/--endpoint-url configures inference/);
 
     expect(mockExeca).not.toHaveBeenCalled();
@@ -167,7 +241,7 @@ describe("Blueprint Runner external OpenShell target", () => {
     async (field, value) => {
       addFile("blueprint.yaml", YAML.stringify({ ...externalTargetBlueprint(), ...value }));
 
-      await expect(main(["plan"])).rejects.toThrow(
+      await expect(runMain(["plan"])).rejects.toThrow(
         `External OpenShell target planning does not accept '${field}'.`,
       );
 
@@ -183,7 +257,7 @@ describe("Blueprint Runner external OpenShell target", () => {
   it("rejects an explicit inference profile before any effect (#9872)", async () => {
     seedExternalTarget();
 
-    await expect(main(["plan", "--profile", "default"])).rejects.toThrow(
+    await expect(runMain(["plan", "--profile", "default"])).rejects.toThrow(
       "--profile configures managed inference and is not accepted by external target-only planning.",
     );
 
@@ -208,7 +282,7 @@ describe("Blueprint Runner external OpenShell target", () => {
       },
     );
 
-    await expect(main(["plan"])).rejects.toThrow(
+    await expect(runMain(["plan"])).rejects.toThrow(
       "external OpenShell target endpoint port must be between 1 and 65535",
     );
 

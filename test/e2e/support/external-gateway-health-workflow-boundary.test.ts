@@ -5,13 +5,37 @@ import { describe, expect, it } from "vitest";
 
 import {
   readExternalGatewayHealthWorkflow,
+  validateExternalGatewayHealthHelper,
   validateExternalGatewayHealthWorkflow,
   validateExternalGatewayHealthWorkflowBoundary,
 } from "../../../tools/e2e/external-gateway-health-workflow-boundary.mts";
+import { readRepoText } from "../../helpers/e2e-workflow-contract";
 
 describe("external gateway health workflow boundary", () => {
   it("accepts the checked-in trusted package and live-test contract", () => {
     expect(validateExternalGatewayHealthWorkflowBoundary()).toEqual([]);
+  });
+
+  it("rejects a helper that bypasses the exact Runner or weakens its live boundary", () => {
+    const source = readRepoText("test/e2e/live/external-gateway-health-helpers.ts")
+      .replace('"--external-target"', '"--managed-target"')
+      .replace("const address = externalHostAddress();", 'const address = "127.0.0.1";')
+      .replace("maxAttempts: 10,", "maxAttempts: 100,")
+      .replace(
+        'runner: "dist/lib/blueprint-runner.js"',
+        'runner: "test/e2e/live/external-gateway-health-helpers.ts"',
+      )
+      .replace("artifacts.addRedactionValues([stateDir]);", "")
+      .concat('\nimport "@nvidia/openshell-sdk";\n');
+
+    expect(validateExternalGatewayHealthHelper(source)).toEqual([
+      "external gateway health helper must run exact Blueprint Runner external status",
+      "external gateway health helper must bind the gateway certificate to a non-loopback address",
+      "external gateway health helper must retain the bounded readiness retry",
+      "external gateway health helper must record the exact Runner artifact identity",
+      "external gateway health helper must redact its private fixture path",
+      "external gateway health helper must not bypass the Runner with a direct SDK import",
+    ]);
   });
 
   it("rejects package credentials or untrusted candidate execution in the package job", () => {

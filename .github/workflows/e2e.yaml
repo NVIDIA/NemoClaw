@@ -770,11 +770,18 @@ jobs:
             { echo "::error::checked-out commit does not match the artifact candidate SHA"; exit 1; }
           [[ "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ && "$RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
             { echo "::error::workflow run identity is invalid"; exit 1; }
-          for required_file in dist/nemoclaw.js dist/build-identity.json; do
+          for required_file in \
+            dist/nemoclaw.js \
+            dist/build-identity.json \
+            dist/lib/blueprint-runner.js \
+            dist/nemoclaw/package.json \
+            dist/nemoclaw/blueprint/runner.js; do
             [[ -f "$required_file" && ! -L "$required_file" && -s "$required_file" ]] ||
               { echo "::error::candidate CLI build output is missing or is not a nonempty regular file: $required_file"; exit 1; }
           done
           for boundary in \
+            openshell-gateway-health-sdk.js \
+            openshell-observation-boundary.cjs \
             openshell-policy-boundary.cjs \
             sandbox-name.cjs \
             snapshot-sanitizer-boundary.cjs; do
@@ -790,6 +797,12 @@ jobs:
             .sourceRevision == $candidateSha
           ' dist/build-identity.json >/dev/null ||
             { echo "::error::candidate CLI build identity does not match the candidate commit SHA"; exit 1; }
+          jq -e '
+            type == "object" and
+            (keys | sort) == ["type"] and
+            .type == "module"
+          ' dist/nemoclaw/package.json >/dev/null ||
+            { echo "::error::candidate Blueprint Runner module boundary is invalid"; exit 1; }
 
           # BEGIN exact managed-image catalog staging
           managed_catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"
@@ -3400,7 +3413,7 @@ jobs:
       E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "external-gateway-health"
       E2E_AGENT_RUNTIME: "none"
-      E2E_OBSERVABLE_OUTCOME: "The reviewed SDK observes exact public gateway health over explicit HTTPS and CA"
+      E2E_OBSERVABLE_OUTCOME: "The exact Blueprint Runner observes public gateway health over explicit HTTPS and CA"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu host with OpenShell 0.0.106; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/external-gateway-health
       NEMOCLAW_RUN_LIVE_E2E: "1"

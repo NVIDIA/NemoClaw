@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
-import { execFileSync, spawnSync, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,10 +12,13 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 const REPOSITORY_ROOT = path.join(import.meta.dirname, "..", "..");
-const PLUGIN_SOURCE = path.join(REPOSITORY_ROOT, "nemoclaw");
+const OPENSHELL_SDK_PACKAGE = "@nvidia/openshell-sdk";
 const PRIVATE_AUTHENTICATION_CONTENTS = "opaque-private-authentication-material";
 const PRIVATE_AMBIENT_CONTENTS = "opaque-ambient-gateway-material";
+const PRIVATE_ENTRY_SECRET = `nvapi-${"A".repeat(64)}`;
 const CA_PEM = rootCertificates[0]!;
+const UNSAFE_DIAGNOSTIC_CHARACTERS =
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/u;
 
 function commandOutput(result: SpawnSyncReturns<string>): string {
   return `${result.stdout ?? ""}${result.stderr ?? ""}`;
@@ -23,6 +26,11 @@ function commandOutput(result: SpawnSyncReturns<string>): string {
 
 function assertCommandSucceeded(result: SpawnSyncReturns<string>, label: string): void {
   expect(result.status, `${label} failed:\n${commandOutput(result)}`).toBe(0);
+}
+
+function expectStableSingleLineDiagnostic(stderr: string): void {
+  expect(stderr.endsWith("\n")).toBe(true);
+  expect(stderr.slice(0, -1)).not.toMatch(UNSAFE_DIAGNOSTIC_CHARACTERS);
 }
 
 function npmEnvironment(): NodeJS.ProcessEnv {
@@ -34,6 +42,19 @@ function npmEnvironment(): NodeJS.ProcessEnv {
   };
 }
 
+function packagePath(root: string, packageName: string): string {
+  return path.join(root, "node_modules", ...packageName.split("/"));
+}
+
+function installedPackageIdentity(
+  installRoot: string,
+  packageName: string,
+): Readonly<{ name: unknown; version: unknown }> {
+  const manifestPath = path.join(packagePath(installRoot, packageName), "package.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+  return { name: manifest.name, version: manifest.version };
+}
+
 function writeRuntimeProbe(probePath: string): void {
   fs.writeFileSync(
     probePath,
@@ -42,19 +63,27 @@ import childProcess from "node:child_process";
 import dns from "node:dns";
 import fs from "node:fs";
 import http from "node:http";
+import http2 from "node:http2";
 import https from "node:https";
 import { syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
-import { pathToFileURL } from "node:url";
 
-const [runnerPath, blueprintRoot, ambientRoot, credentialPath] = process.argv.slice(2);
 const effects = [];
+const ambientPrefix = path.resolve(process.env.NEMOCLAW_TEST_AMBIENT_ROOT) + path.sep;
+const credentialPath = path.resolve(process.env.NEMOCLAW_TEST_AUTHENTICATION_FILE);
+const evidencePath = path.resolve(process.env.NEMOCLAW_TEST_EVIDENCE_FILE);
+const originalWriteFileSync = fs.writeFileSync;
+const credentialDescriptors = new Set();
 const forbid = (kind) => (..._args) => {
   effects.push(kind);
   throw new Error("forbidden packaged-runner effect");
 };
+
+process.on("exit", () => {
+  originalWriteFileSync(evidencePath, JSON.stringify({ effects }));
+});
 
 for (const name of ["exec", "execFile", "execFileSync", "execSync", "fork", "spawn", "spawnSync"]) {
   childProcess[name] = forbid("subprocess");
@@ -64,31 +93,28 @@ for (const name of ["lookup", "resolve", "resolve4", "resolve6", "resolveAny"]) 
 }
 http.get = forbid("network");
 http.request = forbid("network");
+http2.connect = forbid("network");
 https.get = forbid("network");
 https.request = forbid("network");
 net.Socket.prototype.connect = forbid("network");
 tls.connect = forbid("network");
 globalThis.fetch = forbid("network");
 
-const ambientPrefix = path.resolve(ambientRoot) + path.sep;
-const resolvedCredentialPath = path.resolve(credentialPath);
-const credentialDescriptors = new Set();
-const originalReaders = new Map();
 for (const name of ["accessSync", "lstatSync", "readdirSync", "statSync"]) {
-  originalReaders.set(name, fs[name]);
+  const original = fs[name];
   fs[name] = (...args) => {
     const candidate = args[0];
     if (typeof candidate === "string" && path.resolve(candidate).startsWith(ambientPrefix)) {
       effects.push("ambient-gateway-read");
       throw new Error("forbidden ambient gateway read");
     }
-    return originalReaders.get(name)(...args);
+    return original(...args);
   };
 }
 const originalOpenSync = fs.openSync;
 fs.openSync = (...args) => {
   const descriptor = originalOpenSync(...args);
-  if (typeof args[0] === "string" && path.resolve(args[0]) === resolvedCredentialPath) {
+  if (typeof args[0] === "string" && path.resolve(args[0]) === credentialPath) {
     credentialDescriptors.add(descriptor);
   }
   return descriptor;
@@ -101,7 +127,7 @@ fs.closeSync = (descriptor) => {
 const originalReadFileSync = fs.readFileSync;
 fs.readFileSync = (...args) => {
   const candidate = args[0];
-  if (typeof candidate === "string" && path.resolve(candidate) === resolvedCredentialPath) {
+  if (typeof candidate === "string" && path.resolve(candidate) === credentialPath) {
     effects.push("authentication-content-read");
     throw new Error("forbidden authentication content read");
   }
@@ -138,131 +164,130 @@ for (const name of [
   fs[name] = forbid("local-mutation");
 }
 syncBuiltinESMExports();
-
-process.env.HOME = ambientRoot;
-process.env.XDG_CONFIG_HOME = path.join(ambientRoot, ".config");
-process.env.NEMOCLAW_BLUEPRINT_PATH = blueprintRoot;
-
-const runnerUrl = pathToFileURL(runnerPath).href;
-const runner = await import(runnerUrl);
-let planOutput = "";
-const originalWrite = process.stdout.write.bind(process.stdout);
-process.stdout.write = (chunk) => {
-  planOutput += String(chunk);
-  return true;
-};
-
-let applyError = "";
-try {
-  await runner.main(["plan"]);
-  try {
-    await runner.main(["apply"]);
-  } catch (error) {
-    applyError = error instanceof Error ? error.message : String(error);
-  }
-} finally {
-  process.stdout.write = originalWrite;
-}
-
-originalWrite(JSON.stringify({ applyError, effects, planOutput, runnerUrl }));
 `,
   );
 }
 
+type ProbeEvidence = Readonly<{
+  effects: string[];
+}>;
+
 describe("packaged Blueprint Runner external target", () => {
   it(
-    "builds cleanly and denies network, subprocess, ambient gateway state, credential-content, and filesystem-mutation effects during target-only planning (#9872)",
-    {
-      timeout: 240_000,
-    },
+    "executes the root package entry point and fails before effects when the SDK is absent (#9872)",
+    { timeout: 240_000 },
     () => {
       const fixtureRoot = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-external-target-package-"),
       );
-      const sourcePackage = path.join(fixtureRoot, "source-package");
       const archiveRoot = path.join(fixtureRoot, "archive");
-      const extractedRoot = path.join(fixtureRoot, "extracted");
+      const installRoot = path.join(fixtureRoot, "install");
       const runtimeRoot = path.join(fixtureRoot, "runtime");
       const blueprintRoot = path.join(runtimeRoot, "blueprint");
       const privateRoot = path.join(runtimeRoot, "private-inputs");
       const ambientRoot = path.join(runtimeRoot, "ambient-home");
       const privateCaPath = path.join(privateRoot, "private-ca.pem");
       const privateAuthenticationPath = path.join(privateRoot, "private-authentication");
+      const evidencePath = path.join(runtimeRoot, "probe-evidence.json");
 
       try {
-        fs.mkdirSync(sourcePackage, { recursive: true });
-        fs.copyFileSync(
-          path.join(PLUGIN_SOURCE, "package.json"),
-          path.join(sourcePackage, "package.json"),
-        );
-        fs.copyFileSync(
-          path.join(PLUGIN_SOURCE, "package-lock.json"),
-          path.join(sourcePackage, "package-lock.json"),
-        );
-        fs.copyFileSync(
-          path.join(PLUGIN_SOURCE, "tsconfig.json"),
-          path.join(sourcePackage, "tsconfig.json"),
-        );
-        fs.copyFileSync(
-          path.join(PLUGIN_SOURCE, "tsconfig.shared.json"),
-          path.join(sourcePackage, "tsconfig.shared.json"),
-        );
-        fs.cpSync(path.join(PLUGIN_SOURCE, "src"), path.join(sourcePackage, "src"), {
-          recursive: true,
-        });
-        expect(fs.existsSync(path.join(sourcePackage, "dist"))).toBe(false);
-
-        const installBuildDependencies = spawnSync("npm", ["ci", "--ignore-scripts", "--offline"], {
-          cwd: sourcePackage,
-          encoding: "utf8",
-          env: npmEnvironment(),
-        });
-        assertCommandSucceeded(installBuildDependencies, "offline clean-build dependency install");
-
-        const build = spawnSync("npm", ["run", "build"], {
-          cwd: sourcePackage,
-          encoding: "utf8",
-          env: npmEnvironment(),
-        });
-        assertCommandSucceeded(build, "clean package build");
-        expect(fs.existsSync(path.join(sourcePackage, "dist", "blueprint", "runner.js"))).toBe(
-          true,
-        );
-
         fs.mkdirSync(archiveRoot, { recursive: true });
         const pack = spawnSync(
           "npm",
           ["pack", "--ignore-scripts", "--silent", "--pack-destination", archiveRoot],
-          { cwd: sourcePackage, encoding: "utf8", env: npmEnvironment() },
+          { cwd: REPOSITORY_ROOT, encoding: "utf8", env: npmEnvironment() },
         );
-        assertCommandSucceeded(pack, "package archive creation");
+        assertCommandSucceeded(pack, "root package archive creation");
         const archives = fs.readdirSync(archiveRoot).filter((entry) => entry.endsWith(".tgz"));
         expect(archives).toHaveLength(1);
+        const archive = path.join(archiveRoot, archives[0]!);
 
-        fs.mkdirSync(extractedRoot, { recursive: true });
-        execFileSync("tar", ["-xzf", path.join(archiveRoot, archives[0]!), "-C", extractedRoot]);
-        const installedPackage = path.join(extractedRoot, "package");
-        const installedRunner = path.join(installedPackage, "dist", "blueprint", "runner.js");
-        expect(fs.existsSync(installedRunner)).toBe(true);
-        expect(fs.existsSync(path.join(installedPackage, "src"))).toBe(false);
-
-        const pruneBuildDependencies = spawnSync(
+        fs.mkdirSync(installRoot, { recursive: true });
+        const install = spawnSync(
           "npm",
-          ["prune", "--omit=dev", "--ignore-scripts", "--offline"],
-          { cwd: sourcePackage, encoding: "utf8", env: npmEnvironment() },
+          ["install", "--ignore-scripts", "--offline", "--omit=dev", archive],
+          { cwd: installRoot, encoding: "utf8", env: npmEnvironment() },
         );
-        assertCommandSucceeded(pruneBuildDependencies, "offline production dependency pruning");
-        fs.cpSync(
-          path.join(sourcePackage, "node_modules"),
-          path.join(installedPackage, "node_modules"),
-          { recursive: true },
+        assertCommandSucceeded(install, "ordinary installation with the reviewed Runner graph");
+
+        const installedPackage = packagePath(installRoot, "nemoclaw");
+        const installedRunner = path.join(
+          installedPackage,
+          "nemoclaw",
+          "dist",
+          "blueprint",
+          "runner.js",
         );
-        fs.rmSync(sourcePackage, { recursive: true, force: true });
+        const installedRuntimeRunner = path.join(
+          installedPackage,
+          "dist",
+          "nemoclaw",
+          "blueprint",
+          "runner.js",
+        );
+        const installedRootObserver = path.join(
+          installedPackage,
+          "dist",
+          "lib",
+          "adapters",
+          "openshell",
+          "sandbox-observer.js",
+        );
+        const installedSdkObserver = path.join(
+          installedPackage,
+          "dist",
+          "nemoclaw",
+          "shared",
+          "openshell-gateway-health-sdk.js",
+        );
+        const installedBinary = path.join(
+          installRoot,
+          "node_modules",
+          ".bin",
+          "nemoclaw-blueprint-runner",
+        );
+        expect(fs.existsSync(installedRunner)).toBe(true);
+        expect(fs.existsSync(installedRootObserver)).toBe(true);
+        expect(fs.existsSync(installedSdkObserver)).toBe(true);
+        expect(fs.realpathSync(installedBinary)).toBe(
+          fs.realpathSync(path.join(installedPackage, "dist", "lib", "blueprint-runner.js")),
+        );
+        expect(fs.existsSync(path.join(installedPackage, "nemoclaw", "src"))).toBe(false);
+        expect(fs.existsSync(installedRuntimeRunner)).toBe(true);
         expect(
-          fs
-            .realpathSync(path.join(installedPackage, "node_modules", "execa"))
-            .startsWith(`${fs.realpathSync(installedPackage)}${path.sep}`),
-        ).toBe(true);
+          JSON.parse(
+            fs.readFileSync(
+              path.join(installedPackage, "dist", "nemoclaw", "package.json"),
+              "utf8",
+            ),
+          ),
+        ).toEqual({ type: "module" });
+        expect(installedPackageIdentity(installRoot, "@bufbuild/protobuf")).toEqual({
+          name: "@bufbuild/protobuf",
+          version: "2.12.1",
+        });
+        expect(installedPackageIdentity(installRoot, "@connectrpc/connect")).toEqual({
+          name: "@connectrpc/connect",
+          version: "2.1.2",
+        });
+        expect(installedPackageIdentity(installRoot, "@connectrpc/connect-node")).toEqual({
+          name: "@connectrpc/connect-node",
+          version: "2.1.2",
+        });
+        expect(installedPackageIdentity(installRoot, OPENSHELL_SDK_PACKAGE)).toEqual({
+          name: OPENSHELL_SDK_PACKAGE,
+          version: "0.0.106",
+        });
+        const installedSdkRoot = packagePath(installRoot, OPENSHELL_SDK_PACKAGE);
+        expect(
+          fs.existsSync(path.join(installedSdkRoot, "node_modules", "@bufbuild", "protobuf")),
+        ).toBe(false);
+        expect(
+          fs.existsSync(path.join(installedSdkRoot, "node_modules", "@connectrpc", "connect")),
+        ).toBe(false);
+        expect(
+          fs.existsSync(path.join(installedSdkRoot, "node_modules", "@connectrpc", "connect-node")),
+        ).toBe(false);
 
         fs.mkdirSync(blueprintRoot, { recursive: true });
         fs.mkdirSync(privateRoot, { recursive: true });
@@ -273,66 +298,152 @@ describe("packaged Blueprint Runner external target", () => {
           path.join(ambientRoot, ".config", "openshell", "gateway.env"),
           PRIVATE_AMBIENT_CONTENTS,
         );
-        fs.writeFileSync(
-          path.join(blueprintRoot, "blueprint.yaml"),
-          YAML.stringify({
-            version: "1.0.0",
-            min_openshell_version: "0.0.106",
-            max_openshell_version: "0.0.106",
-            openshell_target: {
-              endpoint: "https://openshell.example.test:8443",
-              workspace: "default",
-              expected_release: "0.0.106",
-              lifecycle: "external",
-              trust: { ca_file: privateCaPath },
-              authentication: { credential_file: privateAuthenticationPath },
-            },
-          }),
-        );
-
-        const probePath = path.join(runtimeRoot, "probe.mjs");
-        writeRuntimeProbe(probePath);
-        const probe = spawnSync(
-          process.execPath,
-          [probePath, installedRunner, blueprintRoot, ambientRoot, privateAuthenticationPath],
-          {
-            cwd: runtimeRoot,
-            encoding: "utf8",
-            env: { ...process.env, NODE_OPTIONS: "", NODE_PATH: "" },
+        const blueprintFile = path.join(blueprintRoot, "blueprint.yaml");
+        const validBlueprint = YAML.stringify({
+          version: "1.0.0",
+          min_openshell_version: "0.0.106",
+          max_openshell_version: "0.0.106",
+          openshell_target: {
+            endpoint: "https://192.0.2.1:8443",
+            workspace: "default",
+            expected_release: "0.0.106",
+            lifecycle: "external",
+            trust: { ca_file: privateCaPath },
+            authentication: { credential_file: privateAuthenticationPath },
           },
-        );
+        });
+        fs.writeFileSync(blueprintFile, validBlueprint);
+
+        const probePath = path.join(installedPackage, "runtime-probe.mjs");
+        writeRuntimeProbe(probePath);
         const privateValues = [
+          fixtureRoot,
           privateCaPath,
           privateAuthenticationPath,
           PRIVATE_AUTHENTICATION_CONTENTS,
           PRIVATE_AMBIENT_CONTENTS,
+          PRIVATE_ENTRY_SECRET,
           "BEGIN CERTIFICATE",
         ];
-        const safeProbeDiagnostics = privateValues.reduce(
-          (output, value) => output.replaceAll(value, "[redacted]"),
-          commandOutput(probe),
-        );
-        expect(probe.status, `packaged runner probe failed:\n${safeProbeDiagnostics}`).toBe(0);
-
-        const result = JSON.parse(probe.stdout) as {
-          applyError: string;
-          effects: string[];
-          planOutput: string;
-          runnerUrl: string;
+        const runRunner = (argv: string[]) => {
+          fs.rmSync(evidencePath, { force: true });
+          const result = spawnSync(installedBinary, argv, {
+            cwd: runtimeRoot,
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              HOME: ambientRoot,
+              NODE_OPTIONS: `--import=${probePath}`,
+              NEMOCLAW_BLUEPRINT_PATH: blueprintRoot,
+              NEMOCLAW_TEST_AMBIENT_ROOT: ambientRoot,
+              NEMOCLAW_TEST_AUTHENTICATION_FILE: privateAuthenticationPath,
+              NEMOCLAW_TEST_EVIDENCE_FILE: evidencePath,
+              XDG_CONFIG_HOME: path.join(ambientRoot, ".config"),
+            },
+          });
+          const safeDiagnostics = privateValues.reduce(
+            (output, value) => output.replaceAll(value, "[redacted]"),
+            commandOutput(result),
+          );
+          expect(
+            fs.existsSync(evidencePath),
+            `packaged runner did not write probe evidence:\n${safeDiagnostics}`,
+          ).toBe(true);
+          const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8")) as ProbeEvidence;
+          return { evidence, result, safeDiagnostics };
         };
-        expect(result.runnerUrl.startsWith("file://" + installedPackage)).toBe(true);
-        expect(result.effects).toEqual([]);
-        expect(result.applyError).toBe(
-          "External OpenShell target apply is not available until typed readiness and inventory are implemented.",
-        );
 
-        const planStart = result.planOutput.indexOf("{");
+        const hiddenBlueprint = `${blueprintFile}.hidden`;
+        fs.renameSync(blueprintFile, hiddenBlueprint);
+        const missingBlueprint = runRunner(["status", "--external-target"]);
+        fs.renameSync(hiddenBlueprint, blueprintFile);
+        expect(missingBlueprint.result.status, missingBlueprint.safeDiagnostics).toBe(1);
+        expect(missingBlueprint.result.stderr).toContain("blueprint.yaml not found");
+        expect(missingBlueprint.result.stderr).not.toContain(blueprintRoot);
+        expectStableSingleLineDiagnostic(missingBlueprint.result.stderr);
+        expect(missingBlueprint.evidence).toEqual({ effects: [] });
+
+        fs.writeFileSync(
+          blueprintFile,
+          `openshell_target:\n  trust:\n    ca_file: [${privateCaPath}\u001b[31m`,
+        );
+        const malformedBlueprint = runRunner(["status", "--external-target"]);
+        expect(malformedBlueprint.result.status, malformedBlueprint.safeDiagnostics).toBe(1);
+        expect(malformedBlueprint.result.stderr).toContain("blueprint.yaml contains invalid YAML");
+        expect(malformedBlueprint.result.stderr).not.toContain(privateCaPath);
+        expectStableSingleLineDiagnostic(malformedBlueprint.result.stderr);
+        expect(malformedBlueprint.evidence).toEqual({ effects: [] });
+
+        fs.writeFileSync(blueprintFile, privateCaPath);
+        const invalidBlueprint = runRunner(["status", "--external-target"]);
+        expect(invalidBlueprint.result.status, invalidBlueprint.safeDiagnostics).toBe(1);
+        expect(invalidBlueprint.result.stderr).toContain(
+          "blueprint.yaml must contain a YAML mapping with valid nested component shapes",
+        );
+        expect(invalidBlueprint.result.stderr).not.toContain(privateCaPath);
+        expectStableSingleLineDiagnostic(invalidBlueprint.result.stderr);
+        expect(invalidBlueprint.evidence).toEqual({ effects: [] });
+
+        fs.writeFileSync(blueprintFile, validBlueprint);
+        const invalidAction = runRunner([`\u001b[31m${privateCaPath}\u202e`]);
+        expect(invalidAction.result.status, invalidAction.safeDiagnostics).toBe(1);
+        expect(invalidAction.result.stderr).toContain(
+          "Unknown action. Use: plan, apply, status, reconcile, rollback, snapshots",
+        );
+        expect(invalidAction.result.stderr).not.toContain(privateCaPath);
+        expectStableSingleLineDiagnostic(invalidAction.result.stderr);
+        expect(invalidAction.evidence).toEqual({ effects: [] });
+
+        const installedRunnerSource = fs.readFileSync(installedRuntimeRunner, "utf8");
+        const boundedEntryDiagnostic = (() => {
+          try {
+            const unsafeDetail = `api_key=${PRIVATE_ENTRY_SECRET}\u001b[31m\u202e\n${"x".repeat(5_000)}`;
+            fs.writeFileSync(
+              installedRuntimeRunner,
+              `export async function main() { throw new Error(${JSON.stringify(unsafeDetail)}); }\n`,
+            );
+            return runRunner(["status", "--external-target"]);
+          } finally {
+            fs.writeFileSync(installedRuntimeRunner, installedRunnerSource);
+          }
+        })();
+        expect(boundedEntryDiagnostic.result.status, boundedEntryDiagnostic.safeDiagnostics).toBe(
+          1,
+        );
+        expect(boundedEntryDiagnostic.result.stderr).toContain("<REDACTED>");
+        expect(boundedEntryDiagnostic.result.stderr).not.toContain(PRIVATE_ENTRY_SECRET);
+        expect(boundedEntryDiagnostic.result.stderr.length).toBeLessThanOrEqual(1_032);
+        expectStableSingleLineDiagnostic(boundedEntryDiagnostic.result.stderr);
+        expect(boundedEntryDiagnostic.evidence).toEqual({ effects: [] });
+
+        const installedSdk = packagePath(installRoot, OPENSHELL_SDK_PACKAGE);
+        const disabledSdk = `${installedSdk}.disabled`;
+        fs.renameSync(installedSdk, disabledSdk);
+        const absentStatus = runRunner(["status", "--external-target"]);
+        fs.renameSync(disabledSdk, installedSdk);
+        expect(absentStatus.result.status, absentStatus.safeDiagnostics).toBe(1);
+        expect(absentStatus.result.stderr).toContain(
+          "The approved OpenShell SDK 0.0.106 is unavailable.",
+        );
+        expect(absentStatus.result.stderr).not.toContain("NemoClaw could not reach");
+        expect(absentStatus.evidence).toEqual({ effects: [] });
+
+        const presentStatus = runRunner(["status", "--external-target"]);
+        expect(presentStatus.result.status, presentStatus.safeDiagnostics).toBe(1);
+        expect(presentStatus.result.stderr).toContain(
+          "NemoClaw could not reach the external OpenShell target.",
+        );
+        expect(presentStatus.evidence).toEqual({ effects: ["network"] });
+
+        const plan = runRunner(["plan"]);
+        expect(plan.result.status, plan.safeDiagnostics).toBe(0);
+        expect(plan.evidence.effects).toEqual([]);
+        const planStart = plan.result.stdout.indexOf("{");
         expect(planStart).toBeGreaterThan(-1);
-        const plan = JSON.parse(result.planOutput.slice(planStart)) as Record<string, unknown>;
-        expect(plan).toEqual({
+        expect(JSON.parse(plan.result.stdout.slice(planStart))).toEqual({
           run_id: expect.stringMatching(/^nc-\d{8}-\d{6}-[0-9a-f]{8}$/u),
           openshell_target: {
-            endpoint: "https://openshell.example.test:8443",
+            endpoint: "https://192.0.2.1:8443",
             workspace: "default",
             expected_release: "0.0.106",
             lifecycle: "external",
@@ -343,7 +454,34 @@ describe("packaged Blueprint Runner external target", () => {
           },
           dry_run: false,
         });
-        const publicOutput = `${result.planOutput}\n${result.applyError}`;
+
+        const apply = runRunner(["apply"]);
+        expect(apply.result.status, apply.safeDiagnostics).toBe(1);
+        expect(apply.result.stderr).toContain(
+          "External OpenShell target apply is not available until typed readiness and inventory are implemented.",
+        );
+        expect(apply.evidence.effects).toEqual([]);
+
+        const publicOutput = [
+          absentStatus.result.stdout,
+          absentStatus.result.stderr,
+          presentStatus.result.stdout,
+          presentStatus.result.stderr,
+          plan.result.stdout,
+          plan.result.stderr,
+          apply.result.stdout,
+          apply.result.stderr,
+          missingBlueprint.result.stdout,
+          missingBlueprint.result.stderr,
+          malformedBlueprint.result.stdout,
+          malformedBlueprint.result.stderr,
+          invalidBlueprint.result.stdout,
+          invalidBlueprint.result.stderr,
+          invalidAction.result.stdout,
+          invalidAction.result.stderr,
+          boundedEntryDiagnostic.result.stdout,
+          boundedEntryDiagnostic.result.stderr,
+        ].join("\n");
         expect(privateValues.some((value) => publicOutput.includes(value))).toBe(false);
       } finally {
         fs.rmSync(fixtureRoot, { recursive: true, force: true });

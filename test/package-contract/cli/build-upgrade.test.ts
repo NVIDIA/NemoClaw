@@ -50,9 +50,18 @@ describe("CLI source-checkout upgrade build", () => {
         "junction",
       );
       symlinkSync(path.join(REPOSITORY_ROOT, "src"), path.join(fixtureRoot, "src"), "junction");
+      symlinkSync(
+        path.join(REPOSITORY_ROOT, "scripts"),
+        path.join(fixtureRoot, "scripts"),
+        "junction",
+      );
 
       const policyRoot = path.join(fixtureRoot, "nemoclaw");
       mkdirSync(policyRoot);
+      copyFileSync(
+        path.join(REPOSITORY_ROOT, "nemoclaw", "package.json"),
+        path.join(policyRoot, "package.json"),
+      );
       copyFileSync(
         path.join(REPOSITORY_ROOT, "nemoclaw", "tsconfig.json"),
         path.join(policyRoot, "tsconfig.json"),

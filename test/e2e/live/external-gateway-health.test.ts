@@ -8,14 +8,14 @@ import {
 } from "./external-gateway-health-helpers.ts";
 
 test(
-  "OpenShell public health accepts the reviewed SDK over explicit HTTPS and CA (#9872)",
+  "Blueprint Runner observes OpenShell public health over explicit HTTPS and CA (#9872)",
   {
     timeout: EXTERNAL_GATEWAY_HEALTH_TIMEOUT_MS,
     meta: {
       e2ePhases: [
         "confirm the exact OpenShell gateway and SDK prerequisites",
         "launch a TLS gateway without client-certificate authentication",
-        "observe public health through the reviewed SDK",
+        "observe public health through the exact Blueprint Runner artifact",
       ],
     },
   },
