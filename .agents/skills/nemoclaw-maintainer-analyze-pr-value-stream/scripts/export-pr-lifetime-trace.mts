@@ -677,7 +677,7 @@ function renderTrace(input: {
         current: index === input.commits.length - 1,
         startSource: firstRuns.has(commit.oid)
           ? "first exact-commit workflow"
-          : "commit authored timestamp",
+          : "commit committed timestamp",
       },
     });
     addMetadata(events, metadata, pid, 1, "Revision " + commit.oid.slice(0, 8), "Workflows");
@@ -913,7 +913,7 @@ export async function reclaimStalePublicationLock(
   if (owner && Number.isSafeInteger(owner.pid) && Number(owner.pid) > 0) {
     const observedIdentity = await processStartIdentity(Number(owner.pid));
     if (observedIdentity !== null && observedIdentity === owner.startIdentity) return false;
-    if (observedIdentity === null) {
+    if (observedIdentity === null || owner.startIdentity == null) {
       try {
         process.kill(Number(owner.pid), 0);
         return false;

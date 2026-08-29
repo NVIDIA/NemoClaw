@@ -639,6 +639,8 @@ describe("pull request value-stream analysis", () => {
     const stale = new Date(Date.now() - 6 * 60 * 1_000);
     await utimes(lock, stale, stale);
     expect(await reclaimStalePublicationLock(lock)).toBe(false);
+    await writeFile(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid }));
+    expect(await reclaimStalePublicationLock(lock)).toBe(false);
     await writeFile(
       path.join(lock, "owner.json"),
       JSON.stringify({ pid: process.pid, startIdentity: "reused-owner" }),
