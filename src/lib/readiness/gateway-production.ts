@@ -33,10 +33,7 @@ import {
   isDockerDriverGatewayProcessIdentity,
   readDockerDriverGatewayProcessEnvironment,
 } from "../onboard/docker-driver-gateway-process-identity";
-import {
-  resolveDockerDriverGatewayName,
-  resolveDockerDriverGatewayStateDirName,
-} from "../onboard/docker-driver-gateway-runtime";
+import { resolveDockerDriverGatewayName } from "../onboard/docker-driver-gateway-runtime";
 import {
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   hasOpenShellGatewayUserService,
@@ -51,6 +48,7 @@ import {
 import { ownedHostGatewayTarget } from "../onboard/gateway-process-target-identity";
 import { resolveOpenshell } from "../onboard/openshell-cli";
 import { checkPortAvailable } from "../onboard/preflight";
+import { resolveGatewayStateDirForPort } from "../onboard/gateway/state-dir";
 import type {
   GatewayPortConflictState,
   GatewayReadinessDependencies,
@@ -134,16 +132,11 @@ function resolveManagedGatewayProbeTlsDir(
   gatewayPort: number,
   source: NodeJS.ProcessEnv,
 ): string | undefined {
-  const configuredStateDir = source.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
-  const stateDir = configuredStateDir
-    ? path.resolve(configuredStateDir)
-    : path.join(
-        source.HOME || os.homedir(),
-        ".local",
-        "state",
-        "nemoclaw",
-        resolveDockerDriverGatewayStateDirName(gatewayPort),
-      );
+  const stateDir = resolveGatewayStateDirForPort({
+    configured: source.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    home: source.HOME || os.homedir(),
+    port: gatewayPort,
+  });
   const localTlsDir = getDockerDriverGatewayLocalTlsDir(stateDir);
   return ["ca.crt", "client/tls.crt", "client/tls.key"].every((relativePath) =>
     fs.existsSync(path.join(localTlsDir, relativePath)),
