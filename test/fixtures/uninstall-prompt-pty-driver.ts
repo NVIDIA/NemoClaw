@@ -17,7 +17,7 @@
 //   PTY_DRIVER_POISON_STDIN=1  touch `process.stdin` first, flipping fd 0
 //                              non-blocking — the exact regression condition.
 //   PTY_DRIVER_PRESERVABLE=1   pretend ~/.nemoclaw user data exists so the
-//                              second "Also remove them? [y/N]" prompt runs.
+//                              second user-data and fresh-backup prompt runs.
 //
 // Accepts and ignores argv so `bash uninstall.sh` can exec it through its
 // NEMOCLAW_NODE/NEMOCLAW_CLI_JS overrides (`internal uninstall run-plan`).

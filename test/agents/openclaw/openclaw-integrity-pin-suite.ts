@@ -1024,7 +1024,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
 
         expect(result.status).toBe(0);
         expect(result.stdout).toContain(
-          `Reusing reviewed base OpenClaw ${PINNED_OPENCLAW_VERSION} with exact provenance`,
+          `Reusing reviewed base OpenClaw ${PINNED_OPENCLAW_VERSION} with matching reviewed provenance`,
         );
         expect(calls).not.toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`);
         expect(calls).not.toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.tarball`);
@@ -1036,7 +1036,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
         );
         expect(result.stdout).toContain(
-          `Reusing reviewed base mcporter ${PINNED_MCPORTER_VERSION} with exact lock provenance`,
+          `Reusing reviewed base mcporter ${PINNED_MCPORTER_VERSION} with matching lock provenance`,
         );
         expect(calls).not.toContain(`npm view mcporter@${PINNED_MCPORTER_VERSION} dist.integrity`);
         expect(calls).not.toContain("npm --prefix ");
@@ -1278,7 +1278,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
 
         expect(result.status).toBe(0);
-        expect(result.stdout).toContain("lacks exact reviewed provenance");
+        expect(result.stdout).toContain("lacks matching reviewed provenance");
         expect(calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`);
         expect(calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.tarball`);
         expect(calls).not.toContain(`npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`);

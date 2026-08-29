@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   type CachePut,
@@ -72,6 +72,7 @@ function request(
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) fs.rmSync(root, { force: true, recursive: true });
 });
 
@@ -201,6 +202,26 @@ describe("reviewed npm cache seed", () => {
     expect(integrity).toBe(input.integrity);
   });
 
+  it("rejects an unreviewed npm version before loading npm cache internals", async () => {
+    const input = fixture();
+    const binDirectory = path.join(input.root, "bin");
+    const tracePath = path.join(input.root, "npm.trace");
+    const npmPath = path.join(binDirectory, "npm");
+    fs.mkdirSync(binDirectory);
+    fs.writeFileSync(
+      npmPath,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> "$NPM_TRACE"\nprintf '99.0.0\\n'\n`,
+    );
+    fs.chmodSync(npmPath, 0o755);
+    vi.stubEnv("PATH", `${binDirectory}:${process.env.PATH ?? ""}`);
+    vi.stubEnv("NPM_TRACE", tracePath);
+
+    await expect(seedReviewedNpmCache(request(input))).rejects.toThrow(
+      "reviewed npm cache seed does not support npm@99.0.0; expected npm@10.9.4, npm@10.9.8, or npm@11.17.0",
+    );
+    expect(fs.readFileSync(tracePath, "utf8")).toBe("--version\n");
+  });
+
   it("rejects missing, extra, and integrity-mismatched archives", async () => {
     const input = fixture();
     await expect(
@@ -220,7 +241,7 @@ describe("reviewed npm cache seed", () => {
     ).rejects.toThrow("received unlocked archives: unexpected@9.9.9");
     fs.writeFileSync(input.archivePath, "drifted archive bytes");
     await expect(seedReviewedNpmCache(request(input), async () => undefined)).rejects.toThrow(
-      `integrity mismatch for ${PACKAGE_SPEC}`,
+      `${PACKAGE_SPEC} archive integrity mismatch`,
     );
   });
 
@@ -240,5 +261,16 @@ describe("reviewed npm cache seed", () => {
         async () => undefined,
       ),
     ).rejects.toThrow("registry origin is invalid");
+  });
+
+  it("rejects an archive larger than the configured seed limit", async () => {
+    const input = fixture();
+
+    await expect(
+      seedReviewedNpmCache(
+        { ...request(input), maximumArchiveBytes: input.archive.length - 1 },
+        async () => undefined,
+      ),
+    ).rejects.toThrow("archive must be a bounded regular file");
   });
 });

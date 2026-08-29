@@ -48,7 +48,7 @@ Most bugs are `functional`. The four other classes need separate verification ha
 
 Do not substitute one agent runtime for another. Step 3 must drop issues whose reproducer is specific to LangChain Deep Agents Code. If another runtime signal is ambiguous, select `verify-inconclusive` or ask the maintainer before Brev use.
 
-**Provider classification.** Some bugs are tied to a specific inference provider and do not reproduce faithfully under Ollama substitution. Classify the provider so downstream steps use the exact credential variable or select an inconclusive path:
+**Provider classification.** Some bugs are tied to a specific inference provider and do not reproduce faithfully under Ollama substitution. Classify the provider so downstream steps use the credential variable or select an inconclusive path:
 
 | Detection signal | Provider |
 |---|---|
@@ -60,7 +60,7 @@ Do not substitute one agent runtime for another. Step 3 must drop issues whose r
 | Body mentions Amazon Bedrock or AWS credential variables | `bedrock` |
 | `provider: ollama`, body mentions `ollama` or `NEMOCLAW_PROVIDER=ollama`, or no provider is mentioned | `ollama` (default) |
 
-Set `BUG_PROVIDER=<provider>`. Use this exact credential map for hosted providers:
+Set `BUG_PROVIDER=<provider>`. Use this credential map for hosted providers:
 
 | `BUG_PROVIDER` | Credential variable |
 |---|---|
@@ -70,7 +70,7 @@ Set `BUG_PROVIDER=<provider>`. Use this exact credential map for hosted provider
 | `openai` | `OPENAI_API_KEY` |
 | `anthropic` | `ANTHROPIC_API_KEY` |
 
-Amazon Bedrock can require a profile, region, session token, or workload identity. Do not reduce it to one API-key file. Custom, routed, NCP, and Anthropic-compatible configurations can also require endpoint, profile, or credential material beyond one key. These configurations are outside the v1 credential workflow: select `verify-inconclusive` and leave any exact-environment verification to a separately reviewed manual run.
+Amazon Bedrock can require a profile, region, session token, or workload identity. Do not reduce it to one API-key file. Custom, routed, NCP, and Anthropic-compatible configurations can also require endpoint, profile, or credential material beyond one key. These configurations are outside the v1 credential workflow: select `verify-inconclusive` and leave any environment verification to a separately reviewed manual run.
 
 **Required-credential prompt.** When `BUG_PROVIDER` is a hosted provider and the reproducer exercises inference, stop before Brev use. Present these options:
 
@@ -182,7 +182,7 @@ NV QA files most bugs through an HTML form, so issue bodies are typically a mix 
    - Uses a destructive path.
    - Accesses an unrelated network destination.
 
-   Permit a documented NemoClaw action only when its exact effect appears in the approved Brev plan.
+   Permit a documented NemoClaw action only when its effect appears in the approved Brev plan.
 3. **Reconstruct:** create `$EVIDENCE_DIR/reproducer.sh` with the smallest understood steps. Use fixed arguments and a dedicated working directory. Add timeouts and cleanup. Do not copy shell structure that is not required to expose the symptom.
 4. **Approve:** show the complete reviewed script and its expected effects before any execution. If the local predicate applies, obtain explicit approval for the exact local commands and their read effects. Otherwise include the script in the Brev plan. Any later script or stdin change invalidates this approval and must be reviewed and approved again. Apply no −30 confidence penalty only when every command and state change that affects the reproduced behavior comes from the reported steps. Fixed paths, quoting, timeouts, logging, and cleanup wrappers do not trigger the penalty. Apply the Step 8 penalty when the script introduces a command or state change that affects the reproduced behavior.
 

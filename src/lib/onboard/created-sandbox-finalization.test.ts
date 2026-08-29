@@ -9,8 +9,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../state/registry";
+import type { QualifiedSandboxInferenceRouteReservation } from "../state/registry/route-reservation";
 import * as sandboxState from "../state/sandbox";
 import {
+  completeOrdinaryOnboardSandboxCreation,
   createCreatedSandboxCompletionActions,
   createOnboardCreatedSandboxCompletion,
   createOnboardCreatedSandboxRegistration,
@@ -54,6 +56,52 @@ describe("created sandbox registration authority", () => {
 
     expect(cleanupBuildContext).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
+  });
+});
+
+describe("new sandbox cancellation recovery", () => {
+  it("preserves recovery guidance when the durable identity is unavailable (#9833)", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const runFile = vi.fn();
+    const armCancelRollback = vi.fn();
+    const markCancellationRecovery = vi.fn();
+
+    expect(() =>
+      completeOrdinaryOnboardSandboxCreation(
+        {
+          sandboxName: "new-sandbox",
+          sandboxWasLiveDefault: false,
+          gatewayPort: 8080,
+          runtimeFields: { openshellDriver: "docker" } as never,
+          messagingProviders: [],
+          liveExists: false,
+        },
+        {
+          setDefault: vi.fn(),
+          runFile,
+          scriptsDir: "/repo/scripts",
+          gatewayName: "nemoclaw",
+          providerExistsInGateway: () => true,
+          armCancelRollback,
+          markCancellationRecovery,
+          dockerInfoFormat: () => "",
+          runCapture: () => "",
+          revalidatePolicyAuthority: vi.fn(),
+          applyVmDnsMonkeypatch: vi.fn(),
+        },
+      ),
+    ).toThrow("Sandbox 'new-sandbox' has no exact identity for cancel recovery.");
+
+    const guidance = error.mock.calls.flat().join("\n");
+    expect(guidance).toContain("Sandbox 'new-sandbox' was created on gateway 'nemoclaw'");
+    expect(guidance).toContain("registry entry and onboarding session were preserved");
+    expect(guidance).toContain("Do not delete the sandbox by mutable sandbox name");
+    expect(guidance).toContain("establish the exact live durable identity before removal");
+    expect(guidance).toContain("add --fresh, and use a new sandbox name");
+    expect(runFile).not.toHaveBeenCalled();
+    expect(armCancelRollback).not.toHaveBeenCalled();
+    expect(markCancellationRecovery).toHaveBeenCalledOnce();
+    expect(markCancellationRecovery).toHaveBeenCalledWith("new-sandbox");
   });
 });
 
@@ -487,6 +535,10 @@ describe("created DCode sandbox finalization", () => {
     const lifecycleLiveIdentityFingerprint = "a".repeat(64);
     const lifecycle = {
       generation: "generation-1",
+      recordExactIdentity: () => ({
+        lifecycleGeneration: "generation-1",
+        lifecycleLiveIdentityFingerprint,
+      }),
       capture: () => ({
         lifecycleGeneration: "generation-1",
         lifecycleLiveIdentityFingerprint,
@@ -1000,8 +1052,27 @@ describe("created sandbox completion actions", () => {
         lifecycleLiveIdentityFingerprint: "a".repeat(64),
         route: "native" as const,
       };
+      const inferenceRouteReservation = {
+        authority: {
+          sandboxName: "hermes",
+          gatewayName: "nemoclaw",
+          sessionId: "session-1",
+          selection: {
+            provider: "ollama",
+            model: "qwen3-vl:4b",
+            endpointUrl: "http://host.openshell.internal:11436/v1",
+            endpointSource: "onboard" as const,
+            credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+            preferredInferenceApi: "openai-completions",
+            compatibleEndpointReasoning: null,
+            compatibleEndpointReasoningEffort: null,
+            nimContainer: null,
+          },
+        },
+        entry: { name: "hermes" },
+      } satisfies QualifiedSandboxInferenceRouteReservation;
       const verifiedCreate = {
-        reservation: {} as never,
+        reservation: inferenceRouteReservation,
         checkpoint: pendingSandboxPolicyVerificationForBoundary(verifiedPolicyBoundary),
       } as NonNullable<CreatedSandboxRegistrationInput["verifiedCreate"]>;
       const completion = createCreatedSandboxCompletionActions(
@@ -1122,6 +1193,10 @@ describe("created sandbox completion actions", () => {
       } as SandboxGpuCreateFlowResult;
       const lifecycle = {
         generation: "generation-1",
+        recordExactIdentity: () => ({
+          lifecycleGeneration: "generation-1",
+          lifecycleLiveIdentityFingerprint: "a".repeat(64),
+        }),
         capture: () => {
           order.push("lifecycle-capture");
           return {
@@ -1144,7 +1219,6 @@ describe("created sandbox completion actions", () => {
             container: { imageId: "hermes:test" },
           } as unknown as HermesPortableConfiguredReceipt)
         : null;
-
       await completion.complete(
         schema5 ? null : created,
         configuredReceipt,
@@ -1152,6 +1226,7 @@ describe("created sandbox completion actions", () => {
         manageDashboard,
         () => ({ lifecycleGeneration: "generation-1" }),
         lifecycle,
+        schema5 ? inferenceRouteReservation : undefined,
       );
 
       expect(order).toEqual([
@@ -1176,6 +1251,8 @@ describe("created sandbox completion actions", () => {
           policyCreationReceipt: expect.objectContaining({
             policyHash: "sha256:effective",
           }),
+          inferenceSelection: inferenceRouteReservation.authority.selection,
+          inferenceRouteReservation,
           verifiedCreate,
           runtimeFields: expect.objectContaining({ sandboxGpuProof: gpuProof }),
         }),

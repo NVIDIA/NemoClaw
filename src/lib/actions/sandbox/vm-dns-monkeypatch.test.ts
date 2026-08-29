@@ -183,6 +183,37 @@ describe("OpenShell VM DNS monkeypatch", () => {
     ).toContain('echo "nameserver ${GVPROXY_GATEWAY_IP}" > /etc/resolv.conf');
   });
 
+  it("uses the sandbox gateway port when resolving VM state", () => {
+    const homeDir = makeTempDir();
+    const stateDir = path.join(
+      homeDir,
+      ".local",
+      "state",
+      "nemoclaw",
+      "openshell-docker-gateway-9123",
+    );
+    const rootfs = sandboxRootfs(stateDir);
+    writeRootfsFiles(rootfs, "nameserver 8.8.8.8\n");
+
+    const result = applyOpenShellVmDnsMonkeypatch(
+      "demo",
+      { gatewayPort: 9123, openshellDriver: "vm" },
+      {
+        capture: () => ({ status: 0, output: "Id: abc\n" }),
+        env: {},
+        homeDir,
+        platform: "darwin",
+      },
+    );
+
+    expect(result).toMatchObject({
+      attempted: true,
+      changed: true,
+      ok: true,
+      rootfs: fs.realpathSync.native(rootfs),
+    });
+  });
+
   it("stops VM DNS mutation when authority changes between file writes (#9833)", () => {
     const stateDir = makeTempDir();
     const rootfs = sandboxRootfs(stateDir);

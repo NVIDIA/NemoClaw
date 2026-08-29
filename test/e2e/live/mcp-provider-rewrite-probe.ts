@@ -10,10 +10,18 @@ export function buildMcpProviderRewriteAuthorization(
   }
   const escapedCredentialKey = credentialKey.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const placeholderPattern = new RegExp(
-    `^openshell:resolve:env:(?:v[0-9]{1,20}_)?${escapedCredentialKey}$`,
+    `^openshell:resolve:env:v[0-9]{1,20}_${escapedCredentialKey}$`,
     "u",
   );
   return placeholderPattern.test(runtimeValue) ? `Bearer ${runtimeValue}` : null;
+}
+
+export function buildRevisionScopedMcpAuthorizationPattern(credentialKey: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u.test(credentialKey)) {
+    throw new Error("Unsafe MCP credential key");
+  }
+  const escapedCredentialKey = credentialKey.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return `^Bearer openshell:resolve:env:v[0-9]{1,20}_${escapedCredentialKey}$`;
 }
 
 export const MCP_PROVIDER_REWRITE_PROBE_SOURCE = `const https = require("node:https");

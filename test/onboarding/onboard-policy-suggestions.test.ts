@@ -23,6 +23,7 @@ const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPol
         webSearchConfig?: { fetchEnabled?: boolean; provider?: string | null } | null;
         webSearchSupported?: boolean | null;
         hermesToolGateways?: string[] | null;
+        customPresetNames?: ReadonlySet<string> | null;
         env?: NodeJS.ProcessEnv;
       },
     ) => string[];
@@ -102,6 +103,7 @@ describe("onboard policy preset suggestions", () => {
     "slack",
     "discord",
     "telegram",
+    "googlechat",
     "jira",
     "outlook",
     "local-inference",
@@ -164,7 +166,15 @@ describe("onboard policy preset suggestions", () => {
   // one never suggested). Assert both paths yield exactly
   // `allMessagingChannelPolicyPresets` for every channel individually and combined.
   it("suggestion and finalization paths contribute identical channel presets for all channels (#5967)", () => {
-    const channels = ["slack", "discord", "telegram", "teams", "whatsapp", "wechat"];
+    const channels = [
+      "slack",
+      "discord",
+      "telegram",
+      "teams",
+      "whatsapp",
+      "wechat",
+      "googlechat",
+    ];
     const knownNames = [...known, "teams", "whatsapp", "wechat"];
     const channelPresetSet = new Set(allMessagingChannelPolicyPresets(channels));
     const channelPresetsFromSuggestions = (enabled: string[]) =>
@@ -588,6 +598,45 @@ describe("onboard policy preset suggestions", () => {
     });
     expect(suggestions.filter((name: string) => name === "telegram")).toHaveLength(1);
     expect(suggestions.filter((name: string) => name === "slack")).toHaveLength(1);
+  });
+
+  it("omits repository-owned Hermes messaging presets until their channels are active", () => {
+    const inactive = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: [],
+      knownPresetNames: known,
+    });
+    const active = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: ["discord"],
+      knownPresetNames: known,
+    });
+    const googleChatActive = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: ["googlechat"],
+      knownPresetNames: known,
+    });
+
+    expect(inactive).not.toContain("discord");
+    expect(inactive).not.toContain("slack");
+    expect(inactive).not.toContain("googlechat");
+    expect(active).toContain("discord");
+    expect(active).not.toContain("slack");
+    expect(googleChatActive).toContain("googlechat");
+    expect(googleChatActive).not.toContain("discord");
+    expect(googleChatActive).not.toContain("slack");
+  });
+
+  it("preserves a custom Hermes preset whose name matches an inactive messaging preset", () => {
+    const suggestions = computeSetupPresetSuggestions("open", {
+      agent: "hermes",
+      enabledChannels: [],
+      knownPresetNames: known,
+      customPresetNames: new Set(["slack"]),
+    });
+
+    expect(suggestions).toContain("slack");
+    expect(suggestions).not.toContain("discord");
   });
 
   it.each(["openclaw", "hermes"])(

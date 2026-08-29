@@ -14,6 +14,34 @@ vi.mock("../../messaging-channel-setup", () => ({
 }));
 
 describe("sandbox route publication", () => {
+  it("reuses an already-published route without finalizing a stale session reservation", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
+    const registryEntry: SandboxEntry = {
+      name: "saved",
+      provider: "provider",
+      model: "model",
+      gatewayName: "nemoclaw",
+    };
+    const finalizeSandboxRouteReservation = vi.fn(() => false);
+    const { deps } = createDeps(
+      {
+        finalizeSandboxRouteReservation,
+        getSandboxReuseState: () => "ready",
+        getSandboxRegistryEntry: () => registryEntry,
+      },
+      session,
+    );
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(finalizeSandboxRouteReservation).not.toHaveBeenCalled();
+  });
+
   it("publishes the current inference reservation after completing Ready sandbox reuse", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
@@ -114,7 +142,20 @@ describe("sandbox route publication", () => {
       (_name: string, sessionId: string) => sessionId === registryEntry.reservationSessionId,
     );
     const createSandbox = vi.fn(async (...args: unknown[]) => {
-      expect(args[14]).toEqual({ sessionId: session.sessionId });
+      expect(args[14]).toEqual({
+        sessionId: session.sessionId,
+        selection: {
+          provider: "provider",
+          model: "model",
+          endpointUrl: null,
+          endpointSource: null,
+          credentialEnv: null,
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        },
+      });
       throw new Error("route reservation changed at the verified create boundary");
     });
     const { deps, calls } = createDeps(

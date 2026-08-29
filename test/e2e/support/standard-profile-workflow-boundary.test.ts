@@ -58,8 +58,7 @@ describe("standard E2E execution profile", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { secrets: Record<string, string> }>;
     };
-    workflow.jobs["catalogue-nvidia-api"]!.secrets.NVIDIA_API_KEY =
-      "${{ secrets.NVIDIA_API_KEY }}";
+    workflow.jobs["catalogue-nvidia-api"]!.secrets.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
 
     expect(validateStandardProfileWorkflowBoundary(workflow)).toContain(
       "catalogue-nvidia-api must receive only its profile secrets",
@@ -91,6 +90,22 @@ describe("standard E2E execution profile", () => {
       expect.arrayContaining([
         "catalogue-standard must pass risk_signal_expected_sha from the catalogue matrix",
         "catalogue-standard must pass risk_signal_correlation_id from the catalogue matrix",
+      ]),
+    );
+  });
+
+  it("passes the reusable managed-image revision through every catalogue profile", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { needs: string[]; with: Record<string, string> }>;
+    };
+    workflow.jobs["catalogue-nvidia-inference"]!.needs = ["generate-matrix"];
+    workflow.jobs["catalogue-nvidia-inference"]!.with.managed_image_revision =
+      "${{ inputs.checkout_sha }}";
+
+    expect(validateStandardProfileWorkflowBoundary(workflow)).toEqual(
+      expect.arrayContaining([
+        "catalogue-nvidia-inference must call the standard E2E profile after matrix generation and base-image publication",
+        "catalogue-nvidia-inference must pass managed_image_revision from the catalogue matrix",
       ]),
     );
   });
