@@ -221,6 +221,9 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("agents/hermes/patch-session-list-preview.py")).toEqual([
       "test/agents/hermes/hermes-session-list-preview-patch.test.ts",
     ]);
+    expect(triggeredBy("nemoclaw-blueprint/policies/presets/nous-browser.yaml")).toEqual([
+      "test/onboarding/effective-policy-contracts.test.ts",
+    ]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
       "src/lib/onboard/experimental/hermes-portable-build-context.test.ts",
       "src/lib/onboard/managed-startup-profile.test.ts",

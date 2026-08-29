@@ -461,6 +461,18 @@ describe("effective built-in policy contracts", () => {
       );
       expect(browserHosts.length > 0).toBe(presetName === "nous-browser");
     });
+
+    const browser = requireNetworkPolicy(effective, "nous_browser");
+    expect(binaries(browser)).toEqual(
+      expect.arrayContaining([
+        "/sandbox/.hermes/node/bin/node*",
+        "/sandbox/.hermes/node/bin/npx*",
+        "/sandbox/.hermes/node/bin/agent-browser*",
+      ]),
+    );
+    expect(binaries(browser).filter((binary) => binary.startsWith("/sandbox/.hermes-data/"))).toEqual(
+      [],
+    );
   });
 
   it("keeps OpenClaw messaging credentials and WebSockets inside inspected endpoints", () => {

@@ -176,6 +176,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/onboarding/effective-policy-contracts.test.ts"),
   },
   {
+    pattern: /(?:^|\/)nemoclaw-blueprint\/policies\/presets\/nous-browser\.yaml$/,
+    testsToRun: runTests("test/onboarding/effective-policy-contracts.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)nemoclaw-blueprint\/policies\/presets\/claude-code\.yaml$/,
     testsToRun: runTests("test/onboarding/effective-policy-contracts.test.ts"),
   },

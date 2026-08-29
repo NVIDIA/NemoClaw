@@ -86,7 +86,7 @@ function extractAgentBrowserCacheCommands(dockerfile: string): string {
   return dockerfile
     .slice(warmStart, runtimeGuard)
     .replace(/^RUN\s+/, "")
-    .replace(/\nRUN\s+(?:--network=none\s+)?/gu, "\n")
+    .replace(/\nRUN\s+(?:--network=none\s+)?/gu, " &&\n")
     .replace(/\\\n/g, " ")
     .trim();
 }
@@ -776,7 +776,9 @@ describe("Hermes share mount package parity (#2947)", () => {
     const fakeNpx = path.join(tmp, "npx");
     const sandboxHome = path.join(tmp, "sandbox");
     const lockedRuntime = path.join(tmp, "agent-browser-runtime");
-    const cacheMarker = path.join(sandboxHome, ".npm", "locked-seed");
+    const npmCallLog = path.join(tmp, "npm-calls.log");
+    const metadataMarker = path.join(sandboxHome, ".npm", "exact-packument");
+    const archiveMarker = path.join(sandboxHome, ".npm", "locked-archive");
 
     try {
       fs.mkdirSync(path.dirname(pluginPath), { recursive: true });
@@ -852,11 +854,30 @@ describe("Hermes share mount package parity (#2947)", () => {
         [
           "#!/bin/sh",
           '[ "$HOME" = "$EXPECTED_HOME" ]',
-          '[ "$*" = "ci --prefix $EXPECTED_RUNTIME --ignore-scripts --no-audit --no-fund" ]',
-          'grep -Fq \'"agent-browser": "0.26.0"\' "$EXPECTED_RUNTIME/package-lock.json"',
-          'grep -Fq \'"integrity": "sha512-pdqSfjwbFSp+qnwlb2g23e9wXveIOfMi19xpPA9xZUbzEAUp6W4YBZj6Ybj8z4M7WkcbGDDYc+oDIHDt9R3EDQ=="\' "$EXPECTED_RUNTIME/package-lock.json"',
-          'mkdir -p "$npm_config_cache" "$EXPECTED_RUNTIME/node_modules"',
-          ': > "$npm_config_cache/locked-seed"',
+          '[ "$npm_config_registry" = "https://registry.npmjs.org/" ]',
+          '[ "$npm_config_userconfig" = "$EXPECTED_RUNTIME/npm-userconfig" ]',
+          '[ "$npm_config_globalconfig" = "$EXPECTED_RUNTIME/npm-globalconfig" ]',
+          '[ -f "$npm_config_userconfig" ]',
+          '[ -f "$npm_config_globalconfig" ]',
+          '[ "$npm_config_ignore_scripts" = "true" ]',
+          'printf "%s\\n" "$*" >> "$NPM_CALL_LOG"',
+          'case "$*" in',
+          '  "cache add agent-browser@0.26.0")',
+          '    mkdir -p "$npm_config_cache"',
+          '    : > "$npm_config_cache/exact-packument"',
+          "    ;;",
+          '  "view agent-browser@0.26.0 dist.integrity")',
+          '    [ -f "$npm_config_cache/exact-packument" ]',
+          "    printf 'sha512-pdqSfjwbFSp+qnwlb2g23e9wXveIOfMi19xpPA9xZUbzEAUp6W4YBZj6Ybj8z4M7WkcbGDDYc+oDIHDt9R3EDQ==\\n'",
+          "    ;;",
+          '  "ci --prefix $EXPECTED_RUNTIME --ignore-scripts --no-audit --no-fund")',
+          '    grep -Fq \'"agent-browser": "0.26.0"\' "$EXPECTED_RUNTIME/package-lock.json"',
+          '    grep -Fq \'"integrity": "sha512-pdqSfjwbFSp+qnwlb2g23e9wXveIOfMi19xpPA9xZUbzEAUp6W4YBZj6Ybj8z4M7WkcbGDDYc+oDIHDt9R3EDQ=="\' "$EXPECTED_RUNTIME/package-lock.json"',
+          '    mkdir -p "$npm_config_cache" "$EXPECTED_RUNTIME/node_modules"',
+          '    : > "$npm_config_cache/locked-archive"',
+          "    ;;",
+          "  *) exit 64 ;;",
+          "esac",
           "",
         ].join("\n"),
         { mode: 0o700 },
@@ -867,7 +888,15 @@ describe("Hermes share mount package parity (#2947)", () => {
           "#!/bin/sh",
           '[ "$HOME" = "$EXPECTED_HOME" ]',
           '[ "${npm_config_offline:-}" = "true" ]',
-          '[ -f "$npm_config_cache/locked-seed" ]',
+          '[ "$npm_config_registry" = "https://registry.npmjs.org/" ]',
+          '[ "$npm_config_userconfig" = "$EXPECTED_RUNTIME/npm-userconfig" ]',
+          '[ "$npm_config_globalconfig" = "$EXPECTED_RUNTIME/npm-globalconfig" ]',
+          '[ -f "$npm_config_userconfig" ]',
+          '[ -f "$npm_config_globalconfig" ]',
+          '[ "$npm_config_ignore_scripts" = "true" ]',
+          'printf "npx %s\\n" "$*" >> "$NPM_CALL_LOG"',
+          '[ -f "$npm_config_cache/exact-packument" ]',
+          '[ -f "$npm_config_cache/locked-archive" ]',
           '[ "$*" = "--ignore-scripts --prefer-offline -y agent-browser@0.26.0 --version" ]',
           "printf 'agent-browser 0.26.0\\n'",
           "",
@@ -878,6 +907,7 @@ describe("Hermes share mount package parity (#2947)", () => {
       const command = extractAgentBrowserCacheCommands(dockerfile)
         .replaceAll("/tmp/nemoclaw-agent-browser-runtime", lockedRuntime)
         .replaceAll(`chown -R sandbox:sandbox ${lockedRuntime}`, "true")
+        .replaceAll("install -o sandbox -g sandbox -m 0400", "install -m 0400")
         .replaceAll("HOME=/sandbox", `HOME=${JSON.stringify(sandboxHome)}`)
         .replaceAll(
           "npm_config_cache=/sandbox/.npm",
@@ -896,11 +926,19 @@ describe("Hermes share mount package parity (#2947)", () => {
           PATH: "/usr/bin:/bin",
           EXPECTED_HOME: sandboxHome,
           EXPECTED_RUNTIME: lockedRuntime,
+          NPM_CALL_LOG: npmCallLog,
         },
       });
 
       expect(ran.status, ran.stderr).toBe(0);
-      expect(fs.existsSync(cacheMarker)).toBe(true);
+      expect(fs.readFileSync(npmCallLog, "utf-8").trim().split("\n")).toEqual([
+        "cache add agent-browser@0.26.0",
+        "view agent-browser@0.26.0 dist.integrity",
+        `ci --prefix ${lockedRuntime} --ignore-scripts --no-audit --no-fund`,
+        "npx --ignore-scripts --prefer-offline -y agent-browser@0.26.0 --version",
+      ]);
+      expect(fs.existsSync(metadataMarker)).toBe(true);
+      expect(fs.existsSync(archiveMarker)).toBe(true);
       expect(fs.existsSync(lockedRuntime)).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

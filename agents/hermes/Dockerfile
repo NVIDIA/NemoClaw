@@ -258,13 +258,23 @@ RUN grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/
     && grep -Fq 'outcome = install_specs(missing, timeout=120)' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
     && grep -Fqx 'AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"' /opt/hermes/tools/browser_tool.py \
+    && install -o sandbox -g sandbox -m 0400 /dev/null \
+        /tmp/nemoclaw-agent-browser-userconfig \
+    && install -o sandbox -g sandbox -m 0400 /dev/null \
+        /tmp/nemoclaw-agent-browser-globalconfig \
     && agent_browser_version="$( \
         HOME=/sandbox npm_config_cache=/sandbox/.npm npm_config_offline=true \
+            npm_config_registry=https://registry.npmjs.org/ \
+            npm_config_userconfig=/tmp/nemoclaw-agent-browser-userconfig \
+            npm_config_globalconfig=/tmp/nemoclaw-agent-browser-globalconfig \
+            npm_config_ignore_scripts=true \
             /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
             /usr/local/bin/npx --ignore-scripts --prefer-offline -y \
             agent-browser@0.26.0 --version \
     )" \
-    && test "$agent_browser_version" = 'agent-browser 0.26.0'
+    && test "$agent_browser_version" = 'agent-browser 0.26.0' \
+    && rm -f /tmp/nemoclaw-agent-browser-userconfig \
+        /tmp/nemoclaw-agent-browser-globalconfig
 
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix from the
@@ -553,10 +563,10 @@ RUN /usr/bin/python3 -I \
     | sha256sum -c -
 
 # Hermes v0.20.6 writes gateway lifecycle metadata directly below HERMES_HOME.
-# Shields-up deliberately makes that config root root-owned and non-writable,
-# so managed stop/start recovery cannot remove the old PID file and exits with
-# a false PID race. Keep config/hash locks intact and relocate only Hermes's
-# central PID/lock/status path helpers to the existing writable runtime
+# When Shields up is active, NemoClaw makes that config root root-owned and
+# non-writable. Managed stop/start recovery cannot remove the old PID file and
+# exits with a false PID race. Keep config/hash locks intact. Relocate only
+# Hermes's central PID/lock/status path helpers to the existing writable runtime
 # directory while preserving Hermes's process-scoped home selection. Direct
 # upstream --replace/stop and named-profile consumers remain the documented
 # inherited residual; this probe does not claim a complete upstream relocation.
@@ -1003,8 +1013,8 @@ ENV HERMES_ENVIRONMENT_HINT="You are running inside an NVIDIA OpenShell sandbox,
 # Set mutable-default permissions (640 files, 3770 config root).
 # The sandbox user can write config; the gateway user can read it via
 # supplementary sandbox-group membership and create Hermes v0.14 runtime dirs
-# without being able to remove sticky-protected config files. Shields-up applies
-# 444 root:root + chattr +i.
+# without being able to remove sticky-protected config files. When Shields up
+# is active, NemoClaw applies 444 root:root + chattr +i.
 # hadolint ignore=DL3002
 USER root
 
