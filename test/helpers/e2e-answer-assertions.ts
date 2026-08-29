@@ -42,11 +42,9 @@ function containsToolCallOutput(text: string): boolean {
   const trimmed = text.trim();
   const jsonLike = trimmed.replace(/^```(?:json)?\s*/iu, "");
   const containsJsonToolField =
-    /^[{[]/u.test(jsonLike) &&
-    (/(?:"(?:function|arguments|parameters|param|input|input_schema|tool_use|tool_calls)")\s*:/u.test(
+    /(?:"(?:function|arguments|parameters|param|input|input_schema|tool_use|tool_calls)")\s*:/u.test(
       jsonLike,
-    ) ||
-      (/"name"\s*:/u.test(jsonLike) && /"description"\s*:/u.test(jsonLike)));
+    ) || (/"name"\s*:/u.test(jsonLike) && /"description"\s*:/u.test(jsonLike));
   return (
     /^tool[ _-]?calls?\s*:/iu.test(trimmed) ||
     containsJsonToolField ||
