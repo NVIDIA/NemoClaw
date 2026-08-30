@@ -40,7 +40,6 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/plugin/test_register_tools.py", mode: "100644" },
   { path: "agents/hermes/runtime-config-guard.py", mode: "100755" },
   { path: "agents/hermes/runtime-state-mutation-publisher-v1.json", mode: "100644" },
-  { path: "agents/hermes/security-dependencies.patch", mode: "100644" },
   { path: "agents/hermes/seed-dashboard-config.py", mode: "100755" },
   { path: "agents/hermes/start.sh", mode: "100755" },
   { path: "agents/hermes/state-lock-plan.json", mode: "100644" },
