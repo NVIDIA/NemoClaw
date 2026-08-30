@@ -2182,6 +2182,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
 ): Promise<PreparedConnectChild | null> {
   if (probeOnly) {
     let portableAuthorityRequalified = false;
+    const initialEntry = registry.getSandbox(sandboxName);
     let hermesReadinessAuthority: {
       readonly active: HermesPortableActiveLifecycleAuthority;
       readonly command: HermesPortableReadinessCommandAuthority;
@@ -2198,7 +2199,11 @@ async function prepareConnectSandboxWithinLifecycleFence(
       probeTiming!.markFailureStage("authority");
       failHermesPortableReadinessAuthority(sandboxName);
     }
-    if (initialPortableAuthority.kind === "hermes") {
+    if (initialEntry?.agent === "hermes" || initialPortableAuthority.kind === "hermes") {
+      if (initialPortableAuthority.kind !== "hermes") {
+        probeTiming!.markFailureStage("authority");
+        failHermesPortableReadinessAuthority(sandboxName);
+      }
       try {
         let active = probeTiming!.measure("authority", () =>
           requireHermesPortableActiveLifecycleAuthority(
