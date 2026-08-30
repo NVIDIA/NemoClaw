@@ -208,27 +208,40 @@ describe("PR review advisor specialist lifecycle", () => {
   it.each([
     ["enabled", "1", ["prepare", "configure", "create", "run", "download", "remove"]],
     ["disabled", "0", ["prepare", "unavailable"]],
-  ])("uses one prior preparation for %s analysis", async (_case, enabled, expected) => {
-    const calls: string[] = [];
-    const lifecycle: AdvisorSpecialistLifecycle = {
-      prepare: async () => void calls.push("prepare"),
-      startGateway: () => {
-        calls.push("configure");
-        return { configure: Promise.resolve() };
-      },
-      create: () => void calls.push("create"),
-      run: () => void calls.push("run"),
-      download: () => void calls.push("download"),
-      remove: () => void calls.push("remove"),
-      unavailable: () => void calls.push("unavailable"),
-    };
+  ])(
+    "keeps prior preparation credential-free before %s analysis",
+    async (_case, enabled, expected) => {
+      const calls: string[] = [];
+      const lifecycle: AdvisorSpecialistLifecycle = {
+        prepare: async (env) => {
+          expect(env.OPENAI_API_KEY).toBeUndefined();
+          expect(env.PR_REVIEW_ADVISOR_API_KEY).toBeUndefined();
+          calls.push("prepare");
+        },
+        startGateway: (env) => {
+          expect(env.OPENAI_API_KEY).toBe("analysis-secret");
+          expect(env.GH_TOKEN).toBeUndefined();
+          expect(env.GITHUB_TOKEN).toBeUndefined();
+          calls.push("configure");
+          return { configure: Promise.resolve() };
+        },
+        create: () => void calls.push("create"),
+        run: () => void calls.push("run"),
+        download: () => void calls.push("download"),
+        remove: () => void calls.push("remove"),
+        unavailable: () => void calls.push("unavailable"),
+      };
 
-    const env = { PR_REVIEW_ADVISOR_RUN_ANALYSIS: enabled };
-    await runAdvisorSpecialistCommand("prepare", env, lifecycle);
-    await runAdvisorSpecialistCommand("analysis", env, lifecycle);
+      await runAdvisorSpecialistCommand("prepare", { PR_REVIEW_ADVISOR_RUN_ANALYSIS: enabled }, lifecycle);
+      await runAdvisorSpecialistCommand(
+        "analysis",
+        { PR_REVIEW_ADVISOR_RUN_ANALYSIS: enabled, OPENAI_API_KEY: "analysis-secret" },
+        lifecycle,
+      );
 
-    expect(calls).toEqual(expected);
-  });
+      expect(calls).toEqual(expected);
+    },
+  );
 });
 
 describe("PR review advisor OpenShell wrapper", () => {
