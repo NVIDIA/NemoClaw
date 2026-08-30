@@ -58,7 +58,7 @@ describe("timer marker generation cleanup", () => {
     fs.mkdirSync(path.dirname(markerPath), { recursive: true });
     fs.writeFileSync(markerPath, JSON.stringify(expected));
 
-    expect(clearTimerMarkerGeneration("alpha", expected)).toEqual({ cleared: true });
+    clearTimerMarkerGeneration("alpha", expected);
     expect(readTimerMarker("alpha")).toBeNull();
     fs.rmSync(home, { recursive: true, force: true });
   });
@@ -73,7 +73,6 @@ describe("timer marker generation cleanup", () => {
     fs.writeFileSync(markerPath, JSON.stringify(replacement));
 
     expect(clearTimerMarkerGeneration("alpha", expected)).toMatchObject({
-      cleared: false,
       warning: expect.stringContaining("authority changed"),
     });
     expect(readTimerMarker("alpha")).toEqual(replacement);
@@ -97,14 +96,14 @@ describe("timer marker generation cleanup", () => {
       .mockImplementation(realUnlink);
 
     expect(clearTimerMarkerGeneration("alpha", expected)).toMatchObject({
-      cleared: false,
       warning: expect.stringContaining("restored it for retry"),
     });
     expect(readTimerMarker("alpha")).toEqual(expected);
     expect(
       fs.readdirSync(path.dirname(markerPath)).filter((name) => name.includes(".completed-")),
     ).toEqual([]);
-    expect(clearTimerMarkerGeneration("alpha", expected)).toEqual({ cleared: true });
+    clearTimerMarkerGeneration("alpha", expected);
+    expect(readTimerMarker("alpha")).toBeNull();
     fs.rmSync(home, { recursive: true, force: true });
   });
 
@@ -128,13 +127,13 @@ describe("timer marker generation cleanup", () => {
     );
 
     expect(clearTimerMarkerGeneration("alpha", expected)).toMatchObject({
-      cleared: false,
       retainedPath: markerPath,
       retryRequired: true,
       warning: expect.stringContaining("restored it for an explicit retry"),
     });
     expect(readTimerMarker("alpha")).toEqual(expected);
-    expect(clearTimerMarkerGeneration("alpha", expected)).toEqual({ cleared: true });
+    clearTimerMarkerGeneration("alpha", expected);
+    expect(readTimerMarker("alpha")).toBeNull();
     fs.rmSync(home, { recursive: true, force: true });
   });
 });

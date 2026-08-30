@@ -28,7 +28,6 @@ export interface ShieldsTimerMarker {
 export interface ShieldsTimerRecoveryCandidate {
   artifactPaths: string[];
   marker: ShieldsTimerMarker;
-  markerPath: string;
   quarantined: boolean;
 }
 
@@ -195,7 +194,6 @@ export function readShieldsTimerRecoveryCandidate(
   return {
     artifactPaths: candidates,
     marker,
-    markerPath: candidatePath,
     quarantined: candidatePath !== markerPath,
   };
 }

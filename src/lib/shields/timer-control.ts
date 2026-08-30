@@ -217,7 +217,6 @@ function removeTimerAuthorizationProof(
 }
 
 interface ClearTimerMarkerResult {
-  cleared: boolean;
   retainedPath?: string;
   retryRequired?: boolean;
   warning?: string;
@@ -266,14 +265,13 @@ function clearTimerMarker(sandboxName: string): ClearTimerMarkerResult {
     } finally {
       fs.closeSync(directoryFd);
     }
-    return { cleared: true };
+    return {};
   } catch (error) {
     const errno = error as NodeJS.ErrnoException;
     if (errno.code === "ENOENT") {
-      return { cleared: false };
+      return {};
     }
     return {
-      cleared: false,
       warning: `Failed to remove shields timer marker '${markerPath}': ${errno.message}`,
     };
   }
@@ -293,9 +291,8 @@ function clearTimerMarkerGeneration(
     fs.renameSync(sourcePath, quarantinePath);
   } catch (error) {
     const errno = error as NodeJS.ErrnoException;
-    if (errno.code === "ENOENT") return { cleared: false };
+    if (errno.code === "ENOENT") return {};
     return {
-      cleared: false,
       warning: `Failed to claim shields timer recovery artifact '${sourcePath}': ${errno.message}`,
     };
   }
@@ -305,14 +302,13 @@ function clearTimerMarkerGeneration(
       fs.unlinkSync(quarantinePath);
       removeTimerAuthorizationProof(sandboxName, expected.processToken, stateDir);
       fsyncTimerArtifactDirectory(markerPath);
-      return { cleared: true };
+      return {};
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       if (!fs.existsSync(quarantinePath)) {
         const restoreFailure = restoreTimerArtifactAfterDurabilityFailure(sourcePath, expected);
         const retainedPath = fs.existsSync(sourcePath) ? sourcePath : undefined;
         return {
-          cleared: false,
           ...(retainedPath ? { retainedPath } : {}),
           retryRequired: true,
           warning: restoreFailure
@@ -324,14 +320,12 @@ function clearTimerMarkerGeneration(
         fs.linkSync(quarantinePath, sourcePath);
         fs.unlinkSync(quarantinePath);
         return {
-          cleared: false,
           warning: `Could not remove completed Shields timer recovery artifact '${sourcePath}'; restored it for retry: ${detail}`,
         };
       } catch (restoreError) {
         const restoreDetail =
           restoreError instanceof Error ? restoreError.message : String(restoreError);
         return {
-          cleared: false,
           retainedPath: quarantinePath,
           warning: `Could not remove completed Shields timer recovery artifact '${sourcePath}' or restore it; retained '${quarantinePath}' for recovery: ${detail}; ${restoreDetail}`,
         };
@@ -345,13 +339,11 @@ function clearTimerMarkerGeneration(
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return {
-      cleared: false,
       retainedPath: quarantinePath,
       warning: `Shields timer authority changed while retiring completed artifact '${sourcePath}'; retained '${quarantinePath}' for recovery: ${detail}`,
     };
   }
   return {
-    cleared: false,
     warning: `Shields timer authority changed while retiring completed artifact '${sourcePath}'`,
   };
 }
