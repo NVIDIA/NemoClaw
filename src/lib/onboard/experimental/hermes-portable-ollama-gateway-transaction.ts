@@ -1017,7 +1017,7 @@ export interface PreparedHermesPortableOllamaProviderRetirement {
   readonly verifyAbsent: () => void;
 }
 
-/** Bind and retire only the exact committed schema-5 gateway provider authority. */
+/** Bind and retire only the exact committed schema-7 gateway provider authority. */
 export function prepareHermesPortableOllamaProviderRetirement(options: {
   readonly directory: string;
   readonly transactionId: string;

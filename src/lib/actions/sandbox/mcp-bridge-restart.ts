@@ -101,9 +101,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName);
-  // Prove every policy key is absent or still matches its recorded ownership
-  // before inspecting or updating any provider. `applyGeneratedPolicy` repeats
-  // this check immediately before mutation to close the preflight-to-apply race.
+  // Validate every generated policy name before inspecting or updating any provider.
   for (const entry of targetEntries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const providerInspectionByServer = new Map<string, McpProviderInspection>();
   for (const entry of targetEntries) {
@@ -200,7 +198,10 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
 export async function restoreExistingMcpBridgeRuntime(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
-  options: { lifecyclePhase?: "active-mutation" | "teardown-rollback" } = {},
+  options: {
+    lifecyclePhase?: "active-mutation" | "teardown-rollback";
+    applyPolicy?: boolean;
+  } = {},
 ): Promise<void> {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
@@ -238,11 +239,15 @@ export async function restoreExistingMcpBridgeRuntime(
   for (const entry of entries) {
     assertNoAttachedProviderCredentialCollisions(sandboxName, [entry]);
     ensureMcpBridgeProviderProfile();
-    applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
-      bindCredential: false,
-    });
+    if (options.applyPolicy !== false) {
+      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry), {
+        bindCredential: false,
+      });
+    }
     attachProvider(sandboxName, entry);
-    applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
+    if (options.applyPolicy !== false) {
+      applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
+    }
     const adapter = (entry.adapter as AgentMcpAdapter | undefined) ?? defaultAdapter;
     refreshMcpProviderEnvironment(entry);
     const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry);

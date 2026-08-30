@@ -283,7 +283,6 @@ async function runRestoreTimerWithBudget(
   let retryScheduled = false;
   let terminalContainment = false;
   let restoreCompleted = false;
-  let managedMcpWarning: string | undefined;
   const scheduleRetry = (): boolean => {
     if (!markerMatchesCurrentTimer(args)) return false;
     retryScheduled = true;
@@ -380,11 +379,6 @@ async function runRestoreTimerWithBudget(
             deadlineAuthoritative: true,
           });
           const status = typeof result.status === "number" ? result.status : 1;
-          managedMcpWarning = result.managedMcpOmissions?.length
-            ? `Auto-restore omitted ${String(
-                result.managedMcpOmissions.length,
-              )} unproven managed MCP policy entries`
-            : undefined;
 
           if (status !== 0) {
             appendAudit({
@@ -523,7 +517,6 @@ async function runRestoreTimerWithBudget(
               restored_by: "auto_timer",
               policy_snapshot: args.snapshotPath,
               scheduled_restore_at: args.restoreAtIso,
-              ...(managedMcpWarning ? { warning: managedMcpWarning } : {}),
             });
             restoreCompleted = true;
             exitCode = 0;

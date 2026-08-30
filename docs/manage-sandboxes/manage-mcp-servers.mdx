@@ -5,12 +5,21 @@ title: "Manage MCP Servers"
 sidebar-title: "Manage MCP Servers"
 description: "Inspect advertised tools and DNS pins, probe, rotate, restart, remove, rebuild, and destroy NemoClaw-managed MCP servers."
 description-agent: "Explains managed MCP status, DNS pin drift, advertised tool discovery, credential-resolution probes, credential rotation, restart, removal, rebuild restoration, destroy recovery, and lifecycle locking. Use after an MCP server is registered."
-keywords: ["nemoclaw mcp status", "mcp dns pin drift", "mcp tool discovery", "nemoclaw mcp restart", "nemoclaw mcp remove", "mcp credential rotation"]
+keywords:
+  [
+    "nemoclaw mcp status",
+    "mcp dns pin drift",
+    "mcp tool discovery",
+    "nemoclaw mcp restart",
+    "nemoclaw mcp remove",
+    "mcp credential rotation",
+  ]
 content:
   type: "how_to"
 skill:
   priority: 50
 ---
+
 Use the host-side MCP commands to inspect and change registered servers.
 
 ## List and Inspect Servers
@@ -20,19 +29,13 @@ $$nemoclaw my-sandbox mcp list
 $$nemoclaw my-sandbox mcp status github --json
 ```
 
-`list --json` and `status --json` never include environment values.
-They report provider presence, provider attachment, whether live policy matches registered policy, environment readiness, and adapter registration state.
+`list --json` and `status --json` never include environment values. They report provider presence, provider attachment, whether live policy matches registered policy, environment readiness, and adapter registration state.
 
-The per-server `warnings` array reports unsupported stored boundaries, trusted-private DNS pin changes, and credential-resolution findings.
-The `env.missing` field lists recorded host variable names that are currently unset.
+The per-server `warnings` array reports unsupported stored boundaries, trusted-private DNS pin changes, and credential-resolution findings. The `env.missing` field lists recorded host variable names that are currently unset.
 
-An existing valid provider can remain ready when a host variable is unset because OpenShell retains the credential.
-The JSON value `support.mode: "bridge"` identifies the agent's config-adapter capability, not a host-side traffic bridge.
+An existing valid provider can remain ready when a host variable is unset because OpenShell retains the credential. The JSON value `support.mode: "bridge"` identifies the agent's config-adapter capability, not a host-side traffic bridge.
 
-For a trusted private server, status resolves the endpoint without changing managed state.
-Text output reports `private address pins: match`, `drift`, or `unresolved`.
-JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins.
-Status never adds a new address to the policy.
+For a trusted private server, status resolves the endpoint without changing managed state. Text output reports `private address pins: match`, `drift`, or `unresolved`. JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins. Status never adds a new address to the policy.
 
 ## Discover Advertised Tools
 
@@ -43,21 +46,13 @@ $$nemoclaw my-sandbox mcp status github --tools
 $$nemoclaw my-sandbox mcp status github --tools --json
 ```
 
-The shared discovery runtime uses the managed registration's existing OpenShell credential provider and generated policy.
-OpenShell injects the credential at the policy boundary; it is not passed to the runtime through arguments, environment values, or an authorization option.
-The same runtime and thin adapter ancestry are used across OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes.
+The shared discovery runtime uses the managed registration's existing OpenShell credential provider and generated policy. OpenShell injects the credential at the policy boundary; it is not passed to the runtime through arguments, environment values, or an authorization option. The same runtime and thin adapter ancestry are used across OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes.
 
-Run discovery only against a configured endpoint you trust to advertise names while authenticated.
-The endpoint controls every returned tool name and can derive those names from the request or credential it receives; NemoClaw validates and bounds the returned text but cannot prove that an authenticated endpoint did not encode credential-derived data in an otherwise valid name.
+Run discovery only against a configured endpoint you trust to advertise names while authenticated. The endpoint controls every returned tool name and can derive those names from the request or credential it receives; NemoClaw validates and bounds the returned text but cannot prove that an authenticated endpoint did not encode credential-derived data in an otherwise valid name.
 
-A discovery result is a point-in-time list from the configured MCP server, not an attestation of the tools visible to the model in an active agent session.
-Agent configuration, progressive disclosure, runtime filters, and session state can further limit model-visible tools.
+A discovery result is a point-in-time list from the configured MCP server, not an attestation of the exact tools visible to the model in an active agent session. Agent configuration, progressive disclosure, runtime filters, and session state can further limit model-visible tools.
 
-NemoClaw runs the standard MCP `initialize`, `notifications/initialized`, and paginated `tools/list` lifecycle.
-It retains and returns tool names only, never prints the other tool-definition fields returned by `tools/list`, and never calls a tool.
-The client bounds total time, per-request time, cumulative response bytes, pages, tool count, cursor length, and tool-name length.
-It attempts to close the MCP session and transport on both success and failure.
-Cleanup errors do not replace the bounded discovery result.
+NemoClaw runs the standard MCP `initialize`, `notifications/initialized`, and paginated `tools/list` lifecycle. It retains and returns tool names only, never prints the other tool-definition fields returned by `tools/list`, and never calls a tool. The client bounds total time, per-request time, cumulative response bytes, pages, tool count, cursor length, and tool-name length. It attempts to close the MCP session and transport on both success and failure. Cleanup errors do not replace the bounded discovery result.
 
 JSON output adds a per-server `toolDiscovery` object without changing the existing status fields:
 
@@ -72,44 +67,31 @@ JSON output adds a per-server `toolDiscovery` object without changing the existi
 }
 ```
 
-Discovery is opt-in and sends authenticated network traffic to the configured endpoint.
-`--tools` requires one server name and suppresses the named-server credential-resolution probe that would otherwise run by default.
-Pass `--probe --tools` when you intentionally want both live checks.
+Discovery is opt-in and sends authenticated network traffic to the configured endpoint. `--tools` requires one server name and suppresses the named-server credential-resolution probe that would otherwise run by default. Pass `--probe --tools` when you intentionally want both live checks.
 
-An older sandbox image that does not contain the shared discovery client reports that a rebuild is required.
-Run `$$nemoclaw my-sandbox rebuild` and retry the command.
+An older sandbox image that does not contain the shared discovery client reports that a rebuild is required. Run `$$nemoclaw my-sandbox rebuild` and retry the command.
 
-A discovery failure sets `toolDiscovery.ok` to `false` and leaves the ordinary provider, policy, environment, and adapter status available.
-Bounded partial results set `truncated` to `true` and include a redacted `detail` value.
+A discovery failure sets `toolDiscovery.ok` to `false` and leaves the ordinary provider, policy, environment, and adapter status available. Bounded partial results set `truncated` to `true` and include a redacted `detail` value.
 
 ## Verify Credential Resolution
 
-Provider presence and metadata cannot prove that OpenShell rewrites the recorded resolver placeholder when a request leaves the sandbox.
-`mcp status <server>` requests a differential wire-level credential-resolution probe by default.
+Provider presence and metadata cannot prove that OpenShell rewrites the recorded resolver placeholder when a request leaves the sandbox. `mcp status <server>` requests a differential wire-level credential-resolution probe by default.
 
-Before sending probe traffic, NemoClaw verifies generated policy, expected provider attachment, provider ID, `nemoclaw-mcp-v1` type, valid resource version, and exactly one matching credential key.
-If readiness does not match, it reports `ok: null` with `probe skipped` and sends no request.
+Before sending probe traffic, NemoClaw verifies exact generated policy, expected provider attachment, provider ID, `nemoclaw-mcp-v1` type, valid resource version, and exactly one matching credential key. If readiness does not match, it reports `ok: null` with `probe skipped` and sends no request.
 
-When readiness passes, the probe sends the same idempotent MCP `initialize` request twice from inside the sandbox through the adapter runtime.
-One request carries the real placeholder header, and the control request carries a deliberately unresolvable literal bearer.
+When readiness passes, the probe sends the same idempotent MCP `initialize` request twice from inside the sandbox through the adapter runtime. One request carries the real placeholder header, and the control request carries a deliberately unresolvable literal bearer.
 
-A working rewrite makes the two requests reach the endpoint with different bearers.
-Only a placeholder HTTP 2xx paired with a rejected control verifies resolution because an accepted request proves a valid credential was on the wire.
+A working rewrite makes the two requests reach the endpoint with different bearers. Only a placeholder HTTP 2xx paired with a rejected control verifies resolution because an accepted request proves a valid credential was on the wire.
 
-Every non-2xx placeholder outcome is inconclusive.
-Identical HTTP 400, 401, or 403 rejections tell you to verify the stored credential first.
+Every non-2xx placeholder outcome is inconclusive. Identical HTTP 400, 401, or 403 rejections tell you to verify the stored credential first.
 
-For HTTP 401 or 403, a confirmed-valid credential means the host is not rewriting placeholders.
-HTTP 400 remains inconclusive because the endpoint may reject the probe request itself.
+For HTTP 401 or 403, a confirmed-valid credential means the host is not rewriting placeholders. HTTP 400 remains inconclusive because the endpoint may reject the probe request itself.
 
-The probe never captures or prints endpoint response bodies.
-It refuses to run against a persisted URL that no longer satisfies the authenticated-endpoint boundary.
+The probe never captures or prints endpoint response bodies. It refuses to run against a persisted URL that no longer satisfies the authenticated-endpoint boundary.
 
-The verdict appears as `provider.credentialResolution` in JSON and as a `credential resolution:` line in text output.
-Pass `--no-probe` to skip the probe or `--probe` to request it for every server in multi-server status.
+The verdict appears as `provider.credentialResolution` in JSON and as a `credential resolution:` line in text output. Pass `--no-probe` to skip the probe or `--probe` to request it for every server in multi-server status.
 
-The bare `mcp list` and `mcp status` forms never probe, so they stay fast.
-Endpoint outages, policy denials, timeouts, unreachable sandboxes, and endpoints that accept both probes report `ok: null` with evidence in `detail`.
+The bare `mcp list` and `mcp status` forms never probe, so they stay fast. Endpoint outages, policy denials, timeouts, unreachable sandboxes, and endpoints that accept both probes report `ok: null` with evidence in `detail`.
 
 ## Rotate a Credential
 
@@ -121,31 +103,21 @@ $$nemoclaw my-sandbox mcp restart github
 unset GITHUB_MCP_TOKEN
 ```
 
-`restart` imports or verifies the endpointless `nemoclaw-mcp-v1` profile, applies the generated policy without a credential binding, updates or reuses the provider, and attaches it.
-It then applies the endpoint-bound policy, waits for credential readiness, and refreshes the adapter.
-An ambiguous or failed update is not treated as successful merely because another writer advanced the provider revision.
+`restart` imports or verifies the endpointless `nemoclaw-mcp-v1` profile, applies the generated policy without a credential binding, updates or reuses the provider, and attaches it. It then applies the endpoint-bound policy, waits for credential readiness, and refreshes the adapter. An ambiguous or failed update is not treated as successful merely because another writer advanced the provider revision.
 
-For a trusted-private entry, restart replays the address pins recorded by `mcp add`.
-It does not resolve that endpoint again or widen its policy from ambient DNS.
-For a public entry, restart resolves the hostname again and refreshes the generated policy with the current validated public addresses.
+For a trusted-private entry, restart replays the exact address pins recorded by `mcp add`. It does not resolve that endpoint again or widen its policy from ambient DNS. For a public entry, restart resolves the hostname again and refreshes the generated policy with the current validated public addresses.
 
-The raw value passes only through the OpenShell provider command's process environment and is not added to argv, NemoClaw state, or sandbox config.
-Revoke the old credential upstream after restart succeeds.
+The raw value passes only through the OpenShell provider command's process environment and is not added to argv, NemoClaw state, or sandbox config. Revoke the old credential upstream after restart succeeds.
 
 If the provider was deleted, restart recreates it from the exported value.
 
-When the host variable is unset, restart reuses an existing provider whose current ID and credential-key metadata match the registry and whose type is `nemoclaw-mcp-v1`.
-If the provider is missing, export the recorded variable before retrying.
-If the provider has the profile-less legacy `generic` type, remove the server and add it again with the recorded variable exported.
-Restart and rebuild refuse to activate that provider because OpenShell cannot bind it to an endpoint.
+When the host variable is unset, restart reuses an existing provider whose current ID and credential-key metadata match the registry and whose type is `nemoclaw-mcp-v1`. If the provider is missing, export the recorded variable before retrying. If the provider has the profile-less legacy `generic` type, remove the server and add it again with the recorded variable exported. Restart and rebuild refuse to activate that provider because OpenShell cannot bind it to an endpoint.
 
-Running restart without a server name refreshes every managed server.
-Export only the variables whose credentials you intend to replace.
+Running restart without a server name refreshes every managed server. Export only the variables whose credentials you intend to replace.
 
 ## Change Endpoint Pins
 
-For a trusted-private server, review every destination change before NemoClaw records new pins.
-Neither status, restart, rebuild, nor restore changes the recorded address set.
+For a trusted-private server, review every destination change before NemoClaw records new pins. Neither status, restart, rebuild, nor restore changes the recorded address set.
 
 If the endpoint moves to another address, remove and re-add the server:
 
@@ -159,8 +131,7 @@ $$nemoclaw my-sandbox mcp add local-tools \
 unset LOCAL_MCP_TOKEN
 ```
 
-Removing the server deletes the registry-owned provider, policy, and adapter state after the existing ownership checks pass.
-The re-add performs a new DNS preflight and records the reviewed address set.
+Removing the server deletes the exact provider and adapter state recorded for that bridge and removes its generated key from the current OpenShell policy. The re-add performs a new DNS preflight and records the reviewed exact address set.
 
 ## Remove a Server
 
@@ -168,70 +139,43 @@ The re-add performs a new DNS preflight and records the reviewed address set.
 $$nemoclaw my-sandbox mcp remove github
 ```
 
-Removing a server blocks new requests and reconnects but does not terminate a response or SSE stream that is already open.
-For immediate revocation, revoke the upstream credential first, then run `$$nemoclaw <sandbox> rebuild --yes` or destroy the sandbox to terminate an existing stream.
+Removing a server blocks new requests and reconnects but does not terminate a response or SSE stream that is already open. For immediate revocation, revoke the upstream credential first, then run `$$nemoclaw <sandbox> rebuild --yes` or destroy the sandbox to terminate an existing stream.
 
-`remove --force` may remove a modified same-name adapter entry so an operator can clear local config.
-Provider deletion still requires the recorded provider ID and credential key plus an accepted managed provider type.
-Legacy `generic` providers are accepted only for cleanup.
+`remove --force` may remove a modified same-name adapter entry so an operator can clear local config. Provider deletion still requires the recorded provider ID and credential key plus an accepted managed provider type. Exact legacy `generic` providers are accepted only for cleanup.
 
-Policy deletion still requires live policy content to equal the recorded owned content.
-Force never claims an unowned or drifted provider or same-key live policy.
+Policy deletion still requires exact owned content. Force never claims an unowned or drifted provider or same-key live policy.
 
-For an ordinary managed entry, NemoClaw cleans up the adapter, removes the live policy only when it equals the recorded owned policy, and then detaches its provider because OpenShell rejects detach while `credential_binding.provider` still references that provider.
-For a stored legacy entry whose credential name is no longer accepted, it first detaches the provider so adapter cleanup cannot start with that credential attached.
-It deletes the provider only after detach and credential-removal checks succeed.
+For an ordinary managed entry, NemoClaw cleans up the adapter, removes the exact owned policy, and then detaches its provider because OpenShell rejects detach while `credential_binding.provider` still references that provider. For a stored legacy entry whose credential name is no longer accepted, it first detaches the exact provider so adapter cleanup cannot start with that credential attached. It deletes the provider only after detach and credential-removal checks succeed.
 
-If cleanup leaves a residual, the command exits nonzero and preserves the registry entry so cleanup can be retried.
-It never detaches the provider from other sandboxes.
+If cleanup leaves a residual, the command exits nonzero and preserves the registry entry so cleanup can be retried. It never detaches the provider from other sandboxes.
 
 ## Rebuild with Managed MCP State
 
-`rebuild` preserves providers that match the recorded ID and credential-key metadata and the active `nemoclaw-mcp-v1` type.
-It removes adapter entries and live policies that equal the recorded owned policies, then detaches providers before replacing the sandbox.
-Before changing each managed adapter, a fresh sandbox process must expose a revision-scoped OpenShell credential placeholder for that adapter.
-If an observation is absent, unscoped, or unavailable, NemoClaw leaves the affected adapter and every provider unchanged.
-It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures.
-It does not substitute the provider resource version for the credential revision.
-Follow the reported [credential-revision recovery](../../reference/troubleshoot-mcp-servers#rebuild-or-destroy-cannot-prove-a-credential-revision), then retry rebuild.
-Restoration applies the credential-free policy, reattaches each provider, applies the endpoint-bound policy, waits for credential readiness, and restores adapters.
-For a trusted-private entry, the restored policy uses the recorded address pins and does not widen them from current DNS answers.
-Public entries continue to resolve and validate their endpoint addresses during restoration.
+`rebuild` preserves providers that match the recorded ID and credential-key metadata and the active `nemoclaw-mcp-v1` type. It removes adapter entries and exact owned policies, then detaches providers before replacing the sandbox. Before changing each managed adapter, a fresh sandbox process must expose a revision-scoped OpenShell credential placeholder for that adapter. If an observation is absent, unscoped, or unavailable, NemoClaw leaves the affected adapter and every provider unchanged. It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures. It does not substitute the provider resource version for the credential revision. Follow the reported [credential-revision recovery](../../reference/troubleshoot-mcp-servers#rebuild-or-destroy-cannot-prove-a-credential-revision), then retry rebuild. Restoration applies the credential-free policy, reattaches each provider, applies the endpoint-bound policy, waits for credential readiness, and restores adapters. For a trusted-private entry, the restored policy uses the recorded exact address pins and does not widen them from current DNS answers. Public entries continue to resolve and validate their endpoint addresses during restoration.
 
 <AgentOnly variant="deepagents">
 NemoClaw revalidates the prepared Deep Agents replacement after MCP preparation and before stopping inference or deleting the old sandbox.
 If that check fails, it restores prior MCP attachment and adapter state and keeps the old sandbox.
 
-For a Deep Agents v1 image, remove, rebuild, and destroy scrub only the matching registry-owned legacy entry from `.deepagents/.mcp.json`.
-Other user servers and unrelated top-level content remain unchanged.
+For a Deep Agents v1 image, remove, rebuild, and destroy scrub only the matching registry-owned legacy entry from `.deepagents/.mcp.json`. Other user servers and unrelated top-level content remain unchanged.
 
 The replacement image must expose managed MCP capability v2 before NemoClaw restores MCP runtime state.
+
 </AgentOnly>
 
-If sandbox replacement fails, NemoClaw attempts to restore the previous attachment and adapter state at the path used by the surviving image.
-A later `mcp restart` can retry an incomplete post-rebuild restore.
+If sandbox replacement fails, NemoClaw attempts to restore the previous attachment and adapter state at the path used by the surviving image. A later `mcp restart` can retry an incomplete post-rebuild restore.
 
 ## Destroy a Sandbox with MCP State
 
-Destroy removes adapter entries and live policies that equal the recorded owned policies, then detaches providers that match recorded metadata before asking OpenShell to delete the sandbox.
-Before changing each managed adapter, a fresh sandbox process must expose a revision-scoped OpenShell credential placeholder for that adapter.
-If an observation is absent, unscoped, or unavailable, NemoClaw leaves the affected adapter and every provider unchanged.
-It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures.
-Follow the reported [credential-revision recovery](../../reference/troubleshoot-mcp-servers#rebuild-or-destroy-cannot-prove-a-credential-revision), then retry destroy.
-If deletion is refused, NemoClaw attempts to restore previous MCP state, reports rollback failures, and preserves recovery state.
-Provider deletion and registry cleanup happen only after OpenShell confirms the sandbox is gone.
+Destroy removes adapter entries and exact owned policies, then detaches providers that match recorded metadata before asking OpenShell to delete the sandbox. Before changing each managed adapter, a fresh sandbox process must expose a revision-scoped OpenShell credential placeholder for that adapter. If an observation is absent, unscoped, or unavailable, NemoClaw leaves the affected adapter and every provider unchanged. It attempts to restore adapter entries prepared earlier in the operation and reports rollback failures. Follow the reported [credential-revision recovery](../../reference/troubleshoot-mcp-servers#rebuild-or-destroy-cannot-prove-a-credential-revision), then retry destroy. If deletion is refused, NemoClaw attempts to restore previous MCP state, reports rollback failures, and preserves recovery state. Provider deletion and registry cleanup happen only after OpenShell confirms the sandbox is gone.
 
-An interrupted destroy can leave a durable transaction marker.
-A prepared-only marker means deletion is not durably confirmed.
-If the sandbox is still live, remove each affected server with force until the managed manifest is empty:
+An interrupted destroy can leave a durable transaction marker. A prepared-only marker means deletion is not durably confirmed. If the sandbox is still live, remove each affected server with force until the managed manifest is empty:
 
 ```bash
 $$nemoclaw my-sandbox mcp remove <server> --force
 ```
 
-A pending marker means the registry records that OpenShell deletion was already confirmed.
-`mcp remove --force` refuses that state because provider or policy cleanup can still be owed.
-Finish the idempotent destroy instead:
+A pending marker means the registry records that OpenShell deletion was already confirmed. `mcp remove --force` refuses that state because provider or policy cleanup can still be owed. Finish the idempotent destroy instead:
 
 ```bash
 $$nemoclaw my-sandbox destroy
@@ -257,11 +201,9 @@ If a mutating command times out waiting for the per-sandbox lifecycle lock, conf
 
 Every mutating command recovers a lock whose local process is provably dead or whose PID now has a different process-start identity.
 
-NemoClaw does not expose a force-unlock flag.
-A live owner, different host or PID namespace, or incomplete legacy owner record fails closed because removing it could overlap a provider, policy, or adapter mutation.
+NemoClaw does not expose a force-unlock flag. A live owner, different host or PID namespace, or incomplete legacy owner record fails closed because removing it could overlap a provider, policy, or adapter mutation.
 
-For state shared across hosts or PID namespaces, resolve the owner on that host or stop sharing the state directory before retrying.
-Do not delete the lock file while ownership is ambiguous.
+For state shared across hosts or PID namespaces, resolve the owner on that host or stop sharing the state directory before retrying. Do not delete the lock file while ownership is ambiguous.
 
 ## Related Topics
 

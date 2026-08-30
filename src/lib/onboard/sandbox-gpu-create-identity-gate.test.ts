@@ -617,7 +617,7 @@ describe("created sandbox identity gate", () => {
     });
 
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-      "changed identity before policy verification",
+      "changed identity before identity verification completed",
     );
 
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
@@ -657,7 +657,7 @@ describe("created sandbox identity gate", () => {
     });
 
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-      "did not become visible through its owning gateway before policy verification",
+      "did not become visible through its owning gateway before identity verification completed",
     );
 
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();

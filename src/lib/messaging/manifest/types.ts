@@ -323,6 +323,8 @@ export interface SandboxMessagingChannelPlan {
   readonly selected: boolean;
   readonly configured: boolean;
   readonly disabled: boolean;
+  /** Exact command-owned removal transaction retained until post-restore config cleanup succeeds. */
+  readonly pendingRemoval?: boolean;
   readonly inputs: readonly SandboxMessagingInputReference[];
   readonly hostForward?: SandboxMessagingHostForwardPlan;
   readonly hooks: readonly SandboxMessagingHookReferencePlan[];

@@ -204,7 +204,6 @@ describe("locked Shields policy recovery status", () => {
 
     expect(() =>
       harness.shieldsStatus(sandboxName, false, {
-        inspectPolicyRecovery: () => ({ status: "external", handoff: "policy handoff" }),
         resolveConfig: () => target,
         verifyLockState: () => ({ ok: true, issues: [] }),
         verifyStateLockPlan: () => [],

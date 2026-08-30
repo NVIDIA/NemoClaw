@@ -41,13 +41,9 @@ import {
 } from "../../onboard/gateway-binding";
 import { findAvailableHermesApiPort, HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
-import {
-  isDcodeAgent,
-  OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
-  OBSERVABILITY_POLICY_BINDING,
-} from "../../onboard/observability-policy-presets";
-import { normalizePolicyTierName } from "../../onboard/policy-tier-suppression";
+import { cleanupTempDir, secureTempFile } from "../../onboard/temp-files";
 import * as policies from "../../policy";
+import { buildPolicyGetArgs } from "../../policy/commands";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
@@ -104,7 +100,6 @@ import {
   retirePreparedHostLocalInferenceAuthority,
   type RuntimeProviderBundle,
 } from "./snapshot/dependencies";
-import { formatSnapshotBaselineExclusionSummary } from "./snapshot-baseline-exclusion-summary";
 import { printHermesGatewayRestoreHint } from "./snapshot-hermes-gateway-hint";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -376,35 +371,24 @@ function resolveCloneDashboardEnvArgs(
 
 async function prepareSnapshotClonePolicy(
   srcEntry: SandboxEntry,
-  targetSandbox: string,
+  _targetSandbox: string,
 ): Promise<{
   policyPath: string;
   cleanup?: () => boolean;
 }> {
-  if (srcEntry.baselineExclusionTransition) {
-    const transition = srcEntry.baselineExclusionTransition;
-    throw new Error(
-      `Cannot clone baseline policy while '${transition.operation} ${transition.exclusion.key}' needs repair. Re-run that policy command on '${srcEntry.name}' first.`,
-    );
-  }
-  const agentName = srcEntry.agent || "openclaw";
-  const baseline = policies.resolveAgentBaselinePolicy(agentName);
-  if (!baseline) {
-    throw new Error(`Cannot resolve the '${agentName}' baseline policy for snapshot restore.`);
-  }
-  const baselineExclusions = srcEntry.baselineExclusions ?? [];
-  if (baselineExclusions.length === 0) return { policyPath: baseline.policyPath };
-
-  const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(srcEntry));
-  const activeMessagingChannels = registry
-    .getConfiguredMessagingChannelsFromEntry(srcEntry)
-    .filter((channel) => !disabledChannels.has(channel));
-  const { prepareInitialSandboxCreatePolicy } = await import("../../onboard/initial-policy");
-  return prepareInitialSandboxCreatePolicy(baseline.policyPath, activeMessagingChannels, {
-    agentName,
-    sandboxName: targetSandbox,
-    baselineExclusions,
-  });
+  const gatewayName = resolveSandboxGatewayName(srcEntry);
+  const raw = captureOpenshell(buildPolicyGetArgs(srcEntry.name, gatewayName)).output;
+  const policy = policies.parseCurrentPolicy(raw);
+  if (!policy) throw new Error(`Cannot read the live OpenShell policy for '${srcEntry.name}'.`);
+  const policyPath = secureTempFile("nemoclaw-clone-policy", ".yaml");
+  fs.writeFileSync(policyPath, policy, { mode: 0o600 });
+  return {
+    policyPath,
+    cleanup: () => {
+      cleanupTempDir(policyPath, "nemoclaw-clone-policy");
+      return true;
+    },
+  };
 }
 
 // Used by `snapshot restore --to <dst>` when dst does not exist yet: reuses
@@ -591,18 +575,13 @@ async function autoCreateSandboxFromSource(
     releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
-  const {
-    policyAuthority: _sourcePolicyAuthority,
-    policyCreationReceipt: _sourcePolicyCreationReceipt,
-    ...cloneSourceEntry
-  } = srcEntry as SandboxEntry;
+  const cloneSourceEntry = srcEntry as SandboxEntry;
   try {
     registry.registerSandbox(
       {
         ...cloneSourceEntry,
         name: dstName,
         createdAt: new Date().toISOString(),
-        policies: [],
         observabilityEnabled: sourceObservabilityEnabled,
         // dst has its own lifecycle; don't inherit src's local NIM container
         // reference, or destroying dst would stop src's NIM.
@@ -1002,11 +981,6 @@ function runSnapshotCreate(
       const itemSummary = `${result.backedUpDirs.length} directories, ${result.backedUpFiles.length} files`;
       console.log(`  ${G}✓${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`);
       console.log(`    ${manifest.backupPath}`);
-      for (const line of formatSnapshotBaselineExclusionSummary(
-        registry.getBaselineExclusions(sandboxName),
-      )) {
-        console.log(`    ${line}`);
-      }
       return;
     }
     if (result.error) {
@@ -1049,244 +1023,6 @@ function repairRestoredOpenClawConfigPerms(
     console.warn(
       `  Warning: OpenClaw config permission repair errored: ${err instanceof Error ? err.message : String(err)}`,
     );
-  }
-}
-
-function reconcileSnapshotPolicyPresets(
-  targetSandbox: string,
-  resolvedSnapshot: ReturnType<typeof sandboxState.getLatestBackup>,
-): void {
-  if (!resolvedSnapshot) return;
-  const snapshotPolicyPresets = Array.isArray(resolvedSnapshot.policyPresets)
-    ? resolvedSnapshot.policyPresets
-    : null;
-  const hasSnapshotPresetMetadata = snapshotPolicyPresets !== null;
-  const snapshotCustomPolicies = Array.isArray(resolvedSnapshot.customPolicies)
-    ? resolvedSnapshot.customPolicies
-    : [];
-  const snapshotCustomPolicyNames = new Set(
-    snapshotCustomPolicies.map((entry) => entry.name.trim().toLowerCase()),
-  );
-  const snapshotPresets =
-    snapshotPolicyPresets?.filter(
-      (preset) => !snapshotCustomPolicyNames.has(preset.trim().toLowerCase()),
-    ) ?? [];
-  const targetEntry = registry.getSandbox(targetSandbox);
-  // Custom reconciliation runs before this function. Only the registry state
-  // that remains after that reconciliation can participate in ownership.
-  const currentCustomPolicies = registry.getCustomPolicies(targetSandbox);
-  const currentCustomPolicyNames = new Set(
-    currentCustomPolicies.map((preset) => preset.name.trim().toLowerCase()),
-  );
-  const customPolicyNames = new Set([...snapshotCustomPolicyNames, ...currentCustomPolicyNames]);
-  let customOwnsObservability: boolean;
-  try {
-    customOwnsObservability = OBSERVABILITY_POLICY_BINDING.hasLiveCustomOwner(
-      targetSandbox,
-      currentCustomPolicies.map((entry) => entry.content),
-      policies,
-    );
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    console.warn(
-      `  Warning: could not verify custom ownership of '${OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET}' (${detail}); leaving live policy presets unchanged.`,
-    );
-    return;
-  }
-  const withoutBuiltinObservability = snapshotPresets.filter(
-    (preset) => !OBSERVABILITY_POLICY_BINDING.matchesPreset(preset),
-  );
-  const shouldEnableBuiltinObservability =
-    !customOwnsObservability &&
-    isDcodeAgent(targetEntry?.agent) &&
-    targetEntry?.observabilityEnabled === true &&
-    normalizePolicyTierName(targetEntry.policyTier) !== "restricted";
-  // getAppliedPresets includes custom-policy names for display/CLI parity.
-  // Built-in preset reconciliation must not remove those; custom policy content
-  // is reconciled separately below from registry.getCustomPolicies().
-  const currentPresets = hasSnapshotPresetMetadata
-    ? [...new Set(policies.getAppliedPresets(targetSandbox))].filter((preset: string) => {
-        const normalized = preset.trim().toLowerCase();
-        return (
-          !OBSERVABILITY_POLICY_BINDING.matchesPreset(normalized) &&
-          !customPolicyNames.has(normalized)
-        );
-      })
-    : [];
-  const recordedBuiltinObservability = (targetEntry?.policies ?? []).some((preset) =>
-    OBSERVABILITY_POLICY_BINDING.matchesPreset(preset),
-  );
-  const setRecordedBuiltinObservability = (enabled: boolean, force = false): void => {
-    const currentEntry = registry.getSandbox(targetSandbox);
-    if (!currentEntry) return;
-    const currentPolicies = currentEntry.policies ?? [];
-    const currentlyRecorded = currentPolicies.some((preset) =>
-      OBSERVABILITY_POLICY_BINDING.matchesPreset(preset),
-    );
-    if (!force && enabled === currentlyRecorded) return;
-    registry.updateSandbox(targetSandbox, {
-      policies: OBSERVABILITY_POLICY_BINDING.setAttribution(currentPolicies, enabled),
-    });
-  };
-  if (customOwnsObservability) {
-    setRecordedBuiltinObservability(false);
-  }
-  // Legacy snapshots predate generic preset metadata. Leave those unrelated
-  // presets untouched, while still reconciling the managed observability
-  // binding below from the target registry's authoritative enablement state.
-  const toRemove = hasSnapshotPresetMetadata
-    ? currentPresets.filter((preset: string) => !withoutBuiltinObservability.includes(preset))
-    : [];
-  const toAdd = hasSnapshotPresetMetadata
-    ? withoutBuiltinObservability.filter((preset: string) => !currentPresets.includes(preset))
-    : [];
-
-  // A same-name custom policy does not own the built-in OTLP entry unless its
-  // exact, overlapping content is both registered after custom reconciliation
-  // and live in the gateway. Reconcile the built-in from exact content state,
-  // never from a name/key-only match that could delete drifted operator policy.
-  let builtinObservabilityContent: string | null = null;
-  let builtinObservabilityState: "match" | "absent" | "drift" | null = null;
-  if (!customOwnsObservability) {
-    const loadedBinding = OBSERVABILITY_POLICY_BINDING.load(targetSandbox, policies);
-    builtinObservabilityContent = loadedBinding.content;
-    builtinObservabilityState = loadedBinding.state;
-    const builtinState = builtinObservabilityState;
-    if (builtinState === "absent" && shouldEnableBuiltinObservability) {
-      toAdd.push(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET);
-    } else if (builtinState === "absent" && recordedBuiltinObservability) {
-      setRecordedBuiltinObservability(false);
-    } else if (builtinState === "match" && !shouldEnableBuiltinObservability) {
-      toRemove.push(OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET);
-    } else if (builtinState === "match" && !recordedBuiltinObservability) {
-      setRecordedBuiltinObservability(true);
-    } else if (builtinState === "drift" || builtinState === null) {
-      const reason = builtinState === "drift" ? "has drifted" : "could not be inspected";
-      console.warn(
-        `  Warning: built-in preset '${OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET}' ${reason}; leaving its live policy content unchanged.`,
-      );
-    }
-  }
-  if (toRemove.length === 0 && toAdd.length === 0) return;
-
-  const summary: string[] = [];
-  if (toAdd.length > 0) summary.push(`add ${toAdd.join(", ")}`);
-  if (toRemove.length > 0) summary.push(`remove ${toRemove.join(", ")}`);
-  console.log(`  Reconciling policy presets on '${targetSandbox}': ${summary.join("; ")}`);
-
-  const failed: string[] = [];
-  for (const preset of toRemove) {
-    if (OBSERVABILITY_POLICY_BINDING.matchesPreset(preset) && builtinObservabilityContent) {
-      const removal = OBSERVABILITY_POLICY_BINDING.removeExact(
-        targetSandbox,
-        builtinObservabilityContent,
-        policies,
-        { knownBefore: builtinObservabilityState, removeOptions: { nonFatal: true } },
-      );
-      builtinObservabilityState = removal.after;
-      if (removal.verifiedAbsent) {
-        setRecordedBuiltinObservability(false);
-      } else {
-        // removePreset updates the registry on a reported success. Restore
-        // attribution whenever exact absence was not proven so recovery does
-        // not forget built-in policy that may still be live.
-        setRecordedBuiltinObservability(true, true);
-      }
-      if (removal.failureDetail) failed.push(`${preset} (${removal.failureDetail})`);
-      continue;
-    }
-    try {
-      // Post-restore policy reconciliation is best-effort by design: a failed
-      // gateway policy mutation must be reported as a warning, not terminate
-      // the restore before gateway pairing. Pass nonFatal so setPolicyFile
-      // returns false on failure instead of exiting the process (#8210).
-      if (!policies.removePreset(targetSandbox, preset, { nonFatal: true }))
-        failed.push(`${preset} (remove failed)`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      failed.push(`${preset} (remove: ${message})`);
-    }
-  }
-  for (const preset of toAdd) {
-    try {
-      if (!policies.applyPreset(targetSandbox, preset, { nonFatal: true }))
-        failed.push(`${preset} (apply failed)`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      failed.push(`${preset} (apply: ${message})`);
-    }
-  }
-  if (failed.length > 0) {
-    console.warn(`  Warning: could not reconcile preset(s): ${failed.join("; ")}`);
-  }
-}
-
-function reconcileSnapshotCustomPolicies(
-  targetSandbox: string,
-  resolvedSnapshot: ReturnType<typeof sandboxState.getLatestBackup>,
-): void {
-  if (!resolvedSnapshot || !Array.isArray(resolvedSnapshot.customPolicies)) return;
-  const snapshotCustom = resolvedSnapshot.customPolicies;
-  const currentCustom = registry.getCustomPolicies(targetSandbox);
-  const snapshotByName = new Map(snapshotCustom.map((entry) => [entry.name, entry]));
-  const currentByName = new Map(currentCustom.map((entry) => [entry.name, entry]));
-  const toRemove = currentCustom.filter((c) => !snapshotByName.has(c.name));
-  const toAdd = snapshotCustom.filter((sp) => {
-    const current = currentByName.get(sp.name);
-    return (
-      !current ||
-      current.content !== sp.content ||
-      current.sourcePath !== sp.sourcePath ||
-      current.trustedPrivatePins?.contentDigest !== sp.trustedPrivatePins?.contentDigest
-    );
-  });
-  if (toRemove.length === 0 && toAdd.length === 0) return;
-
-  const summary: string[] = [];
-  if (toAdd.length > 0) summary.push(`add ${toAdd.map((c) => c.name).join(", ")}`);
-  if (toRemove.length > 0) summary.push(`remove ${toRemove.map((c) => c.name).join(", ")}`);
-  console.log(`  Reconciling custom policies on '${targetSandbox}': ${summary.join("; ")}`);
-
-  const failed: string[] = [];
-  for (const entry of toRemove) {
-    try {
-      // Best-effort like the built-in preset reconciliation above (#8210).
-      if (!policies.removePreset(targetSandbox, entry.name, { nonFatal: true })) {
-        failed.push(`${entry.name} (remove failed)`);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      failed.push(`${entry.name} (remove: ${message})`);
-    }
-  }
-  for (const entry of toAdd) {
-    try {
-      const currentAuthority = currentByName.get(entry.name);
-      const trustedPrivatePinCapability =
-        currentAuthority?.content === entry.content && currentAuthority.trustedPrivatePins
-          ? policies.replayTrustedPrivatePolicyPinCapability(
-              currentAuthority.content,
-              currentAuthority.trustedPrivatePins,
-            )
-          : undefined;
-      if (
-        !policies.applyPresetContent(targetSandbox, entry.name, entry.content, {
-          custom: {
-            sourcePath: entry.sourcePath,
-            ...(trustedPrivatePinCapability ? { trustedPrivatePinCapability } : {}),
-          },
-          nonFatal: true,
-        })
-      ) {
-        failed.push(`${entry.name} (apply failed)`);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      failed.push(`${entry.name} (apply: ${message})`);
-    }
-  }
-  if (failed.length > 0) {
-    console.warn(`  Warning: could not reconcile custom policy(ies): ${failed.join("; ")}`);
   }
 }
 
@@ -1359,16 +1095,6 @@ async function runSnapshotRestoreUnlocked(
   const hasPendingCreatedClone =
     targetEntry?.pendingRouteReservation === true &&
     !registry.isRouteOnlySandboxReservation(targetEntry);
-  if (targetEntry?.baselineExclusionTransition) {
-    const transition = targetEntry.baselineExclusionTransition;
-    console.error(
-      `  Cannot replace destination '${targetSandbox}' while baseline policy '${transition.operation} ${transition.exclusion.key}' needs repair.`,
-    );
-    console.error(
-      `  Re-run that policy command on '${targetSandbox}' before restoring into it with --force.`,
-    );
-    snapshotExit(1);
-  }
 
   // #3756 P1 preflight: resolve the snapshot selector AND the source pod
   // image before any destructive action. A bad selector, missing snapshot,
@@ -1860,15 +1586,6 @@ async function runSnapshotRestoreUnlocked(
     // #5027/#4538: openclaw.json restores via the generic copy strategy, which
     // lands it at 0640. Repair the mutable config contract when needed.
     repairRestoredOpenClawConfigPerms(targetSandbox, result);
-    // Reconcile custom policy presets (applied via --from-file/--from-dir).
-    // Skipped for legacy snapshots that predate the `customPolicies` field.
-    reconcileSnapshotCustomPolicies(targetSandbox, resolvedSnapshot);
-    // Reconcile built-in presets after custom content so same-name custom
-    // policies are never transiently substituted with a built-in. The current
-    // target observability bit and tier override historical built-in OTLP state.
-    // Legacy snapshots skip unrelated generic presets but still reconcile the
-    // managed observability binding from current target state.
-    reconcileSnapshotPolicyPresets(targetSandbox, resolvedSnapshot);
   });
   if (isCrossSandboxRestore && crossSandboxRestoreAgent === "openclaw") {
     try {

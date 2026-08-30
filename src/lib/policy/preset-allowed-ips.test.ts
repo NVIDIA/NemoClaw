@@ -251,7 +251,7 @@ network_policies:
     ).toBe(false);
   });
 
-  it("rejects a forged content-digest receipt before any side effects (#8176)", () => {
+  it("rejects a forged process-local pin capability before any side effects (#8176)", () => {
     const content = `preset:
   name: forged-private
 network_policies:

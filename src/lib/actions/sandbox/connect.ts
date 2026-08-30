@@ -2182,12 +2182,23 @@ async function prepareConnectSandboxWithinLifecycleFence(
 ): Promise<PreparedConnectChild | null> {
   if (probeOnly) {
     let portableAuthorityRequalified = false;
-    const initialEntry = registry.getSandbox(sandboxName);
     let hermesReadinessAuthority: {
       readonly active: HermesPortableActiveLifecycleAuthority;
       readonly command: HermesPortableReadinessCommandAuthority;
     } | null = null;
-    if (initialEntry?.agent === "hermes") {
+    let initialPortableAuthority: ReturnType<typeof qualifyPortableAgentLifecycleAuthority>;
+    try {
+      initialPortableAuthority = probeTiming!.measure("authority", () =>
+        qualifyPortableAgentLifecycleAuthority(
+          sandboxName,
+          portableAgentLifecycleAuthorityDeps(),
+        ),
+      );
+    } catch {
+      probeTiming!.markFailureStage("authority");
+      failHermesPortableReadinessAuthority(sandboxName);
+    }
+    if (initialPortableAuthority.kind === "hermes") {
       try {
         let active = probeTiming!.measure("authority", () =>
           requireHermesPortableActiveLifecycleAuthority(
