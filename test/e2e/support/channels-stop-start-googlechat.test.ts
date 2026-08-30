@@ -16,12 +16,20 @@ type FixtureProviderDependencies = {
     tokenDefs: Parameters<
       (typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts"))["policyChannelDependencies"]["upsertMessagingProviders"]
     >[0],
-    run: FixtureRunner,
+    gatewayName: string,
     options?: {
       readonly replaceExisting?: boolean;
+      readonly bestEffort?: boolean;
+      readonly requireExactBindings?: boolean;
       readonly revalidatePolicyRequirements?: (operation: string) => void;
     },
   ): string[];
+  runGatewayOpenshell(
+    gatewayName: string,
+    args: Parameters<FixtureRunner>[0],
+    options?: Parameters<FixtureRunner>[1],
+  ): ReturnType<FixtureRunner>;
+  revalidateChannelProviderPolicyAuthority(sandboxName: string, gatewayName: string): void;
 };
 
 describe("channels stop/start Google Chat live composition", () => {
@@ -226,21 +234,24 @@ describe("channels stop/start Google Chat live composition", () => {
         providerType: "nemoclaw-mcp-v1",
       };
       const originalUpsert = vi.fn(() => [delegatedName]);
-      const providerDependencies: FixtureProviderDependencies = {
-        upsertMessagingProviders: originalUpsert,
-      };
       const ensureProfiles = vi.fn();
       const runMock = vi.fn((args: string[], _options?: { env?: NodeJS.ProcessEnv }) => ({
         status: args[1] === "get" ? 1 : 0,
       }));
-      const run = runMock as unknown as FixtureRunner;
       const revalidatePolicyRequirements = vi.fn();
+      const revalidateChannelProviderPolicyAuthority = vi.fn();
+      const providerDependencies: FixtureProviderDependencies = {
+        upsertMessagingProviders: originalUpsert,
+        runGatewayOpenshell: vi.fn((_gatewayName, args, options) =>
+          runMock(args as string[], options),
+        ) as unknown as FixtureProviderDependencies["runGatewayOpenshell"],
+        revalidateChannelProviderPolicyAuthority,
+      };
 
       const restore = installGooglechatCredentialFixture(sandboxName, agent, {
         ensureProfiles,
         providerDependencies,
         root: "/repo",
-        run,
       });
       const providerNames = providerDependencies.upsertMessagingProviders(
         [
@@ -252,12 +263,12 @@ describe("channels stop/start Google Chat live composition", () => {
             providerType,
           },
         ],
-        run,
+        "nemoclaw",
         { revalidatePolicyRequirements },
       );
 
       expect(providerNames).toEqual([delegatedName, `${sandboxName}-googlechat-bridge`]);
-      expect(originalUpsert).toHaveBeenCalledWith([delegatedTokenDef], run, {
+      expect(originalUpsert).toHaveBeenCalledWith([delegatedTokenDef], "nemoclaw", {
         revalidatePolicyRequirements,
       });
       expect(ensureProfiles).toHaveBeenCalledOnce();
@@ -267,9 +278,14 @@ describe("channels stop/start Google Chat live composition", () => {
         runOpenshell: FixtureRunner;
       };
       expect(profileDependencies.root).toBe("/repo");
-      expect(profileDependencies.runOpenshell).not.toBe(run);
+      expect(profileDependencies.runOpenshell).not.toBe(providerDependencies.runGatewayOpenshell);
       expect(profileDependencies.redact(GOOGLECHAT_E2E_ACCESS_TOKEN)).toBe("[redacted]");
       expect(revalidatePolicyRequirements).toHaveBeenCalledTimes(2);
+      expect(revalidateChannelProviderPolicyAuthority).toHaveBeenCalledTimes(2);
+      expect(revalidateChannelProviderPolicyAuthority).toHaveBeenCalledWith(
+        sandboxName,
+        "nemoclaw",
+      );
 
       const createCall = runMock.mock.calls.find(([args]) => args[1] === "create");
       expect(createCall?.[0]).toEqual([
@@ -326,19 +342,19 @@ describe("channels stop/start Google Chat live composition", () => {
   ] as const)(
     "reconciles an existing fixture provider with options %o",
     (options, expectedCalls) => {
+      const calls: string[][] = [];
       const providerDependencies: FixtureProviderDependencies = {
         upsertMessagingProviders: vi.fn(() => []),
+        runGatewayOpenshell: vi.fn((_gatewayName, args) => {
+          calls.push(args as string[]);
+          return { status: 0 } as ReturnType<FixtureRunner>;
+        }) as unknown as FixtureProviderDependencies["runGatewayOpenshell"],
+        revalidateChannelProviderPolicyAuthority: vi.fn(),
       };
-      const calls: string[][] = [];
-      const run = ((args: string[]) => {
-        calls.push(args);
-        return { status: 0 };
-      }) as unknown as FixtureRunner;
       const restore = installGooglechatCredentialFixture("e2e-oc-ch-cycle", "openclaw", {
         ensureProfiles: vi.fn(),
         providerDependencies,
         root: "/repo",
-        run,
       });
 
       providerDependencies.upsertMessagingProviders(
@@ -350,7 +366,7 @@ describe("channels stop/start Google Chat live composition", () => {
             providerType: "google-chat-bridge",
           },
         ],
-        run,
+        "nemoclaw",
         options,
       );
 

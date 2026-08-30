@@ -10,7 +10,6 @@ import * as policyChannelDependenciesModule from "../../../src/lib/actions/sandb
 import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-channel.ts";
 import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/runtime.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
-import * as onboardProvidersModule from "../../../src/lib/onboard/providers.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -61,14 +60,22 @@ type MessagingBridgeProviderModule =
 type StatePathsModule = typeof import("../../../src/lib/state/paths.ts");
 type ProviderUpsertOptions = {
   readonly replaceExisting?: boolean;
+  readonly bestEffort?: boolean;
+  readonly requireExactBindings?: boolean;
   readonly revalidatePolicyRequirements?: (operation: string) => void;
 };
 type ProviderDependencies = {
   upsertMessagingProviders(
     tokenDefs: Parameters<typeof policyChannelDependencies.upsertMessagingProviders>[0],
-    run: typeof runOpenshell,
+    gatewayName: string,
     options?: ProviderUpsertOptions,
   ): string[];
+  runGatewayOpenshell(
+    gatewayName: string,
+    args: Parameters<typeof runOpenshell>[0],
+    options?: Parameters<typeof runOpenshell>[1],
+  ): ReturnType<typeof runOpenshell>;
+  revalidateChannelProviderPolicyAuthority(sandboxName: string, gatewayName: string): void;
 };
 
 const policyChannel = (
@@ -91,9 +98,6 @@ const messagingBridgeProvider = (
     : messagingBridgeProviderModule
 ) as MessagingBridgeProviderModule;
 const { ensureMessagingBridgeProfiles } = messagingBridgeProvider;
-const onboardProviders = (
-  "default" in onboardProvidersModule ? onboardProvidersModule.default : onboardProvidersModule
-) as ProviderDependencies;
 const statePaths = (
   "default" in statePathsModule ? statePathsModule.default : statePathsModule
 ) as StatePathsModule;
@@ -119,7 +123,6 @@ interface GooglechatCredentialFixtureDependencies {
   readonly ensureProfiles?: typeof ensureMessagingBridgeProfiles;
   readonly providerDependencies?: ProviderDependencies;
   readonly root?: string;
-  readonly run?: typeof runOpenshell;
 }
 
 export const GOOGLECHAT_E2E_ACCESS_TOKEN = "e2e-fake-googlechat-access-token";
@@ -143,14 +146,17 @@ export function installGooglechatCredentialFixture(
 ): () => void {
   assertChannelsStopStartSandboxName(sandboxName, agent);
   const ensureProfiles = dependencies.ensureProfiles ?? ensureMessagingBridgeProfiles;
-  const providerDependencies = dependencies.providerDependencies ?? onboardProviders;
+  const providerDependencies = dependencies.providerDependencies ?? policyChannelDependencies;
   const root = dependencies.root ?? ROOT;
-  const run = dependencies.run ?? runOpenshell;
   const expectedName = `${sandboxName}-googlechat-bridge`;
   const expectedType = PROVIDER_TYPE_BY_AGENT[agent];
   const original = providerDependencies.upsertMessagingProviders;
 
-  providerDependencies.upsertMessagingProviders = (tokenDefs, providerRun, options = {}) => {
+  const fixtureUpsert: ProviderDependencies["upsertMessagingProviders"] = (
+    tokenDefs,
+    gatewayName,
+    options = {},
+  ) => {
     const fixtureTokenDefs = tokenDefs.filter(({ name }) => name === expectedName);
     const fixtureTokenDef = fixtureTokenDefs[0];
     if (
@@ -163,15 +169,16 @@ export function installGooglechatCredentialFixture(
 
     const delegatedTokenDefs = tokenDefs.filter(({ name }) => name !== expectedName);
     const delegatedProviderNames =
-      delegatedTokenDefs.length === 0 ? [] : original(delegatedTokenDefs, providerRun, options);
-    const baseRun = providerRun ?? run;
-    const revalidate = () =>
+      delegatedTokenDefs.length === 0 ? [] : original(delegatedTokenDefs, gatewayName, options);
+    const revalidate = () => {
+      providerDependencies.revalidateChannelProviderPolicyAuthority(sandboxName, gatewayName);
       options.revalidatePolicyRequirements?.(
         `manage Google Chat live fixture provider '${expectedName}'`,
       );
+    };
     const effectiveRun: typeof runOpenshell = (args, runOptions) => {
       revalidate();
-      return baseRun(args, runOptions);
+      return providerDependencies.runGatewayOpenshell(gatewayName, args, runOptions);
     };
     ensureProfiles(fixtureTokenDefs, {
       root,
@@ -216,6 +223,7 @@ export function installGooglechatCredentialFixture(
     const registered = new Set([...delegatedProviderNames, expectedName]);
     return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
   };
+  providerDependencies.upsertMessagingProviders = fixtureUpsert;
 
   return () => {
     providerDependencies.upsertMessagingProviders = original;
@@ -387,6 +395,35 @@ export function registerChannelsStopStartProviderCleanup(
       ),
     );
   }
+}
+
+export function registerChannelsStopStartCleanup(
+  cleanup: CleanupRegistry,
+  host: HostCliClient,
+  sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
+  options: {
+    readonly agent: AgentKind;
+    readonly env: NodeJS.ProcessEnv;
+    readonly redactions: string[];
+    readonly sandboxName: string;
+  },
+): void {
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: `cleanup-openshell-gateway-destroy-${options.agent}`,
+    env: options.env,
+    redactionValues: options.redactions,
+    timeoutMs: 60_000,
+  });
+  registerChannelsStopStartProviderCleanup(cleanup, host, options);
+  trackSandboxCleanup(
+    cleanup,
+    host,
+    sandbox,
+    options.sandboxName,
+    options.env,
+    options.redactions,
+    `cleanup-channels-stop-start-${options.agent}`,
+  );
 }
 // Channels that emit no credentialBinding, each for its own reason. Independent oracle —
 // hardcoded on purpose, not derived from the manifest under test (that would be circular).
@@ -1025,22 +1062,7 @@ export async function runChannelsStopStartTarget({
   const heartbeat = startChannelsStopStartProgress(AGENT);
   cleanup.trackDisposable("stop channels stop/start heartbeat", heartbeat.stop);
 
-  cleanup.trackGateway(host, "nemoclaw", {
-    artifactName: `cleanup-openshell-gateway-destroy-${AGENT}`,
-    env,
-    redactionValues: redactions,
-    timeoutMs: 60_000,
-  });
-  trackSandboxCleanup(
-    cleanup,
-    host,
-    sandbox,
-    SANDBOX_NAME,
-    env,
-    redactions,
-    `cleanup-channels-stop-start-${AGENT}`,
-  );
-  registerChannelsStopStartProviderCleanup(cleanup, host, {
+  registerChannelsStopStartCleanup(cleanup, host, sandbox, {
     agent: AGENT,
     env,
     redactions,
