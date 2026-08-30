@@ -94,7 +94,9 @@ describe("OpenShell policy mutation read failures", () => {
       const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
       expect(calls).toEqual(["policy get -g nemoclaw --base alpha"]);
       expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
-      expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
+      expect(consoleError).toHaveBeenCalledWith(
+        expect.stringContaining("Policy-dependent operations must stop"),
+      );
     });
 
     it.each([
@@ -129,7 +131,9 @@ describe("OpenShell policy mutation read failures", () => {
         expect(
           mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
         ).toEqual([]);
-        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
+        expect(consoleError).toHaveBeenCalledWith(
+          expect.stringContaining("Policy-dependent operations must stop"),
+        );
       },
     );
 
@@ -163,7 +167,9 @@ describe("OpenShell policy mutation read failures", () => {
         expect(
           mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
         ).toEqual([]);
-        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
+        expect(consoleError).toHaveBeenCalledWith(
+          expect.stringContaining("Policy-dependent operations must stop"),
+        );
       },
     );
 
@@ -197,7 +203,9 @@ describe("OpenShell policy mutation read failures", () => {
         expect(
           mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
         ).toEqual([]);
-        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
+        expect(consoleError).toHaveBeenCalledWith(
+          expect.stringContaining("Policy-dependent operations must stop"),
+        );
       },
     );
   });
