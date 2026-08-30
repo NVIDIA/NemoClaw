@@ -19,7 +19,6 @@ it("keeps the detailed JSON envelope when paused Telegram skips its live probe (
   fs.mkdirSync(bin, { recursive: true });
   writeSandboxRegistry(home, sandboxName, {
     agent: "openclaw",
-    policies: ["telegram"],
     messaging: {
       schemaVersion: 1,
       plan: makeMessagingPlan({

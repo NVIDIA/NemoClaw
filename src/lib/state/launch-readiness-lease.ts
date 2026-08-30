@@ -12,7 +12,7 @@ import { nemoclawStateRoot } from "./state-root";
 export const LAUNCH_READINESS_LEASE_MS = 24 * 60 * 60 * 1_000;
 // This version covers lease and fence records. Nested session qualifications
 // and the separate runtime authority keep their independent schema versions.
-export const LAUNCH_READINESS_SCHEMA_VERSION = 2;
+export const LAUNCH_READINESS_SCHEMA_VERSION = 3;
 export const LAUNCH_READINESS_MAX_BYTES = 16 * 1_024;
 
 const RECEIPT_DIRECTORY = "launch-readiness";
@@ -24,7 +24,6 @@ const BOOT_ID_RE = /^[A-Za-z0-9._:-]{1,160}$/;
 export interface LaunchReadinessIdentity {
   registry: string;
   agent: string;
-  livePolicy: string;
   liveInference: string;
   gatewayName: string;
   lifecycleGeneration: string;
@@ -38,7 +37,6 @@ export interface LaunchReadinessOpenClawSessionQualification {
   openclawVersion: string;
   deviceIdentitySha256: string;
   pairingStateSha256: string;
-  policySha256: string;
   requiredRoles: ["operator"];
   requiredScopes: ["operator.pairing", "operator.read", "operator.write"];
 }
@@ -46,7 +44,7 @@ export interface LaunchReadinessOpenClawSessionQualification {
 export type LaunchReadinessSessionQualification = LaunchReadinessOpenClawSessionQualification;
 
 export interface LaunchReadinessLease {
-  schemaVersion: 2;
+  schemaVersion: 3;
   kind: "lease";
   epochId: string;
   sandboxName: string;
@@ -67,7 +65,7 @@ export interface LaunchReadinessLease {
 }
 
 export interface LaunchReadinessFence {
-  schemaVersion: 2;
+  schemaVersion: 3;
   kind: "fence";
   epochId: string;
   sandboxName: string;
@@ -222,7 +220,6 @@ function isSessionQualification(value: unknown): value is LaunchReadinessSession
       "openclawVersion",
       "deviceIdentitySha256",
       "pairingStateSha256",
-      "policySha256",
       "requiredRoles",
       "requiredScopes",
     ])
@@ -239,8 +236,6 @@ function isSessionQualification(value: unknown): value is LaunchReadinessSession
     SHA256_RE.test(value.deviceIdentitySha256) &&
     typeof value.pairingStateSha256 === "string" &&
     SHA256_RE.test(value.pairingStateSha256) &&
-    typeof value.policySha256 === "string" &&
-    SHA256_RE.test(value.policySha256) &&
     isExactStringArray(value.requiredRoles, ["operator"]) &&
     isExactStringArray(value.requiredScopes, [
       "operator.pairing",
@@ -256,7 +251,6 @@ function isIdentity(value: unknown): value is LaunchReadinessIdentity {
     !hasExactKeys(value, [
       "registry",
       "agent",
-      "livePolicy",
       "liveInference",
       "gatewayName",
       "lifecycleGeneration",
@@ -279,8 +273,6 @@ function isIdentity(value: unknown): value is LaunchReadinessIdentity {
     SHA256_RE.test(value.registry) &&
     typeof value.agent === "string" &&
     SHA256_RE.test(value.agent) &&
-    typeof value.livePolicy === "string" &&
-    SHA256_RE.test(value.livePolicy) &&
     typeof value.liveInference === "string" &&
     SHA256_RE.test(value.liveInference) &&
     (value.session === null || isSessionQualification(value.session))

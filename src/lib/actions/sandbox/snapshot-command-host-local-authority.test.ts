@@ -74,7 +74,10 @@ const provider = createInMemoryRuntimeProviderBundle({
 });
 
 vi.mock("../../adapters/openshell/runtime", () => ({
-  captureOpenshell: vi.fn(() => ({ status: 0, output: "alpha Ready\n" })),
+  captureOpenshell: vi.fn((args: string[]) => ({
+    status: 0,
+    output: args[0] === "policy" ? "version: 1\nnetwork_policies: {}\n" : "alpha Ready\n",
+  })),
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: vi.fn(() => ({ status: 0, output: "" })),
 }));
@@ -85,6 +88,7 @@ vi.mock("../../policy", () => ({
   getAppliedPresets: vi.fn(() => []),
   getPresetContentGatewayState: vi.fn(() => "absent"),
   loadPresetForSandbox: vi.fn(() => null),
+  parseCurrentPolicy: (raw: unknown) => String(raw),
   removePreset: vi.fn(() => true),
 }));
 
@@ -109,8 +113,6 @@ vi.mock("../../state/mcp-lifecycle-lock", () => ({
 }));
 
 vi.mock("../../state/registry", () => ({
-  getBaselineExclusions: vi.fn(() => []),
-  getCustomPolicies: vi.fn(() => []),
   getSandbox: harness.getSandbox,
   listSandboxes: vi.fn(() => ({
     sandboxes: [harness.getSandbox()].filter(Boolean),

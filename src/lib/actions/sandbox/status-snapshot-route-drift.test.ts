@@ -199,7 +199,6 @@ describe("collectSandboxStatusSnapshot inference invocation route (#9302)", () =
     const sandbox = {
       name: "alpha",
       agent: "openclaw",
-      policies: [],
       gatewayName: "nemoclaw",
       ...entry,
     } as SandboxEntry;

@@ -261,7 +261,7 @@ function renderSingleChannelSignals(
           ? YW
           : report.report.verdict === "info"
             ? D
-          : RD;
+            : RD;
     deps.out(`  Verdict: ${verdictColor}${report.report.verdict}${R}`);
     for (const hint of report.report.hints) {
       deps.out(`    ${D}- ${hint}${R}`);
@@ -307,7 +307,7 @@ function buildBasicChannelReport(
   const appliedPresets = deps.getAppliedPresets(sandboxName);
   const policyPresets =
     diagnostic.policyPresets.length > 0 ? diagnostic.policyPresets : [channelName];
-  const presetInRegistry = policyPresets.some((preset) => appliedPresets.includes(preset));
+  const presetApplied = policyPresets.some((preset) => appliedPresets.includes(preset));
   const policyLabel = policyPresets.join(", ");
   const signals: DiagnosticSignal[] = [];
   signals.push({
@@ -324,11 +324,9 @@ function buildBasicChannelReport(
   });
   signals.push({
     label: "Policy coverage",
-    severity: presetInRegistry ? "ok" : enabled ? "warn" : "info",
-    detail: presetInRegistry
-      ? `${policyLabel} preset applied`
-      : `${policyLabel} preset not applied`,
-    hint: presetInRegistry
+    severity: presetApplied ? "ok" : enabled ? "warn" : "info",
+    detail: presetApplied ? `${policyLabel} preset applied` : `${policyLabel} preset not applied`,
+    hint: presetApplied
       ? undefined
       : `run \`${CLI_NAME} ${sandboxName} policy add ${policyPresets[0]}\``,
   });
@@ -435,7 +433,7 @@ function runChannelHealthHook(
   const policyPresets =
     diagnostic.policyPresets.length > 0 ? diagnostic.policyPresets : [channelName];
   const appliedPresets = deps.getAppliedPresets(sandboxName);
-  const presetInRegistry = policyPresets.some((preset) => appliedPresets.includes(preset));
+  const presetApplied = policyPresets.some((preset) => appliedPresets.includes(preset));
   let presetOnGateway: boolean | null = null;
   try {
     const gatewayPresets = deps.getGatewayPresets(sandboxName);
@@ -462,7 +460,7 @@ function runChannelHealthHook(
       agent: agent.name,
       probedAt: deps.now().toISOString(),
       channelEnabledInRegistry,
-      presetInRegistry,
+      presetApplied,
       presetOnGateway,
     }),
   });

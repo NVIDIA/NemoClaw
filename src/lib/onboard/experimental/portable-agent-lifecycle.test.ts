@@ -149,7 +149,7 @@ describe("portable agent lifecycle dispatch", () => {
     mocks.readRegistry.mockReturnValue(null);
   });
 
-  it("directs copied active schema-5 authority to probe instead of migrating on launch (#10423)", () => {
+  it("directs copied active schema-7 authority to probe instead of migrating on launch (#10423)", () => {
     mocks.isLifecycleLockHeld.mockReturnValue(true);
     mocks.inspectClassification.mockReturnValue({
       kind: "hermes",
@@ -208,7 +208,7 @@ describe("portable agent lifecycle dispatch", () => {
   });
 
   it.each(["configuring", "active"] as const)(
-    "returns the matching schema-5 %s receipt and registry authority (#9203)",
+    "returns the matching schema-7 %s receipt and registry authority (#9203)",
     (phase) => {
       mocks.inspect.mockReturnValue(hermes(phase));
       const entry = hermesRegistryEntry();
@@ -221,14 +221,14 @@ describe("portable agent lifecycle dispatch", () => {
     },
   );
 
-  it("uses operation-local schema-6 authority for a direct command (#10423)", () => {
+  it("uses operation-local schema-8 authority for a direct command (#10423)", () => {
     const historical = hermes("active").snapshot.receipt;
     const current = { ...historical, socketAuthority: { dev: "current" } };
     const assertTransactionCurrent = vi.fn();
     const assertCurrent = vi.fn();
     mocks.inspect.mockReturnValue({
       kind: "hermes",
-      snapshot: { receipt: historical, successor: { receipt: { schemaVersion: 6 } } },
+      snapshot: { receipt: historical, successor: { receipt: { schemaVersion: 8 } } },
     });
     mocks.qualifyOperatingAuthority.mockReturnValue({
       receipt: current,
@@ -384,7 +384,7 @@ describe("portable agent lifecycle dispatch", () => {
     { gatewayName: "other-gateway" },
     { lifecycleGeneration: "generation-2" },
     { lifecycleLiveIdentityFingerprint: "other-fingerprint" },
-  ])("rejects schema-5 receipt and registry disagreement %# (#9203)", (overrides) => {
+  ])("rejects schema-7 receipt and registry disagreement %# (#9203)", (overrides) => {
     mocks.inspect.mockReturnValue(hermes("active"));
     mocks.readRegistry.mockReturnValue(hermesRegistryEntry(overrides));
 
@@ -393,7 +393,7 @@ describe("portable agent lifecycle dispatch", () => {
     );
   });
 
-  it("rejects a registry row while the schema-5 receipt is pending (#9203)", () => {
+  it("rejects a registry row while the schema-7 receipt is pending (#9203)", () => {
     mocks.inspect.mockReturnValue(hermes("pending"));
     mocks.readRegistry.mockReturnValue(hermesRegistryEntry());
 
@@ -441,7 +441,7 @@ describe("portable agent lifecycle dispatch", () => {
     ).toThrow("changed during verification");
   });
 
-  it("binds schema-5 command children to the receipt runtime namespace (#9203)", () => {
+  it("binds schema-7 command children to the receipt runtime namespace (#9203)", () => {
     mocks.inspect.mockReturnValue(hermes("active"));
     expect(
       buildHermesPortableCommandEnvironment("alpha", {

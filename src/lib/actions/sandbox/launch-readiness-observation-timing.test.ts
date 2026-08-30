@@ -54,9 +54,6 @@ function entry(): SandboxEntry {
     agentVersion: "0.19.0",
     nemoclawVersion: "0.1.0",
     imageTag: "example@sha256:immutable",
-    policyPresetsFinalized: true,
-    policies: ["managed_inference"],
-    policyTier: "standard",
     provider: "compatible-endpoint",
     model: "model-a",
     endpointUrl: "https://inference.example.com/v1/chat/completions",
@@ -70,7 +67,7 @@ function entry(): SandboxEntry {
 
 function fence(): LaunchReadinessFence {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "fence",
     epochId: EPOCH,
     sandboxName: SANDBOX,
@@ -93,7 +90,7 @@ function fence(): LaunchReadinessFence {
 
 function lease(identity: LaunchReadinessIdentity): LaunchReadinessLease {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "lease",
     epochId: EPOCH,
     sandboxName: SANDBOX,

@@ -26,28 +26,6 @@ export type SandboxRecord = {
   pendingRouteReservation?: true;
   reservationSessionId?: string;
   agent?: string | null;
-  baselineExclusionTransition?: {
-    id: string;
-    operation: "exclude" | "restore";
-    exclusion: {
-      version: 1;
-      agent: string;
-      key: string;
-      digest: string;
-      acknowledgedAt?: string;
-      appliedAgentVersion?: string | null;
-    };
-    startedAt: string;
-    targetLiveDigest: string | null;
-  };
-  baselineExclusions?: Array<{
-    version: 1;
-    agent: string;
-    key: string;
-    digest: string;
-    acknowledgedAt?: string;
-    appliedAgentVersion?: string | null;
-  }>;
   fromDockerfile?: string | null;
   gatewayName?: string | null;
   gatewayPort?: number | null;
@@ -63,8 +41,6 @@ export type SandboxRecord = {
   preferredInferenceApi?: string | null;
   lifecycleGeneration?: string;
   lifecycleLiveIdentityFingerprint?: string;
-  policyAuthority?: SandboxEntry["policyAuthority"];
-  policyCreationReceipt?: SandboxEntry["policyCreationReceipt"];
   hostLocalInferenceReceipt?: string | null;
   hostLocalInferenceProvenance?: SandboxHostLocalInferenceProvenance;
   dashboardPort?: number | null;
@@ -95,20 +71,23 @@ export function openshellResponses(
   const sandboxName = String(args.at(-1) ?? "sandbox");
   const result =
     responses[command] ??
-    (command === "sandbox get"
-      ? {
-          status: 0,
-          output: `Name: ${sandboxName}\nId: ${sandboxName}-live-id\nPhase: Ready\n`,
-        }
-      : {
-          status: 0,
-          output: "",
-        });
+    (command === "policy get"
+      ? { status: 0, output: "version: 1\nnetwork_policies: {}\n" }
+      : command === "sandbox get"
+        ? {
+            status: 0,
+            output: `Name: ${sandboxName}\nId: ${sandboxName}-live-id\nPhase: Ready\n`,
+          }
+        : {
+            status: 0,
+            output: "",
+          });
   return captureOpenshellStreams(args, result);
 }
 
 export function defaultOpenshellResponses(args: string[]): OpenshellCaptureResult {
   return openshellResponses(args, {
+    "policy get": { status: 0, output: "version: 1\nnetwork_policies: {}\n" },
     "sandbox exec": { status: 0, output: dcodeProbeOutput("no-runtime") },
     "sandbox list": {
       status: 0,
@@ -172,9 +151,6 @@ export const dockerInspectMock = vi.fn(() => ({ status: 0, stdout: "true\n" }));
 export const establishRestoredSandboxGatewayPairingMock = vi.fn();
 export const findBackupMock = vi.fn();
 export const getAppliedPresetsMock = vi.fn(() => [] as string[]);
-export const getCustomPoliciesMock = vi.fn(
-  () => [] as Array<{ name: string; content: string; sourcePath?: string }>,
-);
 export const getLatestBackupMock = vi.fn(() => null as Record<string, unknown> | null);
 export const applyPresetMock = vi.fn((_sandbox: string, _preset: string) => true);
 export const applyPresetContentMock = vi.fn(
@@ -274,6 +250,7 @@ vi.mock("../../policy", () => ({
   getAppliedPresets: getAppliedPresetsMock,
   getPresetContentGatewayState: getPresetContentGatewayStateMock,
   loadPresetForSandbox: loadPresetForSandboxMock,
+  parseCurrentPolicy: (raw: unknown) => String(raw),
   removePreset: removePresetMock,
   resolveAgentBaselinePolicy: resolveAgentBaselinePolicyMock,
 }));
@@ -330,9 +307,7 @@ vi.mock("../../state/gateway", () => ({
 }));
 
 vi.mock("../../state/registry", () => ({
-  getBaselineExclusions: vi.fn(() => []),
   getConfiguredMessagingChannelsFromEntry: vi.fn(() => []),
-  getCustomPolicies: getCustomPoliciesMock,
   getDisabledMessagingChannelsFromEntry: vi.fn(() => []),
   getSandbox: getSandboxMock,
   isRouteOnlySandboxReservation: (entry: SandboxRecord) =>
@@ -398,7 +373,6 @@ export function resetSnapshotRestoreMocks(): void {
   establishRestoredSandboxGatewayPairingMock.mockReset();
   findBackupMock.mockReturnValue({ match: null });
   getAppliedPresetsMock.mockReturnValue([]);
-  getCustomPoliciesMock.mockReturnValue([]);
   getLatestBackupMock.mockReturnValue(null);
   applyPresetMock.mockReturnValue(true);
   applyPresetContentMock.mockReturnValue(true);

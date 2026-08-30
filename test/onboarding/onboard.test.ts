@@ -532,7 +532,6 @@ startGateway(null).catch((error) => {
         messaging: true,
         resourceProfile: true,
       },
-      policyPresets: ["nous-web", "brave"],
       lastCompletedStep: "policies",
       lastStepStarted: "policies",
       steps: {
@@ -570,7 +569,6 @@ startGateway(null).catch((error) => {
       messaging: false,
       resourceProfile: true,
     });
-    expect(cleared.policyPresets).toBeNull();
     expect(cleared.steps.gateway.status).toBe("complete");
     expect(cleared.steps.provider_selection.status).toBe("pending");
     expect(cleared.steps.sandbox.status).toBe("pending");
@@ -704,7 +702,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-	registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture({
+	registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
 	  name: "my-assistant",
 	  toolDisclosure: "progressive",
 	}, { sandboxId: existingSandbox.state.sandboxId });

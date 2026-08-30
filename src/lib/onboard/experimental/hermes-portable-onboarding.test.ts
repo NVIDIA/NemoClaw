@@ -13,13 +13,10 @@ import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition
 import {
   captureHermesPortablePolicySource,
   createHermesPortableTransactionId,
+  hermesPortablePolicySourcePath,
   hermesPortableReceiptDirectory,
   publishHermesPortableDurablePolicySource,
 } from "./hermes-portable-receipt";
-import {
-  hermesPortableCreatePolicySemanticDigest,
-  resolveHermesPortableExpectedPolicyBytes,
-} from "./hermes-portable-policy-authority";
 import {
   classifyHermesPortableRegistry,
   createHermesPortableAuthenticatedHealthCapture,
@@ -303,7 +300,7 @@ describe("Hermes portable onboarding transaction", () => {
     );
   });
 
-  it("does not enroll dashboard/TUI forward authority for schema-5 Hermes (#9203)", () => {
+  it("does not enroll dashboard/TUI forward authority for schema-7 Hermes (#9203)", () => {
     expect(
       shouldManageHermesPortableDashboard(true, loadAgent("hermes"), {
         NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
@@ -644,9 +641,11 @@ network_policies:
     const resumed = await runHermesPortableOnboardingTransaction(resumedInput, second.value);
 
     expect(resumed.active.receipt.phase).toBe("active");
-    expect(resumed.active.receipt.policy.intendedSemanticSha256).toBe(
-      hermesPortableCreatePolicySemanticDigest(Buffer.from(POLICY)),
-    );
+    expect(
+      fs.existsSync(
+        hermesPortablePolicySourcePath("alpha", resumed.active.receipt.transactionId, stateDir),
+      ),
+    ).toBe(false);
     expect(resumed.created).toBe(true);
     expect(second.events.filter((event) => event === "create")).toHaveLength(1);
   });
@@ -847,7 +846,7 @@ network_policies:
 
   it("resumes an exact interrupted pending receipt prefix after process-style reentry (#9203)", async () => {
     interruptReceiptWrite(
-      Buffer.from('{"schemaVersion":5'),
+      Buffer.from('{"schemaVersion":7'),
       "simulated process exit during pending write",
       (length) => Math.floor(length / 2),
     );
@@ -933,7 +932,6 @@ network_policies:
             sandboxName: "alpha",
             transactionId,
             stateDir,
-            intendedSemanticSha256: hermesPortableCreatePolicySemanticDigest(Buffer.from(POLICY)),
             source: captureHermesPortablePolicySource(policyPath),
             hooks: {
               afterCanonicalLink: () => {
@@ -990,21 +988,15 @@ network_policies:
     expect(fixture.events.filter((event) => event === "registry")).toHaveLength(1);
   });
 
-  it("resumes configuring against the finalized Personal policy authority (#9211)", async () => {
+  it("resumes configuring against the current live OpenShell policy (#9211)", async () => {
     const first = deps({ failAfterRegistry: true });
     await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
       "registry-to-active exit",
     );
     const finalizedRegistry = {
       ...first.value.readRegistry()!,
-      policyTier: "personal",
-      policies: ["personal-open-internet"],
-      policyPresetsFinalized: true,
     };
-    const expectedPolicy = resolveHermesPortableExpectedPolicyBytes(
-      Buffer.from(POLICY),
-      finalizedRegistry,
-    ).bytes;
+    const expectedPolicy = Buffer.from(POLICY);
     fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
     const resumed = deps({
       existingSandbox: true,
@@ -1131,7 +1123,7 @@ network_policies:
     ).toHaveLength(updatesBeforeResume);
   });
 
-  it("rejects a different allowed GPU policy enrichment after configuring publication (#10121)", async () => {
+  it("accepts a host-edited live policy after configuring publication (#10121)", async () => {
     fs.writeFileSync(policyPath, NATIVE_GPU_CREATE, { mode: 0o600 });
     const first = deps({ updateFails: true, policySource: NATIVE_GPU_LIVE });
     await expect(runHermesPortableOnboardingTransaction(input(), first.value)).rejects.toThrow(
@@ -1144,19 +1136,13 @@ network_policies:
       policySource: NATIVE_GPU_LIVE.replace("/dev/nvidia0", "/dev/nvidia1"),
     });
 
-    await expect(runHermesPortableOnboardingTransaction(input(), second.value)).rejects.toThrow(
-      "live policy authority disagrees with the configured receipt",
-    );
+    await expect(
+      runHermesPortableOnboardingTransaction(input(), second.value),
+    ).resolves.toMatchObject({ active: { receipt: { phase: "active" } }, created: false });
 
     expect(
-      second.podman.mock.calls.some(
-        ([args]) => Array.isArray(args) && args[0] === "container" && args[1] === "update",
-      ),
-    ).toBe(false);
-    expect(second.events).not.toContain("registry");
-    expect(
       fs.existsSync(path.join(hermesPortableReceiptDirectory("alpha", stateDir), "active.json")),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("keeps a contender outside the lock through registry and active publication (#9203)", async () => {

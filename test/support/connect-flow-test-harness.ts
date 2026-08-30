@@ -509,7 +509,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         ? portableDisposition.liveIdentityFingerprint
         : undefined,
     gpuEnabled: false,
-    policies: [],
     ...(portableDisposition.kind === "hermes"
       ? {
           openshellDriver: "docker",
@@ -529,7 +528,6 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
               provider: null,
               model: null,
               gpuEnabled: false,
-              policies: [],
               ...candidate,
             },
       )
