@@ -136,6 +136,8 @@ on:
         "src/lib/actions/sandbox/gateway-failure-classifier.ts",
         "src/lib/actions/sandbox/launch-readiness-ordinary-pairing.test.ts",
         "src/lib/actions/sandbox/process-recovery.ts",
+        "src/lib/actions/sandbox/rebuild-dcode-mutation-edge.test.ts",
+        "src/lib/actions/sandbox/rebuild-dcode-preflight.ts",
         "src/lib/actions/sandbox/rebuild-destroy-phase.test.ts",
         "src/lib/actions/sandbox/rebuild-destroy-phase.ts",
         "src/lib/actions/sandbox/mcp-bridge-input-targets.test.ts",
@@ -200,6 +202,7 @@ on:
     expect(source).not.toContain("scripts/checks/run-managed-image-openshell-e2e.ts");
     expect(source).not.toContain("src/lib/actions/maintenance.ts");
     expect(source).not.toContain("src/lib/actions/sandbox/process-recovery.ts");
+    expect(source).not.toContain("src/lib/actions/sandbox/rebuild-dcode-preflight.ts");
     expect(source).not.toContain("src/lib/actions/sandbox/rebuild-destroy-phase.ts");
     expect(source).not.toContain("src/lib/actions/sandbox/gateway-failure-classifier.ts");
     expect(source).not.toContain("src/lib/actions/sandbox/status-preflight.ts");

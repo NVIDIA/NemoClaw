@@ -43,6 +43,8 @@ const REUSABLE_NON_IMAGE_PATHS = [
   /^src\/lib\/actions\/sandbox\/(?:gateway-failure-classifier|status-preflight)(?:[.]test)?[.]ts$/u,
   /^src\/lib\/actions\/sandbox\/launch-readiness-ordinary-pairing[.]test[.]ts$/u,
   /^src\/lib\/actions\/sandbox\/process-recovery[.]ts$/u,
+  /^src\/lib\/actions\/sandbox\/rebuild-dcode-mutation-edge[.]test[.]ts$/u,
+  /^src\/lib\/actions\/sandbox\/rebuild-dcode-preflight[.]ts$/u,
   /^src\/lib\/actions\/sandbox\/rebuild-destroy-phase(?:[.]test)?[.]ts$/u,
   /^src\/lib\/actions\/sandbox\/mcp-bridge-tool-discovery(?:[.]test)?[.]ts$/u,
   /^src\/lib\/actions\/sandbox\/mcp-bridge-input-targets[.]test[.]ts$/u,
