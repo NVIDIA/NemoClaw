@@ -12,6 +12,11 @@ import type { WebSearchConfig } from "../../inference/web-search";
 import { getMessagingPolicyKeysByChannel } from "../../messaging/channels/metadata";
 import { loadMessagingChannelPolicyPreset } from "../../messaging/channels/policy";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import {
+  isDcodeAgent,
+  OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+} from "../observability-policy-presets";
+import { RESTRICTED_TIER_NAME } from "../policy-tier-suppression";
 import type { BackupResult } from "../../state/sandbox";
 import type { RetainedSandboxRecoveryContext, Session } from "../../state/onboard-session";
 import type { SandboxEntry, SandboxMcpState } from "../../state/registry";
@@ -159,6 +164,29 @@ export function resolveRebuildMessagingPolicyDeltas(
       ),
     ],
   };
+}
+
+export function resolveRebuildObservabilityPolicyDelta(input: {
+  readonly agent: string | null | undefined;
+  readonly enabled: boolean | null | undefined;
+  readonly tierName: string | null | undefined;
+}): {
+  readonly requiredNetworkPolicyKeys: readonly string[];
+  readonly removedNetworkPolicyKeys: readonly string[];
+} {
+  if (!isDcodeAgent(input.agent)) {
+    return { requiredNetworkPolicyKeys: [], removedNetworkPolicyKeys: [] };
+  }
+  const required = input.enabled === true && input.tierName !== RESTRICTED_TIER_NAME;
+  return required
+    ? {
+        requiredNetworkPolicyKeys: [OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET],
+        removedNetworkPolicyKeys: [],
+      }
+    : {
+        requiredNetworkPolicyKeys: [],
+        removedNetworkPolicyKeys: [OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET],
+      };
 }
 
 /** Preserve OpenShell's live policy plus bounded requirements for this explicit create. */
@@ -2134,6 +2162,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const rebuildMessagingPolicyDeltas = resolveRebuildMessagingPolicyDeltas(
       plannedMessagingState?.plan,
     );
+    const rebuildObservabilityPolicyDelta = resolveRebuildObservabilityPolicyDelta({
+      agent: agent?.name,
+      enabled: createIntent?.observabilityEnabled,
+      tierName: createIntent?.policyTier,
+    });
     const rebuildPolicyProviderAuthority = resolveRebuildPolicyProviderAuthority({
       createArgs: materializedCreateArgv,
       messagingPlan: plannedMessagingState?.plan,
@@ -2144,8 +2177,14 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       ? selectRebuildCreatePolicy(
           createIntent.rebuildPolicySourcePath,
           materializedInitialSandboxPolicy,
-          rebuildMessagingPolicyDeltas.requiredNetworkPolicyKeys,
-          rebuildMessagingPolicyDeltas.removedNetworkPolicyKeys,
+          [
+            ...rebuildMessagingPolicyDeltas.requiredNetworkPolicyKeys,
+            ...rebuildObservabilityPolicyDelta.requiredNetworkPolicyKeys,
+          ],
+          [
+            ...rebuildMessagingPolicyDeltas.removedNetworkPolicyKeys,
+            ...rebuildObservabilityPolicyDelta.removedNetworkPolicyKeys,
+          ],
           rebuildMessagingPolicyDeltas.requiredNetworkPolicyPresetNames,
           plannedMessagingState?.plan,
           sandboxName,

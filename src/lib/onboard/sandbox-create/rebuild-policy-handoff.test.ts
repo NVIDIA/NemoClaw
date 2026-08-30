@@ -216,6 +216,44 @@ network_policies:
     });
   });
 
+  it("adds the explicit rebuild observability policy while preserving host entries", () => {
+    const merged = mergeReplacementPolicyAccess(
+      "version: 1\nnetwork_policies:\n  host_edit: {name: host_edit}\n",
+      `version: 1
+network_policies:
+  observability-otlp-local:
+    name: observability-otlp-local
+    endpoints: [{host: host.openshell.internal, port: 4318}]
+`,
+      ["observability-otlp-local"],
+    );
+
+    expect(YAML.parse(merged.source).network_policies).toEqual({
+      host_edit: { name: "host_edit" },
+      "observability-otlp-local": {
+        name: "observability-otlp-local",
+        endpoints: [{ host: "host.openshell.internal", port: 4318 }],
+      },
+    });
+  });
+
+  it("removes only the explicit rebuild observability policy", () => {
+    const merged = mergeReplacementPolicyAccess(
+      `version: 1
+network_policies:
+  host_edit: {name: host_edit}
+  observability-otlp-local: {name: observability-otlp-local}
+`,
+      "version: 1\nnetwork_policies: {}\n",
+      [],
+      ["observability-otlp-local"],
+    );
+
+    expect(YAML.parse(merged.source).network_policies).toEqual({
+      host_edit: { name: "host_edit" },
+    });
+  });
+
   it("rejects contradictory messaging policy deltas", () => {
     expect(() =>
       mergeReplacementPolicyAccess(

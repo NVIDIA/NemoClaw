@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   bindRebuildPolicyProvidersToCreateArgs,
   resolveRebuildMessagingPolicyDeltas,
+  resolveRebuildObservabilityPolicyDelta,
   resolveRebuildPolicyProviderAuthority,
 } from "./orchestration";
 
@@ -54,6 +55,21 @@ describe("rebuild policy provider handoff", () => {
       removedNetworkPolicyKeys: ["telegram", "googlechat_hermes"],
     });
   });
+
+  it.each([
+    ["langchain-deepagents-code", true, "balanced", ["observability-otlp-local"], []],
+    ["langchain-deepagents-code", false, "balanced", [], ["observability-otlp-local"]],
+    ["langchain-deepagents-code", true, "restricted", [], ["observability-otlp-local"]],
+    ["openclaw", true, "balanced", [], []],
+  ] as const)(
+    "derives the rebuild observability delta for %s enabled=%s tier=%s",
+    (agent, enabled, tierName, requiredNetworkPolicyKeys, removedNetworkPolicyKeys) => {
+      expect(resolveRebuildObservabilityPolicyDelta({ agent, enabled, tierName })).toEqual({
+        requiredNetworkPolicyKeys,
+        removedNetworkPolicyKeys,
+      });
+    },
+  );
 
   it("adds missing live-policy providers to the final create arguments", () => {
     expect(
