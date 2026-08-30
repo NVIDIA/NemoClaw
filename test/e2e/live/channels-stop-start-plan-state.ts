@@ -51,9 +51,14 @@ export function channelPlanStateErrors(
   );
 
   if (expectation.expected === "removed") {
-    if (channel)
+    const pendingRemoval =
+      channel?.configured === false &&
+      channel.active === false &&
+      channel.disabled === true &&
+      disabledChannels.includes(expectation.channelId);
+    if (channel && !pendingRemoval)
       errors.push(`${expectation.channelId} must be absent from messaging.plan.channels`);
-    if (disabledChannels.includes(expectation.channelId)) {
+    if (disabledChannels.includes(expectation.channelId) && !pendingRemoval) {
       errors.push(`${expectation.channelId} must be absent from disabledChannels`);
     }
     if (hasCredentialBinding) {

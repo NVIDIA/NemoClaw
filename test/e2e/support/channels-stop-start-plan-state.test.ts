@@ -79,6 +79,20 @@ describe("channels stop/start persisted messaging plan state", () => {
     },
   );
 
+  it("accepts a configured-false removal tombstone until rebuild registration retires it", () => {
+    const value = plan("hermes", "disabled");
+    value.channels = (value.channels as Record<string, unknown>[]).map((channel) => ({
+      ...channel,
+      active: false,
+      selected: false,
+      configured: false,
+      disabled: true,
+    }));
+    value.credentialBindings = [];
+
+    expect(errors(value, "hermes", "removed")).toEqual([]);
+  });
+
   it("rejects disabled state that is missing the disabled-channel index", () => {
     const value = plan("openclaw", "disabled");
     value.disabledChannels = [];

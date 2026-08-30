@@ -681,6 +681,14 @@ function expectPlanChannelState(channelId: string, expected: ChannelPlanExpected
   ).toEqual([]);
 }
 
+function expectRemovedPlanChannelRetired(channelId: string): void {
+  const plan = messagingPlan(SANDBOX_NAME);
+  expect(planChannel(channelId), `${channelId} removal tombstone retired`).toBeUndefined();
+  expect(plan.disabledChannels, `${channelId} disabled tombstone retired`).not.toContain(
+    channelId,
+  );
+}
+
 function requireEnvValue(env: NodeJS.ProcessEnv, key: string): string {
   const value = env[key];
   if (!value) throw new Error(`${key} must be configured for the channels stop/start target`);
@@ -1042,6 +1050,7 @@ async function removeChannelsAndRebuild(
     redactions,
     `sandbox-list-after-channel-remove-${AGENT}`,
   );
+  for (const channel of REMOVAL_CHANNELS) expectRemovedPlanChannelRetired(channel);
 }
 
 async function expectHermesChannelConfigRemoved(
