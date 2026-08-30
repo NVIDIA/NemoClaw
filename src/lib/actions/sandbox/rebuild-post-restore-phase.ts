@@ -8,7 +8,7 @@ import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { normalizePolicyTierName } from "../../onboard/policy-tier-suppression";
 import { BASELINE_EXCLUSION_SUPPORT_IMPACT } from "../../policy/baseline-exclusion";
-import type * as sandboxVersion from "../../sandbox/version";
+import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import * as registry from "../../state/registry";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
@@ -44,6 +44,13 @@ export {
   recoverHermesCronRestore,
   runHermesCronRestoreTransaction,
 } from "./rebuild-hermes-post-restore";
+
+/** Probe the recreated runtime instead of accepting its requested version metadata. */
+function probeRebuiltAgentVersion(
+  sandboxName: string,
+): ReturnType<typeof sandboxVersion.checkAgentVersion> {
+  return sandboxVersion.checkAgentVersion(sandboxName, { forceProbe: true });
+}
 
 const OPENCLAW_DOCTOR_TIMEOUT_MS = 5 * 60_000;
 
@@ -330,6 +337,35 @@ export async function runRebuildPostRestorePhase(
       };
   const hermesGatewayRestoreState = hermesGatewayVerification.state;
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
+  let verifiedAgentVersion: string | null = null;
+  if (versionCheck.expectedVersion) {
+    // The replacement runtime is the only authority for the completed rebuild
+    // version. Clear create-time bookkeeping before the forced live probe so a
+    // failed probe cannot leave the requested version recorded as observed.
+    registry.updateSandbox(sandboxName, { agentVersion: null });
+    const rebuiltVersion = probeRebuiltAgentVersion(sandboxName);
+    if (
+      rebuiltVersion.verificationFailed ||
+      rebuiltVersion.sandboxVersion !== versionCheck.expectedVersion
+    ) {
+      const observed = rebuiltVersion.sandboxVersion ?? "unverified";
+      const detail = `  Replacement agent version did not match the rebuild target (expected ${versionCheck.expectedVersion}, observed ${observed}).`;
+      if (hermesCronRestoreIdentity) {
+        return bailAfterHermesCronRestoreFailure(
+          sandboxName,
+          backupManifest,
+          `${detail} Hermes cron dispatch remains drained.`,
+          "Replacement agent version did not match the authoritative rebuild target.",
+          bail,
+          mcpBridgeRestoreUnverified ? () => printMcpRestoreRecovery(sandboxName, true) : undefined,
+        );
+      }
+      console.error(detail);
+      bail("Replacement agent version did not match the authoritative rebuild target.");
+      return;
+    }
+    verifiedAgentVersion = rebuiltVersion.sandboxVersion;
+  }
   if (hermesCronRestoreIdentity) {
     const replacementIdentity = hermesGatewayVerification.replacementIdentity;
     if (
@@ -401,7 +437,7 @@ export async function runRebuildPostRestorePhase(
       policyPresetReconciliationVerified,
     );
   registry.updateSandbox(sandboxName, {
-    agentVersion: agentDef.expectedVersion || null,
+    agentVersion: verifiedAgentVersion,
     policies: restoredBuiltinPresets,
     policyTier: normalizePolicyTierName(sb.policyTier),
     policyPresetsFinalized,

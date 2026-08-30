@@ -431,9 +431,20 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     detected: false,
     sessions: [],
   });
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
-    expectedVersion: "0.2.0",
-    sandboxVersion: "0.1.0",
+  vi.spyOn(sandboxVersion, "checkAgentVersion").mockImplementation((...args: unknown[]) => {
+    const options = args[1] as { forceProbe?: boolean } | undefined;
+    return options?.forceProbe
+      ? {
+          expectedVersion: "0.2.0",
+          sandboxVersion: "0.2.0",
+          isStale: false,
+          verificationFailed: false,
+          detectionMethod: "ssh-exec",
+        }
+      : {
+          expectedVersion: "0.2.0",
+          sandboxVersion: "0.1.0",
+        };
   });
   vi.spyOn(nim, "detectGpu").mockReturnValue(null);
   const routeResults = [...(overrides.dcodeRouteResults ?? [{ ok: true }])];
