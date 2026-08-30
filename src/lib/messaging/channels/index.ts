@@ -6,4 +6,3 @@ export * from "./metadata";
 export * from "./policy";
 export * from "./rendered-config-parser";
 export { createBuiltInRenderTemplateResolver } from "./template-resolver";
-export { WECHAT_OPENCLAW_STATE_PATHS } from "./wechat/contract";

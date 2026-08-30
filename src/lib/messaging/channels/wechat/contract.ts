@@ -26,11 +26,6 @@ export const WECHAT_OPENCLAW_ACCOUNT_FILE_OUTPUT_ID =
 
 export const WECHAT_TOKEN_PLACEHOLDER = "openshell:resolve:env:WECHAT_BOT_TOKEN";
 
-export const WECHAT_OPENCLAW_STATE_PATHS = [
-  "/sandbox/.openclaw/wechat",
-  "/sandbox/.openclaw/openclaw-weixin",
-] as const;
-
 export interface WechatManagedStartupPlaceholderAuthorization {
   readonly path: readonly string[];
   readonly value: string;

@@ -39,7 +39,6 @@ import {
   type SandboxMessagingPlan,
   toMessagingAgentId,
   tryGetMessagingAgentId,
-  WECHAT_OPENCLAW_STATE_PATHS,
 } from "../../messaging";
 import { findChannelConflicts } from "../../messaging/applier/conflict-detection/registry";
 import type { GooglechatNonInteractiveAudienceCapability } from "../../messaging/channels/googlechat/hooks/tunnel-audience-gate";
@@ -1691,8 +1690,12 @@ function getSandboxChannelStatePaths(
   channelName: string,
 ): readonly string[] {
   const configDir = agent.configPaths.dir;
-  if (agent.name === "openclaw" && channelName === "wechat") {
-    return WECHAT_OPENCLAW_STATE_PATHS;
+  const messagingAgentId = tryGetMessagingAgentId(agent, messagingManifestRegistry.list());
+  const manifestStateDirs = messagingAgentId
+    ? messagingManifestRegistry.get(channelName)?.state?.[messagingAgentId]
+    : undefined;
+  if (manifestStateDirs !== undefined) {
+    return manifestStateDirs.map((stateDir) => `${configDir}/${stateDir}`);
   }
   const stateDirs = new Set(agent.stateDirs);
   const paths: string[] = [];
@@ -1744,7 +1747,11 @@ const STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE = {
  */
 function clearSandboxChannelDurableState(sandboxName: string, channelName: string): boolean {
   const agent = resolveAgentForSandbox(sandboxName);
-  const paths = getSandboxChannelStatePaths(agent, channelName).filter(isSafeChannelStatePath);
+  const paths = getSandboxChannelStatePaths(agent, channelName);
+  if (!paths.every(isSafeChannelStatePath)) {
+    console.error(`  ${YW}⚠${R} Refusing unsafe '${channelName}' channel state cleanup path.`);
+    return false;
+  }
   if (paths.length === 0) return true;
 
   const quoted = paths.map((p) => shellQuote(p)).join(" ");

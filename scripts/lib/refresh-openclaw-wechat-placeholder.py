@@ -41,11 +41,12 @@ close_on_exec = getattr(os, "O_CLOEXEC", 0)
 directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | close_on_exec
 file_flags = os.O_RDONLY | os.O_NOFOLLOW | close_on_exec
 
-descriptors = []
+root_fd = -1
+plugin_fd = -1
+accounts_fd = -1
 try:
     try:
         root_fd = os.open(openclaw_dir, directory_flags)
-        descriptors.append(root_fd)
         config_fd = os.open("openclaw.json", file_flags, dir_fd=root_fd)
         try:
             config_metadata = os.fstat(config_fd)
@@ -90,9 +91,7 @@ try:
 
     try:
         plugin_fd = os.open("openclaw-weixin", directory_flags, dir_fd=root_fd)
-        descriptors.append(plugin_fd)
         accounts_fd = os.open("accounts", directory_flags, dir_fd=plugin_fd)
-        descriptors.append(accounts_fd)
     except OSError:
         fail("the managed account directory is missing or unsafe")
 
@@ -169,6 +168,7 @@ try:
                 try:
                     os.unlink(temporary, dir_fd=accounts_fd)
                 except OSError:
+                    # Preserve the original refresh failure when best-effort temp cleanup also fails.
                     pass
 
     if pending:
@@ -177,5 +177,9 @@ try:
             file=sys.stderr,
         )
 finally:
-    for descriptor in reversed(descriptors):
-        os.close(descriptor)
+    if accounts_fd >= 0:
+        os.close(accounts_fd)
+    if plugin_fd >= 0:
+        os.close(plugin_fd)
+    if root_fd >= 0:
+        os.close(root_fd)
