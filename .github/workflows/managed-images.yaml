@@ -2112,10 +2112,11 @@ jobs:
               throw new Error(`managed OpenClaw plugin ${id} is missing, duplicated, or active`);
             }
           }
-          for (const id of ["telegram", "tavily"]) {
-            if (config.plugins?.entries?.[id]?.enabled !== false) {
-              throw new Error(`bundled OpenClaw plugin ${id} is not explicitly disabled`);
-            }
+          if (config.plugins?.entries?.telegram?.enabled !== false) {
+            throw new Error("bundled OpenClaw plugin telegram is not explicitly disabled");
+          }
+          if (config.plugins?.entries?.tavily !== undefined) {
+            throw new Error("uninstalled OpenClaw plugin tavily is present in managed configuration");
           }
           for (const id of [
             "telegram",

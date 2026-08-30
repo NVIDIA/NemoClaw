@@ -102,6 +102,18 @@ describe("complete managed-image publication workflow", () => {
     }
   });
 
+  it("requires neutral managed OpenClaw configuration to omit uninstalled Tavily (#10325)", () => {
+    const workflow = readWorkflow("managed-images.yaml");
+    const validationRun =
+      step(managedPublisher(workflow), "Validate exact managed image before promotion").run ?? "";
+
+    expect(validationRun).toContain("config.plugins?.entries?.tavily !== undefined");
+    expect(validationRun).toContain(
+      "uninstalled OpenClaw plugin tavily is present in managed configuration",
+    );
+    expect(validationRun).not.toContain('for (const id of ["telegram", "tavily"])');
+  });
+
   it("starts managed publication after exact base contracts without canceling release tags (#7744)", () => {
     const baseWorkflow = readWorkflow("base-image.yaml");
     const managedWorkflow = readWorkflow("managed-images.yaml");
@@ -416,9 +428,7 @@ describe("complete managed-image publication workflow", () => {
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
     expect(releaseIdentity.id).toBe("release");
-    expect(releaseIdentity.run).toContain(
-      "git describe --tags --match 'v*' \"$CANDIDATE_SHA\"",
-    );
+    expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$CANDIDATE_SHA\"");
     expect(releaseIdentity.run).toContain("value=%s");
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));

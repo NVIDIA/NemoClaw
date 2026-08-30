@@ -103,14 +103,8 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     expect(config.plugins.entries.qqbot).toBeUndefined();
   });
 
-  it("does not reference the uninstalled Tavily plugin in a managed image (#10325)", () => {
-    // Unlike diagnostics-otel and brave-plugin, the managed image build never
-    // installs Tavily (Dockerfile only installs diagnostics-otel and
-    // brave-plugin for a capability-union build). Declaring an entry for it —
-    // even { enabled: false } — still makes OpenClaw warn "plugin not
-    // installed: tavily" on every `logs --follow`, because OpenClaw's config
-    // validator checks entry keys against installed plugins regardless of
-    // `enabled`. Omit the entry instead, like the qqbot fix above.
+  it("omits the uninstalled Tavily plugin from a neutral managed image (#10325)", () => {
+    // OpenClaw warns for an uninstalled ID in plugins.entries, even when the entry is disabled.
     const config = buildConfig({
       ...BASE_ENV,
       NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
@@ -134,9 +128,6 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
       expect(config.channels[channelId], channelId).toEqual({ enabled: false });
     });
-    // diagnostics-otel and brave are actually installed by the managed-image
-    // build (Dockerfile), so declaring them disabled is safe. Tavily is not
-    // installed there, so it must stay omitted (see the Tavily test above).
     ["diagnostics-otel", "brave"].forEach((pluginId) => {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
     });
