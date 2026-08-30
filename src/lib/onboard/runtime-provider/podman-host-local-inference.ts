@@ -3525,7 +3525,6 @@ export function createPodmanHostLocalInferenceRuntime(
       ),
     );
     timing.measure("cleanupCurrentness", () => {
-      assertAuthority();
       const current = inspectPublishedResumeTransaction(inspected.receipt);
       if (!current.container.running) {
         throw new Error("Podman published inference runtime stopped before final currentness.");
@@ -4443,6 +4442,15 @@ export function createPodmanHostLocalInferenceRuntime(
     resumeManaged: resumePublished,
     ...(publishedEngineAuthority
       ? {
+          preparePublishedRecoveryEntry(
+            receipt: HostLocalInferenceReceipt,
+          ): HostLocalManagedInferenceInspection {
+            const current = inspectPublishedResumeTransaction(receipt);
+            return Object.freeze({
+              running: current.container.running,
+              receipt: current.receipt,
+            });
+          },
           inspectPublishedRecoveryCurrent(
             receipt: HostLocalInferenceReceipt,
           ): HostLocalManagedInferenceInspection {

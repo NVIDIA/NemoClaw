@@ -161,21 +161,34 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
   const assertPublished = vi.fn(() => {
     events.push("publication");
   });
-  const prepareInferenceAuthority = vi.fn((_bundle, lifecycleEntry: SandboxEntry) => {
-    expect(lifecycleEntry).toMatchObject({
-      name: "alpha",
-      agent: "hermes",
-      openshellDriver: "podman",
-      provider: "ollama-local",
-    });
-    expect(lifecycleEntry.hostLocalInferenceProvenance).toBeUndefined();
-    return {
-      serializedReceipt,
-      sandboxAuthoritySha256: "6".repeat(64),
-      managedInspection: { running, receipt },
-      managedOperation,
-    };
-  });
+  const prepareInferenceAuthority = vi.fn(
+    (
+      _bundle,
+      lifecycleEntry: SandboxEntry,
+      _options,
+      entryTiming?: {
+        readonly now?: () => number;
+        readonly onComplete: (durationMs: number) => void;
+      },
+    ) => {
+      expect(lifecycleEntry).toMatchObject({
+        name: "alpha",
+        agent: "hermes",
+        openshellDriver: "podman",
+        provider: "ollama-local",
+      });
+      expect(lifecycleEntry.hostLocalInferenceProvenance).toBeUndefined();
+      const startedAt = entryTiming?.now?.() ?? 0;
+      const managedInspection = { running, receipt };
+      entryTiming?.onComplete((entryTiming.now?.() ?? startedAt) - startedAt);
+      return {
+        serializedReceipt,
+        sandboxAuthoritySha256: "6".repeat(64),
+        managedInspection,
+        managedOperation,
+      };
+    },
+  );
   const overrides = {
     readReceipt: vi.fn(() => ({ receipt: { phase: "active" }, successor: {} })),
     qualifyOperatingAuthority: vi.fn(() => ({
@@ -741,13 +754,27 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(Object.keys(evidence).sort()).toEqual([
       "dependencyMs",
       "entryAuthorityMs",
+      "exactRuntimeInspectionMs",
       "finalCurrentnessMs",
+      "operatingAuthorityMs",
       "preRouteCurrentnessMs",
+      "preparedInferenceAuthorityMs",
+      "privatePublicationMs",
+      "registryPreparationMs",
       "routeMs",
       "runtimeAction",
+      "runtimeAuthorityMs",
       "totalMs",
     ]);
-    expect(evidence).toMatchObject({ runtimeAction: action });
+    expect(evidence).toMatchObject({
+      exactRuntimeInspectionMs: 1,
+      operatingAuthorityMs: 1,
+      preparedInferenceAuthorityMs: 2,
+      privatePublicationMs: 1,
+      registryPreparationMs: 1,
+      runtimeAction: action,
+      runtimeAuthorityMs: 1,
+    });
     expect(
       Object.entries(evidence)
         .filter(([key]) => key.endsWith("Ms"))

@@ -366,6 +366,15 @@ export interface HostLocalInferenceRuntime {
     receipt: HostLocalInferenceReceipt,
   ): HostLocalManagedInferenceInspection;
   /**
+   * Admit one exact published runtime for connect recovery through the
+   * operation authority already qualified by the lifecycle owner. This path
+   * returns a detached transaction snapshot and never creates a second
+   * operation or falls back to generic destroy authority.
+   */
+  preparePublishedRecoveryEntry?(
+    receipt: HostLocalInferenceReceipt,
+  ): HostLocalManagedInferenceInspection;
+  /**
    * Re-prove exact published-runtime authority and GPU identity before the
    * caller performs its final managed route health proof. This path never
    * replaces creation-time or explicit deep inference qualification.

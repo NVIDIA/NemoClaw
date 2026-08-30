@@ -95,6 +95,11 @@ export interface HostLocalInferenceLifecycleOptions {
   ) => ManagedLlamaCppLifecycleAdapter;
 }
 
+export interface HostLocalInferencePublishedRecoveryEntryTiming {
+  readonly now?: () => number;
+  readonly onComplete: (durationMs: number) => void;
+}
+
 export interface HostLocalInferenceSharingAuthority {
   readonly disposition: "exclusive" | "shared";
   readonly sha256: string;
@@ -232,7 +237,13 @@ function requireRuntime(
     env: options.environment ?? process.env,
     acceleration,
   });
-  operation.assertAuthority();
+  if (authorityMode === "published-recovery") {
+    if (!operation.assertTransactionCurrent) {
+      fail("published recovery operation currentness is missing after full qualification");
+    }
+  } else {
+    operation.assertAuthority();
+  }
   const currentEngineMatchesReceipt =
     operation.engine.authorityId === receipt.engineAuthority.authorityId &&
     operation.bindingSha256 === receipt.engineAuthority.bindingSha256;
@@ -301,20 +312,52 @@ function prepare(
   mode: PreparedHostLocalInferenceAuthority["mode"],
   options: HostLocalInferenceLifecycleOptions,
   authorityMode: "current" | "published-recovery" = "current",
+  publishedRecoveryEntryTiming?: HostLocalInferencePublishedRecoveryEntryTiming,
 ): PreparedHostLocalInferenceAuthority | null {
   const receipt = parseManagedReceipt(serialized, sandbox);
   if (!receipt) return null;
   const sandboxAuthority = captureSandboxAuthority(provider, sandbox, serialized, receipt);
   const required = requireRuntime(provider, receipt, sandbox, options, authorityMode);
   const { runtime } = required;
-  const reproved =
-    mode === "destroy" ? runtime.prepareDestroy(receipt) : runtime.preserveForRebuild(receipt);
-  const managedInspection =
-    mode === "destroy" && authorityMode === "published-recovery"
-      ? runtime.inspectPublishedRecoveryCurrent?.(receipt)
-      : undefined;
-  if (mode === "destroy" && authorityMode === "published-recovery" && !managedInspection) {
-    fail("published recovery runtime inspection is missing after full entry proof");
+  let reproved: HostLocalInferenceReceipt;
+  let managedInspection: HostLocalManagedInferenceInspection | undefined;
+  if (mode === "destroy" && authorityMode === "published-recovery") {
+    const preparePublishedRecoveryEntry = runtime.preparePublishedRecoveryEntry;
+    if (!preparePublishedRecoveryEntry) {
+      fail("published recovery runtime entry authority is missing after full qualification");
+    }
+    const now = publishedRecoveryEntryTiming?.now ?? (() => performance.now());
+    let startedAt: number | null = null;
+    try {
+      const value = now();
+      startedAt = Number.isFinite(value) ? value : null;
+    } catch {
+      startedAt = null;
+    }
+    try {
+      managedInspection = preparePublishedRecoveryEntry(receipt);
+    } finally {
+      if (publishedRecoveryEntryTiming) {
+        let durationMs = 0;
+        try {
+          const finishedAt = now();
+          if (startedAt !== null && Number.isFinite(finishedAt)) {
+            durationMs = Math.min(9_999_999, Math.max(0, Math.round(finishedAt - startedAt)));
+          }
+        } catch {
+          durationMs = 0;
+        }
+        try {
+          publishedRecoveryEntryTiming.onComplete(durationMs);
+        } catch {
+          // Timing evidence must not change published-runtime recovery.
+        }
+      }
+    }
+    reproved = managedInspection.receipt;
+  } else {
+    reproved =
+      mode === "destroy" ? runtime.prepareDestroy(receipt) : runtime.preserveForRebuild(receipt);
   }
   requireExactReceipt(
     serialized,
@@ -395,13 +438,14 @@ export function prepareHermesPortableHostLocalInferencePublishedRecoveryAuthorit
   provider: RuntimeProviderBundle,
   sandbox: HostLocalInferenceLifecycleSandbox,
   options: HostLocalInferenceLifecycleOptions = {},
+  entryTiming?: HostLocalInferencePublishedRecoveryEntryTiming,
 ): PreparedHostLocalInferenceAuthority | null {
   if (sandbox.agent !== "hermes" || sandbox.provider !== "ollama-local") {
     fail("published inference requalification is restricted to Hermes Portable Ollama");
   }
   const serialized = sandbox.hostLocalInferenceReceipt;
   return typeof serialized === "string"
-    ? prepare(provider, sandbox, serialized, "destroy", options, "published-recovery")
+    ? prepare(provider, sandbox, serialized, "destroy", options, "published-recovery", entryTiming)
     : null;
 }
 

@@ -114,6 +114,7 @@ function driftRestartPolicy(
 function setup(
   options: {
     readonly creationAuthority?: (value: PersistedEngineAuthority) => PersistedEngineAuthority;
+    readonly publishedIntent?: string;
     readonly serializedReceipt?: (value: string) => string;
     readonly publishedResumeTiming?: PodmanPublishedResumeTiming;
     readonly transformCapture?: (
@@ -211,7 +212,7 @@ function setup(
       routeAuthorityStore: harness.routeAuthorityStore,
       externalNetwork,
       hermesPortablePublishedEngineAuthority: {
-        intent: "connect-probe-only",
+        intent: (options.publishedIntent ?? "connect-probe-only") as "connect-probe-only",
         creationAuthority: publishedCreationAuthority,
         serializedReceipt: publishedSerializedReceipt,
         assertForwardAuthority,
@@ -471,6 +472,8 @@ describe("Hermes Portable published engine recovery", () => {
       { environment: fixture.harness.env },
     );
     expect(prepared?.serializedReceipt).toBe(fixture.serializedReceipt);
+    expect(Object.isFrozen(prepared?.managedInspection)).toBe(true);
+    expect(Object.isFrozen(prepared?.managedInspection?.receipt)).toBe(true);
     const creationContainer = fixture.harness.container()!;
     const immutableContainer = JSON.stringify({
       id: creationContainer.id,
@@ -665,14 +668,6 @@ describe("Hermes Portable published engine recovery", () => {
         .slice(captureStart)
         .filter((event) => event.includes("version") || event.includes("info")),
     ).toEqual([
-      "host-local-inference:version --format json",
-      "host-local-inference:info --format json",
-      "host-local-inference:version --format json",
-      "host-local-inference:info --format json",
-      "host-local-inference:version --format json",
-      "host-local-inference:info --format json",
-      "host-local-inference:version --format json",
-      "host-local-inference:info --format json",
       "host-local-inference:version --format json",
       "host-local-inference:info --format json",
     ]);
@@ -1036,8 +1031,19 @@ describe("Hermes Portable published engine recovery", () => {
         mismatched.providerEntry,
         { environment: mismatched.harness.env },
       ),
-    ).toThrow("differs from its persisted record");
+    ).toThrow("differs from its persisted engine authority");
     expect(mismatched.harness.container()).toMatchObject({ running: false });
+  });
+
+  it("rejects a published operation outside connect probe-only intent (#10423)", () => {
+    const fixture = setup({ publishedIntent: "interactive-launch" });
+
+    expect(() =>
+      requireRuntimeProviderHostLocalInferenceOperation(fixture.bundle, "ollama", {
+        env: fixture.harness.env,
+        acceleration: "nvidia-gpu",
+      }),
+    ).toThrow("invalid creation engine authority");
   });
 
   it("denies unrelated provider mutation surfaces in published recovery mode (#10423)", () => {
