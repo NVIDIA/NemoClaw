@@ -313,7 +313,7 @@ describe("protected managed-image runtime workflow", () => {
 
   it("rejects a mutable DCode base in protected runtime qualification", () => {
     const value = workflow();
-    const bases = namedStep(value, "Resolve exact amd64 runtime base images");
+    const bases = namedStep(value, "Resolve digest-pinned amd64 runtime base images");
     bases.run = `${String(bases.run)}\nghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest`;
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
@@ -392,7 +392,7 @@ describe("protected managed-image runtime workflow", () => {
 
   it("selects each protected DCode base from the validated platform contract", () => {
     const value = workflow();
-    const bases = namedMultiarchStep(value, "Resolve exact platform base images");
+    const bases = namedMultiarchStep(value, "Resolve digest-pinned platform base images");
     (bases.env as Record<string, unknown>).DCODE_BASE_CONTRACT = "${{ inputs.base_contract }}";
 
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(
@@ -402,7 +402,7 @@ describe("protected managed-image runtime workflow", () => {
 
   it("rejects a mutable DCode base in protected multiarch startup", () => {
     const value = workflow();
-    const bases = namedMultiarchStep(value, "Resolve exact platform base images");
+    const bases = namedMultiarchStep(value, "Resolve digest-pinned platform base images");
     bases.run = `${String(bases.run)}\nghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest`;
 
     expect(validateManagedImageMultiarchWorkflow(value)).toContain(

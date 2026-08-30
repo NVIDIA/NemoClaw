@@ -1,28 +1,57 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
-
 export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
-  "confirm Docker credentials and clear the scope-upgrade sandbox",
+  "confirm Docker availability and clear the scope-upgrade sandbox",
   "install the OpenClaw sandbox",
-  "prove fresh agent turns stay on the gateway path",
-  "approve the write-scope upgrade without admin",
+  "prove onboarding settled operator.write and the first agent turn used the gateway",
   "trigger and approve an operator.admin request through connect",
-  "clear the sandbox and record the approval contract",
+  "record the approval contract",
 ] as const;
 
-const OPENCLAW_AGENT_JSON_HELPER_PY = fs.readFileSync(
-  path.join(import.meta.dirname, "..", "lib", "openclaw-agent-json.py"),
-  "utf-8",
-);
+export type PreApprovalAdminProbeOutcome =
+  | "approval-required"
+  | "command-failed"
+  | "gateway-unavailable"
+  | "timeout"
+  | "unexpected-success";
 
-export const ADMIN_REQUEST_SELECTOR_PY = String.raw`import json, sys
+interface PreApprovalAdminProbeResult {
+  exitCode: number | null;
+  stderr: string;
+  stdout: string;
+  timedOut: boolean;
+}
+
+export function preApprovalAdminProbeEvidence(result: PreApprovalAdminProbeResult): {
+  outcome: PreApprovalAdminProbeOutcome;
+} {
+  if (result.timedOut) return { outcome: "timeout" };
+  if (result.exitCode === 0) return { outcome: "unexpected-success" };
+
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (
+    /operator\.admin|scope upgrade pending approval|device pairing required|pairing required/i.test(
+      output,
+    )
+  ) {
+    return { outcome: "approval-required" };
+  }
+  if (
+    /gateway (?:connection )?(?:unavailable|unreachable)|econn(?:refused|reset)|connection refused|network unreachable|socket (?:closed|unavailable)/i.test(
+      output,
+    )
+  ) {
+    return { outcome: "gateway-unavailable" };
+  }
+  return { outcome: "command-failed" };
+}
+
+export const ADMIN_REQUEST_SELECTOR_PY = String.raw`import base64, hashlib, json, os, re, sys
 from pathlib import Path
 
 data=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
-expected_request_id=str(sys.argv[2] or '').strip()
+request_id_path=Path(sys.argv[2])
 pending=data.get('pending') or []
 paired=data.get('paired') or []
 allowed_scopes={'operator.pairing','operator.read','operator.write','operator.admin'}
@@ -81,13 +110,37 @@ def roles(value):
     return result
 def is_cli(value):
     return value.get('clientId') in {'cli','openclaw-cli'} and value.get('clientMode') == 'cli'
+def identity_public_key(value):
+    direct=norm(value.get('publicKey'))
+    if direct: return direct
+    pem=norm(value.get('publicKeyPem'))
+    if not pem: return ''
+    body=''.join(line.strip() for line in pem.splitlines() if not line.startswith('-----'))
+    try: der=base64.b64decode(body, validate=True)
+    except Exception: return ''
+    prefix=bytes.fromhex('302a300506032b6570032100')
+    if len(der) != len(prefix) + 32 or not der.startswith(prefix): return ''
+    return base64.urlsafe_b64encode(der[len(prefix):]).decode('ascii').rstrip('=')
 
-if not expected_request_id:
-    raise SystemExit('expected cron requestId is empty')
-candidates=[request for request in pending if isinstance(request, dict) and norm(request.get('requestId')) == expected_request_id]
-if len(candidates) != 1:
-    raise SystemExit(f'expected the cron requestId exactly once in pending state, found {len(candidates)}')
-request=candidates[0]
+identity_path=Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw') / 'identity' / 'device.json'
+try: identity=json.loads(identity_path.read_text(encoding='utf-8'))
+except (FileNotFoundError, json.JSONDecodeError): raise SystemExit('local CLI identity is missing or invalid')
+if not isinstance(identity, dict): raise SystemExit('local CLI identity must be an object')
+identity_device_id=norm(identity.get('deviceId'))
+identity_key=identity_public_key(identity)
+try: identity_key_raw=base64.urlsafe_b64decode(identity_key + '=' * (-len(identity_key) % 4))
+except Exception: raise SystemExit('local CLI identity public key is invalid')
+if (not identity_device_id or len(identity_key_raw) != 32
+        or hashlib.sha256(identity_key_raw).hexdigest() != identity_device_id):
+    raise SystemExit('local CLI identity binding is invalid')
+
+request_entries=[request for request in pending if isinstance(request, dict)]
+if len(request_entries) != 1:
+    raise SystemExit(f'expected exactly one pending request, found {len(request_entries)}')
+request=request_entries[0]
+request_id=norm(request.get('requestId'))
+if not re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', request_id, re.IGNORECASE):
+    raise SystemExit('pending admin request has an invalid requestId')
 request_scopes=requested_scopes(request)
 if not is_cli(request) or roles(request) != {'operator'}:
     raise SystemExit('cron requestId does not belong to the expected CLI operator')
@@ -95,6 +148,8 @@ if 'operator.admin' not in request_scopes or not request_scopes.issubset(allowed
     raise SystemExit(f'cron requestId has unexpected scopes: {sorted(request_scopes)}')
 device_id=norm(request.get('deviceId'))
 public_key=norm(request.get('publicKey'))
+if device_id != identity_device_id or public_key != identity_key:
+    raise SystemExit('pending admin request does not match the local CLI identity')
 matching_devices=[device for device in paired if isinstance(device, dict) and norm(device.get('deviceId')) == device_id]
 if not device_id or len(matching_devices) != 1:
     raise SystemExit(f'cron requestId must match exactly one paired device, found {len(matching_devices)}')
@@ -108,30 +163,12 @@ if any('operator.admin' in view for view in device_scope_views):
     raise SystemExit('operator.admin was already granted before explicit approval')
 if any(not view.issubset(non_admin_scopes) for view in device_scope_views):
     raise SystemExit('paired device has unexpected approved scopes')
-print(expected_request_id)`;
-
-export function extractPendingRequestId(output: string): string {
-  const requestIds = new Set(
-    [
-      ...output.matchAll(
-        /\brequestId\s*[:=]\s*([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\b/giu,
-      ),
-    ].map((match) => match[1]),
-  );
-  if (requestIds.size !== 1) {
-    throw new Error(
-      `expected exactly one pending requestId in cron output, found ${requestIds.size}`,
-    );
-  }
-  return [...requestIds][0];
-}
+request_id_path.write_text(request_id, encoding='utf-8')`;
 
 export function adminApprovalConnectScript(
   cliPath: string,
   sandboxName: string,
-  expectedRequestId: string,
   cronName: string,
-  sessionId: string,
 ): string {
   const cli = JSON.stringify(cliPath);
   const sandbox = JSON.stringify(sandboxName);
@@ -141,35 +178,81 @@ export function adminApprovalConnectScript(
     "set -euo pipefail",
     'if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then echo "PUBLIC_GATEWAY_URL_LEAK" >&2; exit 20; fi',
     'if [ -n "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" ]; then echo "PUBLIC_INSECURE_WS_LEAK" >&2; exit 21; fi',
-    'case "${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}" in ws://*|wss://*) ;; *) echo "PRIVATE_GATEWAY_ALIAS_MISSING" >&2; exit 22 ;; esac',
+    'if ! python3 - "${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}" "${NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" <<\'PY_PRIVATE_GATEWAY\'; then echo "PRIVATE_GATEWAY_ALIAS_REJECTED" >&2; exit 22; fi',
+    "import ipaddress, sys, urllib.parse",
+    "url=sys.argv[1]",
+    "insecure_private_ws=sys.argv[2]",
+    "try:",
+    "    parsed=urllib.parse.urlsplit(url)",
+    "    host=parsed.hostname",
+    "    port=parsed.port",
+    "except ValueError:",
+    "    raise SystemExit('gateway alias is malformed')",
+    "if parsed.scheme not in {'ws','wss'} or not host or port is None:",
+    "    raise SystemExit('gateway alias must be an explicit WebSocket origin')",
+    "if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {'','/'}:",
+    "    raise SystemExit('gateway alias must not contain credentials, a path, a query, or a fragment')",
+    "loopback=host == 'localhost' or host == '127.0.0.1'",
+    "private=False",
+    "try:",
+    "    address=ipaddress.ip_address(host)",
+    "    private=any(address in network for network in (",
+    "        ipaddress.ip_network('10.0.0.0/8'),",
+    "        ipaddress.ip_network('172.16.0.0/12'),",
+    "        ipaddress.ip_network('192.168.0.0/16'),",
+    "    ))",
+    "except ValueError:",
+    "    pass",
+    "if not loopback and not private:",
+    "    raise SystemExit('gateway alias is not loopback or RFC1918 private')",
+    "if parsed.scheme == 'ws' and not loopback and insecure_private_ws != '1':",
+    "    raise SystemExit('private ws gateway alias is missing its trusted marker')",
+    "PY_PRIVATE_GATEWAY",
     '[ -n "${OPENCLAW_GATEWAY_PORT:-}" ] || { echo "GATEWAY_PORT_MISSING" >&2; exit 23; }',
     '[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ] || { echo "GATEWAY_TOKEN_MISSING" >&2; exit 24; }',
-    `expected_request_id=${JSON.stringify(expectedRequestId)}`,
     `cron_name=${JSON.stringify(cronName)}`,
-    `session_id=${JSON.stringify(sessionId)}`,
+    "emit_admin_diagnostic() {",
+    "python3 - \"$1\" <<'PY_ADMIN_DIAGNOSTIC'",
+    "import re, sys",
+    "from pathlib import Path",
+    "try: raw=Path(sys.argv[1]).read_text(encoding='utf-8', errors='replace')[:65536]",
+    "except FileNotFoundError: raw=''",
+    "checks=(",
+    "    ('timeout', r'timed?\\s*out|timeout'),",
+    "    ('pairing-required', r'device pairing|required.*pairing|pairing required'),",
+    "    ('scope-upgrade-pending', r'scope upgrade pending|operator\\.admin'),",
+    "    ('authorization-rejected', r'denied|forbidden|unauthorized|approval.*(?:failed|rejected)'),",
+    "    ('gateway-unavailable', r'gateway|connection|econn|socket|network'),",
+    "    ('invalid-response', r'invalid|parse|json'),",
+    ")",
+    "label=next((name for name, pattern in checks if re.search(pattern, raw, re.IGNORECASE)), 'command-failed' if raw.strip() else 'no-output')",
+    "print(f'ADMIN_DIAGNOSTIC={label}', file=sys.stderr)",
+    "PY_ADMIN_DIAGNOSTIC",
+    "}",
     'devices_json="$(mktemp)"',
     'devices_err="$(mktemp)"',
+    'selector_err="$(mktemp)"',
+    'request_id_file="$(mktemp)"',
     'approve_output="$(mktemp)"',
     'cron_output="$(mktemp)"',
+    'cron_id_file="$(mktemp)"',
     'cron_run_output="$(mktemp)"',
-    'agent_stdout="$(mktemp)"',
-    'agent_stderr="$(mktemp)"',
-    'trap \'rm -f -- "$devices_json" "$devices_err" "$approve_output" "$cron_output" "$cron_run_output" "$agent_stdout" "$agent_stderr"\' EXIT',
-    'if ! openclaw devices list --json >"$devices_json" 2>"$devices_err"; then echo "ADMIN_DEVICES_LIST_FAILED" >&2; exit 25; fi',
-    'request_id="$(python3 - "$devices_json" "$expected_request_id" <<\'PY_ADMIN_REQUEST\'',
+    'trap \'rm -f -- "$devices_json" "$devices_err" "$selector_err" "$request_id_file" "$approve_output" "$cron_output" "$cron_id_file" "$cron_run_output"\' EXIT',
+    'if ! openclaw devices list --json >"$devices_json" 2>"$devices_err"; then echo "ADMIN_DEVICES_LIST_FAILED" >&2; emit_admin_diagnostic "$devices_err"; exit 25; fi',
+    'if ! python3 - "$devices_json" "$request_id_file" 2>"$selector_err" <<\'PY_ADMIN_REQUEST\'; then echo "ADMIN_REQUEST_SELECTION_FAILED" >&2; emit_admin_diagnostic "$selector_err"; exit 26; fi',
     ...ADMIN_REQUEST_SELECTOR_PY.split("\n"),
     "PY_ADMIN_REQUEST",
-    ')"',
+    'request_id="$(cat "$request_id_file")"',
     '[ -n "$request_id" ] || { echo "ADMIN_REQUEST_ID_MISSING" >&2; exit 26; }',
     'echo "ISSUE_5324_STAGE=explicit-admin-approval"',
-    'if ! openclaw devices approve "$request_id" >"$approve_output" 2>&1; then echo "ADMIN_APPROVE_FAILED" >&2; exit 27; fi',
-    'if ! openclaw cron add --name "$cron_name" --every 2h --agent main --session isolated --message "hello" >"$cron_output" 2>&1; then echo "ADMIN_CRON_RETRY_FAILED" >&2; exit 28; fi',
+    'if ! openclaw devices approve "$request_id" >"$approve_output" 2>&1; then echo "ADMIN_APPROVE_FAILED" >&2; emit_admin_diagnostic "$approve_output"; exit 27; fi',
+    'if ! openclaw cron add --name "$cron_name" --every 2h --agent main --session isolated --message "hello" >"$cron_output" 2>&1; then echo "ADMIN_CRON_RETRY_FAILED" >&2; emit_admin_diagnostic "$cron_output"; exit 28; fi',
     // OpenClaw 2026.6.10 and 2026.7.1 classify cron.add and cron.run at the same
     // operator.admin gateway-method boundary (gateway/methods/core-descriptors.ts).
     // The exact-request approval above therefore grants the scope both use.
-    // The cron.run response is validated below after the final agent proof so
-    // its queued workload cannot race that gateway assertion.
-    'cron_id="$(python3 - "$cron_output" "$cron_name" <<\'PY_CRON_ID\'',
+    // The cron.run response below proves that the approved scope applies to
+    // both methods.
+    'if ! python3 - "$cron_output" "$cron_name" "$cron_id_file" <<\'PY_CRON_ID\'; then echo "ADMIN_CRON_ID_MISSING" >&2; exit 28; fi',
     "import json, sys",
     "from pathlib import Path",
     "raw=Path(sys.argv[1]).read_text(encoding='utf-8')",
@@ -180,23 +263,14 @@ export function adminApprovalConnectScript(
     "    try: value,_=decoder.raw_decode(raw[index:])",
     "    except Exception: continue",
     "    cron_id=str(value.get('id') or '').strip() if isinstance(value, dict) and value.get('name') == want else ''",
-    "    if cron_id: print(cron_id); raise SystemExit(0)",
+    "    if cron_id: Path(sys.argv[3]).write_text(cron_id, encoding='utf-8'); raise SystemExit(0)",
     "raise SystemExit('approved cron add did not return its job id')",
     "PY_CRON_ID",
-    ')"',
+    'cron_id="$(cat "$cron_id_file")"',
     '[ -n "$cron_id" ] || { echo "ADMIN_CRON_ID_MISSING" >&2; exit 28; }',
-    'if ! openclaw agent --agent main --json -m "What is 6 multiplied by 7? Reply with only the integer, no extra words." --session-id "$session_id" >"$agent_stdout" 2>"$agent_stderr"; then echo "CONNECT_AGENT_FAILED" >&2; exit 29; fi',
-    'if grep -Eiq \'EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded\' "$agent_stdout" "$agent_stderr"; then echo "CONNECT_AGENT_FALLBACK_OR_PAIRING" >&2; exit 30; fi',
-    'agent_parser="$(mktemp)"',
-    'trap \'rm -f -- "$devices_json" "$devices_err" "$approve_output" "$cron_output" "$cron_run_output" "$agent_stdout" "$agent_stderr" "$agent_parser"\' EXIT',
-    "cat >\"$agent_parser\" <<'PY_OPENCLAW_AGENT_JSON_HELPER'",
-    ...OPENCLAW_AGENT_JSON_HELPER_PY.split("\n"),
-    "PY_OPENCLAW_AGENT_JSON_HELPER",
-    'if ! agent_reply="$(python3 "$agent_parser" <"$agent_stdout")"; then echo "CONNECT_AGENT_JSON_INVALID" >&2; exit 31; fi',
-    '[ "$agent_reply" = "42" ] || { echo "CONNECT_AGENT_NOT_EXACT_42" >&2; exit 32; }',
-    'echo "ISSUE_5324_STAGE=cron-run job=$cron_id"',
-    'if ! openclaw cron run "$cron_id" >"$cron_run_output" 2>&1; then echo "ADMIN_CRON_RUN_FAILED" >&2; exit 33; fi',
-    'if ! python3 - "$cron_run_output" <<\'PY_CRON_RUN\'; then echo "ADMIN_CRON_RUN_RESULT_INVALID" >&2; exit 34; fi',
+    'echo "ISSUE_5324_STAGE=cron-run"',
+    'if ! openclaw cron run "$cron_id" >"$cron_run_output" 2>&1; then echo "ADMIN_CRON_RUN_FAILED" >&2; emit_admin_diagnostic "$cron_run_output"; exit 29; fi',
+    'if ! python3 - "$cron_run_output" <<\'PY_CRON_RUN\'; then echo "ADMIN_CRON_RUN_RESULT_INVALID" >&2; exit 30; fi',
     "import json, sys",
     "from pathlib import Path",
     "raw=Path(sys.argv[1]).read_text(encoding='utf-8')",
@@ -210,7 +284,7 @@ export function adminApprovalConnectScript(
     "    if value.get('enqueued') is True and str(value.get('runId') or '').strip(): raise SystemExit(0)",
     "raise SystemExit('cron run did not report a successful run or enqueue')",
     "PY_CRON_RUN",
-    'echo "ISSUE_5324_ADMIN_APPROVAL_OK request=$request_id"',
+    'echo "ISSUE_5324_ADMIN_APPROVAL_OK"',
     "exit",
     "NEMOCLAW_ADMIN_APPROVAL",
   ].join("\n");

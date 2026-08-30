@@ -51,6 +51,7 @@ function createFreshOnboardingRuntime(
   options: {
     readonly stockManagedRuntime?: boolean;
     readonly tempManagedRuntime?: boolean;
+    readonly tempManagedRuntimeCatalog?: string | null;
     readonly unavailableCatalog?: boolean;
   } = {},
 ) {
@@ -73,7 +74,7 @@ function createFreshOnboardingRuntime(
       managedWorkloadRebuild: null,
       tempManagedRuntime: options.tempManagedRuntime ?? false,
       stockManagedRuntime: options.stockManagedRuntime ?? false,
-      tempManagedRuntimeCatalog: null,
+      tempManagedRuntimeCatalog: options.tempManagedRuntimeCatalog ?? null,
       agentName: "openclaw",
       legacyDockerfilePath: "agents/openclaw/Dockerfile",
       customDockerfilePath: null,
@@ -183,6 +184,16 @@ describe("managed workload onboard orchestration", () => {
     ).toBe(false);
   });
 
+  it("keeps stock managed images required during providerless interceptor creation (#9833)", () => {
+    expect(
+      shouldActivateStockManagedRuntime({
+        portableLifecycle: false,
+        hermesPortableLifecycle: false,
+        agentName: "openclaw",
+      }),
+    ).toBe(true);
+  });
+
   it("rejects an unavailable catalog for stock managed-image onboarding", async () => {
     const { runtime } = createFreshOnboardingRuntime(
       {},
@@ -199,6 +210,26 @@ describe("managed workload onboard orchestration", () => {
     );
 
     await expect(runtime.ensurePreparedWorkload()).rejects.toThrow("registry offline");
+  });
+
+  it("treats an explicit temporary catalog as strict managed-image selection", async () => {
+    const { prepared, runtime } = createFreshOnboardingRuntime(
+      {},
+      { tempManagedRuntimeCatalog: "/tmp/pi-candidate-catalog.json" },
+    );
+
+    await expect(runtime.ensurePreparedWorkload()).resolves.toBe(prepared);
+    expect(prepareSandboxWorkloadSource).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        catalogPath: "/tmp/pi-candidate-catalog.json",
+        runtime: expect.objectContaining({
+          driverName: "docker",
+          managedImages: expect.objectContaining({
+            exactDigestReferences: true,
+          }),
+        }),
+      }),
+    );
   });
 
   it("selects only the shipped Hermes Dockerfile fallback without profile or prebuild work", async () => {
@@ -369,7 +400,6 @@ describe("managed workload onboard orchestration", () => {
         policyPath: "/tmp/nemoclaw-policy.yaml",
       },
       messagingProviders: [],
-      policyTier: null,
       sandboxGpuLogMessage: null,
     }));
 

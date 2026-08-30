@@ -22,7 +22,7 @@ function baseInput(overrides: Partial<WhatsappProbeInput> = {}): WhatsappProbeIn
     recentLogSignals: [],
     probeReachable: true,
     probedAt: PROBED_AT,
-    presetInRegistry: true,
+    presetApplied: true,
     presetOnGateway: true,
     channelEnabledInRegistry: true,
     ...overrides,
@@ -53,7 +53,7 @@ describe("evaluateWhatsappDiagnostics", () => {
 
   it("returns policy_gap when the whatsapp preset is missing", () => {
     const report = evaluateWhatsappDiagnostics(
-      baseInput({ presetInRegistry: false, presetOnGateway: false }),
+      baseInput({ presetApplied: false, presetOnGateway: false }),
     );
     expect(report.verdict).toBe("policy_gap");
     const policy = report.signals.find((s) => s.label === "Policy coverage");
@@ -306,7 +306,7 @@ describe("evaluateWhatsappDiagnostics", () => {
 
   it("warns when the preset is recorded locally but missing from the gateway", () => {
     const report = evaluateWhatsappDiagnostics(
-      baseInput({ presetInRegistry: true, presetOnGateway: false }),
+      baseInput({ presetApplied: true, presetOnGateway: false }),
     );
     const policy = report.signals.find((s) => s.label === "Policy coverage");
     expect(policy?.severity).toBe("fail");
@@ -337,7 +337,7 @@ describe("evaluateWhatsappDiagnostics", () => {
 
   it("treats a missing local preset as fail even when the gateway is unreachable", () => {
     const report = evaluateWhatsappDiagnostics(
-      baseInput({ presetInRegistry: false, presetOnGateway: null }),
+      baseInput({ presetApplied: false, presetOnGateway: null }),
     );
     const policy = report.signals.find((s) => s.label === "Policy coverage");
     expect(policy?.severity).toBe("fail");

@@ -124,6 +124,8 @@ export function decideMcpLifecycleGate(
       containment: committedContainment,
     };
   }
+  // Ordinary mutation stays closed after restoreAt, including when the timer
+  // process is already gone. Lockdown recovery uses the deadline-fence path.
   return timerDeadlineExpired ? { kind: "wait", reason: "timer-deadline" } : { kind: "proceed" };
 }
 

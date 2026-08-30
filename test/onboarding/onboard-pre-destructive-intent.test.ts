@@ -70,7 +70,7 @@ const resolved = {
   policy: {
     basePolicyPath: "/unused/policy.yaml",
     activeMessagingChannels: [],
-    options: { directGpu: false, additionalPresets: [], policyTier: null, baselineExclusions: [] },
+    options: { directGpu: false, additionalPresets: [], policyTier: null },
   },
   gpuCreateArgs: [],
   resourceCreateArgs: [],

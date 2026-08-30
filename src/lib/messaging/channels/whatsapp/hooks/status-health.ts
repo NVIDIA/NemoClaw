@@ -119,7 +119,7 @@ export function createWhatsappStatusHealthHook(
       recentLogSignals: probe.recentLogSignals,
       probeReachable: probe.probeReachable,
       probedAt: normalizeString(context.inputs?.probedAt) ?? "",
-      presetInRegistry: Boolean(context.inputs?.presetInRegistry),
+      presetApplied: Boolean(context.inputs?.presetApplied),
       presetOnGateway: normalizeTristate(context.inputs?.presetOnGateway),
       channelEnabledInRegistry: Boolean(context.inputs?.channelEnabledInRegistry),
       ...(probe.sessionLocations ? { sessionLocations: probe.sessionLocations } : {}),

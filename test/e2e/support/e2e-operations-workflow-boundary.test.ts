@@ -1484,12 +1484,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
       writeFileSync(
         advisorPath,
-        'permissions: read-all\njobs:\n  advisor:\n    permissions:\n      actions: "write"\n    steps:\n      - run: createWorkflowDispatch()\n',
+        'permissions: read-all\njobs:\n  review-specialists:\n    env: { BASE_REF: target/base~1, HEAD_REF: HEAD~1 }\n    permissions:\n      actions: "write"\n    steps:\n      - run: createWorkflowDispatch()\n',
       );
       expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toEqual(
         expect.arrayContaining([
           "Unified advisor must not hold actions: write",
           "Unified advisor must not auto-dispatch workflows",
+          "Unified advisor specialists must retain target refs through execution",
         ]),
       );
     } finally {

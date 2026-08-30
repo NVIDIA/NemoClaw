@@ -595,8 +595,8 @@ test(
     );
     const unavailableResumeText = `${unavailableResumeRun.stdout}\n${unavailableResumeRun.stderr}`;
     expect(unavailableResumeRun.exitCode, unavailableResumeText).not.toBe(0);
-    expect(unavailableResumeText).toContain("is not ready");
-    expect(unavailableResumeText).toContain("inference");
+    expect(unavailableResumeText).toContain("Compatible endpoint sandbox smoke check failed");
+    expect(unavailableResumeText).toContain("inference.local");
     expect(unavailableResumeText).not.toContain(
       `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
     );
@@ -608,9 +608,9 @@ test(
       resumable: paused.resumable,
       machineState: paused.machine.state,
     });
-    expect(paused.status).toBe("in_progress");
+    expect(paused.status).toBe("failed");
     expect(paused.resumable).toBe(true);
-    expect(paused.machine.state).toBe("post_verify");
+    expect(paused.machine.state).toBe("failed");
 
     fake = await startFakeOpenAiCompatibleServer({
       apiKey: FAKE_COMPATIBLE_AUTH_VALUE,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,6 +25,10 @@ const root = path.resolve(import.meta.dirname, "../../../..");
 
 function readRepoFile(relativePath: string): string {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
+}
+
+function qualificationReceiptDigest(contents: string): string {
+  return createHash("sha256").update(contents, "utf8").digest("hex");
 }
 
 function currentSources(): PiArtifactSources {
@@ -199,13 +204,11 @@ describe("Pi qualification receipts", () => {
 
   it("rejects an authority digest or cross-platform publication identity that drifts", () => {
     const sources = currentSources();
+    const amd64Digest = qualificationReceiptDigest(sources.qualificationReceipts["linux/amd64"]);
     expect(
       verifyPiQualificationReceipts({
         ...sources,
-        candidateAuthority: sources.candidateAuthority.replace(
-          "207930aaca3b1f233b32ddc0c5a3abe3db3123f34bb5b59a4233130befc16df5",
-          "f".repeat(64),
-        ),
+        candidateAuthority: sources.candidateAuthority.replace(amd64Digest, "f".repeat(64)),
       }),
     ).toContain(
       "src/lib/agent/candidate-authority.ts: accepted digests must match the exact Pi qualification receipts",
@@ -216,7 +219,7 @@ describe("Pi qualification receipts", () => {
         qualificationReceipts: {
           ...sources.qualificationReceipts,
           "linux/arm64": sources.qualificationReceipts["linux/arm64"].replace(
-            '"revision": "d92acac1c40364702eaae92a169a2b06d1bfda4b"',
+            `"revision": "${JSON.parse(sources.qualificationReceipts["linux/arm64"]).source.revision as string}"`,
             `"revision": "${"e".repeat(40)}"`,
           ),
         },
@@ -226,15 +229,15 @@ describe("Pi qualification receipts", () => {
 
   it("rejects a stale commented Pi authority before the executed entry", () => {
     const sources = currentSources();
-    const changedAuthority = sources.candidateAuthority.replace(
-      "207930aaca3b1f233b32ddc0c5a3abe3db3123f34bb5b59a4233130befc16df5",
-      "f".repeat(64),
+    const receiptDigests = Object.values(sources.qualificationReceipts).map(
+      qualificationReceiptDigest,
     );
+    const changedAuthority = sources.candidateAuthority.replace(receiptDigests[0]!, "f".repeat(64));
     const staleAuthority = changedAuthority.replace(
       "export const CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS",
       `// pi: Object.freeze([
-//   "207930aaca3b1f233b32ddc0c5a3abe3db3123f34bb5b59a4233130befc16df5",
-//   "1e49356ca9a910ea52fc7a0a70164aff8b056a5530e786c8ea0e54f79858e20e",
+//   "${receiptDigests[0]}",
+//   "${receiptDigests[1]}",
 // ])
 export const CANDIDATE_QUALIFICATION_RECEIPT_DIGESTS`,
     );

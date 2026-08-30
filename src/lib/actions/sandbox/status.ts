@@ -5,6 +5,7 @@ import { printOpenShellStateRpcIssue } from "../../adapters/openshell/gateway-dr
 import { CLI_NAME } from "../../cli/branding";
 import { deferSandboxLifecycleExit, isSandboxLifecycleDeferredExit } from "../../core/process-exit";
 import { inspectManagedLlamaCppStatus } from "../../inference/llama-cpp/managed-status";
+import { getGatewayPresets } from "../../policy";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
@@ -74,10 +75,12 @@ function getPublishedSandbox(sandboxName: string): registry.SandboxEntry | null 
 function hermesPortableStatusReport(
   sandboxName: string,
   authority: HermesPortableAgentLifecycleAuthority,
+  readPolicies: typeof getGatewayPresets,
 ): SandboxStatusReport {
   const { entry, phase } = authority;
   const model = entry?.model ?? "unknown";
   const provider = entry?.provider ?? "unknown";
+  const livePolicies = readPolicies(sandboxName);
   return {
     schemaVersion: 1,
     name: sandboxName,
@@ -106,16 +109,8 @@ function hermesPortableStatusReport(
     hostMounts: normalizeSandboxStatusHostMounts(entry?.hostMounts),
     openshellDriver: entry?.openshellDriver ?? "unknown",
     openshellVersion: entry?.openshellVersion ?? "unknown",
-    policies:
-      entry?.policies?.filter((policy): policy is string => typeof policy === "string") ?? [],
-    baselineExclusions: entry?.baselineExclusions?.map((exclusion) => exclusion.key) ?? [],
-    baselineExclusionStates: [],
-    baselineExclusionTransition: entry?.baselineExclusionTransition
-      ? {
-          operation: entry.baselineExclusionTransition.operation,
-          key: entry.baselineExclusionTransition.exclusion.key,
-        }
-      : null,
+    policies: livePolicies ?? [],
+    policiesAvailable: livePolicies !== null,
     failureLayer: null,
     terminalRuntimeHealth: null,
     servingProcessHealth: null,
@@ -129,7 +124,13 @@ export async function getSandboxStatusReport(
 ): Promise<SandboxStatusReport> {
   return withMcpLifecycleLock(sandboxName, async () => {
     const hermesPortable = inspectHermesPortableStatus(sandboxName);
-    if (hermesPortable) return hermesPortableStatusReport(sandboxName, hermesPortable);
+    if (hermesPortable) {
+      return hermesPortableStatusReport(
+        sandboxName,
+        hermesPortable,
+        deps.getGatewayPresets ?? getGatewayPresets,
+      );
+    }
     return getLegacySandboxStatusReport(sandboxName, deps);
   });
 }
