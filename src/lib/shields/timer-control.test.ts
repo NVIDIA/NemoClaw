@@ -8,9 +8,12 @@ import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearTimerMarkerGeneration,
+  hasExactTimerAuthorizationProof,
   processInspectionDeadlineAfter,
   processInspectionDeadlineReached,
   readTimerMarker,
+  timerAuthoritySha256,
+  timerAuthorizationProofPath,
   timerMarkerPath,
   type TimerMarker,
 } from "./timer-control";
@@ -31,6 +34,54 @@ describe("process inspection deadlines", () => {
 
     monotonicNow.mockReturnValue(1_500);
     expect(processInspectionDeadlineReached(deadline)).toBe(true);
+  });
+});
+
+describe("timer authorization proof", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it("rejects a proof replaced while it is read", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "timer-authorization-race-"));
+    vi.stubEnv("HOME", home);
+    const processToken = "f".repeat(32);
+    const marker: TimerMarker = {
+      pid: process.pid,
+      sandboxName: "alpha",
+      snapshotPath: "/tmp/snapshot.yaml",
+      restoreAt: "2026-01-01T00:00:00.000Z",
+      processToken,
+      timerProcessStartIdentity: "timer-start-identity",
+    };
+    const proofPath = timerAuthorizationProofPath(marker.sandboxName, processToken);
+    const openedPath = `${proofPath}.opened`;
+    fs.mkdirSync(path.dirname(proofPath), { recursive: true });
+    fs.writeFileSync(
+      proofPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        pid: marker.pid,
+        sandboxName: marker.sandboxName,
+        processToken,
+        timerProcessStartIdentity: marker.timerProcessStartIdentity,
+        authoritySha256: timerAuthoritySha256(marker),
+      }),
+      { mode: 0o600 },
+    );
+    const realRead = fs.readSync.bind(fs);
+    vi.spyOn(fs, "readSync")
+      .mockImplementationOnce(((...args: Parameters<typeof fs.readSync>) => {
+        fs.renameSync(proofPath, openedPath);
+        fs.writeFileSync(proofPath, "{}", { mode: 0o600 });
+        return Reflect.apply(realRead, fs, args);
+      }) as typeof fs.readSync)
+      .mockImplementation(realRead);
+
+    expect(hasExactTimerAuthorizationProof(marker)).toBe(false);
+    expect(fs.readFileSync(proofPath, "utf-8")).toBe("{}");
+    fs.rmSync(home, { recursive: true, force: true });
   });
 });
 

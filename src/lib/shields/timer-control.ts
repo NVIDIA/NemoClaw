@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
+import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
 import {
   formatTerminalSafeDiagnosticValue,
   hasQuarantinedShieldsTimerRecoveryArtifact,
@@ -162,33 +163,20 @@ function writeTimerAuthorizationProofForMarker(marker: ShieldsTimerMarker): void
 
 function hasExactTimerAuthorizationProof(marker: ShieldsTimerMarker): boolean {
   if (!marker.processToken || !marker.timerProcessStartIdentity) return false;
-  let fd: number | undefined;
+  let proofFile: ReturnType<typeof openRegularFileNoFollow> | undefined;
   try {
-    fd = fs.openSync(
+    proofFile = openRegularFileNoFollow(
       timerAuthorizationProofPath(marker.sandboxName, marker.processToken),
-      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
     );
-    const before = fs.fstatSync(fd);
+    const proofStats = proofFile.stat();
     if (
-      !before.isFile() ||
-      before.nlink !== 1 ||
-      (before.mode & 0o777) !== 0o600 ||
-      before.size <= 0 ||
-      before.size > MAX_TIMER_AUTHORIZATION_PROOF_BYTES ||
-      (typeof process.getuid === "function" && before.uid !== process.getuid())
+      (proofStats.mode & 0o777) !== 0o600 ||
+      proofStats.size <= 0 ||
+      (typeof process.getuid === "function" && proofStats.uid !== process.getuid())
     ) {
       return false;
     }
-    const raw = fs.readFileSync(fd, "utf-8");
-    const after = fs.fstatSync(fd);
-    if (
-      before.dev !== after.dev ||
-      before.ino !== after.ino ||
-      before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs
-    ) {
-      return false;
-    }
+    const raw = proofFile.readBytes(MAX_TIMER_AUTHORIZATION_PROOF_BYTES).toString("utf-8");
     const proof = JSON.parse(raw) as unknown;
     return (
       isTimerAuthorizationProof(proof) &&
@@ -201,7 +189,7 @@ function hasExactTimerAuthorizationProof(marker: ShieldsTimerMarker): boolean {
   } catch {
     return false;
   } finally {
-    if (fd !== undefined) fs.closeSync(fd);
+    proofFile?.close();
   }
 }
 
