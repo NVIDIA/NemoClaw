@@ -3439,13 +3439,18 @@ def _start_activation_guard(
         ):
             os.set_inheritable(fd, False)
         pid = os.fork()
-    except (OSError, ControlError):
+    except (OSError, ControlError) as error:
         for fd in descriptors:
             try:
                 os.close(fd)
             except OSError:
                 pass
         _hold_exact_processes(fence, mount_namespace, None)
+        if (
+            isinstance(error, ControlError)
+            and error.code == "activation-transport-broker-unavailable"
+        ):
+            raise
         _fail("activation-guard-unavailable")
     if pid == 0:
         os.close(command_write)

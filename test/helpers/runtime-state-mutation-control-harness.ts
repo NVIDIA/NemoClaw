@@ -1642,6 +1642,9 @@ with tempfile.TemporaryDirectory() as root:
             resumed_pids = [int(value, 10) for value in stream.read().splitlines()]
         results["broker_guard_resumed_broker"] = broker_pid in resumed_pids
         results["broker_guard_resumed_controller"] = controller_pid in resumed_pids
+        results["broker_guard_resumed_only"] = sorted(set(resumed_pids)) == sorted(
+            {broker_pid, controller_pid}
+        )
         broker_before = os.path.getsize(heartbeat_path)
         writer_before = os.path.getsize(mutation_path)
         time.sleep(0.15)
