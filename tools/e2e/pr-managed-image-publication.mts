@@ -51,6 +51,7 @@ const REUSABLE_NON_IMAGE_PATHS = [
   /^src\/lib\/actions\/sandbox\/stopped-sandbox-backup(?:[.]test)?[.]ts$/u,
   /^src\/lib\/adapters\/podman\/index(?:[.]test)?[.]ts$/u,
   /^src\/lib\/inference\/serving\/profile-list[.]test[.]ts$/u,
+  /^src\/lib\/onboard[.]ts$/u,
   /^src\/lib\/shields\/.*[.]ts$/u,
   /^src\/lib\/tunnel\/agent-forward-stop(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/credential-provider-registration(?:[.]test)?[.]ts$/u,

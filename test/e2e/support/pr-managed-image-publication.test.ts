@@ -149,6 +149,7 @@ on:
         "src/lib/adapters/podman/index.test.ts",
         "src/lib/adapters/podman/index.ts",
         "src/lib/inference/serving/profile-list.test.ts",
+        "src/lib/onboard.ts",
         "src/lib/shields/index.ts",
         "src/lib/shields/state-dir-lock.test.ts",
         "src/lib/tunnel/agent-forward-stop.test.ts",
@@ -211,6 +212,7 @@ on:
     expect(source).not.toContain("src/lib/adapters/podman/index.ts");
     expect(source).not.toContain("src/lib/tunnel/agent-forward-stop.ts");
     expect(source).not.toContain("src/lib/onboard/credential-provider-registration.ts");
+    expect(source).not.toContain("src/lib/onboard.ts");
     expect(source).not.toContain("src/lib/onboard/initial-policy-real-policy.test.ts");
     expect(source).not.toContain("src/lib/onboard/managed-bootstrap/docker-runtime.ts");
     expect(source).not.toContain("src/lib/onboard/machine/finalization-deps.ts");
