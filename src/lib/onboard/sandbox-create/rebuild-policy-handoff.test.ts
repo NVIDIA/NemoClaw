@@ -164,6 +164,40 @@ network_policies:
     ).toThrow("required network policy 'wechat' is absent");
   });
 
+  it("removes only the policy keys requested by an explicit stopped channel", () => {
+    const live = `
+version: 1
+network_policies:
+  host_edit: {name: host_edit}
+  telegram: {name: telegram}
+  teams: {name: teams}
+`;
+
+    const merged = mergeReplacementPolicyAccess(
+      live,
+      "version: 1\nnetwork_policies: {}\n",
+      [],
+      ["telegram"],
+    );
+
+    expect(merged.changed).toBe(true);
+    expect(YAML.parse(merged.source).network_policies).toEqual({
+      host_edit: { name: "host_edit" },
+      teams: { name: "teams" },
+    });
+  });
+
+  it("rejects contradictory messaging policy deltas", () => {
+    expect(() =>
+      mergeReplacementPolicyAccess(
+        "version: 1\nnetwork_policies: {}\n",
+        "version: 1\nnetwork_policies:\n  telegram: {}\n",
+        ["telegram"],
+        ["telegram"],
+      ),
+    ).toThrow("network policy 'telegram' is both required and removed");
+  });
+
   it("materializes one private handoff and cleans it with the generated replacement source", () => {
     const livePath = tempPolicy(
       "live.yaml",

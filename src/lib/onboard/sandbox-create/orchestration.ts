@@ -110,11 +110,13 @@ function selectRebuildCreatePolicy(
   policySourcePath: string,
   generatedPolicy: import("../initial-policy").InitialSandboxPolicy,
   requiredNetworkPolicyKeys: readonly string[],
+  removedNetworkPolicyKeys: readonly string[],
 ): import("../initial-policy").InitialSandboxPolicy {
   return materializeRebuildPolicyHandoff({
     livePolicyPath: policySourcePath,
     replacementPolicy: generatedPolicy,
     requiredNetworkPolicyKeys,
+    removedNetworkPolicyKeys,
   });
 }
 
@@ -2064,6 +2066,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           materializedInitialSandboxPolicy,
           plannedMessagingState?.plan.networkPolicy.entries.flatMap((entry) => entry.policyKeys) ??
             [],
+          existingEntry?.messaging?.plan.networkPolicy.entries
+            .filter((entry) =>
+              plannedMessagingState?.plan.disabledChannels.includes(entry.channelId),
+            )
+            .flatMap((entry) => entry.policyKeys) ?? [],
         )
       : materializedInitialSandboxPolicy;
     const createArgv = createIntent?.rebuildPolicySourcePath
