@@ -40,6 +40,7 @@ import signal
 import stat
 import sys
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Literal
 
@@ -92,6 +93,7 @@ ACTIVATION_RETRY_NAME = "activation-retry.json"
 ACTIVATION_CLEANUP_NAME = "activation-cleanup.json"
 STARTUP_CANDIDATE_NAME = "startup-complete.json"
 STARTUP_RETRY_ACK_NAME = "retry-ack.json"
+STARTUP_RELEASE_ACK_NAME = "release-ack.json"
 RELEASED_RECEIPT_NAME = "released.json"
 PUBLISHER_MODULE_PATH = (
     "/usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py"
@@ -103,6 +105,7 @@ ACTIVATION_RETRY_PROTOCOL = "nemoclaw-runtime-state-mutation-activation-retry-v1
 ACTIVATION_CLEANUP_PROTOCOL = "nemoclaw-runtime-state-mutation-activation-cleanup-v1"
 STARTUP_CANDIDATE_PROTOCOL = "nemoclaw-runtime-state-mutation-startup-complete-v1"
 STARTUP_RETRY_ACK_PROTOCOL = "nemoclaw-runtime-state-mutation-retry-ack-v1"
+STARTUP_RELEASE_ACK_PROTOCOL = "nemoclaw-runtime-state-mutation-release-ack-v1"
 OPENSHELL_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 NEMOCLAW_START_PATH = b"/usr/local/bin/nemoclaw-start"
 BASH_ARGV0 = (b"bash", b"/bin/bash", b"/usr/bin/bash")
@@ -110,6 +113,14 @@ HERMES_GATEWAY_PATHS = (b"/usr/local/bin/hermes", b"/usr/local/bin/hermes.real")
 HERMES_INTERNAL_PORT = 18642
 HERMES_HEALTH_PATH = "/health"
 HERMES_CONFIG_GENERATION_PATH = "/sandbox/.hermes/.config-hash"
+START_LOG_PATH = b"/tmp/nemoclaw-start.log"
+START_LOG_DRAIN_PATHS = (b"tee", b"/usr/bin/tee", b"/bin/tee")
+STARTUP_GATE_PYTHON = b"/opt/hermes/.venv/bin/python3"
+STARTUP_GATE_HELPER = b"/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py"
+TRANSPORT_BROKER_PYTHON = b"/opt/hermes/.venv/bin/python3"
+TRANSPORT_BROKER_PATH = (
+    b"/usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py"
+)
 
 HEX_64 = re.compile(r"[0-9a-f]{64}\Z")
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -117,6 +128,7 @@ PROVIDER_ID = re.compile(r"[a-z][a-z0-9-]{0,62}\Z")
 RUNTIME_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/=+\-]{0,511}\Z")
 MOUNT_NAMESPACE = re.compile(r"mnt:\[[1-9][0-9]*\]\Z")
 PID_NAMESPACE = re.compile(r"pid:\[[1-9][0-9]*\]\Z")
+NETWORK_NAMESPACE = re.compile(r"net:\[[1-9][0-9]*\]\Z")
 DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)\Z")
 TOP_LEVEL = re.compile(r"[A-Za-z0-9._-]+\Z")
 CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
@@ -187,6 +199,8 @@ class ProcessIdentity:
     command: tuple[bytes, ...]
     proc_device: int
     proc_inode: int
+    executable_device: int
+    executable_inode: int
 
     def identity_key(self) -> tuple[object, ...]:
         return (
@@ -197,7 +211,20 @@ class ProcessIdentity:
             self.command,
             self.proc_device,
             self.proc_inode,
+            self.executable_device,
+            self.executable_inode,
         )
+
+    def kernel_task_key(self) -> tuple[object, ...]:
+        return (
+            self.pid,
+            self.start_identity,
+            self.proc_device,
+            self.proc_inode,
+        )
+
+    def executable_key(self) -> tuple[int, int]:
+        return (self.executable_device, self.executable_inode)
 
 
 @dataclass(frozen=True)
@@ -209,12 +236,15 @@ class ProcessReference:
     command_sha256: str
     proc_device: int
     proc_inode: int
+    executable_device: int
+    executable_inode: int
 
 
 @dataclass(frozen=True)
 class FenceProof:
     supervisor: ProcessReference
     start: ProcessReference
+    start_support: tuple[ProcessReference, ...]
     writer_uids: tuple[int, ...]
 
 
@@ -864,9 +894,11 @@ PROCESS_REFERENCE_KEYS = (
     "commandSha256",
     "procDevice",
     "procInode",
+    "executableDevice",
+    "executableInode",
 )
 
-FENCE_KEYS = ("supervisor", "start", "writerUids")
+FENCE_KEYS = ("supervisor", "start", "startSupport", "writerUids")
 ACTIVATION_PERMIT_KEYS = (
     "schemaVersion",
     "protocol",
@@ -919,6 +951,14 @@ STARTUP_RETRY_ACK_KEYS = (
     "retrySha256",
     "start",
 )
+STARTUP_RELEASE_ACK_KEYS = (
+    "schemaVersion",
+    "protocol",
+    "transactionId",
+    "nonce",
+    "releaseSha256",
+    "start",
+)
 
 
 def _process_command_sha256(command: tuple[bytes, ...]) -> str:
@@ -935,6 +975,8 @@ def _process_reference(process: ProcessIdentity) -> ProcessReference:
         _process_command_sha256(process.command),
         process.proc_device,
         process.proc_inode,
+        process.executable_device,
+        process.executable_inode,
     )
 
 
@@ -947,6 +989,8 @@ def _process_reference_payload(reference: ProcessReference) -> dict[str, object]
         "commandSha256": reference.command_sha256,
         "procDevice": str(reference.proc_device),
         "procInode": str(reference.proc_inode),
+        "executableDevice": str(reference.executable_device),
+        "executableInode": str(reference.executable_inode),
     }
 
 
@@ -967,7 +1011,14 @@ def _process_reference_from_value(value: object, code: str) -> ProcessReference:
     command_sha256 = _hex_digest(reference["commandSha256"], code)
     proc_device = _decimal_identity(reference["procDevice"], code)
     proc_inode = _decimal_identity(reference["procInode"], code)
-    if proc_device == "0" or proc_inode == "0":
+    executable_device = _decimal_identity(reference["executableDevice"], code)
+    executable_inode = _decimal_identity(reference["executableInode"], code)
+    if (
+        proc_device == "0"
+        or proc_inode == "0"
+        or executable_device == "0"
+        or executable_inode == "0"
+    ):
         _fail(code)
     return ProcessReference(
         pid,
@@ -977,6 +1028,8 @@ def _process_reference_from_value(value: object, code: str) -> ProcessReference:
         command_sha256,
         int(proc_device, 10),
         int(proc_inode, 10),
+        int(executable_device, 10),
+        int(executable_inode, 10),
     )
 
 
@@ -984,6 +1037,10 @@ def _fence_payload(fence: FenceProof) -> dict[str, object]:
     return {
         "supervisor": _process_reference_payload(fence.supervisor),
         "start": _process_reference_payload(fence.start),
+        "startSupport": [
+            _process_reference_payload(reference)
+            for reference in fence.start_support
+        ],
         "writerUids": list(fence.writer_uids),
     }
 
@@ -992,6 +1049,7 @@ def _fence_from_value(value: object, code: str = "fence-marker-invalid") -> Fenc
     fence = _exact_keys(value, FENCE_KEYS, code)
     supervisor = _process_reference_from_value(fence["supervisor"], code)
     start = _process_reference_from_value(fence["start"], code)
+    start_support = fence["startSupport"]
     writer_uids = fence["writerUids"]
     if (
         supervisor.pid != 1
@@ -999,6 +1057,8 @@ def _fence_from_value(value: object, code: str = "fence-marker-invalid") -> Fenc
         or supervisor.uids != (ROOT_UID,) * 4
         or start.pid <= 1
         or start.parent_pid != 1
+        or not isinstance(start_support, list)
+        or len(start_support) != 2
         or not isinstance(writer_uids, list)
         or not writer_uids
         or len(writer_uids) > len(SUPPORTED_WRITER_ACCOUNTS)
@@ -1007,7 +1067,23 @@ def _fence_from_value(value: object, code: str = "fence-marker-invalid") -> Fenc
         or not any(uid in writer_uids for uid in start.uids)
     ):
         _fail(code)
-    return FenceProof(supervisor, start, tuple(writer_uids))
+    support = tuple(
+        _process_reference_from_value(reference, code)
+        for reference in start_support
+    )
+    if (
+        tuple(sorted(reference.pid for reference in support))
+        != tuple(reference.pid for reference in support)
+        or len({reference.pid for reference in support}) != 2
+        or any(
+            reference.parent_pid != start.pid
+            or reference.uids != start.uids
+            or not any(uid in writer_uids for uid in reference.uids)
+            for reference in support
+        )
+    ):
+        _fail(code)
+    return FenceProof(supervisor, start, support, tuple(writer_uids))
 
 
 def _startup_candidate_directory(marker: dict[str, object]) -> str:
@@ -1103,6 +1179,19 @@ def _startup_retry_ack_payload(
         "transactionId": marker["transactionId"],
         "nonce": marker["nonce"],
         "retrySha256": _sha256(retry_payload),
+        "start": _process_reference_payload(fence.start),
+    }
+
+
+def _startup_release_ack_payload(
+    marker: dict[str, object], fence: FenceProof, release_payload: bytes
+) -> dict[str, object]:
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "protocol": STARTUP_RELEASE_ACK_PROTOCOL,
+        "transactionId": marker["transactionId"],
+        "nonce": marker["nonce"],
+        "releaseSha256": _sha256(release_payload),
         "start": _process_reference_payload(fence.start),
     }
 
@@ -1316,7 +1405,7 @@ def _receipt_payload(marker: dict[str, object]) -> dict[str, object]:
 def _released_receipt_payload(
     marker: dict[str, object], completed_ledger_sha256: str, release_state: str
 ) -> dict[str, object]:
-    if release_state not in ("intent", "complete"):
+    if release_state not in ("intent", "acknowledged", "complete"):
         _fail("released-receipt-invalid")
     return {
         "schemaVersion": SCHEMA_VERSION,
@@ -1334,7 +1423,7 @@ def _validate_released_receipt(value: object) -> dict[str, object]:
     if (
         type(receipt["schemaVersion"]) is not int
         or receipt["schemaVersion"] != SCHEMA_VERSION
-        or receipt["releaseState"] not in ("intent", "complete")
+        or receipt["releaseState"] not in ("intent", "acknowledged", "complete")
     ):
         _fail("released-receipt-invalid")
     marker = _validate_marker(receipt["marker"])
@@ -2022,6 +2111,129 @@ def _wait_for_startup_retry_ack(
         time.sleep(min(POLL_SECONDS, remaining))
 
 
+def _read_startup_release_ack(
+    marker: dict[str, object], fence: FenceProof, release_payload: bytes
+) -> dict[str, object] | None:
+    opened = _open_startup_candidate_directory(marker, create=False)
+    if opened is None:
+        return None
+    root_fd, directory_fd = opened
+    sandbox_uid, sandbox_gid = _sandbox_account()
+    try:
+        try:
+            fd = os.open(
+                STARTUP_RELEASE_ACK_NAME,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+                dir_fd=directory_fd,
+            )
+        except FileNotFoundError:
+            return None
+        except OSError:
+            _fail("activation-release-ack-invalid")
+        try:
+            before = os.fstat(fd)
+            payload = os.read(fd, MAX_MARKER_BYTES + 1)
+            after = os.fstat(fd)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != sandbox_uid
+                or before.st_gid != sandbox_gid
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or before.st_nlink != 1
+                or len(payload) > MAX_MARKER_BYTES
+                or os.read(fd, 1)
+                or _stable_stat(before) != _stable_stat(after)
+            ):
+                _fail("activation-release-ack-invalid")
+        finally:
+            os.close(fd)
+        ack = _exact_keys(
+            _parse_json(payload, MAX_MARKER_BYTES, "activation-release-ack-invalid"),
+            STARTUP_RELEASE_ACK_KEYS,
+            "activation-release-ack-invalid",
+        )
+        expected = _startup_release_ack_payload(
+            marker, fence, release_payload
+        )
+        if (
+            ack["schemaVersion"] != SCHEMA_VERSION
+            or ack["protocol"] != STARTUP_RELEASE_ACK_PROTOCOL
+            or payload != _json_bytes(expected) + b"\n"
+            or not secrets.compare_digest(_json_bytes(ack), _json_bytes(expected))
+        ):
+            _fail("activation-release-ack-invalid")
+        return expected
+    finally:
+        os.close(directory_fd)
+        os.close(root_fd)
+
+
+def _wait_for_startup_release_ack(
+    marker: dict[str, object], fence: FenceProof, release_payload: bytes
+) -> None:
+    deadline = time.monotonic() + PROCESS_STATE_SECONDS
+    while True:
+        if _read_startup_release_ack(marker, fence, release_payload) is not None:
+            _recapture_reference(fence.start, "activation-release-identity-drift")
+            # The exact publisher stops after writing the acknowledgement. Its
+            # parent stops only after the controller resumes that child, Bash
+            # reaps it, and the parent observes success.
+            _wait_for_release_ack_publisher(fence)
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _fail("activation-release-ack-timeout")
+        time.sleep(min(POLL_SECONDS, remaining))
+
+
+def _is_release_ack_publisher(
+    process: ProcessIdentity, start: ProcessReference
+) -> bool:
+    return bool(
+        process.parent_pid == start.pid
+        and process.uids == start.uids
+        and process.command
+        == (
+            STARTUP_GATE_PYTHON,
+            b"-I",
+            STARTUP_GATE_HELPER,
+            b"acknowledge",
+        )
+    )
+
+
+def _wait_for_release_ack_publisher(fence: FenceProof) -> None:
+    deadline = time.monotonic() + PROCESS_STATE_SECONDS
+    resumed_publisher: ProcessReference | None = None
+    while True:
+        start = _recapture_reference(
+            fence.start, "activation-release-identity-drift"
+        )
+        publishers = tuple(
+            process
+            for process in _capture_writer_processes(fence.writer_uids)
+            if _is_release_ack_publisher(process, fence.start)
+        )
+        if len(publishers) > 1:
+            _fail("activation-release-ack-invalid")
+        if publishers:
+            publisher = publishers[0]
+            if resumed_publisher is not None and not _process_matches_reference(
+                publisher, resumed_publisher
+            ):
+                _fail("activation-release-ack-invalid")
+            if publisher.state in ("T", "t") and resumed_publisher is None:
+                publisher_reference = _process_reference(publisher)
+                _signal_reference(publisher_reference, signal.SIGCONT)
+                resumed_publisher = publisher_reference
+        elif not publishers and start.state in ("T", "t"):
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _fail("activation-release-ack-timeout")
+        time.sleep(min(POLL_SECONDS, remaining))
+
+
 def _verify_activation_checkpoint(
     marker: dict[str, object], fence: FenceProof, activation: ActivationProof
 ) -> None:
@@ -2043,9 +2255,15 @@ def _cleanup_startup_candidate_directory(marker: dict[str, object]) -> None:
     try:
         for name in os.listdir(directory_fd):
             if (
-                name not in (STARTUP_CANDIDATE_NAME, STARTUP_RETRY_ACK_NAME)
+                name
+                not in (
+                    STARTUP_CANDIDATE_NAME,
+                    STARTUP_RETRY_ACK_NAME,
+                    STARTUP_RELEASE_ACK_NAME,
+                )
                 and not name.startswith(f".{STARTUP_CANDIDATE_NAME}.")
                 and not name.startswith(f".{STARTUP_RETRY_ACK_NAME}.")
+                and not name.startswith(f".{STARTUP_RELEASE_ACK_NAME}.")
             ):
                 _fail("activation-candidate-directory-invalid")
             try:
@@ -2314,22 +2532,28 @@ def _assert_private_procfs() -> None:
 
 def _capture_process(pid: int) -> ProcessIdentity | None:
     process_path = os.path.join(PROC_ROOT, str(pid))
+    executable_path = os.path.join(process_path, "exe")
     try:
         before = os.stat(process_path, follow_symlinks=False)
+        executable_before = os.stat(executable_path)
         first_stat = _read_proc_file(os.path.join(process_path, "stat"))
         status = _read_proc_file(os.path.join(process_path, "status"))
         command_raw = _read_proc_file(os.path.join(process_path, "cmdline"))
         second_stat = _read_proc_file(os.path.join(process_path, "stat"))
+        executable_after = os.stat(executable_path)
         after = os.stat(process_path, follow_symlinks=False)
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return None
     except PermissionError:
+        _fail("unreadable-writer-process")
+    except OSError:
         _fail("unreadable-writer-process")
     _first_state, parent, start = _parse_proc_stat(pid, first_stat)
     second_state, second_parent, second_start = _parse_proc_stat(pid, second_stat)
     if (
         not stat.S_ISDIR(before.st_mode)
         or _stable_stat(before) != _stable_stat(after)
+        or not _same_filesystem_object(executable_before, executable_after)
         or (parent, start) != (second_parent, second_start)
     ):
         _fail("raced-writer-process")
@@ -2342,6 +2566,8 @@ def _capture_process(pid: int) -> ProcessIdentity | None:
         tuple(part for part in command_raw.split(b"\0") if part),
         before.st_dev,
         before.st_ino,
+        executable_after.st_dev,
+        executable_after.st_ino,
     )
 
 
@@ -2420,6 +2646,38 @@ def _is_nemoclaw_start(process: ProcessIdentity, sandbox_uid: int) -> bool:
     )
 
 
+def _is_start_log_drain(
+    process: ProcessIdentity, start: ProcessIdentity, sandbox_uid: int
+) -> bool:
+    return bool(
+        process.pid > 1
+        and process.parent_pid == start.pid
+        and process.state != "Z"
+        and process.uids == (sandbox_uid,) * 4
+        and len(process.command) == 3
+        and process.command[0] in START_LOG_DRAIN_PATHS
+        and process.command[1:] == (b"-a", START_LOG_PATH)
+    )
+
+
+def _start_log_drains(
+    writers: tuple[ProcessIdentity, ...], start: ProcessIdentity, sandbox_uid: int
+) -> tuple[ProcessIdentity, ...]:
+    drains = tuple(
+        sorted(
+            (
+                process
+                for process in writers
+                if _is_start_log_drain(process, start, sandbox_uid)
+            ),
+            key=lambda process: process.pid,
+        )
+    )
+    if len(drains) != 2:
+        _fail("startup-support-unavailable")
+    return drains
+
+
 def _process_matches_reference(
     process: ProcessIdentity, reference: ProcessReference
 ) -> bool:
@@ -2432,11 +2690,29 @@ def _process_has_reference_identity(
     process: ProcessIdentity, reference: ProcessReference
 ) -> bool:
     return bool(
-        process.pid == reference.pid
-        and process.start_identity == reference.start_identity
+        _process_has_kernel_task_reference(process, reference)
         and process.parent_pid == reference.parent_pid
         and process.uids == reference.uids
         and _process_command_sha256(process.command) == reference.command_sha256
+        and _process_has_reference_executable(process, reference)
+    )
+
+
+def _process_has_reference_executable(
+    process: ProcessIdentity, reference: ProcessReference
+) -> bool:
+    return bool(
+        process.executable_device == reference.executable_device
+        and process.executable_inode == reference.executable_inode
+    )
+
+
+def _process_has_kernel_task_reference(
+    process: ProcessIdentity, reference: ProcessReference
+) -> bool:
+    return bool(
+        process.pid == reference.pid
+        and process.start_identity == reference.start_identity
         and process.proc_device == reference.proc_device
         and process.proc_inode == reference.proc_inode
     )
@@ -2448,6 +2724,23 @@ def _recapture_reference(
     process = _capture_process(reference.pid)
     if process is None or not _process_matches_reference(process, reference):
         _fail(code)
+    return process
+
+
+def _recapture_supervisor(reference: ProcessReference) -> ProcessIdentity:
+    process = _capture_process(reference.pid)
+    # PID 1 can refresh its displayed argv suffix while it remains the same
+    # kernel task. Revalidate the fixed OpenShell supervisor semantics instead
+    # of treating that mutable display metadata as task replacement. Start
+    # time and procfs identity still bind the original task. The executable
+    # identity rejects an exec replacement that forges the expected argv0.
+    if (
+        process is None
+        or not _process_has_kernel_task_reference(process, reference)
+        or not _process_has_reference_executable(process, reference)
+        or not _is_openshell_supervisor(process)
+    ):
+        _fail("supervisor-identity-drift")
     return process
 
 
@@ -2471,24 +2764,39 @@ def _discover_fence(expected_mount_namespace: str) -> FenceProof:
     if len(starts) != 1:
         _fail("supervisor-unavailable")
     start = starts[0]
+    support = _start_log_drains(writers, start, sandbox_uid)
     supervisor_reference = _process_reference(supervisor)
     start_reference = _process_reference(start)
-    second_supervisor = _recapture_reference(
-        supervisor_reference, "supervisor-identity-drift"
-    )
+    support_references = tuple(_process_reference(process) for process in support)
+    second_supervisor = _recapture_supervisor(supervisor_reference)
     second_writers = _capture_writer_processes(writer_uids)
     second_starts = [
         process
         for process in second_writers
         if _is_nemoclaw_start(process, sandbox_uid)
     ]
-    if (
-        len(second_starts) != 1
-        or not _process_matches_reference(second_starts[0], start_reference)
-        or not _is_openshell_supervisor(second_supervisor)
-    ):
+    second_support = (
+        _start_log_drains(second_writers, second_starts[0], sandbox_uid)
+        if len(second_starts) == 1
+        else ()
+    )
+    if not _is_openshell_supervisor(second_supervisor):
         _fail("supervisor-identity-drift")
-    return FenceProof(supervisor_reference, start_reference, writer_uids)
+    if len(second_starts) != 1 or not _process_matches_reference(
+        second_starts[0], start_reference
+    ):
+        _fail("start-process-identity-drift")
+    if len(second_support) != len(support_references) or any(
+        not _process_matches_reference(process, reference)
+        for process, reference in zip(second_support, support_references)
+    ):
+        _fail("startup-support-identity-drift")
+    return FenceProof(
+        supervisor_reference,
+        start_reference,
+        support_references,
+        writer_uids,
+    )
 
 
 def _signal_exact_process(process: ProcessIdentity, requested_signal: int) -> None:
@@ -2505,7 +2813,16 @@ def _signal_exact_process(process: ProcessIdentity, requested_signal: int) -> No
         current = _capture_process(process.pid)
         if current is None:
             return
-        if current.identity_key() != process.identity_key():
+        # The full process reference was authenticated before opening the
+        # pidfd. Recheck only immutable kernel task identity here: parent,
+        # credentials, and argv can change on the same task between the two
+        # observations. The pidfd remains bound to that task. A real PID
+        # replacement changes its start time or procfs inode, while an exec
+        # replacement changes its executable identity; both fail closed.
+        if (
+            current.kernel_task_key() != process.kernel_task_key()
+            or current.executable_key() != process.executable_key()
+        ):
             _fail("writer-pid-reused")
         try:
             signal.pidfd_send_signal(pidfd, requested_signal)
@@ -2518,8 +2835,24 @@ def _signal_exact_process(process: ProcessIdentity, requested_signal: int) -> No
 
 
 def _signal_reference(reference: ProcessReference, requested_signal: int) -> None:
-    process = _recapture_reference(reference)
-    _signal_exact_process(process, requested_signal)
+    deadline = time.monotonic() + PROCESS_STATE_SECONDS
+    while True:
+        process = _recapture_reference(reference)
+        try:
+            _signal_exact_process(process, requested_signal)
+            return
+        except ControlError as error:
+            if error.code != "writer-pid-reused":
+                raise
+            # Re-open the persisted exact reference within the existing
+            # process-state deadline. A real replacement fails recapture; a
+            # process that still matches can be signalled through a fresh
+            # pidfd without weakening the identity check. A busy restart can
+            # cross more than one short-lived PID snapshot before settling.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(POLL_SECONDS, remaining))
 
 
 def _wait_for_reference_state(
@@ -2539,14 +2872,14 @@ def _wait_for_reference_state(
 def _stop_reference(reference: ProcessReference) -> None:
     process = _recapture_reference(reference)
     if process.state not in ("T", "t"):
-        _signal_exact_process(process, signal.SIGSTOP)
+        _signal_reference(reference, signal.SIGSTOP)
     _wait_for_reference_state(reference, ("T", "t"))
 
 
 def _wait_for_host_stopped_supervisor(reference: ProcessReference) -> ProcessIdentity:
     deadline = time.monotonic() + PROCESS_STATE_SECONDS
     while True:
-        process = _recapture_reference(reference, "supervisor-identity-drift")
+        process = _recapture_supervisor(reference)
         if process.state in ("T", "t"):
             return process
         remaining = deadline - time.monotonic()
@@ -2614,7 +2947,15 @@ def _exclude_writers(
         for writer in unexpected:
             identity = (writer.pid, writer.start_identity, requested)
             if identity not in signalled:
-                _signal_exact_process(writer, requested)
+                try:
+                    _signal_exact_process(writer, requested)
+                except ControlError as error:
+                    if error.code != "writer-pid-reused":
+                        raise
+                    # The pidfd check proved that this captured writer no longer
+                    # owns the PID. Do not signal its replacement; the next scan
+                    # authenticates the replacement as a separate writer.
+                    continue
                 signalled.add(identity)
         time.sleep(POLL_SECONDS)
 
@@ -2644,12 +2985,22 @@ def _prove_fence_shape(
         or fence.writer_uids != _supported_writer_uids()
     ):
         _fail("supervisor-identity-drift")
-    supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")
-    start = _recapture_reference(fence.start, "supervisor-identity-drift")
-    if not _is_openshell_supervisor(supervisor) or not _is_nemoclaw_start(
-        start, _sandbox_uid()
-    ):
+    supervisor = _recapture_supervisor(fence.supervisor)
+    start = _recapture_reference(fence.start, "start-process-identity-drift")
+    support = tuple(
+        _recapture_reference(reference, "startup-support-identity-drift")
+        for reference in fence.start_support
+    )
+    sandbox_uid = _sandbox_uid()
+    if not _is_openshell_supervisor(supervisor):
         _fail("supervisor-identity-drift")
+    if not _is_nemoclaw_start(start, sandbox_uid):
+        _fail("start-process-identity-drift")
+    if any(
+        not _is_start_log_drain(process, start, sandbox_uid)
+        for process in support
+    ):
+        _fail("startup-support-identity-drift")
     return supervisor, start
 
 
@@ -2657,7 +3008,7 @@ def _held_writer_references(
     fence: FenceProof, activation: ActivationProof | None
 ) -> tuple[ProcessReference, ...]:
     if activation is None:
-        return (fence.start,)
+        return (fence.start, *fence.start_support)
     retained: list[ProcessReference] = []
     persistent = set(activation.persistent_pids)
     for reference in activation.processes:
@@ -2682,9 +3033,19 @@ def _hold_exact_processes(
     # workload writer inside the already-proven private namespace.
     _wait_for_host_stopped_supervisor(fence.supervisor)
     _stop_reference(fence.start)
+    for reference in fence.start_support:
+        _stop_reference(reference)
     if activation is not None:
         persistent = set(activation.persistent_pids)
+        support_by_pid = {
+            reference.pid: reference for reference in fence.start_support
+        }
         for reference in activation.processes:
+            support = support_by_pid.get(reference.pid)
+            if support is not None:
+                if reference != support:
+                    _fail("activation-process-drift")
+                continue
             if _reference_is_terminated(reference):
                 if reference.pid in persistent:
                     _fail("activation-process-drift")
@@ -2798,11 +3159,59 @@ def _open_activation_guard_pidfd(reference: ProcessReference) -> int:
     return pidfd
 
 
-def _stop_activation_guard_pidfd(pidfd: int) -> None:
+def _open_activation_guard_current_pidfd() -> int:
+    if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        return _fail("activation-guard-unavailable")
     try:
+        pidfd = os.pidfd_open(os.getpid(), 0)
+        os.set_inheritable(pidfd, False)
+    except OSError:
+        return _fail("activation-guard-unavailable")
+    return pidfd
+
+
+def _stop_activation_guard_pidfd(pidfd: int) -> None:
+    with suppress(AttributeError, OSError, ValueError):
         signal.pidfd_send_signal(pidfd, signal.SIGSTOP, None, 0)
-    except BaseException:
-        pass
+
+
+def _resume_activation_guard_pidfd(pidfd: int) -> None:
+    with suppress(AttributeError, OSError, ValueError):
+        signal.pidfd_send_signal(pidfd, signal.SIGCONT, None, 0)
+
+
+def _transport_broker_reference() -> ProcessReference | None:
+    try:
+        executable_before = os.stat(TRANSPORT_BROKER_PYTHON)
+    except OSError:
+        return None
+    process = _capture_process(os.getppid())
+    if process is None:
+        return None
+    try:
+        executable_after = os.stat(TRANSPORT_BROKER_PYTHON)
+    except OSError:
+        return None
+    command = process.command
+    if (
+        not stat.S_ISREG(executable_before.st_mode)
+        or executable_before.st_uid != ROOT_UID
+        or executable_before.st_gid != ROOT_GID
+        or stat.S_IMODE(executable_before.st_mode) & 0o022
+        or not _same_filesystem_object(executable_before, executable_after)
+        or process.pid <= 1
+        or process.state in ("Z", "X", "x")
+        or process.uids != (ROOT_UID,) * 4
+        or len(command) != 4
+        or command[0] != TRANSPORT_BROKER_PYTHON
+        or command[1] != b"-I"
+        or command[2] != TRANSPORT_BROKER_PATH
+        or re.fullmatch(rb"[0-9a-f]{64}", command[3]) is None
+        or process.executable_key()
+        != (executable_after.st_dev, executable_after.st_ino)
+    ):
+        return None
+    return _process_reference(process)
 
 
 def _kernel_pid_namespace_stop() -> None:
@@ -2810,6 +3219,38 @@ def _kernel_pid_namespace_stop() -> None:
     # guardian handles PID 1 through its pre-opened pidfd; excluding the sender
     # is what lets it keep the transaction lock and repeat this broadcast.
     os.kill(-1, signal.SIGSTOP)
+
+
+def _stop_pid_namespace_fail_closed(pidfds: tuple[int, ...]) -> None:
+    for pidfd in pidfds:
+        _stop_activation_guard_pidfd(pidfd)
+    with suppress(OSError):
+        _kernel_pid_namespace_stop()
+    # Enumeration is defense in depth only. The kernel broadcast above is the
+    # fail-closed primitive when procfs is missing or unreadable.
+    try:
+        pids = _pid_namespace_process_ids()
+    except OSError:
+        pids = ()
+    own_pid = os.getpid()
+    for pid in pids:
+        if pid == own_pid:
+            continue
+        with suppress(OSError):
+            os.kill(pid, signal.SIGSTOP)
+
+
+def _hold_pid_namespace_for_live_controller(
+    stopped_pidfds: tuple[int, ...], resumed_pidfds: tuple[int, ...]
+) -> None:
+    # An authenticated H command proves the root controller is still alive and
+    # owns the transaction lock. Stop the complete private namespace, then
+    # resume only that pidfd-bound controller lineage so it can return the
+    # fixed failure receipt and invoke the durable retry protocol. Workload
+    # writers and PID 1 remain stopped throughout the handoff.
+    _stop_pid_namespace_fail_closed(stopped_pidfds)
+    for pidfd in resumed_pidfds:
+        _resume_activation_guard_pidfd(pidfd)
 
 
 def _park_pid_namespace_fail_closed(pidfds: tuple[int, ...]) -> None:
@@ -2829,31 +3270,12 @@ def _park_pid_namespace_fail_closed(pidfds: tuple[int, ...]) -> None:
             signal.signal(ignored, signal.SIG_IGN)
         except BaseException:
             pass
-    own_pid = os.getpid()
     while True:
-        for pidfd in pidfds:
-            _stop_activation_guard_pidfd(pidfd)
-        try:
-            # The child inherited the already-proven private PID namespace,
-            # and Linux never moves an existing process into another PID
-            # namespace. This broadcast therefore cannot reach host processes
-            # and cannot stop the guardian itself.
-            _kernel_pid_namespace_stop()
-        except BaseException:
-            pass
-        # Enumeration is defense in depth only. The kernel broadcast above is
-        # the fail-closed primitive when procfs is missing or unreadable.
-        try:
-            pids = _pid_namespace_process_ids()
-        except BaseException:
-            pids = ()
-        for pid in pids:
-            if pid == own_pid:
-                continue
-            try:
-                os.kill(pid, signal.SIGSTOP)
-            except BaseException:
-                pass
+        # The child inherited the already-proven private PID namespace, and
+        # Linux never moves an existing process into another PID namespace.
+        # This broadcast therefore cannot reach host processes and cannot stop
+        # the guardian itself.
+        _stop_pid_namespace_fail_closed(pidfds)
         try:
             time.sleep(max(POLL_SECONDS, 0.01))
         except BaseException:
@@ -2868,13 +3290,18 @@ def _activation_guard_child(
     lock_fd: int | None,
     supervisor_pidfd: int,
     start_pidfd: int,
+    controller_pidfd: int,
+    broker_pidfd: int | None,
 ) -> None:
     retained = [
         command_fd,
         acknowledgement_fd,
         supervisor_pidfd,
         start_pidfd,
+        controller_pidfd,
     ]
+    if broker_pidfd is not None:
+        retained.append(broker_pidfd)
     if lock_fd is not None:
         retained.append(lock_fd)
     _close_activation_guard_inherited_fds(tuple(retained))
@@ -2891,6 +3318,7 @@ def _activation_guard_child(
         if command == b"D":
             os.write(acknowledgement_fd, b"D")
             os._exit(0)
+        live_controller_hold = command == b"H"
         # EOF is the kernel-backed controller-death signal. Any malformed
         # command is treated identically: restore the original exact hold and
         # exclude every other writer before this orphan exits.
@@ -2900,10 +3328,22 @@ def _activation_guard_child(
         except OSError:
             pass
         os._exit(0)
-    except BaseException:
+    except Exception:
+        if "live_controller_hold" in locals() and live_controller_hold:
+            _hold_pid_namespace_for_live_controller(
+                (supervisor_pidfd, start_pidfd),
+                tuple(
+                    pidfd
+                    for pidfd in (broker_pidfd, controller_pidfd)
+                    if pidfd is not None
+                ),
+            )
+            with suppress(OSError):
+                os.write(acknowledgement_fd, b"H")
+            os._exit(0)
         try:
             _hold_exact_processes(fence, mount_namespace, None)
-        except BaseException:
+        except Exception:
             _park_pid_namespace_fail_closed((supervisor_pidfd, start_pidfd))
         os._exit(70)
 
@@ -2940,8 +3380,7 @@ class ActivationGuard:
             return
         child_held = False
         try:
-            os.close(self.command_fd)
-            self.command_fd = -1
+            os.write(self.command_fd, b"H")
             child_held = (
                 _read_activation_guard_byte(
                     self.acknowledgement_fd, "activation-guard-hold-failed"
@@ -2972,6 +3411,14 @@ def _start_activation_guard(
         descriptors.append(supervisor_pidfd)
         start_pidfd = _open_activation_guard_pidfd(fence.start)
         descriptors.append(start_pidfd)
+        controller_pidfd = _open_activation_guard_current_pidfd()
+        descriptors.append(controller_pidfd)
+        broker = _transport_broker_reference()
+        broker_pidfd = (
+            None if broker is None else _open_activation_guard_pidfd(broker)
+        )
+        if broker_pidfd is not None:
+            descriptors.append(broker_pidfd)
         command_read, command_write = os.pipe()
         descriptors.extend((command_read, command_write))
         acknowledgement_read, acknowledgement_write = os.pipe()
@@ -3003,10 +3450,15 @@ def _start_activation_guard(
             lock_fd,
             supervisor_pidfd,
             start_pidfd,
+            controller_pidfd,
+            broker_pidfd,
         )
         os._exit(70)
     os.close(supervisor_pidfd)
     os.close(start_pidfd)
+    os.close(controller_pidfd)
+    if broker_pidfd is not None:
+        os.close(broker_pidfd)
     os.close(command_read)
     os.close(acknowledgement_write)
     guard = ActivationGuard(
@@ -3320,7 +3772,31 @@ def _listener_identity(process: ProcessIdentity) -> str:
     return f"tcp:{HERMES_INTERNAL_PORT}:{next(iter(listeners))}"
 
 
-def _health_status() -> int:
+def _network_namespace_identity(path: str) -> str:
+    try:
+        identity = os.readlink(path)
+    except OSError:
+        return _fail("activation-network-namespace-unavailable")
+    if NETWORK_NAMESPACE.fullmatch(identity) is None:
+        return _fail("activation-network-namespace-unavailable")
+    return identity
+
+
+def _open_network_namespace(path: str, expected_identity: str) -> int:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+    except OSError:
+        return _fail("activation-network-namespace-unavailable")
+    try:
+        if _network_namespace_identity(path) != expected_identity:
+            _fail("activation-network-namespace-unavailable")
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _health_status_in_current_namespace() -> int:
     connection = http.client.HTTPConnection(
         "127.0.0.1", HERMES_INTERNAL_PORT, timeout=HEALTH_SECONDS
     )
@@ -3333,11 +3809,59 @@ def _health_status() -> int:
             _fail("activation-health-unavailable")
         return response.status
     except (OSError, http.client.HTTPException):
-        _fail("activation-health-unavailable")
+        return _fail("activation-health-unavailable")
     finally:
         if response is not None:
             response.close()
         connection.close()
+
+
+def _health_status(process: ProcessIdentity) -> int:
+    reference = _process_reference(process)
+    current_path = os.path.join(PROC_ROOT, "self", "ns", "net")
+    target_path = os.path.join(PROC_ROOT, str(process.pid), "ns", "net")
+    current_identity = _network_namespace_identity(current_path)
+    target_identity = _network_namespace_identity(target_path)
+    _recapture_reference(reference, "activation-service-drift")
+    if target_identity == current_identity:
+        status = _health_status_in_current_namespace()
+        _recapture_reference(reference, "activation-service-drift")
+        return status
+    if not hasattr(os, "setns"):
+        _fail("activation-network-namespace-unavailable")
+
+    current_fd = _open_network_namespace(current_path, current_identity)
+    try:
+        target_fd = _open_network_namespace(target_path, target_identity)
+    except Exception:
+        os.close(current_fd)
+        raise
+    switched = False
+    restore_failed = False
+    try:
+        _recapture_reference(reference, "activation-service-drift")
+        try:
+            os.setns(target_fd, 0x40000000)
+        except OSError:
+            _fail("activation-network-namespace-unavailable")
+        switched = True
+        if _network_namespace_identity(current_path) != target_identity:
+            _fail("activation-network-namespace-unavailable")
+        status = _health_status_in_current_namespace()
+        _recapture_reference(reference, "activation-service-drift")
+        return status
+    finally:
+        if switched:
+            try:
+                os.setns(current_fd, 0x40000000)
+                if _network_namespace_identity(current_path) != current_identity:
+                    restore_failed = True
+            except (OSError, ControlError):
+                restore_failed = True
+        os.close(target_fd)
+        os.close(current_fd)
+        if restore_failed:
+            _fail("activation-network-namespace-restore-failed")
 
 
 def _prove_live_activation(
@@ -3352,7 +3876,7 @@ def _prove_live_activation(
     reference = _process_reference(gateway)
     generation = _configuration_generation()
     listener = _listener_identity(gateway)
-    status = _health_status()
+    status = _health_status(gateway)
     current = _recapture_reference(reference, "activation-service-drift")
     if current.state in ("T", "t"):
         _fail("activation-health-unavailable")
@@ -3412,7 +3936,7 @@ def _activation_tree(
     by_pid = {process.pid: process for process in writers}
     start = by_pid.get(fence.start.pid)
     if start is None or not _process_matches_reference(start, fence.start):
-        _fail("supervisor-identity-drift")
+        _fail("start-process-identity-drift")
     tree: list[ProcessIdentity] = []
     for process in writers:
         if process.pid == fence.start.pid:
@@ -3438,7 +3962,7 @@ def _wait_for_activation(
 ) -> ActivationProof:
     deadline = time.monotonic() + ACTIVATION_SECONDS
     while True:
-        _recapture_reference(fence.supervisor, "supervisor-identity-drift")
+        _recapture_supervisor(fence.supervisor)
         gateway, _tree = _activation_tree(fence)
         if gateway is not None:
             try:
@@ -3499,8 +4023,8 @@ def _freeze_activation(
 def _wait_for_startup_checkpoint(marker: dict[str, object], fence: FenceProof) -> str:
     deadline = time.monotonic() + ACTIVATION_SECONDS
     while True:
-        supervisor = _recapture_reference(fence.supervisor, "supervisor-identity-drift")
-        start = _recapture_reference(fence.start, "supervisor-identity-drift")
+        supervisor = _recapture_supervisor(fence.supervisor)
+        start = _recapture_reference(fence.start, "start-process-identity-drift")
         selected = _read_startup_candidate(marker, fence, required=False)
         if selected is not None and start.state in ("T", "t"):
             if supervisor.state not in ("T", "t"):
@@ -3522,6 +4046,8 @@ def _reset_activation_attempt(
         # optional checkpoint. Queue the signal while the exact shell is held;
         # its immutable trap validates that receipt before execing the fixed
         # entrypoint path with the same PID/starttime/parent identity.
+        for reference in fence.start_support:
+            _resume_reference(reference)
         _signal_reference(fence.start, signal.SIGUSR2)
         _signal_reference(fence.start, signal.SIGCONT)
         _wait_for_startup_retry_ack(marker, fence, retry_payload)
@@ -3549,6 +4075,8 @@ def _activate_exact(
         else:
             _assert_exact_process_fence(fence, mount_namespace, None)
         _publish_activation_permit(durable_fd, marker, fence)
+        for reference in fence.start_support:
+            _resume_reference(reference)
         _signal_reference(fence.start, signal.SIGCONT)
         checkpoint_sha256 = _wait_for_startup_checkpoint(marker, fence)
         live = _wait_for_activation(marker, fence, checkpoint_sha256)
@@ -3690,19 +4218,29 @@ def _retire_activation_tree(
     _prove_fence_shape(fence, str(marker["mountNamespace"]))
     _wait_for_host_stopped_supervisor(fence.supervisor)
     _stop_reference(fence.start)
+    support_by_pid = {reference.pid: reference for reference in fence.start_support}
+    retired: list[ProcessReference] = []
     for reference in activation.processes:
+        support = support_by_pid.get(reference.pid)
+        if support is not None:
+            if reference != support:
+                _fail("activation-process-drift")
+            _stop_reference(support)
+            continue
+        retired.append(reference)
         if not _reference_is_terminated(reference):
             _signal_reference(reference, signal.SIGKILL)
     deadline = time.monotonic() + KILL_SECONDS
     while not all(
-        _reference_is_terminated(reference) for reference in activation.processes
+        _reference_is_terminated(reference) for reference in retired
     ):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             _fail("activation-retirement-timeout")
         time.sleep(min(POLL_SECONDS, remaining))
-    _exclude_writers(fence.writer_uids, (fence.start,))
-    _assert_writer_exclusion(fence.writer_uids, (fence.start,))
+    held = (fence.start, *fence.start_support)
+    _exclude_writers(fence.writer_uids, held)
+    _assert_writer_exclusion(fence.writer_uids, held)
     _unlink_private(runtime_fd, ACTIVATION_RECEIPT_NAME)
 
 
@@ -3730,7 +4268,7 @@ def _acquire(
     if released is not None and released["transactionId"] == request.transaction_id:
         _fail(
             "transaction-release-pending"
-            if released["releaseState"] == "intent"
+            if released["releaseState"] != "complete"
             else "transaction-already-released"
         )
     fence = _discover_fence(mount_namespace)
@@ -3798,8 +4336,23 @@ def _wait_for_reference_running(reference: ProcessReference) -> ProcessIdentity:
 def _resume_reference(reference: ProcessReference) -> ProcessIdentity:
     process = _recapture_reference(reference)
     if process.state in ("T", "t"):
-        _signal_exact_process(process, signal.SIGCONT)
+        _signal_reference(reference, signal.SIGCONT)
     return _wait_for_reference_running(reference)
+
+
+def _resume_supervisor(reference: ProcessReference) -> ProcessIdentity:
+    process = _recapture_supervisor(reference)
+    if process.state in ("T", "t"):
+        _signal_exact_process(process, signal.SIGCONT)
+    deadline = time.monotonic() + PROCESS_STATE_SECONDS
+    while True:
+        process = _recapture_supervisor(reference)
+        if process.state not in ("T", "t"):
+            return process
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _fail("process-state-timeout")
+        time.sleep(min(POLL_SECONDS, remaining))
 
 
 def _prove_released_activation(
@@ -3812,9 +4365,37 @@ def _prove_released_activation(
         process = _recapture_reference(reference, "activation-process-drift")
         if process.state in ("T", "t"):
             _fail("activation-process-stopped")
-    start = _recapture_reference(fence.start, "supervisor-identity-drift")
+    start = _recapture_reference(fence.start, "start-process-identity-drift")
     if start.state in ("T", "t"):
         _fail("start-process-stopped")
+    supervisor = _recapture_supervisor(fence.supervisor)
+    if supervisor.state in ("T", "t"):
+        _fail("supervisor-process-stopped")
+    service_reference = next(
+        process
+        for process in activation.processes
+        if process.pid == activation.service_pid
+    )
+    service = _recapture_reference(service_reference, "activation-service-drift")
+    _prove_live_activation(marker, fence, service, activation)
+
+
+def _prove_parent_acknowledged_activation(
+    marker: dict[str, object], fence: FenceProof, activation: ActivationProof
+) -> None:
+    persistent = set(activation.persistent_pids)
+    for reference in activation.processes:
+        if reference.pid not in persistent:
+            continue
+        process = _recapture_reference(reference, "activation-process-drift")
+        if process.state in ("T", "t"):
+            _fail("activation-process-stopped")
+    start = _recapture_reference(fence.start, "start-process-identity-drift")
+    if start.state not in ("T", "t"):
+        _fail("activation-release-parent-running")
+    supervisor = _recapture_supervisor(fence.supervisor)
+    if supervisor.state in ("T", "t"):
+        _fail("supervisor-process-stopped")
     service_reference = next(
         process
         for process in activation.processes
@@ -3831,7 +4412,15 @@ def _release_activation_hold(durable_fd: int, marker: dict[str, object]) -> None
         _fail("activation-marker-invalid")
     _verify_activation_checkpoint(marker, fence, activation)
     _publish_activation_release(durable_fd, marker, fence, activation)
+    release_payload = _canonical_protocol_payload(
+        _activation_release_payload(marker, fence, activation)
+    )
     _prove_fence_shape(fence, str(marker["mountNamespace"]))
+    acknowledged = _read_startup_release_ack(
+        marker, fence, release_payload
+    ) is not None
+    start = _recapture_reference(fence.start, "start-process-identity-drift")
+    parent_already_acknowledged = acknowledged and start.state in ("T", "t")
     persistent = set(activation.persistent_pids)
     for reference in activation.processes:
         if _reference_is_terminated(reference):
@@ -3839,6 +4428,21 @@ def _release_activation_hold(durable_fd: int, marker: dict[str, object]) -> None
                 _fail("activation-process-drift")
             continue
         _resume_reference(reference)
+    if not parent_already_acknowledged:
+        _resume_reference(fence.start)
+    # Resume the exact pinned OpenShell supervisor last. Until the proven
+    # workload is live, keeping PID 1 stopped prevents it from advertising a
+    # transient Ready state or admitting unrelated sandbox commands.
+    _resume_supervisor(fence.supervisor)
+    _wait_for_startup_release_ack(marker, fence, release_payload)
+    _prove_parent_acknowledged_activation(marker, fence, activation)
+
+
+def _resume_acknowledged_parent(marker: dict[str, object]) -> None:
+    fence = _fence_from_value(marker["fence"])
+    activation = _activation_from_marker(marker)
+    if activation is None:
+        _fail("activation-marker-invalid")
     _resume_reference(fence.start)
     _prove_released_activation(marker, fence, activation)
 
@@ -3854,6 +4458,15 @@ def _complete_released_receipt(
     if receipt["releaseState"] == "intent":
         _assert_runtime_binding(marker)
         _release_activation_hold(durable_fd, marker)
+        receipt = _write_released_receipt(
+            durable_fd,
+            marker,
+            str(receipt["completedLedgerSha256"]),
+            "acknowledged",
+        )
+    if receipt["releaseState"] == "acknowledged":
+        _assert_runtime_binding(marker)
+        _resume_acknowledged_parent(marker)
         receipt = _write_released_receipt(
             durable_fd,
             marker,

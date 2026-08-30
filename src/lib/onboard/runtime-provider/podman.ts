@@ -14,6 +14,7 @@ import type { PersistedEngineAuthorityStore } from "./persisted-engine-authority
 import {
   createPodmanHostLocalInferenceOperation,
   type PodmanExternalInferenceNetworkAuthority,
+  type PodmanHostLocalInferenceOperationOptions,
   type PodmanInferenceFailureEvidence,
   type PodmanInferenceRedactor,
 } from "./podman-host-local-inference";
@@ -45,6 +46,7 @@ export interface PodmanHostLocalInferenceOptions {
   readonly externalNetwork?: PodmanExternalInferenceNetworkAuthority;
   readonly authority?: PodmanInferenceAuthorityReceipt;
   readonly authorityQualification?: PodmanInferenceQualificationOptions;
+  readonly hermesPortablePublishedEngineAuthority?: PodmanHostLocalInferenceOperationOptions["hermesPortablePublishedEngineAuthority"];
 }
 
 export interface PodmanRuntimeProviderOptions {
@@ -198,6 +200,12 @@ export function createPodmanRuntimeProviderBundle(
                 ...(inferenceOptions.authority ? { authority: inferenceOptions.authority } : {}),
                 ...(inferenceOptions.authorityQualification
                   ? { authorityQualification: inferenceOptions.authorityQualification }
+                  : {}),
+                ...(inferenceOptions.hermesPortablePublishedEngineAuthority
+                  ? {
+                      hermesPortablePublishedEngineAuthority:
+                        inferenceOptions.hermesPortablePublishedEngineAuthority,
+                    }
                   : {}),
               }),
           }

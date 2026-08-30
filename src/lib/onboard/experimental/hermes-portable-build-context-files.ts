@@ -143,6 +143,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/patch-bundled-npm-tar.mts", mode: "100755" },
   { path: "scripts/runtime_state_mutation_hermes_publisher.py", mode: "100755" },
   { path: "scripts/runtime-state-mutation-control.py", mode: "100755" },
+  { path: "scripts/runtime-state-mutation-transport-broker.py", mode: "100755" },
   { path: "scripts/runtime-state-mutation-startup-gate.py", mode: "100755" },
   { path: "scripts/state-dir-guard.py", mode: "100755" },
   {
@@ -165,6 +166,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/applier/conflict-detection/registry.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/conflict-detection/slack-socket-mode.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/conflict-detection/types.ts", mode: "100644" },
+  { path: "src/lib/messaging/applier/credential-env-cleanup.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/hook-phases.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/hook-phases.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/host-state-applier.test.ts", mode: "100644" },
@@ -175,6 +177,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/applier/openshell-provider.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/plan-filter.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/policy.ts", mode: "100644" },
+  { path: "src/lib/messaging/applier/setup-applier-credential-env.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/setup-applier.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/setup-applier.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/types.ts", mode: "100644" },

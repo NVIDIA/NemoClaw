@@ -4,6 +4,10 @@
 import { stripAnsi } from "./adapters/openshell/client";
 import * as openshellRuntime from "./adapters/openshell/runtime";
 import {
+  classifyCliOpenShellCommandError,
+  type CapturedSandboxCommandResult,
+} from "./adapters/openshell/sandbox-observer-cli";
+import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "./adapters/openshell/timeouts";
@@ -54,6 +58,29 @@ function getActiveGatewayName(output = ""): string | null {
   return match ? match[1].trim() : null;
 }
 
+function blocksNamedGatewayRecovery(result: CapturedSandboxCommandResult): boolean {
+  const error = classifyCliOpenShellCommandError(result);
+  return (
+    error?.kind === "authentication" ||
+    error?.kind === "schema" ||
+    (error?.kind === "transport" && error.reason === "identity_mismatch") ||
+    (error?.kind === "command" && error.reason === "invalid_request")
+  );
+}
+
+export type NamedGatewayLifecycleState = {
+  state:
+    | "healthy_named"
+    | "named_unreachable"
+    | "named_unhealthy"
+    | "connected_other"
+    | "missing_named";
+  status: string;
+  gatewayInfo: string;
+  activeGateway: string | null;
+  recoveryBlocked?: boolean;
+};
+
 /**
  * Classify the lifecycle state of the named gateway (healthy_named,
  * named_unreachable, named_unhealthy, connected_other, or missing_named) from
@@ -64,7 +91,7 @@ function getActiveGatewayName(output = ""): string | null {
 export function getNamedGatewayLifecycleState(
   gatewayName: string = resolveGatewayName(GATEWAY_PORT),
   opts: { ignoreProbeErrors?: boolean } = {},
-) {
+): NamedGatewayLifecycleState {
   // #5714: callers that must stay non-fatal (e.g. plain `nemoclaw list`
   // recovery) opt into `ignoreProbeErrors` so a hung/timed-out `openshell
   // status` returns a not-healthy classification instead of `process.exit`ing
@@ -97,6 +124,12 @@ export function getNamedGatewayLifecycleState(
   const refusing = /Connection refused|client error \(Connect\)|tcp connect error/i.test(
     cleanStatus,
   );
+  const lifecycle = {
+    status: status.output,
+    gatewayInfo: gatewayInfo.output,
+    activeGateway,
+    recoveryBlocked: blocksNamedGatewayRecovery(status) || blocksNamedGatewayRecovery(gatewayInfo),
+  };
   // OpenShell 0.0.72 can serve status and sandbox RPCs but does not implement
   // GetGatewayInfo. The pre-upgrade backup deliberately uses the current CLI
   // against that existing gateway before replacing it. Accept only the exact
@@ -105,44 +138,34 @@ export function getNamedGatewayLifecycleState(
   if (connected && activeGateway === gatewayName && (named || gatewayInfoUnsupported)) {
     return {
       state: "healthy_named",
-      status: status.output,
-      gatewayInfo: gatewayInfo.output,
-      activeGateway,
+      ...lifecycle,
     };
   }
   if (activeGateway === gatewayName && named && refusing) {
     return {
       state: "named_unreachable",
-      status: status.output,
-      gatewayInfo: gatewayInfo.output,
-      activeGateway,
+      ...lifecycle,
     };
   }
   if (activeGateway === gatewayName && named) {
     return {
       state: "named_unhealthy",
-      status: status.output,
-      gatewayInfo: gatewayInfo.output,
-      activeGateway,
+      ...lifecycle,
     };
   }
   if (connected) {
     return {
       state: "connected_other",
-      status: status.output,
-      gatewayInfo: gatewayInfo.output,
-      activeGateway,
+      ...lifecycle,
     };
   }
   return {
     state: "missing_named",
-    status: status.output,
-    gatewayInfo: gatewayInfo.output,
-    activeGateway,
+    ...lifecycle,
   };
 }
 
-type NamedGatewayLifecycleStateName = ReturnType<typeof getNamedGatewayLifecycleState>["state"];
+type NamedGatewayLifecycleStateName = NamedGatewayLifecycleState["state"];
 
 export type RecoverNamedGatewayRuntimeOptions = {
   recoverableStates?: readonly NamedGatewayLifecycleStateName[];
@@ -161,6 +184,9 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     ],
   );
   const before = getNamedGatewayLifecycleState(gatewayName);
+  if (before.recoveryBlocked) {
+    return { recovered: false, before, after: before, attempted: false };
+  }
   if (before.state === "healthy_named") {
     return { recovered: true, before, after: before, attempted: false };
   }
@@ -174,6 +200,9 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
   let after = getNamedGatewayLifecycleState(gatewayName);
+  if (after.recoveryBlocked) {
+    return { recovered: false, before, after, attempted: true };
+  }
   if (after.state === "healthy_named") {
     process.env.OPENSHELL_GATEWAY = gatewayName;
     return { recovered: true, before, after, attempted: true, via: "select" };

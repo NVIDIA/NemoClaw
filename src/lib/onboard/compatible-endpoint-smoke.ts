@@ -44,7 +44,7 @@ const COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS = 3;
 const COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS = 60;
 const COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS = 5;
 const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS = 30;
-const PROVIDER_NEUTRAL_SMOKE_INFERENCE_PROOF_COUNT = 2;
+const PROVIDER_NEUTRAL_SMOKE_INFERENCE_PROOF_COUNT = 3;
 const PROVIDER_NEUTRAL_SMOKE_DIRECT_DENY_TIMEOUT_SECONDS = 10;
 const COMPATIBLE_ENDPOINT_SMOKE_PROOF_TIMEOUT_SECONDS =
   COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS * COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS +
@@ -88,24 +88,6 @@ function nonNegativeInt(value: number | undefined, fallback: number): number {
 }
 
 /**
- * Returns whether onboarding should validate the compatible endpoint through
- * the OpenClaw sandbox instead of only checking host-side configuration.
- */
-export function shouldRunCompatibleEndpointSandboxSmoke(
-  provider: string | null | undefined,
-  messagingChannels: string[] | null | undefined,
-  agent: CompatibleEndpointSmokeAgent = null,
-): boolean {
-  const agentName = agent?.name || "openclaw";
-  return (
-    agentName === "openclaw" &&
-    provider === "compatible-endpoint" &&
-    Array.isArray(messagingChannels) &&
-    messagingChannels.length > 0
-  );
-}
-
-/**
  * Converts child-process output into text for diagnostics without assuming
  * whether Node returned strings, buffers, nulls, or primitive values.
  */
@@ -132,21 +114,20 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
   /** Recheck policy authority after the sandbox proof and before success output. */
   beforeSuccess?: () => void;
 }): void {
+  const agentName = options.agent?.name || "openclaw";
   if (
     options.forceCanonicalRoute !== true &&
-    !shouldRunCompatibleEndpointSandboxSmoke(
-      options.provider,
-      options.messagingChannels,
-      options.agent,
-    )
+    (agentName !== "openclaw" || options.provider !== "compatible-endpoint")
   ) {
     return;
   }
 
+  const hasMessagingChannels =
+    Array.isArray(options.messagingChannels) && options.messagingChannels.length > 0;
   console.log(
     options.forceCanonicalRoute
       ? "  Verifying provider-neutral inference through the sandbox runtime..."
-      : "  Verifying compatible endpoint through the messaging sandbox...",
+      : "  Verifying compatible endpoint through the sandbox runtime...",
   );
 
   const providerResult = options.runOpenshell(["provider", "get", options.provider], {
@@ -168,9 +149,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
         : `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
     );
     console.error(
-      options.forceCanonicalRoute
-        ? "  The sandbox inference.local route cannot reach the selected model provider."
-        : "  The sandbox would start Telegram, but agent turns would fail before reaching the model.",
+      "  The sandbox inference.local route cannot reach the selected model provider.",
     );
     if (providerDetails) {
       console.error(`  ${compactText(options.redact(providerDetails)).slice(0, 800)}`);
@@ -235,7 +214,9 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
         : "  Compatible endpoint sandbox smoke check failed.",
     );
     if (!options.forceCanonicalRoute) {
-      console.error("  Telegram provider startup is not the root cause; inference.local failed.");
+      console.error(
+        "  Messaging setup is not the root cause; the sandbox inference.local route failed.",
+      );
     }
     if (smokeOutput) console.error(`  ${compactText(options.redact(smokeOutput)).slice(0, 1200)}`);
     process.exit(smokeResult.status || 1);
@@ -482,7 +463,7 @@ export function buildCompatibleEndpointSandboxSmokeCommand(model: string): strin
 }
 
 /**
- * Runs through the same Python runtime as the supported agents, proving a real
+ * Runs a Python standard-library request inside the sandbox, proving a real
  * chat response through inference.local and explicit policy denial for the
  * selected direct host-native inference port that would bypass the gateway.
  */
@@ -495,7 +476,7 @@ export function buildProviderNeutralInferenceSandboxSmokeScript(
       ? "/api/tags"
       : authority?.service === "nim"
         ? "/v1/health/ready"
-        : authority?.service === "vllm"
+        : authority?.service === "vllm" || authority?.service === "llama-cpp"
           ? "/health"
           : null;
   if (
@@ -523,6 +504,7 @@ export function buildProviderNeutralInferenceSandboxSmokeScript(
     `${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.method} ${directAuthority}${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.path} ${OPEN_SHELL_DIRECT_POLICY_DENIAL_CONTRACT.detailSuffix}`,
   );
   return `
+import errno
 import json
 import sys
 import time
@@ -534,7 +516,8 @@ model = ${modelValue}
 max_tokens_field = ${maxTokensField}
 tool_calling_required = ${toolCallingRequired}
 max_response_bytes = 1048576
-opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+inference_opener = urllib.request.build_opener()
+direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 def post_inference(payload, label):
     request = urllib.request.Request(
@@ -546,7 +529,7 @@ def post_inference(payload, label):
     response_data = None
     for attempt in range(3):
         try:
-            with opener.open(request, timeout=60) as response:
+            with inference_opener.open(request, timeout=60) as response:
                 if response.status < 200 or response.status > 299:
                     raise RuntimeError("inference.local returned HTTP %s" % response.status)
                 response_bytes = response.read(max_response_bytes + 1)
@@ -582,12 +565,43 @@ response_data = post_inference({
     max_tokens_field: 512,
 }, "content")
 
-choices = response_data.get("choices") if isinstance(response_data, dict) else None
-choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
-message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
-content = message.get("content")
+def classify_content_shape(data):
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return "CHOICES_MISSING", None, False
+    choice = choices[0]
+    message = choice.get("message")
+    if not isinstance(message, dict):
+        return "MESSAGE_MISSING", None, False
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return "CONTENT", content, False
+    reasoning = message.get("reasoning_content")
+    if not isinstance(reasoning, str) or not reasoning.strip():
+        reasoning = message.get("reasoning")
+    if isinstance(reasoning, str) and reasoning.strip():
+        return "REASONING_ONLY", None, choice.get("finish_reason") == "length"
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        return "TOOL_CALL_ONLY", None, False
+    if choice.get("finish_reason") == "length":
+        return "EMPTY_LENGTH", None, False
+    return "EMPTY_OTHER", None, False
+
+content_shape, content, retry_reasoning = classify_content_shape(response_data)
+if retry_reasoning:
+    print(
+        "inference.local content proof returned REASONING_ONLY at the initial token limit; retrying once with a larger content budget",
+        file=sys.stderr,
+    )
+    response_data = post_inference({
+        "model": model,
+        "messages": [{"role": "user", "content": "Reply with exactly: PONG"}],
+        max_tokens_field: 1024,
+    }, "content")
+    content_shape, content, _ = classify_content_shape(response_data)
 if not isinstance(content, str) or not content.strip():
-    print("inference.local response did not contain assistant content", file=sys.stderr)
+    print("inference.local content proof failed: %s" % content_shape, file=sys.stderr)
     sys.exit(1)
 
 if tool_calling_required:
@@ -641,7 +655,7 @@ direct_request = urllib.request.Request(
     method=direct_method,
 )
 try:
-    with opener.open(direct_request, timeout=direct_deny_timeout_seconds) as direct_response:
+    with direct_opener.open(direct_request, timeout=direct_deny_timeout_seconds) as direct_response:
         print(
             "direct host inference route unexpectedly returned HTTP %s" % direct_response.status,
             file=sys.stderr,
@@ -677,9 +691,11 @@ except urllib.error.HTTPError as error:
             file=sys.stderr,
         )
         sys.exit(1)
-except urllib.error.URLError:
-    print("direct host inference deny could not be proven", file=sys.stderr)
-    sys.exit(1)
+except urllib.error.URLError as error:
+    reason = error.reason
+    if not isinstance(reason, ConnectionRefusedError) or reason.errno != errno.ECONNREFUSED:
+        print("direct host inference deny could not be proven", file=sys.stderr)
+        sys.exit(1)
 
 print("INFERENCE_SMOKE_OK " + content.strip()[:200])
 `.trim();

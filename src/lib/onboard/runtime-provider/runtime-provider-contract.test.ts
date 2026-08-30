@@ -28,7 +28,11 @@ import {
   type ManagedStartupProfile,
 } from "../managed-startup/profile";
 import { registerCreatedSandbox } from "../sandbox-registration";
-import type { RuntimeProviderBundle, RuntimeProviderWorkloadProfile } from "./contract";
+import type {
+  RuntimeProviderBundle,
+  RuntimeProviderManagedImageBootstrapSurface,
+  RuntimeProviderWorkloadProfile,
+} from "./contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createDockerRuntimeProviderBundle } from "./docker";
 import type { HostLocalInferenceOperation } from "./host-local-inference";
@@ -119,7 +123,9 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
     Object.entries(CURRENT_RUNTIME_PROVIDER_BUNDLES).forEach(([providerId, bundle]) => {
       expect(bundle.identity.id).toBe(providerId);
-      expect(([
+      expect(
+        (
+          [
             "plan",
             "capabilities",
             "preflightDoctor",
@@ -134,7 +140,9 @@ describe("RuntimeProviderBundle registry contract", () => {
             "recovery",
             "cleanup",
             "containerEngine",
-          ] as const).every((surface) => Object.is(bundle[surface].providerId, providerId))).toBe(true);
+          ] as const
+        ).every((surface) => Object.is(bundle[surface].providerId, providerId)),
+      ).toBe(true);
       expect(bundle.bootstrap).toMatchObject({ supported: providerId === "docker" });
       expect(bundle.stateMutation).toMatchObject({
         supported: providerId === "docker",
@@ -280,6 +288,7 @@ describe("RuntimeProviderBundle registry contract", () => {
         replaceSurface(bundle, "bootstrap", {
           providerId: "mxc",
           supported: true,
+          bootstrapKind: "managed-image",
           createAuthorityStore,
           createLifecycle,
           createOnboardRouting,
@@ -288,8 +297,10 @@ describe("RuntimeProviderBundle registry contract", () => {
     ]);
     const registered = providers.mxc!;
     expectSupportedSurface(registered.bootstrap);
+    expect(registered.bootstrap.bootstrapKind).toBe("managed-image");
+    const managedBootstrap = registered.bootstrap as RuntimeProviderManagedImageBootstrapSurface;
 
-    const routing = registered.bootstrap.createOnboardRouting({
+    const routing = managedBootstrap.createOnboardRouting({
       sandboxName: "alpha",
       openshellArgv: (args) => args,
       nativeFallbackEnabled: false,

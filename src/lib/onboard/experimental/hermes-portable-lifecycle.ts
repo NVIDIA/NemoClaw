@@ -3,13 +3,17 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
-import { TextDecoder } from "node:util";
+import { isDeepStrictEqual, TextDecoder } from "node:util";
 
 import {
+  fingerprintOpenShellSandboxId,
   fingerprintOpenShellSandboxLiveIdentity,
   parseOpenShellSandboxId,
 } from "../../adapters/openshell/sandbox-identity";
-import { classifyOpenShellSandboxPresence } from "../../adapters/openshell/sandbox-presence";
+import {
+  classifyOpenShellSandboxPresence,
+  observeOpenShellSandboxIdentity,
+} from "../../adapters/openshell/sandbox-presence";
 import { assertPodmanSocketAuthority } from "../../adapters/podman";
 import {
   assertHermesPortableOpenShellExecutableAuthority,
@@ -18,6 +22,7 @@ import {
   type HermesPortableOpenShellExecutableAuthority,
 } from "../../adapters/openshell/resolve-shared";
 import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock-acquisition";
+import { assertCurrentPortableHostFenceHeld } from "../../state/portable-uninstall-retirement";
 import type { SandboxEntry } from "../../state/registry/types";
 import {
   PODMAN_MANAGED_LABEL,
@@ -47,10 +52,16 @@ import {
 import {
   assertHermesPortableDurablePolicyAuthority,
   readHermesPortableLifecycleReceipt,
+  readHermesPortableLifecycleReceiptForRequalification,
+  publishHermesPortableSuccessorReceipt,
   type HermesPortableConfiguredReceipt,
   type HermesPortableLifecycleReceipt,
   type HermesPortableReceiptSnapshot,
 } from "./hermes-portable-receipt";
+import {
+  qualifyHermesPortableOperatingAuthority,
+  type HermesPortableOperatingAuthorityDeps,
+} from "./hermes-portable-operating-authority";
 import type {
   PortableDemoLifecycleContext,
   PortableDemoLifecycleRecoveryResult,
@@ -90,6 +101,8 @@ export interface HermesPortableLifecycleDeps {
     | HermesPortableContainerDeps
     | ((receipt: HermesPortableConfiguredReceipt) => HermesPortableContainerDeps);
   readonly podmanAuthorityDeps?: HermesPortablePodmanAuthorityDeps;
+  readonly operatingAuthority?: HermesPortableOperatingAuthorityDeps;
+  readonly publishSuccessorReceipt?: typeof publishHermesPortableSuccessorReceipt;
   readonly now?: () => number;
   readonly sleep?: (milliseconds: number) => void;
   readonly log?: (message: string) => void;
@@ -103,6 +116,8 @@ interface QualifiedHermesPortableLifecycle {
   readonly containerDeps: HermesPortableContainerDeps;
   readonly container: HermesPortableContainerInspection;
   readonly capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>;
+  readonly openShellPhase: string;
+  readonly assertOperatingAuthority: () => void;
 }
 
 function fail(message: string): never {
@@ -174,7 +189,7 @@ export interface HermesPortableOpenShellCommandAuthority {
   readonly executablePath: string;
 }
 
-/** Requalify the exact schema-5 executable and child environment for one command. */
+/** Requalify the receipt-owned executable and child environment for one command. */
 export function buildHermesPortableOpenShellCommandAuthority(
   receipt: HermesPortableLifecycleReceipt,
   commandEnv: NodeJS.ProcessEnv,
@@ -210,6 +225,21 @@ function createContainerDeps(
   };
 }
 
+function createAuthenticatedHealthCapture(
+  receipt: HermesPortableConfiguredReceipt,
+  capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>,
+): NonNullable<HermesPortableContainerDeps["authenticatedHealth"]> {
+  return (script, timeoutMs) => {
+    const result = capture(openshellExecArgs(receipt, ["python3", "-c", script]), timeoutMs);
+    return {
+      status: result.status,
+      stdout: commandOutput(result.stdout, "authenticated health output"),
+      stderr: commandOutput(result.stderr, "authenticated health diagnostic"),
+      ...(result.error ? { error: result.error } : {}),
+    };
+  };
+}
+
 function sameSnapshot(
   left: HermesPortableReceiptSnapshot,
   right: HermesPortableReceiptSnapshot,
@@ -219,8 +249,33 @@ function sameSnapshot(
     left.identity.dev === right.identity.dev &&
     left.identity.ino === right.identity.ino &&
     left.sha256 === right.sha256 &&
-    left.bytes.equals(right.bytes)
+    left.bytes.equals(right.bytes) &&
+    isDeepStrictEqual(left.receipt.policy, right.receipt.policy) &&
+    left.successorPublicationPending === right.successorPublicationPending &&
+    left.successor?.path === right.successor?.path &&
+    left.successor?.identity.dev === right.successor?.identity.dev &&
+    left.successor?.identity.ino === right.successor?.identity.ino &&
+    left.successor?.sha256 === right.successor?.sha256 &&
+    (left.successor === undefined ||
+      right.successor === undefined ||
+      left.successor.bytes.equals(right.successor.bytes))
   );
+}
+
+export function retainRequalifiedOperatingAuthority(
+  sandboxName: string,
+  stateDir: string,
+  published: HermesPortableReceiptSnapshot,
+  assertOperatingAuthority: () => void,
+  readReceipt: typeof readHermesPortableLifecycleReceipt = readHermesPortableLifecycleReceipt,
+): () => void {
+  return () => {
+    const reread = readReceipt(sandboxName, stateDir);
+    if (!reread || !sameSnapshot(reread, published)) {
+      fail("receipt authority changed after schema-6 requalification");
+    }
+    assertOperatingAuthority();
+  };
 }
 
 function contextMatches(
@@ -239,9 +294,21 @@ function observeOpenShellIdentity(
   receipt: HermesPortableConfiguredReceipt,
   capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]>,
   acceptedPhases: readonly string[] = ["Ready"],
-): { readonly sandboxId: string; readonly liveIdentityFingerprint: string } {
-  const gateway = capture(["sandbox", "list", "-g", receipt.gatewayName], COMMAND_TIMEOUT_MS);
+): {
+  readonly sandboxId: string;
+  readonly liveIdentityFingerprint: string;
+  readonly phase: string;
+} {
+  const gateway = capture(
+    ["sandbox", "list", "-g", receipt.gatewayName, "-o", "json"],
+    COMMAND_TIMEOUT_MS,
+  );
   if (gateway.status !== 0 || gateway.error) fail("cannot prove the selected gateway reachable");
+  const listed = observeOpenShellSandboxIdentity(receipt.sandboxName, {
+    status: gateway.status,
+    stdout: commandOutput(gateway.stdout, "sandbox list output"),
+    stderr: commandOutput(gateway.stderr, "sandbox list diagnostic"),
+  });
   const current = capture(
     ["sandbox", "get", "-g", receipt.gatewayName, receipt.sandboxName],
     COMMAND_TIMEOUT_MS,
@@ -250,17 +317,18 @@ function observeOpenShellIdentity(
   const output = commandOutput(current.stdout, "sandbox identity output");
   const sandboxId = parseOpenShellSandboxId(output);
   const liveIdentityFingerprint = fingerprintOpenShellSandboxLiveIdentity(output);
-  const phases = [...output.matchAll(/^Phase:\s*(\S+)\s*$/gmu)].map((match) => match[1]!);
   if (
-    phases.length !== 1 ||
-    !acceptedPhases.includes(phases[0]!) ||
+    listed.kind !== "present" ||
+    !acceptedPhases.includes(listed.phase) ||
     !sandboxId ||
     !liveIdentityFingerprint ||
-    sandboxId !== receipt.container.sandboxId
+    listed.id !== sandboxId ||
+    sandboxId !== receipt.container.sandboxId ||
+    fingerprintOpenShellSandboxId(listed.id) !== liveIdentityFingerprint
   ) {
     fail("OpenShell sandbox identity disagrees with the receipt container");
   }
-  return { sandboxId, liveIdentityFingerprint };
+  return { sandboxId, liveIdentityFingerprint, phase: listed.phase };
 }
 
 function policyCapture(
@@ -281,7 +349,7 @@ function requireRegistry(
   receipt: HermesPortableConfiguredReceipt,
   liveIdentityFingerprint: string,
   deps: HermesPortableLifecycleDeps,
-): void {
+): SandboxEntry {
   const entry = deps.readRegistry?.(receipt.sandboxName);
   if (
     !entry ||
@@ -295,6 +363,7 @@ function requireRegistry(
   ) {
     fail("registry authority disagrees with the active receipt");
   }
+  return entry;
 }
 
 function qualify(
@@ -303,6 +372,7 @@ function qualify(
   deps: HermesPortableLifecycleDeps,
   expected?: HermesPortableReceiptSnapshot,
   acceptedPhases: readonly string[] = ["Ready"],
+  options: { readonly permitSchema5Requalification?: boolean } = {},
 ): QualifiedHermesPortableLifecycle {
   const commandEnv = deps.env ?? process.env;
   assertNoOpenShellGatewayEndpointOverride(commandEnv);
@@ -311,13 +381,22 @@ function qualify(
   if (!isMcpLifecycleLockHeld(sandboxName, lockStateDir)) {
     fail("mutation requires the sandbox lifecycle lock");
   }
-  const snapshot = readHermesPortableLifecycleReceipt(sandboxName, stateDir);
+  const snapshot = options.permitSchema5Requalification
+    ? readHermesPortableLifecycleReceiptForRequalification(sandboxName, stateDir)
+    : readHermesPortableLifecycleReceipt(sandboxName, stateDir);
   if (!snapshot) fail("active receipt authority disappeared");
   if (expected && !sameSnapshot(snapshot, expected)) fail("receipt authority changed");
   if (snapshot.receipt.phase !== "active") {
     fail(`receipt phase '${snapshot.receipt.phase}' is incomplete and cannot run commands`);
   }
-  const receipt = snapshot.receipt;
+  const operatingAuthority = qualifyHermesPortableOperatingAuthority(
+    snapshot as HermesPortableReceiptSnapshot & {
+      readonly receipt: HermesPortableConfiguredReceipt;
+    },
+    deps.operatingAuthority,
+    options,
+  );
+  const receipt = operatingAuthority.receipt;
   if (!contextMatches(receipt, context)) fail("registry context disagrees with the active receipt");
   assertCurrentHermesPortableStoredStartupContract(receipt.startup, sandboxName);
   const durablePolicy = assertHermesPortableDurablePolicyAuthority(receipt.policy);
@@ -342,34 +421,98 @@ function qualify(
     buildHermesPortableOpenShellCommandAuthority(receipt, commandEnv, assertExecutable);
     return rawCapture(args, timeoutMs);
   };
+  const liveIdentity = observeOpenShellIdentity(receipt, capture, acceptedPhases);
+  const registryEntry = requireRegistry(receipt, liveIdentity.liveIdentityFingerprint, deps);
   const policy = proveHermesPortableLivePolicy({
     gatewayName: receipt.gatewayName,
     sandboxName,
     createPolicyBytes: durablePolicy,
+    finalizedRegistryEntry: registryEntry,
     capture: policyCapture(capture),
   });
   if (
-    policy.intendedSemanticSha256 !== receipt.policy.intendedSemanticSha256 ||
-    policy.verifiedLivePolicySemanticSha256 !== receipt.verifiedLivePolicySemanticSha256
+    policy.expectedPolicySource === "create" &&
+    (policy.intendedSemanticSha256 !== receipt.policy.intendedSemanticSha256 ||
+      policy.verifiedLivePolicySemanticSha256 !== receipt.verifiedLivePolicySemanticSha256)
   ) {
     fail("live policy authority disagrees with the active receipt");
   }
-  const liveIdentity = observeOpenShellIdentity(receipt, capture, acceptedPhases);
-  requireRegistry(receipt, liveIdentity.liveIdentityFingerprint, deps);
-  const containerDeps =
+  const baseContainerDeps =
     typeof deps.container === "function"
       ? deps.container(receipt)
       : (deps.container ?? createContainerDeps(receipt, commandEnv, deps.podmanAuthorityDeps));
+  const containerDeps: HermesPortableContainerDeps = {
+    ...baseContainerDeps,
+    authenticatedHealth: createAuthenticatedHealthCapture(receipt, capture),
+  };
   const container = assertCurrentHermesPortableContainer(receipt, containerDeps);
   if (container.paused || container.authority.restartPolicy !== "unless-stopped") {
     fail("container state or restart policy disagrees with active authority");
   }
+  operatingAuthority.assertCurrent();
   return {
     snapshot: snapshot as QualifiedHermesPortableLifecycle["snapshot"],
     receipt,
     containerDeps,
     container,
     capture,
+    openShellPhase: liveIdentity.phase,
+    assertOperatingAuthority: operatingAuthority.assertCurrent,
+  };
+}
+
+export type HermesPortableAuthorityRequalificationResult =
+  | { readonly kind: "not-installed" }
+  | {
+      readonly kind: "already-current";
+      readonly snapshot: HermesPortableReceiptSnapshot;
+      readonly assertCurrent: () => void;
+    }
+  | {
+      readonly kind: "migrated";
+      readonly snapshot: HermesPortableReceiptSnapshot;
+      readonly assertCurrent: () => void;
+    };
+
+/** Publish schema 6 only after the exact schema-5 authority passes the probe fence. */
+export function requalifyHermesPortableSandboxAuthority(
+  sandboxName: string,
+  context: PortableDemoLifecycleContext,
+  deps: HermesPortableLifecycleDeps = {},
+): HermesPortableAuthorityRequalificationResult {
+  const stateDir = deps.stateDir ?? defaultPortableDemoStateDir(deps.env ?? process.env);
+  const snapshot = readHermesPortableLifecycleReceiptForRequalification(sandboxName, stateDir);
+  if (!snapshot) return { kind: "not-installed" };
+  if (snapshot.receipt.phase !== "active") {
+    fail(`receipt phase '${snapshot.receipt.phase}' is incomplete and cannot be requalified`);
+  }
+  assertCurrentPortableHostFenceHeld(snapshot.receipt.runtimeAuthority.homeDir);
+  const qualified = qualify(sandboxName, context, deps, snapshot, ["Ready", "Error", "Stopped"], {
+    permitSchema5Requalification: true,
+  });
+  const publishSuccessor = deps.publishSuccessorReceipt ?? publishHermesPortableSuccessorReceipt;
+  const published = publishSuccessor(
+    sandboxName,
+    stateDir,
+    {},
+    {
+      expected: qualified.snapshot,
+      assertCurrent: qualified.assertOperatingAuthority,
+    },
+  );
+  qualified.assertOperatingAuthority();
+  const current = qualify(sandboxName, context, deps, published, ["Ready", "Error", "Stopped"]);
+  current.assertOperatingAuthority();
+  const assertCurrent = retainRequalifiedOperatingAuthority(
+    sandboxName,
+    stateDir,
+    published,
+    current.assertOperatingAuthority,
+  );
+  return {
+    kind: snapshot.successor ? "already-current" : "migrated",
+    snapshot: published,
+    assertCurrent,
   };
 }
 
@@ -403,81 +546,136 @@ function waitFor(
   return false;
 }
 
-/** Recover the exact schema-5 container and manifest-owned Hermes startup. */
+function rollbackStartedHermesPortableRecovery(
+  sandboxName: string,
+  context: PortableDemoLifecycleContext,
+  deps: HermesPortableLifecycleDeps,
+  qualified: QualifiedHermesPortableLifecycle,
+): void {
+  stopHermesPortableContainer(qualified.receipt, {
+    ...qualified.containerDeps,
+    ...(deps.now ? { now: deps.now } : {}),
+    ...(deps.sleep ? { sleep: deps.sleep } : {}),
+  });
+  const stopped = qualify(sandboxName, context, deps, qualified.snapshot, ["Error", "Stopped"]);
+  if (stopped.container.authority.running || stopped.container.status !== "exited") {
+    fail("failed recovery did not restore the exact stopped container");
+  }
+}
+
+/** Recover the exact receipt-owned container and manifest-owned Hermes startup. */
 export function recoverHermesPortableSandboxLifecycle(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
   deps: HermesPortableLifecycleDeps = {},
 ): PortableDemoLifecycleRecoveryResult {
-  let qualified = qualify(sandboxName, context, deps);
+  let qualified = qualify(sandboxName, context, deps, undefined, ["Ready", "Error", "Stopped"]);
   const wasRunning = qualified.container.authority.running;
-  if (!wasRunning) {
-    startHermesPortableContainer(qualified.receipt, qualified.containerDeps);
+  const rollbackAuthority = qualified;
+  let startedByRecovery = false;
+  try {
+    if (!wasRunning) {
+      try {
+        startedByRecovery =
+          startHermesPortableContainer(qualified.receipt, qualified.containerDeps) === "started";
+      } catch (startError) {
+        try {
+          const current = assertCurrentHermesPortableContainer(
+            qualified.receipt,
+            qualified.containerDeps,
+          );
+          startedByRecovery = current.authority.running;
+        } catch (reconciliationError) {
+          throw new AggregateError(
+            [startError, reconciliationError],
+            "Hermes portable lifecycle start mutation could not be reconciled",
+          );
+        }
+        throw startError;
+      }
+      qualified = qualify(sandboxName, context, deps, qualified.snapshot, [
+        "Ready",
+        "Error",
+        "Stopped",
+      ]);
+    }
+    const commandEnv = deps.env ?? process.env;
+    const assertExecutable =
+      deps.assertOpenShellExecutableAuthority ?? assertHermesPortableOpenShellExecutableAuthority;
+    const commandAuthority = buildHermesPortableOpenShellCommandAuthority(
+      qualified.receipt,
+      commandEnv,
+      assertExecutable,
+    );
+    const rawCapture =
+      deps.captureOpenShell ??
+      defaultCaptureOpenShell(
+        commandAuthority.executablePath,
+        commandEnv,
+        qualified.receipt.runtimeAuthority,
+      );
+    const capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
+      args,
+      timeoutMs,
+    ) => {
+      buildHermesPortableOpenShellCommandAuthority(qualified.receipt, commandEnv, assertExecutable);
+      return rawCapture(args, timeoutMs);
+    };
+    const execReady = waitFor(EXEC_READY_TIMEOUT_MS, deps, (remainingMs) => {
+      const result = capture(
+        openshellExecArgs(qualified.receipt, ["true"]),
+        Math.min(COMMAND_TIMEOUT_MS, remainingMs),
+      );
+      return result.status === 0 && !result.error;
+    });
+    if (!execReady) fail("did not reconnect to the selected OpenShell gateway");
     qualified = qualify(sandboxName, context, deps, qualified.snapshot);
-  }
-  const commandEnv = deps.env ?? process.env;
-  const assertExecutable =
-    deps.assertOpenShellExecutableAuthority ?? assertHermesPortableOpenShellExecutableAuthority;
-  const commandAuthority = buildHermesPortableOpenShellCommandAuthority(
-    qualified.receipt,
-    commandEnv,
-    assertExecutable,
-  );
-  const rawCapture =
-    deps.captureOpenShell ??
-    defaultCaptureOpenShell(
-      commandAuthority.executablePath,
-      commandEnv,
-      qualified.receipt.runtimeAuthority,
-    );
-  const capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (
-    args,
-    timeoutMs,
-  ) => {
-    buildHermesPortableOpenShellCommandAuthority(qualified.receipt, commandEnv, assertExecutable);
-    return rawCapture(args, timeoutMs);
-  };
-  const execReady = waitFor(EXEC_READY_TIMEOUT_MS, deps, (remainingMs) => {
-    const result = capture(
-      openshellExecArgs(qualified.receipt, ["true"]),
-      Math.min(COMMAND_TIMEOUT_MS, remainingMs),
-    );
-    return result.status === 0 && !result.error;
-  });
-  if (!execReady) fail("did not reconnect to the selected OpenShell gateway");
-  qualified = qualify(sandboxName, context, deps, qualified.snapshot);
-  if (
-    observeHermesPortableAuthenticatedHealth(qualified.receipt, qualified.containerDeps) === "ready"
-  ) {
+    if (
+      observeHermesPortableAuthenticatedHealth(qualified.receipt, qualified.containerDeps) ===
+      "ready"
+    ) {
+      qualify(sandboxName, context, deps, qualified.snapshot);
+      return wasRunning ? { kind: "already-running" } : { kind: "recovered" };
+    }
+    if (startedByRecovery) {
+      qualified = qualify(sandboxName, context, deps, qualified.snapshot);
+      const rawLaunch =
+        deps.launchOpenShell ??
+        defaultLaunchOpenShell(
+          commandAuthority.executablePath,
+          commandEnv,
+          qualified.receipt.runtimeAuthority,
+        );
+      buildHermesPortableOpenShellCommandAuthority(qualified.receipt, commandEnv, assertExecutable);
+      rawLaunch(openshellExecArgs(qualified.receipt, qualified.receipt.startup.argv));
+    }
+    const recovered = waitFor(STARTUP_TIMEOUT_MS, deps, () => {
+      const current = qualify(sandboxName, context, deps, qualified.snapshot);
+      return (
+        observeHermesPortableAuthenticatedHealth(current.receipt, current.containerDeps) === "ready"
+      );
+    });
+    if (!recovered) fail("managed startup did not pass authenticated health");
     qualify(sandboxName, context, deps, qualified.snapshot);
-    return wasRunning ? { kind: "already-running" } : { kind: "recovered" };
+    if (wasRunning) return { kind: "already-running" };
+    (deps.log ?? console.log)(`  Hermes portable lifecycle recovered sandbox '${sandboxName}'.`);
+    return { kind: "recovered" };
+  } catch (error) {
+    if (startedByRecovery) {
+      try {
+        rollbackStartedHermesPortableRecovery(sandboxName, context, deps, rollbackAuthority);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "Hermes portable lifecycle recovery failed and exact container rollback was not proven",
+        );
+      }
+    }
+    throw error;
   }
-  qualified = qualify(sandboxName, context, deps, qualified.snapshot);
-  const rawLaunch =
-    deps.launchOpenShell ??
-    defaultLaunchOpenShell(
-      commandAuthority.executablePath,
-      commandEnv,
-      qualified.receipt.runtimeAuthority,
-    );
-  const launch = (args: readonly string[]): void => {
-    buildHermesPortableOpenShellCommandAuthority(qualified.receipt, commandEnv, assertExecutable);
-    rawLaunch(args);
-  };
-  launch(openshellExecArgs(qualified.receipt, qualified.receipt.startup.argv));
-  const recovered = waitFor(STARTUP_TIMEOUT_MS, deps, () => {
-    const current = qualify(sandboxName, context, deps, qualified.snapshot);
-    return (
-      observeHermesPortableAuthenticatedHealth(current.receipt, current.containerDeps) === "ready"
-    );
-  });
-  if (!recovered) fail("managed startup did not pass authenticated health");
-  qualify(sandboxName, context, deps, qualified.snapshot);
-  (deps.log ?? console.log)(`  Hermes portable lifecycle recovered sandbox '${sandboxName}'.`);
-  return { kind: "recovered" };
 }
 
-/** Requalify active schema-5 authority without starting or changing the sandbox. */
+/** Requalify active Hermes authority without starting or changing the sandbox. */
 export function assertHermesPortableSandboxLifecycleAuthority(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
@@ -621,7 +819,13 @@ export function prepareHermesPortableSandboxRemoval(
   ) {
     fail("receipt authority changed");
   }
-  const receipt = expectedSnapshot.receipt;
+  const operatingAuthority = qualifyHermesPortableOperatingAuthority(
+    expectedSnapshot as HermesPortableReceiptSnapshot & {
+      readonly receipt: HermesPortableConfiguredReceipt;
+    },
+    deps.operatingAuthority,
+  );
+  const receipt = operatingAuthority.receipt;
   if (!contextMatches(receipt, context)) fail("registry context disagrees with the active receipt");
 
   const inspect = (
@@ -634,6 +838,7 @@ export function prepareHermesPortableSandboxRemoval(
   } => {
     const snapshot = readHermesPortableLifecycleReceipt(sandboxName, stateDir);
     if (!snapshot || !sameSnapshot(snapshot, expectedSnapshot)) fail("receipt authority changed");
+    operatingAuthority.assertCurrent();
     assertCurrentHermesPortableStoredStartupContract(receipt.startup, sandboxName);
     assertHermesPortableDurablePolicyAuthority(receipt.policy);
     requireStaticRegistry(receipt, deps);
@@ -673,9 +878,15 @@ export function prepareHermesPortableSandboxRemoval(
       if (presence !== "absent") fail("cannot prove the current OpenShell sandbox");
       if (!admitAbsence) fail("sandbox disappeared before uninstall journal publication");
       assertHermesPortableContainerAbsent(receipt, containerDeps);
+      operatingAuthority.assertCurrent();
       return { present: false, capture, containerDeps };
     }
-    const qualified = qualify(sandboxName, context, deps, expectedSnapshot, ["Ready", "Stopped"]);
+    const qualified = qualify(sandboxName, context, deps, expectedSnapshot, [
+      "Ready",
+      "Stopped",
+      "Error",
+    ]);
+    operatingAuthority.assertCurrent();
     return { present: true, qualified, capture, containerDeps: qualified.containerDeps };
   };
 
@@ -705,25 +916,36 @@ export function prepareHermesPortableSandboxRemoval(
   });
 }
 
-/** Stop only the exact schema-5 full ID after revalidating after the callback. */
+/** Stop only the exact receipt-owned full ID after revalidating after the callback. */
 export function stopHermesPortableSandboxLifecycle(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
   beforeStop: () => void,
   deps: HermesPortableLifecycleDeps = {},
 ): PortableDemoLifecycleStopResult {
-  let qualified = qualify(sandboxName, context, deps);
+  let qualified = qualify(sandboxName, context, deps, undefined, ["Ready", "Error", "Stopped"]);
   if (!qualified.container.authority.running && qualified.container.status === "exited") {
+    qualify(sandboxName, context, deps, qualified.snapshot, ["Error", "Stopped"]);
     return { kind: "already-stopped" };
   }
+  if (qualified.container.authority.running && qualified.openShellPhase === "Stopped") {
+    fail("OpenShell Stopped phase disagrees with the running receipt container");
+  }
   if (qualified.container.authority.running) beforeStop();
-  qualified = qualify(sandboxName, context, deps, qualified.snapshot);
+  qualified = qualify(sandboxName, context, deps, qualified.snapshot, [
+    "Ready",
+    "Error",
+    "Stopped",
+  ]);
+  if (qualified.container.authority.running && qualified.openShellPhase === "Stopped") {
+    fail("OpenShell Stopped phase disagrees with the running receipt container");
+  }
   const result = stopHermesPortableContainer(qualified.receipt, {
     ...qualified.containerDeps,
     ...(deps.now ? { now: deps.now } : {}),
     ...(deps.sleep ? { sleep: deps.sleep } : {}),
   });
-  const final = qualify(sandboxName, context, deps, qualified.snapshot);
+  const final = qualify(sandboxName, context, deps, qualified.snapshot, ["Error", "Stopped"]);
   if (final.container.authority.running) fail("exact container remained running after stop");
   return { kind: result };
 }
@@ -732,4 +954,5 @@ export const hermesPortableLifecycleInternals = {
   buildHermesPortableOpenShellEnv,
   createContainerDeps,
   qualify,
+  retainRequalifiedOperatingAuthority,
 };

@@ -62,13 +62,6 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--quick] [--output FILE|-o FILE] [--sandbox NAME]",
     },
   ],
-  deploy: [
-    {
-      group: "Compatibility Commands",
-      order: 31,
-      deprecated: true,
-    },
-  ],
   gc: [
     {
       group: "Cleanup",

@@ -39,10 +39,8 @@ describe("Docker GPU recreate orchestration", () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRm = vi.fn(() => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
-    const runOpenshell = vi.fn((args: readonly string[]) =>
-      args[1] === "list" ? { status: 0, stdout: "No sandboxes found.\n" } : { status: 0 },
-    );
-    const runCaptureOpenshell = vi.fn(() => "alpha  2026-08-23 10:00:00  Ready\n");
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const runCaptureOpenshell = vi.fn(() => "alpha  2026-08-23 10:00:02  Ready\n");
 
     const result = recreateOpenShellDockerSandboxWithGpu(
       { sandboxName: "alpha", timeoutSecs: 1 },
@@ -102,9 +100,14 @@ describe("Docker GPU recreate orchestration", () => {
     expect(dockerRm.mock.invocationCallOrder[backupRmCall]).toBeGreaterThan(
       runOpenshell.mock.invocationCallOrder[0],
     );
-    expect(dockerStart).toHaveBeenCalledWith(
-      NEW_CONTAINER_ID,
-      expect.objectContaining({ ignoreError: true }),
+    expect(dockerStart).not.toHaveBeenCalled();
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "stop", "alpha"],
+      expect.objectContaining({ ignoreError: true, timeout: 1000 }),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "start", "alpha"],
+      expect.objectContaining({ ignoreError: true, timeout: 1000 }),
     );
     expect(runCaptureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "list"],
@@ -125,10 +128,8 @@ describe("Docker GPU recreate orchestration", () => {
           dockerStop: vi.fn(() => ({ status: 0 })),
           dockerRm: vi.fn(() => ({ status: 0 })),
           dockerStart: vi.fn(() => ({ status: 0 })),
-          runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:00  Deleting\n"),
-          runOpenshell: vi.fn((args: readonly string[]) =>
-            args[1] === "list" ? { status: 0, stdout: "No sandboxes found.\n" } : { status: 0 },
-          ),
+          runCaptureOpenshell: vi.fn(() => "alpha  2026-08-23 10:00:02  Deleting\n"),
+          runOpenshell: vi.fn(() => ({ status: 0 })),
           sleep: vi.fn(),
           now: () => new Date("2026-05-12T00:00:00Z"),
           detectSandboxFallbackDns: vi.fn(() => null),

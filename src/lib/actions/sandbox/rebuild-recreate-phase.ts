@@ -15,10 +15,7 @@ import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import { cloneSandboxHostMounts } from "../../state/registry/host-mount";
-import {
-  excludePolicyPresetsByName,
-  type RebuildBackupManifest,
-} from "./rebuild-backup-phase";
+import { excludePolicyPresetsByName, type RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
@@ -288,7 +285,9 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
       rebuildGatewayAuthority,
-      ...(Array.isArray(recreatePolicyPresets) ? { rebuildPolicyPresets: recreatePolicyPresets } : {}),
+      ...(Array.isArray(recreatePolicyPresets)
+        ? { rebuildPolicyPresets: recreatePolicyPresets }
+        : {}),
       ...(rebuildsHermesSandbox && backupManifest?.preservedEnv
         ? { rebuildPreservedEnv: backupManifest.preservedEnv }
         : {}),
@@ -299,7 +298,12 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     onboardFailed = true;
     const message = error instanceof Error ? error.message : String(error);
     const name = error instanceof Error ? error.name : "";
-    if (name !== "RebuildOnboardExit") log(`onboard() threw: ${message}`);
+    if (name !== "RebuildOnboardExit") {
+      log(`onboard() threw: ${message}`);
+      console.error(
+        `  ${_RD}Sandbox recreate error:${R} ${onboardSession.redactSensitiveText(message) ?? "Inner onboarding failed."}`,
+      );
+    }
   } finally {
     process.exit = savedExit;
     restoreRebuildBaseImageOverride();

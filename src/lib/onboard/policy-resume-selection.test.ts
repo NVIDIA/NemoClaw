@@ -15,6 +15,7 @@ function policies(
     "brave",
     "tavily",
     "slack",
+    "discord",
     "observability-otlp-local",
     "personal-open-internet",
   ].map((name) => ({ name }));
@@ -146,11 +147,62 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
     expect(result.policyPresets).toEqual(["slack"]);
     expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
   });
+
+  it("removes a stale Hermes Slack preset when no messaging channel is enabled", () => {
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["npm", "slack"] }) },
+      "alpha",
+      {
+        recordedPolicyPresets: ["npm", "slack"],
+        enabledChannels: [],
+        agent: "hermes",
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
+
+    expect(result.policyPresets).toEqual(["npm"]);
+    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+  });
+
+  it("keeps only the enabled Hermes messaging preset during resume", () => {
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["npm", "slack", "discord"] }) },
+      "alpha",
+      {
+        recordedPolicyPresets: ["npm", "slack", "discord"],
+        enabledChannels: ["discord"],
+        agent: "hermes",
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
+
+    expect(result.policyPresets).toEqual(["npm", "discord"]);
+    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+  });
+
+  it("preserves custom ownership of an inactive Hermes messaging preset name", () => {
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["npm", "slack"], custom: ["slack"] }) },
+      "alpha",
+      {
+        recordedPolicyPresets: ["npm", "slack"],
+        enabledChannels: [],
+        agent: "hermes",
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
+
+    expect(result.policyPresets).toEqual(["npm", "slack"]);
+    expect(result.recordedPolicyPresetsNeedReconcile).toBe(false);
+  });
 });
 
 describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)", () => {
-  // These exercise the real tiers.yaml through classifyPresetProvenance (no tier
-  // stub): `brave` is a Balanced default, and Restricted lists no such default.
+  // These exercise canonical tiers.yaml membership without a tier stub: `brave`
+  // is a Balanced default, and Restricted lists no such default.
 
   it("preserves brave on reuse when it is a Balanced-tier default and web search is off", () => {
     const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
@@ -209,6 +261,26 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
     expect(result.policyPresets).toEqual(["npm"]);
     expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
   });
+
+  it.each(["hermes", "langchain-deepagents-code"])(
+    "prunes OpenClaw-only brave from a Balanced-tier %s resume",
+    (agent) => {
+      const result = preparePolicyPresetResumeSelection(
+        { policies: policies({ applied: ["npm", "brave"] }) },
+        "alpha",
+        {
+          recordedPolicyPresets: ["npm", "brave"],
+          agent,
+          webSearchConfig: null,
+          webSearchSupported: true,
+          tierName: "balanced",
+        },
+      );
+
+      expect(result.policyPresets).toEqual(["npm"]);
+      expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    },
+  );
 });
 
 describe("preparePolicyPresetResumeSelection observability reconciliation", () => {

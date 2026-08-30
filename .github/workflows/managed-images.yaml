@@ -51,6 +51,7 @@ on:
       - "src/lib/security/credential-hash.ts"
       - "src/lib/state/paths.ts"
       - "src/lib/state/state-root.ts"
+      - "test/e2e/live/mcp-bridge*.ts"
       - "test/e2e/live/managed-image-activation-e2e*.ts"
       - "src/lib/tool-disclosure.ts"
       - "tools/mcp-tool-discovery-runtime/**"
@@ -461,12 +462,12 @@ jobs:
         with:
           node-version: 22.19.0
 
-      - name: Validate exact Deep Agents PR base build args
+      - name: Validate Deep Agents PR base build arguments
         if: matrix.agent == 'langchain-deepagents-code'
         shell: bash
         run: scripts/check-production-build-args.sh -f agents/langchain-deepagents-code/Dockerfile.base
 
-      - name: Resolve exact linux/amd64 PR base
+      - name: Resolve digest-pinned linux/amd64 PR base
         id: base
         shell: bash
         env:

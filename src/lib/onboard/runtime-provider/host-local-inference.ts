@@ -71,6 +71,8 @@ export interface HostLocalManagedInferenceInput extends HostLocalInferenceEndpoi
   readonly gpuDevices: readonly string[];
   /** Environment variable names forwarded from the current process; values are never persisted. */
   readonly environment?: readonly string[];
+  /** Exact non-secret Ollama daemon context window persisted as managed runtime authority. */
+  readonly ollamaContextLength?: number;
   readonly mounts?: readonly HostLocalInferenceMount[];
   readonly sharedMemory?: string;
   readonly ipc?: "host" | "private";
@@ -83,8 +85,7 @@ export interface HostLocalInferenceLegacyEndpointAuthority {
   readonly networkName: string;
 }
 
-export interface HostLocalInferenceProofEndpointAuthority
-  extends HostLocalInferenceLegacyEndpointAuthority {
+export interface HostLocalInferenceProofEndpointAuthority extends HostLocalInferenceLegacyEndpointAuthority {
   readonly networkId: string;
   readonly networkGatewayIp: string;
   /** Qualified host listener used by Portable sandboxes and provider probes. */
@@ -254,6 +255,12 @@ export interface HostLocalInferencePreparedStartup {
   validateBeforeCommit(): HostLocalInferenceReceipt;
   /** Cross only the external publication boundary after validation succeeds. */
   commit(): HostLocalInferenceReceipt;
+  /**
+   * Finalize an exact published-runtime resume without writing the already
+   * published receipt again. The provider keeps rollback available until the
+   * caller's final published-authority assertion succeeds.
+   */
+  finalizePublishedResume?(assertPublishedAuthority: () => void): HostLocalInferenceReceipt;
   rollback(): HostLocalInferenceStartupRollbackResult;
 }
 
@@ -337,6 +344,10 @@ export interface HostLocalInferenceRuntime {
     receipt: HostLocalInferenceReceipt,
     writer: HostLocalInferenceReceiptWriter,
   ): HostLocalInferencePreparedStartup;
+  /** Reinspect a failed published resume using only exact rollback-safe authority. */
+  inspectPublishedRecoveryRestoration?(
+    receipt: HostLocalInferenceReceipt,
+  ): HostLocalManagedInferenceInspection;
   inspectManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection;
   stopManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection;
   /**

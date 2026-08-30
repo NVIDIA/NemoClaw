@@ -444,7 +444,7 @@ describe("complete managed-image publication workflow", () => {
     }
 
     const resolveBase = required(
-      step(prBuilder, "Resolve exact linux/amd64 PR base").run,
+      step(prBuilder, "Resolve digest-pinned linux/amd64 PR base").run,
       "PR base resolution is missing",
     );
     expect(resolveBase).toContain('.platform.architecture == "amd64"');
@@ -691,6 +691,7 @@ describe("complete managed-image publication workflow", () => {
       readWorkflow("e2e.yaml").jobs?.["mcp-bridge"],
       "unified E2E workflow is missing its stable MCP job",
     );
+    expect(workflow.on?.pull_request?.paths).toContain("test/e2e/live/mcp-bridge*.ts");
     expect(discovery.needs).toBe("pr-build-and-entrypoint");
     expect(discovery.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
@@ -757,7 +758,7 @@ describe("complete managed-image publication workflow", () => {
   it("pins a single linux/amd64 PR base descriptor and fails closed on torn index evidence", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const resolver = required(
-      step(managedPrBuilder(workflow), "Resolve exact linux/amd64 PR base").run,
+      step(managedPrBuilder(workflow), "Resolve digest-pinned linux/amd64 PR base").run,
       "PR base resolver script is missing",
     );
     const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-base-"));

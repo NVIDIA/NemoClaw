@@ -32,6 +32,7 @@ import {
   PODMAN_INFERENCE_SPEC_LABEL,
   PODMAN_INFERENCE_TRANSACTION_LABEL,
   type PodmanInferenceFailureEvidence,
+  type PodmanProbeCleanupTiming,
 } from "../../src/lib/onboard/runtime-provider/podman-host-local-inference";
 import { qualifyPodmanInferenceAuthority } from "../../src/lib/onboard/runtime-provider/podman-preflight";
 import { redact, redactFull, redactSensitiveText } from "../../src/lib/security/redact";
@@ -82,8 +83,9 @@ export interface PodmanHostLocalInferenceHarnessOptions {
   readonly omitDiscoveredDevices?: boolean;
   readonly gpuIdentities?: readonly string[];
   readonly authorityId?: string;
-  readonly service?: "nim" | "vllm";
+  readonly service?: "ollama" | "nim" | "vllm";
   readonly probeImageRef?: string;
+  readonly probeCleanupTiming?: PodmanProbeCleanupTiming;
 }
 
 export interface PodmanHostLocalInferenceHarness {
@@ -95,6 +97,7 @@ export interface PodmanHostLocalInferenceHarness {
   readonly failureProbeIds: Array<string | null>;
   readonly input: HostLocalManagedInferenceInput;
   readonly operationAcceleration: HostLocalOllamaAccelerationAuthority;
+  readonly probeCleanupTiming: PodmanProbeCleanupTiming;
   readonly routeAuthorityStore: HostLocalInferenceRouteAuthorityStore;
   readonly writer: HostLocalInferenceReceiptWriter;
   readonly written: string[];
@@ -131,8 +134,25 @@ export interface PodmanHostLocalInferenceHarness {
     legacyInferenceProbeRunning: boolean;
     probeWaitFailure: boolean;
     probeRemoveLostAcknowledgement: boolean;
+    probeRemoveTimeout: boolean;
     probeRemoveLeavesContainer: boolean;
     probeReuseNameAfterRemoval: boolean;
+    probeCleanupExistenceTimeoutsRemaining: number;
+    probeCleanupExistenceFailure: boolean;
+    probeCleanupInspectTimeoutsRemaining: number;
+    probeCleanupInspectFailure: boolean;
+    probeCleanupMalformedInspection: boolean;
+    probeCleanupAmbiguousLookup: boolean;
+    probeDisappearBeforeCleanupCount: number;
+    probeRemovalIdObservationsRemaining: number;
+    probeRemovalNameObservationsRemaining: number;
+    probeCleanupLabelDriftAfterRemoval: boolean;
+    probeCleanupSpecDriftAfterRemoval: boolean;
+    probeNetworkDriftBeforeRemoval: boolean;
+    probeNetworkDriftAfterRemoval: boolean;
+    probeEngineDriftBeforeRemoval: boolean;
+    probeEngineDriftAfterRemoval: boolean;
+    engineCurrent: boolean;
     probeInheritedImageLabel: boolean;
     parentInheritedImageLabel: boolean;
     parentExtraControlledLabel: boolean;
@@ -188,7 +208,13 @@ function immutableManagedImage(args: readonly string[], probeImageRef: string): 
 function inspectPayload(container: TestContainer): string {
   const environment = container.createArguments.flatMap((value, index, args) =>
     value === "--env" && typeof args[index + 1] === "string"
-      ? [`${String(args[index + 1])}=injected-test-value`]
+      ? [
+          String(args[index + 1]) === "OLLAMA_CONTEXT_LENGTH"
+            ? "OLLAMA_CONTEXT_LENGTH=64000"
+            : String(args[index + 1]).includes("=")
+              ? String(args[index + 1])
+              : `${String(args[index + 1])}=injected-test-value`,
+        ]
       : [],
   );
   const portBindings: Record<string, { HostIp: string; HostPort: string }[]> = Object.create(null);
@@ -393,6 +419,16 @@ export function createPodmanHostLocalInferenceTestHarness(
   const failures: PodmanInferenceFailureEvidence[] = [];
   const failureProbeIds: Array<string | null> = [];
   const written: string[] = [];
+  let probeCleanupNow = 0;
+  const probeCleanupTiming =
+    options.probeCleanupTiming ??
+    Object.freeze({
+      now: () => probeCleanupNow,
+      sleep: (milliseconds: number) => {
+        events.push(`probe-cleanup:sleep ${String(milliseconds)}`);
+        probeCleanupNow += milliseconds;
+      },
+    });
   const state = {
     cdiDevices: [...(options.cdiDevices ?? [`nvidia.com/gpu=${GPU_UUID}`])],
     omitDiscoveredDevices: options.omitDiscoveredDevices ?? false,
@@ -435,8 +471,25 @@ export function createPodmanHostLocalInferenceTestHarness(
     legacyInferenceProbeRunning: false,
     probeWaitFailure: false,
     probeRemoveLostAcknowledgement: false,
+    probeRemoveTimeout: false,
     probeRemoveLeavesContainer: false,
     probeReuseNameAfterRemoval: false,
+    probeCleanupExistenceTimeoutsRemaining: 0,
+    probeCleanupExistenceFailure: false,
+    probeCleanupInspectTimeoutsRemaining: 0,
+    probeCleanupInspectFailure: false,
+    probeCleanupMalformedInspection: false,
+    probeCleanupAmbiguousLookup: false,
+    probeDisappearBeforeCleanupCount: 0,
+    probeRemovalIdObservationsRemaining: 0,
+    probeRemovalNameObservationsRemaining: 0,
+    probeCleanupLabelDriftAfterRemoval: false,
+    probeCleanupSpecDriftAfterRemoval: false,
+    probeNetworkDriftBeforeRemoval: false,
+    probeNetworkDriftAfterRemoval: false,
+    probeEngineDriftBeforeRemoval: false,
+    probeEngineDriftAfterRemoval: false,
+    engineCurrent: true,
     probeInheritedImageLabel: false,
     parentInheritedImageLabel: false,
     parentExtraControlledLabel: false,
@@ -449,6 +502,8 @@ export function createPodmanHostLocalInferenceTestHarness(
   let currentContainer: TestContainer | null = null;
   let currentProbe: TestProbeContainer | null = null;
   let probeInspectCount = 0;
+  let probeCleanupStarted = false;
+  let probeRemovalIssued = false;
   let networkEngineAuthoritySha256 = "";
   let persistedAuthority: PersistedEngineAuthority | null = null;
   let routeAuthority: HostLocalInferenceRouteAuthority | null = null;
@@ -496,6 +551,199 @@ export function createPodmanHostLocalInferenceTestHarness(
     },
   };
 
+  const captureContainerLookup = (args: readonly string[]): ContainerEngineCommandResult => {
+    const expectedName = String(args.find((arg) => arg.startsWith("name=^")) ?? "").slice(
+      "name=^".length,
+      -1,
+    );
+    let candidate = [currentContainer, currentProbe].find(
+      (container) => container?.name === expectedName,
+    );
+    if (!candidate && state.retainLegacyInferenceProbe) {
+      const retained = retainedLegacyInferenceProbeForName(expectedName);
+      if (retained !== null) {
+        currentProbe = retained;
+        state.retainLegacyInferenceProbe = false;
+        candidate = retained;
+      }
+    }
+    if (
+      state.probePostCreateNameLookupTimeout &&
+      candidate === currentProbe &&
+      currentProbe !== null
+    ) {
+      state.probePostCreateNameLookupTimeout = false;
+      const error = Object.assign(new Error("spawnSync /usr/local/bin/podman ETIMEDOUT"), {
+        code: "ETIMEDOUT",
+      });
+      return result(1, "", "spawnSync /usr/local/bin/podman ETIMEDOUT", error);
+    }
+    if (!candidate) return result();
+    if (probeCleanupStarted && state.probeCleanupAmbiguousLookup) {
+      return result(
+        0,
+        `${candidate.id}\t${candidate.name}\n${REUSED_PROBE_CONTAINER_ID}\t${candidate.name}\n`,
+      );
+    }
+    if (probeCleanupStarted && probeRemovalIssued) {
+      if (state.probeRemovalNameObservationsRemaining > 0) {
+        state.probeRemovalNameObservationsRemaining -= 1;
+        return result(0, `${candidate.id}\t${candidate.name}\n`);
+      }
+      if (state.probeRemovalIdObservationsRemaining === 0) {
+        currentProbe = null;
+        probeCleanupStarted = false;
+        probeRemovalIssued = false;
+      }
+      return result();
+    }
+    const output = result(0, `${candidate.id}\t${candidate.name}\n`);
+    if (probeCleanupStarted && state.probeNetworkDriftBeforeRemoval) {
+      state.networkName = "drifted-network";
+      state.probeNetworkDriftBeforeRemoval = false;
+    }
+    if (probeCleanupStarted && state.probeEngineDriftBeforeRemoval) {
+      state.engineCurrent = false;
+      state.probeEngineDriftBeforeRemoval = false;
+    }
+    return output;
+  };
+
+  const captureContainerInspect = (args: readonly string[]): ContainerEngineCommandResult => {
+    if (currentContainer?.id === args[2]) return result(0, inspectPayload(currentContainer));
+    if (currentProbe?.id !== args[2]) return result(125, "", "no such container");
+    probeInspectCount += 1;
+    if (probeCleanupStarted && state.probeCleanupInspectFailure) {
+      const error = Object.assign(new Error("permission denied"), { code: "EACCES" });
+      return result(1, "", "permission denied", error);
+    }
+    if (probeCleanupStarted && state.probeCleanupInspectTimeoutsRemaining > 0) {
+      state.probeCleanupInspectTimeoutsRemaining -= 1;
+      const error = Object.assign(new Error("spawnSync /usr/local/bin/podman ETIMEDOUT"), {
+        code: "ETIMEDOUT",
+      });
+      return result(1, "", "spawnSync /usr/local/bin/podman ETIMEDOUT", error);
+    }
+    if (probeCleanupStarted && state.probeCleanupMalformedInspection) return result(0, "{");
+    if (state.probePostCreateInspectFailuresRemaining > 0) {
+      state.probePostCreateInspectFailuresRemaining -= 1;
+      const error = Object.assign(new Error("permission denied"), { code: "EACCES" });
+      return result(1, "", "permission denied", error);
+    }
+    if (state.probePostCreateInspectTimeoutsRemaining > 0) {
+      state.probePostCreateInspectTimeoutsRemaining -= 1;
+      const error = Object.assign(new Error("spawnSync /usr/local/bin/podman ETIMEDOUT"), {
+        code: "ETIMEDOUT",
+      });
+      return result(1, "", "spawnSync /usr/local/bin/podman ETIMEDOUT", error);
+    }
+    const inspectedProbe =
+      state.probeInspectRuntimeIdMismatchAt === probeInspectCount
+        ? { ...currentProbe, id: REUSED_PROBE_CONTAINER_ID }
+        : currentProbe;
+    return result(0, probeInspectPayload(inspectedProbe));
+  };
+
+  const captureContainerExists = (args: readonly string[]): ContainerEngineCommandResult => {
+    if (currentProbe?.id === args[2]) {
+      probeCleanupStarted = true;
+      if (state.probeCleanupExistenceFailure) {
+        const error = Object.assign(new Error("permission denied"), { code: "EACCES" });
+        return result(1, "", "permission denied", error);
+      }
+      if (state.probeCleanupExistenceTimeoutsRemaining > 0) {
+        state.probeCleanupExistenceTimeoutsRemaining -= 1;
+        const error = Object.assign(new Error("spawnSync /usr/local/bin/podman ETIMEDOUT"), {
+          code: "ETIMEDOUT",
+        });
+        return result(1, "", "spawnSync /usr/local/bin/podman ETIMEDOUT", error);
+      }
+      if (probeRemovalIssued) {
+        if (state.probeRemovalIdObservationsRemaining > 0) {
+          state.probeRemovalIdObservationsRemaining -= 1;
+          return result(0);
+        }
+        return result(1);
+      }
+    }
+    return result(currentContainer?.id === args[2] || currentProbe?.id === args[2] ? 0 : 1);
+  };
+
+  const captureRemove = (args: readonly string[]): ContainerEngineCommandResult => {
+    const probe = currentProbe;
+    if (probe !== null && probe.id === args.at(-1)) {
+      const removedProbe = probe;
+      if (
+        !state.probeRemoveLeavesContainer &&
+        (state.probeRemovalIdObservationsRemaining > 0 ||
+          state.probeRemovalNameObservationsRemaining > 0)
+      ) {
+        probeRemovalIssued = true;
+      } else if (!state.probeRemoveLeavesContainer) {
+        currentProbe = state.probeReuseNameAfterRemoval
+          ? {
+              ...removedProbe,
+              id: REUSED_PROBE_CONTAINER_ID,
+              labels: {},
+              running: true,
+              status: "running",
+              exitCode: 0,
+            }
+          : null;
+      }
+      if (state.probeCleanupLabelDriftAfterRemoval && currentProbe !== null) {
+        currentProbe.labels[PODMAN_INFERENCE_PROBE_SPEC_LABEL] = "f".repeat(64);
+        state.probeCleanupLabelDriftAfterRemoval = false;
+      }
+      if (state.probeCleanupSpecDriftAfterRemoval && currentProbe !== null) {
+        currentProbe = {
+          ...currentProbe,
+          createArguments: [...currentProbe.createArguments, "unexpected-argument"],
+        };
+        state.probeCleanupSpecDriftAfterRemoval = false;
+      }
+      if (state.probeNetworkDriftAfterRemoval) {
+        state.networkName = "drifted-network";
+        state.probeNetworkDriftAfterRemoval = false;
+      }
+      if (state.probeEngineDriftAfterRemoval) {
+        state.engineCurrent = false;
+        state.probeEngineDriftAfterRemoval = false;
+      }
+      if (state.probeRemoveTimeout) {
+        const error = Object.assign(new Error("spawnSync /usr/local/bin/podman ETIMEDOUT"), {
+          code: "ETIMEDOUT",
+        });
+        return result(1, "", "spawnSync /usr/local/bin/podman ETIMEDOUT", error);
+      }
+      return state.probeRemoveLostAcknowledgement
+        ? result(125, "", "transport closed after probe remove")
+        : result(0, `${PROBE_CONTAINER_ID}\n`);
+    }
+    if (!currentContainer || currentContainer.id !== args.at(-1)) {
+      return result(125, "", "missing");
+    }
+    const removedName = currentContainer.name;
+    const removedImage = currentContainer.imageRef;
+    if (!state.removeLeavesContainer) {
+      currentContainer = state.reuseNameAfterRemoval
+        ? {
+            id: REUSED_CONTAINER_ID,
+            name: removedName,
+            imageRef: removedImage,
+            labels: {},
+            createArguments: currentContainer.createArguments,
+            running: true,
+            status: "running",
+            exitCode: 0,
+          }
+        : null;
+    }
+    return state.removeLostAcknowledgement
+      ? result(125, "", "transport closed after remove")
+      : result(0, `${CONTAINER_ID}\n`);
+  };
+
   const engine: PodmanContainerEngine = {
     operation: "host-local-inference",
     engineId: "podman",
@@ -503,6 +751,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     authorityId: options.authorityId ?? "test:podman-inference",
     endpointAuthorityId: options.authorityId ?? "test:podman-inference",
     capture: (args, timeoutMs) => {
+      if (!state.engineCurrent) throw new Error("test engine authority changed");
       const probeAction =
         args[0] === "logs" || args[0] === "rm" || args[0] === "wait" ? args[0] : null;
       const probeActionId = probeAction === "rm" ? args.at(-1) : args[1];
@@ -558,59 +807,9 @@ export function createPodmanHostLocalInferenceTestHarness(
           ]),
         );
       }
-      if (args[0] === "ps") {
-        const expectedName = String(args.find((arg) => arg.startsWith("name=^")) ?? "").slice(
-          "name=^".length,
-          -1,
-        );
-        let candidate = [currentContainer, currentProbe].find(
-          (container) => container?.name === expectedName,
-        );
-        if (!candidate && state.retainLegacyInferenceProbe) {
-          const retained = retainedLegacyInferenceProbeForName(expectedName);
-          if (retained !== null) {
-            currentProbe = retained;
-            state.retainLegacyInferenceProbe = false;
-            candidate = retained;
-          }
-        }
-        if (
-          state.probePostCreateNameLookupTimeout &&
-          candidate === currentProbe &&
-          currentProbe !== null
-        ) {
-          return result(1, "", "spawnSync /usr/local/bin/podman ETIMEDOUT", new Error("ETIMEDOUT"));
-        }
-        if (!candidate) return result();
-        return result(0, `${candidate.id}\t${candidate.name}\n`);
-      }
-      if (args[0] === "container" && args[1] === "inspect") {
-        if (currentContainer?.id === args[2]) return result(0, inspectPayload(currentContainer));
-        if (currentProbe?.id === args[2]) {
-          probeInspectCount += 1;
-          if (state.probePostCreateInspectFailuresRemaining > 0) {
-            state.probePostCreateInspectFailuresRemaining -= 1;
-            const error = Object.assign(new Error("permission denied"), { code: "EACCES" });
-            return result(1, "", "permission denied", error);
-          }
-          if (state.probePostCreateInspectTimeoutsRemaining > 0) {
-            state.probePostCreateInspectTimeoutsRemaining -= 1;
-            const error = Object.assign(new Error("spawnSync /usr/local/bin/podman ETIMEDOUT"), {
-              code: "ETIMEDOUT",
-            });
-            return result(1, "", "spawnSync /usr/local/bin/podman ETIMEDOUT", error);
-          }
-          const inspectedProbe =
-            state.probeInspectRuntimeIdMismatchAt === probeInspectCount
-              ? { ...currentProbe, id: REUSED_PROBE_CONTAINER_ID }
-              : currentProbe;
-          return result(0, probeInspectPayload(inspectedProbe));
-        }
-        return result(125, "", "no such container");
-      }
-      if (args[0] === "container" && args[1] === "exists") {
-        return result(currentContainer?.id === args[2] || currentProbe?.id === args[2] ? 0 : 1);
-      }
+      if (args[0] === "ps") return captureContainerLookup(args);
+      if (args[0] === "container" && args[1] === "inspect") return captureContainerInspect(args);
+      if (args[0] === "container" && args[1] === "exists") return captureContainerExists(args);
       if (args[0] === "run") {
         const name = valueAfter(args, "--name");
         const labels = labelsFrom(args);
@@ -631,6 +830,8 @@ export function createPodmanHostLocalInferenceTestHarness(
             logsStdout: "",
             logsStderr: "",
           };
+          probeCleanupStarted = false;
+          probeRemovalIssued = false;
           return state.probeRunLostAcknowledgement
             ? result(125, "", "transport closed after probe create")
             : result(0, state.probeRunAcknowledgementText ?? `${PROBE_CONTAINER_ID}\n`);
@@ -667,7 +868,12 @@ export function createPodmanHostLocalInferenceTestHarness(
       }
       if (args[0] === "logs") {
         if (!currentProbe || currentProbe.id !== args[1]) return result(125, "", "missing probe");
-        return result(0, currentProbe.logsStdout, currentProbe.logsStderr);
+        const output = result(0, currentProbe.logsStdout, currentProbe.logsStderr);
+        if (state.probeDisappearBeforeCleanupCount > 0) {
+          state.probeDisappearBeforeCleanupCount -= 1;
+          currentProbe = null;
+        }
+        return output;
       }
       if (args[0] === "exec") {
         if (args[2] === "ollama" && args[3] === "pull" && state.ollamaPullFailure !== null) {
@@ -710,48 +916,7 @@ export function createPodmanHostLocalInferenceTestHarness(
           ? result(125, "", "transport closed after stop")
           : result(0, `${currentContainer.id}\n`);
       }
-      if (args[0] === "rm") {
-        const probe = currentProbe;
-        if (probe !== null && probe.id === args.at(-1)) {
-          const removedProbe = probe;
-          if (!state.probeRemoveLeavesContainer) {
-            currentProbe = state.probeReuseNameAfterRemoval
-              ? {
-                  ...removedProbe,
-                  id: REUSED_PROBE_CONTAINER_ID,
-                  labels: {},
-                  running: true,
-                  status: "running",
-                  exitCode: 0,
-                }
-              : null;
-          }
-          return state.probeRemoveLostAcknowledgement
-            ? result(125, "", "transport closed after probe remove")
-            : result(0, `${PROBE_CONTAINER_ID}\n`);
-        }
-        if (!currentContainer || currentContainer.id !== args.at(-1))
-          return result(125, "", "missing");
-        const removedName = currentContainer.name;
-        const removedImage = currentContainer.imageRef;
-        if (!state.removeLeavesContainer) {
-          currentContainer = state.reuseNameAfterRemoval
-            ? {
-                id: REUSED_CONTAINER_ID,
-                name: removedName,
-                imageRef: removedImage,
-                labels: {},
-                createArguments: currentContainer.createArguments,
-                running: true,
-                status: "running",
-                exitCode: 0,
-              }
-            : null;
-        }
-        return state.removeLostAcknowledgement
-          ? result(125, "", "transport closed after remove")
-          : result(0, `${CONTAINER_ID}\n`);
-      }
+      if (args[0] === "rm") return captureRemove(args);
       return result(125, "", `unexpected test command: ${args.join(" ")}`);
     },
     captureHost: () => result(125, "", "host capture is forbidden"),
@@ -896,6 +1061,7 @@ export function createPodmanHostLocalInferenceTestHarness(
     failureProbeIds,
     input,
     operationAcceleration,
+    probeCleanupTiming,
     routeAuthorityStore,
     writer,
     written,
@@ -931,6 +1097,7 @@ export function createPodmanHostLocalInferenceTestHarness(
         imageRef: input.imageRef,
         gpuDevices,
         environment: Object.freeze([...(input.environment ?? [])].sort()),
+        ollamaContextLength: input.ollamaContextLength ?? null,
         mounts: Object.freeze([]),
         sharedMemory: "64m",
         ipc: "private",
@@ -1015,6 +1182,7 @@ export function createPodmanHostLocalInferenceTestHarness(
           `${input.networkGatewayIp}:${String(input.hostPort)}:${String(input.containerPort)}`,
           ...gpuDevices.flatMap((device) => ["--device", device]),
           ...[...(input.environment ?? [])].flatMap((name) => ["--env", name]),
+          ...(input.ollamaContextLength === undefined ? [] : ["--env", "OLLAMA_CONTEXT_LENGTH"]),
           "--shm-size",
           "64m",
           "--ipc",

@@ -56,7 +56,11 @@ export type ModelValidationResult = ModelValidationSuccess | ModelValidationFail
 export interface SandboxCreateIntent {
   /** Complete secret-free create plan resolved by the onboarding machine. */
   readonly resolved?: import("./sandbox-create-intent-types").SandboxCreateIntent;
+  /** Defer provider, credential, and attachment effects until the created sandbox is verified. */
+  readonly deferSandboxEffectsUntilPolicyVerification?: true;
   readonly recreate: boolean;
+  /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
+  readonly apfInterceptorRequested?: true;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
   readonly observabilityEnabled: boolean;
   /** Present only when the operator explicitly selected observability on or off. */
@@ -88,9 +92,47 @@ export interface SandboxCreateIntent {
   readonly rebuildPolicyPresets?: readonly string[];
 }
 
-/** Durable onboarding-session identity that owns the pending inference route. */
+/** Policy authority proved inside one exact post-create sandbox identity gate. */
+export type VerifiedSandboxPolicyRegistration =
+  | {
+      readonly policyAuthority: "nemoclaw-managed";
+      readonly policyCreationReceipt: import("../policy/merge").NemoClawPolicyCreationReceipt;
+      readonly observedPolicyAuthority: "owner-unknown";
+    }
+  | {
+      readonly policyAuthority: "externally-managed";
+      readonly policyCreationReceipt: null;
+      /** Generic evidence seam; the default #10115 verifier produces only global authority. */
+      readonly observedPolicyAuthority: "externally-managed" | "owner-unknown";
+      readonly policyIdentity: import("../policy/merge").OpenShellPolicyIdentity;
+    };
+
+/** Exact sandbox and policy result retained from the immediate create gate. */
+export interface VerifiedSandboxPolicyBoundary {
+  readonly registration: VerifiedSandboxPolicyRegistration;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly lifecycleGeneration: string;
+  readonly lifecycleLiveIdentityFingerprint: string;
+  readonly createAttemptNonce?: string;
+  readonly route: import("./docker-gpu-route").SelectedDockerGpuRoute;
+}
+
+/** Exact context made available only after effective-policy verification. */
+export interface VerifiedSandboxCreateEffectsContext extends VerifiedSandboxPolicyBoundary {
+  readonly revalidatePolicyRequirements: (operation: string) => void;
+}
+
+/** Ephemeral effects that may run only inside the exact post-create policy gate. */
+export type VerifiedSandboxCreateEffects = (
+  context: VerifiedSandboxCreateEffectsContext,
+) => Promise<void>;
+
+/** Durable onboarding-session identity and exact pending inference route. */
 export interface InferenceRouteReservationAuthority {
   readonly sessionId: string;
+  readonly selection: import("../inference/selection").InferenceSelection;
 }
 
 export type OnboardOptions = {
@@ -146,6 +188,8 @@ export type OnboardOptions = {
     | null;
   resume?: boolean;
   fresh?: boolean;
+  /** Operator-selected APF compatibility mode for fresh sandbox creation. */
+  apfInterceptorRequested?: boolean | null;
   fromDockerfile?: string | null;
   sandboxName?: string | null;
   /** Explicit host directories exposed read-only to the sandbox. */

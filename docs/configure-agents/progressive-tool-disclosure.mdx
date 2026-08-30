@@ -25,6 +25,19 @@ The keys, tool names, and result limits are not interchangeable across agents.
 Progressive disclosure changes model context, not authorization.
 Final tool calls still use the agent's normal execution, policy, approval, and hook paths.
 
+## Choose the Portable Default
+
+Fresh Portable onboarding defaults to `direct` when `--tool-disclosure` is absent.
+This default ignores `NEMOCLAW_TOOL_DISCLOSURE`, including the generic value exported by the hosted installer.
+Pass the flag explicitly when you want progressive disclosure for a fresh Portable sandbox.
+
+```bash
+$$nemoclaw onboard --experimental-profile portable --fresh --tool-disclosure progressive
+```
+
+A Portable resume without the flag preserves the disclosure mode recorded by the interrupted onboarding session.
+A different explicit mode stops the resume with a conflict instead of changing the mode.
+
 ## Understand OpenClaw Tool Search
 
 OpenClaw uses `mode: "tools"` to select its structured bridge instead of the JavaScript-based `tool_search_code` bridge.

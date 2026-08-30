@@ -6,10 +6,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import { withSuccessfulPreUninstallBackup } from "../../../../test/support/uninstall-managed-gateway-test-support";
 
 import {
   type RunResult,
-  runUninstallPlan as runUninstallPlanBase,
+  runUninstallPlanProduction as runUninstallPlanBase,
   type UninstallRunDeps,
   type UninstallRunOptions,
 } from "./run-plan";
@@ -26,24 +27,28 @@ function ok(stdout = ""): RunResult {
 }
 
 function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps) {
-  return runUninstallPlanBase(options, {
-    resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
-      gatewayName,
-      gatewayPort,
-      mode: "nemoclaw-managed",
-      source: gatewayPort === 8080 ? "packaged-service" : "standalone",
-      endpoint: null,
-      stateDir: null,
-      supervisor: null,
-      requiredCapabilities: [],
+  return runUninstallPlanBase(
+    options,
+    withSuccessfulPreUninstallBackup({
+      resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+        gatewayName,
+        gatewayPort,
+        mode: "nemoclaw-managed",
+        source: gatewayPort === 8080 ? "packaged-service" : "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      }),
+      ...deps,
     }),
-    ...deps,
-  });
+  );
 }
 
-function runManagedHermesVolumeUninstall(
+async function runManagedHermesVolumeUninstall(
   mode: "foreign" | "owned" | "remove-fails",
   destroyUserData: boolean,
+  containerMode: "absent" | "foreign" | "owned" = "absent",
 ) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-hermes-volume-"));
   const stateDir = path.join(home, ".nemoclaw");
@@ -71,6 +76,8 @@ function runManagedHermesVolumeUninstall(
   const errors: string[] = [];
   const events: string[] = [];
   const logs: string[] = [];
+  const containerId = "hermes-sandbox-container";
+  let containerPresent = containerMode !== "absent";
   let volumePresent = true;
   const run = vi.fn((command: string, args: string[]) => {
     events.push(`${command} ${args.join(" ")}`);
@@ -82,6 +89,20 @@ function runManagedHermesVolumeUninstall(
     dockerCalls.push(args);
     events.push(`docker ${args.join(" ")}`);
     switch (args.join(" ")) {
+      case "ps -a --format {{.ID}} {{.Image}} {{.Names}}":
+        switch (containerPresent ? containerMode : "absent") {
+          case "owned":
+            return ok(
+              `${containerId} ghcr.io/nvidia/nemoclaw/hermes-sandbox:latest openshell-default--hermes-runtime-id\n`,
+            );
+          case "foreign":
+            return ok(`${containerId} redis:7 foreign-service\n`);
+          default:
+            return ok();
+        }
+      case `rm -f ${containerId}`:
+        containerPresent = false;
+        return ok(`${containerId}\n`);
       case `volume inspect --format {{json .}} ${volumeName}`:
         return volumePresent
           ? ok(
@@ -95,7 +116,8 @@ function runManagedHermesVolumeUninstall(
             )
           : { status: 1, stdout: "", stderr: `Error: no such volume: ${volumeName}` };
       case `volume rm ${volumeName}`:
-        switch (mode) {
+        switch (containerPresent ? "attached" : mode) {
+          case "attached":
           case "remove-fails":
             return { status: 1, stdout: "", stderr: "volume is still in use" };
           default:
@@ -109,7 +131,7 @@ function runManagedHermesVolumeUninstall(
     }
   });
 
-  const result = runUninstallPlan(
+  const result = await runUninstallPlan(
     { assumeYes: true, deleteModels: false, destroyUserData, keepOpenShell: false },
     {
       commandExists: () => true,
@@ -128,6 +150,8 @@ function runManagedHermesVolumeUninstall(
 
   return {
     cleanup: () => fs.rmSync(home, { force: true, recursive: true }),
+    containerId,
+    containerPresent: () => containerPresent,
     dockerCalls,
     errors,
     events,
@@ -143,8 +167,8 @@ describe("managed Hermes state volume uninstall", () => {
   it.each([
     ["local uninstall", false],
     ["destructive uninstall", true],
-  ])("removes an owned volume during %s", (_label, destroyUserData) => {
-    const harness = runManagedHermesVolumeUninstall("owned", destroyUserData);
+  ])("removes an owned volume during %s", async (_label, destroyUserData) => {
+    const harness = await runManagedHermesVolumeUninstall("owned", destroyUserData);
     try {
       expect(harness.result.exitCode, harness.errors.join("\n")).toBe(0);
       expect(harness.volumePresent()).toBe(false);
@@ -158,8 +182,8 @@ describe("managed Hermes state volume uninstall", () => {
     }
   });
 
-  it("keeps a same-name foreign volume", () => {
-    const harness = runManagedHermesVolumeUninstall("foreign", true);
+  it("keeps a same-name foreign volume", async () => {
+    const harness = await runManagedHermesVolumeUninstall("foreign", true);
     try {
       expect(harness.result.exitCode, harness.errors.join("\n")).toBe(0);
       expect(harness.volumePresent()).toBe(true);
@@ -172,8 +196,8 @@ describe("managed Hermes state volume uninstall", () => {
     }
   });
 
-  it("preserves uninstall state when volume removal fails", () => {
-    const harness = runManagedHermesVolumeUninstall("remove-fails", true);
+  it("preserves uninstall state when volume removal fails", async () => {
+    const harness = await runManagedHermesVolumeUninstall("remove-fails", true);
     try {
       expect(harness.result.exitCode).toBe(1);
       expect(harness.volumePresent()).toBe(true);
@@ -183,6 +207,33 @@ describe("managed Hermes state volume uninstall", () => {
         `Managed Hermes state volume '${harness.volumeName}' could not be removed.`,
       );
       expect(harness.errors).toContain("Preserved NemoClaw state so exact cleanup can be retried.");
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("removes an owned stopped sandbox container before its Hermes state volume", async () => {
+    const harness = await runManagedHermesVolumeUninstall("owned", true, "owned");
+    try {
+      expect(harness.result.exitCode, harness.errors.join("\n")).toBe(0);
+      expect(harness.containerPresent()).toBe(false);
+      expect(harness.volumePresent()).toBe(false);
+      expect(harness.events.indexOf(`docker rm -f ${harness.containerId}`)).toBeLessThan(
+        harness.events.indexOf(`docker volume rm ${harness.volumeName}`),
+      );
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  it("keeps a foreign container that prevents Hermes state volume removal", async () => {
+    const harness = await runManagedHermesVolumeUninstall("owned", true, "foreign");
+    try {
+      expect(harness.result.exitCode).toBe(1);
+      expect(harness.containerPresent()).toBe(true);
+      expect(harness.volumePresent()).toBe(true);
+      expect(harness.dockerCalls).not.toContainEqual(["rm", "-f", harness.containerId]);
+      expect(fs.existsSync(harness.registryFile)).toBe(true);
     } finally {
       harness.cleanup();
     }
