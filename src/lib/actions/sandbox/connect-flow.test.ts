@@ -974,6 +974,26 @@ describe("connectSandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  it("keeps OpenShell-managed Hermes on the ordinary probe path when portable authority is absent", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy).not.toHaveBeenCalled();
+    expect(harness.captureResolvedOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalledWith("alpha", {
+      gatewayRecovery: "observe",
+    });
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
+  });
+
   it("keeps active Hermes probe on receipt-owned recovery with every Docker path poisoned (#9203)", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",

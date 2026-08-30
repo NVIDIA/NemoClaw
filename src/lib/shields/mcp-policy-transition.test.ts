@@ -70,4 +70,59 @@ describe("live OpenShell Shields policy composition", () => {
     );
     expect(composed.network_policies.npm).toEqual({ access: "full" });
   });
+
+  it("prefers a differently named live policy on an exact endpoint collision", () => {
+    const composed = YAML.parse(
+      composeLiveNetworkPolicies(
+        YAML.stringify({
+          version: 1,
+          network_policies: {
+            npm_yarn: {
+              endpoints: [
+                { host: "registry.npmjs.org", port: 443, tls: "skip", enforcement: "audit" },
+                { host: "registry.yarnpkg.com", port: 443, tls: "skip", enforcement: "audit" },
+              ],
+            },
+            permissive_baseline: { endpoints: [{ host: "*", port: 443, access: "full" }] },
+          },
+        }),
+        YAML.stringify({
+          version: 1,
+          network_policies: {
+            npm_registry: {
+              endpoints: [
+                {
+                  host: "registry.npmjs.org",
+                  port: 443,
+                  tls: "auto",
+                  protocol: "rest",
+                  enforcement: "enforce",
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(composed.network_policies).toEqual({
+      npm_yarn: {
+        endpoints: [
+          { host: "registry.yarnpkg.com", port: 443, tls: "skip", enforcement: "audit" },
+        ],
+      },
+      permissive_baseline: { endpoints: [{ host: "*", port: 443, access: "full" }] },
+      npm_registry: {
+        endpoints: [
+          {
+            host: "registry.npmjs.org",
+            port: 443,
+            tls: "auto",
+            protocol: "rest",
+            enforcement: "enforce",
+          },
+        ],
+      },
+    });
+  });
 });

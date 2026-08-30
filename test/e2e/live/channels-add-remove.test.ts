@@ -221,6 +221,24 @@ function expectHostTelegramPlan(expected: "active" | "removed", context: string)
   ).toBe(false);
 }
 
+function expectQueuedTelegramRemoval(context: string): void {
+  const plan = messagingPlan();
+  const channel = planArray(plan, "channels").find((item) => item.channelId === "telegram");
+  expect(channel, `telegram removal tombstone missing ${context}`).toMatchObject({
+    active: false,
+    selected: false,
+    configured: false,
+    disabled: true,
+  });
+  expect(stringArray(plan.disabledChannels), `telegram not queued disabled ${context}`).toContain(
+    "telegram",
+  );
+  expect(
+    planArray(plan, "credentialBindings").some((entry) => entry.channelId === "telegram"),
+    `telegram credential binding still present ${context}`,
+  ).toBe(false);
+}
+
 async function expectSandboxReady(
   sandbox: SandboxClient,
   artifactName: string,
@@ -568,7 +586,7 @@ test(
     });
     assertExitZero(remove, `nemoclaw ${SANDBOX_NAME} channels remove telegram`);
     expect(resultText(remove)).toContain("Removed telegram");
-    expectHostTelegramPlan("removed", "after channels remove");
+    expectQueuedTelegramRemoval("after channels remove");
 
     const rebuildRemove = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "phase-5-rebuild-after-remove-with-stale-telegram-env",
@@ -583,6 +601,7 @@ test(
       attempts: 12,
       delayMs: 5_000,
     });
+    expectHostTelegramPlan("removed", "after remove rebuild");
 
     progress.phase("validate Telegram removal");
     const removedTelegram = await readOpenClawTelegramState(
