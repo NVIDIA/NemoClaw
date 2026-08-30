@@ -288,46 +288,42 @@ function stageArtifacts(
   };
 }
 
-function validateSpecialistArtifacts(outputRoot: string, interest: string): void {
-  const directory = path.join(outputRoot, "artifacts", "pr-review-specialist-" + interest);
-  const expected = [
-    "pr-review-" + interest + "-session.jsonl",
-    "pr-review-" + interest + "-summary.md",
-  ];
-  const actual = fs.readdirSync(directory).sort();
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+function validateSpecialistArtifacts(root: string, interest: string): void {
+  const directory = path.join(root, "artifacts", "pr-review-specialist-" + interest);
+  const expected = [`pr-review-${interest}-session.jsonl`, `pr-review-${interest}-summary.md`];
+  if (JSON.stringify(fs.readdirSync(directory).sort()) !== JSON.stringify(expected))
     throw new Error("Specialist artifacts do not match the existing Markdown and JSONL contract");
-  }
-  for (const name of expected) {
-    const stat = fs.lstatSync(path.join(directory, name));
-    if (!stat.isFile() || stat.isSymbolicLink())
-      throw new Error("Specialist artifact must be a regular file");
-  }
+  if (
+    expected.some((name) => {
+      const stat = fs.lstatSync(path.join(directory, name));
+      return !stat.isFile() || stat.isSymbolicLink();
+    })
+  )
+    throw new Error("Specialist artifact must be a regular file");
 }
-
-function specialistEnvironment(input: {
-  advisorDirectory: string;
-  outputRoot: string;
-  runnerTemp: string;
-  snapshot: string;
-  refs: { baseRef: string; headRef: string };
-  specialist: AdvisorSpecialist;
-}): NodeJS.ProcessEnv {
+function specialistEnvironment(
+  advisorDirectory: string,
+  output: string,
+  runnerTemp: string,
+  snapshot: string,
+  refs: { baseRef: string; headRef: string },
+  specialist: AdvisorSpecialist,
+): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    ADVISOR_DIR: input.advisorDirectory,
-    ADVISOR_WORKDIR: input.snapshot,
-    BASE_REF: input.refs.baseRef,
-    GITHUB_WORKSPACE: input.outputRoot,
-    HEAD_REF: input.refs.headRef,
+    ADVISOR_DIR: advisorDirectory,
+    ADVISOR_WORKDIR: snapshot,
+    BASE_REF: refs.baseRef,
+    GITHUB_WORKSPACE: output,
+    HEAD_REF: refs.headRef,
     OPENSHELL_GATEWAY_ENDPOINT: LOCAL_OPENSHELL_GATEWAY_ENDPOINT,
     PI_IMAGE: ADVISOR_PI_IMAGE,
     OPENAI_API_KEY: process.env.PR_REVIEW_ADVISOR_API_KEY,
-    PR_REVIEW_ADVISOR_ARTIFACT_DIR: "pr-review-specialist-" + input.specialist.interest,
-    PR_REVIEW_ADVISOR_INTEREST: input.specialist.interest,
+    PR_REVIEW_ADVISOR_ARTIFACT_DIR: "pr-review-specialist-" + specialist.interest,
+    PR_REVIEW_ADVISOR_INTEREST: specialist.interest,
     PR_REVIEW_ADVISOR_MODEL: DEFAULT_ADVISOR_MODEL,
-    RUNNER_TEMP: input.runnerTemp,
-    SANDBOX_NAME: `lr-${input.specialist.sandboxName.slice(-4)}-${path.basename(input.runnerTemp).slice(-8)}`,
+    RUNNER_TEMP: runnerTemp,
+    SANDBOX_NAME: `lr-${specialist.sandboxName.slice(-4)}-${path.basename(runnerTemp).slice(-8)}`,
   };
 }
 
@@ -378,16 +374,15 @@ export async function runLocalReview(input: {
       const runnerTemp = path.join(runners, specialist.interest + "-" + randomUUID().slice(0, 8));
       fs.mkdirSync(runnerTemp, { recursive: true });
       await runAdvisorSpecialist({
-        env: specialistEnvironment({
-          advisorDirectory:
-            input.advisorDirectory ??
+        env: specialistEnvironment(
+          input.advisorDirectory ??
             path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
-          outputRoot: output,
+          output,
           runnerTemp,
           snapshot,
           refs,
           specialist,
-        }),
+        ),
         lifecycle,
         validate: () => validateSpecialistArtifacts(output, specialist.interest),
         setActiveCleanup: (value) => {
