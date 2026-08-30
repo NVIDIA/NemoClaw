@@ -1165,8 +1165,8 @@ class FakeActivationGuard:
     def fail_closed(self):
         activation_events.append(["guard-hold"])
 control._activation_attempt_pending = lambda _fd, _marker, _fence: False
-control._start_activation_guard = lambda _fence, _mount: (
-    activation_events.append(["guard-start"]) or FakeActivationGuard()
+control._start_activation_guard = lambda _fence, _mount, _lock=None, transport_broker_required=False: (
+    activation_events.append(["guard-start", transport_broker_required]) or FakeActivationGuard()
 )
 control._assert_exact_process_fence = lambda *_args: activation_events.append(["assert-fence"])
 control._signal_reference = lambda reference, requested: activation_events.append(
@@ -1514,6 +1514,176 @@ with tempfile.TemporaryDirectory() as root:
             os.waitpid(writer_pid, 0)
         except ChildProcessError:
             pass
+
+required_broker_hold_events = []
+previous_transport_broker_reference = control._transport_broker_reference
+previous_hold_exact_processes = control._hold_exact_processes
+control._transport_broker_reference = lambda: None
+control._hold_exact_processes = lambda *_args: required_broker_hold_events.append(
+    "held"
+)
+try:
+    results["required_transport_broker"] = code(
+        lambda: real_start_activation_guard(
+            fence,
+            "mnt:[401]",
+            None,
+            transport_broker_required=True,
+        )
+    )
+finally:
+    control._transport_broker_reference = previous_transport_broker_reference
+    control._hold_exact_processes = previous_hold_exact_processes
+results["required_transport_broker_hold"] = required_broker_hold_events
+
+with tempfile.TemporaryDirectory() as root:
+    mutation_path = os.path.join(root, "broker-writer-mutations")
+    heartbeat_path = os.path.join(root, "broker-heartbeat")
+    resumed_path = os.path.join(root, "guard-resumed-pids")
+    lock_path = os.path.join(root, "broker-controller.lock")
+    lock_seed_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    os.close(lock_seed_fd)
+    ready_read, ready_write = os.pipe()
+    writer_pid = os.fork()
+    if writer_pid == 0:
+        try:
+            os.close(ready_read)
+            os.close(ready_write)
+            while True:
+                fd = os.open(mutation_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                os.write(fd, b"x")
+                os.close(fd)
+                time.sleep(0.01)
+        finally:
+            os._exit(0)
+    broker_pid = os.fork()
+    if broker_pid == 0:
+        try:
+            os.close(ready_read)
+            os.close(ready_write)
+            while True:
+                fd = os.open(heartbeat_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                os.write(fd, b"b")
+                os.close(fd)
+                time.sleep(0.01)
+        finally:
+            os._exit(0)
+    deadline = time.monotonic() + 2
+    while (
+        not os.path.exists(mutation_path)
+        or not os.path.exists(heartbeat_path)
+    ) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    controller_pid = os.fork()
+    if controller_pid == 0:
+        try:
+            os.close(ready_read)
+            controller_process_pid = os.getpid()
+            lock_fd = os.open(lock_path, os.O_RDWR)
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            broker_reference = control._process_reference(
+                process(
+                    broker_pid,
+                    "S",
+                    os.getppid(),
+                    "broker-start",
+                    root_uid,
+                    fixed_transport_broker.command,
+                    288,
+                )
+            )
+            pidfd_targets = {}
+            def broker_guard_pidfd(reference):
+                descriptor = os.open(os.devnull, os.O_RDONLY)
+                pidfd_targets[descriptor] = reference.pid
+                return descriptor
+            def broker_guard_controller_pidfd():
+                descriptor = os.open(os.devnull, os.O_RDONLY)
+                pidfd_targets[descriptor] = controller_process_pid
+                return descriptor
+            def fail_guardian_hold(_fence, _mount, _activation):
+                raise RuntimeError("injected brokered hold failure")
+            def stop_brokered_namespace(_pidfds):
+                os.kill(writer_pid, signal.SIGSTOP)
+                os.kill(broker_pid, signal.SIGSTOP)
+                os.kill(controller_process_pid, signal.SIGSTOP)
+            def resume_brokered_process(pidfd):
+                selected_pid = pidfd_targets[pidfd]
+                fd = os.open(resumed_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                os.write(fd, (str(selected_pid) + "\n").encode("ascii"))
+                os.close(fd)
+                os.kill(selected_pid, signal.SIGCONT)
+            control._transport_broker_reference = lambda: broker_reference
+            control._open_activation_guard_pidfd = broker_guard_pidfd
+            control._open_activation_guard_current_pidfd = broker_guard_controller_pidfd
+            control._hold_exact_processes = fail_guardian_hold
+            control._stop_pid_namespace_fail_closed = stop_brokered_namespace
+            control._resume_activation_guard_pidfd = resume_brokered_process
+            guard = real_start_activation_guard(
+                fence,
+                "mnt:[401]",
+                lock_fd,
+                transport_broker_required=True,
+            )
+            guard.fail_closed()
+            os.write(ready_write, b"R")
+        finally:
+            os._exit(0)
+    os.close(ready_write)
+    controller_waited = False
+    try:
+        readable, _writable, _exceptional = select.select([ready_read], [], [], 2)
+        results["broker_guard_response"] = (
+            bool(readable) and os.read(ready_read, 1) == b"R"
+        )
+        os.waitpid(controller_pid, 0)
+        controller_waited = True
+        with open(resumed_path, "r", encoding="ascii") as stream:
+            resumed_pids = [int(value, 10) for value in stream.read().splitlines()]
+        results["broker_guard_resumed_broker"] = broker_pid in resumed_pids
+        results["broker_guard_resumed_controller"] = controller_pid in resumed_pids
+        broker_before = os.path.getsize(heartbeat_path)
+        writer_before = os.path.getsize(mutation_path)
+        time.sleep(0.15)
+        results["broker_guard_broker_running"] = (
+            os.path.getsize(heartbeat_path) > broker_before
+        )
+        results["broker_guard_writer_held"] = (
+            os.path.getsize(mutation_path) == writer_before
+        )
+        selected = 0
+        status = 0
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            selected, status = os.waitpid(writer_pid, os.WUNTRACED | os.WNOHANG)
+            if selected == writer_pid and os.WIFSTOPPED(status):
+                break
+            time.sleep(0.01)
+        results["broker_guard_writer_stopped"] = (
+            selected == writer_pid and os.WIFSTOPPED(status)
+        )
+    finally:
+        os.close(ready_read)
+        if not controller_waited:
+            try:
+                os.kill(controller_pid, signal.SIGCONT)
+                os.kill(controller_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                os.waitpid(controller_pid, 0)
+            except ChildProcessError:
+                pass
+        for selected_pid in (writer_pid, broker_pid):
+            try:
+                os.kill(selected_pid, signal.SIGCONT)
+                os.kill(selected_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                os.waitpid(selected_pid, 0)
+            except ChildProcessError:
+                pass
 
 with tempfile.TemporaryDirectory() as root:
     mutation_path = os.path.join(root, "last-resort-writer-mutations")

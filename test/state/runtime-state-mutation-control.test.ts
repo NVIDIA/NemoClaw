@@ -196,7 +196,7 @@ describe("runtime state mutation controller", () => {
   it("proves and freezes a fresh Hermes activation before it returns evidence (#7744)", () => {
     const sigcont = harnessResult.sigcont as number;
     expect(harnessResult.activation_events).toEqual([
-      ["guard-start"],
+      ["guard-start", true],
       ["assert-fence"],
       ["permit"],
       ["signal", 10, sigcont],
@@ -207,7 +207,7 @@ describe("runtime state mutation controller", () => {
       ["guard-disarm"],
     ]);
     expect(harnessResult.activation_failure_events).toEqual([
-      ["guard-start"],
+      ["guard-start", true],
       ["assert-fence"],
       ["permit"],
       ["signal", 10, sigcont],
@@ -215,7 +215,7 @@ describe("runtime state mutation controller", () => {
       ["guard-hold"],
     ]);
     expect(harnessResult.activation_retry_events).toEqual([
-      ["guard-start"],
+      ["guard-start", true],
       ["restore-hold"],
       ["retry-exec-ack"],
       ["permit"],
@@ -334,6 +334,14 @@ describe("runtime state mutation controller", () => {
       guardian_releases_controller_lock: true,
       guardian_blocks_mutation: true,
       guardian_writer_stopped: true,
+      required_transport_broker: "activation-guard-unavailable",
+      required_transport_broker_hold: ["held"],
+      broker_guard_response: true,
+      broker_guard_resumed_broker: true,
+      broker_guard_resumed_controller: true,
+      broker_guard_broker_running: true,
+      broker_guard_writer_held: true,
+      broker_guard_writer_stopped: true,
       last_resort_controller_ready: true,
       last_resort_client_eof: true,
       last_resort_writer_stopped: true,

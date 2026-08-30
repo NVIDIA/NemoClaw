@@ -3402,7 +3402,11 @@ class ActivationGuard:
 
 
 def _start_activation_guard(
-    fence: FenceProof, mount_namespace: str, lock_fd: int | None = None
+    fence: FenceProof,
+    mount_namespace: str,
+    lock_fd: int | None = None,
+    *,
+    transport_broker_required: bool = False,
 ) -> ActivationGuard:
     # The last-resort child may broadcast SIGSTOP through the whole namespace,
     # so establish this safety property before forking it.
@@ -3416,6 +3420,8 @@ def _start_activation_guard(
         controller_pidfd = _open_activation_guard_current_pidfd()
         descriptors.append(controller_pidfd)
         broker = _transport_broker_reference()
+        if transport_broker_required and broker is None:
+            _fail("activation-transport-broker-unavailable")
         broker_pidfd = (
             None if broker is None else _open_activation_guard_pidfd(broker)
         )
@@ -4066,10 +4072,20 @@ def _activate_exact(
 ) -> ActivationProof:
     mount_namespace = str(marker["mountNamespace"])
     pending = _activation_attempt_pending(durable_fd, marker, fence)
+    transport_broker_required = marker["providerId"] == "docker"
     if lock_fd is None:
-        guard = _start_activation_guard(fence, mount_namespace)
+        guard = _start_activation_guard(
+            fence,
+            mount_namespace,
+            transport_broker_required=transport_broker_required,
+        )
     else:
-        guard = _start_activation_guard(fence, mount_namespace, lock_fd)
+        guard = _start_activation_guard(
+            fence,
+            mount_namespace,
+            lock_fd,
+            transport_broker_required=transport_broker_required,
+        )
     try:
         if pending:
             _hold_exact_processes(fence, mount_namespace, None)
