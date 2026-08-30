@@ -30,6 +30,7 @@ import {
   cleanupMcpBridge,
   MCP_MUTATION_TIMEOUT_MS,
   type McpAdapter,
+  prepareOwnedSandboxForOnboard,
   removeMcpBridgeWithOneConcurrencyRetry,
 } from "./mcp-bridge-cleanup.ts";
 import {
@@ -121,6 +122,7 @@ function expectManagedImageQualificationReceipt(sandboxName: string, agent: McpA
 
 async function onboardAgent(
   host: HostCliClient,
+  sandbox: SandboxClient,
   cleanup: CleanupRegistry,
   endpointUrl: string,
   options: {
@@ -131,14 +133,7 @@ async function onboardAgent(
   },
 ): Promise<void> {
   const corporateCaBundle = requireMcpBridgeTlsCaCert();
-  cleanup.trackSandbox(host, options.sandboxName, {
-    artifactName: "cleanup-destroy-sandbox",
-    timeoutMs: 15 * 60_000,
-  });
-  await host.cleanupSandbox(options.sandboxName, {
-    artifactName: "precleanup-destroy-sandbox",
-    timeoutMs: 15 * 60_000,
-  });
+  await prepareOwnedSandboxForOnboard(host, sandbox, cleanup, options.sandboxName);
   const args = buildMcpBridgeOnboardArgs();
   const commandOptions = {
     artifactName: options.artifactName,
@@ -739,7 +734,7 @@ test("mcp-bridge", {
   const mcpUrl = fakeMcpTunnel.url;
   const decoyMcpUrl = decoyMcpTunnel.url;
   progress.phase("onboard OpenClaw and prove base policy");
-  await onboardAgent(host, cleanup, endpointUrl, {
+  await onboardAgent(host, sandbox, cleanup, endpointUrl, {
     agent: "openclaw",
     sandboxName: OPENCLAW_SANDBOX_NAME,
     artifactName: "onboard-openclaw-mcp-bridge",
@@ -1117,7 +1112,7 @@ mcpBridgeShardTest("hermes")(
     const endpointUrl = `http://${hostAddress}:${compatibleMock.port}/v1`;
     const mcpUrl = fakeMcpTunnel.url;
     progress.phase("onboard the Hermes MCP sandbox");
-    await onboardAgent(host, cleanup, endpointUrl, {
+    await onboardAgent(host, sandbox, cleanup, endpointUrl, {
       agent: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
       artifactName: "onboard-hermes-mcp-bridge",
@@ -1370,7 +1365,7 @@ mcpBridgeShardTest("deepagents")(
       mcpUrl,
     );
     progress.phase("onboard the Deep Agents MCP sandbox");
-    await onboardAgent(host, cleanup, endpointUrl, {
+    await onboardAgent(host, sandbox, cleanup, endpointUrl, {
       agent: "langchain-deepagents-code",
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       artifactName: "onboard-deepagents-mcp-bridge",

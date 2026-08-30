@@ -620,6 +620,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const gatewaySupervisor = path.join(localLib, "gateway-supervisor.sh");
     const stateDirGuard = path.join(localLib, "state-dir-guard.py");
     const runtimeStateMutationControl = path.join(localLib, "runtime-state-mutation-control.py");
+    const runtimeStateMutationTransportBroker = path.join(
+      localLib,
+      "runtime-state-mutation-transport-broker.py",
+    );
     const runtimeStateMutationStartupGate = path.join(
       localLib,
       "runtime-state-mutation-startup-gate.py",
@@ -669,6 +673,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(gatewaySupervisor, "# gateway supervisor fixture\n");
       fs.writeFileSync(stateDirGuard, "# state-dir guard fixture\n");
       fs.writeFileSync(runtimeStateMutationControl, "# runtime mutation control fixture\n");
+      fs.writeFileSync(runtimeStateMutationTransportBroker, "# runtime mutation broker fixture\n");
       fs.writeFileSync(runtimeStateMutationStartupGate, "# runtime mutation gate fixture\n");
       fs.writeFileSync(runtimeStateMutationPublisher, "# runtime mutation publisher fixture\n");
       fs.writeFileSync(stateLockPlan, "{}\n");
@@ -728,6 +733,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
           runtimeStateMutationControl,
         )
         .replaceAll(
+          "/usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py",
+          runtimeStateMutationTransportBroker,
+        )
+        .replaceAll(
           "/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py",
           runtimeStateMutationStartupGate,
         )
@@ -772,6 +781,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(fs.statSync(mcpCredentialBoundary).mode & 0o777).toBe(0o444);
       expect(fs.statSync(buildMcpDigest).mode & 0o777).toBe(0o444);
       expect(fs.statSync(runtimeStateMutationControl).mode & 0o777).toBe(0o500);
+      expect(fs.statSync(runtimeStateMutationTransportBroker).mode & 0o777).toBe(0o500);
       expect(fs.statSync(runtimeStateMutationStartupGate).mode & 0o777).toBe(0o555);
       expect(fs.statSync(runtimeStateMutationPublisher).mode & 0o777).toBe(0o500);
       expect(fs.statSync(stateLockPlan).mode & 0o777).toBe(0o444);

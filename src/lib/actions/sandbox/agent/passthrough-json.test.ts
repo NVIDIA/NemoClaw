@@ -371,6 +371,35 @@ describe("runAgentJsonPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
+  it("recovers timeout guidance after an unclosed log fragment (#8723)", async () => {
+    const response = JSON.stringify({
+      status: "timeout",
+      result: { payloads: [{ text: "partial" }], meta: { timeoutPhase: "provider" } },
+    });
+    const payload = `tool {"name":"read"\n${response}`;
+    const runDispatch = vi.fn(async () => ({
+      status: 0,
+      signal: null,
+      stdout: payload,
+      stderr: "",
+    }));
+    const { exit, proc, stderr, stdout } = makeProc();
+
+    await expect(
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getGatewayName: () => null,
+        getOpenshellBinary: () => "openshell",
+        runDispatch,
+        stdinIsTty: () => false,
+      }),
+    ).rejects.toThrow("__exit:1");
+
+    expect(stdout.join("")).toBe(payload);
+    expect(stderr.join("")).toContain("timed out in the provider phase");
+    expect(stderr.join("")).toContain("Inspect the partial output and affected resources");
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it("exits non-zero when an incomplete response omits optional payloads", async () => {
     const payload = JSON.stringify({
       status: "ok",

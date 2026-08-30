@@ -13,6 +13,7 @@ import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-che
 import { createPortableOnboardEnvironmentScope } from "../session-bootstrap";
 import {
   captureHermesPortablePodmanExecutableAuthority,
+  captureHermesPortablePodmanExecutableFileAuthority,
   createHermesPortablePodmanCommandAuthority,
   type HermesPortablePodmanAuthorityDeps,
 } from "./hermes-portable-podman-authority";
@@ -205,6 +206,31 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
       undefined,
       expect.any(Object),
     );
+  });
+
+  it("recaptures exact executable identity without querying Podman for read-only proof", () => {
+    const generation = { executableInode: 10n, parentInode: 20n };
+    const capture = successfulCapture();
+    const deps = authorityDeps(capture, executableDeps(generation));
+    const runtime = runtimeAuthority();
+    const sourceEnv = { PATH: "/usr/bin", HOME: "/home/test" };
+    const recorded = captureHermesPortablePodmanExecutableAuthority(
+      socketAuthority(),
+      runtime,
+      sourceEnv,
+      deps,
+    );
+    capture.mockClear();
+
+    expect(
+      captureHermesPortablePodmanExecutableFileAuthority(
+        socketAuthority(),
+        { runtimeAuthority: runtime, podmanExecutableAuthority: recorded },
+        sourceEnv,
+        deps,
+      ),
+    ).toEqual(recorded);
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it.each([

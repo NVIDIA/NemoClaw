@@ -178,6 +178,26 @@ describe("agent base image provisioning", () => {
     });
   });
 
+  it("initializes the lazy Hermes MCP runtime before accepting a published base", () => {
+    const imageRef = "hermes-base:current";
+
+    withMockedDocker(({ ensureAgentBaseImage, dockerCaptureMock, resolveSandboxBaseImageMock }) => {
+      ensureAgentBaseImage(makeAgent());
+      const options = resolveSandboxBaseImageMock.mock.calls[0]?.[0] as {
+        validateImage?: (candidate: string) => boolean;
+      };
+
+      expect(options.validateImage?.(imageRef)).toBe(true);
+      expect(dockerCaptureMock.mock.calls[0]?.[0]).toEqual(
+        expect.arrayContaining([
+          "/opt/hermes/.venv/bin/python",
+          imageRef,
+          expect.stringContaining("mcp_tool._ensure_mcp_sdk() or sys.exit(1)"),
+        ]),
+      );
+    });
+  });
+
   it(
     "reuses a compatible resolved agent base image during normal onboarding",
     () => {

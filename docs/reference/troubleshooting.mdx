@@ -1020,7 +1020,7 @@ Escaping can make the preview longer than 80 output characters.
 This prevents a rejected name from injecting control sequences into terminal or CI output.
 
 Names that collide with global CLI commands are also rejected.
-Reserved names include `onboard`, `list`, `deploy`, `setup`, `start`, `stop`, `status`, `debug`, `uninstall`, `credentials`, and `help`.
+Reserved names include `onboard`, `list`, `setup`, `start`, `stop`, `status`, `debug`, `uninstall`, `credentials`, and `help`.
 Using a reserved name would cause the CLI to route to the global command instead of the sandbox.
 
 If the name does not match these rules or is reserved, the wizard exits with an error.
@@ -1833,6 +1833,11 @@ Hermes can also log `[SECURITY] Hermes startup held by an active runtime state m
 Do not kill or manually restart the held entrypoint.
 Run `$$nemoclaw <name> shields status` from the host so NemoClaw can recover the retained target and authenticate the startup release.
 If recovery still fails, preserve the owner-only lifecycle ledger and the complete error for diagnosis instead of removing a marker or changing in-sandbox permissions.
+
+If the startup gate instead reports `invalid-state code=<code> transaction=<id>` and Hermes refuses startup, the error code identifies rejected gate state rather than an active transition that can make progress by waiting.
+The transaction is a 64-character identifier when the gate safely parsed it, or `unknown` when it could not.
+Run `$$nemoclaw <name> shields status` from the host to recover the retained transition.
+If status cannot recover it, preserve `~/.nemoclaw/state/runtime-provider-lifecycle/`, the error code, and the transaction identifier for diagnosis; do not remove or edit the root-owned in-sandbox receipts.
 
 ### Hermes startup reports `HERMES_CONFIG_MUTATION_ORPHANED`
 

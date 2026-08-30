@@ -460,13 +460,27 @@ async function runRestoreTimerWithBudget(
                 // has settled, re-applying if it drifted. This narrows (does not
                 // close) the revert window; fail closed (leave shields DOWN + audit)
                 // when the lock will not re-confirm within the retry budget.
-                const relock = relockAndReconfirm(() =>
-                  lockAgentConfig(
-                    args.sandboxName,
-                    lockTarget,
-                    false,
-                    args.allowLegacyHermesProtocol,
-                  ),
+                const protocol = shields.resolveHermesShieldsProtocol(
+                  args.sandboxName,
+                  lockTarget,
+                  args.allowLegacyHermesProtocol,
+                );
+                const relock = relockAndReconfirm(
+                  () =>
+                    lockAgentConfig(
+                      args.sandboxName,
+                      lockTarget,
+                      false,
+                      args.allowLegacyHermesProtocol,
+                      protocol,
+                    ),
+                  {
+                    confirm: shields.hermesProviderLockConfirmation(
+                      args.sandboxName,
+                      lockTarget,
+                      protocol,
+                    ),
+                  },
                 );
                 if (relock.ok && relock.lastResult) {
                   lockedChattr = relock.lastResult.chattrApplied;
