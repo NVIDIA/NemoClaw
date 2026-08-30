@@ -170,25 +170,26 @@ OpenShell. It writes each specialist's Markdown review and native JSONL session 
 
 Prerequisites:
 
-- Node.js 22.19.0 or newer and the repository dependencies installed with `npm install`;
+- Node.js 22.19.0 or newer and npm registry access for the dependencies locked on `origin/main`;
 - an `origin/main` remote-tracking commit that contains the trusted local review implementation;
 - `git`, `tar`, `openshell`, `openshell-gateway`, `openshell-sandbox`, `rg`, and `fdfind` available on `PATH`;
 - `PR_REVIEW_ADVISOR_API_KEY` exported in the host environment for the existing advisor provider.
-  The local gateway receives this credential. The sandbox does not receive it.
+  The local gateway receives this credential. The sandbox does not receive it. The variable remains
+  in the caller environment until you clear it. The command removes the local gateway after the run.
 
 `npm run dev:doctor` checks general contributor readiness. It does not check these local-review
 executables, the advisor credential, or the `origin/main` ref.
 
 Running the npm script trusts the contributor checkout's `package.json` entry and built-in-only bootstrap.
 After that narrow entry boundary, the executable advisor checkout is detached at the resolved
-`origin/main` commit. Other branch changes, including advisor implementation, policy, and specialist
-prompts, exist only in the read-only review snapshot. The command copies the already-installed root
-`node_modules` tree into the trusted advisor checkout; it does not
-run `npm install`, package lifecycle hooks, or branch-controlled install code during review. Ordinary
-module bytes therefore reflect the packages already installed in the contributor checkout, not source
-files from the reviewed branch. Dependency installation redesign is outside this local command.
+`origin/main` commit. Other branch changes, including advisor implementation, policy, specialist
+prompts, and `node_modules`, exist only in the read-only review snapshot. Before it reads the advisor
+credential or starts the implementation, the built-in-only bootstrap runs `npm ci --ignore-scripts
+--no-audit --no-fund` in the trusted checkout. npm uses the committed `origin/main` lockfile, normal
+cache behavior, and a credential-free environment with user and global npm configuration disabled.
+Failure stops the run before the credential-bearing advisor lifecycle starts.
 
-The command removes its temporary snapshot, copied dependencies, gateway, and each sandbox after
+The command removes its temporary snapshot, trusted dependencies, gateway, and each sandbox after
 success, failure, or a handled termination signal.
 
 ## Output contract

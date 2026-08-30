@@ -28,6 +28,25 @@ function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
+function installFakeNpm(source: string, body?: string): string {
+  const bin = path.join(temporaryDirectory(), "bin");
+  body ??= `printf "%s\\n" "$@" > ${JSON.stringify(path.join(source, "npm-args"))}
+env | sort > ${JSON.stringify(path.join(source, "npm-env"))}
+mkdir node_modules`;
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "npm"), `#!/bin/sh\nset -eu\n${body}\n`);
+  fs.chmodSync(path.join(bin, "npm"), 0o755);
+  fs.writeFileSync(
+    path.join(source, "package.json"),
+    '{"name":"trusted-review","version":"1.0.0"}\n',
+  );
+  fs.writeFileSync(
+    path.join(source, "package-lock.json"),
+    '{"name":"trusted-review","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"trusted-review","version":"1.0.0"}}}\n',
+  );
+  return bin;
+}
+
 function repository(): string {
   const directory = temporaryDirectory();
   git(directory, ["init", "--initial-branch=main"]);
@@ -85,7 +104,7 @@ describe("local PR review advisor", () => {
     expect(ADVISOR_PI_IMAGE).toMatch(/@sha256:[0-9a-f]{64}$/u);
   });
 
-  it("launches origin/main implementation without executing modified branch host code (#10611)", () => {
+  it("installs origin/main dependencies without executing contributor node_modules (#10611)", () => {
     const source = temporaryDirectory();
     git(source, ["init", "--initial-branch=main"]);
     git(source, ["config", "user.name", "Test"]);
@@ -114,6 +133,7 @@ describe("local PR review advisor", () => {
         'fs.writeFileSync(path.join(source, "bootstrap-result.txt"), [hostValue, policy].join("|") + "\\n");',
       ].join("\n"),
     );
+    const npmBin = installFakeNpm(source);
     git(source, ["add", "."]);
     git(source, ["commit", "-m", "trusted base"]);
     git(source, ["remote", "add", "origin", source]);
@@ -128,18 +148,40 @@ describe("local PR review advisor", () => {
       'branch policy data; throw new Error("policy executed")\n',
     );
     git(source, ["commit", "-am", "untrusted branch changes"]);
-    fs.mkdirSync(path.join(source, "node_modules"));
+    fs.mkdirSync(path.join(source, "node_modules", "malicious"), { recursive: true });
+    fs.writeFileSync(
+      path.join(source, "node_modules", "malicious", "index.js"),
+      'require("node:fs").writeFileSync("contributor-module-executed", "yes")\n',
+    );
 
     const result = spawnSync(
       process.execPath,
       ["--experimental-strip-types", "--no-warnings", "tools/pr-review-advisor/local-review.mts"],
-      { cwd: source, encoding: "utf8" },
+      {
+        cwd: source,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: npmBin + path.delimiter + process.env.PATH,
+          SECRET_TOKEN: "must-not-reach-npm",
+          npm_config_cache: path.join(source, "npm-cache"),
+        },
+      },
     );
 
     expect(result.status, result.stderr).toBe(0);
     expect(fs.readFileSync(path.join(source, "bootstrap-result.txt"), "utf8")).toBe(
       'trusted host|branch policy data; throw new Error("policy executed")\n',
     );
+    expect(fs.existsSync(path.join(source, "contributor-module-executed"))).toBe(false);
+    expect(fs.readFileSync(path.join(source, "npm-args"), "utf8")).toBe(
+      "ci\n--ignore-scripts\n--no-audit\n--no-fund\n",
+    );
+    const npmEnvironment = fs.readFileSync(path.join(source, "npm-env"), "utf8");
+    expect(npmEnvironment).not.toContain("SECRET_TOKEN=");
+    expect(npmEnvironment).toContain("npm_config_userconfig=" + os.devNull);
+    expect(npmEnvironment).toContain("npm_config_globalconfig=" + os.devNull);
+    expect(npmEnvironment).toContain("npm_config_cache=" + path.join(source, "npm-cache"));
   });
 
   it("removes the bootstrap checkout before preserving a termination signal (#10611)", async () => {
@@ -162,7 +204,11 @@ describe("local PR review advisor", () => {
         "setInterval(() => undefined, 1000);",
       ].join("\n"),
     );
-    fs.mkdirSync(path.join(source, "node_modules"));
+    const npmStarted = path.join(source, "npm-started");
+    const npmBin = installFakeNpm(
+      source,
+      `touch ${JSON.stringify(npmStarted)}\ntrap 'exit 143' TERM INT HUP\nwhile :; do sleep 1; done`,
+    );
     git(source, ["add", "."]);
     git(source, ["commit", "-m", "trusted base"]);
     git(source, ["remote", "add", "origin", source]);
@@ -170,12 +216,21 @@ describe("local PR review advisor", () => {
     const child = spawn(
       process.execPath,
       ["--experimental-strip-types", "--no-warnings", "tools/pr-review-advisor/local-review.mts"],
-      { cwd: source, env: { ...process.env, TMPDIR: temporaryRoot }, stdio: "pipe" },
+      {
+        cwd: source,
+        env: {
+          ...process.env,
+          TMPDIR: temporaryRoot,
+          PATH: npmBin + path.delimiter + process.env.PATH,
+        },
+        stdio: "pipe",
+      },
     );
     let stderr = "";
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => (stderr += chunk));
-    await vi.waitFor(() => expect(fs.existsSync(path.join(source, "wrapper-ready"))).toBe(true));
+    await vi.waitFor(() => expect(fs.existsSync(npmStarted)).toBe(true));
+    expect(fs.existsSync(path.join(source, "wrapper-ready"))).toBe(false);
 
     child.kill("SIGTERM");
     const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
