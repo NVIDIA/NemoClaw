@@ -1834,6 +1834,11 @@ Do not kill or manually restart the held entrypoint.
 Run `$$nemoclaw <name> shields status` from the host so NemoClaw can recover the retained target and authenticate the startup release.
 If recovery still fails, preserve the owner-only lifecycle ledger and the complete error for diagnosis instead of removing a marker or changing in-sandbox permissions.
 
+If the startup gate instead reports `invalid-state code=<code> transaction=<id>` and Hermes refuses startup, the error code identifies rejected gate state rather than an active transition that can make progress by waiting.
+The transaction is a 64-character identifier when the gate safely parsed it, or `unknown` when it could not.
+Run `$$nemoclaw <name> shields status` from the host to recover the retained transition.
+If status cannot recover it, preserve `~/.nemoclaw/state/runtime-provider-lifecycle/`, the error code, and the transaction identifier for diagnosis; do not remove or edit the root-owned in-sandbox receipts.
+
 ### Hermes startup reports `HERMES_CONFIG_MUTATION_ORPHANED`
 
 This refusal means a root-owned config or shields transaction stopped without a safely recoverable complete state.

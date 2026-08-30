@@ -41,11 +41,16 @@ real_health_status = control._health_status
 real_release_activation_hold = control._release_activation_hold
 real_parse_proc_uids = control._parse_proc_uids
 real_recapture_reference = control._recapture_reference
+real_capture_process = control._capture_process
 real_signal_exact_process = control._signal_exact_process
+real_signal_reference = control._signal_reference
 real_wait_for_reference_running = control._wait_for_reference_running
 real_prove_fence_shape = control._prove_fence_shape
 real_resume_reference = control._resume_reference
 real_prove_released_activation = control._prove_released_activation
+real_prove_parent_acknowledged_activation = control._prove_parent_acknowledged_activation
+real_resume_acknowledged_parent = control._resume_acknowledged_parent
+real_transport_broker_reference = control._transport_broker_reference
 control._assert_private_procfs = lambda: None
 control._open_activation_guard_pidfd = lambda _reference: os.open(
     os.devnull, os.O_RDONLY
@@ -166,7 +171,9 @@ def status_value(action, acquire, provider_handle=None, activation_handle=None, 
 def parse(action, value):
     return control._parse_request(action, control._json_bytes(value) + b"\n")
 
-def process(pid, state, parent, start, uid, command, inode):
+def process(pid, state, parent, start, uid, command, inode, executable_inode=None):
+    if executable_inode is None:
+        executable_inode = 10_000 + inode
     return control.ProcessIdentity(
         pid,
         state,
@@ -176,7 +183,97 @@ def process(pid, state, parent, start, uid, command, inode):
         command,
         91,
         inode,
+        81,
+        executable_inode,
     )
+
+fixed_transport_broker = process(
+    88,
+    "S",
+    1,
+    "788",
+    control.ROOT_UID,
+    (
+        b"/opt/hermes/.venv/bin/python3",
+        b"-I",
+        control.TRANSPORT_BROKER_PATH,
+        b"a" * 64,
+    ),
+    188,
+)
+forged_transport_broker = process(
+    89,
+    "S",
+    1,
+    "789",
+    control.ROOT_UID,
+    (
+        control.TRANSPORT_BROKER_PYTHON,
+        b"-I",
+        control.TRANSPORT_BROKER_PATH,
+        b"a" * 64,
+    ),
+    189,
+    fixed_transport_broker.executable_inode + 1,
+)
+wrong_argv_transport_broker = process(
+    90,
+    "S",
+    1,
+    "790",
+    control.ROOT_UID,
+    (
+        b"/tmp/forged-python",
+        b"-I",
+        control.TRANSPORT_BROKER_PATH,
+        b"a" * 64,
+    ),
+    190,
+    fixed_transport_broker.executable_inode,
+)
+dynamic_transport_broker = process(
+    91,
+    "S",
+    1,
+    "791",
+    control.ROOT_UID,
+    (
+        b"/opt/hermes/.venv/bin/python3",
+        b"-I",
+        b"-c",
+        b"dynamic-source",
+        b"encoded-source",
+        b"/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
+        b"a" * 64,
+    ),
+    191,
+)
+real_os_stat = control.os.stat
+transport_broker_executable = types.SimpleNamespace(
+    st_mode=stat.S_IFREG | 0o755,
+    st_uid=control.ROOT_UID,
+    st_gid=control.ROOT_GID,
+    st_dev=fixed_transport_broker.executable_device,
+    st_ino=fixed_transport_broker.executable_inode,
+)
+control.os.stat = lambda path, *args, **kwargs: (
+    transport_broker_executable
+    if path == control.TRANSPORT_BROKER_PYTHON
+    else real_os_stat(path, *args, **kwargs)
+)
+control._capture_process = lambda _pid: fixed_transport_broker
+fixed_transport_broker_reference = real_transport_broker_reference()
+results = {"fixed_transport_broker": fixed_transport_broker_reference.pid}
+control._capture_process = lambda _pid: forged_transport_broker
+results["forged_transport_broker_rejected"] = real_transport_broker_reference() is None
+control._capture_process = lambda _pid: wrong_argv_transport_broker
+results["wrong_argv_transport_broker_rejected"] = (
+    real_transport_broker_reference() is None
+)
+control._capture_process = lambda _pid: dynamic_transport_broker
+results["dynamic_transport_broker_rejected"] = real_transport_broker_reference() is None
+control._capture_process = real_capture_process
+control.os.stat = real_os_stat
 
 root_uid = control.ROOT_UID
 pid1 = process(1, "S", 0, "100", root_uid, (control.OPENSHELL_ARGV0,), 101)
@@ -242,7 +339,122 @@ activation = control.ActivationProof(
     ),
 )
 
-results = {}
+with tempfile.TemporaryDirectory() as process_probe:
+    process_metadata = os.stat(process_probe, follow_symlinks=False)
+    real_os_stat = control.os.stat
+    real_read_proc_file = control._read_proc_file
+    control.os.stat = lambda _path, follow_symlinks=False: process_metadata
+    try:
+        control._read_proc_file = lambda _path, _maximum=control.MAX_PROC_FILE_BYTES: (
+            _ for _ in ()
+        ).throw(ProcessLookupError())
+        results["vanished_process"] = real_capture_process(42) is None
+        control._read_proc_file = lambda _path, _maximum=control.MAX_PROC_FILE_BYTES: (
+            _ for _ in ()
+        ).throw(OSError())
+        results["unreadable_process_io"] = code(lambda: real_capture_process(42))
+    finally:
+        control.os.stat = real_os_stat
+        control._read_proc_file = real_read_proc_file
+same_task_after_exec = process(
+    start.pid,
+    start.state,
+    start.parent_pid + 1,
+    start.start_identity,
+    1000,
+    (b"/usr/local/bin/hermes", b"gateway"),
+    start.proc_inode,
+)
+replacement_task = process(
+    start.pid,
+    start.state,
+    start.parent_pid,
+    str(int(start.start_identity) + 1),
+    1001,
+    start.command,
+    start.proc_inode + 1,
+)
+same_task_executable_replacement = process(
+    start.pid,
+    start.state,
+    start.parent_pid,
+    start.start_identity,
+    1001,
+    start.command,
+    start.proc_inode,
+    start.executable_inode + 1,
+)
+real_pidfd_open = getattr(control.os, "pidfd_open", None)
+real_pidfd_send_signal = getattr(control.signal, "pidfd_send_signal", None)
+real_os_close = control.os.close
+pidfd_signal_events = []
+control.os.pidfd_open = lambda pid, flags: (
+    pidfd_signal_events.append(["open", pid, flags]) or 91
+)
+control.signal.pidfd_send_signal = lambda pidfd, requested: pidfd_signal_events.append(
+    ["signal", pidfd, requested]
+)
+control.os.close = lambda pidfd: pidfd_signal_events.append(["close", pidfd])
+try:
+    control._capture_process = lambda _pid: same_task_after_exec
+    results["same_task_signal"] = code(
+        lambda: real_signal_exact_process(start, signal.SIGSTOP)
+    )
+    results["same_task_signal_events"] = list(pidfd_signal_events)
+    pidfd_signal_events.clear()
+    control._capture_process = lambda _pid: replacement_task
+    results["replacement_task_signal"] = code(
+        lambda: real_signal_exact_process(start, signal.SIGSTOP)
+    )
+    results["replacement_task_signal_events"] = list(pidfd_signal_events)
+    pidfd_signal_events.clear()
+    control._capture_process = lambda _pid: same_task_executable_replacement
+    results["same_task_executable_replacement_signal"] = code(
+        lambda: real_signal_exact_process(start, signal.SIGSTOP)
+    )
+    results["same_task_executable_replacement_signal_events"] = list(
+        pidfd_signal_events
+    )
+finally:
+    control._capture_process = real_capture_process
+    if real_pidfd_open is None:
+        del control.os.pidfd_open
+    else:
+        control.os.pidfd_open = real_pidfd_open
+    if real_pidfd_send_signal is None:
+        del control.signal.pidfd_send_signal
+    else:
+        control.signal.pidfd_send_signal = real_pidfd_send_signal
+    control.os.close = real_os_close
+reference_signal_attempts = []
+control._recapture_reference = lambda _reference, _code="fenced-process-drift": start
+def signal_reference_after_rescan(selected, requested):
+    reference_signal_attempts.append([selected.pid, requested])
+    if len(reference_signal_attempts) < 4:
+        raise control.ControlError("writer-pid-reused")
+control._signal_exact_process = signal_reference_after_rescan
+real_signal_reference(control._process_reference(start), signal.SIGSTOP)
+results["reference_signal_attempts"] = reference_signal_attempts
+replacement_recaptures = [start]
+control._recapture_reference = lambda _reference, _code="fenced-process-drift": (
+    replacement_recaptures.pop(0)
+    if replacement_recaptures
+    else (_ for _ in ()).throw(control.ControlError(_code))
+)
+control._signal_exact_process = lambda _selected, _requested: (_ for _ in ()).throw(
+    control.ControlError("writer-pid-reused")
+)
+results["replaced_reference_signal"] = code(
+    lambda: real_signal_reference(control._process_reference(start), signal.SIGSTOP)
+)
+control._recapture_reference = lambda _reference, _code="fenced-process-drift": start
+control.PROCESS_STATE_SECONDS = 0
+results["reference_signal_timeout"] = code(
+    lambda: real_signal_reference(control._process_reference(start), signal.SIGSTOP)
+)
+control.PROCESS_STATE_SECONDS = 5
+control._recapture_reference = real_recapture_reference
+control._signal_exact_process = real_signal_exact_process
 with tempfile.TemporaryDirectory() as atomic_root:
     atomic_root_fd = os.open(atomic_root, os.O_RDONLY | os.O_DIRECTORY)
     atomic_creation_modes = []
@@ -404,6 +616,10 @@ with tempfile.TemporaryDirectory() as root:
         receipt = control._load_released_receipt(durable_fd)
         events.append(["release-hold", receipt["releaseState"]])
     control._release_activation_hold = release_hold
+    def resume_acknowledged_parent(_marker):
+        receipt = control._load_released_receipt(durable_fd)
+        events.append(["release-parent-resume", receipt["releaseState"]])
+    control._resume_acknowledged_parent = resume_acknowledged_parent
     try:
         active_value = acquire_value()
         active = parse("acquire", active_value)
@@ -566,6 +782,76 @@ try:
 finally:
     os.readlink = real_readlink
 
+def fence_drift(missing_pid):
+    control._capture_process = lambda pid: {
+        1: pid1,
+        10: start,
+        75: stdout_drain,
+        76: stderr_drain,
+    }.get(pid) if pid != missing_pid else None
+    control.os.readlink = lambda selected: (
+        "mnt:[401]"
+        if selected == control.MOUNT_NAMESPACE_PATH
+        else real_readlink(selected)
+    )
+    try:
+        return code(lambda: real_prove_fence_shape(fence, "mnt:[401]"))
+    finally:
+        control.os.readlink = real_readlink
+
+results["supervisor_identity_drift"] = fence_drift(1)
+results["start_identity_drift"] = fence_drift(10)
+results["startup_support_identity_drift"] = fence_drift(75)
+
+def supervisor_refresh(selected):
+    control._capture_process = lambda pid: {
+        1: selected,
+        10: start,
+        75: stdout_drain,
+        76: stderr_drain,
+    }.get(pid)
+    control.os.readlink = lambda path: (
+        "mnt:[401]"
+        if path == control.MOUNT_NAMESPACE_PATH
+        else real_readlink(path)
+    )
+    try:
+        return code(lambda: real_prove_fence_shape(fence, "mnt:[401]"))
+    finally:
+        control.os.readlink = real_readlink
+
+refreshed_pid1 = process(
+    1,
+    "T",
+    0,
+    pid1.start_identity,
+    root_uid,
+    (control.OPENSHELL_ARGV0, b"--refreshed-status"),
+    pid1.proc_inode,
+)
+replaced_pid1 = process(
+    1,
+    "T",
+    0,
+    "101",
+    root_uid,
+    (control.OPENSHELL_ARGV0,),
+    102,
+)
+exec_replaced_pid1 = process(
+    1,
+    "T",
+    0,
+    pid1.start_identity,
+    root_uid,
+    (control.OPENSHELL_ARGV0, b"--forged-status"),
+    pid1.proc_inode,
+    pid1.executable_inode + 1,
+)
+results["refreshed_supervisor"] = supervisor_refresh(refreshed_pid1)
+results["replaced_supervisor"] = supervisor_refresh(replaced_pid1)
+results["exec_replaced_supervisor"] = supervisor_refresh(exec_replaced_pid1)
+
 hold_events = []
 control._prove_fence_shape = lambda _fence, _mount: (pid1, start)
 control._stop_reference = lambda reference: hold_events.append(["stop", reference.pid])
@@ -587,6 +873,13 @@ control.PROCESS_STATE_SECONDS = 0
 results["running_supervisor_hold"] = code(lambda: real_hold_exact_processes(fence, "mnt:[401]", activation))
 control.PROCESS_STATE_SECONDS = 5
 control._prove_fence_shape = lambda _fence, _mount: (stopped_pid1, start)
+control._capture_process = lambda pid: stopped_pid1 if pid == 1 else {
+    10: start,
+    75: stdout_drain,
+    76: stderr_drain,
+    77: gateway,
+    78: auxiliary,
+}.get(pid)
 control._recapture_reference = lambda reference, _code="fenced-process-drift": stopped_pid1 if reference.pid == 1 else {
     10: start,
     75: stdout_drain,
@@ -618,6 +911,23 @@ control.KILL_SECONDS = 5
 real_exclude_writers((1000, 1001), (control._process_reference(stopped_start),))
 results["writer_signals"] = writer_signals
 results["writer_scans_remaining"] = len(scans)
+
+pid_reuse_scans = [
+    (stopped_start, intruder),
+    (stopped_start,),
+    (stopped_start,),
+    (stopped_start,),
+]
+pid_reuse_signals = []
+control._capture_writer_processes = lambda _uids: pid_reuse_scans.pop(0)
+def reject_replaced_writer(selected, requested):
+    pid_reuse_signals.append([selected.pid, requested])
+    raise control.ControlError("writer-pid-reused")
+control._signal_exact_process = reject_replaced_writer
+real_exclude_writers((1000, 1001), (control._process_reference(stopped_start),))
+results["writer_pid_reuse_signals"] = pid_reuse_signals
+results["writer_pid_reuse_scans_remaining"] = len(pid_reuse_scans)
+
 control._capture_writer_processes = lambda _uids: (intruder,)
 control.TERM_SECONDS = 0
 control.KILL_SECONDS = 0
@@ -973,6 +1283,15 @@ with tempfile.TemporaryDirectory() as root:
 
 release_states = {1: "T", 10: "T", 75: "T", 76: "T", 77: "T", 78: "T"}
 release_events = []
+release_ack_exists = {"value": False}
+control._read_startup_release_ack = lambda *_args: (
+    {"acknowledged": True} if release_ack_exists["value"] else None
+)
+def wait_for_startup_release_ack(*_args):
+    release_events.append(["release-ack"])
+    release_ack_exists["value"] = True
+    release_states[10] = "T"
+control._wait_for_startup_release_ack = wait_for_startup_release_ack
 def state_process(original):
     return control.ProcessIdentity(
         original.pid,
@@ -983,9 +1302,11 @@ def state_process(original):
         original.command,
         original.proc_device,
         original.proc_inode,
+        original.executable_device,
+        original.executable_inode,
     )
 by_release_pid = {
-    1: pid1,
+    1: refreshed_pid1,
     10: start,
     75: stdout_drain,
     76: stderr_drain,
@@ -999,6 +1320,9 @@ control._prove_fence_shape = lambda _fence, _mount: (
 control._recapture_reference = lambda reference, _code="fenced-process-drift": state_process(
     by_release_pid[reference.pid]
 )
+control._recapture_supervisor = lambda reference: state_process(
+    by_release_pid[reference.pid]
+)
 def resume_reference(reference):
     if release_states[reference.pid] in ("T", "t"):
         release_events.append(["resume", reference.pid])
@@ -1006,6 +1330,9 @@ def resume_reference(reference):
     return state_process(by_release_pid[reference.pid])
 control._resume_reference = resume_reference
 control._prove_released_activation = lambda *_args: release_events.append(["health"])
+control._prove_parent_acknowledged_activation = lambda *_args: release_events.append(
+    ["parent-ack-health"]
+)
 control._verify_activation_checkpoint = lambda *_args: release_events.append(["verify-checkpoint"])
 control._publish_activation_release = lambda *_args: release_events.append(["release-receipt"])
 terminated_release_pids = set()
@@ -1028,12 +1355,14 @@ with tempfile.TemporaryDirectory() as root:
 
         release_events.clear()
         release_states.update({1: "T", 10: "T", 75: "T", 76: "T", 77: "T", 78: "T"})
+        release_ack_exists["value"] = False
         terminated_release_pids.add(78)
         real_release_activation_hold(durable_fd, marker_for_helpers)
         results["transient_exit_release_events"] = list(release_events)
 
         release_events.clear()
         release_states.update({1: "T", 10: "T", 75: "T", 76: "T", 77: "T", 78: "T"})
+        release_ack_exists["value"] = False
         terminated_release_pids.clear()
         terminated_release_pids.add(77)
         results["persistent_exit_release"] = code(

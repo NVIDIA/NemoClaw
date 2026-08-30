@@ -762,20 +762,29 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     expect(parseOpenClawHealthResult('{"ok":false}')).toBe(false);
     expect(
       parseOpenClawExactChatReply(
-        JSON.stringify({ status: "ok", result: { payloads: [{ text: "CHAT_OK" }] } }),
+        JSON.stringify({ status: "ok", result: { payloads: [{ text: "CHAT_OK" }], meta: {} } }),
       ),
     ).toBe(true);
     expect(
       parseOpenClawExactChatReply(
         JSON.stringify({
           status: "ok",
-          result: { payloads: [{ text: "CHAT_OK" }, { text: "extra" }] },
+          result: { payloads: [{ text: "CHAT_OK" }, { text: "extra" }], meta: {} },
         }),
       ),
     ).toBe(false);
     expect(
       parseOpenClawExactChatReply(
-        JSON.stringify({ status: "ok", result: { payloads: [{ text: "not exact" }] } }),
+        JSON.stringify({ status: "ok", result: { payloads: [{ text: "not exact" }], meta: {} } }),
+      ),
+    ).toBe(false);
+    expect(
+      parseOpenClawExactChatReply(
+        JSON.stringify({
+          status: "ok",
+          result: { payloads: [{ text: "CHAT_OK" }], meta: {} },
+          tool_calls: [{ function: { name: "read", arguments: "{}" } }],
+        }),
       ),
     ).toBe(false);
   });
@@ -1034,7 +1043,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     (text) => {
       expect(
         parseOpenClawExactChatReply(
-          JSON.stringify({ status: "ok", result: { payloads: [{ text }] } }),
+          JSON.stringify({ status: "ok", result: { payloads: [{ text }], meta: {} } }),
         ),
       ).toBe(false);
     },
