@@ -62,7 +62,7 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   /** Attempt-wide shared-gateway guard, invoked after identity selection and before probes. */
   assertRouteCompatible?: () => GatewayRouteDiscoveryConstraints;
   /** Receipt-bound policy check invoked immediately before provider or runtime mutations. */
-  revalidatePolicyRequirements?: (operation: string) => void;
+  revalidateSandboxIdentity?: (operation: string) => void;
 };
 
 /** Revalidate the current provider selection before a policy-dependent mutation. */
@@ -70,22 +70,22 @@ export function assertSelectionMutationAuthority(
   state: SetupNimSelectionState,
   operation: string,
 ): void {
-  state.revalidatePolicyRequirements?.(operation);
+  state.revalidateSandboxIdentity?.(operation);
 }
 
 /** Carry the attempt's exact mutation guard through a blocking credential prompt. */
 export function credentialMutationGuardFor(
   state: SetupNimSelectionState,
 ): ((operation: string) => void) | undefined {
-  return state.revalidatePolicyRequirements;
+  return state.revalidateSandboxIdentity;
 }
 
 export function withCredentialMutationGuard<T extends object>(
   state: SetupNimSelectionState,
   options: T,
-): T & { revalidatePolicyRequirements?: (operation: string) => void } {
+): T & { revalidateSandboxIdentity?: (operation: string) => void } {
   const guard = credentialMutationGuardFor(state);
-  return guard ? { ...options, revalidatePolicyRequirements: guard } : options;
+  return guard ? { ...options, revalidateSandboxIdentity: guard } : options;
 }
 
 export type CloudFallbackConfig = {
@@ -241,7 +241,7 @@ type ProbeOptions = {
   extraHeaders?: readonly string[];
   capabilityCache?: OnboardInferenceCapabilityCache;
   provider?: string;
-  revalidatePolicyRequirements?: (operation: string) => void;
+  revalidateSandboxIdentity?: (operation: string) => void;
 };
 
 type ValidationResult =
@@ -268,7 +268,7 @@ type RemoteModelValidatorDeps = {
     credentialEnv: string,
     helpUrl: string | null,
     capabilityCache?: OnboardInferenceCapabilityCache,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ) => Promise<ValidationResult>;
   validateCustomAnthropicSelection: (
     label: string,
@@ -278,7 +278,7 @@ type RemoteModelValidatorDeps = {
     helpUrl: string | null,
     options?: {
       intendedApi?: "anthropic-messages" | "openai-completions";
-      revalidatePolicyRequirements?: (operation: string) => void;
+      revalidateSandboxIdentity?: (operation: string) => void;
     },
   ) => Promise<ValidationResult>;
   validateAnthropicSelectionWithRetryMessage: (
@@ -288,7 +288,7 @@ type RemoteModelValidatorDeps = {
     credentialEnv: string,
     retryMessage: string,
     helpUrl: string | null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ) => Promise<ValidationResult>;
   validateOpenAiLikeSelection: (
     label: string,

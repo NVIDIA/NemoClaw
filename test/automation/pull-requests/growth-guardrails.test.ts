@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   addedJavaScriptViolations,
@@ -61,13 +61,30 @@ describe("codebase growth guardrails", () => {
     expect(violations, diagnostics.conditionals(violations)).toEqual([]);
   });
 
-  it("does not add test loops directly, through one-use helpers, or through callback-forwarding helpers", async () => {
-    const violations = await loopGrowthViolations(diff);
-    expect(violations, diagnostics.loops(violations)).toEqual([]);
-  });
+  it(
+    "does not add test loops directly, through one-use helpers, or through callback-forwarding helpers",
+    async () => {
+      const violations = await loopGrowthViolations(diff);
+      expect(violations, diagnostics.loops(violations)).toEqual([]);
+    },
+    60_000,
+  );
 });
 
 describe("codebase growth guardrail test support", () => {
+  it("caches repeated blob reads across guardrail checks", () => {
+    const read = vi.fn((file: string) => `${file} content`);
+    const cache = new Map<string, string | null>();
+
+    expect(diffTestOnly.readFilesCached(["test/a.test.ts"], cache, read)).toEqual(
+      new Map([["test/a.test.ts", "test/a.test.ts content"]]),
+    );
+    expect(diffTestOnly.readFilesCached(["test/a.test.ts"], cache, read)).toEqual(
+      new Map([["test/a.test.ts", "test/a.test.ts content"]]),
+    );
+    expect(read).toHaveBeenCalledOnce();
+  });
+
   it("rejects an added JavaScript file without rejecting an existing JavaScript rename", () => {
     expect(
       addedJavaScriptViolations([

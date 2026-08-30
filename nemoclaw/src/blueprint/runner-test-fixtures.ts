@@ -82,7 +82,7 @@ export function resultForCommandFailure(
   command: readonly [string, string],
   stderr: string,
 ): { exitCode: number; stdout: string; stderr: string } {
-  return resultWithBlueprintPolicyAuthority(
+  return resultWithBlueprintPolicy(
     args,
     args[0] === command[0] && args[1] === command[1]
       ? { exitCode: 1, stdout: "", stderr }
@@ -146,9 +146,9 @@ export function sandboxIdentityResult(
 }
 
 /** Machine-readable effective policy metadata for one sandbox. */
-export function sandboxPolicyAuthorityResult(
+export function sandboxPolicyResult(
   sandboxName: string,
-  authority: "nemoclaw-managed" | "externally-managed" = "nemoclaw-managed",
+  policySource: "sandbox" | "global" = "sandbox",
   networkPolicies: Record<string, unknown> = {},
   effectivePolicy: Record<string, unknown> = { version: 1, network_policies: networkPolicies },
   policyHash = "sha256:test-policy",
@@ -160,7 +160,7 @@ export function sandboxPolicyAuthorityResult(
       scope: "sandbox",
       sandbox: sandboxName,
       status: "effective",
-      policy_source: authority === "nemoclaw-managed" ? "sandbox" : "global",
+      policy_source: policySource,
       hash: policyHash,
       active_version: policyVersion,
       policy: effectivePolicy,
@@ -169,10 +169,8 @@ export function sandboxPolicyAuthorityResult(
   };
 }
 
-/** Machine-readable external global policy metadata. */
-export function globalPolicyAuthorityResult(
-  networkPolicies: Record<string, unknown> = {},
-): CommandResult {
+/** Machine-readable global policy metadata. */
+export function globalPolicyResult(networkPolicies: Record<string, unknown> = {}): CommandResult {
   return {
     exitCode: 0,
     stdout: JSON.stringify({
@@ -187,8 +185,8 @@ export function globalPolicyAuthorityResult(
   };
 }
 
-/** Standard gateway and policy-authority responses for blueprint apply tests. */
-export function resultWithBlueprintPolicyAuthority(
+/** Standard gateway and policy responses for blueprint apply tests. */
+export function resultWithBlueprintPolicy(
   args: readonly string[],
   fallback: CommandResult,
   gateway = "test-gateway",
@@ -207,7 +205,7 @@ export function resultWithBlueprintPolicyAuthority(
             args[5] === "--output" &&
             args[6] === "json" &&
             typeof args[7] === "string"
-          ? sandboxPolicyAuthorityResult(args[7])
+          ? sandboxPolicyResult(args[7])
           : args[0] === "sandbox" &&
               args[1] === "get" &&
               args[2] === "-g" &&
@@ -246,9 +244,9 @@ export function createMutableSandboxPolicyResult(
       return successResult();
     }
     if (args.join(" ") === "policy get -g test-gateway --full --output json test-sandbox") {
-      return sandboxPolicyAuthorityResult(
+      return sandboxPolicyResult(
         "test-sandbox",
-        "nemoclaw-managed",
+        "sandbox",
         (livePolicy.network_policies as Record<string, unknown> | undefined) ?? {},
         livePolicy,
         livePolicyHash,
@@ -268,7 +266,7 @@ export function createMutableSandboxPolicyResult(
         stderr: "",
       };
     }
-    return resultWithBlueprintPolicyAuthority(args, successResult());
+    return resultWithBlueprintPolicy(args, successResult());
   };
 }
 

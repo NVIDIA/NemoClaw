@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { type MockInstance, vi } from "vitest";
 import type { SandboxEntry } from "../../src/lib/state/registry";
-import { managedPolicyMutationAuthority } from "./shields-flow-harness";
+import { livePolicyMutationContext } from "./shields-flow-harness";
 
 const INDEX_MODULE = "./index.js";
 export const HERMES_PROVIDER_CAPABILITY_PATH =
@@ -47,7 +47,6 @@ export const hermesProviderConsumerSandbox: SandboxEntry = {
   name: "current-hermes",
   agent: "hermes",
   openshellDriver: "docker",
-  policyAuthority: "nemoclaw-managed",
   lifecycleGeneration: "generation-1",
   workload: {
     schemaVersion: 1,
@@ -87,6 +86,25 @@ export type HermesShieldsProviderConsumerHarness = {
   cleanup: () => void;
 };
 
+export function writeBoundPolicySnapshot(
+  policyPath: string,
+  content = "version: 1\nnetwork_policies:\n  restrictive: {}\n",
+) {
+  fs.writeFileSync(policyPath, content, { mode: 0o600 });
+  fs.chmodSync(policyPath, 0o600);
+  const metadata = fs.statSync(policyPath);
+  return {
+    schemaVersion: 1 as const,
+    path: policyPath,
+    sha256: createHash("sha256").update(content).digest("hex"),
+    size: Buffer.byteLength(content),
+    mode: 0o600,
+    uid: metadata.uid,
+    gid: metadata.gid,
+    nlink: 1 as const,
+  };
+}
+
 export function writeBoundForwardPolicy(
   stateDir: string,
   sandboxName: string,
@@ -97,19 +115,7 @@ export function writeBoundForwardPolicy(
     stateDir,
     `shields-forward-policy-${sandboxName}-${processToken}.yaml`,
   );
-  fs.writeFileSync(policyPath, content, { mode: 0o600 });
-  fs.chmodSync(policyPath, 0o600);
-  const metadata = fs.statSync(policyPath);
-  return {
-    schemaVersion: 1,
-    path: policyPath,
-    sha256: createHash("sha256").update(content).digest("hex"),
-    size: Buffer.byteLength(content),
-    mode: 0o600,
-    uid: metadata.uid,
-    gid: metadata.gid,
-    nlink: 1,
-  };
+  return writeBoundPolicySnapshot(policyPath, content);
 }
 
 export function writeTimerAuthorizationProof(loadSource: NodeRequire, sandboxName: string): void {
@@ -287,16 +293,10 @@ export function createHermesShieldsProviderConsumerHarness(
         String(file),
         String(name),
       ]),
-    vi
-      .spyOn(policy, "inspectPolicyMutationAuthority")
-      .mockReturnValue(managedPolicyMutationAuthority),
-    vi
-      .spyOn(policy, "inspectPolicyRecoveryAuthority")
-      .mockReturnValue(managedPolicyMutationAuthority),
-    vi
-      .spyOn(policy, "recheckPolicyMutationAuthority")
-      .mockReturnValue(managedPolicyMutationAuthority),
-    vi.spyOn(policy, "finalizePolicyMutationReceipt").mockImplementation(() => undefined),
+    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
+    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
+    vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
+    vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined),
     registrySpy,
     vi
       .spyOn(privilegedExec, "privilegedSandboxExecArgv")

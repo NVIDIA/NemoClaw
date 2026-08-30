@@ -37,6 +37,7 @@ on:
       - "Dockerfile"
       - "agents/**"
       - "ci/npm-audit-exceptions.json"
+      - "ci/pi-agent-qualification-v1-*.json"
       - "ci/reviewed-npm-audit.json"
       - "nemoclaw/**"
       - "nemoclaw-blueprint/**"
@@ -44,6 +45,7 @@ on:
       - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
       - "src/lib/actions/sandbox/mcp-bridge-*.ts"
       - "src/lib/actions/sandbox/rebuild-post-restore-phase.ts"
+      - "src/lib/agent/candidate-authority.ts"
       - "src/lib/core/json-types.ts"
       - "src/lib/core/ports.ts"
       - "src/lib/messaging/**"
@@ -1212,11 +1214,12 @@ jobs:
 
   pi-candidate:
     name: Build and validate the Pi candidate managed image (${{ matrix.arch }})
-    if: github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'pull_request'
+    if: github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
       contents: read
+      packages: write
     strategy: &pi_candidate_strategy
       fail-fast: false
       matrix:
@@ -1231,14 +1234,17 @@ jobs:
       BASE_DOCKERFILE: agents/pi/Dockerfile.base
       CANDIDATE_IMAGE: nemoclaw-managed-candidate/pi
       DOCKERFILE: agents/pi/Dockerfile
-      LOCAL_BASE_REFERENCE: nemoclaw-managed-candidate/pi-base:${{ github.sha }}
+      LOCAL_BASE_REFERENCE: nemoclaw-managed-candidate/pi-base:${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       PLATFORM: ${{ matrix.platform }}
       PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
       REPOSITORY: ghcr.io/nvidia/nemoclaw/pi-sandbox
+      # Qualification receipts compare image sources with the PR head, never GitHub's synthetic merge.
+      SOURCE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps: &pi_candidate_steps
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Set up Docker Buildx
         id: buildx
@@ -1300,10 +1306,10 @@ jobs:
           build-contexts: nemoclaw-pi-base=oci-layout://${{ steps.base.outputs.oci }}
           load: true
           push: false
-          tags: nemoclaw-managed-candidate/pi:${{ github.sha }}
+          tags: nemoclaw-managed-candidate/pi:${{ env.SOURCE_REVISION }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ env.SOURCE_REVISION }}
             io.nvidia.nemoclaw.agent=pi
             io.nvidia.nemoclaw.managed-image.contract=1
             io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
@@ -1319,7 +1325,7 @@ jobs:
       - name: Validate the Pi candidate runtime contract
         shell: bash
         env:
-          IMAGE_REFERENCE: nemoclaw-managed-candidate/pi:${{ github.sha }}
+          IMAGE_REFERENCE: nemoclaw-managed-candidate/pi:${{ env.SOURCE_REVISION }}
         run: |
           set -euo pipefail
           image_json="$(docker image inspect "$IMAGE_REFERENCE")"
@@ -1348,7 +1354,6 @@ jobs:
             test -x /usr/local/bin/nemoclaw-managed-bootstrap
           '
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -1358,7 +1363,6 @@ jobs:
       # consumer alias, so a published candidate stays reachable by digest alone.
       - name: Publish the Pi candidate image by digest
         id: publish
-        if: github.event_name != 'pull_request'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           builder: ${{ steps.buildx.outputs.name }}
@@ -1369,7 +1373,7 @@ jobs:
           outputs: type=image,name=ghcr.io/nvidia/nemoclaw/pi-sandbox,push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ env.SOURCE_REVISION }}
             io.nvidia.nemoclaw.agent=pi
             io.nvidia.nemoclaw.managed-image.contract=1
             io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
@@ -1382,11 +1386,14 @@ jobs:
             NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
           provenance: false
           sbom: false
+      - name: Remove Pi publication credentials
+        if: always()
+        shell: bash
+        run: docker logout ghcr.io
       # The publication above rebuilds the image rather than reusing the
       # already-validated local one, so revalidate the exact published digest
       # before the contract records it as the qualified candidate.
       - name: Validate the published Pi candidate digest
-        if: github.event_name != 'pull_request'
         shell: bash
         env:
           DIGEST: ${{ steps.publish.outputs.digest }}
@@ -1433,8 +1440,8 @@ jobs:
           '
       # The checks above bypass /usr/local/bin/nemoclaw-start with a direct
       # --entrypoint override, so they never prove the entrypoint itself runs
-      # correctly. Start the local pull-request image or exact published digest
-      # through its declared entrypoint with no command, matching a real launch,
+      # correctly. Start the published digest through its declared entrypoint
+      # with no command, matching a real launch,
       # and prove PID 1 drops to the sandbox user, hardens its resource limits,
       # and persists the trusted proxy environment before it holds the sandbox
       # open.
@@ -1442,19 +1449,13 @@ jobs:
         shell: bash
         env:
           DIGEST: ${{ steps.publish.outputs.digest }}
-          EVENT_NAME: ${{ github.event_name }}
-          IMAGE_REFERENCE: nemoclaw-managed-candidate/pi:${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            reference="$IMAGE_REFERENCE"
-          else
-            if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "ERROR: the Pi candidate publication did not return an immutable digest." >&2
-              exit 1
-            fi
-            reference="${REPOSITORY}@${DIGEST}"
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: the Pi candidate publication did not return an immutable digest." >&2
+            exit 1
           fi
+          reference="${REPOSITORY}@${DIGEST}"
           corporate_ca_dir="$(mktemp -d "$RUNNER_TEMP/pi-candidate-ca.XXXXXX")"
           corporate_ca="$corporate_ca_dir/corporate-ca.pem"
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
@@ -1571,7 +1572,6 @@ jobs:
             done
           '
       - name: Record the exact Pi candidate contract
-        if: github.event_name != 'pull_request'
         shell: bash
         env:
           DIGEST: ${{ steps.publish.outputs.digest }}
@@ -1590,7 +1590,7 @@ jobs:
             --arg image "$REPOSITORY" \
             --arg platform "$PLATFORM" \
             --arg release "$release" \
-            --arg revision "$GITHUB_SHA" \
+            --arg revision "$SOURCE_REVISION" \
             --arg reference "${REPOSITORY}@${DIGEST}" \
             '{
               contractVersion: 1,
@@ -1615,7 +1615,6 @@ jobs:
       # This candidate name is deliberately outside that pattern so a published
       # Pi digest cannot enter the atomic release cohort.
       - name: Upload the exact Pi candidate contract
-        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: managed-candidate-contract-${{ github.run_id }}-${{ github.run_attempt }}-pi-${{ matrix.arch }}

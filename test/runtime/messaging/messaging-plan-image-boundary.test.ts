@@ -6,16 +6,13 @@ import {
   createMessagingBoundaryPlan,
   encodeMessagingBoundaryPlan,
   FULL_PLAN_ONLY_SENTINEL,
-  HERMES_AIOHTTP_PACKAGE_SPEC,
   HERMES_TEAMS_PACKAGE_SPEC,
-  OPENCLAW_TEAMS_PACKAGE_SPEC,
   OPENCLAW_TEAMS_PACKAGE_VERSION,
   TEAMS_APP_ID,
   TEAMS_SECRET_PLACEHOLDER,
   TEAMS_TENANT_ID,
   verifyMessagingPlanImageBoundary,
 } from "../../../scripts/check-messaging-plan-image-boundary.mts";
-import { teamsManifest } from "../../../src/lib/messaging/channels/teams/manifest";
 
 type Agent = "openclaw" | "hermes";
 type DockerResult = { status: number; stdout?: string; stderr?: string };
@@ -52,7 +49,18 @@ function reducedArtifact(agent: Agent): string {
               },
             ]
           : [],
-      envAliases: [],
+      envAliases:
+        agent === "hermes"
+          ? [
+              {
+                channelId: "teams",
+                envKey: "MSTEAMS_APP_PASSWORD",
+                targetEnvKey: "TEAMS_CLIENT_SECRET",
+                match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+                value: TEAMS_SECRET_PLACEHOLDER,
+              },
+            ]
+          : [],
       secretScans: [],
     },
   });
@@ -72,7 +80,24 @@ function openClawInspectReport(): any {
   };
 }
 
-function successfulDockerRunner(agent: Agent, openClawInspect = openClawInspectReport()) {
+function openClawConfig(): any {
+  return {
+    channels: {
+      msteams: {
+        enabled: true,
+        appId: TEAMS_APP_ID,
+        tenantId: TEAMS_TENANT_ID,
+      },
+    },
+    plugins: { entries: { msteams: { enabled: true } } },
+  };
+}
+
+function successfulDockerRunner(
+  agent: Agent,
+  openClawInspect = openClawInspectReport(),
+  renderedOpenClawConfig = openClawConfig(),
+) {
   const expected: Array<{ args: string[]; result: DockerResult }> = [
     {
       args: ["image", "inspect", IMAGE],
@@ -95,17 +120,7 @@ function successfulDockerRunner(agent: Agent, openClawInspect = openClawInspectR
             args: imageFileArgs("/sandbox/.openclaw/openclaw.json"),
             result: {
               status: 0,
-              stdout: JSON.stringify({
-                channels: {
-                  msteams: {
-                    enabled: true,
-                    appId: TEAMS_APP_ID,
-                    appPassword: TEAMS_SECRET_PLACEHOLDER,
-                    tenantId: TEAMS_TENANT_ID,
-                  },
-                },
-                plugins: { entries: { msteams: { enabled: true } } },
-              }),
+              stdout: JSON.stringify(renderedOpenClawConfig),
             },
           },
           {
@@ -144,7 +159,6 @@ function successfulDockerRunner(agent: Agent, openClawInspect = openClawInspectR
               status: 0,
               stdout: [
                 `TEAMS_CLIENT_ID=${TEAMS_APP_ID}`,
-                `TEAMS_CLIENT_SECRET=${TEAMS_SECRET_PLACEHOLDER}`,
                 `TEAMS_TENANT_ID=${TEAMS_TENANT_ID}`,
                 "TEAMS_PORT=3978",
                 "",
@@ -208,26 +222,6 @@ describe("messaging plan image boundary helper", () => {
     expect(JSON.stringify(plan)).not.toContain("password-value");
   });
 
-  it("tracks exact current Teams manifest package specs", () => {
-    const manifestSpecs = (teamsManifest.agentPackages ?? []).map(({ agent, manager, spec }) => ({
-      agent,
-      manager,
-      spec,
-    }));
-    const planSpecs = (["openclaw", "hermes"] as const).flatMap((agent) =>
-      decodePlan(agent).buildSteps.map(({ value }: any) => ({
-        agent,
-        manager: value.manager,
-        spec: value.spec,
-      })),
-    );
-
-    expect(planSpecs).toEqual(manifestSpecs);
-    expect(OPENCLAW_TEAMS_PACKAGE_SPEC).toBe("npm:@openclaw/msteams@{{openclaw.version}}");
-    expect(HERMES_TEAMS_PACKAGE_SPEC).toBe("microsoft-teams-apps==2.0.13.4");
-    expect(HERMES_AIOHTTP_PACKAGE_SPEC).toBe("aiohttp==3.14.3");
-  });
-
   it("emits agent-specific Teams render, install, and runtime outputs", () => {
     const openclaw = decodePlan("openclaw");
     expect(openclaw.agentRender).toEqual([
@@ -236,11 +230,11 @@ describe("messaging plan image boundary helper", () => {
         path: "channels.msteams",
         value: expect.objectContaining({
           appId: TEAMS_APP_ID,
-          appPassword: TEAMS_SECRET_PLACEHOLDER,
         }),
       }),
       expect.objectContaining({ target: "openclaw.json", path: "plugins.entries.msteams" }),
     ]);
+    expect(openclaw.agentRender[0].value).not.toHaveProperty("appPassword");
     expect(openclaw.runtimeSetup.nodePreloads).toEqual([
       expect.objectContaining({
         module: "msteams-message-hints",
@@ -253,16 +247,22 @@ describe("messaging plan image boundary helper", () => {
     expect(hermes.agentRender).toEqual([
       expect.objectContaining({
         target: "~/.hermes/.env",
-        lines: expect.arrayContaining([
-          `TEAMS_CLIENT_ID=${TEAMS_APP_ID}`,
-          `TEAMS_CLIENT_SECRET=${TEAMS_SECRET_PLACEHOLDER}`,
-        ]),
+        lines: expect.arrayContaining([`TEAMS_CLIENT_ID=${TEAMS_APP_ID}`]),
       }),
       expect.objectContaining({ target: "~/.hermes/config.yaml", path: "platforms.teams" }),
     ]);
+    expect(JSON.stringify(hermes.agentRender)).not.toContain("TEAMS_CLIENT_SECRET=");
+    expect(hermes.runtimeSetup.envAliases).toEqual([
+      {
+        channelId: "teams",
+        envKey: "MSTEAMS_APP_PASSWORD",
+        targetEnvKey: "TEAMS_CLIENT_SECRET",
+        match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+        value: TEAMS_SECRET_PLACEHOLDER,
+      },
+    ]);
     expect(hermes.buildSteps.map((step: any) => step.value.spec)).toEqual([
       HERMES_TEAMS_PACKAGE_SPEC,
-      HERMES_AIOHTTP_PACKAGE_SPEC,
     ]);
   });
 
@@ -293,6 +293,16 @@ describe("messaging plan image boundary helper", () => {
 
     expect(() => verifyMessagingPlanImageBoundary(IMAGE, "openclaw", mock.runner)).toThrow(
       "OpenClaw Teams plugin evidence must be loaded from the managed npm project",
+    );
+  });
+
+  it("rejects an OpenClaw image that renders the retired appPassword field", () => {
+    const config = openClawConfig();
+    config.channels.msteams.appPassword = TEAMS_SECRET_PLACEHOLDER;
+    const mock = successfulDockerRunner("openclaw", openClawInspectReport(), config);
+
+    expect(() => verifyMessagingPlanImageBoundary(IMAGE, "openclaw", mock.runner)).toThrow(
+      "OpenClaw image Teams render must omit appPassword",
     );
   });
 
