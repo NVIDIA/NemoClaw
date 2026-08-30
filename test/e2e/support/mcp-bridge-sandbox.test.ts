@@ -288,7 +288,9 @@ network_policies:
       ),
     ).toHaveLength(1);
     expect(networkPolicySource).not.toContain("assertRawOpenShellAllowedIpsRebindingDenied");
-    expect(contractSource).toContain('["policy", "set", "--policy"');
+    expect(mcpBridgeSource).toContain("url: redactString(options.mcpUrl, [HOST_SECRET])");
+    expect(contractSource).toContain("setReceiptBoundPolicyDocument");
+    expect(contractSource).not.toContain('["policy", "set", "--policy"');
     expect(contractSource).toContain("server.requestCount()");
     expect(contractSource).toContain("raw-openshell-rebinding-policy-restore");
     expect(contractSource).toContain("raw-openshell-rebinding-policy-verify-restored");

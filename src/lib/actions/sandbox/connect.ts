@@ -2196,9 +2196,60 @@ async function prepareConnectSandboxWithinLifecycleFence(
             portableAgentLifecycleAuthorityDeps(),
           ),
         );
-        let qualified = probeTiming!.measure("authority", () =>
-          qualifyHermesPortableAcceptedReadinessAuthority(sandboxName),
-        );
+        let qualified;
+        try {
+          qualified = probeTiming!.measure("authority", () =>
+            qualifyHermesPortableAcceptedReadinessAuthority(sandboxName),
+          );
+        } catch {
+          // A stopped receipt-owned Hermes container can be restarted before
+          // its operating authority is ready to answer. Re-enter the existing
+          // proof-backed requalification and lifecycle recovery exactly once;
+          // executable, socket, receipt, container, or policy drift still
+          // fails inside those authorities before another readiness read.
+          const requalified = probeTiming!.measure("authority", () =>
+            requalifyPortableAgentSandboxAuthority(
+              sandboxName,
+              portableAgentLifecycleAuthorityDeps(),
+            ),
+          );
+          portableAuthorityRequalified = true;
+          if (requalified.kind === "not-installed" || requalified.kind === "not-hermes") {
+            throw new Error("Hermes portable lifecycle authority changed during probe");
+          }
+          active = probeTiming!.measure("authority", () =>
+            requireHermesPortableActiveLifecycleAuthority(
+              sandboxName,
+              active,
+              portableAgentLifecycleAuthorityDeps(),
+            ),
+          );
+          const registered = active.entry;
+          const recovery = probeTiming!.measure("lifecycle", () =>
+            recoverPortableDemoSandboxLifecycleForConnect(
+              sandboxName,
+              registered,
+              resolveSandboxGatewayName(registered),
+            ),
+          );
+          if (recovery.kind === "not-installed") {
+            probeTiming!.setLifecycleAction("failed");
+            throw new Error("Hermes portable lifecycle authority disappeared during probe");
+          }
+          probeTiming!.setLifecycleAction(recovery.kind === "recovered" ? "recovered" : "reused");
+          active = probeTiming!.measure("authority", () =>
+            requireHermesPortableActiveLifecycleAuthority(
+              sandboxName,
+              active,
+              portableAgentLifecycleAuthorityDeps(),
+            ),
+          );
+          qualified = probeTiming!.measure("authority", () =>
+            qualifyHermesPortableAcceptedReadinessAuthority(sandboxName, {
+              priorReceiptAuthority: requalified,
+            }),
+          );
+        }
         if (qualified.kind === "requalification-required") {
           const requalified = probeTiming!.measure("authority", () =>
             requalifyPortableAgentSandboxAuthority(
