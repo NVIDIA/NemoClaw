@@ -11,6 +11,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 export const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+const WECHAT_REFRESH_HELPER = path.join(
+  import.meta.dirname,
+  "..",
+  "scripts",
+  "lib",
+  "refresh-openclaw-wechat-placeholder.py",
+);
 
 // Heredoc-aware extractor. The reconcile harness's naive /^}/m regex stops at
 // the first column-0 "}", which for refresh_openclaw_provider_placeholders is
@@ -48,8 +55,11 @@ export interface RunResult {
 export function runRefresh(config: unknown, env: Record<string, string> = {}): RunResult {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-extra-placeholder-"));
+  const libDir = path.join(root, "lib");
   const openclawDir = path.join(root, ".openclaw");
+  fs.mkdirSync(libDir);
   fs.mkdirSync(openclawDir, { recursive: true });
+  fs.copyFileSync(WECHAT_REFRESH_HELPER, path.join(libDir, path.basename(WECHAT_REFRESH_HELPER)));
   const configPath = path.join(openclawDir, "openclaw.json");
   const hashPath = path.join(openclawDir, ".config-hash");
   fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
