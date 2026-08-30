@@ -207,6 +207,27 @@ async function stopOwnedProcessGroup(pid: number, context: string): Promise<void
   throw new OpenShellAgentError(context + " process group " + pid + " did not exit after SIGKILL");
 }
 
+function spawnOwnedProcessGroup(
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  stdio: "inherit" | ["ignore", number, number],
+  context = command,
+) {
+  const child = spawn(command, [...args], { detached: true, env, stdio });
+  let stopPromise: Promise<void> | undefined;
+  const stop = async (): Promise<void> => {
+    try {
+      await (stopPromise ??=
+        child.pid === undefined ? Promise.resolve() : stopOwnedProcessGroup(child.pid, context));
+    } catch (error) {
+      stopPromise = undefined;
+      throw error;
+    }
+  };
+  return { child, stop };
+}
+
 export const defaultOpenShellTools: OpenShellTools = {
   run(command, args, options): string {
     const output = execFileSync(command, [...args], {
@@ -218,12 +239,7 @@ export const defaultOpenShellTools: OpenShellTools = {
     return String(output ?? "").trim();
   },
   runAsync(command, args, options): OpenShellExecution {
-    const child = spawn(command, [...args], {
-      detached: true,
-      env: options.env,
-      stdio: "inherit",
-    });
-    let cancelPromise: Promise<void> | undefined;
+    const { child, stop } = spawnOwnedProcessGroup(command, args, options.env, "inherit");
     const completion = new Promise<void>((resolve, reject) => {
       child.once("error", reject);
       child.once("exit", (code, signal) => {
@@ -237,36 +253,23 @@ export const defaultOpenShellTools: OpenShellTools = {
       });
     });
     return {
-      cancel: () => {
-        cancelPromise ??=
-          child.pid === undefined ? Promise.resolve() : stopOwnedProcessGroup(child.pid, command);
-        return cancelPromise;
-      },
+      cancel: stop,
       completion,
     };
   },
   start(command, args, options): () => Promise<void> {
     const log = openSync(options.logPath, "w", 0o600);
     try {
-      const child = spawn(command, [...args], {
-        detached: true,
-        env: options.env,
-        stdio: ["ignore", log, log],
-      });
+      const { child, stop } = spawnOwnedProcessGroup(
+        command,
+        args,
+        options.env,
+        ["ignore", log, log],
+        "Failed to stop owned " + command,
+      );
       child.on("error", () => undefined);
       child.unref();
-      let cleanup: Promise<void> | undefined;
-      return async () => {
-        try {
-          await (cleanup ??=
-            child.pid === undefined
-              ? Promise.resolve()
-              : stopOwnedProcessGroup(child.pid, "Failed to stop owned " + command));
-        } catch (error) {
-          cleanup = undefined;
-          throw error;
-        }
-      };
+      return stop;
     } finally {
       closeSync(log);
     }

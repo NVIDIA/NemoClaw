@@ -76,24 +76,21 @@ export const defaultLocalReviewLifecycle: LocalReviewLifecycle = {
   prepare: (env) => prepareAdvisorSandboxInputs(env, { collectContext: async () => null }),
 };
 
-function restrictedGitEnvironment(): NodeJS.ProcessEnv {
-  return {
-    GIT_AUTHOR_EMAIL: "local-review@localhost",
-    GIT_AUTHOR_NAME: "NemoClaw Local Review",
-    GIT_COMMITTER_EMAIL: "local-review@localhost",
-    GIT_COMMITTER_NAME: "NemoClaw Local Review",
-    GIT_CONFIG_GLOBAL: os.devNull,
-    GIT_CONFIG_NOSYSTEM: "1",
-    HOME: process.env.HOME,
-    LANG: process.env.LANG,
-    LC_ALL: process.env.LC_ALL,
-    PATH: process.env.PATH,
-    TEMP: process.env.TEMP,
-    TMP: process.env.TMP,
-    TMPDIR: process.env.TMPDIR,
-  };
-}
-
+const gitEnvironment: NodeJS.ProcessEnv = {
+  GIT_AUTHOR_EMAIL: "local-review@localhost",
+  GIT_AUTHOR_NAME: "NemoClaw Local Review",
+  GIT_COMMITTER_EMAIL: "local-review@localhost",
+  GIT_COMMITTER_NAME: "NemoClaw Local Review",
+  GIT_CONFIG_GLOBAL: os.devNull,
+  GIT_CONFIG_NOSYSTEM: "1",
+  HOME: process.env.HOME,
+  LANG: process.env.LANG,
+  LC_ALL: process.env.LC_ALL,
+  PATH: process.env.PATH,
+  TEMP: process.env.TEMP,
+  TMP: process.env.TMP,
+  TMPDIR: process.env.TMPDIR,
+};
 function disabledFilters(cwd: string): string[] {
   const names = new Set<string>();
   for (const entry of fs.readdirSync(cwd, { recursive: true, withFileTypes: true })) {
@@ -104,9 +101,8 @@ function disabledFilters(cwd: string): string[] {
       continue;
     for (const match of fs
       .readFileSync(path.join(entry.parentPath, entry.name), "utf8")
-      .matchAll(/(?:^|\s)filter=([^\s]+)/gmu)) {
+      .matchAll(/(?:^|\s)filter=([^\s]+)/gmu))
       if (/^[A-Za-z0-9][A-Za-z0-9.-]*$/u.test(match[1]!)) names.add(match[1]!);
-    }
   }
   return [...names].flatMap((name) => [
     "-c",
@@ -119,7 +115,6 @@ function disabledFilters(cwd: string): string[] {
     `filter.${name}.required=false`,
   ]);
 }
-
 function git(cwd: string, args: readonly string[], input?: string): string {
   return execFileSync(
     "git",
@@ -136,34 +131,18 @@ function git(cwd: string, args: readonly string[], input?: string): string {
     {
       cwd,
       encoding: "utf8",
-      env: restrictedGitEnvironment(),
+      env: gitEnvironment,
       input,
       maxBuffer: Number.POSITIVE_INFINITY,
       stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     },
   );
 }
-
-function gitValue(cwd: string, args: readonly string[]): string {
-  return git(cwd, args).trim();
-}
-
-function copyUntrackedFiles(source: string, destination: string): void {
-  const files = git(source, ["ls-files", "--others", "--exclude-standard", "-z"]);
-  for (const relativePath of files.split("\0").filter(Boolean)) {
-    const sourcePath = path.join(source, relativePath);
-    const destinationPath = path.join(destination, relativePath);
-    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-    fs.cpSync(sourcePath, destinationPath, { recursive: true, verbatimSymlinks: true });
-  }
-}
-
+const gitValue = (cwd: string, args: readonly string[]): string => git(cwd, args).trim();
 function removeSnapshotSymlinks(directory: string): void {
-  for (const entry of fs.readdirSync(directory, { recursive: true, withFileTypes: true })) {
+  for (const entry of fs.readdirSync(directory, { recursive: true, withFileTypes: true }))
     if (entry.isSymbolicLink()) fs.rmSync(path.join(entry.parentPath, entry.name), { force: true });
-  }
 }
-
 export function createLocalReviewSnapshot(
   source: string,
   destination: string,
@@ -179,15 +158,21 @@ export function createLocalReviewSnapshot(
     git(destination, ["apply", "--cached", "--binary", "-"], patch);
     git(destination, ["apply", "--binary", "-"], patch);
   }
-  copyUntrackedFiles(source, destination);
+  for (const relative of git(source, ["ls-files", "--others", "--exclude-standard", "-z"])
+    .split("\0")
+    .filter(Boolean)) {
+    fs.mkdirSync(path.dirname(path.join(destination, relative)), { recursive: true });
+    fs.cpSync(path.join(source, relative), path.join(destination, relative), {
+      recursive: true,
+      verbatimSymlinks: true,
+    });
+  }
   git(destination, ["add", "--all"]);
-  const tree = gitValue(destination, ["write-tree"]);
-  const parent = gitValue(destination, ["rev-parse", "HEAD"]);
   const commit = gitValue(destination, [
     "commit-tree",
-    tree,
+    gitValue(destination, ["write-tree"]),
     "-p",
-    parent,
+    initialHead,
     "-m",
     "Local review snapshot",
   ]);
@@ -197,176 +182,108 @@ export function createLocalReviewSnapshot(
   return { baseRef, headRef: commit };
 }
 
-function assertPublicationPath(
-  source: string,
-  resource: string,
-  options: { destination?: boolean; requireParent?: boolean } = {},
-): void {
-  const canonicalSource = fs.realpathSync(source);
-  const relative = path.relative(canonicalSource, resource);
-  if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
+function assertPublicationPath(source: string, resource: string, destination = false): void {
+  const root = fs.realpathSync(source);
+  const relative = path.relative(root, resource);
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(".." + path.sep) ||
+    path.isAbsolute(relative)
+  )
     throw new Error(`Artifact publication path escapes the contributor checkout: ${resource}`);
-  }
-  const parts = relative.split(path.sep).filter(Boolean);
-  let current = canonicalSource;
-  const count = options.requireParent ? Math.max(0, parts.length - 1) : parts.length;
-  for (const part of parts.slice(0, count)) {
+  let current = root;
+  for (const part of relative.split(path.sep)) {
     current = path.join(current, part);
-    try {
-      const stat = fs.lstatSync(current);
-      if (stat.isSymbolicLink() || !stat.isDirectory()) {
-        throw new Error(
-          `Artifact publication path component must be a directory and not a symbolic link: ${current}`,
-        );
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") break;
-      throw error;
-    }
-  }
-  const existingParent = fs.existsSync(path.dirname(resource))
-    ? fs.realpathSync(path.dirname(resource))
-    : undefined;
-  if (existingParent) {
-    const parentRelative = path.relative(canonicalSource, existingParent);
-    if (
-      parentRelative.startsWith(`..${path.sep}`) ||
-      parentRelative === ".." ||
-      path.isAbsolute(parentRelative)
-    ) {
-      throw new Error(`Artifact publication parent escapes the contributor checkout: ${resource}`);
-    }
-  }
-  if (options.destination && fs.existsSync(resource)) {
-    const stat = fs.lstatSync(resource);
-    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    if (!fs.existsSync(current)) break;
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink() || (!stat.isDirectory() && current !== resource))
       throw new Error(
-        `Existing artifact publication destination must be a directory and not a symbolic link: ${resource}`,
+        `Artifact publication path component must be a directory and not a symbolic link: ${current}`,
       );
-    }
   }
+  if (destination && fs.existsSync(resource) && !fs.lstatSync(resource).isDirectory())
+    throw new Error(
+      `Existing artifact publication destination must be a directory and not a symbolic link: ${resource}`,
+    );
 }
 
-function publicationCleanupFailure(resource: string, error: unknown): Error {
-  return contextualError(
-    `Local review failed during cleanup for artifact publication path ${resource}; remove it manually before retrying`,
-    error,
-  );
-}
-
-function removePublicationPath(
-  source: string,
-  resource: string,
-  publication: LocalReviewPublication,
-): unknown {
-  try {
-    assertPublicationPath(source, resource, { requireParent: true });
-    publication.remove(resource, { recursive: true, force: true });
-  } catch (error) {
-    return publicationCleanupFailure(resource, error);
-  }
-}
-
-type StagedPublication = {
-  discard: () => unknown;
-  publish: () => void;
-};
-
+type StagedPublication = { discard: () => unknown; publish: () => void };
 function stageArtifacts(
   source: string,
   artifacts: string,
   destination: string,
   publication: LocalReviewPublication,
 ): StagedPublication {
-  const nonce = randomUUID();
-  const staged = `${destination}.staged-${nonce}`;
-  const previous = `${destination}.previous-${nonce}`;
+  const suffix = randomUUID();
+  const staged = destination + ".staged-" + suffix;
+  const previous = destination + ".previous-" + suffix;
   const parent = path.dirname(destination);
-  assertPublicationPath(source, parent);
   const hadParent = fs.existsSync(parent);
+  assertPublicationPath(source, parent);
   fs.mkdirSync(parent, { recursive: true });
-  assertPublicationPath(source, destination, { destination: true });
-
-  const removeEmptyCreatedParent = (): unknown => {
-    if (!hadParent && fs.existsSync(parent) && fs.readdirSync(parent).length === 0)
-      return removePublicationPath(source, parent, publication);
+  assertPublicationPath(source, destination, true);
+  const remove = (resource: string): unknown => {
+    try {
+      assertPublicationPath(source, resource);
+      publication.remove(resource, { recursive: true, force: true });
+    } catch (error) {
+      return contextualError(
+        `Failed to remove artifact publication path ${resource}; remove it manually`,
+        error,
+      );
+    }
   };
   const discard = (): unknown => {
-    let failure = removePublicationPath(source, staged, publication);
-    failure = combineFailures(failure, removeEmptyCreatedParent());
+    let error = remove(staged);
+    if (!hadParent && fs.existsSync(parent) && fs.readdirSync(parent).length === 0)
+      error = combineFailures(error, remove(parent));
     if (fs.existsSync(staged))
-      failure = combineFailures(
-        failure,
+      error = combineFailures(
+        error,
         new Error(
           `Residual staged output remains at ${staged}; remove it manually before retrying`,
         ),
       );
-    if (failure !== undefined)
-      failure = contextualError(
-        `Local review failed to discard staged output at ${staged}; remove it manually before retrying`,
-        failure,
-      );
-    return failure;
+    return error;
   };
-
   try {
-    assertPublicationPath(source, staged, { requireParent: true });
     publication.copy(artifacts, staged, { recursive: true, errorOnExist: true });
   } catch (error) {
-    const failure = combineFailures(safeFailure(error), discard());
-    throw failure;
+    throw combineFailures(safeFailure(error), discard());
   }
-
   return {
     discard,
     publish: () => {
-      let failure: unknown;
-      let hadPrevious = false;
+      const hadDestination = fs.existsSync(destination);
       try {
-        assertPublicationPath(source, destination, { destination: true });
-        hadPrevious = fs.existsSync(destination);
-        if (hadPrevious) publication.rename(destination, previous);
-        assertPublicationPath(source, staged, { destination: true });
+        assertPublicationPath(source, destination, true);
+        if (hadDestination) publication.rename(destination, previous);
         publication.rename(staged, destination);
-        if (hadPrevious) {
-          assertPublicationPath(source, previous, { destination: true });
-          publication.remove(previous, { recursive: true });
-        }
-        return;
+        if (hadDestination) publication.remove(previous, { recursive: true });
       } catch (error) {
-        failure = safeFailure(error);
-      }
-      failure = combineFailures(failure, removePublicationPath(source, staged, publication));
-      if (hadPrevious && fs.existsSync(previous)) {
-        failure = combineFailures(failure, removePublicationPath(source, destination, publication));
-        try {
-          assertPublicationPath(source, previous, { destination: true });
-          assertPublicationPath(source, destination, { destination: true, requireParent: true });
-          if (!fs.existsSync(destination)) publication.rename(previous, destination);
-        } catch (error) {
+        let failure: unknown = combineFailures(safeFailure(error), remove(staged));
+        if (hadDestination && fs.existsSync(previous)) {
+          failure = combineFailures(failure, remove(destination));
+          try {
+            if (!fs.existsSync(destination)) publication.rename(previous, destination);
+          } catch (restore) {
+            failure = combineFailures(
+              failure,
+              contextualError(
+                `Failed to restore prior output from ${previous} to ${destination}; recover it manually`,
+                restore,
+              ),
+            );
+          }
+        }
+        if (fs.existsSync(previous))
           failure = combineFailures(
             failure,
-            contextualError(
-              `Failed to restore prior output from ${previous} to ${destination}; recover it manually`,
-              error,
-            ),
+            new Error(`Prior output remains at ${previous}; restore it manually`),
           );
-        }
+        throw failure;
       }
-      if (fs.existsSync(staged))
-        failure = combineFailures(
-          failure,
-          new Error(
-            `Residual staged output remains at ${staged}; remove it manually before retrying`,
-          ),
-        );
-      if (fs.existsSync(previous))
-        failure = combineFailures(
-          failure,
-          new Error(`Prior output remains at ${previous}; restore it to ${destination} manually`),
-        );
-      failure = combineFailures(failure, removeEmptyCreatedParent());
-      throw failure;
     },
   };
 }
@@ -427,160 +344,94 @@ export async function runLocalReview(input: {
   const source = fs.realpathSync(input.source);
   if (!input.lifecycle && !process.env.PR_REVIEW_ADVISOR_API_KEY)
     throw new Error("PR_REVIEW_ADVISOR_API_KEY is required for local review");
-  const temporaryRoot =
+  const root =
     input.temporaryRoot ?? fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-local-review-"));
-  const ownsTemporaryRoot = input.temporaryRoot === undefined;
-  const advisorDirectory =
-    input.advisorDirectory ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-  const snapshot = path.join(temporaryRoot, "pr-workdir");
-  const outputRoot = path.join(temporaryRoot, "output");
-  const runnerTemp = path.join(temporaryRoot, `runner-${randomUUID().slice(0, 8)}`);
+  const ownsRoot = input.temporaryRoot === undefined;
+  const snapshot = path.join(root, "pr-workdir");
+  const output = path.join(root, "output");
+  const runners = path.join(root, "runners");
   const lifecycle = input.lifecycle ?? defaultLocalReviewLifecycle;
-  const publication = input.publication ?? defaultLocalReviewPublication;
-  const removeTemporaryRoot = input.removeTemporaryRoot ?? fs.rmSync;
-  let activeLifecycleCleanup: (() => Promise<void>) | undefined;
-  let sharedGateway: ReturnType<LocalReviewLifecycle["startGateway"]>;
-  let cleanupPromise: Promise<void> | undefined;
-  let primaryFailure: unknown;
-  let cleanupFailure: unknown;
-  let stagedPublication: StagedPublication | undefined;
-  let result: string | undefined;
-  const cleanup = (): Promise<void> => {
-    if (cleanupPromise) return cleanupPromise;
-    cleanupPromise = (async () => {
-      let failure: unknown;
-      try {
-        await activeLifecycleCleanup?.();
-        activeLifecycleCleanup = undefined;
-      } catch (error) {
-        failure = safeFailure(error);
-      }
-      try {
-        await sharedGateway?.stop?.();
-        sharedGateway = undefined;
-      } catch (error) {
-        failure = combineFailures(
-          failure,
-          contextualError("Local review failed during cleanup for gateway", error),
-        );
-      }
-      try {
-        if (ownsTemporaryRoot) removeTemporaryRoot(temporaryRoot, { recursive: true, force: true });
-      } catch (error) {
-        failure = combineFailures(
-          failure,
-          contextualError(
-            `Local review failed during cleanup for temporary root ${temporaryRoot}`,
-            error,
-          ),
-        );
-      }
-      if (failure !== undefined) throw failure;
-    })();
-    void cleanupPromise.catch(() => {
-      cleanupPromise = undefined;
-    });
-    return cleanupPromise;
-  };
-  const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
-  const signalHandlers = new Map<NodeJS.Signals, () => void>();
+  const destination = path.join(source, LOCAL_OUTPUT_DIRECTORY);
+  let activeCleanup: (() => Promise<void>) | undefined;
+  let staged: StagedPublication | undefined;
   let receivedSignal: NodeJS.Signals | undefined;
-  for (const signal of signals) {
+  const handlers = new Map<NodeJS.Signals, () => void>();
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     const handler = (): void => {
       receivedSignal ??= signal;
-      void cleanup().catch(() => undefined);
+      void activeCleanup?.().catch(() => undefined);
     };
-    signalHandlers.set(signal, handler);
+    handlers.set(signal, handler);
     process.once(signal, handler);
   }
-  const removeSignalHandlers = (): void => {
-    for (const [signal, handler] of signalHandlers) process.off(signal, handler);
+  const removeHandlers = (): void => {
+    for (const [signal, handler] of handlers) process.off(signal, handler);
   };
+  let primary: unknown;
+  let cleanup: unknown;
   try {
-    fs.mkdirSync(outputRoot, { recursive: true });
-    fs.mkdirSync(runnerTemp, { recursive: true });
-    const baseCommit = gitValue(source, ["rev-parse", "--verify", "origin/main^{commit}"]);
-    const refs = (input.prepareSnapshot ?? createLocalReviewSnapshot)(source, snapshot, baseCommit);
+    fs.mkdirSync(output, { recursive: true });
+    fs.mkdirSync(runners, { recursive: true });
+    const base = gitValue(source, ["rev-parse", "--verify", "origin/main^{commit}"]);
+    const refs = (input.prepareSnapshot ?? createLocalReviewSnapshot)(source, snapshot, base);
     for (const specialist of input.specialists ?? ADVISOR_SPECIALISTS) {
-      const env = specialistEnvironment({
-        advisorDirectory,
-        outputRoot,
-        runnerTemp,
-        snapshot,
-        refs,
-        specialist,
-      });
-      const specialistLifecycle: LocalReviewLifecycle = {
-        ...lifecycle,
-        startGateway: (currentEnv) => {
-          if (sharedGateway) return undefined;
-          sharedGateway = lifecycle.startGateway(currentEnv);
-          return sharedGateway;
-        },
-      };
+      const runnerTemp = path.join(runners, specialist.interest + "-" + randomUUID().slice(0, 8));
+      fs.mkdirSync(runnerTemp, { recursive: true });
       await runAdvisorSpecialist({
-        env,
-        lifecycle: specialistLifecycle,
-        cleanupGateway: false,
-        validate: () => validateSpecialistArtifacts(outputRoot, specialist.interest),
-        setActiveCleanup: (cleanup) => {
-          activeLifecycleCleanup = cleanup;
+        env: specialistEnvironment({
+          advisorDirectory:
+            input.advisorDirectory ??
+            path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+          outputRoot: output,
+          runnerTemp,
+          snapshot,
+          refs,
+          specialist,
+        }),
+        lifecycle,
+        validate: () => validateSpecialistArtifacts(output, specialist.interest),
+        setActiveCleanup: (value) => {
+          activeCleanup = value;
         },
       });
     }
-    const destination = path.join(source, LOCAL_OUTPUT_DIRECTORY);
-    stagedPublication = stageArtifacts(
+    staged = stageArtifacts(
       source,
-      path.join(outputRoot, "artifacts"),
+      path.join(output, "artifacts"),
       destination,
-      publication,
+      input.publication ?? defaultLocalReviewPublication,
     );
-    result = destination;
   } catch (error) {
-    primaryFailure = safeFailure(error);
+    primary = safeFailure(error);
   }
   try {
-    await cleanup();
+    await activeCleanup?.();
+    activeCleanup = undefined;
+    if (ownsRoot) (input.removeTemporaryRoot ?? fs.rmSync)(root, { recursive: true, force: true });
   } catch (error) {
-    cleanupFailure = safeFailure(error);
-    if (primaryFailure === undefined) activeLifecycleCleanup = undefined;
+    cleanup = contextualError(
+      `Local review failed during cleanup for temporary root ${root}`,
+      error,
+    );
   }
-  if (
-    receivedSignal !== undefined ||
-    primaryFailure !== undefined ||
-    cleanupFailure !== undefined
-  ) {
-    const publicationCleanupFailure = stagedPublication?.discard();
-    cleanupFailure = combineFailures(cleanupFailure, publicationCleanupFailure);
-    if (receivedSignal !== undefined && publicationCleanupFailure !== undefined) {
-      console.error(safeDiagnostic(publicationCleanupFailure));
-    }
-  }
-  if (receivedSignal !== undefined) {
-    removeSignalHandlers();
+  if (receivedSignal || primary || cleanup) cleanup = combineFailures(cleanup, staged?.discard());
+  removeHandlers();
+  if (receivedSignal) {
+    if (cleanup) console.error(safeDiagnostic(cleanup));
     process.kill(process.pid, receivedSignal);
-    if (primaryFailure === undefined && cleanupFailure === undefined) return result!;
   }
-  if (primaryFailure !== undefined || cleanupFailure !== undefined) removeSignalHandlers();
-  if (primaryFailure !== undefined) {
-    if (cleanupFailure !== undefined) {
-      const primary = safeFailure(primaryFailure).message;
-      const cleanup = safeFailure(cleanupFailure).message;
+  if (primary) {
+    if (cleanup)
       throw new AggregateError(
-        [primaryFailure, cleanupFailure],
-        `${primary}; cleanup also failed: ${cleanup}`,
-        { cause: primaryFailure },
+        [primary, cleanup],
+        safeFailure(primary).message + "; cleanup also failed: " + safeFailure(cleanup).message,
+        { cause: primary },
       );
-    }
-    throw primaryFailure;
+    throw primary;
   }
-  if (cleanupFailure !== undefined) throw cleanupFailure;
-  try {
-    stagedPublication!.publish();
-    return result!;
-  } finally {
-    removeSignalHandlers();
-  }
+  if (cleanup) throw cleanup;
+  staged!.publish();
+  return destination;
 }
 
 async function main(): Promise<void> {

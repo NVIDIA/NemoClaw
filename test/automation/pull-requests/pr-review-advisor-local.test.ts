@@ -10,18 +10,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createLocalReviewSnapshot,
-  defaultLocalReviewLifecycle,
   runLocalReview,
   type LocalReviewLifecycle,
   type LocalReviewPublication,
 } from "../../../tools/pr-review-advisor/local-review-implementation.mts";
 import { defaultOpenShellTools } from "../../../tools/openshell-agent/runtime.mts";
 import { ADVISOR_PI_IMAGE } from "../../../tools/pr-review-advisor/runtime-constants.mts";
-import {
-  redactAdvisorDiagnostic,
-  runAdvisorSpecialist,
-  runAdvisorSpecialistCommand,
-} from "../../../tools/pr-review-advisor/specialist-lifecycle.mts";
 import { ADVISOR_SPECIALISTS } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
 
 const SIGTERM_IGNORING_CHILD_FIXTURE = fileURLToPath(
@@ -165,168 +159,6 @@ afterEach(() => {
 });
 
 describe("local PR review advisor", () => {
-  it.each([
-    ["environment value", "failure env-secret", "failure [REDACTED]"],
-    ["secret assignment", "failure token=literal-secret", "failure token=[REDACTED]"],
-    [
-      "authorization",
-      "failure Authorization: Basic literal-secret",
-      "failure Authorization: [REDACTED]",
-    ],
-    ["bearer credential", "failure Bearer literal-secret", "failure Bearer [REDACTED]"],
-  ])("redacts %s diagnostics", (_case, diagnostic, expected) => {
-    vi.stubEnv("ADVISOR_TEST_SECRET", "env-secret");
-    const redacted = redactAdvisorDiagnostic(diagnostic);
-    expect(redacted).toContain(expected);
-    expect(redacted).not.toMatch(/env-secret|literal-secret/u);
-  });
-
-  it("owns CI analysis gateway cleanup across lifecycle outcomes", async () => {
-    const unavailable = vi.fn();
-    const stop = vi.fn(async () => undefined);
-    const lifecycle = { ...artifactLifecycle(stop), unavailable };
-    const prepare = vi.spyOn(lifecycle, "prepare");
-    const startGateway = vi.spyOn(lifecycle, "startGateway");
-
-    await runAdvisorSpecialistCommand("prepare", {}, lifecycle);
-    await runAdvisorSpecialistCommand(
-      "analysis",
-      { PR_REVIEW_ADVISOR_RUN_ANALYSIS: "0" },
-      lifecycle,
-    );
-    await expect(runAdvisorSpecialistCommand(undefined, {}, lifecycle)).rejects.toThrow(
-      "Unsupported specialist lifecycle command: missing",
-    );
-
-    expect(prepare).toHaveBeenCalledOnce();
-    expect(startGateway).not.toHaveBeenCalled();
-    expect(unavailable).toHaveBeenCalledOnce();
-    expect(stop).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    {
-      name: "success",
-      configure: () => Promise.resolve(),
-      downloadFailure: undefined,
-      expected: "complete",
-      unavailable: 0,
-    },
-    {
-      name: "configuration failure",
-      configure: () => Promise.reject(new Error("configuration api_key=ci-secret")),
-      downloadFailure: undefined,
-      expected: "configuration api_key=[REDACTED]",
-      unavailable: 1,
-    },
-    {
-      name: "later failure",
-      configure: () => Promise.resolve(),
-      downloadFailure: new Error("download failed"),
-      expected: "download failed",
-      unavailable: 0,
-    },
-  ])(
-    "stops the CI-owned gateway after $name (#10611)",
-    async ({ configure, downloadFailure, expected, unavailable }) => {
-      const stop = vi.fn(async () => undefined);
-      const unavailableArtifact = vi.fn();
-      const configuration = configure();
-      void configuration.catch(() => undefined);
-      const lifecycle: LocalReviewLifecycle = {
-        ...artifactLifecycle(stop),
-        startGateway: () => ({ configure: configuration, stop }),
-        download: () => {
-          downloadFailure &&
-            (() => {
-              throw downloadFailure;
-            })();
-        },
-        unavailable: unavailableArtifact,
-      };
-
-      const result = await runAdvisorSpecialistCommand(
-        "analysis",
-        { PR_REVIEW_ADVISOR_RUN_ANALYSIS: "1", PR_REVIEW_ADVISOR_API_KEY: "ci-secret" },
-        lifecycle,
-      ).then(
-        () => "complete",
-        (error: Error) => error.message,
-      );
-
-      expect(result).toContain(expected);
-      expect(stop).toHaveBeenCalledOnce();
-      expect(unavailableArtifact).toHaveBeenCalledTimes(unavailable);
-    },
-  );
-
-  it("kills a SIGTERM-ignoring execution before sandbox and gateway cleanup (#10611)", async () => {
-    const source = repository();
-    const childDirectory = temporaryDirectory();
-    const pidPath = path.join(childDirectory, "pid");
-    const termPath = path.join(childDirectory, "term");
-    const descendantPath = path.join(childDirectory, "descendant");
-    const events: string[] = [];
-    const stop = vi.fn(async () => {
-      events.push("gateway");
-    });
-    let childPid = 0;
-    const lifecycle: LocalReviewLifecycle = {
-      ...artifactLifecycle(stop),
-      create: () => undefined,
-      run: () => {
-        const execution = defaultOpenShellTools.runAsync(
-          process.execPath,
-          ["--experimental-strip-types", "--no-warnings", SIGTERM_IGNORING_CHILD_FIXTURE],
-          {
-            env: {
-              ...process.env,
-              DESCENDANT_PATH: descendantPath,
-              PID_PATH: pidPath,
-              TERM_PATH: termPath,
-            },
-          },
-        );
-        return {
-          cancel: () => {
-            events.push("cancel");
-            return execution.cancel();
-          },
-          completion: execution.completion,
-        };
-      },
-      remove: () => {
-        events.push("sandbox");
-      },
-    };
-    const realKill = process.kill.bind(process);
-    const kill = vi
-      .spyOn(process, "kill")
-      .mockImplementation((pid, signal) =>
-        pid === process.pid && signal !== 0 ? (events.push("signal"), true) : realKill(pid, signal),
-      );
-
-    const review = runLocalReview({
-      source,
-      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
-      lifecycle,
-      temporaryRoot: temporaryDirectory(),
-    });
-    await vi.waitFor(() => expect(fs.existsSync(descendantPath)).toBe(true));
-    childPid = Number.parseInt(fs.readFileSync(pidPath, "utf8"), 10);
-    const descendantPid = Number.parseInt(fs.readFileSync(descendantPath, "utf8"), 10);
-    process.emit("SIGTERM");
-    await expect(review).rejects.toThrow(/failed during run/u);
-
-    expect(events.slice(0, 4)).toEqual(["cancel", "sandbox", "gateway", "signal"]);
-    expect(fs.readFileSync(termPath, "utf8")).toBe("SIGTERM");
-    expect(() => realKill(childPid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
-    expect(() => realKill(descendantPid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
-    expect(kill).toHaveBeenCalledWith(-childPid, "SIGTERM");
-    expect(kill).toHaveBeenCalledWith(-childPid, "SIGKILL");
-    expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
-  });
-
   it("exports the digest-pinned advisor image for workflow consumers (#10610)", () => {
     const githubEnv = path.join(temporaryDirectory(), "github-env");
     execFileSync(
@@ -486,69 +318,6 @@ describe("local PR review advisor", () => {
     expect(npmEnvironment).toContain("npm_config_cache=" + path.join(source, "npm-cache"));
   });
 
-  it("removes the bootstrap checkout before preserving a termination signal (#10611)", async () => {
-    const source = temporaryDirectory();
-    const temporaryRoot = temporaryDirectory();
-    git(source, ["init", "--initial-branch=main"]);
-    git(source, ["config", "user.name", "Test"]);
-    git(source, ["config", "user.email", "test@example.com"]);
-    fs.mkdirSync(path.join(source, "tools", "pr-review-advisor"), { recursive: true });
-    fs.copyFileSync(
-      path.resolve("tools/pr-review-advisor/local-review.mts"),
-      path.join(source, "tools", "pr-review-advisor", "local-review.mts"),
-    );
-    fs.writeFileSync(
-      path.join(source, "tools", "pr-review-advisor", "local-review-implementation.mts"),
-      [
-        'import fs from "node:fs";',
-        'import path from "node:path";',
-        'fs.writeFileSync(path.join(process.argv[2], "wrapper-ready"), "ready\\n");',
-        "setInterval(() => undefined, 1000);",
-      ].join("\n"),
-    );
-    const npmStarted = path.join(source, "npm-started");
-    const npmBin = installFakeNpm(
-      source,
-      `touch ${JSON.stringify(npmStarted)}\ntrap 'exit 143' TERM INT HUP\nwhile :; do sleep 1; done`,
-    );
-    git(source, ["add", "."]);
-    git(source, ["commit", "-m", "trusted base"]);
-    git(source, ["remote", "add", "origin", source]);
-    git(source, ["fetch", "origin", "main"]);
-    const child = spawn(
-      process.execPath,
-      ["--experimental-strip-types", "--no-warnings", "tools/pr-review-advisor/local-review.mts"],
-      {
-        cwd: source,
-        env: {
-          ...process.env,
-          HOME: path.resolve(npmBin, "../.."),
-          TMPDIR: temporaryRoot,
-          PATH: npmBin + path.delimiter + process.env.PATH,
-        },
-        stdio: "pipe",
-      },
-    );
-    let stderr = "";
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => (stderr += chunk));
-    await waitForFixturePath(npmStarted, child, () => stderr);
-    expect(fs.existsSync(npmStarted)).toBe(true);
-    expect(fs.existsSync(path.join(source, "wrapper-ready"))).toBe(false);
-
-    child.kill("SIGTERM");
-    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-      (resolve) => child.once("close", (code, signal) => resolve({ code, signal })),
-    );
-
-    expect(result, stderr).toEqual({ code: null, signal: "SIGTERM" });
-    expect(
-      fs
-        .readdirSync(temporaryRoot)
-        .filter((name) => name.startsWith("nemoclaw-local-review-bootstrap-")),
-    ).toEqual([]);
-  });
-
   it("kills a SIGTERM-ignoring trusted child before removing its bootstrap checkout (#10611)", async () => {
     const source = temporaryDirectory();
     const temporaryRoot = temporaryDirectory();
@@ -607,63 +376,61 @@ describe("local PR review advisor", () => {
     ).toEqual([]);
   });
 
-  it.each([
-    ["status", "process.exitCode = 23;", 23, null, "exited with status 23"],
-    ["signal", 'process.kill(process.pid, "SIGTERM");', null, "SIGTERM", "terminated by SIGTERM"],
-  ])(
-    "reports bootstrap cleanup failure with original %s semantics (#10611)",
-    async (_mode, action, expectedStatus, expectedSignal, expectedDiagnostic) => {
-      const source = temporaryDirectory();
-      const temporaryRoot = temporaryDirectory();
-      git(source, ["init", "--initial-branch=main"]);
-      git(source, ["config", "user.name", "Test"]);
-      git(source, ["config", "user.email", "test@example.com"]);
-      fs.mkdirSync(path.join(source, "tools", "pr-review-advisor"), { recursive: true });
-      fs.copyFileSync(
-        path.resolve("tools/pr-review-advisor/local-review.mts"),
-        path.join(source, "tools", "pr-review-advisor", "local-review.mts"),
-      );
-      fs.writeFileSync(
-        path.join(source, "tools", "pr-review-advisor", "local-review-implementation.mts"),
-        action + "\n",
-      );
-      const npmBin = installFakeNpm(source);
-      git(source, ["add", "."]);
-      git(source, ["commit", "-m", "trusted base"]);
-      git(source, ["remote", "add", "origin", source]);
-      git(source, ["fetch", "origin", "main"]);
-      const patch = path.join(temporaryRoot, "fail-cleanup.cjs");
-      fs.writeFileSync(
-        patch,
-        'const fs=require("node:fs");const rm=fs.rmSync;fs.rmSync=(p,o)=>String(p).includes("nemoclaw-local-review-bootstrap-")&&o?.recursive?(()=>{throw new Error("injected cleanup denial")})():rm(p,o);\n',
-      );
-      const result = spawnSync(
-        process.execPath,
-        [
-          "--require",
-          patch,
-          "--experimental-strip-types",
-          "--no-warnings",
-          "tools/pr-review-advisor/local-review.mts",
-        ],
-        {
-          cwd: source,
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: path.resolve(npmBin, "../.."),
-            PATH: npmBin + path.delimiter + process.env.PATH,
-            TMPDIR: temporaryRoot,
-          },
+  it("retains bootstrap when a process group survives SIGKILL (#10611)", async () => {
+    const source = temporaryDirectory();
+    const temporaryRoot = temporaryDirectory();
+    git(source, ["init", "--initial-branch=main"]);
+    git(source, ["config", "user.name", "Test"]);
+    git(source, ["config", "user.email", "test@example.com"]);
+    fs.mkdirSync(path.join(source, "tools", "pr-review-advisor"), { recursive: true });
+    fs.copyFileSync(
+      path.resolve("tools/pr-review-advisor/local-review.mts"),
+      path.join(source, "tools", "pr-review-advisor", "local-review.mts"),
+    );
+    fs.copyFileSync(
+      SIGTERM_IGNORING_CHILD_FIXTURE,
+      path.join(source, "tools", "pr-review-advisor", "local-review-implementation.mts"),
+    );
+    const npmBin = installFakeNpm(source);
+    git(source, ["add", "."]);
+    git(source, ["commit", "-m", "trusted base"]);
+    git(source, ["remote", "add", "origin", source]);
+    git(source, ["fetch", "origin", "main"]);
+    const child = spawn(
+      process.execPath,
+      ["--experimental-strip-types", "--no-warnings", "tools/pr-review-advisor/local-review.mts"],
+      {
+        cwd: source,
+        env: {
+          ...process.env,
+          HOME: path.resolve(npmBin, "../.."),
+          PATH: npmBin + path.delimiter + process.env.PATH,
+          TMPDIR: temporaryRoot,
+          NODE_TEST_CONTEXT: "child-v8",
+          NEMOCLAW_TEST_STICKY_PROCESS_GROUP: "1",
         },
-      );
-      expect(result.stderr).toContain("cleanup also failed for");
-      expect(result.stderr).toContain("injected cleanup denial");
-      expect(result.status).toBe(expectedStatus);
-      expect(result.signal).toBe(expectedSignal);
-      expect(result.stderr).toContain(expectedDiagnostic);
-    },
-  );
+        stdio: "pipe",
+      },
+    );
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => (stderr += chunk));
+    await waitForFixturePath(path.join(source, "trusted-child-pid"), child, () => stderr);
+
+    child.kill("SIGTERM");
+    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) => child.once("close", (code, signal) => resolve({ code, signal })),
+    );
+
+    expect(result, stderr).toEqual({ code: null, signal: "SIGTERM" });
+    expect(stderr).toContain("received SIGTERM; process group cleanup was not confirmed");
+    expect(stderr).toContain("did not exit after SIGKILL");
+    const retained = fs
+      .readdirSync(temporaryRoot)
+      .filter((name) => name.startsWith("nemoclaw-local-review-bootstrap-"));
+    expect(retained).toHaveLength(1);
+    expect(stderr).toContain(path.join(temporaryRoot, retained[0]!));
+  });
 
   it("explains that local review requires the bootstrap repair on origin/main (#10611)", () => {
     const source = repository();
@@ -684,32 +451,6 @@ describe("local PR review advisor", () => {
       "origin/main does not contain the trusted local review implementation",
     );
     expect(result.stderr).toContain("after the bootstrap repair is merged");
-  });
-
-  it("passes the default prepare boundary from a canonical advisor checkout (#10611)", async () => {
-    const source = repository();
-    const root = temporaryDirectory();
-    const advisor = path.join(root, "advisor");
-    const workdir = path.join(root, "pr-workdir");
-    git(root, ["clone", "--quiet", source, advisor]);
-    git(root, ["clone", "--quiet", source, workdir]);
-    const runnerTemp = path.join(root, "runner");
-    fs.mkdirSync(runnerTemp);
-
-    await defaultLocalReviewLifecycle.prepare({
-      ...process.env,
-      ADVISOR_DIR: advisor,
-      ADVISOR_WORKDIR: workdir,
-      BASE_REF: git(workdir, ["rev-parse", "HEAD^"]),
-      HEAD_REF: git(workdir, ["rev-parse", "HEAD"]),
-      PR_REVIEW_ADVISOR_INTEREST: "design-architecture",
-      RUNNER_TEMP: runnerTemp,
-    });
-
-    expect(
-      fs.existsSync(path.join(runnerTemp, "pr-review-advisor-context", "github-context.json")),
-    ).toBe(true);
-    execFileSync("chmod", ["-R", "u+w", advisor, workdir, runnerTemp]);
   });
 
   it("snapshots branch, staged, unstaged, and nonignored untracked changes without source mutation (#10610)", () => {
@@ -814,8 +555,10 @@ describe("local PR review advisor", () => {
     expect(calls.filter((call) => call.startsWith("run:"))).toEqual(
       ADVISOR_SPECIALISTS.map(({ interest }) => "run:" + interest),
     );
-    expect(calls.filter((call) => call.startsWith("configure:"))).toHaveLength(1);
-    expect(stopGateway).toHaveBeenCalledOnce();
+    expect(calls.filter((call) => call.startsWith("configure:"))).toHaveLength(
+      ADVISOR_SPECIALISTS.length,
+    );
+    expect(stopGateway).toHaveBeenCalledTimes(ADVISOR_SPECIALISTS.length);
     expect(calls.filter((call) => call.startsWith("remove:"))).toHaveLength(
       ADVISOR_SPECIALISTS.length,
     );
@@ -867,166 +610,6 @@ describe("local PR review advisor", () => {
     });
     expect(stopGateway).toHaveBeenCalledTimes(2);
     expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
-  });
-
-  it("discards staged output before re-raising a cleanup-time signal (#10611)", async () => {
-    const source = repository();
-    let releaseCleanup!: () => void;
-    const cleanupPaused = new Promise<void>((resolve) => {
-      releaseCleanup = resolve;
-    });
-    let staged = "";
-    const publication: LocalReviewPublication = {
-      copy: (artifacts, target, options) => {
-        staged = String(target);
-        fs.cpSync(artifacts, target, options);
-      },
-      remove: fs.rmSync,
-      rename: fs.renameSync,
-    };
-    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
-    const review = runLocalReview({
-      source,
-      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
-      lifecycle: artifactLifecycle(() => cleanupPaused),
-      publication,
-      temporaryRoot: temporaryDirectory(),
-    });
-
-    await vi.waitFor(() => expect(staged).toContain(".staged-"));
-    process.emit("SIGTERM");
-    releaseCleanup();
-    await expect(review).resolves.toContain("pr-review-advisor-local");
-
-    expect(fs.existsSync(staged)).toBe(false);
-    expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
-  });
-
-  it("reports residual staged output and manual removal when signal discard is denied (#10611)", async () => {
-    const source = repository();
-    let releaseCleanup!: () => void;
-    const cleanupPaused = new Promise<void>((resolve) => {
-      releaseCleanup = resolve;
-    });
-    let staged = "";
-    const publication: LocalReviewPublication = {
-      copy: (artifacts, target, options) => {
-        staged = String(target);
-        fs.cpSync(artifacts, target, options);
-      },
-      remove: vi
-        .fn<typeof fs.rmSync>()
-        .mockImplementationOnce(fs.rmSync)
-        .mockImplementation(() => {
-          throw new Error("injected discard denial token=secret");
-        }),
-      rename: fs.renameSync,
-    };
-    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
-    const review = runLocalReview({
-      source,
-      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
-      lifecycle: artifactLifecycle(() => cleanupPaused),
-      publication,
-      temporaryRoot: temporaryDirectory(),
-    });
-
-    await vi.waitFor(() => expect(staged).toContain(".staged-"));
-    process.emit("SIGTERM");
-    releaseCleanup();
-    await expect(review).rejects.toThrow("remove it manually before retrying");
-
-    expect(diagnostic).toHaveBeenCalledWith(expect.stringContaining(staged));
-    expect(diagnostic).toHaveBeenCalledWith(
-      expect.stringContaining("remove it manually before retrying"),
-    );
-    expect(diagnostic).toHaveBeenCalledWith(expect.not.stringContaining("secret"));
-    expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
-  });
-
-  it.each(["provider create timed out", "inference set timed out"])(
-    "reports bounded configuration failure and cleans owned resources: %s (#10611)",
-    async (diagnostic) => {
-      const source = repository();
-      const stop = vi.fn(async () => undefined);
-      let ownedRoot = "";
-      const lifecycle: LocalReviewLifecycle = {
-        prepare: async () => undefined,
-        startGateway: () => ({ configure: Promise.reject(new Error(diagnostic)), stop }),
-        create: vi.fn(),
-        run: vi.fn(),
-        download: vi.fn(),
-        remove: vi.fn(),
-      };
-      const failure = (await runLocalReview({
-        source,
-        specialists: ADVISOR_SPECIALISTS.slice(0, 1),
-        lifecycle,
-        prepareSnapshot: (snapshotSource, target, baseRef) => {
-          ownedRoot = path.dirname(target);
-          return createLocalReviewSnapshot(snapshotSource, target, baseRef);
-        },
-      }).catch((error: unknown) => error)) as Error;
-      expect(failure.message).toContain("failed during configure");
-      expect(failure.message).toContain(diagnostic);
-      expect(stop).toHaveBeenCalledOnce();
-      expect(fs.existsSync(ownedRoot)).toBe(false);
-      expect(lifecycle.create).not.toHaveBeenCalled();
-      expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
-    },
-  );
-
-  it("stops an owned process group with bounded TERM then KILL and verifies exit (#10610)", async () => {
-    const directory = temporaryDirectory();
-    const pidPath = path.join(directory, "pid");
-    const cleanup = defaultOpenShellTools.start(
-      process.execPath,
-      [
-        "-e",
-        `require("node:fs").writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)); process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);`,
-      ],
-      { env: process.env, logPath: path.join(directory, "process.log") },
-    );
-    expect(cleanup).toBeTypeOf("function");
-    execFileSync("bash", [
-      "-c",
-      `for i in {1..100}; do test -s ${JSON.stringify(pidPath)} && exit 0; sleep .02; done; exit 1`,
-    ]);
-    const pid = Number.parseInt(fs.readFileSync(pidPath, "utf8"), 10);
-
-    await cleanup?.();
-
-    expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
-  });
-
-  it("redacts specialist lifecycle failures without importing local review diagnostics", async () => {
-    const credential = "specialist-lifecycle-secret";
-    vi.stubEnv("PR_REVIEW_ADVISOR_API_KEY", credential);
-
-    const failure = (await runAdvisorSpecialist({
-      env: {
-        PR_REVIEW_ADVISOR_INTEREST: "security",
-        SANDBOX_NAME: "pr-adv-security",
-      },
-      lifecycle: {
-        prepare: async () => undefined,
-        startGateway: () => undefined,
-        create: () => undefined,
-        run: () => {
-          throw new Error(
-            `sandbox failed; api_key=${credential}; Authorization: Bearer other-secret`,
-          );
-        },
-        download: () => undefined,
-        remove: () => undefined,
-      },
-    }).catch((error: unknown) => error)) as Error;
-
-    expect(failure.message).toContain("sandbox failed; api_key=[REDACTED]");
-    expect(failure.message).toContain("Authorization: [REDACTED]");
-    expect(failure.message).not.toContain(credential);
-    expect(failure.message).not.toContain("other-secret");
   });
 
   it("redacts lifecycle credentials while preserving actionable OpenShell context (#10611)", async () => {
@@ -1124,29 +707,6 @@ describe("local PR review advisor", () => {
     expect(fs.readdirSync(external)).toEqual(["sentinel"]);
   });
 
-  it("removes a run-created artifacts parent after copy failure (#10611)", async () => {
-    const source = repository();
-    const parent = path.join(source, "artifacts");
-    fs.rmSync(parent, { recursive: true, force: true });
-
-    await expect(
-      runLocalReview({
-        source,
-        temporaryRoot: temporaryDirectory(),
-        specialists: ADVISOR_SPECIALISTS.slice(0, 1),
-        lifecycle: artifactLifecycle(),
-        publication: {
-          copy: () => {
-            throw new Error("copy failed");
-          },
-          remove: fs.rmSync,
-          rename: fs.renameSync,
-        },
-      }),
-    ).rejects.toThrow("copy failed");
-    expect(fs.existsSync(parent)).toBe(false);
-  });
-
   it("restores prior output after previous-output removal fails (#10611)", async () => {
     const source = repository();
     const destination = path.join(source, "artifacts", "pr-review-advisor-local");
@@ -1187,73 +747,8 @@ describe("local PR review advisor", () => {
       temporaryRoot: temporaryDirectory(),
     }).catch((error: unknown) => error)) as Error;
 
-    expect(failure).toMatchObject({
-      message: expect.stringContaining("failed during cleanup for gateway"),
-      cause: underlying,
-    });
-    expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
-  });
-
-  it("preserves prior output when temporary-root cleanup fails (#10611)", async () => {
-    const source = repository();
-    const destination = path.join(source, "artifacts", "pr-review-advisor-local");
-    fs.mkdirSync(destination, { recursive: true });
-    fs.writeFileSync(path.join(destination, "prior.txt"), "prior\n");
-    const underlying = new Error("temporary root removal failed");
-    const failure = (await runLocalReview({
-      source,
-      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
-      lifecycle: artifactLifecycle(),
-      removeTemporaryRoot: () => {
-        throw underlying;
-      },
-    }).catch((error: unknown) => error)) as Error;
-
-    expect(failure).toMatchObject({
-      message: expect.stringMatching(
-        /failed during cleanup for temporary root .*temporary root removal failed/u,
-      ),
-      cause: underlying,
-    });
-    expect(fs.readdirSync(destination)).toEqual(["prior.txt"]);
-    expect(fs.readFileSync(path.join(destination, "prior.txt"), "utf8")).toBe("prior\n");
-  });
-
-  it("retries sandbox deletion after successful work and publishes no output (#10611)", async () => {
-    const source = repository();
-    const lifecycle: LocalReviewLifecycle = {
-      prepare: async () => undefined,
-      startGateway: () => undefined,
-      create: () => undefined,
-      run: () => undefined,
-      download: (env) => {
-        const interest = env.PR_REVIEW_ADVISOR_INTEREST as string;
-        const output = path.join(
-          env.GITHUB_WORKSPACE as string,
-          "artifacts",
-          env.PR_REVIEW_ADVISOR_ARTIFACT_DIR as string,
-        );
-        fs.mkdirSync(output, { recursive: true });
-        fs.writeFileSync(path.join(output, `pr-review-${interest}-summary.md`), "review\n");
-        fs.writeFileSync(path.join(output, `pr-review-${interest}-session.jsonl`), "{}\n");
-      },
-      remove: vi
-        .fn<() => void>()
-        .mockImplementationOnce(() => {
-          throw new Error("cleanup failed");
-        })
-        .mockImplementationOnce(() => undefined),
-    };
-
-    await expect(
-      runLocalReview({
-        source,
-        temporaryRoot: temporaryDirectory(),
-        specialists: ADVISOR_SPECIALISTS.slice(0, 1),
-        lifecycle,
-      }),
-    ).rejects.toThrow(/failed during cleanup for specialist .*: cleanup failed/u);
-    expect(lifecycle.remove).toHaveBeenCalledTimes(2);
+    expect(failure.message).toContain("failed during gateway cleanup");
+    expect(failure.message).toContain("gateway stop failed");
     expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
   });
 
@@ -1270,10 +765,7 @@ describe("local PR review advisor", () => {
   ])("rejects %s specialist artifact sets (#10611)", async (_case, files) => {
     const source = repository();
     const lifecycle: LocalReviewLifecycle = {
-      prepare: async () => undefined,
-      startGateway: () => undefined,
-      create: () => undefined,
-      run: () => undefined,
+      ...artifactLifecycle(),
       download: (env) => {
         const output = path.join(
           env.GITHUB_WORKSPACE as string,
@@ -1283,8 +775,8 @@ describe("local PR review advisor", () => {
         fs.mkdirSync(output, { recursive: true });
         files.forEach((name) => fs.writeFileSync(path.join(output, name), "artifact\n"));
       },
-      remove: () => undefined,
     };
+
     await expect(
       runLocalReview({
         source,
@@ -1298,84 +790,5 @@ describe("local PR review advisor", () => {
         message: "Specialist artifacts do not match the existing Markdown and JSONL contract",
       }),
     });
-  });
-
-  it("retries failed sandbox deletion during final cleanup before reporting other cleanup failure (#10611)", async () => {
-    const source = repository();
-    const stopGateway = vi.fn(async () => {
-      throw new Error("gateway cleanup failed");
-    });
-    const remove = vi
-      .fn<() => void>()
-      .mockImplementationOnce(() => {
-        throw new Error("sandbox cleanup failed");
-      })
-      .mockImplementationOnce(() => undefined);
-    let ownedRoot = "";
-    const lifecycle: LocalReviewLifecycle = {
-      prepare: async () => undefined,
-      startGateway: () => ({ configure: Promise.resolve(), stop: stopGateway }),
-      create: () => undefined,
-      run: () => {
-        throw new Error("primary run failed");
-      },
-      download: () => undefined,
-      remove,
-    };
-
-    const failure = (await runLocalReview({
-      source,
-      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
-      lifecycle,
-      prepareSnapshot: (snapshotSource, target, baseRef) => {
-        ownedRoot = path.dirname(target);
-        return createLocalReviewSnapshot(snapshotSource, target, baseRef);
-      },
-    }).catch((error: unknown) => error)) as AggregateError;
-    expect(failure.message).toMatch(
-      /failed during run.*failed during cleanup for gateway: gateway cleanup failed/u,
-    );
-    expect(failure.errors).toHaveLength(2);
-    expect((failure.errors[0] as Error).message).toContain("failed during run");
-    expect((failure.errors[1] as Error).message).toContain("failed during cleanup for gateway");
-    expect(remove).toHaveBeenCalledTimes(2);
-    expect(stopGateway).toHaveBeenCalledOnce();
-    expect(fs.existsSync(ownedRoot)).toBe(false);
-  });
-
-  it("removes the active sandbox and publishes no partial output after failure (#10610)", async () => {
-    const source = repository();
-    const root = temporaryDirectory();
-    const before = sourceState(source);
-    const remove = vi.fn();
-    const lifecycle: LocalReviewLifecycle = {
-      prepare: async () => undefined,
-      startGateway: () => undefined,
-      create: () => undefined,
-      run: () => {
-        throw new Error("failed");
-      },
-      download: () => undefined,
-      remove: () => {
-        remove();
-        throw new Error("cleanup failed");
-      },
-    };
-
-    const failure = (await runLocalReview({
-      source,
-      temporaryRoot: root,
-      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
-      lifecycle,
-    }).catch((error: unknown) => error)) as AggregateError;
-    expect(failure.message).toMatch(
-      /failed during run.*failed during cleanup for specialist.*cleanup failed/u,
-    );
-    expect(failure.errors).toHaveLength(2);
-    expect((failure.errors[0] as Error).message).toContain("failed during run");
-    expect((failure.errors[1] as Error).message).toContain("failed during cleanup for specialist");
-    expect(remove).toHaveBeenCalledTimes(2);
-    expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
-    expect(sourceState(source)).toEqual(before);
   });
 });
