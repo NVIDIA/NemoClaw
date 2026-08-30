@@ -16,7 +16,11 @@ import {
 } from "../../../tools/pr-review-advisor/local-review-implementation.mts";
 import { defaultOpenShellTools } from "../../../tools/openshell-agent/runtime.mts";
 import { ADVISOR_PI_IMAGE } from "../../../tools/pr-review-advisor/runtime-constants.mts";
-import { runAdvisorSpecialist } from "../../../tools/pr-review-advisor/specialist-lifecycle.mts";
+import {
+  redactAdvisorDiagnostic,
+  runAdvisorSpecialist,
+  runAdvisorSpecialistCommand,
+} from "../../../tools/pr-review-advisor/specialist-lifecycle.mts";
 import { ADVISOR_SPECIALISTS } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
 
 const temporaryDirectories: string[] = [];
@@ -125,6 +129,47 @@ afterEach(() => {
 });
 
 describe("local PR review advisor", () => {
+  it.each([
+    ["environment value", "failure env-secret", "failure [REDACTED]"],
+    ["secret assignment", "failure token=literal-secret", "failure token=[REDACTED]"],
+    [
+      "authorization",
+      "failure Authorization: Basic literal-secret",
+      "failure Authorization: [REDACTED]",
+    ],
+    ["bearer credential", "failure Bearer literal-secret", "failure Bearer [REDACTED]"],
+  ])("redacts %s diagnostics", (_case, diagnostic, expected) => {
+    vi.stubEnv("ADVISOR_TEST_SECRET", "env-secret");
+    const redacted = redactAdvisorDiagnostic(diagnostic);
+    expect(redacted).toContain(expected);
+    expect(redacted).not.toMatch(/env-secret|literal-secret/u);
+  });
+
+  it("accepts only prepare, configure, and complete lifecycle commands", async () => {
+    const unavailable = vi.fn();
+    const lifecycle = { ...artifactLifecycle(), unavailable };
+    const prepare = vi.spyOn(lifecycle, "prepare");
+    const startGateway = vi.spyOn(lifecycle, "startGateway");
+
+    await runAdvisorSpecialistCommand("prepare", {}, lifecycle);
+    await runAdvisorSpecialistCommand("configure", {}, lifecycle);
+    await runAdvisorSpecialistCommand(
+      "complete",
+      { CONFIGURE_OUTCOME: "failure", PR_REVIEW_ADVISOR_RUN_ANALYSIS: "0" },
+      lifecycle,
+    );
+    await expect(runAdvisorSpecialistCommand(undefined, {}, lifecycle)).rejects.toThrow(
+      "Unsupported specialist lifecycle command: missing",
+    );
+    await expect(runAdvisorSpecialistCommand("run", {}, lifecycle)).rejects.toThrow(
+      "Unsupported specialist lifecycle command: run",
+    );
+
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(startGateway).toHaveBeenCalledOnce();
+    expect(unavailable).toHaveBeenCalledOnce();
+  });
+
   it("exports the digest-pinned advisor image for workflow consumers (#10610)", () => {
     const githubEnv = path.join(temporaryDirectory(), "github-env");
     execFileSync(
@@ -847,7 +892,7 @@ describe("local PR review advisor", () => {
     });
   });
 
-  it("reports cleanup failure only when specialist work succeeds (#10610)", async () => {
+  it("retries sandbox deletion after successful work and publishes no output (#10611)", async () => {
     const source = repository();
     const lifecycle: LocalReviewLifecycle = {
       prepare: async () => undefined,
@@ -865,9 +910,12 @@ describe("local PR review advisor", () => {
         fs.writeFileSync(path.join(output, `pr-review-${interest}-summary.md`), "review\n");
         fs.writeFileSync(path.join(output, `pr-review-${interest}-session.jsonl`), "{}\n");
       },
-      remove: () => {
-        throw new Error("cleanup failed");
-      },
+      remove: vi
+        .fn<() => void>()
+        .mockImplementationOnce(() => {
+          throw new Error("cleanup failed");
+        })
+        .mockImplementationOnce(() => undefined),
     };
 
     await expect(
@@ -877,14 +925,9 @@ describe("local PR review advisor", () => {
         specialists: ADVISOR_SPECIALISTS.slice(0, 1),
         lifecycle,
       }),
-    ).rejects.toMatchObject({
-      message: expect.stringMatching(
-        /failed during cleanup for specialist .* in sandbox .*: cleanup failed/u,
-      ),
-      errors: expect.arrayContaining([
-        expect.objectContaining({ cause: expect.objectContaining({ message: "cleanup failed" }) }),
-      ]),
-    });
+    ).rejects.toThrow(/failed during cleanup for specialist .*: cleanup failed/u);
+    expect(lifecycle.remove).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
   });
 
   it.each([

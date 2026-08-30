@@ -28,6 +28,7 @@ import {
   downloadAdvisorArtifacts,
   prepareAdvisorSandboxInputs,
   runAdvisorSandbox,
+  runOpenShellAdvisorCommand,
   verifyAdvisorGitWorktree,
   writeUnavailableAdvisorArtifacts,
 } from "../../../tools/pr-review-advisor/openshell.mts";
@@ -101,6 +102,32 @@ afterEach(() => {
 });
 
 describe("PR review advisor OpenShell wrapper", () => {
+  it("dispatches sandbox runtime initialization", () => {
+    const initialize = vi.fn();
+
+    runOpenShellAdvisorCommand("initialize", initialize);
+
+    expect(initialize).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [undefined, "openshell command is required"],
+    ["prepare", "Unsupported OpenShell advisor command: prepare"],
+    ["configure", "Unsupported OpenShell advisor command: configure"],
+    ["unavailable", "Unsupported OpenShell advisor command: unavailable"],
+    ["create", "Unsupported OpenShell advisor command: create"],
+    ["run", "Unsupported OpenShell advisor command: run"],
+    ["download", "Unsupported OpenShell advisor command: download"],
+    ["delete", "Unsupported OpenShell advisor command: delete"],
+    ["check", "Unsupported OpenShell advisor command: check"],
+    ["unknown", "Unsupported OpenShell advisor command: unknown"],
+  ])("rejects unsupported OpenShell command %s", (command, message) => {
+    const initialize = vi.fn();
+
+    expect(() => runOpenShellAdvisorCommand(command, initialize)).toThrow(message);
+    expect(initialize).not.toHaveBeenCalled();
+  });
+
   it("allows only the hosted service and OpenShell inference gateway", () => {
     expect(advisorInferenceBaseUrl({})).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
     expect(

@@ -29,19 +29,25 @@ const SECRET_ENVIRONMENT_NAME = /(auth|credential|key|password|secret|token)/iu;
 const SECRET_ASSIGNMENT =
   /\b((?:api[_-]?key|credential|password|secret|token)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
 const AUTHORIZATION_CREDENTIAL =
-  /\b(authorization\s*[:=]\s*)(?:bearer\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
+  /\b(authorization\s*[:=]\s*)(?:[^\s,;]+\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
 const BEARER_CREDENTIAL = /\b(bearer)\s+[^\s,;]+/giu;
 
-function safeDiagnostic(error: unknown): string {
-  let detail = error instanceof Error ? error.message : "Unknown non-Error failure";
+export function redactAdvisorDiagnostic(detail: string): string {
+  let redacted = detail;
   for (const [name, value] of Object.entries(process.env)) {
     if (value && SECRET_ENVIRONMENT_NAME.test(name))
-      detail = detail.replaceAll(value, "[REDACTED]");
+      redacted = redacted.replaceAll(value, "[REDACTED]");
   }
-  return detail
+  return redacted
     .replace(AUTHORIZATION_CREDENTIAL, "$1[REDACTED]")
     .replace(SECRET_ASSIGNMENT, "$1[REDACTED]")
     .replace(BEARER_CREDENTIAL, "$1 [REDACTED]");
+}
+
+function safeDiagnostic(error: unknown): string {
+  return redactAdvisorDiagnostic(
+    error instanceof Error ? error.message : "Unknown non-Error failure",
+  );
 }
 
 export const defaultAdvisorSpecialistLifecycle: AdvisorSpecialistLifecycle = {
@@ -133,7 +139,7 @@ export async function runAdvisorSpecialist(input: {
     } catch (error) {
       cleanupFailure = error;
     }
-    if (!primaryFailure || !sandboxActive) input.setActiveCleanup?.(undefined);
+    if (!sandboxActive) input.setActiveCleanup?.(undefined);
   }
   if (primaryFailure && cleanupFailure) {
     const cleanup = cleanupFailure as Error;
@@ -148,35 +154,39 @@ export async function runAdvisorSpecialist(input: {
   return result;
 }
 
-async function main(): Promise<void> {
-  const command = process.argv[2] ?? "run";
+export async function runAdvisorSpecialistCommand(
+  command: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+  lifecycle: AdvisorSpecialistLifecycle = defaultAdvisorSpecialistLifecycle,
+): Promise<void> {
   if (command === "prepare") {
-    await defaultAdvisorSpecialistLifecycle.prepare(process.env);
+    await lifecycle.prepare(env);
     return;
   }
   if (command === "configure") {
-    await defaultAdvisorSpecialistLifecycle.startGateway(process.env)?.configure;
+    await lifecycle.startGateway(env)?.configure;
     return;
   }
-  if (command === "complete" && process.env.CONFIGURE_OUTCOME !== "success") {
-    defaultAdvisorSpecialistLifecycle.unavailable?.(
-      process.env,
-      new Error("Advisor inference is unavailable"),
-    );
-    if (process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS !== "0") process.exitCode = 1;
+  if (command !== "complete") {
+    throw new Error(`Unsupported specialist lifecycle command: ${command ?? "missing"}`);
+  }
+  if (env.CONFIGURE_OUTCOME !== "success") {
+    lifecycle.unavailable?.(env, new Error("Advisor inference is unavailable"));
+    if (env.PR_REVIEW_ADVISOR_RUN_ANALYSIS !== "0") process.exitCode = 1;
     return;
   }
   await runAdvisorSpecialist({
-    env: process.env,
-    lifecycle:
-      command === "complete"
-        ? {
-            ...defaultAdvisorSpecialistLifecycle,
-            prepare: async () => undefined,
-            startGateway: () => ({ configure: Promise.resolve() }),
-          }
-        : defaultAdvisorSpecialistLifecycle,
+    env,
+    lifecycle: {
+      ...lifecycle,
+      prepare: async () => undefined,
+      startGateway: () => ({ configure: Promise.resolve() }),
+    },
   });
+}
+
+async function main(): Promise<void> {
+  await runAdvisorSpecialistCommand(process.argv[2]);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

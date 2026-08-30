@@ -18,7 +18,11 @@ import {
   runAdvisorSandbox,
   startAdvisorOpenShellInference,
 } from "./openshell.mts";
-import { runAdvisorSpecialist, type AdvisorSpecialistLifecycle } from "./specialist-lifecycle.mts";
+import {
+  redactAdvisorDiagnostic,
+  runAdvisorSpecialist,
+  type AdvisorSpecialistLifecycle,
+} from "./specialist-lifecycle.mts";
 import { ADVISOR_SPECIALISTS, type AdvisorSpecialist } from "./specialist-catalog.mts";
 
 const LOCAL_OUTPUT_DIRECTORY = path.join("artifacts", "pr-review-advisor-local");
@@ -37,27 +41,10 @@ const defaultLocalReviewPublication: LocalReviewPublication = {
   rename: fs.renameSync,
 };
 
-const SECRET_ENVIRONMENT_NAME = /(auth|credential|key|password|secret|token)/iu;
-const SECRET_ASSIGNMENT =
-  /\b((?:api[_-]?key|credential|password|secret|token)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
-const AUTHORIZATION_CREDENTIAL =
-  /\b(authorization\s*[:=]\s*)(?:bearer\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
-const BEARER_CREDENTIAL = /\b(bearer)\s+[^\s,;]+/giu;
-
-function redactDiagnosticText(detail: string): string {
-  let redacted = detail;
-  for (const [name, value] of Object.entries(process.env)) {
-    if (value && SECRET_ENVIRONMENT_NAME.test(name))
-      redacted = redacted.replaceAll(value, "[REDACTED]");
-  }
-  return redacted
-    .replace(AUTHORIZATION_CREDENTIAL, "$1[REDACTED]")
-    .replace(SECRET_ASSIGNMENT, "$1[REDACTED]")
-    .replace(BEARER_CREDENTIAL, "$1 [REDACTED]");
-}
-
 function safeDiagnostic(error: unknown): string {
-  return redactDiagnosticText(error instanceof Error ? error.message : "Unknown non-Error failure");
+  return redactAdvisorDiagnostic(
+    error instanceof Error ? error.message : "Unknown non-Error failure",
+  );
 }
 
 function safeFailure(error: unknown): Error {

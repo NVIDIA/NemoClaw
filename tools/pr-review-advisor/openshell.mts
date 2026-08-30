@@ -611,39 +611,19 @@ export function initializeAdvisorSandboxRuntime(): void {
   checkAdvisorSandboxRuntime();
 }
 
-async function main(): Promise<void> {
-  const command = required(process.argv[2], "openshell command");
-  switch (command) {
-    case "prepare":
-      await prepareAdvisorSandboxInputs(process.env);
-      return;
-    case "configure":
-      await configureAdvisorOpenShellInference(process.env);
-      return;
-    case "unavailable":
-      writeUnavailableAdvisorArtifacts(process.env);
-      return;
-    case "create":
-      createAdvisorSandbox(process.env);
-      return;
-    case "run":
-      runAdvisorSandbox(process.env);
-      return;
-    case "download":
-      downloadAdvisorArtifacts(process.env);
-      return;
-    case "delete":
-      deleteAdvisorSandbox(process.env);
-      return;
-    case "initialize":
-      initializeAdvisorSandboxRuntime();
-      return;
-    case "check":
-      checkAdvisorSandboxRuntime();
-      return;
-    default:
-      throw new Error(`Unsupported OpenShell advisor command: ${command}`);
+export function runOpenShellAdvisorCommand(
+  command: string | undefined,
+  initialize: () => void = initializeAdvisorSandboxRuntime,
+): void {
+  const requiredCommand = required(command, "openshell command");
+  if (requiredCommand !== "initialize") {
+    throw new Error(`Unsupported OpenShell advisor command: ${requiredCommand}`);
   }
+  initialize();
+}
+
+async function main(): Promise<void> {
+  runOpenShellAdvisorCommand(process.argv[2]);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

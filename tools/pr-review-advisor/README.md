@@ -46,9 +46,11 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 
 `investigate-turn.mts` and `challenge-and-record-turn.mts` own the two normal turn contracts, including their prompts and tool configuration. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `artifacts.mts` owns artifact paths, and `render-result.mts` owns human-readable result output. `analyze.mts` composes these modules and runs the session.
 
-`tools/pr-review-advisor/openshell.mts` owns the advisor-specific prepare, create, run, download, and
-cleanup sequence. It uses the shared lifecycle and credential-boundary helpers in
-`tools/openshell-agent/runtime.mts`, which are also used by the merge-conflict fixer.
+`tools/pr-review-advisor/specialist-lifecycle.mts` owns the advisor-specific prepare, configure,
+complete, and cleanup sequence. `tools/pr-review-advisor/openshell.mts` exports its OpenShell
+primitives and exposes only sandbox runtime initialization as a CLI command. Both use the shared
+lifecycle and credential-boundary helpers in `tools/openshell-agent/runtime.mts`, which are also
+used by the merge-conflict fixer.
 
 Provider failures, timeouts, and invalid or missing atomic submission fail closed and leave canonical state unchanged. Failure results retain the reason, and workflow logs retain orchestration diagnostics.
 
