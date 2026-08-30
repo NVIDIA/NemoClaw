@@ -94,6 +94,28 @@ const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
     stdio: options.stdio as never,
   });
 
+function removeDisabledChannelAgentConfigOrExit(
+  sandboxName: string,
+  channelId: string,
+  plan: SandboxMessagingPlan,
+): void {
+  try {
+    MessagingSetupApplier.removeDisabledChannelAgentConfigAtOpenShell(plan, channelId, {
+      runOpenshell: runMessagingOpenshell,
+    });
+  } catch (error) {
+    console.error(
+      `  Could not remove '${channelId}' from the sandbox agent config: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    console.error(
+      `  Channel '${channelId}' remains disabled; fix the sandbox config error and re-run: ${CLI_NAME} ${sandboxName} channels remove ${channelId}`,
+    );
+    process.exit(1);
+  }
+}
+
 /**
  * Report that `NEMOCLAW_NON_INTERACTIVE=1` leaves no interactive picker, and
  * exit non-zero.
@@ -1822,6 +1844,7 @@ async function removeSandboxChannelUnlocked(
   }
 
   const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(registryEntry);
+  let disabledAgentConfigPlan: SandboxMessagingPlan | null = null;
   if (
     registryEntry?.messaging?.plan &&
     configuredChannels.includes(canonical) &&
@@ -1832,23 +1855,8 @@ async function removeSandboxChannelUnlocked(
       console.error(`  Could not mark '${canonical}' disabled before removing it.`);
       process.exit(1);
     }
-    try {
-      MessagingSetupApplier.removeDisabledChannelAgentConfigAtOpenShell(
-        disabledPlan,
-        canonical,
-        { runOpenshell: runMessagingOpenshell },
-      );
-    } catch (error) {
-      console.error(
-        `  Could not remove '${canonical}' from the sandbox agent config: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      console.error(
-        `  Channel '${canonical}' remains disabled; fix the sandbox config error and re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
-      );
-      process.exit(1);
-    }
+    disabledAgentConfigPlan = disabledPlan;
+    removeDisabledChannelAgentConfigOrExit(sandboxName, canonical, disabledPlan);
   }
 
   if (!removeChannelPresetIfPresent(sandboxName, canonical)) {
@@ -1891,7 +1899,10 @@ async function removeSandboxChannelUnlocked(
     clearSandboxChannelDurableState(sandboxName, canonical);
   }
 
-  await promptAndRebuild(sandboxName, `remove '${canonical}'`);
+  const rebuilt = await promptAndRebuild(sandboxName, `remove '${canonical}'`);
+  if (rebuilt && disabledAgentConfigPlan) {
+    removeDisabledChannelAgentConfigOrExit(sandboxName, canonical, disabledAgentConfigPlan);
+  }
 }
 
 async function sandboxChannelsSetEnabled(
