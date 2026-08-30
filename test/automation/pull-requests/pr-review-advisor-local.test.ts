@@ -5,6 +5,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -22,6 +23,10 @@ import {
   runAdvisorSpecialistCommand,
 } from "../../../tools/pr-review-advisor/specialist-lifecycle.mts";
 import { ADVISOR_SPECIALISTS } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
+
+const SIGTERM_IGNORING_CHILD_FIXTURE = fileURLToPath(
+  new URL("./fixtures/sigterm-ignoring-child.ts", import.meta.url),
+);
 
 const temporaryDirectories: string[] = [];
 
@@ -240,11 +245,8 @@ describe("local PR review advisor", () => {
       run: () => {
         const execution = defaultOpenShellTools.runAsync!(
           process.execPath,
-          [
-            "-e",
-            `const fs = require("node:fs"); process.on("SIGTERM", () => fs.writeFileSync(${JSON.stringify(termPath)}, "SIGTERM")); fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)); setInterval(() => {}, 1000)`,
-          ],
-          { env: process.env },
+          ["--experimental-strip-types", "--no-warnings", SIGTERM_IGNORING_CHILD_FIXTURE],
+          { env: { ...process.env, PID_PATH: pidPath, TERM_PATH: termPath } },
         );
         return {
           cancel: () => {
