@@ -173,7 +173,8 @@ Prerequisites:
 - Node.js 22.19.0 or newer and the repository dependencies installed with `npm install`;
 - an `origin/main` remote-tracking commit that contains the trusted local review implementation;
 - `git`, `tar`, `openshell`, `openshell-gateway`, `openshell-sandbox`, `rg`, and `fdfind` available on `PATH`;
-- `PR_REVIEW_ADVISOR_API_KEY` configured for the existing advisor provider.
+- `PR_REVIEW_ADVISOR_API_KEY` exported in the host environment for the existing advisor provider.
+  The local gateway receives this credential. The sandbox does not receive it.
 
 `npm run dev:doctor` checks general contributor readiness. It does not check these local-review
 executables, the advisor credential, or the `origin/main` ref.

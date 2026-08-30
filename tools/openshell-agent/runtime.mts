@@ -235,10 +235,10 @@ export type OwnedOpenShellInference = {
   stop: () => Promise<void>;
 };
 
-export function startOwnedOpenShellInference(
+function startOpenShellInference(
   env: NodeJS.ProcessEnv,
-  input: Omit<OpenShellInferenceOptions, "ownGateway">,
-  tools: OpenShellTools = defaultOpenShellTools,
+  input: OpenShellInferenceOptions,
+  tools: OpenShellTools,
 ): OwnedOpenShellInference {
   validateIdentifier(input.gatewayId, "gatewayId");
   validateIdentifier(input.modelId, "modelId");
@@ -327,14 +327,16 @@ export function startOwnedOpenShellInference(
       }
       throw new OpenShellAgentError("OpenShell inference configuration did not complete");
     } catch (error) {
-      try {
-        await stopGateway();
-      } catch (cleanupError) {
-        const primary = error instanceof Error ? error.message : String(error);
-        const cleanup = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
-        throw new Error(`${primary}; owned gateway cleanup also failed: ${cleanup}`, {
-          cause: error,
-        });
+      if (input.ownGateway) {
+        try {
+          await stopGateway();
+        } catch (cleanupError) {
+          const primary = error instanceof Error ? error.message : String(error);
+          const cleanup = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+          throw new Error(`${primary}; owned gateway cleanup also failed: ${cleanup}`, {
+            cause: error,
+          });
+        }
       }
       throw error;
     }
@@ -342,13 +344,21 @@ export function startOwnedOpenShellInference(
   return { configure, stop: stopGateway };
 }
 
+export function startOwnedOpenShellInference(
+  env: NodeJS.ProcessEnv,
+  input: Omit<OpenShellInferenceOptions, "ownGateway">,
+  tools: OpenShellTools = defaultOpenShellTools,
+): OwnedOpenShellInference {
+  return startOpenShellInference(env, { ...input, ownGateway: true }, tools);
+}
+
 export async function configureOpenShellInference(
   env: NodeJS.ProcessEnv,
   input: OpenShellInferenceOptions,
   tools: OpenShellTools = defaultOpenShellTools,
 ): Promise<void> {
-  const owned = startOwnedOpenShellInference(env, input, tools);
-  await owned.configure;
+  const configured = startOpenShellInference(env, { ...input, ownGateway: false }, tools);
+  await configured.configure;
 }
 
 export function createOpenShellSandbox(

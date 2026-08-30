@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -140,6 +140,54 @@ describe("local PR review advisor", () => {
     expect(fs.readFileSync(path.join(source, "bootstrap-result.txt"), "utf8")).toBe(
       'trusted host|branch policy data; throw new Error("policy executed")\n',
     );
+  });
+
+  it("removes the bootstrap checkout before preserving a termination signal (#10611)", async () => {
+    const source = temporaryDirectory();
+    const temporaryRoot = temporaryDirectory();
+    git(source, ["init", "--initial-branch=main"]);
+    git(source, ["config", "user.name", "Test"]);
+    git(source, ["config", "user.email", "test@example.com"]);
+    fs.mkdirSync(path.join(source, "tools", "pr-review-advisor"), { recursive: true });
+    fs.copyFileSync(
+      path.resolve("tools/pr-review-advisor/local-review.mts"),
+      path.join(source, "tools", "pr-review-advisor", "local-review.mts"),
+    );
+    fs.writeFileSync(
+      path.join(source, "tools", "pr-review-advisor", "local-review-implementation.mts"),
+      [
+        'import fs from "node:fs";',
+        'import path from "node:path";',
+        'fs.writeFileSync(path.join(process.argv[2], "wrapper-ready"), "ready\\n");',
+        "setInterval(() => undefined, 1000);",
+      ].join("\n"),
+    );
+    fs.mkdirSync(path.join(source, "node_modules"));
+    git(source, ["add", "."]);
+    git(source, ["commit", "-m", "trusted base"]);
+    git(source, ["remote", "add", "origin", source]);
+    git(source, ["fetch", "origin", "main"]);
+    const child = spawn(
+      process.execPath,
+      ["--experimental-strip-types", "--no-warnings", "tools/pr-review-advisor/local-review.mts"],
+      { cwd: source, env: { ...process.env, TMPDIR: temporaryRoot }, stdio: "pipe" },
+    );
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => (stderr += chunk));
+    await vi.waitFor(() => expect(fs.existsSync(path.join(source, "wrapper-ready"))).toBe(true));
+
+    child.kill("SIGTERM");
+    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) => child.once("close", (code, signal) => resolve({ code, signal })),
+    );
+
+    expect(result, stderr).toEqual({ code: null, signal: "SIGTERM" });
+    expect(
+      fs
+        .readdirSync(temporaryRoot)
+        .filter((name) => name.startsWith("nemoclaw-local-review-bootstrap-")),
+    ).toEqual([]);
   });
 
   it("explains that local review requires the bootstrap repair on origin/main (#10611)", () => {
@@ -385,14 +433,17 @@ describe("local PR review advisor", () => {
     });
   });
 
-  it("attempts sandbox, gateway, and owned-root cleanup independently with primary-error priority (#10611)", async () => {
+  it("retries failed sandbox deletion during final cleanup before reporting other cleanup failure (#10611)", async () => {
     const source = repository();
     const stopGateway = vi.fn(async () => {
       throw new Error("gateway cleanup failed");
     });
-    const remove = vi.fn(() => {
-      throw new Error("sandbox cleanup failed");
-    });
+    const remove = vi
+      .fn<() => void>()
+      .mockImplementationOnce(() => {
+        throw new Error("sandbox cleanup failed");
+      })
+      .mockImplementationOnce(() => undefined);
     let ownedRoot = "";
     const lifecycle: LocalReviewLifecycle = {
       prepare: async () => undefined,
@@ -424,7 +475,7 @@ describe("local PR review advisor", () => {
         cause: expect.objectContaining({ message: "primary run failed" }),
       }),
     });
-    expect(remove).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledTimes(2);
     expect(stopGateway).toHaveBeenCalledOnce();
     expect(fs.existsSync(ownedRoot)).toBe(false);
   });
@@ -455,10 +506,13 @@ describe("local PR review advisor", () => {
         lifecycle,
       }),
     ).rejects.toMatchObject({
-      message: expect.stringContaining("Local review failed during run for specialist"),
-      cause: expect.objectContaining({ message: "failed" }),
+      message: expect.stringMatching(/failed during run.*cleanup also failed: cleanup failed/u),
+      cause: expect.objectContaining({
+        message: expect.stringContaining("failed during run"),
+        cause: expect.objectContaining({ message: "failed" }),
+      }),
     });
-    expect(remove).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledTimes(2);
     expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
   });
 });

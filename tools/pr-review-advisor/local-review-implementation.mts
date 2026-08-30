@@ -263,8 +263,8 @@ export async function runLocalReview(input: {
       let specialistCleanupFailure: unknown;
       try {
         if (activeEnvironment === env) {
-          activeEnvironment = undefined;
           lifecycle.remove(env);
+          activeEnvironment = undefined;
         }
       } catch (error) {
         specialistCleanupFailure = error;
