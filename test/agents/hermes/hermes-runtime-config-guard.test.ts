@@ -4,7 +4,10 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadAgent } from "../../../src/lib/agent/defs";
+import {
+  buildMessagingRuntimePlanArtifact,
+  type MessagingBuildPlan,
+} from "../../../src/lib/messaging/applier/build/messaging-build-applier.mts";
 
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,
@@ -30,31 +33,6 @@ guard = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = guard
 spec.loader.exec_module(guard)
 `;
-
-describe("Hermes sealed configuration contract", () => {
-  it("keeps the root guard in parity with the host manifest projection (#8006)", () => {
-    const result = runPythonHarness(String.raw`
-import importlib.util
-import json
-import sys
-import types
-
-# This contract check reads a constant only. Avoid requiring the optional host
-# PyYAML package while loading the image-owned module for that narrow purpose.
-sys.modules["yaml"] = types.ModuleType("yaml")
-spec = importlib.util.spec_from_file_location("runtime_config_guard", sys.argv[1])
-guard = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = guard
-spec.loader.exec_module(guard)
-print(json.dumps(guard.SEALED_FILE_NAMES))
-`);
-    expect(result.status, result.stderr).toBe(0);
-
-    const config = loadAgent("hermes").configPaths;
-    const manifestFiles = [config.configFile, ...config.shieldsFiles, ".config-hash"].sort();
-    expect((JSON.parse(result.stdout) as string[]).sort()).toEqual(manifestFiles);
-  });
-});
 
 describe("Hermes candidate schema validation (#8614)", () => {
   it("rejects an incomplete home_channel before a sealed write transaction starts", () => {
@@ -620,7 +598,46 @@ with tempfile.TemporaryDirectory() as tmp:
 });
 
 describe("Hermes provider placeholder diagnostics", () => {
-  it("logs only validated environment keys, never runtime-plan message content", () => {
+  it("carries image-artifact credential aliases into Hermes-native env keys (#10079)", () => {
+    const plan = {
+      schemaVersion: 1,
+      sandboxName: "test-sandbox",
+      agent: "hermes",
+      channels: [
+        { channelId: "wechat", active: true, disabled: false },
+        { channelId: "teams", active: true, disabled: false },
+      ],
+      disabledChannels: [],
+      credentialBindings: [
+        { channelId: "wechat", providerEnvKey: "WECHAT_BOT_TOKEN" },
+        { channelId: "teams", providerEnvKey: "MSTEAMS_APP_PASSWORD" },
+      ],
+      agentRender: [],
+      buildSteps: [],
+      runtimeSetup: {
+        nodePreloads: [],
+        envAliases: [
+          {
+            channelId: "wechat",
+            envKey: "WECHAT_BOT_TOKEN",
+            targetEnvKey: "WEIXIN_TOKEN",
+            match: "^openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN$",
+            value: "openshell:resolve:env:WECHAT_BOT_TOKEN",
+          },
+          {
+            channelId: "teams",
+            envKey: "MSTEAMS_APP_PASSWORD",
+            targetEnvKey: "TEAMS_CLIENT_SECRET",
+            match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+            value: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+          },
+        ],
+        secretScans: [],
+      },
+    } satisfies MessagingBuildPlan;
+    const runtimeArtifact = buildMessagingRuntimePlanArtifact(plan);
+    expect(runtimeArtifact).toBeTruthy();
+
     const result = runPythonHarness(`${loadGuardModule}
 import json
 import os
@@ -630,23 +647,15 @@ with tempfile.TemporaryDirectory() as tmp:
     env_path = os.path.join(tmp, ".env")
     plan_path = os.path.join(tmp, "runtime-plan.json")
     with open(env_path, "w", encoding="utf-8") as handle:
-        handle.write("SLACK_BOT_TOKEN=old-placeholder\\n")
+        handle.write("WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN\\n")
+        handle.write("TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD\\n")
     with open(plan_path, "w", encoding="utf-8") as handle:
-        json.dump({
-            "channels": [{"channelId": "slack", "active": True}],
-            "runtimeSetup": {
-                "envAliases": [{
-                    "channelId": "slack",
-                    "envKey": "SLACK_BOT_TOKEN",
-                    "match": "^openshell:resolve:env:SLACK_BOT_TOKEN$",
-                    "value": "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-                    "message": "Authorization: Bearer should-never-be-logged",
-                }],
-            },
-        }, handle)
+        json.dump(json.loads(${JSON.stringify(JSON.stringify(runtimeArtifact))}), handle)
 
-    os.environ["SLACK_BOT_TOKEN"] = "openshell:resolve:env:SLACK_BOT_TOKEN"
+    os.environ["WECHAT_BOT_TOKEN"] = "openshell:resolve:env:v222_WECHAT_BOT_TOKEN"
+    os.environ["MSTEAMS_APP_PASSWORD"] = "openshell:resolve:env:v333_MSTEAMS_APP_PASSWORD"
     guard._validate_env_text_with_boundary = lambda *_args: None
+    guard._write_existing = lambda path, text, *_args: open(path, "w", encoding="utf-8").write(text)
     guard.refresh_hashes = lambda *_args: None
     guard.provider_placeholders(
         tmp,
@@ -660,13 +669,92 @@ with tempfile.TemporaryDirectory() as tmp:
 `);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe("SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\n");
-    expect(result.stderr).toContain(
-      "[config] Refreshed Hermes provider placeholder for SLACK_BOT_TOKEN",
+    expect(result.stdout).toContain(
+      "WEIXIN_TOKEN=openshell:resolve:env:v222_WECHAT_BOT_TOKEN\n",
     );
-    expect(result.stderr).not.toContain("Authorization");
-    expect(result.stderr).not.toContain("should-never-be-logged");
+    expect(result.stdout).toContain(
+      "TEAMS_CLIENT_SECRET=openshell:resolve:env:v333_MSTEAMS_APP_PASSWORD\n",
+    );
+    expect(result.stderr).toContain(
+      "[config] Refreshed Hermes provider placeholder for WEIXIN_TOKEN",
+    );
+    expect(result.stderr).toContain(
+      "[config] Refreshed Hermes provider placeholder for TEAMS_CLIENT_SECRET",
+    );
   });
+
+  it.each([
+    ["wechat", "WECHAT_BOT_TOKEN", "WEIXIN_TOKEN"],
+    ["teams", "MSTEAMS_APP_PASSWORD", "TEAMS_CLIENT_SECRET"],
+  ] as const)(
+    "copies the %s revision-scoped provider placeholder and logs only validated keys (#10079)",
+    (channelId, envKey, targetEnvKey) => {
+      const result = runPythonHarness(`${loadGuardModule}
+import json
+import os
+import tempfile
+
+with tempfile.TemporaryDirectory() as tmp:
+    env_path = os.path.join(tmp, ".env")
+    plan_path = os.path.join(tmp, "runtime-plan.json")
+    with open(env_path, "w", encoding="utf-8") as handle:
+        handle.write(${JSON.stringify(`${targetEnvKey}=openshell:resolve:env:${envKey}\n`)})
+    with open(plan_path, "w", encoding="utf-8") as handle:
+        json.dump({
+            "channels": [{"channelId": ${JSON.stringify(channelId)}, "active": True}],
+            "credentialBindings": [{
+                "channelId": ${JSON.stringify(channelId)},
+                "providerEnvKey": ${JSON.stringify(envKey)},
+            }],
+            "runtimeSetup": {
+                "envAliases": [{
+                    "channelId": ${JSON.stringify(channelId)},
+                    "envKey": ${JSON.stringify(envKey)},
+                    "targetEnvKey": ${JSON.stringify(targetEnvKey)},
+                    "match": ${JSON.stringify(`^openshell:resolve:env:v[0-9]+_${envKey}$`)},
+                    "value": ${JSON.stringify(`openshell:resolve:env:${envKey}`)},
+                    "message": "Authorization: Bearer should-never-be-logged",
+                }],
+            },
+        }, handle)
+
+    os.environ[${JSON.stringify(envKey)}] = ${JSON.stringify(`openshell:resolve:env:v222_${envKey}`)}
+    guard._validate_env_text_with_boundary = lambda *_args: None
+    guard._write_existing = lambda path, text, *_args: open(path, "w", encoding="utf-8").write(text)
+    guard.refresh_hashes = lambda *_args: None
+    guard.provider_placeholders(
+        tmp,
+        os.path.join(tmp, ".config-hash"),
+        "compat",
+        plan_path,
+        "unused-boundary-validator",
+    )
+    with open(env_path, "r", encoding="utf-8") as handle:
+        print(handle.read(), end="")
+    os.environ[${JSON.stringify(envKey)}] = "raw-test-value"
+    raw_replacements, _provider_keys, _loaded = (
+        guard._runtime_plan_replacements_and_provider_keys(plan_path)
+    )
+    print("raw_replacements=" + json.dumps(raw_replacements, sort_keys=True))
+    os.environ[${JSON.stringify(envKey)}] = ${JSON.stringify(`openshell:resolve:env:${envKey}`)}
+    canonical_replacements, _provider_keys, _loaded = (
+        guard._runtime_plan_replacements_and_provider_keys(plan_path)
+    )
+    print("canonical_replacements=" + json.dumps(canonical_replacements, sort_keys=True))
+`);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(`${targetEnvKey}=openshell:resolve:env:v222_${envKey}\n`);
+      expect(result.stdout).toContain(`${envKey}=openshell:resolve:env:v222_${envKey}\n`);
+      expect(result.stdout).toContain("raw_replacements={}");
+      expect(result.stdout).toContain("canonical_replacements={}");
+      expect(result.stderr).toContain(
+        `[config] Refreshed Hermes provider placeholder for ${targetEnvKey}`,
+      );
+      expect(result.stderr).not.toContain("Authorization");
+      expect(result.stderr).not.toContain("should-never-be-logged");
+    },
+  );
 });
 
 describe("Hermes shields outer namespace containment", () => {

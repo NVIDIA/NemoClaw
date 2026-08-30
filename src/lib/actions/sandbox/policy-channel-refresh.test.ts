@@ -80,9 +80,7 @@ beforeEach(() => {
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: "alpha",
     agent: null,
-    policies: ["pypi"],
   });
-  vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
 
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
   vi.spyOn(onboardSession, "updateSession").mockReturnValue(

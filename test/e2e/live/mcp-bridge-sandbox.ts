@@ -20,6 +20,32 @@ export type CapturedManagedMcpPolicy = {
   policy: McpNetworkPolicy;
 };
 
+export async function applyMcpHostPolicyEdit(
+  sandbox: SandboxClient,
+  options: { artifactPrefix: string; sandboxName: string },
+): Promise<void> {
+  const result = await sandbox.openshell(
+    [
+      "policy",
+      "update",
+      options.sandboxName,
+      "--add-endpoint",
+      "host-edit-mcp.example.com:443:read-only:rest:enforce",
+      "--rule-name",
+      "mcp_host_edit_e2e",
+      "--binary",
+      "/usr/bin/curl",
+      "--wait",
+    ],
+    {
+      artifactName: `${options.artifactPrefix}-host-policy-edit-before-mcp-add`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  assertExitZero(result, `${options.artifactPrefix} host policy edit before MCP add`);
+}
+
 type McpNetworkPolicy = {
   endpoints?: Array<{
     host?: string;

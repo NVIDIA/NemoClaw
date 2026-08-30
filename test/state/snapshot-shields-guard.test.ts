@@ -58,7 +58,6 @@ function writeSandboxRegistry(home: string, sandboxName: string): void {
           model: "test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,
-          policies: [],
         },
       },
       defaultSandbox: sandboxName,

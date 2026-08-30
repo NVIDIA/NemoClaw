@@ -2,15 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
+import { openRegularFileNoFollow } from "../adapters/fs/regular-file";
 import {
+  formatTerminalSafeDiagnosticValue,
+  hasQuarantinedShieldsTimerRecoveryArtifact,
+  isShieldsTimerDeadlineAbandoned,
+  isShieldsTimerMarkerAbandoned,
   readShieldsTimerMarker,
+  readShieldsTimerMarkerFile,
+  readShieldsTimerRecoveryCandidate,
   readShieldsTimerTakeoverToken,
   readTimerProcessStartIdentity,
+  sameShieldsTimerMarkerGeneration,
   type ShieldsTimerMarker,
   shieldsTimerMarkerPath,
 } from "../state/mcp-lifecycle-lock/shields-timer-authority";
@@ -44,12 +52,12 @@ function processInspectionDeadlineReached(deadline: number): boolean {
   return performance.now() >= deadline;
 }
 
-function timerMarkerPath(sandboxName: string): string {
-  return shieldsTimerMarkerPath(sandboxName);
+function timerMarkerPath(sandboxName: string, stateDir?: string): string {
+  return shieldsTimerMarkerPath(sandboxName, stateDir);
 }
 
-function readTimerMarker(sandboxName: string): ShieldsTimerMarker | null {
-  return readShieldsTimerMarker(sandboxName);
+function readTimerMarker(sandboxName: string, stateDir?: string): ShieldsTimerMarker | null {
+  return readShieldsTimerMarker(sandboxName, stateDir);
 }
 
 function readAutoRestoreTakeoverToken(sandboxName: string): string | undefined {
@@ -78,12 +86,16 @@ function timerAuthoritySha256(marker: ShieldsTimerMarker): string {
     .digest("hex");
 }
 
-function timerAuthorizationProofPath(sandboxName: string, processToken: string): string {
+function timerAuthorizationProofPath(
+  sandboxName: string,
+  processToken: string,
+  stateDir?: string,
+): string {
   if (!/^[0-9a-f]{32}$/.test(processToken)) {
     throw new Error("Invalid timer authorization process token");
   }
   return path.join(
-    path.dirname(timerMarkerPath(sandboxName)),
+    path.dirname(timerMarkerPath(sandboxName, stateDir)),
     `shields-timer-authorization-${sandboxName}-${processToken}.json`,
   );
 }
@@ -151,33 +163,20 @@ function writeTimerAuthorizationProofForMarker(marker: ShieldsTimerMarker): void
 
 function hasExactTimerAuthorizationProof(marker: ShieldsTimerMarker): boolean {
   if (!marker.processToken || !marker.timerProcessStartIdentity) return false;
-  let fd: number | undefined;
+  let proofFile: ReturnType<typeof openRegularFileNoFollow> | undefined;
   try {
-    fd = fs.openSync(
+    proofFile = openRegularFileNoFollow(
       timerAuthorizationProofPath(marker.sandboxName, marker.processToken),
-      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
     );
-    const before = fs.fstatSync(fd);
+    const proofStats = proofFile.stat();
     if (
-      !before.isFile() ||
-      before.nlink !== 1 ||
-      (before.mode & 0o777) !== 0o600 ||
-      before.size <= 0 ||
-      before.size > MAX_TIMER_AUTHORIZATION_PROOF_BYTES ||
-      (typeof process.getuid === "function" && before.uid !== process.getuid())
+      (proofStats.mode & 0o777) !== 0o600 ||
+      proofStats.size <= 0 ||
+      (typeof process.getuid === "function" && proofStats.uid !== process.getuid())
     ) {
       return false;
     }
-    const raw = fs.readFileSync(fd, "utf-8");
-    const after = fs.fstatSync(fd);
-    if (
-      before.dev !== after.dev ||
-      before.ino !== after.ino ||
-      before.size !== after.size ||
-      before.mtimeMs !== after.mtimeMs
-    ) {
-      return false;
-    }
+    const raw = proofFile.readBytes(MAX_TIMER_AUTHORIZATION_PROOF_BYTES).toString("utf-8");
     const proof = JSON.parse(raw) as unknown;
     return (
       isTimerAuthorizationProof(proof) &&
@@ -190,25 +189,62 @@ function hasExactTimerAuthorizationProof(marker: ShieldsTimerMarker): boolean {
   } catch {
     return false;
   } finally {
-    if (fd !== undefined) fs.closeSync(fd);
+    proofFile?.close();
   }
 }
 
 function removeTimerAuthorizationProof(
   sandboxName: string,
   processToken: string | undefined,
+  stateDir?: string,
 ): void {
   if (!processToken || !/^[0-9a-f]{32}$/.test(processToken)) return;
   try {
-    fs.rmSync(timerAuthorizationProofPath(sandboxName, processToken), { force: true });
+    fs.rmSync(timerAuthorizationProofPath(sandboxName, processToken, stateDir), { force: true });
   } catch {
     // Best effort. A proof cannot grant authority without its exact marker.
   }
 }
 
 interface ClearTimerMarkerResult {
-  cleared: boolean;
   warning?: string;
+}
+
+interface TimerMarkerRetirementResult {
+  status: "removed" | "missing" | "changed" | "failed";
+  retainedPath?: string;
+  warning?: string;
+}
+
+function fsyncTimerArtifactDirectory(artifactPath: string): void {
+  const directoryFd = fs.openSync(path.dirname(artifactPath), "r");
+  try {
+    fs.fsyncSync(directoryFd);
+  } finally {
+    fs.closeSync(directoryFd);
+  }
+}
+
+function restoreTimerArtifactAfterDurabilityFailure(
+  sourcePath: string,
+  expected: ShieldsTimerMarker,
+): string | null {
+  try {
+    fs.writeFileSync(sourcePath, `${JSON.stringify(expected)}\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    const artifactFd = fs.openSync(sourcePath, "r");
+    try {
+      fs.fsyncSync(artifactFd);
+    } finally {
+      fs.closeSync(artifactFd);
+    }
+    fsyncTimerArtifactDirectory(sourcePath);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 function clearTimerMarker(sandboxName: string): ClearTimerMarkerResult {
@@ -223,17 +259,93 @@ function clearTimerMarker(sandboxName: string): ClearTimerMarkerResult {
     } finally {
       fs.closeSync(directoryFd);
     }
-    return { cleared: true };
+    return {};
   } catch (error) {
     const errno = error as NodeJS.ErrnoException;
     if (errno.code === "ENOENT") {
-      return { cleared: false };
+      return {};
     }
     return {
-      cleared: false,
       warning: `Failed to remove shields timer marker '${markerPath}': ${errno.message}`,
     };
   }
+}
+
+const sameTimerMarkerGeneration = sameShieldsTimerMarkerGeneration;
+
+function clearTimerMarkerGeneration(
+  sandboxName: string,
+  expected: ShieldsTimerMarker,
+  stateDir?: string,
+  sourcePath = timerMarkerPath(sandboxName, stateDir),
+): TimerMarkerRetirementResult {
+  const markerPath = timerMarkerPath(sandboxName, stateDir);
+  const quarantinePath = `${markerPath}.completed-${String(process.pid)}-${randomUUID()}`;
+  try {
+    fs.renameSync(sourcePath, quarantinePath);
+  } catch (error) {
+    const errno = error as NodeJS.ErrnoException;
+    if (errno.code === "ENOENT") return { status: "missing" };
+    return {
+      status: "failed",
+      warning: `Failed to claim Shields timer recovery artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}: ${formatTerminalSafeDiagnosticValue(errno.message)}`,
+    };
+  }
+
+  if (sameTimerMarkerGeneration(readShieldsTimerMarkerFile(quarantinePath), expected)) {
+    try {
+      fs.unlinkSync(quarantinePath);
+      removeTimerAuthorizationProof(sandboxName, expected.processToken, stateDir);
+      fsyncTimerArtifactDirectory(markerPath);
+      return { status: "removed" };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (!fs.existsSync(quarantinePath)) {
+        const restoreFailure = restoreTimerArtifactAfterDurabilityFailure(sourcePath, expected);
+        const retainedPath = fs.existsSync(sourcePath) ? sourcePath : undefined;
+        return {
+          status: "failed",
+          ...(retainedPath ? { retainedPath } : {}),
+          warning: restoreFailure
+            ? `Removed completed Shields timer recovery artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}, but could not confirm durable cleanup or restore it for retry: ${formatTerminalSafeDiagnosticValue(detail)}; ${formatTerminalSafeDiagnosticValue(restoreFailure)}`
+            : `Could not confirm durable cleanup for completed Shields timer recovery artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}; restored it for an explicit retry: ${formatTerminalSafeDiagnosticValue(detail)}`,
+        };
+      }
+      try {
+        fs.linkSync(quarantinePath, sourcePath);
+        fs.unlinkSync(quarantinePath);
+        return {
+          status: "failed",
+          warning: `Could not remove completed Shields timer recovery artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}; restored it for retry: ${formatTerminalSafeDiagnosticValue(detail)}`,
+        };
+      } catch (restoreError) {
+        const restoreDetail =
+          restoreError instanceof Error ? restoreError.message : String(restoreError);
+        return {
+          status: "failed",
+          retainedPath: quarantinePath,
+          warning: `Could not remove completed Shields timer recovery artifact ${formatTerminalSafeDiagnosticValue(sourcePath)} or restore it; retained ${formatTerminalSafeDiagnosticValue(quarantinePath)} for recovery: ${formatTerminalSafeDiagnosticValue(detail)}; ${formatTerminalSafeDiagnosticValue(restoreDetail)}`,
+        };
+      }
+    }
+  }
+
+  try {
+    fs.linkSync(quarantinePath, sourcePath);
+    fs.unlinkSync(quarantinePath);
+  } catch (error) {
+    const errno = error as NodeJS.ErrnoException;
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      status: errno.code === "EEXIST" ? "changed" : "failed",
+      retainedPath: quarantinePath,
+      warning: `Shields timer authority changed while retiring completed artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}; retained ${formatTerminalSafeDiagnosticValue(quarantinePath)} for recovery: ${formatTerminalSafeDiagnosticValue(detail)}`,
+    };
+  }
+  return {
+    status: "changed",
+    warning: `Shields timer authority changed while retiring completed artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}`,
+  };
 }
 
 function readProcessState(pid: number, deadline = processInspectionDeadline()): string | null {
@@ -407,10 +519,20 @@ function killTimer(sandboxName: string): KillTimerResult {
   };
 }
 
-export type { ClearTimerMarkerResult, KillTimerResult, ShieldsTimerMarker as TimerMarker };
+export type {
+  ClearTimerMarkerResult,
+  KillTimerResult,
+  ShieldsTimerMarker as TimerMarker,
+  TimerMarkerRetirementResult,
+};
 export {
   clearTimerMarker,
+  clearTimerMarkerGeneration,
+  formatTerminalSafeDiagnosticValue,
   hasExactTimerAuthorizationProof,
+  hasQuarantinedShieldsTimerRecoveryArtifact,
+  isShieldsTimerDeadlineAbandoned,
+  isShieldsTimerMarkerAbandoned,
   isProcessAlive,
   killTimer,
   processInspectionDeadlineAfter,
@@ -419,10 +541,12 @@ export {
   readProcessStartIdentity,
   readProcessState,
   readTimerMarker,
+  readShieldsTimerRecoveryCandidate,
   removeTimerAuthorizationProof,
   timerAuthoritySha256,
   timerAuthorizationProofPath,
   timerMarkerPath,
+  sameTimerMarkerGeneration,
   verifyTimerMarkerIdentity,
   writeTimerAuthorizationProofForMarker,
 };

@@ -5,6 +5,7 @@ import {
   HermesPortableOllamaRecoveryError,
   HermesPortableOllamaRecoveryPhaseError,
   recoverHermesPortableOllamaInference,
+  type HermesPortableOllamaPreparedProbeDependency,
   type HermesPortableOllamaRecoveryFailure,
   type HermesPortableOllamaRecoveryPhase,
 } from "../../../onboard/experimental/hermes-portable-ollama-inference";
@@ -19,6 +20,9 @@ export interface HermesPortableInferenceConnectRecoveryInput {
   readonly authority: HermesPortableActiveLifecycleAuthority;
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
   readonly verifyRoute: () => SandboxEntry;
+  readonly prepareProbeDependency?: () => HermesPortableOllamaPreparedProbeDependency;
+  readonly assertCallerCurrent?: () => void;
+  readonly runGatewayOpenshell?: typeof captureHermesPortableInferenceRecoveryGateway;
 }
 
 export type HermesPortableInferenceConnectRecoveryFailure =
@@ -44,8 +48,14 @@ export function recoverHermesPortableInferenceForConnectProbe(
     sandboxName: input.sandboxName,
     entry: input.authority.entry,
     runGatewayOpenshell: (args, options) =>
-      captureHermesPortableInferenceRecoveryGateway(input.sandboxName, args, options),
+      (input.runGatewayOpenshell ?? captureHermesPortableInferenceRecoveryGateway)(
+        input.sandboxName,
+        args,
+        options,
+      ),
     readRegistry: input.readRegistry,
     verifyRoute: input.verifyRoute,
+    prepareProbeDependency: input.prepareProbeDependency,
+    assertCallerCurrent: input.assertCallerCurrent,
   });
 }
