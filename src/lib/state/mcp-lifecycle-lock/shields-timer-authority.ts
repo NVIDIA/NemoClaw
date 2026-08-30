@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { isObjectRecord } from "../../core/json-types";
-import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
+import { isValidName, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
 import { processIsAlive } from "../mcp-lifecycle-lock-identity";
 import { resolveNemoclawStateDir } from "../paths";
 
@@ -167,6 +167,7 @@ export function hasShieldsTimerRecoveryArtifact(
   sandboxName: string,
   stateDir = resolveNemoclawStateDir(),
 ): boolean {
+  if (!isValidName(sandboxName)) return false;
   try {
     const markerPath = shieldsTimerMarkerPath(sandboxName, stateDir);
     if (fs.existsSync(markerPath)) return true;

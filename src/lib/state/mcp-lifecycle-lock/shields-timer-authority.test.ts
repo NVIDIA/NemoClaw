@@ -69,6 +69,13 @@ describe("Shields timer marker authority", () => {
     expect(readShieldsTimerMarker("alpha", stateDir)).toBeNull();
   });
 
+  it("leaves invalid sandbox tokens to command validation", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-marker-"));
+    tempDirs.push(stateDir);
+
+    expect(hasShieldsTimerRecoveryArtifact("alpha;echo pwned", stateDir)).toBe(false);
+  });
+
   it("rejects a hard-linked recovery marker", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-marker-"));
     tempDirs.push(stateDir);
