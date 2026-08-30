@@ -88,18 +88,59 @@ function mergeReplacementFilesystemAccess(
   return true;
 }
 
+function mergeRequiredReplacementNetworkPolicies(
+  live: PolicyMapping,
+  replacement: PolicyMapping,
+  requiredKeys: readonly string[],
+): boolean {
+  if (requiredKeys.length === 0) return false;
+
+  const replacementPolicies = policyMapping(
+    replacement.network_policies,
+    "replacement network_policies",
+  );
+  const livePolicies =
+    live.network_policies === undefined
+      ? {}
+      : structuredClone(policyMapping(live.network_policies, "live network_policies"));
+  let changed = false;
+
+  for (const key of new Set(requiredKeys)) {
+    if (Object.hasOwn(livePolicies, key)) continue;
+    if (!Object.hasOwn(replacementPolicies, key)) {
+      throw new Error(
+        `Cannot prepare rebuild policy handoff: required network policy '${key}' is absent from the replacement policy.`,
+      );
+    }
+    livePolicies[key] = structuredClone(replacementPolicies[key]);
+    changed = true;
+  }
+
+  if (changed) live.network_policies = livePolicies;
+  return changed;
+}
+
 /**
  * Build one replacement-create input from OpenShell's live policy. Host edits
- * win completely outside filesystem access; only missing paths required by the
- * replacement image are added for this one create.
+ * win completely outside filesystem access and network keys required by an
+ * explicit active messaging command. Those bounded requirements are added
+ * only to the one replacement create input; they are never persisted as a
+ * NemoClaw-owned policy shadow.
  */
 export function mergeReplacementPolicyAccess(
   livePolicySource: string,
   replacementPolicySource: string,
+  requiredNetworkPolicyKeys: readonly string[] = [],
 ): { readonly changed: boolean; readonly source: string } {
   const live = structuredClone(parseOpenShellPolicy(livePolicySource).policy) as PolicyMapping;
   const replacement = parseOpenShellPolicy(replacementPolicySource).policy as PolicyMapping;
-  const changed = mergeReplacementFilesystemAccess(live, replacement);
+  const filesystemChanged = mergeReplacementFilesystemAccess(live, replacement);
+  const networkChanged = mergeRequiredReplacementNetworkPolicies(
+    live,
+    replacement,
+    requiredNetworkPolicyKeys,
+  );
+  const changed = filesystemChanged || networkChanged;
   return changed
     ? { changed: true, source: YAML.stringify(live) }
     : { changed: false, source: livePolicySource };
@@ -109,12 +150,17 @@ export function mergeReplacementPolicyAccess(
 export function materializeRebuildPolicyHandoff(input: {
   readonly livePolicyPath: string;
   readonly replacementPolicy: InitialSandboxPolicy;
+  readonly requiredNetworkPolicyKeys?: readonly string[];
 }): InitialSandboxPolicy {
   const liveSource = fs.readFileSync(input.livePolicyPath, "utf8");
   const replacementSource =
     input.replacementPolicy.sourceBytes?.toString("utf8") ??
     fs.readFileSync(input.replacementPolicy.policyPath, "utf8");
-  const merged = mergeReplacementPolicyAccess(liveSource, replacementSource);
+  const merged = mergeReplacementPolicyAccess(
+    liveSource,
+    replacementSource,
+    input.requiredNetworkPolicyKeys,
+  );
   if (!merged.changed) {
     return {
       ...input.replacementPolicy,

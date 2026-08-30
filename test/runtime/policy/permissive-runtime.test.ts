@@ -292,7 +292,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     ["bot only", ["hermes-box-slack-bridge"]],
     ["app only", ["hermes-box-slack-app"]],
     ["conflicting", ["hermes-box-slack-app", "hermes-box-slack-bridge", "other-slack-provider"]],
-  ])("omits Hermes Slack egress when the live provider pair is %s", (_name, providers) => {
+  ])("preserves the live Hermes Slack entry when the provider pair is %s", (_name, providers) => {
     let stagedPolicy = "";
     buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
       livePolicyYaml: YAML.stringify({
@@ -310,7 +310,9 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       },
     });
 
-    expect(YAML.parse(stagedPolicy).network_policies.slack).toBeUndefined();
+    expect(YAML.parse(stagedPolicy).network_policies.slack).toEqual({
+      endpoints: providers.map((provider) => ({ credential_binding: { provider } })),
+    });
     expect(stagedPolicy).not.toContain("{sandboxName}");
   });
 
@@ -366,7 +368,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(writeTempPolicy).not.toHaveBeenCalled();
   });
 
-  it("preserves live MCP entries without copying unrelated live egress (#7952)", () => {
+  it("preserves all live OpenShell egress alongside the permissive baseline", () => {
     const liveYaml = YAML.stringify({
       filesystem_policy: { read_write: ["/proc"] },
       network_policies: {
@@ -398,7 +400,9 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
         endpoints: [{ host: "*", port: 443 }],
       },
     });
-    expect(result.network_policies).not.toHaveProperty("unrelated_live_entry");
+    expect(result.network_policies).toHaveProperty("unrelated_live_entry", {
+      endpoints: [{ host: "unrelated.example.com", port: 443 }],
+    });
   });
 
   it("preserves /proc when the live GPU sandbox has it in read_write", () => {

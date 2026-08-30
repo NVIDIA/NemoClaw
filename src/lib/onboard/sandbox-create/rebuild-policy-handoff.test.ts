@@ -129,6 +129,41 @@ seccomp:
     });
   });
 
+  it("adds only explicitly required messaging keys and lets live collisions win", () => {
+    const live = `
+version: 1
+network_policies:
+  host_edit: {name: host_edit}
+  teams: {name: host_teams}
+`;
+    const replacement = `
+version: 1
+network_policies:
+  teams: {name: generated_teams}
+  wechat: {name: generated_wechat}
+  unrelated: {name: unrelated}
+`;
+
+    const merged = mergeReplacementPolicyAccess(live, replacement, ["teams", "wechat"]);
+
+    expect(merged.changed).toBe(true);
+    expect(YAML.parse(merged.source).network_policies).toEqual({
+      host_edit: { name: "host_edit" },
+      teams: { name: "host_teams" },
+      wechat: { name: "generated_wechat" },
+    });
+  });
+
+  it("rejects an active messaging requirement missing from the replacement policy", () => {
+    expect(() =>
+      mergeReplacementPolicyAccess(
+        "version: 1\nnetwork_policies: {}\n",
+        "version: 1\nnetwork_policies: {}\n",
+        ["wechat"],
+      ),
+    ).toThrow("required network policy 'wechat' is absent");
+  });
+
   it("materializes one private handoff and cleans it with the generated replacement source", () => {
     const livePath = tempPolicy(
       "live.yaml",

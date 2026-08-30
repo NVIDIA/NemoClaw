@@ -27,7 +27,10 @@ import {
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
-import { disposeRebuildAgentBaseImagePreflight } from "./rebuild-flow-helpers";
+import {
+  disposeRebuildAgentBaseImagePreflight,
+  removeStaleRebuildDockerOrphan,
+} from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import {
   type HermesCronRestoreIdentity,
@@ -570,6 +573,12 @@ async function rebuildSandboxUnlocked(
                 message: "The current OpenShell policy became unavailable before sandbox deletion.",
               };
         },
+        cleanupDockerOrphanAfterDelete: () =>
+          removeStaleRebuildDockerOrphan(
+            sandboxName,
+            sandboxEntry.openshellDriver,
+            log,
+          ),
         onDeleted: () => {
           sandboxStillExists = false;
           retainPolicyHandoffForRecovery = true;

@@ -7,7 +7,6 @@ import * as gatewayDrift from "../../adapters/openshell/gateway-drift";
 import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as gatewayRuntime from "../../gateway-runtime-action";
 import * as dockerDriverRecovery from "../../onboard/docker-driver-sandbox-recovery";
-import * as openshellDockerContainers from "../../onboard/openshell-docker-sandbox-containers";
 import * as registry from "../../state/registry";
 import * as registryPersistence from "../../state/registry/persistence";
 import { type RebuildSandboxEntry, resolveRebuildLiveState } from "./rebuild-flow-helpers";
@@ -84,9 +83,6 @@ describe("rebuild gateway drift preflight", () => {
     recoverDockerDriverSandboxSpy = vi
       .spyOn(dockerDriverRecovery, "recoverDockerDriverSandbox")
       .mockReturnValue({ recovered: false, via: null });
-    vi.spyOn(openshellDockerContainers, "removeStaleRebuildDockerOrphan").mockImplementation(
-      () => undefined,
-    );
     vi.spyOn(registry, "getSandbox").mockReturnValue(makeSandboxEntry() as never);
     vi.spyOn(registryPersistence, "load").mockReturnValue({
       sandboxes: { alpha: makeSandboxEntry() },
@@ -269,11 +265,6 @@ describe("rebuild gateway drift preflight", () => {
     });
 
     expect(registryPersistence.load).toHaveBeenCalledOnce();
-    expect(openshellDockerContainers.removeStaleRebuildDockerOrphan).toHaveBeenCalledWith(
-      "alpha",
-      undefined,
-      behaviorLog,
-    );
     expect(behaviorLog.mock.calls.flat().join("\n")).toContain(
       "transaction-bound policy handoff is intact",
     );

@@ -45,6 +45,7 @@ export interface RebuildDestroyPhaseInput {
     preparation: McpRebuildPreparation,
   ) => Promise<RebuildDeleteValidationResult>;
   validateAtDeleteEdge?: () => RebuildDeleteValidationResult;
+  cleanupDockerOrphanAfterDelete?: () => void;
   onDeleted: () => void;
   onDeleteStateAmbiguous?: () => void;
 }
@@ -237,6 +238,7 @@ export async function runRebuildDestroyPhase(
     relockShieldsIfNeeded,
     validateAfterMcpPreparation,
     validateAtDeleteEdge,
+    cleanupDockerOrphanAfterDelete,
     onDeleted,
   } = input;
   const deleteTarget = resolveRebuildDeleteTarget(sandboxName, input.sandboxEntry);
@@ -507,6 +509,18 @@ export async function runRebuildDestroyPhase(
     input.onDeleteStateAmbiguous?.();
     const detail = error instanceof Error ? error.message : String(error);
     bail(`Sandbox deletion could not be journaled: ${redactFull(detail)}`);
+    return null;
+  }
+  try {
+    cleanupDockerOrphanAfterDelete?.();
+  } catch (error) {
+    stopNimBestEffort();
+    onDeleted();
+    if (backupManifest) {
+      console.error("  State backup is preserved at: " + backupManifest.backupPath);
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    bail(`Post-delete Docker orphan cleanup failed: ${redactFull(detail)}`);
     return null;
   }
   stopNimBestEffort();

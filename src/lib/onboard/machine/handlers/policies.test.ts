@@ -61,6 +61,21 @@ describe("policy state handler", () => {
     );
   });
 
+  it("does not reconcile presets after a rebuild consumed OpenShell's live policy", async () => {
+    const { deps, calls } = createPolicyHandlerDeps();
+
+    const result = await handlePoliciesState({
+      ...basePolicyHandlerOptions(deps),
+      preserveRebuildLivePolicy: true,
+    });
+
+    expect(calls.smoke).toHaveBeenCalledOnce();
+    expect(calls.prepareResume).not.toHaveBeenCalled();
+    expect(calls.setupPolicies).not.toHaveBeenCalled();
+    expect(calls.skipped).toHaveBeenCalledWith("policies", "live OpenShell rebuild policy");
+    expect(result.appliedPolicyPresets).toEqual([]);
+  });
+
   it("merges live messaging channels into policy requirements", async () => {
     const { deps, calls } = createPolicyHandlerDeps();
     await handlePoliciesState({

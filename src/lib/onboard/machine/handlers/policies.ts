@@ -29,6 +29,7 @@ export interface PolicyResumeSelection {
 
 export interface PoliciesStateOptions<Agent, WebSearchConfig> {
   resume: boolean;
+  preserveRebuildLivePolicy?: boolean;
   sandboxName: string;
   provider: string;
   hostLocalInferenceRouteOnly?: boolean;
@@ -124,6 +125,7 @@ export interface PoliciesStateResult {
 
 export async function handlePoliciesState<Agent, WebSearchConfig>({
   resume,
+  preserveRebuildLivePolicy = false,
   sandboxName,
   provider,
   hostLocalInferenceRouteOnly = false,
@@ -181,6 +183,30 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
         ? { hostLocalInferenceProofAuthority: hostLocalInferenceSandboxProofAuthority ?? undefined }
         : {}),
     });
+  if (preserveRebuildLivePolicy) {
+    verifySandboxInferenceRoute();
+    deps.skippedStepMessage("policies", "live OpenShell rebuild policy");
+    await deps.recordStateSkipped("policies", {
+      reason: "rebuild-live-policy",
+    });
+    const session = await deps.recordStepComplete(
+      "policies",
+      deps.toSessionUpdates({
+        sandboxName,
+        provider,
+        model,
+      }),
+    );
+    return {
+      session,
+      recordedMessagingChannels,
+      selectedMessagingChannels: policyMessagingChannels,
+      appliedPolicyPresets: [],
+      stateResult: advanceTo("finalizing", {
+        metadata: { state: "policies" },
+      }),
+    };
+  }
   if (!hostLocalInferenceRouteOnly) verifySandboxInferenceRoute();
 
   const policyResumeSelection = deps.preparePolicyPresetResumeSelection(sandboxName, {

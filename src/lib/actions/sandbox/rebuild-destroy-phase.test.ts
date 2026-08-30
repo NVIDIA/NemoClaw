@@ -225,6 +225,64 @@ describe("rebuild destroy phase", () => {
     );
   });
 
+  it("removes a legacy Docker orphan after confirmed OpenShell deletion and before recreation", async () => {
+    const recreateJournal = stubRecreateJournal();
+    const cleanupDockerOrphanAfterDelete = vi.fn();
+    const onDeleted = vi.fn();
+
+    await runRebuildDestroyPhase({
+      sandboxName: "alpha",
+      sandboxEntry: { name: "alpha", agent: "openclaw" },
+      staleRecovery: false,
+      recreateJournal,
+      backupManifest: null,
+      log: vi.fn(),
+      bail: vi.fn((message: string): never => {
+        throw new Error(message);
+      }),
+      relockShieldsIfNeeded: vi.fn(() => true),
+      cleanupDockerOrphanAfterDelete,
+      onDeleted,
+    });
+
+    expect(recreateJournal.confirmDeleted).toHaveBeenCalledOnce();
+    expect(cleanupDockerOrphanAfterDelete).toHaveBeenCalledOnce();
+    expect(onDeleted).toHaveBeenCalledOnce();
+    expect(vi.mocked(recreateJournal.confirmDeleted).mock.invocationCallOrder[0]).toBeLessThan(
+      cleanupDockerOrphanAfterDelete.mock.invocationCallOrder[0]!,
+    );
+    expect(cleanupDockerOrphanAfterDelete.mock.invocationCallOrder[0]).toBeLessThan(
+      onDeleted.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("retains the deleted recovery boundary when Docker orphan cleanup fails", async () => {
+    const recreateJournal = stubRecreateJournal();
+    const onDeleted = vi.fn();
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw" },
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: null,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded: vi.fn(() => true),
+        cleanupDockerOrphanAfterDelete: () => {
+          throw new Error("container removal refused");
+        },
+        onDeleted,
+      }),
+    ).rejects.toThrow("Post-delete Docker orphan cleanup failed: container removal refused");
+
+    expect(recreateJournal.confirmDeleted).toHaveBeenCalledOnce();
+    expect(onDeleted).toHaveBeenCalledOnce();
+  });
+
   it("pins deletion to the recorded gateway when ambient selection changes (#7062)", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw-29080");
     mocks.getSandbox.mockReturnValue({

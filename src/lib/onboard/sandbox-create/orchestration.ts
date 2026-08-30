@@ -105,14 +105,16 @@ function bindRebuildPolicySourceProvidersToCreateIntent(
     : intent;
 }
 
-/** Preserve OpenShell's live policy while adding only replacement filesystem access. */
+/** Preserve OpenShell's live policy plus bounded requirements for this explicit create. */
 function selectRebuildCreatePolicy(
   policySourcePath: string,
   generatedPolicy: import("../initial-policy").InitialSandboxPolicy,
+  requiredNetworkPolicyKeys: readonly string[],
 ): import("../initial-policy").InitialSandboxPolicy {
   return materializeRebuildPolicyHandoff({
     livePolicyPath: policySourcePath,
     replacementPolicy: generatedPolicy,
+    requiredNetworkPolicyKeys,
   });
 }
 
@@ -2060,6 +2062,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       ? selectRebuildCreatePolicy(
           createIntent.rebuildPolicySourcePath,
           materializedInitialSandboxPolicy,
+          plannedMessagingState?.plan.networkPolicy.entries.flatMap((entry) => entry.policyKeys) ??
+            [],
         )
       : materializedInitialSandboxPolicy;
     const createArgv = createIntent?.rebuildPolicySourcePath
