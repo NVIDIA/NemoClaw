@@ -624,7 +624,11 @@ RUN set -eu; \
     probe_home="$(mktemp -d)"; \
     trap 'rm -rf "$probe_home"' EXIT; \
     HERMES_HOME="$probe_home" /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py cron-runtime-source
+        /opt/nemoclaw-hermes-config/image-build-probes.py cron-runtime-source \
+    && rm /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
+        /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
+        /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
+        /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
 
 # Hermes v0.20.6 computes `sessions list` preview from the first user message,
 # while #5254's user-facing expectation is that the existing row reflects the
@@ -1433,6 +1437,10 @@ RUN check_metadata() { \
     }; \
     check_absent /opt/hermes/tests \
     && check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \
+    && check_absent /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py \
+    && check_absent /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py \
+    && check_absent /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
+    && check_absent /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \

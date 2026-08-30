@@ -51,7 +51,7 @@ DEFAULT_CONFIG = {
 const browserFixture = `\
 import os
 
-_BROWSER_PASSTHROUGH_KEYS = ()
+_BROWSER_PASSTHROUGH_KEYS = ("npm_config_offline",)
 
 def _build_browser_env() -> dict:
     env = {}
@@ -168,6 +168,21 @@ sys.stdout.write(patched)
   }
 }
 
+function runPatchedBrowserEnvironment(source: string) {
+  const script = `\
+import sys
+namespace = {}
+exec(compile(sys.stdin.read(), "<patched-browser>", "exec"), namespace)
+print(namespace["_build_browser_env"]()["npm_config_offline"])
+`;
+  return spawnSync("python3", ["-I", "-c", script], {
+    encoding: "utf8",
+    env: { ...process.env, npm_config_offline: "false" },
+    input: source,
+    timeout: 5000,
+  });
+}
+
 describe("Hermes profile policy defaults", () => {
   it("pins every config default that fresh profile homes otherwise inherit", () => {
     const result = patchSource("config", configFixture);
@@ -190,7 +205,9 @@ describe("Hermes profile policy defaults", () => {
     expect(result.stdout).toContain('cfg_get(cfg, "browser", "restrict_evaluate"), default=True');
     expect(result.stdout).toMatch(/Could not read browser[.]restrict_evaluate[\s\S]*?return True/u);
     expect(result.stdout).toContain('env["npm_config_offline"] = "true"');
-    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(3);
+    const environment = runPatchedBrowserEnvironment(result.stdout);
+    expect(environment.status, environment.stderr).toBe(0);
+    expect(environment.stdout.trim()).toBe("true");
   });
 
   it("keeps the gateway reset policy fail-safe without config.yaml", () => {

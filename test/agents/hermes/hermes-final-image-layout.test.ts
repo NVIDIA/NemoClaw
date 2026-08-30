@@ -15,6 +15,12 @@ import {
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const NPM_ROOT_ARGUMENTS = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
+const BUILD_ONLY_MIGRATION_PATCHER_PATHS = [
+  "/opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
+  "/opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
+  "/opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
+  "/opt/nemoclaw-hermes-config/patch-cron-restore-drain.py",
+] as const;
 const HERMES_INTEGRITY_FILES = [
   {
     arg: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256",
@@ -226,22 +232,23 @@ function runNeutralPatcherCleanup() {
   return { neutralPatcherPath, result, tmp };
 }
 
-function runFinalNeutralPatcherGuard() {
+function runFinalBuildOnlyPathGuard(buildOnlyPath: string) {
   const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-neutral-guard-"));
-  const neutralPatcherPath = path.join(tmp, "patch-neutral-platform-env-activation.py");
-  fs.writeFileSync(neutralPatcherPath, "build only\n", { flag: "wx" });
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-build-only-guard-"));
+  const fixturePath = path.join(tmp, path.basename(buildOnlyPath));
+  fs.writeFileSync(fixturePath, "build only\n", { flag: "wx" });
   const fullCommand = dockerRunCommandBetween(
     dockerfile,
     "RUN check_metadata() {",
     "# Verify the immutable security package inventory",
-  ).replaceAll(
-    "/opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
-    neutralPatcherPath,
+  ).replaceAll(buildOnlyPath, fixturePath);
+  const guardedClause = `&& check_absent ${fixturePath}`;
+  const guardedIndex = indexOfRequired(fullCommand, guardedClause);
+  const nextClauseOffset = indexOfRequired(
+    fullCommand.slice(guardedIndex + guardedClause.length),
+    " && ",
   );
-  const guardedClause = `&& check_absent ${neutralPatcherPath}`;
-  const guardedIndex = fullCommand.indexOf(guardedClause);
-  const nextClauseIndex = fullCommand.indexOf(" && ", guardedIndex + guardedClause.length);
+  const nextClauseIndex = guardedIndex + guardedClause.length + nextClauseOffset;
   const command = fullCommand.slice(0, nextClauseIndex);
   const result = runLoggedDockerShell(command, tmp).result;
   return { result, tmp };
@@ -282,7 +289,9 @@ describe("Hermes final image layout", () => {
   });
 
   it("rejects a retained neutral-platform patcher from the final layout", () => {
-    const run = runFinalNeutralPatcherGuard();
+    const run = runFinalBuildOnlyPathGuard(
+      "/opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
+    );
     try {
       expect(run.result.status).toBe(1);
       expect(run.result.stderr).toContain("build-only Hermes path leaked into the final image");
@@ -290,6 +299,19 @@ describe("Hermes final image layout", () => {
       fs.rmSync(run.tmp, { recursive: true, force: true });
     }
   });
+
+  it.each(BUILD_ONLY_MIGRATION_PATCHER_PATHS)(
+    "rejects retained build-only migration patcher %s from the final layout",
+    (buildOnlyPath) => {
+      const run = runFinalBuildOnlyPathGuard(buildOnlyPath);
+      try {
+        expect(run.result.status).toBe(1);
+        expect(run.result.stderr).toContain("build-only Hermes path leaked into the final image");
+      } finally {
+        fs.rmSync(run.tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("rejects retired OpenClaw state represented as a directory", () => {
     const run = runFinalLayout({ openclaw: "directory" });
