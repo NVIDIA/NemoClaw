@@ -1538,32 +1538,34 @@ PYCORS
 # baked canonical placeholders after the integrity check so token egress keeps
 # working across provider attach/refresh generations without ever writing a raw
 # credential to disk.
-refresh_openclaw_provider_placeholders() {
+refresh_openclaw_wechat_account_placeholder() {
   local config_file="/sandbox/.openclaw/openclaw.json"
-  local hash_file="/sandbox/.openclaw/.config-hash"
   [ -f "$config_file" ] || return 0
 
   # The Tencent WeChat plugin reads its credential from a separate account file.
   # Store the revision-scoped OpenShell placeholder in that file through
   # descriptor-relative, no-follow operations. Do not write the raw bot token
   # to disk.
-  refresh_openclaw_wechat_account_placeholder() {
-    local helper="/usr/local/lib/nemoclaw/refresh-openclaw-wechat-placeholder.py"
-    if [ ! -f "$helper" ]; then
-      helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/refresh-openclaw-wechat-placeholder.py"
-    fi
-    python3 -I "$helper" "$config_file"
-  }
-
-  if [ "$(openclaw_config_dir_owner "$(dirname "$config_file")")" = "root" ]; then
-    printf '[config] Shields are up; preserving sealed openclaw.json provider placeholders unchanged\n' >&2
-    refresh_openclaw_wechat_account_placeholder || return $?
-    return 0
+  local helper="/usr/local/lib/nemoclaw/refresh-openclaw-wechat-placeholder.py"
+  if [ ! -f "$helper" ]; then
+    helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/refresh-openclaw-wechat-placeholder.py"
   fi
+  python3 -I "$helper" "$config_file"
+}
+
+refresh_openclaw_provider_placeholders() {
+  local config_file="/sandbox/.openclaw/openclaw.json"
+  local hash_file="/sandbox/.openclaw/.config-hash"
+  [ -f "$config_file" ] || return 0
 
   # Refresh the separate WeChat account registry before generic provider files
   # so an invalid placeholder or unsafe account leaves those files unchanged.
   refresh_openclaw_wechat_account_placeholder || return $?
+
+  if [ "$(openclaw_config_dir_owner "$(dirname "$config_file")")" = "root" ]; then
+    printf '[config] Shields are up; preserving sealed openclaw.json provider placeholders unchanged\n' >&2
+    return 0
+  fi
 
   local keys
   keys="$(

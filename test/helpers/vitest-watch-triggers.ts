@@ -180,10 +180,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)scripts\/lib\/refresh-openclaw-wechat-placeholder\.py$/,
-    testsToRun: runTests(
-      "test/agents/openclaw/runtime/nemoclaw-start-extra-placeholder-breadcrumb.test.ts",
-      "test/agents/openclaw/runtime/nemoclaw-start-wechat-placeholder.test.ts",
-    ),
+    testsToRun: runTests("test/agents/openclaw/runtime/nemoclaw-start-wechat-placeholder.test.ts"),
   },
   {
     pattern: /(?:^|\/)agents\/hermes\/mcp-config-transaction\.py$/,

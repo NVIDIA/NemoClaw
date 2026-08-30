@@ -31,6 +31,8 @@ type LabeledSandboxContainer = {
 const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const DOCKER_VOLUME_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
+// Keep this exact set aligned with the OpenClaw manifest's original WeChat
+// state root and the current Tencent plugin account-state root.
 const OFFLINE_WECHAT_STATE_PATHS = new Set([
   "/sandbox/.openclaw/wechat",
   "/sandbox/.openclaw/openclaw-weixin",

@@ -1706,6 +1706,10 @@ function getSandboxChannelStatePaths(agent: AgentDefinition, channelName: string
     paths.push(`${configDir}/${channelName}`);
   }
   if (agent.name === "openclaw" && channelName === "wechat") {
+    // The OpenClaw manifest still owns the original `wechat` state root above;
+    // the current Tencent plugin stores account state under `openclaw-weixin`.
+    // Removal clears both declared generations so a rebuild cannot restore
+    // stale channel credentials from the legacy root.
     paths.push(`${configDir}/openclaw-weixin`);
   }
   return paths;

@@ -132,9 +132,7 @@ try:
         temporary = f".{filename}.nemoclaw-{os.getpid()}-{secrets.token_hex(8)}.tmp"
         temporary_created = False
         try:
-            create_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-            if hasattr(os, "O_NOFOLLOW"):
-                create_flags |= os.O_NOFOLLOW
+            create_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
             temporary_fd = os.open(temporary, create_flags, 0o600, dir_fd=accounts_fd)
             temporary_created = True
             try:
