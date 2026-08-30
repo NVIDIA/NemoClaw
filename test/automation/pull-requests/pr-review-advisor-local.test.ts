@@ -768,16 +768,12 @@ describe("local PR review advisor", () => {
     expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
   });
 
+  const interest = ADVISOR_SPECIALISTS[0]!.interest;
+  const summary = `pr-review-${interest}-summary.md`;
+  const session = `pr-review-${interest}-session.jsonl`;
   it.each([
-    ["missing", ["pr-review-design-architecture-summary.md"]],
-    [
-      "extra",
-      [
-        "pr-review-design-architecture-summary.md",
-        "pr-review-design-architecture-session.jsonl",
-        "extra.txt",
-      ],
-    ],
+    ["missing", [summary]],
+    ["extra", [summary, session, "extra.txt"]],
   ])("rejects %s specialist artifact sets (#10611)", async (_case, files) => {
     const source = repository();
     const lifecycle: LocalReviewLifecycle = {

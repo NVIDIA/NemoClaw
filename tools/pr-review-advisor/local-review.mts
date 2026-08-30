@@ -120,20 +120,21 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
       env: options.env ?? env,
       stdio: options.inherit ? "inherit" : ["ignore", "ignore", "inherit"],
     });
-    if (child.pid === undefined)
-      throw new Error(command + " did not report a process-group identifier");
+    const completion = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve, reject) => {
+        child.once("error", (error) =>
+          reject(new Error(`${command} could not start in the trusted PATH: ${error.message}`)),
+        );
+        child.once("close", (code, signal) => resolve({ code, signal }));
+      },
+    );
+    if (child.pid === undefined) return await completion;
     let stopped: Promise<void> | undefined;
     let finishInterruption!: () => void;
     const interruption = new Promise<void>((resolve) => (finishInterruption = resolve));
     activeStop = () => (stopped ??= stopGroup(child.pid!).finally(() => finishInterruption()));
     if (received) void activeStop().catch((error) => (cancellationError ??= error));
     try {
-      const completion = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-        (resolve, reject) => {
-          child.once("error", reject);
-          child.once("close", (code, signal) => resolve({ code, signal }));
-        },
-      );
       return await Promise.race([
         completion,
         interruption.then(() => ({ code: null, signal: received ?? null })),
@@ -182,7 +183,8 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
     if (activeStop)
       try {
         await activeStop();
-      } catch {
+      } catch (stopError) {
+        cancellationError ??= stopError;
         cleanupAllowed = false;
       }
     throw error;
@@ -191,8 +193,11 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
     cleanupAllowed &&= cancellationError === undefined;
     if (cleanupAllowed) fs.rmSync(root, { recursive: true, force: true });
     else {
-      const reason =
+      let reason =
         cancellationError instanceof Error ? cancellationError.message : String(cancellationError);
+      for (const [name, value] of Object.entries(process.env))
+        if (value && /(auth|credential|key|password|secret|token)/iu.test(name))
+          reason = reason.replaceAll(value, "[REDACTED]");
       console.error(
         `${received ? `received ${received}; ` : ""}process group cleanup was not confirmed: ${reason}; bootstrap retained at ${root} for manual cleanup`,
       );

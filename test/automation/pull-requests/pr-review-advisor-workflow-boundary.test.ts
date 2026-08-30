@@ -105,6 +105,18 @@ describe("PR review advisor workflow boundary", () => {
     expect(errors).toEqual([expectedError]);
   });
 
+  it.each(["workflow", "job"])(
+    "rejects credentials inherited by preparation from %s env",
+    (scope) => {
+      const errors = validateMutation((value) => {
+        const owner = scope === "workflow" ? value : value.jobs["review-specialists"];
+        owner.env ??= {};
+        owner.env.PR_REVIEW_ADVISOR_API_KEY = "secret";
+      });
+      expect(errors).toContain("advisor preparation must not receive model credentials");
+    },
+  );
+
   it("rejects credentials during preparation and preparation outside install-analysis order", () => {
     const errors = validateMutation((value) => {
       const steps = value.jobs["review-specialists"].steps as Record<string, any>[];

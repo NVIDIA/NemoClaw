@@ -255,9 +255,15 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     "${{ runner.temp }}/shared-pr-review-advisor-context/github-context.json"
   )
     errors.push("advisor preparation must receive the downloaded GitHub context");
+  const preparationEnvironments = [
+    object(workflow.env),
+    object(specialists.env),
+    preparationEnvironment,
+  ];
   if (
-    preparationEnvironment.OPENAI_API_KEY !== undefined ||
-    preparationEnvironment.PR_REVIEW_ADVISOR_API_KEY !== undefined
+    preparationEnvironments.some(
+      (env) => env.OPENAI_API_KEY !== undefined || env.PR_REVIEW_ADVISOR_API_KEY !== undefined,
+    )
   )
     errors.push("advisor preparation must not receive model credentials");
   const install = namedStep(specialists, "Install Pi SDK");
