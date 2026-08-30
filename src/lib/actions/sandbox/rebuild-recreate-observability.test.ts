@@ -503,6 +503,7 @@ describe("runRebuildRecreatePhase handoff", () => {
     expect(input.onCreated).not.toHaveBeenCalled();
     expect(input.registryRollback.restoreForRetry).toHaveBeenCalledOnce();
     expect(input.bail).toHaveBeenCalledWith("Recreate failed (stale-sandbox recovery).", 7);
+    expect(input.log).toHaveBeenCalledWith("onboard() exited with code 7");
   });
 
   it("retains enabled observability through inner onboard failure, recovery, and bail", async () => {

@@ -321,7 +321,12 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     onboardFailed = true;
     const message = error instanceof Error ? error.message : String(error);
     const name = error instanceof Error ? error.name : "";
-    if (name !== "RebuildOnboardExit") {
+    if (name === "RebuildOnboardExit") {
+      log(`onboard() exited with code ${onboardExitCode}`);
+      console.error(
+        `  ${_RD}Sandbox recreate error:${R} Inner onboarding exited with code ${onboardExitCode}.`,
+      );
+    } else {
       log(`onboard() threw: ${message}`);
       console.error(
         `  ${_RD}Sandbox recreate error:${R} ${onboardSession.redactSensitiveText(message) ?? "Inner onboarding failed."}`,
