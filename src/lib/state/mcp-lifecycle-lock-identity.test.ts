@@ -484,6 +484,27 @@ describe("MCP lifecycle lock identity properties", () => {
       { numRuns: PROPERTY_RUNS },
     );
   });
+
+  it("rejects malformed structured containment metadata without throwing", () => {
+    expect(
+      isMcpLifecycleLockOwner({
+        ...owner(process.pid, "process"),
+        containedGeneration: null,
+      }),
+    ).toBe(false);
+    expect(
+      isMcpLifecycleLockOwner({
+        ...owner(process.pid, "process"),
+        containedGeneration: {
+          target: "main",
+          dev: 1,
+          ino: 2,
+          token: "owner-token",
+          ownerPid: Number.MAX_SAFE_INTEGER + 1,
+        },
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("MCP lifecycle lock storage properties", () => {

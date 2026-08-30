@@ -178,6 +178,23 @@ describe("resolveOnboardEntryOptions", () => {
     expect(deps.exitProcess).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts deploy as a sandbox name after the command is removed (#10572)", () => {
+    const deps = createDeps();
+
+    const result = resolveOnboardEntryOptions(
+      {
+        opts: { sandboxName: "Deploy" },
+        env: {},
+        stdinIsTty: true,
+        stdoutIsTty: true,
+      },
+      deps,
+    );
+
+    expect(result.requestedSandboxName).toBe("deploy");
+    expect(deps.error).not.toHaveBeenCalled();
+  });
+
   it("auto-detects resume from a persisted in_progress session without --resume (#5470)", () => {
     const deps = createDeps();
 
@@ -272,6 +289,30 @@ describe("resolveOnboardEntryOptions", () => {
     const result = resolveOnboardEntryOptions(
       {
         opts: { fresh: true, sandboxName: "replacement-sb" },
+        env: {},
+        stdinIsTty: true,
+        stdoutIsTty: true,
+        persistedSessionStatus: "recovery_required",
+        persistedRecoverySandboxName: "retained-sb",
+        retainedRecoverySandboxNames: ["retained-sb"],
+      },
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      fresh: true,
+      resume: false,
+      requestedSandboxName: "replacement-sb",
+    });
+    expect(deps.error).not.toHaveBeenCalled();
+  });
+
+  it("treats an explicit different name as fresh while recovery remains isolated (#10547)", () => {
+    const deps = createDeps();
+
+    const result = resolveOnboardEntryOptions(
+      {
+        opts: { sandboxName: "replacement-sb" },
         env: {},
         stdinIsTty: true,
         stdoutIsTty: true,

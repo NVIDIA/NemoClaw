@@ -28,25 +28,19 @@ const target = {
 const originalGateway = process.env.OPENSHELL_GATEWAY;
 
 describe("authoritative rebuild sandbox flow options", () => {
-  it("clones authoritative policy state and ignores non-authoritative injection", () => {
-    const rebuildPolicyPresets = ["github"];
+  it("carries only the bounded live OpenShell policy handoff", () => {
     const projected = authoritativeRebuildSandboxFlowOptions({
       authoritativeResumeConfig: true,
-      policyTier: "balanced",
-      rebuildPolicyPresets,
+      rebuildPolicySourcePath: "/tmp/current-policy.yaml",
     });
 
     expect(projected).toEqual({
       authoritativeResumeConfig: true,
-      authoritativePolicyTier: "balanced",
-      rebuildPolicyPresets: ["github"],
+      rebuildPolicySourcePath: "/tmp/current-policy.yaml",
     });
-    expect(projected.rebuildPolicyPresets).not.toBe(rebuildPolicyPresets);
     expect(
       authoritativeRebuildSandboxFlowOptions({
         authoritativeResumeConfig: false,
-        policyTier: "balanced",
-        rebuildPolicyPresets: ["mcp-bridge-fake"],
       }),
     ).toEqual({ authoritativeResumeConfig: false });
   });

@@ -44,6 +44,31 @@ describe("interactive PTY driver", () => {
     }
   });
 
+  it("matches visible text across ANSI redraw sequences and can send Ctrl+D", async () => {
+    const progress = observedProgress("onboard-interactive-pty ANSI trigger");
+    try {
+      const result = await driveInteractiveCommand({
+        activityLabel: "command: onboard-interactive-pty-ansi-trigger",
+        cmd: [
+          "python3",
+          "-c",
+          "import sys; sys.stdout.write('NEMOCLAW_PI\\x1b[31m_INTERACTIVE_OK\\x1b[0m\\n'); sys.stdout.flush(); sys.stdin.read()",
+        ],
+        env: process.env,
+        progress,
+        rules: [{ trigger: "NEMOCLAW_PI_INTERACTIVE_OK", response: "\u0004" }],
+        timeoutMs: 10_000,
+      });
+
+      expect(result.timedOut).toBe(false);
+      expect(result.exitCode).toBe(0);
+      expect(result.firedTriggers).toContain("NEMOCLAW_PI_INTERACTIVE_OK");
+      expect(result.visibleOutput).toContain("NEMOCLAW_PI_INTERACTIVE_OK");
+    } finally {
+      progress.stop();
+    }
+  });
+
   it("keeps every scripted response, including a secret, out of the spawned process arguments", async () => {
     spawnMock.mockClear();
     const progress = observedProgress("onboard-interactive-pty argv secrecy");

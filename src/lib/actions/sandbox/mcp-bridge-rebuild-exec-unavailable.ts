@@ -10,7 +10,6 @@ import {
   cloneMcpBridgeEntry,
   inspectExactMcpDestroyProvider,
 } from "./mcp-bridge-destroy-preflight";
-import { assertGeneratedPolicyExactReadOnly } from "./mcp-bridge-policy";
 import {
   assertNoProviderCredentialCollisions,
   preflightMcpEntryTargets,
@@ -27,7 +26,6 @@ import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
 import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
 
 type ReadOnlyValidationSnapshot = {
-  policyByServer: Map<string, string>;
   providerByServer: Map<string, string>;
   targetsByServer: Map<string, string>;
 };
@@ -107,16 +105,6 @@ function snapshotCompleteEntries(sandboxName: string): {
   };
 }
 
-function policyFingerprint(policy: ReturnType<typeof assertGeneratedPolicyExactReadOnly>): string {
-  return JSON.stringify({
-    name: policy.name,
-    content: policy.content,
-    pendingContent: policy.pendingContent,
-    sourcePath: policy.sourcePath,
-    appliedAt: policy.appliedAt,
-  });
-}
-
 function providerFingerprint(provider: ReturnType<typeof inspectExactMcpDestroyProvider>): string {
   return JSON.stringify({
     exists: provider.exists,
@@ -139,34 +127,23 @@ function targetFingerprint(target: McpBridgeTargetValidation | undefined): strin
 async function inspectReadOnlyRecoveryState(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
-  adapter: AgentMcpAdapter,
 ): Promise<ReadOnlyValidationSnapshot> {
   const resolvedTargets = await preflightMcpEntryTargets(entries);
   // This may start or recover the sandbox's recorded host gateway and select
-  // it in CLI context. It does not mutate MCP ownership or sandbox contents;
-  // the provider, policy, and target checks below remain inspection-only.
+  // it in CLI context. It does not mutate MCP lifecycle state or sandbox
+  // contents; the provider and target checks below remain inspection-only.
   if (entries.length > 0) await ensureSandboxGatewaySelected(sandboxName);
 
-  const policyByServer = new Map<string, string>();
   const providerByServer = new Map<string, string>();
   const targetsByServer = new Map<string, string>();
   for (const entry of entries) {
     const target = resolvedTargets.get(entry.server);
-    const policy = assertGeneratedPolicyExactReadOnly(
-      sandboxName,
-      entry,
-      adapter,
-      target ?? {
-        addresses: [],
-      },
-    );
-    policyByServer.set(entry.server, policyFingerprint(policy));
     const provider = inspectExactMcpDestroyProvider(entry, { allowMissing: false });
     providerByServer.set(entry.server, providerFingerprint(provider));
     targetsByServer.set(entry.server, targetFingerprint(target));
   }
   assertNoProviderCredentialCollisions(sandboxName, entries);
-  return { policyByServer, providerByServer, targetsByServer };
+  return { providerByServer, targetsByServer };
 }
 
 function assertValidationSnapshotCurrent(
@@ -176,13 +153,12 @@ function assertValidationSnapshotCurrent(
 ): void {
   const drifted = entries.find(
     (entry) =>
-      current.policyByServer.get(entry.server) !== expected.policyByServer.get(entry.server) ||
       current.providerByServer.get(entry.server) !== expected.providerByServer.get(entry.server) ||
       current.targetsByServer.get(entry.server) !== expected.targetsByServer.get(entry.server),
   );
   if (drifted) {
     throw new McpBridgeError(
-      `MCP server '${drifted.server}' changed after host-side rebuild preflight. Refusing to delete the still-live sandbox; retry after its target, policy, and provider state is stable.`,
+      `MCP server '${drifted.server}' changed after host-side rebuild preflight. Refusing to delete the still-live sandbox; retry after its target and provider state are stable.`,
     );
   }
 }
@@ -228,32 +204,24 @@ async function revalidateBeforeDelete(
     expectedAgentName,
     expectedAdapter,
   );
-  const currentValidation = await inspectReadOnlyRecoveryState(
-    sandboxName,
-    expectedEntries,
-    expectedAdapter,
-  );
+  const currentValidation = await inspectReadOnlyRecoveryState(sandboxName, expectedEntries);
   assertValidationSnapshotCurrent(expectedEntries, expectedValidation, currentValidation);
 }
 
 /**
  * Preserve complete MCP intent when sandbox exec is unavailable but OpenShell
  * still reports the sandbox live. Unlike absent-sandbox recovery, this path is
- * read-only with respect to MCP ownership and sandbox contents: it may recover
+ * read-only with respect to MCP lifecycle state and sandbox contents: it may recover
  * and select the recorded host gateway for inspection, but it never discards
- * add markers, scrubs adapters, detaches providers, reconciles policy records,
- * or otherwise mutates MCP ownership before delete.
+ * add markers, scrubs adapters, detaches providers, or changes policy before
+ * delete.
  */
 export async function prepareMcpBridgesForExecUnavailableRebuild(
   sandboxName: string,
 ): Promise<ExecUnavailableMcpRebuildPreparation> {
   const { entries, gatewayName, agentName, adapter } = snapshotCompleteEntries(sandboxName);
   const expectedEntries = entries.map(cloneMcpBridgeEntry);
-  const expectedValidation = await inspectReadOnlyRecoveryState(
-    sandboxName,
-    expectedEntries,
-    adapter,
-  );
+  const expectedValidation = await inspectReadOnlyRecoveryState(sandboxName, expectedEntries);
   return {
     entries: entries.map(cloneMcpBridgeEntry),
     detachedProviderEntries: [],

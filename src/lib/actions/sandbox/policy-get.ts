@@ -6,16 +6,45 @@ import {
   readCliOpenShellSandboxPolicy,
 } from "../../adapters/openshell/sandbox-policy-cli";
 import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
+import { captureRecordedSandboxBasePolicy } from "../../policy/index";
 
 export interface PolicyGetResult {
   raw: string;
   yaml: string;
 }
 
+export interface RecordedGatewayPolicyGetOptions {
+  recordedGatewayOperation: string;
+}
+
 /** Read the round-trippable OpenShell base policy and strip its metadata header. */
-export async function getSandboxPolicy(
+export function getSandboxPolicy(
   sandboxName: string,
-  readPolicy: CliOpenShellSandboxPolicyRead = readCliOpenShellSandboxPolicy,
+  options: RecordedGatewayPolicyGetOptions,
+): PolicyGetResult;
+export function getSandboxPolicy(
+  sandboxName: string,
+  readPolicy?: CliOpenShellSandboxPolicyRead,
+): Promise<PolicyGetResult>;
+export function getSandboxPolicy(
+  sandboxName: string,
+  readerOrOptions: CliOpenShellSandboxPolicyRead | RecordedGatewayPolicyGetOptions =
+    readCliOpenShellSandboxPolicy,
+): PolicyGetResult | Promise<PolicyGetResult> {
+  if (typeof readerOrOptions !== "function") {
+    const yaml = captureRecordedSandboxBasePolicy(
+      sandboxName,
+      readerOrOptions.recordedGatewayOperation,
+    );
+    return { raw: yaml, yaml };
+  }
+
+  return readSandboxPolicy(sandboxName, readerOrOptions);
+}
+
+async function readSandboxPolicy(
+  sandboxName: string,
+  readPolicy: CliOpenShellSandboxPolicyRead,
 ): Promise<PolicyGetResult> {
   const read = await readPolicy({
     target: selectedOpenShellGateway(),

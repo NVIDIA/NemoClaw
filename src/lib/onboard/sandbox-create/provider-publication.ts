@@ -149,7 +149,7 @@ export function publishAttachedProvidersBeforeDockerSandboxCreation(
   }
 }
 
-/** Attach the planned providers only after the created sandbox passed its exact policy gate. */
+/** Attach the planned providers only after the created sandbox passed its exact identity gate. */
 export function attachProvidersAfterSandboxCreation(input: DeferredProviderAttachmentInput): void {
   if (input.providerNames.length === 0) return;
   throw new Error(

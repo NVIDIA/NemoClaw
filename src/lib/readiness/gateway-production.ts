@@ -33,10 +33,7 @@ import {
   isDockerDriverGatewayProcessIdentity,
   readDockerDriverGatewayProcessEnvironment,
 } from "../onboard/docker-driver-gateway-process-identity";
-import {
-  resolveDockerDriverGatewayName,
-  resolveDockerDriverGatewayStateDirName,
-} from "../onboard/docker-driver-gateway-runtime";
+import { resolveDockerDriverGatewayName } from "../onboard/docker-driver-gateway-runtime";
 import {
   getTrustedActiveOpenShellGatewayUserServiceIdentity,
   hasOpenShellGatewayUserService,
@@ -51,6 +48,7 @@ import {
 import { ownedHostGatewayTarget } from "../onboard/gateway-process-target-identity";
 import { resolveOpenshell } from "../onboard/openshell-cli";
 import { checkPortAvailable } from "../onboard/preflight";
+import { resolveGatewayStateDirForPort } from "../onboard/gateway/state-dir";
 import type {
   GatewayPortConflictState,
   GatewayReadinessDependencies,
@@ -134,16 +132,11 @@ function resolveManagedGatewayProbeTlsDir(
   gatewayPort: number,
   source: NodeJS.ProcessEnv,
 ): string | undefined {
-  const configuredStateDir = source.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR?.trim();
-  const stateDir = configuredStateDir
-    ? path.resolve(configuredStateDir)
-    : path.join(
-        source.HOME || os.homedir(),
-        ".local",
-        "state",
-        "nemoclaw",
-        resolveDockerDriverGatewayStateDirName(gatewayPort),
-      );
+  const stateDir = resolveGatewayStateDirForPort({
+    configured: source.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    home: source.HOME || os.homedir(),
+    port: gatewayPort,
+  });
   const localTlsDir = getDockerDriverGatewayLocalTlsDir(stateDir);
   return ["ca.crt", "client/tls.crt", "client/tls.key"].every((relativePath) =>
     fs.existsSync(path.join(localTlsDir, relativePath)),
@@ -207,7 +200,7 @@ function resolveTrustedGatewayBinary(openshell: string | null): string | null {
   return null;
 }
 
-/** Require the trusted Linux executable plus a trusted path or owned target tag. */
+/** Require the trusted executable plus a trusted path or owned target tag. */
 export function gatewayProcessIdentityMatchesTrustedBinary(
   identity: string,
   trustedGatewayBin: string | null,
@@ -216,10 +209,9 @@ export function gatewayProcessIdentityMatchesTrustedBinary(
   actualExecutablePath: string | null = null,
   platform: NodeJS.Platform = process.platform,
 ): boolean {
-  // Linux procfs supplies a kernel-backed executable identity for direct
-  // processes. On macOS, argv0 is user-controlled, so direct listeners remain
-  // untrusted and only the positively identified Homebrew service is eligible.
-  if (!trustedGatewayBin || platform !== "linux") return false;
+  // Linux procfs and the first macOS lsof text vnode supply independent,
+  // kernel-backed executable identity. argv0 alone never establishes trust.
+  if (!trustedGatewayBin || (platform !== "linux" && platform !== "darwin")) return false;
   const argv0 = cleanGatewayProcessToken(identity.trim().split(/\s+/, 1)[0] ?? "");
   const expected = normalizeExecutablePath(trustedGatewayBin);
   if (
@@ -595,9 +587,14 @@ export function createProductionGatewayReadinessDependencies(
   const trustedTargetBoundPids = new Set<number>();
 
   function observeDirectGatewayBinary(pid: number): string | null {
-    if (process.platform !== "linux" || !trustedGatewayBin) return null;
-    const generationBefore = readLinuxProcessStartTime(pid);
-    const executableBefore = readLinuxProcessExecutable(pid);
+    if ((process.platform !== "linux" && process.platform !== "darwin") || !trustedGatewayBin) {
+      return null;
+    }
+    const generationBefore = process.platform === "linux" ? readLinuxProcessStartTime(pid) : null;
+    const executableBefore =
+      process.platform === "linux"
+        ? readLinuxProcessExecutable(pid)
+        : readDarwinProcessExecutable(pid, probeEnv);
     let targetBoundIdentity = false;
     const exactTrustedBinary = isDockerDriverGatewayProcessIdentity({
       pid,
@@ -622,24 +619,33 @@ export function createProductionGatewayReadinessDependencies(
         }
         return matches;
       },
-      requireDockerDriverEnv: true,
+      requireDockerDriverEnv: process.platform === "linux",
       hasDockerDriverGatewayEnv: (candidatePid) =>
         hasDockerDriverGatewayEnvironment(
           readDockerDriverGatewayProcessEnvironment(candidatePid),
           getDockerDriverGatewayEndpoint(gatewayPort),
         ),
     });
-    const executableAfter = readLinuxProcessExecutable(pid);
-    const generationAfter = readLinuxProcessStartTime(pid);
+    const executableAfter =
+      process.platform === "linux"
+        ? readLinuxProcessExecutable(pid)
+        : readDarwinProcessExecutable(pid, probeEnv);
+    const generationAfter = process.platform === "linux" ? readLinuxProcessStartTime(pid) : null;
     const stableTrustedBinary =
       exactTrustedBinary &&
-      gatewayProcessSamplesMatchTrustedBinary(
-        generationBefore,
-        generationAfter,
-        executableBefore,
-        executableAfter,
-        trustedGatewayBin,
-      );
+      (process.platform === "linux"
+        ? gatewayProcessSamplesMatchTrustedBinary(
+            generationBefore,
+            generationAfter,
+            executableBefore,
+            executableAfter,
+            trustedGatewayBin,
+          )
+        : gatewayExecutableSamplesMatchTrustedBinary(
+            executableBefore,
+            executableAfter,
+            trustedGatewayBin,
+          ));
     if (!stableTrustedBinary) return null;
     if (targetBoundIdentity) trustedTargetBoundPids.add(pid);
     return trustedGatewayBin;
