@@ -20,8 +20,14 @@ function trustedHostEnvironment(source: string): NodeJS.ProcessEnv {
       return relative === ".." || relative.startsWith(".." + path.sep);
     });
   return {
-    ...process.env,
+    HOME: process.env.HOME,
+    LANG: process.env.LANG,
+    LC_ALL: process.env.LC_ALL,
     PATH: [...new Set(allowed)].join(path.delimiter),
+    PR_REVIEW_ADVISOR_API_KEY: process.env.PR_REVIEW_ADVISOR_API_KEY,
+    TEMP: process.env.TEMP,
+    TMP: process.env.TMP,
+    TMPDIR: process.env.TMPDIR,
     ...(homeBin ? { XDG_BIN_HOME: homeBin } : {}),
   };
 }
@@ -42,10 +48,10 @@ function dependencyEnvironment(
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     PATH: hostEnvironment.PATH,
-    HOME: process.env.HOME,
-    TMPDIR: process.env.TMPDIR,
-    TMP: process.env.TMP,
-    TEMP: process.env.TEMP,
+    HOME: hostEnvironment.HOME,
+    TMPDIR: hostEnvironment.TMPDIR,
+    TMP: hostEnvironment.TMP,
+    TEMP: hostEnvironment.TEMP,
     npm_config_userconfig: os.devNull,
     npm_config_globalconfig: globalConfig,
   };

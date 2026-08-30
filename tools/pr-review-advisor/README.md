@@ -174,6 +174,7 @@ Prerequisites:
 
 - Node.js 22.19.0 or newer and npm registry access for the dependencies locked on `origin/main`;
 - an `origin/main` remote-tracking commit that contains the trusted local review implementation;
+- a running Docker-compatible container runtime. Run `npm run dev:doctor` to verify Docker availability and resources;
 - `git`, `tar`, `openshell`, `openshell-gateway`, `openshell-sandbox`, `rg`, and `fdfind` available on `PATH`;
 - `PR_REVIEW_ADVISOR_API_KEY` exported in the host environment for the existing advisor provider.
   The local gateway receives this credential. The sandbox does not receive it. The variable remains

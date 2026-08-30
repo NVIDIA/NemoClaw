@@ -36,6 +36,33 @@ export type LocalReviewLifecycle = {
   remove: (env: NodeJS.ProcessEnv) => void;
 };
 
+export type LocalReviewPublication = {
+  copy: typeof fs.cpSync;
+  remove: typeof fs.rmSync;
+  rename: typeof fs.renameSync;
+};
+
+const defaultLocalReviewPublication: LocalReviewPublication = {
+  copy: fs.cpSync,
+  remove: fs.rmSync,
+  rename: fs.renameSync,
+};
+
+function contextualError(message: string, cause: unknown): Error {
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return new Error(`${message}: ${detail}`, { cause });
+}
+
+function combineFailures(first: unknown, next: unknown): unknown {
+  if (next === undefined) return first;
+  if (first === undefined) return next;
+  return new AggregateError(
+    [first, next],
+    `${first instanceof Error ? first.message : String(first)}; ${next instanceof Error ? next.message : String(next)}`,
+    { cause: first },
+  );
+}
+
 export const defaultLocalReviewLifecycle: LocalReviewLifecycle = {
   prepare: (env) => prepareAdvisorSandboxInputs(env, { collectContext: async () => null }),
   startGateway: startAdvisorOpenShellInference,
@@ -111,6 +138,72 @@ export function createLocalReviewSnapshot(
   return { baseRef, headRef: commit };
 }
 
+function publicationCleanupFailure(resource: string, error: unknown): Error {
+  return contextualError(
+    `Local review failed during cleanup for artifact publication path ${resource}; remove it manually before retrying`,
+    error,
+  );
+}
+
+function removePublicationPath(resource: string, publication: LocalReviewPublication): unknown {
+  try {
+    publication.remove(resource, { recursive: true, force: true });
+  } catch (error) {
+    return publicationCleanupFailure(resource, error);
+  }
+}
+
+function publishArtifacts(
+  artifacts: string,
+  destination: string,
+  publication: LocalReviewPublication,
+): void {
+  const nonce = randomUUID();
+  const staged = `${destination}.staged-${nonce}`;
+  const previous = `${destination}.previous-${nonce}`;
+  let failure: unknown;
+  let hadPrevious = false;
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  try {
+    publication.copy(artifacts, staged, { recursive: true, errorOnExist: true });
+    hadPrevious = fs.existsSync(destination);
+    if (hadPrevious) publication.rename(destination, previous);
+    publication.rename(staged, destination);
+    if (hadPrevious) publication.remove(previous, { recursive: true });
+    return;
+  } catch (error) {
+    failure = error;
+  }
+  failure = combineFailures(failure, removePublicationPath(staged, publication));
+  if (hadPrevious && fs.existsSync(previous)) {
+    failure = combineFailures(failure, removePublicationPath(destination, publication));
+    try {
+      if (!fs.existsSync(destination)) publication.rename(previous, destination);
+    } catch (error) {
+      failure = combineFailures(
+        failure,
+        contextualError(
+          `Failed to restore prior output from ${previous} to ${destination}; recover it manually`,
+          error,
+        ),
+      );
+    }
+  }
+  if (fs.existsSync(staged)) {
+    failure = combineFailures(
+      failure,
+      new Error(`Residual staged output remains at ${staged}; remove it manually before retrying`),
+    );
+  }
+  if (fs.existsSync(previous)) {
+    failure = combineFailures(
+      failure,
+      new Error(`Prior output remains at ${previous}; restore it to ${destination} manually`),
+    );
+  }
+  throw failure;
+}
+
 function validateSpecialistArtifacts(outputRoot: string, interest: string): void {
   const directory = path.join(outputRoot, "artifacts", "pr-review-specialist-" + interest);
   const expected = [
@@ -161,6 +254,8 @@ export async function runLocalReview(input: {
   temporaryRoot?: string;
   prepareSnapshot?: typeof createLocalReviewSnapshot;
   advisorDirectory?: string;
+  publication?: LocalReviewPublication;
+  removeTemporaryRoot?: typeof fs.rmSync;
 }): Promise<string> {
   const source = fs.realpathSync(input.source);
   if (!input.lifecycle && !process.env.PR_REVIEW_ADVISOR_API_KEY)
@@ -174,6 +269,8 @@ export async function runLocalReview(input: {
   const outputRoot = path.join(temporaryRoot, "output");
   const runnerTemp = path.join(temporaryRoot, `runner-${randomUUID().slice(0, 8)}`);
   const lifecycle = input.lifecycle ?? defaultLocalReviewLifecycle;
+  const publication = input.publication ?? defaultLocalReviewPublication;
+  const removeTemporaryRoot = input.removeTemporaryRoot ?? fs.rmSync;
   let gatewayCleanup: (() => Promise<void>) | undefined;
   let activeEnvironment: NodeJS.ProcessEnv | undefined;
   let cleanupPromise: Promise<void> | undefined;
@@ -189,19 +286,31 @@ export async function runLocalReview(input: {
         if (environment) lifecycle.remove(environment);
         activeEnvironment = undefined;
       } catch (error) {
-        failure = error;
+        failure = contextualError(
+          `Local review failed during cleanup for specialist ${environment?.PR_REVIEW_ADVISOR_INTEREST} in sandbox ${environment?.SANDBOX_NAME}`,
+          error,
+        );
       }
       const stopGateway = gatewayCleanup;
       try {
         await stopGateway?.();
         gatewayCleanup = undefined;
       } catch (error) {
-        failure ??= error;
+        failure = combineFailures(
+          failure,
+          contextualError("Local review failed during cleanup for gateway", error),
+        );
       }
       try {
-        if (ownsTemporaryRoot) fs.rmSync(temporaryRoot, { recursive: true, force: true });
+        if (ownsTemporaryRoot) removeTemporaryRoot(temporaryRoot, { recursive: true, force: true });
       } catch (error) {
-        failure ??= error;
+        failure = combineFailures(
+          failure,
+          contextualError(
+            `Local review failed during cleanup for temporary root ${temporaryRoot}`,
+            error,
+          ),
+        );
       }
       if (failure !== undefined) throw failure;
     })();
@@ -270,27 +379,23 @@ export async function runLocalReview(input: {
           activeEnvironment = undefined;
         }
       } catch (error) {
-        specialistCleanupFailure = error;
+        specialistCleanupFailure = contextualError(
+          `Local review failed during cleanup for specialist ${specialist.interest} in sandbox ${env.SANDBOX_NAME}`,
+          error,
+        );
+      }
+      if (specialistFailure !== undefined && specialistCleanupFailure !== undefined) {
+        throw new AggregateError(
+          [specialistFailure, specialistCleanupFailure],
+          `${specialistFailure instanceof Error ? specialistFailure.message : String(specialistFailure)}; cleanup also failed: ${specialistCleanupFailure instanceof Error ? specialistCleanupFailure.message : String(specialistCleanupFailure)}`,
+          { cause: specialistFailure },
+        );
       }
       if (specialistFailure !== undefined) throw specialistFailure;
       if (specialistCleanupFailure !== undefined) throw specialistCleanupFailure;
     }
     const destination = path.join(source, LOCAL_OUTPUT_DIRECTORY);
-    const nonce = randomUUID();
-    const staged = `${destination}.staged-${nonce}`;
-    const previous = `${destination}.previous-${nonce}`;
-    fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.cpSync(path.join(outputRoot, "artifacts"), staged, { recursive: true, errorOnExist: true });
-    const hadPrevious = fs.existsSync(destination);
-    if (hadPrevious) fs.renameSync(destination, previous);
-    try {
-      fs.renameSync(staged, destination);
-      if (hadPrevious) fs.rmSync(previous, { recursive: true });
-    } catch (error) {
-      fs.rmSync(staged, { recursive: true, force: true });
-      if (hadPrevious && !fs.existsSync(destination)) fs.renameSync(previous, destination);
-      throw error;
-    }
+    publishArtifacts(path.join(outputRoot, "artifacts"), destination, publication);
     result = destination;
   } catch (error) {
     primaryFailure = error;
@@ -307,7 +412,11 @@ export async function runLocalReview(input: {
         primaryFailure instanceof Error ? primaryFailure.message : String(primaryFailure);
       const cleanup =
         cleanupFailure instanceof Error ? cleanupFailure.message : String(cleanupFailure);
-      throw new Error(`${primary}; cleanup also failed: ${cleanup}`, { cause: primaryFailure });
+      throw new AggregateError(
+        [primaryFailure, cleanupFailure],
+        `${primary}; cleanup also failed: ${cleanup}`,
+        { cause: primaryFailure },
+      );
     }
     throw primaryFailure;
   }

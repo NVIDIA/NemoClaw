@@ -12,6 +12,7 @@ import {
   defaultLocalReviewLifecycle,
   runLocalReview,
   type LocalReviewLifecycle,
+  type LocalReviewPublication,
 } from "../../../tools/pr-review-advisor/local-review-implementation.mts";
 import { defaultOpenShellTools } from "../../../tools/openshell-agent/runtime.mts";
 import { ADVISOR_PI_IMAGE } from "../../../tools/pr-review-advisor/runtime-constants.mts";
@@ -46,6 +47,27 @@ mkdir -p node_modules`;
     '{"name":"trusted-review","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"trusted-review","version":"1.0.0"}}}\n',
   );
   return bin;
+}
+
+function artifactLifecycle(stop = async (): Promise<void> => undefined): LocalReviewLifecycle {
+  return {
+    prepare: async () => undefined,
+    startGateway: () => ({ configure: Promise.resolve(), stop }),
+    create: () => undefined,
+    run: () => undefined,
+    download: (env) => {
+      const interest = env.PR_REVIEW_ADVISOR_INTEREST as string;
+      const output = path.join(
+        env.GITHUB_WORKSPACE as string,
+        "artifacts",
+        env.PR_REVIEW_ADVISOR_ARTIFACT_DIR as string,
+      );
+      fs.mkdirSync(output, { recursive: true });
+      fs.writeFileSync(path.join(output, "pr-review-" + interest + "-summary.md"), "review\n");
+      fs.writeFileSync(path.join(output, "pr-review-" + interest + "-session.jsonl"), "{}\n");
+    },
+    remove: () => undefined,
+  };
 }
 
 function repository(): string {
@@ -132,9 +154,16 @@ describe("local PR review advisor", () => {
         "const source = process.argv[2];",
         'const policy = fs.readFileSync(path.join(source, "tools/pr-review-advisor/policy.txt"), "utf8").trim();',
         'fs.writeFileSync(path.join(source, "bootstrap-result.txt"), [hostValue, policy].join("|") + "\\n");',
+        'fs.writeFileSync(path.join(source, "trusted-child.json"), JSON.stringify({ pid: process.pid, nodeOptions: process.env.NODE_OPTIONS, nodePath: process.env.NODE_PATH }));',
       ].join("\n"),
     );
     const npmBin = installFakeNpm(source);
+    const preloadMarker = path.join(source, "preload-marker");
+    const preload = path.join(source, "contributor-preload.cjs");
+    fs.writeFileSync(
+      preload,
+      `require("node:fs").appendFileSync(${JSON.stringify(preloadMarker)}, process.pid + ":" + (process.env.PR_REVIEW_ADVISOR_API_KEY || "absent") + "\\n");`,
+    );
     const maliciousBin = path.join(source, "node_modules", ".bin");
     fs.mkdirSync(maliciousBin, { recursive: true });
     const maliciousGit = path.join(maliciousBin, "git");
@@ -186,6 +215,8 @@ describe("local PR review advisor", () => {
           HOME: path.resolve(npmBin, "../.."),
           PATH: maliciousBin + path.delimiter + npmBin + path.delimiter + process.env.PATH,
           PR_REVIEW_ADVISOR_API_KEY: "must-not-reach-malicious-tools",
+          NODE_OPTIONS: "--require=" + preload,
+          NODE_PATH: maliciousBin,
           SECRET_TOKEN: "must-not-reach-npm",
           npm_config_cache: path.join(source, "npm-cache"),
         },
@@ -196,6 +227,14 @@ describe("local PR review advisor", () => {
     expect(fs.readFileSync(path.join(source, "bootstrap-result.txt"), "utf8")).toBe(
       'trusted host|branch policy data; throw new Error("policy executed")\n',
     );
+    expect(fs.readFileSync(preloadMarker, "utf8").trim().split("\n")).toHaveLength(1);
+    const trustedChild = JSON.parse(
+      fs.readFileSync(path.join(source, "trusted-child.json"), "utf8"),
+    );
+    expect(
+      Number(preloadMarker && fs.readFileSync(preloadMarker, "utf8").split(":", 1)[0]),
+    ).not.toBe(trustedChild.pid);
+    expect(trustedChild).toEqual({ pid: expect.any(Number) });
     expect(fs.existsSync(path.join(source, "contributor-module-executed"))).toBe(false);
     expect(fs.existsSync(path.join(source, "git-malicious-env"))).toBe(false);
     expect(fs.existsSync(path.join(source, "npm-malicious-env"))).toBe(false);
@@ -304,7 +343,13 @@ describe("local PR review advisor", () => {
       );
       const result = spawnSync(
         process.execPath,
-        ["--experimental-strip-types", "--no-warnings", "tools/pr-review-advisor/local-review.mts"],
+        [
+          "--require",
+          patch,
+          "--experimental-strip-types",
+          "--no-warnings",
+          "tools/pr-review-advisor/local-review.mts",
+        ],
         {
           cwd: source,
           encoding: "utf8",
@@ -313,7 +358,6 @@ describe("local PR review advisor", () => {
             HOME: path.resolve(npmBin, "../.."),
             PATH: npmBin + path.delimiter + process.env.PATH,
             TMPDIR: temporaryRoot,
-            NODE_OPTIONS: "--require=" + patch,
           },
         },
       );
@@ -552,6 +596,100 @@ describe("local PR review advisor", () => {
     expect(failure).toMatchObject({ message: expect.stringContaining(underlying.message) });
   });
 
+  it("removes partial staging output after artifact copy failure (#10611)", async () => {
+    const source = repository();
+    const destination = path.join(source, "artifacts", "pr-review-advisor-local");
+    fs.mkdirSync(destination, { recursive: true });
+    fs.writeFileSync(path.join(destination, "prior.txt"), "prior\n");
+    const publication: LocalReviewPublication = {
+      copy: (_source, staged) => {
+        fs.mkdirSync(staged as string, { recursive: true });
+        fs.writeFileSync(path.join(staged as string, "partial.txt"), "partial\n");
+        throw new Error("copy failed");
+      },
+      remove: fs.rmSync,
+      rename: fs.renameSync,
+    };
+
+    await expect(
+      runLocalReview({
+        source,
+        temporaryRoot: temporaryDirectory(),
+        specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+        lifecycle: artifactLifecycle(),
+        publication,
+      }),
+    ).rejects.toThrow("copy failed");
+    expect(fs.readFileSync(path.join(destination, "prior.txt"), "utf8")).toBe("prior\n");
+    expect(
+      fs.readdirSync(path.dirname(destination)).filter((name) => name.includes(".staged-")),
+    ).toEqual([]);
+  });
+
+  it("restores prior output after previous-output removal fails (#10611)", async () => {
+    const source = repository();
+    const destination = path.join(source, "artifacts", "pr-review-advisor-local");
+    fs.mkdirSync(destination, { recursive: true });
+    fs.writeFileSync(path.join(destination, "prior.txt"), "prior\n");
+    const remove = vi
+      .fn<typeof fs.rmSync>()
+      .mockImplementationOnce(() => {
+        throw new Error("previous removal failed");
+      })
+      .mockImplementation(fs.rmSync);
+    const publication: LocalReviewPublication = { copy: fs.cpSync, remove, rename: fs.renameSync };
+
+    await expect(
+      runLocalReview({
+        source,
+        temporaryRoot: temporaryDirectory(),
+        specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+        lifecycle: artifactLifecycle(),
+        publication,
+      }),
+    ).rejects.toThrow("previous removal failed");
+    expect(fs.readFileSync(path.join(destination, "prior.txt"), "utf8")).toBe("prior\n");
+    expect(
+      fs.readdirSync(path.dirname(destination)).filter((name) => name.includes(".previous-")),
+    ).toEqual([]);
+  });
+
+  it("reports gateway cleanup context after successful specialist work (#10611)", async () => {
+    const underlying = new Error("gateway stop failed");
+    const failure = (await runLocalReview({
+      source: repository(),
+      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+      lifecycle: artifactLifecycle(async () => {
+        throw underlying;
+      }),
+      temporaryRoot: temporaryDirectory(),
+    }).catch((error: unknown) => error)) as Error;
+
+    expect(failure).toMatchObject({
+      message: expect.stringContaining("failed during cleanup for gateway"),
+      cause: underlying,
+    });
+  });
+
+  it("reports temporary-root cleanup context after successful specialist work (#10611)", async () => {
+    const underlying = new Error("temporary root removal failed");
+    const failure = (await runLocalReview({
+      source: repository(),
+      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+      lifecycle: artifactLifecycle(),
+      removeTemporaryRoot: () => {
+        throw underlying;
+      },
+    }).catch((error: unknown) => error)) as Error;
+
+    expect(failure).toMatchObject({
+      message: expect.stringMatching(
+        /failed during cleanup for temporary root .*temporary root removal failed/u,
+      ),
+      cause: underlying,
+    });
+  });
+
   it("reports cleanup failure only when specialist work succeeds (#10610)", async () => {
     const source = repository();
     const lifecycle: LocalReviewLifecycle = {
@@ -582,7 +720,14 @@ describe("local PR review advisor", () => {
         specialists: ADVISOR_SPECIALISTS.slice(0, 1),
         lifecycle,
       }),
-    ).rejects.toThrow("cleanup failed");
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(
+        /failed during cleanup for specialist .* in sandbox .*: cleanup failed/u,
+      ),
+      errors: expect.arrayContaining([
+        expect.objectContaining({ cause: expect.objectContaining({ message: "cleanup failed" }) }),
+      ]),
+    });
   });
 
   it.each([
@@ -651,25 +796,21 @@ describe("local PR review advisor", () => {
       remove,
     };
 
-    await expect(
-      runLocalReview({
-        source,
-        specialists: ADVISOR_SPECIALISTS.slice(0, 1),
-        lifecycle,
-        prepareSnapshot: (snapshotSource, target, baseRef) => {
-          ownedRoot = path.dirname(target);
-          return createLocalReviewSnapshot(snapshotSource, target, baseRef);
-        },
-      }),
-    ).rejects.toMatchObject({
-      message: expect.stringMatching(
-        /failed during run.*cleanup also failed: gateway cleanup failed/u,
-      ),
-      cause: expect.objectContaining({
-        message: expect.stringContaining("failed during run"),
-        cause: expect.objectContaining({ message: "primary run failed" }),
-      }),
-    });
+    const failure = (await runLocalReview({
+      source,
+      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+      lifecycle,
+      prepareSnapshot: (snapshotSource, target, baseRef) => {
+        ownedRoot = path.dirname(target);
+        return createLocalReviewSnapshot(snapshotSource, target, baseRef);
+      },
+    }).catch((error: unknown) => error)) as AggregateError;
+    expect(failure.message).toMatch(
+      /failed during run.*failed during cleanup for gateway: gateway cleanup failed/u,
+    );
+    expect(failure.errors).toHaveLength(2);
+    expect((failure.errors[0] as Error).message).toContain("failed during run");
+    expect((failure.errors[1] as Error).message).toContain("failed during cleanup for gateway");
     expect(remove).toHaveBeenCalledTimes(2);
     expect(stopGateway).toHaveBeenCalledOnce();
     expect(fs.existsSync(ownedRoot)).toBe(false);
@@ -693,20 +834,18 @@ describe("local PR review advisor", () => {
       },
     };
 
-    await expect(
-      runLocalReview({
-        source,
-        temporaryRoot: root,
-        specialists: ADVISOR_SPECIALISTS.slice(0, 1),
-        lifecycle,
-      }),
-    ).rejects.toMatchObject({
-      message: expect.stringMatching(/failed during run.*cleanup also failed: cleanup failed/u),
-      cause: expect.objectContaining({
-        message: expect.stringContaining("failed during run"),
-        cause: expect.objectContaining({ message: "failed" }),
-      }),
-    });
+    const failure = (await runLocalReview({
+      source,
+      temporaryRoot: root,
+      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+      lifecycle,
+    }).catch((error: unknown) => error)) as AggregateError;
+    expect(failure.message).toMatch(
+      /failed during run.*failed during cleanup for specialist.*cleanup failed/u,
+    );
+    expect(failure.errors).toHaveLength(2);
+    expect((failure.errors[0] as Error).message).toContain("failed during run");
+    expect((failure.errors[1] as Error).message).toContain("failed during cleanup for specialist");
     expect(remove).toHaveBeenCalledTimes(2);
     expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
   });
