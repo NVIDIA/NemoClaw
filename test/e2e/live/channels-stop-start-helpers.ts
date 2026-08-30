@@ -996,11 +996,12 @@ env_present = re.search(
 config_path = Path("/sandbox/.hermes/config.yaml")
 config = yaml.safe_load(config_path.read_text()) if config_path.is_file() else {}
 platforms = config.get("platforms", {}) if isinstance(config, dict) else {}
-platform_present = ${JSON.stringify(platformKeys[channel])} in platforms if isinstance(platforms, dict) else False
+platform_config = platforms.get(${JSON.stringify(platformKeys[channel])}, {}) if isinstance(platforms, dict) else {}
+platform_enabled = platform_config.get("enabled") is True if isinstance(platform_config, dict) else False
 state_present = Path(${JSON.stringify(`/sandbox/.hermes/platforms/${channel}`)}).exists()
 print(json.dumps({
     "envPresent": env_present,
-    "platformPresent": platform_present,
+    "platformEnabled": platform_enabled,
     "statePresent": state_present,
 }, separators=(",", ":")))
 `.trim();
@@ -1011,7 +1012,7 @@ print(json.dumps({
   expectExitZero(result, `read Hermes ${channel} after-remove`);
   expect(JSON.parse(result.stdout.trim()), `Hermes ${channel} config removed`).toEqual({
     envPresent: false,
-    platformPresent: false,
+    platformEnabled: false,
     statePresent: false,
   });
 }

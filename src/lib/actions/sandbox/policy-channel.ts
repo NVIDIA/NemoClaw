@@ -1928,32 +1928,14 @@ async function removeSandboxChannelUnlocked(
   }
 
   const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(registryEntry);
-  if (registryEntry?.messaging?.plan && configuredChannels.includes(canonical)) {
+  if (
+    registryEntry?.messaging?.plan &&
+    configuredChannels.includes(canonical) &&
+    !registry.getDisabledChannels(sandboxName).includes(canonical)
+  ) {
     const disabledPlan = await persistManifestChannelDisabledPlan(sandboxName, canonical, true);
     if (!disabledPlan) {
       console.error(`  Could not mark '${canonical}' disabled before removing it.`);
-      process.exit(1);
-    }
-    const gatewayName = getSandboxTargetGatewayName(sandboxName);
-    try {
-      await MessagingSetupApplier.removeChannelAgentConfigAtOpenShell(disabledPlan, canonical, {
-        runOpenshell: (args, runOptions) => {
-          revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
-          const result = runOpenshell(
-            [...args],
-            runOptions as Parameters<typeof runOpenshell>[1],
-          );
-          revalidateMessagingProviderAttachmentTarget(sandboxName, gatewayName);
-          return result;
-        },
-      });
-    } catch (error) {
-      console.error(
-        `  Could not remove '${canonical}' agent configuration: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      console.error(
-        `  Channel '${canonical}' remains disabled; resolve the config cleanup and re-run this command.`,
-      );
       process.exit(1);
     }
   }

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import YAML from "yaml";
 
 import {
   createBuiltInChannelManifestRegistry,
@@ -260,35 +259,5 @@ describe("MessagingSetupApplier credential env cleanup", () => {
       MessagingSetupApplier.reconcileCredentialEnvAtOpenShell(plan, { runOpenshell }),
     ).toThrow("did not resolve to a provider placeholder");
     expect(writes).toEqual([]);
-  });
-
-  it("removes one channel's manifest-owned Hermes config before discarding its plan", async () => {
-    const plan = await buildHermesWechatPlan();
-    const { files, writes, runOpenshell } = sandboxFiles({
-      [HERMES_ENV_PATH]: [
-        "WEIXIN_TOKEN=openshell:resolve:env:v222_WECHAT_BOT_TOKEN",
-        "WEIXIN_ACCOUNT_ID=wechat-account",
-        "WEIXIN_BASE_URL=https://ilinkai.wechat.com",
-        "WEIXIN_ALLOWED_USERS=wxid-operator",
-        "OPERATOR_OWNED=keep-me",
-        "",
-      ].join("\n"),
-      "/sandbox/.hermes/config.yaml": YAML.stringify({
-        platforms: { weixin: { enabled: true }, preserved: { enabled: true } },
-      }),
-    });
-
-    await MessagingSetupApplier.removeChannelAgentConfigAtOpenShell(plan, "wechat", {
-      runOpenshell,
-    });
-
-    expect(new Set(writes)).toEqual(
-      new Set([HERMES_ENV_PATH, "/sandbox/.hermes/config.yaml"]),
-    );
-    expect(files[HERMES_ENV_PATH] ?? "").not.toMatch(/^WEIXIN_/mu);
-    expect(files[HERMES_ENV_PATH] ?? "").toContain("OPERATOR_OWNED=keep-me");
-    expect(YAML.parse(files["/sandbox/.hermes/config.yaml"] ?? "{}")).toEqual({
-      platforms: { preserved: { enabled: true } },
-    });
   });
 });

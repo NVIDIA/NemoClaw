@@ -59,9 +59,6 @@ describe("policy channel remove/enable flows", () => {
     const current = {
       name: "alpha",
       agent: "hermes",
-      gatewayName: "nemoclaw",
-      lifecycleGeneration: "generation-1",
-      lifecycleLiveIdentityFingerprint: "identity-1",
       policies: ["whatsapp"],
       messaging: {
         schemaVersion: 1,
@@ -77,29 +74,6 @@ describe("policy channel remove/enable flows", () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue(current);
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["whatsapp"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
-    vi.spyOn(
-      policyChannelDependencies,
-      "inspectMessagingProviderAttachmentTarget",
-    ).mockReturnValue("identity-1");
-    vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) =>
-      args.includes("cat")
-        ? {
-            pid: 1,
-            output: [null, "", "not found"],
-            signal: null,
-            status: 1,
-            stdout: "",
-            stderr: "not found",
-          }
-        : {
-            pid: 1,
-            output: [null, "", ""],
-            signal: null,
-            status: 0,
-            stdout: "",
-            stderr: "",
-          },
-    );
     const updateSandbox = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
     vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["whatsapp"]);
     vi.spyOn(policies, "listPresets").mockReturnValue([{ name: "whatsapp" } as never]);
