@@ -126,8 +126,8 @@ process_artifact() {
   bound=${maxCharacters * 4 + 1}
   [ "\$expected" -le "\$bound" ] || expected=\$bound
   [ "\$actual" -eq "\$expected" ] || { echo 'summary size differs from archive metadata' >&2; return 25; }
-  printf '%.1000s\n' "\$summary"
-  [ "\$actual" -gt ${maxCharacters * 4} ] && printf '1\n' || printf '0\n'
+  printf '%.1000s\t' "\$summary"
+  [ "\$actual" -gt ${maxCharacters * 4} ] && printf '1\t' || printf '0\t'
   base64 -w 0 "\$dir/summary"
 }
 run_artifact() {
@@ -149,12 +149,17 @@ while [ "\$running" -gt 0 ]; do
 done
 for specification in ${specifications}; do
   index=\${specification%%:*}
-  status=\$(<"\$tmp/\$index.status")
-  printf '%s\t%s\t' "\$status" "\$index"
-  if [ "\$status" -eq 0 ]; then
-    base64 -w 0 "\$tmp/\$index.out"
+  if IFS= read -r status < "\$tmp/\$index.status" 2>/dev/null && [[ "\$status" =~ ^[0-9]{1,3}$ ]]; then
+    if [ "\$status" -eq 0 ]; then
+      printf '0\t%s\t' "\$index"
+      cat "\$tmp/\$index.out"
+    else
+      printf '%s\t%s\t' "\$status" "\$index"
+      head -c 2000 "\$tmp/\$index.err" | base64 -w 0
+    fi
   else
-    head -c 2000 "\$tmp/\$index.err" | base64 -w 0
+    printf '99\t%s\t' "\$index"
+    printf 'artifact worker status was missing or malformed' | base64 -w 0
   fi
   printf '\n'
 done`;
@@ -165,7 +170,7 @@ done`;
           command,
           workdir: input.workdir,
           description: "Read bounded advisor artifact summaries",
-          timeoutMs: 60000,
+          timeoutMs: Math.min(300000, 60000 * Math.ceil(eligible.length / 4)),
         });
   const batchRecords = new Map();
   let batchFailureDetail = "artifact summary batch processing failed";
@@ -178,12 +183,24 @@ done`;
     });
     batchFailureDetail = projected.text || batchFailureDetail;
   }
-  if (batch?.kind === "foreground" && !batch.stdout.truncated) {
-    for (const line of batch.stdout.text.split("\n")) {
+  if (batch?.kind === "foreground") {
+    let completeOutput = batch.stdout.text;
+    if (batch.stdout.truncated) {
+      const firstNewline = completeOutput.indexOf("\n");
+      completeOutput = firstNewline < 0 ? "" : completeOutput.slice(firstNewline + 1);
+    }
+    const lastNewline = completeOutput.lastIndexOf("\n");
+    completeOutput = lastNewline < 0 ? "" : completeOutput.slice(0, lastNewline);
+    for (const line of completeOutput.split("\n")) {
       if (!line) continue;
       const fields = line.split("\t");
       const index = Number(fields[1]);
-      if (fields.length === 3 && Number.isSafeInteger(index)) batchRecords.set(index, fields);
+      if (
+        (fields.length === 3 || fields.length === 5) &&
+        Number.isSafeInteger(index) &&
+        eligible.some((item) => item.index === index)
+      )
+        batchRecords.set(index, fields);
     }
   }
   const summaries = [];
@@ -202,23 +219,20 @@ done`;
       });
       continue;
     }
-    let payload = "";
-    try {
-      if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(fields[2]))
-        throw new Error("invalid base64");
-      payload = Buffer.from(fields[2], "base64").toString("utf8");
-    } catch {
-      failures.push({
-        index,
-        artifactId: artifact.artifactId,
-        artifactName: artifact.artifactName,
-        detail: "artifact summary response was malformed",
-      });
-      continue;
-    }
     if (fields[0] !== "0") {
+      let detail = "";
+      try {
+        if (
+          fields.length !== 3 ||
+          !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(fields[2])
+        )
+          throw new Error("invalid failure record");
+        detail = Buffer.from(fields[2], "base64").toString("utf8");
+      } catch {
+        detail = "artifact summary response was malformed";
+      }
       const projected = await tools.project_diagnostic_text({
-        lines: [payload],
+        lines: [detail],
         maxLines: 5,
         maxCharacters: 1000,
         maxLineCharacters: 500,
@@ -231,13 +245,7 @@ done`;
       });
       continue;
     }
-    const first = payload.indexOf("\n");
-    const second = payload.indexOf("\n", first + 1);
-    if (
-      first < 0 ||
-      second < 0 ||
-      (payload.slice(first + 1, second) !== "0" && payload.slice(first + 1, second) !== "1")
-    ) {
+    if (fields.length !== 5 || (fields[3] !== "0" && fields[3] !== "1")) {
       failures.push({
         index,
         artifactId: artifact.artifactId,
@@ -248,10 +256,9 @@ done`;
     }
     let decoded = "";
     try {
-      const encoded = payload.slice(second + 1).trim();
-      if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded))
+      if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(fields[4]))
         throw new Error("invalid base64");
-      decoded = Buffer.from(encoded, "base64").toString("utf8");
+      decoded = Buffer.from(fields[4], "base64").toString("utf8");
     } catch {
       failures.push({
         index,
@@ -261,7 +268,7 @@ done`;
       });
       continue;
     }
-    const clipped = payload.slice(first + 1, second) === "1" || decoded.length > maxCharacters;
+    const clipped = fields[3] === "1" || decoded.length > maxCharacters;
     const projected = await tools.project_diagnostic_text({
       lines: (clipped ? decoded.slice(0, maxCharacters) : decoded).split("\n"),
       clipMode: "head",
@@ -273,7 +280,7 @@ done`;
     summaries.push({
       artifactId: artifact.artifactId,
       artifactName: artifact.artifactName,
-      entry: payload.slice(0, first).slice(0, 1000),
+      entry: fields[2].slice(0, 1000),
       text: projected.text,
       truncated: projected.truncated,
       index,
