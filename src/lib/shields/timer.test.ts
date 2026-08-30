@@ -616,12 +616,12 @@ describe("shields timer authorization", () => {
 
     const originalRename = fs.renameSync.bind(fs);
     const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
-      originalRename(source, destination);
       String(source) === markerPath &&
         fs.writeFileSync(markerPath, JSON.stringify(replacementMarker));
+      originalRename(source, destination);
     });
     try {
-      expect(timer.cleanupOwnedTimerMarker(args!)).toBe(true);
+      expect(timer.cleanupOwnedTimerMarker(args!)).toBe(false);
     } finally {
       renameSpy.mockRestore();
     }
