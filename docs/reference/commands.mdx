@@ -992,10 +992,10 @@ Kanban backup does not include named boards, attachments, worker logs, scratch w
 </AgentOnly>
 
 Before creating the gateway, the wizard runs preflight checks.
-It verifies that Docker is reachable and prints host remediation guidance when prerequisites are missing.
-Standard onboarding rejects unsupported runtimes such as Podman.
-The explicit portable experimental profile has one installer-preflight admission exception for the Podman unsupported-runtime finding.
-It does not waive any other readiness blocker or make Podman generally supported.
+Docker is the default runtime provider. It verifies that the selected provider is reachable and prints host remediation guidance when prerequisites are missing.
+On Linux, set `NEMOCLAW_GATEWAY_RUNTIME=podman` to select the qualified native rootless Podman provider for standard onboarding.
+Native Podman must pass its provider-owned socket, rootless service, cgroups v2, bridge-container, DNS, architecture, and managed-image checks; an auto-detected Podman compatibility socket is not enough to opt in.
+The portable experimental profile remains a separate selection with its existing installer-preflight admission and lifecycle behavior. It does not read `NEMOCLAW_GATEWAY_RUNTIME` or become synonymous with native Podman.
 The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
 If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.
 For fresh OpenShell installs, NemoClaw queries published OpenShell releases and asks the installer to use a release that fits the blueprint range.
@@ -1044,11 +1044,11 @@ Docker and Podman gateways cannot reuse one state directory. For NemoClaw-manage
 
 #### `--from <Dockerfile>`
 
-Without `--from`, onboarding through the OpenShell Docker driver for OpenClaw, Hermes, and LangChain Deep Agents Code selects an immutable managed image for the installed release and host architecture.
+Without `--from`, onboarding through the default Docker provider or the explicitly selected native Podman provider for OpenClaw, Hermes, and LangChain Deep Agents Code selects an immutable managed image for the installed release and host architecture.
 NemoClaw validates the complete three-agent publication cohort before selecting any member.
 If registry or catalog availability prevents resolution, stock onboarding stops before sandbox creation and does not build a shipped Dockerfile.
 Catalog evidence that is incomplete, mixed, mutable, wrong-platform, or identity-inconsistent also fails closed before sandbox creation.
-The portable experimental profile and native Podman are not part of this activation.
+The portable experimental profile retains its separate workload path. Native Podman uses this managed-image activation and rejects legacy or custom Dockerfile builds, so `--from` remains a Docker-provider path.
 
 Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
 The supplied Dockerfile defines the complete sandbox image, and NemoClaw does not layer it on top of the stock managed runtime.
