@@ -171,7 +171,17 @@ def status_value(action, acquire, provider_handle=None, activation_handle=None, 
 def parse(action, value):
     return control._parse_request(action, control._json_bytes(value) + b"\n")
 
-def process(pid, state, parent, start, uid, command, inode, executable_inode=None):
+def process(
+    pid,
+    state,
+    parent,
+    start,
+    uid,
+    command,
+    inode,
+    executable_inode=None,
+    executable_device=81,
+):
     if executable_inode is None:
         executable_inode = 10_000 + inode
     return control.ProcessIdentity(
@@ -183,7 +193,7 @@ def process(pid, state, parent, start, uid, command, inode, executable_inode=Non
         command,
         91,
         inode,
-        81,
+        executable_device,
         executable_inode,
     )
 
@@ -215,6 +225,17 @@ forged_transport_broker = process(
     ),
     189,
     fixed_transport_broker.executable_inode + 1,
+)
+wrong_device_transport_broker = process(
+    92,
+    "S",
+    1,
+    "792",
+    control.ROOT_UID,
+    fixed_transport_broker.command,
+    192,
+    fixed_transport_broker.executable_inode,
+    fixed_transport_broker.executable_device + 1,
 )
 wrong_argv_transport_broker = process(
     90,
@@ -266,6 +287,10 @@ fixed_transport_broker_reference = real_transport_broker_reference()
 results = {"fixed_transport_broker": fixed_transport_broker_reference.pid}
 control._capture_process = lambda _pid: forged_transport_broker
 results["forged_transport_broker_rejected"] = real_transport_broker_reference() is None
+control._capture_process = lambda _pid: wrong_device_transport_broker
+results["wrong_device_transport_broker_rejected"] = (
+    real_transport_broker_reference() is None
+)
 control._capture_process = lambda _pid: wrong_argv_transport_broker
 results["wrong_argv_transport_broker_rejected"] = (
     real_transport_broker_reference() is None

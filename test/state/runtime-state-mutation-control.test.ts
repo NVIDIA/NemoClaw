@@ -76,6 +76,7 @@ describe("runtime state mutation controller", () => {
       running_supervisor_hold: "supervisor-not-host-stopped",
       fixed_transport_broker: 88,
       forged_transport_broker_rejected: true,
+      wrong_device_transport_broker_rejected: true,
       wrong_argv_transport_broker_rejected: true,
       dynamic_transport_broker_rejected: true,
     });
