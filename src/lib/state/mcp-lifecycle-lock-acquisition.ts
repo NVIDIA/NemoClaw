@@ -421,6 +421,12 @@ function recoverCompletedAutoRestoreGatesSync(
       );
     }
     const target = contained.target === "main" ? main : deadline;
+    if (structuredGeneration && !target) {
+      refuseCompletedAutoRestoreRecovery(
+        lockPath,
+        `the structured containment has no remaining ${contained.target} generation to verify`,
+      );
+    }
     if (!structuredGeneration && contained.target === "deadline" && !target) {
       refuseCompletedAutoRestoreRecovery(
         lockPath,

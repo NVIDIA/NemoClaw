@@ -585,11 +585,7 @@ describe("MCP lifecycle lock acquisition", () => {
     fs.writeFileSync(
       containmentPath,
       JSON.stringify({
-        ...createMcpLifecycleLockOwner(
-          SANDBOX_NAME,
-          "terminal-containment",
-          processToken,
-        ),
+        ...createMcpLifecycleLockOwner(SANDBOX_NAME, "terminal-containment", processToken),
         pid: 2_147_483_647,
         processIdentity: "dead-containment-owner",
         containmentReason:
@@ -614,11 +610,7 @@ describe("MCP lifecycle lock acquisition", () => {
 
   it("recovers from structured containment independently of diagnostic wording", () => {
     const processToken = "e".repeat(32);
-    writeTimerMarker(
-      processToken,
-      new Date(Date.now() - 1_000).toISOString(),
-      2_147_483_647,
-    );
+    writeTimerMarker(processToken, new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
     const paths = writeStructuredCompletedContainment(processToken);
 
     expect(
@@ -634,13 +626,29 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(fs.existsSync(paths.containmentPath)).toBe(false);
   });
 
+  it("preserves structured containment when its protected generation is absent", () => {
+    const processToken = "e".repeat(32);
+    writeTimerMarker(processToken, new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
+    const paths = writeStructuredCompletedContainment(processToken);
+    fs.unlinkSync(paths.lockPath);
+    const operation = vi.fn();
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, operation, {
+        ...options(),
+        completedAutoRestoreRecovery: {
+          ownerPid: 2_147_483_647,
+          assertAuthority: vi.fn(),
+        },
+      }),
+    ).toThrow("structured containment has no remaining main generation to verify");
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(paths.containmentPath)).toBe(true);
+  });
+
   it("preserves containment whose structured generation does not match", () => {
     const processToken = "e".repeat(32);
-    writeTimerMarker(
-      processToken,
-      new Date(Date.now() - 1_000).toISOString(),
-      2_147_483_647,
-    );
+    writeTimerMarker(processToken, new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
     const paths = writeStructuredCompletedContainment(processToken, "different-main-token");
     const operation = vi.fn();
 

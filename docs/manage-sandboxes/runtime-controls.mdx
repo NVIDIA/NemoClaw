@@ -159,10 +159,14 @@ Correct the reported state-directory write failure, then run `$$nemoclaw <name> 
 When recovery cannot complete, an interactive command returns an error, or the detached timer exits with a failure status.
 
 NemoClaw also records durable containment when an owner exits before it can prove that the owner's descendants stopped, or when ownership becomes ambiguous.
-Durable containment, retained gates, or the fail-closed state-directory error keeps new mutations blocked until you complete generation operator recovery.
+When Shields are already UP after an abandoned auto-restore completes, run `$$nemoclaw <name> shields status`.
+NemoClaw removes the timer artifacts and lifecycle gates only when they all identify that completed process generation, the recorded owners are gone, and no Shields transition remains.
+Running the command again after successful cleanup is safe because the retired generation no longer supplies recovery authority.
+A live or ambiguous owner, a replaced or unrelated generation, conflicting artifacts, or a missing protected generation remains fail-closed.
+Those cases, retained gates, and fail-closed state-directory errors keep new mutations blocked until you complete generation operator recovery.
 A `--dry-run` run of a `channels` or `policy` command takes no mutation lock, so you can still preview the change while mutations are blocked.
 
-Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
+For a fail-closed case, stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
 Verify each recorded generation is unchanged, remove only the stale generations first, and remove the containment generation last.
 
 ### Preserve Managed MCP Policy

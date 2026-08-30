@@ -466,6 +466,7 @@ describe("completed auto-restore command admission", () => {
         artifacts[0],
         artifacts[1],
         "Remove only an artifact whose exact process generation is proven obsolete",
+        "nemoclaw alpha shields status",
       ]
         .map((text) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
         .join(".*"),
