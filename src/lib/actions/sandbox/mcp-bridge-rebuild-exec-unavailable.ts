@@ -12,6 +12,7 @@ import {
 } from "./mcp-bridge-destroy-preflight";
 import {
   assertNoProviderCredentialCollisions,
+  getMcpProviderInspectionRuntimeSelection,
   preflightMcpEntryTargets,
 } from "./mcp-bridge-provider";
 import {
@@ -142,7 +143,11 @@ async function inspectReadOnlyRecoveryState(
     providerByServer.set(entry.server, providerFingerprint(provider));
     targetsByServer.set(entry.server, targetFingerprint(target));
   }
-  assertNoProviderCredentialCollisions(sandboxName, entries);
+  assertNoProviderCredentialCollisions(
+    sandboxName,
+    entries,
+    getMcpProviderInspectionRuntimeSelection(getSandboxOrThrow(sandboxName)),
+  );
   return { providerByServer, targetsByServer };
 }
 

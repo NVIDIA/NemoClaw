@@ -39,6 +39,7 @@ import {
   detachMissingProviderReference,
   detachProvider,
   ensureMcpBridgeProviderProfile,
+  getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   type McpCredentialRevisionObservation,
   observeMcpCredentialRevision,
@@ -185,6 +186,7 @@ async function addMcpBridgeUnlocked(
   }
   const matchingTrustedPrivateHosts = allTrustedPrivateHosts.filter((host) => host === urlHost);
   const sandbox = getSandboxOrThrow(sandboxName);
+  const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   assertMcpDestroyNotPending(sandbox);
   const agent = getSandboxAgent(sandbox);
   const adapter = getBridgeAdapter(agent);
@@ -311,7 +313,7 @@ async function addMcpBridgeUnlocked(
       // Publish the durable MCP reservation under the same cross-command lock
       // used by credentials add. Neither command can pass its collision check
       // before the other records its credential-key reservation.
-      assertNoProviderCredentialCollisions(sandboxName, [entry]);
+      assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
       writeBridgeEntry(sandboxName, entry);
     });
   }
@@ -381,7 +383,7 @@ async function addMcpBridgeUnlocked(
     // Credential keys are sandbox-global. Prove this key is not already
     // supplied by a foreign attachment before opening its MCP route, then check
     // again after provider creation to close the intervening race.
-    assertNoProviderCredentialCollisions(sandboxName, [entry]);
+    assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
     ensureMcpBridgeProviderProfile();
     // Load the real protocol:mcp policy without a credential binding before
     // provider mutation. OpenShell requires the endpointless provider to be
@@ -418,7 +420,7 @@ async function addMcpBridgeUnlocked(
       // adapter mutations. A process death before this write fails closed.
       writeBridgeEntry(sandboxName, entry);
     }
-    assertNoProviderCredentialCollisions(sandboxName, [entry]);
+    assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
     if (providerResult.action === "updated" && previousCredentialRevision === undefined) {
       throw new McpBridgeError(
         `Could not retain the prior OpenShell credential revision for provider '${entry.providerName}'.`,

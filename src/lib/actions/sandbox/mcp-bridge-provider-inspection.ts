@@ -3,9 +3,11 @@
 
 import { stripAnsi } from "../../adapters/openshell/client";
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import { reportsExactProviderNotFound } from "../../onboard/extra-provider-diagnostic-parser";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
-import { listExtraProviders, type McpBridgeEntry } from "../../state/registry";
+import { listExtraProviders, type McpBridgeEntry, type SandboxEntry } from "../../state/registry";
+import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
@@ -41,6 +43,15 @@ export type McpProviderInspectionRuntimeSelection = {
   gatewayName: string;
   workspace: string;
 };
+
+export function getMcpProviderInspectionRuntimeSelection(
+  sandbox: SandboxEntry,
+): McpProviderInspectionRuntimeSelection {
+  return {
+    gatewayName: getPersistedSandboxTargetGatewayName(sandbox),
+    workspace: OPENSHELL_DEFAULT_WORKSPACE,
+  };
+}
 
 const MCP_PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
@@ -181,10 +192,11 @@ export function inspectMcpProviderAttachments(
 export function assertNoAttachedProviderCredentialCollisions(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
-  const inspection = inspectMcpProviderAttachments(sandboxName);
+  const inspection = inspectMcpProviderAttachments(sandboxName, runtimeSelection);
   if (!inspection.attachments) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect providers attached to sandbox '${sandboxName}'.`,
@@ -210,12 +222,15 @@ export function assertNoRegisteredProviderCredentialCollisions(
   deps: {
     listExtraProviders?: () => string[];
     inspectProvider?: (providerName: string) => McpProviderInspection;
+    runtimeSelection?: McpProviderInspectionRuntimeSelection;
   } = {},
 ): void {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
   const queryExtraProviders = deps.listExtraProviders ?? listExtraProviders;
-  const inspectProvider = deps.inspectProvider ?? inspectMcpProvider;
+  const inspectProvider =
+    deps.inspectProvider ??
+    ((providerName: string) => inspectMcpProvider(providerName, deps.runtimeSelection));
   for (const providerName of queryExtraProviders()) {
     const provider = inspectProvider(providerName);
     if (provider.exists === false) continue;
@@ -242,9 +257,10 @@ export function assertNoRegisteredProviderCredentialCollisions(
 export function assertNoProviderCredentialCollisions(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
-  assertNoAttachedProviderCredentialCollisions(sandboxName, entries);
-  assertNoRegisteredProviderCredentialCollisions(entries);
+  assertNoAttachedProviderCredentialCollisions(sandboxName, entries, runtimeSelection);
+  assertNoRegisteredProviderCredentialCollisions(entries, { runtimeSelection });
 }
 
 export function providerMatchesCredential(

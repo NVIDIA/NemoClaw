@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../agent/defs";
-import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import type { McpBridgeEntry } from "../../state/registry";
-import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
@@ -20,6 +18,7 @@ import {
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { getPolicyPresence, getRegisteredGeneratedPolicy } from "./mcp-bridge-policy";
 import {
+  getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   observeMcpCredentialRevision,
   providerAttached,
@@ -185,10 +184,7 @@ export async function statusMcpBridge(
   validateSandboxName(sandboxName);
   if (server !== undefined) validateMcpServerName(server);
   const sandbox = getSandboxOrThrow(sandboxName);
-  const providerRuntimeSelection = {
-    gatewayName: getPersistedSandboxTargetGatewayName(sandbox),
-    workspace: OPENSHELL_DEFAULT_WORKSPACE,
-  };
+  const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   const agent = getSandboxAgent(sandbox);
   const bridges = bridgeState(sandbox);
   if (Object.keys(bridges).length > 0) {

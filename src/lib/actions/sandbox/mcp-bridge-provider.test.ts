@@ -223,9 +223,12 @@ alpha-mcp-slack   generic  1                 0
       addedAt: "2026-06-01T00:00:00.000Z",
     };
 
-    expect(() => assertNoAttachedProviderCredentialCollisions("alpha", [entry])).toThrow(
-      "MCP server 'example' has no complete authenticated credential binding",
-    );
+    expect(() =>
+      assertNoAttachedProviderCredentialCollisions("alpha", [entry], {
+        gatewayName: "nemoclaw-8080",
+        workspace: "default",
+      }),
+    ).toThrow("MCP server 'example' has no complete authenticated credential binding");
     expect(() =>
       assertNoRegisteredProviderCredentialCollisions([entry], {
         listExtraProviders: () => ["foreign-registered"],
@@ -259,6 +262,95 @@ alpha-mcp-slack   generic  1                 0
       }),
     ).toThrow(
       "Credential key 'TEST_DIR1_TOKEN' is already supplied by registered provider 'test-dir1'",
+    );
+  });
+
+  it("pins attachment collision inspection to the recorded runtime target (#10514)", () => {
+    const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
+    const run = vi
+      .spyOn(providerCommand, "runOpenshellProviderCommand")
+      .mockReturnValueOnce({
+        pid: 1234,
+        status: 0,
+        signal: null,
+        output: [
+          null,
+          "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nforeign-provider nemoclaw-mcp-v1 1 0\n",
+          "",
+        ],
+        stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nforeign-provider nemoclaw-mcp-v1 1 0\n",
+        stderr: "",
+      })
+      .mockReturnValueOnce({
+        pid: 1234,
+        status: 0,
+        signal: null,
+        output: [
+          null,
+          "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
+          "",
+        ],
+        stdout:
+          "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
+        stderr: "",
+      });
+    const entry: McpBridgeEntry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://api.githubcopilot.com/mcp",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+      addedAt: "2026-08-19T00:00:00.000Z",
+    };
+
+    expect(() =>
+      assertNoAttachedProviderCredentialCollisions("alpha", [entry], runtimeSelection),
+    ).toThrow("Credential key 'GITHUB_TOKEN' is already supplied by attached provider");
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(
+      run.mock.calls.every(([, options]) => options?.runtimeSelection === runtimeSelection),
+    ).toBe(true);
+  });
+
+  it("pins registered collision inspection to the recorded runtime target (#10514)", () => {
+    const runtimeSelection = { gatewayName: "nemoclaw-9090", workspace: "default" };
+    const run = vi.spyOn(providerCommand, "runOpenshellProviderCommand").mockReturnValue({
+      pid: 1234,
+      status: 0,
+      signal: null,
+      output: [
+        null,
+        "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
+        "",
+      ],
+      stdout:
+        "Id: 99999999-8888-4777-8666-555555555555\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: GITHUB_TOKEN\n",
+      stderr: "",
+    });
+    const entry: McpBridgeEntry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://api.githubcopilot.com/mcp",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+      addedAt: "2026-08-19T00:00:00.000Z",
+    };
+
+    expect(() =>
+      assertNoRegisteredProviderCredentialCollisions([entry], {
+        listExtraProviders: () => ["foreign-provider"],
+        runtimeSelection,
+      }),
+    ).toThrow("Credential key 'GITHUB_TOKEN' is already supplied by registered provider");
+    expect(run).toHaveBeenCalledWith(
+      ["provider", "get", "foreign-provider"],
+      expect.objectContaining({ runtimeSelection }),
     );
   });
 

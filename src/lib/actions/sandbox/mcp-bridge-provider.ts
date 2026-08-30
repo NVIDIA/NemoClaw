@@ -11,6 +11,7 @@ export {
   assertNoAttachedProviderCredentialCollisions,
   assertNoProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions,
+  getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
   MCP_BRIDGE_PROVIDER_TYPE,

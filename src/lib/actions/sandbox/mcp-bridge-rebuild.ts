@@ -29,6 +29,7 @@ import {
   assertNoProviderCredentialCollisions,
   assertNoRegisteredProviderCredentialCollisions,
   detachProvider,
+  getMcpProviderInspectionRuntimeSelection,
   preflightMcpEntryTargets,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
@@ -145,11 +146,16 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   }
   await preflightMcpEntryTargets(entries);
   await ensureSandboxGatewaySelected(sandboxName);
+  const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(
+    getSandboxOrThrow(sandboxName),
+  );
   for (const entry of entries) {
     assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
   }
   for (const entry of entries) assertMcpProviderRecoverable(entry);
-  assertNoRegisteredProviderCredentialCollisions(entries);
+  assertNoRegisteredProviderCredentialCollisions(entries, {
+    runtimeSelection: providerRuntimeSelection,
+  });
   return {
     entries,
     detachedProviderEntries: [],
@@ -171,10 +177,11 @@ export async function prepareMcpBridgesForRebuild(
   }
   await preflightMcpEntryTargets(entries);
   await ensureSandboxGatewaySelected(sandboxName);
+  const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
   for (const entry of entries) assertMcpProviderRecoverable(entry);
-  assertNoProviderCredentialCollisions(sandboxName, entries);
+  assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
   // This is the bounded replacement handoff, not a durable NemoClaw policy
   // record. Capture OpenShell immediately before the internal teardown
   // mutations so the replacement receives the complete operator-owned
