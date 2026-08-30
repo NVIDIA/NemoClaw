@@ -26,7 +26,6 @@ import {
   writeJsonFile,
 } from "../fixtures/file-state.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
-import { openShellCommandDiagnostic } from "../fixtures/openshell-container-diagnostics.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -1157,16 +1156,7 @@ test(
     cleanupRegistryDashboardPort = readJsonFileOr<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[
       SANDBOX_NAME
     ]?.dashboardPort;
-    expect(
-      rebuild.exitCode,
-      await openShellCommandDiagnostic(rebuild, {
-        artifactPrefix: "phase-6-rebuild-failure",
-        env: rebuildEnv,
-        host,
-        redactionValues,
-        sandboxName: SANDBOX_NAME,
-      }),
-    ).toBe(0);
+    expectExitZero(rebuild, "nemoclaw rebuild Hermes sandbox");
     const rebuiltRegistry = registrySandbox();
     const rebuiltDashboardPort = requireRebuildHermesDashboardPort(
       rebuiltRegistry.dashboardPort,

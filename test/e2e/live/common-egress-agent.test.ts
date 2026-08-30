@@ -22,7 +22,6 @@ import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
-import { openShellCommandDiagnostic } from "../fixtures/openshell-container-diagnostics.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -433,16 +432,7 @@ async function runOnboard(
       "NVIDIA endpoint validation was unavailable/rate-limited before common-egress assertions",
     );
   }
-  expect(
-    onboard.exitCode,
-    await openShellCommandDiagnostic(onboard, {
-      artifactPrefix: `onboard-common-egress-${args.sandboxName}-failure`,
-      env: commandEnv(),
-      host,
-      redactionValues: [args.hosted.apiKey, ...(args.extraRedactionValues ?? [])],
-      sandboxName: args.sandboxName,
-    }),
-  ).toBe(0);
+  expect(onboard.exitCode, text(onboard)).toBe(0);
   return onboard;
 }
 
