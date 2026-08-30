@@ -99,15 +99,15 @@ export function allMessagingChannelPolicyPresets(channels: string[] | null | und
   return all;
 }
 
-// An unconfigured channel's preset names a credential provider nothing attached.
-// Agent set comes from manifest `supportedAgents`. #10281 did this for Hermes. (#10153)
+// A preset for an unconfigured channel can name a credential provider that the sandbox does not attach.
+// Derive the agent set from manifest `supportedAgents`. #10281 added this rule for Hermes. (#10153)
 const MESSAGING_AGENT_IDS = new Set<string>(
   listSupportedMessagingAgentIds(listBuiltInMessagingChannelManifests()),
 );
 
-// An array means the caller knows the complete enabled-channel set. Remove only
-// repository-owned messaging presets outside that set; null preserves an
-// unknown selection, and a custom preset with the same name keeps user intent.
+// An array identifies every enabled channel. Remove repository-owned messaging presets
+// outside that set. Preserve the selection when channel state is unknown or when a custom
+// preset has the same name.
 export function pruneInactiveMessagingPolicyPresets(
   selectedPresets: string[],
   enabledChannels: string[] | null | undefined,

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type WebSearchConfig, webSearchProviderForConfig } from "../../inference/web-search";
-import { getActiveChannelIdsFromPlan, type SandboxMessagingPlan } from "../../messaging";
+import type { SandboxMessagingPlan } from "../../messaging";
+import { enabledPlanChannels } from "../../messaging/applier/plan-filter";
 import {
   mergeRebuildMessagingPolicyPresets,
   pruneInactiveMessagingPolicyPresets,
@@ -231,7 +232,7 @@ export function runRebuildBackupPhase(
   const disabledChannels = [...(input.messagingPlan?.disabledChannels ?? [])];
   // `!disabled` alone kept presets for channels the plan cannot start. (#10153)
   const enabledChannelIds = input.messagingPlan
-    ? getActiveChannelIdsFromPlan(input.messagingPlan)
+    ? enabledPlanChannels(input.messagingPlan).map((channel) => channel.channelId)
     : [];
   const mergedPolicyPresets = mergeRebuildMessagingPolicyPresets(
     backupManifest?.policyPresets,
