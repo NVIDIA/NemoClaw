@@ -1690,10 +1690,12 @@ function getSandboxChannelStatePaths(
   channelName: string,
 ): readonly string[] {
   const configDir = agent.configPaths.dir;
+  const manifest = messagingManifestRegistry.get(channelName);
+  if (manifest && !isMessagingChannelSupportedByAgent(manifest, agent)) {
+    return [];
+  }
   const messagingAgentId = tryGetMessagingAgentId(agent, messagingManifestRegistry.list());
-  const manifestStateDirs = messagingAgentId
-    ? messagingManifestRegistry.get(channelName)?.state?.[messagingAgentId]
-    : undefined;
+  const manifestStateDirs = messagingAgentId ? manifest?.state?.[messagingAgentId] : undefined;
   if (manifestStateDirs !== undefined) {
     return manifestStateDirs.map((stateDir) => `${configDir}/${stateDir}`);
   }

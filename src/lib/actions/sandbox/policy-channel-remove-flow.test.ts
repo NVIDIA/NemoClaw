@@ -127,6 +127,30 @@ describe("policy channel remove/enable flows", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("does not clean manifest state for an unsupported sandbox agent", async () => {
+    vi.spyOn(defs, "loadAgent").mockReturnValue({
+      name: "custom-agent",
+      configPaths: { dir: "/sandbox/.custom-agent" },
+      stateDirs: ["wechat"],
+    } as unknown as defs.AgentDefinition);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      agent: "custom-agent",
+      policies: ["wechat"],
+      messaging: { schemaVersion: 1, plan: {} as never },
+    } as SandboxEntry);
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["wechat"]);
+    vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
+    vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["wechat"]);
+
+    await expect(removeSandboxChannel("alpha", { channel: "wechat" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(processRecovery.executeSandboxExecCommand).not.toHaveBeenCalled();
+    expect(processRecovery.executeSandboxCommand).not.toHaveBeenCalled();
+  });
+
   it("clears Hermes WhatsApp default, profile, and legacy sessions before removal", async () => {
     const { updateSandbox } = await arrangeHermesWhatsappRemoval();
 
