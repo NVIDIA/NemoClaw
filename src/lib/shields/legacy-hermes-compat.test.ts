@@ -17,6 +17,7 @@ import {
   hermesProviderConsumerSandbox as sandbox,
   hermesProviderConsumerTarget as target,
   writeBoundForwardPolicy,
+  writeBoundPolicySnapshot,
   writeTimerAuthorizationProof,
 } from "../../../test/helpers/hermes-shields-provider-consumer-harness";
 import * as shieldsFlow from "../../../test/helpers/shields-flow-harness";
@@ -164,7 +165,7 @@ function expectTimerReplacementRejectedAfterMutation({
   expect(runSpy).toHaveBeenCalled();
   expect(transitionSpy).toHaveBeenCalled();
   expect(routeSpy).toHaveBeenCalledTimes(1);
-  expect(fs.existsSync(transitionPath)).toBe(false);
+  expect(fs.existsSync(transitionPath)).toBe(true);
 }
 
 const forwardPolicyFailureFixtures: ReadonlyArray<
@@ -251,13 +252,12 @@ describe("legacy Hermes shields compatibility", () => {
         ]),
       vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw)),
       vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(permissivePolicyPath),
-      ...shieldsFlow.bindManagedPolicyMutationAuthority(policy),
+      ...shieldsFlow.bindLivePolicyMutationContext(policy),
       vi.spyOn(agentConfig, "resolveAgentConfig").mockImplementation(() => hermesTarget()),
       vi.spyOn(registry, "getSandbox").mockImplementation((name: unknown) => ({
         name: String(name),
         agent: "hermes",
         openshellDriver: "docker",
-        policyAuthority: "nemoclaw-managed",
         lifecycleGeneration: "legacy-generation",
         workload: { kind: "managed-image" },
       })),
@@ -855,7 +855,7 @@ describe("legacy Hermes shields compatibility", () => {
           recursive: true,
           mode: 0o700,
         });
-        fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive: {}\n");
+        const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
         const forwardPolicy = writeBoundForwardPolicy(stateDir, sandbox.name, processToken);
         fs.writeFileSync(
           path.join(stateDir, `shields-${sandbox.name}.json`),
@@ -865,7 +865,7 @@ describe("legacy Hermes shields compatibility", () => {
             shieldsDownTimeout: 300,
             shieldsDownReason: "crash retry",
             shieldsDownPolicy: "permissive",
-            shieldsPolicySnapshotPath: snapshotPath,
+            shieldsPolicySnapshotPath: snapshotPath, shieldsPolicySnapshot: snapshotPolicy,
           }),
         );
         fs.writeFileSync(
@@ -893,7 +893,7 @@ describe("legacy Hermes shields compatibility", () => {
             ownerStartIdentity: "dead-provider-owner",
             processToken,
             sandboxName: sandbox.name,
-            snapshotPath,
+            snapshotPath, snapshotPolicy,
             forwardPolicy,
           }),
         );
@@ -976,7 +976,7 @@ describe("legacy Hermes shields compatibility", () => {
         `shields-transition-${sandbox.name}-${processToken}.json`,
       );
       fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive: {}\n");
+      const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
       const forwardPolicy = writeBoundForwardPolicy(stateDir, sandbox.name, processToken);
       fs.writeFileSync(
         path.join(stateDir, `shields-${sandbox.name}.json`),
@@ -986,7 +986,7 @@ describe("legacy Hermes shields compatibility", () => {
           shieldsDownTimeout: 300,
           shieldsDownReason: "post-release crash",
           shieldsDownPolicy: "permissive",
-          shieldsPolicySnapshotPath: snapshotPath,
+          shieldsPolicySnapshotPath: snapshotPath, shieldsPolicySnapshot: snapshotPolicy,
         }),
       );
       fs.writeFileSync(
@@ -1014,7 +1014,7 @@ describe("legacy Hermes shields compatibility", () => {
           ownerStartIdentity: "dead-post-release-owner",
           processToken,
           sandboxName: sandbox.name,
-          snapshotPath,
+          snapshotPath, snapshotPolicy,
           forwardPolicy,
         }),
       );
@@ -1060,7 +1060,7 @@ describe("legacy Hermes shields compatibility", () => {
           `shields-transition-${sandbox.name}-${processToken}.json`,
         );
         fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-        fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive: {}\n");
+        const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
         const forwardPolicy = writeBoundForwardPolicy(stateDir, sandbox.name, processToken);
         fs.writeFileSync(
           path.join(stateDir, `shields-${sandbox.name}.json`),
@@ -1070,7 +1070,7 @@ describe("legacy Hermes shields compatibility", () => {
             shieldsDownTimeout: 300,
             shieldsDownReason: "invalid forward policy",
             shieldsDownPolicy: "permissive",
-            shieldsPolicySnapshotPath: snapshotPath,
+            shieldsPolicySnapshotPath: snapshotPath, shieldsPolicySnapshot: snapshotPolicy,
           }),
         );
         const timerPath = path.join(stateDir, `shields-timer-${sandbox.name}.json`);
@@ -1099,7 +1099,7 @@ describe("legacy Hermes shields compatibility", () => {
             ownerStartIdentity: "dead-forward-owner",
             processToken,
             sandboxName: sandbox.name,
-            snapshotPath,
+            snapshotPath, snapshotPolicy,
             forwardPolicy,
           }),
         );
@@ -1277,7 +1277,7 @@ describe("legacy Hermes shields compatibility", () => {
         `shields-transition-${sandbox.name}-${processToken}.json`,
       );
       fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive: {}\n");
+      const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
       const forwardPolicy = writeBoundForwardPolicy(stateDir, sandbox.name, processToken);
       fs.writeFileSync(
         path.join(stateDir, `shields-${sandbox.name}.json`),
@@ -1287,7 +1287,7 @@ describe("legacy Hermes shields compatibility", () => {
           shieldsDownTimeout: 300,
           shieldsDownReason: "timed mutable status",
           shieldsDownPolicy: "permissive",
-          shieldsPolicySnapshotPath: snapshotPath,
+          shieldsPolicySnapshotPath: snapshotPath, shieldsPolicySnapshot: snapshotPolicy,
           updatedAt: new Date().toISOString(),
         }),
       );
@@ -1316,8 +1316,7 @@ describe("legacy Hermes shields compatibility", () => {
           ownerStartIdentity: "timed-status-owner",
           processToken,
           sandboxName: sandbox.name,
-          snapshotPath,
-          managedMcpPolicyKeys: [],
+          snapshotPath, snapshotPolicy,
           forwardPolicy,
         }),
       );

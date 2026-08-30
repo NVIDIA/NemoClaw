@@ -9,9 +9,8 @@ keywords: ["nemoclaw network policy", "sandbox egress control operator approval"
 content:
   type: "reference"
 ---
-NemoClaw runs with a deny-by-default network policy.
-The sandbox can only reach endpoints that are explicitly allowed.
-OpenShell intercepts any request to an unlisted destination and prompts the operator to approve or deny it in real time through the TUI.
+
+NemoClaw runs with a deny-by-default network policy. The sandbox can only reach endpoints that are explicitly allowed. OpenShell intercepts any request to an unlisted destination and prompts the operator to approve or deny it in real time through the TUI.
 
 ## Baseline Policy
 
@@ -27,26 +26,23 @@ Hermes sandboxes use an agent-specific baseline policy in `agents/hermes/policy-
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents sandboxes use an agent-specific baseline policy in `agents/langchain-deepagents-code/policy-additions.yaml` so the managed `dcode` runtime can reach inference, GitHub, and package endpoints while keeping the same deny-by-default model.
-Deep Agents uses strict Landlock compatibility, so sandbox startup fails when OpenShell cannot enforce the managed filesystem policy.
+Deep Agents sandboxes use an agent-specific baseline policy in `agents/langchain-deepagents-code/policy-additions.yaml` so the managed `dcode` runtime can reach inference, GitHub, and package endpoints while keeping the same deny-by-default model. Deep Agents uses strict Landlock compatibility, so sandbox startup fails when OpenShell cannot enforce the managed filesystem policy.
 
 </AgentOnly>
 
 ### Filesystem
 
 | Path | Access |
-|---|---|
+| --- | --- |
 | `/sandbox`, `/tmp`, `/dev/null`, `/dev/pts` | Read-write |
 | `/usr`, `/lib`, `/proc`, `/dev/urandom`, `/app`, `/etc`, `/var/log`, `/var/lib/dpkg` | Read-only |
 
-`/dev/pts` is the pseudo-terminal (devpts) directory.
-It is writable so PTY-based tools (`tmux`, `script`, and interactive shells) can allocate a terminal.
-Without it, those tools fail with `fork failed: Permission denied`.
+`/dev/pts` is the pseudo-terminal (devpts) directory. It is writable so PTY-based tools (`tmux`, `script`, and interactive shells) can allocate a terminal. Without it, those tools fail with `fork failed: Permission denied`.
 
-Read-only access to `/var/lib/dpkg` lets `dpkg-query` inspect installed package metadata.
-The filesystem policy does not grant write access to the package database.
+Read-only access to `/var/lib/dpkg` lets `dpkg-query` inspect installed package metadata. The filesystem policy does not grant write access to the package database.
 
 The sandbox process runs as a dedicated `sandbox` user and group.
+
 <AgentOnly variant="openclaw">
 Landlock LSM enforcement applies on a best-effort basis.
 </AgentOnly>
@@ -54,8 +50,8 @@ Landlock LSM enforcement applies on a best-effort basis.
 Landlock LSM enforcement applies on a best-effort basis.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-For Deep Agents, Landlock enforcement is strict.
-If the kernel or runtime cannot enforce the managed filesystem policy, sandbox startup fails closed.
+  For Deep Agents, Landlock enforcement is strict. If the kernel or runtime cannot enforce the
+  managed filesystem policy, sandbox startup fails closed.
 </AgentOnly>
 
 ### Network Policies
@@ -75,8 +71,7 @@ The following endpoint groups are allowed by default:
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Hermes baseline endpoint groups are declared by the Hermes agent policy additions.
-Use `$$nemoclaw <sandbox> policy list` or `openshell policy get --base <sandbox>` on a live sandbox to inspect the applied baseline.
+Hermes baseline endpoint groups are declared by the Hermes agent policy additions. Use `$$nemoclaw <sandbox> policy list` or `openshell policy get --base <sandbox>` on a live sandbox to inspect the exact applied baseline.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -87,8 +82,7 @@ Use `$$nemoclaw <sandbox> policy list` or `openshell policy get --base <sandbox>
 | `github` | `github.com:443`, `api.github.com:443`, `raw.githubusercontent.com:443` | `/usr/bin/git`, `/usr/local/bin/dcode`, `/opt/venv/bin/python3*` | Full access to `github.com` and `api.github.com`; GET and HEAD only to `raw.githubusercontent.com` |
 | `pypi` | `pypi.org:443`, `files.pythonhosted.org:443` | `/opt/venv/bin/python3*`, `/opt/venv/bin/pip3*` | GET for package installation |
 
-The separate `raw.githubusercontent.com` route lets Deep Agents Code follow GitHub file links and read repository source through its managed `fetch_url` tool.
-Repository, ref, and file path segments vary by task, so the route covers the host while limiting requests to read-only GET and HEAD methods and the listed managed binaries.
+The separate `raw.githubusercontent.com` route lets Deep Agents Code follow GitHub file links and read repository source through its managed `fetch_url` tool. Repository, ref, and file path segments vary by task, so the route covers the host while limiting requests to read-only GET and HEAD methods and the listed managed binaries.
 
 </AgentOnly>
 
@@ -101,27 +95,26 @@ GitHub access (`github.com`, `api.github.com`) is not included in the baseline p
 Apply the `github` preset during onboarding if your agent needs GitHub access.
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy).
 
-The baseline policy does not include messaging endpoints for Telegram, Discord, Slack, WeChat, or WhatsApp.
-Enable the channel during onboarding or apply the matching messaging preset so the sandbox can reach that platform.
-WeChat and WhatsApp are experimental.
-Review [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
+The baseline policy does not include messaging endpoints for Telegram, Discord, Slack, WeChat, or WhatsApp. Enable the channel during onboarding or apply the matching messaging preset so the sandbox can reach that platform. WeChat and WhatsApp are experimental. Review [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
+
 </Note>
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
 <Note>
-Messaging endpoints are not part of the common baseline policy.
-Enable the channel during onboarding or apply the matching preset so the sandbox can reach that platform.
+  Messaging endpoints are not part of the common baseline policy. Enable the channel during
+  onboarding or apply the matching preset so the sandbox can reach that platform.
 </Note>
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
 <Note>
-Deep Agents is a terminal-oriented harness.
-NemoClaw does not configure messaging channel bridges for Deep Agents today, and the baseline policy does not include Tavily, LangSmith, MCP hosts, or arbitrary web endpoints.
-Apply maintained presets such as `github`, `pypi`, or `tavily` only when the sandbox needs that access.
+  Deep Agents is a terminal-oriented harness. NemoClaw does not configure messaging channel bridges
+  for Deep Agents today, and the baseline policy does not include Tavily, LangSmith, MCP hosts, or
+  arbitrary web endpoints. Apply maintained presets such as `github`, `pypi`, or `tavily` only when
+  the sandbox needs that access.
 </Note>
 
 </AgentOnly>
@@ -129,22 +122,16 @@ Apply maintained presets such as `github`, `pypi`, or `tavily` only when the san
 <a id="policy-tiers"></a>
 ## Policy Tiers
 
-During onboarding, the wizard prompts for a policy tier that determines the default set of presets applied on top of the baseline policy.
-The baseline policy is always applied regardless of the selected tier.
-An operator can persistently exclude a specific baseline entry with [`policy exclude`](#excluding-a-baseline-entry) when they accept reduced, unsupported functionality.
-This is the supported registry-backed way to replay a live key removal during rebuild; raw `openshell policy set` edits are not replayed, while edits made to the source baseline itself are applied when the sandbox is recreated.
-The table records canonical tier membership, which also determines whether an existing preset can be retained during reuse or rebuild.
-Fresh onboarding filters those presets by the active agent and selected integrations before it presents the policy review.
+During onboarding, the wizard prompts for a policy tier that determines the default set of presets applied on top of the baseline policy. The baseline policy is always applied regardless of the selected tier. An operator can exclude a specific baseline entry from the current OpenShell policy with [`policy exclude`](#excluding-a-baseline-entry) when they accept reduced, unsupported functionality. NemoClaw stores no separate exclusion record. Rebuild and clone carry the current OpenShell policy forward, so changes made through NemoClaw, the OpenShell TUI, or direct host-side policy editing have the same lifecycle.
 
 | Tier | Presets included | Description |
-|------|------------------|-------------|
+| --- | --- | --- |
 | Restricted | No tier defaults | Starts from the baseline policy. Web search or messaging integrations selected earlier can still suggest their required presets; deselect them during policy review for baseline-only access. Restricted suppresses other agent-required additions; reapply them later with `policy add` only after reviewing the additional egress. |
 | Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, `brave`; selected `tavily` web search access when supported | Full dev tooling. Fresh onboarding filters web-search egress to the provider selected for the active agent. No messaging platform access. Apply the `weather` preset explicitly if your agent needs read-only weather lookups. |
 | Open | `npm`, `pypi`, `huggingface`, `brew`, `brave`, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `teams` (experimental), `jira`, `outlook`; selected `tavily` web search access when supported | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. Fresh onboarding filters web-search egress to the provider selected for the active agent. |
 | Personal | `personal-open-internet` (mandatory) | Lets every sandbox binary open TCP connections to public and private address ranges on destination ports `80` and `443`. The broad route replaces overlapping web endpoints while preserving non-web policy. Unspecified, loopback, and link-local ranges remain blocked. |
 
-When Personal is selected or carried forward, the `personal-open-internet` preset is mandatory for every agent and every onboarding entry point.
-Interactive choices, `NEMOCLAW_POLICY_MODE=custom`, and `NEMOCLAW_POLICY_MODE=skip` control only additional presets; they cannot deselect, skip, or replace Personal's required web authority.
+When Personal is selected or carried forward, the `personal-open-internet` preset is mandatory for every agent and every onboarding entry point. Interactive choices, `NEMOCLAW_POLICY_MODE=custom`, and `NEMOCLAW_POLICY_MODE=skip` control only additional presets; they cannot deselect, skip, or replace Personal's required web authority.
 
 <Warning title="Personal Tier Network Access">
 The Personal tier applies the `personal-open-internet` policy preset with a hostless L4 endpoint on destination ports `80` and `443`.
@@ -153,23 +140,14 @@ The rule does not inspect the application protocol or payload, so traffic on the
 OpenShell does not restrict the hostname, HTTP method, path, or body after the rule permits the connection.
 An agent can send workspace data or sandbox-visible credentials to an arbitrary reachable service on either port without an operator approval prompt.
 
-The preset excludes unspecified, loopback, and link-local address ranges, including the common cloud metadata range.
-OpenShell also keeps its hard blocks for those destinations.
-Other destination ports remain denied unless another policy entry permits them.
-The sandbox's filesystem, process, gateway authentication, and managed credential controls remain active.
-Use this tier only for trusted personal workloads with trusted prompts and data.
+The preset excludes unspecified, loopback, and link-local address ranges, including the common cloud metadata range. OpenShell also keeps its hard blocks for those destinations. Other destination ports remain denied unless another policy entry permits them. The sandbox's filesystem, process, gateway authentication, and managed credential controls remain active. Use this tier only for trusted personal workloads with trusted prompts and data.
+
 </Warning>
 
-Every fresh onboarding run through the experimental Portable profile selects the Personal tier.
-When `NEMOCLAW_POLICY_PRESETS` is unset, blank, or contains only whitespace, Portable uses `suggested` mode with no optional preset override.
-If `NEMOCLAW_POLICY_PRESETS` contains a non-blank list, Portable treats that list as authoritative for additional presets while still applying mandatory `personal-open-internet`.
-`$$nemoclaw onboard --resume` does not override a recorded non-Personal tier; a resumed Personal tier retains or repairs its mandatory preset.
+Every fresh onboarding run through the experimental Portable profile selects the Personal tier. When `NEMOCLAW_POLICY_PRESETS` is unset, blank, or contains only whitespace, Portable uses `suggested` mode with no optional preset override. If `NEMOCLAW_POLICY_PRESETS` contains a non-blank list, Portable treats that list as authoritative for additional presets while still applying mandatory `personal-open-internet` during that onboarding transaction. Resume and reuse derive effective access from the current OpenShell policy rather than a recorded tier.
 
-After selecting a tier, a combined preset and access-mode screen lets you include or exclude optional presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
-On Personal, NemoClaw restores `personal-open-internet` if it is deselected in the screen.
-Tier-default presets are pre-selected; additional presets can be added from the built-in preset list available to the sandbox's active agent.
-NemoClaw filters tier defaults and built-in preset choices by the active agent's supported integrations.
-The `personal-open-internet` preset uses L4 passthrough, so its read-write label does not add HTTP method or path inspection.
+After selecting a tier, a combined preset and access-mode screen lets you include or exclude optional presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access. On Personal, NemoClaw restores `personal-open-internet` if it is deselected in the screen. Tier-default presets are pre-selected; additional presets can be added from the built-in preset list available to the sandbox's active agent. NemoClaw filters tier defaults and built-in preset choices by the active agent's supported integrations. The `personal-open-internet` preset uses L4 passthrough, so its read-write label does not add HTTP method or path inspection.
+
 <AgentOnly variant="openclaw">
 OpenClaw can select `brave` or `tavily`, while Hermes can select `tavily` only.
 </AgentOnly>
@@ -182,8 +160,8 @@ Deep Agents can use the maintained `tavily` opt-in path, but messaging channel p
 NemoClaw automatically suggests the preset that matches the selected provider and removes stale web search presets during resume reconciliation when you switch providers or disable web search.
 <AgentOnly variant="openclaw">
 On fresh onboarding, OpenClaw suggests `brave` only when you select Brave Search and `tavily` only when you select Tavily Search.
-When reuse or rebuild retains a recorded Balanced or Open tier, NemoClaw keeps an already-applied `brave` preset even if you disable web search or select Tavily.
-NemoClaw removes a built-in web search preset only when it is neither required by the recorded tier nor selected by the active web search provider.
+When reuse or rebuild sees an already-applied `brave` preset in the current OpenShell policy, it preserves that live host choice unless the active command explicitly changes it.
+During onboarding, NemoClaw removes a built-in web search preset only when the current selection explicitly replaces it with the active web search provider.
 </AgentOnly>
 <AgentOnly variant="openclaw,hermes">
 When a later onboarding run does not select a messaging channel and the environment no longer supplies that channel's required values, NemoClaw treats the channel as disabled.
@@ -225,46 +203,31 @@ In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER`:
 NEMOCLAW_POLICY_TIER=open $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
-Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced` default.
-In non-interactive onboarding, a non-blank value that does not match a known tier exits before preflight, gateway, or inference side effects and lists the valid options.
-Interactive onboarding ignores an invalid environment value and shows the normal tier prompt.
+Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced` default. In non-interactive onboarding, a non-blank value that does not match a known tier exits before preflight, gateway, or inference side effects and lists the valid options. Interactive onboarding ignores an invalid environment value and shows the normal tier prompt.
 
 ### Inference
 
-The baseline policy allows only the `local` inference route.
-External inference providers are reached through the OpenShell gateway, not by direct sandbox egress.
+The baseline policy allows only the `local` inference route. External inference providers are reached through the OpenShell gateway, not by direct sandbox egress.
 
 <AgentOnly variant="deepagents">
 
 ### Local OTLP Trace Export
 
-The `observability-otlp-local` preset supports the opt-in LangChain Deep Agents Code trace path.
-It is not a general remote observability policy.
+The `observability-otlp-local` preset supports the opt-in LangChain Deep Agents Code trace path. It is not a general remote observability policy.
 
 | Preset | Destination | Binary | Rules |
-|---|---|---|---|
-| `observability-otlp-local` | `host.openshell.internal:4318` | `/opt/venv/bin/python3*` | `POST /v1/traces` only |
+| --- | --- | --- | --- |
+| `observability-otlp-local` | `host.openshell.internal:4318` | `/opt/venv/bin/python3*` | Exact `POST /v1/traces` only |
 
-The sandbox sends OTLP/HTTP protobuf traces to a collector that the operator runs on the host.
-The managed exporter uses standard OTLP transport headers but does not accept operator-supplied custom or authentication headers.
-Remote backend endpoints and credentials stay in that collector.
-The policy does not allow direct LangSmith, Jaeger, Phoenix, or other backend egress from Deep Agents Code.
-Changing the collector's downstream exporter requires no sandbox policy change.
+The sandbox sends OTLP/HTTP protobuf traces to a collector that the operator runs on the host. The managed exporter uses standard OTLP transport headers but does not accept operator-supplied custom or authentication headers. Remote backend endpoints and credentials stay in that collector. The policy does not allow direct LangSmith, Jaeger, Phoenix, or other backend egress from Deep Agents Code. Changing the collector's downstream exporter requires no sandbox policy change.
 
-OpenShell observes Deep Agents Code export as the managed Python interpreter, so this permission is process-wide for `/opt/venv/bin/python3*` rather than limited to the `dcode` launcher.
-Sandbox Python can forge spans and resource attributes.
-The explicit `--observability` opt-in can export bounded prompts, responses, tool arguments, tool results, and operational metadata.
-Managed size and recognized-key redaction do not detect secrets embedded in ordinary content values.
-The collector must enforce the operator's filtering and redaction requirements before forwarding traces, and it must not treat span fields such as `service.name` as authenticated tenant identity.
-For a safe host binding, policy recovery commands, and a runnable collector, refer to [Set Up Deep Agents Trace Export](../monitoring/set-up-deepagents-trace-export).
+OpenShell observes Deep Agents Code export as the managed Python interpreter, so this permission is process-wide for `/opt/venv/bin/python3*` rather than limited to the `dcode` launcher. Sandbox Python can forge spans and resource attributes. The explicit `--observability` opt-in can export bounded prompts, responses, tool arguments, tool results, and operational metadata. Managed size and recognized-key redaction do not detect secrets embedded in ordinary content values. The collector must enforce the operator's filtering and redaction requirements before forwarding traces, and it must not treat span fields such as `service.name` as authenticated tenant identity. For a safe host binding, policy recovery commands, and a runnable collector, refer to [Set Up Deep Agents Trace Export](../monitoring/set-up-deepagents-trace-export).
 
 </AgentOnly>
 
 ## Operator Approval Flow
 
-When the agent attempts to reach an endpoint not listed in the policy, OpenShell intercepts the request and presents it in the TUI for operator review.
-The Personal tier does not prompt for matching TCP connections on destination ports `80` or `443` because `personal-open-internet` already permits them.
-The flow has these steps:
+When the agent attempts to reach an endpoint not listed in the policy, OpenShell intercepts the request and presents it in the TUI for operator review. The Personal tier does not prompt for matching TCP connections on destination ports `80` or `443` because `personal-open-internet` already permits them. The flow has these steps:
 
 1. The agent makes a network request to an unlisted host.
 2. OpenShell blocks the connection and logs the attempt.
@@ -312,15 +275,13 @@ Apply policy updates to a running sandbox without restarting:
 openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
 ```
 
-To replace the live policy with a complete base policy file, export the current base policy and use `openshell policy set`.
-Requires OpenShell 0.0.72+ for the round-trippable `policy get --base` and `policy set --wait` syntax.
+To replace the live policy with a complete base policy file, export the current base policy and use `openshell policy set`. Requires OpenShell 0.0.72+ for the round-trippable `policy get --base` and `policy set --wait` syntax.
 
 ```bash
 $$nemoclaw <sandbox-name> policy get > current-policy.yaml
 ```
 
-NemoClaw strips the OpenShell metadata header and exits non-zero if it cannot validate the base policy.
-Do not add `--raw` when you plan to edit and reapply the file.
+NemoClaw strips the OpenShell metadata header and exits non-zero if it cannot validate the base policy. Do not add `--raw` when you plan to edit and reapply the file.
 
 Edit or review `current-policy.yaml`, then apply it:
 
@@ -330,70 +291,26 @@ openshell policy set --policy current-policy.yaml --wait <sandbox-name>
 
 ### Excluding a baseline entry
 
-The baseline policy applies to every sandbox, but an operator can persistently exclude a specific baseline entry when they accept reduced, unsupported functionality in exchange for tighter egress.
+The baseline applies to every sandbox, but an operator can remove one exact baseline entry from the current OpenShell policy after accepting the reduced-support impact.
 
-Preview the scope, then exclude a baseline key:
+Preview and apply the live change:
 
 ```bash
 $$nemoclaw <sandbox-name> policy exclude <key> --dry-run
 $$nemoclaw <sandbox-name> policy exclude <key> --force
 ```
 
-The command prints every endpoint, method/path rule, and binary the exclusion removes.
-It also names the supported features that may stop working before it requires explicit acknowledgement (`--force` in non-interactive use).
-NemoClaw refuses to exclude an entry that does not have a reviewed feature-impact disclosure, so a new baseline entry cannot bypass this review.
-The versioned exclusion record is bound to the reviewed entry content and active agent, recorded in the sandbox registry, and replayed on rebuild.
-If the sandbox's active agent changes, NemoClaw requires you to clear or review the exclusion again instead of applying an approval from another agent baseline.
-NemoClaw journals the cross-system update before changing the live OpenShell policy and verifies that the live policy equals the intended result before publishing the durable intent.
-If the process or persistence layer fails between those steps, `policy list`, `policy explain`, and `status` report `repair required`.
-Sandbox creation or recreation, rebuild, and cross-sandbox snapshot cloning stop before destructive work, and rerunning the same `policy exclude` or `policy restore` command reconciles only when the state equals the recorded source or intended target.
-An unreadable live policy, or one that matches neither the pre-mutation source nor the intended target, remains fail-closed for manual inspection instead of being guessed or overwritten.
-An interrupted restore finalizes only when the durable exclusion still exactly matches the staged exclusion and the current release baseline still exactly matches the journaled target; if either changes or becomes unreadable, the journal remains pending for inspection and re-review.
-If a later release changes that entry, create and rebuild fail closed until re-review; if the release removes it, they fail closed until the stale record is cleared.
-The critical `managed_inference` entry cannot be excluded because it carries the required route to managed inference.
-NemoClaw enforces this both when the command runs and whenever durable exclusion state is replayed.
+The command prints the endpoints, method and path rules, binaries, and supported features affected by the removal. It refuses entries without a reviewed feature-impact disclosure and refuses keys required by an active preset. The critical `managed_inference` entry cannot be excluded because it carries the required managed-inference route.
 
-An excluded baseline key remains reserved while the exclusion is active.
-NemoClaw refuses onboarding, rebuild, built-in and custom presets, messaging channel policies, and generated MCP policies that would define the same key and silently restore its egress.
-It also refuses to exclude a key that an applied preset already owns.
-Restore the baseline entry before applying a preset that intentionally owns the key, or rename a custom entry whose key represents different access.
+NemoClaw reads the current OpenShell policy, removes the selected key, writes the complete modified document, and verifies the live result. It does not create an exclusion record, journal, or replay state. Rebuild and clone preserve the current OpenShell policy as a whole, so a change made with this command has the same lifecycle as one made through the OpenShell TUI or another trusted host process.
 
-To recover from baseline drift, first check whether the release changed the entry's content or removed it entirely (`$$nemoclaw <sandbox-name> policy explain` or `doctor` reports which).
-
-If the entry still exists with different content, `policy restore <key> --force` restores the current baseline entry and clears the stale exclusion record.
-This allows the entry's listed egress before you can exclude it again.
-Preview the restore and exclusion scopes before applying either change:
-
-```bash
-$$nemoclaw <sandbox-name> policy restore <key> --dry-run
-$$nemoclaw <sandbox-name> policy restore <key> --force
-$$nemoclaw <sandbox-name> policy exclude <key> --dry-run
-$$nemoclaw <sandbox-name> policy exclude <key> --force
-```
-
-If the release removed the entry entirely, `policy exclude <key>` fails with `Unknown baseline entry '<key>'.` because there is nothing left to exclude.
-Preview the stale-record cleanup, then clear the record without changing live egress:
+Restore an entry from the current agent baseline with:
 
 ```bash
 $$nemoclaw <sandbox-name> policy restore <key> --dry-run
 $$nemoclaw <sandbox-name> policy restore <key> --force
 ```
 
-List active exclusions with `policy list`.
-`policy explain`, `status`, `doctor`, and snapshot and rebuild summaries also disclose active exclusions and their reduced-support impact.
-Status and doctor compare each approval with the active agent baseline and verify that the excluded key is absent from the live OpenShell policy.
-An unreadable live policy is unverified, while a live policy that contains the key is a mismatch that requires repair before you rely on the exclusion.
-When the current baseline still defines the entry, `policy restore <key> --force` allows the entry's listed egress again and clears its exclusion.
-When the baseline no longer defines the entry, the command clears only the stale exclusion record.
-Preview the applicable result before you apply it:
-
-```bash
-$$nemoclaw <sandbox-name> policy restore <key> --dry-run
-$$nemoclaw <sandbox-name> policy restore <key> --force
-```
-
-Both restore paths require acknowledgement unless you use `--dry-run`.
-A run with a terminal on stdin prompts for confirmation when no acknowledgement flag is present.
-A run with `NEMOCLAW_NON_INTERACTIVE=1`, or a run without a terminal on stdin, requires `--force`, `--yes`, or `-y`.
+If the current baseline still defines the key, restore previews and then adds that current entry to the live OpenShell policy. If the baseline no longer defines it, the command reports that there is nothing to restore and leaves the live policy unchanged. Both mutation commands require acknowledgement unless `--dry-run` is used. A non-interactive run requires `--force`, `--yes`, or `-y`.
 
 Excluding a baseline entry leaves agent features that depend on it unsupported for that sandbox.

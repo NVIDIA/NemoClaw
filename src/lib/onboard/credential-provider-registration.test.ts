@@ -5,12 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
-import * as onboardSourceModule from "../onboard";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
 import {
   credentialProviderRegistrationDependencies,
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
+  installLiveE2eCredentialProviderRegistrationOverride,
 } from "./credential-provider-registration";
 import type { MessagingTokenDef } from "./messaging-prep";
 
@@ -92,43 +92,70 @@ function sandboxInput(bindings: ReturnType<typeof requiredBindings>) {
 }
 
 describe("credential provider registration", () => {
-  it("routes messaging provider creation through the late-bound rebuild boundary", () => {
-    const session = { stagedCredentialProviders: [] } as unknown as Session;
-    const runOpenshell = vi.fn();
-    const registration = createCredentialProviderRegistration(
-      registrationDeps(runOpenshell, session),
-    );
-    const tokenDefs: MessagingTokenDef[] = [
-      { name: "alpha-discord-bridge", envKey: "DISCORD_BOT_TOKEN", token: DISCORD_SECRET },
-    ];
-    const options = { revalidatePolicyRequirements: vi.fn() };
-    const upsert = vi
-      .spyOn(credentialProviderRegistrationDependencies, "upsertMessagingProviders")
-      .mockReturnValue(["alpha-discord-bridge"]);
-
-    expect(registration.upsertMessagingProviders(tokenDefs, options)).toEqual([
-      "alpha-discord-bridge",
-    ]);
-    expect(upsert).toHaveBeenCalledWith(tokenDefs, runOpenshell, options);
+  it("restricts the process-global provider override to the destructive live E2E", () => {
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "0");
+    try {
+      expect(() =>
+        installLiveE2eCredentialProviderRegistrationOverride({
+          expectedName: "e2e-oc-ch-cycle-googlechat-bridge",
+          expectedType: "google-chat-bridge",
+          upsert: vi.fn(() => []),
+        }),
+      ).toThrow("restricted to its destructive live E2E");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
-  it("keeps source-mode onboarding on the same late-bound rebuild boundary", () => {
+  it("routes one exact Google Chat live E2E plan through the process-global override", () => {
+    vi.stubEnv("NEMOCLAW_RUN_LIVE_E2E", "1");
     const tokenDefs: MessagingTokenDef[] = [
-      { name: "alpha-discord-bridge", envKey: "DISCORD_BOT_TOKEN", token: DISCORD_SECRET },
+      {
+        name: "e2e-oc-ch-cycle-googlechat-bridge",
+        envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+        token: null,
+        providerType: "google-chat-bridge",
+      },
+    ];
+    const runOpenshell = vi.fn();
+    const override = vi.fn(() => ["e2e-oc-ch-cycle-googlechat-bridge"]);
+    const restore = installLiveE2eCredentialProviderRegistrationOverride({
+      expectedName: "e2e-oc-ch-cycle-googlechat-bridge",
+      expectedType: "google-chat-bridge",
+      upsert: override,
+    });
+    try {
+      expect(
+        credentialProviderRegistrationDependencies.upsertMessagingProviders(
+          tokenDefs,
+          runOpenshell,
+          { replaceExisting: true },
+        ),
+      ).toEqual(["e2e-oc-ch-cycle-googlechat-bridge"]);
+      expect(override).toHaveBeenCalledExactlyOnceWith(tokenDefs, runOpenshell, {
+        replaceExisting: true,
+      });
+    } finally {
+      restore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("resolves the provider upsert dependency when registration executes", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn();
+    const deps = registrationDeps(runOpenshell, session);
+    const registration = createCredentialProviderRegistration(deps);
+    const tokenDefs: MessagingTokenDef[] = [
+      { name: "alpha-googlechat-bridge", envKey: "GOOGLE_CHAT_ACCESS_TOKEN", token: null },
     ];
     const upsert = vi
       .spyOn(credentialProviderRegistrationDependencies, "upsertMessagingProviders")
-      .mockReturnValue(["alpha-discord-bridge"]);
+      .mockReturnValue(["alpha-googlechat-bridge"]);
 
     try {
-      const onboard = ("default" in onboardSourceModule
-        ? onboardSourceModule.default
-        : onboardSourceModule) as unknown as {
-        upsertMessagingProviders(tokenDefs: MessagingTokenDef[]): string[];
-      };
-
-      expect(onboard.upsertMessagingProviders(tokenDefs)).toEqual(["alpha-discord-bridge"]);
-      expect(upsert).toHaveBeenCalledWith(tokenDefs, expect.any(Function), {});
+      expect(registration.upsertMessagingProviders(tokenDefs)).toEqual(["alpha-googlechat-bridge"]);
+      expect(upsert).toHaveBeenCalledExactlyOnceWith(tokenDefs, deps.runOpenshell, {});
     } finally {
       upsert.mockRestore();
     }
@@ -827,7 +854,7 @@ describe("credential provider registration", () => {
       registration.stageSandboxCredentialProviders(
         {
           ...sandboxInput(requiredBindings([tokenDef])),
-          revalidatePolicyRequirements: () => {
+          revalidateSandboxIdentity: () => {
             throw new Error("authority changed");
           },
         },
@@ -854,7 +881,7 @@ describe("credential provider registration", () => {
       { name: "alpha-first", envKey: "FIRST_TOKEN", token: "first-secret" },
       { name: "alpha-second", envKey: "SECOND_TOKEN", token: "second-secret" },
     ];
-    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+    const revalidateSandboxIdentity = vi.fn((operation: string) =>
       operation === 'inspect or change provider "alpha-second"'
         ? refuseAuthorityChange()
         : undefined,
@@ -864,7 +891,7 @@ describe("credential provider registration", () => {
       registration.stageSandboxCredentialProviders(
         {
           ...sandboxInput(requiredBindings(tokenDefs)),
-          revalidatePolicyRequirements,
+          revalidateSandboxIdentity,
         },
         async () => ({ messagingTokenDefs: tokenDefs }),
       ),
@@ -891,7 +918,7 @@ describe("credential provider registration", () => {
     const deps = registrationDeps(runOpenshell, session);
     deps.stagedLegacyValues = new Map([["DISCORD_BOT_TOKEN", DISCORD_SECRET]]);
     const registration = createCredentialProviderRegistration(deps);
-    const revalidatePolicyRequirements = vi
+    const revalidateSandboxIdentity = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => undefined)
@@ -906,7 +933,7 @@ describe("credential provider registration", () => {
             token: DISCORD_SECRET,
           },
         ],
-        { revalidatePolicyRequirements },
+        { revalidateSandboxIdentity },
       ),
     ).toThrow("authority changed");
 

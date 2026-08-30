@@ -267,7 +267,7 @@ export interface SandboxGpuCreateFlowInput {
    * readiness, GPU, service, dashboard, or registry effects continue.
    */
   verifyCreatedSandboxBeforeEffects?: (identity: CreatedSandboxIdentity) => void | Promise<void>;
-  /** Re-read the exact durable policy checkpoint before each post-create effect. */
+  /** Re-read the exact pending create identity before each post-create effect. */
   revalidateVerifiedSandboxBeforeEffect?: (operation: string) => void;
 }
 

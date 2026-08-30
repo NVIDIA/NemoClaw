@@ -118,7 +118,7 @@ function selectRetainedSandboxRecoveryAuthority(
   }
 
   const matchesRegistryAuthority = (record: RetainedSandboxRecoveryRecord): boolean => {
-    const pending = sandbox.pendingPolicyVerification;
+    const pending = sandbox.pendingCreateIdentity;
     if (pending) {
       return (
         record.gatewayName === pending.gatewayName &&

@@ -46,9 +46,12 @@ function recordRecovery(
     gatewayName: gatewayPort === 8080 ? "nemoclaw" : `nemoclaw-${String(gatewayPort)}`,
     gatewayPort,
     lifecycleGeneration: `generation-${seed}`,
-    verifiedEffectivePolicyIdentity: null,
     createAttemptNonce: seed.repeat(62),
-    policyCreationReceipt: null,
+    resources: {
+      sharedInferenceProviders: [],
+      sandboxScopedProviders: [],
+      credentialEnvironmentVariables: [],
+    },
     reason: "retained_after_sandbox_creation_failure",
     recordedAt: "2026-08-29T00:00:00.000Z",
   });
@@ -200,9 +203,12 @@ describe("legacy non-default gateway state migration", () => {
       gatewayName: "nemoclaw-9124",
       gatewayPort: 9123,
       lifecycleGeneration: "generation-c",
-      verifiedEffectivePolicyIdentity: null,
       createAttemptNonce: "c".repeat(62),
-      policyCreationReceipt: null,
+      resources: {
+        sharedInferenceProviders: [],
+        sandboxScopedProviders: [],
+        credentialEnvironmentVariables: [],
+      },
       reason: "retained_after_sandbox_creation_failure",
       recordedAt: "2026-08-29T00:00:00.000Z",
     });
