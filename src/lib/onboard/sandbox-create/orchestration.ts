@@ -118,10 +118,15 @@ export function resolveRebuildMessagingPolicyDeltas(
   if (!plan) {
     return { requiredNetworkPolicyKeys: [], removedNetworkPolicyKeys: [] };
   }
+  const disabledChannels = new Set(plan.disabledChannels);
   const policyKeysByChannel = getMessagingPolicyKeysByChannel({ agent: plan.agent });
   return {
     requiredNetworkPolicyKeys: [
-      ...new Set(plan.networkPolicy.entries.flatMap((entry) => entry.policyKeys)),
+      ...new Set(
+        plan.networkPolicy.entries
+          .filter((entry) => !disabledChannels.has(entry.channelId))
+          .flatMap((entry) => entry.policyKeys),
+      ),
     ],
     removedNetworkPolicyKeys: [
       ...new Set(

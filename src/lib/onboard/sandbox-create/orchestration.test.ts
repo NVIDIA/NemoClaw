@@ -48,6 +48,12 @@ describe("rebuild policy provider handoff", () => {
           presets: ["wechat"],
           entries: [
             {
+              channelId: "telegram",
+              presetName: "telegram",
+              policyKeys: ["telegram"],
+              source: "agent-alias",
+            },
+            {
               channelId: "wechat",
               presetName: "wechat",
               policyKeys: ["wechat_bridge"],
