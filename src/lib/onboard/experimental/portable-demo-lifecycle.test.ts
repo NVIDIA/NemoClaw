@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PodmanSocketAuthorityDeps } from "../../adapters/podman";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
 import type { SandboxEntry } from "../../state/registry";
+import { gatewayWaitResult } from "./__test-helpers__/portable-demo-gateway-wait";
 import { recordUserLocalOllamaOwnership } from "./ollama-user-local-runtime";
 import {
   installPortableDemoSandboxLifecycle,
@@ -752,16 +753,16 @@ describe("portable demo sandbox lifecycle", () => {
     const launchOpenshell = vi.fn();
     const log = vi.fn();
     const captureOpenshell = vi.fn((args: readonly string[]) => {
-      const command = args.find((arg) => ["true", "pgrep", "curl"].includes(arg));
+      const command = args.find((arg) => ["true", "pgrep", "curl", "python3"].includes(arg));
       switch (command) {
         case "true":
           return { status: 0 };
         case "pgrep":
           return { status: 1 };
         case "curl":
-          return launchOpenshell.mock.calls.length === 0
-            ? { status: 0, stdout: "000" }
-            : { status: 0, stdout: "200" };
+          return { status: 0, stdout: "000" };
+        case "python3":
+          return gatewayWaitResult();
         default:
           throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
       }
@@ -806,16 +807,16 @@ describe("portable demo sandbox lifecycle", () => {
     const launchOpenshell = vi.fn();
     let now = 0;
     const captureOpenshell = vi.fn((args: readonly string[]) => {
-      const command = args.find((arg) => ["true", "pgrep", "curl"].includes(arg));
+      const command = args.find((arg) => ["true", "pgrep", "curl", "python3"].includes(arg));
       switch (command) {
         case "true":
           return { status: now >= 31_000 ? 0 : 1 };
         case "pgrep":
           return { status: 1 };
         case "curl":
-          return launchOpenshell.mock.calls.length === 0
-            ? { status: 0, stdout: "000" }
-            : { status: 0, stdout: "200" };
+          return { status: 0, stdout: "000" };
+        case "python3":
+          return gatewayWaitResult();
         default:
           throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
       }
@@ -920,16 +921,17 @@ describe("portable demo sandbox lifecycle", () => {
     const launchOpenshell = vi.fn();
     let now = 0;
     const captureOpenshell = vi.fn((args: readonly string[]) => {
-      const command = args.find((arg) => ["true", "pgrep", "curl"].includes(arg));
+      const command = args.find((arg) => ["true", "pgrep", "curl", "python3"].includes(arg));
       switch (command) {
         case "true":
           return { status: 0 };
         case "pgrep":
           return { status: 1 };
         case "curl":
-          return launchOpenshell.mock.calls.length >= 2
-            ? { status: 0, stdout: "200" }
-            : { status: 0, stdout: "000" };
+          return { status: 0, stdout: "000" };
+        case "python3":
+          now += 90_000;
+          return gatewayWaitResult(launchOpenshell.mock.calls.length < 2 ? "not-ready" : "ready");
         default:
           throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
       }
