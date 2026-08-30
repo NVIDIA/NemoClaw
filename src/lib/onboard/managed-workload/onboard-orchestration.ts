@@ -74,7 +74,13 @@ import {
   prepareSandboxWorkloadSourceFromRebuildHandoff,
 } from "../workload/rebuild";
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
-import { prepareManagedStateVolumes, type ManagedStateVolumeDeps } from "./managed-state-volumes";
+import {
+  prepareManagedStateVolumes,
+  removeManagedStateVolumes,
+  type ManagedStateVolumeDeps,
+} from "./managed-state-volumes";
+
+export { prepareManagedStateVolumes, removeManagedStateVolumes };
 
 type ManagedProfileInput = Omit<
   ManagedStartupOnboardProfileInput,

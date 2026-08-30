@@ -36,6 +36,7 @@ import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/mana
 import {
   managedStartupStateRoots,
   managedStartupWorkspaceRoot,
+  type ManagedStartupStateRoot,
 } from "../../src/lib/onboard/managed-startup/state-roots.ts";
 import type {
   RuntimeProviderBundle,
@@ -96,6 +97,18 @@ export function createProtectedManagedImageBootstrapInput(
   });
 }
 
+export function protectedManagedStateRootDriverConfig(
+  provider: Pick<RuntimeProviderBundle, "workload">,
+  mounts: readonly ProtectedManagedStateVolumeMount[],
+): string | null {
+  if (mounts.length === 0) return null;
+  const driverId = provider.workload.managedStateMountDriverId;
+  if (!driverId) {
+    throw new Error("Protected managed state roots require provider-owned mount projection.");
+  }
+  return JSON.stringify({ [driverId]: { mounts } });
+}
+
 function compactText(value = ""): string {
   return String(value).replace(/\s+/gu, " ").trim();
 }
@@ -148,6 +161,27 @@ export type ManagedImageOpenShellE2eResult<
 
 type Inputs = ManagedImageOpenShellE2eInputs;
 
+type ProtectedManagedStateVolumeMount = {
+  readonly type: "volume";
+  readonly source: string;
+  readonly target: string;
+  readonly read_only: boolean;
+};
+
+type ProtectedManagedStateVolumeCleanupResult =
+  | { readonly status: "not-applicable" | "absent" | "removed" }
+  | {
+      readonly status: "not-owned" | "failed";
+      readonly detail: string;
+      readonly volumeName: string;
+    };
+
+type ProtectedManagedStateVolumeScope = {
+  readonly mounts: readonly ProtectedManagedStateVolumeMount[];
+  cleanupIncompleteCreate(): readonly ProtectedManagedStateVolumeCleanupResult[];
+  commit(): void;
+};
+
 const MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS = [
   "NEMOCLAW_NON_INTERACTIVE",
   "NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR",
@@ -161,6 +195,16 @@ const MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS = [
 ] as const;
 
 type OnboardModule = {
+  managedWorkloadOnboard: {
+    prepareManagedStateVolumes(
+      input: { readonly roots: readonly ManagedStartupStateRoot[] },
+      deps: { readonly runtimeProvider: RuntimeProviderBundle },
+    ): ProtectedManagedStateVolumeScope | null;
+    removeManagedStateVolumes(
+      input: { readonly roots: readonly ManagedStartupStateRoot[] },
+      deps: { readonly runtimeProvider: RuntimeProviderBundle },
+    ): readonly ProtectedManagedStateVolumeCleanupResult[];
+  };
   openshellArgv(args: string[]): string[];
   runOpenshell(args: string[], opts?: Record<string, unknown>): ReturnType<typeof commandResult>;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string;
@@ -195,7 +239,47 @@ export function resolveManagedImageOnboardModule(onboardImport: unknown): Onboar
       `managed-image onboard module is missing required operation(s): ${missing.join(", ")}`,
     );
   }
+  const managedWorkload = candidateRecord?.managedWorkloadOnboard as
+    | Record<string, unknown>
+    | undefined;
+  if (
+    typeof managedWorkload?.prepareManagedStateVolumes !== "function" ||
+    typeof managedWorkload.removeManagedStateVolumes !== "function"
+  ) {
+    throw new Error(
+      "managed-image onboard module is missing required managed state-volume operations",
+    );
+  }
   return candidate as OnboardModule;
+}
+
+function cleanupProtectedManagedStateVolumes(input: {
+  readonly onboard: OnboardModule | null;
+  readonly runtimeProvider: RuntimeProviderBundle | null;
+  readonly roots: readonly ManagedStartupStateRoot[];
+  readonly scope: ProtectedManagedStateVolumeScope | null;
+  readonly committed: boolean;
+}): string[] {
+  try {
+    let results: readonly ProtectedManagedStateVolumeCleanupResult[] = [];
+    if (input.committed && input.onboard && input.runtimeProvider) {
+      results = input.onboard.managedWorkloadOnboard.removeManagedStateVolumes(
+        { roots: input.roots },
+        { runtimeProvider: input.runtimeProvider },
+      );
+    } else if (!input.committed) {
+      results = input.scope?.cleanupIncompleteCreate() ?? [];
+    }
+    return results.flatMap((result) =>
+      result.status === "not-owned" || result.status === "failed"
+        ? [
+            `managed state volume ${result.volumeName} cleanup ${result.status}: ${result.detail}`,
+          ]
+        : [],
+    );
+  } catch (error) {
+    return [error instanceof Error ? error.message : String(error)];
+  }
 }
 
 function requiredValue(argv: readonly string[], flag: string): string {
@@ -897,6 +981,12 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   let onboard: OnboardModule | null = null;
   let ownedContainerId: string | null = null;
   let initialSandboxPolicy: InitialSandboxPolicy | null = null;
+  let runtimeProvider: (RuntimeProviderBundle & {
+    readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
+  }) | null = null;
+  let managedStateRoots: readonly ManagedStartupStateRoot[] = [];
+  let managedStateVolumeScope: ProtectedManagedStateVolumeScope | null = null;
+  let managedStateVolumesCommitted = false;
   let failureInjectionQualified = false;
   let probeEvidence: T | undefined;
   let primaryError: unknown;
@@ -939,6 +1029,27 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         additionalPresets: input.localProvider ? ["local-inference"] : [],
       },
     );
+    const selectedRuntimeProvider = {
+      ...createDockerRuntimeProviderBundle(),
+      bootstrap: createDockerManagedBootstrapSurface("docker"),
+    } as RuntimeProviderBundle & {
+      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
+    };
+    runtimeProvider = selectedRuntimeProvider;
+    const agentIdentity = managedImageRuntimeIdentity(input.agent);
+    managedStateRoots = managedStartupStateRoots({
+      agent: input.agent,
+      sandboxName: input.sandbox,
+      agentIdentity,
+    });
+    managedStateVolumeScope = onboard.managedWorkloadOnboard.prepareManagedStateVolumes(
+      { roots: managedStateRoots },
+      { runtimeProvider: selectedRuntimeProvider },
+    );
+    const managedStateDriverConfig = protectedManagedStateRootDriverConfig(
+      selectedRuntimeProvider,
+      managedStateVolumeScope?.mounts ?? [],
+    );
     const createArgs = [
       "--from",
       input.image,
@@ -946,6 +1057,9 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       input.sandbox,
       "--policy",
       initialSandboxPolicy.policyPath,
+      ...(managedStateDriverConfig
+        ? ["--driver-config-json", managedStateDriverConfig]
+        : []),
       ...(input.gpu ? ["--gpu"] : []),
     ];
     const launch = prepareSandboxCreateLaunch({
@@ -1010,12 +1124,6 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           detail: null,
           at: new Date().toISOString(),
         });
-    const runtimeProvider = {
-      ...createDockerRuntimeProviderBundle(),
-      bootstrap: createDockerManagedBootstrapSurface("docker"),
-    } as RuntimeProviderBundle & {
-      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
-    };
     let flow: Awaited<ReturnType<typeof runSandboxGpuCreateFlow>> | null = null;
     try {
       flow = await runSandboxGpuCreateFlow(
@@ -1041,20 +1149,16 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           managedBootstrap: createProtectedManagedImageBootstrapInput({
             bootstrapIdentity: launch.managedBootstrapIdentity,
             stateRoot: stateDir,
-            runtimeProvider,
+            runtimeProvider: selectedRuntimeProvider,
             authorityStore: createProtectedAuthorityStore(stateDir),
             request: launch.managedStartupRootApplyRequest,
             image,
-            agentIdentity: managedImageRuntimeIdentity(input.agent),
+            agentIdentity,
             workspaceRoot: managedStartupWorkspaceRoot({
               agent: input.agent,
-              agentIdentity: managedImageRuntimeIdentity(input.agent),
+              agentIdentity,
             }),
-            managedStateRoots: managedStartupStateRoots({
-              agent: input.agent,
-              sandboxName: input.sandbox,
-              agentIdentity: managedImageRuntimeIdentity(input.agent),
-            }),
+            managedStateRoots,
             intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
           }),
           ...startupPlan,
@@ -1131,6 +1235,8 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         await flow.runtimePatch.commitAfterReady();
         await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv);
       }
+      managedStateVolumeScope?.commit();
+      managedStateVolumesCommitted = managedStateVolumeScope !== null;
       if (afterLocalInference) {
         if (!input.localProvider) {
           throw new Error("managed-image post-route probe requires protected local inference");
@@ -1241,6 +1347,15 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     } catch (error) {
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }
+    cleanupErrors.push(
+      ...cleanupProtectedManagedStateVolumes({
+        onboard,
+        runtimeProvider,
+        roots: managedStateRoots,
+        scope: managedStateVolumeScope,
+        committed: managedStateVolumesCommitted,
+      }),
+    );
     const removeNetwork = commandResult(
       ["docker", "network", "rm", networkName],
       process.env,
