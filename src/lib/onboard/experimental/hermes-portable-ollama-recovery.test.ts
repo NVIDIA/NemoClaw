@@ -228,6 +228,32 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
 }
 
 describe("Hermes Portable Ollama inference recovery", () => {
+  it.each([
+    ["missing", undefined, "sandbox registry host-local inference receipt is missing"],
+    ["malformed", "not-json\n", "serialized receipt is not valid JSON"],
+  ] as const)(
+    "rejects an ollama-local registry receipt that is %s before registry recovery",
+    (_label, serializedReceipt, expectedError) => {
+      const harness = createHarness();
+      const entry = {
+        ...harness.input.entry,
+        hostLocalInferenceReceipt: serializedReceipt,
+      } as SandboxEntry;
+
+      expect(() =>
+        recoverHermesPortableOllamaInference(
+          {
+            ...harness.input,
+            entry,
+            readRegistry: vi.fn(() => entry),
+          },
+          harness.overrides as never,
+        ),
+      ).toThrow(expectedError);
+      expect(harness.overrides.prepareRegistryRecovery).not.toHaveBeenCalled();
+    },
+  );
+
   it("resumes one stopped published runtime and commits only after final route proof", () => {
     const harness = createHarness();
 
@@ -250,6 +276,216 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.events.at(-1)).toBe("registry-release");
   });
 
+  it("releases a prepared probe dependency only after stopped-runtime finalization", () => {
+    const harness = createHarness();
+    const dependency = {
+      release: vi.fn(() => harness.events.push("dependency-release")),
+      rollback: vi.fn(() => harness.events.push("dependency-rollback")),
+    };
+
+    expect(
+      recoverHermesPortableOllamaInference(
+        {
+          ...harness.input,
+          prepareProbeDependency: vi.fn(() => {
+            harness.events.push("dependency-prepare");
+            return dependency;
+          }),
+        },
+        harness.overrides as never,
+      ),
+    ).toBe("recovered");
+
+    expect(harness.events.indexOf("route")).toBeLessThan(
+      harness.events.indexOf("dependency-prepare"),
+    );
+    expect(harness.events.indexOf("dependency-prepare")).toBeLessThan(
+      harness.events.indexOf("finalize"),
+    );
+    expect(harness.events.indexOf("finalize")).toBeLessThan(
+      harness.events.indexOf("dependency-release"),
+    );
+    expect(harness.events.indexOf("registry-release")).toBeLessThan(
+      harness.events.indexOf("dependency-release"),
+    );
+    expect(dependency.rollback).not.toHaveBeenCalled();
+  });
+
+  it("restores the stopped runtime when probe-dependency preparation fails", () => {
+    const harness = createHarness();
+    const canary = new Error("forward preparation failed");
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(
+        {
+          ...harness.input,
+          prepareProbeDependency: vi.fn(() => {
+            throw canary;
+          }),
+        },
+        harness.overrides as never,
+      ),
+    ).toThrow(canary);
+
+    expect(harness.prepared.rollback).toHaveBeenCalledOnce();
+    expect(harness.running()).toBe(false);
+    expect(harness.registryRunning()).toBe(false);
+    expect(harness.events.indexOf("rollback")).toBeLessThan(
+      harness.events.indexOf("registry-rollback"),
+    );
+  });
+
+  it("rolls back a prepared probe dependency before the stopped runtime", () => {
+    const harness = createHarness();
+    const dependency = {
+      release: vi.fn(() => harness.events.push("dependency-release")),
+      rollback: vi.fn(() => harness.events.push("dependency-rollback")),
+    };
+    vi.mocked(harness.prepared.finalizePublishedResume!).mockImplementation(() => {
+      harness.events.push("finalize");
+      throw new Error("finalization failed");
+    });
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(
+        { ...harness.input, prepareProbeDependency: vi.fn(() => dependency) },
+        harness.overrides as never,
+      ),
+    ).toThrow("finalization failed");
+
+    expect(dependency.release).not.toHaveBeenCalled();
+    expect(harness.events.indexOf("dependency-rollback")).toBeLessThan(
+      harness.events.indexOf("rollback"),
+    );
+    expect(harness.events.indexOf("rollback")).toBeLessThan(
+      harness.events.indexOf("registry-rollback"),
+    );
+    expect(harness.running()).toBe(false);
+    expect(harness.registryRunning()).toBe(false);
+  });
+
+  it("restores forwards, the stopped runtime, and the registry after retained command drift", () => {
+    const harness = createHarness();
+    const commandDrift = new Error("retained command authority changed");
+    const assertCallerCurrent = vi.fn(() => {
+      harness.events.push("caller-current");
+    });
+    const dependency = {
+      release: vi.fn(() => harness.events.push("dependency-release")),
+      rollback: vi.fn(() => harness.events.push("dependency-rollback")),
+    };
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(
+        {
+          ...harness.input,
+          assertCallerCurrent,
+          prepareProbeDependency: vi.fn(() => {
+            harness.events.push("dependency-prepare");
+            assertCallerCurrent.mockImplementation(() => {
+              throw commandDrift;
+            });
+            return dependency;
+          }),
+        },
+        harness.overrides as never,
+      ),
+    ).toThrow(commandDrift);
+
+    expect(dependency.release).not.toHaveBeenCalled();
+    expect(dependency.rollback).toHaveBeenCalledOnce();
+    expect(harness.prepared.rollback).toHaveBeenCalledOnce();
+    expect(harness.events.indexOf("dependency-rollback")).toBeLessThan(
+      harness.events.indexOf("rollback"),
+    );
+    expect(harness.events.indexOf("rollback")).toBeLessThan(
+      harness.events.indexOf("registry-rollback"),
+    );
+    expect(harness.running()).toBe(false);
+    expect(harness.registryRunning()).toBe(false);
+  });
+
+  it("keeps runtime restoration uncertainty dominant when command drift also breaks forward rollback", () => {
+    const harness = createHarness();
+    const commandDrift = new Error("retained command authority changed");
+    const assertCallerCurrent = vi.fn();
+    const dependency = {
+      release: vi.fn(),
+      rollback: vi.fn(() => {
+        harness.events.push("dependency-rollback");
+        throw new Error("forward restoration unproved");
+      }),
+    };
+    vi.mocked(harness.prepared.rollback).mockImplementation(() => {
+      harness.events.push("rollback");
+      return {
+        priorState: "stopped",
+        status: "retained",
+        receipt: harness.receipt,
+      } as never;
+    });
+
+    let caught: unknown;
+    try {
+      recoverHermesPortableOllamaInference(
+        {
+          ...harness.input,
+          assertCallerCurrent,
+          prepareProbeDependency: vi.fn(() => {
+            assertCallerCurrent.mockImplementation(() => {
+              throw commandDrift;
+            });
+            return dependency;
+          }),
+        },
+        harness.overrides as never,
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(HermesPortableOllamaRecoveryError);
+    expect(caught).toMatchObject({ failure: "runtime-restoration-unproved" });
+    expect(dependency.rollback).toHaveBeenCalledOnce();
+    expect(harness.prepared.rollback).toHaveBeenCalledOnce();
+    expect(harness.events.indexOf("dependency-rollback")).toBeLessThan(
+      harness.events.indexOf("rollback"),
+    );
+    expect(harness.events).not.toContain("registry-rollback");
+    expect(harness.running()).toBe(true);
+    expect(harness.registryRunning()).toBe(true);
+  });
+
+  it("preserves probe-dependency restoration uncertainty after restoring Ollama", () => {
+    const harness = createHarness();
+    const restorationError = new Error("forward restoration unproved");
+    const dependency = {
+      release: vi.fn(),
+      rollback: vi.fn(() => {
+        harness.events.push("dependency-rollback");
+        throw restorationError;
+      }),
+    };
+    vi.mocked(harness.prepared.finalizePublishedResume!).mockImplementation(() => {
+      harness.events.push("finalize");
+      throw new Error("lower finalization canary");
+    });
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(
+        { ...harness.input, prepareProbeDependency: vi.fn(() => dependency) },
+        harness.overrides as never,
+      ),
+    ).toThrow(restorationError);
+
+    expect(harness.prepared.rollback).toHaveBeenCalledOnce();
+    expect(harness.running()).toBe(false);
+    expect(harness.registryRunning()).toBe(false);
+    expect(harness.events.indexOf("dependency-rollback")).toBeLessThan(
+      harness.events.indexOf("rollback"),
+    );
+  });
+
   it("validates an already running runtime without invoking resume", () => {
     const harness = createHarness(true, true);
 
@@ -262,6 +498,37 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.events).toContain("route");
     expect(harness.events).not.toContain("registry-start");
     expect(harness.events.at(-1)).toBe("registry-release");
+  });
+
+  it("does not invent runtime rollback for an already-running Ollama dependency failure", () => {
+    const harness = createHarness(true, true);
+    const dependency = {
+      release: vi.fn(),
+      rollback: vi.fn(() => {
+        harness.events.push("dependency-rollback");
+      }),
+    };
+    harness.overrides.prepareRegistryRecovery.mockReturnValue({
+      started: false,
+      assertCurrent: vi.fn(),
+      rollback: vi.fn(() => {
+        harness.events.push("registry-rollback");
+      }),
+      release: vi.fn(() => {
+        throw new Error("registry finalization failed");
+      }),
+    });
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(
+        { ...harness.input, prepareProbeDependency: vi.fn(() => dependency) },
+        harness.overrides as never,
+      ),
+    ).toThrow("registry finalization failed");
+
+    expect(dependency.rollback).toHaveBeenCalledOnce();
+    expect(harness.prepared.rollback).not.toHaveBeenCalled();
+    expect(harness.running()).toBe(true);
   });
 
   it("reconciles a stopped registry before validating an already running runtime", () => {

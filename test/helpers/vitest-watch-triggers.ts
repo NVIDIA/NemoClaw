@@ -51,8 +51,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/repository/github-actions-workflow-names.test.ts"),
   },
   {
-    pattern:
-      /(?:^|\/)test\/helpers\/(?:onboard-fixture-contract\.json|onboard-script-mocks\.cjs)$/,
+    pattern: /(?:^|\/)test\/helpers\/(?:onboard-fixture-contract\.json|onboard-script-mocks\.cjs)$/,
     testsToRun: runTests(
       "test/helpers/onboard-created-sandbox-fixture.test.ts",
       "test/onboarding/onboard-custom-dockerfile.test.ts",
@@ -327,15 +326,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,
-    testsToRun: runTests(
-      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
-    ),
+    testsToRun: runTests("test/e2e/support/e2e-operations-workflow-boundary.test.ts"),
   },
   {
     pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,
-    testsToRun: runTests(
-      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
-    ),
+    testsToRun: runTests("test/automation/pull-requests/pr-review-advisor-openshell.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e-main-retry\.yaml$/,

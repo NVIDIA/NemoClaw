@@ -24,6 +24,7 @@ import {
   V00106_CHECKSUM_MANIFESTS,
   V00106_SANDBOX_BUILD_DIGESTS,
 } from "../helpers/openshell-release-fixtures";
+import { installerReleaseTemplate } from "../helpers/openshell-installer-template";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const INSTALLER_TEMPLATE = fs.readFileSync(
@@ -716,7 +717,7 @@ function removeV00106OperationalTrust(source: string): string {
 }
 
 function renderInstallerTemplate(openshellVersion: string, pinFunction: string): string {
-  const selected = INSTALLER_TEMPLATE.replaceAll("test/install/", "test/")
+  const selected = installerReleaseTemplate(INSTALLER_TEMPLATE, openshellVersion)
     .replace(/^MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m, `MIN_VERSION="${openshellVersion}"`)
     .replace(/^MAX_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m, `MAX_VERSION="${openshellVersion}"`)
     .replace(

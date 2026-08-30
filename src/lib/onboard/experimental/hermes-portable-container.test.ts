@@ -77,7 +77,7 @@ describe("Hermes portable Podman environment", () => {
 function receipt(): HermesPortablePendingReceipt {
   const uid = process.getuid!();
   return {
-    schemaVersion: 5,
+    schemaVersion: 7,
     agent: "hermes",
     phase: "pending",
     transactionId: randomUUID(),
@@ -133,11 +133,12 @@ function inspect(
 }
 
 function activeReceipt(running = true): HermesPortableConfiguredReceipt {
+  const pending = receipt();
+  const { policy: _policy, ...transaction } = pending;
   return {
-    ...receipt(),
+    ...transaction,
     phase: "active",
     previousPhaseSha256: "c".repeat(64),
-    verifiedLivePolicySemanticSha256: "d".repeat(64),
     startup: { health: { successStatus: 200 } } as never,
     container: {
       containerId: ID,
@@ -210,6 +211,7 @@ describe("Hermes portable container authority", () => {
 
   it("updates one exact full ID and verifies running restart authority (#9203)", () => {
     const pending = receipt();
+    const { policy: _policy, ...transaction } = pending;
     const container = {
       containerId: ID,
       sandboxId: SANDBOX_ID,
@@ -220,10 +222,9 @@ describe("Hermes portable container authority", () => {
       restartPolicy: "no",
     };
     const configuring = {
-      ...pending,
+      ...transaction,
       phase: "configuring" as const,
       previousPhaseSha256: "c".repeat(64),
-      verifiedLivePolicySemanticSha256: "d".repeat(64),
       container,
     };
     const podman = vi
@@ -248,11 +249,11 @@ describe("Hermes portable container authority", () => {
 
   it("preserves configuring authority when update outcome is ambiguous (#9203)", () => {
     const pending = receipt();
+    const { policy: _policy, ...transaction } = pending;
     const configuring = {
-      ...pending,
+      ...transaction,
       phase: "configuring" as const,
       previousPhaseSha256: "c".repeat(64),
-      verifiedLivePolicySemanticSha256: "d".repeat(64),
       container: {
         ...enrollHermesPortableContainer(pending, SANDBOX_ID, {
           podman: vi

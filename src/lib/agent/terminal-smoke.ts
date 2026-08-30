@@ -35,8 +35,7 @@ function getSmokeExitCode(output: string | null, requireManagedBoundary: boolean
   return Number.parseInt(exitMatches[0]![1]!, 10);
 }
 
-function smokeRunner(loginShell: boolean): string {
-  const shell = loginShell ? "sh -lc" : "sh -c";
+function smokeRunner(shell: "sh -c" | "sh -lc" | "/bin/bash -lc"): string {
   return `printf '${SMOKE_BEGIN_MARKER}\\n'; ${shell} "$1"; rc=$?; printf '\\n${SMOKE_EXIT_MARKER}%s\\n' "$rc"; exit 0`;
 }
 
@@ -79,7 +78,7 @@ export function buildAgentSmokeArgs(
       DCODE_MANAGED_EXEC_LAUNCHER,
       "/bin/sh",
       "-c",
-      smokeRunner(false),
+      smokeRunner("sh -c"),
       "nemoclaw-agent-smoke",
       command,
     ];
@@ -91,8 +90,9 @@ export function buildAgentSmokeArgs(
     "-n",
     sandboxName,
     ...(gatewayName ? ["-g", gatewayName] : []),
+    "--no-tty",
     ...probeShell.execArgs,
-    smokeRunner(probeShell.nestedCommandUsesLoginShell),
+    smokeRunner(probeShell.nestedCommandUsesLoginShell ? "sh -lc" : "sh -c"),
     "nemoclaw-agent-smoke",
     command,
   ];

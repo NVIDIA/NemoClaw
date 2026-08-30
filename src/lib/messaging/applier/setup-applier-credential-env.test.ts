@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { restoreEnvBulk } from "../../../../test/helpers/env-test-helpers";
 import {
   createBuiltInChannelManifestRegistry,
   createBuiltInRenderTemplateResolver,
@@ -54,6 +55,27 @@ function buildHermesTelegramPlan(
     disabledChannels,
     credentialAvailability: { "telegram.telegramBotToken": true },
   });
+}
+
+async function buildHermesWechatPlan(): Promise<SandboxMessagingPlan> {
+  const original = {
+    WECHAT_ACCOUNT_ID: process.env.WECHAT_ACCOUNT_ID,
+    WECHAT_ALLOWED_IDS: process.env.WECHAT_ALLOWED_IDS,
+  };
+  process.env.WECHAT_ACCOUNT_ID = "wechat-account";
+  process.env.WECHAT_ALLOWED_IDS = "wechat-user";
+  try {
+    return await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "hermes",
+      workflow: "rebuild",
+      isInteractive: false,
+      configuredChannels: ["wechat"],
+      credentialAvailability: { WECHAT_BOT_TOKEN: true },
+    });
+  } finally {
+    restoreEnvBulk(original);
+  }
 }
 
 /** An in-memory sandbox filesystem behind the `cat`/write calls the applier makes. */
@@ -199,5 +221,58 @@ describe("MessagingSetupApplier credential env cleanup", () => {
 
     expect(result).toEqual({ changed: false });
     expect(writes).toEqual([]);
+  });
+
+  it("rematerializes a manifest cross-key alias from OpenShell's revision placeholder", async () => {
+    const plan = await buildHermesWechatPlan();
+    const {
+      files,
+      writes,
+      runOpenshell: runFiles,
+    } = sandboxFiles({
+      [HERMES_ENV_PATH]: ["WEIXIN_ALLOWED_USERS=wechat-user", ""].join("\n"),
+    });
+    const runOpenshell: MessagingOpenShellRunner = (args, options) =>
+      args.some((arg) => arg.includes("printenv"))
+        ? { status: 0, stdout: "openshell:resolve:env:v7_WECHAT_BOT_TOKEN\n" }
+        : runFiles(args, options);
+
+    const result = MessagingSetupApplier.reconcileCredentialEnvAtOpenShell(plan, {
+      runOpenshell,
+    });
+
+    expect(result).toEqual({ changed: true, target: HERMES_ENV_PATH });
+    expect(writes).toEqual([HERMES_ENV_PATH]);
+    expect(files[HERMES_ENV_PATH]).toContain(
+      "WEIXIN_TOKEN=openshell:resolve:env:v7_WECHAT_BOT_TOKEN",
+    );
+  });
+
+  it("never persists a raw value returned for a manifest cross-key alias", async () => {
+    const plan = await buildHermesWechatPlan();
+    const {
+      files,
+      writes,
+      runOpenshell: runFiles,
+    } = sandboxFiles({
+      [HERMES_ENV_PATH]: [
+        "WEIXIN_TOKEN=openshell:resolve:env:v6_WECHAT_BOT_TOKEN",
+        "WEIXIN_ALLOWED_USERS=wechat-user",
+        "",
+      ].join("\n"),
+    });
+    const runOpenshell: MessagingOpenShellRunner = (args, options) =>
+      args.some((arg) => arg.includes("printenv"))
+        ? { status: 0, stdout: "raw-secret-value\n" }
+        : runFiles(args, options);
+
+    const result = MessagingSetupApplier.reconcileCredentialEnvAtOpenShell(plan, {
+      runOpenshell,
+    });
+
+    expect(result).toEqual({ changed: true, target: HERMES_ENV_PATH });
+    expect(writes).toEqual([HERMES_ENV_PATH]);
+    expect(files[HERMES_ENV_PATH]).not.toContain("WEIXIN_TOKEN=");
+    expect(files[HERMES_ENV_PATH]).not.toContain("raw-secret-value");
   });
 });
