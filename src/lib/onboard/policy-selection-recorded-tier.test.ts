@@ -26,7 +26,15 @@ function createPolicySelectionHarness(controlPlaneReady = true) {
       resolveTierPresets: vi.fn((tierName: string) =>
         tierName === "balanced" ? [{ name: "observability-otlp-local" }] : [],
       ),
-      getTier: vi.fn(() => ({})),
+      getTier: vi.fn((tierName: string) => ({
+        name: tierName,
+        label: tierName,
+        description: "test tier",
+        presets:
+          tierName === "balanced"
+            ? [{ name: "observability-otlp-local", access: "read" as const }]
+            : [],
+      })),
     },
     localInferenceProviders: [],
     step: vi.fn(),
@@ -97,24 +105,42 @@ describe("policy selection after interrupted onboarding", () => {
     expect(waitForSandboxControlPlaneReady.mock.invocationCallOrder[0]).toBeGreaterThan(
       waitForSandboxReady.mock.invocationCallOrder[1],
     );
+    expect(onSelection.mock.invocationCallOrder[0]).toBeGreaterThan(
+      waitForSandboxControlPlaneReady.mock.invocationCallOrder[0],
+    );
   });
 
   it("fails closed when sandbox command execution does not recover after policy application (#7228)", async () => {
     const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
       throw new Error(`process.exit(${code})`);
     });
-    const { deps, syncPresetSelection, waitForSandboxControlPlaneReady } =
+    const { deps, onSelection, syncPresetSelection, waitForSandboxControlPlaneReady } =
       createPolicySelectionHarness(false);
 
-    await expect(setupPoliciesWithSelection(deps, "alpha", setupOptions)).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(
+      setupPoliciesWithSelection(deps, "alpha", { ...setupOptions, onSelection }),
+    ).rejects.toThrow("process.exit(1)");
 
     expect(syncPresetSelection).toHaveBeenCalledWith("alpha", [], []);
+    expect(onSelection).not.toHaveBeenCalled();
     expect(waitForSandboxControlPlaneReady).toHaveBeenCalledWith("alpha");
     expect(waitForSandboxControlPlaneReady.mock.invocationCallOrder[0]).toBeGreaterThan(
       syncPresetSelection.mock.invocationCallOrder[0],
     );
     expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("does not persist the selection when gateway synchronization fails", async () => {
+    const syncFailure = new Error("policy removal failed");
+    const { deps, onSelection, syncPresetSelection } = createPolicySelectionHarness();
+    syncPresetSelection.mockImplementationOnce(() => {
+      throw syncFailure;
+    });
+
+    await expect(
+      setupPoliciesWithSelection(deps, "alpha", { ...setupOptions, onSelection }),
+    ).rejects.toBe(syncFailure);
+
+    expect(onSelection).not.toHaveBeenCalled();
   });
 });

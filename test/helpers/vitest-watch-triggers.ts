@@ -7,6 +7,8 @@ export type VitestWatchTriggerPattern = {
 };
 
 const E2E_WORKFLOW_CONTRACTS = [
+  "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
+  "test/e2e/support/cli-artifact-workflow-boundary.test.ts",
   "test/e2e/support/dcode-profile-import-gate-workflow-boundary.test.ts",
   "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
   "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
@@ -22,6 +24,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
+  "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
   "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
   "test/e2e/support/onboard-timeout-contract.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
@@ -48,15 +51,26 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/repository/github-actions-workflow-names.test.ts"),
   },
   {
-    pattern: /(?:^|\/)test\/helpers\/onboard-script-mocks\.cjs$/,
+    pattern:
+      /(?:^|\/)test\/helpers\/(?:onboard-fixture-contract\.json|onboard-script-mocks\.cjs)$/,
     testsToRun: runTests(
+      "test/helpers/onboard-created-sandbox-fixture.test.ts",
+      "test/onboarding/onboard-custom-dockerfile.test.ts",
       "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
+      "test/onboarding/onboard-fresh-create-identity.test.ts",
       "test/onboarding/onboard-installer-restore-intent.test.ts",
+      "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
+      "test/onboarding/onboard-mcp-observability-redirect.test.ts",
       "test/onboarding/onboard-messaging.test.ts",
+      "test/onboarding/onboard-prepared-build-context.test.ts",
       "test/onboarding/onboard-reservation-recreate.test.ts",
       "test/onboarding/onboard-sandbox-build.test.ts",
       "test/onboarding/onboard-sandbox-recreation.test.ts",
+      "test/onboarding/onboard-script-mocks-contract.test.ts",
       "test/onboarding/onboard-terminal-dashboard.test.ts",
+      "test/onboarding/onboard.test.ts",
+      "test/security/shellquote-sandbox.test.ts",
+      "test/repository/source-require-loader.test.ts",
     ),
   },
   {
@@ -319,16 +333,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,
-    testsToRun: runTests(
-      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
-      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
-    ),
+    testsToRun: runTests("test/e2e/support/e2e-operations-workflow-boundary.test.ts"),
   },
   {
     pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,
-    testsToRun: runTests(
-      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
-    ),
+    testsToRun: runTests("test/automation/pull-requests/pr-review-advisor-openshell.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e-main-retry\.yaml$/,

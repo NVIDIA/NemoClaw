@@ -591,10 +591,15 @@ async function autoCreateSandboxFromSource(
     releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
+  const {
+    policyAuthority: _sourcePolicyAuthority,
+    policyCreationReceipt: _sourcePolicyCreationReceipt,
+    ...cloneSourceEntry
+  } = srcEntry as SandboxEntry;
   try {
     registry.registerSandbox(
       {
-        ...srcEntry,
+        ...cloneSourceEntry,
         name: dstName,
         createdAt: new Date().toISOString(),
         policies: [],
@@ -829,10 +834,9 @@ function reconcilePendingSnapshotClone(
     return "removed";
   }
 
-  const get = captureOpenshell(
-    ["sandbox", "get", "-g", sourceGatewayName, targetSandbox],
-    { ignoreError: true },
-  );
+  const get = captureOpenshell(["sandbox", "get", "-g", sourceGatewayName, targetSandbox], {
+    ignoreError: true,
+  });
   if (get.status !== 0) {
     throw new SnapshotCommandError(
       `Cannot reconcile pending clone '${targetSandbox}' because its live identity could not be read.`,
@@ -1314,7 +1318,7 @@ async function runSnapshotRestore(
   if (targetSandbox !== sandboxName) {
     assertSandboxSnapshotCommandAvailable(targetSandbox, "sandbox:snapshot:restore");
   }
-  const orderedNames = [...new Set(lockNames)].sort();
+  const orderedNames = recoverCompletedAutoRestoreForSnapshotRestore(lockNames);
   const acquire = (index: number): Promise<void> =>
     index === orderedNames.length
       ? Promise.resolve().then(() => {
@@ -1326,6 +1330,17 @@ async function runSnapshotRestore(
         })
       : withSandboxMutationLock(orderedNames[index], () => acquire(index + 1));
   return acquire(0);
+}
+
+export function recoverCompletedAutoRestoreForSnapshotRestore(
+  sandboxNames: readonly string[],
+  stateDir?: string,
+): string[] {
+  const orderedNames = [...new Set(sandboxNames)].sort();
+  for (const name of orderedNames) {
+    shields.recoverCompletedAutoRestoreBeforeCommand(name, stateDir);
+  }
+  return orderedNames;
 }
 
 async function runSnapshotRestoreUnlocked(

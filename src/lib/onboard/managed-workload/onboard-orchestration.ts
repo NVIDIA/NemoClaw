@@ -32,6 +32,7 @@ import type { MessagingTokenDef } from "../messaging-prep";
 import { resolveSandboxBuildContext, resolveSandboxBuildPatch } from "../prepared-dcode-rebuild";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  normalizeRuntimeProviderIdentity,
   type RuntimeProviderBundle,
   resolveRuntimeProviderBundle,
 } from "../runtime-provider/access";
@@ -67,6 +68,7 @@ import {
 import { resolveSandboxWorkloadRuntimeCapabilities } from "../workload/runtime";
 import {
   prepareManagedHermesStateVolume,
+  removeManagedHermesStateVolume,
   type ManagedHermesStateVolumeContext,
   type ManagedHermesStateVolumeDeps,
 } from "./hermes-state-volume";
@@ -80,6 +82,8 @@ type SandboxInferenceConfig = import("../../inference/config").SandboxInferenceC
 type BootstrapProvider = RuntimeProviderBundle & {
   readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
 };
+
+export { normalizeRuntimeProviderIdentity, removeManagedHermesStateVolume };
 
 export type ManagedHermesStateVolumeOnboardLifecycle = {
   materializeSandboxCreatePlan(
@@ -129,8 +133,8 @@ export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly legacyDockerfilePath: string;
   readonly customDockerfilePath: string | null;
   readonly rootDir: string;
-  readonly model: string;
-  readonly provider: string;
+  readonly model: string | null;
+  readonly provider: string | null;
   readonly preferredInferenceApi: string | null;
   readonly endpointUrl: string | null;
   readonly startupProfile: ManagedProfileInput;
@@ -241,7 +245,9 @@ export function createManagedWorkloadOnboardRuntime(
   let preparedProfile: BuiltManagedStartupOnboardProfile | null = null;
 
   const ensurePreparedWorkload = async (): Promise<PreparedSandboxWorkloadSource> => {
-    const liveCatalogRevision = liveE2eManagedImageRevision(input.startupProfile.environment);
+    const liveCatalogRevision = input.stockManagedRuntime
+      ? liveE2eManagedImageRevision(input.startupProfile.environment)
+      : null;
     const liveCatalog = liveE2eManagedImageCatalog(input.startupProfile.environment);
     if (liveCatalogRevision && liveCatalog) {
       throw new Error("live E2E managed-image revision and catalog authority conflict");
@@ -295,25 +301,27 @@ export function createManagedWorkloadOnboardRuntime(
       return input.managedWorkloadRebuild.replacementProfile;
     }
     if (preparedProfile) return preparedProfile;
+    const selectedModel = input.model?.trim() || "unconfigured";
+    const selectedProvider = input.provider?.trim() || null;
     const inferenceApi =
       input.agentName === "langchain-deepagents-code"
         ? "openai-completions"
         : dependencies.resolveAgentInferenceApi(
             input.agentName,
-            input.provider,
+            selectedProvider,
             input.preferredInferenceApi,
           );
     const inference: SandboxInferenceConfig = dependencies.getSandboxInferenceConfig(
-      input.model,
-      input.provider,
+      selectedModel,
+      selectedProvider,
       inferenceApi,
     );
     preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
       inference: {
         routeProvider: inference.providerKey,
-        upstreamProvider: input.provider.trim() ? input.provider : inference.providerKey,
-        model: input.model,
+        upstreamProvider: selectedProvider ?? inference.providerKey,
+        model: selectedModel,
         routedBaseUrl: inference.inferenceBaseUrl,
         upstreamEndpointUrl:
           input.agentName === "langchain-deepagents-code" ? input.endpointUrl : null,
@@ -351,8 +359,9 @@ export interface PrepareOnboardSandboxWorkloadLaunchInput {
   readonly plan: {
     readonly intent: SandboxCreateIntent;
     readonly policyAuthority: MaterializeSandboxCreatePlanInput["policyAuthority"];
+    readonly deferSandboxEffectsUntilPolicyVerification?: boolean;
     readonly rebindMessagingTokenDefs: () => Promise<readonly MessagingTokenDef[]>;
-    readonly runProviderPreDeleteCleanup: () => void;
+    readonly runProviderPreDeleteCleanup: MaterializeSandboxCreatePlanInput["runProviderPreDeleteCleanup"];
     readonly upsertMessagingProviders: MaterializeSandboxCreatePlanInput["upsertMessagingProviders"];
     readonly getHermesToolGatewayProviderName: (sandboxName: string) => string;
     readonly discloseInitialSandboxPolicy: (policy: InitialSandboxPolicy) => void;
@@ -384,6 +393,7 @@ export interface PreparedOnboardSandboxWorkloadLaunch {
   readonly messagingProviders: string[];
   readonly gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
   readonly compatibilityPolicyPath: string | null;
+  readonly activateDeferredProviderEffects: SandboxCreatePlan["activateDeferredProviderEffects"];
   readonly initialGpuRoute: SelectedDockerGpuRoute;
   readonly sandboxReadyTimeoutSecs: number;
   readonly buildId: string;
@@ -425,6 +435,8 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     intent: input.plan.intent,
     fromRef,
     policyAuthority: input.plan.policyAuthority,
+    deferSandboxEffectsUntilPolicyVerification:
+      input.plan.deferSandboxEffectsUntilPolicyVerification,
     messagingTokenDefs: [...messagingTokenDefs],
     runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
     upsertMessagingProviders: input.plan.upsertMessagingProviders,
@@ -482,11 +494,15 @@ export async function prepareOnboardSandboxWorkloadLaunch(
   } else {
     const buildContext = requireLegacyBuildContext(legacyBuildContext);
     input.dependencies.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
+    const patchInput = input.legacy.resolvePatchInput();
     const patch = await (input.dependencies.resolveSandboxBuildPatch ?? resolveSandboxBuildPatch)({
       // Build-context staging resolves managed-agent base-image provenance.
       // Read the patch input only after that boundary so the final image gets
       // the exact metadata produced by the same staging operation.
-      ...input.legacy.resolvePatchInput(),
+      ...patchInput,
+      // An explicit path to the checked-in agent Dockerfile is staged through
+      // the trusted agent builder. Preserve that classification at patch time.
+      fromDockerfile: buildContext.origin === "generated" ? null : patchInput.fromDockerfile,
       selectedGpuRoute: initialGpuRoute,
       stagedDockerfile: buildContext.stagedDockerfile,
     });
@@ -510,6 +526,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
     messagingProviders: createPlan.messagingProviders,
     gpuRoutePlan: createPlan.gpuRoutePlan,
     compatibilityPolicyPath: createPlan.compatibilityPolicyPath,
+    activateDeferredProviderEffects: createPlan.activateDeferredProviderEffects,
     initialGpuRoute,
     sandboxReadyTimeoutSecs,
     buildId,

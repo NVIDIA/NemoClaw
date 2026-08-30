@@ -10,8 +10,35 @@ import {
   fingerprintOpenShellSandboxId,
   fingerprintOpenShellSandboxLiveIdentity,
   isOpenShellSandboxId,
+  NEMOCLAW_CREATE_ATTEMPT_LABEL,
+  NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
   parseOpenShellSandboxId,
+  resolveCreatedOpenShellSandboxId,
+  settleCreatedOpenShellSandboxId,
 } from "./sandbox-identity";
+
+const CREATE_ATTEMPT_NONCE = "a".repeat(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
+const SELECTOR_ERROR_CANARIES = {
+  diagnosticMessage: "diagnostic-message-canary",
+  codeAdjacent: "code-adjacent-canary",
+  stdout: "stdout-canary",
+  stderr: "stderr-canary",
+};
+
+function sandboxListJson(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify([
+    {
+      id: "sandbox-alpha",
+      name: "alpha",
+      labels: { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: CREATE_ATTEMPT_NONCE },
+      resource_version: 1,
+      created_at: "2026-08-25T00:00:00Z",
+      phase: "Ready",
+      current_policy_version: 1,
+      ...overrides,
+    },
+  ]);
+}
 
 describe("OpenShell sandbox identity parsing", () => {
   it("accepts one exact durable ID with optional terminal color", () => {
@@ -19,6 +46,22 @@ describe("OpenShell sandbox identity parsing", () => {
     expect(parseOpenShellSandboxId("\u001b[32mId: sandbox.alpha_2\u001b[0m\n")).toBe(
       "sandbox.alpha_2",
     );
+  });
+
+  it("preserves the durable ID across mutable sandbox state (#10404)", () => {
+    const beforeReuse = parseOpenShellSandboxId(
+      "Name: alpha\nId: sandbox-alpha\nPhase: Ready\nPolicy version: 6\n",
+    );
+    const afterReuse = parseOpenShellSandboxId(
+      "Name: alpha\nId: sandbox-alpha\nPhase: Ready\nPolicy version: 7\n",
+    );
+    const replacement = parseOpenShellSandboxId(
+      "Name: alpha\nId: sandbox-bravo\nPhase: Ready\nPolicy version: 7\n",
+    );
+
+    expect(beforeReuse).toBe("sandbox-alpha");
+    expect(afterReuse).toBe(beforeReuse);
+    expect(replacement).not.toBe(beforeReuse);
   });
 
   it("rejects ambiguous or non-canonical IDs", () => {
@@ -35,6 +78,7 @@ describe("OpenShell sandbox identity parsing", () => {
       createHash("sha256").update("sandbox-alpha").digest("hex"),
     );
     expect(fingerprintOpenShellSandboxLiveIdentity("Name: alpha\nPhase: Ready\n")).toBeNull();
+    expect(fingerprintOpenShellSandboxLiveIdentity("Id: first\nId: second\n")).toBeNull();
     expect(fingerprintOpenShellSandboxLiveIdentity("ID: first\nID: second\n")).toBeNull();
     expect(fingerprintOpenShellSandboxId("sandbox-alpha")).toBe(
       createHash("sha256").update("sandbox-alpha").digest("hex"),
@@ -48,6 +92,449 @@ describe("OpenShell sandbox identity parsing", () => {
 });
 
 describe("OpenShell sandbox identity reading", () => {
+  it("binds the first ID to an exact create-attempt label (#9833)", () => {
+    const runCaptureOpenshell = vi.fn(() => sandboxListJson());
+
+    expect(
+      resolveCreatedOpenShellSandboxId({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        createAttemptNonce: CREATE_ATTEMPT_NONCE,
+        runCaptureOpenshell,
+      }),
+    ).toBe("sandbox-alpha");
+    expect(runCaptureOpenshell).toHaveBeenCalledExactlyOnceWith(
+      [
+        "sandbox",
+        "list",
+        "-g",
+        "nemoclaw",
+        "--selector",
+        `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${CREATE_ATTEMPT_NONCE}`,
+        "--output",
+        "json",
+        "--limit",
+        "2",
+      ],
+      {
+        ignoreError: false,
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024,
+        killSignal: "SIGKILL",
+        killProcessTreeOnTimeout: true,
+      },
+    );
+  });
+
+  it.each(["a".repeat(61), "a".repeat(63), "a".repeat(64), "g".repeat(62)])(
+    "refuses a create-attempt nonce outside the label-compatible contract (#9833)",
+    (createAttemptNonce) => {
+      const runCaptureOpenshell = vi.fn();
+
+      expect(() =>
+        resolveCreatedOpenShellSandboxId({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          createAttemptNonce,
+          runCaptureOpenshell,
+        }),
+      ).toThrow("OpenShell sandbox create-attempt identity is invalid.");
+      expect(runCaptureOpenshell).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["same-name replacement", sandboxListJson({ labels: {} })],
+    ["different name", sandboxListJson({ name: "bravo" })],
+    ["ambiguous rows", `${sandboxListJson().slice(0, -1)},${sandboxListJson().slice(1)}`],
+    [
+      "malformed labels",
+      sandboxListJson({
+        labels: { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: CREATE_ATTEMPT_NONCE, other: 1 },
+      }),
+    ],
+    ["malformed row", sandboxListJson({ id: "invalid/id" })],
+    ["oversized row", sandboxListJson({ id: "a".repeat(513) })],
+  ])(
+    "refuses %s during settlement without disclosing captured metadata (#9211)",
+    (_case, output) => {
+      const outputCanary = "captured-metadata-canary";
+      const capturedRows = (JSON.parse(output) as Array<Record<string, unknown>>).map((row) => ({
+        ...row,
+        diagnostic: outputCanary,
+      }));
+      const runCaptureOpenshell = vi.fn(() => JSON.stringify(capturedRows));
+      const sleep = vi.fn();
+
+      let caught: unknown;
+      try {
+        settleCreatedOpenShellSandboxId({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          createAttemptNonce: CREATE_ATTEMPT_NONCE,
+          runCaptureOpenshell,
+          sleep,
+        });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect(String(caught)).toContain(
+        "OpenShell did not return the exact created identity for sandbox 'alpha'",
+      );
+      expect(String(caught)).not.toContain(outputCanary);
+      expect(String(caught)).not.toContain(CREATE_ATTEMPT_NONCE);
+      expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+      expect(sleep).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses malformed selector output without retrying (#9211)", () => {
+    const runCaptureOpenshell = vi.fn(() => "not-json");
+    const sleep = vi.fn();
+
+    expect(() =>
+      settleCreatedOpenShellSandboxId({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        createAttemptNonce: CREATE_ATTEMPT_NONCE,
+        runCaptureOpenshell,
+        sleep,
+      }),
+    ).toThrow(
+      "OpenShell did not return the exact created identity for sandbox 'alpha'. Diagnostic class: selector-output-malformed.",
+    );
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "timeout",
+      Object.assign(new Error("timeout canary"), SELECTOR_ERROR_CANARIES, { code: "ETIMEDOUT" }),
+      "selector-execution-timeout",
+    ],
+    [
+      "missing executable",
+      Object.assign(new Error("missing canary"), SELECTOR_ERROR_CANARIES, { code: "ENOENT" }),
+      "selector-execution-not-found",
+    ],
+    [
+      "permission error",
+      Object.assign(new Error("permission canary"), SELECTOR_ERROR_CANARIES, { code: "EACCES" }),
+      "selector-execution-permission",
+    ],
+    [
+      "alternate permission error",
+      Object.assign(new Error("alternate permission canary"), SELECTOR_ERROR_CANARIES, {
+        code: "EPERM",
+      }),
+      "selector-execution-permission",
+    ],
+    [
+      "nonzero exit",
+      Object.assign(new Error("Command failed with status 1"), SELECTOR_ERROR_CANARIES),
+      "selector-execution-nonzero",
+    ],
+    [
+      "buffer limit",
+      Object.assign(new Error("buffer limit canary"), SELECTOR_ERROR_CANARIES, { code: "ENOBUFS" }),
+      "selector-execution-buffer-limit",
+    ],
+    [
+      "resource unavailable",
+      Object.assign(new Error("resource unavailable canary"), SELECTOR_ERROR_CANARIES, {
+        code: "EAGAIN",
+      }),
+      "selector-execution-resource-unavailable",
+    ],
+    [
+      "unknown string code",
+      {
+        ...SELECTOR_ERROR_CANARIES,
+        code: "unknown-code-canary",
+        message: "unknown string code message canary",
+      },
+      "selector-execution-other-code",
+    ],
+    [
+      "unknown numeric code",
+      { ...SELECTOR_ERROR_CANARIES, code: 17, message: "unknown numeric code message canary" },
+      "selector-execution-other-code",
+    ],
+    [
+      "unknown object code",
+      {
+        ...SELECTOR_ERROR_CANARIES,
+        code: { value: "object-code-canary" },
+        message: "unknown object code message canary",
+      },
+      "selector-execution-other-code",
+    ],
+    [
+      "uncoded error",
+      Object.assign(new Error("uncoded error canary"), SELECTOR_ERROR_CANARIES),
+      "selector-execution-uncoded-error",
+    ],
+    ["string throw", "string throw canary", "selector-execution-non-error"],
+    ["null throw", null, "selector-execution-non-error"],
+    [
+      "plain object throw",
+      { ...SELECTOR_ERROR_CANARIES, value: "plain object canary" },
+      "selector-execution-non-error",
+    ],
+  ])(
+    "refuses selector %s without retrying or disclosing its error (#10423)",
+    (_case, error, diagnostic) => {
+      const runCaptureOpenshell = vi.fn((): string => {
+        throw error;
+      });
+      const sleep = vi.fn();
+
+      let caught: unknown;
+      try {
+        settleCreatedOpenShellSandboxId({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          createAttemptNonce: CREATE_ATTEMPT_NONCE,
+          runCaptureOpenshell,
+          sleep,
+        });
+      } catch (settlementError) {
+        caught = settlementError;
+      }
+      expect(String(caught)).toContain(`Diagnostic class: ${diagnostic}.`);
+      expect(String(caught)).not.toContain("canary");
+      expect(String(caught)).not.toContain("sandbox-alpha");
+      expect(String(caught)).not.toContain(CREATE_ATTEMPT_NONCE);
+      expect(String(caught)).not.toContain(NEMOCLAW_CREATE_ATTEMPT_LABEL);
+      expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+      expect(sleep).not.toHaveBeenCalled();
+    },
+  );
+
+  it("settles an exact nonce identity published after Ready (#9211)", () => {
+    let nowMs = 0;
+    const sleep = vi.fn((milliseconds: number) => {
+      nowMs += milliseconds;
+    });
+    const runCaptureOpenshell = vi
+      .fn<(args: string[], options?: Record<string, unknown>) => string>()
+      .mockReturnValueOnce("[]")
+      .mockReturnValueOnce(sandboxListJson());
+
+    expect(
+      settleCreatedOpenShellSandboxId({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        createAttemptNonce: CREATE_ATTEMPT_NONCE,
+        runCaptureOpenshell,
+        now: () => nowMs,
+        sleep,
+      }),
+    ).toBe("sandbox-alpha");
+
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(runCaptureOpenshell.mock.calls.map(([, options]) => options?.timeout)).toEqual([
+      30_000, 29_750,
+    ]);
+    expect(sleep).toHaveBeenCalledExactlyOnceWith(250);
+  });
+
+  it("settles one exact nonce identity while its publication metadata becomes complete (#10423)", () => {
+    let nowMs = 0;
+    const sleep = vi.fn((milliseconds: number) => {
+      nowMs += milliseconds;
+    });
+    const runCaptureOpenshell = vi
+      .fn<(args: string[], options?: Record<string, unknown>) => string>()
+      .mockReturnValueOnce(
+        sandboxListJson({
+          resource_version: null,
+          created_at: null,
+          phase: null,
+          current_policy_version: null,
+        }),
+      )
+      .mockReturnValueOnce(sandboxListJson());
+
+    expect(
+      settleCreatedOpenShellSandboxId({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        createAttemptNonce: CREATE_ATTEMPT_NONCE,
+        runCaptureOpenshell,
+        now: () => nowMs,
+        sleep,
+      }),
+    ).toBe("sandbox-alpha");
+
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledExactlyOnceWith(250);
+  });
+
+  it.each([
+    ["changes durable ID", sandboxListJson({ id: "sandbox-bravo" })],
+    ["disappears", "[]"],
+  ])(
+    "refuses a nonce-owned identity that %s after incomplete metadata (#10423)",
+    (_case, secondObservation) => {
+      let nowMs = 0;
+      const sleep = vi.fn((milliseconds: number) => {
+        nowMs += milliseconds;
+      });
+      const runCaptureOpenshell = vi
+        .fn<(args: string[], options?: Record<string, unknown>) => string>()
+        .mockReturnValueOnce(sandboxListJson({ resource_version: null }))
+        .mockReturnValueOnce(secondObservation);
+
+      expect(() =>
+        settleCreatedOpenShellSandboxId({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          createAttemptNonce: CREATE_ATTEMPT_NONCE,
+          runCaptureOpenshell,
+          now: () => nowMs,
+          sleep,
+        }),
+      ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+
+      expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+      expect(sleep).toHaveBeenCalledExactlyOnceWith(250);
+    },
+  );
+
+  it.each([
+    ["resource version", { resource_version: "1" }],
+    ["creation time", { created_at: 1 }],
+    ["phase", { phase: [] }],
+    ["policy version", { current_policy_version: "1" }],
+  ])("refuses malformed %s metadata without retrying (#10423)", (_case, overrides) => {
+    const runCaptureOpenshell = vi.fn(() => sandboxListJson(overrides));
+    const sleep = vi.fn();
+
+    expect(() =>
+      settleCreatedOpenShellSandboxId({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        createAttemptNonce: CREATE_ATTEMPT_NONCE,
+        runCaptureOpenshell,
+        sleep,
+      }),
+    ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("stops exact nonce settlement at the existing deadline (#9211)", () => {
+    let nowMs = 0;
+    const sleep = vi.fn((milliseconds: number) => {
+      nowMs += milliseconds;
+    });
+    const runCaptureOpenshell = vi.fn(
+      (_args: string[], _options?: Record<string, unknown>) => "[]",
+    );
+
+    expect(() =>
+      settleCreatedOpenShellSandboxId({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        createAttemptNonce: CREATE_ATTEMPT_NONCE,
+        runCaptureOpenshell,
+        now: () => nowMs,
+        sleep,
+      }),
+    ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+
+    expect(nowMs).toBe(30_000);
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(120);
+    expect(runCaptureOpenshell.mock.calls.at(0)?.[1]).toMatchObject({ timeout: 30_000 });
+    expect(runCaptureOpenshell.mock.calls.at(-1)?.[1]).toMatchObject({ timeout: 250 });
+    expect(runCaptureOpenshell.mock.calls.every(([args]) => args.includes("--selector"))).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    ["NaN", Number.NaN],
+    ["positive infinity", Number.POSITIVE_INFINITY],
+    ["negative infinity", Number.NEGATIVE_INFINITY],
+  ])(
+    "refuses a non-finite %s settlement clock sample before selector lookup (#9211)",
+    (_case, invalidNow) => {
+      const now = vi.fn().mockReturnValueOnce(0).mockReturnValueOnce(invalidNow);
+      const runCaptureOpenshell = vi.fn(() => "[]");
+      const sleep = vi.fn();
+
+      expect(() =>
+        settleCreatedOpenShellSandboxId({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          createAttemptNonce: CREATE_ATTEMPT_NONCE,
+          runCaptureOpenshell,
+          now,
+          sleep,
+        }),
+      ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+
+      expect(runCaptureOpenshell).not.toHaveBeenCalled();
+      expect(sleep).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["NaN", Number.NaN],
+    ["positive infinity", Number.POSITIVE_INFINITY],
+    ["negative infinity", Number.NEGATIVE_INFINITY],
+    ["an overflowed deadline", Number.MAX_VALUE],
+  ])(
+    "refuses an initial %s settlement clock sample before selector lookup (#9211)",
+    (_case, invalidNow) => {
+      const now = vi.fn(() => invalidNow);
+      const runCaptureOpenshell = vi.fn(() => "[]");
+      const sleep = vi.fn();
+
+      expect(() =>
+        settleCreatedOpenShellSandboxId({
+          sandboxName: "alpha",
+          gatewayName: "nemoclaw",
+          createAttemptNonce: CREATE_ATTEMPT_NONCE,
+          runCaptureOpenshell,
+          now,
+          sleep,
+        }),
+      ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+
+      expect(now).toHaveBeenCalledOnce();
+      expect(runCaptureOpenshell).not.toHaveBeenCalled();
+      expect(sleep).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses a backward settlement clock sample before sleeping (#9211)", () => {
+    const now = vi
+      .fn<() => number>()
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(999);
+    const runCaptureOpenshell = vi.fn(() => "[]");
+    const sleep = vi.fn();
+
+    expect(() =>
+      settleCreatedOpenShellSandboxId({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        createAttemptNonce: CREATE_ATTEMPT_NONCE,
+        runCaptureOpenshell,
+        now,
+        sleep,
+      }),
+    ).toThrow("OpenShell did not return the exact created identity for sandbox 'alpha'.");
+
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("reads each sandbox ID once per process (#9316)", () => {
     const runCommand = vi.fn(() => ({ status: 0, stdout: "Name: alpha\nID: sandbox-alpha\n" }));
     const readSandboxId = createOpenshellSandboxIdReader("/usr/bin/openshell", runCommand);

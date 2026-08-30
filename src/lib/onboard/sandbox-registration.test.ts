@@ -699,18 +699,14 @@ describe("registerCreatedSandbox", () => {
     expect(classifyPortableLifecycleReceipt).not.toHaveBeenCalled();
   });
 
-  it("stages an owned registration until onboarding commits the sandbox step", () => {
+  it("publishes ordinary registrations without verified-create transaction options", () => {
     const registerSandbox = vi.fn();
     const entry = registerCreatedSandbox({
       ...createdRegistryEntryInput({ lifecycleGeneration: "generation-1" }),
-      reservationSessionId: "session-owner",
       registerSandbox,
     });
 
-    expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry, undefined, {
-      pending: true,
-      reservationSessionId: "session-owner",
-    });
+    expect(registerSandbox).toHaveBeenCalledExactlyOnceWith(entry);
   });
 
   it("persists lifecycle identity for a non-OpenClaw agent", () => {

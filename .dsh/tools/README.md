@@ -3,9 +3,7 @@
 
 # E2E Investigation Tools
 
-These project-scoped DSH tools separate evidence collection from causal analysis.
-Each directory contains the authoritative source-first `index.ts` definition that
-`dsh-tool-authoring` loads.
+These project-scoped DSH tools separate evidence collection from causal analysis. Each directory contains the authoritative source-first `index.ts` definition that `dsh-tool-authoring` loads.
 
 ## Pattern
 
@@ -16,10 +14,7 @@ Each directory contains the authoritative source-first `index.ts` definition tha
 5. `e2e_root_cause_correlator` groups shared signatures and checks relevant path overlap.
 6. `e2e_investigation_report` renders proven facts, supported hypotheses, missing evidence, and next steps.
 
-The first four tools collect deterministic evidence. The correlator provides a
-bounded first classification, not a final causal judgment. An agent must review
-the evidence before it adds `proven`, `hypothesis`, `notVerified`, and
-`nextSteps` fields to the report input.
+The first four tools collect deterministic evidence. The correlator provides a bounded first classification, not a final causal judgment. An agent must review the evidence before it adds `proven`, `hypothesis`, `notVerified`, and `nextSteps` fields to the report input.
 
 ## Example sequence
 
@@ -29,37 +24,37 @@ const diff = await tools.github_actions_run_diff({
   repository: "NVIDIA/NemoClaw",
   earlierRunId: 32500184982,
   recentRunId: 32523257489,
-})
+});
 
 const range = await tools.git_tested_commit_range({
   workdir: "/path/to/NemoClaw",
   earlierSha: diff.earlier.headSha,
   recentSha: diff.recent.headSha,
-})
+});
 
 if (!range.ancestor) {
-  throw new Error("The tested commit range diverges and cannot be correlated")
+  throw new Error("The tested commit range diverges and cannot be correlated");
 }
 
-const failures = []
+const failures = [];
 for (const job of diff.newlyFailing) {
   const evidence = await tools.github_actions_failure_evidence({
     workdir: "/path/to/NemoClaw",
     repository: "NVIDIA/NemoClaw",
     runId: diff.recent.id,
     jobId: job.recentJobId,
-  })
+  });
   failures.push({
     jobName: job.name,
     jobId: job.recentJobId,
     signatureLines: evidence.signatureLines,
-  })
+  });
 }
 
 const correlation = await tools.e2e_root_cause_correlator({
   failures,
   changedFiles: range.changedFiles,
-})
+});
 
 const report = await tools.e2e_investigation_report({
   repository: "NVIDIA/NemoClaw",
@@ -72,57 +67,13 @@ const report = await tools.e2e_investigation_report({
   },
   commits: range.commits,
   groups: correlation.groups,
-})
+});
 ```
 
-Add `relevantPaths` to each failure before correlation when repository knowledge
-identifies the owning source paths. Without those paths, a no-overlap result has
-low confidence.
-The report marks the investigation as incomplete when the commit or changed-file list is truncated.
-Do not claim causal completeness or absence of path overlap from a truncated range.
+Add `relevantPaths` to each failure before correlation when repository knowledge identifies the owning source paths. Without those paths, a single-failure no-overlap result has low confidence. The report marks the investigation as incomplete when the commit or changed-file list is truncated. Do not claim causal completeness or absence of path overlap from a truncated range.
 
 ## Pull request value stream
 
-Use `analyze_pr_value_stream` to measure one pull request from the earliest
-observable branch push through merge:
+The pull request value-stream analyzer moved to the lazily loaded `nemoclaw-maintainer-analyze-pr-value-stream` skill. Load that skill for the standalone Node command, comparison options, output contract, artifact validation, and caveats.
 
-```ts
-const valueStream = await tools.analyze_pr_value_stream({
-  workdir: "/path/to/NemoClaw",
-  number: 10301,
-  targetMinutes: 10,
-})
-```
-
-The report separates these intervals:
-
-- Branch push to pull request open.
-- Pull request open to the latest revision.
-- Latest revision to selected automation completion.
-- Approval delay after automation.
-- Ready-to-merge lag.
-
-The target result models a one-push pull request with immediate opening and
-approval. It uses the latest revision's observed automation time plus the
-observed ready-to-merge lag. GitHub does not expose a canonical branch-created
-time, so the report identifies whether the start came from a retained push run
-or a lower-confidence fallback. Treat one pull request as a diagnostic sample,
-not a service-level distribution.
-
-## Trust boundaries
-
-- The tools use authenticated `gh` and local `git`; they make no GitHub writes.
-- Job logs are untrusted input. The evidence tool returns bounded excerpts and
-  redacts common credential forms.
-- The tools do not download artifacts. Artifact collection needs a separate
-  design because it must create a mode-0700 temporary directory, validate exact
-  run identity, redact retained evidence, and verify directory removal.
-- Exact job-name comparison is intentional. A future stable target-identity
-  resolver must use repository-owned matrix metadata rather than fuzzy matching.
-
-## Activation
-
-The Web profile must include the `dsh-tool-authoring` bundle. Restart the DSH Web
-process after changing the profile so the server registers `tool_define`,
-`tool_list`, `tool_remove`, `tool_promote`, and the project tools. Starting a
-second Web server does not update the existing GUI.
+The script is `.agents/skills/nemoclaw-maintainer-analyze-pr-value-stream/scripts/analyze-pr-value-stream.mts`. It uses authenticated `gh` reads. It performs no GitHub writes.

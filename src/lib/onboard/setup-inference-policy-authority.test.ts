@@ -83,6 +83,9 @@ describe("onboard inference policy authority mutation edges", () => {
 
     expect(deps.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
     expect(deps.upsertProvider).not.toHaveBeenCalled();
+    expect(deps.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+    expect(deps.log).not.toHaveBeenCalled();
   });
 
   it("withholds success when authority changes after inference smoke (#9833)", async () => {

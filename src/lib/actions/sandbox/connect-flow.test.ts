@@ -635,6 +635,7 @@ describe("connectSandbox flow", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
+    expect(harness.requalifyPortableAgentAuthoritySpy).not.toHaveBeenCalled();
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
@@ -1008,6 +1009,7 @@ describe("connectSandbox flow", () => {
         Array.isArray(args) ? args[0] === "inference" && args[1] === "set" : false,
       ),
     ).toBe(false);
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
     expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalled();
   });
 
@@ -1029,7 +1031,7 @@ describe("connectSandbox flow", () => {
         "process.exit(1)",
       );
       expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-        "receipt and registry authority disagree",
+        "missing, incomplete, or changed during launch-readiness verification",
       );
       expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
       expect(harness.captureResolvedOpenshellSpy).not.toHaveBeenCalled();
@@ -1120,71 +1122,6 @@ describe("connectSandbox flow", () => {
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
   });
 
-  it("requalifies accepted probe evidence against active schema-5 authority (#9203)", async () => {
-    const entry = {
-      name: "alpha",
-      agent: "hermes",
-      provider: "ollama-local",
-      model: "qwen3-vl:4b",
-      policies: [],
-      openshellDriver: "docker",
-      gatewayName: "nemoclaw",
-      lifecycleGeneration: "generation-1",
-    } as never;
-    const harness = createConnectHarness({
-      agentName: "hermes",
-      sessionAgent: { name: "hermes" },
-      registryEntry: entry,
-      portableReceiptDisposition: { kind: "hermes", phase: "active" },
-      portableRecoveryResult: { kind: "already-running" },
-      readinessDecision: {
-        kind: "accepted",
-        category: "accepted",
-        agent: { name: "hermes" },
-        sb: entry,
-      },
-    });
-
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
-
-    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
-    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
-    expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
-    expect(harness.dockerStartSpy).not.toHaveBeenCalled();
-    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
-  });
-
-  it("rejects accepted probe evidence when schema-5 authority disappears (#9203)", async () => {
-    const entry = {
-      name: "alpha",
-      agent: "hermes",
-      provider: null,
-      model: null,
-      policies: [],
-      openshellDriver: "docker",
-      gatewayName: "nemoclaw",
-      lifecycleGeneration: "generation-1",
-    } as never;
-    const harness = createConnectHarness({
-      agentName: "hermes",
-      registryEntry: entry,
-      portableReceiptDisposition: { kind: "hermes", phase: "active" },
-      portableRecoveryResult: { kind: "not-installed" },
-      readinessDecision: {
-        kind: "accepted",
-        category: "accepted",
-        agent: { name: "hermes" },
-        sb: entry,
-      },
-    });
-
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "authority disappeared during probe",
-    );
-    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
-    expect(harness.runSandboxExecChildSpy).not.toHaveBeenCalled();
-  });
-
   it("keeps active Hermes interactive setup inside receipt-owned recovery (#9203)", async () => {
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "do-not-forward");
     vi.stubEnv("GITHUB_TOKEN", "do-not-forward");
@@ -1221,6 +1158,7 @@ describe("connectSandbox flow", () => {
     expect(harness.preflightVllmSpy).not.toHaveBeenCalled();
     expect(harness.readSandboxConfigSpy).not.toHaveBeenCalled();
     expect(harness.writeSandboxConfigSpy).not.toHaveBeenCalled();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
     expect(sandboxVersion.checkAgentVersion).not.toHaveBeenCalled();
     expect(brokerSpy).not.toHaveBeenCalled();
     const connectCall = harness.runSandboxExecChildSpy.mock.calls.find(
@@ -1298,7 +1236,7 @@ describe("connectSandbox flow", () => {
       "process.exit(1)",
     );
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
-      "Hermes portable lifecycle authority is missing or incomplete",
+      "missing, incomplete, or changed during launch-readiness verification",
     );
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
     expect(harness.dockerStartSpy).not.toHaveBeenCalled();

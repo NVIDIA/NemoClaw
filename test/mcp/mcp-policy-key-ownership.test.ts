@@ -8,14 +8,23 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  managedPolicyMetadata,
+  managedRegistrationSource,
+  managedSandboxEntry,
+  SANDBOX_ID,
+} from "../helpers/managed-policy-receipt-fixture";
+
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.106");
 const MATCHING_OPENSHELL_VERSION_CLAUSE = `if [ "$1" = "--version" ]; then printf '%s\\n' 'openshell 0.0.106'; exit 0; fi`;
-const MANAGED_POLICY_AUTHORITY_CLAUSE = `if [ "$1 $2" = "policy get" ]; then
+const MANAGED_POLICY_AUTHORITY_CLAUSE = `if [ "$1 $2" = "sandbox get" ]; then
+  printf 'Name: alpha\nId: ${SANDBOX_ID}\nPhase: Ready\n'
+  exit 0
+fi
+if [ "$1 $2" = "policy get" ]; then
   case " $* " in
     *" --output json "*)
-      sandbox=""
-      for sandbox in "$@"; do :; done
-      printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\\n' "$sandbox"
+      printf '%s\n' ${JSON.stringify(managedPolicyMetadata("alpha"))}
       exit 0
       ;;
   esac
@@ -34,6 +43,7 @@ function runApply(
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-policy-owner-"));
   const binDir = path.join(home, ".local", "bin");
   const callsPath = path.join(home, "calls.log");
+  const appliedPolicyPath = path.join(home, "applied-policy.yaml");
   fs.mkdirSync(binDir, { recursive: true });
   fs.writeFileSync(
     path.join(binDir, "openshell"),
@@ -42,11 +52,24 @@ ${MATCHING_OPENSHELL_VERSION_CLAUSE}
 ${MANAGED_POLICY_AUTHORITY_CLAUSE}
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2" = "policy get" ]; then
+  if [ -f ${JSON.stringify(appliedPolicyPath)} ]; then
+    cat ${JSON.stringify(appliedPolicyPath)}
+    exit 0
+  fi
   printf 'Version: 1\nHash: test\n---\nversion: 1\n${
     liveName === null
       ? "network_policies: {}"
       : `network_policies:\n  example:\n    name: ${liveName}\n    endpoints: []`
   }\n'
+fi
+if [ "$1 $2" = "policy set" ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      cp "$2" ${JSON.stringify(appliedPolicyPath)}
+      break
+    fi
+    shift
+  done
 fi
 exit 0
 `,
@@ -55,7 +78,7 @@ exit 0
   const script = `
 const registry = require("./src/lib/state/registry.js");
 const policies = require("./src/lib/policy/index.js");
-registry.registerSandbox({ name: "alpha" });
+${managedRegistrationSource("alpha")}
 const result = policies.applyPresetContent(
   "alpha",
   "mcp-bridge-example",
@@ -136,7 +159,7 @@ exit 0
   const script = `
 const registry = require("./src/lib/state/registry.js");
 const policies = require("./src/lib/policy/index.js");
-registry.registerSandbox({ name: "alpha" });
+${managedRegistrationSource("alpha")}
 ${
   operation === "remove"
     ? `registry.addCustomPolicy("alpha", {
@@ -182,6 +205,7 @@ process.stdout.write("\\n__RESULT__" + JSON.stringify({
 function runSuccessfulPolicyRemoval(skipRegistryUpdate: boolean) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-policy-remove-success-"));
   const binDir = path.join(home, ".local", "bin");
+  const appliedPolicyPath = path.join(home, "applied-policy.yaml");
   fs.mkdirSync(binDir, { recursive: true });
   fs.writeFileSync(
     path.join(binDir, "openshell"),
@@ -189,7 +213,20 @@ function runSuccessfulPolicyRemoval(skipRegistryUpdate: boolean) {
 ${MATCHING_OPENSHELL_VERSION_CLAUSE}
 ${MANAGED_POLICY_AUTHORITY_CLAUSE}
 if [ "$1 $2" = "policy get" ]; then
+  if [ -f ${JSON.stringify(appliedPolicyPath)} ]; then
+    cat ${JSON.stringify(appliedPolicyPath)}
+    exit 0
+  fi
   printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: generated-policy\n    endpoints: []\n'
+fi
+if [ "$1 $2" = "policy set" ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      cp "$2" ${JSON.stringify(appliedPolicyPath)}
+      break
+    fi
+    shift
+  done
 fi
 exit 0
 `,
@@ -198,7 +235,7 @@ exit 0
   const script = `
 const registry = require("./src/lib/state/registry.js");
 const policies = require("./src/lib/policy/index.js");
-registry.registerSandbox({ name: "alpha" });
+${managedRegistrationSource("alpha")}
 registry.addCustomPolicy("alpha", {
   name: "mcp-bridge-example",
   content: ${JSON.stringify(PRESET)},
@@ -360,7 +397,7 @@ processRecovery.executeSandboxExecCommand = () => ({
   stdout: "",
   stderr: "",
 });
-registry.registerSandbox({ name: "alpha", agent: "openclaw" });
+${managedRegistrationSource("alpha")}
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.addMcpBridge("alpha", {
   server: "example",
@@ -471,7 +508,7 @@ processRecovery.executeSandboxExecCommand = () => ({
   stdout: "",
   stderr: "",
 });
-registry.registerSandbox({ name: "alpha", agent: "openclaw" });
+${managedRegistrationSource("alpha")}
 registry.addCustomPolicy = () => { throw new Error("injected registry write failure"); };
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.addMcpBridge("alpha", {
@@ -570,9 +607,7 @@ const entry = {
   addedAt: "2026-06-01T00:00:00.000Z",
 };
 registry.registerSandbox({
-  name: "alpha",
-  agent: "openclaw",
-  gatewayName: "nemoclaw",
+  ...${JSON.stringify(managedSandboxEntry("alpha"))},
   mcp: { bridges: { example: entry } },
 });
 registry.addCustomPolicy("alpha", {

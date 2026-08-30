@@ -79,6 +79,7 @@ const LOCAL_COPY_SOURCES = [
   "scripts/patch-bundled-npm-brace-expansion.mts",
   "scripts/patch-bundled-npm-tar.mts",
   "scripts/runtime-state-mutation-control.py",
+  "scripts/runtime-state-mutation-transport-broker.py",
   "scripts/runtime-state-mutation-startup-gate.py",
   "scripts/runtime_state_mutation_hermes_publisher.py",
   "scripts/state-dir-guard.py",

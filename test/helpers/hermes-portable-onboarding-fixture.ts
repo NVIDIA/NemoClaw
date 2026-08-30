@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -30,8 +31,10 @@ export const HERMES_PORTABLE_TEST_POLICY = "version: 1\nnetwork_policies: {}\n";
 
 const CONTAINER_ID = "a".repeat(64);
 const IMAGE_ID = "b".repeat(64);
-const SANDBOX_ID = "sandbox-id-1";
-export const HERMES_PORTABLE_TEST_LIVE_IDENTITY = "live-identity-1";
+export const HERMES_PORTABLE_TEST_SANDBOX_ID = "sandbox-id-1";
+export const HERMES_PORTABLE_TEST_LIVE_IDENTITY = createHash("sha256")
+  .update(HERMES_PORTABLE_TEST_SANDBOX_ID)
+  .digest("hex");
 const ROUTE_SESSION_ID = "session-alpha";
 
 export function makeHermesPortableCheckoutPrivate(root: string): void {
@@ -68,11 +71,11 @@ export function createHermesPortableContainerInspectResult(
       {
         Id: CONTAINER_ID,
         Image: IMAGE_ID,
-        Name: `openshell-default--${sandboxName}-${SANDBOX_ID}`,
+        Name: `openshell-default--${sandboxName}-${HERMES_PORTABLE_TEST_SANDBOX_ID}`,
         Config: {
           Labels: {
             "openshell.managed": "true",
-            "openshell.ai/sandbox-id": SANDBOX_ID,
+            "openshell.ai/sandbox-id": HERMES_PORTABLE_TEST_SANDBOX_ID,
             "openshell.ai/sandbox-name": sandboxName,
             "openshell.ai/sandbox-namespace": "",
             "openshell.ai/sandbox-workspace": "default",
@@ -299,6 +302,9 @@ export interface HermesPortableTransactionFixtureOptions {
   beforeCompareAndSetRegistryGatewayPort?: (entry: SandboxEntry | null) => SandboxEntry | null;
   podmanAuthority?: HermesPortablePodmanExecutableAuthority;
   readRegistry?: () => SandboxEntry | null;
+  revalidatePendingCreateRegistry?: HermesPortableOnboardingDeps<{
+    ready: true;
+  }>["revalidatePendingCreateRegistry"];
   compareAndSetRegistryGatewayPort?: HermesPortableOnboardingDeps<{
     ready: true;
   }>["compareAndSetRegistryGatewayPort"];
@@ -346,6 +352,7 @@ export function createHermesPortableTransactionFixture(
       [
         "container update",
         () => {
+          events.push("restart-policy");
           restartPolicy = options.updateFails ? restartPolicy : "unless-stopped";
           return options.updateFails
             ? { status: null, stdout: "", stderr: "timed out" }
@@ -401,7 +408,7 @@ export function createHermesPortableTransactionFixture(
         present
           ? {
               kind: "present",
-              sandboxId: SANDBOX_ID,
+              sandboxId: HERMES_PORTABLE_TEST_SANDBOX_ID,
               liveIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
             }
           : { kind: "absent" }),
@@ -411,15 +418,20 @@ export function createHermesPortableTransactionFixture(
     ...(options.readSandboxReadyPublicationClockMs
       ? { readSandboxReadyPublicationClockMs: options.readSandboxReadyPublicationClockMs }
       : {}),
-    createSandbox: async (argv, buildContextPath) => {
+    createSandbox: async (argv, buildContextPath, effectivePolicySourcePath) => {
       events.push("create");
       if (options.createSandbox) {
-        const created = await options.createSandbox(argv, buildContextPath);
+        const created = await options.createSandbox(
+          argv,
+          buildContextPath,
+          effectivePolicySourcePath,
+        );
         present = true;
         return created;
       }
       const policyIndex = argv.indexOf("--policy");
       expect(argv[policyIndex + 1]).toContain("policy.");
+      expect(argv[policyIndex + 1]).toBe(effectivePolicySourcePath);
       expect(argv[argv.indexOf("--from") + 1]).toBe(
         options.expectedDockerfilePath ?? "/private/staged-hermes/Dockerfile",
       );
@@ -428,6 +440,9 @@ export function createHermesPortableTransactionFixture(
       return { ready: true };
     },
     readRegistry: options.readRegistry ?? (() => registryEntry),
+    ...(options.revalidatePendingCreateRegistry
+      ? { revalidatePendingCreateRegistry: options.revalidatePendingCreateRegistry }
+      : {}),
     compareAndSetRegistryGatewayPort:
       options.compareAndSetRegistryGatewayPort ??
       ((name, expected, gatewayPort) => {

@@ -75,6 +75,7 @@ interface ChildPayload {
     agent?: string | null;
     dashboardPort?: number | null;
     imageTag?: string | null;
+    lifecycleLiveIdentityFingerprint?: string | null;
     name?: string;
     workload?: {
       schemaVersion?: number;
@@ -93,6 +94,7 @@ interface ChildPayload {
     };
   }>;
   runnerCommands: string[];
+  sandboxId: string;
   spawnCalls: SpawnCall[];
 }
 
@@ -149,7 +151,6 @@ const managedBootstrapCalls = [];
 const registerCalls = [];
 const runnerCommands = [];
 const spawnCalls = [];
-let sandboxCreated = recreate;
 let existingEntryAvailable = recreate;
 let registeredSandbox = null;
 let managedHermesVolume = recreate ? {
@@ -191,8 +192,14 @@ const replace = (target, name, value) => {
   if (target[name] !== value) throw new Error("could not install test boundary for " + name);
 };
 const childProcess = require("node:child_process");
-require(${source("test/helpers/onboard-script-mocks.cjs")})
-  .mockStandaloneGatewayTeardownAuthority();
+const fixtureMocks = require(${source("test/helpers/onboard-script-mocks.cjs")});
+fixtureMocks.mockStandaloneGatewayTeardownAuthority();
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName,
+  sandboxId: "fixture-managed-sandbox",
+  lifecycleState: recreate ? "created" : "absent",
+});
+createdSandbox.installRuntimeObservation();
 
 const coreVersion = require(${source("src/lib/core/version.ts")});
 replace(coreVersion, "getVersion", () => catalogRelease);
@@ -420,15 +427,15 @@ runner.run = (command, options = {}) => {
   const argv = Array.isArray(command) ? command.map(String) : [];
   const normalized = normalize(command);
   runnerCommands.push(normalized);
-  sandboxCreated = normalized.includes("sandbox delete") ? false : sandboxCreated;
-  existingEntryAvailable = normalized.includes("sandbox delete") ? false : existingEntryAvailable;
+  if (
+    normalized.includes("sandbox delete") &&
+    createdSandbox.state.lifecycleState === "created"
+  ) {
+    createdSandbox.delete();
+    existingEntryAvailable = false;
+  }
   if (/(?:^|\s)docker(?:\s+buildx)?\s+build(?:\s|$)/u.test(normalized)) {
     return poison("docker build");
-  }
-  if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
-    return sandboxCreated
-      ? { status: 0, stdout: "Name: " + sandboxName + "\nId: sbx-managed-fixture\n", stderr: "" }
-      : { status: 1, stdout: "", stderr: "sandbox not found" };
   }
   if (argv[0] === "docker" && argv[1] === "volume") {
     const volumeName = argv.at(-1);
@@ -449,18 +456,28 @@ runner.run = (command, options = {}) => {
       return { status: 0, stdout: volumeName + "\n", stderr: "" };
     }
   }
-  return { status: 0, stdout: "", stderr: "" };
+  return createdSandbox.run(command) ?? { status: 0, stdout: "", stderr: "" };
 };
 runner.runFile = (file, args = []) => runner.run([file, ...args]);
 runner.runCapture = (command) => {
   const normalized = normalize(command);
   runnerCommands.push(normalized);
-  if (normalized.includes("sandbox get") && normalized.includes(sandboxName)) {
-    return sandboxCreated
-      ? "Name: " + sandboxName + "\nId: " + sandboxName + "-id\nState: Ready"
-      : "";
+  const createdIdentity = createdSandbox.capture(command);
+  if (createdIdentity !== null) return createdIdentity;
+  if (normalized.includes("policy get") && normalized.includes("--output json")) {
+    return JSON.stringify({
+      scope: "sandbox",
+      sandbox: sandboxName,
+      status: "effective",
+      policy_source: "sandbox",
+      hash: "fixture-policy",
+      active_version: 1,
+      policy: {},
+    });
   }
-  if (normalized.includes("sandbox list")) return sandboxName + " Ready";
+  if (normalized.includes("gateway info")) {
+    return "Gateway endpoint: http://127.0.0.1:8080";
+  }
   if (normalized.includes("forward list")) {
     return sandboxName + " 127.0.0.1 18789 23189 running";
   }
@@ -481,6 +498,8 @@ runner.runCapture = (command) => {
 };
 runner.runCaptureEx = (command) => {
   const normalized = normalize(command);
+  const globalPolicyHistory =
+    normalized.includes("policy list") && normalized.includes("--global");
   const sandboxPolicy = {
     scope: "sandbox",
     sandbox: sandboxName,
@@ -488,16 +507,17 @@ runner.runCaptureEx = (command) => {
     policy_source: "sandbox",
     policy: {},
   };
-  const stdout = normalized.includes("policy list") && normalized.includes("--global")
+  const stdout = globalPolicyHistory
     ? ""
     : normalized.includes("policy get")
       ? JSON.stringify(sandboxPolicy)
       : runner.runCapture(command);
-  return { status: 0, stdout, stderr: "", exitCode: 0, timedOut: false };
+  const stderr = globalPolicyHistory ? "No global policy history found\n" : "";
+  return { status: 0, stdout, stderr, exitCode: 0, timedOut: false };
 };
 
 const registry = require(${source("src/lib/state/registry.ts")});
-const sourceEntry = recreate ? {
+const sourceEntry = recreate ? fixtureMocks.managedSandboxPolicyReceiptFixture({
   name: sandboxName,
   agent: "hermes",
   gpuEnabled: false,
@@ -505,7 +525,6 @@ const sourceEntry = recreate ? {
   imageTag: catalogTemplate.hermes.reference,
   model,
   provider,
-  policyAuthority: "nemoclaw-managed",
   toolDisclosure: "progressive",
   workload: {
     schemaVersion: 1,
@@ -522,7 +541,7 @@ const sourceEntry = recreate ? {
     credentialProxyReplayRequired: true,
     shared: true,
   },
-} : null;
+}, { sandboxName, sandboxId: createdSandbox.state.sandboxId }) : null;
 registry.getSandbox = () => registeredSandbox ?? (existingEntryAvailable ? sourceEntry : null);
 registry.getDefault = () => null;
 registry.listExtraProviders = () => [];
@@ -534,6 +553,17 @@ registry.registerSandbox = (entry) => {
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
 registry.removeSandbox = () => true;
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName,
+  provider,
+  model,
+  preferredInferenceApi: "openai-completions",
+  getSandbox: registry.getSandbox,
+  registerSandbox: (entry) => {
+    registerCalls.push(entry);
+    registeredSandbox = entry;
+  },
+});
 
 const preflight = require(${source("src/lib/onboard/preflight.ts")});
 preflight.checkPortAvailable = async () => ({ ok: true });
@@ -546,7 +576,13 @@ childProcess.spawn = (command, args = [], options = {}) => {
   if (/(?:^|\s)docker(?:\s+buildx)?\s+build(?:\s|$)/u.test(normalized)) {
     return poison("docker build");
   }
-  if (normalized.includes("sandbox create")) sandboxCreated = true;
+  if (normalized.includes("sandbox create")) {
+    if (createdSandbox.state.lifecycleState === "deleted") {
+      createdSandbox.recreate([command, ...argv]);
+    } else {
+      createdSandbox.create([command, ...argv]);
+    }
+  }
   spawnCalls.push({ command: String(command), args: argv });
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -567,15 +603,24 @@ const { createSandbox } = require(${source("src/lib/onboard.ts")});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   await createSandbox(
-    null,
-    model,
-    provider,
-    "openai-completions",
-    sandboxName,
-    null,
-    [],
-    null,
-    loadAgent(agentName),
+    ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+      [
+        null,
+        model,
+        provider,
+        "openai-completions",
+        sandboxName,
+        null,
+        [],
+        null,
+        loadAgent(agentName),
+        null,
+        null,
+        null,
+        [],
+      ],
+      createFixture,
+    ),
   );
   console.log(JSON.stringify({
     agent: agentName,
@@ -584,6 +629,7 @@ const { createSandbox } = require(${source("src/lib/onboard.ts")});
     managedBootstrapCalls,
     registerCalls,
     runnerCommands,
+    sandboxId: createdSandbox.state.sandboxId,
     spawnCalls,
   }));
 })().catch((error) => {
@@ -601,8 +647,8 @@ function writeRuntimeStubs(fakeBin: string, dockerLog: string): void {
       'if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then',
       '  printf "%s\\n" "openshell 0.0.96"',
       "fi",
-      'if [ "${1:-}" = "sandbox" ] && [ "${2:-}" = "get" ]; then',
-      '  printf "Sandbox:\\n\\n  Id: fixture-managed-sandbox\\n  Name: %s\\n  Phase: Ready\\n" "${!#}"',
+      'if [ "${1:-}" = "policy" ] && [ "${2:-}" = "list" ] && [[ " $* " = *" --global "* ]]; then',
+      '  printf "%s\\n" "No global policy history found" >&2',
       "fi",
       "exit 0",
       "",
@@ -834,6 +880,9 @@ function assertManagedLaunch(
     )}`,
   ).toBeDefined();
   expect(registration?.agent).toBe(agent);
+  expect(registration?.lifecycleLiveIdentityFingerprint).toBe(
+    createHash("sha256").update(result.payload.sandboxId).digest("hex"),
+  );
   if (agent === "langchain-deepagents-code") {
     expect(registration?.dashboardPort).toBe(0);
   }

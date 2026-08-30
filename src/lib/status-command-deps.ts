@@ -25,7 +25,7 @@ import {
 import type { MessagingAgentId } from "./messaging/manifest";
 import { resolveGatewayName } from "./onboard/gateway-binding";
 import { classifyHermesPortableRegistry } from "./onboard/experimental/hermes-portable-onboarding";
-import { inspectPortableAgentReceiptAuthority } from "./onboard/experimental/hermes-portable-receipt";
+import { inspectPortableAgentReceiptAuthorityForClassification } from "./onboard/experimental/hermes-portable-receipt";
 import { defaultPortableDemoStateDir } from "./onboard/experimental/portable-runtime-receipt-readiness";
 import { summarizeForDebug } from "./state/onboard-session";
 import * as registry from "./state/registry";
@@ -302,7 +302,7 @@ export function buildStatusCommandDeps(rootDir: string): ShowStatusCommandDeps {
     findMessagingOverlaps,
     readGatewayLog: (sandboxName) => readGatewayLog(rootDir, sandboxName),
     getHermesPortablePhase: (sandboxName) => {
-      const authority = inspectPortableAgentReceiptAuthority(
+      const authority = inspectPortableAgentReceiptAuthorityForClassification(
         sandboxName,
         defaultPortableDemoStateDir(process.env),
       );

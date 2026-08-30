@@ -93,6 +93,7 @@ const registryRoute = {
   preferredInferenceApi: "openai-completions",
   source: "registry",
 };
+registry.removeSandbox("recovered-custom");
 registry.registerSandbox({
   name: "recovered-custom",
   ...registryRoute,

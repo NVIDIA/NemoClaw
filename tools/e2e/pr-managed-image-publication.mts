@@ -26,9 +26,14 @@ const WORKFLOW_PATH = ".github/workflows/managed-images.yaml";
 const WORKFLOW_FILE = "managed-images.yaml";
 const WORKFLOW_NAME = "Images / Build, Test, and Publish Managed Images";
 const MAX_CHANGED_FILES = 3_000;
-const PAGE_SIZE = 100;
+const MAX_COMMIT_TREE_ENTRIES = 100_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
+const TREE_ENTRY_MODES = new Map([
+  ["blob", new Set(["100644", "100755", "120000"])],
+  ["commit", new Set(["160000"])],
+  ["tree", new Set(["040000"])],
+]);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -54,6 +59,13 @@ function positiveInteger(value: unknown, label: string): number {
 
 function exactString(value: unknown, expected: string, label: string): void {
   if (value !== expected) throw new Error(`${label} must be ${expected}`);
+}
+
+function sha(value: unknown, label: string): string {
+  if (typeof value !== "string" || !SHA_PATTERN.test(value)) {
+    throw new Error(`${label} must be a lowercase 40-character SHA`);
+  }
+  return value;
 }
 
 function compileManagedImagePath(pattern: string): RegExp {
@@ -241,49 +253,71 @@ function validateWorkflow(payload: unknown): number {
   return id;
 }
 
+async function readCommitTree(
+  revision: string,
+  label: string,
+  request: (path: string) => Promise<unknown>,
+): Promise<Map<string, string>> {
+  const commit = record(
+    await request(`/repos/${REPOSITORY}/git/commits/${revision}`),
+    `${label} commit`,
+  );
+  exactString(commit.sha, revision, `${label} commit SHA`);
+  const treeSha = sha(record(commit.tree, `${label} commit tree`).sha, `${label} tree SHA`);
+  const payload = record(
+    await request(`/repos/${REPOSITORY}/git/trees/${treeSha}?recursive=1`),
+    `${label} tree`,
+  );
+  exactString(payload.sha, treeSha, `${label} tree SHA`);
+  if (payload.truncated !== false) {
+    throw new Error(`${label} commit tree is truncated`);
+  }
+  if (!Array.isArray(payload.tree) || payload.tree.length > MAX_COMMIT_TREE_ENTRIES) {
+    throw new Error(`${label} commit tree is invalid or exceeds the entry limit`);
+  }
+
+  const entries = new Map<string, string>();
+  const paths = new Set<string>();
+  for (const value of payload.tree) {
+    const entry = record(value, `${label} tree entry`);
+    if (typeof entry.path !== "string" || entry.path.length === 0) {
+      throw new Error(`${label} tree entry path is invalid`);
+    }
+    if (paths.has(entry.path)) throw new Error(`${label} commit tree contains duplicate paths`);
+    paths.add(entry.path);
+    const validModes =
+      typeof entry.type === "string" ? TREE_ENTRY_MODES.get(entry.type) : undefined;
+    if (!validModes) {
+      throw new Error(`${label} tree entry type is invalid`);
+    }
+    if (typeof entry.mode !== "string" || !validModes.has(entry.mode)) {
+      throw new Error(`${label} tree entry mode is invalid`);
+    }
+    const entrySha = sha(entry.sha, `${label} tree entry SHA`);
+    if (entry.type === "tree") continue;
+    entries.set(entry.path, `${entry.mode}:${entry.type}:${entrySha}`);
+  }
+  return entries;
+}
+
 async function readChangedFiles(
-  prNumber: number,
-  count: number,
+  input: { readonly baseSha: string; readonly candidateSha: string },
   request: (path: string) => Promise<unknown>,
 ): Promise<string[]> {
-  if (!Number.isSafeInteger(count) || count < 0 || count > MAX_CHANGED_FILES) {
-    throw new Error("PR changed-file count is invalid");
+  const baseTree = await readCommitTree(input.baseSha, "PR base", request);
+  const candidateTree = await readCommitTree(input.candidateSha, "PR candidate", request);
+  const changedFiles: string[] = [];
+  for (const changedPath of new Set([...baseTree.keys(), ...candidateTree.keys()])) {
+    if (baseTree.get(changedPath) === candidateTree.get(changedPath)) continue;
+    changedFiles.push(changedPath);
   }
-  const files: string[] = [];
-  let listedFiles = 0;
-  for (let page = 1; listedFiles < count; page += 1) {
-    if (page > Math.ceil(MAX_CHANGED_FILES / PAGE_SIZE)) {
-      throw new Error("PR changed-file pagination exceeded the safety cap");
-    }
-    const payload = await request(
-      `/repos/${REPOSITORY}/pulls/${prNumber}/files?per_page=${PAGE_SIZE}&page=${page}`,
-    );
-    if (!Array.isArray(payload) || payload.length === 0 || payload.length > PAGE_SIZE) {
-      throw new Error("PR changed-file page is invalid or incomplete");
-    }
-    for (const value of payload) {
-      const file = record(value, "PR changed file");
-      if (typeof file.filename !== "string") throw new Error("PR changed-file name is invalid");
-      files.push(file.filename);
-      if (file.previous_filename !== undefined) {
-        if (typeof file.previous_filename !== "string") {
-          throw new Error("PR previous changed-file name is invalid");
-        }
-        files.push(file.previous_filename);
-      }
-      listedFiles += 1;
-    }
-  }
-  if (listedFiles !== count) {
-    throw new Error("PR changed-file listing is incomplete");
-  }
-  return [...new Set(files)];
+  return changedFiles;
 }
 
 function validatePr(
   payload: unknown,
   expected: { readonly baseSha: string; readonly candidateSha: string; readonly prNumber: number },
-): number {
+): void {
   const pull = record(payload, "pull request");
   exactString(pull.state, "open", "pull request state");
   exactString(
@@ -307,7 +341,6 @@ function validatePr(
     REPOSITORY,
     "pull request source repository",
   );
-  return positiveInteger(pull.changed_files, "PR changed-file count");
 }
 
 /** Resolve and download the exact all-agent catalog before candidate code executes. */
@@ -329,11 +362,8 @@ export async function resolvePrManagedImageCatalog(
   }
   positiveInteger(input.prNumber, "PR number");
   if (!input.token) throw new Error("GITHUB_TOKEN is required");
-  const changedCount = validatePr(
-    await request(`/repos/${REPOSITORY}/pulls/${input.prNumber}`),
-    input,
-  );
-  const changedFiles = await readChangedFiles(input.prNumber, changedCount, request);
+  validatePr(await request(`/repos/${REPOSITORY}/pulls/${input.prNumber}`), input);
+  const changedFiles = await readChangedFiles(input, request);
   const patterns = parseManagedImagePullRequestPaths(input.workflowSource);
   if (!managedImagePublicationRequired(changedFiles, patterns)) return "not-required";
 
