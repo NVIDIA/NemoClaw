@@ -8,12 +8,10 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../../state/registry";
-import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../sandbox-create-intent-types";
 import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import {
   assertApfCreateIntent,
   bindRebuildPolicyProvidersToCreateArgs,
-  bindRebuildPolicyProvidersToCreateIntent,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
@@ -67,31 +65,6 @@ describe("rebuild policy provider handoff", () => {
       requiredNetworkPolicyPresetNames: ["wechat"],
       removedNetworkPolicyKeys: ["telegram", "googlechat_hermes"],
     });
-  });
-
-  it("adds exact credential-binding providers to the replacement create intent", () => {
-    const original = {
-      extraProviders: ["operator-provider"],
-    } as unknown as ResolvedSandboxCreateIntent;
-    const rebound = bindRebuildPolicyProvidersToCreateIntent(
-      original,
-      [
-        "version: 1",
-        "network_policies:",
-        "  managed_mcp:",
-        "    endpoints:",
-        "      - credential_binding:",
-        "          provider: mcp-provider",
-        "  duplicate_binding:",
-        "    endpoints:",
-        "      - credential_binding:",
-        "          provider: operator-provider",
-        "",
-      ].join("\n"),
-    );
-
-    expect(rebound.extraProviders).toEqual(["operator-provider", "mcp-provider"]);
-    expect(original.extraProviders).toEqual(["operator-provider"]);
   });
 
   it("adds missing live-policy providers to the final create arguments", () => {

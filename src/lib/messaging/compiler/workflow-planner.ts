@@ -447,6 +447,7 @@ export function markPlanChannelPendingRemoval(
           selected: false,
           configured: false,
           disabled: true,
+          pendingRemoval: true,
         }
       : channel,
   );
@@ -470,12 +471,12 @@ export function markPlanChannelPendingRemoval(
   });
 }
 
-export function retireUnconfiguredMessagingPlanChannels(
+export function retirePendingRemovalMessagingPlanChannels(
   plan: SandboxMessagingPlan,
 ): SandboxMessagingPlan {
   if (!Array.isArray(plan.channels)) return plan;
   return plan.channels
-    .filter((channel) => !channel.configured)
+    .filter((channel) => channel.pendingRemoval === true)
     .reduce(
       (current, channel) => removePlanChannel(current, channel.channelId, current.workflow),
       plan,

@@ -12,6 +12,21 @@ const REBUILD_POLICY_HANDOFF_PREFIX = "nemoclaw-rebuild-policy-handoff";
 
 type PolicyMapping = Record<string, unknown>;
 
+function authorizedCredentialBindingProviders(
+  source: string,
+  replacementPolicy: InitialSandboxPolicy,
+): string[] {
+  const observed = getCredentialBindingProviders(source);
+  const authorized = new Set(replacementPolicy.credentialBindingProviders ?? []);
+  const unauthorized = observed.filter((provider) => !authorized.has(provider));
+  if (unauthorized.length > 0) {
+    throw new Error(
+      "Cannot prepare rebuild policy handoff: live policy references a credential provider outside the verified replacement plan.",
+    );
+  }
+  return observed;
+}
+
 function isPolicyMapping(value: unknown): value is PolicyMapping {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -237,7 +252,10 @@ export function materializeRebuildPolicyHandoff(input: {
       ...input.replacementPolicy,
       policyPath: input.livePolicyPath,
       appliedPresets: [],
-      credentialBindingProviders: getCredentialBindingProviders(liveSource),
+      credentialBindingProviders: authorizedCredentialBindingProviders(
+        liveSource,
+        input.replacementPolicy,
+      ),
       sourceBytes: Buffer.from(liveSource),
     };
   }
@@ -259,7 +277,10 @@ export function materializeRebuildPolicyHandoff(input: {
       ...input.replacementPolicy,
       policyPath,
       appliedPresets: [],
-      credentialBindingProviders: getCredentialBindingProviders(merged.source),
+      credentialBindingProviders: authorizedCredentialBindingProviders(
+        merged.source,
+        input.replacementPolicy,
+      ),
       sourceBytes: Buffer.from(merged.source),
       cleanup,
       cleanupExact: cleanup,

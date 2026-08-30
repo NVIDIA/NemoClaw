@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 
 import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
@@ -21,7 +20,6 @@ import type {
   QualifiedPendingSandboxCreateReservation,
 } from "../../state/registry";
 import type { HermesAuthMethod } from "../hermes-auth";
-import { getCredentialBindingProviders } from "../initial-policy";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
@@ -43,7 +41,6 @@ import type {
   VerifiedSandboxCreateEffectsContext,
   VerifiedSandboxCreateBoundary,
 } from "../types";
-import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../sandbox-create-intent-types";
 import * as sandboxCreatePlanMaterialization from "../sandbox-create-plan-materialization";
 import {
   pendingSandboxCreateIdentityForBoundary,
@@ -66,19 +63,6 @@ function cancelRecoveryIdentity(
   };
 }
 
-/** Attach every provider named by the exact rebuild policy during sandbox creation. */
-export function bindRebuildPolicyProvidersToCreateIntent(
-  intent: ResolvedSandboxCreateIntent,
-  policyContent: string,
-): ResolvedSandboxCreateIntent {
-  const policyProviders = getCredentialBindingProviders(policyContent);
-  if (policyProviders.length === 0) return intent;
-  return {
-    ...intent,
-    extraProviders: [...new Set([...intent.extraProviders, ...policyProviders])],
-  };
-}
-
 /** Finalize provider arguments from the exact policy that creation consumes. */
 export function bindRebuildPolicyProvidersToCreateArgs(
   createArgs: readonly string[],
@@ -96,15 +80,6 @@ export function bindRebuildPolicyProvidersToCreateArgs(
     attached.add(provider);
   }
   return result;
-}
-
-function bindRebuildPolicySourceProvidersToCreateIntent(
-  intent: ResolvedSandboxCreateIntent,
-  policySourcePath: string | undefined,
-): ResolvedSandboxCreateIntent {
-  return policySourcePath
-    ? bindRebuildPolicyProvidersToCreateIntent(intent, fs.readFileSync(policySourcePath, "utf8"))
-    : intent;
 }
 
 export function resolveRebuildMessagingPolicyDeltas(
@@ -1305,10 +1280,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
       },
     );
-    const resolvedCreateIntent = bindRebuildPolicySourceProvidersToCreateIntent(
-      preparedCreateIntent.intent,
-      createIntent?.rebuildPolicySourcePath,
-    );
+    const resolvedCreateIntent = preparedCreateIntent.intent;
     const messagingCapabilities = preparedCreateIntent.messagingCapabilities;
     const manageDashboard = sandboxGpuCreateFlow.shouldManageHermesPortableDashboard(
       dashboardRuntime.shouldManageDashboardForAgent(agent),

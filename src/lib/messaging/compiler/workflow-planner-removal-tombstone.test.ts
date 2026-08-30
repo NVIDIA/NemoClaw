@@ -5,8 +5,12 @@ import { describe, expect, it } from "vitest";
 
 import type { SandboxMessagingPlan } from "../manifest";
 import {
+  compactSandboxMessagingPlanForPersistence,
+  normalizePersistedSandboxMessagingPlanShape,
+} from "../persistence";
+import {
   markPlanChannelPendingRemoval,
-  retireUnconfiguredMessagingPlanChannels,
+  retirePendingRemovalMessagingPlanChannels,
 } from "./workflow-planner";
 
 function existingPlan(): SandboxMessagingPlan {
@@ -89,7 +93,7 @@ function existingPlan(): SandboxMessagingPlan {
 }
 
 describe("messaging channel removal tombstone", () => {
-  it("retains exact config removal through rebuild and retires it at registration", () => {
+  it("retains exact config removal through rebuild and retires only the marked channel", () => {
     const tombstone = markPlanChannelPendingRemoval(existingPlan(), "telegram");
 
     expect(tombstone.workflow).toBe("remove-channel");
@@ -98,6 +102,7 @@ describe("messaging channel removal tombstone", () => {
       selected: false,
       configured: false,
       disabled: true,
+      pendingRemoval: true,
     });
     expect(tombstone.disabledChannels).toContain("telegram");
     expect(tombstone.agentRender.some((entry) => entry.channelId === "telegram")).toBe(true);
@@ -107,9 +112,34 @@ describe("messaging channel removal tombstone", () => {
     expect(tombstone.networkPolicy.entries.some((entry) => entry.channelId === "telegram")).toBe(
       false,
     );
+    const persisted = compactSandboxMessagingPlanForPersistence(tombstone);
+    expect(persisted.channels.find((channel) => channel.channelId === "telegram")).toMatchObject({
+      pendingRemoval: true,
+    });
+    expect(
+      normalizePersistedSandboxMessagingPlanShape(
+        persisted as unknown as Parameters<typeof normalizePersistedSandboxMessagingPlanShape>[0],
+      ).channels.find((channel) => channel.channelId === "telegram"),
+    ).toMatchObject({ pendingRemoval: true });
 
-    const retired = retireUnconfiguredMessagingPlanChannels(tombstone);
-    expect(retired.channels.map((channel) => channel.channelId)).toEqual(["slack"]);
+    const retired = retirePendingRemovalMessagingPlanChannels({
+      ...tombstone,
+      channels: [
+        ...tombstone.channels,
+        {
+          channelId: "skipped",
+          displayName: "Skipped",
+          authMode: "token-paste",
+          active: false,
+          selected: true,
+          configured: false,
+          disabled: true,
+          inputs: [],
+          hooks: [],
+        },
+      ],
+    });
+    expect(retired.channels.map((channel) => channel.channelId)).toEqual(["slack", "skipped"]);
     expect(retired.disabledChannels).not.toContain("telegram");
     expect(retired.agentRender.some((entry) => entry.channelId === "telegram")).toBe(false);
   });

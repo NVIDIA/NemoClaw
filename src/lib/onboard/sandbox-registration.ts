@@ -12,7 +12,6 @@ import {
   normalizeInferenceSelection,
 } from "../inference/selection";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
-import { retireUnconfiguredMessagingPlanChannels } from "../messaging/compiler/workflow-planner";
 import * as onboardSession from "../state/onboard-session";
 import type { OpenClawImagePluginInstall } from "../state/openclaw-plugin-restore";
 import type { SandboxEntry, SandboxMcpState, SandboxMessagingState } from "../state/registry";
@@ -184,15 +183,9 @@ export function buildCreatedSandboxRegistryEntry(
     input.plannedMessagingState?.plan.sandboxName === input.sandboxName
       ? input.plannedMessagingState
       : undefined;
-  const retiredMessagingPlan = plannedMessagingState
-    ? retireUnconfiguredMessagingPlanChannels(plannedMessagingState.plan)
-    : undefined;
-  const messagingState =
-    plannedMessagingState && retiredMessagingPlan === plannedMessagingState.plan
-      ? plannedMessagingState
-      : retiredMessagingPlan
-        ? { schemaVersion: 1 as const, plan: retiredMessagingPlan }
-        : undefined;
+  // A pending removal is command-owned recovery state. Registration must
+  // preserve it until post-restore config cleanup and the registry update both succeed.
+  const messagingState = plannedMessagingState;
   const workload = cloneSandboxWorkloadReceipt(input.workload);
   if (input.workload !== undefined && workload === undefined) {
     throw new RuntimeProviderSelectionError(

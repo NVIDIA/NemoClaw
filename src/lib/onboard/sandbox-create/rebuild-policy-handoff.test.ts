@@ -270,4 +270,39 @@ network_policies:
     expect(fs.existsSync(handoff.policyPath)).toBe(false);
     expect(fs.existsSync(livePath)).toBe(true);
   });
+
+  it("rejects live credential bindings outside the verified replacement plan", () => {
+    const livePath = tempPolicy(
+      "live-provider.yaml",
+      `version: 1
+network_policies:
+  planned:
+    endpoints:
+      - credential_binding: {provider: planned-provider}
+  host_added:
+    endpoints:
+      - credential_binding: {provider: host-added-provider}
+`,
+    );
+    const replacementPath = tempPolicy(
+      "replacement-provider.yaml",
+      `version: 1
+network_policies:
+  planned:
+    endpoints:
+      - credential_binding: {provider: planned-provider}
+`,
+    );
+
+    expect(() =>
+      materializeRebuildPolicyHandoff({
+        livePolicyPath: livePath,
+        replacementPolicy: {
+          policyPath: replacementPath,
+          appliedPresets: [],
+          credentialBindingProviders: ["planned-provider"],
+        },
+      }),
+    ).toThrow("outside the verified replacement plan");
+  });
 });

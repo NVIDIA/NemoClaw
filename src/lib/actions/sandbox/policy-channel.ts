@@ -30,6 +30,7 @@ import {
   getMessagingManifestAvailabilityContext,
   isMessagingChannelSupportedByAgent,
   isMessagingHookConflictError,
+  markPlanChannelPendingRemoval,
   MessagingHostStateApplier,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
@@ -1845,7 +1846,16 @@ async function removeSandboxChannelUnlocked(
 
   const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(registryEntry);
   let disabledAgentConfigPlan: SandboxMessagingPlan | null = null;
-  if (
+  let removalPlanPersisted = false;
+  const existingPlan = registryEntry?.messaging?.plan;
+  const existingRemoval = existingPlan?.channels.some(
+    (candidate) => candidate.channelId === canonical && candidate.pendingRemoval === true,
+  );
+  if (existingPlan && existingRemoval) {
+    disabledAgentConfigPlan = existingPlan;
+    removalPlanPersisted = true;
+    removeDisabledChannelAgentConfigOrExit(sandboxName, canonical, existingPlan);
+  } else if (
     registryEntry?.messaging?.plan &&
     configuredChannels.includes(canonical) &&
     !registry.getDisabledChannels(sandboxName).includes(canonical)
@@ -1855,8 +1865,14 @@ async function removeSandboxChannelUnlocked(
       console.error(`  Could not mark '${canonical}' disabled before removing it.`);
       process.exit(1);
     }
-    disabledAgentConfigPlan = disabledPlan;
-    removeDisabledChannelAgentConfigOrExit(sandboxName, canonical, disabledPlan);
+    const removalPlan = markPlanChannelPendingRemoval(disabledPlan, canonical);
+    if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, removalPlan)) {
+      console.error(`  ${YW}⚠${R} Could not persist messaging removal for '${sandboxName}'.`);
+      process.exit(1);
+    }
+    disabledAgentConfigPlan = removalPlan;
+    removalPlanPersisted = true;
+    removeDisabledChannelAgentConfigOrExit(sandboxName, canonical, disabledAgentConfigPlan);
   }
 
   if (!removeChannelPresetIfPresent(sandboxName, canonical)) {
@@ -1887,7 +1903,7 @@ async function removeSandboxChannelUnlocked(
     console.log(`  ${G}✓${R} Removed ${canonical} channel.`);
   }
 
-  if (!(await persistManifestChannelRemovePlan(sandboxName, canonical))) {
+  if (!removalPlanPersisted && !(await persistManifestChannelRemovePlan(sandboxName, canonical))) {
     console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
     process.exit(1);
   }

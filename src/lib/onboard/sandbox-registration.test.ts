@@ -188,7 +188,10 @@ describe("buildCreatedSandboxRegistryEntry", () => {
   it("records the final created sandbox metadata with configured messaging channels", () => {
     const plannedMessagingState = {
       schemaVersion: 1 as const,
-      plan: { sandboxName: "demo" },
+      plan: {
+        sandboxName: "demo",
+        channels: [{ channelId: "telegram", configured: false, pendingRemoval: true }],
+      },
     };
     const openclawImagePluginInstalls = [
       {
@@ -273,6 +276,10 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       openclawImagePluginInstalls[0]?.loadPaths,
     );
     expect(entry.messaging).toBe(plannedMessagingState);
+    expect(entry.messaging?.plan.channels[0]).toMatchObject({
+      channelId: "telegram",
+      pendingRemoval: true,
+    });
     const rawEntry = entry as unknown as Record<string, unknown>;
     expect(rawEntry.messagingChannels).toBeUndefined();
     expect(rawEntry.messagingChannelConfig).toBeUndefined();

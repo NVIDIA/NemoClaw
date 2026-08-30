@@ -29,6 +29,7 @@ function removalPlan(): SandboxMessagingPlan {
         selected: false,
         configured: false,
         disabled: true,
+        pendingRemoval: true,
         inputs: [],
         hooks: [],
       },
@@ -72,5 +73,16 @@ describe("post-restore messaging removal", () => {
     expect(finalized?.channels).toEqual([]);
     expect(finalized?.disabledChannels).toEqual([]);
     expect(finalized?.agentRender).toEqual([]);
+  });
+
+  it("keeps the exact tombstone retryable after a cleanup failure", () => {
+    mocks.runOpenshell.mockImplementationOnce(() => ({ status: 1, stderr: "read failed" }));
+    mocks.runOpenshell.mockImplementationOnce(() => ({ status: 1, stderr: "not absent" }));
+    expect(() => finalizePendingMessagingRemovalsAfterRestore(removalPlan(), vi.fn())).toThrow(
+      "Failed to read messaging agent config",
+    );
+
+    const finalized = finalizePendingMessagingRemovalsAfterRestore(removalPlan(), vi.fn());
+    expect(finalized?.channels).toEqual([]);
   });
 });

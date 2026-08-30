@@ -14,6 +14,7 @@ const POLICY_SHADOW_FIELDS = [
   "policies",
   "policyAuthority",
   "policyCreationReceipt",
+  "pendingPolicyVerification",
   "policyPresetsFinalized",
   "policyTier",
 ] as const;

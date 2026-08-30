@@ -266,7 +266,6 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
       "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
-      "test/inference/managed/pi-candidate-pr-publication-workflow.test.ts",
       "test/e2e-runtime/pull-public-exact-digest.test.ts",
     ]);
     expect(triggeredBy("test/e2e/live/managed-image-activation-e2e-helpers.ts")).toEqual([

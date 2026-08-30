@@ -34,7 +34,7 @@ export type PersistedSandboxMessagingInputReference = Pick<
 
 export type PersistedSandboxMessagingChannelPlan = Pick<
   SandboxMessagingChannelPlan,
-  "channelId" | "configured" | "disabled"
+  "channelId" | "configured" | "disabled" | "pendingRemoval"
 > & {
   readonly inputs?: readonly PersistedSandboxMessagingInputReference[];
 } & Partial<
@@ -95,6 +95,7 @@ export function compactSandboxMessagingPlanForPersistence(
       active: channel.active,
       configured: channel.configured,
       disabled: channel.disabled,
+      ...(channel.pendingRemoval === true ? { pendingRemoval: true } : {}),
       inputs: channel.inputs
         .flatMap((input) => {
           const compact: PersistedSandboxMessagingInputReference = {
@@ -219,6 +220,7 @@ function normalizePersistedChannel(
     selected: channel.selected ?? configured,
     configured,
     disabled,
+    ...(channel.pendingRemoval === true ? { pendingRemoval: true } : {}),
     inputs,
     ...(hostForward ? { hostForward } : {}),
     hooks: Array.isArray(channel.hooks) ? [...channel.hooks] : [],

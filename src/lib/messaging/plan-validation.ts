@@ -68,6 +68,12 @@ export function parseSandboxMessagingPlan(
     }
     if (Object.hasOwn(channel, "active") && typeof channel.active !== "boolean") return null;
     if (Object.hasOwn(channel, "disabled") && typeof channel.disabled !== "boolean") return null;
+    if (
+      Object.hasOwn(channel, "pendingRemoval") &&
+      typeof channel.pendingRemoval !== "boolean"
+    ) {
+      return null;
+    }
     if (Object.hasOwn(channel, "inputs") && !Array.isArray(channel.inputs)) return null;
     if (Object.hasOwn(channel, "hostForward") && !isHostForward(channel.hostForward)) return null;
     if (Object.hasOwn(channel, "hooks") && !Array.isArray(channel.hooks)) return null;

@@ -10,7 +10,7 @@ import type {
 } from "../../messaging/applier/types";
 import type { MessagingHookOutputMap } from "../../messaging/hooks";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
-import { retireUnconfiguredMessagingPlanChannels } from "../../messaging/compiler/workflow-planner";
+import { retirePendingRemovalMessagingPlanChannels } from "../../messaging/compiler/workflow-planner";
 import type { SandboxEntry } from "../../state/registry";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-stage";
@@ -59,7 +59,7 @@ export function finalizePendingMessagingRemovalsAfterRestore(
 ): SandboxMessagingPlan | null {
   if (!plan) return null;
   const pendingRemovals = plan.channels.filter(
-    (channel) => channel.configured === false && channel.disabled === true,
+    (channel) => channel.pendingRemoval === true,
   );
   for (const channel of pendingRemovals) {
     const result = MessagingSetupApplier.removeDisabledChannelAgentConfigAtOpenShell(
@@ -71,7 +71,7 @@ export function finalizePendingMessagingRemovalsAfterRestore(
       `Retired messaging config for '${channel.channelId}' after restore: ${result.appliedTargets.join(",") || "no config target"}`,
     );
   }
-  return pendingRemovals.length > 0 ? retireUnconfiguredMessagingPlanChannels(plan) : plan;
+  return pendingRemovals.length > 0 ? retirePendingRemovalMessagingPlanChannels(plan) : plan;
 }
 
 function hookOutputsFromBuildSteps(

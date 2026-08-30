@@ -129,7 +129,7 @@ export async function applyAgentConfigAtOpenShell(
   };
 }
 
-/** Remove only one disabled channel's manifest-owned JSON config before plan retirement. */
+/** Remove only one disabled channel's manifest-owned config before plan retirement. */
 export function removeDisabledChannelAgentConfigAtOpenShell(
   plan: SandboxMessagingPlan,
   channelId: string,
@@ -138,26 +138,45 @@ export function removeDisabledChannelAgentConfigAtOpenShell(
   if (!plan.disabledChannels.includes(channelId)) {
     throw new Error(`Cannot remove active messaging channel config '${channelId}'.`);
   }
-  const disabledRender = plan.agentRender.filter(
-    (entry): entry is SandboxMessagingJsonRenderPlan =>
-      entry.channelId === channelId && entry.kind === "json-fragment",
-  );
+  const disabledRender = plan.agentRender.filter((entry) => entry.channelId === channelId);
   const appliedTargets: string[] = [];
   for (const [target, render] of groupRenderByTarget(disabledRender)) {
     const resolvedTarget = resolveSandboxAgentConfigTarget(target, plan.agent);
-    const existing = readSandboxFile(plan.sandboxName, resolvedTarget, options.runOpenshell);
-    if (existing === undefined) continue;
-    const contents = applyJsonFragments(
-      plan,
-      existing,
-      [],
-      render.filter(isJsonRender),
+    const kind = render[0]?.kind;
+    if (!kind || render.some((entry) => entry.kind !== kind)) {
+      throw new Error(`Cannot remove mixed messaging render kinds from ${target}.`);
+    }
+    const existing = readSandboxFileForRemoval(
+      plan.sandboxName,
       resolvedTarget,
+      options.runOpenshell,
     );
+    if (existing === undefined) continue;
+    const contents =
+      kind === "json-fragment"
+        ? applyJsonFragments(plan, existing, [], render.filter(isJsonRender), resolvedTarget)
+        : removeOwnedEnvLines(existing, render.filter(isEnvLinesRender));
     writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
     appliedTargets.push(resolvedTarget);
   }
   return { appliedTargets: uniqueStrings(appliedTargets) };
+}
+
+function removeOwnedEnvLines(
+  existing: string,
+  render: readonly SandboxMessagingEnvLinesRenderPlan[],
+): string {
+  const ownedKeys = new Set(
+    render.flatMap((entry) => entry.lines.map(readEnvLineKey).filter((key) => key !== null)),
+  );
+  const output = existing
+    .split(/\n/u)
+    .filter((line, index, lines) => line.length > 0 || index < lines.length - 1)
+    .filter((line) => {
+      const key = readEnvLineKey(line);
+      return key === null || !ownedKeys.has(key);
+    });
+  return output.length > 0 ? `${output.join("\n")}\n` : "";
 }
 
 /**
@@ -785,6 +804,24 @@ function readSandboxFile(
   });
   const status = result.status ?? 0;
   return status === 0 ? String(result.stdout ?? "") : undefined;
+}
+
+function readSandboxFileForRemoval(
+  sandboxName: string,
+  target: string,
+  runOpenshell: MessagingOpenShellRunner,
+): string | undefined {
+  const result = runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "cat", target], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if ((result.status ?? 0) === 0) return String(result.stdout ?? "");
+  const missing = runOpenshell(
+    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", 'test ! -e "$1"', "sh", target],
+    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if ((missing.status ?? 0) === 0) return undefined;
+  throw new Error(`Failed to read messaging agent config '${target}': ${compactOutput(result)}`);
 }
 
 function writeSandboxFile(

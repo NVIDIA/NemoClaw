@@ -282,6 +282,7 @@ describe("sandbox registry normalization", () => {
       baselineExclusions: [{ key: "npm", digest: "a".repeat(64) }],
       baselineExclusionTransition: { operation: "exclude" },
       policyCreationReceipt: { schemaVersion: 1 },
+      pendingPolicyVerification: { expectedHash: "legacy" },
     };
     const { home, registry } = await loadRegistryDocument({
       defaultSandbox: "alpha",
@@ -297,6 +298,7 @@ describe("sandbox registry normalization", () => {
         "baselineExclusionTransition",
         "policyAuthority",
         "policyCreationReceipt",
+        "pendingPolicyVerification",
         "policyPresetsFinalized",
         "policyTier",
       ]),

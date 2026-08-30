@@ -1860,7 +1860,7 @@ $$nemoclaw <name> logs --tail 50
 </AgentOnly>
 <AgentOnly variant="deepagents">
   If the host should be reachable, allow it with a built-in preset or apply a [reviewed custom
-  preset file](../network-policy/configure-policies/create-custom-policy-presets) from the host:
+  preset file](../network-policy/create-custom-policy-presets) from the host:
 </AgentOnly>
 
 ```bash
@@ -2500,10 +2500,16 @@ network_policies:
       - { path: /usr/bin/curl }
 ```
 
-Apply the preset to the running sandbox with the NemoClaw CLI:
+Preview the private-host trust pins and the exact binary, method, path, port, and access limits:
 
 ```bash
-$$nemoclaw my-assistant policy add --from-file ./host-memory-api.yaml
+$$nemoclaw my-assistant policy add --from-file ./host-memory-api.yaml --trusted-private-host 10.0.0.5 --dry-run
+```
+
+After reviewing the generated `allowed_ips`, apply the same bounded request:
+
+```bash
+$$nemoclaw my-assistant policy add --from-file ./host-memory-api.yaml --trusted-private-host 10.0.0.5
 ```
 
 After you apply the policy, retry the request from inside the sandbox without disabling the proxy:
