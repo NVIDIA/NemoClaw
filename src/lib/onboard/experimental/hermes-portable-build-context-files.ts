@@ -143,6 +143,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/patch-bundled-npm-tar.mts", mode: "100755" },
   { path: "scripts/runtime_state_mutation_hermes_publisher.py", mode: "100755" },
   { path: "scripts/runtime-state-mutation-control.py", mode: "100755" },
+  { path: "scripts/runtime-state-mutation-transport-broker.py", mode: "100755" },
   { path: "scripts/runtime-state-mutation-startup-gate.py", mode: "100755" },
   { path: "scripts/state-dir-guard.py", mode: "100755" },
   {

@@ -102,6 +102,8 @@ export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly sandboxGpuConfig: SandboxGpuConfig;
   readonly requiredLimits: readonly ManagedBootstrapRuntimeLimit[];
   readonly timeoutSecs: number;
+  /** Docker client authority used by the owning managed sandbox create. */
+  readonly dockerClientEnv: NodeJS.ProcessEnv;
   readonly onPatchFailure?: (error: unknown) => never;
   readonly network: {
     readonly inferenceProvider: string;

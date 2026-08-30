@@ -34,7 +34,7 @@ describe("rebuild web-search policy normalization", () => {
     ).toEqual(["npm", "tavily"]);
   });
 
-  it("removes both built-in providers for an authoritative disable", () => {
+  it("removes both built-in providers for an authoritative disable, except a tier egress default (#10404)", () => {
     expect(
       normalizeRebuildWebSearchPolicyPresets(
         ["npm", "brave", "tavily"],
@@ -42,7 +42,37 @@ describe("rebuild web-search policy normalization", () => {
         null,
       ),
     ).toEqual(["npm"]);
+    // Balanced and Open both default `brave` as tier egress, so a rebuild that
+    // declines web search keeps it and still drops `tavily`, which neither tier
+    // defaults.
+    expect(
+      normalizeRebuildWebSearchPolicyPresets(
+        ["npm", "brave", "tavily"],
+        { name: "alpha", agent: "openclaw", policyTier: "balanced" },
+        null,
+      ),
+    ).toEqual(["npm", "brave"]);
+    expect(
+      normalizeRebuildWebSearchPolicyPresets(
+        ["npm", "brave", "tavily"],
+        { name: "alpha", agent: "openclaw", policyTier: "open" },
+        null,
+      ),
+    ).toEqual(["npm", "brave"]);
   });
+
+  it.each(["hermes", "langchain-deepagents-code"])(
+    "removes OpenClaw-only brave from a Balanced-tier %s rebuild",
+    (agent) => {
+      expect(
+        normalizeRebuildWebSearchPolicyPresets(
+          ["npm", "brave"],
+          { name: "alpha", agent, policyTier: "balanced" },
+          null,
+        ),
+      ).toEqual(["npm"]);
+    },
+  );
 
   it("preserves DCode's standalone Tavily and excludes custom names from built-in replay", () => {
     expect(

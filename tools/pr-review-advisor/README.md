@@ -46,9 +46,11 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 
 `investigate-turn.mts` and `challenge-and-record-turn.mts` own the two normal turn contracts, including their prompts and tool configuration. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `artifacts.mts` owns artifact paths, and `render-result.mts` owns human-readable result output. `analyze.mts` composes these modules and runs the session.
 
-`tools/pr-review-advisor/openshell.mts` owns the advisor-specific prepare, create, run, download, and
-cleanup sequence. It uses the shared lifecycle and credential-boundary helpers in
-`tools/openshell-agent/runtime.mts`, which are also used by the merge-conflict fixer.
+`tools/pr-review-advisor/specialist-lifecycle.mts` owns the advisor-specific prepare, configure,
+complete, and cleanup sequence. `tools/pr-review-advisor/openshell.mts` exports its OpenShell
+primitives and exposes only sandbox runtime initialization as a CLI command. Both use the shared
+lifecycle and credential-boundary helpers in `tools/openshell-agent/runtime.mts`, which are also
+used by the merge-conflict fixer.
 
 Provider failures, timeouts, and invalid or missing atomic submission fail closed and leave canonical state unchanged. Failure results retain the reason, and workflow logs retain orchestration diagnostics.
 
@@ -155,18 +157,46 @@ artifact with `gh run download <run-id> --name pr-review-specialist-<interest>`.
 The publisher has the only pull-request write permission. It receives neither the model credential
 nor the specialist artifacts. It posts only the workflow-run link.
 
-## Manual run
+## Local run
+
+From a prepared contributor checkout, run:
 
 ```bash
-node --experimental-strip-types tools/pr-review-advisor/analyze.mts \
-  --base origin/main \
-  --head HEAD \
-  --schema tools/pr-review-advisor/schema.json \
-  --out-dir artifacts/pr-review-advisor
+npm run review:local
 ```
 
-For this direct local invocation outside the workflow's OpenShell wrapper, set
-`PR_REVIEW_ADVISOR_API_KEY` locally. Run `npm install` first so the Pi SDK dependency is available.
+The command snapshots the committed branch delta from `origin/main`, staged and unstaged final
+content, and nonignored untracked files. It runs every checked-in specialist separately through
+OpenShell. It writes each specialist's Markdown review and native JSONL session under
+`artifacts/pr-review-advisor-local/`. The command does not run tests, inspect CI state, use GitHub
+context, or combine findings. Test recommendations are advisory targets verified against the
+repository inventory, not executed test results.
+
+Prerequisites:
+
+- Node.js 22.19.0 or newer and npm registry access for the dependencies locked on `origin/main`;
+- an `origin/main` remote-tracking commit that contains the trusted local review implementation;
+- a running Docker-compatible container runtime. Run `npm run dev:doctor` to verify Docker availability and resources;
+- `git`, `openshell`, `openshell-gateway`, `openshell-sandbox`, `rg`, and `fdfind` available on `PATH`;
+- `PR_REVIEW_ADVISOR_API_KEY` exported in the host environment for the existing advisor provider.
+  The local gateway receives this credential. The sandbox does not receive it. The variable remains
+  in the caller environment until you clear it. The command removes the local gateway after the run.
+
+`npm run dev:doctor` checks general contributor readiness. It does not check these local-review
+executables, the advisor credential, or the `origin/main` ref.
+
+Running the npm script trusts the contributor checkout's `package.json` entry and built-in-only bootstrap.
+After that narrow entry boundary, the executable advisor checkout is detached at the resolved
+`origin/main` commit. Other branch changes, including advisor implementation, policy, specialist
+prompts, and `node_modules`, exist only in the read-only review snapshot. Before it reads the advisor
+credential or starts the implementation, the built-in-only bootstrap runs `npm ci --ignore-scripts
+--no-audit --no-fund` in the trusted checkout. npm uses the committed `origin/main` lockfile, normal
+cache behavior, and a credential-free environment with user and global npm configuration disabled.
+Failure stops the run before the credential-bearing advisor lifecycle starts.
+
+The command attempts to remove its temporary snapshot, trusted dependencies, gateway, and each
+sandbox after success, failure, or a handled termination signal. It reports cleanup failures with the
+remaining resource name or path. Remove that named resource before retrying.
 
 ## Output contract
 

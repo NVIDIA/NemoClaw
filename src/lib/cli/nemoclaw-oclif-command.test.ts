@@ -14,6 +14,8 @@ import {
   isMcpLifecycleLockHeld,
   withMcpLifecycleLock,
 } from "../state/mcp-lifecycle-lock-acquisition";
+import * as mcpLifecycleLock from "../state/mcp-lifecycle-lock-acquisition";
+import { getMcpLifecycleLockPath } from "../state/mcp-lifecycle-lock-storage";
 import { log } from "./logger";
 import { type CommandExitResult, NemoClawCommand } from "./nemoclaw-oclif-command";
 
@@ -335,7 +337,7 @@ describe("NemoClawCommand", () => {
           ),
         ).toBe(true);
         expect(isMcpLifecycleLockHeld(sandboxName)).toBe(true);
-        return { kind: "already-current", snapshot: {} as never };
+        return { kind: "already-current", snapshot: {} as never, assertCurrent: vi.fn() };
       });
     ProbeOnlyConnectCommand.operation = (sandboxName) => {
       portableAgentLifecycle.requalifyPortableAgentSandboxAuthority(sandboxName, {
@@ -533,5 +535,47 @@ describe("NemoClawCommand", () => {
     expect(fence).toHaveBeenCalledOnce();
     expect(classify).toHaveBeenCalledWith(expect.any(String), "use");
     expect(GlobalUseMutationCommand.ran).toBe(false);
+  });
+
+  it("recovers sandbox:destroy through the abandoned-timer deadline fence (#10066)", async () => {
+    vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
+      kind: "none",
+    });
+    fs.writeFileSync(
+      path.join(stateDir, "shields-timer-alpha.json"),
+      JSON.stringify({
+        pid: 2_147_483_647,
+        sandboxName: "alpha",
+        snapshotPath: path.join(stateDir, "snapshot.yaml"),
+        restoreAt: new Date(Date.now() - 1_000).toISOString(),
+        processToken: "d".repeat(32),
+      }),
+    );
+    const realLock = mcpLifecycleLock.withMcpLifecycleLock.bind(mcpLifecycleLock);
+    const lock = vi
+      .spyOn(mcpLifecycleLock, "withMcpLifecycleLock")
+      .mockImplementation((sandboxName, operation, options) =>
+        realLock(sandboxName, operation, {
+          ...options,
+          pollIntervalMs: 1,
+          timeoutMs: 5_000,
+          corruptLockGraceMs: 1,
+        }),
+      );
+
+    await expect(
+      ParsedUnsupportedSandboxCommand.run(["alpha"], process.cwd()),
+    ).resolves.toBeUndefined();
+
+    expect(lock).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Function),
+      expect.objectContaining({ recoverAbandonedExpiredTimer: true }),
+    );
+    expect(ParsedUnsupportedSandboxCommand.ran).toBe(true);
+    const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
+    expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
   });
 });

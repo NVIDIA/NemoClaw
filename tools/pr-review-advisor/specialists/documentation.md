@@ -7,6 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 
 Determine whether the intended reader can act correctly from the changed text.
 
-A good documentation review identifies the reader and the decision or task the text supports. It checks each changed claim against the implemented behavior and uses the repository term for each concept. It checks commands, examples, prerequisites, limits, failure guidance, and links when they affect the reader's action.
+Apply the trusted writing guide to the assigned explanatory text. Check commands, examples, prerequisites, limits, failure guidance, and links when they affect the reader's action.
 
-Report a finding when the text can lead the reader to take the wrong action, expect unsupported behavior, miss a required condition, or misunderstand a safety or support boundary. Explain the likely reading, the implemented behavior, and the wording change that makes the action clear.
+For a concern about an incorrect action, unsupported behavior, or a safety or support boundary, cite current repository evidence. State material uncertainty when the available context is incomplete. Do not require exhaustive proof, and do not turn missing evidence into a behavior claim.
