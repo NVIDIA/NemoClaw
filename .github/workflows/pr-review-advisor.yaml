@@ -117,7 +117,6 @@ jobs:
       FD_FIND_VERSION: "9.0.0-1"
       RIPGREP_VERSION: "14.1.0-1"
       OPENSHELL_GATEWAY_ENDPOINT: http://127.0.0.1:8080
-      PI_IMAGE: ghcr.io/nvidia/openshell-community/sandboxes/pi@sha256:00d0c5e9e733f94f6db3eaa2ab70d4fd75bcc4aace6b13a54535cbf2dd20dfcd
       PR_REVIEW_ADVISOR_TIMEOUT_MS: "900000"
       PR_REVIEW_ADVISOR_HEARTBEAT_MS: "60000"
       PR_REVIEW_ADVISOR_SANDBOX_TIMEOUT_SECONDS: "2100"
@@ -144,6 +143,9 @@ jobs:
           persist-credentials: false
           lfs: false
           submodules: false
+
+      - name: Load advisor runtime image
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/export-runtime-env.mts"
 
       # A dispatch without target_repo is maintainer-triggered and analyzes the
       # commit that supplied the trusted workflow. It is still treated as

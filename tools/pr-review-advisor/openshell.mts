@@ -249,13 +249,14 @@ export async function prepareAdvisorSandboxInputs(
 export async function configureAdvisorOpenShellInference(
   env: NodeJS.ProcessEnv,
   tools: OpenShellTools = defaultOpenShellTools,
-): Promise<void> {
-  await configureOpenShellInference(
+): Promise<() => Promise<void>> {
+  return configureOpenShellInference(
     env,
     {
       enableBindMounts: true,
       gatewayId: "pr-review-advisor",
       modelId: required(env.PR_REVIEW_ADVISOR_MODEL, "PR_REVIEW_ADVISOR_MODEL"),
+      ownGateway: true,
       providerName: "advisor",
     },
     tools,

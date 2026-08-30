@@ -155,18 +155,22 @@ artifact with `gh run download <run-id> --name pr-review-specialist-<interest>`.
 The publisher has the only pull-request write permission. It receives neither the model credential
 nor the specialist artifacts. It posts only the workflow-run link.
 
-## Manual run
+## Local run
+
+From a prepared contributor checkout, run:
 
 ```bash
-node --experimental-strip-types tools/pr-review-advisor/analyze.mts \
-  --base origin/main \
-  --head HEAD \
-  --schema tools/pr-review-advisor/schema.json \
-  --out-dir artifacts/pr-review-advisor
+npm run review:local
 ```
 
-For this direct local invocation outside the workflow's OpenShell wrapper, set
-`PR_REVIEW_ADVISOR_API_KEY` locally. Run `npm install` first so the Pi SDK dependency is available.
+The command snapshots the committed branch delta from `origin/main`, staged and unstaged final
+content, and nonignored untracked files. It runs every checked-in specialist separately through
+OpenShell. It writes each specialist's Markdown review and native JSONL session under
+`artifacts/pr-review-advisor-local/`. The command does not use GitHub context or combine findings.
+
+Run `npm install` first. Configure the existing advisor credential and OpenShell environment as
+reported by `npm run dev:doctor`. The command removes its temporary snapshot and each sandbox after
+success or failure.
 
 ## Output contract
 

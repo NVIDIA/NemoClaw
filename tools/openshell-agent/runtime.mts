@@ -27,7 +27,11 @@ export interface OpenShellStartOptions {
 
 export interface OpenShellTools {
   run: (command: string, args: readonly string[], options: OpenShellCommandOptions) => string;
-  start: (command: string, args: readonly string[], options: OpenShellStartOptions) => void;
+  start: (
+    command: string,
+    args: readonly string[],
+    options: OpenShellStartOptions,
+  ) => (() => Promise<void>) | void;
   wait: (milliseconds: number) => Promise<void>;
 }
 
@@ -35,6 +39,7 @@ export type OpenShellInferenceOptions = {
   enableBindMounts?: boolean;
   gatewayId: string;
   modelId: string;
+  ownGateway?: boolean;
   providerName: string;
 };
 
@@ -163,7 +168,7 @@ export const defaultOpenShellTools: OpenShellTools = {
     });
     return String(output ?? "").trim();
   },
-  start(command, args, options): void {
+  start(command, args, options): () => Promise<void> {
     const log = openSync(options.logPath, "w", 0o600);
     try {
       const child = spawn(command, [...args], {
@@ -173,6 +178,42 @@ export const defaultOpenShellTools: OpenShellTools = {
       });
       child.on("error", () => undefined);
       child.unref();
+      let cleanup: Promise<void> | undefined;
+      return () =>
+        (cleanup ??= (async () => {
+          if (child.pid === undefined) return;
+          const pid = child.pid;
+          const groupExists = (): boolean => {
+            try {
+              process.kill(-pid, 0);
+              return true;
+            } catch (error) {
+              if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
+              throw error;
+            }
+          };
+          const signalGroup = (signal: NodeJS.Signals): void => {
+            try {
+              process.kill(-pid, signal);
+            } catch (error) {
+              if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH")
+                throw error;
+            }
+          };
+          const waitForGroupExit = async (): Promise<boolean> => {
+            const deadline = Date.now() + 2000;
+            while (groupExists() && Date.now() < deadline) {
+              await new Promise((resolve) => setTimeout(resolve, 50));
+            }
+            return !groupExists();
+          };
+          if (!groupExists()) return;
+          signalGroup("SIGTERM");
+          if (await waitForGroupExit()) return;
+          signalGroup("SIGKILL");
+          if (await waitForGroupExit()) return;
+          throw new OpenShellAgentError(`Failed to stop owned process group ${pid}`);
+        })());
     } finally {
       closeSync(log);
     }
@@ -182,11 +223,21 @@ export const defaultOpenShellTools: OpenShellTools = {
   },
 };
 
+export function configureOpenShellInference(
+  env: NodeJS.ProcessEnv,
+  input: OpenShellInferenceOptions & { ownGateway: true },
+  tools?: OpenShellTools,
+): Promise<() => Promise<void>>;
+export function configureOpenShellInference(
+  env: NodeJS.ProcessEnv,
+  input: OpenShellInferenceOptions,
+  tools?: OpenShellTools,
+): Promise<void>;
 export async function configureOpenShellInference(
   env: NodeJS.ProcessEnv,
   input: OpenShellInferenceOptions,
   tools: OpenShellTools = defaultOpenShellTools,
-): Promise<void> {
+): Promise<void | (() => Promise<void>)> {
   validateIdentifier(input.gatewayId, "gatewayId");
   validateIdentifier(input.modelId, "modelId");
   validateIdentifier(input.providerName, "providerName");
@@ -220,54 +271,63 @@ export async function configureOpenShellInference(
     }),
     { mode: 0o600 },
   );
-  tools.start("openshell-gateway", ["--config", configurationPath], {
-    env: commandEnv,
-    logPath: path.join(gatewayDirectory, "gateway.log"),
-  });
+  const stopGateway =
+    tools.start("openshell-gateway", ["--config", configurationPath], {
+      env: commandEnv,
+      logPath: path.join(gatewayDirectory, "gateway.log"),
+    }) ?? (async () => undefined);
 
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    try {
-      tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
-      break;
-    } catch {
-      await tools.wait(1000);
+  try {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      try {
+        tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
+        break;
+      } catch {
+        await tools.wait(1000);
+      }
     }
-  }
-  tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
-  tools.run(
-    "openshell",
-    [
-      "provider",
-      "create",
-      "--name",
+    tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
+    tools.run(
+      "openshell",
+      [
+        "provider",
+        "create",
+        "--name",
+        input.providerName,
+        "--type",
+        "openai",
+        "--credential",
+        "OPENAI_API_KEY",
+        "--config",
+        "OPENAI_BASE_URL=https://inference-api.nvidia.com/v1",
+      ],
+      { env: providerEnv },
+    );
+    const inferenceArgs = [
+      "inference",
+      "set",
+      "--provider",
       input.providerName,
-      "--type",
-      "openai",
-      "--credential",
-      "OPENAI_API_KEY",
-      "--config",
-      "OPENAI_BASE_URL=https://inference-api.nvidia.com/v1",
-    ],
-    { env: providerEnv },
-  );
-  const inferenceArgs = [
-    "inference",
-    "set",
-    "--provider",
-    input.providerName,
-    "--model",
-    input.modelId,
-    "--timeout",
-    "900",
-  ] as const;
-  for (let attempt = 0; attempt < INFERENCE_CONFIGURATION_ATTEMPTS; attempt += 1) {
-    try {
-      tools.run("openshell", inferenceArgs, { env: commandEnv });
-      return;
-    } catch (error) {
-      if (attempt === INFERENCE_CONFIGURATION_ATTEMPTS - 1) throw error;
-      await tools.wait(inferenceConfigurationRetryDelay(env, input, attempt));
+      "--model",
+      input.modelId,
+      "--timeout",
+      "900",
+    ] as const;
+    for (let attempt = 0; attempt < INFERENCE_CONFIGURATION_ATTEMPTS; attempt += 1) {
+      try {
+        tools.run("openshell", inferenceArgs, { env: commandEnv });
+        return input.ownGateway ? stopGateway : undefined;
+      } catch (error) {
+        if (attempt === INFERENCE_CONFIGURATION_ATTEMPTS - 1) throw error;
+        await tools.wait(inferenceConfigurationRetryDelay(env, input, attempt));
+      }
     }
+    throw new OpenShellAgentError("OpenShell inference configuration did not complete");
+  } catch (error) {
+    try {
+      await stopGateway();
+    } catch {}
+    throw error;
   }
 }
 
