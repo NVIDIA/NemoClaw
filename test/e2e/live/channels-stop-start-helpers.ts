@@ -5,13 +5,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { AddSandboxChannelDependencies } from "../../../src/lib/actions/sandbox/policy-channel.ts";
-import * as policyChannelDependenciesModule from "../../../src/lib/actions/sandbox/policy-channel-dependencies.ts";
-import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-channel.ts";
-import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/runtime.ts";
-import * as credentialProviderRegistrationModule from "../../../src/lib/onboard/credential-provider-registration.ts";
-import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
-import * as statePathsModule from "../../../src/lib/state/paths.ts";
+import { policyChannelDependencies } from "../../../src/lib/actions/sandbox/policy-channel-dependencies.ts";
+import {
+  addSandboxChannel,
+  type AddSandboxChannelDependencies,
+} from "../../../src/lib/actions/sandbox/policy-channel.ts";
+import { runOpenshell } from "../../../src/lib/adapters/openshell/runtime.ts";
+import { credentialProviderRegistrationDependencies as onboardProviders } from "../../../src/lib/onboard/credential-provider-registration.ts";
+import { ensureMessagingBridgeProfiles } from "../../../src/lib/onboard/messaging-bridge-provider.ts";
+import { ROOT } from "../../../src/lib/state/paths.ts";
 import {
   assertCleanupSucceededOrAbsent,
   cleanupWhenOpenShellAvailable,
@@ -52,15 +54,6 @@ import {
 } from "./phase6-messaging-helpers.ts";
 import { parsePolicyPresetState } from "./policy-list-state.ts";
 
-type PolicyChannelModule = typeof import("../../../src/lib/actions/sandbox/policy-channel.ts");
-type PolicyChannelDependenciesModule =
-  typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts");
-type OpenshellRuntimeModule = typeof import("../../../src/lib/adapters/openshell/runtime.ts");
-type CredentialProviderRegistrationModule =
-  typeof import("../../../src/lib/onboard/credential-provider-registration.ts");
-type MessagingBridgeProviderModule =
-  typeof import("../../../src/lib/onboard/messaging-bridge-provider.ts");
-type StatePathsModule = typeof import("../../../src/lib/state/paths.ts");
 type ProviderUpsertOptions = {
   readonly replaceExisting?: boolean;
   readonly bestEffort?: boolean;
@@ -90,37 +83,6 @@ type OnboardProviderDependencies = {
     options?: ProviderUpsertOptions,
   ): string[];
 };
-
-const policyChannel = (
-  "default" in policyChannelModule ? policyChannelModule.default : policyChannelModule
-) as PolicyChannelModule;
-const { addSandboxChannel } = policyChannel;
-const policyChannelDependenciesNamespace = (
-  "default" in policyChannelDependenciesModule
-    ? policyChannelDependenciesModule.default
-    : policyChannelDependenciesModule
-) as PolicyChannelDependenciesModule;
-const { policyChannelDependencies } = policyChannelDependenciesNamespace;
-const openshellRuntime = (
-  "default" in openshellRuntimeModule ? openshellRuntimeModule.default : openshellRuntimeModule
-) as OpenshellRuntimeModule;
-const { runOpenshell } = openshellRuntime;
-const messagingBridgeProvider = (
-  "default" in messagingBridgeProviderModule
-    ? messagingBridgeProviderModule.default
-    : messagingBridgeProviderModule
-) as MessagingBridgeProviderModule;
-const { ensureMessagingBridgeProfiles } = messagingBridgeProvider;
-const credentialProviderRegistration = (
-  "default" in credentialProviderRegistrationModule
-    ? credentialProviderRegistrationModule.default
-    : credentialProviderRegistrationModule
-) as CredentialProviderRegistrationModule;
-const onboardProviders = credentialProviderRegistration.credentialProviderRegistrationDependencies;
-const statePaths = (
-  "default" in statePathsModule ? statePathsModule.default : statePathsModule
-) as StatePathsModule;
-const { ROOT } = statePaths;
 
 interface GooglechatLiveE2eComposition {
   readonly sandboxName: string;
