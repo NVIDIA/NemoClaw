@@ -134,7 +134,6 @@ function setupFixture(opts: {
           model: "nvidia/test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,
-          policies: [],
           dashboardPort: Number(port),
         },
       },

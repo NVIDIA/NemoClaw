@@ -15,12 +15,19 @@ import {
   readGatewayRegistryFile,
   registryEntryGatewayPort,
 } from "./gateway-registry";
+import {
+  listRetainedSandboxRecoveryRecords,
+  retainedSandboxRecoveryFile,
+  type RetainedSandboxRecoveryRecord,
+} from "./onboard-session/retained-sandbox-recovery";
 import { nemoclawStateRoot, resolveHome } from "./state-root";
 
 const MIGRATION_LOCK = ".gateway-state-migration.lock";
 const MIGRATION_INTENT = ".gateway-state-migration";
 const MIGRATION_INTENT_METADATA = "intent.json";
+const MIGRATION_INTENT_REMAINING_RECOVERY = "remaining-retained-sandbox-recovery.json";
 const MIGRATION_INTENT_SELECTED_REGISTRY = "selected-registry.json";
+const MIGRATION_INTENT_SELECTED_RECOVERY = "selected-retained-sandbox-recovery.json";
 const MIGRATION_INTENT_REMAINING_REGISTRY = "remaining-registry.json";
 const MIGRATION_INTENT_VERSION = 1;
 const MIGRATION_LOCK_STALE_MS = 10_000;
@@ -76,6 +83,13 @@ interface LegacyPortMigrationIntent {
   metadata: LegacyPortMigrationIntentMetadata;
   selectedRegistry: GatewayRegistryDocument;
   remainingRegistry: GatewayRegistryDocument | null;
+  selectedRecovery: RetainedRecoveryDocument | null;
+  remainingRecovery: RetainedRecoveryDocument | null;
+}
+
+interface RetainedRecoveryDocument {
+  schemaVersion: 1;
+  unresolved: readonly RetainedSandboxRecoveryRecord[];
 }
 
 function migrationError(message: string): Error {
@@ -162,6 +176,44 @@ function readJsonNoFollow(home: string, filePath: string): unknown | null {
   } finally {
     fs.closeSync(fd);
   }
+}
+
+function retainedRecoveryDocument(
+  records: readonly RetainedSandboxRecoveryRecord[],
+): RetainedRecoveryDocument {
+  return { schemaVersion: 1, unresolved: records };
+}
+
+function readRetainedRecoveryDocument(
+  home: string,
+  filePath: string,
+): RetainedRecoveryDocument | null {
+  if (!lstatNoFollow(home, filePath)) return null;
+  let records: readonly RetainedSandboxRecoveryRecord[];
+  try {
+    records = listRetainedSandboxRecoveryRecords(filePath);
+  } catch (error) {
+    throw migrationError(
+      `${filePath} is not valid retained sandbox recovery state: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  for (const record of records) {
+    const gatewayPort = resolveGatewayPortFromName(record.gatewayName);
+    if (gatewayPort === null || gatewayPort !== record.gatewayPort) {
+      throw migrationError(
+        `${filePath} record ${record.recordId} has conflicting gateway identity`,
+      );
+    }
+  }
+  return retainedRecoveryDocument(records);
+}
+
+function removeRetainedRecoveryFile(home: string, filePath: string): void {
+  const stat = lstatNoFollow(home, filePath);
+  if (!stat) return;
+  if (!stat.isFile()) throw migrationError(`${filePath} is not a regular file`);
+  fs.rmSync(filePath);
+  fsyncDirectory(path.dirname(filePath));
 }
 
 function firstSandboxName(sandboxes: Record<string, GatewayRegistryEntry>): string | null {
@@ -370,10 +422,19 @@ function readMigrationIntent(home: string, sharedRoot: string): LegacyPortMigrat
     rawMetadata.bundleEntries,
     "migration intent bundleEntries",
   );
+  const selectedRecovery = readRetainedRecoveryDocument(
+    home,
+    path.join(intentDir, MIGRATION_INTENT_SELECTED_RECOVERY),
+  );
+  const remainingRecovery = readRetainedRecoveryDocument(
+    home,
+    path.join(intentDir, MIGRATION_INTENT_REMAINING_RECOVERY),
+  );
   if (
     rawMetadata.rewriteLegacyRegistry !== selectedSandboxNames.length > 0 ||
     (rawMetadata.moveSession && rawMetadata.warnAmbiguousSession) ||
-    (selectedSandboxNames.length === 0 && !rawMetadata.moveSession)
+    (selectedSandboxNames.length === 0 && !rawMetadata.moveSession && !selectedRecovery) ||
+    (selectedRecovery === null) !== (remainingRecovery === null)
   ) {
     throw migrationError("migration intent has inconsistent ownership metadata");
   }
@@ -387,6 +448,13 @@ function readMigrationIntent(home: string, sharedRoot: string): LegacyPortMigrat
     if (!selectedNameSet.has(sandboxName)) {
       throw migrationError(`migration intent backup ${sandboxName} is not a selected sandbox`);
     }
+  }
+  if (
+    selectedRecovery?.unresolved.length === 0 ||
+    selectedRecovery?.unresolved.some((record) => record.gatewayPort !== gatewayPort) ||
+    remainingRecovery?.unresolved.some((record) => record.gatewayPort === gatewayPort)
+  ) {
+    throw migrationError("migration intent has inconsistent retained recovery ownership");
   }
 
   const selectedRegistryFile = path.join(intentDir, MIGRATION_INTENT_SELECTED_REGISTRY);
@@ -421,6 +489,17 @@ function readMigrationIntent(home: string, sharedRoot: string): LegacyPortMigrat
       }
     }
   }
+  if (
+    selectedRecovery === null &&
+    readRetainedRecoveryDocument(
+      home,
+      retainedSandboxRecoveryFile(sharedRoot),
+    )?.unresolved.some((record) => record.gatewayPort === gatewayPort)
+  ) {
+    throw migrationError(
+      "published migration intent predates retained recovery partitioning; retained recovery remains safely in the shared root",
+    );
+  }
 
   return {
     intentDir,
@@ -436,6 +515,8 @@ function readMigrationIntent(home: string, sharedRoot: string): LegacyPortMigrat
     },
     selectedRegistry,
     remainingRegistry,
+    selectedRecovery,
+    remainingRecovery,
   };
 }
 
@@ -445,6 +526,8 @@ function createMigrationIntent(
   metadata: LegacyPortMigrationIntentMetadata,
   selectedRegistry: GatewayRegistryDocument,
   remainingRegistry: GatewayRegistryDocument | null,
+  selectedRecovery: RetainedRecoveryDocument | null,
+  remainingRecovery: RetainedRecoveryDocument | null,
 ): LegacyPortMigrationIntent {
   const intentDir = path.join(sharedRoot, MIGRATION_INTENT);
   if (lstatNoFollow(home, intentDir)) {
@@ -454,6 +537,9 @@ function createMigrationIntent(
   }
   if (metadata.rewriteLegacyRegistry && !remainingRegistry) {
     throw migrationError("migration intent is missing its remaining legacy registry");
+  }
+  if ((selectedRecovery === null) !== (remainingRecovery === null)) {
+    throw migrationError("migration intent is missing its retained recovery partition");
   }
 
   ensureRealDirectory(home, sharedRoot);
@@ -472,6 +558,18 @@ function createMigrationIntent(
         home,
         path.join(preparingDir, MIGRATION_INTENT_REMAINING_REGISTRY),
         remainingRegistry,
+      );
+    }
+    if (selectedRecovery && remainingRecovery) {
+      writeJsonAtomic(
+        home,
+        path.join(preparingDir, MIGRATION_INTENT_SELECTED_RECOVERY),
+        selectedRecovery,
+      );
+      writeJsonAtomic(
+        home,
+        path.join(preparingDir, MIGRATION_INTENT_REMAINING_RECOVERY),
+        remainingRecovery,
       );
     }
     fsyncDirectory(preparingDir);
@@ -539,6 +637,22 @@ function applyMigrationIntent(
     writeJsonAtomic(home, legacyRegistryFile, intent.remainingRegistry);
   }
 
+  if (intent.selectedRecovery && intent.remainingRecovery) {
+    writeJsonAtomic(
+      home,
+      retainedSandboxRecoveryFile(selectedRoot),
+      intent.selectedRecovery,
+    );
+    if (intent.remainingRecovery.unresolved.length > 0) {
+      writeJsonAtomic(
+        home,
+        retainedSandboxRecoveryFile(sharedRoot),
+        intent.remainingRecovery,
+      );
+    } else {
+      removeRetainedRecoveryFile(home, retainedSandboxRecoveryFile(sharedRoot));
+    }
+  }
   migrateSandboxBackups(home, sharedRoot, selectedRoot, intent.metadata.sandboxBackupNames);
   if (intent.metadata.moveSession) {
     resumeMovePath(
@@ -628,6 +742,17 @@ function acquireDirectoryLock(home: string, lock: string): string {
   throw migrationError(`could not acquire ${lock}`);
 }
 
+function assertOnboardStateUnlocked(home: string, stateRoots: readonly string[]): void {
+  for (const stateRoot of stateRoots) {
+    const activeLock = path.join(stateRoot, "onboard.lock");
+    if (lstatNoFollow(home, activeLock)) {
+      throw migrationError(
+        `onboarding lock ${activeLock} is present; finish or stop that run before migrating state`,
+      );
+    }
+  }
+}
+
 /**
  * Partition pre-segregation state into the selected non-default gateway root.
  * Registry rows move only when their persisted canonical gateway identity is
@@ -669,6 +794,7 @@ export function migrateLegacyPortState(
     if (staleIntentDirectoriesExist) {
       const lock = acquireDirectoryLock(home, migrationLock);
       try {
+        assertOnboardStateUnlocked(home, [sharedRoot]);
         removeStaleMigrationIntentDirectories(home, sharedRoot);
       } finally {
         fs.rmSync(lock, { recursive: true, force: true });
@@ -682,10 +808,13 @@ export function migrateLegacyPortState(
   const legacyRegistry = readGatewayRegistryFile(home, legacyRegistryFile);
   const legacySessionFile = path.join(sharedRoot, "onboard-session.json");
   const legacySession = readJsonNoFollow(home, legacySessionFile);
+  const legacyRecoveryFile = retainedSandboxRecoveryFile(sharedRoot);
+  const legacyRecoveryExists = lstatNoFollow(home, legacyRecoveryFile) !== null;
   if (
     !pendingBeforeLock &&
     !legacyRegistry &&
     legacySession === null &&
+    !legacyRecoveryExists &&
     !staleIntentDirectoriesExist
   ) {
     return result;
@@ -694,6 +823,10 @@ export function migrateLegacyPortState(
   const lock = acquireDirectoryLock(home, migrationLock);
   const registryLocks: string[] = [];
   try {
+    // Onboard writers recheck the migration lock after claiming onboard.lock.
+    // Checking both roots while this lock is held closes the opposite side of
+    // the handshake and serializes session/recovery state with partitioning.
+    assertOnboardStateUnlocked(home, [sharedRoot, selectedRoot]);
     removeStaleMigrationIntentDirectories(home, sharedRoot);
     registryLocks.push(acquireDirectoryLock(home, `${legacyRegistryFile}.lock`));
     const pendingIntent = readMigrationIntent(home, sharedRoot);
@@ -727,6 +860,18 @@ export function migrateLegacyPortState(
     }
 
     const session = readJsonNoFollow(home, legacySessionFile);
+    const recovery = readRetainedRecoveryDocument(home, legacyRecoveryFile);
+    const selectedRecoveryRecords =
+      recovery?.unresolved.filter((record) => record.gatewayPort === gatewayPort) ?? [];
+    const remainingRecoveryRecords =
+      recovery?.unresolved.filter((record) => record.gatewayPort !== gatewayPort) ?? [];
+    const selectedRecovery =
+      selectedRecoveryRecords.length > 0
+        ? retainedRecoveryDocument(selectedRecoveryRecords)
+        : null;
+    const remainingRecovery = selectedRecovery
+      ? retainedRecoveryDocument(remainingRecoveryRecords)
+      : null;
     const recordedSessionPort =
       session === null ? null : sessionGatewayPort(session, registryPortsByName);
     const selectedNames = Object.keys(selectedEntries).sort();
@@ -736,7 +881,7 @@ export function migrateLegacyPortState(
       Object.keys(remainingEntries).length === 0 &&
       (session === null || sessionBelongsToSelected);
 
-    if (selectedNames.length === 0 && !sessionBelongsToSelected) return result;
+    if (selectedNames.length === 0 && !sessionBelongsToSelected && !selectedRecovery) return result;
 
     const entriesToMove: readonly LegacyBundleEntry[] = wholeLegacyBundleBelongsToSelected
       ? MIGRATABLE_BUNDLE_ENTRIES
@@ -745,12 +890,6 @@ export function migrateLegacyPortState(
         : [];
     let moveSession = false;
     if (sessionBelongsToSelected) {
-      const activeLock = path.join(sharedRoot, "onboard.lock");
-      if (lstatNoFollow(home, activeLock)) {
-        throw migrationError(
-          `legacy onboarding lock ${activeLock} is present; finish or stop that run first`,
-        );
-      }
       moveSession = preflightMovePath(
         home,
         legacySessionFile,
@@ -768,6 +907,13 @@ export function migrateLegacyPortState(
       if (preflightMovePath(home, path.join(sharedRoot, entry), path.join(selectedRoot, entry))) {
         bundleEntries.push(entry);
       }
+    }
+    if (selectedRecovery) {
+      preflightMovePath(
+        home,
+        legacyRecoveryFile,
+        retainedSandboxRecoveryFile(selectedRoot),
+      );
     }
 
     registryLocks.push(acquireDirectoryLock(home, `${selectedRegistryFile}.lock`));
@@ -798,6 +944,8 @@ export function migrateLegacyPortState(
       },
       selectedRegistry,
       remainingRegistry,
+      selectedRecovery,
+      remainingRecovery,
     );
     return applyMigrationIntent(
       home,

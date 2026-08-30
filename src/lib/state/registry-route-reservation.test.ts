@@ -8,12 +8,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { serializedHostLocalInferenceReceipt } from "../../../test/helpers/host-local-inference-receipt";
 import type { InferenceSelection } from "../inference/selection";
 import type { SandboxInferenceRouteReservationDisposition } from "./registry/route-reservation";
-
+import type { PendingSandboxCreateIdentity, SandboxEntry } from "./registry/types";
 function ownedReservation(disposition: SandboxInferenceRouteReservationDisposition) {
   expect(disposition.kind).toBe("owned");
   return (disposition as Extract<typeof disposition, { kind: "owned" }>).reservation;
 }
-
 const EXACT_ROUTE_SELECTION = {
   provider: "ollama-local",
   model: "qwen3-vl:4b",
@@ -25,14 +24,12 @@ const EXACT_ROUTE_SELECTION = {
   compatibleEndpointReasoningEffort: null,
   nimContainer: null,
 } as const;
-
 const EXACT_ROUTE_AUTHORITY = {
   sandboxName: "alpha",
   gatewayName: "nemoclaw",
   sessionId: "session-owner",
   selection: EXACT_ROUTE_SELECTION,
 } as const;
-
 const EXACT_ROUTE_RESERVATION = {
   name: EXACT_ROUTE_AUTHORITY.sandboxName,
   gatewayName: EXACT_ROUTE_AUTHORITY.gatewayName,
@@ -40,7 +37,46 @@ const EXACT_ROUTE_RESERVATION = {
   pendingRouteReservation: true as const,
   ...EXACT_ROUTE_SELECTION,
 };
-
+const LIFECYCLE_GENERATION = "123e4567-e89b-42d3-a456-426614174983";
+const LIVE_IDENTITY_FINGERPRINT = "a".repeat(64);
+function managedCheckpoint(
+  overrides: Partial<
+    Pick<
+      PendingSandboxCreateIdentity,
+      "gatewayPort" | "lifecycleGeneration" | "sandboxIdentityFingerprint" | "route"
+    >
+  > = {},
+): PendingSandboxCreateIdentity {
+  const boundary = {
+    gatewayPort: 8080,
+    lifecycleGeneration: LIFECYCLE_GENERATION,
+    sandboxIdentityFingerprint: LIVE_IDENTITY_FINGERPRINT,
+    route: "none" as const,
+    ...overrides,
+  };
+  return {
+    schemaVersion: 1,
+    state: "verified-create",
+    gatewayName: EXACT_ROUTE_AUTHORITY.gatewayName,
+    sandboxName: EXACT_ROUTE_AUTHORITY.sandboxName,
+    ...boundary,
+  };
+}
+function externalCheckpoint(
+  overrides: Partial<Pick<PendingSandboxCreateIdentity, "route">> = {},
+): PendingSandboxCreateIdentity {
+  return {
+    schemaVersion: 1,
+    state: "verified-create",
+    gatewayName: EXACT_ROUTE_AUTHORITY.gatewayName,
+    gatewayPort: 8080,
+    sandboxName: EXACT_ROUTE_AUTHORITY.sandboxName,
+    lifecycleGeneration: LIFECYCLE_GENERATION,
+    sandboxIdentityFingerprint: LIVE_IDENTITY_FINGERPRINT,
+    route: "none",
+    ...overrides,
+  };
+}
 function createdSandboxRegistrationInput(
   sandboxName: string,
   gatewayName: string,
@@ -67,7 +103,6 @@ function createdSandboxRegistrationInput(
       reference: null,
       shared: false as const,
     },
-    appliedPolicies: [],
     plannedMessagingState: undefined,
     hermesToolGateways: [],
     hermesDashboardState: { enabled: false, config: null },
@@ -76,7 +111,6 @@ function createdSandboxRegistrationInput(
     gatewayPort: 8080,
   };
 }
-
 const EXACT_QUALIFIED_ROUTE_RESERVATION = {
   name: EXACT_ROUTE_AUTHORITY.sandboxName,
   gatewayName: EXACT_ROUTE_AUTHORITY.gatewayName,
@@ -89,7 +123,6 @@ const EXACT_QUALIFIED_ROUTE_RESERVATION = {
   credentialEnv: EXACT_ROUTE_SELECTION.credentialEnv,
   preferredInferenceApi: EXACT_ROUTE_SELECTION.preferredInferenceApi,
 };
-
 function reserveQualifiedRoute(registry: typeof import("./registry")) {
   registry.reserveSandboxInferenceRoute(EXACT_ROUTE_AUTHORITY.sandboxName, {
     ...EXACT_ROUTE_SELECTION,
@@ -103,20 +136,37 @@ function reserveQualifiedRoute(registry: typeof import("./registry")) {
     ),
   );
 }
-
+function reserveQualifiedCreate(registry: typeof import("./registry")) {
+  const route = reserveQualifiedRoute(registry);
+  const create = registry.qualifyPendingSandboxCreateReservation(
+    EXACT_ROUTE_AUTHORITY,
+    registry.getSandbox(EXACT_ROUTE_AUTHORITY.sandboxName),
+  );
+  return { route, create };
+}
+function completedEntry(checkpoint: PendingSandboxCreateIdentity): SandboxEntry {
+  return {
+    name: EXACT_ROUTE_AUTHORITY.sandboxName,
+    ...EXACT_ROUTE_SELECTION,
+    agent: "hermes",
+    openshellDriver: "docker",
+    gatewayName: EXACT_ROUTE_AUTHORITY.gatewayName,
+    gatewayPort: checkpoint.gatewayPort,
+    lifecycleGeneration: checkpoint.lifecycleGeneration,
+    lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+  };
+}
 describe("sandbox inference route reservation", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
   });
-
   it("persists a complete route without claiming the default sandbox", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);
     vi.resetModules();
     try {
       const registry = await import("./registry");
-
       expect(
         registry.reserveSandboxInferenceRoute("alpha", {
           provider: "compatible-endpoint",
@@ -127,7 +177,6 @@ describe("sandbox inference route reservation", () => {
           gatewayName: "nemoclaw-9090",
         }),
       ).toBe(true);
-
       expect(registry.listSandboxes()).toMatchObject({
         defaultSandbox: null,
         sandboxes: [
@@ -153,7 +202,6 @@ describe("sandbox inference route reservation", () => {
       await fs.rm(home, { recursive: true, force: true });
     }
   });
-
   it.each([
     [
       "fresh Model Router route",
@@ -240,16 +288,12 @@ describe("sandbox inference route reservation", () => {
           "preferredInferenceApi",
         ] as const;
         expect(
-          routeKeys.filter(
-            (key) => reconstructedSelection[key] !== reservedSelection[key],
-          ),
+          routeKeys.filter((key) => reconstructedSelection[key] !== reservedSelection[key]),
         ).toEqual(["endpointSource"]);
-
         const registered = registerCreatedSandbox({
           ...createdSandboxRegistrationInput(sandboxName, gatewayName, reconstructedSelection),
           reservationSessionId: sessionId,
         });
-
         expect(registered).toMatchObject({
           ...reservedSelection,
           pendingRouteReservation: true,
@@ -261,7 +305,6 @@ describe("sandbox inference route reservation", () => {
       }
     },
   );
-
   it("rejects creation registration from a foreign reservation session and preserves the pending row (#10214)", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
     vi.stubEnv("HOME", home);
@@ -383,20 +426,22 @@ describe("sandbox inference route reservation", () => {
         credentialEnv: "CUSTOM_API_KEY",
         preferredInferenceApi: "openai-responses",
         gatewayName: "nemoclaw-9090",
+        reservationSessionId: "session-owner",
       } as const;
 
       registry.reserveSandboxInferenceRoute("alpha", {
         ...route,
         hostLocalInferenceReceipt: receipt,
       });
-      registry.reserveSandboxInferenceRoute("alpha", { ...route, model: "model-b" });
+      registry.reserveSandboxInferenceRoute("alpha", route);
 
       expect(registry.getSandbox("alpha")?.hostLocalInferenceReceipt).toBe(receipt);
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-owner")).toBe(true);
       const entry = registerCreatedSandbox({
         sandboxName: "alpha",
         inferenceSelection: {
           provider: route.provider,
-          model: "model-b",
+          model: route.model,
           endpointUrl: route.endpointUrl,
           endpointSource: null,
           credentialEnv: route.credentialEnv,
@@ -423,7 +468,6 @@ describe("sandbox inference route reservation", () => {
           reference: null,
           shared: false,
         },
-        appliedPolicies: [],
         plannedMessagingState: undefined,
         hermesToolGateways: [],
         hermesDashboardState: { enabled: false, config: null },
@@ -496,45 +540,6 @@ describe("sandbox inference route reservation", () => {
         pendingRouteReservation: true,
         reservationSessionId: "session-owner",
       });
-    } finally {
-      await fs.rm(home, { recursive: true, force: true });
-    }
-  });
-
-  it("transfers reservation ownership when a new session retargets the route (#6562)", async () => {
-    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
-    vi.stubEnv("HOME", home);
-    vi.resetModules();
-    try {
-      const registry = await import("./registry");
-      registry.reserveSandboxInferenceRoute("alpha", {
-        provider: "compatible-endpoint",
-        model: "model-a",
-        endpointUrl: "https://api.example.test/v1",
-        credentialEnv: "CUSTOM_API_KEY",
-        preferredInferenceApi: "openai-responses",
-        gatewayName: "nemoclaw",
-        reservationSessionId: "session-old",
-      });
-
-      registry.reserveSandboxInferenceRoute("alpha", {
-        provider: "compatible-endpoint",
-        model: "model-b",
-        endpointUrl: "https://api.example.test/v1",
-        credentialEnv: "CUSTOM_API_KEY",
-        preferredInferenceApi: "openai-responses",
-        gatewayName: "nemoclaw",
-        reservationSessionId: "session-new",
-      });
-
-      const reserved = registry.getSandbox("alpha");
-      expect(reserved).toMatchObject({
-        model: "model-b",
-        pendingRouteReservation: true,
-        reservationSessionId: "session-new",
-      });
-      expect(registry.isPendingReservationForSession(reserved, "session-new")).toBe(true);
-      expect(registry.isPendingReservationForSession(reserved, "session-old")).toBe(false);
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }
@@ -815,6 +820,7 @@ describe("sandbox inference route reservation", () => {
         gatewayName: "nemoclaw",
         reservationSessionId: "session-old",
       });
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-old")).toBe(true);
       registry.reserveSandboxInferenceRoute("alpha", {
         provider: "compatible-endpoint",
         model: "model-a",
@@ -884,18 +890,13 @@ describe("sandbox inference route reservation", () => {
     vi.resetModules();
     try {
       const registry = await import("./registry");
-      const qualified = reserveQualifiedRoute(registry);
+      const { route, create } = reserveQualifiedCreate(registry);
+      const checkpoint = managedCheckpoint();
+      registry.recordPendingSandboxCreateIdentity(create, checkpoint);
 
-      const registered = registry.registerSandbox(
-        {
-          name: "alpha",
-          ...EXACT_ROUTE_SELECTION,
-          agent: "hermes",
-          openshellDriver: "docker",
-          gatewayName: "nemoclaw",
-        },
-        qualified,
-      );
+      const registered = registry.registerSandbox(completedEntry(checkpoint), route, {
+        verifiedCreate: { reservation: create, checkpoint },
+      });
 
       expect(registered).toMatchObject({
         name: "alpha",
@@ -904,7 +905,199 @@ describe("sandbox inference route reservation", () => {
         agent: "hermes",
       });
       expect(registered.pendingRouteReservation).toBeUndefined();
+      expect(registered.pendingCreateIdentity).toBeUndefined();
       expect(registry.getSandbox("alpha")).toEqual(registered);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a verified create checkpoint non-authorizing and hidden until final publication (#9833)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-policy-checkpoint-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const { create } = reserveQualifiedCreate(registry);
+      const checkpoint = managedCheckpoint();
+
+      const pending = registry.recordPendingSandboxCreateIdentity(create, checkpoint);
+
+      expect(pending).toMatchObject({
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+        pendingCreateIdentity: checkpoint,
+        lifecycleGeneration: LIFECYCLE_GENERATION,
+        lifecycleLiveIdentityFingerprint: LIVE_IDENTITY_FINGERPRINT,
+      });
+      expect(pending).not.toHaveProperty("policyAuthority");
+      expect(pending).not.toHaveProperty("policyCreationReceipt");
+      expect(registry.getDefault()).toBeNull();
+      expect(() => registry.updateSandbox("alpha", { agent: "hermes" })).toThrow(
+        /verified create checkpoint is incomplete/u,
+      );
+      expect(registry.finalizeSandboxRouteReservation("alpha", "session-owner")).toBe(false);
+      expect(registry.finalizePendingSandboxRegistration("alpha")).toBe(false);
+      expect(registry.recordPendingSandboxCreateIdentity(create, checkpoint)).toEqual(pending);
+      expect(
+        registry.reserveSandboxInferenceRoute("alpha", {
+          ...EXACT_ROUTE_SELECTION,
+          gatewayName: "nemoclaw",
+          reservationSessionId: "session-owner",
+        }),
+      ).toBe(true);
+      expect(() =>
+        registry.reserveSandboxInferenceRoute("alpha", {
+          ...EXACT_ROUTE_SELECTION,
+          gatewayName: "nemoclaw",
+          openshellDriver: "kubernetes",
+          reservationSessionId: "session-owner",
+        }),
+      ).toThrow(/verified create checkpoint is incomplete/u);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rotates a checkpoint only from the exact old evidence and supports an exact retry (#9833)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-policy-checkpoint-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const { route, create } = reserveQualifiedCreate(registry);
+      const initial = managedCheckpoint({ route: "native" });
+      const replacement = managedCheckpoint({
+        route: "compatibility",
+        sandboxIdentityFingerprint: "b".repeat(64),
+      });
+      const initialEntry = registry.recordPendingSandboxCreateIdentity(create, initial);
+      const admittedCheckpoint = ownedReservation(
+        registry.classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, initialEntry),
+      );
+
+      const rotated = registry.recordPendingSandboxCreateIdentity(create, replacement, {
+        expected: initial,
+      });
+      expect(rotated.pendingCreateIdentity).toEqual(replacement);
+      expect(registry.isCurrentSandboxInferenceRouteReservation(route, rotated)).toBe(true);
+      expect(registry.isCurrentSandboxInferenceRouteReservation(admittedCheckpoint, rotated)).toBe(
+        false,
+      );
+      expect(() =>
+        registry.requireCurrentPendingSandboxCreateIdentity(create, initial),
+      ).toThrow(/verified checkpoint changed/u);
+      expect(
+        registry.recordPendingSandboxCreateIdentity(create, replacement, {
+          expected: initial,
+        }),
+      ).toEqual(rotated);
+      expect(() =>
+        registry.recordPendingSandboxCreateIdentity(create, initial, {
+          expected: initial,
+        }),
+      ).toThrow(/without exact authority/u);
+      expect(() =>
+        registry.recordPendingSandboxCreateIdentity(
+          {
+            ...create,
+            authority: { ...create.authority, sessionId: "another-session" },
+          },
+          replacement,
+        ),
+      ).toThrow(/incomplete verified sandbox create checkpoint/u);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("requires the exact durable checkpoint at final registration (#9833)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-policy-checkpoint-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const { route, create } = reserveQualifiedCreate(registry);
+      const checkpoint = managedCheckpoint();
+
+      expect(() => registry.registerSandbox(completedEntry(checkpoint), route)).toThrow(
+        /pending create identity/u,
+      );
+      registry.recordPendingSandboxCreateIdentity(create, checkpoint);
+      registry.removeSandbox("alpha");
+      expect(() =>
+        registry.registerSandbox(completedEntry(checkpoint), route, {
+          verifiedCreate: { reservation: create, checkpoint },
+        }),
+      ).toThrow(/verified create checkpoint changed/u);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a second route reservation authority at final registration (#9833)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-policy-checkpoint-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const { route, create } = reserveQualifiedCreate(registry);
+      const checkpoint = managedCheckpoint();
+      registry.recordPendingSandboxCreateIdentity(create, checkpoint);
+
+      expect(() =>
+        registry.registerSandbox(
+          completedEntry(checkpoint),
+          {
+            ...route,
+            authority: { ...route.authority, sessionId: "different-session" },
+          },
+          { verifiedCreate: { reservation: create, checkpoint } },
+        ),
+      ).toThrow(/different route reservation authority/u);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects stale external identity and partial lifecycle evidence at final registration (#9833)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-policy-checkpoint-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      const { route, create } = reserveQualifiedCreate(registry);
+      const checkpoint = externalCheckpoint();
+      registry.recordPendingSandboxCreateIdentity(create, checkpoint);
+
+      expect(() =>
+        registry.registerSandbox(completedEntry(checkpoint), route, {
+          verifiedCreate: {
+            reservation: create,
+            checkpoint: externalCheckpoint({ route: "native" }),
+          },
+        }),
+      ).toThrow(/verified create checkpoint changed/u);
+      expect(() =>
+        registry.registerSandbox(
+          {
+            ...completedEntry(checkpoint),
+            lifecycleGeneration: "223e4567-e89b-42d3-a456-426614174983",
+          },
+          route,
+          { verifiedCreate: { reservation: create, checkpoint } },
+        ),
+      ).toThrow(/requested lifecycle generation/u);
+      expect(() =>
+        registry.registerSandbox(
+          {
+            ...completedEntry(checkpoint),
+            lifecycleLiveIdentityFingerprint: "c".repeat(64),
+          },
+          route,
+          { verifiedCreate: { reservation: create, checkpoint } },
+        ),
+      ).toThrow(/requested lifecycle identity/u);
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }
@@ -956,30 +1149,21 @@ describe("sandbox inference route reservation", () => {
     vi.resetModules();
     try {
       const registry = await import("./registry");
-      const qualified = reserveQualifiedRoute(registry);
-      registry.reserveSandboxInferenceRoute("alpha", {
-        ...EXACT_ROUTE_SELECTION,
-        model: "another-model",
-        gatewayName: "nemoclaw",
-        reservationSessionId: "another-session",
-      });
-
+      const { create } = reserveQualifiedCreate(registry);
       expect(() =>
-        registry.registerSandbox(
-          {
-            name: "alpha",
-            ...EXACT_ROUTE_SELECTION,
-            agent: "hermes",
-            openshellDriver: "docker",
-            gatewayName: "nemoclaw",
-          },
-          qualified,
-        ),
-      ).toThrow("Cannot register a sandbox after its inference route reservation changed");
+        registry.reserveSandboxInferenceRoute("alpha", {
+          ...EXACT_ROUTE_SELECTION,
+          model: "another-model",
+          gatewayName: "nemoclaw",
+          reservationSessionId: "another-session",
+        }),
+      ).toThrow(/belongs to another onboarding session/u);
+      registry.recordPendingSandboxCreateIdentity(create, managedCheckpoint());
       expect(registry.getSandbox("alpha")).toMatchObject({
         pendingRouteReservation: true,
-        reservationSessionId: "another-session",
-        model: "another-model",
+        reservationSessionId: EXACT_ROUTE_AUTHORITY.sessionId,
+        model: EXACT_ROUTE_SELECTION.model,
+        pendingCreateIdentity: managedCheckpoint(),
       });
     } finally {
       await fs.rm(home, { recursive: true, force: true });
@@ -1025,9 +1209,6 @@ describe("sandbox inference route reservation qualification (#9203)", () => {
     const disposition = classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, {
       ...EXACT_QUALIFIED_ROUTE_RESERVATION,
       dashboardPort: 8080,
-      policies: ["github"],
-      policyPresetsFinalized: true,
-      policyTier: "personal",
       webSearchEnabled: false,
       webSearchProvider: null,
     });
@@ -1035,12 +1216,41 @@ describe("sandbox inference route reservation qualification (#9203)", () => {
     expect(disposition.kind).toBe("owned");
   });
 
+  it("recognizes only an exact verified-create checkpoint overlay as pending authority (#10423)", async () => {
+    const { classifySandboxInferenceRouteReservation, isCurrentSandboxInferenceRouteReservation } =
+      await import("./registry/route-reservation");
+    const admitted = ownedReservation(
+      classifySandboxInferenceRouteReservation(
+        EXACT_ROUTE_AUTHORITY,
+        EXACT_QUALIFIED_ROUTE_RESERVATION,
+      ),
+    );
+    const checkpoint = managedCheckpoint();
+    const pending = {
+      ...EXACT_QUALIFIED_ROUTE_RESERVATION,
+      gatewayPort: checkpoint.gatewayPort,
+      lifecycleGeneration: checkpoint.lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
+      pendingCreateIdentity: checkpoint,
+    };
+
+    expect(classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, pending).kind).toBe(
+      "owned",
+    );
+    expect(isCurrentSandboxInferenceRouteReservation(admitted, pending)).toBe(true);
+    expect(
+      classifySandboxInferenceRouteReservation(EXACT_ROUTE_AUTHORITY, {
+        ...pending,
+        gatewayPort: 8081,
+      }),
+    ).toMatchObject({
+      kind: "conflict",
+      detail: "the inference route reservation verified create checkpoint is malformed",
+    });
+  });
+
   it.each([
     ["invalid dashboard port", { dashboardPort: 0 }],
-    ["duplicate policies", { policies: ["github", "github"] }],
-    ["control character in a policy", { policies: ["github\u0000"] }],
-    ["control character in the policy tier", { policyTier: "personal\u0000" }],
-    ["non-boolean policy finalization", { policyPresetsFinalized: "yes" }],
     ["non-boolean web search state", { webSearchEnabled: "yes" }],
     ["unknown web search provider", { webSearchProvider: "unknown" }],
   ])("rejects %s in carried route metadata (#10056)", async (_case, updates) => {
@@ -1071,7 +1281,6 @@ describe("sandbox inference route reservation qualification (#9203)", () => {
         await import("./registry/route-reservation");
       const entry = {
         ...EXACT_QUALIFIED_ROUTE_RESERVATION,
-        policies: ["github"],
         ...updates,
       } as Parameters<typeof classifySandboxInferenceRouteReservation>[1];
 

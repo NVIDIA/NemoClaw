@@ -6,6 +6,7 @@ export * from "./exec";
 export * from "./pull";
 export * from "./info";
 export * from "./runtime";
+export * from "./client-isolation";
 export * from "./inspect";
 export * from "./image";
 export * from "./container";

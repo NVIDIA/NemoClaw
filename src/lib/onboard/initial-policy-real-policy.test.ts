@@ -121,6 +121,10 @@ describe("initial sandbox policy real preset merge", () => {
     MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
     MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
   ] as const;
+  const hermesRuntimeStateMutationControl = {
+    receipts: "/var/lib/nemoclaw/runtime-state-mutation",
+    startupHandoff: "/run/nemoclaw/runtime-state-mutation-startup",
+  } as const;
 
   it("covers the complete shipped managed startup trust policy matrix", () => {
     const policyIdentities = managedImagePolicyCases.map(
@@ -165,6 +169,26 @@ describe("initial sandbox policy real preset merge", () => {
       ).toEqual([]);
     },
   );
+
+  it.each([
+    ["agents/hermes/policy-additions.yaml", "restricted"],
+    ["agents/hermes/policy-permissive.yaml", "permissive"],
+  ])("grants the exact Hermes state-mutation control channels in the %s policy", (policyPath) => {
+    const effective = readPreparedPolicy(
+      prepareInitialSandboxCreatePolicy(repoPath(...policyPath.split("/")), [], {
+        agentName: "hermes",
+      }),
+    );
+    const readOnly = effective.filesystem_policy?.read_only ?? [];
+    const readWrite = effective.filesystem_policy?.read_write ?? [];
+
+    expect(readOnly).toContain(hermesRuntimeStateMutationControl.receipts);
+    expect(readWrite).not.toContain(hermesRuntimeStateMutationControl.receipts);
+    expect(readWrite).toContain(hermesRuntimeStateMutationControl.startupHandoff);
+    expect(readOnly).not.toContain(hermesRuntimeStateMutationControl.startupHandoff);
+    expect([...readOnly, ...readWrite]).not.toContain("/var/lib/nemoclaw");
+    expect([...readOnly, ...readWrite]).not.toContain("/run/nemoclaw");
+  });
 
   it.each(
     managedImagePolicyCases.flatMap((policyCase) =>
@@ -338,18 +362,22 @@ describe("initial sandbox policy real preset merge", () => {
       method: "DELETE",
       path: "/api/v*/guilds/*",
     });
-    const credentialEndpoints = (policy.network_policies?.discord?.endpoints ?? []).filter(
-      (endpoint) =>
-        endpoint.host === "discord.com" ||
-        endpoint.host === "gateway.discord.gg" ||
-        endpoint.host === "*.discord.gg",
+  });
+
+  it("keeps create-time messaging presets unbound until the channel is configured (#10273)", () => {
+    const prepared = prepareInitialSandboxCreatePolicy(
+      repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+      [],
+      {
+        agentName: "openclaw",
+        additionalPresets: ["discord"],
+        sandboxName: "discord-egress",
+      },
     );
-    expect(credentialEndpoints).toHaveLength(3);
-    expect(credentialEndpoints.map((endpoint) => endpoint.credential_binding?.provider)).toEqual([
-      "openclaw-discord-discord-bridge",
-      "openclaw-discord-discord-bridge",
-      "openclaw-discord-discord-bridge",
-    ]);
+    const endpoints = readPreparedPolicy(prepared).network_policies?.discord?.endpoints ?? [];
+
+    expect(endpoints.length).toBeGreaterThan(0);
+    expect(endpoints.every((endpoint) => endpoint.credential_binding === undefined)).toBe(true);
   });
 
   it.each(shippingPolicyCases)(
@@ -576,7 +604,6 @@ describe("initial sandbox policy real preset merge", () => {
       [],
       {
         agentName: "langchain-deepagents-code",
-        policyTier: "balanced",
         additionalPresets: ["observability-otlp-local"],
       },
     );
@@ -641,7 +668,6 @@ describe("initial sandbox policy real preset merge", () => {
     const effective = readPreparedPolicy(
       prepareInitialSandboxCreatePolicy(baselinePath, [], {
         agentName: "openclaw",
-        policyTier: "restricted",
       }),
     );
 
@@ -661,7 +687,6 @@ describe("initial sandbox policy real preset merge", () => {
         [],
         {
           agentName: "openclaw",
-          policyTier: "balanced",
           additionalPresets: ["npm", "brew", "openclaw-pricing"],
         },
       ),

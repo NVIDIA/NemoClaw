@@ -55,6 +55,9 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
             model: "nvidia/model-a",
             dashboardPort: 18790,
             gatewayName: "nemoclaw-18080",
+            gatewayPort: 18080,
+            lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
+            lifecycleLiveIdentityFingerprint: "a".repeat(64),
           }
         : registeredClone,
     );
@@ -94,6 +97,8 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
       undefined,
       { pending: true },
     );
+    expect(registeredClone).not.toHaveProperty("policyAuthority");
+    expect(registeredClone).not.toHaveProperty("policyCreationReceipt");
   });
 
   it("keeps a --force destination when the source gateway binding is invalid (#7227)", async () => {

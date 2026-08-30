@@ -31,19 +31,26 @@ describe("onboard managed MCP recreation redirect", () => {
     const script = String.raw`
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
+const fixtureMocks = require(${mocksPath});
 const normalize = (command) => (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
-runner.run = () => ({ status: 0 });
+const existingSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "alpha",
+  lifecycleState: "created",
+});
+existingSandbox.installRuntimeObservation();
+const sandboxCommand = (command) => Array.isArray(command) ? command : normalize(command).split(/\s+/u);
+runner.run = (command) => existingSandbox.run(sandboxCommand(command)) ?? { status: 0 };
 runner.runCapture = (command) => {
   const value = normalize(command);
-  if (value.includes("sandbox get --gateway nemoclaw alpha")) return "alpha";
-  if (value.includes("sandbox list")) return "alpha Ready";
+  const sandboxResult = existingSandbox.run(sandboxCommand(command));
+  if (sandboxResult !== null) return sandboxResult.status === 0 ? sandboxResult.stdout.toString() : "";
   if (value.includes("/usr/local/bin/dcode identity")) {
     return "Route: inference\nProvider: provider\nModel: openai:model\nEndpoint: https://inference.local/v1";
   }
   const mocked = require(${mocksPath}).mockOnboardRunCapture(command, { defaultCurlOutput: "ok" });
   return mocked === null ? "" : mocked;
 };
-registry.getSandbox = () => ({
+registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
   name: "alpha",
   agent: "langchain-deepagents-code",
   model: "model",
@@ -51,7 +58,6 @@ registry.getSandbox = () => ({
   preferredInferenceApi: "openai-completions",
   toolDisclosure: "progressive",
   observabilityEnabled: true,
-  policyAuthority: "nemoclaw-managed",
   mcp: {
     version: 1,
     bridges: {
@@ -65,11 +71,12 @@ registry.getSandbox = () => ({
       }
     }
   }
-});
+}, { sandboxId: existingSandbox.state.sandboxId });
 registry.getDefault = () => null;
 const { createSandbox } = require(${onboardPath});
 createSandbox(
-  null, "model", "provider", "openai-completions", "alpha", null, null, null,
+  null, "model", "provider", "openai-completions", "alpha", null, null,
+  ${JSON.stringify(path.join(repoRoot, "agents", "langchain-deepagents-code", "Dockerfile"))},
   { name: "langchain-deepagents-code", policyAdditionsPath: ${dcodePolicyPath} }, null, null, null, [], null,
   null,
   {
@@ -91,7 +98,6 @@ createSandbox(
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
-          NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK: "1",
           NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
         },
       });

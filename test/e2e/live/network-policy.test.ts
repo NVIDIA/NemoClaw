@@ -502,9 +502,10 @@ test(
         "clear the sandbox and onboard restricted policy",
         "prove zero active presets, read-only package metadata, default denial, and the weather allowlist",
         "exercise package and SaaS policy presets",
-        "prove dry-run and per-binary Jira approval",
+        "prove Jira dry-run and per-binary denial",
         "verify hot reload inference exemption and SSRF guards",
         "exercise scoped host-gateway web fetch policy",
+        "prove per-binary Jira approval after NemoClaw policy mutations",
         "switch to permissive policy and record the contract",
       ],
     },
@@ -842,7 +843,7 @@ echo "GITHUB_GIT_OK"
     );
     expect(slackAfter).toMatch(/STATUS_200/);
 
-    progress.phase("prove dry-run and per-binary Jira approval");
+    progress.phase("prove Jira dry-run and per-binary denial");
     const atlassianBefore = await fetchStatus(
       sandbox,
       "https://api.atlassian.com/",
@@ -892,44 +893,6 @@ echo "$OUT CURL_RC_$RC"
     );
     expect(curlBeforeText).toMatch(/CURL_APPCONNECT_0(\.0+)?( |$)/);
 
-    const curlApproval = await sandbox.openshell(
-      [
-        "policy",
-        "update",
-        SANDBOX_NAME,
-        "--add-endpoint",
-        "api.atlassian.com:443:read-only:rest:enforce",
-        "--binary",
-        "/usr/bin/curl",
-        "--binary",
-        "/usr/local/bin/curl",
-        "--wait",
-      ],
-      {
-        artifactName: "tc-net-08-openshell-curl-approval",
-        env: baseEnv(),
-        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
-      },
-    );
-    expect(curlApproval.exitCode, text(curlApproval)).toBe(0);
-    await sleep(POLICY_SETTLE_MS);
-
-    const curlAfterApproval = await sandboxBash(
-      sandbox,
-      String.raw`
-set +e
-rm -f /tmp/nemoclaw-jira-curl-body
-OUT=$(curl -sS -o /tmp/nemoclaw-jira-curl-body -w 'CURL_STATUS_%{http_code}' --max-time 10 https://api.atlassian.com/oauth/token/accessible-resources 2>&1)
-RC=$?
-printf '%s CURL_RC_%s CURL_BODY_' "$OUT" "$RC"
-head -c 120 /tmp/nemoclaw-jira-curl-body 2>/dev/null || true
-printf '\n'
-`,
-      { artifactName: "tc-net-08-curl-after-approval" },
-    );
-    expect(text(curlAfterApproval)).toMatch(/CURL_STATUS_401/);
-    expect(text(curlAfterApproval)).toMatch(/Unauthorized|unauthorized/);
-
     progress.phase("verify hot reload inference exemption and SSRF guards");
     const startTimeBefore = await sandboxBash(
       sandbox,
@@ -966,9 +929,14 @@ printf '\n'
     );
     expect(directProvider).toMatch(/STATUS_403|ERROR_/);
 
-    expect(["169.254.169.254", "127.0.0.1", "10.0.0.1", "192.168.1.1", "0.0.0.0"].every((ip) =>
-        Object.is(isPrivateIp(ip), true))).toBe(true);
-    expect(["8.8.8.8", "142.250.80.46"].every((ip) => Object.is(isPrivateIp(ip), false))).toBe(true);
+    expect(
+      ["169.254.169.254", "127.0.0.1", "10.0.0.1", "192.168.1.1", "0.0.0.0"].every((ip) =>
+        Object.is(isPrivateIp(ip), true),
+      ),
+    ).toBe(true);
+    expect(["8.8.8.8", "142.250.80.46"].every((ip) => Object.is(isPrivateIp(ip), false))).toBe(
+      true,
+    );
 
     progress.phase("exercise scoped host-gateway web fetch policy");
     const marker = "NEMOCLAW_HOST_GATEWAY_WEB_FETCH_OK";
@@ -1034,6 +1002,61 @@ NEMOCLAW_WEB_FETCH_PROBE`,
       await Promise.all([approvedServer.close(), deniedServer.close()]);
     }
 
+    // A direct OpenShell policy update is authoritative. Keep this final so the
+    // test proves host-side edits require no NemoClaw receipt or adoption step.
+    progress.phase("prove per-binary Jira approval after NemoClaw policy mutations");
+    const curlApproval = await sandbox.openshell(
+      [
+        "policy",
+        "update",
+        SANDBOX_NAME,
+        "--add-endpoint",
+        "api.atlassian.com:443:read-only:rest:enforce",
+        "--binary",
+        "/usr/bin/curl",
+        "--binary",
+        "/usr/local/bin/curl",
+        "--wait",
+      ],
+      {
+        artifactName: "tc-net-08-openshell-curl-approval",
+        env: baseEnv(),
+        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+      },
+    );
+    expect(curlApproval.exitCode, text(curlApproval)).toBe(0);
+    await sleep(POLICY_SETTLE_MS);
+
+    const curlAfterApproval = await sandboxBash(
+      sandbox,
+      String.raw`
+set +e
+rm -f /tmp/nemoclaw-jira-curl-body
+OUT=$(curl -sS -o /tmp/nemoclaw-jira-curl-body -w 'CURL_STATUS_%{http_code}' --max-time 10 https://api.atlassian.com/oauth/token/accessible-resources 2>&1)
+RC=$?
+printf '%s CURL_RC_%s CURL_BODY_' "$OUT" "$RC"
+head -c 120 /tmp/nemoclaw-jira-curl-body 2>/dev/null || true
+printf '\n'
+`,
+      { artifactName: "tc-net-08-curl-after-approval" },
+    );
+    expect(text(curlAfterApproval)).toMatch(/CURL_STATUS_401/);
+    expect(text(curlAfterApproval)).toMatch(/Unauthorized|unauthorized/);
+
+    const githubAdd = await applyPreset(host, "github");
+    expect(githubAdd.exitCode, text(githubAdd)).toBe(0);
+    const policyAfterNemoclawMutation = await sandbox.openshell(
+      ["policy", "get", "--full", SANDBOX_NAME],
+      {
+        artifactName: "tc-net-08-policy-after-nemoclaw-mutation",
+        env: baseEnv(),
+        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+      },
+    );
+    expect(policyAfterNemoclawMutation.exitCode, text(policyAfterNemoclawMutation)).toBe(0);
+    expect(policyAfterNemoclawMutation.stdout).toContain("api.atlassian.com");
+    expect(policyAfterNemoclawMutation.stdout).toMatch(/github|api\.github\.com/i);
+
     progress.phase("switch to permissive policy and record the contract");
     const permissiveApply = await sandbox.openshell(
       ["policy", "set", "--policy", PERMISSIVE_POLICY, "--wait", SANDBOX_NAME],
@@ -1063,6 +1086,7 @@ NEMOCLAW_WEB_FETCH_PROBE`,
         livePolicyAdd: true,
         dryRunNoSideEffect: true,
         jiraPerBinaryPolicy: true,
+        hostEditSurvivesNemoclawMutation: true,
         hotReloadNoRestart: true,
         inferenceExemption: true,
         ssrfValidation: true,

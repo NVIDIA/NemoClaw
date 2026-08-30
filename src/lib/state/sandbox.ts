@@ -83,7 +83,6 @@ import type {
   SandboxWorkloadReceipt,
 } from "./registry/types.js";
 import { cloneSandboxWorkloadReceipt } from "./registry/workload.js";
-import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
 import { restoreStateFile } from "./state-file-restore.js";
@@ -130,16 +129,13 @@ export interface RebuildManifest {
   writableDir?: string;
   backupPath: string;
   blueprintDigest: string | null;
-  policyPresets?: string[];
-  /**
-   * Custom policy presets applied via `--from-file`/`--from-dir`, captured with
-   * full content so they can be re-applied on restore without the source file.
-   * Like `policyPresets`, these live in the gateway policy engine and are
-   * otherwise lost on destroy/recreate. Always present on snapshots created since
-   * this field was added (possibly an empty array, so restore can reconcile a
-   * zero-custom snapshot); absent only on legacy manifests.
-   */
-  customPolicies?: CustomPolicyEntry[];
+  /** Bounded live-policy handoff retained only while a rebuild transaction is recoverable. */
+  rebuildPolicyHandoff?: {
+    file: string;
+    sha256: string;
+    /** Cleanup-only identity; retired handoffs cannot be consumed for recovery. */
+    retired?: boolean;
+  };
   /** Allowlisted non-secret environment assignments captured for image recreation. */
   preservedEnv?: PreservedEnvFile[];
   /**
@@ -317,16 +313,6 @@ function isInstanceBackup(value: unknown): value is InstanceBackup {
   );
 }
 
-function isCustomPolicyEntryArray(value: unknown): value is CustomPolicyEntry[] {
-  if (!Array.isArray(value)) return false;
-  if (value.length === 0) return true;
-  try {
-    return registry.normalizeCustomPolicyEntries(value) !== undefined;
-  } catch {
-    return false;
-  }
-}
-
 function cloneOpenClawImagePluginInstalls(
   installs: readonly OpenClawImagePluginInstall[],
 ): OpenClawImagePluginInstall[] {
@@ -404,8 +390,15 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     (value.blueprintDigest === undefined ||
       value.blueprintDigest === null ||
       typeof value.blueprintDigest === "string") &&
-    (value.policyPresets === undefined || isStringArray(value.policyPresets)) &&
-    (value.customPolicies === undefined || isCustomPolicyEntryArray(value.customPolicies)) &&
+    (value.rebuildPolicyHandoff === undefined ||
+      (isObjectRecord(value.rebuildPolicyHandoff) &&
+        typeof value.rebuildPolicyHandoff.file === "string" &&
+        typeof value.rebuildPolicyHandoff.sha256 === "string" &&
+        /^[a-f0-9]{64}$/.test(value.rebuildPolicyHandoff.sha256) &&
+        (value.rebuildPolicyHandoff.retired === undefined ||
+          value.rebuildPolicyHandoff.retired === true) &&
+        value.rebuildPolicyHandoff.file ===
+          `rebuild-policy-handoff.${value.rebuildPolicyHandoff.sha256}.yaml`)) &&
     (value.preservedEnv === undefined ||
       (value.agentType === "hermes" &&
         validatePreservedEnvFiles(value.preservedEnv, HERMES_PRESERVED_ENV_INVENTORY))) &&
@@ -1427,18 +1420,6 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   // a symlink swapped in between the first check and mkdirSync is caught here.
   rejectSymlinksOnPath(backupPath);
 
-  // Capture applied policy presets from the registry so they can be
-  // re-applied after rebuild. Presets live in the gateway policy engine,
-  // not on the sandbox filesystem, so they are lost on destroy/recreate.
-  const policyPresets: string[] = sb?.policies && sb.policies.length > 0 ? [...sb.policies] : [];
-  _log(`policyPresets from registry: [${policyPresets.join(",")}]`);
-  // Custom presets (--from-file/--from-dir) also live only in the gateway policy
-  // engine, so capture their full content for replay. Always record the field
-  // (even empty) so restore can tell a zero-custom snapshot (reconcile, remove
-  // any stale custom presets on the target) from a legacy snapshot (skip).
-  const customPolicies: CustomPolicyEntry[] = sb?.customPolicies ? [...sb.customPolicies] : [];
-  _log(`customPolicies from registry: [${customPolicies.map((c) => c.name).join(",")}]`);
-
   const manifest: RebuildManifest = {
     version: MANIFEST_VERSION,
     sandboxName,
@@ -1458,8 +1439,6 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     dir,
     backupPath,
     blueprintDigest: computeBlueprintDigest(),
-    policyPresets,
-    customPolicies,
     ...(agentName === "hermes" ? { preservedEnv: [] } : {}),
     ...snapshotAuthority,
     ...(providedName !== null ? { name: providedName } : {}),
@@ -2555,6 +2534,120 @@ function writeManifest(
 }
 
 export const __test = { writeManifest };
+
+function readBoundRebuildPolicyHandoff(filePath: string): string | null {
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const before = fstatSync(descriptor, { bigint: true });
+    if (!before.isFile() || before.size > 8n * 1024n * 1024n) return null;
+    const content = readFileSync(descriptor, "utf8");
+    const after = fstatSync(descriptor, { bigint: true });
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs
+    ) {
+      return null;
+    }
+    return content;
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+  }
+}
+
+/** Publish or replace the transaction-bound policy handoff beside its rebuild backup. */
+export function writeRebuildPolicyHandoff(
+  manifest: RebuildManifest,
+  policyDocument: string,
+): RebuildManifest {
+  if (!policyDocument.trim()) throw new Error("Cannot persist an empty rebuild policy handoff");
+  const sha256 = createHash("sha256").update(policyDocument).digest("hex");
+  const file = `rebuild-policy-handoff.${sha256}.yaml`;
+  const filePath = path.join(manifest.backupPath, file);
+  let created = false;
+  let published = false;
+  try {
+    try {
+      writeFileSync(filePath, policyDocument, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      created = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = readBoundRebuildPolicyHandoff(filePath);
+      if (existing !== policyDocument) {
+        throw new Error("Existing rebuild policy handoff does not match its content identity");
+      }
+    }
+    const next = {
+      ...manifest,
+      rebuildPolicyHandoff: { file, sha256 },
+    };
+    writeManifest(manifest.backupPath, next);
+    const previousFile = manifest.rebuildPolicyHandoff?.file;
+    Object.assign(manifest, next);
+    published = true;
+    if (previousFile && previousFile !== file) {
+      rmSync(path.join(manifest.backupPath, previousFile), { force: true });
+    }
+    return next;
+  } catch (error) {
+    // Roll back only a file that never became authoritative. Once the manifest
+    // is published, removing the new file would strand recovery on a dangling
+    // content identity if cleanup of the superseded handoff fails.
+    if (created && !published) rmSync(filePath, { force: true });
+    throw error;
+  }
+}
+
+/** Read a transaction-bound policy only when its exact published digest still matches. */
+export function readRebuildPolicyHandoff(manifest: RebuildManifest): string | null {
+  const handoff = manifest.rebuildPolicyHandoff;
+  if (!handoff || handoff.retired === true) return null;
+  const content = readBoundRebuildPolicyHandoff(path.join(manifest.backupPath, handoff.file));
+  if (content === null) return null;
+  return createHash("sha256").update(content).digest("hex") === handoff.sha256 ? content : null;
+}
+
+/** Retire recovery authority, retain cleanup identity, then delete the handoff artifact. */
+export function clearRebuildPolicyHandoff(
+  manifest: RebuildManifest,
+  ops: {
+    write?: typeof writeManifest;
+    remove?: typeof rmSync;
+  } = {},
+): boolean {
+  const handoff = manifest.rebuildPolicyHandoff;
+  if (!handoff) return true;
+  const write = ops.write ?? writeManifest;
+  const remove = ops.remove ?? rmSync;
+  if (handoff.retired !== true) {
+    const retired = { ...manifest, rebuildPolicyHandoff: { ...handoff, retired: true as const } };
+    try {
+      write(manifest.backupPath, retired);
+    } catch {
+      return false;
+    }
+    Object.assign(manifest, retired);
+  }
+  try {
+    remove(path.join(manifest.backupPath, handoff.file), { force: true });
+  } catch {
+    return false;
+  }
+  const cleared = { ...manifest };
+  delete cleared.rebuildPolicyHandoff;
+  try {
+    write(manifest.backupPath, cleared);
+  } catch {
+    return false;
+  }
+  delete manifest.rebuildPolicyHandoff;
+  return true;
+}
 
 function readManifestPayload(backupPath: string): unknown | null {
   const manifestPath = path.join(backupPath, "rebuild-manifest.json");

@@ -80,9 +80,7 @@ beforeEach(() => {
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: "alpha",
     agent: null,
-    policies: ["pypi"],
   });
-  vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
 
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
   vi.spyOn(onboardSession, "updateSession").mockReturnValue(
@@ -274,7 +272,9 @@ describe("applyChannelPresetIfAvailable refresh contract", () => {
     const ok = applyChannelPresetIfAvailable("alpha", "discord");
 
     expect(ok).toBe(true);
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "discord");
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "discord", {
+      includeMessagingCredentialBindings: true,
+    });
     expect(refreshSpy).toHaveBeenCalledTimes(1);
     expect(refreshSpy).toHaveBeenCalledWith("alpha");
   });
@@ -285,7 +285,9 @@ describe("applyChannelPresetIfAvailable refresh contract", () => {
     const ok = applyChannelPresetIfAvailable("alpha", "discord");
 
     expect(ok).toBe(false);
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "discord");
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "discord", {
+      includeMessagingCredentialBindings: true,
+    });
     expect(refreshSpy).not.toHaveBeenCalled();
   });
 
