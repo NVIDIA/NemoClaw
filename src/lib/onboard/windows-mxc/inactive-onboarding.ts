@@ -1,26 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { projectRuntimeProviderComputePlan, type OpenShellComputePlan } from "../compute/plan";
+import type { OpenShellComputePlan } from "../compute/plan";
 import type {
   RuntimeProviderBundle,
-  RuntimeProviderNativeArtifactBootstrapInput,
   RuntimeProviderNativeArtifactBootstrapResult,
-  RuntimeProviderNativeArtifactBootstrapSurface,
 } from "../runtime-provider/contract";
 import type { MxcOpenShellAttachmentReceipt } from "../runtime-provider/mxc-openshell-attachment";
+import {
+  recoverInactiveNativeArtifactOnboarding,
+  runInactiveNativeArtifactOnboarding,
+  type InactiveNativeArtifactOnboardingBootstrapInput,
+} from "../runtime-provider/native-artifact-onboarding";
 import {
   attachMxcWindowsExistingInstallation,
   type MxcWindowsExistingInstallationInput,
 } from "./existing-installation";
 import type { WindowsMxcHostFacts } from "./host-qualification";
 
-const PROVIDER_ID = "mxc" as const;
-
-export type MxcWindowsInactiveOnboardingBootstrapInput = Omit<
-  RuntimeProviderNativeArtifactBootstrapInput,
-  "providerId"
->;
+export type MxcWindowsInactiveOnboardingBootstrapInput =
+  InactiveNativeArtifactOnboardingBootstrapInput;
 
 export interface MxcWindowsInactiveOnboardingInput {
   readonly installation: MxcWindowsExistingInstallationInput;
@@ -35,54 +34,25 @@ export interface MxcWindowsInactiveOnboardingResult {
   readonly bootstrapResult: RuntimeProviderNativeArtifactBootstrapResult;
 }
 
-export class MxcWindowsInactiveOnboardingError extends Error {
-  constructor(message: string) {
-    super(`Inactive Windows OpenShell MXC onboarding failed: ${message}`);
-    this.name = "MxcWindowsInactiveOnboardingError";
-  }
-}
-
-function requireNativeArtifactBootstrap(
-  provider: RuntimeProviderBundle,
-): RuntimeProviderNativeArtifactBootstrapSurface {
-  if (
-    !provider.bootstrap.supported ||
-    provider.bootstrap.providerId !== PROVIDER_ID ||
-    provider.bootstrap.bootstrapKind !== "native-artifact"
-  ) {
-    throw new MxcWindowsInactiveOnboardingError(
-      "the attached provider does not expose the accepted native-artifact bootstrap contract",
-    );
-  }
-  return provider.bootstrap;
-}
-
 async function execute(
   input: MxcWindowsInactiveOnboardingInput,
   operation: "run" | "recover",
 ): Promise<MxcWindowsInactiveOnboardingResult> {
   const attachment = await attachMxcWindowsExistingInstallation(input.installation);
-  if (!attachment.provider.workload.supported) {
-    throw new MxcWindowsInactiveOnboardingError(
-      "the attached provider does not expose a workload contract",
-    );
-  }
-  if (!attachment.provider.workload.acceptsReceipt(input.bootstrap.workload)) {
-    throw new MxcWindowsInactiveOnboardingError(
-      "the native artifact does not match the attached provider workload contract",
-    );
-  }
-  const bootstrap = requireNativeArtifactBootstrap(attachment.provider);
-  const bootstrapResult = await bootstrap[operation]({
-    ...input.bootstrap,
-    providerId: PROVIDER_ID,
+  const onboarding = await (
+    operation === "run"
+      ? runInactiveNativeArtifactOnboarding
+      : recoverInactiveNativeArtifactOnboarding
+  )({
+    provider: attachment.provider,
+    bootstrap: input.bootstrap,
   });
   return Object.freeze({
-    provider: attachment.provider,
-    computePlan: Object.freeze(projectRuntimeProviderComputePlan(attachment.provider)),
+    provider: onboarding.provider,
+    computePlan: onboarding.computePlan,
     attachmentReceipt: attachment.attachmentReceipt,
     hostFacts: attachment.hostFacts,
-    bootstrapResult,
+    bootstrapResult: onboarding.bootstrapResult,
   });
 }
 

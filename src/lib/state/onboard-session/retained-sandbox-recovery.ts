@@ -4,14 +4,20 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+import {
+  parseNemoClawPolicyCreationReceipt,
+  type NemoClawPolicyCreationReceipt,
+} from "../../policy/merge";
+import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../sandbox-name-contract";
+
+export { parseNemoClawPolicyCreationReceipt } from "../../policy/merge";
 
 const SCHEMA_VERSION = 1;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/u;
 const SAFE_EVIDENCE_PATTERN = /^[A-Za-z0-9._:@/-]{1,256}$/u;
-const NAME_MAX_LENGTH = 63;
-const NAME_VALID_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u;
 
 export function retainedSandboxRecoveryFile(sessionDirectory: string): string {
   return path.join(sessionDirectory, "retained-sandbox-recovery.json");
@@ -20,12 +26,6 @@ export function retainedSandboxRecoveryFile(sessionDirectory: string): string {
 export type RetainedSandboxRecoveryReason =
   | "cancelled_after_sandbox_creation"
   | "retained_after_sandbox_creation_failure";
-
-export interface RetainedSandboxResourceEvidence {
-  readonly sharedInferenceProviders: readonly string[];
-  readonly sandboxScopedProviders: readonly string[];
-  readonly credentialEnvironmentVariables: readonly string[];
-}
 
 export interface RetainedSandboxVerifiedEffectivePolicyIdentity {
   readonly hash: string;
@@ -37,32 +37,19 @@ export interface RetainedSandboxRecoveryRecord {
   readonly recordId: string;
   readonly sandboxName: string;
   readonly sandboxIdentityFingerprint: string | null;
-  readonly identityWasUnavailable: boolean;
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string | null;
   readonly verifiedEffectivePolicyIdentity: RetainedSandboxVerifiedEffectivePolicyIdentity | null;
-  readonly resources: RetainedSandboxResourceEvidence;
+  readonly createAttemptNonce: string;
+  readonly policyCreationReceipt: NemoClawPolicyCreationReceipt | null;
   readonly reason: RetainedSandboxRecoveryReason;
   readonly recordedAt: string;
-}
-
-interface RetainedSandboxAdministratorResolutionReceipt {
-  readonly schemaVersion: typeof SCHEMA_VERSION;
-  readonly receiptId: string;
-  readonly recordId: string;
-  readonly sandboxName: string;
-  readonly sandboxIdentityFingerprint: string | null;
-  readonly gatewayName: string;
-  readonly gatewayPort: number;
-  readonly outcome: "removed_verified_identity" | "confirmed_absent_without_identity";
-  readonly resolvedAt: string;
 }
 
 interface RetainedSandboxRecoveryState {
   readonly schemaVersion: typeof SCHEMA_VERSION;
   readonly unresolved: readonly RetainedSandboxRecoveryRecord[];
-  readonly resolutions: readonly RetainedSandboxAdministratorResolutionReceipt[];
 }
 
 interface RetainedSandboxStateDirectory {
@@ -79,7 +66,8 @@ export interface RecordRetainedSandboxRecoveryInput {
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string | null;
   readonly verifiedEffectivePolicyIdentity: RetainedSandboxVerifiedEffectivePolicyIdentity | null;
-  readonly resources: RetainedSandboxResourceEvidence;
+  readonly createAttemptNonce: string;
+  readonly policyCreationReceipt: NemoClawPolicyCreationReceipt | null;
   readonly reason: RetainedSandboxRecoveryReason;
   readonly recordedAt?: string;
 }
@@ -87,7 +75,6 @@ export interface RecordRetainedSandboxRecoveryInput {
 const emptyState = (): RetainedSandboxRecoveryState => ({
   schemaVersion: SCHEMA_VERSION,
   unresolved: [],
-  resolutions: [],
 });
 
 function sameFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
@@ -339,20 +326,6 @@ function validGatewayPort(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) >= 1024 && Number(value) <= 65535;
 }
 
-function parseEvidence(value: unknown): RetainedSandboxResourceEvidence | null {
-  if (!isObjectRecord(value)) return null;
-  const parse = (candidate: unknown): string[] | null =>
-    Array.isArray(candidate) && candidate.every(validSafeEvidence)
-      ? [...new Set(candidate)].sort()
-      : null;
-  const sharedInferenceProviders = parse(value.sharedInferenceProviders);
-  const sandboxScopedProviders = parse(value.sandboxScopedProviders);
-  const credentialEnvironmentVariables = parse(value.credentialEnvironmentVariables);
-  return sharedInferenceProviders && sandboxScopedProviders && credentialEnvironmentVariables
-    ? { sharedInferenceProviders, sandboxScopedProviders, credentialEnvironmentVariables }
-    : null;
-}
-
 function parseVerifiedEffectivePolicyIdentity(
   value: unknown,
 ): RetainedSandboxVerifiedEffectivePolicyIdentity | null | undefined {
@@ -370,12 +343,19 @@ function parseVerifiedEffectivePolicyIdentity(
 
 function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
   if (!isObjectRecord(value)) return null;
-  const resources = parseEvidence(value.resources);
   const fingerprint = value.sandboxIdentityFingerprint;
   const verifiedEffectivePolicyIdentity = parseVerifiedEffectivePolicyIdentity(
     value.verifiedEffectivePolicyIdentity,
   );
   const reason = value.reason;
+  let policyCreationReceipt: NemoClawPolicyCreationReceipt | null = null;
+  if (value.policyCreationReceipt !== null) {
+    try {
+      policyCreationReceipt = parseNemoClawPolicyCreationReceipt(value.policyCreationReceipt);
+    } catch {
+      return null;
+    }
+  }
   if (
     value.schemaVersion !== SCHEMA_VERSION ||
     typeof value.recordId !== "string" ||
@@ -383,12 +363,20 @@ function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
     !validSandboxName(value.sandboxName) ||
     (fingerprint !== null &&
       (typeof fingerprint !== "string" || !FINGERPRINT_PATTERN.test(fingerprint))) ||
-    value.identityWasUnavailable !== (fingerprint === null) ||
     !validSafeEvidence(value.gatewayName) ||
     !validGatewayPort(value.gatewayPort) ||
     (value.lifecycleGeneration !== null && !validSafeEvidence(value.lifecycleGeneration)) ||
     verifiedEffectivePolicyIdentity === undefined ||
-    !resources ||
+    typeof value.createAttemptNonce !== "string" ||
+    !/^[0-9a-f]{62}$/u.test(value.createAttemptNonce) ||
+    (policyCreationReceipt !== null &&
+      (policyCreationReceipt.gatewayName !== value.gatewayName ||
+        policyCreationReceipt.gatewayPort !== value.gatewayPort ||
+        policyCreationReceipt.sandboxName !== value.sandboxName ||
+        policyCreationReceipt.lifecycleGeneration !== value.lifecycleGeneration ||
+        policyCreationReceipt.sandboxIdentityFingerprint !== fingerprint ||
+        policyCreationReceipt.policyHash !== verifiedEffectivePolicyIdentity?.hash ||
+        policyCreationReceipt.policyVersion !== verifiedEffectivePolicyIdentity?.activeVersion)) ||
     !["cancelled_after_sandbox_creation", "retained_after_sandbox_creation_failure"].includes(
       String(reason),
     ) ||
@@ -401,47 +389,14 @@ function parseRecord(value: unknown): RetainedSandboxRecoveryRecord | null {
     recordId: value.recordId,
     sandboxName: value.sandboxName,
     sandboxIdentityFingerprint: fingerprint,
-    identityWasUnavailable: fingerprint === null,
     gatewayName: value.gatewayName,
     gatewayPort: value.gatewayPort,
     lifecycleGeneration: value.lifecycleGeneration,
     verifiedEffectivePolicyIdentity,
-    resources,
+    createAttemptNonce: value.createAttemptNonce,
+    policyCreationReceipt,
     reason: reason as RetainedSandboxRecoveryReason,
     recordedAt: value.recordedAt,
-  };
-}
-
-function parseReceipt(value: unknown): RetainedSandboxAdministratorResolutionReceipt | null {
-  if (!isObjectRecord(value)) return null;
-  const fingerprint = value.sandboxIdentityFingerprint;
-  const outcome = value.outcome;
-  if (
-    value.schemaVersion !== SCHEMA_VERSION ||
-    typeof value.receiptId !== "string" ||
-    !FINGERPRINT_PATTERN.test(value.receiptId) ||
-    typeof value.recordId !== "string" ||
-    !FINGERPRINT_PATTERN.test(value.recordId) ||
-    !validSandboxName(value.sandboxName) ||
-    (fingerprint !== null &&
-      (typeof fingerprint !== "string" || !FINGERPRINT_PATTERN.test(fingerprint))) ||
-    !validSafeEvidence(value.gatewayName) ||
-    !validGatewayPort(value.gatewayPort) ||
-    !["removed_verified_identity", "confirmed_absent_without_identity"].includes(String(outcome)) ||
-    !validTimestamp(value.resolvedAt)
-  ) {
-    return null;
-  }
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    receiptId: value.receiptId,
-    recordId: value.recordId,
-    sandboxName: value.sandboxName,
-    sandboxIdentityFingerprint: fingerprint,
-    gatewayName: value.gatewayName,
-    gatewayPort: value.gatewayPort,
-    outcome: outcome as RetainedSandboxAdministratorResolutionReceipt["outcome"],
-    resolvedAt: value.resolvedAt,
   };
 }
 
@@ -451,14 +406,12 @@ function loadState(filePath: string): RetainedSandboxRecoveryState {
     throw new Error("Retained sandbox recovery state has an unsupported schema.");
   }
   const unresolved = Array.isArray(value.unresolved) ? value.unresolved.map(parseRecord) : null;
-  const resolutions = Array.isArray(value.resolutions) ? value.resolutions.map(parseReceipt) : null;
-  if (!unresolved || unresolved.includes(null) || !resolutions || resolutions.includes(null)) {
+  if (!unresolved || unresolved.includes(null)) {
     throw new Error("Retained sandbox recovery state is invalid; onboarding remains blocked.");
   }
   return {
     schemaVersion: SCHEMA_VERSION,
     unresolved: unresolved as RetainedSandboxRecoveryRecord[],
-    resolutions: resolutions as RetainedSandboxAdministratorResolutionReceipt[],
   };
 }
 
@@ -472,6 +425,8 @@ function recoveryRecordId(input: RecordRetainedSandboxRecoveryInput): string {
         input.sandboxIdentityFingerprint,
         input.lifecycleGeneration,
         input.verifiedEffectivePolicyIdentity,
+        input.createAttemptNonce,
+        input.policyCreationReceipt,
       ]),
     )
     .digest("hex");
@@ -486,9 +441,28 @@ function assertRecordInput(input: RecordRetainedSandboxRecoveryInput): void {
     !validGatewayPort(input.gatewayPort) ||
     (input.lifecycleGeneration !== null && !validSafeEvidence(input.lifecycleGeneration)) ||
     parseVerifiedEffectivePolicyIdentity(input.verifiedEffectivePolicyIdentity) === undefined ||
-    !parseEvidence(input.resources)
+    !/^[0-9a-f]{62}$/u.test(input.createAttemptNonce)
   ) {
     throw new Error("Cannot persist invalid retained sandbox recovery evidence.");
+  }
+  if (input.policyCreationReceipt !== null) {
+    let receipt: NemoClawPolicyCreationReceipt;
+    try {
+      receipt = parseNemoClawPolicyCreationReceipt(input.policyCreationReceipt);
+    } catch {
+      throw new Error("Cannot persist invalid retained sandbox recovery evidence.");
+    }
+    if (
+      receipt.gatewayName !== input.gatewayName ||
+      receipt.gatewayPort !== input.gatewayPort ||
+      receipt.sandboxName !== input.sandboxName ||
+      receipt.lifecycleGeneration !== input.lifecycleGeneration ||
+      receipt.sandboxIdentityFingerprint !== input.sandboxIdentityFingerprint ||
+      receipt.policyHash !== input.verifiedEffectivePolicyIdentity?.hash ||
+      receipt.policyVersion !== input.verifiedEffectivePolicyIdentity?.activeVersion
+    ) {
+      throw new Error("Cannot persist mismatched retained sandbox recovery evidence.");
+    }
   }
 }
 
@@ -508,14 +482,16 @@ export function recordRetainedSandboxRecovery(
     recordId: recoveryRecordId(input),
     sandboxName: input.sandboxName,
     sandboxIdentityFingerprint: input.sandboxIdentityFingerprint,
-    identityWasUnavailable: input.sandboxIdentityFingerprint === null,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
     lifecycleGeneration: input.lifecycleGeneration,
     verifiedEffectivePolicyIdentity: input.verifiedEffectivePolicyIdentity
       ? { ...input.verifiedEffectivePolicyIdentity }
       : null,
-    resources: parseEvidence(input.resources)!,
+    createAttemptNonce: input.createAttemptNonce,
+    policyCreationReceipt: input.policyCreationReceipt
+      ? parseNemoClawPolicyCreationReceipt(input.policyCreationReceipt)
+      : null,
     reason: input.reason,
     recordedAt: input.recordedAt ?? new Date().toISOString(),
   };
@@ -538,4 +514,43 @@ export function recordRetainedSandboxRecovery(
     throw new Error("Retained sandbox recovery record did not survive durable readback.");
   }
   return reread;
+}
+
+function retainedSandboxRecoveryAuthorityMatchesState(
+  state: RetainedSandboxRecoveryState,
+  expected: RetainedSandboxRecoveryRecord,
+): boolean {
+  const recorded = state.unresolved.find(
+    (candidate) => candidate.recordId === expected.recordId,
+  );
+  if (!recorded) return false;
+  if (!isDeepStrictEqual(recorded, expected)) {
+    throw new Error("Retained sandbox recovery authority changed before cleanup completed.");
+  }
+  return true;
+}
+
+/** Confirm that the exact cleanup authority is still present and unchanged. */
+export function retainedSandboxRecoveryAuthorityIsCurrent(
+  filePath: string,
+  expected: RetainedSandboxRecoveryRecord,
+): boolean {
+  return retainedSandboxRecoveryAuthorityMatchesState(loadState(filePath), expected);
+}
+
+/** Retire only the unchanged record whose external resources were verified absent. */
+export function resolveRetainedSandboxRecovery(
+  filePath: string,
+  expected: RetainedSandboxRecoveryRecord,
+): boolean {
+  const current = loadState(filePath);
+  if (!retainedSandboxRecoveryAuthorityMatchesState(current, expected)) return false;
+  writeStateFile(filePath, {
+    ...current,
+    unresolved: current.unresolved.filter((candidate) => candidate.recordId !== expected.recordId),
+  });
+  if (loadState(filePath).unresolved.some((candidate) => candidate.recordId === expected.recordId)) {
+    throw new Error("Retained sandbox recovery record remained after verified cleanup.");
+  }
+  return true;
 }

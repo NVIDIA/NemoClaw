@@ -11,6 +11,14 @@ import {
 } from "./cancel-rollback";
 
 const SANDBOX_FINGERPRINT = "a".repeat(64);
+const RECOVERY_CONTEXT = {
+  gatewayName: "nemoclaw",
+  gatewayPort: 8080,
+  lifecycleGeneration: "generation-alpha",
+  verifiedEffectivePolicyIdentity: null,
+  createAttemptNonce: "c".repeat(62),
+  policyCreationReceipt: null,
+} as const;
 
 function createHarness() {
   const log = vi.fn();
@@ -21,23 +29,22 @@ describe("createSandboxCancelRollback", () => {
   it("preserves an armed cancelled sandbox and reports its captured identity (#9833)", () => {
     const { rollback, log } = createHarness();
 
-    rollback.arm("new-sb", SANDBOX_FINGERPRINT);
+    rollback.arm("new-sb", SANDBOX_FINGERPRINT, RECOVERY_CONTEXT);
     rollback.markCancelled();
     rollback.runIfArmed();
 
     const guidance = log.mock.calls.flat().join("\n");
     expect(guidance).toContain("preserved incomplete sandbox 'new-sb'");
     expect(guidance).toContain(SANDBOX_FINGERPRINT);
-    expect(guidance).toContain("OpenShell administrator");
+    expect(guidance).toContain(
+      `ai.nvidia.nemoclaw.create-attempt=${RECOVERY_CONTEXT.createAttemptNonce}`,
+    );
     expect(guidance).toContain("did not run OpenShell's mutable-name deletion command");
     expect(guidance).toContain("Do not delete the sandbox by mutable sandbox name");
     expect(guidance).toContain("Shared inference providers are gateway configuration");
     expect(guidance).toContain("not sandbox cleanup targets");
-    expect(guidance).toContain("sandbox-scoped resources whose ownership is confirmed");
-    expect(guidance).toContain("no supported operation to clear this recovery record");
-    expect(guidance).toContain("credential environment name alone does not prove exposure");
-    expect(guidance).toContain("rotate a credential only when identity-bound inspection proves");
-    expect(guidance).not.toContain("rotate any credential");
+    expect(guidance).toContain("nemoclaw new-sb destroy");
+    expect(guidance).toContain("clear the matching recovery record");
   });
 
   it.each([
@@ -296,12 +303,24 @@ describe("makeOnboardCancelExit", () => {
 
 describe("buildCancelRollbackMessage", () => {
   it("preserves identity-bound recovery guidance", () => {
-    const message = buildCancelRollbackMessage("sb", SANDBOX_FINGERPRINT).join("\n");
+    const message = buildCancelRollbackMessage(
+      "sb",
+      SANDBOX_FINGERPRINT,
+      RECOVERY_CONTEXT,
+    ).join("\n");
 
     expect(message).toContain("preserved incomplete sandbox 'sb'");
     expect(message).toContain(SANDBOX_FINGERPRINT);
+    expect(message).toContain(RECOVERY_CONTEXT.createAttemptNonce);
     expect(message).toContain("identity-bound inspection, recovery, or removal");
     expect(message).not.toContain("openshell sandbox delete");
     expect(message).not.toContain("cannot delete it by immutable identity");
+  });
+
+  it("does not refer to an undisplayed create-attempt label", () => {
+    const message = buildCancelRollbackMessage("sb", SANDBOX_FINGERPRINT).join("\n");
+
+    expect(message).toContain("preserve the displayed fingerprint");
+    expect(message).not.toContain("displayed create-attempt label");
   });
 });

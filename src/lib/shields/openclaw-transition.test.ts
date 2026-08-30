@@ -17,6 +17,7 @@ import {
   createShieldsFlowHarness,
   type ShieldsFlowHarnessOptions,
 } from "../../../test/helpers/shields-flow-harness";
+import { createCompletedAutoRestoreFixture } from "../../../test/support/completed-auto-restore-fixture";
 import type { AgentConfigTarget } from "../sandbox/agent-config";
 
 const requireSource = createRequire(import.meta.url);
@@ -505,6 +506,78 @@ describe("OpenClaw shields flow rollback and recovery", () => {
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-openclaw-recovery-"));
     vi.stubEnv("HOME", tmpDir);
+  });
+
+  it(
+    "retires an orphaned completed auto-restore generation and containment (#10094)",
+    {
+      timeout: 30_000,
+    },
+    async () => {
+      const harness = createHarness();
+      const paths = await createCompletedAutoRestoreFixture(
+        path.join(tmpDir, ".nemoclaw", "state"),
+        "openclaw",
+        "c".repeat(32),
+      );
+      const status = () =>
+        harness.shieldsStatus("openclaw", true, {
+          verifyLockState: () => ({ ok: true, issues: [] }),
+          verifyStateLockPlan: () => [],
+        });
+
+      status();
+      status();
+
+      expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
+      expect(
+        [paths.containmentPath, paths.deadlinePath, paths.lockPath, paths.markerPath].map((file) =>
+          fs.existsSync(file),
+        ),
+      ).toEqual([false, false, false, false]);
+    },
+  );
+
+  it("preserves completed containment for a live ambiguous timer PID", async () => {
+    const harness = createHarness();
+    const paths = await createCompletedAutoRestoreFixture(
+      path.join(tmpDir, ".nemoclaw", "state"),
+      "openclaw",
+      "c".repeat(32),
+    );
+    const marker = JSON.parse(fs.readFileSync(paths.markerPath, "utf8"));
+    marker.pid = process.pid;
+    delete marker.timerProcessStartIdentity;
+    fs.writeFileSync(paths.markerPath, JSON.stringify(marker));
+
+    expect(() => harness.shieldsStatus("openclaw")).toThrow("containment is active");
+    expect([paths.lockPath, paths.containmentPath, paths.markerPath].map(fs.existsSync)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+  });
+
+  it("gives safe retry guidance when completed recovery authority changes", async () => {
+    const harness = createHarness();
+    const paths = await createCompletedAutoRestoreFixture(
+      path.join(tmpDir, ".nemoclaw", "state"),
+      "openclaw",
+      "c".repeat(32),
+    );
+    const realRename = fs.renameSync.bind(fs);
+    vi.spyOn(fs, "renameSync").mockImplementationOnce((source, destination) => {
+      realRename(source, destination);
+      const marker = JSON.parse(fs.readFileSync(paths.markerPath, "utf8"));
+      marker.restoreAt = new Date(Date.now() + 60_000).toISOString();
+      fs.writeFileSync(paths.markerPath, JSON.stringify(marker));
+    });
+
+    expect(() => harness.shieldsStatus("openclaw")).toThrow(
+      "Rerun nemoclaw openclaw shields status. Do not modify lifecycle-lock or timer files",
+    );
+    expect(fs.existsSync(paths.lockPath)).toBe(true);
+    expect(fs.existsSync(paths.containmentPath)).toBe(true);
   });
 
   afterEach(() => {

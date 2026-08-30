@@ -54,7 +54,12 @@ describe("runtime state mutation controller", () => {
       bare_direct_start: false,
       bare_interpreted_start: false,
       acquire_fence: {
-        supervisor: { pid: 1, startIdentity: "100" },
+        supervisor: {
+          pid: 1,
+          startIdentity: "100",
+          executableDevice: "81",
+          executableInode: "10101",
+        },
         start: { pid: 10, startIdentity: "200", parentPid: 1 },
         startSupport: [
           { pid: 75, parentPid: 10 },
@@ -65,7 +70,14 @@ describe("runtime state mutation controller", () => {
       discovered_pid1: 1,
       discovered_start: 10,
       wrong_pid1: "supervisor-unavailable",
+      supervisor_identity_drift: "supervisor-identity-drift",
+      start_identity_drift: "start-process-identity-drift",
+      startup_support_identity_drift: "startup-support-identity-drift",
       running_supervisor_hold: "supervisor-not-host-stopped",
+      fixed_transport_broker: 88,
+      forged_transport_broker_rejected: true,
+      wrong_argv_transport_broker_rejected: true,
+      dynamic_transport_broker_rejected: true,
     });
     expect(harnessResult.hold_events).toEqual([
       ["stop", 10],
@@ -92,6 +104,51 @@ describe("runtime state mutation controller", () => {
     expect(harnessResult.writer_scans_remaining).toBe(0);
     expect(harnessResult.unstoppable_writer).toBe("writer-exclusion-timeout");
     expect(harnessResult.unknown_writer).toBe("unreadable-writer-process");
+    expect(harnessResult.vanished_process).toBe(true);
+    expect(harnessResult.unreadable_process_io).toBe("unreadable-writer-process");
+  });
+
+  it("rescans when an unexpected writer changes identity before signalling (#10155)", () => {
+    expect(harnessResult.writer_pid_reuse_signals).toEqual([[42, 15]]);
+    expect(harnessResult.writer_pid_reuse_scans_remaining).toBe(0);
+  });
+
+  it("keeps recapturing an exact process reference across raced signals (#10155)", () => {
+    const sigstop = harnessResult.sigstop as number;
+    expect(harnessResult.reference_signal_attempts).toEqual([
+      [10, sigstop],
+      [10, sigstop],
+      [10, sigstop],
+      [10, sigstop],
+    ]);
+    expect(harnessResult.replaced_reference_signal).toBe("fenced-process-drift");
+    expect(harnessResult.reference_signal_timeout).toBe("writer-pid-reused");
+  });
+
+  it("signals the same kernel task after mutable process metadata changes (#9485)", () => {
+    const sigstop = harnessResult.sigstop as number;
+    expect(harnessResult.same_task_signal).toBe("ok");
+    expect(harnessResult.same_task_signal_events).toEqual([
+      ["open", 10, 0],
+      ["signal", 91, sigstop],
+      ["close", 91],
+    ]);
+    expect(harnessResult.replacement_task_signal).toBe("writer-pid-reused");
+    expect(harnessResult.replacement_task_signal_events).toEqual([
+      ["open", 10, 0],
+      ["close", 91],
+    ]);
+    expect(harnessResult.same_task_executable_replacement_signal).toBe("writer-pid-reused");
+    expect(harnessResult.same_task_executable_replacement_signal_events).toEqual([
+      ["open", 10, 0],
+      ["close", 91],
+    ]);
+  });
+
+  it("retains supervisor argv refreshes but rejects same-task executable replacement (#9485)", () => {
+    expect(harnessResult.refreshed_supervisor).toBe("ok");
+    expect(harnessResult.replaced_supervisor).toBe("supervisor-identity-drift");
+    expect(harnessResult.exec_replaced_supervisor).toBe("supervisor-identity-drift");
   });
 
   it("publishes, rolls an activated fence back, and recovers every durable phase (#7744)", () => {
@@ -204,7 +261,8 @@ describe("runtime state mutation controller", () => {
     });
   });
 
-  it("records release intent before resuming exact writers and leaves PID1 to host authority (#9485)", () => {
+  it("records release intent before resuming exact writers and waits for parent acknowledgement (#10155)", () => {
+    const sigcont = harnessResult.sigcont as number;
     expect(harnessResult).toMatchObject({
       release: "activation-proven",
       released_marker: true,
@@ -222,13 +280,15 @@ describe("runtime state mutation controller", () => {
       ["resume", 77],
       ["resume", 78],
       ["resume", 10],
-      ["resume", 1],
-      ["health"],
+      ["signal", 1, sigcont],
+      ["release-ack"],
+      ["parent-ack-health"],
     ]);
     expect(harnessResult.release_retry_events).toEqual([
       ["verify-checkpoint"],
       ["release-receipt"],
-      ["health"],
+      ["release-ack"],
+      ["parent-ack-health"],
     ]);
     expect(harnessResult.transient_exit_release_events).toEqual([
       ["verify-checkpoint"],
@@ -237,12 +297,14 @@ describe("runtime state mutation controller", () => {
       ["resume", 76],
       ["resume", 77],
       ["resume", 10],
-      ["resume", 1],
-      ["health"],
+      ["signal", 1, sigcont],
+      ["release-ack"],
+      ["parent-ack-health"],
     ]);
     expect(harnessResult.persistent_exit_release).toBe("activation-process-drift");
     const events = harnessResult.state_events as unknown[][];
     expect(events).toContainEqual(["release-hold", "intent"]);
+    expect(events).toContainEqual(["release-parent-resume", "acknowledged"]);
     expect(events).toContainEqual(["protocol-cleanup", "activation-proven"]);
   });
 

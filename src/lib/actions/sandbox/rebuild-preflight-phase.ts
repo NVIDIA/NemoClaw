@@ -43,6 +43,7 @@ import {
   acquireRebuildOnboardLock,
   assertRebuildEntryUnchanged,
   blockRebuildOnPendingBaselineTransition,
+  blockRebuildOnRetainedSandboxRecovery,
   checkRebuildGatewaySchemaPreflight,
   expectedRebuildEntryAfterVersionCheck,
   getRebuildSandboxEntryOrBail,
@@ -137,6 +138,7 @@ export async function runRebuildPreflightPhase(
   } = createRebuildCommandContext(options, opts);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
+  if (blockRebuildOnRetainedSandboxRecovery(sandboxName, bail)) return null;
   if (blockRebuildOnPendingBaselineTransition(sandboxEntry, sandboxName, bail)) return null;
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   // #6376: refuse a stuck MCP destroy transaction up front — before backup,
