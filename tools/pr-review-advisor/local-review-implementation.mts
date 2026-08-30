@@ -257,8 +257,9 @@ export async function runLocalReview(input: {
         stage = "validate";
         validateSpecialistArtifacts(outputRoot, specialist.interest);
       } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error);
         specialistFailure = new Error(
-          `Local review failed during ${stage} for specialist ${specialist.interest}`,
+          `Local review failed during ${stage} for specialist ${specialist.interest} in sandbox ${env.SANDBOX_NAME}: ${detail}`,
           { cause: error },
         );
       }

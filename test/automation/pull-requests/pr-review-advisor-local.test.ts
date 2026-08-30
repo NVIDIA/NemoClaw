@@ -518,6 +518,40 @@ describe("local PR review advisor", () => {
     expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
   });
 
+  it("reports lifecycle context and the underlying OpenShell failure while preserving its cause (#10611)", async () => {
+    const source = repository();
+    const specialist = ADVISOR_SPECIALISTS[0]!;
+    let sandboxName = "";
+    const underlying = new Error("openshell sandbox exec failed: connection refused");
+    const lifecycle: LocalReviewLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => undefined,
+      create: () => undefined,
+      run: (env) => {
+        sandboxName = env.SANDBOX_NAME as string;
+        throw underlying;
+      },
+      download: () => undefined,
+      remove: () => undefined,
+    };
+
+    const failure = await runLocalReview({
+      source,
+      temporaryRoot: temporaryDirectory(),
+      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+      lifecycle,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      message: expect.stringContaining(
+        `Local review failed during run for specialist ${specialist.interest}`,
+      ),
+      cause: underlying,
+    });
+    expect(failure).toMatchObject({ message: expect.stringContaining(`sandbox ${sandboxName}`) });
+    expect(failure).toMatchObject({ message: expect.stringContaining(underlying.message) });
+  });
+
   it("reports cleanup failure only when specialist work succeeds (#10610)", async () => {
     const source = repository();
     const lifecycle: LocalReviewLifecycle = {

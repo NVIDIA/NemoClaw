@@ -166,7 +166,9 @@ npm run review:local
 The command snapshots the committed branch delta from `origin/main`, staged and unstaged final
 content, and nonignored untracked files. It runs every checked-in specialist separately through
 OpenShell. It writes each specialist's Markdown review and native JSONL session under
-`artifacts/pr-review-advisor-local/`. The command does not use GitHub context or combine findings.
+`artifacts/pr-review-advisor-local/`. The command does not run tests, inspect CI state, use GitHub
+context, or combine findings. Test recommendations are advisory targets verified against the
+repository inventory, not executed test results.
 
 Prerequisites:
 
