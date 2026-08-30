@@ -49,6 +49,7 @@ import type { InferenceProviderHostGpu, InferenceProviderHostState } from "./pro
 import { buildInferenceProviderMenu, type ProviderMenuChoice } from "./provider-menu";
 import {
   applyVllmInstallResumeDefaults,
+  resolveSelectedEndpointSource,
   resolveRequestedProviderSelection,
   vllmInstallRecoveryOptions,
 } from "./provider-selection";
@@ -71,11 +72,11 @@ export { resumeManagedLlamaCppRuntime };
 
 /** Bind managed llama.cpp resume to the selected runtime provider. */
 export function bindManagedLlamaCppResume(gatewayPort: number) {
-  return (sandboxName: string, revalidatePolicyRequirements?: (operation: string) => void) =>
+  return (sandboxName: string, revalidateSandboxIdentity?: (operation: string) => void) =>
     resumeManagedLlamaCppRuntime(sandboxName, {
       gatewayPort,
       runtimeProvider: resolveCurrentRuntimeProviderBundle(),
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     });
 }
 
@@ -111,7 +112,7 @@ export type SetupNim = (
   assertRouteCompatible?: (route: ProviderInferenceProbeRoute) => GatewayRouteDiscoveryConstraints,
   canProbeRoute?: (provider: string) => boolean,
   recoverySessionId?: string | null,
-  revalidatePolicyRequirements?: (route: ProviderInferenceProbeRoute, operation: string) => void,
+  revalidateSandboxIdentity?: (route: ProviderInferenceProbeRoute, operation: string) => void,
 ) => Promise<ProviderSelectionResult>;
 
 export interface SetupNimFlowDeps {
@@ -741,7 +742,7 @@ function policyCheckedVllmInstallRecovery(
     ...recovery,
     checkpointInstallIntent: (modelId: string) => {
       seedVllmInstallRoute(modelId);
-      state.revalidatePolicyRequirements?.("record managed vLLM install intent");
+      state.revalidateSandboxIdentity?.("record managed vLLM install intent");
       checkpointInstallIntent(modelId);
     },
   };
@@ -771,7 +772,7 @@ export function createSetupNim(
     ) => GatewayRouteDiscoveryConstraints,
     canProbeRoute?: (provider: string) => boolean,
     recoverySessionId?: string | null,
-    revalidatePolicyRequirements?: (route: ProviderInferenceProbeRoute, operation: string) => void,
+    revalidateSandboxIdentity?: (route: ProviderInferenceProbeRoute, operation: string) => void,
   ): Promise<ProviderSelectionResult> {
     deps.step(3, 8, "Configuring inference provider");
 
@@ -839,8 +840,8 @@ export function createSetupNim(
         assertRouteCompatible?.(route());
         return constraints;
       };
-      state.revalidatePolicyRequirements = (operation) =>
-        revalidatePolicyRequirements?.(route(), operation);
+      state.revalidateSandboxIdentity = (operation) =>
+        revalidateSandboxIdentity?.(route(), operation);
       return state;
     };
 
@@ -1038,7 +1039,7 @@ export function createSetupNim(
         if (isEndpointProviderSelection(deps, selected.key)) {
           const state = createSelectionState();
           prepareEndpointProviderPolicyRoute(deps, selected, state);
-          state.revalidatePolicyRequirements?.(
+          state.revalidateSandboxIdentity?.(
             `configure inference provider ${JSON.stringify(state.provider)}`,
           );
           const result = await handleEndpointProviderSelection({
@@ -1100,14 +1101,14 @@ export function createSetupNim(
           state.credentialEnv = LLAMA_CPP_CREDENTIAL_ENV;
           state.preferredInferenceApi = "openai-completions";
           state.assertRouteCompatible?.();
-          state.revalidatePolicyRequirements?.("install managed llama.cpp runtime");
+          state.revalidateSandboxIdentity?.("install managed llama.cpp runtime");
           const installed = await (deps.installManagedLlamaCpp ?? installManagedLlamaCpp)(
             resolved.selection,
             {
               sandboxName,
               gatewayPort: deps.getGatewayPort(),
               runtimeProvider: deps.getRuntimeProvider(),
-              revalidatePolicyRequirements: state.revalidatePolicyRequirements,
+              revalidateSandboxIdentity: state.revalidateSandboxIdentity,
             },
           );
           if (!installed.ok) {
@@ -1249,7 +1250,7 @@ export function createSetupNim(
             ...vllmRecovery,
             beforeInstall: (modelId) => {
               seedVllmInstallRoute(modelId);
-              vllmState.revalidatePolicyRequirements?.("install managed vLLM runtime");
+              vllmState.revalidateSandboxIdentity?.("install managed vLLM runtime");
             },
           });
           if (!result.ok) {
@@ -1330,9 +1331,12 @@ export function createSetupNim(
       recoveredRegistryRoute.endpointUrl === endpointUrl;
     const endpointSource = recoveredRegistryRouteMatches
       ? (recoveredRegistryRoute.endpointSource ?? null)
-      : endpointPinnedAddresses || endpointTrustedPrivateCapability
-        ? "onboard"
-        : null;
+      : resolveSelectedEndpointSource({
+          provider,
+          endpointUrl,
+          hasPinnedAddresses: Boolean(endpointPinnedAddresses),
+          hasTrustedPrivateCapability: Boolean(endpointTrustedPrivateCapability),
+        });
     await maybePromptForSupportedInferenceInputCapability(deps, agent, selectedModel);
     return {
       model: selectedModel,

@@ -166,7 +166,6 @@ describe("initial sandbox policy helpers", () => {
 
     const planned = planHermesPortableInitialSandboxPolicy(basePolicyPath, [], {
       agentName: "hermes",
-      policyTier: "personal",
       additionalPresets: ["personal-open-internet", "slack"],
     });
 
@@ -185,7 +184,6 @@ describe("initial sandbox policy helpers", () => {
 
     const planned = planHermesPortableInitialSandboxPolicy(basePolicyPath, [], {
       agentName: "hermes",
-      policyTier: "personal",
       additionalPresets: ["personal-open-internet"],
     });
 
@@ -213,7 +211,6 @@ describe("initial sandbox policy helpers", () => {
     expect(() =>
       planHermesPortableInitialSandboxPolicy(basePolicyPath, [], {
         agentName: "hermes",
-        policyTier: "personal",
         additionalPresets: ["personal-open-internet"],
       }),
     ).toThrow("not strict UTF-8");
@@ -233,20 +230,18 @@ describe("initial sandbox policy helpers", () => {
     expect(() =>
       planHermesPortableInitialSandboxPolicy(basePolicyPath, [], {
         agentName: "hermes",
-        policyTier: "personal",
         additionalPresets: ["personal-open-internet"],
       }),
     ).toThrow("must not include a UTF-8 byte-order mark");
   });
 
-  it("rejects replaced, linked, or writable schema-5 policy authority (#9203)", () => {
+  it("rejects replaced, linked, or writable schema-5 policy requirements (#9203)", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
     const original = tmpPolicy("version: 1\nnetwork_policies: {}\n");
     const replacement = path.join(path.dirname(original), "replacement.yaml");
     const plan = (policyPath: string) =>
       planHermesPortableInitialSandboxPolicy(policyPath, [], {
         agentName: "hermes",
-        policyTier: "personal",
         additionalPresets: ["personal-open-internet"],
       });
 
@@ -639,10 +634,24 @@ network_policies: {}
   it("keeps the base policy when no channel needs a create-time preset", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
 
-    expect(prepareInitialSandboxCreatePolicy(basePolicyPath, ["telegram"])).toEqual({
+    expect(prepareInitialSandboxCreatePolicy(basePolicyPath, ["whatsapp"])).toEqual({
       policyPath: basePolicyPath,
       appliedPresets: [],
     });
+  });
+
+  it("applies the WeChat bridge policy at sandbox creation", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["wechat"]);
+
+    expect(prepared.policyPath).not.toBe(basePolicyPath);
+    expect(prepared.appliedPresets).toEqual(["wechat"]);
+    expect(getNetworkPolicyNames(fs.readFileSync(prepared.policyPath, "utf-8"))).toEqual(
+      new Set(["base", "wechat_bridge"]),
+    );
+    expect(prepared.cleanup?.()).toBe(true);
+    expect(fs.existsSync(prepared.policyPath)).toBe(false);
   });
 
   it("records an existing create-time preset without writing a temp policy", () => {

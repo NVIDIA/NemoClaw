@@ -1,12 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
-
 import { GATEWAY_PORT } from "../core/ports";
 import {
   resolveGatewayPortFromName,
-  resolveGatewayStateDirName,
+  resolveGatewayStateDirForPort,
   resolveSandboxGatewayName,
   type SandboxGatewayBinding,
 } from "../onboard/gateway-binding";
@@ -91,7 +89,9 @@ export function resolveGatewayReleaseStateDir(
   env: NodeJS.ProcessEnv,
   homeDir: string,
 ): string {
-  const configured = env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
-  if (configured && configured.trim()) return path.resolve(configured.trim());
-  return path.join(homeDir, ".local", "state", "nemoclaw", resolveGatewayStateDirName(port));
+  return resolveGatewayStateDirForPort({
+    configured: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    home: homeDir,
+    port,
+  });
 }

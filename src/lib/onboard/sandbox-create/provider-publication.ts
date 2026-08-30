@@ -8,7 +8,7 @@ import {
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } from "../../messaging/provider-profile";
 import type { SandboxEntry } from "../../state/registry";
-import { inspectGatewayCredentialOnlyProviderBinding } from "../gateway-provider-metadata";
+import { inspectGatewayCredentialFamilyProviderBinding } from "../gateway-provider-metadata";
 import type { SandboxCreateIntent } from "../sandbox-create-intent-types";
 
 type ProviderPreparationInput = {
@@ -31,10 +31,6 @@ type DeferredProviderAttachmentInput = {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly providerNames: readonly string[];
-};
-
-type DeferredProviderAttachmentDeps = Pick<SandboxCreateOrchestrationRuntime, "runOpenshell"> & {
-  readonly revalidateSandboxIdentity: (operation: string) => void;
 };
 
 function expectedMessagingBindings(input: ProviderPreparationInput) {
@@ -60,8 +56,13 @@ function inspectExpectedMessagingBinding(
 ): boolean {
   const expected = expectedBindings.get(providerName);
   if (!expected) return true;
-  const inspection = inspectGatewayCredentialOnlyProviderBinding(expected, (args, options) =>
-    deps.runOpenshell([...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)], options),
+  const inspection = inspectGatewayCredentialFamilyProviderBinding(
+    expected,
+    (args, options) =>
+      deps.runOpenshell(
+        [...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)],
+        options,
+      ),
   );
   return inspection.kind === "exact";
 }
@@ -148,26 +149,11 @@ export function publishAttachedProvidersBeforeDockerSandboxCreation(
   }
 }
 
-/** Attach the planned providers only after the created sandbox passed its exact policy gate. */
-export function attachProvidersAfterSandboxCreation(
-  input: DeferredProviderAttachmentInput,
-  deps: DeferredProviderAttachmentDeps,
-): void {
-  for (const providerName of input.providerNames) {
-    deps.revalidateSandboxIdentity(
-      `attaching provider '${providerName}' to sandbox '${input.sandboxName}'`,
-    );
-    const attached = deps.runOpenshell(
-      ["sandbox", "provider", "attach", "-g", input.gatewayName, input.sandboxName, providerName],
-      { ignoreError: true, suppressOutput: true },
-    );
-    if (attached.status !== 0) {
-      throw new Error(
-        `OpenShell did not attach provider '${providerName}' to the verified sandbox.`,
-      );
-    }
-    deps.revalidateSandboxIdentity(
-      `confirming provider '${providerName}' on sandbox '${input.sandboxName}'`,
-    );
-  }
+/** Attach the planned providers only after the created sandbox passed its exact identity gate. */
+export function attachProvidersAfterSandboxCreation(input: DeferredProviderAttachmentInput): void {
+  if (input.providerNames.length === 0) return;
+  throw new Error(
+    `OpenShell cannot attach providers to the immutable identity of sandbox '${input.sandboxName}'. ` +
+      `The sandbox remains incomplete on gateway '${input.gatewayName}'; preserve its verified create checkpoint for administrator recovery.`,
+  );
 }

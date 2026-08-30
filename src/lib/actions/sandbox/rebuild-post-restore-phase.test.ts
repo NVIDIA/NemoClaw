@@ -91,7 +91,6 @@ describe("rebuild post-restore phase", () => {
     vi.spyOn(registry, "getSandbox").mockImplementation(
       () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
     );
-    vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([]);
     vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
     vi.spyOn(messagingHostForward, "ensureMessagingHostForwardAfterRebuild").mockImplementation(
       () => {
@@ -198,17 +197,11 @@ describe("rebuild post-restore phase", () => {
 
     await runRebuildPostRestorePhase(args);
 
-    expect(
-      sessionModels.reconcileStalePinnedSessionModelsAfterRebuild,
-    ).not.toHaveBeenCalled();
+    expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
     expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).not.toHaveBeenCalled();
     expect(shields.repairMutableConfigPerms).not.toHaveBeenCalled();
-    expect(
-      rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore,
-    ).not.toHaveBeenCalled();
-    expect(
-      rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore,
-    ).not.toHaveBeenCalled();
+    expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
+    expect(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
     expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
     expect(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
@@ -221,6 +214,27 @@ describe("rebuild post-restore phase", () => {
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
     expect(output).toContain("Post-upgrade structure repair failed (doctor returned 255)");
     expect(output).not.toContain("rebuilt successfully");
+  });
+
+  it("stops rebuild when OpenClaw messaging config reapply fails", async () => {
+    vi.mocked(
+      rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor,
+    ).mockRejectedValue(new Error("config write failed"));
+    const args = input();
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(shields.repairMutableConfigPerms).not.toHaveBeenCalled();
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+    expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
+    expect(args.bail).toHaveBeenCalledWith(
+      "OpenClaw messaging manifest config reapply failed during rebuild.",
+    );
+    expect(args.log).toHaveBeenCalledWith(
+      "Messaging manifest reapply failed: config write failed",
+    );
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain("Messaging manifest config reapply failed after doctor");
   });
 
   it("captures a completed doctor mutation and rejects a later config change (#9946)", async () => {
@@ -552,29 +566,6 @@ describe("rebuild post-restore phase", () => {
     );
   });
 
-  it("discloses carried-over baseline exclusions in the successful rebuild summary (#7194)", async () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([
-      {
-        version: 1,
-        agent: "hermes",
-        key: "nous_research",
-        digest: "digest-1",
-        acknowledgedAt: "2026-07-19T00:00:00.000Z",
-      },
-    ]);
-
-    await runRebuildPostRestorePhase(input());
-
-    expect(
-      logSpy.mock.calls.some(
-        (call) =>
-          typeof call[0] === "string" &&
-          call[0].includes("Baseline exclusions carried over: nous_research"),
-      ),
-    ).toBe(true);
-  });
-
   it("points Hermes rebuilds to the replacement API token retrieval command (#7175)", async () => {
     agentName = "hermes";
 
@@ -763,12 +754,16 @@ describe("rebuild post-restore phase", () => {
       "Mutable OpenClaw config hash was not refreshed",
       "Messaging webhook forward was not verified",
       "MCP bridge definitions were preserved but not fully refreshed",
-      "Policy presets failed to reapply: messaging-telegram",
-      "Exact live policy reconciliation was incomplete; remove failed: messaging-discord",
       "Shields were previously enabled",
     ];
     const offsets = ordered.map((fragment) => output.indexOf(fragment));
     expect(offsets.every((offset) => offset >= 0)).toBe(true);
     expect(offsets).toEqual([...offsets].sort((left, right) => left - right));
+    expect(args.bail).toHaveBeenCalledWith(
+      "State restore remained incomplete after rebuilding 'alpha'.",
+    );
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(
+      "nemoclaw alpha rebuild",
+    );
   });
 });

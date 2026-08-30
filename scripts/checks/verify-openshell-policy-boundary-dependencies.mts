@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const ALLOWED_POLICY_BOUNDARY_MODULES = new Set(["yaml"]);
+const ALLOWED_POLICY_BOUNDARY_MODULES = new Set(["node:util", "yaml"]);
 const STATIC_REQUIRE = /\brequire\s*\(\s*(["'])([^"'\\\r\n]+)\1\s*\)/g;
 const STATIC_IMPORT = /\bimport\s*\(\s*(["'])([^"'\\\r\n]+)\1\s*\)/g;
 const ANY_UNCLASSIFIED_REQUIRE = /\brequire\b/;

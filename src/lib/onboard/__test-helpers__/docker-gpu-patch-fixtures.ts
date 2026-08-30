@@ -67,6 +67,30 @@ export function createDockerGpuInspectFixture(): DockerContainerInspect {
   };
 }
 
+export function createDockerFinalHandoffCaptureFixture(
+  oldContainerId: string,
+): (args: readonly string[]) => string {
+  const inspect = createDockerGpuInspectFixture();
+  inspect.Id = oldContainerId;
+  return (args) => {
+    if (args[0] === "ps") return `${oldContainerId}\n`;
+    if (args[0] === "inspect") return JSON.stringify([inspect]);
+    return "";
+  };
+}
+
+export function createDockerFinalHandoffRunFixture(
+  newContainerId: string,
+): (args: readonly string[]) => { status: number; stdout: string } {
+  return (args) => {
+    if (args[0] === "ps") return { status: 0, stdout: `${newContainerId}\n` };
+    if (args[0] === "inspect" && String(args[4]).includes("sandbox-namespace")) {
+      return { status: 0, stdout: "current-gateway\n" };
+    }
+    return { status: 0, stdout: "true\n" };
+  };
+}
+
 export function createDockerGpuDnsInspectFixture(): DockerContainerInspect {
   return {
     Id: "old-container-id",

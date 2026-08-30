@@ -41,10 +41,12 @@ const DEV_ARTIFACT_DOWNLOAD_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 const DEV_ARTIFACT_TRUSTED_CHECKOUT_NAME = "Checkout trusted OpenShell dev tooling";
 const DEV_ARTIFACT_TRUSTED_CHECKOUT = ".trusted-openshell-dev-artifact";
+const DEV_ARTIFACT_COPY_HELPER = ".github/scripts/copy-openshell-dev-asset.sh";
 const DEV_ARTIFACT_TRUSTED_PATHS =
   "scripts/install-openshell.sh\ntools/e2e/openshell-dev-artifact.mts\n";
-const DEV_ARTIFACT_SHARD_TRUSTED_PATHS = `.github/scripts/docker-auth-cleanup.sh\n${DEV_ARTIFACT_TRUSTED_PATHS}`;
+const DEV_ARTIFACT_SHARD_TRUSTED_PATHS = `${DEV_ARTIFACT_COPY_HELPER}\n.github/scripts/docker-auth-cleanup.sh\n${DEV_ARTIFACT_TRUSTED_PATHS}`;
 const DEV_ARTIFACT_TRUSTED_TOOL = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_TOOL}`;
+const DEV_ARTIFACT_TRUSTED_COPY_HELPER = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/${DEV_ARTIFACT_COPY_HELPER}`;
 const DEV_ARTIFACT_TRUSTED_INSTALLER = `\${{ github.workspace }}/${DEV_ARTIFACT_TRUSTED_CHECKOUT}/scripts/install-openshell.sh`;
 const DEV_ARTIFACT_SOURCE_OUTPUT = "${{ needs.openshell-dev-artifact.outputs.source_commit }}";
 const DEV_ARTIFACT_MANIFEST_OUTPUT = "${{ needs.openshell-dev-artifact.outputs.manifest_sha256 }}";
@@ -59,7 +61,7 @@ const DEV_ARTIFACT_INSTALL_ASSETS = [
   "openshell-checksums-sha256.txt",
   "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
   "openshell-gateway-checksums-sha256.txt",
-  "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
+  "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
   "openshell-sandbox-checksums-sha256.txt",
 ] as const;
 const DEV_COMPATIBILITY_STEP_NAME = "Classify OpenShell credential-boundary compatibility";
@@ -169,6 +171,18 @@ function validateJobIdentity(
   );
   requireEqual(
     errors,
+    env.E2E_MANAGED_IMAGE_REVISION,
+    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
+    `${jobName} must receive the selected managed-image cohort revision`,
+  );
+  requireEqual(
+    errors,
+    env.E2E_MANAGED_IMAGE_COHORT_RECEIPT,
+    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}",
+    `${jobName} must receive the complete selected managed-image cohort receipt`,
+  );
+  requireEqual(
+    errors,
     job["timeout-minutes"],
     90,
     `${jobName} must bound each shard to 90 minutes`,
@@ -178,7 +192,9 @@ function validateJobIdentity(
     errors,
     JSON.stringify(jobNeeds(job)),
     JSON.stringify(
-      jobName === "mcp-bridge-dev" ? ["generate-matrix", DEV_ARTIFACT_JOB] : ["generate-matrix"],
+      jobName === "mcp-bridge-dev"
+        ? ["base-image-publication", "generate-matrix", DEV_ARTIFACT_JOB]
+        : ["base-image-publication", "generate-matrix"],
     ),
     `${jobName} must depend on its reviewed artifact producers`,
   );
@@ -523,11 +539,8 @@ function validateJobExecution(
     for (const token of [
       ...DEV_ARTIFACT_INSTALL_ASSETS,
       'cat >"$shim_dir/gh"',
-      'source_asset="${OPENSHELL_DEV_ASSET_DIR}/${asset}"',
-      '! -L "$source_asset"',
-      '"$destination" = /*',
-      '! -L "$destination"',
-      'cp -- "$source_asset" "$destination/$asset"',
+      `bash "${DEV_ARTIFACT_TRUSTED_COPY_HELPER}"`,
+      '"$OPENSHELL_DEV_ASSET_DIR" "$asset" "$destination"',
       'cat >"$shim_dir/curl"',
       "Network fallback is disabled for retained OpenShell assets.",
       'PATH="$shim_dir:$PATH"',
@@ -841,8 +854,8 @@ function validateCredentialWindowJob(
   requireEqual(
     errors,
     JSON.stringify(jobNeeds(job)),
-    JSON.stringify(["generate-matrix"]),
-    `${CREDENTIAL_WINDOW_JOB} must depend only on matrix generation so it can run in parallel`,
+    JSON.stringify(["base-image-publication", "generate-matrix"]),
+    `${CREDENTIAL_WINDOW_JOB} must depend on publication and matrix generation`,
   );
   requireEqual(
     errors,
@@ -865,6 +878,10 @@ function validateCredentialWindowJob(
 
   const env = asRecord(job.env);
   const expectedEnv = {
+    E2E_MANAGED_IMAGE_REVISION:
+      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
+    E2E_MANAGED_IMAGE_COHORT_RECEIPT:
+      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}",
     E2E_JOB: "1",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",

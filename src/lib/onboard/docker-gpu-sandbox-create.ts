@@ -327,7 +327,7 @@ export function createDockerGpuSandboxCreatePatch(
       const rollbackError = await rollbackAfterFailure();
       if (!rollbackError) return request ? { kind: "rolled-back" } : undefined;
       if (
-        request?.ownerCleanupHandoff === "native-gpu-fallback-after-absent-attachment" &&
+        request?.ownerCleanupHandoff === "native-gpu-fallback" &&
         options.route === "native" &&
         options.externalRecreation === true &&
         rollbackError instanceof ManagedBootstrapOwnerCleanupRequiredError &&

@@ -29,6 +29,23 @@ export function buildPolicyGetArgs(sandboxName: string, gatewayName?: string): s
   return ["policy", "get", ...policyGatewayArgs(gatewayName), "--base", sandboxName];
 }
 
+/** Read one stored base-policy revision for concurrent-write reconciliation. */
+export function buildPolicyGetRevisionArgs(
+  sandboxName: string,
+  gatewayName: string,
+  revision: number,
+): string[] {
+  return [
+    "policy",
+    "get",
+    ...policyGatewayArgs(gatewayName),
+    "--rev",
+    String(revision),
+    "--base",
+    sandboxName,
+  ];
+}
+
 /** Read the effective policy for status and other diagnostics. */
 export function buildPolicyGetFullCommand(sandboxName: string, gatewayName?: string): string[] {
   return buildOpenshellCommand([
@@ -73,8 +90,4 @@ export function buildGlobalPolicyGetFullJsonArgs(gatewayName?: string): string[]
 /** Check whether the global policy has revision history. */
 export function buildGlobalPolicyListArgs(gatewayName?: string): string[] {
   return ["policy", "list", ...policyGatewayArgs(gatewayName), "--global", "--limit", "1"];
-}
-
-export function buildPolicyGetFullJsonCommand(sandboxName: string, gatewayName?: string): string[] {
-  return buildOpenshellCommand(buildPolicyGetFullJsonArgs(sandboxName, gatewayName));
 }

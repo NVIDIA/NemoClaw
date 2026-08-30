@@ -42,9 +42,7 @@ import {
   runOpenClawLaunchSession,
   runOpenClawLaunchReadinessLeaseTurns,
 } from "../live/launch-agent-turn.ts";
-
 const PROCESS_EXIT_WAIT = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
-
 type SessionRecords = Record<string, string[]>;
 type FixtureMode =
   | "cleanup-failure"
@@ -304,8 +302,12 @@ function runLaunchSessionFixture(mode: FixtureMode, terminalCopy: "absent" | "an
     join(fixtureRoot, ".bash_profile"),
     'export PATH="$NEMOCLAW_FIXTURE_BIN_ROOT:$PATH"\n',
   );
-
   try {
+    writeFileSync(
+      join(fixtureRoot, "sleep"),
+      '#!/bin/bash\n[[ "$1:$NEMOCLAW_FIXTURE_MODE" =~ ^0\.05:pty-(socket-(invalid|permission)|response-identity)$ ]] || exec /usr/bin/sleep "$@"\n',
+      { mode: 0o755 },
+    );
     writeFileSync(
       fakeStty,
       String.raw`#!/bin/bash
@@ -421,6 +423,7 @@ if (process.argv[2] !== "tui") {
           }) + "\n";
       client.end(body);
     });
+    process.umask(0o177);
     await new Promise((resolve, reject) => {
       replacement.once("error", reject);
       replacement.listen(socketPath, resolve);

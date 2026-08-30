@@ -4,6 +4,10 @@
 import { isAbsolute } from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
+import {
+  assertStockManagedImageReceipt,
+  shouldAssertStockManagedImageReceipt,
+} from "../managed-image-receipt.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
 import { trustedShellCommand } from "../shell-probe.ts";
 import {
@@ -48,7 +52,7 @@ export class HostCliClient {
     return this.openshellPath;
   }
 
-  command(
+  async command(
     command: string,
     args: string[] = [],
     options: ShellProbeRunOptions = {},
@@ -57,7 +61,7 @@ export class HostCliClient {
     if (this.cwd && !merged.cwd) {
       merged.cwd = this.cwd;
     }
-    return this.runner.run(
+    const result = await this.runner.run(
       trustedShellCommand({
         command,
         args,
@@ -65,6 +69,22 @@ export class HostCliClient {
       }),
       merged,
     );
+    const environment = merged.env ?? {};
+    if (
+      result.exitCode === 0 &&
+      shouldAssertStockManagedImageReceipt(command, args, environment)
+    ) {
+      const sandboxName = environment.NEMOCLAW_SANDBOX_NAME?.trim();
+      if (!sandboxName) {
+        throw new Error("stock managed-image receipt assertion requires a sandbox name");
+      }
+      assertStockManagedImageReceipt({
+        environment,
+        expectedAgent: environment.NEMOCLAW_AGENT?.trim(),
+        sandboxName,
+      });
+    }
+    return result;
   }
 
   async isCommandAvailable(command: string, options: ShellProbeRunOptions = {}): Promise<boolean> {

@@ -56,9 +56,11 @@ export type ModelValidationResult = ModelValidationSuccess | ModelValidationFail
 export interface SandboxCreateIntent {
   /** Complete secret-free create plan resolved by the onboarding machine. */
   readonly resolved?: import("./sandbox-create-intent-types").SandboxCreateIntent;
-  /** Defer provider, credential, and attachment effects until the created sandbox is verified. */
-  readonly deferSandboxEffectsUntilPolicyVerification?: true;
+  /** Defer provider, credential, and attachment effects until the created sandbox identity is verified. */
+  readonly deferSandboxEffectsUntilIdentityVerification?: true;
   readonly recreate: boolean;
+  /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
+  readonly apfInterceptorRequested?: true;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
   readonly observabilityEnabled: boolean;
   /** Present only when the operator explicitly selected observability on or off. */
@@ -86,49 +88,35 @@ export interface SandboxCreateIntent {
   readonly recreateJournalTargetIntentFingerprint?: string;
   /** Validated non-secret Hermes environment assignments carried by a rebuild. */
   readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
-  /** Built-in policy presets owned by the outer authoritative rebuild lifecycle. */
-  readonly rebuildPolicyPresets?: readonly string[];
+  /** Bounded live OpenShell policy handoff for one active rebuild. */
+  readonly rebuildPolicySourcePath?: string;
 }
 
-/** Policy authority proved inside one exact post-create sandbox identity gate. */
-export type VerifiedSandboxPolicyRegistration =
-  | {
-      readonly policyAuthority: "nemoclaw-managed";
-      readonly policyCreationReceipt: import("../policy/merge").NemoClawPolicyCreationReceipt;
-      readonly observedPolicyAuthority: "owner-unknown";
-    }
-  | {
-      readonly policyAuthority: "externally-managed";
-      readonly policyCreationReceipt: null;
-      /** Generic evidence seam; the default #10115 verifier produces only global authority. */
-      readonly observedPolicyAuthority: "externally-managed" | "owner-unknown";
-      readonly policyIdentity: import("../policy/merge").OpenShellPolicyIdentity;
-    };
-
-/** Exact sandbox and policy result retained from the immediate create gate. */
-export interface VerifiedSandboxPolicyBoundary {
-  readonly registration: VerifiedSandboxPolicyRegistration;
+/** Exact sandbox identity retained from the immediate create boundary. */
+export interface VerifiedSandboxCreateBoundary {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly gatewayPort: number;
   readonly lifecycleGeneration: string;
   readonly lifecycleLiveIdentityFingerprint: string;
+  readonly createAttemptNonce?: string;
   readonly route: import("./docker-gpu-route").SelectedDockerGpuRoute;
 }
 
-/** Exact context made available only after effective-policy verification. */
-export interface VerifiedSandboxCreateEffectsContext extends VerifiedSandboxPolicyBoundary {
-  readonly revalidatePolicyRequirements: (operation: string) => void;
+/** Exact context made available after OpenShell confirms the created sandbox identity. */
+export interface VerifiedSandboxCreateEffectsContext extends VerifiedSandboxCreateBoundary {
+  readonly revalidateSandboxIdentity: (operation: string) => void;
 }
 
-/** Ephemeral effects that may run only inside the exact post-create policy gate. */
+/** Ephemeral effects that may run only after OpenShell confirms the created sandbox identity. */
 export type VerifiedSandboxCreateEffects = (
   context: VerifiedSandboxCreateEffectsContext,
 ) => Promise<void>;
 
-/** Durable onboarding-session identity that owns the pending inference route. */
+/** Durable onboarding-session identity and exact pending inference route. */
 export interface InferenceRouteReservationAuthority {
   readonly sessionId: string;
+  readonly selection: import("../inference/selection").InferenceSelection;
 }
 
 export type OnboardOptions = {
@@ -172,8 +160,8 @@ export type OnboardOptions = {
   managedWorkloadRebuild?: import("./workload/rebuild").ManagedWorkloadRebuildHandoff;
   /** Internal validated non-secret Hermes environment assignments carried by a rebuild. */
   rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
-  /** Internal authoritative policy selection carried across sandbox recreation. */
-  rebuildPolicyPresets?: readonly string[];
+  /** Bounded live OpenShell policy handoff for one active rebuild. */
+  rebuildPolicySourcePath?: string;
   /** Internal hint for resolving the sandbox base image without repeating remote discovery. */
   baseImageResolutionHint?:
     | import("../sandbox-base-image").SandboxBaseImageResolutionMetadata
@@ -184,6 +172,8 @@ export type OnboardOptions = {
     | null;
   resume?: boolean;
   fresh?: boolean;
+  /** Operator-selected APF compatibility mode for fresh sandbox creation. */
+  apfInterceptorRequested?: boolean | null;
   fromDockerfile?: string | null;
   sandboxName?: string | null;
   /** Explicit host directories exposed read-only to the sandbox. */

@@ -21,6 +21,7 @@ const supervisorFailureMarkers: Array<
   ["SUPERVISOR_UNAVAILABLE", "privileged control unavailable"],
   ["SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=await-replacement", "supervisor unavailable"],
   ["SUPERVISOR_NOT_RUNNING", "supervisor not running"],
+  ["SUPERVISOR_DISCOVERY_PENDING", "supervisor unavailable"],
   ["SUPERVISOR_REBUILD_REQUIRED", "privileged control unavailable"],
   ["SUPERVISOR_BUSY", "privileged control unavailable"],
   [MARKERS.SECRET_BOUNDARY_REFUSED, "secret-boundary refusal"],

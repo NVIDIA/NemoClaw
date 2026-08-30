@@ -82,7 +82,7 @@ export function createTelegramStatusHealthHook(
       gatewayProcessAlive,
       breadcrumbs,
       probedAt: normalizeString(context.inputs?.probedAt) ?? "",
-      presetInRegistry: Boolean(context.inputs?.presetInRegistry),
+      presetApplied: Boolean(context.inputs?.presetApplied),
       presetOnGateway: normalizeTristate(context.inputs?.presetOnGateway),
       channelEnabledInRegistry: Boolean(context.inputs?.channelEnabledInRegistry),
     };

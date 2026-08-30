@@ -10,7 +10,7 @@ import {
   buildPolicyGetCommand,
   buildPolicyGetFullCommand,
   buildPolicyGetFullJsonArgs,
-  buildPolicyGetFullJsonCommand,
+  buildPolicyGetRevisionArgs,
   buildPolicySetCommand,
 } from "./commands";
 
@@ -31,22 +31,24 @@ describe("OpenShell policy command builders", () => {
       "--full",
       "alpha",
     ]);
-    expect(buildPolicyGetFullJsonCommand("alpha").slice(1)).toEqual([
-      "policy",
-      "get",
-      "--full",
-      "--output",
-      "json",
-      "alpha",
-    ]);
   });
 
-  it("pins policy authority reads to the selected gateway", () => {
+  it("pins policy requirements reads to the selected gateway", () => {
     expect(buildPolicyGetArgs("alpha", "nemoclaw")).toEqual([
       "policy",
       "get",
       "-g",
       "nemoclaw",
+      "--base",
+      "alpha",
+    ]);
+    expect(buildPolicyGetRevisionArgs("alpha", "nemoclaw", 7)).toEqual([
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--rev",
+      "7",
       "--base",
       "alpha",
     ]);
