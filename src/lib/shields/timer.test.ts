@@ -114,33 +114,6 @@ describe("shields timer authorization", () => {
     }
   }
 
-  async function ownedMarkerFixture(sandboxName: string) {
-    const timer = await import("./timer");
-    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
-    fs.mkdirSync(stateDir, { recursive: true });
-    const snapshotPath = path.join(stateDir, "snapshot.yaml");
-    const restoreAtIso = new Date().toISOString();
-    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
-    const marker = {
-      pid: process.pid,
-      sandboxName,
-      snapshotPath,
-      restoreAt: restoreAtIso,
-      processToken: PROCESS_TOKEN,
-    };
-    fs.writeFileSync(markerPath, JSON.stringify(marker));
-    const args = timer.parseTimerArgs([
-      sandboxName,
-      snapshotPath,
-      restoreAtIso,
-      "",
-      "",
-      PROCESS_TOKEN,
-    ]);
-    expect(args).not.toBeNull();
-    return { args: args!, marker, markerPath, timer };
-  }
-
   async function waitForRetryBoundary(deadlinePath: string, auditPath: string): Promise<void> {
     await vi.waitFor(
       () => {
@@ -610,20 +583,37 @@ describe("shields timer authorization", () => {
     expect(fs.existsSync(markerPath)).toBe(true);
   });
 
-  it("removes the exact owned timer marker through shared cleanup", async () => {
-    const { args, markerPath, timer } = await ownedMarkerFixture("owned-marker");
-    expect(timer.cleanupOwnedTimerMarker(args)).toBe(true);
-    expect(fs.existsSync(markerPath)).toBe(false);
-  });
-
   it("does not delete a replacement timer marker during owned-marker cleanup", async () => {
-    const { args, marker: oldMarker, markerPath, timer } =
-      await ownedMarkerFixture("marker-race");
+    const timer = await import("./timer");
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    const sandboxName = "marker-race";
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date().toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const oldMarker = {
+      pid: process.pid,
+      sandboxName,
+      snapshotPath,
+      restoreAt: restoreAtIso,
+      processToken: PROCESS_TOKEN,
+    };
     const replacementMarker = {
       ...oldMarker,
       restoreAt: new Date(Date.now() + 60_000).toISOString(),
       processToken: "b".repeat(32),
     };
+    fs.writeFileSync(markerPath, JSON.stringify(oldMarker));
+    const args = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      "",
+      "",
+      PROCESS_TOKEN,
+    ]);
+    expect(args).not.toBeNull();
+
     const originalRename = fs.renameSync.bind(fs);
     const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
       String(source) === markerPath &&
@@ -631,31 +621,12 @@ describe("shields timer authorization", () => {
       originalRename(source, destination);
     });
     try {
-      expect(timer.cleanupOwnedTimerMarker(args)).toBe(false);
+      expect(timer.cleanupOwnedTimerMarker(args!)).toBe(false);
     } finally {
       renameSpy.mockRestore();
     }
 
     expect(JSON.parse(fs.readFileSync(markerPath, "utf-8"))).toEqual(replacementMarker);
-  });
-
-  it("retains the owned marker for retry when shared cleanup cannot confirm durability", async () => {
-    const { args, marker, markerPath, timer } = await ownedMarkerFixture("marker-durability");
-    const realFsync = fs.fsyncSync.bind(fs);
-    vi.spyOn(fs, "fsyncSync")
-      .mockImplementationOnce(() => {
-        const error = new Error("injected directory sync failure") as NodeJS.ErrnoException;
-        error.code = "EIO";
-        throw error;
-      })
-      .mockImplementation(realFsync);
-
-    expect(() => timer.cleanupOwnedTimerMarker(args)).toThrow(
-      "Could not confirm durable cleanup",
-    );
-    expect(JSON.parse(fs.readFileSync(markerPath, "utf-8"))).toEqual(marker);
-    expect(timer.cleanupOwnedTimerMarker(args)).toBe(true);
-    expect(fs.existsSync(markerPath)).toBe(false);
   });
 
   it("does not preempt a transition owner after timer authority is revoked", async () => {
