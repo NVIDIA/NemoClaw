@@ -56,6 +56,7 @@ export type ConnectHarness = {
   readSandboxConfigSpy: MockInstance;
   recoverPortableDemoLifecycleSpy: MockInstance;
   requalifyPortableAgentAuthoritySpy: MockInstance;
+  qualifyHermesPortableAcceptedReadinessAuthoritySpy: MockInstance;
   inspectPortableReceiptDispositionSpy: MockInstance;
   registryEntries: SandboxEntry[];
   resolveAgentConfigSpy: MockInstance;
@@ -252,6 +253,20 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     },
     executablePath: "/usr/bin/openshell",
   });
+  const qualifyHermesPortableAcceptedReadinessAuthoritySpy = vi
+    .spyOn(gatewayState, "qualifyHermesPortableAcceptedReadinessAuthority")
+    .mockReturnValue({
+      kind: "current",
+      commandAuthority: {
+        assertCurrent: assertHermesPortableOperatingCommandCurrentSpy,
+        env: {
+          HOME: "/home/test",
+          XDG_CONFIG_HOME: "/home/test/.config",
+          XDG_RUNTIME_DIR: "/run/user/1000",
+        },
+        executablePath: "/usr/bin/openshell",
+      },
+    });
   vi.spyOn(gatewayState, "assertHermesPortableLifecycleForConnect").mockImplementation(
     () => undefined,
   );
@@ -299,7 +314,10 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     )) as never);
   const recoverHermesPortableOllamaInferenceSpy = vi
     .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
-    .mockImplementation(((input: { verifyRoute: () => unknown }) => {
+    .mockImplementation(((input: {
+      verifyRoute: () => unknown;
+      prepareProbeDependency?: () => { release: () => void };
+    }) => {
       if (options.hermesInferenceRecoveryPhase) {
         throw new hermesOllamaInference.HermesPortableOllamaRecoveryPhaseError(
           options.hermesInferenceRecoveryPhase,
@@ -315,6 +333,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         );
       }
       input.verifyRoute();
+      input.prepareProbeDependency?.().release();
       return "reused";
     }) as never);
   const requalifyPortableAgentAuthoritySpy = vi
@@ -567,6 +586,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     readSandboxConfigSpy,
     recoverPortableDemoLifecycleSpy,
     requalifyPortableAgentAuthoritySpy,
+    qualifyHermesPortableAcceptedReadinessAuthoritySpy,
     inspectPortableReceiptDispositionSpy,
     registryEntries,
     resolveAgentConfigSpy,

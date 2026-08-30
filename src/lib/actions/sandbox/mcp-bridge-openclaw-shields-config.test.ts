@@ -37,7 +37,7 @@ import { assertOpenClawMcpConfigMutationAllowed } from "./mcp-bridge-adapter-ope
 // group write bit, so every in-sandbox `mcporter config` write fails. Before
 // this guard existed the raw Node error escaped as
 // `EACCES: permission denied, open '/sandbox/.openclaw/workspace/config/mcporter.json'`.
-describe("OpenClaw MCP config mutation posture", () => {
+describe("OpenClaw MCP config mutation posture (#10469)", () => {
   beforeEach(() => {
     mocks.isShieldsDown.mockReset();
   });

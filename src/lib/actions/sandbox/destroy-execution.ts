@@ -233,7 +233,11 @@ async function restoreMcpAfterDeleteAbort(
   let recoveryFailure: string | undefined;
   let openedRollbackWindow = false;
   try {
-    if (hardened.hardenedForDelete && preparation.entries.length > 0) {
+    if (
+      hardened.hardenedForDelete &&
+      preparation.entries.length > 0 &&
+      !preparation.adapterScrubSkipped
+    ) {
       if (!hardened.timerProcessToken) {
         throw new Error(
           "Cannot open a bounded MCP rollback window because the active shields timer had no valid process token.",

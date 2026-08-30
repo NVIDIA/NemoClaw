@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
   rollbackScrubbedMcpAdapters,
@@ -9,6 +9,7 @@ import {
   type McpScrubbedAdapterEntry,
 } from "./mcp-bridge-adapter-teardown";
 import { MCP_BRIDGE_POLICY_SOURCE, McpBridgeError } from "./mcp-bridge-contracts";
+import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { removeGeneratedPolicy } from "./mcp-bridge-policy";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 import {
@@ -44,6 +45,20 @@ export {
   prepareMcpBridgesForAbsentSandboxDestroy,
 } from "./mcp-bridge-destroy-preflight";
 
+/** Restrict the forced scrub bypass to OpenClaw's locked Mcporter config. */
+function canForceSkipAdapterScrub(
+  sandbox: SandboxEntry,
+  entries: readonly McpBridgeEntry[],
+): boolean {
+  const sandboxAgent = sandbox.agent || "openclaw";
+  return (
+    entries.length > 0 &&
+    entries.every(
+      (entry) => entry.adapter === "mcporter" || (!entry.adapter && sandboxAgent === "openclaw"),
+    )
+  );
+}
+
 /**
  * Classify whether an in-sandbox adapter mutation preflight blocks destroy.
  *
@@ -63,12 +78,14 @@ function classifyForcedAdapterScrubRefusal(
     return "";
   } catch (error) {
     if (!force) throw error;
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = redactBridgeSecretsForDisplay(
+      error instanceof Error ? error.message : String(error),
+    );
     console.warn(
       `  Sandbox '${sandboxName}' keeps its retained-volume MCP adapter entry (--force): ${detail}`,
     );
     console.warn(
-      "  Exact OpenShell providers are still deleted so any stale credential placeholder cannot authenticate; same-name onboarding may need to replace stale MCP adapter config.",
+      "  MCP policy and provider state remain until OpenShell confirms sandbox deletion. The workspace wipe can still remove the retained adapter entry.",
     );
     return detail;
   }
@@ -83,10 +100,10 @@ function classifyForcedAdapterScrubRefusal(
  *
  * `--force` may continue when the live adapter config cannot be mutated at all
  * — for example an OpenClaw sandbox whose Mcporter config is locked under the
- * shields state root (#10469). The retained-volume adapter entry is then left
- * in place, exactly as it is for an already-absent sandbox, and the caller
- * reports that. The exact global providers are still deleted in phase two, so
- * the retained credential placeholder cannot authenticate afterwards.
+ * shields state root (#10469). In that case, phase one changes no complete MCP
+ * policy or provider state. The ordinary workspace wipe can still remove the
+ * retained adapter entry. Phase two deletes exact providers only after
+ * OpenShell confirms sandbox deletion.
  */
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
@@ -118,7 +135,7 @@ export async function prepareMcpBridgesForDestroy(
             currentSandbox,
             entriesRequiringExternalCleanup,
           ),
-        force,
+        force && canForceSkipAdapterScrub(currentSandbox, entriesRequiringExternalCleanup),
       );
   const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox);
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
@@ -174,16 +191,24 @@ export async function prepareMcpBridgesForDestroy(
   adapterScrubRefusal ||= classifyForcedAdapterScrubRefusal(
     sandboxName,
     () => assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries),
-    force,
+    force && canForceSkipAdapterScrub(sandbox, entries),
   );
+  if (adapterScrubRefusal) {
+    return {
+      entries,
+      detachedProviderEntries: [],
+      scrubbedAdapterEntries: [],
+      destroyAlreadyPrepared: false,
+      destroyAlreadyPending: false,
+      adapterScrubSkipped: adapterScrubRefusal,
+    };
+  }
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];
   const removedPolicies: McpBridgeEntry[] = [];
   try {
-    if (!adapterScrubRefusal) {
-      for (const entry of entries) {
-        scrubbedAdapters.push(scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry));
-      }
+    for (const entry of entries) {
+      scrubbedAdapters.push(scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry));
     }
     for (const entry of entries) {
       removeGeneratedPolicy(sandboxName, entry);
@@ -236,9 +261,7 @@ export async function prepareMcpBridgesForDestroy(
       }
     }
     if (!runtimeRestored) {
-      rollbackFailures.push(
-        ...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters),
-      );
+      rollbackFailures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters));
     }
     const current = registry.getSandbox(sandboxName);
     if (current?.mcp?.destroyPreparedAt) {
@@ -272,7 +295,6 @@ export async function prepareMcpBridgesForDestroy(
     scrubbedAdapterEntries: scrubbedAdapters,
     destroyAlreadyPrepared: false,
     destroyAlreadyPending: false,
-    ...(adapterScrubRefusal ? { adapterScrubSkipped: adapterScrubRefusal } : {}),
   };
 }
 
@@ -281,7 +303,11 @@ export async function restoreMcpBridgesAfterDestroyAbort(
   sandboxName: string,
   preparation: McpDestroyPreparation,
 ): Promise<void> {
-  if (preparation.entries.length === 0 || preparation.destroyAlreadyPending) {
+  if (
+    preparation.entries.length === 0 ||
+    preparation.destroyAlreadyPending ||
+    preparation.adapterScrubSkipped
+  ) {
     return;
   }
   const preparedSandbox = assertMcpDestroySnapshotCurrent(sandboxName, preparation.entries);

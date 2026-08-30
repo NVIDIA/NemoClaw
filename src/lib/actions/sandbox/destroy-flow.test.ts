@@ -1084,37 +1084,6 @@ describe("destroySandbox flow", () => {
     expectShieldsUpRefusalBeforeMutation(harness);
   });
 
-  // #10469: OpenClaw's managed Mcporter config lives under the locked
-  // `workspace` state root, so a shields-up sandbox cannot have its adapter
-  // entry scrubbed. Destroy must say so before any teardown starts.
-  it("refuses shields-up OpenClaw MCP destroy before stopping services or preparing MCP state (#10469)", async () => {
-    const harness = createDestroyHarness({
-      agent: "openclaw",
-      mcpServers: ["github"],
-      shieldsDown: false,
-    });
-
-    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
-      "has shields up or an unreadable shields posture",
-    );
-
-    expectShieldsUpRefusalBeforeMutation(harness);
-  });
-
-  it("lets --force past the shields-up OpenClaw refusal into MCP preparation (#10469)", async () => {
-    const harness = createDestroyHarness({
-      agent: "openclaw",
-      mcpServers: ["github"],
-      shieldsDown: false,
-    });
-
-    await expect(
-      harness.destroySandbox("alpha", { yes: true, force: true }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", { force: true });
-  });
-
   it("does not require mutable Hermes config for a prepared-only add", async () => {
     const harness = createDestroyHarness({
       agent: "hermes",

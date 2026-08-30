@@ -8,10 +8,12 @@ import type { McpBridgeEntry } from "../../state/registry";
 const mocks = vi.hoisted(() => ({
   assertMcpAdapterConfigMutationsAllowed: vi.fn(),
   assertMcpAdapterTeardownRuntimeCapabilities: vi.fn(),
+  assertMcpDestroySnapshotCurrent: vi.fn(),
   detachProvider: vi.fn(),
   discardSafeIncompleteMcpAdds: vi.fn(),
   getSandboxOrThrow: vi.fn(),
   removeGeneratedPolicy: vi.fn(),
+  restoreExistingMcpBridgeRuntime: vi.fn(),
   scrubManagedMcpAdapterOrThrow: vi.fn(),
   updateSandbox: vi.fn(),
   waitForDetachedMcpCredential: vi.fn(),
@@ -29,6 +31,12 @@ const ENTRY: McpBridgeEntry = {
 } as McpBridgeEntry;
 
 const SANDBOX = { name: "alpha", agent: "openclaw", mcp: { bridges: { github: ENTRY } } };
+const HERMES_ENTRY = { ...ENTRY, agent: "hermes", adapter: "hermes-config" };
+const HERMES_SANDBOX = {
+  name: "alpha",
+  agent: "hermes",
+  mcp: { bridges: { github: HERMES_ENTRY } },
+};
 const PREPARED_SANDBOX = {
   ...SANDBOX,
   mcp: { bridges: { github: ENTRY }, destroyPreparedAt: "2026-08-27T00:00:00Z" },
@@ -48,7 +56,7 @@ vi.mock("./mcp-bridge-policy", () => ({
 }));
 
 vi.mock("./mcp-bridge-destroy-preflight", () => ({
-  assertMcpDestroySnapshotCurrent: vi.fn(() => SANDBOX),
+  assertMcpDestroySnapshotCurrent: mocks.assertMcpDestroySnapshotCurrent,
   cloneMcpBridgeEntry: (entry: McpBridgeEntry) => ({ ...entry }),
   discardSafeIncompleteMcpAdds: mocks.discardSafeIncompleteMcpAdds,
   inspectExactMcpDestroyProvider: vi.fn(() => ({ exists: true })),
@@ -63,7 +71,7 @@ vi.mock("./mcp-bridge-provider", () => ({
 }));
 
 vi.mock("./mcp-bridge-restart", () => ({
-  restoreExistingMcpBridgeRuntime: vi.fn(async () => undefined),
+  restoreExistingMcpBridgeRuntime: mocks.restoreExistingMcpBridgeRuntime,
 }));
 
 vi.mock("./mcp-bridge-runtime-capabilities", () => ({
@@ -88,7 +96,10 @@ vi.mock("../../state/registry", () => ({
   updateSandbox: mocks.updateSandbox,
 }));
 
-import { prepareMcpBridgesForDestroy } from "./mcp-bridge-destroy";
+import {
+  prepareMcpBridgesForDestroy,
+  restoreMcpBridgesAfterDestroyAbort,
+} from "./mcp-bridge-destroy";
 
 // #10469: an OpenClaw sandbox whose Mcporter config is locked under the shields
 // state root cannot have its retained-volume adapter entry scrubbed at all.
@@ -101,8 +112,10 @@ describe("prepareMcpBridgesForDestroy adapter-scrub refusal", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     mocks.assertMcpAdapterConfigMutationsAllowed.mockReset();
     mocks.assertMcpAdapterTeardownRuntimeCapabilities.mockReset();
+    mocks.assertMcpDestroySnapshotCurrent.mockReset().mockReturnValue(SANDBOX);
     mocks.scrubManagedMcpAdapterOrThrow.mockReset().mockImplementation(() => ({ ...ENTRY }));
     mocks.removeGeneratedPolicy.mockReset();
+    mocks.restoreExistingMcpBridgeRuntime.mockReset().mockResolvedValue(undefined);
     mocks.detachProvider.mockReset().mockReturnValue("detached");
     mocks.waitForDetachedMcpCredential.mockReset();
     mocks.updateSandbox.mockReset().mockReturnValue(SANDBOX);
@@ -120,19 +133,19 @@ describe("prepareMcpBridgesForDestroy adapter-scrub refusal", () => {
     expect(mocks.detachProvider).not.toHaveBeenCalled();
   });
 
-  it("keeps the retained adapter entry under --force and still detaches the provider", async () => {
+  it("keeps MCP policy and provider state under --force when adapter mutation is refused", async () => {
     mocks.assertMcpAdapterConfigMutationsAllowed.mockImplementation(() => {
       throw new Error(SHIELDS_REFUSAL);
     });
     const preparation = await prepareMcpBridgesForDestroy("alpha", { force: true });
     expect(preparation.adapterScrubSkipped).toContain(SHIELDS_REFUSAL);
     expect(preparation.scrubbedAdapterEntries).toEqual([]);
+    expect(preparation.detachedProviderEntries).toEqual([]);
     expect(mocks.scrubManagedMcpAdapterOrThrow).not.toHaveBeenCalled();
-    // Host-side cleanup is unaffected by the in-sandbox posture and must still
-    // run, so the retained credential placeholder cannot authenticate.
-    expect(mocks.removeGeneratedPolicy).toHaveBeenCalledTimes(1);
-    expect(mocks.detachProvider).toHaveBeenCalledTimes(1);
-    expect(preparation.detachedProviderEntries).toHaveLength(1);
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+    expect(mocks.waitForDetachedMcpCredential).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
   });
 
   it("tolerates a refused teardown capability probe under --force", async () => {
@@ -141,8 +154,43 @@ describe("prepareMcpBridgesForDestroy adapter-scrub refusal", () => {
     });
     const preparation = await prepareMcpBridgesForDestroy("alpha", { force: true });
     expect(preparation.adapterScrubSkipped).toContain(SHIELDS_REFUSAL);
+    expect(preparation.scrubbedAdapterEntries).toEqual([]);
+    expect(preparation.detachedProviderEntries).toEqual([]);
     expect(mocks.scrubManagedMcpAdapterOrThrow).not.toHaveBeenCalled();
-    expect(mocks.detachProvider).toHaveBeenCalledTimes(1);
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+    expect(mocks.waitForDetachedMcpCredential).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("does not bypass a Hermes config-mutation refusal under --force", async () => {
+    mocks.getSandboxOrThrow.mockReturnValue(HERMES_SANDBOX);
+    mocks.discardSafeIncompleteMcpAdds.mockResolvedValue(HERMES_SANDBOX);
+    mocks.assertMcpAdapterConfigMutationsAllowed.mockImplementation(() => {
+      throw new Error(SHIELDS_REFUSAL);
+    });
+
+    await expect(prepareMcpBridgesForDestroy("alpha", { force: true })).rejects.toThrow(
+      SHIELDS_REFUSAL,
+    );
+
+    expect(mocks.scrubManagedMcpAdapterOrThrow).not.toHaveBeenCalled();
+    expect(mocks.removeGeneratedPolicy).not.toHaveBeenCalled();
+    expect(mocks.detachProvider).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate MCP state when deletion aborts after forced preparation", async () => {
+    mocks.assertMcpAdapterConfigMutationsAllowed.mockImplementation(() => {
+      throw new Error(SHIELDS_REFUSAL);
+    });
+    const preparation = await prepareMcpBridgesForDestroy("alpha", { force: true });
+
+    await expect(restoreMcpBridgesAfterDestroyAbort("alpha", preparation)).resolves.toBeUndefined();
+
+    expect(mocks.assertMcpDestroySnapshotCurrent).not.toHaveBeenCalled();
+    expect(mocks.restoreExistingMcpBridgeRuntime).not.toHaveBeenCalled();
+    expect(mocks.updateSandbox).not.toHaveBeenCalled();
   });
 
   it("rethrows a refused teardown capability probe without --force", async () => {

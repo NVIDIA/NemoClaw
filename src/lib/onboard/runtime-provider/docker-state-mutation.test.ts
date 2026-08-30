@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -24,16 +26,36 @@ import {
 import { createDockerOperationAuthority } from "./docker-operation-authority";
 import {
   DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS,
-  DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP,
-  DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE,
   createDockerStateMutationOwner,
   createDockerStateMutationSurface,
 } from "./docker-state-mutation";
 
-const RUNTIME_STATE_MUTATION_CONTROLLER = path.join(
+const TRANSPORT_BROKER = path.join(
   import.meta.dirname,
-  "../../../../scripts/runtime-state-mutation-control.py",
+  "..",
+  "..",
+  "..",
+  "..",
+  "scripts",
+  "runtime-state-mutation-transport-broker.py",
 );
+
+const TRANSPORT_BROKER_HARNESS = String.raw`
+import importlib.util
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("runtime_state_mutation_transport_broker", sys.argv[1])
+broker = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = broker
+spec.loader.exec_module(broker)
+broker.ROOT = sys.argv[2]
+broker.EXPECTED_UID = os.getuid()
+broker.EXPECTED_GID = os.getgid()
+broker.TIMEOUTS = {**broker.TIMEOUTS, "activate": float(sys.argv[3])}
+broker.HELPER = sys.argv[4]
+raise SystemExit(broker.main([sys.argv[5]]))
+`;
 
 function ownerThatStopsAfterPrepare(runtime: ReturnType<typeof harness>) {
   const acquireMutationExecution = vi.fn(() => {
@@ -57,147 +79,228 @@ function ownerThatStopsAfterPrepare(runtime: ReturnType<typeof harness>) {
   };
 }
 
+function finalizeReleasedProviderWithLiveTransport(
+  runtime: ReturnType<typeof harness>,
+  transactionId: string,
+  resultSha256: string,
+): void {
+  const lease = runtime.lifecycleStore.acquireMutationExecution(transactionId);
+  runtime.lifecycleStore.complete(lease, resultSha256);
+  runtime.releaseProviderWithoutTransportCleanup();
+  runtime.lifecycleStore.finalizeStateMutationRelease(lease, resultSha256);
+  runtime.lifecycleStore.releaseMutationExecution(lease);
+}
+
+async function waitForPath(filePath: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      fs.accessSync(filePath);
+      return;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${path.basename(filePath)}`);
+}
+
+type BrokerAction =
+  | "acquire"
+  | "assert"
+  | "publish"
+  | "recover"
+  | "rollback"
+  | "activate"
+  | "release";
+
+interface BrokerResponse {
+  readonly schemaVersion: number;
+  readonly action: BrokerAction;
+  readonly identity: string;
+  readonly status: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+async function createBrokerRuntime(
+  helperSource: (root: string) => string,
+  activateTimeoutSeconds = 0.25,
+) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-mutation-broker-"));
+  const helper = path.join(root, "helper.py");
+  const transaction = randomBytes(32).toString("hex");
+  const session = path.join(root, transaction);
+  fs.writeFileSync(helper, helperSource(root), { mode: 0o500 });
+  const broker = spawn(
+    "python3",
+    [
+      "-I",
+      "-c",
+      TRANSPORT_BROKER_HARNESS,
+      TRANSPORT_BROKER,
+      root,
+      String(activateTimeoutSeconds),
+      helper,
+      transaction,
+    ],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
+  const brokerExit = new Promise<void>((resolve, reject) => {
+    broker.once("exit", () => resolve());
+    broker.once("error", reject);
+  });
+  let brokerStderr = "";
+  broker.stderr.setEncoding("utf8");
+  broker.stderr.on("data", (chunk: string) => {
+    brokerStderr += chunk;
+  });
+
+  try {
+    await waitForPath(path.join(session, "ready"), 2_000);
+  } catch (error: unknown) {
+    broker.kill("SIGTERM");
+    await brokerExit;
+    fs.rmSync(root, { force: true, recursive: true });
+    throw error;
+  }
+
+  return {
+    helper,
+    root,
+    session,
+    transaction,
+    stderr: () => brokerStderr,
+    close: async () => {
+      broker.kill("SIGTERM");
+      await brokerExit;
+      fs.rmSync(root, { force: true, recursive: true });
+    },
+  };
+}
+
+async function sendBrokerRequest(
+  runtime: Awaited<ReturnType<typeof createBrokerRuntime>>,
+  action: BrokerAction,
+): Promise<{ readonly elapsedMs: number; readonly response: BrokerResponse }> {
+  const request = Buffer.from(
+    `${JSON.stringify({ action, transactionId: runtime.transaction })}\n`,
+    "utf8",
+  );
+  const identity = createHash("sha256").update(request).digest("hex");
+  const responsePath = path.join(runtime.session, `${identity}.response`);
+  const startedAt = Date.now();
+  fs.writeFileSync(path.join(runtime.session, `${identity}.${action}.incoming`), request, {
+    mode: 0o600,
+  });
+  await waitForPath(responsePath, 1_500);
+  return {
+    elapsedMs: Date.now() - startedAt,
+    response: JSON.parse(fs.readFileSync(responsePath, "utf8")) as BrokerResponse,
+  };
+}
+
+function brokerFailureCode(response: BrokerResponse): string {
+  return (JSON.parse(response.stderr) as { code: string }).code;
+}
+
 afterEach(() => {
   cleanupDockerStateMutationRoots();
 });
 
 describe("Docker runtime-provider state mutation surface", () => {
-  it("preserves safe broker diagnostics after request validation", () => {
-    const definitionsEnd = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.indexOf(
-      "\nhelper = sys.argv[1]\n",
+  it("publishes safe full-broker diagnostics after request validation", async () => {
+    const runtime = await createBrokerRuntime(
+      () => `import os,sys
+action = sys.argv[1]
+if action == "acquire":
+    os.write(2, b"raw helper failure")
+    raise SystemExit(2)
+if action == "assert":
+    os.write(2, b"unexpected helper stderr")
+if action == "publish":
+    os.write(2, b'{"schemaVersion":1,"action":"publish","status":"failed","code":"publisher-guard-failed"}\\n')
+    raise SystemExit(1)
+if action == "rollback":
+    os.write(1, b"\\xff")
+`,
     );
-    expect(definitionsEnd).toBeGreaterThan(0);
-    const definitions = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.slice(
-      0,
-      definitionsEnd,
-    );
-    const probe = `${definitions}
-helper = "/definitely-missing/nemoclaw-runtime-state-mutation-control.py"
+
+    try {
+      const failed = await sendBrokerRequest(runtime, "acquire");
+      expect(brokerFailureCode(failed.response)).toBe("helper-process-failed");
+
+      const protocol = await sendBrokerRequest(runtime, "assert");
+      expect(brokerFailureCode(protocol.response)).toBe("helper-protocol-stderr");
+
+      const publisher = await sendBrokerRequest(runtime, "publish");
+      expect(brokerFailureCode(publisher.response)).toBe("publisher-guard-failed");
+
+      const encoding = await sendBrokerRequest(runtime, "rollback");
+      expect(brokerFailureCode(encoding.response)).toBe("transport-response-encoding-invalid");
+
+      fs.unlinkSync(runtime.helper);
+      const missing = await sendBrokerRequest(runtime, "recover");
+      expect(brokerFailureCode(missing.response)).toBe("helper-file-missing");
+      expect(runtime.stderr(), runtime.stderr()).toBe("");
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("bounds signal replay and terminates the full helper process group (#10155)", async () => {
+    let leakedChildMarker = "";
+    const runtime = await createBrokerRuntime((root) => {
+      const countPath = path.join(root, "helper-count");
+      leakedChildMarker = path.join(root, "leaked-child");
+      return `import os,signal,sys,time
+count_path = ${JSON.stringify(countPath)}
+leaked_child_marker = ${JSON.stringify(leakedChildMarker)}
+if sys.argv[1] != "activate":
+    raise SystemExit(0)
 try:
-    run_helper("acquire", b"{}\\n")
-except (OSError, RuntimeError, UnicodeError, ValueError) as error:
-    missing_helper = post_validation_failure_code(error)
-print(json.dumps({
-    "missingHelper": missing_helper,
-    "permission": post_validation_failure_code(PermissionError()),
-    "encoding": post_validation_failure_code(UnicodeDecodeError("utf-8", b"x", 0, 1, "invalid")),
-    "invalidResponse": post_validation_failure_code(ValueError()),
-    "helperProcess": json.loads(normalize_helper_stderr("acquire", 2, b"raw python error"))["code"],
-    "helperProtocol": json.loads(normalize_helper_stderr("acquire", 0, b"unexpected stderr"))["code"],
-    "timeout": json.loads(failure_stderr("acquire", "helper-timeout"))["code"],
-    "activateTimeoutSeconds": TIMEOUTS["activate"],
-}, separators=(",", ":")))
+    with open(count_path, "r", encoding="utf-8") as stream:
+        count = int(stream.read())
+except FileNotFoundError:
+    count = 0
+with open(count_path, "w", encoding="utf-8") as stream:
+    stream.write(str(count + 1))
+if count == 0:
+    time.sleep(0.2)
+    os.kill(os.getpid(), signal.SIGKILL)
+if os.fork() == 0:
+    time.sleep(0.35)
+    with open(leaked_child_marker, "w", encoding="utf-8") as stream:
+        stream.write("helper process group survived")
+    os._exit(0)
+time.sleep(30)
 `;
-
-    expect(
-      JSON.parse(
-        execFileSync("python3", ["-I", "-c", probe], {
-          encoding: "utf8",
-          timeout: 5_000,
-        }),
-      ),
-    ).toEqual({
-      missingHelper: "helper-file-missing",
-      permission: "transport-permission-denied",
-      encoding: "transport-response-encoding-invalid",
-      invalidResponse: "transport-response-invalid",
-      helperProcess: "helper-process-failed",
-      helperProtocol: "helper-protocol-stderr",
-      timeout: "helper-timeout",
-      activateTimeoutSeconds: DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS / 1000,
     });
+
+    try {
+      const result = await sendBrokerRequest(runtime, "activate");
+      expect(result.response).toMatchObject({ action: "activate", status: 1, stdout: "" });
+      expect(brokerFailureCode(result.response)).toBe("helper-timeout");
+      expect(result.elapsedMs).toBeLessThan(400);
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      expect(fs.existsSync(leakedChildMarker)).toBe(false);
+      expect(runtime.stderr(), runtime.stderr()).toBe("");
+    } finally {
+      await runtime.close();
+    }
   });
 
-  it("terminates the isolated helper process group before reporting a timeout", () => {
-    const definitionsEnd = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.indexOf(
-      "\nhelper = sys.argv[1]\n",
-    );
-    const definitions = DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_SOURCE.slice(
-      0,
-      definitionsEnd,
-    );
-    const probe = `${definitions}
-import tempfile
-root = tempfile.mkdtemp(prefix="nemoclaw-helper-timeout-")
-helper = os.path.join(root, "helper.py")
-with open(helper, "w", encoding="utf-8") as stream:
-    stream.write("import os,time\\n")
-    stream.write("if os.fork() == 0: time.sleep(30)\\n")
-    stream.write("time.sleep(30)\\n")
-original_lstat = os.lstat
-class RootHelperMetadata:
-    st_mode = stat.S_IFREG | 0o555
-    st_uid = 0
-    st_gid = 0
-os.lstat = lambda target: RootHelperMetadata() if target == helper else original_lstat(target)
-TIMEOUTS["activate"] = 0.05
-try:
-    run_helper("activate", b"{}\\n")
-except subprocess.TimeoutExpired:
-    print("helper-timeout")
-`;
-
-    expect(
-      execFileSync("python3", ["-I", "-c", probe], {
-        encoding: "utf8",
-        timeout: 5_000,
-      }).trim(),
-    ).toBe("helper-timeout");
-  });
-
-  it("keeps activation transport alive beyond both controller readiness windows", () => {
-    const probe = String.raw`
-import importlib.util
-import json
-import sys
-
-spec = importlib.util.spec_from_file_location("runtime_state_control", sys.argv[1])
-control = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = control
-spec.loader.exec_module(control)
-print(json.dumps({
-    "activationSeconds": control.ACTIVATION_SECONDS,
-    "processStateSeconds": control.PROCESS_STATE_SECONDS,
-}, separators=(",", ":")))
-`;
-    const timing = JSON.parse(
-      execFileSync("python3", ["-I", "-c", probe, RUNTIME_STATE_MUTATION_CONTROLLER], {
-        encoding: "utf8",
-        timeout: 5_000,
-      }),
-    ) as { activationSeconds: number; processStateSeconds: number };
-
-    expect(DOCKER_STATE_MUTATION_ACTIVATE_TIMEOUT_MS / 1000).toBeGreaterThan(
-      timing.activationSeconds * 2 + timing.processStateSeconds * 2,
-    );
-  });
-
-  it("binds the guardian recovery lineage to the exact embedded broker command", () => {
-    const probe = String.raw`
-import importlib.util
-import json
-import sys
-
-spec = importlib.util.spec_from_file_location("runtime_state_control", sys.argv[1])
-control = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = control
-spec.loader.exec_module(control)
-print(json.dumps({
-    "bootstrap": control.TRANSPORT_BROKER_BOOTSTRAP.decode("ascii"),
-    "helper": control.TRANSPORT_BROKER_HELPER_PATH.decode("ascii"),
-}, separators=(",", ":")))
-`;
-    const binding = JSON.parse(
-      execFileSync("python3", ["-I", "-c", probe, RUNTIME_STATE_MUTATION_CONTROLLER], {
-        encoding: "utf8",
-        timeout: 5_000,
-      }),
-    ) as { bootstrap: string; helper: string };
-
-    expect(binding).toEqual({
-      bootstrap: DOCKER_STATE_MUTATION_HELPER_TRANSPORT_BROKER_BOOTSTRAP,
-      helper: "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
+  it("uses the remaining response allowance after one Docker copy timeout (#10155)", () => {
+    const runtime = harness({ timeoutResponseCopyOnce: true });
+    const surface = createDockerStateMutationSurface({
+      capture: runtime.capture,
+      resolveStateDir: () => runtime.root,
     });
+
+    expect(() => surface.acquire({ ...runtime.context, plan: plan() })).not.toThrow();
+    const responseCopies = runtime.capture.mock.calls.filter(([, args]) =>
+      args.some((value) => value.endsWith(".response")),
+    );
+    expect(responseCopies).toHaveLength(2);
+    expect(responseCopies.map(([, , timeout]) => timeout)).toEqual([15_000, 15_000]);
   });
 
   it("uses one harness-owned absolute Docker executable", () => {
@@ -261,6 +364,56 @@ print(json.dumps({
     expect(runtime.engineAuthorityStore.load("sandbox-lifecycle")).toBeNull();
     expect(runtime.capture).not.toHaveBeenCalled();
     expect(exclusionCalls).toEqual([["alpha", "Docker runtime-provider state mutation recovery"]]);
+  });
+
+  it("recovers transport left by a finalized provider release (#10155)", () => {
+    const runtime = harness({ failReleaseCleanupInspectionOnce: true });
+    const surface = createDockerStateMutationSurface({
+      capture: runtime.capture,
+      resolveStateDir: () => runtime.root,
+    });
+    const fence = surface.acquire({ ...runtime.context, plan: plan() });
+    surface.activate(runtime.context, fence);
+    const completedLedgerSha256 = "e".repeat(64);
+    finalizeReleasedProviderWithLiveTransport(runtime, fence.transactionId, completedLedgerSha256);
+
+    expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
+    expect(runtime.transportBrokerSessionExists(fence.transactionId)).toBe(true);
+
+    expect(() => surface.recover(runtime.context)).toThrow(
+      "root helper transport release cleanup verification failed",
+    );
+    expect(runtime.lifecycleStore.load(fence.transactionId)).toMatchObject({
+      phase: "completed",
+      resultSha256: completedLedgerSha256,
+    });
+    expect(runtime.transportBrokerSessionExists(fence.transactionId)).toBe(true);
+
+    expect(surface.recover(runtime.context)).toBeNull();
+    expect(runtime.transportBrokerSessionExists(fence.transactionId)).toBe(false);
+    expect(runtime.lifecycleStore.isRetired(fence.transactionId, completedLedgerSha256)).toBe(true);
+  });
+
+  it("cleans finalized provider transport before the next acquire (#10155)", () => {
+    const runtime = harness();
+    const surface = createDockerStateMutationSurface({
+      capture: runtime.capture,
+      resolveStateDir: () => runtime.root,
+    });
+    const first = surface.acquire({ ...runtime.context, plan: plan() });
+    surface.activate(runtime.context, first);
+    const completedLedgerSha256 = "e".repeat(64);
+    finalizeReleasedProviderWithLiveTransport(runtime, first.transactionId, completedLedgerSha256);
+
+    const second = surface.acquire({ ...runtime.context, plan: plan() });
+
+    expect(second.transactionId).not.toBe(first.transactionId);
+    expect(runtime.transportBrokerSessionExists(first.transactionId)).toBe(false);
+    expect(runtime.transportBrokerSessionExists(second.transactionId)).toBe(true);
+    expect(runtime.lifecycleStore.isRetired(first.transactionId, completedLedgerSha256)).toBe(true);
+    expect(runtime.lifecycleStore.listUnfinished()).toMatchObject([
+      { phase: "fence-established", transactionId: second.transactionId },
+    ]);
   });
 
   it("preserves the isolated Vitest state root from the operation environment", () => {
@@ -448,7 +601,7 @@ describe("Docker state mutation owner", () => {
       runtime.capture.mock.calls.filter(
         ([, args]) =>
           args.includes("--detach") &&
-          args.includes("/usr/local/lib/nemoclaw/runtime-state-mutation-control.py"),
+          args.includes("/usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py"),
       ),
     ).toHaveLength(1);
     expect(helperCalls.map(([, args, timeout]) => [args.at(-1), timeout])).toEqual([
@@ -486,6 +639,47 @@ describe("Docker state mutation owner", () => {
     expect(inspectFormats.length).toBeGreaterThan(0);
     expect(inspectFormats).not.toContain("{{json .}}");
     expect(inspectFormats.every((format) => !format.includes("Config.Env"))).toBe(true);
+  });
+
+  it("fully releases transport before a back-to-back provider transition (#10155)", () => {
+    const runtime = harness();
+
+    const completeTransition = (completedLedgerSha256: string) => {
+      const fence = runtime.owner.acquire({ ...runtime.context, plan: plan() });
+      runtime.owner.assertFenced(runtime.context, fence);
+      runtime.owner.publish(runtime.context, fence);
+      runtime.owner.assertFenced(runtime.context, fence);
+      const proof = runtime.owner.activate(runtime.context, fence);
+      runtime.owner.release(runtime.context, fence, proof, completedLedgerSha256);
+      return fence;
+    };
+
+    const first = completeTransition("e".repeat(64));
+    expect(runtime.transportBrokerActive()).toBe(false);
+    expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
+
+    const second = completeTransition("f".repeat(64));
+
+    expect(second.transactionId).not.toBe(first.transactionId);
+    expect(runtime.transportBrokerActive()).toBe(false);
+    expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
+    expect(runtime.helperActions).toEqual([
+      "acquire",
+      "assert",
+      "publish",
+      "assert",
+      "activate",
+      "activate",
+      "release",
+      "acquire",
+      "assert",
+      "publish",
+      "assert",
+      "activate",
+      "activate",
+      "release",
+    ]);
+    expect(runtime.supervisorSignals).toEqual(["SIGSTOP", "SIGCONT", "SIGSTOP", "SIGCONT"]);
   });
 
   it("publishes without retiring the host lifecycle fence", async () => {
@@ -573,6 +767,29 @@ describe("Docker state mutation owner", () => {
     expect(runtime.supervisorSignals).toEqual(["SIGSTOP", "SIGCONT", "SIGCONT"]);
     expect(runtime.state.supervisorStopped).toBe(false);
     expect(runtime.transportBrokerActive()).toBe(false);
+    expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
+  });
+
+  it("retains release recovery until Docker broker cleanup completes (#10155)", () => {
+    const runtime = harness({ failReleaseCleanupProbeOnce: true });
+    const fence = runtime.owner.acquire({ ...runtime.context, plan: plan() });
+    runtime.owner.rollback(runtime.context, fence);
+    const proof = runtime.owner.activate(runtime.context, fence);
+    const completedLedgerSha256 = "e".repeat(64);
+
+    expect(() =>
+      runtime.owner.release(runtime.context, fence, proof, completedLedgerSha256),
+    ).toThrow("root helper transport release cleanup remains incomplete");
+    expect(runtime.transportBrokerActive()).toBe(true);
+    expect(runtime.transportBrokerSessionExists()).toBe(true);
+    expect(runtime.lifecycleStore.listUnfinished()[0]).toMatchObject({
+      phase: "completed",
+      resultSha256: completedLedgerSha256,
+    });
+
+    expect(runtime.owner.recover(runtime.context)).toBeNull();
+    expect(runtime.transportBrokerActive()).toBe(false);
+    expect(runtime.transportBrokerSessionExists()).toBe(false);
     expect(runtime.lifecycleStore.listUnfinished()).toEqual([]);
   });
 

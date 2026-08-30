@@ -197,6 +197,7 @@ vi.mock("../../shields", () => ({
   get isShieldsDown() {
     return true;
   },
+  recoverCompletedAutoRestoreBeforeCommand: vi.fn(),
   repairMutableConfigPerms: vi.fn(() => ({ applied: true, verified: true, errors: [] })),
   shieldsUp: vi.fn(),
 }));
