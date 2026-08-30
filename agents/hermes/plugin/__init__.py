@@ -1458,7 +1458,10 @@ def _install_googlechat_adapter(ctx):
 def register(ctx):
     """Register NemoClaw tools and hooks with Hermes."""
     _install_nous_tool_broker_patch()
-    _install_messaging_response_patch()
+    # Hermes 0.20.6 discovers plugins on a background thread while run_agent
+    # imports model_tools and waits for discovery to finish. Importing
+    # run_agent from this registration path deadlocks those two threads. The
+    # pre_llm_call hook below installs the patch before response processing.
     _install_googlechat_adapter(ctx)
 
     # Register status tool

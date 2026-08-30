@@ -604,6 +604,80 @@ print(json.dumps({
     );
   });
 
+  it("defers the run_agent patch until the first hook after plugin registration", () => {
+    const output = runPython(`
+import builtins
+import importlib.util
+import json
+import pathlib
+import sys
+import types
+
+plugin_path = pathlib.Path(sys.argv[1])
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+sys.modules.setdefault("yaml", yaml_stub)
+
+spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
+plugin = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(plugin)
+plugin._install_nous_tool_broker_patch = lambda: False
+plugin._install_googlechat_adapter = lambda _ctx: False
+
+hooks = {}
+class Context:
+    def register_tool(self, **_kwargs):
+        pass
+
+    def register_hook(self, name, callback):
+        hooks[name] = callback
+
+original_import = builtins.__import__
+def refuse_partial_run_agent(name, *args, **kwargs):
+    if name == "run_agent":
+        raise AssertionError("plugin registration imported partial run_agent")
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = refuse_partial_run_agent
+try:
+    plugin.register(Context())
+finally:
+    builtins.__import__ = original_import
+
+run_agent = types.ModuleType("run_agent")
+class AIAgent:
+    @staticmethod
+    def _strip_think_blocks(content):
+        return content
+run_agent.AIAgent = AIAgent
+sys.modules["run_agent"] = run_agent
+plugin._get_sandbox_info = lambda: {
+    "agent": "hermes",
+    "model": "n",
+    "provider": "p",
+    "base_url": "b",
+    "gateway": "g",
+    "port": 1,
+}
+
+hooks["pre_llm_call"](user_message="hello", is_first_turn=True, platform="telegram")
+normalized = AIAgent._strip_think_blocks(
+    'send_message: "to telegram: registration completed"'
+)
+print(json.dumps({
+    "hooks": sorted(hooks),
+    "normalized": normalized,
+    "patched": getattr(AIAgent, plugin._MESSAGING_RESPONSE_PATCH_ATTR, False),
+}))
+`);
+
+    expect(JSON.parse(output)).toEqual({
+      hooks: ["on_session_start", "pre_llm_call"],
+      normalized: "registration completed",
+      patched: true,
+    });
+  });
+
   it("grounds first Telegram turns to reply directly instead of spelling tool calls", () => {
     const output = runPython(`
 import importlib.util
