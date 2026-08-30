@@ -21,6 +21,7 @@ import {
   persistRetainedSandboxRecoveryMessage,
   readManagedDcodeCreateSelectionDrift,
   resolveRebuildMessagingPolicyDeltas,
+  resolveRebuildPolicyProviderAuthority,
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
   runAuthorityBoundProviderCleanup,
@@ -83,6 +84,90 @@ describe("rebuild policy provider handoff", () => {
       "--provider",
       "wechat-provider",
     ]);
+  });
+
+  it("authorizes exact create, messaging-plan, and managed MCP providers", () => {
+    expect(
+      resolveRebuildPolicyProviderAuthority({
+        createArgs: ["--from", "image", "--provider", "inference-provider"],
+        messagingPlan: {
+          credentialBindings: [
+            {
+              channelId: "telegram",
+              credentialId: "bot-token",
+              sourceInput: "token",
+              providerName: "alpha-telegram-bridge",
+              providerEnvKey: "TELEGRAM_BOT_TOKEN",
+              placeholder: "${TELEGRAM_BOT_TOKEN}",
+              credentialAvailable: true,
+            },
+          ],
+        },
+        preservedMcpState: {
+          bridges: {
+            github: {
+              server: "github",
+              agent: "openclaw",
+              url: "https://mcp.example.com/",
+              env: ["MCP_TOKEN"],
+              providerName: "alpha-mcp-github",
+              providerId: "provider-id",
+              policyName: "mcp_github",
+              addedAt: "2026-08-30T00:00:00.000Z",
+            },
+          },
+        },
+        managedMcpRebuildHandoff: true,
+      }),
+    ).toEqual(["inference-provider", "alpha-telegram-bridge", "alpha-mcp-github"]);
+  });
+
+  it("does not authorize MCP registry names without the managed rebuild handoff", () => {
+    expect(
+      resolveRebuildPolicyProviderAuthority({
+        createArgs: [],
+        messagingPlan: null,
+        preservedMcpState: {
+          bridges: {
+            github: {
+              server: "github",
+              agent: "openclaw",
+              url: "https://mcp.example.com/",
+              env: ["MCP_TOKEN"],
+              providerName: "alpha-mcp-github",
+              providerId: "provider-id",
+              policyName: "mcp_github",
+              addedAt: "2026-08-30T00:00:00.000Z",
+            },
+          },
+        },
+        managedMcpRebuildHandoff: false,
+      }),
+    ).toEqual([]);
+  });
+
+  it("ignores incomplete MCP add records even with a managed rebuild handoff", () => {
+    expect(
+      resolveRebuildPolicyProviderAuthority({
+        createArgs: [],
+        messagingPlan: null,
+        preservedMcpState: {
+          bridges: {
+            github: {
+              server: "github",
+              agent: "openclaw",
+              url: "https://mcp.example.com/",
+              env: ["MCP_TOKEN"],
+              providerName: "alpha-mcp-github",
+              policyName: "mcp_github",
+              addedAt: "2026-08-30T00:00:00.000Z",
+              addState: "prepared",
+            },
+          },
+        },
+        managedMcpRebuildHandoff: true,
+      }),
+    ).toEqual([]);
   });
 });
 

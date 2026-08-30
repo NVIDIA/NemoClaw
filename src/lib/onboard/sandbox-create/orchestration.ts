@@ -14,7 +14,7 @@ import { loadMessagingChannelPolicyPreset } from "../../messaging/channels/polic
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import type { BackupResult } from "../../state/sandbox";
 import type { RetainedSandboxRecoveryContext, Session } from "../../state/onboard-session";
-import type { SandboxEntry } from "../../state/registry";
+import type { SandboxEntry, SandboxMcpState } from "../../state/registry";
 import type {
   PendingSandboxCreateIdentity,
   QualifiedPendingSandboxCreateReservation,
@@ -80,6 +80,36 @@ export function bindRebuildPolicyProvidersToCreateArgs(
     attached.add(provider);
   }
   return result;
+}
+
+/**
+ * Admit credential providers only from replacement inputs that were validated
+ * independently of the live policy document. The live policy remains the
+ * policy source of truth; this list only proves that each provider attachment
+ * it references already belongs to the exact create, messaging, or managed MCP
+ * replacement transaction.
+ */
+export function resolveRebuildPolicyProviderAuthority(input: {
+  readonly createArgs: readonly string[];
+  readonly messagingPlan: Pick<SandboxMessagingPlan, "credentialBindings"> | null | undefined;
+  readonly preservedMcpState: SandboxMcpState | undefined;
+  readonly managedMcpRebuildHandoff: boolean;
+}): string[] {
+  const providers = new Set(
+    input.createArgs.flatMap((value, index, args) =>
+      index > 0 && args[index - 1] === "--provider" ? [value] : [],
+    ),
+  );
+  for (const binding of input.messagingPlan?.credentialBindings ?? []) {
+    providers.add(binding.providerName);
+  }
+  if (input.managedMcpRebuildHandoff) {
+    for (const entry of Object.values(input.preservedMcpState?.bridges ?? {})) {
+      if (entry.addState || !entry.providerName || !entry.providerId) continue;
+      providers.add(entry.providerName);
+    }
+  }
+  return [...providers];
 }
 
 export function resolveRebuildMessagingPolicyDeltas(
@@ -2097,6 +2127,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const rebuildMessagingPolicyDeltas = resolveRebuildMessagingPolicyDeltas(
       plannedMessagingState?.plan,
     );
+    const rebuildPolicyProviderAuthority = resolveRebuildPolicyProviderAuthority({
+      createArgs: materializedCreateArgv,
+      messagingPlan: plannedMessagingState?.plan,
+      preservedMcpState,
+      managedMcpRebuildHandoff: hasManagedMcpRebuildHandoff(createIntent),
+    });
     const initialSandboxPolicy = createIntent?.rebuildPolicySourcePath
       ? selectRebuildCreatePolicy(
           createIntent.rebuildPolicySourcePath,
@@ -2106,9 +2142,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           rebuildMessagingPolicyDeltas.requiredNetworkPolicyPresetNames,
           plannedMessagingState?.plan,
           sandboxName,
-          materializedCreateArgv.flatMap((value, index, args) =>
-            index > 0 && args[index - 1] === "--provider" ? [value] : [],
-          ),
+          rebuildPolicyProviderAuthority,
         )
       : materializedInitialSandboxPolicy;
     const createArgv = createIntent?.rebuildPolicySourcePath
