@@ -179,9 +179,11 @@ Prerequisites:
 `npm run dev:doctor` checks general contributor readiness. It does not check these local-review
 executables, the advisor credential, or the `origin/main` ref.
 
-The executable advisor checkout is detached at the resolved `origin/main` commit. Branch changes,
-including advisor code and policy changes, exist only in the read-only review snapshot. The command
-copies the already-installed root `node_modules` tree into the trusted advisor checkout; it does not
+Running the npm script trusts the contributor checkout's `package.json` entry and built-in-only bootstrap.
+After that narrow entry boundary, the executable advisor checkout is detached at the resolved
+`origin/main` commit. Other branch changes, including advisor implementation, policy, and specialist
+prompts, exist only in the read-only review snapshot. The command copies the already-installed root
+`node_modules` tree into the trusted advisor checkout; it does not
 run `npm install`, package lifecycle hooks, or branch-controlled install code during review. Ordinary
 module bytes therefore reflect the packages already installed in the contributor checkout, not source
 files from the reviewed branch. Dependency installation redesign is outside this local command.
