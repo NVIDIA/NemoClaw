@@ -129,6 +129,37 @@ export async function applyAgentConfigAtOpenShell(
   };
 }
 
+/** Remove only one disabled channel's manifest-owned JSON config before plan retirement. */
+export function removeDisabledChannelAgentConfigAtOpenShell(
+  plan: SandboxMessagingPlan,
+  channelId: string,
+  options: { readonly runOpenshell: MessagingOpenShellRunner },
+): { readonly appliedTargets: readonly string[] } {
+  if (!plan.disabledChannels.includes(channelId)) {
+    throw new Error(`Cannot remove active messaging channel config '${channelId}'.`);
+  }
+  const disabledRender = plan.agentRender.filter(
+    (entry): entry is SandboxMessagingJsonRenderPlan =>
+      entry.channelId === channelId && entry.kind === "json-fragment",
+  );
+  const appliedTargets: string[] = [];
+  for (const [target, render] of groupRenderByTarget(disabledRender)) {
+    const resolvedTarget = resolveSandboxAgentConfigTarget(target, plan.agent);
+    const existing = readSandboxFile(plan.sandboxName, resolvedTarget, options.runOpenshell);
+    if (existing === undefined) continue;
+    const contents = applyJsonFragments(
+      plan,
+      existing,
+      [],
+      render.filter(isJsonRender),
+      resolvedTarget,
+    );
+    writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
+    appliedTargets.push(resolvedTarget);
+  }
+  return { appliedTargets: uniqueStrings(appliedTargets) };
+}
+
 /**
  * Repair the Hermes env file after starting an image built with an older
  * applier. This deliberately touches only the manifest-owned credential key

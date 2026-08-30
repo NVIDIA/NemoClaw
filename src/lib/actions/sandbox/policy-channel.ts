@@ -35,6 +35,7 @@ import {
   MessagingWorkflowPlanner,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
   runMessagingHook,
+  type MessagingOpenShellRunner,
   type SandboxMessagingChannelPlan,
   type SandboxMessagingPlan,
   toMessagingAgentId,
@@ -85,6 +86,13 @@ import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 
 const isNonInteractive = () => isNonInteractiveSession();
+const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
+  runOpenshell([...args], {
+    env: options.env as NodeJS.ProcessEnv | undefined,
+    ignoreError: options.ignoreError,
+    input: options.input,
+    stdio: options.stdio as never,
+  });
 
 /**
  * Report that `NEMOCLAW_NON_INTERACTIVE=1` leaves no interactive picker, and
@@ -1822,6 +1830,23 @@ async function removeSandboxChannelUnlocked(
     const disabledPlan = await persistManifestChannelDisabledPlan(sandboxName, canonical, true);
     if (!disabledPlan) {
       console.error(`  Could not mark '${canonical}' disabled before removing it.`);
+      process.exit(1);
+    }
+    try {
+      MessagingSetupApplier.removeDisabledChannelAgentConfigAtOpenShell(
+        disabledPlan,
+        canonical,
+        { runOpenshell: runMessagingOpenshell },
+      );
+    } catch (error) {
+      console.error(
+        `  Could not remove '${canonical}' from the sandbox agent config: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      console.error(
+        `  Channel '${canonical}' remains disabled; fix the sandbox config error and re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
+      );
       process.exit(1);
     }
   }
