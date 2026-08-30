@@ -12,10 +12,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
   let session = createSession();
   const calls = {
     handleAgentSetup: vi.fn(async () => undefined),
-    context: vi.fn((revalidatePolicyRequirements?: (operation: string) => void) => ({
-      ctx: true,
-      revalidatePolicyRequirements,
-    })),
+    context: vi.fn(() => ({ ctx: true })),
     ensureDashboard: vi.fn(() => 18789),
     persistDashboardPort: vi.fn(),
     skipped: vi.fn(async (stepName: string) => {
@@ -74,25 +71,6 @@ function baseOptions(
 }
 
 describe("handleAgentSetupState", () => {
-  it("refuses agent setup before its first effect when policy authority drifts (#9833)", async () => {
-    const { deps, calls } = createDeps();
-    const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("policy authority changed");
-    });
-
-    await expect(
-      handleAgentSetupState({
-        ...baseOptions(deps, { name: "hermes", displayName: "Hermes" }),
-        revalidatePolicyRequirements,
-      }),
-    ).rejects.toThrow("policy authority changed");
-
-    expect(calls.handleAgentSetup).not.toHaveBeenCalled();
-    expect(calls.ensureDashboard).not.toHaveBeenCalled();
-    expect(calls.persistDashboardPort).not.toHaveBeenCalled();
-    expect(calls.skipped).not.toHaveBeenCalled();
-  });
-
   it("delegates non-OpenClaw agent setup and skips openclaw", async () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes", displayName: "Hermes" };
@@ -111,9 +89,9 @@ describe("handleAgentSetupState", () => {
       agent,
       true,
       session,
-      { ctx: true, revalidatePolicyRequirements: undefined },
+      { ctx: true },
     );
-    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent, undefined);
+    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent);
     expect(calls.skipped).toHaveBeenCalledWith("openclaw");
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
     expect(result.session?.steps.openclaw.status).toBe("skipped");
@@ -126,59 +104,6 @@ describe("handleAgentSetupState", () => {
     });
   });
 
-  it("passes policy revalidation into non-OpenClaw agent setup (#9833)", async () => {
-    const { deps, calls } = createDeps();
-    const revalidatePolicyRequirements = vi.fn();
-
-    await handleAgentSetupState({
-      ...baseOptions(deps, { name: "hermes", displayName: "Hermes" }),
-      revalidatePolicyRequirements,
-    });
-
-    expect(calls.context).toHaveBeenCalledWith(revalidatePolicyRequirements);
-    expect(calls.handleAgentSetup).toHaveBeenCalledWith(
-      "my-assistant",
-      "model",
-      "provider",
-      { name: "hermes", displayName: "Hermes" },
-      false,
-      expect.anything(),
-      { ctx: true, revalidatePolicyRequirements },
-    );
-  });
-
-  it("stops dashboard forwarding when authority changes during the first forward (#9833)", async () => {
-    const refuseDashboardForward = () => {
-      throw new Error("policy authority changed");
-    };
-    const policyChecks = new Map([["start optional dashboard forward", refuseDashboardForward]]);
-    const revalidatePolicyRequirements = vi.fn<(operation: string) => void>((operation) =>
-      policyChecks.get(operation)?.(),
-    );
-    const ensureAgentDashboardForward = vi.fn(
-      async (_sandboxName: string, _agent: Agent, revalidate?: (operation: string) => void) => {
-        revalidate?.("start optional dashboard forward");
-        return 18791;
-      },
-    );
-    const { deps, calls } = createDeps({ ensureAgentDashboardForward });
-
-    await expect(
-      handleAgentSetupState({
-        ...baseOptions(deps, { name: "hermes", displayName: "Hermes" }),
-        revalidatePolicyRequirements,
-      }),
-    ).rejects.toThrow("policy authority changed");
-
-    expect(ensureAgentDashboardForward).toHaveBeenCalledWith(
-      "my-assistant",
-      { name: "hermes", displayName: "Hermes" },
-      revalidatePolicyRequirements,
-    );
-    expect(calls.persistDashboardPort).not.toHaveBeenCalled();
-    expect(calls.skipped).not.toHaveBeenCalled();
-  });
-
   it("persists the bumped dashboard port returned by the forward (#8214)", async () => {
     const { deps, calls } = createDeps({});
     calls.ensureDashboard.mockReturnValue(18791);
@@ -186,7 +111,7 @@ describe("handleAgentSetupState", () => {
 
     await handleAgentSetupState({ ...baseOptions(deps, agent), resume: true });
 
-    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent, undefined);
+    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent);
     expect(calls.persistDashboardPort).toHaveBeenCalledWith("my-assistant", 18791);
   });
 
@@ -245,13 +170,13 @@ describe("handleAgentSetupState", () => {
 
   it("delegates shared OpenClaw configuration before ready-resume completion", async () => {
     const { deps, calls } = createDeps({ isOpenclawReady: vi.fn(() => true) });
-    const revalidatePolicyRequirements = vi.fn();
+    const revalidateSandboxIdentity = vi.fn();
 
     await handleAgentSetupState({
       ...baseOptions(deps),
       resume: true,
       webSearchConfig: { fetchEnabled: false },
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     });
 
     expect(calls.configureOpenclaw).toHaveBeenCalledExactlyOnceWith(
@@ -259,7 +184,7 @@ describe("handleAgentSetupState", () => {
       "model",
       "provider",
       { fetchEnabled: false },
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     );
     expect(calls.configureOpenclaw.mock.invocationCallOrder[0]).toBeLessThan(
       calls.recordSkip.mock.invocationCallOrder[0],
@@ -292,11 +217,11 @@ describe("handleAgentSetupState", () => {
       [
         "synchronize OpenClaw config in sandbox 'my-assistant'",
         () => {
-          throw new Error("policy authority changed");
+          throw new Error("sandbox identity changed");
         },
       ],
     ]);
-    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+    const revalidateSandboxIdentity = vi.fn((operation: string) =>
       revalidationSteps.get(operation)?.(),
     );
 
@@ -304,9 +229,9 @@ describe("handleAgentSetupState", () => {
       handleAgentSetupState({
         ...baseOptions(deps),
         resume: true,
-        revalidatePolicyRequirements,
+        revalidateSandboxIdentity,
       }),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("sandbox identity changed");
 
     expect(configExec).not.toHaveBeenCalled();
     expect(calls.recordSkip).not.toHaveBeenCalled();

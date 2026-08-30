@@ -3,14 +3,7 @@
 
 import YAML from "yaml";
 
-import type {
-  ExactManagedMcpPolicy,
-  ManagedMcpPolicyOmission,
-} from "../actions/sandbox/mcp-bridge-policy";
-import { diagnosticPreview } from "../name-validation";
-
-const CANONICAL_MANAGED_MCP_POLICY_KEY_RE = /^mcp_bridge_[a-z][a-z0-9_]{0,63}$/;
-const RESERVED_MANAGED_MCP_POLICY_KEY_RE = /^mcp_bridge_/;
+const MCP_POLICY_KEY_PREFIX = "mcp_bridge_";
 
 function parsePolicyDocument(source: string, label: string): Record<string, unknown> {
   let parsed: unknown;
@@ -37,147 +30,76 @@ function readNetworkPolicies(
   return policies as Record<string, unknown>;
 }
 
+function exactEndpointSignatures(policy: unknown): Set<string> {
+  if (!policy || typeof policy !== "object" || Array.isArray(policy)) return new Set();
+  const endpoints = (policy as Record<string, unknown>).endpoints;
+  if (!Array.isArray(endpoints)) return new Set();
+  const signatures = new Set<string>();
+  for (const endpoint of endpoints) {
+    if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) continue;
+    const record = endpoint as Record<string, unknown>;
+    const host = typeof record.host === "string" ? record.host : "";
+    const ports = Array.isArray(record.ports) ? record.ports : [record.port];
+    for (const port of ports) {
+      if (host && (typeof port === "number" || typeof port === "string")) {
+        signatures.add(`${host}:${String(port)}`);
+      }
+    }
+  }
+  return signatures;
+}
+
+function withoutExactLiveEndpointCollisions(
+  targetKey: string,
+  targetPolicy: unknown,
+  livePolicies: Record<string, unknown>,
+): unknown | null {
+  if (!targetPolicy || typeof targetPolicy !== "object" || Array.isArray(targetPolicy)) {
+    return targetPolicy;
+  }
+  const record = targetPolicy as Record<string, unknown>;
+  if (!Array.isArray(record.endpoints)) return targetPolicy;
+  const liveEndpoints = new Set(
+    Object.entries(livePolicies).flatMap(([liveKey, livePolicy]) =>
+      liveKey === targetKey ? [] : [...exactEndpointSignatures(livePolicy)],
+    ),
+  );
+  if (liveEndpoints.size === 0) return targetPolicy;
+  const endpoints = record.endpoints.filter((endpoint) => {
+    const signatures = exactEndpointSignatures({ endpoints: [endpoint] });
+    return signatures.size === 0 || ![...signatures].some((item) => liveEndpoints.has(item));
+  });
+  if (endpoints.length === record.endpoints.length) return targetPolicy;
+  return endpoints.length > 0 ? { ...record, endpoints } : null;
+}
+
 /**
- * Reconcile generated MCP entries into a complete target policy.
- *
- * Snapshot-time keys are removed first so an MCP server deleted during the
- * shields-down window cannot be restored. The current exact entries are then overlaid,
- * retaining additions and replacing stale pins. Every non-MCP target entry
- * remains authoritative; unrelated live entries are never copied.
+ * Preserve OpenShell's live policy while composing a temporary Shields policy.
+ * The target's intentional permissive entries win ordinary name collisions;
+ * live MCP entries win because their exact runtime-generated content has no
+ * static equivalent. Every other live-only entry is carried through unchanged.
  */
-export function composeManagedMcpPolicies(
+export function composeLiveNetworkPolicies(
   targetPolicyYaml: string,
-  currentPolicies: readonly ExactManagedMcpPolicy[],
-  snapshotManagedPolicyKeys: readonly string[] = [],
+  livePolicyYaml: string,
 ): string {
   const target = parsePolicyDocument(targetPolicyYaml, "Target Shields policy");
   const targetPolicies = readNetworkPolicies(target, "Target Shields policy");
+  const live = parsePolicyDocument(livePolicyYaml, "Live OpenShell policy");
+  const livePolicies = readNetworkPolicies(live, "Live OpenShell policy");
 
-  const snapshotKeys = new Set<string>();
-  for (const key of snapshotManagedPolicyKeys) {
-    if (!CANONICAL_MANAGED_MCP_POLICY_KEY_RE.test(key) || snapshotKeys.has(key)) {
-      throw new Error("Saved Shields MCP policy ownership is invalid");
-    }
-    if (!Object.hasOwn(targetPolicies, key)) {
-      throw new Error(`Saved Shields MCP policy '${key}' is absent from its policy snapshot`);
-    }
-    snapshotKeys.add(key);
-    delete targetPolicies[key];
-  }
-  const unclassifiedKey = Object.keys(targetPolicies).find((key) =>
-    RESERVED_MANAGED_MCP_POLICY_KEY_RE.test(key),
-  );
-  if (unclassifiedKey) {
-    throw new Error(
-      `Reserved MCP policy key ${diagnosticPreview(unclassifiedKey)} is absent from the saved ownership manifest`,
-    );
+  for (const [key, policy] of Object.entries(targetPolicies)) {
+    const reconciled = withoutExactLiveEndpointCollisions(key, policy, livePolicies);
+    if (reconciled === null) delete targetPolicies[key];
+    else targetPolicies[key] = reconciled;
   }
 
-  const currentKeys = new Set<string>();
-  for (const policy of currentPolicies) {
-    if (!CANONICAL_MANAGED_MCP_POLICY_KEY_RE.test(policy.key) || currentKeys.has(policy.key)) {
-      throw new Error(`Managed MCP policy key '${policy.key}' has ambiguous ownership`);
+  for (const [key, policy] of Object.entries(livePolicies)) {
+    if (key.startsWith(MCP_POLICY_KEY_PREFIX) || !Object.hasOwn(targetPolicies, key)) {
+      targetPolicies[key] = structuredClone(policy);
     }
-    currentKeys.add(policy.key);
-    targetPolicies[policy.key] = policy.networkPolicy;
   }
 
   target.network_policies = targetPolicies;
   return YAML.stringify(target);
-}
-
-export interface DeadlineManagedMcpPolicyComposition {
-  yaml: string;
-  omissions: ManagedMcpPolicyOmission[];
-}
-
-/**
- * Security-authoritative deadline composition.
- *
- * Every reserved key is removed from the snapshot, including keys missing from
- * an incomplete manifest. Only independently proven current entries are then
- * overlaid.
- */
-export function composeDeadlineManagedMcpPolicies(
-  targetPolicyYaml: string,
-  currentPolicies: readonly ExactManagedMcpPolicy[],
-  snapshotManagedPolicyKeys: readonly string[],
-): DeadlineManagedMcpPolicyComposition {
-  const target = parsePolicyDocument(targetPolicyYaml, "Target Shields policy");
-  const targetPolicies = readNetworkPolicies(target, "Target Shields policy");
-
-  const snapshotKeys = new Set<string>();
-  const omissions: ManagedMcpPolicyOmission[] = [];
-  for (const key of snapshotManagedPolicyKeys) {
-    if (!CANONICAL_MANAGED_MCP_POLICY_KEY_RE.test(key)) {
-      if (RESERVED_MANAGED_MCP_POLICY_KEY_RE.test(key)) {
-        delete targetPolicies[key];
-      }
-      omissions.push({
-        key,
-        reason: `Saved Shields MCP policy ownership key '${key}' is invalid`,
-      });
-      continue;
-    }
-    if (snapshotKeys.has(key)) {
-      omissions.push({
-        key,
-        reason: `Saved Shields MCP policy '${key}' appeared more than once in its ownership manifest`,
-      });
-      continue;
-    }
-    if (!Object.hasOwn(targetPolicies, key)) {
-      omissions.push({
-        reason: `Saved Shields MCP policy '${key}' was already absent from its policy snapshot`,
-      });
-    }
-    snapshotKeys.add(key);
-    delete targetPolicies[key];
-  }
-  for (const key of Object.keys(targetPolicies)) {
-    if (!RESERVED_MANAGED_MCP_POLICY_KEY_RE.test(key)) continue;
-    delete targetPolicies[key];
-    omissions.push({
-      key,
-      reason: `Reserved MCP policy key '${key}' was absent from the saved ownership manifest`,
-    });
-  }
-
-  const currentKeys = new Set<string>();
-  for (const policy of currentPolicies) {
-    if (!CANONICAL_MANAGED_MCP_POLICY_KEY_RE.test(policy.key) || currentKeys.has(policy.key)) {
-      throw new Error(`Managed MCP policy key '${policy.key}' has ambiguous ownership`);
-    }
-    currentKeys.add(policy.key);
-    targetPolicies[policy.key] = policy.networkPolicy;
-  }
-
-  target.network_policies = targetPolicies;
-  return { yaml: YAML.stringify(target), omissions };
-}
-
-export function isManagedMcpPolicyKey(value: unknown): value is string {
-  return typeof value === "string" && RESERVED_MANAGED_MCP_POLICY_KEY_RE.test(value);
-}
-
-/**
- * Refuse to guess managed ownership for a Shields snapshot captured before the
- * ownership manifest existed. Current claims prove reconciliation is needed;
- * a managed-shaped snapshot key may be a removed bridge or an operator entry.
- * Either case requires explicit recovery instead of a destructive raw apply.
- */
-export function assertLegacyMcpPolicyRestoreSafe(
-  snapshotPolicyYaml: string,
-  hasCurrentManagedClaims: boolean,
-): void {
-  const snapshot = parsePolicyDocument(snapshotPolicyYaml, "Legacy Shields policy snapshot");
-  const snapshotPolicies = readNetworkPolicies(snapshot, "Legacy Shields policy snapshot");
-  if (
-    hasCurrentManagedClaims ||
-    Object.keys(snapshotPolicies).some((key) => isManagedMcpPolicyKey(key))
-  ) {
-    throw new Error(
-      "Legacy Shields state has no managed MCP ownership manifest; refusing policy restore",
-    );
-  }
 }

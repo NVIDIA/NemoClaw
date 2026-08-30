@@ -110,6 +110,10 @@ describe("ensureBraveProviderProfile", () => {
       ),
     ).not.toThrow();
     expect(deps.exit).not.toHaveBeenCalled();
+    expect(runOpenshell).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ suppressOutput: true }),
+    );
   });
 
   it("exits with the OpenShell status when import fails for a non-idempotent reason", () => {

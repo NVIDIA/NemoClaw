@@ -265,6 +265,30 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "M-WA3: WhatsApp policy preset applied before rebuild",
     );
 
+    const hostPolicyEdit = await runHost(
+      host,
+      "openshell",
+      [
+        "policy",
+        "update",
+        SANDBOX_NAME,
+        "--add-endpoint",
+        "host-edit-messaging.example.com:443:read-only:rest:enforce",
+        "--rule-name",
+        "messaging_host_edit_e2e",
+        "--binary",
+        "/usr/bin/curl",
+        "--wait",
+      ],
+      {
+        artifactName: "host-policy-edit-before-messaging-rebuild",
+        env: state.env,
+        redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
+    expectExitZero(hostPolicyEdit, "M-WA3a: direct OpenShell policy edit before rebuild");
+
     const whatsappRebuild = await runHost(
       host,
       "node",
@@ -279,7 +303,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     expectExitZero(whatsappRebuild, "M-WA4: rebuild completed after WhatsApp channel add");
     const whatsappRebuildText = stripAnsi(outputText(whatsappRebuild));
     check(
-      whatsappRebuildText.includes(`Sandbox '${SANDBOX_NAME}' rebuilt successfully`),
+      whatsappRebuildText.includes(`Sandbox '${SANDBOX_NAME}' rebuild completed`),
       "M-WA4a: rebuild reports complete post-restore success",
     );
     check(
@@ -309,6 +333,10 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
         policyTextHasHost(whatsappPolicyPostText, "raw.githubusercontent.com") &&
         /\/usr\/local\/bin\/node|\/usr\/bin\/node/.test(whatsappPolicyPostText),
       "M-WA5: WhatsApp policy preset survived rebuild with Node binary scope",
+    );
+    check(
+      whatsappPolicyPostText.includes("messaging_host_edit_e2e"),
+      "M-WA5a: unrelated host policy edit survived messaging rebuild",
     );
 
     progress.phase("inspect providers placeholders and credential isolation");
@@ -527,13 +555,6 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     check(
       accountString(slackAccount, "groupPolicy") === "allowlist",
       "M11g: Slack groupPolicy is allowlist",
-    );
-    const slackBotPlaceholder = credentialPlaceholders.get("SLACK_BOT_TOKEN") ?? "";
-    const slackAppPlaceholder = credentialPlaceholders.get("SLACK_APP_TOKEN") ?? "";
-    check(
-      /^openshell:resolve:env:v[0-9]+_SLACK_BOT_TOKEN$/u.test(slackBotPlaceholder) &&
-        /^openshell:resolve:env:v[0-9]+_SLACK_APP_TOKEN$/u.test(slackAppPlaceholder),
-      "M11j: Slack environment uses revision-scoped OpenShell credential placeholders",
     );
     const slackChannels = slackAccount.channels;
     const slackWildcard =
@@ -882,6 +903,24 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       state.env,
       redactionValues,
       `${SANDBOX_NAME}-slack-app`,
+    );
+
+    const slackBotPlaceholder = await sandboxOutput(
+      sandbox,
+      "printenv SLACK_BOT_TOKEN 2>/dev/null || true",
+      "placeholder-slack_bot_token-after-binding",
+      redactionValues,
+    );
+    const slackAppPlaceholder = await sandboxOutput(
+      sandbox,
+      "printenv SLACK_APP_TOKEN 2>/dev/null || true",
+      "placeholder-slack_app_token-after-binding",
+      redactionValues,
+    );
+    check(
+      /^openshell:resolve:env:v[0-9]+_SLACK_BOT_TOKEN$/u.test(slackBotPlaceholder) &&
+        /^openshell:resolve:env:v[0-9]+_SLACK_APP_TOKEN$/u.test(slackAppPlaceholder),
+      "M11j: Slack bindings expose revision-scoped OpenShell credential placeholders",
     );
 
     const slackAuth = await runSlackApiRequest(

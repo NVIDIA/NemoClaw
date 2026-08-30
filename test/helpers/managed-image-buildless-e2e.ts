@@ -517,7 +517,7 @@ runner.runCaptureEx = (command) => {
 };
 
 const registry = require(${source("src/lib/state/registry.ts")});
-const sourceEntry = recreate ? fixtureMocks.managedSandboxPolicyReceiptFixture({
+const sourceEntry = recreate ? fixtureMocks.sandboxLifecycleFixture({
   name: sandboxName,
   agent: "hermes",
   gpuEnabled: false,

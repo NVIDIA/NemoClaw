@@ -226,8 +226,6 @@ function seedRegistryAndSession(dashboardPort: number): void {
     model: DEFAULT_MODEL,
     provider: "compatible-endpoint",
     gpuEnabled: false,
-    policies: [],
-    policyTier: null,
     agent: null,
     agentVersion: OLD_OPENCLAW_VERSION,
     dashboardPort,
@@ -262,7 +260,6 @@ function seedRegistryAndSession(dashboardPort: number): void {
       inference: complete,
       openclaw: pending,
       agent_setup: pending,
-      policies: pending,
     },
   });
   writeJsonFile(SESSION_FILE, session);
@@ -346,7 +343,7 @@ test(
         "onboard the current OpenClaw sandbox",
         "build the old OpenClaw base image",
         "create the old OpenClaw sandbox",
-        "seed persistent state policy and registry metadata",
+        "seed persistent state and registry metadata",
         "restore the current OpenClaw base image",
         "rebuild the OpenClaw sandbox",
         "validate upgraded state policy inference and backup hygiene",
@@ -540,6 +537,8 @@ test(
           oldDockerfile,
           "--gateway",
           "nemoclaw",
+          "--policy",
+          path.join(REPO_ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
           "--no-tty",
           "--",
           "true",
@@ -567,7 +566,7 @@ test(
     // Phase 4: seed workspace state, an existing gateway token, and registry /
     // resume-session state so `nemoclaw <name> rebuild --yes` drives the same
     // user-visible rebuild path as the former shell test.
-    progress.phase("seed persistent state policy and registry metadata");
+    progress.phase("seed persistent state and registry metadata");
     const markerWrite = await sandbox.exec(
       SANDBOX_NAME,
       [
@@ -637,7 +636,6 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
         provider: seededSandbox.provider,
         agentVersion: seededSandbox.agentVersion,
         dashboardPort: seededSandbox.dashboardPort,
-        policyCount: Array.isArray(seededSandbox.policies) ? seededSandbox.policies.length : 0,
       },
       session: {
         sandboxName: sessionAfterSeed.sandboxName,
@@ -653,8 +651,8 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     const routeResult = await configureGatewayInferenceRoute(host, apiKey);
     expectExitZero(routeResult, "configure gateway inference route before rebuild");
 
-    // Phase 4.5: apply policy presets through the public CLI, then verify both
-    // registry persistence and the live OpenShell gateway policy.
+    // Phase 4.5: apply policy presets through the public CLI, then verify the
+    // live OpenShell gateway policy without consulting registry policy state.
     for (const preset of POLICY_PRESETS) {
       const policyAdd = await host.command(
         "node",
@@ -679,7 +677,26 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     expect(prePolicy.stdout).toMatch(/pypi|pypi\.org/i);
     expect(prePolicy.stdout).toMatch(/telegram/i);
     expect(prePolicy.stdout).toContain("api.telegram.org");
-    expect(registrySandbox().policies).toEqual(expect.arrayContaining([...POLICY_PRESETS]));
+    const hostPolicyEdit = await sandbox.openshell(
+      [
+        "policy",
+        "update",
+        SANDBOX_NAME,
+        "--add-endpoint",
+        "host-edit-rebuild-openclaw.example.com:443:read-only:rest:enforce",
+        "--rule-name",
+        "host_edit_rebuild_openclaw_e2e",
+        "--binary",
+        "/usr/bin/curl",
+        "--wait",
+      ],
+      {
+        artifactName: "phase-4-host-policy-edit-before-rebuild",
+        env: dockerContextEnv(),
+        timeoutMs: OPENSHELL_TIMEOUT_MS,
+      },
+    );
+    expectExitZero(hostPolicyEdit, "apply host policy edit before rebuild");
     const prePolicyList = await host.command(
       "node",
       [CLI_ENTRYPOINT, SANDBOX_NAME, "policy-list"],
@@ -727,7 +744,7 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     );
     expectExitZero(rebuild, "nemoclaw rebuild");
     const rebuildText = resultText(rebuild);
-    expect(rebuildText).toContain(`Sandbox '${SANDBOX_NAME}' rebuilt successfully`);
+    expect(rebuildText).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
     expect(rebuildText).not.toContain("post-restore steps were incomplete");
 
     // Phase 7: state preservation, upgrade, token rotation, backup hygiene, and
@@ -793,14 +810,11 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
     await artifacts.writeJson("phase-7-rebuild-manifest-summary.json", {
       backupDir,
       stateDirCount: Array.isArray(manifest.stateDirs) ? manifest.stateDirs.length : undefined,
-      policyPresets: manifest.policyPresets,
       telegramBridgeTraffic:
         "real bot response remains owned by the messaging-providers E2E; this rebuild target asserts restored Telegram policy and api.telegram.org reachability",
     });
-    expect(manifest.policyPresets).toEqual(expect.arrayContaining([...POLICY_PRESETS]));
     expect(backupCredentialLeakPaths(backupDir, PRE_REBUILD_GATEWAY_TOKEN)).toEqual([]);
 
-    expect(registrySandbox().policies).toEqual(expect.arrayContaining([...POLICY_PRESETS]));
     const postPolicy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
       artifactName: "phase-7-live-policy-after-rebuild",
       env: dockerContextEnv(),
@@ -811,6 +825,7 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
     expect(postPolicy.stdout).toMatch(/pypi|pypi\.org/i);
     expect(postPolicy.stdout).toMatch(/telegram/i);
     expect(postPolicy.stdout).toContain("api.telegram.org");
+    expect(postPolicy.stdout).toContain("host_edit_rebuild_openclaw_e2e");
 
     const postPolicyList = await host.command(
       "node",
