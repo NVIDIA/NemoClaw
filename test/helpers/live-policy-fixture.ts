@@ -25,35 +25,20 @@ export function managedSandboxEntry(
   const gatewayName = options.gatewayName ?? "nemoclaw";
   const gatewayPort = options.gatewayPort ?? 8080;
   const lifecycleGeneration = options.lifecycleGeneration ?? LIFECYCLE_GENERATION;
-  const policyHash = options.policyHash ?? POLICY_HASH;
-  const policyVersion = options.policyVersion ?? POLICY_VERSION;
   return {
     name,
     agent,
-    policies: [],
     openshellDriver: "docker",
     gatewayName,
     gatewayPort,
     lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: SANDBOX_IDENTITY,
-    policyAuthority: "nemoclaw-managed" as const,
-    policyCreationReceipt: {
-      schemaVersion: 1 as const,
-      origin: "sandbox-create" as const,
-      gatewayName,
-      gatewayPort,
-      sandboxName: name,
-      lifecycleGeneration,
-      sandboxIdentityFingerprint: SANDBOX_IDENTITY,
-      policyHash,
-      policyVersion,
-    },
   };
 }
 
-export function managedPolicyInspection() {
+export function livePolicyInspection() {
   return {
-    authority: "owner-unknown" as const,
+    policySource: "sandbox" as const,
     effectivePolicy: {},
     policyIdentity: {
       hash: POLICY_HASH,
@@ -66,7 +51,7 @@ export function managedRegistrationSource(name: string, agent = "openclaw"): str
   return `registry.registerSandbox(${JSON.stringify(managedSandboxEntry(name, agent))});`;
 }
 
-export function managedPolicyMetadata(sandboxName: string): string {
+export function livePolicyMetadata(sandboxName: string): string {
   return JSON.stringify({
     scope: "sandbox",
     sandbox: sandboxName,

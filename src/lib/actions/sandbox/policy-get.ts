@@ -4,6 +4,7 @@
 import {
   assertOpenshellResolvable,
   buildPolicyGetCommand,
+  captureRecordedSandboxBasePolicy,
   parseCurrentPolicy,
 } from "../../policy/index";
 import { runCapture } from "../../runner";
@@ -14,7 +15,17 @@ export interface PolicyGetResult {
 }
 
 /** Read the round-trippable OpenShell base policy and strip its metadata header. */
-export function getSandboxPolicy(sandboxName: string): PolicyGetResult {
+export function getSandboxPolicy(
+  sandboxName: string,
+  options: { recordedGatewayOperation?: string } = {},
+): PolicyGetResult {
+  if (options.recordedGatewayOperation) {
+    const yaml = captureRecordedSandboxBasePolicy(
+      sandboxName,
+      options.recordedGatewayOperation,
+    );
+    return { raw: yaml, yaml };
+  }
   assertOpenshellResolvable();
   let raw: string;
   try {

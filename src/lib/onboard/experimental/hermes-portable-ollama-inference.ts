@@ -193,7 +193,7 @@ function prepareHermesPortableOllamaRegistryRecovery(options: {
   }
 }
 
-/** Reconstruct the exact schema-5 Podman inference owner without acquiring images. */
+/** Reconstruct the exact schema-7 Podman inference owner without acquiring images. */
 export function createHermesPortableOllamaRuntimeAuthority(options: {
   readonly receipt: HermesPortableConfiguredReceipt;
   readonly publishedRecovery?: {

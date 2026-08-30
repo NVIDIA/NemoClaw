@@ -5,10 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-import {
-  addSandboxChannel,
-  removeSandboxChannel,
-} from "../../src/lib/actions/sandbox/policy-channel";
+import { addSandboxChannel } from "../../src/lib/actions/sandbox/policy-channel";
 import { policyChannelDependencies } from "../../src/lib/actions/sandbox/policy-channel-dependencies";
 import * as processRecovery from "../../src/lib/actions/sandbox/process-recovery";
 import * as httpProbe from "../../src/lib/adapters/http/probe";
@@ -144,8 +141,6 @@ let appliedPresets: string[];
 let presetContent: string | null;
 let applyPresetResult: boolean;
 let sessionState: onboardSession.Session | null;
-let sessionUpdateThrows: boolean;
-let sessionUpdates: Array<{ policyPresets: string[] | null }>;
 let callOrder: string[];
 let slackBotProbe: ProbeResult;
 let slackAppProbe: ProbeResult;
@@ -166,11 +161,8 @@ async function expectExit(action: () => Promise<void>): Promise<void> {
   expect(exitSpy).toHaveBeenCalledWith(1);
 }
 
-function setSession(
-  sandboxName: string | null = "test-sb",
-  policyPresets: string[] | null = ["npm", "pypi", "huggingface", "brew"],
-): void {
-  sessionState = { sandboxName, policyPresets } as onboardSession.Session;
+function setSession(sandboxName: string | null = "test-sb"): void {
+  sessionState = onboardSession.createSession({ sandboxName });
 }
 
 let stdinIsTty: PropertyDescriptor | undefined;
@@ -194,8 +186,6 @@ beforeEach(() => {
   presetContent = "network_policies:\n  stub:\n    egress:\n      - host: example.com\n";
   applyPresetResult = true;
   setSession();
-  sessionUpdateThrows = false;
-  sessionUpdates = [];
   callOrder = [];
   slackBotProbe = successfulProbe();
   slackAppProbe = successfulProbe('{"ok":true,"url":"wss://wss-primary.slack.com/link"}');
@@ -213,10 +203,9 @@ beforeEach(() => {
   exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
     throw new ExitError(code);
   }) as never);
-  vi.spyOn(
-    policyChannelDependencies,
-    "revalidateChannelProviderPolicyAuthority",
-  ).mockImplementation(() => undefined);
+  vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
+    () => undefined,
+  );
 
   vi.spyOn(registry, "getSandbox").mockImplementation(() => registryEntry);
   vi.spyOn(registry, "listSandboxes").mockImplementation(() => ({
@@ -265,22 +254,6 @@ beforeEach(() => {
   });
 
   vi.spyOn(onboardSession, "loadSession").mockImplementation(() => sessionState);
-  vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator) => {
-    sessionUpdateThrows
-      ? (() => {
-          throw new Error("simulated save failure");
-        })()
-      : undefined;
-    sessionState ??= { sandboxName: null, policyPresets: null } as onboardSession.Session;
-    const next = mutator(sessionState as onboardSession.Session) || sessionState;
-    sessionState = next as onboardSession.Session;
-    sessionUpdates.push({
-      policyPresets: Array.isArray(sessionState.policyPresets)
-        ? [...sessionState.policyPresets]
-        : sessionState.policyPresets,
-    });
-    return sessionState;
-  });
 
   providerSpy = vi
     .spyOn(policyChannelDependencies, "upsertMessagingProviders")
@@ -414,19 +387,40 @@ describe("channels add applies a matching policy preset (#3437)", () => {
   });
 
   it.each(["telegram", "slack", "discord"])(
-    "applies the '%s' preset before triggering rebuild",
+    "applies the '%s' preset before provider registration and binds credentials afterward",
     async (channel) => {
       await addSandboxChannel("test-sb", { channel });
 
-      expect(applyPresetSpy).toHaveBeenCalledOnce();
-      expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", channel, {
-        disclosedPresetState: "absent",
-        includeMessagingCredentialBindings: true,
-      });
+      expect(applyPresetSpy.mock.calls).toEqual([
+        [
+          "test-sb",
+          channel,
+          {
+            disclosedPresetState: "absent",
+            includeMessagingCredentialBindings: false,
+          },
+        ],
+        [
+          "test-sb",
+          channel,
+          {
+            disclosedPresetState: "absent",
+            includeMessagingCredentialBindings: true,
+          },
+        ],
+      ]);
       expect(loadPresetForSandboxSpy).toHaveBeenCalledWith("test-sb", channel);
-      expect(callOrder.indexOf(`applyPreset:${channel}`)).toBeLessThan(
-        callOrder.indexOf("promptAndRebuild"),
+      const presetCallIndexes = callOrder.flatMap((entry, index) =>
+        entry === `applyPreset:${channel}` ? [index] : [],
       );
+      expect(presetCallIndexes).toHaveLength(2);
+      expect(presetCallIndexes[0]).toBeLessThan(
+        callOrder.indexOf("upsertMessagingProviders"),
+      );
+      expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(
+        presetCallIndexes[1],
+      );
+      expect(presetCallIndexes[1]).toBeLessThan(callOrder.indexOf("promptAndRebuild"));
     },
   );
 
@@ -568,7 +562,15 @@ describe("channels add applies a matching policy preset (#3437)", () => {
   });
 
   it("rolls back providers and credentials without writing plan state when applyPreset fails", async () => {
-    applyPresetResult = false;
+    applyPresetSpy
+      .mockImplementationOnce((_name, presetName) => {
+        callOrder.push(`applyPreset:${presetName}`);
+        return true;
+      })
+      .mockImplementationOnce((_name, presetName) => {
+        callOrder.push(`applyPreset:${presetName}`);
+        return false;
+      });
 
     await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
 
@@ -578,12 +580,19 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     });
     expect(updateSandboxSpy).not.toHaveBeenCalled();
     expect(deleteCredentialSpy).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
-    expect(sessionUpdates).toEqual([]);
     expect(callOrder).not.toContain("promptAndRebuild");
   });
 
   it("keeps plan state and skips provider delete when rollback detach fails", async () => {
-    applyPresetResult = false;
+    applyPresetSpy
+      .mockImplementationOnce((_name, presetName) => {
+        callOrder.push(`applyPreset:${presetName}`);
+        return true;
+      })
+      .mockImplementationOnce((_name, presetName) => {
+        callOrder.push(`applyPreset:${presetName}`);
+        return false;
+      });
     runOpenshellSpy.mockImplementation((args: string[]) =>
       args.slice(0, 3).join(" ") === "sandbox provider detach"
         ? { ...successfulOpenshellResult(), status: 1, stderr: "permission denied" }
@@ -715,100 +724,6 @@ describe("channels add applies a matching policy preset (#3437)", () => {
     expect(providerSpy).not.toHaveBeenCalled();
     expect(updateSandboxSpy).not.toHaveBeenCalled();
     expect(applyPresetSpy).not.toHaveBeenCalled();
-  });
-});
-
-describe("channels add/remove keeps session.policyPresets in sync with registry", () => {
-  it("appends the channel preset to session.policyPresets after a successful add", async () => {
-    await addSandboxChannel("test-sb", { channel: "slack" });
-
-    expect(sessionUpdates).toEqual([
-      { policyPresets: ["npm", "pypi", "huggingface", "brew", "slack"] },
-    ]);
-    expect(sessionState?.policyPresets).toEqual(["npm", "pypi", "huggingface", "brew", "slack"]);
-  });
-
-  it("does not touch the session when it tracks a different sandbox", async () => {
-    setSession("other-sb", ["npm", "github"]);
-
-    await addSandboxChannel("test-sb", { channel: "slack" });
-
-    expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "slack", {
-      disclosedPresetState: "absent",
-      includeMessagingCredentialBindings: true,
-    });
-    expect(sessionUpdates).toEqual([]);
-    expect(sessionState?.policyPresets).toEqual(["npm", "github"]);
-  });
-
-  it("succeeds even when no onboard session file exists", async () => {
-    sessionState = null;
-
-    await addSandboxChannel("test-sb", { channel: "slack" });
-
-    expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "slack", {
-      disclosedPresetState: "absent",
-      includeMessagingCredentialBindings: true,
-    });
-    expect(sessionUpdates).toEqual([]);
-    expect(callOrder).toContain("promptAndRebuild");
-  });
-
-  it("does not abort channels-add when session save fails", async () => {
-    sessionUpdateThrows = true;
-
-    await addSandboxChannel("test-sb", { channel: "slack" });
-
-    expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", "slack", {
-      disclosedPresetState: "absent",
-      includeMessagingCredentialBindings: true,
-    });
-    expect(callOrder).toContain("promptAndRebuild");
-  });
-
-  it("removes the channel preset from session.policyPresets after a successful remove", async () => {
-    appliedPresets = ["slack"];
-    setSession("test-sb", ["npm", "slack", "github"]);
-
-    await removeSandboxChannel("test-sb", { channel: "slack" });
-
-    expect(removePresetSpy).toHaveBeenCalledWith("test-sb", "slack");
-    expect(sessionUpdates).toEqual([{ policyPresets: ["npm", "github"] }]);
-    expect(sessionState?.policyPresets).toEqual(["npm", "github"]);
-    expect(callOrder).toContain("promptAndRebuild");
-  });
-
-  it("does not touch a foreign session during channels-remove", async () => {
-    appliedPresets = ["slack"];
-    setSession("other-sb", ["slack", "npm"]);
-
-    await removeSandboxChannel("test-sb", { channel: "slack" });
-
-    expect(removePresetSpy).toHaveBeenCalledWith("test-sb", "slack");
-    expect(sessionUpdates).toEqual([]);
-    expect(sessionState?.policyPresets).toEqual(["slack", "npm"]);
-  });
-
-  it("succeeds during channels-remove when no onboard session file exists", async () => {
-    appliedPresets = ["slack"];
-    sessionState = null;
-
-    await removeSandboxChannel("test-sb", { channel: "slack" });
-
-    expect(removePresetSpy).toHaveBeenCalledWith("test-sb", "slack");
-    expect(sessionUpdates).toEqual([]);
-    expect(callOrder).toContain("promptAndRebuild");
-  });
-
-  it("does not abort channels-remove when session save fails", async () => {
-    appliedPresets = ["slack"];
-    setSession("test-sb", ["npm", "slack"]);
-    sessionUpdateThrows = true;
-
-    await removeSandboxChannel("test-sb", { channel: "slack" });
-
-    expect(removePresetSpy).toHaveBeenCalledWith("test-sb", "slack");
-    expect(callOrder).toContain("promptAndRebuild");
   });
 });
 

@@ -189,7 +189,6 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       assert.ok(telegramProvider, "expected my-assistant-telegram-bridge provider create command");
       assert.match(telegramProvider.command, /--credential TELEGRAM_BOT_TOKEN/);
 
-      // Verify sandbox create includes --provider flags for all three
       const createCommand = payload.commands.find((e: CommandEntry) =>
         e.command.includes("sandbox create"),
       );
@@ -214,8 +213,6 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
         ["wss-backup.slack.com", "wss-primary.slack.com"].sort(),
       );
 
-      // Messaging tokens must NOT appear in the sandbox create command
-      // (they flow exclusively through the openshell provider credential system).
       assert.doesNotMatch(createCommand.command, /test-discord-token-value/);
       assert.doesNotMatch(createCommand.command, /123456:ABC-test-telegram-token/);
       assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
@@ -238,7 +235,6 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       assert.doesNotMatch(JSON.stringify(messagingPlan), /test-discord-token-value/);
       assert.doesNotMatch(JSON.stringify(messagingPlan), /123456:ABC-test-telegram-token/);
 
-      // Verify blocked credentials are NOT in the sandbox spawn environment
       assert.ok(createCommand.env, "expected env to be captured from spawn call");
       assert.equal(
         createCommand.env.DISCORD_BOT_TOKEN,
@@ -276,7 +272,6 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
         "SSH_AUTH_SOCK must not be in sandbox env",
       );
 
-      // Belt-and-suspenders: raw token values must not appear anywhere in env
       const envString = JSON.stringify(createCommand.env);
       assert.ok(
         !envString.includes("test-discord-token-value"),
@@ -434,7 +429,7 @@ const { createSandbox } = require(${onboardPath});
       policyPath: createCommand?.policyPath || "",
       policyReadError: createCommand?.policyReadError || null,
     },
-    registeredPolicies: registeredSandbox?.policies || [],
+    registeredPolicyStatePresent: "policies" in (registeredSandbox || {}),
     slackBinaryPaths: (slack.binaries || []).map((entry) => entry.path),
     slackEndpointHosts: (slack.endpoints || []).map((entry) => entry.host),
   }));
@@ -464,7 +459,7 @@ const { createSandbox } = require(${onboardPath});
         assert.match(payload.createCommand.command, /--provider my-assistant-slack-app/);
         assert.match(payload.createCommand.policyPath, /nemoclaw-initial-policy/);
         assert.equal(payload.createCommand.policyReadError, null);
-        assert.deepEqual(payload.registeredPolicies, ["slack"]);
+        assert.equal(payload.registeredPolicyStatePresent, false);
         assert.deepEqual(payload.slackBinaryPaths, [
           "/usr/local/bin/hermes",
           "/usr/bin/python3*",
@@ -792,11 +787,11 @@ const { createSandbox } = require(${onboardPath});
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_SANDBOX_GPU: "0",
           NEMOCLAW_MESSAGING_PLAN_B64: messagingPlanB64,
           TELEGRAM_BOT_TOKEN: "",
         },
       });
-
       assert.equal(result.status, 0, result.stderr || result.error?.message);
       const payload = parseStdoutJson(result.stdout);
 
@@ -1287,7 +1282,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
 };
-registry.getSandbox = () => fixtureMocks.managedSandboxPolicyReceiptFixture(
+registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture(
   { name: "my-assistant", toolDisclosure: "progressive" },
   { sandboxId: existingSandbox.state.sandboxId },
 );

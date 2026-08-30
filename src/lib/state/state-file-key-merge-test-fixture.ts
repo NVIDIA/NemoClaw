@@ -63,27 +63,29 @@ function requireInstrumented(instrumented: string, label: string): string {
   return instrumented !== KEY_ALLOWLIST_MERGE_PYTHON ? instrumented : failInstrumentation(label);
 }
 
-const INODE_REVALIDATION_POINT = String.raw`        try:
-            latest_current = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)`;
+const INODE_REVALIDATION_POINT = String.raw`        else:
+            try:
+                latest_current = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)`;
 export const INODE_SWAP_SCRIPT = requireInstrumented(
   KEY_ALLOWLIST_MERGE_PYTHON.replace(
     INODE_REVALIDATION_POINT,
-    String.raw`        swapped_name = current_name + ".pre-swap"
-        os.replace(current_name, swapped_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-        replacement_fd = os.open(
-            current_name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o660,
-            dir_fd=parent_fd,
-        )
-        try:
-            os.write(replacement_fd, b"# replacement created during race test\n")
-            os.fsync(replacement_fd)
-        finally:
-            os.close(replacement_fd)
+    String.raw`        else:
+            swapped_name = current_name + ".pre-swap"
+            os.replace(current_name, swapped_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            replacement_fd = os.open(
+                current_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o660,
+                dir_fd=parent_fd,
+            )
+            try:
+                os.write(replacement_fd, b"# replacement created during race test\n")
+                os.fsync(replacement_fd)
+            finally:
+                os.close(replacement_fd)
 
-        try:
-            latest_current = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)`,
+            try:
+                latest_current = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)`,
   ),
   "current-config inode revalidation point",
 );
@@ -91,20 +93,21 @@ export const INODE_SWAP_SCRIPT = requireInstrumented(
 export const IN_PLACE_MUTATION_SCRIPT = requireInstrumented(
   KEY_ALLOWLIST_MERGE_PYTHON.replace(
     INODE_REVALIDATION_POINT,
-    String.raw`        mutation_fd = os.open(
-            current_name,
-            os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
-            dir_fd=parent_fd,
-        )
-        try:
-            os.lseek(mutation_fd, 0, os.SEEK_END)
-            os.write(mutation_fd, b"# concurrent mutation\n")
-            os.fsync(mutation_fd)
-        finally:
-            os.close(mutation_fd)
+    String.raw`        else:
+            mutation_fd = os.open(
+                current_name,
+                os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=parent_fd,
+            )
+            try:
+                os.lseek(mutation_fd, 0, os.SEEK_END)
+                os.write(mutation_fd, b"# concurrent mutation\n")
+                os.fsync(mutation_fd)
+            finally:
+                os.close(mutation_fd)
 
-        try:
-            latest_current = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)`,
+            try:
+                latest_current = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)`,
   ),
   "current-config version revalidation point",
 );
@@ -165,6 +168,55 @@ function loadDcodeOwnership(): StateFileKeyAllowlistRestoreOwnership {
 }
 
 export const DCODE_OWNERSHIP = loadDcodeOwnership();
+
+export const PI_SETTINGS_OWNERSHIP: StateFileKeyAllowlistRestoreOwnership = {
+  merge: "key-allowlist",
+  userKeys: [
+    { key: "theme", type: "string", maxLength: 128 },
+    { key: "quietStartup", type: "boolean" },
+  ],
+};
+
+export function runJsonMerge(
+  backup: Record<string, unknown>,
+  current: Record<string, unknown> | null,
+  ownership: StateFileKeyAllowlistRestoreOwnership = PI_SETTINGS_OWNERSHIP,
+): {
+  current: Record<string, unknown> | null;
+  mode: number | null;
+  status: number | null;
+  stderr: string;
+} {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-file-json-"));
+  const configPath = path.join(dir, "settings.json");
+  try {
+    if (current !== null) {
+      fs.writeFileSync(configPath, `${JSON.stringify(current)}\n`, { mode: 0o600 });
+    }
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        KEY_ALLOWLIST_MERGE_PYTHON,
+        dir,
+        "settings.json",
+        JSON.stringify(stateFileKeyMergeSpec(ownership, "settings.json")),
+      ],
+      { encoding: "utf8", input: JSON.stringify(backup) },
+    );
+    return {
+      status: result.status,
+      stderr: result.stderr,
+      current: fs.existsSync(configPath)
+        ? (JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>)
+        : null,
+      mode: fs.existsSync(configPath) ? fs.statSync(configPath).mode & 0o777 : null,
+    };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 export function generatedCurrent(config: unknown, providerHeader = FRESH_PROVIDER_HEADER): string {
   return `${GENERATED_HEADER}\n${providerHeader}\n\n${stringify(config)}`;

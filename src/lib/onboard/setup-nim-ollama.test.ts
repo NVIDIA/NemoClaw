@@ -213,10 +213,10 @@ describe("createSetupNimOllamaHandlers", () => {
     expect(install).not.toHaveBeenCalled();
   });
 
-  it("stops before local Ollama install effects when policy authority changes (#9833)", async () => {
+  it("stops before local Ollama install effects when sandbox identity changes (#9833)", async () => {
     const selection = makeState();
-    selection.revalidatePolicyRequirements = () => {
-      throw new Error("external policy authority must supply local inference");
+    selection.revalidateSandboxIdentity = () => {
+      throw new Error("Sandbox identity changed before local inference");
     };
     const install = vi.fn(() => ({ ok: true }));
     const start = vi.fn(() => ({ kind: "ready" as const }));
@@ -233,7 +233,7 @@ describe("createSetupNimOllamaHandlers", () => {
         hasUpgradableOllama: false,
         binaryNeedsUpgrade: false,
       }),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    ).rejects.toThrow(/Sandbox identity changed before/u);
 
     expect(install).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
@@ -290,10 +290,10 @@ describe("createSetupNimOllamaHandlers", () => {
     expect(restart).not.toHaveBeenCalled();
   });
 
-  it("stops before Windows Ollama install effects when policy authority changes (#9833)", async () => {
+  it("stops before Windows Ollama install effects when sandbox identity changes (#9833)", async () => {
     const selection = makeState();
-    selection.revalidatePolicyRequirements = () => {
-      throw new Error("external policy authority must supply local inference");
+    selection.revalidateSandboxIdentity = () => {
+      throw new Error("Sandbox identity changed before local inference");
     };
     const install = vi.fn(async () => ({ ok: true, path: "C:/Ollama/ollama.exe" }));
     const start = vi.fn(() => true);
@@ -314,7 +314,7 @@ describe("createSetupNimOllamaHandlers", () => {
         null,
         selection,
       ),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    ).rejects.toThrow(/Sandbox identity changed before/u);
 
     expect(install).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();

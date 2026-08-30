@@ -28,10 +28,6 @@ import {
   type HermesPortableLifecycleDeps,
 } from "./hermes-portable-lifecycle";
 import {
-  hermesPortableCreatePolicySemanticDigest,
-  resolveHermesPortableExpectedPolicyBytes,
-} from "./hermes-portable-policy-authority";
-import {
   captureHermesPortablePolicySource,
   publishHermesPortableDurablePolicySource,
   publishHermesPortableLifecycleReceipt,
@@ -175,17 +171,15 @@ function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt 
   const uid = process.getuid!();
   const socketPath = `/run/user/${String(uid)}/podman/podman.sock`;
   const transactionId = randomUUID();
-  const policyBytes = fs.readFileSync(policyPath);
   const policy = publishHermesPortableDurablePolicySource({
     sandboxName: SANDBOX,
     transactionId,
     stateDir,
-    intendedSemanticSha256: hermesPortableCreatePolicySemanticDigest(policyBytes),
     source: captureHermesPortablePolicySource(policyPath),
     hooks: { assertLifecycleLock: () => undefined },
   });
   const pending: HermesPortablePendingReceipt = {
-    schemaVersion: 5,
+    schemaVersion: 7,
     agent: "hermes",
     phase: "pending",
     transactionId,
@@ -229,11 +223,11 @@ function activeReceipt(homeDir = "/home/test"): HermesPortableConfiguredReceipt 
   const first = publishHermesPortableLifecycleReceipt(pending, stateDir, {
     assertLifecycleLock: () => undefined,
   });
+  const { policy: _policy, ...transaction } = pending;
   const configuring: HermesPortableConfiguredReceipt = {
-    ...pending,
+    ...transaction,
     phase: "configuring",
     previousPhaseSha256: first.sha256,
-    verifiedLivePolicySemanticSha256: policy.intendedSemanticSha256,
     container: {
       containerId: CONTAINER_ID,
       sandboxId: SANDBOX_ID,
@@ -400,51 +394,7 @@ afterEach(() => {
 });
 
 describe("Hermes portable lifecycle", () => {
-  it("migrates an identical same-path schema-5 copy only under both probe fences (#10423)", async () => {
-    const receipt = activeReceipt(stateDir);
-    const copiedPolicy = `${receipt.policy.sourcePath}.copy`;
-    fs.writeFileSync(copiedPolicy, fs.readFileSync(receipt.policy.sourcePath), { mode: 0o600 });
-    fs.renameSync(copiedPolicy, receipt.policy.sourcePath);
-    const fixture = lifecycleDeps(receipt);
-
-    expect(() =>
-      withMcpLifecycleLockSync(
-        SANDBOX,
-        () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), fixture.deps),
-        { stateDir: path.join(stateDir, "state") },
-      ),
-    ).toThrow("durable policy source disagrees with its receipt authority");
-
-    expect(() =>
-      withMcpLifecycleLockSync(
-        SANDBOX,
-        () => requalifyHermesPortableSandboxAuthority(SANDBOX, lifecycleContext(), fixture.deps),
-        { stateDir: path.join(stateDir, "state") },
-      ),
-    ).toThrow("Portable host authority mutation requires the current HOME fence");
-
-    const migrated = await withPortableHostFence(stateDir, () =>
-      withMcpLifecycleLockSync(
-        SANDBOX,
-        () => requalifyHermesPortableSandboxAuthority(SANDBOX, lifecycleContext(), fixture.deps),
-        { stateDir: path.join(stateDir, "state") },
-      ),
-    );
-
-    expect(migrated.kind).toBe("migrated");
-    expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor).toBeDefined();
-    expect(
-      fixture.podman.mock.calls.some(([args]) => args[1] === "start" || args[1] === "stop"),
-    ).toBe(false);
-    const removal = withMcpLifecycleLockSync(
-      SANDBOX,
-      () => prepareHermesPortableSandboxRemoval(SANDBOX, lifecycleContext(), fixture.deps),
-      { stateDir: path.join(stateDir, "state") },
-    );
-    expect(removal.receipt.socketAuthority.inode).toBe("102");
-  });
-
-  it("reconciles an interrupted schema-6 publication inside both probe fences (#10423)", async () => {
+  it("reconciles an interrupted schema-8 publication inside both probe fences (#10423)", async () => {
     const receipt = activeReceipt(stateDir);
     expect(() =>
       withMcpLifecycleLockSync(
@@ -452,12 +402,12 @@ describe("Hermes portable lifecycle", () => {
         () =>
           publishHermesPortableSuccessorReceipt(SANDBOX, stateDir, {
             afterCanonicalLink: () => {
-              throw new Error("simulated schema-6 process exit");
+              throw new Error("simulated schema-8 process exit");
             },
           }),
         { stateDir: path.join(stateDir, "state") },
       ),
-    ).toThrow("simulated schema-6 process exit");
+    ).toThrow("simulated schema-8 process exit");
     const fixture = lifecycleDeps(receipt);
 
     const recovered = await withPortableHostFence(stateDir, () =>
@@ -484,10 +434,10 @@ describe("Hermes portable lifecycle", () => {
           expect(() =>
             publishHermesPortableSuccessorReceipt(SANDBOX, stateDir, {
               afterCanonicalLink: () => {
-                throw new Error("simulated schema-6 process exit");
+                throw new Error("simulated schema-8 process exit");
               },
             }),
-          ).toThrow("simulated schema-6 process exit");
+          ).toThrow("simulated schema-8 process exit");
 
           expect(() =>
             hermesPortableLifecycleInternals.qualify(
@@ -505,176 +455,7 @@ describe("Hermes portable lifecycle", () => {
     );
   });
 
-  it("rejects policy generation replacement during schema-6 publication (#10423)", async () => {
-    const receipt = activeReceipt(stateDir);
-    const copiedPolicy = `${receipt.policy.sourcePath}.copy`;
-    fs.writeFileSync(copiedPolicy, fs.readFileSync(receipt.policy.sourcePath), { mode: 0o600 });
-    fs.renameSync(copiedPolicy, receipt.policy.sourcePath);
-    const fixture = lifecycleDeps(receipt);
-    const publishWithReplacement: typeof publishHermesPortableSuccessorReceipt = (
-      sandboxName,
-      receiptStateDir,
-      hooks,
-      authority,
-    ) =>
-      publishHermesPortableSuccessorReceipt(
-        sandboxName,
-        receiptStateDir,
-        {
-          ...hooks,
-          afterStageWrite: (written, total) => {
-            const replacement = `${receipt.policy.sourcePath}.during-publication`;
-            fs.writeFileSync(replacement, fs.readFileSync(receipt.policy.sourcePath), {
-              mode: 0o600,
-            });
-            fs.renameSync(replacement, receipt.policy.sourcePath);
-            hooks?.afterStageWrite?.(written, total);
-          },
-        },
-        authority,
-      );
-
-    await expect(
-      withPortableHostFence(stateDir, () =>
-        withMcpLifecycleLockSync(
-          SANDBOX,
-          () =>
-            requalifyHermesPortableSandboxAuthority(SANDBOX, lifecycleContext(), {
-              ...fixture.deps,
-              publishSuccessorReceipt: publishWithReplacement,
-            }),
-          { stateDir: path.join(stateDir, "state") },
-        ),
-      ),
-    ).rejects.toThrow("operation-local filesystem or runtime identity changed");
-  });
-
-  it.each(["socket", "openshell", "podman"] as const)(
-    "rejects %s identity generation replacement during schema-6 publication (#10423)",
-    async (owner) => {
-      const receipt = activeReceipt(stateDir);
-      let replaceIdentity = false;
-      const fixture = lifecycleDeps(receipt);
-      const operatingAuthority = {
-        ...fixture.deps.operatingAuthority,
-        captureSocketAuthority: () => ({
-          ...receipt.socketAuthority,
-          inode: owner === "socket" && replaceIdentity ? "103" : "102",
-        }),
-        captureOpenShellExecutableAuthority: () => ({
-          ...receipt.openshellExecutableAuthority,
-          executable: {
-            ...receipt.openshellExecutableAuthority.executable,
-            inode: owner === "openshell" && replaceIdentity ? "11" : "10",
-          },
-        }),
-        capturePodmanExecutableAuthority: () => ({
-          ...receipt.podmanExecutableAuthority,
-          executable: {
-            ...receipt.podmanExecutableAuthority.executable,
-            inode: owner === "podman" && replaceIdentity ? "31" : "30",
-          },
-        }),
-      };
-      const publishWithReplacement: typeof publishHermesPortableSuccessorReceipt = (
-        sandboxName,
-        receiptStateDir,
-        hooks,
-        authority,
-      ) =>
-        publishHermesPortableSuccessorReceipt(
-          sandboxName,
-          receiptStateDir,
-          {
-            ...hooks,
-            afterStageWrite: (written, total) => {
-              replaceIdentity = true;
-              hooks?.afterStageWrite?.(written, total);
-            },
-          },
-          authority,
-        );
-
-      await expect(
-        withPortableHostFence(stateDir, () =>
-          withMcpLifecycleLockSync(
-            SANDBOX,
-            () =>
-              requalifyHermesPortableSandboxAuthority(SANDBOX, lifecycleContext(), {
-                ...fixture.deps,
-                operatingAuthority,
-                publishSuccessorReceipt: publishWithReplacement,
-              }),
-            { stateDir: path.join(stateDir, "state") },
-          ),
-        ),
-      ).rejects.toThrow("operation-local filesystem or runtime identity changed");
-    },
-  );
-
-  it("passes only private state, terminal, locale, and TLS variables to child commands (#9203)", () => {
-    const runtimeAuthority = {
-      schemaVersion: 1 as const,
-      kind: "podman" as const,
-      ownership: "current-user" as const,
-      uid: process.getuid!(),
-      homeDir: "/home/test",
-      configHome: "/home/test/.config",
-      runtimeDir: "/run/user/1000",
-      socketPath: "/run/user/1000/podman/podman.sock",
-    };
-    const sourceEnv = {
-      HOME: "/home/test",
-      PATH: "/usr/bin",
-      TERM: "xterm-256color",
-      LANG: "C.UTF-8",
-      XDG_CONFIG_HOME: "/home/test/.config",
-      XDG_RUNTIME_DIR: "/run/user/1000",
-      XDG_CACHE_HOME: "/tmp/ambient-cache",
-      HTTPS_PROXY: "http://127.0.0.1:8118",
-      SSL_CERT_FILE: "/etc/ssl/cert.pem",
-      DOCKER_HOST: "unix:///run/docker.sock",
-      KUBECONFIG: "/home/test/.kube/config",
-      SSH_AUTH_SOCK: "/run/user/1000/ssh-agent.sock",
-      OPENSHELL_GATEWAY: "ambient",
-      OPENSHELL_GATEWAY_ENDPOINT: "https://ambient.example",
-      NVIDIA_INFERENCE_API_KEY: "do-not-forward",
-      GITHUB_TOKEN: "do-not-forward",
-      AWS_SECRET_ACCESS_KEY: "do-not-forward",
-    };
-    const env = hermesPortableLifecycleInternals.buildHermesPortableOpenShellEnv(
-      sourceEnv,
-      runtimeAuthority,
-    );
-
-    expect(env).toMatchObject({
-      HOME: "/home/test",
-      PATH: "/usr/bin",
-      TERM: "xterm-256color",
-      LANG: "C.UTF-8",
-      XDG_CONFIG_HOME: "/home/test/.config",
-      XDG_RUNTIME_DIR: "/run/user/1000",
-      SSL_CERT_FILE: "/etc/ssl/cert.pem",
-    });
-    expect(env).not.toHaveProperty("HTTPS_PROXY");
-    expect(env).not.toHaveProperty("XDG_CACHE_HOME");
-    expect(env).not.toHaveProperty("DOCKER_HOST");
-    expect(env).not.toHaveProperty("KUBECONFIG");
-    expect(env).not.toHaveProperty("SSH_AUTH_SOCK");
-    expect(env).not.toHaveProperty("OPENSHELL_GATEWAY");
-    expect(env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
-    expect(env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
-    expect(env).not.toHaveProperty("GITHUB_TOKEN");
-    expect(env).not.toHaveProperty("AWS_SECRET_ACCESS_KEY");
-    expect(() =>
-      hermesPortableLifecycleInternals.buildHermesPortableOpenShellEnv(
-        { ...sourceEnv, XDG_CONFIG_HOME: "/tmp/other-config" },
-        runtimeAuthority,
-      ),
-    ).toThrow("XDG_CONFIG_HOME disagrees with runtime authority");
-  });
-
-  it("constructs production Podman dependencies from the receipt authority (#9203)", () => {
+  it("constructs production Podman dependencies from the receipt identity (#9203)", () => {
     const receipt = activeReceipt();
     const capture = vi.fn<ContainerEngineCommandCapture>(
       (_executable, args, _timeoutMs, _input, environment) => {
@@ -1078,18 +859,10 @@ describe("Hermes portable lifecycle", () => {
     expect(podman.mock.calls.filter(([args]) => args[1] === "stop")).toEqual([]);
   });
 
-  it("recovers against the finalized Personal policy authority (#9211)", () => {
+  it("recovers against the current live OpenShell policy (#9211)", () => {
     const receipt = activeReceipt();
-    const registry = {
-      policyTier: "personal",
-      policies: ["personal-open-internet"],
-      policyPresetsFinalized: true,
-    } satisfies Partial<SandboxEntry>;
-    const livePolicy = resolveHermesPortableExpectedPolicyBytes(Buffer.from(POLICY), {
-      name: SANDBOX,
-      agent: "hermes",
-      ...registry,
-    } as SandboxEntry).bytes.toString("utf8");
+    const registry = {} satisfies Partial<SandboxEntry>;
+    const livePolicy = POLICY;
     const { deps, podman } = lifecycleDeps(receipt, false, { livePolicy, registry });
 
     const result = withMcpLifecycleLockSync(
@@ -1129,32 +902,26 @@ describe("Hermes portable lifecycle", () => {
     );
   });
 
-  it("rejects Personal policy without finalized registry authority (#9211)", () => {
+  it("accepts a valid host-edited policy without a finalized policy receipt (#9211)", () => {
     const receipt = activeReceipt();
     const finalized = {
       name: SANDBOX,
       agent: "hermes",
-      policyTier: "personal",
-      policies: ["personal-open-internet"],
-      policyPresetsFinalized: true,
     } as SandboxEntry;
-    const livePolicy = resolveHermesPortableExpectedPolicyBytes(
-      Buffer.from(POLICY),
-      finalized,
-    ).bytes.toString("utf8");
+    const livePolicy = POLICY;
     const { deps, podman } = lifecycleDeps(receipt, false, {
       livePolicy,
-      registry: { ...finalized, policyPresetsFinalized: undefined },
+      registry: { ...finalized },
     });
 
-    expect(() =>
+    expect(
       withMcpLifecycleLockSync(
         SANDBOX,
         () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), deps),
         { stateDir: path.join(stateDir, "state") },
       ),
-    ).toThrow("base policy disagrees with create input");
-    expect(podman).not.toHaveBeenCalled();
+    ).toEqual({ kind: "recovered" });
+    expect(podman).toHaveBeenCalled();
   });
 
   it("rejects an ambient OpenShell endpoint before Podman or OpenShell effects (#9203)", () => {

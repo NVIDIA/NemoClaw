@@ -61,7 +61,16 @@ function runCli(args: string, env: Record<string, string | undefined> = {}): Cli
  * exit 0 with stale data, so the old isLive.status guard never fires.
  */
 function writeExecutable(filePath: string, lines: string[]): void {
-  fs.writeFileSync(filePath, ["#!/bin/sh", ...lines].join("\n"), { mode: 0o755 });
+  const policyGet =
+    path.basename(filePath) === "openshell"
+      ? [
+          'if [ "$1 $2" = "policy get" ]; then',
+          "  printf 'version: 1\\nnetwork_policies: {}\\n'",
+          "  exit 0",
+          "fi",
+        ]
+      : [];
+  fs.writeFileSync(filePath, ["#!/bin/sh", ...policyGet, ...lines].join("\n"), { mode: 0o755 });
 }
 
 function writeSandboxRegistry(
@@ -80,7 +89,6 @@ function writeSandboxRegistry(
           model: "test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,
-          policies: [],
           ...entry,
         },
       },
@@ -114,8 +122,6 @@ function writeEmptyOpenClawSnapshot(home: string, name: string): void {
       dir: "/sandbox/.openclaw",
       backupPath,
       blueprintDigest: null,
-      policyPresets: [],
-      customPolicies: [],
       name,
     }),
     { mode: 0o600 },
@@ -173,6 +179,7 @@ function makeStoppedGatewayEnv(prefix: string): Record<string, string> {
 
   return {
     HOME: home,
+    NEMOCLAW_OPENSHELL_BIN: path.join(localBin, "openshell"),
     PATH: `${localBin}:${process.env.PATH ?? ""}`,
   };
 }
@@ -204,6 +211,7 @@ function makeHealthyVmGatewayEnv(prefix: string): Record<string, string> {
 
   return {
     HOME: home,
+    NEMOCLAW_OPENSHELL_BIN: path.join(localBin, "openshell"),
     PATH: `${localBin}:${process.env.PATH ?? ""}`,
   };
 }
@@ -270,7 +278,7 @@ function makeVmRestoreToEnv(
     '  if printf "%s" "$cmd" | grep -q "cat --"; then cat "$REMOTE_OPENCLAW_JSON"; exit 0; fi',
     '  touch "$SNAPSHOT_RESTORE_MARKER"',
     '  if printf "%s" "$cmd" | grep -q ".nemoclaw-restore"; then cat > "$REMOTE_OPENCLAW_JSON"; exit 0; fi',
-    '  exit 92',
+    "  exit 92",
     "fi",
     "exit 0",
   ]);
@@ -318,6 +326,7 @@ function makeVmRestoreToEnv(
 
   return {
     HOME: home,
+    NEMOCLAW_OPENSHELL_BIN: path.join(localBin, "openshell"),
     NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS: "0",
     NEMOCLAW_TEST_SNAPSHOT_RESTORE_MARKER: snapshotRestoreMarker,
     PATH: `${localBin}:${process.env.PATH ?? ""}`,
@@ -377,9 +386,7 @@ describe("snapshot VM-driver gateway guard", () => {
         .update("fixture-clone-1")
         .digest("hex"),
     });
-    expect(registryState.sandboxes["clone-1"].lifecycleGeneration).not.toBe(
-      "source-generation",
-    );
+    expect(registryState.sandboxes["clone-1"].lifecycleGeneration).not.toBe("source-generation");
   }, 15000);
 
   it("snapshot restore --to rejects a malformed clone identity before registration (#8942)", () => {
