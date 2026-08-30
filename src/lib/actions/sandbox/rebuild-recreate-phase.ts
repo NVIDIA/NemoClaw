@@ -295,8 +295,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         : {}),
       recreateJournalTargetIntentFingerprint: recreateJournal.targetIntentFingerprint,
     });
-    const returnedExitCode = process.exitCode;
-    if (typeof returnedExitCode === "number" && returnedExitCode !== 0) {
+    const returnedExitCode = Number(process.exitCode ?? 0);
+    if (returnedExitCode !== 0) {
       onboardFailed = true;
       onboardExitCode = returnedExitCode;
       log(`onboard() returned with exit code ${returnedExitCode}`);
