@@ -363,11 +363,20 @@ describe("portable lifecycle recovery timing output", () => {
       }),
     ).toEqual({ kind: "already-running" });
     expect(now).toBe(2_000);
-    expect(
-      captureOpenshell.mock.calls.map(([args]) =>
-        args.find((arg) => ["true", "pgrep", "curl", "python3"].includes(arg)),
-      ),
-    ).toEqual(["true", "curl", "pgrep", "python3"]);
+    const curlCalls = captureOpenshell.mock.calls.filter(([args]) => args.includes("curl"));
+    const waiterCalls = captureOpenshell.mock.calls.filter(([args]) => args.includes("python3"));
+    expect(curlCalls).toHaveLength(1);
+    expect(waiterCalls).toHaveLength(1);
+    const waiterArgs = waiterCalls[0]?.[0] ?? [];
+    expect(waiterArgs.slice(waiterArgs.lastIndexOf("--") + 1)).toEqual([
+      "python3",
+      "-I",
+      "-c",
+      expect.any(String),
+      "18789",
+      "18000",
+      "100",
+    ]);
     expect(launchOpenshell).not.toHaveBeenCalled();
   });
 
@@ -608,6 +617,13 @@ describe("portable lifecycle recovery timing output", () => {
     [
       "a receipt with a mismatched exit status",
       { ...gatewayWaitResult("ready", { notReady: 1 }), status: 75 },
+      "gatewayTimeouts=0 gatewayErrors=1",
+      "lastFailure=error",
+      1_000,
+    ],
+    [
+      "a receipt whose timing exceeds the waiter budget",
+      gatewayWaitResult("ready", { probeMs: 18_002 }),
       "gatewayTimeouts=0 gatewayErrors=1",
       "lastFailure=error",
       1_000,

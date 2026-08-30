@@ -73,6 +73,8 @@ const GATEWAY_HEALTH_WAIT_COMMAND_RESERVE_MS = 2_000;
 const GATEWAY_HEALTH_WAIT_POLL_INTERVAL_MS = 100;
 const GATEWAY_HEALTH_WAIT_RETRY_INTERVAL_MS = 1_000;
 const GATEWAY_HEALTH_WAIT_MAX_ATTEMPTS = 9_999;
+// The waiter rounds probe and sleep totals independently, so their sum can exceed its budget by 1 ms.
+const GATEWAY_HEALTH_WAIT_RECEIPT_ROUNDING_TOLERANCE_MS = 1;
 const GATEWAY_HEALTH_WAIT_PROGRAM = [
   "import http.client",
   "import sys",
@@ -1214,7 +1216,12 @@ function waitForLaunchedGateway(
     const validReady = waitReceipt?.result === "ready" && result.status === 0 && !result.error;
     const validNotReady =
       waitReceipt?.result === "not-ready" && result.status === 75 && !result.error;
-    const acceptedReceipt = waitReceipt && (validReady || validNotReady) ? waitReceipt : null;
+    const receiptWithinBudget =
+      waitReceipt !== null &&
+      waitReceipt.probeMs + waitReceipt.sleepMs <=
+        waiterTimeoutMs + GATEWAY_HEALTH_WAIT_RECEIPT_ROUNDING_TOLERANCE_MS;
+    const acceptedReceipt =
+      waitReceipt && receiptWithinBudget && (validReady || validNotReady) ? waitReceipt : null;
     if (acceptedReceipt) {
       lifecycleTiming.recordOpenClawGatewayWaitSleep(acceptedReceipt.sleepMs);
       recordGatewayHealthWaitReceipt(acceptedReceipt, lifecycleTiming);
