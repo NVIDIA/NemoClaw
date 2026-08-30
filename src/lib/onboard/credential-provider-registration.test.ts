@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
+import * as onboardSourceModule from "../onboard";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
 import {
   credentialProviderRegistrationDependencies,
@@ -111,7 +112,7 @@ describe("credential provider registration", () => {
     expect(upsert).toHaveBeenCalledWith(tokenDefs, runOpenshell, options);
   });
 
-  it("keeps source-mode onboarding on the same late-bound rebuild boundary", async () => {
+  it("keeps source-mode onboarding on the same late-bound rebuild boundary", () => {
     const tokenDefs: MessagingTokenDef[] = [
       { name: "alpha-discord-bridge", envKey: "DISCORD_BOT_TOKEN", token: DISCORD_SECRET },
     ];
@@ -120,8 +121,9 @@ describe("credential provider registration", () => {
       .mockReturnValue(["alpha-discord-bridge"]);
 
     try {
-      const loaded = await import("../onboard");
-      const onboard = ("default" in loaded ? loaded.default : loaded) as {
+      const onboard = ("default" in onboardSourceModule
+        ? onboardSourceModule.default
+        : onboardSourceModule) as unknown as {
         upsertMessagingProviders(tokenDefs: MessagingTokenDef[]): string[];
       };
 
@@ -130,7 +132,7 @@ describe("credential provider registration", () => {
     } finally {
       upsert.mockRestore();
     }
-  }, 15_000);
+  });
 
   it.each([
     { condition: "matches", endpoints: [], expected: true },
