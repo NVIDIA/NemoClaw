@@ -206,6 +206,29 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
+  it("does not recover when stopped schema-6 receipt authority drifts", async () => {
+    const harness = acceptedHermesHarness("compatible-endpoint", "model-alpha");
+    harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy.mockImplementationOnce(() => {
+      throw new Error("operating authority is not ready");
+    });
+    harness.requalifyPortableAgentAuthoritySpy.mockReturnValue({
+      kind: "already-current",
+      snapshot: {},
+      assertCurrent: () => {
+        throw new Error("requalified receipt authority changed");
+      },
+    } as never);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalledOnce();
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
+    expect(harness.inspectLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects schema-5 authority that disappears during requalification", async () => {
     const harness = acceptedHermesHarness("compatible-endpoint", "model-alpha");
     harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy.mockReturnValue({

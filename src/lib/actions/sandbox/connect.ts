@@ -2225,6 +2225,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
             ),
           );
           const registered = active.entry;
+          requalified.assertCurrent();
           const recovery = probeTiming!.measure("lifecycle", () =>
             recoverPortableDemoSandboxLifecycleForConnect(
               sandboxName,
