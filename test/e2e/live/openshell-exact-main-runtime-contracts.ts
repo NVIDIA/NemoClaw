@@ -6,7 +6,7 @@ import path from "node:path";
 import YAML from "yaml";
 
 import { shellQuote } from "../../../src/lib/core/shell-quote";
-import { setReceiptBoundPolicyDocument } from "../../../src/lib/policy";
+import { setPolicyDocument } from "../../../src/lib/policy";
 import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -754,7 +754,7 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
   const restorePolicy = async () => {
     if (!restoreRequired) return;
     expect(
-      setReceiptBoundPolicyDocument(options.sandboxName, basePolicyYaml, {
+      setPolicyDocument(options.sandboxName, basePolicyYaml, {
         nonFatal: true,
         operation: "restore the exact-main policy proof",
       }),
@@ -783,7 +783,7 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
     );
     restoreRequired = true;
     expect(
-      setReceiptBoundPolicyDocument(
+      setPolicyDocument(
         options.sandboxName,
         buildIdentityPolicy(basePolicyYaml, options.mcpUrl),
         {

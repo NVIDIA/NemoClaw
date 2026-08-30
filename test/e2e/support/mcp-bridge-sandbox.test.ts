@@ -278,7 +278,7 @@ network_policies:
     expect(transportFailure.status).toBe(7);
   });
 
-  it("applies and restores the raw proof through receipt-bound policy authority", async () => {
+  it("applies and restores the raw proof through live OpenShell policy authority", async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-raw-policy-proof-"));
     tempDirs.push(rootDir);
     const artifacts = new ArtifactSink(path.join(rootDir, "artifacts"));
@@ -287,7 +287,7 @@ network_policies:
     let currentPolicy = basePolicy;
     const policyMutations: Array<{ document: string; operation: string | undefined }> = [];
     const setPolicy = vi
-      .spyOn(policy, "setReceiptBoundPolicyDocument")
+      .spyOn(policy, "setPolicyDocument")
       .mockImplementation((_sandboxName, document, options) => {
         currentPolicy = document;
         policyMutations.push({ document, operation: options?.operation });

@@ -83,12 +83,12 @@ function completeRuleset(): Record<string, unknown> {
 }
 
 describe("OpenShell exact-main policy, nft, and process-identity proof helpers", () => {
-  it("applies and restores the identity proof through receipt-bound policy authority", async () => {
+  it("applies and restores the identity proof through live OpenShell policy authority", async () => {
     vi.stubEnv("NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF", "1");
     const basePolicy = "version: 1\nnetwork_policies: {}\n";
     const policyMutations: Array<{ document: string; operation: string | undefined }> = [];
     const setPolicy = vi
-      .spyOn(policy, "setReceiptBoundPolicyDocument")
+      .spyOn(policy, "setPolicyDocument")
       .mockImplementation((_sandboxName, document, options) => {
         policyMutations.push({ document, operation: options?.operation });
         return true;
@@ -121,7 +121,7 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
       .mockResolvedValueOnce({
         ...success(""),
         exitCode: 1,
-        stderr: "stop after receipt-bound mutation",
+        stderr: "stop after live-policy mutation",
       })
       .mockResolvedValueOnce(success(basePolicy));
     const sandbox = {
@@ -138,7 +138,7 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
           sandbox,
           sandboxName: "exact-main-proof",
         }),
-      ).rejects.toThrow("stop after receipt-bound mutation");
+      ).rejects.toThrow("stop after live-policy mutation");
     } finally {
       setPolicy.mockRestore();
       vi.unstubAllEnvs();
