@@ -172,6 +172,41 @@ export function credentialFreeEnvironment(env: NodeJS.ProcessEnv): NodeJS.Proces
   return result;
 }
 
+function processGroupExists(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
+async function waitForProcessGroupExit(pid: number, timeout: number): Promise<boolean> {
+  const deadline = Date.now() + timeout;
+  while (processGroupExists(pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return !processGroupExists(pid);
+}
+
+async function stopOwnedProcessGroup(pid: number, context: string): Promise<void> {
+  if (!processGroupExists(pid)) return;
+  signalProcessGroup(pid, "SIGTERM");
+  if (await waitForProcessGroupExit(pid, PROCESS_TERMINATION_GRACE_MS)) return;
+  signalProcessGroup(pid, "SIGKILL");
+  if (await waitForProcessGroupExit(pid, PROCESS_KILL_TIMEOUT_MS)) return;
+  throw new OpenShellAgentError(context + " process group " + pid + " did not exit after SIGKILL");
+}
+
 export const defaultOpenShellTools: OpenShellTools = {
   run(command, args, options): string {
     const output = execFileSync(command, [...args], {
@@ -188,57 +223,23 @@ export const defaultOpenShellTools: OpenShellTools = {
       env: options.env,
       stdio: "inherit",
     });
-    let exited = false;
     let cancelPromise: Promise<void> | undefined;
     const completion = new Promise<void>((resolve, reject) => {
       child.once("error", reject);
       child.once("exit", (code, signal) => {
-        exited = true;
         if (code === 0) resolve();
-        else reject(new OpenShellAgentError(`${command} exited with ${signal ?? `code ${code ?? "unknown"}`}`));
+        else
+          reject(
+            new OpenShellAgentError(
+              `${command} exited with ${signal ?? `code ${code ?? "unknown"}`}`,
+            ),
+          );
       });
     });
-    const settled = completion.then(() => undefined, () => undefined);
-    const waitForExit = async (timeout: number): Promise<boolean> => {
-      if (exited) return true;
-      return Promise.race([
-        settled.then(() => true),
-        new Promise<false>((resolve) => setTimeout(resolve, timeout, false)),
-      ]);
-    };
-    const signalProcessGroup = (signal: NodeJS.Signals): void => {
-      if (exited || child.pid === undefined) return;
-      try {
-        process.kill(-child.pid, signal);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-      }
-    };
     return {
       cancel: () => {
-        cancelPromise ??= (async () => {
-          const errors: unknown[] = [];
-          try {
-            signalProcessGroup("SIGTERM");
-          } catch (error) {
-            errors.push(error);
-          }
-          if (!(await waitForExit(PROCESS_TERMINATION_GRACE_MS))) {
-            try {
-              signalProcessGroup("SIGKILL");
-            } catch (error) {
-              errors.push(error);
-            }
-            if (!(await waitForExit(PROCESS_KILL_TIMEOUT_MS))) {
-              errors.push(
-                new OpenShellAgentError(command + " process group did not exit after SIGKILL"),
-              );
-            }
-          }
-          if (errors.length > 0) {
-            throw new AggregateError(errors, command + " process group cancellation failed");
-          }
-        })();
+        cancelPromise ??=
+          child.pid === undefined ? Promise.resolve() : stopOwnedProcessGroup(child.pid, command);
         return cancelPromise;
       },
       completion,
@@ -257,41 +258,10 @@ export const defaultOpenShellTools: OpenShellTools = {
       let cleanup: Promise<void> | undefined;
       return async () => {
         try {
-          await (cleanup ??= (async () => {
-            if (child.pid === undefined) return;
-            const pid = child.pid;
-            const groupExists = (): boolean => {
-              try {
-                process.kill(-pid, 0);
-                return true;
-              } catch (error) {
-                if (error instanceof Error && "code" in error && error.code === "ESRCH")
-                  return false;
-                throw error;
-              }
-            };
-            const signalGroup = (signal: NodeJS.Signals): void => {
-              try {
-                process.kill(-pid, signal);
-              } catch (error) {
-                if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH")
-                  throw error;
-              }
-            };
-            const waitForGroupExit = async (): Promise<boolean> => {
-              const deadline = Date.now() + 2000;
-              while (groupExists() && Date.now() < deadline) {
-                await new Promise((resolve) => setTimeout(resolve, 50));
-              }
-              return !groupExists();
-            };
-            if (!groupExists()) return;
-            signalGroup("SIGTERM");
-            if (await waitForGroupExit()) return;
-            signalGroup("SIGKILL");
-            if (await waitForGroupExit()) return;
-            throw new OpenShellAgentError(`Failed to stop owned process group ${pid}`);
-          })());
+          await (cleanup ??=
+            child.pid === undefined
+              ? Promise.resolve()
+              : stopOwnedProcessGroup(child.pid, "Failed to stop owned " + command));
         } catch (error) {
           cleanup = undefined;
           throw error;

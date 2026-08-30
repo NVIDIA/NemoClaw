@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -38,6 +38,37 @@ function temporaryDirectory(): string {
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function waitForFixturePath(
+  file: string,
+  child: ChildProcess,
+  diagnostic: () => string,
+): Promise<void> {
+  const watcher = fs.watch(path.dirname(file));
+  const ready = new Promise<void>((resolve) => {
+    const detect = (): void => void (fs.existsSync(file) && resolve());
+    watcher.on("change", detect);
+    detect();
+  });
+  let onError!: (error: Error) => void;
+  let onClose!: (code: number | null, signal: NodeJS.Signals | null) => void;
+  const stopped = new Promise<never>((_resolve, reject) => {
+    onError = reject;
+    onClose = (code, signal) =>
+      reject(
+        new Error(
+          `Fixture process exited before creating ${file}: ${signal ?? `code ${code ?? "unknown"}`}\n${diagnostic()}`,
+        ),
+      );
+    child.once("error", onError);
+    child.once("close", onClose);
+  });
+  return Promise.race([ready, stopped]).finally(() => {
+    watcher.close();
+    child.off("error", onError);
+    child.off("close", onClose);
+  });
 }
 
 function sourceState(source: string): unknown {
@@ -234,6 +265,7 @@ describe("local PR review advisor", () => {
     const childDirectory = temporaryDirectory();
     const pidPath = path.join(childDirectory, "pid");
     const termPath = path.join(childDirectory, "term");
+    const descendantPath = path.join(childDirectory, "descendant");
     const events: string[] = [];
     const stop = vi.fn(async () => {
       events.push("gateway");
@@ -246,7 +278,14 @@ describe("local PR review advisor", () => {
         const execution = defaultOpenShellTools.runAsync(
           process.execPath,
           ["--experimental-strip-types", "--no-warnings", SIGTERM_IGNORING_CHILD_FIXTURE],
-          { env: { ...process.env, PID_PATH: pidPath, TERM_PATH: termPath } },
+          {
+            env: {
+              ...process.env,
+              DESCENDANT_PATH: descendantPath,
+              PID_PATH: pidPath,
+              TERM_PATH: termPath,
+            },
+          },
         );
         return {
           cancel: () => {
@@ -273,14 +312,16 @@ describe("local PR review advisor", () => {
       lifecycle,
       temporaryRoot: temporaryDirectory(),
     });
-    await vi.waitFor(() => expect(fs.existsSync(pidPath)).toBe(true));
+    await vi.waitFor(() => expect(fs.existsSync(descendantPath)).toBe(true));
     childPid = Number.parseInt(fs.readFileSync(pidPath, "utf8"), 10);
+    const descendantPid = Number.parseInt(fs.readFileSync(descendantPath, "utf8"), 10);
     process.emit("SIGTERM");
     await expect(review).rejects.toThrow(/failed during run/u);
 
     expect(events.slice(0, 4)).toEqual(["cancel", "sandbox", "gateway", "signal"]);
     expect(fs.readFileSync(termPath, "utf8")).toBe("SIGTERM");
     expect(() => realKill(childPid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    expect(() => realKill(descendantPid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
     expect(kill).toHaveBeenCalledWith(-childPid, "SIGTERM");
     expect(kill).toHaveBeenCalledWith(-childPid, "SIGKILL");
     expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
@@ -491,7 +532,8 @@ describe("local PR review advisor", () => {
     let stderr = "";
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => (stderr += chunk));
-    await vi.waitFor(() => expect(fs.existsSync(npmStarted)).toBe(true));
+    await waitForFixturePath(npmStarted, child, () => stderr);
+    expect(fs.existsSync(npmStarted)).toBe(true);
     expect(fs.existsSync(path.join(source, "wrapper-ready"))).toBe(false);
 
     child.kill("SIGTERM");
@@ -546,7 +588,8 @@ describe("local PR review advisor", () => {
     child.stderr.on("data", (chunk: string) => (stderr += chunk));
     const pidPath = path.join(source, "trusted-child-pid");
     const termPath = path.join(source, "trusted-child-term");
-    await vi.waitFor(() => expect(fs.existsSync(pidPath)).toBe(true));
+    await waitForFixturePath(pidPath, child, () => stderr);
+    expect(fs.existsSync(pidPath)).toBe(true);
     const trustedPid = Number(fs.readFileSync(pidPath, "utf8"));
 
     child.kill("SIGTERM");
@@ -823,6 +866,82 @@ describe("local PR review advisor", () => {
       cause: expect.objectContaining({ message: "configuration failed" }),
     });
     expect(stopGateway).toHaveBeenCalledTimes(2);
+    expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
+  });
+
+  it("discards staged output before re-raising a cleanup-time signal (#10611)", async () => {
+    const source = repository();
+    let releaseCleanup!: () => void;
+    const cleanupPaused = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    let staged = "";
+    const publication: LocalReviewPublication = {
+      copy: (artifacts, target, options) => {
+        staged = String(target);
+        fs.cpSync(artifacts, target, options);
+      },
+      remove: fs.rmSync,
+      rename: fs.renameSync,
+    };
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const review = runLocalReview({
+      source,
+      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+      lifecycle: artifactLifecycle(() => cleanupPaused),
+      publication,
+      temporaryRoot: temporaryDirectory(),
+    });
+
+    await vi.waitFor(() => expect(staged).toContain(".staged-"));
+    process.emit("SIGTERM");
+    releaseCleanup();
+    await expect(review).resolves.toContain("pr-review-advisor-local");
+
+    expect(fs.existsSync(staged)).toBe(false);
+    expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
+  });
+
+  it("reports residual staged output and manual removal when signal discard is denied (#10611)", async () => {
+    const source = repository();
+    let releaseCleanup!: () => void;
+    const cleanupPaused = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    let staged = "";
+    const publication: LocalReviewPublication = {
+      copy: (artifacts, target, options) => {
+        staged = String(target);
+        fs.cpSync(artifacts, target, options);
+      },
+      remove: vi
+        .fn<typeof fs.rmSync>()
+        .mockImplementationOnce(fs.rmSync)
+        .mockImplementation(() => {
+          throw new Error("injected discard denial token=secret");
+        }),
+      rename: fs.renameSync,
+    };
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const review = runLocalReview({
+      source,
+      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+      lifecycle: artifactLifecycle(() => cleanupPaused),
+      publication,
+      temporaryRoot: temporaryDirectory(),
+    });
+
+    await vi.waitFor(() => expect(staged).toContain(".staged-"));
+    process.emit("SIGTERM");
+    releaseCleanup();
+    await expect(review).rejects.toThrow("remove it manually before retrying");
+
+    expect(diagnostic).toHaveBeenCalledWith(expect.stringContaining(staged));
+    expect(diagnostic).toHaveBeenCalledWith(
+      expect.stringContaining("remove it manually before retrying"),
+    );
+    expect(diagnostic).toHaveBeenCalledWith(expect.not.stringContaining("secret"));
     expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
   });
 

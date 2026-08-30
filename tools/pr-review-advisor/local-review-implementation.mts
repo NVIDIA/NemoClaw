@@ -301,6 +301,11 @@ function stageArtifacts(
           `Residual staged output remains at ${staged}; remove it manually before retrying`,
         ),
       );
+    if (failure !== undefined)
+      failure = contextualError(
+        `Local review failed to discard staged output at ${staged}; remove it manually before retrying`,
+        failure,
+      );
     return failure;
   };
 
@@ -479,26 +484,18 @@ export async function runLocalReview(input: {
   };
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const signalHandlers = new Map<NodeJS.Signals, () => void>();
+  let receivedSignal: NodeJS.Signals | undefined;
   for (const signal of signals) {
     const handler = (): void => {
-      const resumeSignal = (): void => {
-        process.off(signal, handler);
-        process.kill(process.pid, signal);
-      };
-      void cleanup().then(
-        () => {
-          stagedPublication?.discard();
-          resumeSignal();
-        },
-        () => {
-          stagedPublication?.discard();
-          resumeSignal();
-        },
-      );
+      receivedSignal ??= signal;
+      void cleanup().catch(() => undefined);
     };
     signalHandlers.set(signal, handler);
     process.once(signal, handler);
   }
+  const removeSignalHandlers = (): void => {
+    for (const [signal, handler] of signalHandlers) process.off(signal, handler);
+  };
   try {
     fs.mkdirSync(outputRoot, { recursive: true });
     fs.mkdirSync(runnerTemp, { recursive: true });
@@ -542,17 +539,29 @@ export async function runLocalReview(input: {
   } catch (error) {
     primaryFailure = safeFailure(error);
   }
-  for (const [signal, handler] of signalHandlers) process.off(signal, handler);
   try {
     await cleanup();
   } catch (error) {
     cleanupFailure = safeFailure(error);
     if (primaryFailure === undefined) activeLifecycleCleanup = undefined;
   }
-  if (primaryFailure !== undefined || cleanupFailure !== undefined) {
+  if (
+    receivedSignal !== undefined ||
+    primaryFailure !== undefined ||
+    cleanupFailure !== undefined
+  ) {
     const publicationCleanupFailure = stagedPublication?.discard();
     cleanupFailure = combineFailures(cleanupFailure, publicationCleanupFailure);
+    if (receivedSignal !== undefined && publicationCleanupFailure !== undefined) {
+      console.error(safeDiagnostic(publicationCleanupFailure));
+    }
   }
+  if (receivedSignal !== undefined) {
+    removeSignalHandlers();
+    process.kill(process.pid, receivedSignal);
+    if (primaryFailure === undefined && cleanupFailure === undefined) return result!;
+  }
+  if (primaryFailure !== undefined || cleanupFailure !== undefined) removeSignalHandlers();
   if (primaryFailure !== undefined) {
     if (cleanupFailure !== undefined) {
       const primary = safeFailure(primaryFailure).message;
@@ -566,8 +575,12 @@ export async function runLocalReview(input: {
     throw primaryFailure;
   }
   if (cleanupFailure !== undefined) throw cleanupFailure;
-  stagedPublication!.publish();
-  return result!;
+  try {
+    stagedPublication!.publish();
+    return result!;
+  } finally {
+    removeSignalHandlers();
+  }
 }
 
 async function main(): Promise<void> {
