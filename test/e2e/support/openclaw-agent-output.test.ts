@@ -74,6 +74,15 @@ describe("OpenClaw agent-output fixture", () => {
         }),
       ),
     ).toBe("");
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          payloads: [{ text: "hostname, date, and uptime completed successfully." }],
+          meta: {},
+          tool_calls: [{ function: { name: "exec", arguments: '{"command":"uptime"}' } }],
+        }),
+      ),
+    ).toBe("");
   });
 
   it("accepts conversational text that only mentions tool-call capability", () => {
