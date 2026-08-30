@@ -267,21 +267,13 @@ jobs:
             NEMOCLAW_NON_INTERACTIVE=1 \
             bash "$ADVISOR_DIR/scripts/install-openshell.sh"
 
-      - name: Configure OpenShell inference
-        id: configure-openshell
-        if: ${{ env.PR_REVIEW_ADVISOR_RUN_ANALYSIS == '1' }}
-        continue-on-error: true
-        env:
-          OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" configure
-
-      - name: Complete advisor specialist
+      - name: Run advisor specialist lifecycle
         id: specialist-analysis
         if: always()
         env:
-          CONFIGURE_OUTCOME: ${{ steps.configure-openshell.outcome }}
+          OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
           PR_REVIEW_ADVISOR_UNAVAILABLE_REASON: ${{ env.PR_REVIEW_ADVISOR_RUN_ANALYSIS == '0' && 'PR_REVIEW_ADVISOR_RUN_ANALYSIS=0' || 'OpenShell inference configuration failed or the advisor credential is unavailable' }}
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" complete
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" analysis
 
       - name: Upload specialist review
         id: upload-specialist-session

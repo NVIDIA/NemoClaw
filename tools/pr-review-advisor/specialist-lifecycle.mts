@@ -9,7 +9,8 @@ import {
   deleteAdvisorSandbox,
   downloadAdvisorArtifacts,
   prepareAdvisorSandboxInputs,
-  runAdvisorSandbox,
+  runAdvisorSandboxAsync,
+  startAdvisorOpenShellInference,
   writeUnavailableAdvisorArtifacts,
 } from "./openshell.mts";
 
@@ -19,7 +20,7 @@ export type AdvisorSpecialistLifecycle = {
     env: NodeJS.ProcessEnv,
   ) => { configure: Promise<void>; stop?: () => Promise<void> } | undefined;
   create: (env: NodeJS.ProcessEnv) => void;
-  run: (env: NodeJS.ProcessEnv) => void;
+  run: (env: NodeJS.ProcessEnv) => void | { cancel: () => void; completion: Promise<void> };
   download: (env: NodeJS.ProcessEnv) => void;
   remove: (env: NodeJS.ProcessEnv) => void;
   unavailable?: (env: NodeJS.ProcessEnv, error: unknown) => void;
@@ -52,9 +53,9 @@ function safeDiagnostic(error: unknown): string {
 
 export const defaultAdvisorSpecialistLifecycle: AdvisorSpecialistLifecycle = {
   prepare: prepareAdvisorSandboxInputs,
-  startGateway: (env) => ({ configure: configureAdvisorOpenShellInference(env) }),
+  startGateway: (env) => startAdvisorOpenShellInference(env),
   create: createAdvisorSandbox,
-  run: runAdvisorSandbox,
+  run: runAdvisorSandboxAsync,
   download: downloadAdvisorArtifacts,
   remove: deleteAdvisorSandbox,
   unavailable: (env, error) =>
@@ -84,29 +85,46 @@ export async function runAdvisorSpecialist(input: {
   const lifecycle = input.lifecycle ?? defaultAdvisorSpecialistLifecycle;
   let gateway: ReturnType<AdvisorSpecialistLifecycle["startGateway"]> | undefined;
   let sandboxActive = false;
+  let execution: { cancel: () => void; completion: Promise<void> } | undefined;
   let primaryFailure: Error | undefined;
   let cleanupFailure: unknown;
+  let cleanupPromise: Promise<void> | undefined;
   let result: "complete" | "unavailable" = "complete";
   let stage = "prepare";
-  const cleanup = async (): Promise<void> => {
-    const errors: unknown[] = [];
-    if (sandboxActive) {
-      try {
-        lifecycle.remove(input.env);
-        sandboxActive = false;
-      } catch (error) {
-        errors.push(stageFailure("cleanup", input.env, error));
+  const cleanup = (): Promise<void> => {
+    cleanupPromise ??= (async () => {
+      const errors: unknown[] = [];
+      if (execution) {
+        execution.cancel();
+        try {
+          await execution.completion;
+        } catch {
+          // Cancellation is followed by resource cleanup; the primary lifecycle failure owns diagnostics.
+        }
+        execution = undefined;
       }
-    }
-    try {
-      if (input.cleanupGateway !== false) await gateway?.stop?.();
-      gateway = undefined;
-    } catch (error) {
-      errors.push(stageFailure("gateway cleanup", input.env, error));
-    }
-    if (errors.length === 1)
-      throw new AggregateError(errors, (errors[0] as Error).message, { cause: errors[0] });
-    if (errors.length > 1) throw new AggregateError(errors, errors.map(String).join("; "));
+      if (sandboxActive) {
+        try {
+          lifecycle.remove(input.env);
+          sandboxActive = false;
+        } catch (error) {
+          errors.push(stageFailure("cleanup", input.env, error));
+        }
+      }
+      try {
+        if (input.cleanupGateway !== false) await gateway?.stop?.();
+        gateway = undefined;
+      } catch (error) {
+        errors.push(stageFailure("gateway cleanup", input.env, error));
+      }
+      if (errors.length === 1)
+        throw new AggregateError(errors, (errors[0] as Error).message, { cause: errors[0] });
+      if (errors.length > 1) throw new AggregateError(errors, errors.map(String).join("; "));
+    })();
+    void cleanupPromise.catch(() => {
+      cleanupPromise = undefined;
+    });
+    return cleanupPromise;
   };
   try {
     await lifecycle.prepare(input.env);
@@ -125,7 +143,13 @@ export async function runAdvisorSpecialist(input: {
       sandboxActive = true;
       lifecycle.create(input.env);
       stage = "run";
-      lifecycle.run(input.env);
+      const started = lifecycle.run(input.env);
+      if (started) {
+        execution = started;
+        input.setActiveCleanup?.(cleanup);
+        await execution.completion;
+        execution = undefined;
+      }
       stage = "download";
       lifecycle.download(input.env);
       stage = "validate";
@@ -163,26 +187,14 @@ export async function runAdvisorSpecialistCommand(
     await lifecycle.prepare(env);
     return;
   }
-  if (command === "configure") {
-    await lifecycle.startGateway(env)?.configure;
-    return;
-  }
-  if (command !== "complete") {
+  if (command !== "analysis") {
     throw new Error(`Unsupported specialist lifecycle command: ${command ?? "missing"}`);
   }
-  if (env.CONFIGURE_OUTCOME !== "success") {
+  if (env.PR_REVIEW_ADVISOR_RUN_ANALYSIS === "0") {
     lifecycle.unavailable?.(env, new Error("Advisor inference is unavailable"));
-    if (env.PR_REVIEW_ADVISOR_RUN_ANALYSIS !== "0") process.exitCode = 1;
     return;
   }
-  await runAdvisorSpecialist({
-    env,
-    lifecycle: {
-      ...lifecycle,
-      prepare: async () => undefined,
-      startGateway: () => ({ configure: Promise.resolve() }),
-    },
-  });
+  await runAdvisorSpecialist({ env, lifecycle });
 }
 
 async function main(): Promise<void> {

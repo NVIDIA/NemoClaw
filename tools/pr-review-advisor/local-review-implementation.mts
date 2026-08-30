@@ -15,7 +15,7 @@ import {
   deleteAdvisorSandbox,
   downloadAdvisorArtifacts,
   prepareAdvisorSandboxInputs,
-  runAdvisorSandbox,
+  runAdvisorSandboxAsync,
   startAdvisorOpenShellInference,
 } from "./openshell.mts";
 import {
@@ -81,7 +81,7 @@ export const defaultLocalReviewLifecycle: LocalReviewLifecycle = {
   prepare: (env) => prepareAdvisorSandboxInputs(env, { collectContext: async () => null }),
   startGateway: (env) => startAdvisorOpenShellInference(env)!,
   create: createAdvisorSandbox,
-  run: runAdvisorSandbox,
+  run: runAdvisorSandboxAsync,
   download: downloadAdvisorArtifacts,
   remove: deleteAdvisorSandbox,
 };
@@ -211,6 +211,56 @@ export function createLocalReviewSnapshot(
   return { baseRef, headRef: commit };
 }
 
+function assertPublicationPath(
+  source: string,
+  resource: string,
+  options: { destination?: boolean; requireParent?: boolean } = {},
+): void {
+  const canonicalSource = fs.realpathSync(source);
+  const relative = path.relative(canonicalSource, resource);
+  if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
+    throw new Error(`Artifact publication path escapes the contributor checkout: ${resource}`);
+  }
+  const parts = relative.split(path.sep).filter(Boolean);
+  let current = canonicalSource;
+  const count = options.requireParent ? Math.max(0, parts.length - 1) : parts.length;
+  for (const part of parts.slice(0, count)) {
+    current = path.join(current, part);
+    try {
+      const stat = fs.lstatSync(current);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw new Error(
+          `Artifact publication path component must be a directory and not a symbolic link: ${current}`,
+        );
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") break;
+      throw error;
+    }
+  }
+  const existingParent = fs.existsSync(path.dirname(resource))
+    ? fs.realpathSync(path.dirname(resource))
+    : undefined;
+  if (existingParent) {
+    const parentRelative = path.relative(canonicalSource, existingParent);
+    if (
+      parentRelative.startsWith(`..${path.sep}`) ||
+      parentRelative === ".." ||
+      path.isAbsolute(parentRelative)
+    ) {
+      throw new Error(`Artifact publication parent escapes the contributor checkout: ${resource}`);
+    }
+  }
+  if (options.destination && fs.existsSync(resource)) {
+    const stat = fs.lstatSync(resource);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(
+        `Existing artifact publication destination must be a directory and not a symbolic link: ${resource}`,
+      );
+    }
+  }
+}
+
 function publicationCleanupFailure(resource: string, error: unknown): Error {
   return contextualError(
     `Local review failed during cleanup for artifact publication path ${resource}; remove it manually before retrying`,
@@ -218,8 +268,13 @@ function publicationCleanupFailure(resource: string, error: unknown): Error {
   );
 }
 
-function removePublicationPath(resource: string, publication: LocalReviewPublication): unknown {
+function removePublicationPath(
+  source: string,
+  resource: string,
+  publication: LocalReviewPublication,
+): unknown {
   try {
+    assertPublicationPath(source, resource, { requireParent: true });
     publication.remove(resource, { recursive: true, force: true });
   } catch (error) {
     return publicationCleanupFailure(resource, error);
@@ -227,6 +282,7 @@ function removePublicationPath(resource: string, publication: LocalReviewPublica
 }
 
 function publishArtifacts(
+  source: string,
   artifacts: string,
   destination: string,
   publication: LocalReviewPublication,
@@ -237,22 +293,32 @@ function publishArtifacts(
   let failure: unknown;
   let hadPrevious = false;
   const parent = path.dirname(destination);
+  assertPublicationPath(source, parent);
   const hadParent = fs.existsSync(parent);
   fs.mkdirSync(parent, { recursive: true });
+  assertPublicationPath(source, destination, { destination: true });
   try {
+    assertPublicationPath(source, staged, { requireParent: true });
     publication.copy(artifacts, staged, { recursive: true, errorOnExist: true });
+    assertPublicationPath(source, destination, { destination: true });
     hadPrevious = fs.existsSync(destination);
     if (hadPrevious) publication.rename(destination, previous);
+    assertPublicationPath(source, staged, { destination: true });
     publication.rename(staged, destination);
-    if (hadPrevious) publication.remove(previous, { recursive: true });
+    if (hadPrevious) {
+      assertPublicationPath(source, previous, { destination: true });
+      publication.remove(previous, { recursive: true });
+    }
     return;
   } catch (error) {
     failure = safeFailure(error);
   }
-  failure = combineFailures(failure, removePublicationPath(staged, publication));
+  failure = combineFailures(failure, removePublicationPath(source, staged, publication));
   if (hadPrevious && fs.existsSync(previous)) {
-    failure = combineFailures(failure, removePublicationPath(destination, publication));
+    failure = combineFailures(failure, removePublicationPath(source, destination, publication));
     try {
+      assertPublicationPath(source, previous, { destination: true });
+      assertPublicationPath(source, destination, { destination: true, requireParent: true });
       if (!fs.existsSync(destination)) publication.rename(previous, destination);
     } catch (error) {
       failure = combineFailures(
@@ -277,7 +343,7 @@ function publishArtifacts(
     );
   }
   if (!hadParent && fs.existsSync(parent) && fs.readdirSync(parent).length === 0) {
-    failure = combineFailures(failure, removePublicationPath(parent, publication));
+    failure = combineFailures(failure, removePublicationPath(source, parent, publication));
   }
   throw failure;
 }
@@ -438,7 +504,7 @@ export async function runLocalReview(input: {
       });
     }
     const destination = path.join(source, LOCAL_OUTPUT_DIRECTORY);
-    publishArtifacts(path.join(outputRoot, "artifacts"), destination, publication);
+    publishArtifacts(source, path.join(outputRoot, "artifacts"), destination, publication);
     result = destination;
   } catch (error) {
     primaryFailure = safeFailure(error);

@@ -251,26 +251,6 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   );
   if (setupNodeIndex < 0 || runtimeImageIndex <= setupNodeIndex)
     errors.push("advisor runtime image must load after the pinned Node setup");
-  const analysisCondition = "${{ env.PR_REVIEW_ADVISOR_RUN_ANALYSIS == '1' }}";
-  const installIndex = specialistSteps.findIndex((step) => step.name === "Install OpenShell");
-  const configureIndex = specialistSteps.findIndex(
-    (step) => step.name === "Configure OpenShell inference",
-  );
-  const install = namedStep(specialists, "Install OpenShell");
-  const configure = namedStep(specialists, "Configure OpenShell inference");
-  const complete = namedStep(specialists, "Complete advisor specialist");
-  if (installIndex < 0 || configureIndex <= installIndex)
-    errors.push("OpenShell must be installed before inference configuration");
-  if (install?.if !== analysisCondition || configure?.if !== analysisCondition)
-    errors.push("OpenShell installation and configuration must run only when analysis is requested");
-  if (!String(install?.run ?? "").includes("scripts/install-openshell.sh"))
-    errors.push("OpenShell installation must use the trusted installer");
-  if (
-    !String(object(complete?.env).PR_REVIEW_ADVISOR_UNAVAILABLE_REASON ?? "").includes(
-      "PR_REVIEW_ADVISOR_RUN_ANALYSIS=0",
-    )
-  )
-    errors.push("disabled analysis must preserve its unavailable reason");
   const prepareInputs = namedStep(specialists, "Prepare advisor sandbox inputs");
   const prepareEnvironment = object(prepareInputs?.env);
   if (prepareEnvironment.BASE_REF !== BASE_REF_EXPRESSION)

@@ -25,8 +25,18 @@ export interface OpenShellStartOptions {
   logPath: string;
 }
 
+export interface OpenShellExecution {
+  cancel: () => void;
+  completion: Promise<void>;
+}
+
 export interface OpenShellTools {
   run: (command: string, args: readonly string[], options: OpenShellCommandOptions) => string;
+  runAsync?: (
+    command: string,
+    args: readonly string[],
+    options: OpenShellCommandOptions,
+  ) => OpenShellExecution;
   start: (
     command: string,
     args: readonly string[],
@@ -169,6 +179,30 @@ export const defaultOpenShellTools: OpenShellTools = {
       timeout: options.timeout,
     });
     return String(output ?? "").trim();
+  },
+  runAsync(command, args, options): OpenShellExecution {
+    const child = spawn(command, [...args], {
+      env: options.env,
+      stdio: "inherit",
+    });
+    const completion = new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code, signal) => {
+        if (code === 0) resolve();
+        else
+          reject(
+            new OpenShellAgentError(
+              `${command} exited with ${signal ?? `code ${code ?? "unknown"}`}`,
+            ),
+          );
+      });
+    });
+    return {
+      cancel: () => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      },
+      completion,
+    };
   },
   start(command, args, options): () => Promise<void> {
     const log = openSync(options.logPath, "w", 0o600);
@@ -401,11 +435,7 @@ export function createOpenShellSandbox(
   );
 }
 
-export function execOpenShellSandbox(
-  env: NodeJS.ProcessEnv,
-  input: ExecOpenShellSandboxOptions,
-  tools: OpenShellTools = defaultOpenShellTools,
-): void {
+function openShellSandboxExecArguments(input: ExecOpenShellSandboxOptions): string[] {
   const workdirArgs = input.workdir ? ["--workdir", input.workdir] : [];
   const timeoutArgs = input.timeoutSeconds ? ["--timeout", String(input.timeoutSeconds)] : [];
   const environmentArgs = Object.entries(input.environment ?? {}).flatMap(([name, value]) => {
@@ -414,21 +444,43 @@ export function execOpenShellSandbox(
     }
     return ["--env", `${name}=${value}`];
   });
-  tools.run(
-    "openshell",
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      input.name,
-      ...timeoutArgs,
-      ...workdirArgs,
-      ...environmentArgs,
-      "--",
-      ...input.command,
-    ],
-    { env: credentialFreeEnvironment(env) },
-  );
+  return [
+    "sandbox",
+    "exec",
+    "--name",
+    input.name,
+    ...timeoutArgs,
+    ...workdirArgs,
+    ...environmentArgs,
+    "--",
+    ...input.command,
+  ];
+}
+
+export function execOpenShellSandbox(
+  env: NodeJS.ProcessEnv,
+  input: ExecOpenShellSandboxOptions,
+  tools: OpenShellTools = defaultOpenShellTools,
+): void {
+  tools.run("openshell", openShellSandboxExecArguments(input), {
+    env: credentialFreeEnvironment(env),
+  });
+}
+
+export function execOpenShellSandboxAsync(
+  env: NodeJS.ProcessEnv,
+  input: ExecOpenShellSandboxOptions,
+  tools: OpenShellTools = defaultOpenShellTools,
+): OpenShellExecution {
+  if (!tools.runAsync) {
+    return {
+      cancel: () => undefined,
+      completion: Promise.resolve().then(() => execOpenShellSandbox(env, input, tools)),
+    };
+  }
+  return tools.runAsync("openshell", openShellSandboxExecArguments(input), {
+    env: credentialFreeEnvironment(env),
+  });
 }
 
 export function downloadOpenShellPath(

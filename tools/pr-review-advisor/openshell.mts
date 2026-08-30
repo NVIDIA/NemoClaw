@@ -20,6 +20,7 @@ import {
   deleteOpenShellSandbox,
   downloadOpenShellPath,
   execOpenShellSandbox,
+  execOpenShellSandboxAsync,
   type OpenShellTools,
   required,
 } from "../openshell-agent/runtime.mts";
@@ -409,6 +410,49 @@ export function runAdvisorSandbox(
 ): void {
   advisorArtifactDirectory(env);
   execOpenShellSandbox(
+    env,
+    {
+      name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
+      timeoutSeconds: sandboxTimeoutSeconds(env),
+      workdir: SANDBOX_WORKDIR,
+      environment: {
+        ...passthroughEnvironment(env),
+        ADVISOR_DIR: SANDBOX_ADVISOR_DIR,
+        ADVISOR_WORKDIR: SANDBOX_WORKDIR,
+        GIT_DIR: SANDBOX_GIT_DIR,
+        GIT_WORK_TREE: SANDBOX_WORKDIR,
+        GITHUB_WORKSPACE: SANDBOX_RUNTIME_DIR,
+        HOME: SANDBOX_RUNTIME_DIR,
+        PATH: `${SANDBOX_TOOLS_DIR}:/usr/bin`,
+        PI_OFFLINE: "1",
+        PR_REVIEW_ADVISOR_API_KEY: SANDBOX_API_KEY,
+        PR_REVIEW_ADVISOR_BASE_URL: ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
+        PR_REVIEW_ADVISOR_CONFIG_DIR: `${SANDBOX_RUNTIME_DIR}/config`,
+        PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: SANDBOX_CONTEXT_PATH,
+        ...(env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR
+          ? { PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR: SANDBOX_SPECIALIST_SESSION_DIR }
+          : {}),
+        TMPDIR: `${SANDBOX_RUNTIME_DIR}/tmp`,
+      },
+      command: [
+        "/usr/bin/node",
+        "--experimental-strip-types",
+        "--no-warnings",
+        env.PR_REVIEW_ADVISOR_INTEREST
+          ? `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-specialist.mts`
+          : `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-analysis.mts`,
+      ],
+    },
+    tools,
+  );
+}
+
+export function runAdvisorSandboxAsync(
+  env: NodeJS.ProcessEnv,
+  tools: OpenShellTools = defaultOpenShellTools,
+): ReturnType<typeof execOpenShellSandboxAsync> {
+  advisorArtifactDirectory(env);
+  return execOpenShellSandboxAsync(
     env,
     {
       name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),

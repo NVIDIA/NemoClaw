@@ -145,29 +145,137 @@ describe("local PR review advisor", () => {
     expect(redacted).not.toMatch(/env-secret|literal-secret/u);
   });
 
-  it("accepts only prepare, configure, and complete lifecycle commands", async () => {
+  it("owns CI analysis gateway cleanup across lifecycle outcomes", async () => {
     const unavailable = vi.fn();
-    const lifecycle = { ...artifactLifecycle(), unavailable };
+    const stop = vi.fn(async () => undefined);
+    const lifecycle = { ...artifactLifecycle(stop), unavailable };
     const prepare = vi.spyOn(lifecycle, "prepare");
     const startGateway = vi.spyOn(lifecycle, "startGateway");
 
     await runAdvisorSpecialistCommand("prepare", {}, lifecycle);
-    await runAdvisorSpecialistCommand("configure", {}, lifecycle);
     await runAdvisorSpecialistCommand(
-      "complete",
-      { CONFIGURE_OUTCOME: "failure", PR_REVIEW_ADVISOR_RUN_ANALYSIS: "0" },
+      "analysis",
+      { PR_REVIEW_ADVISOR_RUN_ANALYSIS: "0" },
       lifecycle,
     );
     await expect(runAdvisorSpecialistCommand(undefined, {}, lifecycle)).rejects.toThrow(
       "Unsupported specialist lifecycle command: missing",
     );
-    await expect(runAdvisorSpecialistCommand("run", {}, lifecycle)).rejects.toThrow(
-      "Unsupported specialist lifecycle command: run",
-    );
 
     expect(prepare).toHaveBeenCalledOnce();
-    expect(startGateway).toHaveBeenCalledOnce();
+    expect(startGateway).not.toHaveBeenCalled();
     expect(unavailable).toHaveBeenCalledOnce();
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "success",
+      configure: () => Promise.resolve(),
+      downloadFailure: undefined,
+      expected: "complete",
+      unavailable: 0,
+    },
+    {
+      name: "configuration failure",
+      configure: () => Promise.reject(new Error("configuration api_key=ci-secret")),
+      downloadFailure: undefined,
+      expected: "configuration api_key=[REDACTED]",
+      unavailable: 1,
+    },
+    {
+      name: "later failure",
+      configure: () => Promise.resolve(),
+      downloadFailure: new Error("download failed"),
+      expected: "download failed",
+      unavailable: 0,
+    },
+  ])(
+    "stops the CI-owned gateway after $name (#10611)",
+    async ({ configure, downloadFailure, expected, unavailable }) => {
+      const stop = vi.fn(async () => undefined);
+      const unavailableArtifact = vi.fn();
+      const configuration = configure();
+      void configuration.catch(() => undefined);
+      const lifecycle: LocalReviewLifecycle = {
+        ...artifactLifecycle(stop),
+        startGateway: () => ({ configure: configuration, stop }),
+        download: () => {
+          downloadFailure &&
+            (() => {
+              throw downloadFailure;
+            })();
+        },
+        unavailable: unavailableArtifact,
+      };
+
+      const result = await runAdvisorSpecialistCommand(
+        "analysis",
+        { PR_REVIEW_ADVISOR_RUN_ANALYSIS: "1", PR_REVIEW_ADVISOR_API_KEY: "ci-secret" },
+        lifecycle,
+      ).then(
+        () => "complete",
+        (error: Error) => error.message,
+      );
+
+      expect(result).toContain(expected);
+      expect(stop).toHaveBeenCalledOnce();
+      expect(unavailableArtifact).toHaveBeenCalledTimes(unavailable);
+    },
+  );
+
+  it("cancels a real blocking execution before sandbox and gateway cleanup (#10611)", async () => {
+    const source = repository();
+    const childDirectory = temporaryDirectory();
+    const pidPath = path.join(childDirectory, "pid");
+    const events: string[] = [];
+    const stop = vi.fn(async () => {
+      events.push("gateway");
+    });
+    let childPid = 0;
+    const lifecycle: LocalReviewLifecycle = {
+      ...artifactLifecycle(stop),
+      create: () => undefined,
+      run: () => {
+        const execution = defaultOpenShellTools.runAsync!(
+          process.execPath,
+          [
+            "-e",
+            `require("node:fs").writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)); setInterval(() => {}, 1000)`,
+          ],
+          { env: process.env },
+        );
+        return {
+          cancel: () => {
+            events.push("cancel");
+            execution.cancel();
+          },
+          completion: execution.completion,
+        };
+      },
+      remove: () => {
+        events.push("sandbox");
+      },
+    };
+    const realKill = process.kill.bind(process);
+    const kill = vi
+      .spyOn(process, "kill")
+      .mockImplementation((_pid, signal) => (signal === 0 ? true : (events.push("signal"), true)));
+
+    const review = runLocalReview({
+      source,
+      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+      lifecycle,
+      temporaryRoot: temporaryDirectory(),
+    });
+    await vi.waitFor(() => expect(fs.existsSync(pidPath)).toBe(true));
+    childPid = Number.parseInt(fs.readFileSync(pidPath, "utf8"), 10);
+    process.emit("SIGTERM");
+    await expect(review).rejects.toThrow(/failed during run/u);
+
+    expect(events.slice(0, 4)).toEqual(["cancel", "sandbox", "gateway", "signal"]);
+    expect(() => realKill(childPid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
   });
 
   it("exports the digest-pinned advisor image for workflow consumers (#10610)", () => {
@@ -803,6 +911,26 @@ describe("local PR review advisor", () => {
     expect(
       fs.readdirSync(path.dirname(destination)).filter((name) => name.includes(".staged-")),
     ).toEqual([]);
+  });
+
+  it("rejects an artifacts symlink without touching its external target (#10611)", async () => {
+    const source = repository();
+    const external = temporaryDirectory();
+    const sentinel = path.join(external, "sentinel");
+    fs.writeFileSync(sentinel, "untouched\n");
+    fs.symlinkSync(external, path.join(source, "artifacts"), "dir");
+
+    await expect(
+      runLocalReview({
+        source,
+        specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+        lifecycle: artifactLifecycle(),
+        temporaryRoot: temporaryDirectory(),
+      }),
+    ).rejects.toThrow(/must be a directory and not a symbolic link/u);
+
+    expect(fs.readFileSync(sentinel, "utf8")).toBe("untouched\n");
+    expect(fs.readdirSync(external)).toEqual(["sentinel"]);
   });
 
   it("removes a run-created artifacts parent after copy failure (#10611)", async () => {
