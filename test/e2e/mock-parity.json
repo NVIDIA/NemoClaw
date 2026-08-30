@@ -807,8 +807,10 @@
     },
     {
       "live": "test/e2e/live/windows-mxc-openclaw-process-container.test.ts",
+      "liveSources": ["test/e2e/live/windows-mxc-inactive-onboarding-composition.ts"],
       "fast": [
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/windows-mxc-inactive-onboarding-composition.test.ts",
         "test/e2e/support/windows-mxc-openclaw-process-container.test.ts"
       ]
     }
