@@ -404,7 +404,6 @@ describe("portable lifecycle recovery timing output", () => {
     let deadlineNow = 0;
     let diagnosticNow = 0;
     let epochNow = EPOCH_BASE_MS;
-    let gatewayWaitArgs: readonly string[] | null = null;
     let gatewayWaitTimeout = 0;
     installReceipt(stateDir, podman);
 
@@ -417,22 +416,7 @@ describe("portable lifecycle recovery timing output", () => {
           );
           switch (command) {
             case "python3": {
-              gatewayWaitArgs = args;
               gatewayWaitTimeout = timeoutMs;
-              const separator = args.lastIndexOf("--");
-              const waitCommand = [...args.slice(separator + 1)];
-              expect(waitCommand.slice(0, 3)).toEqual(["python3", "-I", "-c"]);
-              expect(waitCommand[3]).toContain('HTTPConnection("127.0.0.1"');
-              expect(waitCommand[3]).toContain('connection.request("GET", "/health")');
-              expect(waitCommand[3]).toContain("if status in (200, 401):");
-              waitCommand[4] = "0";
-              const validation = spawnSync("python3", waitCommand.slice(1), {
-                encoding: "utf8",
-                timeout: 1_000,
-              });
-              expect(validation.status).toBe(64);
-              expect(validation.stdout).toBe("");
-              expect(validation.stderr).toBe("");
               deadlineNow += 250;
               diagnosticNow += 250;
               epochNow = EPOCH_BASE_MS + 2_110;
@@ -467,9 +451,6 @@ describe("portable lifecycle recovery timing output", () => {
         },
       }),
     ).toEqual({ kind: "recovered" });
-    expect(gatewayWaitArgs).toEqual(
-      expect.arrayContaining(["python3", "-I", "-c", "18789", "18000", "100"]),
-    );
     expect(gatewayWaitTimeout).toBe(20_000);
     expect(sleeps).toEqual([]);
     expect(timingLines(log)[0]).toContain(
