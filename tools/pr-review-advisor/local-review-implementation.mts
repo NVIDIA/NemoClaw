@@ -182,8 +182,8 @@ export function createLocalReviewSnapshot(
   return { baseRef, headRef: commit };
 }
 
-function assertPublicationPath(source: string, resource: string, destination = false): void {
-  const root = fs.realpathSync(source);
+function assertPublicationPath(root: string, resource: string): void {
+  root = fs.realpathSync(root);
   const relative = path.relative(root, resource);
   if (
     !relative ||
@@ -192,41 +192,39 @@ function assertPublicationPath(source: string, resource: string, destination = f
     path.isAbsolute(relative)
   )
     throw new Error(`Artifact publication path escapes the contributor checkout: ${resource}`);
-  let current = root;
   for (const part of relative.split(path.sep)) {
-    current = path.join(current, part);
-    if (!fs.existsSync(current)) break;
-    const stat = fs.lstatSync(current);
-    if (stat.isSymbolicLink() || (!stat.isDirectory() && current !== resource))
+    root = path.join(root, part);
+    if (!fs.existsSync(root)) return;
+    const stat = fs.lstatSync(root);
+    if (stat.isSymbolicLink() || (!stat.isDirectory() && root !== resource))
       throw new Error(
-        `Artifact publication path component must be a directory and not a symbolic link: ${current}`,
+        `Artifact publication path component must be a directory and not a symbolic link: ${root}`,
       );
   }
-  if (destination && fs.existsSync(resource) && !fs.lstatSync(resource).isDirectory())
-    throw new Error(
-      `Existing artifact publication destination must be a directory and not a symbolic link: ${resource}`,
-    );
 }
-
 type StagedPublication = { discard: () => unknown; publish: () => void };
 function stageArtifacts(
   source: string,
   artifacts: string,
   destination: string,
-  publication: LocalReviewPublication,
+  io: LocalReviewPublication,
 ): StagedPublication {
-  const suffix = randomUUID();
-  const staged = destination + ".staged-" + suffix;
-  const previous = destination + ".previous-" + suffix;
-  const parent = path.dirname(destination);
+  const suffix = randomUUID(),
+    parent = path.dirname(destination);
+  const staged = destination + ".staged-" + suffix,
+    previous = destination + ".previous-" + suffix;
   const hadParent = fs.existsSync(parent);
   assertPublicationPath(source, parent);
   fs.mkdirSync(parent, { recursive: true });
-  assertPublicationPath(source, destination, true);
+  assertPublicationPath(source, destination);
+  if (fs.existsSync(destination) && !fs.lstatSync(destination).isDirectory())
+    throw new Error(
+      `Existing artifact publication destination must be a directory and not a symbolic link: ${destination}`,
+    );
   const remove = (resource: string): unknown => {
     try {
       assertPublicationPath(source, resource);
-      publication.remove(resource, { recursive: true, force: true });
+      io.remove(resource, { recursive: true, force: true });
     } catch (error) {
       return contextualError(
         `Failed to remove artifact publication path ${resource}; remove it manually`,
@@ -235,38 +233,38 @@ function stageArtifacts(
     }
   };
   const discard = (): unknown => {
-    let error = remove(staged);
+    let failure = remove(staged);
     if (!hadParent && fs.existsSync(parent) && fs.readdirSync(parent).length === 0)
-      error = combineFailures(error, remove(parent));
+      failure = combineFailures(failure, remove(parent));
     if (fs.existsSync(staged))
-      error = combineFailures(
-        error,
+      failure = combineFailures(
+        failure,
         new Error(
           `Residual staged output remains at ${staged}; remove it manually before retrying`,
         ),
       );
-    return error;
+    return failure;
   };
   try {
-    publication.copy(artifacts, staged, { recursive: true, errorOnExist: true });
+    io.copy(artifacts, staged, { recursive: true, errorOnExist: true });
   } catch (error) {
     throw combineFailures(safeFailure(error), discard());
   }
   return {
     discard,
-    publish: () => {
-      const hadDestination = fs.existsSync(destination);
+    publish() {
+      const existed = fs.existsSync(destination);
       try {
-        assertPublicationPath(source, destination, true);
-        if (hadDestination) publication.rename(destination, previous);
-        publication.rename(staged, destination);
-        if (hadDestination) publication.remove(previous, { recursive: true });
+        assertPublicationPath(source, destination);
+        if (existed) io.rename(destination, previous);
+        io.rename(staged, destination);
+        if (existed) io.remove(previous, { recursive: true });
       } catch (error) {
-        let failure: unknown = combineFailures(safeFailure(error), remove(staged));
-        if (hadDestination && fs.existsSync(previous)) {
+        let failure = combineFailures(safeFailure(error), remove(staged));
+        if (existed && fs.existsSync(previous)) {
           failure = combineFailures(failure, remove(destination));
           try {
-            if (!fs.existsSync(destination)) publication.rename(previous, destination);
+            if (!fs.existsSync(destination)) io.rename(previous, destination);
           } catch (restore) {
             failure = combineFailures(
               failure,
