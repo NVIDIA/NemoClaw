@@ -3638,6 +3638,38 @@ function captureSealHashes(sandboxName: string, filesToHash: string[]): { [path:
   return hashes;
 }
 
+function verifyHermesProviderLockedPosture(
+  sandboxName: string,
+  target: AgentConfigTarget,
+): { chattrApplied: boolean; fileHashes: { [path: string]: string } } {
+  const chattrApplied = hermesProviderChattrApplied(sandboxName, target);
+  const verified = verifyShieldsLockState(sandboxName, target, {
+    verifyChattr: chattrApplied,
+    verifyParentProtection: true,
+    exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+    assertLegacyLayout: assertNoLegacyStateLayout,
+  });
+  if (verified.issues.length > 0) {
+    throw new Error(`Config not locked: ${verified.issues.join(", ")}`);
+  }
+  return {
+    chattrApplied,
+    fileHashes: captureSealHashes(sandboxName, [
+      target.configPath,
+      ...(target.sensitiveFiles || []),
+    ]),
+  };
+}
+
+function hermesProviderLockConfirmation(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  protocol: HermesShieldsProtocol,
+): (() => { chattrApplied: boolean; fileHashes: { [path: string]: string } }) | undefined {
+  if (protocol !== "provider-state-mutation-v2") return undefined;
+  return () => verifyHermesProviderLockedPosture(sandboxName, target);
+}
+
 function lockAgentConfigUnderMutationLock(
   sandboxName: string,
   rawTarget: AgentConfigTarget,
@@ -3646,36 +3678,17 @@ function lockAgentConfigUnderMutationLock(
 ): { chattrApplied: boolean; fileHashes: { [path: string]: string } } {
   const target = ensureConfigHashSensitiveFile(rawTarget);
   if (target.agentName === "hermes" && protocol === "provider-state-mutation-v2") {
-    const verifyProviderLockedPosture = () => {
-      const chattrApplied = hermesProviderChattrApplied(sandboxName, target);
-      const verified = verifyShieldsLockState(sandboxName, target, {
-        verifyChattr: chattrApplied,
-        verifyParentProtection: true,
-        exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
-        assertLegacyLayout: assertNoLegacyStateLayout,
-      });
-      if (verified.issues.length > 0) {
-        throw new Error(`Config not locked: ${verified.issues.join(", ")}`);
-      }
-      return {
-        chattrApplied,
-        fileHashes: captureSealHashes(sandboxName, [
-          target.configPath,
-          ...(target.sensitiveFiles || []),
-        ]),
-      };
-    };
     if (rollbackLocked) {
       runHermesProviderProtectionTransition(sandboxName, target, "locked", "locked");
       try {
-        return verifyProviderLockedPosture();
+        return verifyHermesProviderLockedPosture(sandboxName, target);
       } catch {
         // Repair a drifted live posture with a mutable rollback. Locked-target
         // failures retain the provider fence, so this remains fail-closed.
       }
     }
     runHermesProviderProtectionTransition(sandboxName, target, "locked", "mutable");
-    return verifyProviderLockedPosture();
+    return verifyHermesProviderLockedPosture(sandboxName, target);
   }
   const compatibilityIssues = stateLockPlanCompatibilityIssues(
     stateDirLockExec(sandboxName),
@@ -4343,8 +4356,9 @@ function rollbackShieldsDown(
     // the rolled-back config DRIFTED — same fail-closed treatment as the
     // auto-restore path. Leaves the hashes null (→ "manual intervention"
     // below) when the lock will not re-confirm.
-    const relock = relockAndReconfirm(() =>
-      lockAgentConfigUnderMutationLock(sandboxName, target, true, protocol),
+    const relock = relockAndReconfirm(
+      () => lockAgentConfigUnderMutationLock(sandboxName, target, true, protocol),
+      { confirm: hermesProviderLockConfirmation(sandboxName, target, protocol) },
     );
     if (relock.ok && relock.lastResult) {
       rollbackChattrApplied = relock.lastResult.chattrApplied;
@@ -4450,8 +4464,9 @@ function activateLockdownFromSnapshot(
   // which mark shields UP on this result — so a reconciler revert here would
   // otherwise leave the same DRIFTED state #4663 is about. relockAndReconfirm
   // fails closed (ok:false) when the lock will not hold past the settle window.
-  const relock = relockAndReconfirm(() =>
-    lockAgentConfig(sandboxName, target, false, allowLegacyHermesProtocol, protocol),
+  const relock = relockAndReconfirm(
+    () => lockAgentConfig(sandboxName, target, false, allowLegacyHermesProtocol, protocol),
+    { confirm: hermesProviderLockConfirmation(sandboxName, target, protocol) },
   );
   if (!relock.ok || !relock.lastResult) {
     return {
@@ -5768,8 +5783,16 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
     // reverted on DGX Station / DGX Spark, leaving the sandbox DRIFTED. This
     // narrows (does not close) the revert window; the chattr +i immutable bit
     // applied inside lockAgentConfig is the only fully durable defense.
-    const relock = relockAndReconfirm(() =>
-      lockAgentConfig(sandboxName, target, true, opts.allowLegacyHermesProtocol === true, protocol),
+    const relock = relockAndReconfirm(
+      () =>
+        lockAgentConfig(
+          sandboxName,
+          target,
+          true,
+          opts.allowLegacyHermesProtocol === true,
+          protocol,
+        ),
+      { confirm: hermesProviderLockConfirmation(sandboxName, target, protocol) },
     );
     if (!relock.ok || !relock.lastResult) {
       const message = relock.error ?? "Config re-lock did not re-confirm after settle window";
@@ -5868,22 +5891,25 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
     //     Each operation runs independently and the result is verified.
     //     If verification fails, config remains unlocked — we do not lie about state.
     console.log(`  Locking ${target.agentName} config (${target.configPath})...`);
-    let lockResult: { chattrApplied: boolean; fileHashes: { [path: string]: string } };
-    try {
-      lockResult = lockAgentConfig(
-        sandboxName,
-        target,
-        false,
-        opts.allowLegacyHermesProtocol === true,
-        protocol,
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+    const relock = relockAndReconfirm(
+      () =>
+        lockAgentConfig(
+          sandboxName,
+          target,
+          false,
+          opts.allowLegacyHermesProtocol === true,
+          protocol,
+        ),
+      { confirm: hermesProviderLockConfirmation(sandboxName, target, protocol) },
+    );
+    if (!relock.ok || !relock.lastResult) {
+      const message = relock.error ?? "Config lock did not re-confirm after settle window";
       console.error(`  ERROR: ${message}`);
       console.error("  Config remains unlocked — manual intervention required.");
       printManualRelockRecoveryHint(sandboxName);
       return failShieldsCommand(message, opts.throwOnError);
     }
+    const lockResult = relock.lastResult;
     saveShieldsState(sandboxName, {
       chattrApplied: lockResult.chattrApplied,
       fileHashes: lockResult.fileHashes,
@@ -6284,6 +6310,7 @@ export {
   DEFAULT_TIMEOUT_SECONDS,
   deriveShieldsMode,
   getShieldsPosture,
+  hermesProviderLockConfirmation,
   inspectMutableConfigPerms,
   isShieldsDown,
   killTimer,
@@ -6293,6 +6320,7 @@ export {
   prepareAutoRestoreTransitionTakeover,
   repairMutableConfigPerms,
   resolvePersistedAutoRestoreTarget,
+  resolveHermesShieldsProtocol,
   restoreLockedStateDirStartupAccess,
   shieldsDown,
   shieldsStatus,

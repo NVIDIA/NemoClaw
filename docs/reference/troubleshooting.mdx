@@ -1460,6 +1460,11 @@ Use the status result as follows:
 
 Hermes can also log `[SECURITY] Hermes startup held by an active runtime state mutation.` before it reads mutable state. Do not kill or manually restart the held entrypoint. Run `$$nemoclaw <name> shields status` from the host so NemoClaw can recover the exact retained target and authenticate the startup release. If recovery still fails, preserve the owner-only lifecycle ledger and the complete error for diagnosis instead of removing a marker or changing in-sandbox permissions.
 
+If the startup gate instead reports `invalid-state code=<code> transaction=<id>` and Hermes refuses startup, the error code identifies rejected gate state rather than an active transition that can make progress by waiting.
+The transaction is a 64-character identifier when the gate safely parsed it, or `unknown` when it could not.
+Run `$$nemoclaw <name> shields status` from the host to recover the retained transition.
+If status cannot recover it, preserve `~/.nemoclaw/state/runtime-provider-lifecycle/`, the error code, and the transaction identifier for diagnosis; do not remove or edit the root-owned in-sandbox receipts.
+
 ### Hermes startup reports `HERMES_CONFIG_MUTATION_ORPHANED`
 
 This refusal means a root-owned config or shields transaction stopped without a safely recoverable complete state. NemoClaw intentionally does not guess whether a partially updated recursive state tree should be locked or mutable, and it does not treat a leftover lock file as permission to continue. Do not delete `/run/nemoclaw/hermes-config-mutation.lock`, the restart state, or the persistent transaction marker manually. The config root remains sealed from the sandbox identity, so an ordinary in-place `rebuild` cannot create a new trustworthy backup and will stop before deleting the sandbox. If you already have a trusted host-side snapshot, record its selector, destroy the sealed sandbox, re-onboard the same sandbox name from trusted host configuration, and then restore that snapshot:
