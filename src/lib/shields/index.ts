@@ -2439,12 +2439,14 @@ function withCompletedAbandonedAutoRestoreFence<T>(
         for (const artifactPath of candidate.artifactPaths) {
           const result = clearTimerMarkerGeneration(sandboxName, marker, stateDir, artifactPath);
           if (result.warning) console.warn(`  ${result.warning}`);
-          if (result.retryRequired || result.retainedPath) {
+          if (result.status !== "removed") {
             throw completedAutoRestoreRecoveryError(
               sandboxName,
               result.retainedPath
                 ? `Completed auto-restore cleanup retained '${result.retainedPath}' for retry`
-                : "Completed auto-restore cleanup could not confirm durable removal and requires an explicit retry",
+                : result.status === "changed"
+                  ? "Completed auto-restore cleanup found replacement timer authority"
+                  : "Completed auto-restore cleanup could not confirm durable removal and requires an explicit retry",
             );
           }
         }

@@ -186,9 +186,14 @@ describe("completed auto-restore command admission", () => {
           : realUnlink(target);
       });
 
-      await expect(StatusCommand.run(["alpha"], process.cwd())).resolves.toBeUndefined();
+      await expect(StatusCommand.run(["alpha"], process.cwd())).rejects.toThrow("explicit retry");
 
       expect(injected).toBe(true);
+      expect(StatusCommand.entered).toBe(false);
+      expect(fs.existsSync(orphan.markerPath)).toBe(true);
+
+      await expect(StatusCommand.run(["alpha"], process.cwd())).resolves.toBeUndefined();
+
       expect(StatusCommand.entered).toBe(true);
       expect(fs.existsSync(orphan.markerPath)).toBe(false);
       expect(fs.readdirSync(stateDir).filter((name) => name.includes(".completed-"))).toEqual([]);
@@ -232,6 +237,51 @@ describe("completed auto-restore command admission", () => {
 
       expect(StatusCommand.entered).toBe(true);
       expect(fs.existsSync(orphan.markerPath)).toBe(false);
+    },
+  );
+
+  it(
+    "denies entry when timer authority changes during completed cleanup (#10094)",
+    { timeout: 30_000 },
+    async () => {
+      const orphan = await reproduceCompletedAutoRestoreContainment(
+        stateDir,
+        "alpha",
+        "9".repeat(32),
+      );
+      const replacement = {
+        ...JSON.parse(fs.readFileSync(orphan.markerPath, "utf8")),
+        pid: process.pid,
+        processToken: "a".repeat(32),
+      };
+      const realRename = fs.renameSync.bind(fs);
+      let replaced = false;
+      const replacementHooks = new Map<string, () => void>([
+        [
+          orphan.markerPath,
+          () => {
+            replaced = true;
+            fs.writeFileSync(orphan.markerPath, JSON.stringify(replacement));
+          },
+        ],
+      ]);
+      const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
+        const replacementHook = replaced ? undefined : replacementHooks.get(String(source));
+        replacementHook?.();
+        realRename(source, destination);
+      });
+
+      try {
+        await expect(StatusCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+          "replacement timer authority",
+        );
+      } finally {
+        renameSpy.mockRestore();
+      }
+
+      expect(replaced).toBe(true);
+      expect(StatusCommand.entered).toBe(false);
+      expect(JSON.parse(fs.readFileSync(orphan.markerPath, "utf8"))).toEqual(replacement);
     },
   );
 
@@ -354,14 +404,17 @@ describe("completed auto-restore command admission", () => {
           String(source).includes(".completed-") ? denyLink() : realLink(source, destination),
         );
 
-      await expect(StatusCommand.run(["alpha"], process.cwd())).rejects.toThrow("retained");
-      expect(StatusCommand.entered).toBe(false);
-      expect(fs.existsSync(orphan.markerPath)).toBe(false);
-      expect(fs.readdirSync(stateDir).filter((name) => name.includes(".completed-"))).toHaveLength(
-        1,
-      );
-      unlinkSpy.mockRestore();
-      linkSpy.mockRestore();
+      try {
+        await expect(StatusCommand.run(["alpha"], process.cwd())).rejects.toThrow("retained");
+        expect(StatusCommand.entered).toBe(false);
+        expect(fs.existsSync(orphan.markerPath)).toBe(false);
+        expect(
+          fs.readdirSync(stateDir).filter((name) => name.includes(".completed-")),
+        ).toHaveLength(1);
+      } finally {
+        unlinkSpy.mockRestore();
+        linkSpy.mockRestore();
+      }
 
       await expect(StatusCommand.run(["alpha"], process.cwd())).resolves.toBeUndefined();
 
