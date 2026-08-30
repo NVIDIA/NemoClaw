@@ -714,7 +714,7 @@ exit 1
     // catch the real-world bug, spy on this process's mkdtempSync calls:
     // if the assertion fires before mkdtempSync, no nemoclaw-policy-* dir
     // should be requested.
-    it("applyPreset does not create temp dirs before the openshell resolvability check", () => {
+    it("applyPreset does not create temp dirs when bounded policy observation loses OpenShell", () => {
       const policyTempPrefix = path.join(os.tmpdir(), "nemoclaw-policy-");
 
       const resolveSpy = vi
@@ -732,8 +732,8 @@ exit 1
       }) as never);
 
       try {
-        expect(() => policies.applyPreset("my-assistant", "npm")).toThrow(/__test_exit__/);
-        expect(exitSpy).toHaveBeenCalledWith(1);
+        expect(policies.applyPreset("my-assistant", "npm")).toBe(false);
+        expect(exitSpy).not.toHaveBeenCalled();
         // No `nemoclaw-policy-*` temp dir should have been created before
         // the resolvability check exited.
         expect(
@@ -801,7 +801,7 @@ exit 1
           custom: { sourcePath: "/tmp/x.yaml" },
         });
         expect(result).toBe(false);
-        expect(errs.join("\n")).toMatch(/[Cc]ould not read the current policy/);
+        expect(errs.join("\n")).toContain("Policy-dependent operations must stop");
         expect(logs.join("\n")).not.toContain("Applied preset:");
       } finally {
         errSpy.mockRestore();
@@ -819,7 +819,7 @@ exit 1
       try {
         const result = policies.applyPresets("alpha", ["npm"]);
         expect(result).toBe(false);
-        expect(errs.join("\n")).toMatch(/[Cc]ould not read the current policy/);
+        expect(errs.join("\n")).toContain("Policy-dependent operations must stop");
       } finally {
         errSpy.mockRestore();
         logSpy.mockRestore();
