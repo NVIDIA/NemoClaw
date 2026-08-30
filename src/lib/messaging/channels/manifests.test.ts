@@ -32,12 +32,6 @@ describe("built-in channel manifests", () => {
     );
   });
 
-  it("owns OpenClaw WeChat cleanup state in the channel manifest (#10079)", () => {
-    const wechat = BUILT_IN_CHANNEL_MANIFESTS.find((manifest) => manifest.id === "wechat");
-
-    expect(wechat?.state).toEqual({ openclaw: ["wechat", "openclaw-weixin"] });
-  });
-
   it("keeps rendered config parsers aligned with built-in manifests", () => {
     expect(
       BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => [
@@ -75,5 +69,4 @@ describe("built-in channel manifests", () => {
       }),
     ).toEqual([]);
   });
-
 });

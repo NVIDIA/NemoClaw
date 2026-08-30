@@ -1981,15 +1981,31 @@ def clean_env_alias(entry, index):
     env_key = clean_string(entry.get("envKey"), f"envAliases[{index}].envKey")
     if not ENV_KEY_RE.match(env_key):
         fail(f"envAliases[{index}].envKey is not a safe environment key")
+    target_env_key = entry.get("targetEnvKey")
+    if target_env_key is None:
+        target_env_key = env_key
+    else:
+        target_env_key = clean_string(target_env_key, f"envAliases[{index}].targetEnvKey")
+        if not ENV_KEY_RE.match(target_env_key):
+            fail(f"envAliases[{index}].targetEnvKey is not a safe environment key")
+        if target_env_key == env_key:
+            fail(f"envAliases[{index}].targetEnvKey must differ from envKey")
     pattern = clean_string(entry.get("match"), f"envAliases[{index}].match")
     try:
         re.compile(pattern)
     except re.error as exc:
         fail(f"envAliases[{index}].match is not a valid regex: {exc}")
+    value = clean_string(entry.get("value"), f"envAliases[{index}].value", allow_empty=True)
+    if target_env_key != env_key:
+        if pattern != f"^openshell:resolve:env:v[0-9]+_{env_key}$":
+            fail(f"envAliases[{index}] cross-key match is not revision-scoped")
+        if value != f"openshell:resolve:env:{env_key}":
+            fail(f"envAliases[{index}] cross-key value is not the canonical source placeholder")
     return {
         "envKey": env_key,
+        "targetEnvKey": target_env_key,
         "match": pattern,
-        "value": clean_string(entry.get("value"), f"envAliases[{index}].value", allow_empty=True),
+        "value": value,
         "message": clean_message(entry.get("message"), f"envAliases[{index}].message"),
     }
 
@@ -2092,7 +2108,7 @@ for entry in runtime_setup_entries("nodePreloads"):
         node_preloads.append(preload)
 for entry in runtime_setup_entries("envAliases"):
     alias = clean_env_alias(entry, len(env_aliases))
-    alias_key = (alias["envKey"], alias["match"], alias["value"])
+    alias_key = (alias["envKey"], alias["targetEnvKey"], alias["match"], alias["value"])
     if alias_key not in seen_aliases:
         seen_aliases.add(alias_key)
         env_aliases.append(alias)
@@ -2123,7 +2139,7 @@ for alias in plan.get("envAliases", []):
     if not re.search(alias["match"], os.environ.get(alias["envKey"], "")):
         continue
     print("\t".join([
-        alias["envKey"],
+        alias.get("targetEnvKey", alias["envKey"]),
         alias["value"],
         alias.get("message", ""),
     ]))
@@ -2131,10 +2147,12 @@ PYMESSAGINGALIASES
   )" || return $?
   [ -n "$_rows" ] || return 0
 
-  local _env_key _value _message
-  while IFS=$'\t' read -r _env_key _value _message; do
-    export "$_env_key=$_value"
-    [ -n "$_message" ] && printf '%s\n' "$_message" >&2
+  local _target_env_key _value _message
+  while IFS=$'\t' read -r _target_env_key _value _message; do
+    export "$_target_env_key=$_value"
+    if [ -n "$_message" ]; then
+      printf '%s\n' "$_message" >&2
+    fi
   done <<<"$_rows"
 }
 

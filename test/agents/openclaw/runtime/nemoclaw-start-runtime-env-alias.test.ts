@@ -7,7 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "scripts",
+  "nemoclaw-start.sh",
+);
 
 function messagingRuntimeSetupSection(src: string, planPath: string): string {
   const start = src.indexOf("# ── Messaging runtime setup from manifest metadata");
@@ -22,7 +28,11 @@ function messagingRuntimeSetupSection(src: string, planPath: string): string {
     );
 }
 
-function encodeRuntimeSetupPlan(channelId: string, value: Record<string, unknown>): string {
+function encodeRuntimeSetupPlan(
+  channelId: string,
+  value: Record<string, unknown>,
+  agent = "openclaw",
+): string {
   const withChannelId = (entries: unknown) =>
     Array.isArray(entries)
       ? entries.map((entry) => ({ channelId, ...(entry as Record<string, unknown>) }))
@@ -31,7 +41,7 @@ function encodeRuntimeSetupPlan(channelId: string, value: Record<string, unknown
     JSON.stringify({
       schemaVersion: 1,
       sandboxName: "test-sandbox",
-      agent: "openclaw",
+      agent,
       workflow: "rebuild",
       channels: [
         {
@@ -110,4 +120,64 @@ describe("messaging runtime env aliases", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    {
+      channelId: "wechat",
+      sourceEnvKey: "WECHAT_BOT_TOKEN",
+      targetEnvKey: "WEIXIN_TOKEN",
+    },
+    {
+      channelId: "teams",
+      sourceEnvKey: "MSTEAMS_APP_PASSWORD",
+      targetEnvKey: "TEAMS_CLIENT_SECRET",
+    },
+  ])(
+    "exports the Hermes $channelId alias without replacing its revision-scoped source (#10079)",
+    ({ channelId, sourceEnvKey, targetEnvKey }) => {
+      const src = fs.readFileSync(START_SCRIPT, "utf-8");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-alias-"));
+      const planPath = path.join(tmpDir, "runtime-plan.json");
+      const scriptPath = path.join(tmpDir, "run.sh");
+      const scoped = `openshell:resolve:env:v42_${sourceEnvKey}`;
+      const runtimeValue = {
+        envAliases: [
+          {
+            envKey: sourceEnvKey,
+            targetEnvKey,
+            match: `^openshell:resolve:env:v[0-9]+_${sourceEnvKey}$`,
+            value: `openshell:resolve:env:${sourceEnvKey}`,
+          },
+        ],
+      };
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
+          'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
+          `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimeSetupPlan(channelId, runtimeValue, "hermes"))}`,
+          messagingRuntimeSetupSection(src, planPath),
+          "write_messaging_runtime_setup_plan",
+          "apply_messaging_runtime_env_aliases",
+          `printf "${sourceEnvKey}=%s\\n${targetEnvKey}=%s\\n" "$${sourceEnvKey}" "$${targetEnvKey}"`,
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      try {
+        const result = spawnSync("bash", [scriptPath], {
+          encoding: "utf-8",
+          env: { ...process.env, [sourceEnvKey]: scoped },
+          timeout: 5000,
+        });
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain(`${sourceEnvKey}=${scoped}`);
+        expect(result.stdout).toContain(`${targetEnvKey}=openshell:resolve:env:${sourceEnvKey}`);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

@@ -34,6 +34,82 @@ def safe_account_id(value):
     )
 
 
+def temporary_owner_pid(candidate, filename):
+    prefix = f".{filename}.nemoclaw-"
+    suffix = ".tmp"
+    if not candidate.startswith(prefix) or not candidate.endswith(suffix):
+        return None
+    identity = candidate[len(prefix) : -len(suffix)]
+    match = re.fullmatch(r"([1-9][0-9]*)-([0-9a-f]{16})", identity)
+    if match is None:
+        return None
+    pid = int(match.group(1))
+    return pid if pid <= 2147483647 else None
+
+
+def process_is_running(pid):
+    if pid == os.getpid():
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def cleanup_stale_temporaries(accounts_fd, filename, account_metadata):
+    try:
+        directory_metadata = os.fstat(accounts_fd)
+    except OSError:
+        fail("the managed account directory cannot be validated")
+    if (
+        not stat.S_ISDIR(directory_metadata.st_mode)
+        or stat.S_IMODE(directory_metadata.st_mode) & 0o002
+        or directory_metadata.st_uid not in {account_metadata.st_uid, os.geteuid()}
+    ):
+        fail("the managed account directory is unsafe for temporary-file cleanup")
+    try:
+        candidates = os.listdir(accounts_fd)
+    except OSError:
+        fail("the managed account directory cannot be checked for stale temporary files")
+    cleaned = False
+    for candidate in candidates:
+        owner_pid = temporary_owner_pid(candidate, filename)
+        if owner_pid is None or process_is_running(owner_pid):
+            continue
+        try:
+            metadata = os.stat(candidate, dir_fd=accounts_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            fail("a stale managed account temporary file is unreadable")
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_uid != account_metadata.st_uid
+            or metadata.st_gid != account_metadata.st_gid
+        ):
+            fail("a stale managed account temporary file is unsafe")
+        try:
+            os.unlink(candidate, dir_fd=accounts_fd)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            fail(
+                "a stale managed account temporary file could not be removed; "
+                "restore owner write access to the managed account directory and retry startup"
+            )
+        cleaned = True
+    if cleaned:
+        try:
+            os.fsync(accounts_fd)
+        except OSError:
+            fail("the managed account directory could not persist temporary-file cleanup")
+
+
 if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
     fail("the platform cannot enforce no-follow account traversal")
 
@@ -108,6 +184,7 @@ try:
                 fail("a managed account file is not a single regular file")
             if stat.S_IMODE(metadata.st_mode) & 0o077:
                 fail("a managed account file is accessible outside its owner")
+            cleanup_stale_temporaries(accounts_fd, filename, metadata)
             try:
                 with os.fdopen(os.dup(account_fd), "r", encoding="utf-8") as stream:
                     account_data = json.load(stream)
@@ -168,8 +245,12 @@ try:
                 try:
                     os.unlink(temporary, dir_fd=accounts_fd)
                 except OSError:
-                    # Preserve the original refresh failure when best-effort temp cleanup also fails.
-                    pass
+                    print(
+                        "[SECURITY] WeChat provider placeholder refresh could not remove its "
+                        "temporary account file; restore owner write access to the managed "
+                        "account directory and retry startup",
+                        file=sys.stderr,
+                    )
 
     if pending:
         print(

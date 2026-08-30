@@ -17,6 +17,7 @@ const SAVED_AT = "2026-08-29T00:00:00.000Z";
 
 interface WechatRefreshFixture {
   readonly account: Record<string, unknown>;
+  readonly accountFiles: readonly string[];
   readonly config: OpenClawTestConfig;
   readonly result: ReturnType<typeof spawnSync>;
 }
@@ -52,6 +53,7 @@ function runWechatRefresh(
   enabled: boolean | null = true,
   mutateAccount?: (paths: { accountPath: string; configPath: string; tmpDir: string }) => void,
   accountEnabled: boolean | null = true,
+  faultMode: "replace-and-unlink" | null = null,
 ): WechatRefreshFixture {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-placeholder-"));
   const openclawDir = path.join(tmpDir, ".openclaw");
@@ -71,14 +73,33 @@ function runWechatRefresh(
   mutateAccount?.({ accountPath, configPath, tmpDir });
 
   try {
-    const result = spawnSync("python3", ["-I", REFRESH_HELPER, configPath], {
+    const pythonArgs =
+      faultMode === "replace-and-unlink"
+        ? [
+            "-I",
+            "-c",
+            [
+              "import os, runpy, sys",
+              "def fail_replace(*_args, **_kwargs):",
+              "    raise OSError('forced refresh failure')",
+              "def fail_unlink(*_args, **_kwargs):",
+              "    raise OSError('forced temporary cleanup failure')",
+              "os.replace = fail_replace",
+              "os.unlink = fail_unlink",
+              `sys.argv = [${JSON.stringify(REFRESH_HELPER)}, ${JSON.stringify(configPath)}]`,
+              `runpy.run_path(${JSON.stringify(REFRESH_HELPER)}, run_name="__main__")`,
+            ].join("\n"),
+          ]
+        : ["-I", REFRESH_HELPER, configPath];
+    const result = spawnSync("python3", pythonArgs, {
       encoding: "utf-8",
       env: { PATH: process.env.PATH || "", ...env },
       timeout: 5000,
     });
     const account = JSON.parse(fs.readFileSync(accountPath, "utf-8"));
+    const accountFiles = fs.readdirSync(path.dirname(accountPath));
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as OpenClawTestConfig;
-    return { account, config, result };
+    return { account, accountFiles, config, result };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -132,6 +153,68 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     expect(run.result.status, String(run.result.stderr)).toBe(0);
     expect(run.account.token).toBe(scoped);
     expect(run.result.stderr).not.toContain("Refreshed WeChat account provider placeholder");
+  });
+
+  it("removes a validated stale helper temporary file before refreshing", () => {
+    const scoped = "openshell:resolve:env:v51_WECHAT_BOT_TOKEN";
+    const finishedProcess = spawnSync(process.execPath, ["-e", ""], { encoding: "utf-8" });
+    expect(finishedProcess.status).toBe(0);
+    const staleName = `.primary.json.nemoclaw-${finishedProcess.pid}-0123456789abcdef.tmp`;
+    const run = runWechatRefresh(
+      CANONICAL,
+      { WECHAT_BOT_TOKEN: scoped },
+      true,
+      ({ accountPath }) => {
+        fs.writeFileSync(path.join(path.dirname(accountPath), staleName), "stale\n", {
+          mode: 0o600,
+        });
+      },
+    );
+
+    expect(run.result.status, String(run.result.stderr)).toBe(0);
+    expect(run.account.token).toBe(scoped);
+    expect(run.accountFiles).not.toContain(staleName);
+  });
+
+  it("refuses an unsafe stale helper temporary file", () => {
+    const scoped = "openshell:resolve:env:v51_WECHAT_BOT_TOKEN";
+    const finishedProcess = spawnSync(process.execPath, ["-e", ""], { encoding: "utf-8" });
+    expect(finishedProcess.status).toBe(0);
+    const staleName = `.primary.json.nemoclaw-${finishedProcess.pid}-0123456789abcdef.tmp`;
+    const run = runWechatRefresh(
+      CANONICAL,
+      { WECHAT_BOT_TOKEN: scoped },
+      true,
+      ({ accountPath }) => {
+        fs.writeFileSync(path.join(path.dirname(accountPath), staleName), "unsafe\n", {
+          mode: 0o640,
+        });
+      },
+    );
+
+    expect(run.result.status).toBe(1);
+    expect(run.account.token).toBe(CANONICAL);
+    expect(run.result.stderr).toContain("stale managed account temporary file is unsafe");
+    expect(run.result.stderr).not.toContain(scoped);
+  });
+
+  it("reports redacted recovery guidance when refresh and temporary cleanup both fail", () => {
+    const scoped = "openshell:resolve:env:v51_WECHAT_BOT_TOKEN";
+    const run = runWechatRefresh(
+      CANONICAL,
+      { WECHAT_BOT_TOKEN: scoped },
+      true,
+      undefined,
+      true,
+      "replace-and-unlink",
+    );
+
+    expect(run.result.status).not.toBe(0);
+    expect(run.account.token).toBe(CANONICAL);
+    expect(run.result.stderr).toContain(
+      "restore owner write access to the managed account directory and retry startup",
+    );
+    expect(run.result.stderr).not.toContain(scoped);
   });
 
   it.each([
