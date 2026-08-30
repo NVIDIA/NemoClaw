@@ -258,6 +258,10 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
     command.assertTransactionCurrent();
 
     expect(capture).not.toHaveBeenCalled();
+    generation.executableInode = 11n;
+    expect(() => command.assertTransactionCurrent()).toThrow("changed after it was qualified");
+    expect(capture).not.toHaveBeenCalled();
+    generation.executableInode = 10n;
     command.assertCurrent();
     expect(capture).toHaveBeenCalled();
   });

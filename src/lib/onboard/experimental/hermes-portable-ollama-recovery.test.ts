@@ -527,6 +527,29 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.events.at(-1)).toBe("registry-release");
   });
 
+  it("preserves an existing recovery failure classification", () => {
+    const harness = createHarness(true, true);
+    const nested = new HermesPortableOllamaRecoveryError(
+      "runtime-restoration-unproved",
+      "nested recovery remained indeterminate",
+    );
+    harness.input.verifyRoute.mockImplementation(() => {
+      throw nested;
+    });
+
+    let caught: unknown;
+    try {
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(nested);
+    expect(caught).toMatchObject({ failure: "runtime-restoration-unproved" });
+    expect(harness.events).toContain("registry-rollback");
+    expect(harness.events).not.toContain("registry-release");
+  });
+
   it("rejects a running runtime when published resume validation is unavailable", () => {
     const harness = createHarness(true, true);
     const { validatePublishedResume: _validatePublishedResume, ...runtimeWithoutValidator } =

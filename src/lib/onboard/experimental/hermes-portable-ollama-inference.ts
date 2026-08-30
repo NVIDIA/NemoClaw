@@ -530,6 +530,7 @@ function failRecovery(
 
 function rethrowNestedHermesPortableRecoveryError(error: unknown): void {
   const prefix = "Hermes Portable managed inference recovery failed: ";
+  if (error instanceof HermesPortableOllamaRecoveryError) throw error;
   if (error instanceof Error && error.message.startsWith(prefix)) {
     throw new HermesPortableOllamaRecoveryError(
       "authority-drift",
