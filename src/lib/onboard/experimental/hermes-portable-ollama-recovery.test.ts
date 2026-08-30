@@ -14,6 +14,7 @@ import type { HostLocalInferenceStartupRequest } from "../runtime-provider/host-
 import {
   HermesPortableOllamaRecoveryError,
   HermesPortableOllamaRecoveryPhaseError,
+  inspectHermesPortableOllamaReadinessRuntime,
   recoverHermesPortableOllamaInference,
   rethrowHermesPortableOllamaRegistryRecoveryError,
 } from "./hermes-portable-ollama-inference";
@@ -274,6 +275,130 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
 }
 
 describe("Hermes Portable Ollama inference recovery", () => {
+  it("classifies one running exact runtime without constructing recovery authority", () => {
+    const harness = createHarness(true, true);
+    const serializedReceipt = serializeHostLocalInferenceReceipt(harness.receipt);
+    const assertCallerCurrent = vi.fn();
+    const assertPublishedCurrent = vi.fn();
+    const assertEngineCurrent = vi.fn();
+    const createInspectionAuthority = vi.fn(() => ({
+      engine: { operation: "host-local-inference", engineId: "podman" },
+      assertTransactionCurrent: assertEngineCurrent,
+    }));
+    const inspectRuntime = vi.fn((options) => {
+      options.assertCurrent();
+      return { running: true, receipt: harness.receipt };
+    });
+
+    const result = inspectHermesPortableOllamaReadinessRuntime(
+      {
+        intent: "connect-probe-only",
+        sandboxName: "alpha",
+        entry: harness.input.entry,
+        operatingReceipt: {
+          phase: "active",
+          sandboxName: "alpha",
+          podmanExecutableAuthority: {},
+          socketAuthority: {},
+          runtimeAuthority: {},
+        } as never,
+        readRegistry: () => harness.input.entry,
+        assertCallerCurrent,
+        env: {},
+        stateDir: "/state",
+      },
+      {
+        preparePublishedReceiptAuthority: vi.fn(() => ({
+          receipt: harness.receipt,
+          serializedReceipt,
+          assertCurrent: assertPublishedCurrent,
+        })),
+        createInspectionAuthority: createInspectionAuthority as never,
+        inspectRuntime: inspectRuntime as never,
+        openAuthorityStore: vi.fn(() => ({
+          load: vi.fn(() => harness.receipt.engineAuthority),
+          record: vi.fn(),
+        })),
+      },
+    );
+
+    expect(result.kind).toBe("running-current");
+    expect(createInspectionAuthority).toHaveBeenCalledOnce();
+    expect(inspectRuntime).toHaveBeenCalledOnce();
+    expect(assertEngineCurrent).toHaveBeenCalled();
+    expect(assertCallerCurrent).toHaveBeenCalled();
+    expect(harness.overrides.prepareRecoveryEntry).not.toHaveBeenCalled();
+    expect(harness.overrides.prepareInferenceAuthority).not.toHaveBeenCalled();
+  });
+
+  it.each(["registry", "private-publication", "engine", "persisted-engine", "container"] as const)(
+    "rejects %s drift without constructing recovery authority",
+    (drift) => {
+      const harness = createHarness(true, true);
+      const serializedReceipt = serializeHostLocalInferenceReceipt(harness.receipt);
+      const expectedEntry = harness.input.entry;
+      let persistedLoads = 0;
+      const preparePublishedReceiptAuthority = vi.fn(() => ({
+        receipt: harness.receipt,
+        serializedReceipt,
+        assertCurrent: vi.fn(() => {
+          expect(drift).not.toBe("private-publication");
+        }),
+      }));
+      const createInspectionAuthority = vi.fn(() => ({
+        engine: { operation: "host-local-inference", engineId: "podman" },
+        assertTransactionCurrent: vi.fn(() => {
+          expect(drift).not.toBe("engine");
+        }),
+      }));
+      const inspectRuntime = vi.fn(() => {
+        expect(drift).not.toBe("container");
+        return { running: true, receipt: harness.receipt };
+      });
+
+      expect(() =>
+        inspectHermesPortableOllamaReadinessRuntime(
+          {
+            intent: "connect-probe-only",
+            sandboxName: "alpha",
+            entry: expectedEntry,
+            operatingReceipt: {
+              phase: "active",
+              sandboxName: "alpha",
+              podmanExecutableAuthority: {},
+              socketAuthority: {},
+              runtimeAuthority: {},
+            } as never,
+            readRegistry: () =>
+              drift === "registry"
+                ? ({ ...expectedEntry, model: "changed" } as never)
+                : expectedEntry,
+            assertCallerCurrent: vi.fn(),
+            env: {},
+            stateDir: "/state",
+          },
+          {
+            preparePublishedReceiptAuthority,
+            createInspectionAuthority: createInspectionAuthority as never,
+            inspectRuntime: inspectRuntime as never,
+            openAuthorityStore: vi.fn(() => ({
+              load: vi.fn(() => {
+                persistedLoads += 1;
+                return drift === "persisted-engine" && persistedLoads > 1
+                  ? null
+                  : harness.receipt.engineAuthority;
+              }),
+              record: vi.fn(),
+            })),
+          },
+        ),
+      ).toThrow();
+
+      expect(harness.overrides.prepareRecoveryEntry).not.toHaveBeenCalled();
+      expect(harness.overrides.prepareInferenceAuthority).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     ["missing", undefined, "sandbox registry host-local inference receipt is missing"],
     ["malformed", "not-json\n", "serialized receipt is not valid JSON"],

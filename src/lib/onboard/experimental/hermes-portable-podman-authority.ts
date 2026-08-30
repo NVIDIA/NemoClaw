@@ -188,6 +188,24 @@ export function createHermesPortablePodmanCommandAuthority(
   );
 }
 
+/** Bind one receipt-owned inference inspection without running the Podman behavior matrix. */
+export function createHermesPortablePodmanInferenceInspectionAuthority(
+  authority: HermesPortablePodmanExecutableAuthority,
+  socketAuthority: PodmanSocketAuthority,
+  runtimeAuthority: CheckpointPortableRuntimeAuthority,
+  sourceEnv: NodeJS.ProcessEnv = process.env,
+  deps: HermesPortablePodmanAuthorityDeps = {},
+): HermesPortablePodmanCommandAuthority {
+  return createHermesPortablePodmanOperationCommandAuthority(
+    authority,
+    socketAuthority,
+    runtimeAuthority,
+    "host-local-inference",
+    sourceEnv,
+    deps,
+  );
+}
+
 export function createHermesPortablePodmanOperationEngines(
   authority: HermesPortablePodmanExecutableAuthority,
   socketAuthority: PodmanSocketAuthority,

@@ -61,6 +61,10 @@ export type HermesPortableForwardRecoveryResult = {
   readonly restoredPorts: readonly number[];
 };
 
+export type HermesPortableForwardVerificationResult = {
+  readonly kind: "healthy" | "unhealthy";
+};
+
 export interface PreparedHermesPortableForwardRecovery {
   readonly result: HermesPortableForwardRecoveryResult;
   readonly release: () => HermesPortableForwardRecoveryResult;
@@ -379,6 +383,23 @@ export function recoverHermesPortableLaunchForwards(
   input: HermesPortableForwardRecoveryInput,
 ): HermesPortableForwardRecoveryResult {
   return prepareHermesPortableLaunchForwards(input).release();
+}
+
+/** Verify the exact launch-readiness forward set without starting or stopping a forward. */
+export function verifyHermesPortableLaunchForwards(
+  input: HermesPortableForwardRecoveryInput,
+): HermesPortableForwardVerificationResult {
+  validatePorts(input);
+  try {
+    const states = observeForwards(input, false);
+    requireNoOccupied(states);
+    requireCurrent(input, false);
+    return Object.freeze({
+      kind: input.ports.every((port) => states.get(port) === "healthy") ? "healthy" : "unhealthy",
+    });
+  } catch (error) {
+    throw normalizeFailure(error);
+  }
 }
 
 function sleepMilliseconds(milliseconds: number): void {

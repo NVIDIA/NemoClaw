@@ -4,6 +4,7 @@
 import {
   HermesPortableOllamaRecoveryError,
   HermesPortableOllamaRecoveryPhaseError,
+  inspectHermesPortableOllamaReadinessRuntime,
   recoverHermesPortableOllamaInference,
   type HermesPortableOllamaPreparedProbeDependency,
   type HermesPortableOllamaRecoveryFailure,
@@ -38,6 +39,13 @@ export function classifyHermesPortableInferenceConnectRecoveryFailure(
   if (error instanceof HermesPortableOllamaRecoveryError) return error.failure;
   if (error instanceof HermesPortableOllamaRecoveryPhaseError) return error.phase;
   return "recovery-failed";
+}
+
+/** Classify one exact published Ollama runtime without opening recovery authority. */
+export function inspectHermesPortableInferenceReadinessRuntimeForConnectProbe(
+  input: Parameters<typeof inspectHermesPortableOllamaReadinessRuntime>[0],
+) {
+  return inspectHermesPortableOllamaReadinessRuntime(input);
 }
 
 /** Resume exact published Ollama authority for one probe-only connect operation. */

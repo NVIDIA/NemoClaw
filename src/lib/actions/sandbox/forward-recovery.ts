@@ -44,11 +44,13 @@ export {
   HermesPortableForwardRecoveryError,
   prepareHermesPortableLaunchForwards,
   recoverHermesPortableLaunchForwards,
+  verifyHermesPortableLaunchForwards,
 } from "./probe/hermes-portable-forward-recovery";
 export type {
   HermesPortableForwardRecoveryFailure,
   HermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryResult,
+  HermesPortableForwardVerificationResult,
   PreparedHermesPortableForwardRecovery,
 } from "./probe/hermes-portable-forward-recovery";
 

@@ -15,6 +15,7 @@ import {
 import {
   HermesPortableForwardRecoveryError,
   recoverHermesPortableLaunchForwards,
+  verifyHermesPortableLaunchForwards,
 } from "./hermes-portable-forward-recovery";
 
 describe("Hermes Portable probe-only forward recovery", () => {
@@ -42,6 +43,22 @@ describe("Hermes Portable probe-only forward recovery", () => {
       kind: "verified",
       restoredPorts: [],
     });
+    expect(fixture.currentCalls).toEqual([["forward", "list", "--gateway", "nemoclaw"]]);
+    expect(fixture.rollbackCalls).toEqual([]);
+  });
+
+  it("reports a missing forward without starting or stopping it", () => {
+    const fixture = createRecoveryFixture({ ports: [18_789, 8_642], running: [18_789] });
+
+    expect(verifyHermesPortableLaunchForwards(fixture.input)).toEqual({ kind: "unhealthy" });
+    expect(fixture.currentCalls).toEqual([["forward", "list", "--gateway", "nemoclaw"]]);
+    expect(fixture.rollbackCalls).toEqual([]);
+  });
+
+  it("verifies exact forward ownership and reachability without mutation", () => {
+    const fixture = createRecoveryFixture({ ports: [18_789, 8_642], running: [18_789, 8_642] });
+
+    expect(verifyHermesPortableLaunchForwards(fixture.input)).toEqual({ kind: "healthy" });
     expect(fixture.currentCalls).toEqual([["forward", "list", "--gateway", "nemoclaw"]]);
     expect(fixture.rollbackCalls).toEqual([]);
   });

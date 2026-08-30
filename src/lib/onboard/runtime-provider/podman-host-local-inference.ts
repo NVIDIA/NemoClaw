@@ -1630,6 +1630,53 @@ function requireReceiptIdentity(
   });
 }
 
+/** Inspect one exact published Ollama runtime without creating a lifecycle operation. */
+export function inspectPodmanPublishedOllamaReadinessRuntime(options: {
+  readonly engine: PodmanContainerEngine;
+  readonly persistedEngineAuthority: PersistedEngineAuthority;
+  readonly serializedReceipt: string;
+  readonly assertCurrent: () => void;
+}): HostLocalManagedInferenceInspection {
+  const receipt = parseHostLocalInferenceReceipt(options.serializedReceipt);
+  if (
+    serializeHostLocalInferenceReceipt(receipt) !== options.serializedReceipt ||
+    receipt.providerId !== PROVIDER_ID ||
+    receipt.service !== "ollama" ||
+    receipt.runtime.kind !== "container" ||
+    receipt.inference === undefined ||
+    receipt.publication === undefined ||
+    !("devices" in receipt.runtime.gpu)
+  ) {
+    throw new Error("Podman published readiness requires an exact Ollama container receipt.");
+  }
+  if (
+    serializePersistedEngineAuthority(options.persistedEngineAuthority) !==
+    serializePersistedEngineAuthority(receipt.engineAuthority)
+  ) {
+    throw new Error("Podman published readiness engine authority changed.");
+  }
+  requirePersistedEngineAuthority(
+    options.persistedEngineAuthority,
+    PROVIDER_ID,
+    options.engine,
+    receipt.engineAuthority.bindingSha256,
+  );
+  options.assertCurrent();
+  let inspected: ManagedContainer | undefined;
+  let failure: unknown;
+  try {
+    inspected = requireReceiptIdentity(
+      inspectContainer(options.engine, receipt.runtime.runtimeId),
+      receipt,
+    );
+  } catch (error) {
+    failure = error;
+  }
+  options.assertCurrent();
+  if (failure !== undefined) throw failure;
+  return Object.freeze({ running: inspected!.running, receipt });
+}
+
 function receiptFor(
   authority: PersistedEngineAuthority,
   spec: ManagedSpec,
@@ -4669,12 +4716,7 @@ export function preparePodmanHostLocalInferenceOperationAuthority(
   options: Omit<
     Pick<
       PodmanHostLocalInferenceOperationOptions,
-      | "acceleration"
-      | "authority"
-      | "authorityQualification"
-      | "engine"
-      | "env"
-      | "redactSensitive"
+      "acceleration" | "authority" | "authorityQualification" | "engine" | "env" | "redactSensitive"
     >,
     "engine"
   > & { readonly engine: PodmanBoundContainerEngine },

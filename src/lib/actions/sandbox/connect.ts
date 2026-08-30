@@ -116,6 +116,7 @@ import {
   type HermesPortableForwardRecoveryFailure,
   type ManagedGatewayControlCompletion,
   prepareHermesPortableLaunchForwards,
+  verifyHermesPortableLaunchForwards,
   type PreparedHermesPortableForwardRecovery,
   resolveSandboxDashboardPort,
   resolveSandboxLaunchForwardPorts,
@@ -123,6 +124,7 @@ import {
 } from "./process-recovery";
 import {
   classifyHermesPortableInferenceConnectRecoveryFailure,
+  inspectHermesPortableInferenceReadinessRuntimeForConnectProbe,
   recoverHermesPortableInferenceForConnectProbe,
   type HermesPortableInferenceConnectRecoveryFailure,
 } from "./probe/hermes-portable-inference-recovery";
@@ -570,8 +572,9 @@ function captureHermesPortableReadinessObservation(
   authority: HermesPortableReadinessCommandAuthority,
   args: string[],
   options: NonNullable<Parameters<typeof captureResolvedOpenshell>[1]> = {},
+  assertCurrent = authority.assertCurrent,
 ) {
-  authority.assertCurrent();
+  assertCurrent();
   try {
     return captureResolvedOpenshell(args, {
       ...options,
@@ -580,18 +583,19 @@ function captureHermesPortableReadinessObservation(
       replaceEnv: true,
     });
   } finally {
-    authority.assertCurrent();
+    assertCurrent();
   }
 }
 
 function hermesPortableLaunchReadinessDeps(
   authority: HermesPortableReadinessCommandAuthority,
   probeTiming?: ProbeTimingRecorder,
+  assertCurrent = authority.assertCurrent,
 ): NonNullable<Parameters<typeof inspectLaunchReadiness>[1]> {
   const capture = (
     args: string[],
     options: NonNullable<Parameters<typeof captureResolvedOpenshell>[1]> = {},
-  ) => captureHermesPortableReadinessObservation(authority, args, options);
+  ) => captureHermesPortableReadinessObservation(authority, args, options, assertCurrent);
   return {
     ...createBoundLaunchReadinessDeps(capture),
     ...(probeTiming
@@ -615,8 +619,7 @@ type HermesPortableForwardConnectRecoveryInput = {
   readonly commandAuthority?: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>;
 };
 
-/** Restore the launch-readiness forwards through current Hermes command authority. */
-function prepareHermesPortableForwardsForConnectProbe(
+function hermesPortableForwardInputForConnectProbe(
   input: HermesPortableForwardConnectRecoveryInput,
 ) {
   const expectedEntry = structuredClone(input.authority.entry);
@@ -674,7 +677,7 @@ function prepareHermesPortableForwardsForConnectProbe(
     });
   };
 
-  return prepareHermesPortableLaunchForwards({
+  return {
     intent: input.intent,
     sandboxName: input.sandboxName,
     gatewayName: input.authority.gatewayName,
@@ -687,7 +690,21 @@ function prepareHermesPortableForwardsForConnectProbe(
       captureCurrent: capture,
       captureRollback: capture,
     },
-  });
+  } as const;
+}
+
+/** Restore the launch-readiness forwards through current Hermes command authority. */
+function prepareHermesPortableForwardsForConnectProbe(
+  input: HermesPortableForwardConnectRecoveryInput,
+) {
+  return prepareHermesPortableLaunchForwards(hermesPortableForwardInputForConnectProbe(input));
+}
+
+/** Verify the launch-readiness forwards without starting or stopping them. */
+function verifyHermesPortableForwardsForConnectProbe(
+  input: HermesPortableForwardConnectRecoveryInput,
+) {
+  return verifyHermesPortableLaunchForwards(hermesPortableForwardInputForConnectProbe(input));
 }
 
 function recoverHermesPortableForwardsForConnectProbeOrExit(
@@ -2185,6 +2202,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
 ): Promise<PreparedConnectChild | null> {
   if (probeOnly) {
     let portableAuthorityReady = false;
+    let hermesMissingFastPathEligible = false;
     const initialEntry = registry.getSandbox(sandboxName);
     let hermesReadinessAuthority: {
       readonly active: HermesPortableActiveLifecycleAuthority;
@@ -2202,6 +2220,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
         let qualified = probeTiming!.measure("authority", () =>
           qualifyHermesPortableAcceptedReadinessAuthority(sandboxName),
         );
+        hermesMissingFastPathEligible = qualified.kind === "current";
         if (qualified.kind === "requalification-required") {
           const requalified = probeTiming!.measure("authority", () =>
             requalifyPortableAgentSandboxAuthority(
@@ -2343,6 +2362,96 @@ async function prepareConnectSandboxWithinLifecycleFence(
       }
       const publicationRequest = publicationFromDecision(sandboxName, readiness);
       const gated = await withLaunchReadinessMutationGate(publicationRequest, async () => {
+        if (
+          readiness.category === "missing" &&
+          hermesMissingFastPathEligible &&
+          hermesReadinessAuthority?.active.entry.provider === "ollama-local" &&
+          typeof hermesReadinessAuthority.active.entry.hostLocalInferenceReceipt === "string"
+        ) {
+          const retainedAuthority = hermesReadinessAuthority;
+          const assertBaseCurrent = (): void => {
+            probeTiming!.measure("authority", retainedAuthority.command.assertTransactionCurrent);
+            const current = probeTiming!.measure("authority", () =>
+              requireHermesPortableActiveLifecycleAuthority(
+                sandboxName,
+                retainedAuthority.active,
+                portableAgentLifecycleAuthorityDeps(),
+              ),
+            );
+            if (!isDeepStrictEqual(current.entry, retainedAuthority.active.entry)) {
+              throw new Error(
+                "Hermes portable registry authority changed during readiness recapture",
+              );
+            }
+          };
+          let runtime: ReturnType<
+            typeof inspectHermesPortableInferenceReadinessRuntimeForConnectProbe
+          >;
+          try {
+            runtime = probeTiming!.measure("inference", () =>
+              inspectHermesPortableInferenceReadinessRuntimeForConnectProbe({
+                intent: "connect-probe-only",
+                sandboxName,
+                entry: retainedAuthority.active.entry,
+                operatingReceipt: retainedAuthority.command.receipt,
+                readRegistry: registry.getSandbox,
+                assertCallerCurrent: assertBaseCurrent,
+              }),
+            );
+          } catch {
+            probeTiming!.markFailureStage("authority");
+            failHermesPortableReadinessAuthority(sandboxName);
+          }
+          if (runtime.kind === "running-current") {
+            let forward: ReturnType<typeof verifyHermesPortableForwardsForConnectProbe>;
+            try {
+              runtime.assertCurrent();
+              forward = probeTiming!.measure("forward", () =>
+                verifyHermesPortableForwardsForConnectProbe({
+                  intent: "connect-probe-only",
+                  sandboxName,
+                  authority: retainedAuthority.active,
+                  readRegistry: registry.getSandbox,
+                  commandAuthority: retainedAuthority.command,
+                }),
+              );
+              runtime.assertCurrent();
+            } catch (error) {
+              failHermesPortableForwardRecovery(
+                sandboxName,
+                error instanceof HermesPortableForwardRecoveryError
+                  ? error.failure
+                  : "authority-drift",
+              );
+            }
+            if (forward.kind === "healthy") {
+              const publicationDeps = {
+                ...hermesPortableLaunchReadinessDeps(
+                  retainedAuthority.command,
+                  probeTiming,
+                  retainedAuthority.command.assertTransactionCurrent,
+                ),
+                assertPublicationCurrent: runtime.assertCurrent,
+              };
+              runtime.assertCurrent();
+              const fastPublication = await probeTiming!.measureAsync("publication", () =>
+                publishLaunchReadiness(publicationRequest, publicationDeps),
+              );
+              runtime.assertCurrent();
+              if (fastPublication.kind === "published") {
+                probeTiming!.setLifecycleAction("reused");
+                probeTiming!.setForwardAction("verified");
+                return fastPublication;
+              }
+              if (
+                fastPublication.kind !== "validation-failed" ||
+                fastPublication.category !== "health"
+              ) {
+                return fastPublication;
+              }
+            }
+          }
+        }
         await runConnectEntryPreflight(sandboxName, {
           probeOnly: true,
           probeTiming,

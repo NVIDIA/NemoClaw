@@ -418,7 +418,12 @@ function qualifyOperatingCommandAuthority(
     operatingAuthority.assertTransactionCurrent,
   );
   assertCurrent();
-  return { ...commandAuthority, assertTransactionCurrent, assertCurrent };
+  return {
+    ...commandAuthority,
+    receipt: operatingAuthority.receipt,
+    assertTransactionCurrent,
+    assertCurrent,
+  };
 }
 
 export function buildHermesPortableCommandAuthority(

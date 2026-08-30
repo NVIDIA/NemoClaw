@@ -36,9 +36,11 @@ import { prepareHermesPortablePublishedHostLocalInferenceStartup } from "../runt
 import {
   createFilePersistedEngineAuthorityStore,
   openFilePersistedEngineAuthorityStore,
+  serializePersistedEngineAuthority,
 } from "../runtime-provider/persisted-engine-authority";
 import { createPodmanRuntimeProviderBundle } from "../runtime-provider/podman";
 import {
+  inspectPodmanPublishedOllamaReadinessRuntime,
   preparePodmanHostLocalInferenceOperationAuthority,
   PublishedInferenceForwardAuthorityError,
   type PodmanPublishedResumeTiming,
@@ -55,6 +57,7 @@ import {
 import { PORTABLE_DOCKER_NETWORK_NAME, isPortableExperimentalProfile } from "./portable-profile";
 import {
   captureHermesPortablePodmanExecutableAuthority,
+  createHermesPortablePodmanInferenceInspectionAuthority,
   createHermesPortablePodmanOperationEngines,
   HERMES_PORTABLE_PODMAN_VERSION,
   type HermesPortablePodmanAuthorityDeps,
@@ -78,6 +81,7 @@ import {
   createHermesPortableOllamaGatewayTransaction,
   hasHermesPortableOllamaRecoveryContainer,
   prepareHermesPortableOllamaPublishedInferenceAuthority,
+  prepareHermesPortableOllamaPublishedReceiptAuthority,
   type HermesPortableOllamaGatewayRunner,
 } from "./hermes-portable-ollama-gateway-transaction";
 import { qualifyHermesPortableOperatingAuthority } from "./hermes-portable-operating-authority";
@@ -779,6 +783,118 @@ function inferenceLifecycleRow(
     failRecovery("Ollama registry must not contain llama.cpp provenance");
   }
   return Object.freeze({ ...entry, openshellDriver: providerId });
+}
+
+export type HermesPortableOllamaReadinessRuntimeDisposition = Readonly<{
+  kind: "running-current" | "stopped";
+  assertCurrent: () => void;
+}>;
+
+interface HermesPortableOllamaReadinessRuntimeDeps {
+  readonly preparePublishedReceiptAuthority: typeof prepareHermesPortableOllamaPublishedReceiptAuthority;
+  readonly createInspectionAuthority: typeof createHermesPortablePodmanInferenceInspectionAuthority;
+  readonly inspectRuntime: typeof inspectPodmanPublishedOllamaReadinessRuntime;
+  readonly openAuthorityStore: typeof openFilePersistedEngineAuthorityStore;
+}
+
+const DEFAULT_READINESS_RUNTIME_DEPS: HermesPortableOllamaReadinessRuntimeDeps = Object.freeze({
+  preparePublishedReceiptAuthority: prepareHermesPortableOllamaPublishedReceiptAuthority,
+  createInspectionAuthority: createHermesPortablePodmanInferenceInspectionAuthority,
+  inspectRuntime: inspectPodmanPublishedOllamaReadinessRuntime,
+  openAuthorityStore: openFilePersistedEngineAuthorityStore,
+});
+
+/** Classify one exact published Ollama runtime without creating recovery authority. */
+export function inspectHermesPortableOllamaReadinessRuntime(
+  input: {
+    readonly intent: "connect-probe-only";
+    readonly sandboxName: string;
+    readonly entry: SandboxEntry;
+    readonly operatingReceipt: HermesPortableConfiguredReceipt;
+    readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
+    readonly assertCallerCurrent: () => void;
+    readonly env?: NodeJS.ProcessEnv;
+    readonly stateDir?: string;
+  },
+  overrides: Partial<HermesPortableOllamaReadinessRuntimeDeps> = {},
+): HermesPortableOllamaReadinessRuntimeDisposition {
+  if (
+    input.intent !== "connect-probe-only" ||
+    input.operatingReceipt.phase !== "active" ||
+    input.operatingReceipt.sandboxName !== input.sandboxName ||
+    input.entry.name !== input.sandboxName ||
+    input.entry.agent !== "hermes" ||
+    input.entry.provider !== "ollama-local"
+  ) {
+    failRecovery("readiness runtime authority is incomplete");
+  }
+  const serializedReceipt = input.entry.hostLocalInferenceReceipt;
+  if (typeof serializedReceipt !== "string") {
+    failRecovery("sandbox registry host-local inference receipt is missing");
+  }
+  const receipt = parseHostLocalInferenceReceipt(serializedReceipt);
+  requirePublishedOllamaRecoveryReceipt(receipt);
+  inferenceLifecycleRow(input.entry, receipt.providerId);
+  if (input.entry.model !== receipt.inference.model) {
+    failRecovery("sandbox registry model differs from published runtime authority");
+  }
+
+  const deps = { ...DEFAULT_READINESS_RUNTIME_DEPS, ...overrides };
+  const expectedEntry = structuredClone(input.entry);
+  const stateDir = input.stateDir ?? defaultPortableDemoStateDir(input.env ?? process.env);
+  const inferenceStateDir = hermesPortableInferenceStateDir(stateDir, input.sandboxName);
+  const published = deps.preparePublishedReceiptAuthority({
+    directory: inferenceStateDir,
+    sandboxName: input.sandboxName,
+    credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+  });
+  if (published.serializedReceipt !== serializedReceipt) {
+    failRecovery("private and registry inference receipts disagree");
+  }
+  const authorityStore = deps.openAuthorityStore(inferenceStateDir);
+  const persisted = authorityStore.load("host-local-inference");
+  if (
+    persisted === null ||
+    serializePersistedEngineAuthority(persisted) !==
+      serializePersistedEngineAuthority(receipt.engineAuthority)
+  ) {
+    failRecovery("persisted and published inference engine authority disagree");
+  }
+  const inspectionAuthority = deps.createInspectionAuthority(
+    input.operatingReceipt.podmanExecutableAuthority,
+    input.operatingReceipt.socketAuthority,
+    input.operatingReceipt.runtimeAuthority,
+    input.env ?? process.env,
+  );
+  const assertCurrent = (): void => {
+    input.assertCallerCurrent();
+    if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), expectedEntry)) {
+      failRecovery("sandbox registry authority changed during readiness classification");
+    }
+    published.assertCurrent();
+    inspectionAuthority.assertTransactionCurrent();
+    const currentPersisted = authorityStore.load("host-local-inference");
+    if (
+      currentPersisted === null ||
+      serializePersistedEngineAuthority(currentPersisted) !==
+        serializePersistedEngineAuthority(persisted)
+    ) {
+      failRecovery("persisted inference engine authority changed during readiness classification");
+    }
+    input.assertCallerCurrent();
+  };
+  assertCurrent();
+  const inspected = deps.inspectRuntime({
+    engine: inspectionAuthority.engine,
+    persistedEngineAuthority: persisted,
+    serializedReceipt,
+    assertCurrent,
+  });
+  assertCurrent();
+  return Object.freeze({
+    kind: inspected.running ? "running-current" : "stopped",
+    assertCurrent,
+  });
 }
 
 function restoreStoppedRuntime(
