@@ -144,9 +144,6 @@ jobs:
           lfs: false
           submodules: false
 
-      - name: Load advisor runtime image
-        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/export-runtime-env.mts"
-
       # A dispatch without target_repo is maintainer-triggered and analyzes the
       # commit that supplied the trusted workflow. It is still treated as
       # read-only data and never supplies executable advisor code.
@@ -174,6 +171,9 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: advisor/package-lock.json
+
+      - name: Load advisor runtime image
+        run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/export-runtime-env.mts"
 
       # pull_request_target content is fetched manually so no PR-controlled
       # action, hook, submodule, LFS filter, or package setup can run. The base

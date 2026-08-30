@@ -15,8 +15,7 @@ const DEFAULT_POLICY = join(ROOT, "tools", "pr-review-advisor", "openshell-polic
 const ACTION_PIN = /^[^@\s]+\/[^@\s]+@[0-9a-f]{40}(?:\s*#.*)?$/u;
 const SANDBOX_NAME = /^(?!.*--)[a-z]([a-z0-9-]*[a-z0-9])?$/u;
 const INTERESTS = new Set(ADVISOR_INTERESTS);
-const SPECIALIST_MATRIX_EXPRESSION =
-  "${{ fromJSON(needs.discover-specialists.outputs.matrix) }}";
+const SPECIALIST_MATRIX_EXPRESSION = "${{ fromJSON(needs.discover-specialists.outputs.matrix) }}";
 const BASE_REF_EXPRESSION =
   "${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}";
 const HEAD_REF_EXPRESSION =
@@ -193,9 +192,7 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     specialistEnvironments.some(
       (env) => env.GH_TOKEN !== undefined || env.GITHUB_TOKEN !== undefined,
     ) ||
-    /\$\{\{[^}]*\b(?:github\.token|secrets\.GITHUB_TOKEN)\b[^}]*\}\}/u.test(
-      specialistTokenWiring,
-    )
+    /\$\{\{[^}]*\b(?:github\.token|secrets\.GITHUB_TOKEN)\b[^}]*\}\}/u.test(specialistTokenWiring)
   )
     errors.push("specialist jobs must not wire a GitHub token into steps");
   const contextUpload = namedStep(discovery, "Upload GitHub review context");
@@ -204,7 +201,12 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push("shared context upload must use actions/upload-artifact");
   if (!String(contextDownload?.uses ?? "").startsWith("actions/download-artifact@"))
     errors.push("shared context download must use actions/download-artifact");
-  requireWith(errors, contextUpload, "path", "artifacts/pr-review-advisor-context/github-context.json");
+  requireWith(
+    errors,
+    contextUpload,
+    "path",
+    "artifacts/pr-review-advisor-context/github-context.json",
+  );
   requireWith(
     errors,
     contextDownload,
@@ -242,6 +244,13 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push(
       "specialist job env.PR_REVIEW_ADVISOR_INTEREST must be ${{ matrix.advisor.interest }}",
     );
+  const specialistSteps = jobSteps(specialists);
+  const setupNodeIndex = specialistSteps.findIndex((step) => step.name === "Setup Node");
+  const runtimeImageIndex = specialistSteps.findIndex(
+    (step) => step.name === "Load advisor runtime image",
+  );
+  if (setupNodeIndex < 0 || runtimeImageIndex <= setupNodeIndex)
+    errors.push("advisor runtime image must load after the pinned Node setup");
   const prepareInputs = namedStep(specialists, "Prepare advisor sandbox inputs");
   const prepareEnvironment = object(prepareInputs?.env);
   if (prepareEnvironment.BASE_REF !== BASE_REF_EXPRESSION)
@@ -257,12 +266,7 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   if (!String(specialistUpload?.uses ?? "").startsWith("actions/upload-artifact@"))
     errors.push("specialist review step must use actions/upload-artifact");
   requireWith(errors, specialistUpload, "if-no-files-found", "error");
-  requireWith(
-    errors,
-    specialistUpload,
-    "path",
-    "artifacts/${{ matrix.advisor.artifact_dir }}/",
-  );
+  requireWith(errors, specialistUpload, "path", "artifacts/${{ matrix.advisor.artifact_dir }}/");
   requireWith(
     errors,
     namedStep(publish, "Checkout trusted comment publisher (workflow revision)"),

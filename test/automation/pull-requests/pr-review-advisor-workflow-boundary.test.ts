@@ -33,6 +33,16 @@ describe("PR review advisor workflow boundary", () => {
     expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
   });
 
+  it("loads the advisor runtime image after pinned Node setup", () => {
+    const errors = validateMutation((value) => {
+      const steps = value.jobs["review-specialists"].steps as Array<Record<string, any>>;
+      const image = steps.findIndex((step) => step.name === "Load advisor runtime image");
+      const [runtimeImage] = steps.splice(image, 1);
+      steps.unshift(runtimeImage);
+    });
+    expect(errors).toContain("advisor runtime image must load after the pinned Node setup");
+  });
+
   it("requires valid specialist sandbox names", () => {
     const errors = validateMutation((workflow) => {
       workflow.jobs["review-specialists"].strategy.matrix.advisor = [
@@ -120,8 +130,7 @@ describe("PR review advisor workflow boundary", () => {
       const upload = workflow.jobs["review-specialists"].steps.find(
         (step: Record<string, any>) => step.name === "Upload specialist review",
       );
-      upload.with.path =
-        "artifacts/${{ matrix.advisor.artifact_dir }}/pr-review-session.jsonl";
+      upload.with.path = "artifacts/${{ matrix.advisor.artifact_dir }}/pr-review-session.jsonl";
     });
     expect(
       errors.some((item) =>

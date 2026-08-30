@@ -168,9 +168,22 @@ content, and nonignored untracked files. It runs every checked-in specialist sep
 OpenShell. It writes each specialist's Markdown review and native JSONL session under
 `artifacts/pr-review-advisor-local/`. The command does not use GitHub context or combine findings.
 
-Run `npm install` first. Configure the existing advisor credential and OpenShell environment as
-reported by `npm run dev:doctor`. The command removes its temporary snapshot and each sandbox after
-success or failure.
+Prerequisites:
+
+- Node.js 22 and the repository dependencies installed with `npm install`;
+- an `origin/main` remote-tracking commit in the local repository;
+- OpenShell, `git`, `rg`, and `fdfind` available as reported by `npm run dev:doctor`;
+- `PR_REVIEW_ADVISOR_API_KEY` configured for the existing advisor provider.
+
+The executable advisor checkout is detached at the resolved `origin/main` commit. Branch changes,
+including advisor code and policy changes, exist only in the read-only review snapshot. The command
+copies the already-installed root `node_modules` tree into the trusted advisor checkout; it does not
+run `npm install`, package lifecycle hooks, or branch-controlled install code during review. Ordinary
+module bytes therefore reflect the packages already installed in the contributor checkout, not source
+files from the reviewed branch. Dependency installation redesign is outside this local command.
+
+The command removes its temporary snapshot, copied dependencies, gateway, and each sandbox after
+success, failure, or a handled termination signal.
 
 ## Output contract
 

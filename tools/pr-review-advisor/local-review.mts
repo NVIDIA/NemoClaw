@@ -80,8 +80,8 @@ function removeSnapshotSymlinks(directory: string): void {
 export function createLocalReviewSnapshot(
   source: string,
   destination: string,
+  baseRef = gitValue(source, ["rev-parse", "--verify", "origin/main^{commit}"]),
 ): { baseRef: string; headRef: string } {
-  const baseRef = gitValue(source, ["rev-parse", "--verify", "origin/main^{commit}"]);
   execFileSync("git", ["clone", "--no-hardlinks", "--no-checkout", source, destination], {
     stdio: "pipe",
   });
@@ -106,13 +106,17 @@ export function createLocalReviewSnapshot(
   return { baseRef, headRef: commit };
 }
 
-export function copyAdvisorCheckout(source: string, destination: string): void {
+export function copyAdvisorCheckout(
+  source: string,
+  destination: string,
+  baseCommit = gitValue(source, ["rev-parse", "--verify", "origin/main^{commit}"]),
+): void {
   execFileSync("git", ["clone", "--no-hardlinks", "--no-checkout", source, destination], {
     stdio: "pipe",
   });
-  git(destination, ["checkout", "--detach", "HEAD"]);
+  git(destination, ["checkout", "--detach", baseCommit]);
   const dependencies = path.join(source, "node_modules");
-  if (!fs.statSync(dependencies).isDirectory())
+  if (!fs.statSync(dependencies, { throwIfNoEntry: false })?.isDirectory())
     throw new Error("Run npm install before local review");
   fs.cpSync(dependencies, path.join(destination, "node_modules"), { recursive: true });
 }
@@ -183,22 +187,41 @@ export async function runLocalReview(
   let activeEnvironment: NodeJS.ProcessEnv | undefined;
   let cleanupPromise: Promise<void> | undefined;
   let primaryFailure: unknown;
+  let cleanupFailure: unknown;
+  let result: string | undefined;
   const cleanup = (): Promise<void> =>
     (cleanupPromise ??= (async () => {
+      let failure: unknown;
       const environment = activeEnvironment;
       activeEnvironment = undefined;
-      if (environment) lifecycle.remove(environment);
-      await gatewayCleanup?.();
+      try {
+        if (environment) lifecycle.remove(environment);
+      } catch (error) {
+        failure = error;
+      }
+      const stopGateway = gatewayCleanup;
       gatewayCleanup = undefined;
+      try {
+        await stopGateway?.();
+      } catch (error) {
+        failure ??= error;
+      }
+      try {
+        if (ownsTemporaryRoot) fs.rmSync(temporaryRoot, { recursive: true, force: true });
+      } catch (error) {
+        failure ??= error;
+      }
+      if (failure !== undefined) throw failure;
     })());
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const signalHandlers = new Map<NodeJS.Signals, () => void>();
   for (const signal of signals) {
     const handler = (): void => {
-      void cleanup().finally(() => {
+      const resumeSignal = (): void => {
         process.off(signal, handler);
         process.kill(process.pid, signal);
-      });
+      };
+      void cleanup().then(resumeSignal, resumeSignal);
     };
     signalHandlers.set(signal, handler);
     process.once(signal, handler);
@@ -206,8 +229,9 @@ export async function runLocalReview(
   try {
     fs.mkdirSync(outputRoot, { recursive: true });
     fs.mkdirSync(runnerTemp, { recursive: true });
-    (input.prepareAdvisor ?? copyAdvisorCheckout)(source, advisorDirectory);
-    const refs = (input.prepareSnapshot ?? createLocalReviewSnapshot)(source, snapshot);
+    const baseCommit = gitValue(source, ["rev-parse", "--verify", "origin/main^{commit}"]);
+    (input.prepareAdvisor ?? copyAdvisorCheckout)(source, advisorDirectory, baseCommit);
+    const refs = (input.prepareSnapshot ?? createLocalReviewSnapshot)(source, snapshot, baseCommit);
     for (const specialist of input.specialists ?? ADVISOR_SPECIALISTS) {
       const env = specialistEnvironment({
         advisorDirectory,
@@ -237,17 +261,18 @@ export async function runLocalReview(
           `Local review failed during ${stage} for specialist ${specialist.interest}`,
           { cause: error },
         );
-        throw specialistFailure;
-      } finally {
-        try {
-          if (activeEnvironment === env) {
-            activeEnvironment = undefined;
-            lifecycle.remove(env);
-          }
-        } catch (cleanupError) {
-          if (specialistFailure === undefined) throw cleanupError;
-        }
       }
+      let specialistCleanupFailure: unknown;
+      try {
+        if (activeEnvironment === env) {
+          activeEnvironment = undefined;
+          lifecycle.remove(env);
+        }
+      } catch (error) {
+        specialistCleanupFailure = error;
+      }
+      if (specialistFailure !== undefined) throw specialistFailure;
+      if (specialistCleanupFailure !== undefined) throw specialistCleanupFailure;
     }
     const destination = path.join(source, LOCAL_OUTPUT_DIRECTORY);
     const nonce = randomUUID();
@@ -265,24 +290,19 @@ export async function runLocalReview(
       if (hadPrevious && !fs.existsSync(destination)) fs.renameSync(previous, destination);
       throw error;
     }
-    return destination;
+    result = destination;
   } catch (error) {
     primaryFailure = error;
-    throw error;
-  } finally {
-    for (const [signal, handler] of signalHandlers) process.off(signal, handler);
-    try {
-      await cleanup();
-    } catch (cleanupError) {
-      if (primaryFailure === undefined) throw cleanupError;
-    } finally {
-      try {
-        if (ownsTemporaryRoot) fs.rmSync(temporaryRoot, { recursive: true, force: true });
-      } catch (cleanupError) {
-        if (primaryFailure === undefined) throw cleanupError;
-      }
-    }
   }
+  for (const [signal, handler] of signalHandlers) process.off(signal, handler);
+  try {
+    await cleanup();
+  } catch (error) {
+    cleanupFailure = error;
+  }
+  if (primaryFailure !== undefined) throw primaryFailure;
+  if (cleanupFailure !== undefined) throw cleanupFailure;
+  return result!;
 }
 
 async function main(): Promise<void> {

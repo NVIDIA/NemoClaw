@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  copyAdvisorCheckout,
   createLocalReviewSnapshot,
   runLocalReview,
   type LocalReviewLifecycle,
@@ -40,6 +41,11 @@ function repository(): string {
   fs.writeFileSync(path.join(directory, "committed.txt"), "base\n");
   fs.writeFileSync(path.join(directory, "staged.txt"), "base\n");
   fs.writeFileSync(path.join(directory, "unstaged.txt"), "base\n");
+  fs.mkdirSync(path.join(directory, "tools", "pr-review-advisor"), { recursive: true });
+  fs.writeFileSync(
+    path.join(directory, "tools", "pr-review-advisor", "policy.txt"),
+    "base policy\n",
+  );
   git(directory, ["add", "."]);
   git(directory, ["commit", "-m", "base"]);
   git(directory, ["remote", "add", "origin", directory]);
@@ -78,6 +84,41 @@ describe("local PR review advisor", () => {
 
     expect(fs.readFileSync(githubEnv, "utf8")).toBe(`PI_IMAGE=${ADVISOR_PI_IMAGE}\n`);
     expect(ADVISOR_PI_IMAGE).toMatch(/@sha256:[0-9a-f]{64}$/u);
+  });
+
+  it("copies trusted advisor code from origin/main while the review snapshot includes branch advisor changes (#10611)", () => {
+    const source = repository();
+    const advisorSource = path.join(source, "tools", "pr-review-advisor");
+    fs.writeFileSync(path.join(advisorSource, "policy.txt"), "branch policy\n");
+    git(source, ["commit", "-am", "advisor branch"]);
+    fs.mkdirSync(path.join(source, "node_modules"));
+    fs.writeFileSync(
+      path.join(source, "node_modules", "installed-package.txt"),
+      "installed bytes\n",
+    );
+    const root = temporaryDirectory();
+    const advisor = path.join(root, "advisor");
+    const snapshot = path.join(root, "snapshot");
+
+    copyAdvisorCheckout(source, advisor);
+    createLocalReviewSnapshot(source, snapshot);
+
+    expect(
+      fs.readFileSync(path.join(advisor, "tools", "pr-review-advisor", "policy.txt"), "utf8"),
+    ).toBe("base policy\n");
+    expect(
+      fs.readFileSync(path.join(snapshot, "tools", "pr-review-advisor", "policy.txt"), "utf8"),
+    ).toBe("branch policy\n");
+    expect(
+      fs.readFileSync(path.join(advisor, "node_modules", "installed-package.txt"), "utf8"),
+    ).toBe("installed bytes\n");
+  });
+
+  it("reports the prerequisite when copied dependencies are missing (#10611)", () => {
+    const source = repository();
+    expect(() => copyAdvisorCheckout(source, path.join(temporaryDirectory(), "advisor"))).toThrow(
+      "Run npm install before local review",
+    );
   });
 
   it("snapshots branch, staged, unstaged, and nonignored untracked changes without source mutation (#10610)", () => {
@@ -224,6 +265,89 @@ describe("local PR review advisor", () => {
     ).rejects.toThrow("cleanup failed");
   });
 
+  it.each([
+    ["missing", ["pr-review-design-architecture-summary.md"]],
+    [
+      "extra",
+      [
+        "pr-review-design-architecture-summary.md",
+        "pr-review-design-architecture-session.jsonl",
+        "extra.txt",
+      ],
+    ],
+  ])("rejects %s specialist artifact sets (#10611)", async (_case, files) => {
+    const source = repository();
+    const lifecycle: LocalReviewLifecycle = {
+      prepare: async () => undefined,
+      configure: async () => undefined,
+      create: () => undefined,
+      run: () => undefined,
+      download: (env) => {
+        const output = path.join(
+          env.GITHUB_WORKSPACE as string,
+          "artifacts",
+          env.PR_REVIEW_ADVISOR_ARTIFACT_DIR as string,
+        );
+        fs.mkdirSync(output, { recursive: true });
+        files.forEach((name) => fs.writeFileSync(path.join(output, name), "artifact\n"));
+      },
+      remove: () => undefined,
+    };
+    await expect(
+      runLocalReview({
+        source,
+        temporaryRoot: temporaryDirectory(),
+        specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+        lifecycle,
+        prepareAdvisor: (_source, target) => fs.mkdirSync(target, { recursive: true }),
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("failed during validate"),
+      cause: expect.objectContaining({
+        message: "Specialist artifacts do not match the existing Markdown and JSONL contract",
+      }),
+    });
+  });
+
+  it("attempts sandbox, gateway, and owned-root cleanup independently with primary-error priority (#10611)", async () => {
+    const source = repository();
+    const stopGateway = vi.fn(async () => {
+      throw new Error("gateway cleanup failed");
+    });
+    const remove = vi.fn(() => {
+      throw new Error("sandbox cleanup failed");
+    });
+    let ownedRoot = "";
+    const lifecycle: LocalReviewLifecycle = {
+      prepare: async () => undefined,
+      configure: async () => stopGateway,
+      create: () => undefined,
+      run: () => {
+        throw new Error("primary run failed");
+      },
+      download: () => undefined,
+      remove,
+    };
+
+    await expect(
+      runLocalReview({
+        source,
+        specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+        lifecycle,
+        prepareAdvisor: (_source, target) => {
+          ownedRoot = path.dirname(target);
+          fs.mkdirSync(target, { recursive: true });
+        },
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("failed during run"),
+      cause: expect.objectContaining({ message: "primary run failed" }),
+    });
+    expect(remove).toHaveBeenCalledOnce();
+    expect(stopGateway).toHaveBeenCalledOnce();
+    expect(fs.existsSync(ownedRoot)).toBe(false);
+  });
+
   it("removes the active sandbox and publishes no partial output after failure (#10610)", async () => {
     const source = repository();
     const root = temporaryDirectory();
@@ -251,7 +375,10 @@ describe("local PR review advisor", () => {
         prepareAdvisor: (_source, target) =>
           fs.mkdirSync(path.join(target, ".git"), { recursive: true }),
       }),
-    ).rejects.toThrow("Local review failed during run for specialist");
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("Local review failed during run for specialist"),
+      cause: expect.objectContaining({ message: "failed" }),
+    });
     expect(remove).toHaveBeenCalledOnce();
     expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
   });
