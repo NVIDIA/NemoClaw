@@ -201,11 +201,41 @@ fixed_transport_broker = process(
     ),
     188,
 )
-dynamic_transport_broker = process(
+forged_transport_broker = process(
     89,
     "S",
     1,
     "789",
+    control.ROOT_UID,
+    (
+        control.TRANSPORT_BROKER_PYTHON,
+        b"-I",
+        control.TRANSPORT_BROKER_PATH,
+        b"a" * 64,
+    ),
+    189,
+    fixed_transport_broker.executable_inode + 1,
+)
+wrong_argv_transport_broker = process(
+    90,
+    "S",
+    1,
+    "790",
+    control.ROOT_UID,
+    (
+        b"/tmp/forged-python",
+        b"-I",
+        control.TRANSPORT_BROKER_PATH,
+        b"a" * 64,
+    ),
+    190,
+    fixed_transport_broker.executable_inode,
+)
+dynamic_transport_broker = process(
+    91,
+    "S",
+    1,
+    "791",
     control.ROOT_UID,
     (
         b"/opt/hermes/.venv/bin/python3",
@@ -216,14 +246,34 @@ dynamic_transport_broker = process(
         b"/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
         b"a" * 64,
     ),
-    189,
+    191,
+)
+real_os_stat = control.os.stat
+transport_broker_executable = types.SimpleNamespace(
+    st_mode=stat.S_IFREG | 0o755,
+    st_uid=control.ROOT_UID,
+    st_gid=control.ROOT_GID,
+    st_dev=fixed_transport_broker.executable_device,
+    st_ino=fixed_transport_broker.executable_inode,
+)
+control.os.stat = lambda path, *args, **kwargs: (
+    transport_broker_executable
+    if path == control.TRANSPORT_BROKER_PYTHON
+    else real_os_stat(path, *args, **kwargs)
 )
 control._capture_process = lambda _pid: fixed_transport_broker
 fixed_transport_broker_reference = real_transport_broker_reference()
 results = {"fixed_transport_broker": fixed_transport_broker_reference.pid}
+control._capture_process = lambda _pid: forged_transport_broker
+results["forged_transport_broker_rejected"] = real_transport_broker_reference() is None
+control._capture_process = lambda _pid: wrong_argv_transport_broker
+results["wrong_argv_transport_broker_rejected"] = (
+    real_transport_broker_reference() is None
+)
 control._capture_process = lambda _pid: dynamic_transport_broker
 results["dynamic_transport_broker_rejected"] = real_transport_broker_reference() is None
 control._capture_process = real_capture_process
+control.os.stat = real_os_stat
 
 root_uid = control.ROOT_UID
 pid1 = process(1, "S", 0, "100", root_uid, (control.OPENSHELL_ARGV0,), 101)

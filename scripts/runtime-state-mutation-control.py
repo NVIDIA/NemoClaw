@@ -117,6 +117,7 @@ START_LOG_PATH = b"/tmp/nemoclaw-start.log"
 START_LOG_DRAIN_PATHS = (b"tee", b"/usr/bin/tee", b"/bin/tee")
 STARTUP_GATE_PYTHON = b"/opt/hermes/.venv/bin/python3"
 STARTUP_GATE_HELPER = b"/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py"
+TRANSPORT_BROKER_PYTHON = b"/opt/hermes/.venv/bin/python3"
 TRANSPORT_BROKER_PATH = (
     b"/usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py"
 )
@@ -3180,18 +3181,34 @@ def _resume_activation_guard_pidfd(pidfd: int) -> None:
 
 
 def _transport_broker_reference() -> ProcessReference | None:
+    try:
+        executable_before = os.stat(TRANSPORT_BROKER_PYTHON)
+    except OSError:
+        return None
     process = _capture_process(os.getppid())
     if process is None:
         return None
+    try:
+        executable_after = os.stat(TRANSPORT_BROKER_PYTHON)
+    except OSError:
+        return None
     command = process.command
     if (
-        process.pid <= 1
+        not stat.S_ISREG(executable_before.st_mode)
+        or executable_before.st_uid != ROOT_UID
+        or executable_before.st_gid != ROOT_GID
+        or stat.S_IMODE(executable_before.st_mode) & 0o022
+        or not _same_filesystem_object(executable_before, executable_after)
+        or process.pid <= 1
         or process.state in ("Z", "X", "x")
         or process.uids != (ROOT_UID,) * 4
         or len(command) != 4
+        or command[0] != TRANSPORT_BROKER_PYTHON
         or command[1] != b"-I"
         or command[2] != TRANSPORT_BROKER_PATH
         or re.fullmatch(rb"[0-9a-f]{64}", command[3]) is None
+        or process.executable_key()
+        != (executable_after.st_dev, executable_after.st_ino)
     ):
         return None
     return _process_reference(process)
