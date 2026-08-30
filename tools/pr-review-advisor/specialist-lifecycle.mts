@@ -76,6 +76,7 @@ export async function runAdvisorSpecialist(input: {
   let gateway: ReturnType<AdvisorSpecialistLifecycle["startGateway"]>;
   let sandbox = false;
   let execution: Exclude<ReturnType<AdvisorSpecialistLifecycle["run"]>, void> | undefined;
+  let settleCancellation: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
   let stage = "prepare";
   const cleanup = (): Promise<void> =>
@@ -84,11 +85,14 @@ export async function runAdvisorSpecialist(input: {
         const errors: Error[] = [];
         if (execution) {
           try {
-            await (execution.cancel() ?? execution.completion);
+            await execution.cancel();
           } catch (error) {
             errors.push(failure("execution cleanup", input.env, error));
+          } finally {
+            settleCancellation?.();
+            settleCancellation = undefined;
+            execution = undefined;
           }
-          execution = undefined;
         }
         if (sandbox) {
           try {
@@ -138,9 +142,20 @@ export async function runAdvisorSpecialist(input: {
       execution = lifecycle.run(input.env) || undefined;
       input.setActiveCleanup?.(cleanup);
       if (execution) {
-        await execution.completion;
-        execution = undefined;
-        if (input.cancelled?.()) result = "cancelled";
+        const cancellation = new Promise<"cancelled">(
+          (resolve) => (settleCancellation = () => resolve("cancelled")),
+        );
+        const completion = execution.completion.then(
+          () => ({ error: undefined }),
+          (error: unknown) => ({ error }),
+        );
+        const settled = await Promise.race([completion, cancellation]);
+        if (settled === "cancelled" || input.cancelled?.()) result = "cancelled";
+        else {
+          execution = undefined;
+          settleCancellation = undefined;
+          if (settled.error) throw settled.error;
+        }
       }
       if (result === "complete") {
         stage = "download";
@@ -173,6 +188,23 @@ export async function runAdvisorSpecialistCommand(
   command: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
   lifecycle: AdvisorSpecialistLifecycle = defaultAdvisorSpecialistLifecycle,
+  signals: {
+    listen: (handler: (signal: NodeJS.Signals) => void) => () => void;
+    restore: (signal: NodeJS.Signals) => void;
+  } = {
+    listen: (receive) => {
+      const handlers = new Map<NodeJS.Signals, () => void>();
+      for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+        const handler = (): void => receive(signal);
+        handlers.set(signal, handler);
+        process.once(signal, handler);
+      }
+      return () => {
+        for (const [signal, handler] of handlers) process.off(signal, handler);
+      };
+    },
+    restore: (signal) => process.kill(process.pid, signal),
+  },
 ): Promise<void> {
   if (command === "prepare") return lifecycle.prepare(env);
   if (command !== "analysis")
@@ -181,7 +213,37 @@ export async function runAdvisorSpecialistCommand(
     lifecycle.unavailable?.(env, new Error("Advisor inference is unavailable"));
     return;
   }
-  await runAdvisorSpecialist({ env, lifecycle, prepare: false });
+  let received: NodeJS.Signals | undefined;
+  let activeCleanup: (() => Promise<void>) | undefined;
+  let cancellationFailure: unknown;
+  const removeHandlers = signals.listen((signal) => {
+    received ??= signal;
+    void activeCleanup?.().catch((error) => (cancellationFailure ??= error));
+  });
+  try {
+    await runAdvisorSpecialist({
+      env,
+      lifecycle,
+      prepare: false,
+      setActiveCleanup: (cleanup) => {
+        activeCleanup = cleanup;
+        if (received) void cleanup?.().catch((error) => (cancellationFailure ??= error));
+      },
+      cancelled: () => received !== undefined,
+    });
+  } catch (error) {
+    cancellationFailure ??= error;
+    if (!received) throw error;
+  } finally {
+    removeHandlers();
+  }
+  if (received) {
+    if (cancellationFailure)
+      console.error(
+        `Received ${received}; residual advisor resource cleanup failed: ${diagnostic(cancellationFailure)}`,
+      );
+    signals.restore(received);
+  }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   runAdvisorSpecialistCommand(process.argv[2]).catch((error) => {

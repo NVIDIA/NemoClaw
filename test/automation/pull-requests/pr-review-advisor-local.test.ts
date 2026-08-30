@@ -317,7 +317,7 @@ describe("local PR review advisor", () => {
     expect(npmEnvironment).toContain("npm_config_cache=" + path.join(source, "npm-cache"));
   });
 
-  it("kills a SIGTERM-ignoring trusted child before removing its bootstrap checkout (#10611)", async () => {
+  it("allows cleanup longer than 250 ms before removing its bootstrap checkout (#10611)", async () => {
     const source = temporaryDirectory();
     const temporaryRoot = temporaryDirectory();
     git(source, ["init", "--initial-branch=main"]);
@@ -357,78 +357,23 @@ describe("local PR review advisor", () => {
     const pidPath = path.join(source, "trusted-child-pid");
     const termPath = path.join(source, "trusted-child-term");
     await waitForFixturePath(pidPath, child, () => stderr);
-    expect(fs.existsSync(pidPath)).toBe(true);
     const trustedPid = Number(fs.readFileSync(pidPath, "utf8"));
 
     child.kill("SIGTERM");
+    await waitForFixturePath(termPath, child, () => stderr);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(() => process.kill(trustedPid, 0)).not.toThrow();
+    process.kill(-trustedPid, "SIGKILL");
     const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
       (resolve) => child.once("close", (code, signal) => resolve({ code, signal })),
     );
 
     expect(result, stderr).toEqual({ code: null, signal: "SIGTERM" });
-    expect(fs.readFileSync(termPath, "utf8")).toBe("SIGTERM");
-    expect(() => process.kill(trustedPid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
     expect(
       fs
         .readdirSync(temporaryRoot)
         .filter((name) => name.startsWith("nemoclaw-local-review-bootstrap-")),
     ).toEqual([]);
-  });
-
-  it("retains bootstrap when a process group survives SIGKILL (#10611)", async () => {
-    const source = temporaryDirectory();
-    const temporaryRoot = temporaryDirectory();
-    git(source, ["init", "--initial-branch=main"]);
-    git(source, ["config", "user.name", "Test"]);
-    git(source, ["config", "user.email", "test@example.com"]);
-    fs.mkdirSync(path.join(source, "tools", "pr-review-advisor"), { recursive: true });
-    fs.copyFileSync(
-      path.resolve("tools/pr-review-advisor/local-review.mts"),
-      path.join(source, "tools", "pr-review-advisor", "local-review.mts"),
-    );
-    fs.copyFileSync(
-      SIGTERM_IGNORING_CHILD_FIXTURE,
-      path.join(source, "tools", "pr-review-advisor", "local-review-implementation.mts"),
-    );
-    const npmBin = installFakeNpm(source);
-    git(source, ["add", "."]);
-    git(source, ["commit", "-m", "trusted base"]);
-    git(source, ["remote", "add", "origin", source]);
-    git(source, ["fetch", "origin", "main"]);
-    const child = spawn(
-      process.execPath,
-      ["--experimental-strip-types", "--no-warnings", "tools/pr-review-advisor/local-review.mts"],
-      {
-        cwd: source,
-        env: {
-          ...process.env,
-          HOME: path.resolve(npmBin, "../.."),
-          PATH: npmBin + path.delimiter + process.env.PATH,
-          TMPDIR: temporaryRoot,
-          NODE_TEST_CONTEXT: "child-v8",
-          NEMOCLAW_TEST_STICKY_PROCESS_GROUP: "1",
-        },
-        stdio: "pipe",
-      },
-    );
-    let stderr = "";
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => (stderr += chunk));
-    await waitForFixturePath(path.join(source, "trusted-child-pid"), child, () => stderr);
-
-    child.kill("SIGTERM");
-    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-      (resolve) => child.once("close", (code, signal) => resolve({ code, signal })),
-    );
-
-    expect(result, stderr).toEqual({ code: null, signal: "SIGTERM" });
-    expect(stderr).toContain("received SIGTERM; process group cleanup was not confirmed");
-    expect(stderr).toContain("did not exit after SIGKILL");
-    const retained = fs
-      .readdirSync(temporaryRoot)
-      .filter((name) => name.startsWith("nemoclaw-local-review-bootstrap-"));
-    expect(retained).toHaveLength(1);
-    expect(stderr).toContain(path.join(temporaryRoot, retained[0]!));
   });
 
   it("explains that local review requires the bootstrap repair on origin/main (#10611)", () => {

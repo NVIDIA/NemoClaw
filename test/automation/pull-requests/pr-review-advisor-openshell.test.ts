@@ -110,6 +110,101 @@ afterEach(() => {
 });
 
 describe("PR review advisor specialist lifecycle", () => {
+  it("cancels active analysis, cleans owned resources, and restores termination (#10611)", async () => {
+    const calls: string[] = [];
+    let receive!: (signal: NodeJS.Signals) => void;
+    let interrupt!: () => void;
+    const completion = new Promise<void>((_resolve, reject) =>
+      (interrupt = () => reject(new Error("analysis stopped by SIGTERM"))),
+    );
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const restore = vi.fn();
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => ({ configure: Promise.resolve(), stop: async () => void calls.push("gateway") }),
+      create: () => void calls.push("create"),
+      run: () => ({
+        completion,
+        cancel: () => {
+          calls.push("cancel");
+          interrupt();
+        },
+      }),
+      download: () => void calls.push("download"),
+      remove: () => void calls.push("sandbox"),
+    };
+
+    const command = runAdvisorSpecialistCommand(
+      "analysis",
+      { PR_REVIEW_ADVISOR_RUN_ANALYSIS: "1", SANDBOX_NAME: "signal-test" },
+      lifecycle,
+      {
+        listen: (handler) => {
+          receive = handler;
+          return () => void calls.push("listeners");
+        },
+        restore,
+      },
+    );
+    await vi.waitFor(() => expect(calls).toContain("create"));
+    receive("SIGTERM");
+    await command;
+
+    expect(calls).toEqual(["create", "cancel", "sandbox", "gateway", "listeners"]);
+    expect(restore).toHaveBeenCalledWith("SIGTERM");
+    expect(stderr).not.toHaveBeenCalled();
+    expect(calls).not.toContain("download");
+  });
+
+  it("reports redacted residual resource diagnostics before restoring termination (#10611)", async () => {
+    let receive!: (signal: NodeJS.Signals) => void;
+    let finish!: () => void;
+    const credential = "cleanup-secret";
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const restore = vi.fn();
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => ({ configure: Promise.resolve(), stop: async () => undefined }),
+      create: () => undefined,
+      run: () => ({
+        completion: new Promise<void>((resolve) => (finish = resolve)),
+        cancel: () => {
+          finish();
+          throw new Error(`cancel residual; token=${credential}`);
+        },
+      }),
+      download: () => undefined,
+      remove: () => {
+        throw new Error(`sandbox residual; token=${credential}`);
+      },
+    };
+
+    const command = runAdvisorSpecialistCommand(
+      "analysis",
+      {
+        PR_REVIEW_ADVISOR_RUN_ANALYSIS: "1",
+        PR_REVIEW_ADVISOR_API_KEY: credential,
+        SANDBOX_NAME: "residual-sandbox",
+      },
+      lifecycle,
+      {
+        listen: (handler) => {
+          receive = handler;
+          return () => undefined;
+        },
+        restore,
+      },
+    );
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    receive("SIGHUP");
+    await command;
+
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("execution cleanup"));
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("residual-sandbox"));
+    expect(stderr).not.toHaveBeenCalledWith(expect.stringContaining(credential));
+    expect(restore).toHaveBeenCalledWith("SIGHUP");
+  });
+
   it.each([
     ["enabled", "1", ["prepare", "configure", "create", "run", "download", "remove"]],
     ["disabled", "0", ["prepare", "unavailable"]],

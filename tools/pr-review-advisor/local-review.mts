@@ -65,16 +65,11 @@ function groupExists(pid: number): boolean {
   }
 }
 async function stopGroup(pid: number): Promise<void> {
-  let killed = false;
-  const stickyTestGroup =
-    process.env.NODE_TEST_CONTEXT === "child-v8" &&
-    process.env.NEMOCLAW_TEST_STICKY_PROCESS_GROUP === "1";
-  const exists = (): boolean => (killed && stickyTestGroup) || groupExists(pid);
   const wait = async (ms: number): Promise<boolean> => {
     const deadline = Date.now() + ms;
-    while (exists() && Date.now() < deadline)
+    while (groupExists(pid) && Date.now() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 25));
-    return !exists();
+    return !groupExists(pid);
   };
   const signal = (value: NodeJS.Signals): void => {
     try {
@@ -84,11 +79,9 @@ async function stopGroup(pid: number): Promise<void> {
     }
   };
   signal("SIGTERM");
-  if (await wait(250)) return;
+  if (await wait(30_000)) return;
   signal("SIGKILL");
-  killed = true;
-  if (!(await wait(stickyTestGroup ? 25 : 5_000)))
-    throw new Error(`process group ${pid} did not exit after SIGKILL`);
+  if (!(await wait(5_000))) throw new Error(`process group ${pid} did not exit after SIGKILL`);
 }
 async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
   if (process.argv.length !== 2) throw new Error("review:local does not accept options");
