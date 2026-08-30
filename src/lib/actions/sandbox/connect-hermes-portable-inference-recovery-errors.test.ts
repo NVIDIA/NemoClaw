@@ -88,6 +88,7 @@ describe("Hermes Portable connect recovery errors", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.registryEntries[0]?.hostLocalInferenceReceipt).toBeUndefined();
+    expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalled();
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
     expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledWith(
       ["inference", "get", "-g", "nemoclaw"],
