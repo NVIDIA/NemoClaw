@@ -103,7 +103,7 @@
     },
     {
       "file": "test/agents/hermes/hermes-share-mount-deps.test.ts",
-      "test": "binds the cached Hermes agent-browser fallback to its lock before offline use",
+      "test": "binds the Hermes one-shot turn and cached agent-browser fallback before use",
       "category": "security"
     },
     {

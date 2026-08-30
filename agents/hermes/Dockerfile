@@ -757,6 +757,10 @@ RUN hermes_version_output="$(/usr/local/bin/hermes --version)" \
         && grep -q '"resumed_oneshot"' /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json; then \
         echo "ERROR: installed Hermes ${hermes_semver} but Hermes v0.20.6 compatibility workarounds are still installed; re-review the workaround set before upgrading Hermes" >&2; \
         exit 1; \
+    fi \
+    && if ! grep -Fq 'process_registry.wait_for_pending_completions(oneshot_task_id)' /opt/hermes/hermes_cli/oneshot.py; then \
+        echo "ERROR: Hermes one-shot completion wait is not scoped to the exact turn" >&2; \
+        exit 1; \
     fi
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \

@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Pins the remaining NemoClaw dependency policy difference in the checksum-
+# Pins the remaining NemoClaw source compatibility differences in the checksum-
 # pinned Hermes v2026.8.27 source. Hermes 0.20.6 already carries the reviewed
 # Python security floors and routes memory-provider installation through its
 # managed lazy target. Keep the Hindsight bridge and upstream agent-browser
 # fallback exact so runtime resolution cannot drift beyond the separately
-# verified build-time probes.
+# verified build-time probes. Scope one-shot completion waits to the exact turn
+# so unrelated managed-runtime processes cannot hold a completed query open.
 diff --git a/plugins/memory/hindsight/plugin.yaml b/plugins/memory/hindsight/plugin.yaml
 --- a/plugins/memory/hindsight/plugin.yaml
 +++ b/plugins/memory/hindsight/plugin.yaml
@@ -37,3 +38,27 @@ diff --git a/tools/browser_tool.py b/tools/browser_tool.py
 +
 +
  def _is_npx_agent_browser_sentinel(browser_cmd: str) -> bool:
+diff --git a/hermes_cli/oneshot.py b/hermes_cli/oneshot.py
+--- a/hermes_cli/oneshot.py
++++ b/hermes_cli/oneshot.py
+@@ -23,6 +23,7 @@ from __future__ import annotations
+ import logging
+ import os
+ import sys
++import uuid
+ from contextlib import redirect_stderr, redirect_stdout
+ from pathlib import Path
+ from typing import Optional
+@@ -510,4 +511,5 @@ def _run_agent(
+-        result = agent.run_conversation(prompt)
++        oneshot_task_id = str(uuid.uuid4())
++        result = agent.run_conversation(prompt, task_id=oneshot_task_id)
+         return (result.get("final_response") or "", result)
+     finally:
+         # Ordering deliberately mirrors gateway/run.py:_cleanup_agent_resources,
+@@ -526,4 +528,4 @@ def _run_agent(
+-                process_registry.wait_for_pending_completions(None)
++                process_registry.wait_for_pending_completions(oneshot_task_id)
+             except Exception:
+                 logging.debug("oneshot background completion wait failed", exc_info=True)
+             try:

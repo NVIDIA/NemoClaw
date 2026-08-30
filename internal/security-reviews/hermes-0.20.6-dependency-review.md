@@ -13,11 +13,11 @@ Update the NVIDIA/NemoClaw Hermes runtime from `v2026.7.20` / `0.19.0` to
 the published `v2026.8.27` / `0.20.6` release. The target source is
 `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`.
 
-The migration is acceptable for a draft only with the exact source bindings,
-compatibility patches, and focused tests in this change. The `CI / Pull Request`
-workflow and the trusted manual PR plan in `.github/workflows/e2e.yaml` remain
-required before qualification. This review does not treat the Mac authoring run
-or a missing Brev shadow as qualification.
+This change can remain a draft while the required evidence is incomplete.
+Before qualification, obtain `CI / Pull Request` evidence and the authenticated
+E2E job set selected by `.github/workflows/e2e.yaml`. The Mac authoring checks do
+not qualify the Linux image or sandbox lifecycle. The `staging-brev-launchable`
+job is supplemental evidence and does not replace the selected job set.
 
 ## Reviewed identities
 
@@ -123,6 +123,14 @@ and repeats only the network-disabled version probe. The final-image profile
 policy patch also forces the browser subprocess into npm offline mode after
 ambient values are copied, so a missing runtime cache fails closed instead of
 contacting the registry.
+
+Hermes 0.20.6 also added a one-shot completion linger that waits on every
+tracked process in the CLI registry. A managed sandbox can contain unrelated
+background processes, so a completed `hermes -z` turn can remain open until the
+upstream 600-second bound expires. The source patch assigns one fresh task ID to
+the one-shot turn and passes that same ID to the completion wait. Background
+work created by the turn still receives its bounded linger, while unrelated
+managed-runtime processes cannot delay the final response.
 
 No new supported integration is introduced. Optional upstream features remain
 subject to their existing NVIDIA/NemoClaw product and policy gates.

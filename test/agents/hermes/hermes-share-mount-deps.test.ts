@@ -780,13 +780,14 @@ describe("Hermes share mount package parity (#2947)", () => {
     }
   });
 
-  // source-shape-contract: security -- The image must retain the sandbox privilege drop and network-disabled offline probe around the reviewed browser package.
-  it("binds the cached Hermes agent-browser fallback to its lock before offline use", () => {
+  // source-shape-contract: security -- The image must scope one-shot completion to the exact turn and retain the network-disabled browser package probe.
+  it("binds the Hermes one-shot turn and cached agent-browser fallback before use", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-agent-browser-"));
     const fixtureRoot = path.join(tmp, "source");
     const pluginPath = path.join(fixtureRoot, "plugins", "memory", "hindsight", "plugin.yaml");
     const browserToolPath = path.join(fixtureRoot, "tools", "browser_tool.py");
+    const oneshotPath = path.join(fixtureRoot, "hermes_cli", "oneshot.py");
     const fakePython = path.join(tmp, "python");
     const fakeNpm = path.join(tmp, "npm");
     const fakeNpx = path.join(tmp, "npx");
@@ -801,6 +802,7 @@ describe("Hermes share mount package parity (#2947)", () => {
     try {
       fs.mkdirSync(path.dirname(pluginPath), { recursive: true });
       fs.mkdirSync(path.dirname(browserToolPath), { recursive: true });
+      fs.mkdirSync(path.dirname(oneshotPath), { recursive: true });
       fs.mkdirSync(sandboxHome);
       fs.mkdirSync(lockedRuntime);
       fs.copyFileSync(
@@ -860,6 +862,65 @@ describe("Hermes share mount package parity (#2947)", () => {
             "",
           ].join("\n"),
       );
+      fs.writeFileSync(
+        oneshotPath,
+        [
+          '"""Hermes one-shot completion fixture."""',
+          "",
+          "from __future__ import annotations",
+          "",
+          "import logging",
+          "import os",
+          "import sys",
+          "from contextlib import redirect_stderr, redirect_stdout",
+          "from pathlib import Path",
+          "from typing import Optional",
+          "",
+          "EVENTS = []",
+          "",
+          "class FakeAgent:",
+          "    def __init__(self):",
+          "        self.suppress_status_output = False",
+          "        self.stream_delta_callback = object()",
+          "        self.tool_gen_callback = object()",
+          "",
+          "    def run_conversation(self, prompt, **kwargs):",
+          '        EVENTS.append(["run", kwargs.get("task_id")])',
+          '        return {"final_response": prompt}',
+          "",
+          "def _run_agent(prompt):",
+          "    agent = FakeAgent()",
+          "    try:",
+          "        agent.suppress_status_output = True",
+          "        agent.stream_delta_callback = None",
+          "        agent.tool_gen_callback = None",
+          "",
+          "        result = agent.run_conversation(prompt)",
+          '        return (result.get("final_response") or "", result)',
+          "    finally:",
+          "        # Ordering deliberately mirrors gateway/run.py:_cleanup_agent_resources,",
+          "        # NOT cli.py:_run_cleanup — oneshot has no _active_agent_ref and must",
+          "        # close the agent explicitly because the hard-exit path skips finalizers.",
+          "        if agent is not None:",
+          "            # Linger (bounded) for background processes this turn spawned with",
+          "            # notify_on_complete=true BEFORE agent.close(): close() calls",
+          "            # process_registry.kill_all(task_id) and the dying parent owns the",
+          "            # children's stdout pipes, so exiting now destroys in-flight",
+          "            # deliveries — including Bot Mode handoff replies dispatched from",
+          "            # a short-lived recipient (#90879).",
+          "            try:",
+          "                from tools.process_registry import process_registry",
+          "",
+          "                process_registry.wait_for_pending_completions(None)",
+          "            except Exception:",
+          '                logging.debug("oneshot background completion wait failed", exc_info=True)',
+          "            try:",
+          "                pass",
+          "            except Exception:",
+          "                pass",
+          "",
+        ].join("\n"),
+      );
 
       const applied = spawnSync(
         "git",
@@ -872,6 +933,41 @@ describe("Hermes share mount package parity (#2947)", () => {
         .split("\n")
         .find((line) => line.startsWith("AGENT_BROWSER_NPX_SPEC ="));
       expect(patchedSpec).toBe('AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"');
+      const oneShotRun = spawnSync(
+        "python3",
+        [
+          "-I",
+          "-c",
+          [
+            "import importlib.util, json, pathlib, sys, types, uuid",
+            "events = []",
+            'registry = types.SimpleNamespace(wait_for_pending_completions=lambda task_id: events.append(["wait", task_id]))',
+            'tools = types.ModuleType("tools")',
+            'process_registry_module = types.ModuleType("tools.process_registry")',
+            "process_registry_module.process_registry = registry",
+            "tools.process_registry = process_registry_module",
+            'sys.modules["tools"] = tools',
+            'sys.modules["tools.process_registry"] = process_registry_module',
+            'spec = importlib.util.spec_from_file_location("oneshot_fixture", pathlib.Path(sys.argv[1]))',
+            "module = importlib.util.module_from_spec(spec)",
+            "spec.loader.exec_module(module)",
+            'response, _result = module._run_agent("PONG")',
+            "events = module.EVENTS + events",
+            'assert response == "PONG"',
+            'assert [event[0] for event in events] == ["run", "wait"]',
+            "assert events[0][1] == events[1][1]",
+            "assert events[0][1] is not None",
+            "uuid.UUID(events[0][1])",
+            "print(json.dumps(events))",
+          ].join("; "),
+          oneshotPath,
+        ],
+        { encoding: "utf-8" },
+      );
+      expect(oneShotRun.status, oneShotRun.stderr).toBe(0);
+      const oneShotEvents = JSON.parse(oneShotRun.stdout);
+      expect(oneShotEvents[0][0]).toBe("run");
+      expect(oneShotEvents[1]).toEqual(["wait", oneShotEvents[0][1]]);
       const profilePatched = spawnSync(
         "python3",
         [

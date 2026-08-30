@@ -142,6 +142,15 @@ describe("Hermes 0.20.6 dependency review", () => {
     );
     expect(securityDependenciesPatch).toContain('-  - "hindsight-client>=0.6.1"');
     expect(securityDependenciesPatch).toContain('+  - "hindsight-client==0.6.1"');
+    expect(securityDependenciesPatch).toContain(
+      "+        oneshot_task_id = str(uuid.uuid4())",
+    );
+    expect(securityDependenciesPatch).toContain(
+      "+        result = agent.run_conversation(prompt, task_id=oneshot_task_id)",
+    );
+    expect(securityDependenciesPatch).toContain(
+      "+                process_registry.wait_for_pending_completions(oneshot_task_id)",
+    );
     expect(securityDependenciesPatch).not.toContain("diff --git a/uv.lock");
     expect(securityDependenciesPatch).not.toContain("diff --git a/pyproject.toml");
     expect(Object.keys(agentBrowserLock.packages).sort()).toEqual([
@@ -162,12 +171,16 @@ describe("Hermes 0.20.6 dependency review", () => {
     expect(dockerfile).toContain("npm_config_offline=true");
     expect(dockerfile).toContain("agent-browser@0.26.0 --version");
     expect(dockerfile).toContain(
+      "process_registry.wait_for_pending_completions(oneshot_task_id)",
+    );
+    expect(dockerfile).toContain(
       "ADD --checksum=sha256:a20c97b37910b6550d5ea50fbcc2d4187defe58cd57070b73863d069419c9440 https://files.pythonhosted.org/packages/77/c1/6e422f34e569cf8e18df68d1939c81c099d2b61e4f7d9621c8a77560799c/pydantic_settings-2.14.2-py3-none-any.whl /pydantic_settings-2.14.2-py3-none-any.whl",
     );
     expect(dockerfile).toContain(
       "--agent hermes --phase managed-image-capability-union; \\\n    fi \\\n    && /opt/hermes/.venv/bin/python -I -c",
     );
     expect(review).toContain("`pydantic-settings==2.14.2`");
+    expect(review).toContain("one-shot completion linger");
 
     for (const installedVersion of [
       "'agent-client-protocol': '0.9.0'",
