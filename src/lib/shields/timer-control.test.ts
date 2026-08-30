@@ -111,7 +111,7 @@ describe("timer marker generation cleanup", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "timer-marker-diagnostic-"));
     const expected = marker("alpha", "e".repeat(32));
     const markerPath = timerMarkerPath("alpha", stateDir);
-    const hostilePath = `${markerPath}.completed-hostile\u001b[31m\n\u009b31m`;
+    const hostilePath = `${markerPath}.completed-hostile\u001b[31m\n\u009b31m\u202e\u2066`;
     fs.writeFileSync(hostilePath, JSON.stringify(expected));
     const realUnlink = fs.unlinkSync.bind(fs);
     vi.spyOn(fs, "unlinkSync")
@@ -129,7 +129,11 @@ describe("timer marker generation cleanup", () => {
     expect(result.warning).toContain("\\u001b");
     expect(result.warning).toContain("\\n");
     expect(result.warning).toContain("\\u009b");
-    expect(result.warning).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
+    expect(result.warning).toContain("\\u202e");
+    expect(result.warning).toContain("\\u2066");
+    expect(result.warning).not.toMatch(
+      /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
+    );
     fs.rmSync(stateDir, { recursive: true, force: true });
   });
 

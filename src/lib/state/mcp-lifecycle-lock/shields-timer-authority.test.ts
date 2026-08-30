@@ -74,7 +74,7 @@ describe("Shields timer marker authority", () => {
     tempDirs.push(stateDir);
     const markerPath = shieldsTimerMarkerPath("alpha", stateDir);
     writeMarker(stateDir, "alpha", "alpha");
-    const hostilePath = `${markerPath}.completed-hostile\u001b[31m\n\u009b31m`;
+    const hostilePath = `${markerPath}.completed-hostile\u001b[31m\n\u009b31m\u202e\u2066`;
     fs.renameSync(markerPath, hostilePath);
     fs.writeFileSync(`${markerPath}.completed-invalid`, "{}");
 
@@ -88,14 +88,18 @@ describe("Shields timer marker authority", () => {
     expect(message).toContain("\\u001b");
     expect(message).toContain("\\n");
     expect(message).toContain("\\u009b");
-    expect(message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
+    expect(message).toContain("\\u202e");
+    expect(message).toContain("\\u2066");
+    expect(message).not.toMatch(
+      /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
+    );
   });
 
   it("fails into recovery with terminal-safe directory inspection diagnostics", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-marker-"));
     tempDirs.push(stateDir);
     const error = new Error(
-      `cannot inspect ${stateDir}\u001b[31m\n\u009b31m`,
+      `cannot inspect ${stateDir}\u001b[31m\n\u009b31m\u202e\u2066`,
     ) as NodeJS.ErrnoException;
     error.code = "EACCES";
     vi.spyOn(fs, "readdirSync").mockImplementation(() => {
@@ -114,7 +118,11 @@ describe("Shields timer marker authority", () => {
     expect(message).toContain("\\u001b");
     expect(message).toContain("\\n");
     expect(message).toContain("\\u009b");
-    expect(message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
+    expect(message).toContain("\\u202e");
+    expect(message).toContain("\\u2066");
+    expect(message).not.toMatch(
+      /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
+    );
   });
 });
 
