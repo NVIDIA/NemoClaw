@@ -52,6 +52,7 @@ const REUSABLE_NON_IMAGE_PATHS = [
   /^src\/lib\/shields\/.*[.]ts$/u,
   /^src\/lib\/tunnel\/agent-forward-stop(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/credential-provider-registration(?:[.]test)?[.]ts$/u,
+  /^src\/lib\/onboard\/initial-policy-real-policy[.]test[.]ts$/u,
   /^src\/lib\/onboard\/managed-bootstrap\/docker-runtime(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/managed-bootstrap\/podman-bootstrap-replacement(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/managed-bootstrap\/podman-image-transaction(?:[.]test)?[.]ts$/u,

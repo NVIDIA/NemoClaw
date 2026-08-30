@@ -153,6 +153,7 @@ on:
         "src/lib/tunnel/agent-forward-stop.ts",
         "src/lib/onboard/credential-provider-registration.test.ts",
         "src/lib/onboard/credential-provider-registration.ts",
+        "src/lib/onboard/initial-policy-real-policy.test.ts",
         "src/lib/onboard/managed-bootstrap/docker-runtime.test.ts",
         "src/lib/onboard/managed-bootstrap/docker-runtime.ts",
         "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.test.ts",
@@ -207,6 +208,7 @@ on:
     expect(source).not.toContain("src/lib/adapters/podman/index.ts");
     expect(source).not.toContain("src/lib/tunnel/agent-forward-stop.ts");
     expect(source).not.toContain("src/lib/onboard/credential-provider-registration.ts");
+    expect(source).not.toContain("src/lib/onboard/initial-policy-real-policy.test.ts");
     expect(source).not.toContain("src/lib/onboard/managed-bootstrap/docker-runtime.ts");
     expect(source).not.toContain("src/lib/onboard/machine/finalization-deps.ts");
     expect(source).not.toContain("src/lib/onboard/machine/messaging-credential-convergence.ts");
