@@ -193,6 +193,11 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "reuses the trusted dependency cache for offline package contracts",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "passes only the base-packaged SDK archive to pull request dependency jobs",
       "category": "security"
     },

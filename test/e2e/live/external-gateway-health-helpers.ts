@@ -18,6 +18,15 @@ import type { TestProgress } from "../fixtures/progress.ts";
 import { runBoundedRetry } from "../fixtures/retry-policy.ts";
 
 export const EXTERNAL_GATEWAY_HEALTH_TIMEOUT_MS = 3 * 60_000;
+const BLUEPRINT_RUNNER = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "..",
+  "dist",
+  "lib",
+  "blueprint-runner.js",
+);
 type ScenarioFixtures = Readonly<{
   artifacts: ArtifactSink;
   cleanup: CleanupRegistry;
@@ -150,7 +159,7 @@ async function waitForGatewayPort(options: {
 function runBlueprintRunnerHealth(blueprintRoot: string): Record<string, unknown> {
   const result = spawnSync(
     process.execPath,
-    [path.join(process.cwd(), "dist", "lib", "blueprint-runner.js"), "status", "--external-target"],
+    [BLUEPRINT_RUNNER, "status", "--external-target"],
     {
       encoding: "utf8",
       env: { ...process.env, NEMOCLAW_BLUEPRINT_PATH: blueprintRoot },

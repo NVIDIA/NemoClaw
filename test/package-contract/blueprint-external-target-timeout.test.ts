@@ -140,7 +140,11 @@ function createTlsMaterial(root: string, serverSan: string): TlsMaterial {
   return { caPath, certificatePath, keyPath };
 }
 
-function createTlsServer(material: TlsMaterial, sockets: Set<Socket>): tls.Server {
+function createTlsServer(
+  material: TlsMaterial,
+  sockets: Set<Socket>,
+  observedConnections: { count: number },
+): tls.Server {
   const server = tls.createServer(
     {
       ALPNProtocols: ["h2"],
@@ -150,6 +154,7 @@ function createTlsServer(material: TlsMaterial, sockets: Set<Socket>): tls.Serve
     () => undefined,
   );
   server.on("connection", (socket) => {
+    observedConnections.count += 1;
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));
   });
@@ -239,11 +244,12 @@ describe("packaged Blueprint Runner external health deadline", () => {
     async () => {
       const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-health-timeout-"));
       const sockets = new Set<Socket>();
+      const observedConnections = { count: 0 };
 
       try {
         const address = externalIpv4Address();
         const material = createTlsMaterial(path.join(fixtureRoot, "tls"), address);
-        const server = createTlsServer(material, sockets);
+        const server = createTlsServer(material, sockets, observedConnections);
         try {
           const port = await listen(server, address);
           const blueprintRoot = writeExternalBlueprint(
@@ -256,7 +262,7 @@ describe("packaged Blueprint Runner external health deadline", () => {
           const result = await runRunner(fixtureRoot, blueprintRoot);
 
           expectFixedReachabilityFailure(result, fixtureRoot);
-          expect(sockets.size).toBeGreaterThan(0);
+          expect(observedConnections.count).toBeGreaterThan(0);
         } finally {
           sockets.forEach((socket) => socket.destroy());
           await close(server);
@@ -273,6 +279,7 @@ describe("packaged Blueprint Runner external health deadline", () => {
   ])("rejects a $name with fixed diagnostics (#9872)", async (testCase) => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-health-identity-"));
     const sockets = new Set<Socket>();
+    const observedConnections = { count: 0 };
 
     try {
       const address = externalIpv4Address();
@@ -280,7 +287,7 @@ describe("packaged Blueprint Runner external health deadline", () => {
         path.join(fixtureRoot, "tls"),
         testCase.serverSan === "target" ? address : testCase.serverSan,
       );
-      const server = createTlsServer(material, sockets);
+      const server = createTlsServer(material, sockets, observedConnections);
       try {
         const port = await listen(server, address);
         const blueprintRoot = writeExternalBlueprint(

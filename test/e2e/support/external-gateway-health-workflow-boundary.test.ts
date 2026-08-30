@@ -38,6 +38,17 @@ describe("external gateway health workflow boundary", () => {
     ]);
   });
 
+  it("rejects a different module-relative Runner artifact", () => {
+    const source = readRepoText("test/e2e/live/external-gateway-health-helpers.ts").replace(
+      '  "blueprint-runner.js",',
+      '  "other-runner.js",',
+    );
+
+    expect(validateExternalGatewayHealthHelper(source)).toContain(
+      "external gateway health helper must run exact Blueprint Runner external status",
+    );
+  });
+
   it("rejects package credentials or untrusted candidate execution in the package job", () => {
     const workflow = readExternalGatewayHealthWorkflow();
     const job = workflow.jobs["package-openshell-sdk"];

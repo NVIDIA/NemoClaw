@@ -5,12 +5,12 @@ import { cpSync, existsSync, lstatSync, mkdirSync, rmSync, writeFileSync } from 
 import path from "node:path";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..", "..");
-const source = path.join(repositoryRoot, "nemoclaw", "dist");
+const source = path.join(repositoryRoot, "nemoclaw", "runner-dist");
 const destination = path.join(repositoryRoot, "dist", "nemoclaw");
 const runner = path.join(source, "blueprint", "runner.js");
 
 if (!existsSync(runner) || !lstatSync(runner).isFile() || lstatSync(runner).isSymbolicLink()) {
-  throw new Error("The compiled Blueprint Runner is missing from the plugin build.");
+  throw new Error("The compiled blueprint runner is missing from its focused build.");
 }
 
 rmSync(destination, { force: true, recursive: true });

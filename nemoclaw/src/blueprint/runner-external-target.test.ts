@@ -205,20 +205,49 @@ describe("Blueprint Runner external OpenShell target", () => {
   });
 
   it.each([
-    ["run receipt", ["status", "--external-target", "--run-id", "existing"]],
-    ["managed profile", ["status", "--external-target", "--profile", "default"]],
-    ["another action", ["plan", "--external-target"]],
+    [
+      "run receipt",
+      ["status", "--external-target", "--run-id", "existing"],
+      "--external-target and --run-id cannot be used together",
+    ],
+    [
+      "managed profile",
+      ["status", "--external-target", "--profile", "default"],
+      "External target status does not accept managed-run options",
+    ],
+    [
+      "another action",
+      ["plan", "--external-target"],
+      "--external-target is accepted only with status",
+    ],
   ])(
     "rejects external status with %s options before the health call (#9872)",
-    async (_name, argv) => {
+    async (_name, argv, message) => {
       seedExternalTarget();
 
-      await expect(runMain(argv)).rejects.toThrow();
+      await expect(runMain(argv)).rejects.toThrow(message);
 
       expect(observeHealth).not.toHaveBeenCalled();
       expect(mockExeca).not.toHaveBeenCalled();
     },
   );
+
+  it("propagates only the fixed external health failure (#9872)", async () => {
+    seedExternalTarget();
+    observeHealth.mockResolvedValue({
+      ok: false,
+      error: {
+        kind: "transport",
+        message: "NemoClaw could not reach the external OpenShell target.",
+      },
+    });
+
+    await expect(runMain(["status", "--external-target"])).rejects.toThrow(
+      "NemoClaw could not reach the external OpenShell target.",
+    );
+
+    expect(mockExeca).not.toHaveBeenCalled();
+  });
 
   it("rejects an inference endpoint override before any effect (#9872)", async () => {
     seedExternalTarget();

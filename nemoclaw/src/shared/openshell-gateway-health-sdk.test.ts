@@ -7,6 +7,19 @@ import type { SanitizedExternalOpenShellTargetPlan } from "./openshell-external-
 import { EXTERNAL_OPENSHELL_RELEASE } from "./openshell-observation-boundary.cjs";
 import { createOpenShellSdkGatewayHealthObserver } from "./openshell-gateway-health-sdk.js";
 
+const officialSdkMocks = vi.hoisted(() => ({
+  connect: vi.fn(),
+  health: vi.fn(),
+}));
+
+vi.mock("@nvidia/openshell-sdk", () => ({
+  OpenShellClient: { connect: officialSdkMocks.connect },
+}));
+
+vi.mock("@nvidia/openshell-sdk/raw", () => ({
+  ServiceStatus: { UNSPECIFIED: 0, HEALTHY: 1, DEGRADED: 2, UNHEALTHY: 3 },
+}));
+
 const TARGET: SanitizedExternalOpenShellTargetPlan = {
   endpoint: "https://openshell.example.test:8443",
   workspace: "default",
@@ -35,6 +48,11 @@ describe("OpenShell SDK gateway health observer", () => {
     connect.mockResolvedValue({ raw: { health } });
     loadSdk.mockResolvedValue({ connect, serviceStatus: SERVICE_STATUS });
     timeoutSignal.mockReturnValue(new AbortController().signal);
+    officialSdkMocks.health.mockResolvedValue({
+      status: SERVICE_STATUS.HEALTHY,
+      version: "0.0.106",
+    });
+    officialSdkMocks.connect.mockResolvedValue({ raw: { health: officialSdkMocks.health } });
   });
 
   function request(overrides: Record<string, unknown> = {}) {
@@ -74,6 +92,56 @@ describe("OpenShell SDK gateway health observer", () => {
     await observer.observeHealth(request());
 
     expect(connect).toHaveBeenCalledOnce();
+  });
+
+  it("loads the approved SDK exports through the default adapter (#9872)", async () => {
+    const observer = createOpenShellSdkGatewayHealthObserver({ timeoutSignal });
+
+    const result = await observer.observeHealth(request());
+
+    expect(officialSdkMocks.connect).toHaveBeenCalledWith({
+      gateway: TARGET.endpoint,
+      caCert: CA_BUNDLE,
+    });
+    expect(officialSdkMocks.health).toHaveBeenCalledWith(
+      {},
+      {
+        signal: timeoutSignal.mock.results[0]?.value,
+      },
+    );
+    expect(result).toEqual({ ok: true, value: { status: "healthy", release: "0.0.106" } });
+  });
+
+  it.each([
+    ["missing client", null],
+    ["incompatible service status", { connect, serviceStatus: {} }],
+  ])("rejects an SDK with %s exports (#9872)", async (_name, loadedSdk) => {
+    loadSdk.mockResolvedValue(loadedSdk);
+    const observer = createOpenShellSdkGatewayHealthObserver({ loadSdk, timeoutSignal });
+
+    const result = await observer.observeHealth(request());
+
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: "dependency", message: "The approved OpenShell SDK package is unavailable." },
+    });
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it("does not start SDK loading after an expired deadline (#9872)", async () => {
+    timeoutSignal.mockReturnValue(AbortSignal.abort());
+    const observer = createOpenShellSdkGatewayHealthObserver({ loadSdk, timeoutSignal });
+
+    const result = await observer.observeHealth(request());
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "timeout",
+        message: "The external OpenShell gateway health check timed out.",
+      },
+    });
+    expect(loadSdk).not.toHaveBeenCalled();
   });
 
   it.each([

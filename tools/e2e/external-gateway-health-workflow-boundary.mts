@@ -285,8 +285,18 @@ function validateHealthJob(errors: string[], job: WorkflowJob): void {
 
 export function validateExternalGatewayHealthHelper(source: string): string[] {
   const errors: string[] = [];
+  const exactRunnerPath = `const BLUEPRINT_RUNNER = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "..",
+  "dist",
+  "lib",
+  "blueprint-runner.js",
+);`;
   const required = [
-    'path.join(process.cwd(), "dist", "lib", "blueprint-runner.js")',
+    exactRunnerPath,
+    "[BLUEPRINT_RUNNER, \"status\", \"--external-target\"]",
     '"status", "--external-target"',
     "NEMOCLAW_BLUEPRINT_PATH: blueprintRoot",
   ];

@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import {
+  cpSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -50,10 +51,11 @@ describe("CLI source-checkout upgrade build", () => {
         "junction",
       );
       symlinkSync(path.join(REPOSITORY_ROOT, "src"), path.join(fixtureRoot, "src"), "junction");
-      symlinkSync(
-        path.join(REPOSITORY_ROOT, "scripts"),
-        path.join(fixtureRoot, "scripts"),
-        "junction",
+      const scriptsRoot = path.join(fixtureRoot, "scripts", "lib");
+      mkdirSync(scriptsRoot, { recursive: true });
+      copyFileSync(
+        path.join(REPOSITORY_ROOT, "scripts", "lib", "package-blueprint-runner-runtime.mts"),
+        path.join(scriptsRoot, "package-blueprint-runner-runtime.mts"),
       );
 
       const policyRoot = path.join(fixtureRoot, "nemoclaw");
@@ -70,15 +72,14 @@ describe("CLI source-checkout upgrade build", () => {
         path.join(REPOSITORY_ROOT, "nemoclaw", "tsconfig.shared.json"),
         path.join(policyRoot, "tsconfig.shared.json"),
       );
-      symlinkSync(
-        path.join(REPOSITORY_ROOT, "nemoclaw", "node_modules"),
-        path.join(policyRoot, "node_modules"),
-        "junction",
+      copyFileSync(
+        path.join(REPOSITORY_ROOT, "nemoclaw", "tsconfig.runner.json"),
+        path.join(policyRoot, "tsconfig.runner.json"),
       );
-      symlinkSync(
+      cpSync(
         path.join(REPOSITORY_ROOT, "nemoclaw", "src"),
         path.join(policyRoot, "src"),
-        "junction",
+        { recursive: true },
       );
 
       const blueprintRoot = path.join(fixtureRoot, "nemoclaw-blueprint");

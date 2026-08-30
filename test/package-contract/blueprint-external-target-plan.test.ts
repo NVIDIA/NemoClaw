@@ -13,6 +13,13 @@ import YAML from "yaml";
 
 const REPOSITORY_ROOT = path.join(import.meta.dirname, "..", "..");
 const OPENSHELL_SDK_PACKAGE = "@nvidia/openshell-sdk";
+const UNSAFE_RUNNER_FIXTURE = path.join(
+  REPOSITORY_ROOT,
+  "test",
+  "package-contract",
+  "fixtures",
+  "blueprint-runner-unsafe-diagnostic.ts",
+);
 const PRIVATE_AUTHENTICATION_CONTENTS = "opaque-private-authentication-material";
 const PRIVATE_AMBIENT_CONTENTS = "opaque-ambient-gateway-material";
 const PRIVATE_ENTRY_SECRET = `nvapi-${"A".repeat(64)}`;
@@ -33,10 +40,21 @@ function expectStableSingleLineDiagnostic(stderr: string): void {
   expect(stderr.slice(0, -1)).not.toMatch(UNSAFE_DIAGNOSTIC_CHARACTERS);
 }
 
-function npmEnvironment(): NodeJS.ProcessEnv {
+function npmEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+  cacheExists: (candidate: string) => boolean = fs.existsSync,
+): NodeJS.ProcessEnv {
+  const runnerCache = environment.RUNNER_TEMP
+    ? path.join(environment.RUNNER_TEMP, "npm")
+    : undefined;
+  const cacheDirectory =
+    environment.NPM_CONFIG_CACHE ??
+    (runnerCache && cacheExists(path.join(runnerCache, "_cacache")) ? runnerCache : undefined) ??
+    environment.npm_config_cache;
   return {
-    ...process.env,
+    ...environment,
     npm_config_audit: "false",
+    ...(cacheDirectory ? { npm_config_cache: cacheDirectory } : {}),
     npm_config_fund: "false",
     npm_config_update_notifier: "false",
   };
@@ -171,6 +189,28 @@ syncBuiltinESMExports();
 type ProbeEvidence = Readonly<{
   effects: string[];
 }>;
+
+describe("packaged Blueprint Runner npm cache", () => {
+  it("uses the populated trusted runner cache before npm exec's default", () => {
+    const runnerTemp = path.join(os.tmpdir(), "trusted-runner");
+    const environment = npmEnvironment(
+      { RUNNER_TEMP: runnerTemp, npm_config_cache: path.join(os.tmpdir(), "npm-default") },
+      (candidate) => candidate === path.join(runnerTemp, "npm", "_cacache"),
+    );
+
+    expect(environment.npm_config_cache).toBe(path.join(runnerTemp, "npm"));
+  });
+
+  it("keeps npm exec's cache when the runner cache is not populated", () => {
+    const defaultCache = path.join(os.tmpdir(), "npm-default");
+    const environment = npmEnvironment(
+      { RUNNER_TEMP: path.join(os.tmpdir(), "empty-runner"), npm_config_cache: defaultCache },
+      () => false,
+    );
+
+    expect(environment.npm_config_cache).toBe(defaultCache);
+  });
+});
 
 describe("packaged Blueprint Runner external target", () => {
   it(
@@ -397,11 +437,7 @@ describe("packaged Blueprint Runner external target", () => {
         const installedRunnerSource = fs.readFileSync(installedRuntimeRunner, "utf8");
         const boundedEntryDiagnostic = (() => {
           try {
-            const unsafeDetail = `api_key=${PRIVATE_ENTRY_SECRET}\u001b[31m\u202e\n${"x".repeat(5_000)}`;
-            fs.writeFileSync(
-              installedRuntimeRunner,
-              `export async function main() { throw new Error(${JSON.stringify(unsafeDetail)}); }\n`,
-            );
+            fs.copyFileSync(UNSAFE_RUNNER_FIXTURE, installedRuntimeRunner);
             return runRunner(["status", "--external-target"]);
           } finally {
             fs.writeFileSync(installedRuntimeRunner, installedRunnerSource);
