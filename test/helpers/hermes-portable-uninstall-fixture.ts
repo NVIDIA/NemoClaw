@@ -32,7 +32,6 @@ import {
 } from "../../src/lib/onboard/experimental/hermes-portable-podman-authority";
 import { hermesPortableContainerInternals } from "../../src/lib/onboard/experimental/hermes-portable-container";
 import { resolveHermesPortableStartupContract } from "../../src/lib/onboard/experimental/hermes-portable-contract";
-import { hermesPortableCreatePolicySemanticDigest } from "../../src/lib/onboard/experimental/hermes-portable-policy-authority";
 import {
   captureHermesPortablePolicySource,
   publishHermesPortableDurablePolicySource,
@@ -173,17 +172,15 @@ function publishLifecycleReceipt(
   const policyPath = path.join(stateDir, "portable-uninstall-policy.yaml");
   fs.writeFileSync(policyPath, POLICY, { mode: 0o600 });
   const transactionId = randomUUID();
-  const policyBytes = fs.readFileSync(policyPath);
   const policy = publishHermesPortableDurablePolicySource({
     sandboxName: SANDBOX_NAME,
     transactionId,
     stateDir,
-    intendedSemanticSha256: hermesPortableCreatePolicySemanticDigest(policyBytes),
     source: captureHermesPortablePolicySource(policyPath),
     hooks: { assertLifecycleLock: () => undefined },
   });
   const pending: HermesPortablePendingReceipt = {
-    schemaVersion: 5,
+    schemaVersion: 7,
     agent: "hermes",
     phase: "pending",
     transactionId,
@@ -210,11 +207,11 @@ function publishLifecycleReceipt(
   const first = publishHermesPortableLifecycleReceipt(pending, stateDir, {
     assertLifecycleLock: () => undefined,
   });
+  const { policy: _policy, ...transaction } = pending;
   const configuring: HermesPortableConfiguredReceipt = {
-    ...pending,
+    ...transaction,
     phase: "configuring",
     previousPhaseSha256: first.sha256,
-    verifiedLivePolicySemanticSha256: policy.intendedSemanticSha256,
     container: {
       containerId: SANDBOX_CONTAINER_ID,
       sandboxId: SANDBOX_ID,

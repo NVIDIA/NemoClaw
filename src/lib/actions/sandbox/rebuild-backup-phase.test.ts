@@ -1,382 +1,109 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { makeMessagingPlan } from "../../../../test/helpers/messaging-plan-fixtures";
-import * as sandboxState from "../../state/sandbox";
-import {
-  normalizeRebuildObservabilityPolicyPresets,
-  normalizeRebuildTargetPolicyPresets,
-  normalizeRebuildWebSearchPolicyPresets,
-  type RebuildBackupPhaseInput,
-  runRebuildBackupPhase,
-} from "./rebuild-backup-phase";
+const mocks = vi.hoisted(() => ({
+  getSandboxPolicy: vi.fn(),
+  secureTempFile: vi.fn(),
+}));
 
-describe("rebuild web-search policy normalization", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
+vi.mock("./policy-get", () => ({ getSandboxPolicy: mocks.getSandboxPolicy }));
+vi.mock("../../onboard/temp-files", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/temp-files")>()),
+  secureTempFile: mocks.secureTempFile,
+}));
+
+import { type RebuildBackupPhaseInput, runRebuildBackupPhase } from "./rebuild-backup-phase";
+
+const temporaryDirectories: string[] = [];
+
+beforeEach(() => {
+  mocks.getSandboxPolicy.mockReset().mockReturnValue({
+    yaml: "version: 1\nnetwork_policies: {}\n",
   });
-
-  it("keeps only the durable Tavily provider and removes stale nous-web", () => {
-    expect(
-      normalizeRebuildWebSearchPolicyPresets(
-        ["npm", "brave", "nous-web", "tavily"],
-        { name: "alpha", agent: "hermes" },
-        { fetchEnabled: true, provider: "tavily" },
-      ),
-    ).toEqual(["npm", "tavily"]);
-    expect(
-      normalizeRebuildWebSearchPolicyPresets(
-        ["npm", "brave"],
-        { name: "alpha", agent: "hermes" },
-        { fetchEnabled: true, provider: "tavily" },
-      ),
-    ).toEqual(["npm", "tavily"]);
+  mocks.secureTempFile.mockReset().mockImplementation(() => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-default-"));
+    temporaryDirectories.push(directory);
+    return path.join(directory, "policy.yaml");
   });
+});
 
-  it("removes both built-in providers for an authoritative disable, except a tier egress default (#10404)", () => {
-    expect(
-      normalizeRebuildWebSearchPolicyPresets(
-        ["npm", "brave", "tavily"],
-        { name: "alpha", agent: "openclaw" },
-        null,
-      ),
-    ).toEqual(["npm"]);
-    // Balanced and Open both default `brave` as tier egress, so a rebuild that
-    // declines web search keeps it and still drops `tavily`, which neither tier
-    // defaults.
-    expect(
-      normalizeRebuildWebSearchPolicyPresets(
-        ["npm", "brave", "tavily"],
-        { name: "alpha", agent: "openclaw", policyTier: "balanced" },
-        null,
-      ),
-    ).toEqual(["npm", "brave"]);
-    expect(
-      normalizeRebuildWebSearchPolicyPresets(
-        ["npm", "brave", "tavily"],
-        { name: "alpha", agent: "openclaw", policyTier: "open" },
-        null,
-      ),
-    ).toEqual(["npm", "brave"]);
-  });
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const directory of temporaryDirectories.splice(0)) {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
-  it.each(["hermes", "langchain-deepagents-code"])(
-    "removes OpenClaw-only brave from a Balanced-tier %s rebuild",
-    (agent) => {
-      expect(
-        normalizeRebuildWebSearchPolicyPresets(
-          ["npm", "brave"],
-          { name: "alpha", agent, policyTier: "balanced" },
-          null,
-        ),
-      ).toEqual(["npm"]);
-    },
-  );
-
-  it("preserves DCode's standalone Tavily and excludes custom names from built-in replay", () => {
-    expect(
-      normalizeRebuildWebSearchPolicyPresets(
-        ["npm", "tavily"],
-        { name: "alpha", agent: "langchain-deepagents-code" },
-        null,
-      ),
-    ).toEqual(["npm", "tavily"]);
-    expect(
-      normalizeRebuildWebSearchPolicyPresets(
-        ["npm", "tavily"],
-        {
-          name: "alpha",
-          agent: "openclaw",
-          customPolicies: [{ name: "tavily", content: "allow: []" }],
-        },
-        null,
-      ),
-    ).toEqual(["npm"]);
-  });
-
-  it("keeps a finalized custom-only built-in selection empty instead of resetting it", () => {
-    const result = runRebuildBackupPhase({
-      sandboxName: "alpha",
-      sandboxEntry: {
-        name: "alpha",
-        agent: "openclaw",
-        policies: ["tavily"],
-        customPolicies: [{ name: "tavily", content: "allow: []" }],
-        policyPresetsFinalized: true,
-      },
-      staleRecovery: false,
-      preparedRecoveryManifest: {
-        policyPresets: ["tavily"],
-        customPolicies: [{ name: "tavily", content: "allow: []" }],
-      } as never,
-      messagingPlan: null,
-      webSearchConfig: null,
-      log: vi.fn(),
-      bail: (message): never => {
-        throw new Error(message);
-      },
-      relockShieldsIfNeeded: () => true,
+describe("rebuild policy handoff", () => {
+  it("captures the current OpenShell base policy in a private transaction file", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-policy-test-"));
+    temporaryDirectories.push(directory);
+    const policyPath = path.join(directory, "policy.yaml");
+    mocks.secureTempFile.mockReturnValue(policyPath);
+    mocks.getSandboxPolicy.mockReturnValue({
+      yaml: "version: 1\nnetwork_policies:\n  host_changed: {}\n",
     });
-
-    expect(result?.policyPresets).toEqual([]);
-    expect(result?.sessionPolicyPresets).toEqual([]);
-    expect(result?.backupWasForceSkipped).toBe(false);
-  });
-
-  it("removes inactive built-in Hermes channel egress during rebuild", () => {
-    const customDiscordPolicy = { name: "discord", content: "network_policies: {}\n" };
-    const preparedRecoveryManifest = {
-      policyPresets: ["discord"],
-      customPolicies: [customDiscordPolicy],
-    } as never;
-
-    const result = runRebuildBackupPhase({
-      sandboxName: "alpha",
-      sandboxEntry: {
-        name: "alpha",
-        agent: "hermes",
-        policies: ["discord"],
-        customPolicies: [customDiscordPolicy],
-        policyPresetsFinalized: true,
-      },
-      staleRecovery: false,
-      preparedRecoveryManifest,
-      messagingPlan: makeMessagingPlan({
+    const result = runRebuildBackupPhase(
+      {
         sandboxName: "alpha",
-        agent: "hermes",
-        workflow: "rebuild",
-        channels: ["slack"],
-      }),
-      webSearchConfig: null,
-      log: vi.fn(),
-      bail: (message): never => {
-        throw new Error(message);
-      },
-      relockShieldsIfNeeded: () => true,
-    });
-
-    expect(result?.policyPresets).toEqual(["slack"]);
-    expect(result?.backupManifest).toBe(preparedRecoveryManifest);
-    expect(result?.backupManifest?.customPolicies).toEqual([customDiscordPolicy]);
-  });
-
-  // Built-in only: the test above passes even when the pruner is a no-op, because its
-  // custom `discord` is exempt by name and a later stage removes it. (#10153)
-  it.each([
-    { label: "Hermes", entryAgent: "hermes" as const, planAgent: "hermes" as const },
-    { label: "OpenClaw", entryAgent: null, planAgent: "openclaw" as const },
-  ])(
-    "drops a built-in inactive channel preset for $label during rebuild (#10153)",
-    ({ entryAgent, planAgent }) => {
-      const result = runRebuildBackupPhase({
-        sandboxName: "alpha",
-        sandboxEntry: {
-          name: "alpha",
-          agent: entryAgent,
-          policies: ["discord", "slack"],
-          policyPresetsFinalized: true,
-        },
+        sandboxEntry: { name: "alpha" },
         staleRecovery: false,
-        preparedRecoveryManifest: { policyPresets: ["discord", "slack"] } as never,
-        messagingPlan: makeMessagingPlan({
-          sandboxName: "alpha",
-          agent: planAgent,
-          workflow: "rebuild",
-          channels: ["slack"],
-        }),
+        preparedRecoveryManifest: null,
+        messagingPlan: null,
         webSearchConfig: null,
         log: vi.fn(),
         bail: (message): never => {
           throw new Error(message);
         },
-        relockShieldsIfNeeded: () => true,
-      });
-
-      expect(result?.policyPresets).toEqual(["slack"]);
-    },
-  );
-
-  // Rebuild's planner sets `active` from `!disabled && isChannelPlanStartable(channel)`, so a
-  // configured channel whose required secret has no credential is inactive but not disabled.
-  function inactiveDiscordPlan() {
-    const plan = makeMessagingPlan({
-      sandboxName: "alpha",
-      agent: "openclaw",
-      workflow: "rebuild",
-      channels: ["slack", "discord"],
-    });
-    return {
-      ...plan,
-      channels: plan.channels.map((channel) =>
-        channel.channelId === "discord"
-          ? {
-              ...channel,
-              active: false,
-              inputs: [
-                {
-                  channelId: "discord" as const,
-                  inputId: "botToken",
-                  kind: "secret" as const,
-                  required: true,
-                  credentialAvailable: false,
-                },
-              ],
-            }
-          : channel,
-      ),
-    };
-  }
-
-  // Configured channel with no credential: `active: false`, `disabled: false`. (#10153)
-  it("drops a channel preset the plan cannot start during rebuild (#10153)", () => {
-    const result = runRebuildBackupPhase({
-      sandboxName: "alpha",
-      sandboxEntry: {
-        name: "alpha",
-        agent: null,
-        policies: ["discord", "slack"],
-        policyPresetsFinalized: true,
+        relockShieldsIfNeeded: vi.fn(() => true),
       },
-      staleRecovery: false,
-      preparedRecoveryManifest: { policyPresets: ["discord", "slack"] } as never,
-      messagingPlan: inactiveDiscordPlan(),
-      webSearchConfig: null,
-      log: vi.fn(),
-      bail: (message): never => {
-        throw new Error(message);
-      },
-      relockShieldsIfNeeded: () => true,
+      vi.fn(() => null),
+    );
+
+    expect(result?.policySourcePath).toBe(policyPath);
+    expect(fs.readFileSync(policyPath, "utf8")).toContain("host_changed");
+    expect(fs.statSync(policyPath).mode & 0o777).toBe(0o600);
+    expect(result).not.toHaveProperty("policyPresets");
+    expect(mocks.getSandboxPolicy).toHaveBeenCalledWith("alpha", {
+      recordedGatewayOperation: "capture the live policy before sandbox replacement",
     });
-
-    expect(result?.policyPresets).toEqual(["slack"]);
   });
 
-  it("records when --force skips a total backup failure", () => {
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue({
-      success: false,
-      backedUpDirs: [],
-      backedUpFiles: [],
-      failedDirs: [".openclaw"],
-      failedFiles: ["openclaw.json"],
-    });
-
-    const result = runRebuildBackupPhase({
-      sandboxName: "alpha",
-      sandboxEntry: { name: "alpha", agent: "openclaw", policies: [] },
-      staleRecovery: false,
-      preparedRecoveryManifest: null,
-      messagingPlan: null,
-      webSearchConfig: null,
-      force: true,
-      log: vi.fn(),
-      bail: (message): never => {
-        throw new Error(message);
-      },
-      relockShieldsIfNeeded: () => true,
-    });
-
-    expect(result?.backupManifest).toBeNull();
-    expect(result?.backupWasForceSkipped).toBe(true);
-  });
-
-  it("removes stale built-in observability egress from disabled and restricted rebuild targets", () => {
-    expect(
-      normalizeRebuildObservabilityPolicyPresets(["npm", "observability-otlp-local"], {
-        name: "alpha",
-        agent: "langchain-deepagents-code",
-        observabilityEnabled: false,
-        policyTier: "balanced",
-      }),
-    ).toEqual(["npm"]);
-    expect(
-      normalizeRebuildObservabilityPolicyPresets(["npm", "observability-otlp-local"], {
-        name: "alpha",
-        agent: "langchain-deepagents-code",
-        observabilityEnabled: true,
-        policyTier: "restricted",
-      }),
-    ).toEqual(["npm"]);
-    expect(
-      normalizeRebuildObservabilityPolicyPresets(["npm"], {
-        name: "alpha",
-        agent: "langchain-deepagents-code",
-        observabilityEnabled: true,
-        policyTier: "balanced",
-      }),
-    ).toEqual(["npm", "observability-otlp-local"]);
-  });
-
-  it("leaves a same-name custom observability policy for exact custom replay", () => {
-    expect(
-      normalizeRebuildObservabilityPolicyPresets(["npm", "observability-otlp-local"], {
-        name: "alpha",
-        agent: "langchain-deepagents-code",
-        observabilityEnabled: false,
-        policyTier: "restricted",
-        customPolicies: [{ name: "observability-otlp-local", content: "network_policies: {}" }],
-      }),
-    ).toEqual(["npm"]);
-  });
-
-  it("does not add built-in observability when a differently named custom policy owns its key", () => {
-    expect(
-      normalizeRebuildObservabilityPolicyPresets(["npm", "observability-otlp-local"], {
-        name: "alpha",
-        agent: "langchain-deepagents-code",
-        observabilityEnabled: true,
-        policyTier: "balanced",
-        customPolicies: [
-          {
-            name: "corp-otel",
-            content:
-              "network_policies:\n  observability-otlp-local:\n    endpoints:\n      - host: collector.corp.example\n",
-          },
-        ],
-      }),
-    ).toEqual(["npm"]);
-  });
-
-  it("keeps fresh agent-required additions while suppressing stale restricted observability", () => {
-    expect(
-      normalizeRebuildTargetPolicyPresets(
-        ["npm", "future-agent-required", "observability-otlp-local"],
+  it("never reconstructs a missing live policy from NemoClaw state", () => {
+    expect(() =>
+      runRebuildBackupPhase(
         {
-          name: "alpha",
-          agent: "langchain-deepagents-code",
-          observabilityEnabled: true,
-          policyTier: " Restricted ",
+          sandboxName: "alpha",
+          sandboxEntry: { name: "alpha" },
+          staleRecovery: true,
+          preparedRecoveryManifest: null,
+          messagingPlan: null,
+          webSearchConfig: null,
+          log: vi.fn(),
+          bail: (message): never => {
+            throw new Error(message);
+          },
+          relockShieldsIfNeeded: vi.fn(() => true),
         },
-        null,
+        vi.fn(() => null),
       ),
-    ).toEqual(["npm", "future-agent-required"]);
+    ).toThrow(/will not reconstruct policy from NemoClaw state/);
   });
-
-  it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"] as const)(
-    "repairs a Personal rebuild target missing its tier-defining preset: %s",
-    (agent) => {
-      expect(
-        normalizeRebuildTargetPolicyPresets(
-          ["npm"],
-          { name: "alpha", agent, policyTier: " Personal " },
-          null,
-        ),
-      ).toEqual(["personal-open-internet", "npm"]);
-    },
-  );
 });
 
-describe("custom OpenClaw plugin provenance rebuild guard (#6108)", () => {
+describe("rebuild backup safety", () => {
   const completeMarkedManifest = {
     agentType: "openclaw",
     dir: "/sandbox/.openclaw",
     backupPath: "/tmp/custom-openclaw-backup",
     reconcileOpenClawImagePluginProvenance: true,
     openclawImagePluginInstalls: [],
-  } as never;
+  } as Record<string, unknown>;
 
   function customOpenClawInput(overrides: Record<string, unknown> = {}): RebuildBackupPhaseInput {
     return {
@@ -391,7 +118,7 @@ describe("custom OpenClaw plugin provenance rebuild guard (#6108)", () => {
       messagingPlan: null,
       webSearchConfig: null,
       log: vi.fn(),
-      bail: (message: string): never => {
+      bail: (message): never => {
         throw new Error(message);
       },
       relockShieldsIfNeeded: vi.fn(() => true),
@@ -399,36 +126,35 @@ describe("custom OpenClaw plugin provenance rebuild guard (#6108)", () => {
     } as RebuildBackupPhaseInput;
   }
 
-  it("blocks a live custom image with missing registry provenance before backup", () => {
-    const backupStateForRebuild = vi.fn();
+  it("blocks a live custom image with missing plugin provenance before backup", () => {
+    const backup = vi.fn();
     const input = customOpenClawInput();
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(() => runRebuildBackupPhase(input, backupStateForRebuild)).toThrow(
+    expect(() => runRebuildBackupPhase(input, backup)).toThrow(
       "Custom-image OpenClaw plugin provenance is unavailable.",
     );
-
-    expect(backupStateForRebuild).not.toHaveBeenCalled();
+    expect(backup).not.toHaveBeenCalled();
     expect(input.relockShieldsIfNeeded).toHaveBeenCalledWith(true);
-    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("new sandbox name"));
-    expect(errorLog).not.toHaveBeenCalledWith(
-      expect.stringContaining("NEMOCLAW_RECREATE_WITHOUT_BACKUP"),
+  });
+
+  it("uses a marked prepared manifest while still capturing live OpenShell policy", () => {
+    const backup = vi.fn();
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-recovery-"));
+    temporaryDirectories.push(backupPath);
+    const preparedManifest = { ...completeMarkedManifest, backupPath } as never;
+    const result = runRebuildBackupPhase(
+      customOpenClawInput({ preparedRecoveryManifest: preparedManifest }),
+      backup,
     );
-    errorLog.mockRestore();
+
+    expect(result?.backupManifest).toEqual(preparedManifest);
+    expect(result?.policySourcePath).toMatch(/rebuild-policy-handoff\.[a-f0-9]{64}\.yaml$/u);
+    expect(backup).not.toHaveBeenCalled();
   });
 
-  it("uses a marked prepared manifest when registry provenance is missing", () => {
-    const backupStateForRebuild = vi.fn();
-    const input = customOpenClawInput({ preparedRecoveryManifest: completeMarkedManifest });
-
-    const result = runRebuildBackupPhase(input, backupStateForRebuild);
-
-    expect(result?.backupManifest).toBe(completeMarkedManifest);
-    expect(backupStateForRebuild).not.toHaveBeenCalled();
-  });
-
-  it("blocks an unmarked legacy prepared manifest before deletion", () => {
-    const backupStateForRebuild = vi.fn();
+  it("blocks an unmarked legacy prepared manifest before replacement", () => {
+    const backup = vi.fn();
     const input = customOpenClawInput({
       preparedRecoveryManifest: {
         agentType: "openclaw",
@@ -437,16 +163,16 @@ describe("custom OpenClaw plugin provenance rebuild guard (#6108)", () => {
         openclawImagePluginInstalls: [],
       },
     });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(() => runRebuildBackupPhase(input, backupStateForRebuild)).toThrow(
+    expect(() => runRebuildBackupPhase(input, backup)).toThrow(
       "Custom-image OpenClaw plugin provenance is unavailable.",
     );
-
-    expect(backupStateForRebuild).not.toHaveBeenCalled();
+    expect(backup).not.toHaveBeenCalled();
   });
 
-  it("revalidates a newly generated backup manifest before deletion", () => {
-    const backupStateForRebuild = vi.fn(() => ({
+  it("revalidates a newly generated backup manifest before replacement", () => {
+    const backup = vi.fn(() => ({
       agentType: "openclaw",
       dir: "/sandbox/.openclaw",
       backupPath: "/tmp/incomplete-custom-openclaw-backup",
@@ -460,11 +186,36 @@ describe("custom OpenClaw plugin provenance rebuild guard (#6108)", () => {
         openclawImagePluginInstalls: [],
       },
     });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(() => runRebuildBackupPhase(input, backupStateForRebuild as never)).toThrow(
+    expect(() => runRebuildBackupPhase(input, backup as never)).toThrow(
       "Custom-image OpenClaw plugin provenance is unavailable.",
     );
+    expect(backup).toHaveBeenCalledOnce();
+  });
 
-    expect(backupStateForRebuild).toHaveBeenCalledOnce();
+  it("records when --force skips a total filesystem backup failure", () => {
+    const backup = vi.fn(() => null);
+    const result = runRebuildBackupPhase(
+      {
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw" },
+        staleRecovery: false,
+        preparedRecoveryManifest: null,
+        messagingPlan: null,
+        webSearchConfig: null,
+        force: true,
+        log: vi.fn(),
+        bail: (message): never => {
+          throw new Error(message);
+        },
+        relockShieldsIfNeeded: vi.fn(() => true),
+      },
+      backup as never,
+    );
+
+    expect(result?.backupManifest).toBeNull();
+    expect(result?.backupWasForceSkipped).toBe(true);
+    expect(result?.policySourcePath).toMatch(/policy\.yaml$/u);
   });
 });

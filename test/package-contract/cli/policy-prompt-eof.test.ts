@@ -44,7 +44,7 @@ policies.listPresets = () => [
 policies.listCustomPresets = () => [];
 policies.getAppliedPresets = () => ["npm"];
 registry.getSandbox = (name) =>
-  name === "test-sandbox" ? { name, policies: ["npm"], customPolicies: [] } : null;
+  name === "test-sandbox" ? { name } : null;
 registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
 process.argv = ["node", "nemoclaw.js", "test-sandbox", ${JSON.stringify(command)}];
 require(${CLI_PATH});
@@ -75,23 +75,23 @@ describe("policy preset prompt cancellation", () => {
       menu: "Applied presets:",
       usage: "policy remove <preset>",
     },
-  ])("$command exits non-zero before opening a picker without a terminal (#7418)", ({
-    command,
-    menu,
-    usage,
-  }) => {
-    const result = runPolicyCommandAtStdinEof(command);
+  ])(
+    "$command exits non-zero before opening a picker without a terminal (#7418)",
+    ({ command, menu, usage }) => {
+      const result = runPolicyCommandAtStdinEof(command);
 
-    // The child exited on its own rather than being killed by the defensive
-    // timeout above. A hang would produce SIGKILL and a null status; the
-    // pre-#7418 regression exited 0 and is caught by the final assertion.
-    expect(result.error).toBeUndefined();
-    expect(result.signal).toBeNull();
-    expect(result.stderr).not.toContain(menu);
-    expect(result.stderr).toContain("No input available on stdin");
-    expect(result.stderr).toContain(usage);
-    expect(result.status).toBe(1);
-    // Above the child's 30s cap, so any hang fails on the assertions above
-    // rather than as a bare suite timeout.
-  }, 45_000);
+      // The child exited on its own rather than being killed by the defensive
+      // timeout above. A hang would produce SIGKILL and a null status; the
+      // pre-#7418 regression exited 0 and is caught by the final assertion.
+      expect(result.error).toBeUndefined();
+      expect(result.signal).toBeNull();
+      expect(result.stderr).not.toContain(menu);
+      expect(result.stderr).toContain("No input available on stdin");
+      expect(result.stderr).toContain(usage);
+      expect(result.status).toBe(1);
+      // Above the child's 30s cap, so any hang fails on the assertions above
+      // rather than as a bare suite timeout.
+    },
+    45_000,
+  );
 });

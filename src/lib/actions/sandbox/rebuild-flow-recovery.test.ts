@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -8,6 +9,7 @@ import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-a
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
+  policyGet,
 } from "../../../../test/helpers/rebuild-flow-generic-harness";
 import { fingerprintSandboxLiveIdentity } from "../../onboard/sandbox-recreate-transaction";
 import {
@@ -227,6 +229,56 @@ describe("rebuildSandbox flow: recovery", () => {
     return interrupted.session.checkpoint;
   }
 
+  it("retains the exact policy handoff across a failed recreate and consumes it on retry", async () => {
+    const policyDocument = "version: 1\nnetwork_policies:\n  host_preserved: {}\n";
+    const interrupted = createRebuildFlowHarness({
+      captureOpenshell: sandboxGetProbes([SOURCE_PROBE, null]),
+      onboard: () => {
+        throw new Error("replacement create failed");
+      },
+    });
+    policyGet.getSandboxPolicy.mockReset().mockReturnValue({ yaml: policyDocument });
+
+    await expect(
+      interrupted.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recreate failed");
+
+    const persistedManifest = JSON.parse(
+      fs.readFileSync(path.join(interrupted.backupPath, "rebuild-manifest.json"), "utf8"),
+    ) as { rebuildPolicyHandoff: { file: string } } & Record<string, unknown>;
+    const handoffPath = path.join(
+      interrupted.backupPath,
+      persistedManifest.rebuildPolicyHandoff.file,
+    );
+    expect(fs.readFileSync(handoffPath, "utf8")).toBe(policyDocument);
+    expect(fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
+      true,
+    );
+    let recreatedPolicy = "";
+    const restarted = createRebuildFlowHarness({
+      staleRecovery: true,
+      captureOpenshell: sandboxGetProbes([null]),
+      onboard: (_session, options) => {
+        recreatedPolicy = fs.readFileSync(String(options.rebuildPolicySourcePath), "utf8");
+      },
+    });
+    restarted.session.checkpoint = interrupted.session.checkpoint;
+    policyGet.getSandboxPolicy.mockReset().mockReturnValue({ yaml: "" });
+
+    await expect(
+      restarted.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: persistedManifest as never,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(recreatedPolicy).toBe(policyDocument);
+    expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
+      false,
+    );
+  });
+
   function restartFromJournaledSource(probes: readonly (string | null)[], checkpoint: unknown) {
     const restarted = createRebuildFlowHarness({
       captureOpenshell: sandboxGetProbes(probes),
@@ -402,41 +454,6 @@ describe("rebuildSandbox flow: recovery", () => {
     expect(harness.relockSpy).toHaveBeenCalled();
   });
 
-  it("prunes the disabled Teams preset from the final registry policies after rebuild", async () => {
-    const disabledTeamsPlan = {
-      schemaVersion: 1,
-      sandboxName: "alpha",
-      agent: "openclaw",
-      workflow: "rebuild",
-      channels: [],
-      disabledChannels: ["teams"],
-      credentialBindings: [],
-      networkPolicy: { presets: [], entries: [] },
-      agentRender: [],
-      buildSteps: [],
-      stateUpdates: [],
-      healthChecks: [],
-    };
-    const harness = createRebuildFlowHarness({
-      applyPreset: () => true,
-      backupPolicyPresets: ["teams", "npm"],
-      buildMessagingRebuildPlan: () => disabledTeamsPlan,
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
-    expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "teams");
-    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
-      agentVersion: "0.2.0",
-      policies: ["npm"],
-      policyTier: null,
-      policyPresetsFinalized: undefined,
-    });
-  });
-
   it("aborts before backup/delete when messaging manifest staging fails", async () => {
     const harness = createRebuildFlowHarness({
       buildMessagingRebuildPlan: () => {
@@ -506,10 +523,7 @@ describe("rebuildSandbox flow: recovery", () => {
     };
     const harness = createRebuildFlowHarness({
       defaultSandbox: "alpha",
-      sandboxEntry: {
-        policies: ["npm", "mcp-bridge-github"],
-        policyPresetsFinalized: true,
-      },
+      sandboxEntry: {},
       mcpPreparation: {
         entries: [mcpEntry],
         detachedProviderEntries: [mcpEntry],
@@ -525,7 +539,7 @@ describe("rebuildSandbox flow: recovery", () => {
 
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
     expect(harness.restoreSandboxEntrySpy.mock.calls).toEqual([
-      [expect.objectContaining({ name: "alpha", policies: ["npm", "mcp-bridge-github"] })],
+      [expect.objectContaining({ name: "alpha" })],
     ]);
   });
 
@@ -548,7 +562,7 @@ describe("rebuildSandbox flow: recovery", () => {
 
   it("fails the rebuild while surfacing incomplete OpenClaw post-restore work", async () => {
     const harness = createRebuildFlowHarness({
-      sandboxEntry: { policyPresetsFinalized: true, policyTier: "balanced" },
+      sandboxEntry: {},
       executeSandboxCommand: () => ({ status: 1, stdout: "", stderr: "hash refresh failed" }),
       repairMutableConfigPerms: () => ({
         applied: false,
@@ -566,34 +580,26 @@ describe("rebuildSandbox flow: recovery", () => {
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("OpenClaw config integrity verification failed after rebuild");
+    ).rejects.toThrow("State restore remained incomplete after rebuilding 'alpha'");
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("rebuilt but some post-restore steps were incomplete");
     expect(output).toContain("State restore was incomplete");
     expect(output).toContain("Mutable config permissions were not verified");
     expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
-    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "bad");
-    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
-    expect(harness.errorSpy).toHaveBeenCalledWith(expect.stringContaining("bad, throw"));
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
-      policies: ["npm"],
-      policyTier: "balanced",
-      policyPresetsFinalized: undefined,
     });
-    expect(output).toContain("Policy presets failed to reapply: bad, throw");
   });
 
-  it("reports both MCP and policy recovery when both restores are incomplete", async () => {
+  it("reports MCP recovery when bridge restoration is incomplete", async () => {
     const mcpEntry = {
       server: "github",
       providerName: "nemoclaw-mcp-alpha-github",
     };
     const harness = createRebuildFlowHarness({
       applyPreset: () => false,
-      backupPolicyPresets: ["npm"],
       mcpPreparation: {
         entries: [mcpEntry],
         detachedProviderEntries: [mcpEntry],
@@ -608,7 +614,6 @@ describe("rebuildSandbox flow: recovery", () => {
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("rebuilt but some post-restore steps were incomplete");
     expect(output).toContain("MCP bridge definitions were preserved but not fully refreshed");
-    expect(output).toContain("Policy presets failed to reapply: npm");
     expect(output).not.toContain("rebuilt successfully");
     expect(harness.errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("MCP bridge restore incomplete: MCP restore boom"),

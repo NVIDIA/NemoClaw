@@ -29,9 +29,6 @@ function openClawEntry(): SandboxEntry {
     agentVersion: "1.0.0",
     nemoclawVersion: "2.0.0",
     imageTag: "example@sha256:immutable",
-    policyPresetsFinalized: true,
-    policies: ["managed_inference"],
-    policyTier: "standard",
     provider: null,
     model: null,
     endpointUrl: null,
@@ -65,7 +62,6 @@ describe("ordinary OpenClaw pairing target", () => {
   it("resolves ordinary pairing after a supported policy-skip onboarding (#9817)", () => {
     vi.mocked(deps.getSandbox!).mockReturnValue({
       ...openClawEntry(),
-      policyPresetsFinalized: undefined,
     });
 
     expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
@@ -101,9 +97,7 @@ describe("ordinary OpenClaw pairing target", () => {
           agent,
         ),
       ),
-    ).toBe(
-      launchReadinessDigest(buildLaunchReadinessRegistryProjection(openClawEntry(), agent)),
-    );
+    ).toBe(launchReadinessDigest(buildLaunchReadinessRegistryProjection(openClawEntry(), agent)));
   });
 
   it("resolves a custom Dockerfile without inventing a managed agent version", () => {

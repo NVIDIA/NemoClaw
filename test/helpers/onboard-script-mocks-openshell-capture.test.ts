@@ -26,13 +26,7 @@ const exactCreateQuery = [
   "--limit",
   "2",
 ] as const;
-const exactCreateCommand = [
-  "openshell",
-  "sandbox",
-  "create",
-  "--label",
-  selector,
-] as const;
+const exactCreateCommand = ["openshell", "sandbox", "create", "--label", selector] as const;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -150,7 +144,7 @@ describe("mockStructuredOpenShellCaptureFromRunner", () => {
     }
   });
 
-  it("synthesizes exact gateway-scoped JSON authority queries (#9833)", () => {
+  it("synthesizes exact gateway-scoped OpenShell reads (#9833)", () => {
     expect(
       client.captureOpenshellCommand("/opt/openshell", ["gateway", "info", "-g", "nemoclaw-test"], {
         includeStreams: true,

@@ -123,15 +123,6 @@ registry.registerSandbox({
   gatewayName: "nemoclaw",
   mcp: { bridges: entries },
 });
-for (const entry of Object.values(entries)) {
-  registry.addCustomPolicy("alpha", {
-    name: entry.policyName,
-    content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
-      addresses: [new URL(entry.url).hostname],
-    }, entry.providerName),
-    sourcePath: "generated:nemoclaw-mcp-bridge",
-  });
-}
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 const restart = require("./src/lib/actions/sandbox/mcp-bridge-restart.js");
@@ -273,13 +264,6 @@ registry.registerSandbox({
   mcp: { bridges: { example: entry } },
 });
 registry.addExtraProvider("foreign-registered");
-registry.addCustomPolicy("alpha", {
-  name: entry.policyName,
-  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
-    addresses: ["8.8.8.8"],
-  }, entry.providerName),
-  sourcePath: "generated:nemoclaw-mcp-bridge",
-});
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.restartMcpBridge("alpha", "example").then(

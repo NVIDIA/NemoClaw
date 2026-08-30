@@ -691,17 +691,17 @@ function installVerifiedSandboxCreateFixture(registry, options) {
       entry: structuredClone(reservationEntry),
     };
   };
-  const recordPendingSandboxPolicyVerification = (reservation, checkpoint) => {
+  const recordPendingSandboxCreateIdentity = (reservation, checkpoint) => {
     pendingCheckpoint = structuredClone(checkpoint);
     pendingEntry = {
       ...structuredClone(reservation.entry),
       lifecycleGeneration: checkpoint.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: checkpoint.sandboxIdentityFingerprint,
-      pendingPolicyVerification: structuredClone(checkpoint),
+      pendingCreateIdentity: structuredClone(checkpoint),
     };
     return structuredClone(pendingEntry);
   };
-  const requireCurrentPendingSandboxPolicyVerification = (reservation, checkpoint) => {
+  const requireCurrentPendingSandboxCreateIdentity = (reservation, checkpoint) => {
     if (
       reservation.authority.sessionId !== sessionId ||
       pendingCheckpoint === null ||
@@ -716,8 +716,8 @@ function installVerifiedSandboxCreateFixture(registry, options) {
   const registryFixture = {
     ...registry,
     qualifyPendingSandboxCreateReservation,
-    recordPendingSandboxPolicyVerification,
-    requireCurrentPendingSandboxPolicyVerification,
+    recordPendingSandboxCreateIdentity,
+    requireCurrentPendingSandboxCreateIdentity,
     getSandbox: (name) =>
       name === sandboxName
         ? structuredClone(publishedEntry || pendingEntry || sourceEntry)
@@ -762,65 +762,6 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     require.cache[registryPath].exports = registry;
   }
 
-  const receiptPath = require.resolve(
-    path.resolve(__dirname, "../../src/lib/onboard/sandbox-create/policy-creation-receipt.ts"),
-  );
-  const receipt = require(receiptPath);
-  const apfPolicyRegistration = (input) => {
-    if (options.apfInterceptorRequested !== true) {
-      throw new Error("integration fixture received unexpected APF policy verification");
-    }
-    options.onVerifyCreatedPolicy?.(input);
-    return {
-      policyAuthority: "externally-managed",
-      observedPolicyAuthority: "owner-unknown",
-      policyCreationReceipt: null,
-      policyIdentity: {
-        hash: "fixture-policy",
-        activeVersion: 1,
-      },
-    };
-  };
-  Object.defineProperties(receipt, {
-    verifyCreatedApfInterceptorPolicyRegistration: {
-      configurable: true,
-      enumerable: true,
-      writable: true,
-      value: apfPolicyRegistration,
-    },
-    verifyCreatedSandboxPolicyRegistration: {
-      configurable: true,
-      enumerable: true,
-      writable: true,
-      value: (input) => {
-        if (input.plannedAuthority !== "nemoclaw-managed") {
-          throw new Error("integration fixture supports only managed sandbox creation");
-        }
-        return {
-          policyAuthority: "nemoclaw-managed",
-          observedPolicyAuthority: "owner-unknown",
-          policyCreationReceipt: {
-            schemaVersion: 1,
-            origin: "sandbox-create",
-            gatewayName: input.gatewayName,
-            gatewayPort: input.gatewayPort,
-            sandboxName: input.sandboxName,
-            lifecycleGeneration: input.lifecycleGeneration,
-            sandboxIdentityFingerprint: input.lifecycleLiveIdentityFingerprint,
-            policyHash: "fixture-policy",
-            policyVersion: 1,
-          },
-        };
-      },
-    },
-    revalidateCreatedSandboxPolicyRegistration: {
-      configurable: true,
-      enumerable: true,
-      writable: true,
-      value: (input) => input.registration,
-    },
-  });
-  require.cache[receiptPath].exports = receipt;
   const prepareCreateIntent = () => {
     const onboardSession = require(
       path.resolve(__dirname, "../../src/lib/state/onboard-session.ts"),
@@ -836,7 +777,7 @@ function installVerifiedSandboxCreateFixture(registry, options) {
         : registryFixture.getSandbox(sandboxName);
     const recoverPendingCreate =
       currentEntry?.pendingRouteReservation === true &&
-      currentEntry.pendingPolicyVerification !== undefined;
+      currentEntry.pendingCreateIdentity !== undefined;
     let transaction =
       currentTransaction && (currentTransaction.phase !== "created" || recoverPendingCreate)
         ? currentTransaction
@@ -921,8 +862,7 @@ function sandboxCreateArgsWithVerifiedReservation(args, fixture) {
   return createArgs;
 }
 
-function managedSandboxPolicyReceiptFixture(entry, options = {}) {
-  const sandboxName = options.sandboxName || entry.name;
+function sandboxLifecycleFixture(entry, options = {}) {
   const gatewayName = options.gatewayName || "nemoclaw";
   const gatewayPort = options.gatewayPort || 8080;
   const lifecycleGeneration = options.lifecycleGeneration || "123e4567-e89b-42d3-a456-426614174983";
@@ -931,26 +871,12 @@ function managedSandboxPolicyReceiptFixture(entry, options = {}) {
     .createHash("sha256")
     .update(sandboxId)
     .digest("hex");
-  const policyHash = options.policyHash || "fixture-policy";
-  const policyVersion = options.policyVersion || 1;
   return {
     ...entry,
     gatewayName,
     gatewayPort,
     lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: sandboxIdentityFingerprint,
-    policyAuthority: "nemoclaw-managed",
-    policyCreationReceipt: {
-      schemaVersion: 1,
-      origin: "sandbox-create",
-      gatewayName,
-      gatewayPort,
-      sandboxName,
-      lifecycleGeneration,
-      sandboxIdentityFingerprint,
-      policyHash,
-      policyVersion,
-    },
   };
 }
 
@@ -1374,7 +1300,7 @@ module.exports = {
   createCreatedSandboxFixture,
   mockStructuredOpenShellCaptureFromRunner,
   installVerifiedSandboxCreateFixture,
-  managedSandboxPolicyReceiptFixture,
+  sandboxLifecycleFixture,
   mockOnboardRunCapture,
   mockStandaloneGatewayTeardownAuthority,
   normalizeCommand,

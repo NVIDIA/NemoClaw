@@ -51,8 +51,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/repository/github-actions-workflow-names.test.ts"),
   },
   {
-    pattern:
-      /(?:^|\/)test\/helpers\/(?:onboard-fixture-contract\.json|onboard-script-mocks\.cjs)$/,
+    pattern: /(?:^|\/)test\/helpers\/(?:onboard-fixture-contract\.json|onboard-script-mocks\.cjs)$/,
     testsToRun: runTests(
       "test/helpers/onboard-created-sandbox-fixture.test.ts",
       "test/onboarding/onboard-custom-dockerfile.test.ts",

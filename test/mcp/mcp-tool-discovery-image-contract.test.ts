@@ -160,8 +160,7 @@ describe("MCP tool discovery image contract", () => {
         .map((seedName) => fs.statSync(path.join(seedDirectory, seedName)).size)
         .every((size) => size <= 2_000_000),
     ).toBe(true);
-    manifest.archives.forEach(
-      (archive: { archive: string; integrity: string; size: number }) => {
+    manifest.archives.forEach((archive: { archive: string; integrity: string; size: number }) => {
       const archiveParts = seedNames.filter(
         (seedName) =>
           seedName === archive.archive || seedName.startsWith(`${archive.archive}.part-`),
@@ -189,8 +188,7 @@ describe("MCP tool discovery image contract", () => {
       expect(seed).toHaveLength(archive.size);
       expect(integrity).toBe(archive.integrity);
       expect(matches.length).toBeGreaterThan(0);
-      },
-    );
+    });
   });
 
   it("does not commit MCP runtime registry archives", () => {
@@ -206,7 +204,7 @@ describe("MCP tool discovery image contract", () => {
   // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
   it.each([
     {
-      expectedHash: "53771f9433668eae932034b80666d7dbbfa010caf69b719af1735851cbae405f",
+      expectedHash: "7374416e22010dc0a03177dbd57d6388d3ddc9206a9edaff2a87717e842f306d",
       relativePath: "managed-startup-image-runtime.bundle",
     },
     {
@@ -403,25 +401,26 @@ describe("MCP tool discovery image contract", () => {
     },
   );
 
-  it.each(
-    dockerfiles,
-  )("%s copies and probes the bundled runtime at its canonical path (#6901)", (relativePath) => {
-    const dockerfile = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
+  it.each(dockerfiles)(
+    "%s copies and probes the bundled runtime at its canonical path (#6901)",
+    (relativePath) => {
+      const dockerfile = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
 
-    expect(dockerfile).toContain(
-      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs",
-    );
-    expect(dockerfile).toContain(
-      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
-    );
-    expect(dockerfile).toContain(
-      `COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ ${runtimeRoot}/`,
-    );
-    expect(dockerfile).not.toContain("mcp-runtime-npm-cache-seed/");
-    expect(dockerfile).not.toContain("install-reviewed-runtime.sh");
-    expect(dockerfile).toContain(`node ${runtimeRoot}/mcp-tool-discovery.mjs`);
-    expect(dockerfile).not.toContain(`${runtimeRoot}/mcp-tool-discovery.ts`);
-  });
+      expect(dockerfile).toContain(
+        "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs",
+      );
+      expect(dockerfile).toContain(
+        "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+      );
+      expect(dockerfile).toContain(
+        `COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ ${runtimeRoot}/`,
+      );
+      expect(dockerfile).not.toContain("mcp-runtime-npm-cache-seed/");
+      expect(dockerfile).not.toContain("install-reviewed-runtime.sh");
+      expect(dockerfile).toContain(`node ${runtimeRoot}/mcp-tool-discovery.mjs`);
+      expect(dockerfile).not.toContain(`${runtimeRoot}/mcp-tool-discovery.ts`);
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "accepts a complete locked tree after npm's exact internal exit-handler failure",
