@@ -2796,15 +2796,19 @@ function customPresetOwnsNetworkPolicyKey(sandboxName: string, policyKey: string
  * matching presets" (`[]`).
  */
 function getGatewayPresets(sandboxName: string, timeoutMs?: number): string[] | null {
-  let sandboxAgent: string | null = null;
+  let sandbox: ReturnType<typeof registry.getSandbox>;
+  let gatewayName: string;
   try {
-    sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
+    sandbox = registry.getSandbox(sandboxName);
+    if (!sandbox) return null;
+    gatewayName = resolveSandboxGatewayName(sandbox);
   } catch {
-    sandboxAgent = null;
+    return null;
   }
+  const sandboxAgent = sandbox.agent ?? null;
   const builtins = inspectGatewayPresetNames({
     readPolicy: () =>
-      runCapture(buildPolicyGetFullCommand(sandboxName), {
+      runCapture(buildPolicyGetFullCommand(sandboxName, gatewayName), {
         ignoreError: true,
         ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }),
       }),

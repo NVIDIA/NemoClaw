@@ -57,17 +57,29 @@ describe("rebuild policy provider handoff", () => {
   });
 
   it.each([
-    ["langchain-deepagents-code", true, "balanced", ["observability-otlp-local"], []],
-    ["langchain-deepagents-code", false, "balanced", [], ["observability-otlp-local"]],
-    ["langchain-deepagents-code", true, "restricted", [], ["observability-otlp-local"]],
-    ["openclaw", true, "balanced", [], []],
+    ["langchain-deepagents-code", true, true, "balanced", ["observability-otlp-local"], []],
+    ["langchain-deepagents-code", false, true, "balanced", [], ["observability-otlp-local"]],
+    ["langchain-deepagents-code", true, true, "restricted", [], ["observability-otlp-local"]],
+    ["langchain-deepagents-code", true, false, null, [], []],
+    ["openclaw", true, true, "balanced", [], []],
   ] as const)(
-    "derives the rebuild observability delta for %s enabled=%s tier=%s",
-    (agent, enabled, tierName, requiredNetworkPolicyKeys, removedNetworkPolicyKeys) => {
-      expect(resolveRebuildObservabilityPolicyDelta({ agent, enabled, tierName })).toEqual({
-        requiredNetworkPolicyKeys,
-        removedNetworkPolicyKeys,
-      });
+    "derives the rebuild observability delta for %s enabled=%s explicit=%s tier=%s",
+    (
+      agent,
+      enabled,
+      explicitlyRequested,
+      tierName,
+      requiredNetworkPolicyKeys,
+      removedNetworkPolicyKeys,
+    ) => {
+      expect(
+        resolveRebuildObservabilityPolicyDelta({
+          agent,
+          enabled,
+          explicitlyRequested,
+          tierName,
+        }),
+      ).toEqual({ requiredNetworkPolicyKeys, removedNetworkPolicyKeys });
     },
   );
 

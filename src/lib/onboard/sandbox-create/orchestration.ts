@@ -169,12 +169,13 @@ export function resolveRebuildMessagingPolicyDeltas(
 export function resolveRebuildObservabilityPolicyDelta(input: {
   readonly agent: string | null | undefined;
   readonly enabled: boolean | null | undefined;
+  readonly explicitlyRequested: boolean | null | undefined;
   readonly tierName: string | null | undefined;
 }): {
   readonly requiredNetworkPolicyKeys: readonly string[];
   readonly removedNetworkPolicyKeys: readonly string[];
 } {
-  if (!isDcodeAgent(input.agent)) {
+  if (!isDcodeAgent(input.agent) || input.explicitlyRequested !== true) {
     return { requiredNetworkPolicyKeys: [], removedNetworkPolicyKeys: [] };
   }
   const required = input.enabled === true && input.tierName !== RESTRICTED_TIER_NAME;
@@ -2165,6 +2166,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const rebuildObservabilityPolicyDelta = resolveRebuildObservabilityPolicyDelta({
       agent: agent?.name,
       enabled: createIntent?.observabilityEnabled,
+      explicitlyRequested: createIntent?.observabilityRequestedExplicitly,
       tierName: createIntent?.policyTier,
     });
     const rebuildPolicyProviderAuthority = resolveRebuildPolicyProviderAuthority({

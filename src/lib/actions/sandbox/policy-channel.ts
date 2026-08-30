@@ -828,6 +828,7 @@ async function applyChannelAddToGatewayAndRegistry(
   acquired: Record<string, string>,
   applyPolicyAfterAttachment?: () => boolean,
   upsertMessagingProviders = policyChannelDependencies.upsertMessagingProviders,
+  cleanupCredentialFreePolicy?: () => void,
 ): Promise<boolean | null> {
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
   const staticProviderType = staticMessagingProviderTypeForChannel(channelName, sandboxAgent);
@@ -864,6 +865,7 @@ async function applyChannelAddToGatewayAndRegistry(
     console.error(
       "  Paste the secret at the enrollment prompt or export the env var, then re-run.",
     );
+    cleanupCredentialFreePolicy?.();
     process.exit(1);
   }
   tokenDefs.push(...bridgeDefs);
@@ -877,6 +879,7 @@ async function applyChannelAddToGatewayAndRegistry(
     );
     console.error("  in env for this run only. Rerun after starting the gateway.");
     console.error(`  ${gatewayStartGuidance(gatewayName)}`);
+    cleanupCredentialFreePolicy?.();
     process.exit(1);
   }
   policyChannelDependencies.revalidateChannelProviderPolicy(sandboxName, gatewayName);
@@ -937,6 +940,7 @@ async function applyChannelAddToGatewayAndRegistry(
           `  ${YW}⚠${R} Could not remove newly created providers ${cleanupFailures.join(", ")}; rerun '${CLI_NAME} ${sandboxName} channels remove ${channelName}'.`,
         );
       }
+      cleanupCredentialFreePolicy?.();
       process.exit(1);
     }
     const teardown = await applyChannelRemoveToGatewayAndRegistry(
@@ -950,6 +954,7 @@ async function applyChannelAddToGatewayAndRegistry(
         `  ${YW}⚠${R} Partial provider state may remain; run '${CLI_NAME} ${sandboxName} channels remove ${channelName}' once the gateway is reachable.`,
       );
     }
+    cleanupCredentialFreePolicy?.();
     process.exit(1);
   }
   return true;
@@ -1516,9 +1521,21 @@ async function addSandboxChannelUnlocked(
     const existing = getCredential(key);
     if (existing != null) priorCreds[key] = existing;
   }
-  // Register providers before credentials or durable channel state are saved.
-  // OpenShell requires credential providers to be attached before their policy
-  // bindings can be applied, so rollback both effects when policy application fails.
+  // Confirm credential-free egress before creating or attaching any provider.
+  // OpenShell requires providers to exist before the binding can be applied, so
+  // the bound policy is applied as a second stage after attachment.
+  const cleanupCredentialFreePolicy = wasAlreadyEnabled
+    ? undefined
+    : () => removeChannelPresetIfPresent(sandboxName, canonical);
+  if (
+    !wasAlreadyEnabled &&
+    !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
+      disclosedPresetState,
+      includeMessagingCredentialBindings: false,
+    })
+  ) {
+    process.exit(1);
+  }
   const registeredBridge = await applyChannelAddToGatewayAndRegistry(
     sandboxName,
     canonical,
@@ -1528,6 +1545,7 @@ async function addSandboxChannelUnlocked(
         disclosedPresetState,
       }),
     dependencies.upsertMessagingProviders,
+    cleanupCredentialFreePolicy,
   );
   if (registeredBridge === null) {
     await rollbackChannelAdd(sandboxName, channelDef, canonical, {
@@ -1634,16 +1652,23 @@ export function applyChannelPresetIfAvailable(
   sandboxName: string,
   channelName: string,
   retryAction: "add" | "start" = "add",
-  options: { disclosedPresetState?: policies.PresetPolicyState | null } = {},
+  options: {
+    disclosedPresetState?: policies.PresetPolicyState | null;
+    includeMessagingCredentialBindings?: boolean;
+  } = {},
 ): boolean {
   try {
+    const includeMessagingCredentialBindings =
+      options.includeMessagingCredentialBindings === undefined
+        ? true
+        : options.includeMessagingCredentialBindings;
     const applied = Object.prototype.hasOwnProperty.call(options, "disclosedPresetState")
       ? policies.applyPreset(sandboxName, channelName, {
           disclosedPresetState: options.disclosedPresetState,
-          includeMessagingCredentialBindings: true,
+          includeMessagingCredentialBindings,
         })
       : policies.applyPreset(sandboxName, channelName, {
-          includeMessagingCredentialBindings: true,
+          includeMessagingCredentialBindings,
         });
     if (!applied) {
       console.error(
