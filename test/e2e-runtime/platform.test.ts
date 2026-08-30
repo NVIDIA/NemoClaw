@@ -350,11 +350,11 @@ describe("platform helpers", () => {
             '  test -f "$DOCKER_CONFIG/config.json" || exit 8',
             '  test -n "${XDG_RUNTIME_DIR:-}" || exit 3',
             '  case ",${NO_PROXY:-}," in *,127.0.0.1,*) ;; *) exit 10 ;; esac',
-            "  printf '%s\\n' '{\"Server\":{\"Platform\":{\"Name\":\"Docker Engine - Community\"}}}'",
+            '  printf \'%s\\n\' \'{"Server":{"Platform":{"Name":"Docker Engine - Community"}}}\'',
             "else",
             '  test -z "${DOCKER_CONTEXT:-}" || exit 6',
             '  test -z "${DOCKER_CONFIG:-}" || exit 9',
-            "  printf '%s\\n' '{\"Server\":{\"Components\":[{\"Name\":\"Podman Engine\"}]}}'",
+            '  printf \'%s\\n\' \'{"Server":{"Components":[{"Name":"Podman Engine"}]}}\'',
             "fi",
           ].join("\n"),
         );
@@ -396,7 +396,7 @@ describe("platform helpers", () => {
           [
             "#!/bin/sh",
             'test -n "${DOCKER_HOST:-}" || kill -TERM $$',
-            "printf '%s\\n' '{\"Server\":{\"Components\":[{\"Name\":\"Podman Engine\"}]}}'",
+            'printf \'%s\\n\' \'{"Server":{"Components":[{"Name":"Podman Engine"}]}}\'',
           ].join("\n"),
         );
         chmodSync(docker, 0o755);
