@@ -11,7 +11,14 @@ export function gatewayWaitResult(
     sleepMs?: number;
   } = {},
 ) {
-  const notReady = failures.notReady ?? 0;
+  const defaultNotReady =
+    result === "not-ready" &&
+    failures.notReady === undefined &&
+    failures.timeouts === undefined &&
+    failures.errors === undefined
+      ? 1
+      : 0;
+  const notReady = failures.notReady ?? defaultNotReady;
   const timeouts = failures.timeouts ?? 0;
   const errors = failures.errors ?? 0;
   const failureCount = notReady + timeouts + errors;

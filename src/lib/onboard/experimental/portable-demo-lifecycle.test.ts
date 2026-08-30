@@ -930,7 +930,7 @@ describe("portable demo sandbox lifecycle", () => {
         case "curl":
           return { status: 0, stdout: "000" };
         case "python3":
-          now += 90_000;
+          now += 89_900;
           return gatewayWaitResult(launchOpenshell.mock.calls.length < 2 ? "not-ready" : "ready");
         default:
           throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);

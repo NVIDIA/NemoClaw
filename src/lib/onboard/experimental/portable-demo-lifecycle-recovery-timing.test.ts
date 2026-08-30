@@ -490,6 +490,7 @@ describe("portable lifecycle recovery timing output", () => {
       },
       "gatewayTimeouts=1 gatewayErrors=0",
       "lastFailure=timeout",
+      1_000,
     ],
     [
       "an inconsistent receipt",
@@ -500,16 +501,25 @@ describe("portable lifecycle recovery timing output", () => {
       },
       "gatewayTimeouts=0 gatewayErrors=1",
       "lastFailure=error",
+      1_000,
     ],
     [
       "a receipt with a mismatched exit status",
       { ...gatewayWaitResult("ready", { notReady: 1 }), status: 75 },
       "gatewayTimeouts=0 gatewayErrors=1",
       "lastFailure=error",
+      1_000,
+    ],
+    [
+      "a valid not-ready receipt",
+      gatewayWaitResult("not-ready"),
+      "gatewayTimeouts=0 gatewayErrors=0",
+      "lastFailure=not-ready",
+      100,
     ],
   ] as const)(
     "retries launched gateway observation after %s without accepting it as ready (#9200)",
-    (_label, firstResult, attemptCounts, lastFailure) => {
+    (_label, firstResult, attemptCounts, lastFailure, retryDelay) => {
       const stateDir = temporaryStateDir();
       const podman = createPodman(false);
       const launchOpenshell = vi.fn();
@@ -558,7 +568,7 @@ describe("portable lifecycle recovery timing output", () => {
         }),
       ).toEqual({ kind: "recovered" });
       expect(waitAttempts).toBe(2);
-      expect(sleeps).toEqual([1_000]);
+      expect(sleeps).toEqual([retryDelay]);
       expect(timingLines(log)[0]).toContain(attemptCounts);
       expect(gatewayTimingLines(log)[0]).toContain(`firstReadyAttempt=2 ${lastFailure}`);
       expect(gatewayTimingLines(log)[0]).not.toContain("credential-bearing");
