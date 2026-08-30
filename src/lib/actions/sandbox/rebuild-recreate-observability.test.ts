@@ -464,7 +464,7 @@ describe("runRebuildRecreatePhase handoff", () => {
     }
   });
 
-  it("treats a nonzero inner onboarding result as recreate failure (#10394)", async () => {
+  it("treats an integer-string inner onboarding result as recreate failure (#10394)", async () => {
     const previousExitCode = process.exitCode;
     const observedExitCodes: Array<typeof process.exitCode> = [];
     const input = makeInput();
@@ -472,7 +472,7 @@ describe("runRebuildRecreatePhase handoff", () => {
       process.exitCode = 23;
       vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
         observedExitCodes.push(process.exitCode);
-        process.exitCode = 7;
+        process.exitCode = "7";
       });
 
       await expect(runRebuildRecreatePhase(input)).rejects.toThrow(
