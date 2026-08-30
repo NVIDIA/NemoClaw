@@ -242,6 +242,79 @@ on:
     ).rejects.toThrow("PR base commit tree is truncated");
   });
 
+  it.each([
+    [
+      "duplicate directories",
+      [
+        { path: "agents", mode: "040000", type: "tree", sha: "1".repeat(40) },
+        { path: "agents", mode: "040000", type: "tree", sha: "2".repeat(40) },
+      ],
+    ],
+    [
+      "directory and file collisions",
+      [
+        { path: "agents", mode: "040000", type: "tree", sha: "1".repeat(40) },
+        { path: "agents", mode: "100644", type: "blob", sha: "2".repeat(40) },
+      ],
+    ],
+  ])("rejects %s in an immutable commit tree", async (_description, tree) => {
+    const request = exactCommitRequest("docs/upgrade.md", (apiPath) => {
+      throw new Error(`unexpected request: ${apiPath}`);
+    });
+    const baseTreePath = `/repos/NVIDIA/NemoClaw/git/trees/${BASE_TREE_SHA}?recursive=1`;
+
+    await expect(
+      resolvePrManagedImageCatalog(
+        {
+          baseSha: BASE_SHA,
+          candidateRepository: "NVIDIA/NemoClaw",
+          candidateSha: CANDIDATE_SHA,
+          outputPath: path.join(os.tmpdir(), "unused-pr-managed-image-catalog.json"),
+          prNumber: PR_NUMBER,
+          token: "test-token",
+          workflowSource: MANAGED_IMAGE_WORKFLOW,
+        },
+        async (apiPath) =>
+          apiPath === baseTreePath
+            ? { sha: BASE_TREE_SHA, truncated: false, tree }
+            : request(apiPath),
+      ),
+    ).rejects.toThrow("PR base commit tree contains duplicate paths");
+  });
+
+  it.each([
+    ["blob", "040000"],
+    ["commit", "100644"],
+    ["tree", "100755"],
+  ])("rejects an immutable %s entry with Git mode %s", async (type, mode) => {
+    const request = exactCommitRequest("docs/upgrade.md", (apiPath) => {
+      throw new Error(`unexpected request: ${apiPath}`);
+    });
+    const baseTreePath = `/repos/NVIDIA/NemoClaw/git/trees/${BASE_TREE_SHA}?recursive=1`;
+
+    await expect(
+      resolvePrManagedImageCatalog(
+        {
+          baseSha: BASE_SHA,
+          candidateRepository: "NVIDIA/NemoClaw",
+          candidateSha: CANDIDATE_SHA,
+          outputPath: path.join(os.tmpdir(), "unused-pr-managed-image-catalog.json"),
+          prNumber: PR_NUMBER,
+          token: "test-token",
+          workflowSource: MANAGED_IMAGE_WORKFLOW,
+        },
+        async (apiPath) =>
+          apiPath === baseTreePath
+            ? {
+                sha: BASE_TREE_SHA,
+                truncated: false,
+                tree: [{ path: "agents", mode, type, sha: "1".repeat(40) }],
+              }
+            : request(apiPath),
+      ),
+    ).rejects.toThrow("PR base tree entry mode is invalid");
+  });
+
   it("rejects a manual PR catalog without a trusted pre-checkout producer", () => {
     const workflow = readE2eOperationsWorkflow();
     delete workflow.jobs["generate-matrix"].outputs?.managed_image_catalog;

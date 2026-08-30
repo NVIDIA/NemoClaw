@@ -29,7 +29,11 @@ const MAX_CHANGED_FILES = 3_000;
 const MAX_COMMIT_TREE_ENTRIES = 100_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
-const TREE_ENTRY_TYPES = new Set(["blob", "commit", "tree"]);
+const TREE_ENTRY_MODES = new Map([
+  ["blob", new Set(["100644", "100755", "120000"])],
+  ["commit", new Set(["160000"])],
+  ["tree", new Set(["040000"])],
+]);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -273,20 +277,24 @@ async function readCommitTree(
   }
 
   const entries = new Map<string, string>();
+  const paths = new Set<string>();
   for (const value of payload.tree) {
     const entry = record(value, `${label} tree entry`);
     if (typeof entry.path !== "string" || entry.path.length === 0) {
       throw new Error(`${label} tree entry path is invalid`);
     }
-    if (typeof entry.type !== "string" || !TREE_ENTRY_TYPES.has(entry.type)) {
+    if (paths.has(entry.path)) throw new Error(`${label} commit tree contains duplicate paths`);
+    paths.add(entry.path);
+    const validModes =
+      typeof entry.type === "string" ? TREE_ENTRY_MODES.get(entry.type) : undefined;
+    if (!validModes) {
       throw new Error(`${label} tree entry type is invalid`);
     }
-    if (typeof entry.mode !== "string" || !/^[0-7]{6}$/u.test(entry.mode)) {
+    if (typeof entry.mode !== "string" || !validModes.has(entry.mode)) {
       throw new Error(`${label} tree entry mode is invalid`);
     }
     const entrySha = sha(entry.sha, `${label} tree entry SHA`);
     if (entry.type === "tree") continue;
-    if (entries.has(entry.path)) throw new Error(`${label} commit tree contains duplicate paths`);
     entries.set(entry.path, `${entry.mode}:${entry.type}:${entrySha}`);
   }
   return entries;
