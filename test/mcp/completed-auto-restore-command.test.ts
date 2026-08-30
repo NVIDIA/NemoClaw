@@ -49,6 +49,21 @@ class StatusCommand extends NemoClawCommand {
   }
 }
 
+class InteractiveConnectCommand extends NemoClawCommand {
+  static id = "sandbox:connect";
+  static args = { sandboxName: Args.string({ required: true }) };
+  static flags = {};
+  static recoveryPaths: string[] = [];
+  static childStartedAfterRecovery = false;
+
+  public async run(): Promise<void> {
+    await this.parse(InteractiveConnectCommand);
+    InteractiveConnectCommand.childStartedAfterRecovery = InteractiveConnectCommand.recoveryPaths
+      .map((file) => fs.existsSync(file))
+      .every((exists) => !exists);
+  }
+}
+
 describe("completed auto-restore command admission", () => {
   let testHome: string;
   let stateDir: string;
@@ -67,6 +82,8 @@ describe("completed auto-restore command admission", () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
     StatusCommand.entered = false;
+    InteractiveConnectCommand.recoveryPaths = [];
+    InteractiveConnectCommand.childStartedAfterRecovery = false;
     fs.rmSync(testHome, { recursive: true, force: true });
   });
 
@@ -92,6 +109,34 @@ describe("completed auto-restore command admission", () => {
           (file) => fs.existsSync(file),
         ),
       ).toEqual([false, false, false, false]);
+    },
+  );
+
+  it(
+    "starts ordinary sandbox connect after exact completed auto-restore recovery (#10094)",
+    { timeout: 30_000 },
+    async () => {
+      const orphan = await reproduceCompletedAutoRestoreContainment(
+        stateDir,
+        "alpha",
+        "6".repeat(32),
+      );
+      const recoveryPaths = [
+        orphan.markerPath,
+        orphan.lockPath,
+        orphan.deadlinePath,
+        orphan.containmentPath,
+      ];
+      InteractiveConnectCommand.recoveryPaths = recoveryPaths;
+
+      await expect(
+        InteractiveConnectCommand.run(["alpha"], process.cwd()),
+      ).resolves.toBeUndefined();
+
+      expect(InteractiveConnectCommand.childStartedAfterRecovery).toBe(true);
+      expect(recoveryPaths.map((file) => fs.existsSync(file))).toEqual(
+        recoveryPaths.map(() => false),
+      );
     },
   );
 

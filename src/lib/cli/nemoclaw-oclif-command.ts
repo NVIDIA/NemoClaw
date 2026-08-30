@@ -107,7 +107,16 @@ export abstract class NemoClawCommand extends Command {
     if (portablePolicy?.ownsLifecycleFence) return await super._run<T>();
     const sandboxName = await this.resolveLifecycleSandboxName(portablePolicy);
     if (!sandboxName) return await super._run<T>();
-    if (this.isInteractiveConnect(commandId)) return await super._run<T>();
+    const recoverCompletedAutoRestore = async () => {
+      if (hasShieldsTimerRecoveryArtifact(sandboxName, resolveShieldsStateDir())) {
+        const { recoverCompletedAutoRestoreBeforeCommand } = await import("../shields");
+        recoverCompletedAutoRestoreBeforeCommand(sandboxName);
+      }
+    };
+    if (this.isInteractiveConnect(commandId)) {
+      await recoverCompletedAutoRestore();
+      return await super._run<T>();
+    }
     const runLocked = () => {
       if (typeof commandId === "string" && portablePolicy?.rawSandboxName) {
         assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
@@ -115,10 +124,7 @@ export abstract class NemoClawCommand extends Command {
       return super._run<T>();
     };
     const runWithLifecycleFence = async () => {
-      if (hasShieldsTimerRecoveryArtifact(sandboxName, resolveShieldsStateDir())) {
-        const { recoverCompletedAutoRestoreBeforeCommand } = await import("../shields");
-        recoverCompletedAutoRestoreBeforeCommand(sandboxName);
-      }
+      await recoverCompletedAutoRestore();
       return await (commandId === "sandbox:destroy"
         ? withMcpLifecycleLock(sandboxName, runLocked, {
             recoverAbandonedExpiredTimer: true,
