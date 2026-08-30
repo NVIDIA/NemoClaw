@@ -35,7 +35,6 @@ function identity(gatewayName = GATEWAY_NAME): LaunchReadinessIdentity {
   return {
     registry: DIGEST,
     agent: DIGEST,
-    livePolicy: DIGEST,
     liveInference: DIGEST,
     gatewayName,
     lifecycleGeneration: "generation-1",
@@ -53,7 +52,6 @@ function openClawIdentity(): LaunchReadinessIdentity {
       openclawVersion: "2026.7.1",
       deviceIdentitySha256: DIGEST,
       pairingStateSha256: DIGEST,
-      policySha256: DIGEST,
       requiredRoles: ["operator"],
       requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
     },
@@ -281,7 +279,7 @@ describe("launch readiness lease storage", () => {
     expect(readLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options()).kind).toBe("malformed");
     const next = fenceLaunchReadinessLease(SANDBOX, GATEWAY_PORT, options());
 
-    expect(next).toMatchObject({ schemaVersion: 2, epochId: EPOCH_B });
+    expect(next).toMatchObject({ schemaVersion: 3, epochId: EPOCH_B });
     expect(next.preservedLeaseStartedWallMs).toBe(first.leaseStartedWallMs);
     expect(next.preservedLeaseExpiresWallMs).toBe(first.leaseExpiresWallMs);
     expect(

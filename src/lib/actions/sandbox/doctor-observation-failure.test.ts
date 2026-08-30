@@ -58,8 +58,6 @@ vi.mock("../../onboard/runtime-provider/access", () => ({
 
 vi.mock("../../state/registry", () => ({
   getSandbox: () => null,
-  getBaselineExclusionTransition: () => null,
-  getBaselineExclusions: () => [],
 }));
 
 vi.mock("./doctor-inference", () => ({

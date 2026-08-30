@@ -127,11 +127,17 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
         fs.chmodSync(file, 0o600);
       });
 
-      const command = dockerRunCommandBetween(
+      const messagingPermissionCommand = dockerRunCommandBetween(
+        dockerfile,
+        "# Add messaging source after the non-messaging install",
+        "# Bake reduced messaging runtime metadata for the entrypoint",
+      );
+      const runtimePermissionCommand = dockerRunCommandBetween(
         dockerfile,
         "# Copy startup script and shared sandbox initialisation library",
-        "# Build args for config that varies per deployment.",
-      )
+        "# Lock down npm for the next RUN",
+      );
+      const command = `${messagingPermissionCommand}\n${runtimePermissionCommand}`
         .replaceAll("/usr/local/bin", localBin)
         .replaceAll("/usr/local/lib/nemoclaw", localLib)
         .replaceAll("/usr/local/share/nemoclaw", localShare)

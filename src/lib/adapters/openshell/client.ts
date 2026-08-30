@@ -13,6 +13,9 @@ import {
 import { redirectInheritedChildStdoutToStderr } from "../../cli/stdout-guard";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import { processTreeBoundedOpenshellInvocation } from "./process-tree-timeout";
+import { classifyManagedGatewayEndpointBinding } from "../../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs";
+
+export { classifyManagedGatewayEndpointBinding };
 
 export { openshellSandboxSshHost, resolveOpenshellSandboxSshHost } from "./sandbox-ssh-host";
 
@@ -90,6 +93,9 @@ const ANSI_RE = /\x1b\[[0-9;]*m/g;
 export function stripAnsi(value = ""): string {
   return String(value).replace(ANSI_RE, "");
 }
+
+export type ManagedGatewayEndpointBinding =
+  import("../../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs").ManagedGatewayEndpointBinding;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

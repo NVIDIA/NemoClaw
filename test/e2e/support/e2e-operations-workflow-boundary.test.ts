@@ -537,11 +537,48 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         );
         expect(authentication.run).not.toContain("collaborators/");
         expect(authentication.run).not.toContain("role_name");
+        expect(authentication.env).not.toHaveProperty("GITHUB_TOKEN");
+        expect(authentication.run).not.toContain("Authorization:");
       } finally {
         rmSync(directory, { force: true, recursive: true });
       }
     },
   );
+
+  it.each([
+    ["a denied public PR metadata request", "return 22"],
+    ["malformed public PR metadata", `printf '%s' '{'`],
+  ])("fails closed for %s", (_caseName, curlResult) => {
+    const workflow = readE2eOperationsWorkflow();
+    const authentication = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Authenticate manual PR dispatch",
+    )!;
+    const prefix = ["curl() {", `  ${curlResult}`, "}"].join("\n");
+    const result = spawnSync(
+      "bash",
+      ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", `${prefix}\n${authentication.run}`],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          BASE_SHA: "b".repeat(40),
+          CHECKOUT_REPOSITORY: "NVIDIA/NemoClaw",
+          CHECKOUT_SHA: "a".repeat(40),
+          EXPECTED_WORKFLOW_SHA: "c".repeat(40),
+          GITHUB_OUTPUT: "/dev/null",
+          GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+          INCLUDE_LAUNCHABLE: "false",
+          JOBS: "",
+          PR_NUMBER: "42",
+          WORKFLOW_EVENT: "workflow_dispatch",
+          WORKFLOW_REF: "refs/heads/main",
+          WORKFLOW_SHA: "c".repeat(40),
+        },
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+  });
 
   it.each([
     [
@@ -1447,12 +1484,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
       writeFileSync(
         advisorPath,
-        'permissions: read-all\njobs:\n  advisor:\n    permissions:\n      actions: "write"\n    steps:\n      - run: createWorkflowDispatch()\n',
+        'permissions: read-all\njobs:\n  review-specialists:\n    env: { BASE_REF: target/base~1, HEAD_REF: HEAD~1 }\n    permissions:\n      actions: "write"\n    steps:\n      - run: createWorkflowDispatch()\n',
       );
       expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toEqual(
         expect.arrayContaining([
           "Unified advisor must not hold actions: write",
           "Unified advisor must not auto-dispatch workflows",
+          "Unified advisor specialists must retain target refs through execution",
         ]),
       );
     } finally {

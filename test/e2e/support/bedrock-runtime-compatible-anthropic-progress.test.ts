@@ -8,7 +8,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it, onTestFinished } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 
 import { SNAPSHOT_DATA_PREFIX } from "../live/bedrock-runtime-compatible-anthropic-leaks.ts";
@@ -55,28 +54,6 @@ afterEach(async () => {
 });
 
 describe("Bedrock raw-command progress", () => {
-  it("applies the provider-neutral workload source at the raw spawn boundary", async () => {
-    const artifacts = await artifactSink("bedrock-workload-source");
-    const observation = progressProbe();
-    const result = await runRawCommand(
-      process.execPath,
-      ["-e", "process.stdout.write(process.env.NEMOCLAW_FROM_DOCKERFILE ?? '')"],
-      {
-        artifactName: "bedrock-workload-source",
-        artifacts,
-        env: {
-          E2E_TARGET_ID: "inference-routing",
-          E2E_WORKLOAD_SOURCE: "legacy-dockerfile",
-          NEMOCLAW_AGENT: "langchain-deepagents-code",
-        },
-        progress: observation.progress,
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe(path.join(REPO_ROOT, "agents/langchain-deepagents-code/Dockerfile"));
-  });
-
   it("reports timestamp-only output activity without forwarding child payloads", async () => {
     const secret = "opaque-bedrock-progress-secret";
     const artifacts = await artifactSink("bedrock-progress-output");

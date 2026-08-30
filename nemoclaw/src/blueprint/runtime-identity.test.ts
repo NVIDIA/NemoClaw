@@ -62,10 +62,7 @@ const matchingProviderResult: RuntimeIdentityCommandResult = {
 };
 const configuredProviderResult: RuntimeIdentityCommandResult = {
   exitCode: 0,
-  stdout: matchingProvider.replace(
-    "Credential keys: OKTA_ACCESS_TOKEN",
-    "Credential keys: <none>",
-  ),
+  stdout: matchingProvider.replace("Credential keys: OKTA_ACCESS_TOKEN", "Credential keys: <none>"),
   stderr: "",
 };
 const configuredRefreshResult: RuntimeIdentityCommandResult = {
@@ -300,15 +297,14 @@ describe("runtime identity contract", () => {
     expect(resolveRuntimeIdentityProfilePath(config.profile_path, root)).toBe(profilePath);
   });
 
-  it.each([
-    "/absolute-profile.yaml",
-    "../outside-profile.yaml",
-    "missing-profile.yaml",
-  ])("rejects an unsafe or missing profile path: %s", (candidate) => {
-    expect(() => resolveRuntimeIdentityProfilePath(candidate, root)).toThrow(
-      /must (?:be relative|stay inside|name an existing file)/,
-    );
-  });
+  it.each(["/absolute-profile.yaml", "../outside-profile.yaml", "missing-profile.yaml"])(
+    "rejects an unsafe or missing profile path: %s",
+    (candidate) => {
+      expect(() => resolveRuntimeIdentityProfilePath(candidate, root)).toThrow(
+        /must (?:be relative|stay inside|name an existing file)/,
+      );
+    },
+  );
 
   it("rejects a directory and an outward symlink as profiles", () => {
     mkdirSync(join(root, "provider-profiles", "directory"));
@@ -555,15 +551,18 @@ describe("runtime identity contract", () => {
       entraProfileDocument.replace("login.microsoftonline.com", "graph.microsoft.com"),
       /refresh token_url host 'graph\.microsoft\.com' is outside/,
     ],
-  ])("rejects an Entra profile that changes the reviewed %s", async (_boundary, profile, message) => {
-    writeFileSync(join(root, entraConfig.profile_path), profile);
-    environment.ENTRA_CLIENT_ID = "entra-client-id";
-    environment.ENTRA_REFRESH_TOKEN = "entra-refresh-secret";
-    environment.ENTRA_CLIENT_SECRET = "entra-client-secret";
+  ])(
+    "rejects an Entra profile that changes the reviewed %s",
+    async (_boundary, profile, message) => {
+      writeFileSync(join(root, entraConfig.profile_path), profile);
+      environment.ENTRA_CLIENT_ID = "entra-client-id";
+      environment.ENTRA_REFRESH_TOKEN = "entra-refresh-secret";
+      environment.ENTRA_CLIENT_SECRET = "entra-client-secret";
 
-    await expect(prepareRuntimeIdentity(entraConfig, deps)).rejects.toThrow(message);
-    expect(calls).toEqual([]);
-  });
+      await expect(prepareRuntimeIdentity(entraConfig, deps)).rejects.toThrow(message);
+      expect(calls).toEqual([]);
+    },
+  );
 
   it("rejects DNS-backed destinations unless the reviewed profile policy owns DNS", async () => {
     deps.validateEndpointUrl = async () => ({ dnsResolved: true });
@@ -868,6 +867,20 @@ describe("runtime identity contract", () => {
     );
   });
 
+  it("preserves a created provider when its ownership receipt is not durable (#9833)", async () => {
+    responses.set("provider get acme-okta-runtime", [missingProvider]);
+    deps.persistReceipt = () => {
+      throw new Error("receipt persistence failed");
+    };
+
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(
+      "receipt persistence failed",
+    );
+    const commands = calls.map(({ args }) => commandKey(args));
+    expect(commands).not.toContain("provider delete acme-okta-runtime");
+    expect(commands.join("\n")).not.toContain("provider refresh configure");
+  });
+
   it("redacts client ID and secret material from refresh configuration errors", async () => {
     responses.set("provider get acme-okta-runtime", [missingProvider, matchingProviderResult]);
     responses.set(
@@ -961,10 +974,9 @@ describe("runtime identity contract", () => {
 
   it("attaches a provider whose refresh is configured before its first mint", async () => {
     responses.set("provider get acme-okta-runtime", [configuredProviderResult]);
-    responses.set(
-      "provider refresh status acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN",
-      [configuredRefreshResult],
-    );
+    responses.set("provider refresh status acme-okta-runtime --credential-key OKTA_ACCESS_TOKEN", [
+      configuredRefreshResult,
+    ]);
 
     await expect(attachRuntimeIdentity(createdReceipt, "sandbox", deps)).resolves.toBe(true);
     expect(calls.map(({ args }) => commandKey(args))).toEqual([

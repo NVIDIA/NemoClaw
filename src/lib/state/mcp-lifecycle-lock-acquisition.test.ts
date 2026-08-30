@@ -11,11 +11,13 @@ import {
   beginCommittedMcpLifecycleContainmentSync,
   durableMcpLifecycleContainmentFailure,
   isMcpLifecycleLockHeld,
+  localAbandonedTimerGeneration,
   withMcpLifecycleDeadlineFence,
   withMcpLifecycleDeadlineFenceSync,
   withMcpLifecycleLock,
   withMcpLifecycleLockSync,
 } from "./mcp-lifecycle-lock-acquisition";
+import { localTimerProcessStartIdentity } from "./mcp-lifecycle-lock/shields-timer-authority";
 import {
   createMcpLifecycleLockOwner,
   readMcpLockHostIdentity,
@@ -44,6 +46,7 @@ function writeTimerMarker(
   processToken: string | undefined,
   restoreAt = new Date(Date.now() + 60_000).toISOString(),
   pid = process.pid,
+  extra: Record<string, unknown> = {},
 ): void {
   fs.writeFileSync(
     path.join(stateDir, `shields-timer-${SANDBOX_NAME}.json`),
@@ -53,6 +56,7 @@ function writeTimerMarker(
       snapshotPath: path.join(stateDir, "snapshot.yaml"),
       restoreAt,
       ...(processToken ? { processToken } : {}),
+      ...extra,
     }),
   );
 }
@@ -75,6 +79,32 @@ function writeStaleMainOwner(shieldsTakeoverToken?: string): string {
     })}\n`,
   );
   return lockPath;
+}
+
+function writeStructuredCompletedContainment(
+  processToken: string,
+  containedToken = "stale-main-token",
+): { containmentPath: string; lockPath: string } {
+  const lockPath = writeStaleMainOwner(processToken);
+  const containmentPath = `${lockPath}.containment`;
+  const mainStat = fs.statSync(lockPath);
+  fs.writeFileSync(
+    containmentPath,
+    JSON.stringify({
+      ...createMcpLifecycleLockOwner(SANDBOX_NAME, "structured-containment", processToken),
+      pid: 2_147_483_646,
+      processIdentity: "dead-containment-owner",
+      containmentReason: "Human-readable containment diagnostics may change independently",
+      containedGeneration: {
+        target: "main",
+        dev: mainStat.dev,
+        ino: mainStat.ino,
+        token: containedToken,
+        ownerPid: 2_147_483_647,
+      },
+    }),
+  );
+  return { containmentPath, lockPath };
 }
 
 function writeOwnerAt(lockPath: string, token: string): void {
@@ -232,7 +262,7 @@ describe("MCP lifecycle lock acquisition", () => {
     });
   });
 
-  it("keeps asynchronous ordinary acquisition closed after an unpublished timer deadline", async () => {
+  it("keeps ordinary acquisition closed after an unpublished timer deadline", async () => {
     const operation = vi.fn(() => "must not enter");
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
     writeTimerMarker("1".repeat(32), new Date(Date.now() - 1_000).toISOString());
@@ -266,18 +296,105 @@ describe("MCP lifecycle lock acquisition", () => {
     });
   });
 
-  it("keeps synchronous ordinary acquisition closed after a dead timer misses its deadline", () => {
+  it("keeps ordinary acquisition closed after a dead timer misses its deadline", async () => {
     const operation = vi.fn(() => "must not enter");
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
     writeTimerMarker("2".repeat(32), new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
 
-    expect(() => withMcpLifecycleLockSync(SANDBOX_NAME, operation, options())).toThrow(
-      "Timed out waiting for sandbox mutation lock",
+    await expect(withMcpLifecycleLock(SANDBOX_NAME, operation, options())).rejects.toThrow(
+      "Timed out waiting for the sandbox mutation lock",
     );
 
     expect(operation).not.toHaveBeenCalled();
     expect(fs.existsSync(lockPath)).toBe(false);
-    expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
+  });
+
+  it("recovers through the deadline fence after an abandoned timer deadline", async () => {
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker("4".repeat(32), new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
+
+    await expect(
+      withMcpLifecycleLock(SANDBOX_NAME, () => "entered", {
+        ...options(),
+        recoverAbandonedExpiredTimer: true,
+      }),
+    ).resolves.toBe("entered");
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
+  });
+
+  it("recovers through the deadline fence when a live PID's recorded ps identity no longer matches", async () => {
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker("9".repeat(32), new Date(Date.now() - 1_000).toISOString(), process.pid, {
+      timerProcessStartIdentity: "ps:recorded",
+    });
+    vi.spyOn(localTimerProcessStartIdentity, "read").mockReturnValue("ps:observed");
+
+    await expect(
+      withMcpLifecycleLock(SANDBOX_NAME, () => "entered", {
+        ...options(),
+        recoverAbandonedExpiredTimer: true,
+      }),
+    ).resolves.toBe("entered");
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("restarts abandoned-timer grace when a replacement generation appears", async () => {
+    const operation = vi.fn(() => "entered");
+    writeTimerMarker("a".repeat(32), new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
+    const pending = withMcpLifecycleLock(SANDBOX_NAME, operation, {
+      ...options(),
+      recoverAbandonedExpiredTimer: true,
+      pollIntervalMs: 15,
+      timeoutMs: 5_000,
+      corruptLockGraceMs: 80,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    writeTimerMarker("b".repeat(32), new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(operation).not.toHaveBeenCalled();
+    await expect(pending).resolves.toBe("entered");
+    expect(operation).toHaveBeenCalledTimes(1);
+  });
+
+  it("restarts asynchronous recovery grace after confirmation observes a replacement generation (#10066)", async () => {
+    const tokenA = "a".repeat(32);
+    const tokenB = "b".repeat(32);
+    writeTimerMarker(tokenA, new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
+    const snapA = { token: tokenA, key: `${tokenA}:2147483647:` };
+    const snapB = { token: tokenB, key: `${tokenB}:2147483647:` };
+    const observations = [snapA, snapA, snapB, snapA, snapA, snapA];
+    let reads = 0;
+    vi.spyOn(localAbandonedTimerGeneration, "read").mockImplementation(() => {
+      const observation = observations[Math.min(reads, observations.length - 1)]!;
+      reads += 1;
+      return observation;
+    });
+    const operation = vi.fn(() => "entered");
+    let monotonicNow = 0;
+
+    await expect(
+      withMcpLifecycleLock(SANDBOX_NAME, operation, {
+        ...options(),
+        recoverAbandonedExpiredTimer: true,
+        corruptLockGraceMs: 2,
+        monotonicNow: () => monotonicNow++,
+      }),
+    ).resolves.toBe("entered");
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(monotonicNow).toBeGreaterThan(2);
+  });
+
+  it("keeps waiting when an expired timer's process is still alive", async () => {
+    const operation = vi.fn(() => "must not enter");
+    writeTimerMarker("5".repeat(32), new Date(Date.now() - 1_000).toISOString());
+
+    await expect(withMcpLifecycleLock(SANDBOX_NAME, operation, options())).rejects.toThrow(
+      "Timed out waiting for the sandbox mutation lock",
+    );
+
+    expect(operation).not.toHaveBeenCalled();
   });
 
   it("rejects synchronous entry after its published generation is replaced", () => {
@@ -450,6 +567,25 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(fs.existsSync(lockPath)).toBe(false);
   });
 
+  it("holds ordinary admission for abandoned-timer grace when restoreAt crosses after the gate", async () => {
+    const operation = vi.fn(() => "must not enter");
+    const beforeDeadline = Date.now();
+    writeTimerMarker("9".repeat(32), new Date(beforeDeadline + 500).toISOString(), 2_147_483_647);
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(beforeDeadline)
+      .mockReturnValue(beforeDeadline + 1_000);
+
+    await expect(
+      withMcpLifecycleLock(SANDBOX_NAME, operation, {
+        ...options(),
+        timeoutMs: 200,
+        corruptLockGraceMs: 10_000,
+      }),
+    ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
+
+    expect(operation).not.toHaveBeenCalled();
+  });
+
   it("releases a synchronous lock after nested work completes", () => {
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
     const events: string[] = [];
@@ -517,10 +653,181 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
   });
 
+  it("denies completed auto-restore cleanup while the exact timer owner is still live", () => {
+    const processToken = "c".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker(processToken);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify(createMcpLifecycleLockOwner(SANDBOX_NAME, "live-main", processToken)),
+    );
+    const operation = vi.fn();
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, operation, {
+        ...options(),
+        completedAutoRestoreRecovery: {
+          ownerPid: process.pid,
+          assertAuthority: vi.fn(),
+        },
+      }),
+    ).toThrow("main generation is not the exact stale timer owner");
+
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(lockPath)).toBe(true);
+  });
+
+  it("preserves a terminal auto-restore containment with the same timer token", () => {
+    const processToken = "d".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const containmentPath = `${lockPath}.containment`;
+    writeTimerMarker(processToken);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(
+      containmentPath,
+      JSON.stringify({
+        ...createMcpLifecycleLockOwner(SANDBOX_NAME, "terminal-containment", processToken),
+        pid: 2_147_483_647,
+        processIdentity: "dead-containment-owner",
+        containmentReason:
+          "Auto-restore recovery failed while the exact timer generation still owned recovery authority",
+      }),
+    );
+    const operation = vi.fn();
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, operation, {
+        ...options(),
+        completedAutoRestoreRecovery: {
+          ownerPid: 2_147_483_646,
+          assertAuthority: vi.fn(),
+        },
+      }),
+    ).toThrow("does not identify a recoverable completed timer generation");
+
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(containmentPath)).toBe(true);
+  });
+
+  it("recovers from structured containment independently of diagnostic wording", () => {
+    const processToken = "e".repeat(32);
+    writeTimerMarker(processToken, new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
+    const paths = writeStructuredCompletedContainment(processToken);
+
+    expect(
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, () => "complete", {
+        ...options(),
+        completedAutoRestoreRecovery: {
+          ownerPid: 2_147_483_647,
+          assertAuthority: vi.fn(),
+        },
+      }),
+    ).toBe("complete");
+    expect(fs.existsSync(paths.lockPath)).toBe(false);
+    expect(fs.existsSync(paths.containmentPath)).toBe(false);
+  });
+
+  it("uses completed auto-restore authority when the canonical timer marker is unavailable", () => {
+    const processToken = "e".repeat(32);
+    const paths = writeStructuredCompletedContainment(processToken);
+    const assertAuthority = vi.fn();
+
+    expect(
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, () => "complete", {
+        ...options(),
+        completedAutoRestoreRecovery: {
+          ownerPid: 2_147_483_647,
+          assertAuthority,
+        },
+      }),
+    ).toBe("complete");
+    expect(assertAuthority).toHaveBeenCalled();
+    expect(fs.existsSync(paths.lockPath)).toBe(false);
+    expect(fs.existsSync(paths.containmentPath)).toBe(false);
+  });
+
+  it("cleans an ambiguously published main generation before refusing completed recovery authority", () => {
+    const processToken = "e".repeat(32);
+    const operation = vi.fn(() => "must not enter");
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    const deadlinePath = `${lockPath}.deadline`;
+    let authorityCurrent = true;
+    const assertAuthority = vi.fn(() => expect(authorityCurrent).toBe(true));
+    const realLinkSync = fs.linkSync.bind(fs);
+    vi.spyOn(fs, "linkSync")
+      .mockImplementationOnce((candidatePath, targetPath) =>
+        realLinkSync(candidatePath, targetPath),
+      )
+      .mockImplementationOnce((candidatePath, targetPath) => {
+        realLinkSync(candidatePath, targetPath);
+        authorityCurrent = false;
+        vi.spyOn(fs, "statSync").mockImplementationOnce(() => {
+          throw new Error("publication reconciliation unavailable");
+        });
+        throw new Error("publication reply lost");
+      });
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, operation, {
+        ...options(),
+        completedAutoRestoreRecovery: {
+          ownerPid: 2_147_483_647,
+          assertAuthority,
+        },
+      }),
+    ).toThrow("Auto-restore authority changed");
+
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+  });
+
+  it("preserves structured containment when its protected generation is absent", () => {
+    const processToken = "e".repeat(32);
+    writeTimerMarker(processToken, new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
+    const paths = writeStructuredCompletedContainment(processToken);
+    fs.unlinkSync(paths.lockPath);
+    const operation = vi.fn();
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, operation, {
+        ...options(),
+        completedAutoRestoreRecovery: {
+          ownerPid: 2_147_483_647,
+          assertAuthority: vi.fn(),
+        },
+      }),
+    ).toThrow("structured containment has no remaining main generation to verify");
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(paths.containmentPath)).toBe(true);
+  });
+
+  it("preserves containment whose structured generation does not match", () => {
+    const processToken = "e".repeat(32);
+    writeTimerMarker(processToken, new Date(Date.now() - 1_000).toISOString(), 2_147_483_647);
+    const paths = writeStructuredCompletedContainment(processToken, "different-main-token");
+    const operation = vi.fn();
+
+    expect(() =>
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, operation, {
+        ...options(),
+        completedAutoRestoreRecovery: {
+          ownerPid: 2_147_483_647,
+          assertAuthority: vi.fn(),
+        },
+      }),
+    ).toThrow("contained lifecycle generation changed");
+    expect(operation).not.toHaveBeenCalled();
+    expect(fs.existsSync(paths.lockPath)).toBe(true);
+    expect(fs.existsSync(paths.containmentPath)).toBe(true);
+  });
+
   it("retains exact synchronous deadline and main generations after an uncommitted durable-containment failure", () => {
     const processToken = "f".repeat(32);
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
     const deadlinePath = `${lockPath}.deadline`;
+    const onReleased = vi.fn();
     writeTimerMarker(processToken);
 
     expect(() =>
@@ -533,7 +840,7 @@ describe("MCP lifecycle lock acquisition", () => {
             lockPath,
           );
         },
-        options(),
+        { ...options(), onReleased },
       ),
     ).toThrow("containment state is read-only");
 
@@ -550,6 +857,7 @@ describe("MCP lifecycle lock acquisition", () => {
       shieldsTakeoverToken: processToken,
     });
     expect(fs.existsSync(`${lockPath}.containment`)).toBe(false);
+    expect(onReleased).not.toHaveBeenCalled();
   });
 
   it("releases owned generations when committed containment is proven present", () => {
@@ -958,6 +1266,24 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(onReleased).toHaveBeenCalledOnce();
   });
 
+  it("runs synchronous release completion only after exact gates are absent (#10094)", () => {
+    const processToken = "9".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker(processToken);
+    const onReleased = vi.fn(() => {
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
+    });
+
+    expect(
+      withMcpLifecycleDeadlineFenceSync(SANDBOX_NAME, processToken, () => "complete", {
+        ...options(),
+        onReleased,
+      }),
+    ).toBe("complete");
+    expect(onReleased).toHaveBeenCalledOnce();
+  });
+
   it("contains a stale async main generation that records a rotated Shields timer token", async () => {
     const ownerToken = "3".repeat(32);
     const currentToken = "4".repeat(32);
@@ -1013,6 +1339,13 @@ describe("MCP lifecycle lock acquisition", () => {
       sandboxName: SANDBOX_NAME,
       shieldsTakeoverToken: processToken,
       containmentReason: expect.stringContaining("timer-bound sandbox mutation owner exited"),
+      containedGeneration: {
+        target: "main",
+        dev: expect.any(Number),
+        ino: expect.any(Number),
+        token: "stale-main-token",
+        ownerPid: 2_147_483_647,
+      },
     });
   });
 
@@ -1036,6 +1369,13 @@ describe("MCP lifecycle lock acquisition", () => {
       sandboxName: SANDBOX_NAME,
       shieldsTakeoverToken: processToken,
       containmentReason: expect.stringContaining("timer-bound sandbox mutation owner exited"),
+      containedGeneration: {
+        target: "main",
+        dev: expect.any(Number),
+        ino: expect.any(Number),
+        token: "stale-main-token",
+        ownerPid: 2_147_483_647,
+      },
     });
   });
 

@@ -63,10 +63,7 @@ export function hydrateDerivedSandboxMessagingPlanFields(
   });
   return {
     ...hydratedPlan,
-    networkPolicy:
-      plan.networkPolicy.entries.length > 0
-        ? plan.networkPolicy
-        : planNetworkPolicy(manifests, compilerContext(hydratedPlan)),
+    networkPolicy: planNetworkPolicy(manifests, compilerContext(hydratedPlan)),
     agentRender:
       plan.agentRender.length > 0
         ? plan.agentRender
@@ -230,9 +227,7 @@ function selectHookInputs(
 function runtimeSetupHasEntries(setup: SandboxMessagingRuntimeSetupPlan | undefined): boolean {
   return Boolean(
     setup &&
-      (setup.nodePreloads.length > 0 ||
-        setup.envAliases.length > 0 ||
-        setup.secretScans.length > 0),
+    (setup.nodePreloads.length > 0 || setup.envAliases.length > 0 || setup.secretScans.length > 0),
   );
 }
 

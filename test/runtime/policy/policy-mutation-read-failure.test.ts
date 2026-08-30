@@ -7,11 +7,18 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  managedSandboxEntry,
+  POLICY_HASH,
+  POLICY_VERSION,
+  SANDBOX_IDENTITY,
+} from "../../helpers/live-policy-fixture";
+
 const requireForTest = createRequire(import.meta.url);
 const policies = requireForTest(
   path.join(import.meta.dirname, "..", "../..", "src", "lib", "policy", "index.ts"),
 ) as typeof import("../../../src/lib/policy");
-const policyAuthority = requireForTest(
+const policyState = requireForTest(
   path.join(
     import.meta.dirname,
     "..",
@@ -20,9 +27,9 @@ const policyAuthority = requireForTest(
     "lib",
     "adapters",
     "openshell",
-    "policy-authority.ts",
+    "policy-state.ts",
   ),
-) as typeof import("../../../src/lib/adapters/openshell/policy-authority");
+) as typeof import("../../../src/lib/adapters/openshell/policy-state");
 const registry = requireForTest(
   path.join(import.meta.dirname, "..", "../..", "src", "lib", "state", "registry.ts"),
 ) as typeof import("../../../src/lib/state/registry");
@@ -44,15 +51,15 @@ describe("OpenShell policy mutation read failures", () => {
   const tempDirs: string[] = [];
 
   beforeEach(() => {
-    vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue({
-      authority: "nemoclaw-managed",
+    vi.spyOn(policyState, "inspectSandboxPolicy").mockReturnValue({
+      policySource: "sandbox",
       effectivePolicy: {},
+      policyIdentity: { hash: POLICY_HASH, activeVersion: POLICY_VERSION },
     });
-    vi.spyOn(registry, "getSandbox").mockReturnValue({
-      name: "alpha",
-      agent: "openclaw",
-      policyAuthority: "nemoclaw-managed",
-    });
+    vi.spyOn(policyState, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
+      SANDBOX_IDENTITY,
+    );
+    vi.spyOn(registry, "getSandbox").mockReturnValue(managedSandboxEntry("alpha"));
   });
 
   afterEach(() => {
@@ -85,9 +92,11 @@ describe("OpenShell policy mutation read failures", () => {
 
       expect(apply()).toBe(false);
       const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
-      expect(calls).toEqual(["policy get --base alpha"]);
+      expect(calls).toEqual(["policy get -g nemoclaw --base alpha"]);
       expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
-      expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
+      expect(consoleError).toHaveBeenCalledWith(
+        expect.stringContaining("Policy-dependent operations must stop"),
+      );
     });
 
     it.each([
@@ -117,12 +126,14 @@ describe("OpenShell policy mutation read failures", () => {
 
         expect(apply()).toBe(false);
         const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
-        expect(calls).toEqual(["policy get --base alpha"]);
+        expect(calls).toEqual(["policy get -g nemoclaw --base alpha"]);
         expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
         expect(
           mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
         ).toEqual([]);
-        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
+        expect(consoleError).toHaveBeenCalledWith(
+          expect.stringContaining("Policy-dependent operations must stop"),
+        );
       },
     );
 
@@ -151,12 +162,14 @@ describe("OpenShell policy mutation read failures", () => {
 
         expect(apply()).toBe(false);
         const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
-        expect(calls).toEqual(["policy get --base alpha"]);
+        expect(calls).toEqual(["policy get -g nemoclaw --base alpha"]);
         expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
         expect(
           mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
         ).toEqual([]);
-        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
+        expect(consoleError).toHaveBeenCalledWith(
+          expect.stringContaining("Policy-dependent operations must stop"),
+        );
       },
     );
 
@@ -185,12 +198,14 @@ describe("OpenShell policy mutation read failures", () => {
 
         expect(apply()).toBe(false);
         const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
-        expect(calls).toEqual(["policy get --base alpha"]);
+        expect(calls).toEqual(["policy get -g nemoclaw --base alpha"]);
         expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
         expect(
           mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
         ).toEqual([]);
-        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
+        expect(consoleError).toHaveBeenCalledWith(
+          expect.stringContaining("Policy-dependent operations must stop"),
+        );
       },
     );
   });

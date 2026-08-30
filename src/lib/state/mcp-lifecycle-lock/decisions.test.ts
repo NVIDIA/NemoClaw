@@ -144,6 +144,7 @@ describe("lifecycle lock decisions", () => {
     ["open", null, false, "proceed"],
     ["timer deadline", null, true, "wait"],
     ["committed containment", observation(owner()), false, "refuse"],
+    ["containment over an expired timer", observation(owner()), true, "refuse"],
   ] as const)("maps the %s gate to %s", (_name, containment, timerExpired, kind) => {
     expect(decideMcpLifecycleGate(containment, timerExpired).kind).toBe(kind);
   });
@@ -174,8 +175,7 @@ describe("lifecycle lock decisions", () => {
       "unchanged publication authority",
       {
         phase: "publication",
-        expectedTakeoverToken: "a".repeat(32),
-        observedTakeoverToken: "a".repeat(32),
+        authorityCurrent: true,
         existingSelfToken: null,
       },
       "publish",
@@ -184,8 +184,7 @@ describe("lifecycle lock decisions", () => {
       "recovered self publication",
       {
         phase: "publication",
-        expectedTakeoverToken: "a".repeat(32),
-        observedTakeoverToken: "a".repeat(32),
+        authorityCurrent: true,
         existingSelfToken: "owner-a",
       },
       "resume",
@@ -194,8 +193,7 @@ describe("lifecycle lock decisions", () => {
       "changed publication authority",
       {
         phase: "publication",
-        expectedTakeoverToken: "a".repeat(32),
-        observedTakeoverToken: "b".repeat(32),
+        authorityCurrent: false,
         existingSelfToken: "owner-a",
       },
       "refuse",

@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ShippedManagedImageAgent } from "../../../src/lib/onboard/managed-image/contract.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertManagedImageReceiptMatchesSelectedCohort } from "../fixtures/managed-image-receipt.ts";
 
 const EXACT_MAIN_OVERLAY_KEYS = new Set([
   "PATH",
@@ -11,6 +13,8 @@ const EXACT_MAIN_OVERLAY_KEYS = new Set([
 ]);
 
 const MCP_BRIDGE_QUALIFICATION_ENV_KEYS = [
+  "E2E_MANAGED_IMAGE_REVISION",
+  "E2E_MANAGED_IMAGE_COHORT_RECEIPT",
   "NEMOCLAW_E2E_EXPECTED_SHA",
   "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG",
   "NEMOCLAW_RUN_LIVE_E2E",
@@ -24,9 +28,7 @@ const MCP_BRIDGE_ONBOARD_ARGS = [
   "--yes-i-accept-third-party-software",
 ] as const;
 
-export function buildMcpBridgeOnboardArgs(
-  environment: NodeJS.ProcessEnv = process.env,
-): string[] {
+export function buildMcpBridgeOnboardArgs(environment: NodeJS.ProcessEnv = process.env): string[] {
   const catalogPath = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
   return catalogPath
     ? [
@@ -41,23 +43,23 @@ export function buildMcpBridgeOnboardArgs(
 
 export function assertMcpBridgeManagedImageReceipt(options: {
   environment?: NodeJS.ProcessEnv;
+  expectedAgent: ShippedManagedImageAgent;
   workload?: Record<string, unknown>;
 }): void {
   const environment = options.environment ?? process.env;
-  if (!environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim()) return;
+  const selectedRevision = environment.E2E_MANAGED_IMAGE_REVISION?.trim();
+  const exactCandidateCatalog = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
+  if (!selectedRevision && !exactCandidateCatalog) return;
 
-  const expectedRevision = environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
+  const expectedRevision = selectedRevision ?? environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
   if (!/^[0-9a-f]{40}$/u.test(expectedRevision)) {
-    throw new Error("managed-image MCP qualification requires an exact candidate revision");
+    throw new Error("managed-image MCP qualification requires an exact cohort revision");
   }
-  if (
-    options.workload?.kind !== "managed-image" ||
-    options.workload.sourceRevision !== expectedRevision
-  ) {
-    throw new Error(
-      "MCP qualification must use the exact managed image instead of a Dockerfile build",
-    );
-  }
+  assertManagedImageReceiptMatchesSelectedCohort({
+    environment,
+    expectedAgent: options.expectedAgent,
+    workload: options.workload,
+  });
 }
 
 export function buildMcpBridgeExactMainEnv(options: {

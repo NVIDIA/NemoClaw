@@ -473,20 +473,33 @@ describe("resolveSandboxDashboardPort", () => {
 });
 
 describe("classifySandboxForwardHealth", () => {
-  it("returns true for a running forward owned by the target sandbox", () => {
-    expect(
-      classifySandboxForwardHealth(
-        [{ sandboxName: "beta", port: "18790", status: "running" }],
-        "beta",
-        "18790",
-      ),
-    ).toBe(true);
-  });
+  it.each(["running", "active"])(
+    "returns true for a %s forward owned by the target sandbox",
+    (status) => {
+      expect(
+        classifySandboxForwardHealth(
+          [{ sandboxName: "beta", port: "18790", status }],
+          "beta",
+          "18790",
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("returns occupied when another sandbox owns the expected port", () => {
     expect(
       classifySandboxForwardHealth(
         [{ sandboxName: "alpha", port: "18790", status: "running" }],
+        "beta",
+        "18790",
+      ),
+    ).toBe("occupied");
+  });
+
+  it("returns occupied when another sandbox owns an active forward on the expected port", () => {
+    expect(
+      classifySandboxForwardHealth(
+        [{ sandboxName: "alpha", port: "18790", status: "active" }],
         "beta",
         "18790",
       ),
@@ -576,6 +589,22 @@ describe("classifySandboxForwardHealth", () => {
 });
 
 describe("classifyForwardHealthWithReachability", () => {
+  it("requires an exact active owner to answer before reporting healthy", () => {
+    let probed = false;
+    const result = classifyForwardHealthWithReachability(
+      [{ sandboxName: "beta", port: "18790", status: "active" }],
+      "beta",
+      "18790",
+      () => {
+        probed = true;
+        return true;
+      },
+    );
+
+    expect(result).toBe(true);
+    expect(probed).toBe(true);
+  });
+
   it("does not trust an arbitrary local listener for a non-running owned entry", () => {
     let probed = false;
     const result = classifyForwardHealthWithReachability(

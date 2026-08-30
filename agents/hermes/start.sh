@@ -80,6 +80,11 @@ while :; do
       printf '%s\n' '[SECURITY] Hermes startup held by an active runtime state mutation.' >&2
       /bin/sleep 1 || true
       ;;
+    76)
+      printf '%s\n' '[SECURITY] Hermes startup refused invalid runtime state mutation state.' >&2
+      printf '%s\n' "[SECURITY] Run 'nemoclaw <sandbox-name> shields status' on the host to recover the retained transition." >&2
+      exit 1
+      ;;
     *)
       printf '%s\n' '[SECURITY] Runtime state mutation startup gate failed.' >&2
       exit 1
@@ -106,7 +111,16 @@ nemoclaw_runtime_state_mutation_checkpoint() {
   fi
   kill -STOP "$$"
   if nemoclaw_runtime_state_mutation_gate resume; then
-    return 0
+    if nemoclaw_runtime_state_mutation_gate acknowledge; then
+      # The acknowledgement helper stops itself after publishing. The root
+      # controller resumes that exact child, then this parent stops only after
+      # Bash has reaped it and observed success.
+      kill -STOP "$$"
+      return 0
+    fi
+    printf '%s\n' '[SECURITY] Runtime state mutation release acknowledgement failed; holding startup.' >&2
+    kill -STOP "$$"
+    return 1
   else
     status=$?
   fi
@@ -324,6 +338,9 @@ HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 # create new top-level state while the gateway user cannot remove config files.
 # Immutability is opt-in via `shields up`.
 HERMES_DIR="/sandbox/.hermes"
+if [ -z "${HERMES_LAZY_INSTALL_TARGET+x}" ]; then
+  export HERMES_LAZY_INSTALL_TARGET="/sandbox/.hermes/lazy-packages"
+fi
 HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
 
 # Resolve the standalone secret-boundary validator. The container ships it at
@@ -2993,6 +3010,11 @@ prepare_hermes_nonroot_runtime() {
   # the actionable, redacted secret-boundary refusal. Repeat after the trusted
   # startup mutations below so their outputs remain covered as well.
   validate_hermes_env_secret_boundary || return 1
+  # The non-root Hermes runtime can persist safe config/env changes while it is
+  # running. Reconcile that mutable compatibility anchor only after the secret
+  # boundary is valid; refresh-hashes still requires the recorded MCP intent to
+  # match exactly before it advances the anchor.
+  refresh_hermes_runtime_config_hashes compat || return 1
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
   prepare_hermes_lazy_dependencies || return 1
   ensure_hermes_runtime_api_server_key compat || return 1

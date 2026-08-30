@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import { type ProviderOption, resolveProviderKeyFallback } from "./provider-key-fallback";
 import { providerNameToOptionKey, type RemoteProviderConfigEntryLike } from "./provider-recovery";
 
@@ -48,6 +49,17 @@ export interface ProviderSelectionFailure {
 export type ProviderSelectionResolution<T extends ProviderOption> =
   | ProviderSelectionSuccess<T>
   | ProviderSelectionFailure;
+
+export function resolveSelectedEndpointSource(input: {
+  provider: string;
+  endpointUrl: string | null;
+  hasPinnedAddresses: boolean;
+  hasTrustedPrivateCapability: boolean;
+}): "onboard" | null {
+  if (input.hasPinnedAddresses || input.hasTrustedPrivateCapability) return "onboard";
+  if (input.provider !== "compatible-anthropic-endpoint") return null;
+  return isBedrockRuntimeEndpoint(input.endpointUrl) ? "onboard" : null;
+}
 
 export interface ProviderSelectionRecoveryReaders {
   readRecordedProvider(sandboxName: string | null | undefined): string | null;
