@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, type StdioOptions } from "node:child_process";
+import type { Writable } from "node:stream";
 import { getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import { spawnExitCode } from "../../core/process-exit";
@@ -30,6 +31,76 @@ import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-f
  */
 const DRAIN_GRACE_MS = 200;
 
+// Source attribution depends only on the start of a line. Relay the rest after
+// this bound so one unterminated log line cannot grow host memory without limit.
+const MAX_BUFFERED_GATEWAY_LINE_PREFIX_CHARS = 4_096;
+
+type GatewayLogChunkTagger = {
+  finish: () => string;
+  write: (chunk: string) => string;
+};
+
+function createGatewayLogChunkTagger(): GatewayLogChunkTagger {
+  let pendingPrefix = "";
+  let pendingCarriageReturn = false;
+  let linePrefixRelayed = false;
+
+  return {
+    write(chunk: string): string {
+      const output: string[] = [];
+      let currentChunk = pendingCarriageReturn ? `\r${chunk}` : chunk;
+      pendingCarriageReturn = false;
+      if (currentChunk.endsWith("\r")) {
+        currentChunk = currentChunk.slice(0, -1);
+        pendingCarriageReturn = true;
+      }
+      const segments = currentChunk.split("\n");
+      for (let index = 0; index < segments.length; index += 1) {
+        const hasNewline = index < segments.length - 1;
+        const rawSegment = segments[index] ?? "";
+        const segment =
+          hasNewline && rawSegment.endsWith("\r") ? rawSegment.slice(0, -1) : rawSegment;
+
+        if (linePrefixRelayed) {
+          output.push(segment);
+        } else {
+          const remaining = MAX_BUFFERED_GATEWAY_LINE_PREFIX_CHARS - pendingPrefix.length;
+          if (segment.length <= remaining) {
+            pendingPrefix += segment;
+          } else {
+            pendingPrefix += segment.slice(0, remaining);
+            output.push(tagGatewayLogLine(pendingPrefix), segment.slice(remaining));
+            pendingPrefix = "";
+            linePrefixRelayed = true;
+          }
+        }
+
+        if (hasNewline) {
+          if (!linePrefixRelayed) {
+            output.push(tagGatewayLogLine(pendingPrefix));
+            pendingPrefix = "";
+          }
+          output.push("\n");
+          linePrefixRelayed = false;
+        }
+      }
+      return output.join("");
+    },
+    finish(): string {
+      const hadPendingCarriageReturn = pendingCarriageReturn;
+      pendingCarriageReturn = false;
+      if (linePrefixRelayed) {
+        linePrefixRelayed = false;
+        return "\n";
+      }
+      if (!pendingPrefix) return hadPendingCarriageReturn ? "\n" : "";
+      const finalLine = `${tagGatewayLogLine(pendingPrefix)}\n`;
+      pendingPrefix = "";
+      return finalLine;
+    },
+  };
+}
+
 type RunOpenshellOptions = Parameters<typeof runOpenshell>[1];
 type RunOpenshellFn = (args: string[], options?: RunOpenshellOptions) => LogProbeResult;
 type SpawnFn = typeof spawn;
@@ -44,7 +115,8 @@ export type SandboxLogsRuntimeDeps = {
   printDockerRuntimeDownGuidance?: typeof printDockerRuntimeDownGuidance;
   runOpenshell?: RunOpenshellFn;
   spawn?: SpawnFn;
-  writeStdout?: (chunk: string) => void;
+  stdout?: Writable;
+  writeStdout?: (chunk: string) => boolean | void;
 };
 
 function runOpenclawGatewayLogs(
@@ -86,17 +158,20 @@ function streamSandboxFollowLogs(
       : buildSandboxOpenclawGatewayLogsArgs(sandboxName, options);
   const openshellArgs = buildSandboxLogsArgs(sandboxName, options);
   const exit = deps.exit ?? process.exit;
-  const writeStdout = deps.writeStdout ?? process.stdout.write.bind(process.stdout);
+  const outputStream = deps.stdout ?? process.stdout;
+  const writesThroughOutputStream = deps.writeStdout === undefined;
+  const writeStdout = deps.writeStdout ?? outputStream.write.bind(outputStream);
   // A tagged source is piped so each line can be attributed before it is
   // relayed. Every other source keeps the original raw passthrough.
-  const spawnOptionsFor = (tagged: boolean): { cwd: string; env: NodeJS.ProcessEnv; stdio: StdioOptions } => ({
+  const spawnOptionsFor = (
+    tagged: boolean,
+  ): { cwd: string; env: NodeJS.ProcessEnv; stdio: StdioOptions } => ({
     cwd: ROOT,
     env: deps.env ?? process.env,
     stdio: tagged ? ["inherit", "pipe", "inherit"] : "inherit",
   });
   const sources: Array<{
     label: string;
-    args: string[];
     child: import("node:child_process").ChildProcess;
     done: boolean;
   }> = [];
@@ -106,6 +181,15 @@ function streamSandboxFollowLogs(
   let requestedExitCode: number | null = null;
   let forcedExitTimer: NodeJS.Timeout | null = null;
   let setupComplete = false;
+  let outputErrorHandler: ((error: NodeJS.ErrnoException) => void) | null = null;
+
+  const exitRelay = (code: number): never => {
+    if (outputErrorHandler) {
+      outputStream.off("error", outputErrorHandler);
+      outputErrorHandler = null;
+    }
+    return exit(code);
+  };
 
   const stopChildren = (signal: NodeJS.Signals) => {
     for (const { child } of sources) {
@@ -122,7 +206,7 @@ function streamSandboxFollowLogs(
       clearTimeout(forcedExitTimer);
       forcedExitTimer = null;
     }
-    exit(requestedExitCode ?? finalStatus);
+    exitRelay(requestedExitCode ?? finalStatus);
   };
   const markSourceDone = (
     source: (typeof sources)[number],
@@ -146,7 +230,7 @@ function streamSandboxFollowLogs(
     exiting = true;
     requestedExitCode = exitCode;
     stopChildren(signal);
-    forcedExitTimer = setTimeout(() => exit(exitCode), 2000);
+    forcedExitTimer = setTimeout(() => exitRelay(exitCode), 2000);
     forcedExitTimer.unref?.();
     maybeExit();
   };
@@ -161,11 +245,18 @@ function streamSandboxFollowLogs(
   // an `error` event rather than a throw from write(), and an unhandled one
   // crashes the CLI. Own that channel only when this relay is the writer, so an
   // injected writeStdout keeps whatever error handling its owner chose (#10340).
-  if (deps.writeStdout === undefined) {
-    process.stdout.on("error", (error: NodeJS.ErrnoException) => {
-      if (!isBrokenPipeRelayError(error)) throw error;
-      requestExitAfterSignal("SIGTERM", LOG_RELAY_BROKEN_PIPE_EXIT_CODE);
-    });
+  if (writesThroughOutputStream) {
+    outputErrorHandler = (error: NodeJS.ErrnoException) => {
+      if (requestedExitCode !== null) return;
+      if (isBrokenPipeRelayError(error)) {
+        requestExitAfterSignal("SIGTERM", LOG_RELAY_BROKEN_PIPE_EXIT_CODE);
+        return;
+      }
+      const suffix = typeof error.code === "string" ? ` (${error.code})` : "";
+      console.error(`  Log output failed${suffix}.`);
+      requestExitAfterSignal("SIGTERM", 1);
+    };
+    outputStream.on("error", outputErrorHandler);
   }
 
   const addSource = (label: string, args: string[], tagged = false) => {
@@ -173,17 +264,16 @@ function streamSandboxFollowLogs(
     const openshellBinary = (deps.getOpenshellBinary ?? getOpenshellBinary)();
     const source = {
       label,
-      args,
       child: spawnProcess(openshellBinary, args, spawnOptionsFor(tagged)),
       done: false,
     };
     sources.push(source);
-    source.child.on("error", (error: Error) => {
-      markSourceDone(source, 1, error.message);
-    });
 
     const stdout = tagged ? source.child.stdout : null;
     if (!stdout) {
+      source.child.on("error", (error: Error) => {
+        markSourceDone(source, 1, error.message);
+      });
       source.child.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
         markSourceDone(
           source,
@@ -193,58 +283,166 @@ function streamSandboxFollowLogs(
       });
       return;
     }
+    const relayStdout = stdout;
 
-    let pending = "";
+    const tagger = createGatewayLogChunkTagger();
     let exited = false;
     let ended = false;
     let exitStatus = 0;
     let exitDetail: string | null = null;
     let drainTimer: NodeJS.Timeout | null = null;
+    let drainTimeRemainingMs = DRAIN_GRACE_MS;
+    let drainTimerStartedAtMs: number | null = null;
+    let waitingForDrain = false;
+    let finalizing = false;
+    let finalOutput = "";
+    let pendingOutputWrites = 0;
 
-    const emitLine = (raw: string) => {
-      const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
-      writeStdout(`${tagGatewayLogLine(line)}\n`);
-    };
-    const finish = () => {
-      if (drainTimer) {
-        clearTimeout(drainTimer);
-        drainTimer = null;
-      }
-      if (pending) {
-        emitLine(pending);
-        pending = "";
-      }
-      stdout.destroy();
+    function completeSource(): void {
+      outputStream.off("drain", resumeAfterDrain);
+      relayStdout.destroy();
       markSourceDone(source, exitStatus, exitDetail);
-    };
+    }
 
-    stdout.setEncoding("utf8");
-    stdout.on("data", (chunk: string) => {
-      pending += chunk;
-      const parts = pending.split("\n");
-      pending = parts.pop() ?? "";
-      for (const part of parts) emitLine(part);
+    function stopSourceDrainTimer(recordElapsedTime: boolean): void {
+      if (!drainTimer) return;
+      clearTimeout(drainTimer);
+      drainTimer = null;
+      if (recordElapsedTime && drainTimerStartedAtMs !== null) {
+        drainTimeRemainingMs = Math.max(
+          0,
+          drainTimeRemainingMs - (Date.now() - drainTimerStartedAtMs),
+        );
+      }
+      drainTimerStartedAtMs = null;
+    }
+
+    function maybeCompleteSource(): void {
+      if (!finalizing || finalOutput.length > 0 || pendingOutputWrites > 0 || waitingForDrain) {
+        return;
+      }
+      completeSource();
+    }
+
+    function relayOutput(chunk: string): boolean {
+      if (!chunk) return true;
+      let accepted: boolean | void;
+      if (writesThroughOutputStream) {
+        pendingOutputWrites += 1;
+        let writeReturned = false;
+        accepted = outputStream.write(chunk, (error?: Error | null) => {
+          const recordCompletion = () => {
+            pendingOutputWrites -= 1;
+            if (error) {
+              outputErrorHandler?.(error as NodeJS.ErrnoException);
+              return;
+            }
+            maybeCompleteSource();
+          };
+          if (writeReturned) recordCompletion();
+          else queueMicrotask(recordCompletion);
+        });
+        writeReturned = true;
+      } else {
+        accepted = writeStdout(chunk);
+      }
+      if (!writesThroughOutputStream || accepted !== false) return true;
+      if (!waitingForDrain) {
+        waitingForDrain = true;
+        relayStdout.pause();
+        stopSourceDrainTimer(true);
+        outputStream.once("drain", resumeAfterDrain);
+      }
+      return false;
+    }
+
+    function flushFinalOutput(): void {
+      if (!finalizing || waitingForDrain) return;
+      const chunk = finalOutput;
+      finalOutput = "";
+      relayOutput(chunk);
+      maybeCompleteSource();
+    }
+
+    function beginFinalization(): void {
+      if (source.done || finalizing) return;
+      finalizing = true;
+      stopSourceDrainTimer(false);
+      relayStdout.destroy();
+      finalOutput = tagger.finish();
+      flushFinalOutput();
+    }
+
+    function startSourceDrainTimer(): void {
+      if (source.done || finalizing || ended || !exited || waitingForDrain || drainTimer) return;
+      if (drainTimeRemainingMs <= 0) {
+        beginFinalization();
+        return;
+      }
+      drainTimerStartedAtMs = Date.now();
+      drainTimer = setTimeout(() => {
+        drainTimer = null;
+        drainTimerStartedAtMs = null;
+        drainTimeRemainingMs = 0;
+        beginFinalization();
+      }, drainTimeRemainingMs);
+      drainTimer.unref?.();
+    }
+
+    function resumeAfterDrain(): void {
+      waitingForDrain = false;
+      if (finalizing) {
+        flushFinalOutput();
+        return;
+      }
+      startSourceDrainTimer();
+      if (!source.done && !relayStdout.destroyed) relayStdout.resume();
+    }
+
+    relayStdout.setEncoding("utf8");
+    relayStdout.on("data", (chunk: string) => {
+      if (source.done || finalizing) return;
+      relayOutput(tagger.write(chunk));
     });
-    // Completion is `end` OR the drain timer, never `end` alone: a descendant
-    // that inherited the child's stdout write end keeps `end` from firing, and
-    // the signal-path forced-exit timer never runs on a natural child death, so
-    // requiring `end` would hang follow mode forever (#10340).
+    // A descendant can inherit stdout and prevent `end`. Count only time that
+    // stdout can flow so output backpressure cannot discard buffered data.
     const settleAfterExit = () => {
       ended = true;
-      if (exited) finish();
+      if (exited) beginFinalization();
     };
-    stdout.on("end", settleAfterExit);
-    stdout.on("error", settleAfterExit);
+    relayStdout.on("end", settleAfterExit);
+    relayStdout.on("error", (error: NodeJS.ErrnoException) => {
+      if (source.done) return;
+      const suffix = typeof error.code === "string" ? ` (${error.code})` : "";
+      console.error(`  ${source.label} read failed${suffix}.`);
+      exitStatus = 1;
+      exitDetail = `read error${suffix}`;
+      if (
+        !exited &&
+        !source.child.killed &&
+        source.child.exitCode === null &&
+        source.child.signalCode === null
+      ) {
+        source.child.kill("SIGTERM");
+      }
+      beginFinalization();
+    });
+    source.child.on("error", (error: Error) => {
+      if (source.done) return;
+      exitStatus = 1;
+      exitDetail = error.message;
+      beginFinalization();
+    });
     source.child.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
+      if (source.done || finalizing) return;
       exited = true;
       exitStatus = spawnExitCode({ status: code, signal });
       exitDetail = signal ? `signal ${signal}` : null;
       if (ended) {
-        finish();
+        beginFinalization();
         return;
       }
-      drainTimer = setTimeout(finish, DRAIN_GRACE_MS);
-      drainTimer.unref?.();
+      startSourceDrainTimer();
     });
   };
 
