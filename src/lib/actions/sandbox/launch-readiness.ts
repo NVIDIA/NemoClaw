@@ -48,10 +48,13 @@ import {
 } from "./auto-pair-approval";
 import {
   captureLaunchReadiness,
+  createBoundLaunchReadinessDeps,
   LaunchReadinessEvidenceError,
   type LaunchReadinessFailedCheck,
   type LaunchReadinessHealthDeps,
+  type LaunchReadinessObservationStage,
   LaunchReadinessObservationError as ObservationError,
+  recordLaunchReadinessObservationFailure,
   requireLaunchSemanticHealth,
   resolveLaunchInteractiveCommand,
   resolveTrustedLaunchAgent,
@@ -71,6 +74,7 @@ import {
 } from "./launch-readiness/openclaw-pairing-qualification";
 
 export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/timing";
+export { createBoundLaunchReadinessDeps };
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
 const ALLOWED_OPENSHELL_DRIVERS = new Set(["docker", "kubernetes", "vm"]);
@@ -187,6 +191,18 @@ function recordPerformanceStage(stage: LaunchReadinessPerformanceStage, startedA
     });
   } catch {
     // Measurements are diagnostic evidence and never control launch behavior.
+  }
+}
+
+function recordObservationTiming(
+  deps: LaunchReadinessDeps,
+  stage: LaunchReadinessObservationStage,
+  startedAt: number,
+): void {
+  try {
+    deps.recordObservationTiming?.(stage, Math.max(0, performance.now() - startedAt));
+  } catch {
+    // Timing evidence must never change readiness behavior.
   }
 }
 
@@ -743,6 +759,7 @@ async function captureLaunchIdentity(
   if (!lifecycleGeneration || !recordedFingerprint) throw new ObservationError("identity");
 
   let live: ReturnType<SandboxRecreateObserver>;
+  const sandboxIdentityStartedAt = performance.now();
   try {
     live = (deps.observeSandbox ?? observeSandboxOnGateway)({
       sandboxName,
@@ -750,31 +767,79 @@ async function captureLaunchIdentity(
       gatewayPort,
     });
   } catch {
+    recordLaunchReadinessObservationFailure(deps, "sandbox-identity");
     throw new LaunchReadinessEvidenceError();
+  } finally {
+    recordObservationTiming(deps, "sandbox-identity", sandboxIdentityStartedAt);
   }
-  if (live.state === "missing") throw new ObservationError("identity");
-  if (live.state !== "ready") throw new ObservationError("health");
+  if (live.state === "missing") {
+    recordLaunchReadinessObservationFailure(deps, "sandbox-identity");
+    throw new ObservationError("identity");
+  }
+  if (live.state !== "ready") {
+    recordLaunchReadinessObservationFailure(deps, "sandbox-identity");
+    throw new ObservationError("health");
+  }
   if (live.liveIdentityFingerprint !== recordedFingerprint) {
+    recordLaunchReadinessObservationFailure(deps, "sandbox-identity");
     throw new ObservationError("identity");
   }
 
-  const livePolicy = captureLivePolicy(sandboxName, gatewayName, deps);
+  const policyStartedAt = performance.now();
+  let livePolicy: string;
+  try {
+    livePolicy = captureLivePolicy(sandboxName, gatewayName, deps);
+  } catch (error) {
+    recordLaunchReadinessObservationFailure(deps, "policy-get");
+    throw error;
+  } finally {
+    recordObservationTiming(deps, "policy-get", policyStartedAt);
+  }
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
-  const inferenceResult = (deps.capture ?? ((args) => captureLaunchReadiness(args)))(
-    buildGatewayInferenceGetArgs(gatewayName),
-  );
-  if (inferenceResult.status !== 0) throw new LaunchReadinessEvidenceError();
-  const liveInference = parseGatewayInference(inferenceResult.output);
-  const liveInferenceAbsent = reportsInferenceNotConfigured(inferenceResult.output);
+  const inferenceGetStartedAt = performance.now();
+  let inferenceResult: ReturnType<typeof captureLaunchReadiness>;
+  try {
+    inferenceResult = (deps.capture ?? ((args) => captureLaunchReadiness(args)))(
+      buildGatewayInferenceGetArgs(gatewayName),
+    );
+  } catch (error) {
+    recordLaunchReadinessObservationFailure(deps, "inference-get");
+    throw error;
+  } finally {
+    recordObservationTiming(deps, "inference-get", inferenceGetStartedAt);
+  }
+  if (inferenceResult.status !== 0) {
+    recordLaunchReadinessObservationFailure(deps, "inference-get");
+    throw new LaunchReadinessEvidenceError();
+  }
+  let liveInference: ReturnType<typeof parseGatewayInference>;
+  let liveInferenceAbsent: boolean;
+  try {
+    liveInference = parseGatewayInference(inferenceResult.output);
+    liveInferenceAbsent = reportsInferenceNotConfigured(inferenceResult.output);
+  } catch (error) {
+    recordLaunchReadinessObservationFailure(deps, "inference-get");
+    throw error;
+  }
   if (inference.kind === "configured") {
-    if (!liveInference && !liveInferenceAbsent) throw new LaunchReadinessEvidenceError();
+    if (!liveInference && !liveInferenceAbsent) {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
+      throw new LaunchReadinessEvidenceError();
+    }
     if (planInferenceRouteReconcile(liveInference, inference).kind !== "aligned") {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
       throw new ObservationError("config");
     }
   } else {
-    if (liveInference) throw new ObservationError("config");
-    if (!liveInferenceAbsent) throw new LaunchReadinessEvidenceError();
+    if (liveInference) {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
+      throw new ObservationError("config");
+    }
+    if (!liveInferenceAbsent) {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
+      throw new LaunchReadinessEvidenceError();
+    }
   }
 
   await requireLaunchSemanticHealth(

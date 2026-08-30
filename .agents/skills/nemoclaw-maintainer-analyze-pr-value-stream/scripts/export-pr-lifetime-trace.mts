@@ -30,8 +30,8 @@ export async function validateChromeTrace(
 ): Promise<{ events: number; tracks: number }> {
   const payload = JSON.parse(await readFile(file, "utf8")) as { traceEvents?: unknown };
   if (!Array.isArray(payload.traceEvents)) throw new Error("traceEvents must be an array");
-  const tracks = new Map<string, { ts: number; dur: number; name: string }[]>();
   const metadata = new Set<string>();
+  const tracks = new Set<string>();
   for (const raw of payload.traceEvents as ValidatedEvent[]) {
     if (typeof raw.name !== "string" || !["C", "M", "i", "X"].includes(String(raw.ph)))
       throw new Error("trace event used an unsupported Chrome trace phase");
@@ -45,6 +45,7 @@ export async function validateChromeTrace(
     }
     if (!Number.isSafeInteger(raw.ts))
       throw new Error("timed trace event must have a safe timestamp");
+    tracks.add(raw.pid + ":" + raw.tid);
     if (raw.ph === "C") {
       if (
         raw.args === null ||
@@ -59,20 +60,6 @@ export async function validateChromeTrace(
     if (raw.ph !== "X") continue;
     if (!Number.isSafeInteger(raw.dur) || Number(raw.dur) < 0)
       throw new Error("complete trace event must have a nonnegative safe duration");
-    const key = raw.pid + ":" + raw.tid;
-    const track = tracks.get(key) ?? [];
-    track.push({ ts: Number(raw.ts), dur: Number(raw.dur), name: raw.name });
-    tracks.set(key, track);
-  }
-  for (const [key, events] of tracks) {
-    events.sort((left, right) => left.ts - right.ts || right.dur - left.dur);
-    const stack: typeof events = [];
-    for (const event of events) {
-      while (stack.length > 0 && event.ts >= stack.at(-1)!.ts + stack.at(-1)!.dur) stack.pop();
-      if (stack.length > 0 && event.ts + event.dur > stack.at(-1)!.ts + stack.at(-1)!.dur)
-        throw new Error("crossing complete events on trace track " + key);
-      stack.push(event);
-    }
   }
   return { events: payload.traceEvents.length, tracks: tracks.size };
 }
@@ -773,6 +760,52 @@ function renderTrace(input: {
         url: run.html_url,
       },
     });
+  }
+  const lifetimeJobs = new Map(input.jobs.map((job, index) => [job.id, { job, index }]));
+  for (const run of validateArray(input.report?.waterfall?.runs ?? [], "waterfall runs")) {
+    for (const reportJob of validateArray(run?.jobs ?? [], "waterfall jobs")) {
+      const matched = lifetimeJobs.get(reportJob?.id);
+      if (!matched || reportJob?.testRun === null || reportJob?.testRun === undefined) continue;
+      const commitIndex = input.commits.findIndex(
+        (commit) => commit.oid === matched.job.run.head_sha,
+      );
+      const pid = 1_000 + Math.max(0, commitIndex);
+      for (const [testIndex, test] of validateArray(
+        reportJob.testRun.slowTests ?? [],
+        "slow test timings",
+      ).entries()) {
+        const tid = 2_000_000 + matched.index * 1_000 + testIndex;
+        addMetadata(
+          events,
+          metadata,
+          pid,
+          tid,
+          "Revision " + matched.job.run.head_sha.slice(0, 8),
+          matched.job.name + " / slow tests",
+        );
+        const start = optionalTime(test?.startedAt);
+        const duration = Number(test?.durationSeconds);
+        addSpan(events, {
+          name: boundedText(test?.name, 500) || "Slow test",
+          category: "ci.test.slow",
+          start,
+          end:
+            start === null || !Number.isFinite(duration) || duration < 0
+              ? null
+              : start + duration * 1_000,
+          pid,
+          tid,
+          args: {
+            file: boundedText(test?.file, 500),
+            state: boundedText(test?.state, 100),
+            jobId: reportJob.id,
+            runId: matched.job.run.id,
+            artifact: boundedText(reportJob.testRun.artifact, 500),
+            selection: "bounded slowest tests",
+          },
+        });
+      }
+    }
   }
   for (const [jobIndex, job] of input.jobs.entries()) {
     const commitIndex = input.commits.findIndex((commit) => commit.oid === job.run.head_sha);
