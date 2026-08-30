@@ -8,24 +8,27 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { exportLifetimeTrace, type LifetimeArtifacts } from "./export-pr-lifetime-trace.mts";
+
 const execFileAsync = promisify(execFile);
 const MAX_GH_OUTPUT = 10_000_000;
 const MAX_JSON_OUTPUT = 4_000_000;
+const MAX_RUN_PAGES = 3;
+const MAX_CHECK_PAGES = 3;
+const MAX_AUTOMATION_RUNS = 50;
+const MAX_TEST_ARTIFACTS = 12;
+const TOP_TESTS_PER_SHARD = 10;
 
 type Input = {
   workdir: string;
   number: number;
   repository?: string;
   targetMinutes?: number;
-  maxRunPages?: number;
-  maxCheckPages?: number;
-  maxAutomationRuns?: number;
-  maxTestArtifacts?: number;
-  topTestsPerShard?: number;
 };
 
 export type ValueStreamReport = {
   measuredAt: string;
+  lifetime?: LifetimeArtifacts;
   repository: string;
   number: number;
   url: string;
@@ -163,7 +166,7 @@ async function runGithubCli(input: GithubCliInput): Promise<{ stdout: string }> 
 
 type RequiredCheck = { name: string; appId: number | null; legacy: boolean };
 
-const artifactDirectories = new Set<string>();
+const artifactDirectories = new Map<string, (() => Promise<void>) | undefined>();
 const artifactAbortController = new AbortController();
 const cancellationSignals = ["SIGINT", "SIGTERM"] as const;
 let cancellationHandlersInstalled = false;
@@ -181,8 +184,8 @@ async function handleCancellation(signal: (typeof cancellationSignals)[number]):
   artifactAbortController.abort();
   const retained: string[] = [];
   await Promise.all(
-    [...artifactDirectories].map(async (directory) => {
-      const caveat = await cleanupArtifactDirectory(directory);
+    [...artifactDirectories].map(async ([directory, cleanup]) => {
+      const caveat = await cleanupArtifactDirectory(directory, cleanup);
       if (caveat !== null) retained.push(caveat);
       else artifactDirectories.delete(directory);
     }),
@@ -192,8 +195,13 @@ async function handleCancellation(signal: (typeof cancellationSignals)[number]):
   process.kill(process.pid, signal);
 }
 
-function trackArtifactDirectory(directory: string): void {
-  artifactDirectories.add(directory);
+function releaseTrackedPath(path: string): void {
+  artifactDirectories.delete(path);
+  if (artifactDirectories.size === 0 && cancellationHandlersInstalled) removeCancellationHandlers();
+}
+
+function trackArtifactDirectory(directory: string, cleanup?: () => Promise<void>): void {
+  artifactDirectories.set(directory, cleanup);
   if (cancellationHandlersInstalled) return;
   for (const signal of cancellationSignals) process.on(signal, handleCancellation);
   cancellationHandlersInstalled = true;
@@ -283,11 +291,11 @@ function normalizeAnalysisInput(input: Input): AnalysisOptions {
     number: input.number,
     repository,
     targetMinutes,
-    maxRunPages: boundedInteger(input.maxRunPages ?? 3, "maxRunPages", 1, 10),
-    maxCheckPages: boundedInteger(input.maxCheckPages ?? 3, "maxCheckPages", 1, 10),
-    maxAutomationRuns: boundedInteger(input.maxAutomationRuns ?? 50, "maxAutomationRuns", 1, 100),
-    maxTestArtifacts: boundedInteger(input.maxTestArtifacts ?? 12, "maxTestArtifacts", 0, 24),
-    topTestsPerShard: boundedInteger(input.topTestsPerShard ?? 10, "topTestsPerShard", 1, 25),
+    maxRunPages: MAX_RUN_PAGES,
+    maxCheckPages: MAX_CHECK_PAGES,
+    maxAutomationRuns: MAX_AUTOMATION_RUNS,
+    maxTestArtifacts: MAX_TEST_ARTIFACTS,
+    topTestsPerShard: TOP_TESTS_PER_SHARD,
   };
 }
 
@@ -332,7 +340,7 @@ async function readPullContext(input: AnalysisOptions): Promise<PullContext> {
       "--repo",
       input.repository,
       "--json",
-      "number,url,state,isDraft,createdAt,mergedAt,baseRefName,headRefName,headRefOid,commits,reviews",
+      "number,url,state,isDraft,createdAt,mergedAt,updatedAt,author,baseRefName,headRefName,headRefOid,commits,reviews",
     ],
   });
   const pull = JSON.parse(result.stdout);
@@ -1392,8 +1400,11 @@ function assembleValueStreamReport(context: ReportAssemblyContext): ValueStreamR
   };
 }
 
-async function collectValueStreamReport(input: AnalysisOptions): Promise<ValueStreamReport> {
-  const pullContext = await readPullContext(input);
+async function collectValueStreamReport(
+  input: AnalysisOptions,
+  snapshot?: PullContext,
+): Promise<ValueStreamReport> {
+  const pullContext = snapshot ?? (await readPullContext(input));
   const runs = await readWorkflowRuns(input, pullContext.pull.headRefName);
   const timeline = selectRevisionTimeline({
     pull: pullContext.pull,
@@ -1459,17 +1470,7 @@ export async function analyzePrValueStream(input: Input): Promise<ValueStreamRep
 }
 
 function parseArguments(argv: string[]): Input {
-  const allowed = new Set([
-    "workdir",
-    "number",
-    "repository",
-    "target-minutes",
-    "max-run-pages",
-    "max-check-pages",
-    "max-automation-runs",
-    "max-test-artifacts",
-    "top-tests-per-shard",
-  ]);
+  const allowed = new Set(["workdir", "number", "repository", "target-minutes"]);
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
@@ -1489,16 +1490,24 @@ function parseArguments(argv: string[]): Input {
     number,
     repository: values.get("repository"),
     targetMinutes: numeric("target-minutes"),
-    maxRunPages: numeric("max-run-pages"),
-    maxCheckPages: numeric("max-check-pages"),
-    maxAutomationRuns: numeric("max-automation-runs"),
-    maxTestArtifacts: numeric("max-test-artifacts"),
-    topTestsPerShard: numeric("top-tests-per-shard"),
   };
 }
 
 async function main(): Promise<void> {
-  const report = await analyzePrValueStream(parseArguments(process.argv.slice(2)));
+  const input = parseArguments(process.argv.slice(2));
+  const normalized = normalizeAnalysisInput(input);
+  const pullContext = await readPullContext(normalized);
+  const report = await collectValueStreamReport(normalized, pullContext);
+  report.lifetime = await exportLifetimeTrace({
+    workdir: normalized.workdir,
+    repository: normalized.repository,
+    number: normalized.number,
+    report,
+    pullSnapshot: pullContext.pull,
+    githubRead: async (args) => runGithubCli({ workdir: normalized.workdir, args }),
+    trackTemporaryPath: trackArtifactDirectory,
+    releaseTemporaryPath: releaseTrackedPath,
+  });
   const output = `${JSON.stringify(report, null, 2)}\n`;
   if (Buffer.byteLength(output) > MAX_JSON_OUTPUT)
     throw new Error("value-stream JSON exceeded the 4 MB output bound");

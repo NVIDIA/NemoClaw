@@ -14,7 +14,6 @@ function createHarness() {
       listCustomPresets: vi.fn(() => []),
       getAppliedPresets: vi.fn(() => ["local-inference", "npm"]),
       customPresetOwnsNetworkPolicyKey: vi.fn(() => false),
-      removeBuiltinPresetAttribution: vi.fn(),
       clampSetupPolicyPresetNames: vi.fn((names: string[]) => [...names]),
     },
     tiers: {
@@ -37,8 +36,6 @@ function createHarness() {
     waitForSandboxControlPlaneReady: vi.fn(() => true),
     syncPresetSelection,
     selectPolicyTier: vi.fn(async () => "balanced"),
-    setPolicyTier: vi.fn(),
-    getRecordedPolicyTier: vi.fn(() => null),
     selectTierPresetsAndAccess: vi.fn(
       async (): Promise<Array<{ name: string; access: string }>> => [],
     ),
@@ -100,44 +97,17 @@ describe("host-local route-only policy selection", () => {
     });
   });
 
-  it("refuses tier attribution when authority changes during the prompt (#9833)", async () => {
-    const { deps, syncPresetSelection } = createHarness();
-    deps.isNonInteractive.mockReturnValue(false);
-    const refuseTierAttribution = () => {
-      throw new Error("policy authority changed");
-    };
-    const policyChecks = new Map([
-      ["record the policy tier for sandbox 'alpha'", refuseTierAttribution],
-    ]);
-    const revalidatePolicyRequirements = vi.fn((operation: string) =>
-      policyChecks.get(operation)?.(),
-    );
-
-    await expect(
-      setupPoliciesWithSelection(deps, "alpha", {
-        selectedPresets: null,
-        provider: null,
-        excludedPresets: ["local-inference"],
-        revalidatePolicyRequirements,
-      }),
-    ).rejects.toThrow("policy authority changed");
-
-    expect(deps.selectPolicyTier).toHaveBeenCalledOnce();
-    expect(deps.setPolicyTier).not.toHaveBeenCalled();
-    expect(syncPresetSelection).not.toHaveBeenCalled();
-  });
-
   it("refuses interactive preset mutation when authority changes during the prompt (#9833)", async () => {
     const { deps, syncPresetSelection } = createHarness();
     deps.isNonInteractive.mockReturnValue(false);
     deps.selectTierPresetsAndAccess.mockResolvedValue([{ name: "npm", access: "read" }]);
     const refusePresetMutation = () => {
-      throw new Error("policy authority changed");
+      throw new Error("sandbox identity changed");
     };
     const policyChecks = new Map([
       ["apply policy presets to sandbox 'alpha'", refusePresetMutation],
     ]);
-    const revalidatePolicyRequirements = vi.fn((operation: string) =>
+    const revalidateSandboxIdentity = vi.fn((operation: string) =>
       policyChecks.get(operation)?.(),
     );
 
@@ -146,9 +116,9 @@ describe("host-local route-only policy selection", () => {
         selectedPresets: null,
         provider: null,
         excludedPresets: ["local-inference"],
-        revalidatePolicyRequirements,
+        revalidateSandboxIdentity,
       }),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("sandbox identity changed");
 
     expect(deps.selectTierPresetsAndAccess).toHaveBeenCalledOnce();
     expect(syncPresetSelection).not.toHaveBeenCalled();
@@ -158,7 +128,7 @@ describe("host-local route-only policy selection", () => {
     const { deps, syncPresetSelection } = createHarness();
     const onSelection = vi.fn();
     syncPresetSelection.mockImplementation(() => {
-      throw new Error("policy authority changed");
+      throw new Error("sandbox identity changed");
     });
 
     await expect(
@@ -166,75 +136,26 @@ describe("host-local route-only policy selection", () => {
         selectedPresets: ["npm"],
         onSelection,
       }),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("sandbox identity changed");
 
     expect(onSelection).not.toHaveBeenCalled();
   });
 
   it("refuses resumed preset synchronization when authority changes (#9833)", async () => {
     const { deps, syncPresetSelection } = createHarness();
-    const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("policy authority changed");
+    const revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("sandbox identity changed");
     });
 
     await expect(
       setupPoliciesWithSelection(deps, "alpha", {
         selectedPresets: ["npm"],
-        revalidatePolicyRequirements,
+        revalidateSandboxIdentity,
       }),
-    ).rejects.toThrow("policy authority changed");
+    ).rejects.toThrow("sandbox identity changed");
 
-    expect(revalidatePolicyRequirements).toHaveBeenCalledWith(
-      "reapply recorded policy presets to sandbox 'alpha'",
-    );
-    expect(syncPresetSelection).not.toHaveBeenCalled();
-  });
-
-  it("refuses retained-preset synchronization when authority changes (#9833)", async () => {
-    const { deps, syncPresetSelection } = createHarness();
-    deps.env.NEMOCLAW_POLICY_MODE = "skip";
-    const revalidatePolicyRequirements = vi
-      .fn<() => void>()
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => {
-        throw new Error("policy authority changed");
-      });
-
-    await expect(
-      setupPoliciesWithSelection(deps, "alpha", {
-        selectedPresets: null,
-        provider: null,
-        excludedPresets: ["local-inference"],
-        revalidatePolicyRequirements,
-      }),
-    ).rejects.toThrow("policy authority changed");
-
-    expect(revalidatePolicyRequirements).toHaveBeenLastCalledWith(
-      "apply retained policy presets to sandbox 'alpha'",
-    );
-    expect(syncPresetSelection).not.toHaveBeenCalled();
-  });
-
-  it("refuses non-interactive preset synchronization when authority changes (#9833)", async () => {
-    const { deps, syncPresetSelection } = createHarness();
-    const revalidatePolicyRequirements = vi
-      .fn<() => void>()
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => {
-        throw new Error("policy authority changed");
-      });
-
-    await expect(
-      setupPoliciesWithSelection(deps, "alpha", {
-        selectedPresets: null,
-        provider: null,
-        excludedPresets: ["local-inference"],
-        revalidatePolicyRequirements,
-      }),
-    ).rejects.toThrow("policy authority changed");
-
-    expect(revalidatePolicyRequirements).toHaveBeenLastCalledWith(
-      "apply non-interactive policy presets to sandbox 'alpha'",
+    expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
+      "reapply selected policy presets to sandbox 'alpha'",
     );
     expect(syncPresetSelection).not.toHaveBeenCalled();
   });

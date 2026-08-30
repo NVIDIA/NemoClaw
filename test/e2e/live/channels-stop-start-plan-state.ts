@@ -33,6 +33,9 @@ export function channelPlanStateErrors(
   if (Object.hasOwn(persistedPlan, "agentRender")) {
     errors.push("messaging.plan.agentRender must not persist");
   }
+  if (Object.hasOwn(persistedPlan, "networkPolicy")) {
+    errors.push("messaging.plan.networkPolicy must not persist");
+  }
 
   const persistedChannels = persistedPlan.channels as Record<string, unknown>[];
   if (persistedChannels.some((channel) => Object.hasOwn(channel, "hooks"))) {
@@ -40,26 +43,24 @@ export function channelPlanStateErrors(
   }
   const channel = plan.channels.find((entry) => entry.channelId === expectation.channelId);
   const disabledChannels = plan.disabledChannels;
-  const policyPresets = plan.networkPolicy.presets;
-  const policyEntries = plan.networkPolicy.entries;
   const credentialBindings = (persistedPlan.credentialBindings ?? []) as {
     channelId: string;
   }[];
-  const hasPolicyEntry = policyEntries.some((entry) => entry.channelId === expectation.channelId);
   const hasCredentialBinding = credentialBindings.some(
     (entry) => entry.channelId === expectation.channelId,
   );
 
   if (expectation.expected === "removed") {
-    if (channel)
+    const pendingRemoval =
+      channel?.configured === false &&
+      channel.active === false &&
+      channel.disabled === true &&
+      disabledChannels.includes(expectation.channelId);
+    if (channel && !pendingRemoval)
       errors.push(`${expectation.channelId} must be absent from messaging.plan.channels`);
-    if (disabledChannels.includes(expectation.channelId)) {
+    if (disabledChannels.includes(expectation.channelId) && !pendingRemoval) {
       errors.push(`${expectation.channelId} must be absent from disabledChannels`);
     }
-    if (policyPresets.includes(expectation.channelId)) {
-      errors.push(`${expectation.channelId} policy preset must be removed`);
-    }
-    if (hasPolicyEntry) errors.push(`${expectation.channelId} policy entry must be removed`);
     if (hasCredentialBinding) {
       errors.push(`${expectation.channelId} credential binding must be removed`);
     }
@@ -85,10 +86,6 @@ export function channelPlanStateErrors(
   if (expectation.expected === "disabled" && !disabledChannels.includes(expectation.channelId)) {
     errors.push(`${expectation.channelId} must be present in disabledChannels while disabled`);
   }
-  if (!policyPresets.includes(expectation.channelId)) {
-    errors.push(`${expectation.channelId} policy preset must be present`);
-  }
-  if (!hasPolicyEntry) errors.push(`${expectation.channelId} policy entry must be present`);
   if (expectation.credentialBindingRequired && !hasCredentialBinding) {
     errors.push(`${expectation.channelId} credential binding must be present`);
   }

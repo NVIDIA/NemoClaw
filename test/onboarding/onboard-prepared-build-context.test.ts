@@ -94,9 +94,6 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 });
 const runner = require(${runnerPath});
 const preflight = require(${preflightPath});
-const policyAuthorityPreflight = require(${JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "policy-authority", "preflight.ts"),
-  )});
 const credentials = require(${credentialsPath});
 const buildContextStage = require(${buildContextStagePath});
 const dockerfilePatchFlow = require(${dockerfilePatchFlowPath});
@@ -186,9 +183,6 @@ runner.runCapture = (command) => {
 registry.getDefault = () => null;
 registry.listExtraProviders = () => [];
 preflight.checkPortAvailable = async () => ({ ok: true });
-policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
-  authority: "nemoclaw-managed",
-});
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {

@@ -9,7 +9,7 @@ import {
 type OnboardVmDnsMonkeypatchDeps = {
   apply?: typeof applyOpenShellVmDnsMonkeypatch;
   log?: (message: string) => void;
-  revalidatePolicyAuthority?: (operation: string) => void;
+  revalidateSandboxIdentity?: (operation: string) => void;
   warn?: (message: string) => void;
 };
 
@@ -28,11 +28,11 @@ export function applyOnboardVmDnsMonkeypatch(
       openshellDriver: runtime.openshellDriver,
     },
     {
-      revalidatePolicyAuthority: deps.revalidatePolicyAuthority,
+      revalidateSandboxIdentity: deps.revalidateSandboxIdentity,
     },
   );
   if (vmDnsPatch.ok) {
-    deps.revalidatePolicyAuthority?.(
+    deps.revalidateSandboxIdentity?.(
       `report VM DNS monkeypatch result for sandbox '${sandboxName}'`,
     );
   }

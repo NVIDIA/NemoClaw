@@ -19,13 +19,11 @@ import {
 } from "./helpers";
 
 describe("CLI dispatch", () => {
-  it.each(
-    [
-        "inference set 2>&1",
-        "inference set --provider nvidia-prod 2>&1",
-        "inference set --model nvidia/model 2>&1",
-      ],
-  )(
+  it.each([
+    "inference set 2>&1",
+    "inference set --provider nvidia-prod 2>&1",
+    "inference set --model nvidia/model 2>&1",
+  ])(
     "keeps `inference set` inside NemoClaw when provider or model is missing [%s]",
     (argv) => {
       const r = run(argv);
@@ -199,7 +197,6 @@ describe("CLI dispatch", () => {
             model: "configured-model",
             provider: "configured-provider",
             gpuEnabled: true,
-            policies: ["pypi"],
             agent: "openclaw",
           },
         },
@@ -245,7 +242,6 @@ describe("CLI dispatch", () => {
           model: "configured-model",
           provider: "configured-provider",
           gpuEnabled: true,
-          policies: ["pypi"],
           agent: "openclaw",
           isDefault: true,
           activeSessionCount: 1,
@@ -255,6 +251,7 @@ describe("CLI dispatch", () => {
           sandboxGpuDevice: null,
           openshellDriver: null,
           openshellVersion: null,
+          policies: [],
         },
       ],
     });

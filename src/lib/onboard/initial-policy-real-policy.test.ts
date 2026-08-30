@@ -604,7 +604,6 @@ describe("initial sandbox policy real preset merge", () => {
       [],
       {
         agentName: "langchain-deepagents-code",
-        policyTier: "balanced",
         additionalPresets: ["observability-otlp-local"],
       },
     );
@@ -669,7 +668,6 @@ describe("initial sandbox policy real preset merge", () => {
     const effective = readPreparedPolicy(
       prepareInitialSandboxCreatePolicy(baselinePath, [], {
         agentName: "openclaw",
-        policyTier: "restricted",
       }),
     );
 
@@ -689,7 +687,6 @@ describe("initial sandbox policy real preset merge", () => {
         [],
         {
           agentName: "openclaw",
-          policyTier: "balanced",
           additionalPresets: ["npm", "brew", "openclaw-pricing"],
         },
       ),
