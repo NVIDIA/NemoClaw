@@ -22,12 +22,12 @@ import {
   serializePreparedGitHubContext,
 } from "../../../tools/pr-review-advisor/github-context.mts";
 import {
-  configureAdvisorOpenShellInference,
+  startAdvisorOpenShellInference,
   createAdvisorSandbox,
   deleteAdvisorSandbox,
   downloadAdvisorArtifacts,
   prepareAdvisorSandboxInputs,
-  runAdvisorSandbox,
+  runAdvisorSandboxAsync,
   runOpenShellAdvisorCommand,
   verifyAdvisorGitWorktree,
   writeUnavailableAdvisorArtifacts,
@@ -89,6 +89,10 @@ function advisorTools(runImplementation?: OpenShellTools["run"]): OpenShellTools
       runImplementation ??
         ((command) => (command === "which" ? "/trusted/bin/openshell-sandbox" : "")),
     ),
+    runAsync: vi.fn(() => ({
+      cancel: vi.fn(),
+      completion: Promise.resolve(),
+    })),
     start: vi.fn(),
     wait: vi.fn(async () => undefined),
   };
@@ -562,7 +566,9 @@ describe("PR review advisor OpenShell wrapper", () => {
     const env = advisorEnvironment();
     const tools = advisorTools();
 
-    await configureAdvisorOpenShellInference(env, tools);
+    const gateway = startAdvisorOpenShellInference(env, tools);
+    await gateway.configure;
+    await gateway.stop?.();
 
     const calls = vi.mocked(tools.run).mock.calls;
     expect(calls).toContainEqual([
@@ -632,7 +638,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     },
   );
 
-  it("creates, runs, downloads, and deletes the sandbox without host credentials", () => {
+  it("creates, runs, downloads, and deletes the sandbox without host credentials", async () => {
     const env = advisorEnvironment();
     env.GIT_DIR = "/untrusted/ambient-git-dir";
     env.GIT_WORK_TREE = "/untrusted/ambient-worktree";
@@ -642,7 +648,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     );
 
     createAdvisorSandbox(env, tools);
-    runAdvisorSandbox(env, tools);
+    await runAdvisorSandboxAsync(env, tools).completion;
     downloadAdvisorArtifacts(env, tools);
     deleteAdvisorSandbox(env, tools);
 
@@ -725,13 +731,12 @@ describe("PR review advisor OpenShell wrapper", () => {
     ]);
     expect(calls.some(([, args]) => args.slice(0, 2).join(" ") === "policy set")).toBe(false);
 
-    const sandboxExecCalls = calls.filter(
-      ([command, args]) => command === "openshell" && args.slice(0, 2).join(" ") === "sandbox exec",
-    );
     const runArgs =
-      sandboxExecCalls.find(([, args]) =>
-        args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"),
-      )?.[1] ?? [];
+      vi
+        .mocked(tools.runAsync!)
+        .mock.calls.find(([, args]) =>
+          args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"),
+        )?.[1] ?? [];
     expect(runArgs).toEqual(
       expect.arrayContaining([
         "sandbox",
@@ -793,7 +798,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     });
   });
 
-  it("exposes validated specialist sessions inside the standard Pi workdir (#9949)", () => {
+  it("exposes validated specialist sessions inside the standard Pi workdir (#9949)", async () => {
     const env = advisorEnvironment();
     const sessionDirectory = path.join(
       env.ADVISOR_WORKDIR as string,
@@ -815,7 +820,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     const tools = advisorTools();
 
     createAdvisorSandbox(env, tools);
-    runAdvisorSandbox(env, tools);
+    await runAdvisorSandboxAsync(env, tools).completion;
 
     const calls = vi.mocked(tools.run).mock.calls;
     const createArgs =
@@ -828,9 +833,11 @@ describe("PR review advisor OpenShell wrapper", () => {
       ),
     ).toEqual([expect.objectContaining({ read_only: true })]);
     const runArgs =
-      calls.find(([, args]) =>
-        args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"),
-      )?.[1] ?? [];
+      vi
+        .mocked(tools.runAsync!)
+        .mock.calls.find(([, args]) =>
+          args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"),
+        )?.[1] ?? [];
     expect(runArgs).toContain(
       "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR=/pr-workdir/.pr-review-advisor-sessions",
     );
@@ -857,7 +864,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     env.PR_REVIEW_ADVISOR_ARTIFACT_DIR = "../../advisor";
     const tools = advisorTools();
 
-    expect(() => runAdvisorSandbox(env, tools)).toThrow(
+    expect(() => runAdvisorSandboxAsync(env, tools)).toThrow(
       "PR_REVIEW_ADVISOR_ARTIFACT_DIR must be a simple directory name",
     );
     expect(() => downloadAdvisorArtifacts(env, tools)).toThrow(

@@ -4,7 +4,6 @@
 
 import { pathToFileURL } from "node:url";
 import {
-  configureAdvisorOpenShellInference,
   createAdvisorSandbox,
   deleteAdvisorSandbox,
   downloadAdvisorArtifacts,
@@ -20,7 +19,9 @@ export type AdvisorSpecialistLifecycle = {
     env: NodeJS.ProcessEnv,
   ) => { configure: Promise<void>; stop?: () => Promise<void> } | undefined;
   create: (env: NodeJS.ProcessEnv) => void;
-  run: (env: NodeJS.ProcessEnv) => void | { cancel: () => void; completion: Promise<void> };
+  run: (
+    env: NodeJS.ProcessEnv,
+  ) => void | { cancel: () => void | Promise<void>; completion: Promise<void> };
   download: (env: NodeJS.ProcessEnv) => void;
   remove: (env: NodeJS.ProcessEnv) => void;
   unavailable?: (env: NodeJS.ProcessEnv, error: unknown) => void;
@@ -85,7 +86,7 @@ export async function runAdvisorSpecialist(input: {
   const lifecycle = input.lifecycle ?? defaultAdvisorSpecialistLifecycle;
   let gateway: ReturnType<AdvisorSpecialistLifecycle["startGateway"]> | undefined;
   let sandboxActive = false;
-  let execution: { cancel: () => void; completion: Promise<void> } | undefined;
+  let execution: { cancel: () => void | Promise<void>; completion: Promise<void> } | undefined;
   let primaryFailure: Error | undefined;
   let cleanupFailure: unknown;
   let cleanupPromise: Promise<void> | undefined;
@@ -95,11 +96,13 @@ export async function runAdvisorSpecialist(input: {
     cleanupPromise ??= (async () => {
       const errors: unknown[] = [];
       if (execution) {
-        execution.cancel();
+        const cancellation = execution.cancel();
         try {
-          await execution.completion;
-        } catch {
-          // Cancellation is followed by resource cleanup; the primary lifecycle failure owns diagnostics.
+          if (cancellation) await cancellation;
+          else await execution.completion;
+        } catch (error) {
+          if (cancellation) errors.push(stageFailure("execution cleanup", input.env, error));
+          // The run stage owns execution diagnostics after synchronous cancellation.
         }
         execution = undefined;
       }

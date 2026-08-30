@@ -26,7 +26,7 @@ export interface OpenShellStartOptions {
 }
 
 export interface OpenShellExecution {
-  cancel: () => void;
+  cancel: () => void | Promise<void>;
   completion: Promise<void>;
 }
 
@@ -61,6 +61,8 @@ export type OpenShellUpload = {
 const INFERENCE_CONFIGURATION_ATTEMPTS = 6;
 const PROVIDER_CONFIGURATION_TIMEOUT_MS = 60_000;
 const INFERENCE_CONFIGURATION_TIMEOUT_MS = 930_000;
+const PROCESS_TERMINATION_GRACE_MS = 250;
+const PROCESS_KILL_TIMEOUT_MS = 5_000;
 
 function inferenceConfigurationRetryDelay(
   env: NodeJS.ProcessEnv,
@@ -182,24 +184,62 @@ export const defaultOpenShellTools: OpenShellTools = {
   },
   runAsync(command, args, options): OpenShellExecution {
     const child = spawn(command, [...args], {
+      detached: true,
       env: options.env,
       stdio: "inherit",
     });
+    let exited = false;
+    let cancelPromise: Promise<void> | undefined;
     const completion = new Promise<void>((resolve, reject) => {
       child.once("error", reject);
       child.once("exit", (code, signal) => {
+        exited = true;
         if (code === 0) resolve();
-        else
-          reject(
-            new OpenShellAgentError(
-              `${command} exited with ${signal ?? `code ${code ?? "unknown"}`}`,
-            ),
-          );
+        else reject(new OpenShellAgentError(`${command} exited with ${signal ?? `code ${code ?? "unknown"}`}`));
       });
     });
+    const settled = completion.then(() => undefined, () => undefined);
+    const waitForExit = async (timeout: number): Promise<boolean> => {
+      if (exited) return true;
+      return Promise.race([
+        settled.then(() => true),
+        new Promise<false>((resolve) => setTimeout(resolve, timeout, false)),
+      ]);
+    };
+    const signalProcessGroup = (signal: NodeJS.Signals): void => {
+      if (exited || child.pid === undefined) return;
+      try {
+        process.kill(-child.pid, signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    };
     return {
       cancel: () => {
-        if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+        cancelPromise ??= (async () => {
+          const errors: unknown[] = [];
+          try {
+            signalProcessGroup("SIGTERM");
+          } catch (error) {
+            errors.push(error);
+          }
+          if (!(await waitForExit(PROCESS_TERMINATION_GRACE_MS))) {
+            try {
+              signalProcessGroup("SIGKILL");
+            } catch (error) {
+              errors.push(error);
+            }
+            if (!(await waitForExit(PROCESS_KILL_TIMEOUT_MS))) {
+              errors.push(
+                new OpenShellAgentError(command + " process group did not exit after SIGKILL"),
+              );
+            }
+          }
+          if (errors.length > 0) {
+            throw new AggregateError(errors, command + " process group cancellation failed");
+          }
+        })();
+        return cancelPromise;
       },
       completion,
     };

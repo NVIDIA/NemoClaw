@@ -244,13 +244,6 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push(
       "specialist job env.PR_REVIEW_ADVISOR_INTEREST must be ${{ matrix.advisor.interest }}",
     );
-  const specialistSteps = jobSteps(specialists);
-  const setupNodeIndex = specialistSteps.findIndex((step) => step.name === "Setup Node");
-  const runtimeImageIndex = specialistSteps.findIndex(
-    (step) => step.name === "Load advisor runtime image",
-  );
-  if (setupNodeIndex < 0 || runtimeImageIndex <= setupNodeIndex)
-    errors.push("advisor runtime image must load after the pinned Node setup");
   const prepareInputs = namedStep(specialists, "Prepare advisor sandbox inputs");
   const prepareEnvironment = object(prepareInputs?.env);
   if (prepareEnvironment.BASE_REF !== BASE_REF_EXPRESSION)

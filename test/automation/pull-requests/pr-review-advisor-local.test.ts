@@ -224,10 +224,11 @@ describe("local PR review advisor", () => {
     },
   );
 
-  it("cancels a real blocking execution before sandbox and gateway cleanup (#10611)", async () => {
+  it("kills a SIGTERM-ignoring execution before sandbox and gateway cleanup (#10611)", async () => {
     const source = repository();
     const childDirectory = temporaryDirectory();
     const pidPath = path.join(childDirectory, "pid");
+    const termPath = path.join(childDirectory, "term");
     const events: string[] = [];
     const stop = vi.fn(async () => {
       events.push("gateway");
@@ -241,14 +242,14 @@ describe("local PR review advisor", () => {
           process.execPath,
           [
             "-e",
-            `require("node:fs").writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)); setInterval(() => {}, 1000)`,
+            `const fs = require("node:fs"); process.on("SIGTERM", () => fs.writeFileSync(${JSON.stringify(termPath)}, "SIGTERM")); fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)); setInterval(() => {}, 1000)`,
           ],
           { env: process.env },
         );
         return {
           cancel: () => {
             events.push("cancel");
-            execution.cancel();
+            return execution.cancel();
           },
           completion: execution.completion,
         };
@@ -260,7 +261,9 @@ describe("local PR review advisor", () => {
     const realKill = process.kill.bind(process);
     const kill = vi
       .spyOn(process, "kill")
-      .mockImplementation((_pid, signal) => (signal === 0 ? true : (events.push("signal"), true)));
+      .mockImplementation((pid, signal) =>
+        pid === process.pid && signal !== 0 ? (events.push("signal"), true) : realKill(pid, signal),
+      );
 
     const review = runLocalReview({
       source,
@@ -274,7 +277,10 @@ describe("local PR review advisor", () => {
     await expect(review).rejects.toThrow(/failed during run/u);
 
     expect(events.slice(0, 4)).toEqual(["cancel", "sandbox", "gateway", "signal"]);
+    expect(fs.readFileSync(termPath, "utf8")).toBe("SIGTERM");
     expect(() => realKill(childPid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    expect(kill).toHaveBeenCalledWith(-childPid, "SIGTERM");
+    expect(kill).toHaveBeenCalledWith(-childPid, "SIGKILL");
     expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
   });
 

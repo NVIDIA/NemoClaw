@@ -10,15 +10,9 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DEFAULT_ADVISOR_MODEL } from "../advisors/provider-constants.mts";
 import { ADVISOR_PI_IMAGE, LOCAL_OPENSHELL_GATEWAY_ENDPOINT } from "./runtime-constants.mts";
+import { prepareAdvisorSandboxInputs } from "./openshell.mts";
 import {
-  createAdvisorSandbox,
-  deleteAdvisorSandbox,
-  downloadAdvisorArtifacts,
-  prepareAdvisorSandboxInputs,
-  runAdvisorSandboxAsync,
-  startAdvisorOpenShellInference,
-} from "./openshell.mts";
-import {
+  defaultAdvisorSpecialistLifecycle,
   redactAdvisorDiagnostic,
   runAdvisorSpecialist,
   type AdvisorSpecialistLifecycle,
@@ -78,12 +72,8 @@ function combineFailures(first: unknown, next: unknown): unknown {
 }
 
 export const defaultLocalReviewLifecycle: LocalReviewLifecycle = {
+  ...defaultAdvisorSpecialistLifecycle,
   prepare: (env) => prepareAdvisorSandboxInputs(env, { collectContext: async () => null }),
-  startGateway: (env) => startAdvisorOpenShellInference(env)!,
-  create: createAdvisorSandbox,
-  run: runAdvisorSandboxAsync,
-  download: downloadAdvisorArtifacts,
-  remove: deleteAdvisorSandbox,
 };
 
 function restrictedGitEnvironment(): NodeJS.ProcessEnv {
