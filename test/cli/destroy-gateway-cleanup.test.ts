@@ -9,7 +9,19 @@ import { describe, expect, it } from "vitest";
 import { runWithEnv, testTimeoutOptions } from "./helpers";
 
 const LIVE_DOCKER_IDENTITY = `#!/bin/sh
-case "$*" in *'.Label '*) printf 'aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n' ;; esac
+removed_marker="$0.removed"
+case "$1" in
+  ps)
+    if [ ! -e "$removed_marker" ]; then
+      printf 'aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n'
+    fi
+    ;;
+  rm)
+    if [ "$2" = "-f" ] && [ "$3" = "aaaaaaaaaaaa" ]; then
+      : > "$removed_marker"
+    fi
+    ;;
+esac
 exit 0
 `;
 
@@ -750,6 +762,7 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    fs.writeFileSync(path.join(localBin, "docker"), LIVE_DOCKER_IDENTITY, { mode: 0o755 });
 
     const r = runWithEnv("alpha destroy --yes", {
       HOME: home,
