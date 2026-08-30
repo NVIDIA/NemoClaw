@@ -10,6 +10,7 @@ import * as policyChannelDependenciesModule from "../../../src/lib/actions/sandb
 import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-channel.ts";
 import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/runtime.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
+import * as onboardProvidersModule from "../../../src/lib/onboard/providers.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -64,9 +65,12 @@ type ProviderUpsertOptions = {
   readonly requireExactBindings?: boolean;
   readonly revalidatePolicyRequirements?: (operation: string) => void;
 };
+type ProviderTokenDefinitions = Parameters<
+  typeof policyChannelDependencies.upsertMessagingProviders
+>[0];
 type ProviderDependencies = {
   upsertMessagingProviders(
-    tokenDefs: Parameters<typeof policyChannelDependencies.upsertMessagingProviders>[0],
+    tokenDefs: ProviderTokenDefinitions,
     gatewayName: string,
     options?: ProviderUpsertOptions,
   ): string[];
@@ -76,6 +80,13 @@ type ProviderDependencies = {
     options?: Parameters<typeof runOpenshell>[1],
   ): ReturnType<typeof runOpenshell>;
   revalidateChannelProviderPolicyAuthority(sandboxName: string, gatewayName: string): void;
+};
+type OnboardProviderDependencies = {
+  upsertMessagingProviders(
+    tokenDefs: ProviderTokenDefinitions,
+    run: typeof runOpenshell,
+    options?: ProviderUpsertOptions,
+  ): string[];
 };
 
 const policyChannel = (
@@ -98,6 +109,9 @@ const messagingBridgeProvider = (
     : messagingBridgeProviderModule
 ) as MessagingBridgeProviderModule;
 const { ensureMessagingBridgeProfiles } = messagingBridgeProvider;
+const onboardProviders = (
+  "default" in onboardProvidersModule ? onboardProvidersModule.default : onboardProvidersModule
+) as OnboardProviderDependencies;
 const statePaths = (
   "default" in statePathsModule ? statePathsModule.default : statePathsModule
 ) as StatePathsModule;
@@ -121,6 +135,7 @@ interface GooglechatLiveE2eDependencies {
 
 interface GooglechatCredentialFixtureDependencies {
   readonly ensureProfiles?: typeof ensureMessagingBridgeProfiles;
+  readonly onboardProviderDependencies?: OnboardProviderDependencies;
   readonly providerDependencies?: ProviderDependencies;
   readonly root?: string;
 }
@@ -147,15 +162,18 @@ export function installGooglechatCredentialFixture(
   assertChannelsStopStartSandboxName(sandboxName, agent);
   const ensureProfiles = dependencies.ensureProfiles ?? ensureMessagingBridgeProfiles;
   const providerDependencies = dependencies.providerDependencies ?? policyChannelDependencies;
+  const onboardProviderDependencies = dependencies.onboardProviderDependencies ?? onboardProviders;
   const root = dependencies.root ?? ROOT;
   const expectedName = `${sandboxName}-googlechat-bridge`;
   const expectedType = PROVIDER_TYPE_BY_AGENT[agent];
   const original = providerDependencies.upsertMessagingProviders;
+  const originalOnboard = onboardProviderDependencies.upsertMessagingProviders;
 
-  const fixtureUpsert: ProviderDependencies["upsertMessagingProviders"] = (
-    tokenDefs,
-    gatewayName,
-    options = {},
+  const fixtureUpsert = (
+    tokenDefs: ProviderTokenDefinitions,
+    options: ProviderUpsertOptions,
+    delegate: (delegatedTokenDefs: ProviderTokenDefinitions) => string[],
+    effectiveRun: typeof runOpenshell,
   ) => {
     const fixtureTokenDefs = tokenDefs.filter(({ name }) => name === expectedName);
     const fixtureTokenDef = fixtureTokenDefs[0];
@@ -169,17 +187,7 @@ export function installGooglechatCredentialFixture(
 
     const delegatedTokenDefs = tokenDefs.filter(({ name }) => name !== expectedName);
     const delegatedProviderNames =
-      delegatedTokenDefs.length === 0 ? [] : original(delegatedTokenDefs, gatewayName, options);
-    const revalidate = () => {
-      providerDependencies.revalidateChannelProviderPolicyAuthority(sandboxName, gatewayName);
-      options.revalidatePolicyRequirements?.(
-        `manage Google Chat live fixture provider '${expectedName}'`,
-      );
-    };
-    const effectiveRun: typeof runOpenshell = (args, runOptions) => {
-      revalidate();
-      return providerDependencies.runGatewayOpenshell(gatewayName, args, runOptions);
-    };
+      delegatedTokenDefs.length === 0 ? [] : delegate(delegatedTokenDefs);
     ensureProfiles(fixtureTokenDefs, {
       root,
       runOpenshell: effectiveRun,
@@ -223,10 +231,51 @@ export function installGooglechatCredentialFixture(
     const registered = new Set([...delegatedProviderNames, expectedName]);
     return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
   };
-  providerDependencies.upsertMessagingProviders = fixtureUpsert;
+  const channelUpsert: ProviderDependencies["upsertMessagingProviders"] = (
+    tokenDefs,
+    gatewayName,
+    options = {},
+  ) => {
+    const effectiveRun: typeof runOpenshell = (args, runOptions) => {
+      providerDependencies.revalidateChannelProviderPolicyAuthority(sandboxName, gatewayName);
+      options.revalidatePolicyRequirements?.(
+        `manage Google Chat live fixture provider '${expectedName}'`,
+      );
+      return providerDependencies.runGatewayOpenshell(gatewayName, args, runOptions);
+    };
+    return fixtureUpsert(
+      tokenDefs,
+      options,
+      (delegated) => original(delegated, gatewayName, options),
+      effectiveRun,
+    );
+  };
+  providerDependencies.upsertMessagingProviders = channelUpsert;
+  const onboardUpsert: OnboardProviderDependencies["upsertMessagingProviders"] = (
+    tokenDefs,
+    run,
+    options = {},
+  ) => {
+    const revalidate = options.revalidatePolicyRequirements;
+    if (!revalidate) {
+      throw new Error("Google Chat live fixture requires policy authority revalidation");
+    }
+    const effectiveRun: typeof runOpenshell = (args, runOptions) => {
+      revalidate(`manage Google Chat live fixture provider '${expectedName}'`);
+      return run(args, runOptions);
+    };
+    return fixtureUpsert(
+      tokenDefs,
+      options,
+      (delegated) => originalOnboard(delegated, run, options),
+      effectiveRun,
+    );
+  };
+  onboardProviderDependencies.upsertMessagingProviders = onboardUpsert;
 
   return () => {
     providerDependencies.upsertMessagingProviders = original;
+    onboardProviderDependencies.upsertMessagingProviders = originalOnboard;
   };
 }
 

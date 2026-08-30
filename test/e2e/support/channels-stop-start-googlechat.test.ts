@@ -31,6 +31,13 @@ type FixtureProviderDependencies = {
   ): ReturnType<FixtureRunner>;
   revalidateChannelProviderPolicyAuthority(sandboxName: string, gatewayName: string): void;
 };
+type FixtureOnboardProviderDependencies = {
+  upsertMessagingProviders(
+    tokenDefs: Parameters<FixtureProviderDependencies["upsertMessagingProviders"]>[0],
+    run: FixtureRunner,
+    options?: Parameters<FixtureProviderDependencies["upsertMessagingProviders"]>[2],
+  ): string[];
+};
 
 describe("channels stop/start Google Chat live composition", () => {
   it("grants a process-local audience capability to the exact live sandbox", async () => {
@@ -234,10 +241,15 @@ describe("channels stop/start Google Chat live composition", () => {
         providerType: "nemoclaw-mcp-v1",
       };
       const originalUpsert = vi.fn(() => [delegatedName]);
+      const originalOnboardUpsert = vi.fn(() => [delegatedName]);
+      const onboardProviderDependencies: FixtureOnboardProviderDependencies = {
+        upsertMessagingProviders: originalOnboardUpsert,
+      };
       const ensureProfiles = vi.fn();
       const runMock = vi.fn((args: string[], _options?: { env?: NodeJS.ProcessEnv }) => ({
         status: args[1] === "get" ? 1 : 0,
       }));
+      const run = runMock as unknown as FixtureRunner;
       const revalidatePolicyRequirements = vi.fn();
       const revalidateChannelProviderPolicyAuthority = vi.fn();
       const providerDependencies: FixtureProviderDependencies = {
@@ -250,28 +262,41 @@ describe("channels stop/start Google Chat live composition", () => {
 
       const restore = installGooglechatCredentialFixture(sandboxName, agent, {
         ensureProfiles,
+        onboardProviderDependencies,
         providerDependencies,
         root: "/repo",
       });
-      const providerNames = providerDependencies.upsertMessagingProviders(
-        [
-          delegatedTokenDef,
-          {
-            name: `${sandboxName}-googlechat-bridge`,
-            envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
-            token: null,
-            providerType,
-          },
-        ],
-        "nemoclaw",
+      const tokenDefs = [
+        delegatedTokenDef,
+        {
+          name: `${sandboxName}-googlechat-bridge`,
+          envKey: "GOOGLE_CHAT_ACCESS_TOKEN",
+          token: null,
+          providerType,
+        },
+      ];
+      const providerNames = providerDependencies.upsertMessagingProviders(tokenDefs, "nemoclaw", {
+        revalidatePolicyRequirements,
+      });
+      expect(() => onboardProviderDependencies.upsertMessagingProviders(tokenDefs, run)).toThrow(
+        /requires policy authority revalidation/,
+      );
+      expect(originalOnboardUpsert).not.toHaveBeenCalled();
+      const onboardProviderNames = onboardProviderDependencies.upsertMessagingProviders(
+        tokenDefs,
+        run,
         { revalidatePolicyRequirements },
       );
 
       expect(providerNames).toEqual([delegatedName, `${sandboxName}-googlechat-bridge`]);
+      expect(onboardProviderNames).toEqual(providerNames);
       expect(originalUpsert).toHaveBeenCalledWith([delegatedTokenDef], "nemoclaw", {
         revalidatePolicyRequirements,
       });
-      expect(ensureProfiles).toHaveBeenCalledOnce();
+      expect(originalOnboardUpsert).toHaveBeenCalledWith([delegatedTokenDef], run, {
+        revalidatePolicyRequirements,
+      });
+      expect(ensureProfiles).toHaveBeenCalledTimes(2);
       const profileDependencies = ensureProfiles.mock.calls[0]?.[1] as {
         redact: (value: string) => string;
         root: string;
@@ -280,7 +305,7 @@ describe("channels stop/start Google Chat live composition", () => {
       expect(profileDependencies.root).toBe("/repo");
       expect(profileDependencies.runOpenshell).not.toBe(providerDependencies.runGatewayOpenshell);
       expect(profileDependencies.redact(GOOGLECHAT_E2E_ACCESS_TOKEN)).toBe("[redacted]");
-      expect(revalidatePolicyRequirements).toHaveBeenCalledTimes(2);
+      expect(revalidatePolicyRequirements).toHaveBeenCalledTimes(4);
       expect(revalidateChannelProviderPolicyAuthority).toHaveBeenCalledTimes(2);
       expect(revalidateChannelProviderPolicyAuthority).toHaveBeenCalledWith(
         sandboxName,
@@ -305,6 +330,7 @@ describe("channels stop/start Google Chat live composition", () => {
 
       restore();
       expect(providerDependencies.upsertMessagingProviders).toBe(originalUpsert);
+      expect(onboardProviderDependencies.upsertMessagingProviders).toBe(originalOnboardUpsert);
     },
   );
 
