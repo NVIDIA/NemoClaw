@@ -36,7 +36,7 @@ export type LocalReviewLifecycle = {
   remove: (env: NodeJS.ProcessEnv) => void;
 };
 
-const defaultLifecycle: LocalReviewLifecycle = {
+export const defaultLocalReviewLifecycle: LocalReviewLifecycle = {
   prepare: (env) => prepareAdvisorSandboxInputs(env, { collectContext: async () => null }),
   startGateway: startAdvisorOpenShellInference,
   create: createAdvisorSandbox,
@@ -160,6 +160,7 @@ export async function runLocalReview(input: {
   lifecycle?: LocalReviewLifecycle;
   temporaryRoot?: string;
   prepareSnapshot?: typeof createLocalReviewSnapshot;
+  advisorDirectory?: string;
 }): Promise<string> {
   const source = fs.realpathSync(input.source);
   if (!input.lifecycle && !process.env.PR_REVIEW_ADVISOR_API_KEY)
@@ -167,11 +168,12 @@ export async function runLocalReview(input: {
   const temporaryRoot =
     input.temporaryRoot ?? fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-local-review-"));
   const ownsTemporaryRoot = input.temporaryRoot === undefined;
-  const advisorDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const advisorDirectory =
+    input.advisorDirectory ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const snapshot = path.join(temporaryRoot, "pr-workdir");
   const outputRoot = path.join(temporaryRoot, "output");
   const runnerTemp = path.join(temporaryRoot, `runner-${randomUUID().slice(0, 8)}`);
-  const lifecycle = input.lifecycle ?? defaultLifecycle;
+  const lifecycle = input.lifecycle ?? defaultLocalReviewLifecycle;
   let gatewayCleanup: (() => Promise<void>) | undefined;
   let activeEnvironment: NodeJS.ProcessEnv | undefined;
   let cleanupPromise: Promise<void> | undefined;

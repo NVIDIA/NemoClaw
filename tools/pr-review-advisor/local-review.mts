@@ -10,24 +10,44 @@ import path from "node:path";
 const TRUSTED_IMPLEMENTATION = "tools/pr-review-advisor/local-review-implementation.mts";
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
-function git(cwd: string, args: readonly string[]): string {
+function trustedHostEnvironment(source: string): NodeJS.ProcessEnv {
+  const homeBin = process.env.HOME ? path.join(process.env.HOME, ".local", "bin") : undefined;
+  const allowed = [homeBin, path.dirname(process.execPath), "/usr/local/bin", "/usr/bin", "/bin"]
+    .filter((entry): entry is string => typeof entry === "string" && fs.existsSync(entry))
+    .map((entry) => fs.realpathSync(entry))
+    .filter((entry) => {
+      const relative = path.relative(source, entry);
+      return relative === ".." || relative.startsWith(".." + path.sep);
+    });
+  return {
+    ...process.env,
+    PATH: [...new Set(allowed)].join(path.delimiter),
+    ...(homeBin ? { XDG_BIN_HOME: homeBin } : {}),
+  };
+}
+
+function git(cwd: string, args: readonly string[], env: NodeJS.ProcessEnv): string {
   return execFileSync("git", [...args], {
     cwd,
     encoding: "utf8",
+    env,
     maxBuffer: Number.POSITIVE_INFINITY,
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 }
 
-function dependencyEnvironment(): NodeJS.ProcessEnv {
+function dependencyEnvironment(
+  hostEnvironment: NodeJS.ProcessEnv,
+  globalConfig: string,
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
-    PATH: process.env.PATH,
+    PATH: hostEnvironment.PATH,
     HOME: process.env.HOME,
     TMPDIR: process.env.TMPDIR,
     TMP: process.env.TMP,
     TEMP: process.env.TEMP,
     npm_config_userconfig: os.devNull,
-    npm_config_globalconfig: os.devNull,
+    npm_config_globalconfig: globalConfig,
   };
   const cache = process.env.npm_config_cache ?? process.env.NPM_CONFIG_CACHE;
   if (cache) env.npm_config_cache = cache;
@@ -37,20 +57,26 @@ function dependencyEnvironment(): NodeJS.ProcessEnv {
 async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
   if (process.argv.length !== 2) throw new Error("review:local does not accept options");
   const source = fs.realpathSync(process.cwd());
-  const baseCommit = git(source, ["rev-parse", "--verify", "origin/main^{commit}"]);
+  const hostEnvironment = trustedHostEnvironment(source);
+  const baseCommit = git(
+    source,
+    ["rev-parse", "--verify", "origin/main^{commit}"],
+    hostEnvironment,
+  );
   try {
-    git(source, ["cat-file", "-e", baseCommit + ":" + TRUSTED_IMPLEMENTATION]);
+    git(source, ["cat-file", "-e", baseCommit + ":" + TRUSTED_IMPLEMENTATION], hostEnvironment);
   } catch {
     throw new Error(
       "origin/main does not contain the trusted local review implementation. This feature can run only after the bootstrap repair is merged; update origin/main and try again.",
     );
   }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-local-review-bootstrap-"));
-  const trustedCheckout = path.join(root, "trusted");
+  const trustedCheckout = path.join(root, "advisor");
   const handlers = new Map<NodeJS.Signals, () => void>();
   let activeChild: ChildProcess | undefined;
   let forwardedSignal: NodeJS.Signals | undefined;
   let cleaned = false;
+  let cleanupError: unknown;
   let result: { code: number | null; signal: NodeJS.Signals | null } | undefined;
 
   const cleanup = (): void => {
@@ -59,9 +85,7 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
       fs.rmSync(root, { recursive: true, force: true });
       cleaned = true;
     } catch (error) {
-      console.error(
-        `Local review bootstrap cleanup failed for ${root}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      cleanupError = error;
     }
   };
   for (const signal of SIGNALS) {
@@ -81,7 +105,7 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
   ): Promise<{ code: number | null; signal: NodeJS.Signals | null }> => {
     const child = spawn(command, [...args], {
       cwd: options.cwd,
-      env: options.env ?? process.env,
+      env: options.env ?? hostEnvironment,
       stdio: options.stdio ?? ["ignore", "ignore", "inherit"],
     });
     activeChild = child;
@@ -112,6 +136,8 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
 
   try {
     fs.mkdirSync(trustedCheckout);
+    const globalConfig = path.join(root, "npm-global-config");
+    fs.writeFileSync(globalConfig, "", { mode: 0o600 });
     const archive = path.join(root, "trusted.tar");
     if (
       !(await requireSuccess("git", ["archive", "--format=tar", "--output", archive, baseCommit], {
@@ -124,7 +150,7 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
     if (
       !(await requireSuccess("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], {
         cwd: trustedCheckout,
-        env: dependencyEnvironment(),
+        env: dependencyEnvironment(hostEnvironment, globalConfig),
       }))
     )
       return result!;
@@ -136,15 +162,24 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
         path.join(trustedCheckout, TRUSTED_IMPLEMENTATION),
         source,
       ],
-      { cwd: trustedCheckout, stdio: "inherit" },
+      { cwd: trustedCheckout, env: hostEnvironment, stdio: "inherit" },
     );
     result = { code: childResult.code, signal: forwardedSignal ?? childResult.signal };
     return result;
   } finally {
     for (const [signal, handler] of handlers) process.off(signal, handler);
     cleanup();
-    if (!cleaned && (!result || (result.code === 0 && !result.signal)))
-      throw new Error(`Local review bootstrap cleanup failed for ${root}`);
+    if (cleanupError !== undefined) {
+      const cleanup = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+      const original = result?.signal
+        ? `trusted implementation terminated by ${result.signal}`
+        : result?.code !== undefined && result.code !== null
+          ? `trusted implementation exited with status ${result.code}`
+          : "trusted checkout preparation failed";
+      const message = `${original}; cleanup also failed for ${root}: ${cleanup}`;
+      if (result && (result.code !== 0 || result.signal)) console.error(message);
+      else throw new Error(message);
+    }
   }
 }
 

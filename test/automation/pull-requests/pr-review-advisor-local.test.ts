@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createLocalReviewSnapshot,
+  defaultLocalReviewLifecycle,
   runLocalReview,
   type LocalReviewLifecycle,
 } from "../../../tools/pr-review-advisor/local-review-implementation.mts";
@@ -29,11 +30,11 @@ function git(cwd: string, args: string[]): string {
 }
 
 function installFakeNpm(source: string, body?: string): string {
-  const bin = path.join(temporaryDirectory(), "bin");
+  const bin = path.join(temporaryDirectory(), ".local", "bin");
   body ??= `printf "%s\\n" "$@" > ${JSON.stringify(path.join(source, "npm-args"))}
 env | sort > ${JSON.stringify(path.join(source, "npm-env"))}
-mkdir node_modules`;
-  fs.mkdirSync(bin);
+mkdir -p node_modules`;
+  fs.mkdirSync(bin, { recursive: true });
   fs.writeFileSync(path.join(bin, "npm"), `#!/bin/sh\nset -eu\n${body}\n`);
   fs.chmodSync(path.join(bin, "npm"), 0o755);
   fs.writeFileSync(
@@ -82,9 +83,9 @@ function repository(): string {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const directory of temporaryDirectories.splice(0)) {
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
+  temporaryDirectories
+    .splice(0)
+    .forEach((directory) => fs.rmSync(directory, { recursive: true, force: true }));
 });
 
 describe("local PR review advisor", () => {
@@ -134,6 +135,26 @@ describe("local PR review advisor", () => {
       ].join("\n"),
     );
     const npmBin = installFakeNpm(source);
+    const maliciousBin = path.join(source, "node_modules", ".bin");
+    fs.mkdirSync(maliciousBin, { recursive: true });
+    const maliciousGit = path.join(maliciousBin, "git");
+    const maliciousNpm = path.join(maliciousBin, "npm");
+    const maliciousOpenShell = path.join(maliciousBin, "openshell");
+    fs.writeFileSync(
+      maliciousGit,
+      `#!/bin/sh\nenv > ${JSON.stringify(path.join(source, "git-malicious-env"))}\nexit 99\n`,
+    );
+    fs.writeFileSync(
+      maliciousNpm,
+      `#!/bin/sh\nenv > ${JSON.stringify(path.join(source, "npm-malicious-env"))}\nexit 99\n`,
+    );
+    fs.writeFileSync(
+      maliciousOpenShell,
+      `#!/bin/sh\nenv > ${JSON.stringify(path.join(source, "openshell-malicious-env"))}\nexit 99\n`,
+    );
+    fs.chmodSync(maliciousGit, 0o755);
+    fs.chmodSync(maliciousNpm, 0o755);
+    fs.chmodSync(maliciousOpenShell, 0o755);
     git(source, ["add", "."]);
     git(source, ["commit", "-m", "trusted base"]);
     git(source, ["remote", "add", "origin", source]);
@@ -162,7 +183,9 @@ describe("local PR review advisor", () => {
         encoding: "utf8",
         env: {
           ...process.env,
-          PATH: npmBin + path.delimiter + process.env.PATH,
+          HOME: path.resolve(npmBin, "../.."),
+          PATH: maliciousBin + path.delimiter + npmBin + path.delimiter + process.env.PATH,
+          PR_REVIEW_ADVISOR_API_KEY: "must-not-reach-malicious-tools",
           SECRET_TOKEN: "must-not-reach-npm",
           npm_config_cache: path.join(source, "npm-cache"),
         },
@@ -174,13 +197,16 @@ describe("local PR review advisor", () => {
       'trusted host|branch policy data; throw new Error("policy executed")\n',
     );
     expect(fs.existsSync(path.join(source, "contributor-module-executed"))).toBe(false);
+    expect(fs.existsSync(path.join(source, "git-malicious-env"))).toBe(false);
+    expect(fs.existsSync(path.join(source, "npm-malicious-env"))).toBe(false);
+    expect(fs.existsSync(path.join(source, "openshell-malicious-env"))).toBe(false);
     expect(fs.readFileSync(path.join(source, "npm-args"), "utf8")).toBe(
       "ci\n--ignore-scripts\n--no-audit\n--no-fund\n",
     );
     const npmEnvironment = fs.readFileSync(path.join(source, "npm-env"), "utf8");
     expect(npmEnvironment).not.toContain("SECRET_TOKEN=");
     expect(npmEnvironment).toContain("npm_config_userconfig=" + os.devNull);
-    expect(npmEnvironment).toContain("npm_config_globalconfig=" + os.devNull);
+    expect(npmEnvironment).toMatch(/npm_config_globalconfig=.*nemoclaw-local-review-bootstrap-/u);
     expect(npmEnvironment).toContain("npm_config_cache=" + path.join(source, "npm-cache"));
   });
 
@@ -220,6 +246,7 @@ describe("local PR review advisor", () => {
         cwd: source,
         env: {
           ...process.env,
+          HOME: path.resolve(npmBin, "../.."),
           TMPDIR: temporaryRoot,
           PATH: npmBin + path.delimiter + process.env.PATH,
         },
@@ -245,6 +272,59 @@ describe("local PR review advisor", () => {
     ).toEqual([]);
   });
 
+  it.each([
+    ["status", "process.exitCode = 23;", 23, null, "exited with status 23"],
+    ["signal", 'process.kill(process.pid, "SIGTERM");', null, "SIGTERM", "terminated by SIGTERM"],
+  ])(
+    "reports bootstrap cleanup failure with original %s semantics (#10611)",
+    async (_mode, action, expectedStatus, expectedSignal, expectedDiagnostic) => {
+      const source = temporaryDirectory();
+      const temporaryRoot = temporaryDirectory();
+      git(source, ["init", "--initial-branch=main"]);
+      git(source, ["config", "user.name", "Test"]);
+      git(source, ["config", "user.email", "test@example.com"]);
+      fs.mkdirSync(path.join(source, "tools", "pr-review-advisor"), { recursive: true });
+      fs.copyFileSync(
+        path.resolve("tools/pr-review-advisor/local-review.mts"),
+        path.join(source, "tools", "pr-review-advisor", "local-review.mts"),
+      );
+      fs.writeFileSync(
+        path.join(source, "tools", "pr-review-advisor", "local-review-implementation.mts"),
+        action + "\n",
+      );
+      const npmBin = installFakeNpm(source);
+      git(source, ["add", "."]);
+      git(source, ["commit", "-m", "trusted base"]);
+      git(source, ["remote", "add", "origin", source]);
+      git(source, ["fetch", "origin", "main"]);
+      const patch = path.join(temporaryRoot, "fail-cleanup.cjs");
+      fs.writeFileSync(
+        patch,
+        'const fs=require("node:fs");const rm=fs.rmSync;fs.rmSync=(p,o)=>String(p).includes("nemoclaw-local-review-bootstrap-")&&o?.recursive?(()=>{throw new Error("injected cleanup denial")})():rm(p,o);\n',
+      );
+      const result = spawnSync(
+        process.execPath,
+        ["--experimental-strip-types", "--no-warnings", "tools/pr-review-advisor/local-review.mts"],
+        {
+          cwd: source,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: path.resolve(npmBin, "../.."),
+            PATH: npmBin + path.delimiter + process.env.PATH,
+            TMPDIR: temporaryRoot,
+            NODE_OPTIONS: "--require=" + patch,
+          },
+        },
+      );
+      expect(result.stderr).toContain("cleanup also failed for");
+      expect(result.stderr).toContain("injected cleanup denial");
+      expect(result.status).toBe(expectedStatus);
+      expect(result.signal).toBe(expectedSignal);
+      expect(result.stderr).toContain(expectedDiagnostic);
+    },
+  );
+
   it("explains that local review requires the bootstrap repair on origin/main (#10611)", () => {
     const source = repository();
     fs.mkdirSync(path.join(source, "node_modules"));
@@ -264,6 +344,32 @@ describe("local PR review advisor", () => {
       "origin/main does not contain the trusted local review implementation",
     );
     expect(result.stderr).toContain("after the bootstrap repair is merged");
+  });
+
+  it("passes the default prepare boundary from a canonical advisor checkout (#10611)", async () => {
+    const source = repository();
+    const root = temporaryDirectory();
+    const advisor = path.join(root, "advisor");
+    const workdir = path.join(root, "pr-workdir");
+    git(root, ["clone", "--quiet", source, advisor]);
+    git(root, ["clone", "--quiet", source, workdir]);
+    const runnerTemp = path.join(root, "runner");
+    fs.mkdirSync(runnerTemp);
+
+    await defaultLocalReviewLifecycle.prepare({
+      ...process.env,
+      ADVISOR_DIR: advisor,
+      ADVISOR_WORKDIR: workdir,
+      BASE_REF: git(workdir, ["rev-parse", "HEAD^"]),
+      HEAD_REF: git(workdir, ["rev-parse", "HEAD"]),
+      PR_REVIEW_ADVISOR_INTEREST: "design-architecture",
+      RUNNER_TEMP: runnerTemp,
+    });
+
+    expect(
+      fs.existsSync(path.join(runnerTemp, "pr-review-advisor-context", "github-context.json")),
+    ).toBe(true);
+    execFileSync("chmod", ["-R", "u+w", advisor, workdir, runnerTemp]);
   });
 
   it("snapshots branch, staged, unstaged, and nonignored untracked changes without source mutation (#10610)", () => {
