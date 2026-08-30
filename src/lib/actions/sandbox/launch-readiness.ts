@@ -52,6 +52,7 @@ import {
   LaunchReadinessEvidenceError,
   type LaunchReadinessFailedCheck,
   type LaunchReadinessHealthDeps,
+  type LaunchReadinessObservationStage,
   LaunchReadinessObservationError as ObservationError,
   requireLaunchSemanticHealth,
   resolveLaunchInteractiveCommand,
@@ -189,6 +190,18 @@ function recordPerformanceStage(stage: LaunchReadinessPerformanceStage, startedA
     });
   } catch {
     // Measurements are diagnostic evidence and never control launch behavior.
+  }
+}
+
+function recordObservationTiming(
+  deps: LaunchReadinessDeps,
+  stage: LaunchReadinessObservationStage,
+  startedAt: number,
+): void {
+  try {
+    deps.recordObservationTiming?.(stage, Math.max(0, performance.now() - startedAt));
+  } catch {
+    // Timing evidence must never change readiness behavior.
   }
 }
 
@@ -745,6 +758,7 @@ async function captureLaunchIdentity(
   if (!lifecycleGeneration || !recordedFingerprint) throw new ObservationError("identity");
 
   let live: ReturnType<SandboxRecreateObserver>;
+  const sandboxIdentityStartedAt = performance.now();
   try {
     live = (deps.observeSandbox ?? observeSandboxOnGateway)({
       sandboxName,
@@ -753,6 +767,8 @@ async function captureLaunchIdentity(
     });
   } catch {
     throw new LaunchReadinessEvidenceError();
+  } finally {
+    recordObservationTiming(deps, "sandbox-identity", sandboxIdentityStartedAt);
   }
   if (live.state === "missing") throw new ObservationError("identity");
   if (live.state !== "ready") throw new ObservationError("health");
@@ -760,12 +776,24 @@ async function captureLaunchIdentity(
     throw new ObservationError("identity");
   }
 
-  const livePolicy = captureLivePolicy(sandboxName, gatewayName, deps);
+  const policyStartedAt = performance.now();
+  let livePolicy: string;
+  try {
+    livePolicy = captureLivePolicy(sandboxName, gatewayName, deps);
+  } finally {
+    recordObservationTiming(deps, "policy-get", policyStartedAt);
+  }
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
-  const inferenceResult = (deps.capture ?? ((args) => captureLaunchReadiness(args)))(
-    buildGatewayInferenceGetArgs(gatewayName),
-  );
+  const inferenceGetStartedAt = performance.now();
+  let inferenceResult: ReturnType<typeof captureLaunchReadiness>;
+  try {
+    inferenceResult = (deps.capture ?? ((args) => captureLaunchReadiness(args)))(
+      buildGatewayInferenceGetArgs(gatewayName),
+    );
+  } finally {
+    recordObservationTiming(deps, "inference-get", inferenceGetStartedAt);
+  }
   if (inferenceResult.status !== 0) throw new LaunchReadinessEvidenceError();
   const liveInference = parseGatewayInference(inferenceResult.output);
   const liveInferenceAbsent = reportsInferenceNotConfigured(inferenceResult.output);

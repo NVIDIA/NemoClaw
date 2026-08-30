@@ -41,6 +41,14 @@ export type LaunchReadinessCaptureResult = ReturnType<typeof captureOpenshell>;
 
 export type LaunchReadinessFailedCheck = "inference request";
 
+export type LaunchReadinessObservationStage =
+  | "sandbox-identity"
+  | "policy-get"
+  | "inference-get"
+  | "gateway-health"
+  | "forward-health"
+  | "inference-route";
+
 export interface LaunchReadinessHealthDeps {
   listAgents?: typeof listAgents;
   loadAgent?: typeof loadAgent;
@@ -54,6 +62,7 @@ export interface LaunchReadinessHealthDeps {
     gatewayName: string,
   ) => ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
   inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
+  recordObservationTiming?: (stage: LaunchReadinessObservationStage, elapsedMs: number) => void;
 }
 
 export type LaunchReadinessBoundCapture = (
@@ -106,6 +115,18 @@ export class LaunchReadinessObservationError extends Error {
 export class LaunchReadinessEvidenceError extends Error {
   constructor() {
     super("launch readiness evidence unavailable");
+  }
+}
+
+function recordObservationTiming(
+  deps: LaunchReadinessHealthDeps,
+  stage: LaunchReadinessObservationStage,
+  startedAt: number,
+): void {
+  try {
+    deps.recordObservationTiming?.(stage, Math.max(0, performance.now() - startedAt));
+  } catch {
+    // Timing evidence must never change readiness behavior.
   }
 }
 
@@ -186,23 +207,41 @@ export async function requireLaunchSemanticHealth(
       throw new LaunchReadinessObservationError("health");
     }
   } else {
-    const running = await (deps.gatewayHealth ?? isSandboxGatewayRunningForStatus)(
-      sandboxName,
-      gatewayName,
-    );
+    const gatewayStartedAt = performance.now();
+    let running: boolean | null;
+    try {
+      running = await (deps.gatewayHealth ?? isSandboxGatewayRunningForStatus)(
+        sandboxName,
+        gatewayName,
+      );
+    } finally {
+      recordObservationTiming(deps, "gateway-health", gatewayStartedAt);
+    }
     if (running === null) throw new LaunchReadinessEvidenceError();
     if (!running) throw new LaunchReadinessObservationError("health");
-    const forwards = (deps.forwardsHealthy ?? areSandboxLaunchForwardsHealthy)(
-      sandboxName,
-      gatewayName,
-    );
+    const forwardStartedAt = performance.now();
+    let forwards: boolean | null;
+    try {
+      forwards = (deps.forwardsHealthy ?? areSandboxLaunchForwardsHealthy)(
+        sandboxName,
+        gatewayName,
+      );
+    } finally {
+      recordObservationTiming(deps, "forward-health", forwardStartedAt);
+    }
     if (forwards === null) throw new LaunchReadinessEvidenceError();
     if (!forwards) {
       throw new LaunchReadinessObservationError("health");
     }
   }
   if (inferenceConfigured) {
-    const inference = (deps.inferenceProbe ?? probeInferenceRoute)(sandboxName, agent, gatewayName);
+    const inferenceStartedAt = performance.now();
+    let inference: ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
+    try {
+      inference = (deps.inferenceProbe ?? probeInferenceRoute)(sandboxName, agent, gatewayName);
+    } finally {
+      recordObservationTiming(deps, "inference-route", inferenceStartedAt);
+    }
     const strictRouteHealth =
       inference.healthy && inference.httpStatus >= 200 && inference.httpStatus < 300;
     if (strictRouteHealth) return;

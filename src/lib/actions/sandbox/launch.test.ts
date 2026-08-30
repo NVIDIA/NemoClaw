@@ -23,6 +23,9 @@ const mocks = vi.hoisted(() => ({
   withLaunchReadinessMutationGate: vi.fn(),
   inspectPortableReceiptDisposition: vi.fn(),
   recoverPortableLifecycle: vi.fn(),
+  qualifyAcceptedReadinessAuthority: vi.fn(),
+  requireActiveLifecycleAuthority: vi.fn(),
+  requalifyPortableAuthority: vi.fn(),
   assertCommandCurrent: vi.fn(),
 }));
 
@@ -61,6 +64,7 @@ vi.mock("./connect-hermes-light-skin", () => ({
   prepareHermesLightTerminalSkin: mocks.prepareHermesLightTerminalSkin,
 }));
 vi.mock("./launch-readiness", () => ({
+  createBoundLaunchReadinessDeps: () => ({ boundReadinessCapture: true }),
   inspectLaunchReadiness: mocks.inspectLaunchReadiness,
   publishLaunchReadiness: mocks.publishLaunchReadiness,
   withLaunchReadinessMutationGate: mocks.withLaunchReadinessMutationGate,
@@ -76,6 +80,7 @@ vi.mock("./gateway-state", async () => {
     typeof import("../../onboard/experimental/hermes-portable-lifecycle")
   >("../../onboard/experimental/hermes-portable-lifecycle");
   return {
+    captureHermesPortableAcceptedReadinessObservation: vi.fn(),
     buildHermesPortableCommandAuthority: () => ({
       env: lifecycle.hermesPortableLifecycleInternals.buildHermesPortableOpenShellEnv(
         {
@@ -125,6 +130,9 @@ vi.mock("./gateway-state", async () => {
       XDG_RUNTIME_DIR: "/run/user/1000",
     }),
     inspectPortableAgentReceiptDisposition: mocks.inspectPortableReceiptDisposition,
+    qualifyHermesPortableAcceptedReadinessAuthority: mocks.qualifyAcceptedReadinessAuthority,
+    requireHermesPortableActiveLifecycleAuthority: mocks.requireActiveLifecycleAuthority,
+    requalifyPortableAgentSandboxAuthority: mocks.requalifyPortableAuthority,
     recoverPortableDemoSandboxLifecycleForConnect: mocks.recoverPortableLifecycle,
     withSandboxLifecycleLock: async (_sandboxName: string, operation: () => unknown) => operation(),
   };
@@ -234,6 +242,31 @@ describe("launchSandbox", () => {
     }));
     mocks.inspectPortableReceiptDisposition.mockReturnValue({ kind: "absent" });
     mocks.recoverPortableLifecycle.mockReturnValue({ kind: "already-running" });
+    mocks.qualifyAcceptedReadinessAuthority.mockReturnValue({
+      kind: "current",
+      commandAuthority: {
+        env: {},
+        executablePath: "/usr/bin/openshell",
+        assertCurrent: mocks.assertCommandCurrent,
+      },
+    });
+    mocks.requireActiveLifecycleAuthority.mockImplementation((_sandboxName, expected, deps) => {
+      const currentEntry =
+        deps.readRegistry("alpha") ??
+        (() => {
+          throw new Error("Hermes portable lifecycle authority is missing or incomplete");
+        })();
+      expected === undefined ||
+        JSON.stringify(currentEntry) === JSON.stringify(expected.entry) ||
+        (() => {
+          throw new Error("Hermes portable lifecycle authority changed during verification");
+        })();
+      return expected ?? { ...activeHermesDisposition(), entry: currentEntry };
+    });
+    mocks.requalifyPortableAuthority.mockReturnValue({
+      kind: "hermes",
+      assertCurrent: vi.fn(),
+    });
     // Production keeps OpenClaw null in getSessionAgent so its recovery path
     // continues to use the legacy defaults. The launch resolver must still
     // load OpenClaw's trusted manifest before choosing the interactive command.
@@ -304,8 +337,8 @@ describe("launchSandbox", () => {
 
     expect(mocks.recoverPortableLifecycle).toHaveBeenCalledOnce();
     expect(mocks.recoverPortableLifecycle).toHaveBeenCalledWith("alpha", entry, "gateway-alpha");
-    expect(mocks.assertCommandCurrent).toHaveBeenCalledOnce();
-    expect(events).toEqual(["sandbox:acquired", "child"]);
+    expect(mocks.assertCommandCurrent).toHaveBeenCalledTimes(3);
+    expect(events).toEqual(["sandbox:acquired", "sandbox:released", "sandbox:acquired", "child"]);
     expect(mocks.execSandbox).not.toHaveBeenCalled();
     expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
     expect(mocks.runSandboxExecChild.mock.calls[0]?.slice(0, 2)).toEqual([
@@ -338,6 +371,8 @@ describe("launchSandbox", () => {
     await launch;
     await contender;
     expect(events).toEqual([
+      "sandbox:acquired",
+      "sandbox:released",
       "sandbox:acquired",
       "child",
       "sandbox:released",
@@ -397,11 +432,13 @@ describe("launchSandbox", () => {
   });
 
   it("rejects schema-5 retirement inside the launch lifecycle fence (#9203)", async () => {
+    const entry = sandboxEntry("hermes");
     prepareSession("hermes", loadAgent("hermes"), true);
     mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
 
     await expect(
       launchSandbox("alpha", {
+        getSandbox: () => entry,
         withSandboxMutationLock: async (_sandboxName, operation) => {
           mocks.inspectPortableReceiptDisposition.mockReturnValue({ kind: "absent" });
           return await operation();
@@ -583,12 +620,49 @@ describe("launchSandbox", () => {
     expect(mocks.completeReadinessQualifiedInteractiveSessionSetup).not.toHaveBeenCalled();
     expect(mocks.completeInteractiveSessionSetup).not.toHaveBeenCalled();
     expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
-    expect(mocks.recoverPortableLifecycle).toHaveBeenCalledOnce();
-    expect(mocks.assertCommandCurrent).toHaveBeenCalledOnce();
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.assertCommandCurrent).toHaveBeenCalledTimes(4);
+    expect(mocks.inspectLaunchReadiness).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ boundReadinessCapture: true }),
+    );
     expect(mocks.runSandboxExecChild).toHaveBeenCalledOnce();
   });
 
-  it("rejects Hermes receipt drift after lifecycle recovery and before execution", async () => {
+  it("requalifies schema-5 before accepted Hermes readiness skips recovery (#9203)", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    mocks.inspectLaunchReadiness.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: hermes,
+      sb: entry,
+    });
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+    mocks.qualifyAcceptedReadinessAuthority
+      .mockReturnValueOnce({ kind: "requalification-required" })
+      .mockReturnValueOnce({
+        kind: "current",
+        commandAuthority: {
+          env: {},
+          executablePath: "/usr/bin/openshell",
+          assertCurrent: mocks.assertCommandCurrent,
+        },
+      });
+
+    await launchSandbox("alpha", {
+      getSandbox: () => entry,
+      resolveSandboxGatewayName: () => "gateway-alpha",
+      withSandboxMutationLock: async (_name, operation) => await operation(),
+    });
+
+    expect(mocks.requalifyPortableAuthority).toHaveBeenCalledOnce();
+    expect(mocks.qualifyAcceptedReadinessAuthority).toHaveBeenCalledTimes(2);
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.runSandboxExecChild).toHaveBeenCalledOnce();
+  });
+
+  it("rejects Hermes receipt drift after accepted readiness and before execution", async () => {
     const hermes = loadAgent("hermes");
     const entry = sandboxEntry("hermes");
     mocks.inspectLaunchReadiness.mockResolvedValue({
@@ -608,18 +682,22 @@ describe("launchSandbox", () => {
         resolveSandboxGatewayName: () => "gateway-alpha",
         withSandboxMutationLock: async (_name, operation) => await operation(),
       }),
-    ).rejects.toThrow("lifecycle authority changed at agent launch");
+    ).rejects.toThrow("lifecycle authority changed before agent launch");
 
-    expect(mocks.recoverPortableLifecycle).toHaveBeenCalledOnce();
-    expect(mocks.assertCommandCurrent).not.toHaveBeenCalled();
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.assertCommandCurrent).toHaveBeenCalled();
     expect(mocks.runSandboxExecChild).not.toHaveBeenCalled();
   });
 
-  it("rejects Hermes registry drift after lifecycle recovery and before execution", async () => {
+  it("rejects Hermes registry drift during accepted readiness", async () => {
     const hermes = loadAgent("hermes");
     const entry = sandboxEntry("hermes");
     const changed = { ...entry, lifecycleGeneration: "generation-new" };
-    const readSandbox = vi.fn().mockReturnValueOnce(entry).mockReturnValueOnce(changed);
+    const readSandbox = vi
+      .fn()
+      .mockReturnValueOnce(entry)
+      .mockReturnValueOnce(entry)
+      .mockReturnValueOnce(changed);
     mocks.inspectLaunchReadiness.mockResolvedValue({
       kind: "accepted",
       category: "accepted",
@@ -634,15 +712,15 @@ describe("launchSandbox", () => {
         resolveSandboxGatewayName: () => "gateway-alpha",
         withSandboxMutationLock: async (_name, operation) => await operation(),
       }),
-    ).rejects.toThrow("lifecycle authority changed at agent launch");
+    ).rejects.toThrow("lifecycle authority changed during verification");
 
-    expect(readSandbox).toHaveBeenCalledTimes(2);
-    expect(mocks.recoverPortableLifecycle).toHaveBeenCalledOnce();
-    expect(mocks.assertCommandCurrent).not.toHaveBeenCalled();
+    expect(readSandbox).toHaveBeenCalledTimes(3);
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.assertCommandCurrent).toHaveBeenCalledTimes(2);
     expect(mocks.runSandboxExecChild).not.toHaveBeenCalled();
   });
 
-  it("rejects Hermes operating-command drift immediately before execution", async () => {
+  it("rejects Hermes operating-command drift after readiness and before execution", async () => {
     const hermes = loadAgent("hermes");
     const entry = sandboxEntry("hermes");
     mocks.inspectLaunchReadiness.mockResolvedValue({
@@ -652,9 +730,12 @@ describe("launchSandbox", () => {
       sb: entry,
     });
     mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
-    mocks.assertCommandCurrent.mockImplementationOnce(() => {
-      throw new Error("operating authority changed");
-    });
+    mocks.assertCommandCurrent
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("operating authority changed");
+      });
 
     await expect(
       launchSandbox("alpha", {
@@ -664,20 +745,47 @@ describe("launchSandbox", () => {
       }),
     ).rejects.toThrow("operating authority changed");
 
-    expect(mocks.recoverPortableLifecycle).toHaveBeenCalledOnce();
-    expect(mocks.assertCommandCurrent).toHaveBeenCalledOnce();
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.assertCommandCurrent).toHaveBeenCalledTimes(3);
     expect(mocks.runSandboxExecChild).not.toHaveBeenCalled();
   });
 
-  it("recovers one stopped Hermes lifecycle before qualified execution", async () => {
+  it("rejects full registry drift after readiness and before execution", async () => {
     const hermes = loadAgent("hermes");
     const entry = sandboxEntry("hermes");
+    const changed = { ...entry, provider: "compatible-endpoint", model: "model-new" };
+    const readSandbox = vi
+      .fn()
+      .mockReturnValueOnce(entry)
+      .mockReturnValueOnce(entry)
+      .mockReturnValueOnce(entry)
+      .mockReturnValueOnce(entry)
+      .mockReturnValueOnce(changed);
     mocks.inspectLaunchReadiness.mockResolvedValue({
       kind: "accepted",
       category: "accepted",
       agent: hermes,
       sb: entry,
     });
+    mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
+
+    await expect(
+      launchSandbox("alpha", {
+        getSandbox: readSandbox,
+        resolveSandboxGatewayName: () => "gateway-alpha",
+        withSandboxMutationLock: async (_name, operation) => await operation(),
+      }),
+    ).rejects.toThrow("lifecycle authority changed during verification");
+
+    expect(readSandbox).toHaveBeenCalledTimes(5);
+    expect(mocks.recoverPortableLifecycle).not.toHaveBeenCalled();
+    expect(mocks.runSandboxExecChild).not.toHaveBeenCalled();
+  });
+
+  it("recovers one stopped Hermes lifecycle after readiness fallback", async () => {
+    const hermes = loadAgent("hermes");
+    const entry = sandboxEntry("hermes");
+    prepareSession("hermes", hermes, true);
     mocks.inspectPortableReceiptDisposition.mockReturnValue(activeHermesDisposition());
     mocks.recoverPortableLifecycle.mockReturnValue({ kind: "recovered" });
 
@@ -688,7 +796,7 @@ describe("launchSandbox", () => {
     });
 
     expect(mocks.recoverPortableLifecycle).toHaveBeenCalledOnce();
-    expect(mocks.assertCommandCurrent).toHaveBeenCalledOnce();
+    expect(mocks.assertCommandCurrent).toHaveBeenCalledTimes(3);
     expect(mocks.runSandboxExecChild).toHaveBeenCalledOnce();
   });
 

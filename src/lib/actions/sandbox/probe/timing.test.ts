@@ -28,12 +28,14 @@ describe("probe timing recorder", () => {
     ).resolves.toBe("healthy");
     recorder.setLifecycleAction("reused");
     recorder.setForwardAction("restored");
+    recorder.recordReadinessObservation("sandbox-identity", 1.4);
+    recorder.recordReadinessObservation("policy-get", 2.6);
     clock = 20;
     recorder.finish("ready");
     recorder.finishOnExit("failed", "publication");
 
     expect(lines).toEqual([
-      "  Probe timing: readiness=5ms authority=0ms lifecycle=0ms gateway=12ms processes=0ms forward=0ms inference=0ms pairing=0ms publication=0ms total=20ms lifecycleAction=reused forwardAction=restored result=ready",
+      "  Probe timing: readiness=5ms authority=0ms lifecycle=0ms gateway=12ms processes=0ms forward=0ms inference=0ms pairing=0ms publication=0ms readiness.sandbox-identity=1ms readiness.policy-get=3ms readiness.inference-get=0ms readiness.gateway-health=0ms readiness.forward-health=0ms readiness.inference-route=0ms total=20ms lifecycleAction=reused forwardAction=restored result=ready",
     ]);
   });
 

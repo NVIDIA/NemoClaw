@@ -130,6 +130,25 @@ export const withSandboxLifecycleLock = withMcpLifecycleLock;
 export const withSandboxLifecycleLockSync = withMcpLifecycleLockSync;
 export const withConnectSandboxLifecycleLock = withMcpLifecycleLock;
 
+/** Capture one accepted-readiness observation through retained Hermes command authority. */
+export function captureHermesPortableAcceptedReadinessObservation(
+  authority: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>,
+  args: string[],
+  options: NonNullable<Parameters<typeof captureResolvedOpenshell>[1]> = {},
+) {
+  authority.assertCurrent();
+  try {
+    return captureResolvedOpenshell(args, {
+      ...options,
+      env: authority.env,
+      openshellBinary: authority.executablePath,
+      replaceEnv: true,
+    });
+  } finally {
+    authority.assertCurrent();
+  }
+}
+
 /** Capture one recovery-only gateway command under receipt-owned authority. */
 export function captureHermesPortableInferenceRecoveryGateway(
   sandboxName: string,

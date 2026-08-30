@@ -574,12 +574,16 @@ function captureHermesPortableReadinessObservation(
 
 function hermesPortableLaunchReadinessDeps(
   authority: HermesPortableReadinessCommandAuthority,
+  probeTiming?: ProbeTimingRecorder,
 ): NonNullable<Parameters<typeof inspectLaunchReadiness>[1]> {
   const capture = (
     args: string[],
     options: NonNullable<Parameters<typeof captureResolvedOpenshell>[1]> = {},
   ) => captureHermesPortableReadinessObservation(authority, args, options);
-  return createBoundLaunchReadinessDeps(capture);
+  return {
+    ...createBoundLaunchReadinessDeps(capture),
+    ...(probeTiming ? { recordObservationTiming: probeTiming.recordReadinessObservation } : {}),
+  };
 }
 
 function portableAgentLifecycleAuthorityDeps() {
@@ -2150,7 +2154,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
         inspectLaunchReadiness(
           sandboxName,
           hermesReadinessAuthority
-            ? hermesPortableLaunchReadinessDeps(hermesReadinessAuthority.command)
+            ? hermesPortableLaunchReadinessDeps(hermesReadinessAuthority.command, probeTiming)
             : {},
         ),
       );
@@ -2315,7 +2319,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
             readiness = await probeTiming!.measureAsync("readiness", () =>
               inspectLaunchReadiness(
                 sandboxName,
-                hermesPortableLaunchReadinessDeps(qualified.commandAuthority),
+                hermesPortableLaunchReadinessDeps(qualified.commandAuthority, probeTiming),
               ),
             );
             probeTiming!.measure("authority", qualified.commandAuthority.assertCurrent);
