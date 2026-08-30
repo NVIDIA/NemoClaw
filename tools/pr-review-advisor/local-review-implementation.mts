@@ -162,6 +162,8 @@ export async function runLocalReview(input: {
   prepareSnapshot?: typeof createLocalReviewSnapshot;
 }): Promise<string> {
   const source = fs.realpathSync(input.source);
+  if (!input.lifecycle && !process.env.PR_REVIEW_ADVISOR_API_KEY)
+    throw new Error("PR_REVIEW_ADVISOR_API_KEY is required for local review");
   const temporaryRoot =
     input.temporaryRoot ?? fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-local-review-"));
   const ownsTemporaryRoot = input.temporaryRoot === undefined;
