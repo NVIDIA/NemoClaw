@@ -116,30 +116,30 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
-  it.each([
-    "test/helpers/onboard-fixture-contract.json",
-    "test/helpers/onboard-script-mocks.cjs",
-  ])("maps %s to every sandbox identity consumer (#10463)", (fixturePath) => {
-    expect(triggeredBy(fixturePath)).toEqual([
-      "test/helpers/onboard-created-sandbox-fixture.test.ts",
-      "test/onboarding/onboard-custom-dockerfile.test.ts",
-      "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
-      "test/onboarding/onboard-fresh-create-identity.test.ts",
-      "test/onboarding/onboard-installer-restore-intent.test.ts",
-      "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
-      "test/onboarding/onboard-mcp-observability-redirect.test.ts",
-      "test/onboarding/onboard-messaging.test.ts",
-      "test/onboarding/onboard-prepared-build-context.test.ts",
-      "test/onboarding/onboard-reservation-recreate.test.ts",
-      "test/onboarding/onboard-sandbox-build.test.ts",
-      "test/onboarding/onboard-sandbox-recreation.test.ts",
-      "test/onboarding/onboard-script-mocks-contract.test.ts",
-      "test/onboarding/onboard-terminal-dashboard.test.ts",
-      "test/onboarding/onboard.test.ts",
-      "test/security/shellquote-sandbox.test.ts",
-      "test/repository/source-require-loader.test.ts",
-    ]);
-  });
+  it.each(["test/helpers/onboard-fixture-contract.json", "test/helpers/onboard-script-mocks.cjs"])(
+    "maps %s to every sandbox identity consumer (#10463)",
+    (fixturePath) => {
+      expect(triggeredBy(fixturePath)).toEqual([
+        "test/helpers/onboard-created-sandbox-fixture.test.ts",
+        "test/onboarding/onboard-custom-dockerfile.test.ts",
+        "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
+        "test/onboarding/onboard-fresh-create-identity.test.ts",
+        "test/onboarding/onboard-installer-restore-intent.test.ts",
+        "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
+        "test/onboarding/onboard-mcp-observability-redirect.test.ts",
+        "test/onboarding/onboard-messaging.test.ts",
+        "test/onboarding/onboard-prepared-build-context.test.ts",
+        "test/onboarding/onboard-reservation-recreate.test.ts",
+        "test/onboarding/onboard-sandbox-build.test.ts",
+        "test/onboarding/onboard-sandbox-recreation.test.ts",
+        "test/onboarding/onboard-script-mocks-contract.test.ts",
+        "test/onboarding/onboard-terminal-dashboard.test.ts",
+        "test/onboarding/onboard.test.ts",
+        "test/security/shellquote-sandbox.test.ts",
+        "test/repository/source-require-loader.test.ts",
+      ]);
+    },
+  );
 
   it.each([".github/workflows/pr.yaml", ".github/workflows/pr.yml"])(
     "maps YAML workflow files to the shared display-name contract [%s]",
@@ -152,13 +152,17 @@ describe("Vitest opaque-input watch triggers", () => {
     ".github/workflows/release-daily-brev-image.yaml",
     "scripts/release-daily-brev-image.sh",
   ])("maps each daily image caller input to its contract test [%s] (#9799)", (inputPath) => {
-    expect(triggeredBy(inputPath)).toEqual(["test/automation/releases/release-daily-brev-image.test.ts"]);
+    expect(triggeredBy(inputPath)).toEqual([
+      "test/automation/releases/release-daily-brev-image.test.ts",
+    ]);
   });
 
   it.each([".github/workflows/release-lkg-brev-image.yaml", "scripts/release-lkg-brev-image.sh"])(
     "maps each LKG image caller input to its contract test [%s] (#9798)",
     (inputPath) => {
-      expect(triggeredBy(inputPath)).toEqual(["test/automation/releases/release-lkg-brev-image.test.ts"]);
+      expect(triggeredBy(inputPath)).toEqual([
+        "test/automation/releases/release-lkg-brev-image.test.ts",
+      ]);
     },
   );
 
@@ -169,14 +173,14 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
   });
 
-  it.each([
-    "nemoclaw/src/shared/openshell-policy-boundary.cts",
-    "nemoclaw/tsconfig.shared.json",
-  ])("maps each policy compiler input to its spawned fixture contract [%s] (#10016)", (inputPath) => {
-    expect(triggeredBy(inputPath)).toEqual([
-      "test/e2e/support/hermes-discord-policy-binding.test.ts",
-    ]);
-  });
+  it.each(["nemoclaw/src/shared/openshell-policy-boundary.cts", "nemoclaw/tsconfig.shared.json"])(
+    "maps each policy compiler input to its spawned fixture contract [%s] (#10016)",
+    (inputPath) => {
+      expect(triggeredBy(inputPath)).toEqual([
+        "test/e2e/support/hermes-discord-policy-binding.test.ts",
+      ]);
+    },
+  );
 
   it.each([
     ".github/actions/docker-auth-setup/action.yaml",
@@ -200,9 +204,7 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
       "test/platform/images/base-image-resolver-helper.test.ts",
     ]);
-    expect(
-      triggeredBy(".github/actions/resolve-reviewed-hermes-platform/action.yaml"),
-    ).toEqual([
+    expect(triggeredBy(".github/actions/resolve-reviewed-hermes-platform/action.yaml")).toEqual([
       "test/agents/hermes/reviewed-hermes-platform-action.test.ts",
       "test/platform/images/protected-managed-image-contract.test.ts",
       "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",

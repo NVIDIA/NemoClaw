@@ -352,7 +352,6 @@ describe("connectSandbox flow", () => {
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
       gpuEnabled: false,
-      policies: [],
     });
     const responses = new Map([
       ["sandbox list", { status: 0, output: "alpha Ready" }],
@@ -973,6 +972,26 @@ describe("connectSandbox flow", () => {
     const logOutput = harness.logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(logOutput).not.toContain("Probe complete");
     expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("keeps OpenShell-managed Hermes on the ordinary probe path when portable authority is absent", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: {
+        openshellDriver: "docker",
+        gatewayName: "nemoclaw",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy).not.toHaveBeenCalled();
+    expect(harness.captureResolvedOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalledWith("alpha", {
+      gatewayRecovery: "observe",
+    });
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
   });
 
   it("keeps active Hermes probe on receipt-owned recovery with every Docker path poisoned (#9203)", async () => {

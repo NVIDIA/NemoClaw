@@ -9,13 +9,10 @@ import * as processRecovery from "../process-recovery";
 
 export function createHermesCredentialEnvReconciliationRuntime(
   runOpenshell: MessagingOpenShellRunner,
-  revalidatePolicyAuthority: (operation: string) => void,
+  revalidateSandboxIdentity: (operation: string) => void,
 ) {
   return {
-    reconcileCredentialEnv: (
-      plan: SandboxMessagingPlan,
-      revalidate: (operation: string) => void,
-    ) =>
+    reconcileCredentialEnv: (plan: SandboxMessagingPlan, revalidate: (operation: string) => void) =>
       MessagingSetupApplier.reconcileCredentialEnvAtOpenShell(plan, {
         runOpenshell: (args, options) => {
           revalidate(`mutating Hermes credential environment for sandbox '${plan.sandboxName}'`);
@@ -26,11 +23,7 @@ export function createHermesCredentialEnvReconciliationRuntime(
       }),
     restartGateway: (sandboxName: string, revalidate: (operation: string) => void) => {
       revalidate(`restarting Hermes gateway for sandbox '${sandboxName}'`);
-      const result = processRecovery.executeGatewaySupervisorAction(
-        sandboxName,
-        "restart",
-        210000,
-      );
+      const result = processRecovery.executeGatewaySupervisorAction(sandboxName, "restart", 210000);
       revalidate(`confirming Hermes gateway restart for sandbox '${sandboxName}'`);
       return result;
     },
@@ -45,7 +38,7 @@ export function createHermesCredentialEnvReconciliationRuntime(
       revalidate(`confirming Hermes gateway health for sandbox '${sandboxName}'`);
       return healthy;
     },
-    revalidatePolicyAuthority,
+    revalidateSandboxIdentity,
   };
 }
 

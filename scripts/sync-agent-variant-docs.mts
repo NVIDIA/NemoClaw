@@ -76,7 +76,10 @@ function splitFrontmatter(
 }
 
 function replaceFrontmatterLine(frontmatter: string, key: string, value: string): string {
-  const pattern = new RegExp(`^${escapeRegExp(key)}:.*$`, "m");
+  const pattern = new RegExp(
+    `^${escapeRegExp(key)}:[^\\r\\n]*(?:\\r?\\n[ \\t]+[^\\r\\n]*)*`,
+    "m",
+  );
   if (!pattern.test(frontmatter)) {
     throw new Error(`commands.mdx frontmatter is missing '${key}'`);
   }

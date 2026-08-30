@@ -10,10 +10,10 @@ import { describe, expect, it } from "vitest";
 
 import * as policies from "../../../src/lib/policy";
 import {
-  managedPolicyMetadata,
+  livePolicyMetadata,
   managedRegistrationSource,
   SANDBOX_ID,
-} from "../../helpers/managed-policy-receipt-fixture";
+} from "../../helpers/live-policy-fixture";
 
 const requireForTest = createRequire(import.meta.url);
 const YAML = requireForTest("yaml");
@@ -192,7 +192,7 @@ if [ "$1 $2" = "sandbox get" ]; then
 fi
 if [ "$1 $2" = "policy get" ]; then
   if [[ " $* " == *" --output json "* ]]; then
-    printf '%s\n' ${JSON.stringify(managedPolicyMetadata("hermes-sandbox"))}
+    printf '%s\n' ${JSON.stringify(livePolicyMetadata("hermes-sandbox"))}
     exit 0
   fi
   if [ -f ${JSON.stringify(policyOut)} ]; then
@@ -265,7 +265,7 @@ exit 1
       ]);
       expect(allowedMethods(teamsPolicy, "teams.microsoft.com")).toEqual(["GET"]);
       expect(allowedMethods(teamsPolicy, "*.sharepoint.com")).toEqual(["GET"]);
-      expect(payload.registry.policies).toEqual(["teams"]);
+      expect(payload.registry).not.toHaveProperty("policies");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

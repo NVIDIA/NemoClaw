@@ -6,7 +6,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ManagedMcpPolicyOmission } from "../actions/sandbox/mcp-bridge-policy";
 import {
   beginCommittedMcpLifecycleContainmentSync,
   getMcpLifecycleLockPath,
@@ -14,12 +13,7 @@ import {
 } from "../state/mcp-lifecycle-lock";
 
 const shieldsIndexMock = vi.hoisted(() => ({
-  applyShieldsPolicySnapshot: vi.fn(
-    (): {
-      status: number;
-      managedMcpOmissions?: ManagedMcpPolicyOmission[];
-    } => ({ status: 0 }),
-  ),
+  applyShieldsPolicySnapshot: vi.fn((): { status: number } => ({ status: 0 })),
   completeAutoRestoreTransition: vi.fn(() => true),
   hermesProviderLockConfirmation: vi.fn() as unknown,
   lockAgentConfig: vi.fn() as unknown,
@@ -484,12 +478,10 @@ describe("shields timer authorization", () => {
       expect(fs.existsSync(deadlinePath)).toBe(true);
       return {
         status: 17,
-        managedMcpOmissions: [{ server: "beta", reason: "incomplete add" }],
       };
     });
     shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValueOnce({
       status: 0,
-      managedMcpOmissions: [],
     });
     const args = timer.parseTimerArgs([
       sandboxName,
@@ -736,7 +728,6 @@ describe("shields timer authorization", () => {
       });
       return {
         status: 0,
-        managedMcpOmissions: [{ server: "beta", reason: "incomplete add" }],
       };
     });
 
@@ -772,7 +763,6 @@ describe("shields timer authorization", () => {
     ).toContainEqual(
       expect.objectContaining({
         action: "shields_auto_restore",
-        warning: "Auto-restore omitted 1 unproven managed MCP policy entries",
       }),
     );
   });
