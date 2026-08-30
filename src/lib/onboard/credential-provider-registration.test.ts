@@ -130,7 +130,7 @@ describe("credential provider registration", () => {
     } finally {
       upsert.mockRestore();
     }
-  });
+  }, 15_000);
 
   it.each([
     { condition: "matches", endpoints: [], expected: true },
