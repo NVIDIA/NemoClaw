@@ -32,14 +32,40 @@ function trustedHostEnvironment(source: string): NodeJS.ProcessEnv {
   };
 }
 
+function restrictedGitEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return {
+    GIT_CONFIG_GLOBAL: os.devNull,
+    GIT_CONFIG_NOSYSTEM: "1",
+    HOME: env.HOME,
+    LANG: env.LANG,
+    LC_ALL: env.LC_ALL,
+    PATH: env.PATH,
+    TEMP: env.TEMP,
+    TMP: env.TMP,
+    TMPDIR: env.TMPDIR,
+  };
+}
+
 function git(cwd: string, args: readonly string[], env: NodeJS.ProcessEnv): string {
-  return execFileSync("git", [...args], {
-    cwd,
-    encoding: "utf8",
-    env,
-    maxBuffer: Number.POSITIVE_INFINITY,
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim();
+  return execFileSync(
+    "git",
+    [
+      "-c",
+      `core.hooksPath=${os.devNull}`,
+      "-c",
+      "core.fsmonitor=false",
+      "-c",
+      "diff.external=",
+      ...args,
+    ],
+    {
+      cwd,
+      encoding: "utf8",
+      env: restrictedGitEnvironment(env),
+      maxBuffer: Number.POSITIVE_INFINITY,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  ).trim();
 }
 
 function dependencyEnvironment(
@@ -141,18 +167,29 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
   };
 
   try {
-    fs.mkdirSync(trustedCheckout);
     const globalConfig = path.join(root, "npm-global-config");
     fs.writeFileSync(globalConfig, "", { mode: 0o600 });
-    const archive = path.join(root, "trusted.tar");
     if (
-      !(await requireSuccess("git", ["archive", "--format=tar", "--output", archive, baseCommit], {
-        cwd: source,
-      }))
+      !(await requireSuccess(
+        "git",
+        [
+          "-c",
+          `core.hooksPath=${os.devNull}`,
+          "-c",
+          "core.fsmonitor=false",
+          "-c",
+          "diff.external=",
+          "clone",
+          "--no-hardlinks",
+          "--no-checkout",
+          source,
+          trustedCheckout,
+        ],
+        { env: restrictedGitEnvironment(hostEnvironment) },
+      ))
     )
       return result!;
-    if (!(await requireSuccess("tar", ["-xf", archive, "-C", trustedCheckout]))) return result!;
-    fs.rmSync(archive, { force: true });
+    git(trustedCheckout, ["checkout", "--detach", "--force", baseCommit], hostEnvironment);
     if (
       !(await requireSuccess("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], {
         cwd: trustedCheckout,

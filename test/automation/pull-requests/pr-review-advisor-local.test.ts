@@ -30,6 +30,19 @@ function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
+function sourceState(source: string): unknown {
+  return {
+    head: git(source, ["rev-parse", "HEAD"]),
+    status: git(source, ["status", "--porcelain=v1", "-uall"]),
+    staged: git(source, ["diff", "--cached", "--binary"]),
+    unstaged: git(source, ["diff", "--binary"]),
+    files: ["committed.txt", "staged.txt", "unstaged.txt", "untracked.txt"].map((name) =>
+      fs.readFileSync(path.join(source, name), "utf8"),
+    ),
+    link: fs.readlinkSync(path.join(source, "untracked-link")),
+  };
+}
+
 function installFakeNpm(source: string, body?: string): string {
   const bin = path.join(temporaryDirectory(), ".local", "bin");
   body ??= `printf "%s\\n" "$@" > ${JSON.stringify(path.join(source, "npm-args"))}
@@ -150,11 +163,14 @@ describe("local PR review advisor", () => {
       [
         'import fs from "node:fs";',
         'import path from "node:path";',
+        'import { execFileSync } from "node:child_process";',
         'import { hostValue } from "./trusted-host.mts";',
         "const source = process.argv[2];",
+        'const gitHead = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();',
+        'let detached = false; try { execFileSync("git", ["symbolic-ref", "-q", "HEAD"], { stdio: "ignore" }); } catch { detached = true; }',
         'const policy = fs.readFileSync(path.join(source, "tools/pr-review-advisor/policy.txt"), "utf8").trim();',
         'fs.writeFileSync(path.join(source, "bootstrap-result.txt"), [hostValue, policy].join("|") + "\\n");',
-        'fs.writeFileSync(path.join(source, "trusted-child.json"), JSON.stringify({ pid: process.pid, nodeOptions: process.env.NODE_OPTIONS, nodePath: process.env.NODE_PATH }));',
+        'fs.writeFileSync(path.join(source, "trusted-child.json"), JSON.stringify({ pid: process.pid, nodeOptions: process.env.NODE_OPTIONS, nodePath: process.env.NODE_PATH, git: fs.existsSync(".git"), gitHead, detached }));',
       ].join("\n"),
     );
     const npmBin = installFakeNpm(source);
@@ -184,6 +200,7 @@ describe("local PR review advisor", () => {
     fs.chmodSync(maliciousGit, 0o755);
     fs.chmodSync(maliciousNpm, 0o755);
     fs.chmodSync(maliciousOpenShell, 0o755);
+    fs.writeFileSync(path.join(source, ".gitattributes"), "*.txt filter=hostile\n");
     git(source, ["add", "."]);
     git(source, ["commit", "-m", "trusted base"]);
     git(source, ["remote", "add", "origin", source]);
@@ -199,6 +216,17 @@ describe("local PR review advisor", () => {
     );
     git(source, ["commit", "-am", "untrusted branch changes"]);
     fs.mkdirSync(path.join(source, "node_modules", "malicious"), { recursive: true });
+    const bootstrapFilterMarker = path.join(source, "bootstrap-filter-ran");
+    execFileSync(
+      "git",
+      [
+        "config",
+        "--global",
+        "filter.hostile.smudge",
+        `sh -c 'printf %s \"$PR_REVIEW_ADVISOR_API_KEY\" > ${bootstrapFilterMarker}; cat'`,
+      ],
+      { env: { ...process.env, HOME: path.resolve(npmBin, "../..") } },
+    );
     fs.writeFileSync(
       path.join(source, "node_modules", "malicious", "index.js"),
       'require("node:fs").writeFileSync("contributor-module-executed", "yes")\n',
@@ -234,9 +262,15 @@ describe("local PR review advisor", () => {
     expect(
       Number(preloadMarker && fs.readFileSync(preloadMarker, "utf8").split(":", 1)[0]),
     ).not.toBe(trustedChild.pid);
-    expect(trustedChild).toEqual({ pid: expect.any(Number) });
+    expect(trustedChild).toEqual({
+      pid: expect.any(Number),
+      git: true,
+      gitHead: git(source, ["rev-parse", "origin/main"]),
+      detached: true,
+    });
     expect(fs.existsSync(path.join(source, "contributor-module-executed"))).toBe(false);
     expect(fs.existsSync(path.join(source, "git-malicious-env"))).toBe(false);
+    expect(fs.existsSync(bootstrapFilterMarker)).toBe(false);
     expect(fs.existsSync(path.join(source, "npm-malicious-env"))).toBe(false);
     expect(fs.existsSync(path.join(source, "openshell-malicious-env"))).toBe(false);
     expect(fs.readFileSync(path.join(source, "npm-args"), "utf8")).toBe(
@@ -436,9 +470,35 @@ describe("local PR review advisor", () => {
     expect(git(source, ["status", "--porcelain=v1", "-uall"])).toBe(before);
   });
 
+  it("does not execute host Git filters or expose the advisor key while snapshotting (#10611)", () => {
+    const source = repository();
+    const home = temporaryDirectory();
+    const marker = path.join(home, "filter-ran");
+    fs.writeFileSync(path.join(source, ".gitattributes"), "*.txt filter=hostile\n");
+    git(source, ["add", ".gitattributes"]);
+    git(source, ["commit", "-m", "select hostile filter"]);
+    execFileSync(
+      "git",
+      [
+        "config",
+        "--global",
+        "filter.hostile.smudge",
+        `sh -c 'printf %s \"$PR_REVIEW_ADVISOR_API_KEY\" > ${marker}; cat'`,
+      ],
+      { env: { ...process.env, HOME: home } },
+    );
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("PR_REVIEW_ADVISOR_API_KEY", "must-not-reach-filter");
+
+    createLocalReviewSnapshot(source, path.join(temporaryDirectory(), "snapshot"));
+
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
   it("runs each catalogued specialist through the existing lifecycle and publishes only Markdown and JSONL (#10610)", async () => {
     const source = repository();
     const root = temporaryDirectory();
+    const before = sourceState(source);
     const calls: string[] = [];
     const stopGateway = vi.fn(async () => undefined);
     const lifecycle: LocalReviewLifecycle = {
@@ -498,6 +558,7 @@ describe("local PR review advisor", () => {
         .readdirSync(destination, { recursive: true })
         .filter((name) => typeof name === "string" && name.includes("final-result")),
     ).toEqual([]);
+    expect(sourceState(source)).toEqual(before);
   });
 
   it("owns gateway cleanup while provider configuration is pending (#10611)", async () => {
@@ -538,6 +599,38 @@ describe("local PR review advisor", () => {
     expect(stopGateway).toHaveBeenCalledTimes(2);
     expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
   });
+
+  it.each(["provider create timed out", "inference set timed out"])(
+    "reports bounded configuration failure and cleans owned resources: %s (#10611)",
+    async (diagnostic) => {
+      const source = repository();
+      const stop = vi.fn(async () => undefined);
+      let ownedRoot = "";
+      const lifecycle: LocalReviewLifecycle = {
+        prepare: async () => undefined,
+        startGateway: () => ({ configure: Promise.reject(new Error(diagnostic)), stop }),
+        create: vi.fn(),
+        run: vi.fn(),
+        download: vi.fn(),
+        remove: vi.fn(),
+      };
+      const failure = (await runLocalReview({
+        source,
+        specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+        lifecycle,
+        prepareSnapshot: (snapshotSource, target, baseRef) => {
+          ownedRoot = path.dirname(target);
+          return createLocalReviewSnapshot(snapshotSource, target, baseRef);
+        },
+      }).catch((error: unknown) => error)) as Error;
+      expect(failure.message).toContain("failed during configure");
+      expect(failure.message).toContain(diagnostic);
+      expect(stop).toHaveBeenCalledOnce();
+      expect(fs.existsSync(ownedRoot)).toBe(false);
+      expect(lifecycle.create).not.toHaveBeenCalled();
+      expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
+    },
+  );
 
   it("stops an owned process group with bounded TERM then KILL and verifies exit (#10610)", async () => {
     const directory = temporaryDirectory();
@@ -830,6 +923,7 @@ describe("local PR review advisor", () => {
   it("removes the active sandbox and publishes no partial output after failure (#10610)", async () => {
     const source = repository();
     const root = temporaryDirectory();
+    const before = sourceState(source);
     const remove = vi.fn();
     const lifecycle: LocalReviewLifecycle = {
       prepare: async () => undefined,
@@ -859,5 +953,6 @@ describe("local PR review advisor", () => {
     expect((failure.errors[1] as Error).message).toContain("failed during cleanup for specialist");
     expect(remove).toHaveBeenCalledTimes(2);
     expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
+    expect(sourceState(source)).toEqual(before);
   });
 });

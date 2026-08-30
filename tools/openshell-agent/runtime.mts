@@ -49,6 +49,8 @@ export type OpenShellUpload = {
 };
 
 const INFERENCE_CONFIGURATION_ATTEMPTS = 6;
+const PROVIDER_CONFIGURATION_TIMEOUT_MS = 60_000;
+const INFERENCE_CONFIGURATION_TIMEOUT_MS = 930_000;
 
 function inferenceConfigurationRetryDelay(
   env: NodeJS.ProcessEnv,
@@ -304,7 +306,7 @@ function startOpenShellInference(
           "--config",
           "OPENAI_BASE_URL=https://inference-api.nvidia.com/v1",
         ],
-        { env: providerEnv },
+        { env: providerEnv, timeout: PROVIDER_CONFIGURATION_TIMEOUT_MS },
       );
       const inferenceArgs = [
         "inference",
@@ -318,7 +320,10 @@ function startOpenShellInference(
       ] as const;
       for (let attempt = 0; attempt < INFERENCE_CONFIGURATION_ATTEMPTS; attempt += 1) {
         try {
-          tools.run("openshell", inferenceArgs, { env: commandEnv });
+          tools.run("openshell", inferenceArgs, {
+            env: commandEnv,
+            timeout: INFERENCE_CONFIGURATION_TIMEOUT_MS,
+          });
           return;
         } catch (error) {
           if (attempt === INFERENCE_CONFIGURATION_ATTEMPTS - 1) throw error;
@@ -332,7 +337,8 @@ function startOpenShellInference(
           await stopGateway();
         } catch (cleanupError) {
           const primary = error instanceof Error ? error.message : String(error);
-          const cleanup = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+          const cleanup =
+            cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
           throw new Error(`${primary}; owned gateway cleanup also failed: ${cleanup}`, {
             cause: error,
           });

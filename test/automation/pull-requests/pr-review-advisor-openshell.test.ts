@@ -111,7 +111,10 @@ describe("PR review advisor OpenShell wrapper", () => {
   ])(
     "keeps credential-bearing host commands out of the Pi SDK import graph [case %#]",
     (relativePath) => {
-      const source = fs.readFileSync(path.resolve(import.meta.dirname, "../../..", relativePath), "utf8");
+      const source = fs.readFileSync(
+        path.resolve(import.meta.dirname, "../../..", relativePath),
+        "utf8",
+      );
       expect(source, relativePath).not.toMatch(
         /(?:@earendil-works\/pi-coding-agent|\btypebox\b|\/session\.mts|\/analyze\.mts)/u,
       );
@@ -325,8 +328,10 @@ describe("PR review advisor OpenShell wrapper", () => {
     const created = spawnSync("mkfifo", [fifoPath], { encoding: "utf8", timeout: 5_000 });
     expect(created.status, created.stderr).toBe(0);
 
-    const moduleUrl = new URL("../../../tools/pr-review-advisor/github-context.mts", import.meta.url)
-      .href;
+    const moduleUrl = new URL(
+      "../../../tools/pr-review-advisor/github-context.mts",
+      import.meta.url,
+    ).href;
     const read = spawnSync(
       process.execPath,
       [
@@ -573,6 +578,9 @@ describe("PR review advisor OpenShell wrapper", () => {
     );
     expect(providerCalls).toHaveLength(1);
     expect(providerCalls[0]?.[2].env.OPENAI_API_KEY).toBe("model-host-secret");
+    expect(providerCalls[0]?.[2].timeout).toBeGreaterThan(0);
+    const inferenceCall = calls.find(([, args]) => args.slice(0, 2).join(" ") === "inference set");
+    expect(inferenceCall?.[2].timeout).toBeGreaterThan(900_000);
     calls.forEach(([command, args, options]) => {
       expect(options.env.GH_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();
       expect(options.env.GITHUB_TOKEN, `${command} ${args.join(" ")}`).toBeUndefined();

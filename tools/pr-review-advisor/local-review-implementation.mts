@@ -110,21 +110,72 @@ export const defaultLocalReviewLifecycle: LocalReviewLifecycle = {
   remove: deleteAdvisorSandbox,
 };
 
+function restrictedGitEnvironment(): NodeJS.ProcessEnv {
+  return {
+    GIT_AUTHOR_EMAIL: "local-review@localhost",
+    GIT_AUTHOR_NAME: "NemoClaw Local Review",
+    GIT_COMMITTER_EMAIL: "local-review@localhost",
+    GIT_COMMITTER_NAME: "NemoClaw Local Review",
+    GIT_CONFIG_GLOBAL: os.devNull,
+    GIT_CONFIG_NOSYSTEM: "1",
+    HOME: process.env.HOME,
+    LANG: process.env.LANG,
+    LC_ALL: process.env.LC_ALL,
+    PATH: process.env.PATH,
+    TEMP: process.env.TEMP,
+    TMP: process.env.TMP,
+    TMPDIR: process.env.TMPDIR,
+  };
+}
+
+function disabledFilters(cwd: string): string[] {
+  const names = new Set<string>();
+  for (const entry of fs.readdirSync(cwd, { recursive: true, withFileTypes: true })) {
+    if (
+      entry.name !== ".gitattributes" &&
+      !(entry.name === "attributes" && entry.parentPath.endsWith(path.join(".git", "info")))
+    )
+      continue;
+    for (const match of fs
+      .readFileSync(path.join(entry.parentPath, entry.name), "utf8")
+      .matchAll(/(?:^|\s)filter=([^\s]+)/gmu)) {
+      if (/^[A-Za-z0-9][A-Za-z0-9.-]*$/u.test(match[1]!)) names.add(match[1]!);
+    }
+  }
+  return [...names].flatMap((name) => [
+    "-c",
+    `filter.${name}.clean=`,
+    "-c",
+    `filter.${name}.smudge=`,
+    "-c",
+    `filter.${name}.process=`,
+    "-c",
+    `filter.${name}.required=false`,
+  ]);
+}
+
 function git(cwd: string, args: readonly string[], input?: string): string {
-  return execFileSync("git", [...args], {
-    cwd,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      GIT_AUTHOR_EMAIL: "local-review@localhost",
-      GIT_AUTHOR_NAME: "NemoClaw Local Review",
-      GIT_COMMITTER_EMAIL: "local-review@localhost",
-      GIT_COMMITTER_NAME: "NemoClaw Local Review",
+  return execFileSync(
+    "git",
+    [
+      "-c",
+      `core.hooksPath=${os.devNull}`,
+      "-c",
+      "core.fsmonitor=false",
+      "-c",
+      "diff.external=",
+      ...disabledFilters(cwd),
+      ...args,
+    ],
+    {
+      cwd,
+      encoding: "utf8",
+      env: restrictedGitEnvironment(),
+      input,
+      maxBuffer: Number.POSITIVE_INFINITY,
+      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     },
-    input,
-    maxBuffer: Number.POSITIVE_INFINITY,
-    stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-  });
+  );
 }
 
 function gitValue(cwd: string, args: readonly string[]): string {
@@ -152,12 +203,20 @@ export function createLocalReviewSnapshot(
   destination: string,
   baseRef = gitValue(source, ["rev-parse", "--verify", "origin/main^{commit}"]),
 ): { baseRef: string; headRef: string } {
-  execFileSync("git", ["clone", "--no-hardlinks", "--no-checkout", source, destination], {
-    stdio: "pipe",
+  git(path.dirname(destination), ["clone", "--no-hardlinks", "--no-checkout", source, destination]);
+  const initialHead = gitValue(destination, ["rev-parse", "HEAD"]);
+  git(destination, ["read-tree", initialHead]);
+  const archive = execFileSync("git", ["archive", initialHead], {
+    cwd: destination,
+    env: restrictedGitEnvironment(),
+    maxBuffer: Number.POSITIVE_INFINITY,
   });
-  git(destination, ["checkout", "--detach", "HEAD"]);
-  const patch = git(source, ["diff", "--binary", "HEAD"]);
-  if (patch) git(destination, ["apply", "--index", "--binary", "-"], patch);
+  execFileSync("tar", ["-xf", "-", "-C", destination], { input: archive });
+  const patch = git(source, ["diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD"]);
+  if (patch) {
+    git(destination, ["apply", "--cached", "--binary", "-"], patch);
+    git(destination, ["apply", "--binary", "-"], patch);
+  }
   copyUntrackedFiles(source, destination);
   git(destination, ["add", "--all"]);
   const tree = gitValue(destination, ["write-tree"]);
@@ -170,7 +229,7 @@ export function createLocalReviewSnapshot(
     "-m",
     "Local review snapshot",
   ]);
-  git(destination, ["checkout", "--detach", commit]);
+  git(destination, ["update-ref", "--no-deref", "HEAD", commit]);
   removeSnapshotSymlinks(destination);
   git(destination, ["cat-file", "-e", baseRef + "^{commit}"]);
   return { baseRef, headRef: commit };
