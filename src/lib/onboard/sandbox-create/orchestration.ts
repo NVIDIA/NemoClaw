@@ -76,7 +76,9 @@ export function bindRebuildPolicyProvidersToCreateArgs(
   );
   for (const provider of policy.credentialBindingProviders ?? []) {
     if (attached.has(provider)) continue;
-    result.push("--provider", provider);
+    const startupCommandSeparator = result.indexOf("--");
+    const insertionIndex = startupCommandSeparator < 0 ? result.length : startupCommandSeparator;
+    result.splice(insertionIndex, 0, "--provider", provider);
     attached.add(provider);
   }
   return result;

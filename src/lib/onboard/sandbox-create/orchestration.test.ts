@@ -38,6 +38,21 @@ const UNVERIFIED_RECOVERY_CONTEXT = {
 } as const;
 
 describe("rebuild policy provider handoff", () => {
+  const preservedMcpState = {
+    bridges: {
+      github: {
+        server: "github",
+        agent: "openclaw",
+        url: "https://mcp.example.com/",
+        env: ["MCP_TOKEN"],
+        providerName: "alpha-mcp-github",
+        providerId: "provider-id",
+        policyName: "mcp_github",
+        addedAt: "2026-08-30T00:00:00.000Z",
+      },
+    },
+  };
+
   it("derives active additions and disabled removals from current channel manifests", () => {
     expect(
       resolveRebuildMessagingPolicyDeltas({
@@ -86,6 +101,37 @@ describe("rebuild policy provider handoff", () => {
     ]);
   });
 
+  it("inserts rebuild providers before the sandbox startup command separator", () => {
+    expect(
+      bindRebuildPolicyProvidersToCreateArgs(
+        [
+          "openshell",
+          "sandbox",
+          "create",
+          "--provider",
+          "inference-provider",
+          "--",
+          "env",
+          "nemoclaw-start",
+        ],
+        {
+          credentialBindingProviders: ["inference-provider", "mcp-provider"],
+        },
+      ),
+    ).toEqual([
+      "openshell",
+      "sandbox",
+      "create",
+      "--provider",
+      "inference-provider",
+      "--provider",
+      "mcp-provider",
+      "--",
+      "env",
+      "nemoclaw-start",
+    ]);
+  });
+
   it("authorizes exact create, messaging-plan, and managed MCP providers", () => {
     expect(
       resolveRebuildPolicyProviderAuthority({
@@ -103,20 +149,7 @@ describe("rebuild policy provider handoff", () => {
             },
           ],
         },
-        preservedMcpState: {
-          bridges: {
-            github: {
-              server: "github",
-              agent: "openclaw",
-              url: "https://mcp.example.com/",
-              env: ["MCP_TOKEN"],
-              providerName: "alpha-mcp-github",
-              providerId: "provider-id",
-              policyName: "mcp_github",
-              addedAt: "2026-08-30T00:00:00.000Z",
-            },
-          },
-        },
+        preservedMcpState,
         managedMcpRebuildHandoff: true,
       }),
     ).toEqual(["inference-provider", "alpha-telegram-bridge", "alpha-mcp-github"]);
@@ -127,20 +160,7 @@ describe("rebuild policy provider handoff", () => {
       resolveRebuildPolicyProviderAuthority({
         createArgs: [],
         messagingPlan: null,
-        preservedMcpState: {
-          bridges: {
-            github: {
-              server: "github",
-              agent: "openclaw",
-              url: "https://mcp.example.com/",
-              env: ["MCP_TOKEN"],
-              providerName: "alpha-mcp-github",
-              providerId: "provider-id",
-              policyName: "mcp_github",
-              addedAt: "2026-08-30T00:00:00.000Z",
-            },
-          },
-        },
+        preservedMcpState,
         managedMcpRebuildHandoff: false,
       }),
     ).toEqual([]);
@@ -154,13 +174,7 @@ describe("rebuild policy provider handoff", () => {
         preservedMcpState: {
           bridges: {
             github: {
-              server: "github",
-              agent: "openclaw",
-              url: "https://mcp.example.com/",
-              env: ["MCP_TOKEN"],
-              providerName: "alpha-mcp-github",
-              policyName: "mcp_github",
-              addedAt: "2026-08-30T00:00:00.000Z",
+              ...preservedMcpState.bridges.github,
               addState: "prepared",
             },
           },
