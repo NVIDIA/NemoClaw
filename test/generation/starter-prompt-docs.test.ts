@@ -32,7 +32,7 @@ const repoRoot = path.resolve(__dirname, "../..");
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 // CI resolves this Git commit and byte-compares its prompt-asset blobs with
 // the local files. The digests independently assert those same immutable bytes.
-const promptAssetRevision = "66b532695db0ae38b74725ce7c57e4c91be24b19";
+const promptAssetRevision = "6e1a29a1fb0fbbcd25b3fe2d4523ffa71e814010";
 
 type PromptAsset = {
   path: string;
@@ -55,7 +55,7 @@ const promptAssets = {
   ),
   dgxStation: definePromptAsset(
     "docs/resources/prompt-assets/dgx-station.md",
-    "9b620ffe898847718fc25e230039c0bf07dd574e26a27479c45297eb17d2cfa4", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "4aa682fdb1ff2dd552bf8803c9a55dc5b7029fd33b7565812fdc46cb3745da09", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
   windowsWsl: definePromptAsset(
     "docs/resources/prompt-assets/windows-wsl.md",
@@ -544,7 +544,7 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain(
       "If either digest differs, do not execute the helper; delete both temporary files and stop.",
     );
-    expect(promptSource).toContain("exact environment-variable names and exact command argv");
+    expect(promptSource).toContain("every environment-variable name and the complete command argv");
     expect(promptSource).toContain("--field NAME:type");
     expect(promptSource).toContain("--execution-profile isolated");
     expect(promptSource).toContain("--execution-profile account-home --cwd");

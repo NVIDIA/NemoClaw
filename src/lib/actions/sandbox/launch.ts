@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import * as agentRuntime from "../../agent/runtime";
 import type { AgentDefinition } from "../../agent/definition-types";
 import { spawnExitCode } from "../../core/process-exit";
@@ -19,13 +21,19 @@ import {
   wrapExecCommandWithRuntimeEnv,
 } from "./exec";
 import {
-  buildHermesPortableCommandAuthority,
   inspectPortableAgentReceiptDisposition,
+  captureHermesPortableAcceptedReadinessObservation,
+  qualifyHermesPortableAcceptedReadinessAuthority,
+  qualifyHermesPortableOperatingCommandAuthority,
+  requalifyPortableAgentSandboxAuthority,
   recoverPortableDemoSandboxLifecycleForConnect,
+  requireHermesPortableActiveLifecycleAuthority,
+  type HermesPortableActiveLifecycleAuthority,
   withSandboxLifecycleLock as withSandboxMutationLock,
 } from "./gateway-state";
 import { getKnownSandboxTarget } from "./gateway-target";
 import {
+  createBoundLaunchReadinessDeps,
   inspectLaunchReadiness,
   publicationFromDecision,
   publishLaunchReadiness,
@@ -50,6 +58,115 @@ interface LaunchSandboxDeps {
   inspectLaunchReadiness?: typeof inspectLaunchReadiness;
   publishLaunchReadiness?: typeof publishLaunchReadiness;
   withLaunchReadinessMutationGate?: typeof withLaunchReadinessMutationGate;
+  now?: () => number;
+  writeLaunchTiming?: (line: string) => void;
+}
+
+type LaunchReadinessAction = "accepted" | "prepared";
+
+function createLaunchPreExecTiming(deps: LaunchSandboxDeps): {
+  emit(action: LaunchReadinessAction): void;
+} {
+  const now = deps.now ?? (() => performance.now());
+  const write = deps.writeLaunchTiming ?? ((line: string) => console.log(line));
+  const safeNow = (): number | null => {
+    try {
+      const value = now();
+      return Number.isFinite(value) ? value : null;
+    } catch {
+      return null;
+    }
+  };
+  const startedAt = safeNow();
+  let emitted = false;
+  return {
+    emit(action): void {
+      if (emitted) return;
+      emitted = true;
+      try {
+        const finishedAt = safeNow();
+        const elapsedMs =
+          startedAt === null || finishedAt === null
+            ? 0
+            : Math.max(0, Math.round(finishedAt - startedAt));
+        write(`  Launch timing: preExec=${String(elapsedMs)}ms readinessAction=${action}`);
+      } catch {
+        // Timing evidence must never change launch behavior.
+      }
+    },
+  };
+}
+
+type HermesPortableReadinessCommandAuthority = ReturnType<
+  typeof qualifyHermesPortableOperatingCommandAuthority
+>;
+
+type HermesPortableAcceptedLaunchAuthority = {
+  readonly active: HermesPortableActiveLifecycleAuthority;
+  readonly command: HermesPortableReadinessCommandAuthority;
+};
+
+async function inspectLaunchReadinessForLaunch(
+  sandboxName: string,
+  deps: LaunchSandboxDeps,
+): Promise<{
+  readonly decision: Awaited<ReturnType<typeof inspectLaunchReadiness>>;
+  readonly hermesAuthority: HermesPortableAcceptedLaunchAuthority | null;
+}> {
+  const inspect = deps.inspectLaunchReadiness ?? inspectLaunchReadiness;
+  const readSandbox = deps.getSandbox ?? getKnownSandboxTarget;
+  if (inspectPortableAgentReceiptDisposition(sandboxName).kind !== "hermes") {
+    return { decision: await inspect(sandboxName), hermesAuthority: null };
+  }
+  if (readSandbox(sandboxName)?.agent !== "hermes") {
+    throw new Error("Hermes portable registry authority changed before launch readiness.");
+  }
+
+  const lockSandbox = deps.withSandboxMutationLock ?? withSandboxMutationLock;
+  return lockSandbox(sandboxName, async () => {
+    const lifecycleDeps = { readRegistry: readSandbox };
+    let active = requireHermesPortableActiveLifecycleAuthority(
+      sandboxName,
+      undefined,
+      lifecycleDeps,
+    );
+    let qualified = qualifyHermesPortableAcceptedReadinessAuthority(sandboxName);
+    if (qualified.kind === "requalification-required") {
+      const requalified = requalifyPortableAgentSandboxAuthority(sandboxName, lifecycleDeps);
+      if (requalified.kind === "not-installed" || requalified.kind === "not-hermes") {
+        throw new Error("Hermes portable lifecycle authority changed before launch readiness.");
+      }
+      active = requireHermesPortableActiveLifecycleAuthority(sandboxName, active, lifecycleDeps);
+      qualified = qualifyHermesPortableAcceptedReadinessAuthority(sandboxName, {
+        priorReceiptAuthority: requalified,
+      });
+      if (qualified.kind === "requalification-required") {
+        throw new Error("Hermes portable schema-6 authority was not published before launch.");
+      }
+    }
+    const command = qualified.commandAuthority;
+    const capture = (args: string[], options = {}) =>
+      captureHermesPortableAcceptedReadinessObservation(command, args, options);
+    command.assertCurrent();
+    const decision = await inspect(sandboxName, {
+      ...createBoundLaunchReadinessDeps(capture),
+      getSandbox: readSandbox,
+      withSandboxLock: async (_name, operation) => operation(),
+    });
+    command.assertCurrent();
+    const current = requireHermesPortableActiveLifecycleAuthority(
+      sandboxName,
+      active,
+      lifecycleDeps,
+    );
+    if (decision.kind === "accepted" && !isDeepStrictEqual(decision.sb, current.entry)) {
+      throw new Error("Hermes portable registry authority changed during launch readiness.");
+    }
+    return {
+      decision,
+      hermesAuthority: decision.kind === "accepted" ? { active: current, command } : null,
+    };
+  });
 }
 
 async function launchAgentWithPortableAuthority(
@@ -59,24 +176,31 @@ async function launchAgentWithPortableAuthority(
   hermesPortableSnapshot: boolean,
   command: readonly string[],
   deps: LaunchSandboxDeps,
+  acceptedHermesAuthority: HermesPortableAcceptedLaunchAuthority | null,
   beforeOrdinaryLaunch?: () => void,
+  beforeAgentExec?: () => void,
 ): Promise<void> {
   const runOrdinaryAgent = async (): Promise<void> => {
     prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
+    beforeAgentExec?.();
     await execSandbox(sandboxName, command, {
       tty: true,
       stdin: true,
       timeoutSeconds: 0,
     });
   };
-  const runHermesPortableAgent = async (gatewayName: string): Promise<void> => {
-    const commandAuthority = buildHermesPortableCommandAuthority(sandboxName);
+  const runHermesPortableAgent = async (
+    gatewayName: string,
+    commandAuthority: HermesPortableReadinessCommandAuthority,
+  ): Promise<void> => {
     const options = {
       tty: true,
       stdin: true,
       timeoutSeconds: 0,
       subprocessEnv: commandAuthority.env,
     } as const;
+    commandAuthority.assertCurrent();
+    beforeAgentExec?.();
     const result = await runSandboxExecChild(
       commandAuthority.executablePath,
       buildOpenshellExecArgs(
@@ -124,6 +248,17 @@ async function launchAgentWithPortableAuthority(
       throw new Error("Hermes portable registry authority changed before agent launch.");
     }
     const gatewayName = (deps.resolveSandboxGatewayName ?? resolveSandboxGatewayName)(registered);
+    if (acceptedHermesAuthority) {
+      requireHermesPortableActiveLifecycleAuthority(sandboxName, acceptedHermesAuthority.active, {
+        readRegistry: readSandbox,
+      });
+      if (!isDeepStrictEqual(registered, acceptedHermesAuthority.active.entry)) {
+        throw new Error("Hermes portable registry authority changed before agent launch.");
+      }
+      acceptedHermesAuthority.command.assertCurrent();
+      await runHermesPortableAgent(gatewayName, acceptedHermesAuthority.command);
+      return;
+    }
     const recovery = recoverPortableDemoSandboxLifecycleForConnect(
       sandboxName,
       registered,
@@ -132,15 +267,29 @@ async function launchAgentWithPortableAuthority(
     if (recovery.kind === "not-installed") {
       throw new Error("Hermes portable lifecycle authority disappeared before agent launch.");
     }
-    const finalRecovery = recoverPortableDemoSandboxLifecycleForConnect(
-      sandboxName,
-      registered,
-      gatewayName,
-    );
-    if (finalRecovery.kind === "not-installed") {
-      throw new Error("Hermes portable lifecycle authority disappeared at agent launch.");
+    const finalReceipt = inspectPortableAgentReceiptDisposition(sandboxName);
+    const finalRegistered = readSandbox(sandboxName);
+    if (
+      finalReceipt.kind !== "hermes" ||
+      finalReceipt.phase !== "active" ||
+      !finalRegistered ||
+      finalRegistered.agent !== "hermes" ||
+      finalRegistered.gatewayName !== registered.gatewayName ||
+      finalRegistered.lifecycleGeneration !== registered.lifecycleGeneration ||
+      finalRegistered.lifecycleLiveIdentityFingerprint !==
+        registered.lifecycleLiveIdentityFingerprint ||
+      finalRegistered.openshellDriver !== registered.openshellDriver ||
+      finalRegistered.openshellVersion !== registered.openshellVersion ||
+      finalReceipt.gatewayName !== registered.gatewayName ||
+      finalReceipt.lifecycleGeneration !== registered.lifecycleGeneration ||
+      finalReceipt.liveIdentityFingerprint !== registered.lifecycleLiveIdentityFingerprint
+    ) {
+      throw new Error("Hermes portable lifecycle authority changed at agent launch.");
     }
-    await runHermesPortableAgent(gatewayName);
+    await runHermesPortableAgent(
+      gatewayName,
+      qualifyHermesPortableOperatingCommandAuthority(sandboxName),
+    );
   });
 }
 
@@ -148,11 +297,14 @@ export async function launchSandbox(
   sandboxName: string,
   deps: LaunchSandboxDeps = {},
 ): Promise<void> {
-  const inspect = deps.inspectLaunchReadiness ?? inspectLaunchReadiness;
+  const launchTiming = createLaunchPreExecTiming(deps);
   const enterMutationGate = deps.withLaunchReadinessMutationGate ?? withLaunchReadinessMutationGate;
-  let decision = await inspect(sandboxName);
+  let inspection = await inspectLaunchReadinessForLaunch(sandboxName, deps);
+  let decision = inspection.decision;
+  let acceptedHermesAuthority = inspection.hermesAuthority;
   let session: Awaited<ReturnType<typeof prepareInteractiveSession>>;
   let acceptedReadinessSetup: (() => void) | undefined;
+  let readinessAction: LaunchReadinessAction = "prepared";
   while (true) {
     if (decision.kind === "accepted") {
       const acceptedDecision = decision;
@@ -171,6 +323,7 @@ export async function launchSandbox(
         sb: acceptedDecision.sb,
         hermesPortable,
       };
+      readinessAction = "accepted";
       break;
     }
     if (
@@ -191,7 +344,9 @@ export async function launchSandbox(
       return { prepared, publication };
     });
     if (gated.kind === "changed") {
-      decision = await inspect(sandboxName);
+      inspection = await inspectLaunchReadinessForLaunch(sandboxName, deps);
+      decision = inspection.decision;
+      acceptedHermesAuthority = inspection.hermesAuthority;
       continue;
     }
     if (gated.kind === "unsafe") throw new Error(LAUNCH_READINESS_FENCE_REPAIR);
@@ -229,6 +384,8 @@ export async function launchSandbox(
     hermesPortable,
     command,
     deps,
+    acceptedHermesAuthority,
     acceptedReadinessSetup,
+    () => launchTiming.emit(readinessAction),
   );
 }

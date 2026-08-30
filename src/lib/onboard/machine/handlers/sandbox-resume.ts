@@ -24,6 +24,7 @@ export interface SandboxResumeSignals {
   readonly hostMountConfigChanged: boolean;
   readonly recreateSandboxRequested: boolean;
   readonly recreateJournalHandoff?: boolean;
+  readonly activeRecreateJournal?: boolean;
   readonly messagingChannelConfigChanged: boolean;
   readonly messagingCredentialChanged: boolean;
   readonly hermesToolGatewayConfigChanged: boolean;
@@ -32,6 +33,7 @@ export interface SandboxResumeSignals {
   readonly toolDisclosureMigrationNeeded: boolean;
   readonly toolDisclosureChanged: boolean;
   readonly inferenceSelectionChanged: boolean;
+  readonly hermesPortableLifecyclePending?: boolean;
 }
 
 export function hasHostMountConfigDrift(left: unknown, right: unknown): boolean {
@@ -101,8 +103,8 @@ export function resolveToolDisclosureResumeSignals(
     toolDisclosureMigrationNeeded: migrationNeeded,
     toolDisclosureChanged: Boolean(
       registryEntry &&
-        !migrationNeeded &&
-        recorded !== toolDisclosureOrDefault(session?.toolDisclosure),
+      !migrationNeeded &&
+      recorded !== toolDisclosureOrDefault(session?.toolDisclosure),
     ),
   };
 }
@@ -111,6 +113,7 @@ export type SandboxResumeDecision =
   | {
       readonly kind: "create";
       readonly validateMessagingCredentialsBeforeMutation?: boolean;
+      readonly continueHermesPortableLifecycle?: true;
     }
   | { readonly kind: "reuse" }
   | {
@@ -308,11 +311,14 @@ function runtimeConfigurationResumeDecision(
 }
 
 function continuesJournaledRecreate(signals: SandboxResumeSignals): boolean {
+  const sourceStateKnown = ["ready", "missing", "not_ready"].includes(signals.sandboxReuseState);
   return (
     signals.resume &&
-    (signals.sandboxReuseState === "missing" || signals.sandboxReuseState === "not_ready") &&
-    signals.recreateSandboxRequested &&
-    Boolean(signals.recreateJournalHandoff)
+    sourceStateKnown &&
+    (signals.activeRecreateJournal === true ||
+      ((signals.sandboxReuseState === "missing" || signals.sandboxReuseState === "not_ready") &&
+        signals.recreateSandboxRequested &&
+        Boolean(signals.recreateJournalHandoff)))
   );
 }
 
@@ -331,6 +337,9 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
       note: "  [resume] Continuing journaled sandbox recreation.",
       removeRegistryEntry: false,
     };
+  }
+  if (signals.hermesPortableLifecyclePending === true) {
+    return { kind: "create", continueHermesPortableLifecycle: true };
   }
   if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
   if (requiresUnownedNotReadyRepair(signals)) return { kind: "repair-and-recreate" };

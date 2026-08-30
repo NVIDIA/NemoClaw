@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-evening
-description: Runs the end-of-day NemoClaw release handoff and optionally cuts an exact release tag. Use for evening, handoff, wrap-up, or ship requests.
+description: Runs the end-of-day NemoClaw release handoff and optionally cuts a release tag. Use for evening, handoff, wrap-up, or ship requests.
 user_invocable: true
 ---
 
@@ -18,7 +18,7 @@ for release rules.
 
 ## 1. Select the Target Version
 
-Use the maintainer's exact `vX.Y.Z` when supplied. Otherwise, read the current target and show its
+Use the maintainer's `vX.Y.Z` when supplied. Otherwise, read the current target and show its
 merged and open work:
 
 ```bash
@@ -33,7 +33,7 @@ whether to stop without a tag.
 
 ## 2. Finish One Cumulative Documentation Change
 
-Inspect the current `Docs / Post-Merge Catch-Up` state. The Pi workflow owns documentation catch-up
+Inspect the current `Docs / Author Post-Merge Catch-Up` state. The Pi workflow owns documentation catch-up
 for merged changes. Continue its managed draft PR when one exists. If no managed PR exists and the
 release entry is the only missing change, use one direct documentation-only PR.
 
@@ -44,7 +44,7 @@ documentation writer review. Do not create a separate release-entry PR when the 
 docs PR can carry it.
 
 Merge the documentation PR before selecting the tag candidate. A docs-only merge does not start
-another `Docs / Post-Merge Catch-Up` run. Preserve the merged PR, its final commit, its merge commit,
+another `Docs / Author Post-Merge Catch-Up` run. Preserve the merged PR, its final commit, its merge commit,
 and the final automated refresh coverage commit for the tag session.
 
 If another product merge lands before candidate selection, decide whether it belongs in this
@@ -52,7 +52,7 @@ release. When it does, update the cumulative documentation change first. When it
 skill may keep an earlier planned candidate that remains on `main`; later managed documentation work
 does not invalidate that candidate.
 
-When an included merge changes the candidate after planning, generate a new exact-version plan after
+When an included merge changes the candidate after planning, generate a new version plan after
 its documentation merges.
 
 ## 3. Show the Release Handoff
@@ -71,9 +71,9 @@ move to the next target, but do not perform label writes here.
 
 ## 4. Cut the Tag When Requested
 
-Load `nemoclaw-maintainer-cut-release-tag` and pass the exact version. That skill owns:
+Load `nemoclaw-maintainer-cut-release-tag` and pass the version. That skill owns:
 
-- the exact-version plan and candidate;
+- the version plan and candidate;
 - the required release entry, documentation coverage decision, and image evidence;
 - the maintainer's focused, full, or proceed E2E choice;
 - `../nemoclaw-release-vX.Y.Z/release-brief.md`;

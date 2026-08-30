@@ -49,7 +49,6 @@ export interface SandboxMessagingPreflightDeps {
   getCredential(envKey: string): string | null;
   normalizeCredentialValue(value: unknown): string;
   registerExtraPlaceholderProviders(
-    sandboxName: string,
     messagingTokenDefs: CreateSandboxMessagingPrepResult["messagingTokenDefs"],
   ): string[];
   getMessagingChannelForEnvKey(envKey: string): string | null;

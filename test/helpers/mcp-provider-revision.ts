@@ -3,6 +3,7 @@
 
 type ProviderWithCredentialRevision = {
   credential: string;
+  credentialRevision?: string;
   resourceVersion?: number;
 };
 
@@ -21,5 +22,6 @@ export function findObservedCredentialRevision(
     (name) => providers.get(name)?.credential === credential,
   );
   if (!providerName) return null;
-  return `v${String(providers.get(providerName)?.resourceVersion ?? 1)}`;
+  const provider = providers.get(providerName);
+  return provider?.credentialRevision ?? `v${String(provider?.resourceVersion ?? 1)}`;
 }

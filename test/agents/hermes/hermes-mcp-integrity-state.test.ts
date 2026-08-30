@@ -9,7 +9,13 @@ import { describe, expect, it } from "vitest";
 
 import { bashPrintfQ, extractShellFunction } from "../../support/hermes-shell-harness";
 
-const GUARD = path.join(import.meta.dirname, "../../..", "agents", "hermes", "runtime-config-guard.py");
+const GUARD = path.join(
+  import.meta.dirname,
+  "../../..",
+  "agents",
+  "hermes",
+  "runtime-config-guard.py",
+);
 const BUILD_DIGEST = path.join(
   import.meta.dirname,
   "../../..",
@@ -247,6 +253,91 @@ print(json.dumps({"current": current, "pending": pending, "misuse": misuse}))
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({ current: 0, pending: 10, misuse: 1 });
+  });
+
+  it("refreshes safe mutable compatibility drift without changing MCP intent (#9203)", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        String.raw`
+import importlib.util, json, os, shutil, sys, tempfile
+spec = importlib.util.spec_from_file_location("hermes_guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+root = tempfile.mkdtemp(prefix="hermes-mcp-mutable-refresh-")
+hermes = os.path.join(root, ".hermes")
+os.mkdir(hermes)
+config = os.path.join(hermes, "config.yaml")
+env = os.path.join(hermes, ".env")
+anchor = os.path.join(hermes, ".config-hash")
+
+def write_inputs(model, safe_value, endpoint="https://alpha.example/mcp"):
+    open(config, "w", encoding="utf-8").write(
+        f"model: {model}\n"
+        "mcp_servers:\n"
+        "  alpha:\n"
+        f"    url: {endpoint}\n"
+    )
+    open(env, "w", encoding="utf-8").write(f"SAFE_VALUE={safe_value}\n")
+
+write_inputs("before", "one")
+initial_text, _config_snapshot, _env_snapshot = guard._hash_text(config, env)
+guard._write_hash(anchor, initial_text)
+_config_digest, _env_digest, initial_state = guard._parse_config_hash(
+    initial_text, config, env
+)
+
+write_inputs("after", "two")
+try:
+    guard.inspect_mcp_integrity(hermes, anchor)
+except guard.UnsafePathError:
+    stale_rejected = True
+else:
+    stale_rejected = False
+
+guard.refresh_hashes(hermes, anchor, "compat")
+refreshed_state = guard.inspect_mcp_integrity(hermes, anchor)
+refreshed_text = open(anchor, encoding="utf-8").read()
+_config_digest, _env_digest, refreshed_mcp = guard._parse_config_hash(
+    refreshed_text, config, env
+)
+
+write_inputs("after", "two", "https://foreign.example/mcp")
+try:
+    guard.refresh_hashes(hermes, anchor, "compat")
+except guard.UnsafePathError as error:
+    mcp_drift_error = str(error)
+else:
+    mcp_drift_error = ""
+
+proof = {
+    "stale_rejected": stale_rejected,
+    "refreshed_state": refreshed_state,
+    "intended_preserved": refreshed_mcp.intended == initial_state.intended,
+    "applied_preserved": refreshed_mcp.applied == initial_state.applied,
+    "mcp_drift_error": mcp_drift_error,
+    "anchor_unchanged_after_mcp_drift": open(anchor, encoding="utf-8").read() == refreshed_text,
+}
+shutil.rmtree(root)
+print(json.dumps(proof))
+`,
+        GUARD,
+      ],
+      { encoding: "utf-8", timeout: 10_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      stale_rejected: true,
+      refreshed_state: "current",
+      intended_preserved: true,
+      applied_preserved: true,
+      mcp_drift_error: "Hermes MCP config differs from persisted intended state",
+      anchor_unchanged_after_mcp_drift: true,
+    });
   });
 
   it("uses the atomic write outcome for compat applied-state commits", () => {

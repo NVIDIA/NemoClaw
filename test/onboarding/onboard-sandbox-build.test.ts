@@ -22,28 +22,38 @@ beforeEach(() => {
 });
 
 describe("onboard helpers", () => {
-  it("creates the stock managed sandbox without uploading an external OpenClaw config file", {
-    timeout: 90_000,
-  }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "../..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-sandbox-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "create-sandbox-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const preflightPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
-    );
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
+  it(
+    "creates the stock managed sandbox without uploading an external OpenClaw config file",
+    {
+      timeout: 90_000,
+    },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "../..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-sandbox-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "create-sandbox-check.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
+      );
+      const preflightPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
+      );
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+      );
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      writeOkOpenshell(fakeBin);
 
-    const script = String.raw`
+      const script = String.raw`
 const runner = require(${runnerPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+});
+createdSandbox.installRuntimeObservation();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -58,42 +68,35 @@ const defaultCalls = [];
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (normalized.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
-  }
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  const normalized = _n(command);
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   {
-    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
+    const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.registerSandbox = (entry) => {
-  registerCalls.push(entry);
-  return true;
-};
-registry.updateSandbox = (name, updates) => {
-  updateCalls.push({ name, updates });
-  return true;
-};
-registry.setDefault = (name) => {
-  defaultCalls.push(name);
-  return true;
-};
-registry.removeSandbox = () => true;
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName: "my-assistant",
+  provider: "nvidia-prod",
+  model: "gpt-5.4",
+  registerSandbox: (entry) => registerCalls.push(entry),
+  updateSandbox: (name, updates) => updateCalls.push({ name, updates }),
+  setDefault: (name) => defaultCalls.push(name),
+});
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
+  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -111,79 +114,83 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod");
+  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+    [null, "gpt-5.4", "nvidia-prod", null, null, null, null, null, null, null, null, null, []],
+    createFixture,
+  ));
   console.log(JSON.stringify({ sandboxName, commands, registerCalls, updateCalls, defaultCalls }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-    });
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
-    assert.equal(payload.sandboxName, "my-assistant");
-    // createSandbox no longer marks the sandbox default — that is deferred to the
-    // finalization step so a cancel at policy presets can't leave an unconfigured
-    // sandbox as default (#4614).
-    assert.deepEqual(payload.defaultCalls, []);
-    assert.ok(
-      payload.registerCalls.some(
-        (entry: Record<string, unknown>) =>
-          entry.name === "my-assistant" &&
-          entry.model === "gpt-5.4" &&
-          Object.prototype.hasOwnProperty.call(entry, "agentVersion"),
-      ),
-      "expected registry metadata for created sandbox",
-    );
-    assert.ok(
-      payload.updateCalls.every(
-        (call: { name: string; updates: Record<string, unknown> }) =>
-          call.name === "my-assistant" && call.updates,
-      ),
-      "expected any registry metadata updates to target the created sandbox",
-    );
-    const createCommand = payload.commands.find((entry: CommandEntry) =>
-      entry.command.includes("sandbox create"),
-    );
-    assert.ok(createCommand, "expected sandbox create command");
-    assert.match(createCommand.command, /nemoclaw-managed-startup-hold/);
-    assert.match(
-      createCommand.command,
-      /--from ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[0-9a-f]{64}/,
-    );
-    assert.doesNotMatch(createCommand.command, /--upload/);
-    assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
-    assert.doesNotMatch(createCommand.command, /NVIDIA_INFERENCE_API_KEY=/);
-    assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
-    assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
-    assert.ok(
-      payload.commands.some(
-        (entry: CommandEntry) =>
-          entry.command.includes("forward start --background 18789 my-assistant") ||
-          entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
-      ),
-      "expected dashboard forward (loopback or WSL 0.0.0.0)",
-    );
-  });
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+      assert.equal(payload.sandboxName, "my-assistant");
+      // createSandbox no longer marks the sandbox default — that is deferred to the
+      // finalization step so a cancel at policy presets can't leave an unconfigured
+      // sandbox as default (#4614).
+      assert.deepEqual(payload.defaultCalls, []);
+      assert.ok(
+        payload.registerCalls.some(
+          (entry: Record<string, unknown>) =>
+            entry.name === "my-assistant" &&
+            entry.model === "gpt-5.4" &&
+            Object.prototype.hasOwnProperty.call(entry, "agentVersion"),
+        ),
+        "expected registry metadata for created sandbox",
+      );
+      assert.ok(
+        payload.updateCalls.every(
+          (call: { name: string; updates: Record<string, unknown> }) =>
+            call.name === "my-assistant" && call.updates,
+        ),
+        "expected any registry metadata updates to target the created sandbox",
+      );
+      const createCommand = payload.commands.find((entry: CommandEntry) =>
+        entry.command.includes("sandbox create"),
+      );
+      assert.ok(createCommand, "expected sandbox create command");
+      assert.match(createCommand.command, /nemoclaw-managed-startup-hold/);
+      assert.match(
+        createCommand.command,
+        /--from ghcr\.io\/nvidia\/nemoclaw\/openclaw-sandbox@sha256:[0-9a-f]{64}/,
+      );
+      assert.doesNotMatch(createCommand.command, /--upload/);
+      assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
+      assert.doesNotMatch(createCommand.command, /NVIDIA_INFERENCE_API_KEY=/);
+      assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
+      assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
+      assert.ok(
+        payload.commands.some(
+          (entry: CommandEntry) =>
+            entry.command.includes("forward start --background 18789 my-assistant") ||
+            entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
+        ),
+        "expected dashboard forward (loopback or WSL 0.0.0.0)",
+      );
+    },
+  );
 
   it("resolves the sandbox base for an explicit custom Dockerfile", async () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
@@ -210,13 +217,18 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const runner = require(${runnerPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "hermes-sandbox",
+});
+createdSandbox.installRuntimeObservation();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -282,36 +294,36 @@ agentOnboard.createAgentSandbox = () => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (normalized.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
-  }
-  return normalized.includes("sandbox get hermes-sandbox") ? { status: 0, stdout: Buffer.from("Name: hermes-sandbox\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) } : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ command: _n([file, ...args]), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get hermes-sandbox")) return "";
-  if (_n(command).includes("sandbox list")) return "hermes-sandbox Ready";
+  const normalized = _n(command);
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   {
-    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
+    const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "hermes-sandbox 127.0.0.1 18789 12345 running\nhermes-sandbox 127.0.0.1 8642 12346 running";
+  if (normalized.includes("forward list")) return "hermes-sandbox 127.0.0.1 18789 12345 running\nhermes-sandbox 127.0.0.1 8642 12346 running";
   return "";
 };
-registry.registerSandbox = () => true;
-registry.updateSandbox = () => true;
-registry.setDefault = () => true;
-registry.removeSandbox = () => true;
-registry.getSandbox = () => null;
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName: "hermes-sandbox",
+  provider: "nvidia-prod",
+  model: "gpt-5.4",
+});
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
+  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -332,6 +344,7 @@ const { createSandbox } = require(${onboardPath});
   const agent = {
     name: "hermes",
     displayName: "Hermes Agent",
+    dockerfilePath: ${JSON.stringify(path.join(repoRoot, "agents", "hermes", "Dockerfile"))},
     forwardPort: 18789,
     forward_ports: [18789, 8642],
     healthProbe: { url: "http://127.0.0.1:8642/health", port: 8642, timeout_seconds: 90 },
@@ -340,21 +353,24 @@ const { createSandbox } = require(${onboardPath});
     policyAdditionsPath: ${hermesPolicyPath},
   };
   const customDockerfilePath = agentOnboard.createAgentSandbox().stagedDockerfile;
-  await createSandbox(
-    null,
-    "gpt-5.4",
-    "nvidia-prod",
-    null,
-    "hermes-sandbox",
-    null,
-    [],
-    customDockerfilePath,
-    agent,
-    null,
-    null,
-    null,
-    ["nous-web"],
-  );
+  await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+    [
+      null,
+      "gpt-5.4",
+      "nvidia-prod",
+      null,
+      "hermes-sandbox",
+      null,
+      [],
+      customDockerfilePath,
+      agent,
+      null,
+      null,
+      null,
+      ["nous-web"],
+    ],
+    createFixture,
+  ));
   console.log(JSON.stringify({ commands, logs, warnings, baseResolutionCalls }));
 })().catch((error) => {
   console.error(error);
@@ -383,11 +399,11 @@ const { createSandbox } = require(${onboardPath});
       baseResolutionCalls: Array<{ imageName?: string; dockerfilePath?: string }>;
     }>(result.stdout);
     assert.equal(payload.baseResolutionCalls.length, 1);
+    assert.equal(payload.baseResolutionCalls[0]?.imageName, "ghcr.io/nvidia/nemoclaw/sandbox-base");
     assert.equal(
-      payload.baseResolutionCalls[0]?.imageName,
-      "ghcr.io/nvidia/nemoclaw/sandbox-base",
+      payload.baseResolutionCalls[0]?.dockerfilePath,
+      path.join(repoRoot, "Dockerfile.base"),
     );
-    assert.equal(payload.baseResolutionCalls[0]?.dockerfilePath, path.join(repoRoot, "Dockerfile.base"));
     const createCommand = payload.commands.find((entry) =>
       entry.command.includes("sandbox create"),
     );
@@ -428,13 +444,14 @@ const { createSandbox } = require(${onboardPath});
     const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const runner = require(${runnerPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -446,11 +463,14 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 platform.isWsl = () => false;
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+});
+createdSandbox.installRuntimeObservation();
 
 const commands = [];
 const logs = [];
 const baseResolutionCalls = [];
-let sandboxCreated = false;
 const originalLog = console.log;
 console.log = (...args) => {
   logs.push(args.join(" "));
@@ -493,41 +513,36 @@ buildContext.stageOptimizedSandboxBuildContext = () => {
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (normalized.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
-  }
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ command: _n([file, ...args]), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) {
-    return sandboxCreated ? "Name: my-assistant\\nPhase: Ready\\n" : "";
-  }
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  const normalized = _n(command);
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   {
-    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
+    const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.registerSandbox = () => true;
-registry.updateSandbox = () => true;
-registry.setDefault = () => true;
-registry.removeSandbox = () => true;
-registry.getSandbox = () => null;
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName: "my-assistant",
+  provider: "nvidia-prod",
+  model: "gpt-5.4",
+});
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
-  sandboxCreated = true;
+  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -545,7 +560,10 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+    [null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, null, null, null, null, null, null, []],
+    createFixture,
+  ));
   console.log(JSON.stringify({ commands, logs, baseResolutionCalls }));
 })().catch((error) => {
   console.error(error);
@@ -594,10 +612,11 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -606,36 +625,39 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+});
+createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (normalized.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
-  }
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  const normalized = _n(command);
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   {
-    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
+    const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.registerSandbox = () => true;
-registry.updateSandbox = () => true;
-registry.setDefault = () => true;
-registry.removeSandbox = () => true;
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName: "my-assistant",
+  provider: "nvidia-prod",
+  model: "gpt-5.4",
+});
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
+  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -654,7 +676,10 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.CHAT_UI_URL = "https://chat.example.com";
-  await createSandbox(null, "gpt-5.4", "nvidia-prod");
+  await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+    [null, "gpt-5.4", "nvidia-prod", null, null, null, null, null, null, null, null, null, []],
+    createFixture,
+  ));
   console.log(JSON.stringify(commands));
 })().catch((error) => {
   console.error(error);
@@ -700,10 +725,11 @@ const { createSandbox } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin, { readySandboxGet: true });
+    writeOkOpenshell(fakeBin);
 
     const script = String.raw`
 const runner = require(${runnerPath});
+const fixtureMocks = require(${onboardScriptMocksPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
@@ -712,41 +738,44 @@ const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
+const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+  sandboxName: "my-assistant",
+});
+createdSandbox.installRuntimeObservation();
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
+  const profileResult = fixtureMocks.mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
-  if (normalized.includes("sandbox list")) {
-    return { status: 0, stdout: Buffer.from("No sandboxes found.\n"), stderr: Buffer.alloc(0) };
-  }
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("Name: my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  const sandboxResult = createdSandbox.run(command);
+  return sandboxResult ?? { status: 0 };
 };
 runner.runFile = (file, args = [], opts = {}) => {
   commands.push({ command: _n([file, ...args]), env: opts.env || null });
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  const normalized = _n(command);
+  const sandboxCapture = createdSandbox.capture(command);
+  if (sandboxCapture !== null) return sandboxCapture;
   // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
   {
-    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
+    const mockedCapture = fixtureMocks.mockOnboardRunCapture(command);
     if (mockedCapture !== null) return mockedCapture;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 19000 12345 running";
+  if (normalized.includes("forward list")) return "my-assistant 127.0.0.1 19000 12345 running";
   return "";
 };
-registry.registerSandbox = () => true;
-registry.updateSandbox = () => true;
-registry.setDefault = () => true;
-registry.removeSandbox = () => true;
+const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry, {
+  sandboxName: "my-assistant",
+  provider: "nvidia-prod",
+  model: "gpt-5.4",
+});
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
+  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -764,7 +793,10 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod");
+  const sandboxName = await createSandbox(...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+    [null, "gpt-5.4", "nvidia-prod", null, null, null, null, null, null, null, null, null, []],
+    createFixture,
+  ));
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
   console.error(error);

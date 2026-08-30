@@ -36,7 +36,7 @@ type RoutedSelectionDeps = {
       helpUrl?: string | null,
       validator?: ((value: string) => string | null) | null,
       allowEmpty?: boolean,
-      revalidatePolicyRequirements?: (operation: string) => void,
+      revalidateSandboxIdentity?: (operation: string) => void,
     ): Promise<unknown>;
     returningToProviderSelection(value: unknown): boolean;
   };
@@ -128,7 +128,7 @@ export async function handleRoutedSelection(
       null,
       null,
       false,
-      state.revalidatePolicyRequirements,
+      state.revalidateSandboxIdentity,
     );
     if (deps.credentialPrompt.returningToProviderSelection(result)) return "retry-selection";
     if (typeof result !== "string" || !deps.credentials.normalizeCredentialValue(result)) {
@@ -136,10 +136,10 @@ export async function handleRoutedSelection(
       return "retry-selection";
     }
   } else if (configuredCredential) {
-    state.revalidatePolicyRequirements?.("save Model Router credential");
+    state.revalidateSandboxIdentity?.("save Model Router credential");
     deps.credentials.saveCredential(credentialEnv, configuredCredential);
   } else if (bridgedCredential) {
-    state.revalidatePolicyRequirements?.("stage Model Router provider credential");
+    state.revalidateSandboxIdentity?.("stage Model Router provider credential");
     deps.providerKeyBridge.stageRouterProviderKeyBridge(credentialEnv, bridgedCredential);
   }
 

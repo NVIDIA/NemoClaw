@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isObjectRecord } from "../core/json-types";
+import { isIP } from "node:net";
 import { isBlockedMcpUrlTargetHost, MCP_SERVER_URL_MAX_LENGTH } from "../security/mcp-url-target";
 import {
   canonicalizeTrustedPrivateEndpointPins,
@@ -16,12 +17,7 @@ export interface McpBridgeEntry {
   env: string[];
   /** Exact URL host explicitly admitted for routed private access. */
   trustedPrivateHost?: string;
-  /**
-   * Immutable validated private address pins recorded when the bridge was
-   * added. After strict registry normalization, this durable host state is the
-   * operator-approved replay authority; lifecycle commands never widen it
-   * from ambient DNS.
-   */
+  /** Validated endpoint pins recorded as MCP domain state for new bridges. */
   allowedIps?: string[];
   providerName?: string;
   /** Immutable OpenShell ObjectMeta.id captured after provider creation. */
@@ -175,8 +171,31 @@ function normalizeMcpBridgeEntry(server: string, value: unknown): McpBridgeEntry
       return null;
     }
     allowedIps = [...canonicalPins];
-  } else if (rawAllowedIps !== undefined) {
-    return null;
+  } else {
+    // Legacy public bridge rows predate durable public pins. Preserve them so
+    // explicit restart/rebuild can resolve and write current pins; new bridge
+    // registrations always persist a non-empty canonical list.
+    if (rawAllowedIps === undefined) {
+      allowedIps = undefined;
+    } else {
+      if (
+        !Array.isArray(rawAllowedIps) ||
+        rawAllowedIps.length === 0 ||
+        rawAllowedIps.some(
+          (address) =>
+            typeof address !== "string" ||
+            address !== address.toLowerCase() ||
+            address.includes("%") ||
+            isIP(address) === 0 ||
+            isBlockedMcpUrlTargetHost(address),
+        )
+      ) {
+        return null;
+      }
+      const canonical = [...new Set(rawAllowedIps as string[])].sort();
+      if (canonical.length !== rawAllowedIps.length) return null;
+      allowedIps = canonical;
+    }
   }
   const rawEnv = value.env;
   const env =
@@ -209,7 +228,8 @@ function normalizeMcpBridgeEntry(server: string, value: unknown): McpBridgeEntry
     ...(adapter ? { adapter } : {}),
     url,
     env,
-    ...(trustedPrivateHost ? { trustedPrivateHost, allowedIps } : {}),
+    ...(trustedPrivateHost ? { trustedPrivateHost } : {}),
+    ...(allowedIps ? { allowedIps } : {}),
     ...(providerName ? { providerName } : {}),
     ...(providerId ? { providerId } : {}),
     policyName,

@@ -532,7 +532,6 @@ startGateway(null).catch((error) => {
         messaging: true,
         resourceProfile: true,
       },
-      policyPresets: ["nous-web", "brave"],
       lastCompletedStep: "policies",
       lastStepStarted: "policies",
       steps: {
@@ -570,7 +569,6 @@ startGateway(null).catch((error) => {
       messaging: false,
       resourceProfile: true,
     });
-    expect(cleared.policyPresets).toBeNull();
     expect(cleared.steps.gateway.status).toBe("complete");
     expect(cleared.steps.provider_selection.status).toBe("pending");
     expect(cleared.steps.sandbox.status).toBe("pending");
@@ -681,26 +679,33 @@ startGateway(null).catch((error) => {
     writeOkOpenshell(fakeBin);
 
     const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-const childProcess = require("node:child_process");
+	const runner = require(${runnerPath});
+	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+	const registry = require(${registryPath});
+	const fixtureMocks = require(${onboardScriptMocksPath});
+	const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
+const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
+existingSandbox.installRuntimeObservation();
+const sandboxCommand = (command) => Array.isArray(command) ? command : _n(command).split(/\s+/u);
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
-  const profileResult = require(${onboardScriptMocksPath}).mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+	  const profileResult = fixtureMocks.mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
   if (profileResult !== null) return profileResult;
-  return { status: 0 };
+  return existingSandbox.run(sandboxCommand(command)) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  const sandboxResult = existingSandbox.run(sandboxCommand(command));
+  if (sandboxResult !== null) return sandboxResult.status === 0 ? sandboxResult.stdout.toString() : "";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", policyAuthority: "nemoclaw-managed", toolDisclosure: "progressive" });
+	registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
+	  name: "my-assistant",
+	  toolDisclosure: "progressive",
+	}, { sandboxId: existingSandbox.state.sandboxId });
 
 childProcess.spawn = (...args) => {
   const child = new EventEmitter();
@@ -754,7 +759,10 @@ const { createSandbox } = require(${onboardPath});
       payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox create")),
       "did not expect sandbox create when reusing existing sandbox",
     );
-    assert.match(result.stdout, /\[reuse\] Skipping sandbox \(my-assistant\)/);
+    assert.match(
+      result.stdout,
+      /Existing provider\/model selection is unreadable; reusing sandbox\./,
+    );
   });
 
   it("accepts gateway inference when system inference is separately not configured", async () => {
@@ -1114,7 +1122,6 @@ const { createSandboxWithTemporaryManagedRuntime } = require(${onboardPath});
       NEMOCLAW_RECREATE_SANDBOX: "1",
     };
     delete env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
-    delete env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK;
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf-8",

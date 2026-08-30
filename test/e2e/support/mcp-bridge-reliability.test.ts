@@ -14,10 +14,12 @@ import { startTestProgress } from "../fixtures/progress.ts";
 import { ShellProbe } from "../fixtures/shell-probe.ts";
 import {
   isHermesRestartTransportFailure,
+  isRetryableOpenClawBaselineScopeOnboardFailure,
   MCP_BRIDGE_TEST_REDACTION_VALUES,
   restartBridgeWithoutHostSecret,
   retryAfterHermesRestartTransportFailure,
   retryHermesGatewayDraining,
+  retryOpenClawBaselineScopeOnboardFailure,
 } from "../live/mcp-bridge-reliability.ts";
 
 const HTTP_STATUS_MARKER = "NEMOCLAW_HERMES_MCP_HTTP_STATUS=";
@@ -60,6 +62,63 @@ async function readRestartFailureArtifacts(root: string): Promise<string> {
 }
 
 describe("MCP bridge transient classification", () => {
+  it("retries only the exact OpenClaw baseline-scope settlement failure", () => {
+    const sandboxName = "e2e-pr-exact-mcp-1";
+    const message = `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device did not receive the required baseline scopes. Resume or rerun onboarding.`;
+    const result = {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      stdout: `policy loaded\n${message}\n`,
+      stderr: "",
+    };
+
+    expect(isRetryableOpenClawBaselineScopeOnboardFailure("openclaw", sandboxName, result)).toBe(
+      true,
+    );
+    expect(isRetryableOpenClawBaselineScopeOnboardFailure("hermes", sandboxName, result)).toBe(
+      false,
+    );
+    expect(
+      isRetryableOpenClawBaselineScopeOnboardFailure("openclaw", "other-sandbox", result),
+    ).toBe(false);
+    expect(
+      isRetryableOpenClawBaselineScopeOnboardFailure("openclaw", sandboxName, {
+        ...result,
+        exitCode: 0,
+      }),
+    ).toBe(false);
+    expect(
+      isRetryableOpenClawBaselineScopeOnboardFailure("openclaw", sandboxName, {
+        ...result,
+        stdout: message.replace("baseline scopes", "device pairing"),
+      }),
+    ).toBe(false);
+  });
+
+  it("retries the qualified OpenClaw onboarding failure exactly once", async () => {
+    const sandboxName = "e2e-pr-exact-mcp-1";
+    const initialResult = {
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      stdout: `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device did not receive the required baseline scopes. Resume or rerun onboarding.\n`,
+      stderr: "",
+    };
+    const passing = { ...initialResult, exitCode: 0, stdout: "onboarded\n" };
+    const retry = vi.fn(async () => passing);
+
+    await expect(
+      retryOpenClawBaselineScopeOnboardFailure({
+        agent: "openclaw",
+        sandboxName,
+        initialResult,
+        retry,
+      }),
+    ).resolves.toBe(passing);
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
   it("redacts every MCP fixture credential from a restart-command failure artifact", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-mcp-restart-redaction-"));
     const progress = startTestProgress(
@@ -101,9 +160,7 @@ describe("MCP bridge transient classification", () => {
         failure = error;
       }
 
-      expect(MCP_BRIDGE_TEST_REDACTION_VALUES).toEqual(
-        Object.values(MCP_BRIDGE_TEST_CREDENTIALS),
-      );
+      expect(MCP_BRIDGE_TEST_REDACTION_VALUES).toEqual(Object.values(MCP_BRIDGE_TEST_CREDENTIALS));
       expect(failure).toBeInstanceOf(Error);
       progress.phase("inspect redacted failure artifacts");
       const failureMessage = failure instanceof Error ? failure.message : String(failure);
@@ -116,9 +173,7 @@ describe("MCP bridge transient classification", () => {
       expect(persistedFailure).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.rebindHost);
       expect(persistedFailure).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint);
       expect(persistedFailure).not.toContain(MCP_BRIDGE_TEST_CREDENTIALS.generationWindow);
-      expect(persistedFailure).not.toContain(
-        `${MCP_BRIDGE_TEST_CREDENTIALS.generationWindow}7`,
-      );
+      expect(persistedFailure).not.toContain(`${MCP_BRIDGE_TEST_CREDENTIALS.generationWindow}7`);
     } finally {
       progress.stop();
       await fs.rm(root, { recursive: true, force: true });

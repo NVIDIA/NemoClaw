@@ -210,11 +210,11 @@ describe("onboard Hermes dashboard helpers", () => {
 
   it("stops Hermes dashboard forwarding when authority changes between retries (#9833)", () => {
     const starts: string[] = [];
-    const revalidatePolicyAuthority = vi
+    const revalidateSandboxIdentity = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
-        throw new Error("policy authority changed");
+        throw new Error("sandbox identity changed");
       });
     const ensureForward = vi.fn(
       (
@@ -244,21 +244,21 @@ describe("onboard Hermes dashboard helpers", () => {
       },
     });
 
-    expect(() => ensure("my-hermes", false, revalidatePolicyAuthority)).toThrow(
-      "policy authority changed",
+    expect(() => ensure("my-hermes", false, revalidateSandboxIdentity)).toThrow(
+      "sandbox identity changed",
     );
 
     expect(starts).toEqual(["attempt 1"]);
-    expect(revalidatePolicyAuthority).toHaveBeenCalledTimes(2);
+    expect(revalidateSandboxIdentity).toHaveBeenCalledTimes(2);
   });
 
   it("stops Hermes dashboard rollback when authority changes between commands (#9833)", () => {
     const runOpenshell = vi.fn();
-    const revalidatePolicyAuthority = vi
+    const revalidateSandboxIdentity = vi
       .fn<(operation: string) => void>()
       .mockImplementationOnce(() => undefined)
       .mockImplementationOnce(() => {
-        throw new Error("policy authority changed");
+        throw new Error("sandbox identity changed");
       });
     const forwarding = createHermesDashboardOnboardForwarding({
       agentName: "hermes",
@@ -274,8 +274,8 @@ describe("onboard Hermes dashboard helpers", () => {
     const state = forwarding.resolveStateForPort(18789);
 
     expect(() =>
-      forwarding.ensureForState(state, "my-hermes", true, revalidatePolicyAuthority),
-    ).toThrow("policy authority changed");
+      forwarding.ensureForState(state, "my-hermes", true, revalidateSandboxIdentity),
+    ).toThrow("sandbox identity changed");
 
     expect(runOpenshell).toHaveBeenCalledTimes(1);
     expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "8642", "my-hermes"], {
@@ -312,10 +312,9 @@ describe("onboard Hermes dashboard helpers", () => {
     expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "8642", "my-hermes"], {
       ignoreError: true,
     });
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "stop", "18789", "my-hermes"],
-      { ignoreError: true },
-    );
+    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "my-hermes"], {
+      ignoreError: true,
+    });
     expect(runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "my-hermes"],
       expect.anything(),

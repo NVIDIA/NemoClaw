@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { HERMES_SHIELDS_COMMAND_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -69,7 +70,7 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestartAndState
     artifactName: "hermes-mcp-shields-up-after-add",
     env: buildAvailabilityProbeEnv(),
     redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
-    timeoutMs: 3 * 60_000,
+    timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
   });
   expectExitZero(shieldsUp, "restore Hermes shields after managed MCP add");
 
@@ -77,7 +78,7 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestartAndState
     artifactName: "hermes-mcp-shields-status-after-add",
     env: buildAvailabilityProbeEnv(),
     redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
-    timeoutMs: 60_000,
+    timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
   });
   expectExitZero(shieldsStatus, "read Hermes shields status after managed MCP add");
   expect(resultText(shieldsStatus)).toContain("Shields: UP");
@@ -192,7 +193,7 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestartAndState
       artifactName: "hermes-mcp-shields-down-after-restart-proof",
       env: buildAvailabilityProbeEnv(),
       redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
-      timeoutMs: 3 * 60_000,
+      timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
     },
   );
   expectExitZero(shieldsDown, "unlock Hermes config for remaining managed MCP lifecycle");
@@ -212,7 +213,7 @@ export async function reopenHermesMcpMaintenanceWindow(
     artifactName: "hermes-mcp-shields-up-before-post-rebuild-remove",
     env: buildAvailabilityProbeEnv(),
     redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
-    timeoutMs: 3 * 60_000,
+    timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
   });
   expectExitZero(shieldsUp, "normalize Hermes shields before post-rebuild MCP removal");
 
@@ -230,7 +231,7 @@ export async function reopenHermesMcpMaintenanceWindow(
       artifactName: "hermes-mcp-shields-down-before-post-rebuild-remove",
       env: buildAvailabilityProbeEnv(),
       redactionValues: [HOST_SECRET, ROTATED_HOST_SECRET],
-      timeoutMs: 3 * 60_000,
+      timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
     },
   );
   expectExitZero(shieldsDown, "open a fresh Hermes MCP maintenance window after rebuild");
@@ -245,7 +246,7 @@ export async function lowerHermesShieldsForCleanup(
     {
       artifactName: "cleanup-hermes-shields-down",
       env: buildAvailabilityProbeEnv(),
-      timeoutMs: 3 * 60_000,
+      timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
     },
   );
   if (shieldsDown.exitCode === 0 || targetSandboxDoesNotExist(shieldsDown, sandboxName)) {
@@ -255,7 +256,7 @@ export async function lowerHermesShieldsForCleanup(
   const shieldsStatus = await host.nemoclaw([sandboxName, "shields", "status"], {
     artifactName: "cleanup-hermes-shields-status-after-down-error",
     env: buildAvailabilityProbeEnv(),
-    timeoutMs: 60_000,
+    timeoutMs: HERMES_SHIELDS_COMMAND_TIMEOUT_MS,
   });
   if (targetSandboxDoesNotExist(shieldsStatus, sandboxName)) {
     return;
