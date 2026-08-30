@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,136 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NemoClawCommand } from "../../src/lib/cli/nemoclaw-oclif-command";
 import * as lifecycleLock from "../../src/lib/state/mcp-lifecycle-lock";
-
-const CHILD_TIMEOUT_MS = 10_000;
-const LOCK_MODULE_PATH = path.resolve("src/lib/state/mcp-lifecycle-lock.ts");
-
-async function runChild(
-  script: string,
-  args: string[],
-  expectedLine: string,
-  label: string,
-): Promise<void> {
-  const child = spawn(process.execPath, ["--require", "tsx/cjs", "-e", script, ...args], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout?.on("data", (chunk: Buffer) => {
-    stdout += chunk.toString("utf8");
-  });
-  child.stderr?.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf8");
-  });
-  const completed = new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const settle = (error?: Error) => {
-      switch (settled) {
-        case true:
-          return;
-      }
-      settled = true;
-      clearTimeout(timeout);
-      error ? reject(error) : resolve();
-    };
-    const timeout = setTimeout(
-      () => settle(new Error(`${label} child did not report ${expectedLine}: ${stderr}`)),
-      CHILD_TIMEOUT_MS,
-    );
-    child.once("error", (error) => settle(error));
-    child.once("close", (code) => {
-      switch (true) {
-        case code !== 0:
-          settle(new Error(`${label} child exited ${String(code)}: ${stderr}`));
-          break;
-        case !stdout.split(/\r?\n/u).includes(expectedLine):
-          settle(new Error(`${label} child closed before reporting ${expectedLine}: ${stderr}`));
-          break;
-        default:
-          settle();
-      }
-    });
-  });
-  try {
-    await completed;
-  } finally {
-    child.exitCode === null && child.kill("SIGKILL");
-  }
-}
-
-async function reproduceCompletedAutoRestoreContainment(
-  stateDir: string,
-  sandboxName: string,
-  processToken: string,
-): Promise<{ markerPath: string; timerPid: number }> {
-  const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
-  const timerScript = String.raw`
-const fs = require("node:fs");
-const lock = require(process.argv[1]);
-const stateDir = process.argv[2];
-const markerPath = process.argv[3];
-const sandboxName = process.argv[4];
-const processToken = process.argv[5];
-fs.writeFileSync(markerPath, JSON.stringify({
-  pid: process.pid,
-  sandboxName,
-  snapshotPath: stateDir + "/snapshot.yaml",
-  restoreAt: new Date(Date.now() - 60000).toISOString(),
-  processToken,
-}));
-lock.withMcpLifecycleDeadlineFenceSync(sandboxName, processToken, () => {
-  fs.writeSync(1, "OWNED\n");
-  process.exit(0);
-}, { stateDir, pollIntervalMs: 5, timeoutMs: 1000, corruptLockGraceMs: 1 });
-`;
-  await runChild(
-    timerScript,
-    [LOCK_MODULE_PATH, stateDir, markerPath, sandboxName, processToken],
-    "OWNED",
-    "timer",
-  );
-
-  const containmentScript = String.raw`
-const fs = require("node:fs");
-const lock = require(process.argv[1]);
-const stateDir = process.argv[2];
-const sandboxName = process.argv[3];
-try {
-  lock.withMcpLifecycleLockSync(sandboxName, () => process.exit(3), {
-    stateDir,
-    pollIntervalMs: 5,
-    timeoutMs: 1000,
-    corruptLockGraceMs: 1,
-  });
-  process.exit(4);
-} catch {
-  fs.statSync(lock.getMcpLifecycleLockPath(sandboxName, stateDir) + ".containment");
-  fs.writeSync(1, "CONTAINED\n");
-}
-`;
-  await runChild(
-    containmentScript,
-    [LOCK_MODULE_PATH, stateDir, sandboxName],
-    "CONTAINED",
-    "containment",
-  );
-
-  return {
-    markerPath,
-    timerPid: JSON.parse(fs.readFileSync(markerPath, "utf8")).pid as number,
-  };
-}
-
-function writeShieldsUpState(stateDir: string, sandboxName: string): void {
-  fs.writeFileSync(
-    path.join(stateDir, `shields-${sandboxName}.json`),
-    JSON.stringify({
-      shieldsDown: false,
-      updatedAt: new Date().toISOString(),
-      fileHashes: { "/sandbox/.openclaw/openclaw.json": "a".repeat(64) },
-    }),
-  );
-}
+import {
+  createCompletedAutoRestoreFixture as reproduceCompletedAutoRestoreContainment,
+  runCompletedAutoRestoreFixtureChild as runChild,
+} from "../support/completed-auto-restore-fixture";
 
 async function loadCleanPublicShieldsStatusCommand() {
   vi.resetModules();
@@ -207,7 +80,6 @@ describe("completed auto-restore command admission", () => {
         "alpha",
         processToken,
       );
-      writeShieldsUpState(stateDir, "alpha");
       const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
       const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
       const ShieldsStatusCommand = await loadCleanPublicShieldsStatusCommand();
@@ -226,7 +98,6 @@ describe("completed auto-restore command admission", () => {
   it("denies public Shields status for an ambiguous live timer owner (#10094)", async () => {
     const processToken = "d".repeat(32);
     const orphan = await reproduceCompletedAutoRestoreContainment(stateDir, "alpha", processToken);
-    writeShieldsUpState(stateDir, "alpha");
     const marker = JSON.parse(fs.readFileSync(orphan.markerPath, "utf8"));
     marker.pid = process.pid;
     fs.writeFileSync(orphan.markerPath, JSON.stringify(marker));
@@ -256,7 +127,6 @@ describe("completed auto-restore command admission", () => {
         "alpha",
         processToken,
       );
-      writeShieldsUpState(stateDir, "alpha");
       const realUnlink = fs.unlinkSync.bind(fs);
       let injected = false;
       const injectUnlinkFailure = (): never => {
@@ -290,7 +160,6 @@ describe("completed auto-restore command admission", () => {
         "alpha",
         processToken,
       );
-      writeShieldsUpState(stateDir, "alpha");
       const realFsync = fs.fsyncSync.bind(fs);
       let injected = false;
       const injectFsyncFailure = (): never => {
@@ -327,7 +196,6 @@ describe("completed auto-restore command admission", () => {
       "alpha",
       "8".repeat(32),
     );
-    writeShieldsUpState(stateDir, "alpha");
     const quarantinePath = `${orphan.markerPath}.completed-invalid`;
     fs.renameSync(orphan.markerPath, quarantinePath);
     const invalidMarker = JSON.parse(fs.readFileSync(quarantinePath, "utf8"));
@@ -356,8 +224,6 @@ describe("completed auto-restore command admission", () => {
         "beta",
         "2".repeat(32),
       );
-      writeShieldsUpState(stateDir, "alpha");
-      writeShieldsUpState(stateDir, "beta");
       const { recoverCompletedAutoRestoreForSnapshotRestore } =
         await import("../../src/lib/actions/sandbox/snapshot");
 
@@ -385,7 +251,6 @@ describe("completed auto-restore command admission", () => {
       "alpha",
       "3".repeat(32),
     );
-    writeShieldsUpState(stateDir, "alpha");
     const marker = JSON.parse(fs.readFileSync(orphan.markerPath, "utf8"));
     marker.pid = process.pid;
     fs.writeFileSync(orphan.markerPath, JSON.stringify(marker));
@@ -416,7 +281,6 @@ describe("completed auto-restore command admission", () => {
         "alpha",
         processToken,
       );
-      writeShieldsUpState(stateDir, "alpha");
       const proofPath = path.join(
         stateDir,
         `shields-timer-authorization-alpha-${processToken}.json`,
@@ -468,7 +332,6 @@ describe("completed auto-restore command admission", () => {
       "alpha",
       "5".repeat(32),
     );
-    writeShieldsUpState(stateDir, "alpha");
     const artifacts = [`${orphan.markerPath}.completed-a`, `${orphan.markerPath}.completed-b`];
     fs.renameSync(orphan.markerPath, artifacts[0]);
     fs.copyFileSync(artifacts[0], artifacts[1], fs.constants.COPYFILE_EXCL);
@@ -485,7 +348,6 @@ describe("completed auto-restore command admission", () => {
       "alpha",
       "6".repeat(32),
     );
-    writeShieldsUpState(stateDir, "alpha");
     const artifacts = [`${orphan.markerPath}.completed-a`, `${orphan.markerPath}.completed-b`];
     fs.renameSync(orphan.markerPath, artifacts[0]);
     const changed = JSON.parse(fs.readFileSync(artifacts[0], "utf8"));

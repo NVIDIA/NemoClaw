@@ -1852,30 +1852,11 @@ Before `shields down` opens a new window, NemoClaw must revoke any stale auto-re
 If marker cleanup fails, the command reports `Cannot revoke stale auto-restore timer authority` and stops before policy capture, state writes, config unlock, replacement-timer startup, or audit writes.
 The sandbox retains its existing configuration and policy posture, and the stale timer authority remains.
 Resolve the reported timer-marker error on the trusted host, then retry `shields down`.
-When a timed shields-down window reaches its deadline, auto-restore closes the per-sandbox lifecycle deadline gate.
-The gate blocks new mutations and waits for the recorded live owner to release its lock generation before auto-restore restores lockdown.
-NemoClaw does not signal that process because portable process inspection cannot prove that all descendants stopped.
-An interactive command can take over an expired timer.
-Interactive recovery has separate transition-takeover and restoration phases.
-Each phase makes up to 7 attempts and waits 5 seconds between failures, for up to 30 seconds of retry delay per phase.
-Detached recovery uses one 7-attempt budget across deadline setup, main-generation publication, and restoration.
-The deadline gate remains closed during those attempts.
-If restoration cannot commit, NemoClaw attempts to record durable containment.
-If that containment commit also fails, NemoClaw retains any lifecycle and deadline gates it already owns.
-A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
-Correct the reported state-directory write failure, then run `$$nemoclaw <name> shields status` to resume recovery or receive generation recovery guidance.
-When recovery cannot complete, an interactive command returns an error, or the detached timer exits with a failure status.
-NemoClaw also records durable containment when an owner exits before it can prove that the owner's descendants stopped, or when ownership becomes ambiguous.
-When Shields are already UP after an abandoned auto-restore completes, run `$$nemoclaw <name> shields status`.
-NemoClaw removes the timer artifacts and lifecycle gates only when they all identify that completed process generation, the recorded owners are gone, and no Shields transition remains.
-Running the command again after successful cleanup is safe because the retired generation no longer supplies recovery authority.
-A live or ambiguous owner, a replaced or unrelated generation, conflicting artifacts, or a missing protected generation remains fail-closed.
-Those conditions and retained gates block new mutations until the reported recovery completes.
-If the error reports a live or ambiguous owner, let that process finish or stop it through normal process controls, then rerun `$$nemoclaw <name> shields status` without modifying lifecycle-lock or timer files.
-If the error says that completed recovery authority changed, rerun `$$nemoclaw <name> shields status` without modifying those files so NemoClaw can evaluate the current authority.
-If the error instead reports invalid or conflicting artifacts, a replaced or unrelated lifecycle generation, or a missing protected generation, stop all NemoClaw processes for the sandbox and follow the paths, identities, tokens, and removal order in that error.
-Verify each recorded generation is unchanged, remove only the stale generations first, and remove the containment generation last.
-Then rerun `$$nemoclaw <name> shields status`.
+When a timed Shields window reaches its deadline, auto-restore closes the per-sandbox lifecycle gate before it restores lockdown.
+`$$nemoclaw <name> shields status` can finish cleanup for a completed, abandoned auto-restore, but live or ambiguous ownership remains fail-closed.
+<AgentOnly variant="openclaw,hermes">
+For retry budgets, containment behavior, and safe remediation for each retained-artifact state, see [Timed Shields Windows](../manage-sandboxes/configure-sandboxes/understand-runtime-changes#timed-shields-windows).
+</AgentOnly>
 
 Before a manual Shields transition replaces a policy, NemoClaw requires agreement among the sandbox registry, generated-policy record, and live gateway policy.
 `shields down` carries the proven managed MCP policy entries into the relaxed policy.

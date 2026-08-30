@@ -17,6 +17,7 @@ import {
   createShieldsFlowHarness,
   type ShieldsFlowHarnessOptions,
 } from "../../../test/helpers/shields-flow-harness";
+import { createCompletedAutoRestoreFixture } from "../../../test/support/completed-auto-restore-fixture";
 import type { AgentConfigTarget } from "../sandbox/agent-config";
 
 const requireSource = createRequire(import.meta.url);
@@ -502,77 +503,6 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     };
   }
 
-  function writeCompletedAutoRestoreOrphanFixture() {
-    const sandboxName = "openclaw";
-    const processToken = "c".repeat(32);
-    const timerPid = 2_147_483_647;
-    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
-    const lifecycleLock = requireSource(
-      "../state/mcp-lifecycle-lock.js",
-    ) as typeof import("../state/mcp-lifecycle-lock.js");
-    const lockPath = lifecycleLock.getMcpLifecycleLockPath(sandboxName, stateDir);
-    const deadlinePath = `${lockPath}.deadline`;
-    const containmentPath = `${lockPath}.containment`;
-    const timerOwner = {
-      version: 1,
-      sandboxName,
-      pid: timerPid,
-      processIdentity: "dead-auto-restore-owner",
-      hostIdentity: lifecycleLock.readMcpLockHostIdentity(),
-      pidNamespaceIdentity: lifecycleLock.readMcpLockPidNamespaceIdentity(),
-      shieldsTakeoverToken: processToken,
-      token: "orphaned-auto-restore-main",
-      acquiredAt: new Date(Date.now() - 60_000).toISOString(),
-    };
-
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    fs.writeFileSync(
-      path.join(stateDir, `shields-${sandboxName}.json`),
-      JSON.stringify({
-        shieldsDown: false,
-        shieldsDownAt: null,
-        shieldsDownTimeout: null,
-        shieldsDownReason: null,
-        shieldsDownPolicy: null,
-        fileHashes: { "/sandbox/.openclaw/openclaw.json": "a".repeat(64) },
-        updatedAt: new Date(Date.now() - 60_000).toISOString(),
-      }),
-    );
-    fs.writeFileSync(
-      markerPath,
-      JSON.stringify({
-        pid: timerPid,
-        sandboxName,
-        snapshotPath: path.join(stateDir, "completed-auto-restore-snapshot.yaml"),
-        restoreAt: new Date(Date.now() - 60_000).toISOString(),
-        processToken,
-        timerProcessStartIdentity: "dead-auto-restore-timer",
-      }),
-    );
-    fs.writeFileSync(lockPath, JSON.stringify(timerOwner));
-    fs.writeFileSync(
-      deadlinePath,
-      JSON.stringify({ ...timerOwner, token: "orphaned-auto-restore-deadline" }),
-    );
-    const mainStat = fs.statSync(lockPath);
-    fs.writeFileSync(
-      containmentPath,
-      JSON.stringify({
-        ...timerOwner,
-        pid: timerPid - 1,
-        processIdentity: "dead-containment-owner",
-        token: "completed-auto-restore-containment",
-        containmentReason: `The sandbox mutation owner PID ${String(
-          timerPid,
-        )} was already gone before takeover; contained generation ${String(mainStat.dev)}:${String(
-          mainStat.ino,
-        )}:${timerOwner.token}`,
-      }),
-    );
-    return { containmentPath, deadlinePath, lockPath, markerPath };
-  }
-
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-openclaw-recovery-"));
     vi.stubEnv("HOME", tmpDir);
@@ -583,9 +513,13 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     {
       timeout: 30_000,
     },
-    () => {
+    async () => {
       const harness = createHarness();
-      const paths = writeCompletedAutoRestoreOrphanFixture();
+      const paths = await createCompletedAutoRestoreFixture(
+        path.join(tmpDir, ".nemoclaw", "state"),
+        "openclaw",
+        "c".repeat(32),
+      );
       const status = () =>
         harness.shieldsStatus("openclaw", true, {
           verifyLockState: () => ({ ok: true, issues: [] }),
@@ -596,18 +530,21 @@ describe("OpenClaw shields flow rollback and recovery", () => {
       status();
 
       expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
-      expect(Object.values(paths).map((file) => fs.existsSync(file))).toEqual([
-        false,
-        false,
-        false,
-        false,
-      ]);
+      expect(
+        [paths.containmentPath, paths.deadlinePath, paths.lockPath, paths.markerPath].map((file) =>
+          fs.existsSync(file),
+        ),
+      ).toEqual([false, false, false, false]);
     },
   );
 
-  it("preserves completed containment for a live ambiguous timer PID", () => {
+  it("preserves completed containment for a live ambiguous timer PID", async () => {
     const harness = createHarness();
-    const paths = writeCompletedAutoRestoreOrphanFixture();
+    const paths = await createCompletedAutoRestoreFixture(
+      path.join(tmpDir, ".nemoclaw", "state"),
+      "openclaw",
+      "c".repeat(32),
+    );
     const marker = JSON.parse(fs.readFileSync(paths.markerPath, "utf8"));
     marker.pid = process.pid;
     delete marker.timerProcessStartIdentity;
@@ -621,9 +558,13 @@ describe("OpenClaw shields flow rollback and recovery", () => {
     ]);
   });
 
-  it("gives safe retry guidance when completed recovery authority changes", () => {
+  it("gives safe retry guidance when completed recovery authority changes", async () => {
     const harness = createHarness();
-    const paths = writeCompletedAutoRestoreOrphanFixture();
+    const paths = await createCompletedAutoRestoreFixture(
+      path.join(tmpDir, ".nemoclaw", "state"),
+      "openclaw",
+      "c".repeat(32),
+    );
     const realRename = fs.renameSync.bind(fs);
     vi.spyOn(fs, "renameSync").mockImplementationOnce((source, destination) => {
       realRename(source, destination);
