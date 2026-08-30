@@ -95,7 +95,7 @@ function classifyForcedAdapterScrubRefusal(
  * Phase one of sandbox destroy. Remove the adapter entry from the retained
  * sandbox volume and detach exact MCP providers while preserving the global
  * provider objects (and therefore their host-only credentials) and registry
- * cleanup manifest. OpenShell requires the bound policy to be removed before
+ * cleanup manifest. OpenShell requires the generated policy key to be removed before
  * detach. Any failure restores the managed runtime before returning.
  *
  * `--force` may continue when the live adapter config cannot be mutated at all
@@ -122,7 +122,7 @@ export async function prepareMcpBridgesForDestroy(
   const adapterScrubAlreadySettled =
     !!currentSandbox.mcp?.destroyPreparedAt || !!currentSandbox.mcp?.destroyPendingAt;
   // Run the host-visible config preflight before
-  // discardSafeIncompleteMcpAdds, which may remove an owned policy for a
+  // discardSafeIncompleteMcpAdds, which may remove the generated live policy key for a
   // providerless preflighted add. That cleanup has no adapter/provider to
   // probe; complete entries get the teardown runtime probe after retry markers.
   let adapterScrubRefusal = adapterScrubAlreadySettled
@@ -366,7 +366,7 @@ export async function restoreMcpBridgesAfterDestroyAbort(
 /**
  * Phase two of sandbox destroy, called only after OpenShell confirmed the
  * sandbox is gone. Delete exact matching global providers, then clear the MCP
- * bridge manifest and owned custom-policy records in one registry update.
+ * bridge lifecycle record in one registry update.
  */
 export async function finalizeMcpBridgesAfterSandboxDelete(
   sandboxName: string,
@@ -425,15 +425,9 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
     }
   }
 
-  const finalSandbox = assertMcpDestroySnapshotCurrent(sandboxName, entries);
-  const ownedPolicyNames = new Set(entries.map((entry) => entry.policyName));
-  const remainingCustomPolicies = (finalSandbox.customPolicies ?? []).filter(
-    (policy) =>
-      !(ownedPolicyNames.has(policy.name) && policy.sourcePath === MCP_BRIDGE_POLICY_SOURCE),
-  );
+  assertMcpDestroySnapshotCurrent(sandboxName, entries);
   const cleared = registry.updateSandbox(sandboxName, {
     mcp: undefined,
-    customPolicies: remainingCustomPolicies.length > 0 ? remainingCustomPolicies : undefined,
   });
   if (!cleared) {
     throw new McpBridgeError(

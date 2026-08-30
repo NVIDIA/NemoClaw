@@ -58,8 +58,6 @@ describe("onboarding policy application", () => {
       withSandboxMutationLock,
       waitForSandboxReady: vi.fn(() => true),
       waitForSandboxControlPlaneReady: vi.fn(() => true),
-      setPolicyTier: vi.fn(),
-      getRecordedPolicyTier: vi.fn(() => null),
       parsePolicyPresetEnv: vi.fn(() => []),
       env: {},
     });
@@ -104,10 +102,11 @@ describe("onboarding policy application", () => {
         withSandboxMutationLock: async (_sandboxName, action) => await action(),
         waitForSandboxReady: vi.fn(() => true),
         waitForSandboxControlPlaneReady: vi.fn(() => true),
-        setPolicyTier: vi.fn(),
-        getRecordedPolicyTier: vi.fn(() => "balanced"),
         parsePolicyPresetEnv: vi.fn((value: string) =>
-          value.split(",").map((name) => name.trim()).filter(Boolean),
+          value
+            .split(",")
+            .map((name) => name.trim())
+            .filter(Boolean),
         ),
         env,
       });

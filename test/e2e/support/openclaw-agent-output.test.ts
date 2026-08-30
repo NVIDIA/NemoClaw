@@ -33,6 +33,43 @@ describe("OpenClaw agent-output fixture", () => {
     ).toBe("NEMOCLAW_E2E_READY_6002");
   });
 
+  it("accepts a completed tool replay whose final response and tool summary are successful", () => {
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          runId: "run-1",
+          status: "ok",
+          summary: "completed",
+          result: {
+            payloads: [{ text: "TOOLS_COMPLETE" }],
+            meta: {
+              replayInvalid: true,
+              finalAssistantVisibleText: "TOOLS_COMPLETE",
+              systemPromptReport: { tools: { entries: [{ name: "exec" }] } },
+              toolSummary: { calls: 3, failures: 0, tools: ["exec"] },
+            },
+          },
+        }),
+      ),
+    ).toBe("TOOLS_COMPLETE");
+    expect(
+      parseOpenClawAgentText(
+        JSON.stringify({
+          status: "ok",
+          summary: "completed",
+          result: {
+            payloads: [{ text: "UNTRUSTED_PAYLOAD" }],
+            meta: {
+              replayInvalid: true,
+              finalAssistantVisibleText: "TOOLS_COMPLETE",
+              toolSummary: { calls: 1, failures: 0, tools: ["exec"] },
+            },
+          },
+        }),
+      ),
+    ).toBe("");
+  });
+
   it("accepts a log-framed array of agent-output payloads", () => {
     expect(
       parseOpenClawAgentText(

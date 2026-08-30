@@ -214,7 +214,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
       hydrateCredentialEnv: () => "host-provider-key",
       runOpenshell: (args) =>
         args[0] === "provider" ? (providerLookups.shift() ?? registeredProvider)(args) : undefined,
-      staleRecovery: true,
+      staleRecovery: false,
     });
     configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
       endpointUrl: "https://inference.example.test/v1",
@@ -247,7 +247,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
         return credentialHydrations < 3 ? "host-provider-key" : null;
       },
       runOpenshell: providerRuntime([]),
-      staleRecovery: true,
+      staleRecovery: false,
     });
     configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
       endpointUrl: "https://inference.example.test/v1",
@@ -287,7 +287,7 @@ describe("rebuildSandbox flow: credential preflight", () => {
         args[0] === "provider"
           ? (providerLookups.shift() ?? indeterminateProvider)(args)
           : undefined,
-      staleRecovery: true,
+      staleRecovery: false,
     });
     configureSession(harness, "compatible-endpoint", "COMPATIBLE_API_KEY", {
       endpointUrl: "https://inference.example.test/v1",
@@ -392,25 +392,25 @@ describe("rebuildSandbox flow: credential preflight", () => {
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    "ollama-local",
-    "vllm-local",
-  ])("migrates a legacy %s target away from OPENAI_API_KEY (#2519)", async (provider) => {
-    const harness = createRebuildFlowHarness({
-      sandboxEntry: { provider, model: MODEL, credentialEnv: "OPENAI_API_KEY" },
-    });
-    configureSession(harness, provider, "OPENAI_API_KEY");
+  it.each(["ollama-local", "vllm-local"])(
+    "migrates a legacy %s target away from OPENAI_API_KEY (#2519)",
+    async (provider) => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { provider, model: MODEL, credentialEnv: "OPENAI_API_KEY" },
+      });
+      configureSession(harness, provider, "OPENAI_API_KEY");
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
 
-    const output = harness.logSpy.mock.calls.flat().map(String).join("\n");
-    expect(output).toContain("GH #2519");
-    expect(output).toContain(provider);
-    expect(harness.session.credentialEnv).toBeNull();
-    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
-  });
+      const output = harness.logSpy.mock.calls.flat().map(String).join("\n");
+      expect(output).toContain("GH #2519");
+      expect(output).toContain(provider);
+      expect(harness.session.credentialEnv).toBeNull();
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    },
+  );
 
   it("fails closed when a matching session omits the remote target credential", async () => {
     const harness = createRebuildFlowHarness({
