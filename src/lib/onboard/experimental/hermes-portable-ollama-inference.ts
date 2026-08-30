@@ -353,6 +353,7 @@ export interface HermesPortableOllamaRecoveryInput {
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
   readonly verifyRoute: () => SandboxEntry;
   readonly prepareProbeDependency?: () => HermesPortableOllamaPreparedProbeDependency;
+  readonly assertCallerCurrent?: () => void;
 }
 
 export interface HermesPortableOllamaPreparedProbeDependency {
@@ -505,6 +506,7 @@ export function recoverHermesPortableOllamaInference(
   const deps = { ...DEFAULT_RECOVERY_DEPS, ...overrides };
   const env = input.env ?? process.env;
   const stateDir = input.stateDir ?? defaultPortableDemoStateDir(env);
+  input.assertCallerCurrent?.();
   const snapshot = deps.readReceipt(input.sandboxName, stateDir);
   if (!snapshot || snapshot.receipt.phase !== "active" || !snapshot.successor) {
     failRecovery("active schema-6 lifecycle authority is missing");
@@ -524,6 +526,7 @@ export function recoverHermesPortableOllamaInference(
   requirePublishedOllamaRecoveryReceipt(receipt);
   const providerEntry = inferenceLifecycleRow(input.entry, receipt.providerId);
   const assertCallerCurrent = (): void => {
+    input.assertCallerCurrent?.();
     try {
       operating.assertCurrent();
     } catch {
@@ -532,6 +535,7 @@ export function recoverHermesPortableOllamaInference(
     if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
       failRecovery("sandbox registry authority changed during recovery");
     }
+    input.assertCallerCurrent?.();
   };
   const registryRecovery = atOllamaRecoveryPhase("REGISTRY_PREPARATION_POSTCONDITION", () =>
     deps.prepareRegistryRecovery({
@@ -607,6 +611,7 @@ export function recoverHermesPortableOllamaInference(
       },
     );
     const requireCurrent = (): void => {
+      assertCallerCurrent();
       registryRecovery.assertCurrent();
       operating.assertCurrent();
       runtimeAuthority.assertCurrent();
@@ -627,6 +632,7 @@ export function recoverHermesPortableOllamaInference(
       ) {
         failRecovery("host-local inference authority changed during recovery");
       }
+      assertCallerCurrent();
     };
     const verifyFinalRoute = (): void => {
       const verified = input.verifyRoute();

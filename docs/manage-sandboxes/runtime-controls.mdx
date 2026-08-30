@@ -159,11 +159,21 @@ Correct the reported state-directory write failure, then run `$$nemoclaw <name> 
 When recovery cannot complete, an interactive command returns an error, or the detached timer exits with a failure status.
 
 NemoClaw also records durable containment when an owner exits before it can prove that the owner's descendants stopped, or when ownership becomes ambiguous.
-Durable containment, retained gates, or the fail-closed state-directory error keeps new mutations blocked until you complete generation operator recovery.
-A `--dry-run` run of a `channels` or `policy` command takes no mutation lock, so you can still preview the change while mutations are blocked.
+When Shields are already UP after an abandoned auto-restore completes, run `$$nemoclaw <name> shields status`.
+NemoClaw removes the timer artifacts and lifecycle gates only when they all identify that completed process generation, the recorded owners are gone, and no Shields transition remains.
+Running the command again after successful cleanup is safe because the retired generation no longer supplies recovery authority.
+A live or ambiguous owner, a replaced or unrelated generation, conflicting artifacts, or a containment record with no remaining owner generation to verify remains fail-closed.
+Those conditions and retained gates keep new mutations blocked until the reported recovery completes.
+Do not retry the original sandbox-scoped command while recovery is active, including a `channels` or `policy` command with `--dry-run`.
+Run `$$nemoclaw <name> shields status` to complete or inspect recovery, and retry the original command only after `shields status` completes successfully.
 
-Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
-Verify each recorded generation is unchanged, remove only the stale generations first, and remove the containment generation last.
+If the error reports a live or ambiguous owner, let that process finish or stop it through normal process controls, then rerun `$$nemoclaw <name> shields status` without modifying lifecycle-lock or timer files.
+If the error says that completed recovery authority changed, rerun `$$nemoclaw <name> shields status` without modifying those files so NemoClaw can evaluate the current authority.
+If the error reports invalid or conflicting recovery artifacts, stop all NemoClaw processes for the sandbox and inspect each reported artifact.
+Retain every artifact unless its exact process generation is proven obsolete; remove only an artifact with that proof, then rerun `$$nemoclaw <name> shields status`.
+For a replaced or unrelated lifecycle generation, retain the files and follow the reported error.
+Apply the owner-generation removal order only when an error explicitly reports committed containment and supplies that order.
+Verify every reported identity is unchanged, remove only the exact stale owner generations first and the exact containment generation last, then rerun `$$nemoclaw <name> shields status`.
 
 ### Preserve Managed MCP Policy
 

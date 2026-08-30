@@ -1318,7 +1318,7 @@ async function runSnapshotRestore(
   if (targetSandbox !== sandboxName) {
     assertSandboxSnapshotCommandAvailable(targetSandbox, "sandbox:snapshot:restore");
   }
-  const orderedNames = [...new Set(lockNames)].sort();
+  const orderedNames = recoverCompletedAutoRestoreForSnapshotRestore(lockNames);
   const acquire = (index: number): Promise<void> =>
     index === orderedNames.length
       ? Promise.resolve().then(() => {
@@ -1330,6 +1330,17 @@ async function runSnapshotRestore(
         })
       : withSandboxMutationLock(orderedNames[index], () => acquire(index + 1));
   return acquire(0);
+}
+
+export function recoverCompletedAutoRestoreForSnapshotRestore(
+  sandboxNames: readonly string[],
+  stateDir?: string,
+): string[] {
+  const orderedNames = [...new Set(sandboxNames)].sort();
+  for (const name of orderedNames) {
+    shields.recoverCompletedAutoRestoreBeforeCommand(name, stateDir);
+  }
+  return orderedNames;
 }
 
 async function runSnapshotRestoreUnlocked(
