@@ -259,9 +259,9 @@
 
   "out_of_scope": [
     {
-      "name": "Podman / other container runtimes",
+      "name": "Other container runtimes",
       "status": "unsupported",
-      "notes": "Standard onboarding surfaces an explicit unsupported-runtime error for Podman (`src/lib/onboard/fatal-runtime-preflight.ts` prints the rejection; `src/lib/onboard/preflight.ts` flags the unsupported runtime upstream). The explicit portable experimental profile has one installer-preflight admission exception for the Podman unsupported-runtime finding, as accepted in issue #9007. It does not waive any other readiness blocker or make Podman generally supported. Only Docker Engine, Docker Desktop, and Colima are supported. See issue #420 (closed)."
+      "notes": "Native rootless Podman has the limited explicit support described in Deployment Paths. Containerd, CRI-O, and other runtime providers are not selectable for standard onboarding."
     },
     {
       "name": "Intel Mac (macOS x86_64)",
@@ -363,6 +363,11 @@
       "name": "Local CLI onboard",
       "status": "tested",
       "notes": "Run `$$nemoclaw onboard` on a tested platform with Docker available locally. Primary path."
+    },
+    {
+      "name": "Native rootless Podman on Linux",
+      "status": "caveated",
+      "notes": "Set `NEMOCLAW_GATEWAY_RUNTIME=podman` before standard onboarding. The provider requires a qualified current-user Podman socket, rootless service, cgroups v2, bridge networking and DNS, and exact managed-image receipts. Full native E2E qualification currently runs on Linux amd64; the managed-image contract accepts `linux/amd64` and `linux/arm64` receipts. Custom `--from` Dockerfiles and read-only host mounts are not qualified. The portable experimental profile remains separate."
     },
     {
       "name": "Headless Linux server",
