@@ -905,6 +905,7 @@ export interface HermesPortableOllamaPublishedInferenceAuthority {
   readonly receipt: ReturnType<typeof parseHostLocalInferenceReceipt>;
   readonly serializedReceipt: string;
   readonly receiptWriter: HostLocalInferenceReceiptWriter;
+  readonly assertTransactionCurrent: () => void;
   readonly assertCurrent: () => void;
 }
 
@@ -975,7 +976,7 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
   ) {
     throw new Error("Hermes Portable Ollama gateway publication authority changed.");
   }
-  const assertCurrent = (): void => {
+  const assertTransactionCurrent = (): void => {
     if (receiptState.readExact() !== serializedReceipt) {
       throw new Error("Hermes Portable Ollama published receipt authority changed.");
     }
@@ -983,6 +984,9 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
     if (!isDeepStrictEqual(currentJournal, journal)) {
       throw new Error("Hermes Portable Ollama gateway publication journal changed.");
     }
+  };
+  const assertCurrent = (): void => {
+    assertTransactionCurrent();
     const currentProvider = observeExactGatewayProvider(
       options.runGatewayOpenshell,
       "ollama-local",
@@ -1003,7 +1007,13 @@ export function prepareHermesPortableOllamaPublishedInferenceAuthority(options: 
       return serializedReceipt;
     },
   });
-  return Object.freeze({ receipt, serializedReceipt, receiptWriter, assertCurrent });
+  return Object.freeze({
+    receipt,
+    serializedReceipt,
+    receiptWriter,
+    assertTransactionCurrent,
+    assertCurrent,
+  });
 }
 
 export interface PreparedHermesPortableOllamaProviderRetirement {

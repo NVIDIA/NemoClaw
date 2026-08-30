@@ -21,6 +21,7 @@ export interface HermesPortableInferenceConnectRecoveryInput {
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
   readonly verifyRoute: () => SandboxEntry;
   readonly prepareProbeDependency?: () => HermesPortableOllamaPreparedProbeDependency;
+  readonly assertCallerTransactionCurrent?: () => void;
   readonly assertCallerCurrent?: () => void;
   readonly runGatewayOpenshell?: typeof captureHermesPortableInferenceRecoveryGateway;
 }
@@ -56,6 +57,7 @@ export function recoverHermesPortableInferenceForConnectProbe(
     readRegistry: input.readRegistry,
     verifyRoute: input.verifyRoute,
     prepareProbeDependency: input.prepareProbeDependency,
+    assertCallerTransactionCurrent: input.assertCallerTransactionCurrent,
     assertCallerCurrent: input.assertCallerCurrent,
   });
 }

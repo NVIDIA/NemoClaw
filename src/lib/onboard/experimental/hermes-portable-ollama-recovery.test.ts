@@ -103,6 +103,18 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
     }),
     preserveForRebuild: vi.fn(() => receipt),
   };
+  const managedOperation = {
+    providerId: "podman",
+    engine: {
+      operation: "host-local-inference",
+      engineId: "podman",
+      authorityId: `podman-endpoint:${"a".repeat(64)}`,
+    },
+    bindingSha256: "b".repeat(64),
+    assertAuthority: vi.fn(),
+    assertTransactionCurrent: vi.fn(),
+    managedRuntime: runtime,
+  };
   const prepared: HostLocalInferencePreparedStartup = {
     receipt,
     rollbackPriorState: "stopped",
@@ -160,18 +172,25 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
     return {
       serializedReceipt,
       sandboxAuthoritySha256: "6".repeat(64),
+      managedInspection: { running, receipt },
+      managedOperation,
     };
   });
   const overrides = {
     readReceipt: vi.fn(() => ({ receipt: { phase: "active" }, successor: {} })),
-    qualifyOperatingAuthority: vi.fn(() => ({ receipt: {}, assertCurrent: assertOperating })),
+    qualifyOperatingAuthority: vi.fn(() => ({
+      receipt: {},
+      assertTransactionCurrent: assertOperating,
+      assertCurrent: assertOperating,
+    })),
     createRuntimeAuthority: vi.fn(() => ({
       bundle: { identity: { id: "podman" } },
       inferenceStateDir: "/state/portable-inference/alpha",
+      assertTransactionCurrent: assertRuntime,
       assertCurrent: assertRuntime,
     })),
     prepareInferenceAuthority,
-    requireOperation: vi.fn(() => ({ managedRuntime: runtime })),
+    assertPreparedInferenceAuthorityCurrent: vi.fn(() => ({ running, receipt })),
     preparePublishedAuthority: vi.fn(() => ({
       receipt,
       serializedReceipt,
@@ -180,6 +199,7 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
         targetSha256: "f".repeat(64),
         writeExact,
       },
+      assertTransactionCurrent: assertPublished,
       assertCurrent: assertPublished,
     })),
     prepareRegistryRecovery: vi.fn(() => {
@@ -190,6 +210,10 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
         started,
         assertCurrent: vi.fn(() => {
           events.push("registry-current");
+          expect(registryRunning).toBe(true);
+        }),
+        assertTransactionCurrent: vi.fn(() => {
+          events.push("registry-transaction-current");
           expect(registryRunning).toBe(true);
         }),
         rollback: vi.fn(() => {
@@ -217,6 +241,7 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
   return {
     events,
     input,
+    managedOperation,
     overrides,
     prepared,
     prepareStartup,
@@ -506,9 +531,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     const harness = createHarness(true, true);
     const { validatePublishedResume: _validatePublishedResume, ...runtimeWithoutValidator } =
       harness.runtime;
-    harness.overrides.requireOperation.mockReturnValue({
-      managedRuntime: runtimeWithoutValidator as never,
-    });
+    harness.managedOperation.managedRuntime = runtimeWithoutValidator as never;
 
     expect(() =>
       recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
@@ -529,6 +552,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     };
     harness.overrides.prepareRegistryRecovery.mockReturnValue({
       started: false,
+      assertTransactionCurrent: vi.fn(),
       assertCurrent: vi.fn(),
       rollback: vi.fn(() => {
         harness.events.push("registry-rollback");
@@ -605,14 +629,9 @@ describe("Hermes Portable Ollama inference recovery", () => {
 
   it("restores the exact stopped state when final published authority changes", () => {
     const harness = createHarness();
-    const assertCurrent = vi
-      .fn()
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => undefined)
-      .mockImplementationOnce(() => {
-        throw new Error("published authority changed");
-      })
-      .mockImplementation(() => undefined);
+    const assertCurrent = vi.fn(() => {
+      throw new Error("published authority changed");
+    });
     harness.overrides.preparePublishedAuthority.mockReturnValue({
       receipt: harness.receipt,
       serializedReceipt: serializeHostLocalInferenceReceipt(harness.receipt),
@@ -621,6 +640,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
         targetSha256: "f".repeat(64),
         writeExact: harness.writeExact,
       },
+      assertTransactionCurrent: vi.fn(),
       assertCurrent,
     });
 
@@ -673,6 +693,44 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.runtime.preserveForRebuild).not.toHaveBeenCalled();
     expect(harness.events.filter((event) => event === "registry-start")).toHaveLength(1);
     expect(harness.events.filter((event) => event === "registry-release")).toHaveLength(2);
+  });
+
+  it.each([
+    ["recovered", false],
+    ["reused", true],
+  ] as const)("emits fixed outer timing after a successful %s transaction", (action, running) => {
+    const harness = createHarness(running, running);
+    let now = 0;
+    const onComplete = vi.fn();
+    Object.assign(harness.overrides, {
+      recoveryTiming: {
+        now: () => ++now,
+        onComplete,
+      },
+    });
+
+    expect(recoverHermesPortableOllamaInference(harness.input, harness.overrides as never)).toBe(
+      action,
+    );
+
+    expect(onComplete).toHaveBeenCalledOnce();
+    const evidence = onComplete.mock.calls[0]?.[0];
+    expect(Object.keys(evidence).sort()).toEqual([
+      "dependencyMs",
+      "entryAuthorityMs",
+      "finalCurrentnessMs",
+      "preRouteCurrentnessMs",
+      "routeMs",
+      "runtimeAction",
+      "totalMs",
+    ]);
+    expect(evidence).toMatchObject({ runtimeAction: action });
+    expect(
+      Object.entries(evidence)
+        .filter(([key]) => key.endsWith("Ms"))
+        .every(([, value]) => typeof value === "number" && value >= 0),
+    ).toBe(true);
+    expect(JSON.stringify(evidence)).not.toContain("qwen3-vl");
   });
 
   it("rejects registry drift before a runtime resume", () => {
@@ -741,9 +799,18 @@ describe("Hermes Portable Ollama inference recovery", () => {
           });
           break;
         case "runtime-inspection":
-          harness.runtime.inspectManaged.mockImplementation(() => {
-            throw new Error(canary);
-          });
+          {
+            const prepare = harness.overrides.prepareInferenceAuthority.getMockImplementation()!;
+            harness.overrides.prepareInferenceAuthority.mockImplementation((...args) => {
+              const preparedAuthority = prepare(...args);
+              return {
+                ...preparedAuthority,
+                get managedInspection(): NonNullable<typeof preparedAuthority.managedInspection> {
+                  throw new Error(canary);
+                },
+              };
+            });
+          }
           break;
       }
 
@@ -802,6 +869,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
     const canary = "nested recovery diagnostic canary";
     harness.overrides.prepareRegistryRecovery.mockReturnValue({
       started: true,
+      assertTransactionCurrent: vi.fn(),
       assertCurrent: vi.fn(),
       rollback: vi.fn(() => {
         throw new Error(canary);

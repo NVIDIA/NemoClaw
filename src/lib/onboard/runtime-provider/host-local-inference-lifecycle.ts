@@ -13,6 +13,8 @@ import type { SandboxEntry } from "../../state/registry/types";
 import type { RuntimeProviderBundle } from "./contract";
 import {
   type HostLocalInferenceDestroyResult,
+  type HostLocalManagedInferenceInspection,
+  type HostLocalInferenceOperation,
   type HostLocalInferenceReceipt,
   type HostLocalInferenceRuntime,
   parseHostLocalInferenceReceipt,
@@ -72,6 +74,10 @@ export interface PreparedHostLocalInferenceAuthority {
   readonly destroyRuntime?: HostLocalInferenceRuntime;
   /** Revalidates the pinned provider operation immediately before destructive use. */
   readonly assertDestroyRuntimeAuthority?: () => void;
+  /** Operation pinned while Hermes Portable prepares one published recovery transaction. */
+  readonly managedOperation?: HostLocalInferenceOperation;
+  /** Exact managed state observed after the unchanged full published entry proof. */
+  readonly managedInspection?: HostLocalManagedInferenceInspection;
 }
 
 export type HostLocalInferenceRetirementResult =
@@ -216,6 +222,7 @@ function requireRuntime(
   options: HostLocalInferenceLifecycleOptions,
   authorityMode: "current" | "published-recovery" = "current",
 ): {
+  readonly operation: HostLocalInferenceOperation;
   readonly runtime: HostLocalInferenceRuntime;
   readonly assertAuthority: () => void;
 } {
@@ -257,7 +264,11 @@ function requireRuntime(
     if (adapter.model !== sandbox.model) {
       fail("sandbox model differs from reconstructed llama.cpp authority");
     }
-    return Object.freeze({ runtime: adapter.runtime, assertAuthority: operation.assertAuthority });
+    return Object.freeze({
+      operation,
+      runtime: adapter.runtime,
+      assertAuthority: operation.assertAuthority,
+    });
   }
   const runtime = operation.managedRuntime;
   if (
@@ -271,7 +282,7 @@ function requireRuntime(
   ) {
     fail("provider returned an incomplete managed inference lifecycle");
   }
-  return Object.freeze({ runtime, assertAuthority: operation.assertAuthority });
+  return Object.freeze({ operation, runtime, assertAuthority: operation.assertAuthority });
 }
 
 function requireExactReceipt(
@@ -298,6 +309,13 @@ function prepare(
   const { runtime } = required;
   const reproved =
     mode === "destroy" ? runtime.prepareDestroy(receipt) : runtime.preserveForRebuild(receipt);
+  const managedInspection =
+    mode === "destroy" && authorityMode === "published-recovery"
+      ? runtime.inspectPublishedRecoveryCurrent?.(receipt)
+      : undefined;
+  if (mode === "destroy" && authorityMode === "published-recovery" && !managedInspection) {
+    fail("published recovery runtime inspection is missing after full entry proof");
+  }
   requireExactReceipt(
     serialized,
     reproved,
@@ -317,6 +335,9 @@ function prepare(
       ? {
           destroyRuntime: runtime,
           assertDestroyRuntimeAuthority: required.assertAuthority,
+          ...(authorityMode === "published-recovery"
+            ? { managedInspection, managedOperation: required.operation }
+            : {}),
         }
       : {}),
   });
@@ -402,6 +423,39 @@ function requireCurrentSandboxAuthority(
   ) {
     fail("sandbox authority changed after lifecycle preparation");
   }
+}
+
+/** Recheck the pinned published-recovery row and command endpoint without rebuilding its operation. */
+export function assertHermesPortableHostLocalInferencePublishedRecoveryAuthorityCurrent(
+  provider: RuntimeProviderBundle,
+  sandbox: HostLocalInferenceLifecycleSandbox,
+  prepared: PreparedHostLocalInferenceAuthority,
+): HostLocalManagedInferenceInspection {
+  requireCurrentSandboxAuthority(provider, sandbox, prepared, "destroy");
+  const operation = prepared.managedOperation;
+  if (
+    !operation ||
+    operation.providerId !== provider.identity.id ||
+    operation.engine.engineId !== provider.identity.id ||
+    operation.engine.operation !== "host-local-inference"
+  ) {
+    fail("published recovery operation authority is missing or changed");
+  }
+  if (!operation.assertTransactionCurrent) {
+    fail("published recovery operation currentness is missing");
+  }
+  operation.assertTransactionCurrent();
+  const inspectCurrent = operation.managedRuntime?.inspectPublishedRecoveryCurrent;
+  if (!inspectCurrent) {
+    fail("published recovery runtime currentness is missing");
+  }
+  const current = inspectCurrent(prepared.receipt);
+  requireExactReceipt(
+    prepared.serializedReceipt,
+    current.receipt,
+    "published recovery runtime authority changed",
+  );
+  return current;
 }
 
 export function confirmHostLocalInferenceAuthority(

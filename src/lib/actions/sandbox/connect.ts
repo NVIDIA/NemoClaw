@@ -898,6 +898,7 @@ function verifyOrRecoverHermesPortableInferenceRouteForProbeOnlyOrExit(
       sandboxName,
       authority,
       readRegistry: registry.getSandbox,
+      assertCallerTransactionCurrent: options.commandAuthority?.assertTransactionCurrent,
       assertCallerCurrent: options.commandAuthority?.assertCurrent,
       ...(options.commandAuthority
         ? {

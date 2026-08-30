@@ -321,6 +321,8 @@ export interface HostLocalInferenceOperation {
   readonly providerId: string;
   readonly engine: ContainerEngine;
   readonly bindingSha256: string;
+  /** Recheck the pinned executable and endpoint without repeating full provider qualification. */
+  readonly assertTransactionCurrent?: () => void;
   readonly assertAuthority: () => void;
   readonly spawn: HostLocalInferenceCommandSpawner;
   readonly createLlamaCppLifecycle: (
@@ -357,6 +359,10 @@ export interface HostLocalInferenceRuntime {
   ): HostLocalInferencePreparedStartup;
   /** Reinspect a failed published resume using only exact rollback-safe authority. */
   inspectPublishedRecoveryRestoration?(
+    receipt: HostLocalInferenceReceipt,
+  ): HostLocalManagedInferenceInspection;
+  /** Reinspect one published recovery through its retained transaction authority. */
+  inspectPublishedRecoveryCurrent?(
     receipt: HostLocalInferenceReceipt,
   ): HostLocalManagedInferenceInspection;
   /**

@@ -411,8 +411,14 @@ function qualifyOperatingCommandAuthority(
     authority.snapshot,
     operatingAuthority.assertCurrent,
   );
+  const assertTransactionCurrent = retainRequalifiedOperatingAuthority(
+    sandboxName,
+    stateDir,
+    authority.snapshot,
+    operatingAuthority.assertTransactionCurrent,
+  );
   assertCurrent();
-  return { ...commandAuthority, assertCurrent };
+  return { ...commandAuthority, assertTransactionCurrent, assertCurrent };
 }
 
 export function buildHermesPortableCommandAuthority(

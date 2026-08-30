@@ -233,6 +233,35 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
     expect(capture).not.toHaveBeenCalled();
   });
 
+  it("checks transaction currentness without repeating the Podman behavior matrix", () => {
+    const generation = { executableInode: 10n, parentInode: 20n };
+    const capture = successfulCapture();
+    const deps = authorityDeps(capture, executableDeps(generation));
+    const runtime = runtimeAuthority();
+    const socket = socketAuthority();
+    const sourceEnv = { PATH: "/usr/bin", HOME: "/home/test" };
+    const authority = captureHermesPortablePodmanExecutableAuthority(
+      socket,
+      runtime,
+      sourceEnv,
+      deps,
+    );
+    const command = createHermesPortablePodmanCommandAuthority(
+      authority,
+      socket,
+      runtime,
+      sourceEnv,
+      deps,
+    );
+    capture.mockClear();
+
+    command.assertTransactionCurrent();
+
+    expect(capture).not.toHaveBeenCalled();
+    command.assertCurrent();
+    expect(capture).toHaveBeenCalled();
+  });
+
   it.each([
     ["client", { client: "5.6.2" }],
     ["server", { server: "5.8.0" }],
