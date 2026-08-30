@@ -17,7 +17,7 @@ import {
   createMutableSandboxPolicyResult,
   minimalBlueprint,
   resultForCommandFailure,
-  resultWithBlueprintPolicyAuthority,
+  resultWithBlueprintPolicy,
   routedBlueprint,
   TEST_SANDBOX_POLICY,
   TEST_SANDBOX_POLICY_PATH,
@@ -48,6 +48,7 @@ vi.mock("node:fs", async (importOriginal) => {
     openSync: memory.openSync,
     readFileSync: vi.fn(memory.readFileSync),
     renameSync: memory.renameSync,
+    unlinkSync: memory.unlinkSync,
     writeFileSync: memory.writeFileSync,
     readdirSync: memory.readdirSync,
   };
@@ -93,7 +94,7 @@ function mockCurrentPolicy(stdout: string): void {
     if (args.join(" ") === "policy get -g test-gateway --base test-sandbox") {
       return { exitCode: 0, stdout, stderr: "" };
     }
-    return resultWithBlueprintPolicyAuthority(args, {
+    return resultWithBlueprintPolicy(args, {
       exitCode: 0,
       stdout: "",
       stderr: "",
@@ -389,6 +390,7 @@ describe("runner", () => {
       );
       expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
     });
+
   });
 
   describe("actionPlan", () => {
@@ -546,7 +548,7 @@ describe("runner", () => {
     beforeEach(() => {
       captureStdout();
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        resultWithBlueprintPolicyAuthority(args, {
+        resultWithBlueprintPolicy(args, {
           exitCode: 0,
           stdout: "",
           stderr: "",
@@ -581,7 +583,7 @@ describe("runner", () => {
       vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient-gateway.invalid");
       vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
       const commandResult = createMutableSandboxPolicyResult(() => {
-        const merged = [...store.entries()].find(([path]) => path.endsWith("merged-policy.yaml"));
+        const merged = [...store.entries()].find(([path]) => path.endsWith("policy-update.yaml"));
         return YAML.parse(merged?.[1].content ?? TEST_SANDBOX_POLICY);
       });
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
@@ -808,17 +810,6 @@ describe("runner", () => {
       expect(policyCalls.some((call) => call[1][1] === "set")).toBe(false);
     });
 
-    it("refuses to claim policy ownership when sandbox already exists", async () => {
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        resultForCommandFailure(args, ["sandbox", "create"], "already exists"),
-      );
-
-      await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-        /already exists.*cannot establish NemoClaw policy ownership/u,
-      );
-      expect(stdoutText()).not.toContain("Apply complete");
-    });
-
     it("throws when sandbox creation fails with other error", async () => {
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
         resultForCommandFailure(args, ["sandbox", "create"], "disk full"),
@@ -911,8 +902,7 @@ describe("runner", () => {
         [
           "inference",
           "inference_provider_created_by_apply",
-          "policy_additions",
-          "policy_authority",
+          "gateway",
           "profile",
           "run_id",
           "sandbox_created_by_apply",
@@ -1267,7 +1257,6 @@ describe("runner", () => {
         },
         sandbox_name: "sb",
         sandbox_created_by_apply: true,
-        policy_additions: {},
         inference: {
           provider_type: "openai",
           provider_name: "secret-provider",
@@ -1423,7 +1412,7 @@ describe("runner", () => {
     beforeEach(() => {
       captureStdout();
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
-        resultWithBlueprintPolicyAuthority(args, {
+        resultWithBlueprintPolicy(args, {
           exitCode: 0,
           stdout: "",
           stderr: "",

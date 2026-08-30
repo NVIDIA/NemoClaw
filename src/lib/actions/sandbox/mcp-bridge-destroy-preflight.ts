@@ -89,8 +89,7 @@ export async function discardSafeIncompleteMcpAdds(
   if (Object.keys(remaining).length === Object.keys(bridges).length) return sandbox;
   for (const entry of providerlessPreflighted) {
     if (options.sandboxAbsent) {
-      const ownedRegistration = assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
-      if (ownedRegistration) registry.removeCustomPolicyByName(sandboxName, entry.policyName);
+      assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
     } else {
       removeGeneratedPolicy(sandboxName, entry);
     }

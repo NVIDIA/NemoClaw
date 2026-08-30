@@ -7,7 +7,9 @@
  * lane: install an old NemoClaw/OpenShell gateway, create a real OpenClaw
  * sandbox, seed durable workspace + live process state, run the current
  * installer upgrade path, then assert the gateway reports the current
- * OpenShell version and the survivor claw remains restored/reachable.
+ * OpenShell version. Fixtures whose live OpenShell policy survives the gateway
+ * transition restore the claw; the cluster-era fixture fails closed with its
+ * backup intact because NemoClaw has no policy shadow from which to recreate it.
  * After the outer rebuild destroys the source sandbox, the inner onboarding flow
  * must continue the upgrade-owned recreation journal without opening a second transaction.
  *
@@ -83,6 +85,7 @@ const OLD_SANDBOX_BASE_IMAGE_REF =
 const OLD_OPENCLAW_VERSION = process.env.NEMOCLAW_OLD_OPENCLAW_VERSION ?? "2026.4.24";
 const CURRENT_OPENCLAW_VERSION = process.env.NEMOCLAW_CURRENT_OPENCLAW_VERSION ?? "";
 const OPENCLAW_STATE_UPGRADE_PROOF = process.env.NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF === "1";
+const LEGACY_GATEWAY_PRESERVES_LIVE_POLICY = OLD_NEMOCLAW_REF !== "v0.0.36";
 const OLD_INSTALLER_FIXTURE_IDENTITY = Object.freeze({
   nemoclawCommit: OLD_NEMOCLAW_COMMIT,
   nemoclawRef: OLD_NEMOCLAW_REF,
@@ -658,7 +661,11 @@ async function runInstallerPayload(
   logFile: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[] = [],
-  options: { hiddenOpenShellDir?: string; interactiveInput?: string } = {},
+  options: {
+    expectedExitCode?: number;
+    hiddenOpenShellDir?: string;
+    interactiveInput?: string;
+  } = {},
 ): Promise<ShellProbeResult> {
   const quotedInstallerArgs = installerArgs.map(shellQuote).join(" ");
   const installerCommand = `bash ${quotedInstallerArgs} >${shellQuote(logFile)} 2>&1`;
@@ -693,7 +700,10 @@ ${installerInvocation}`,
     artifactName: `${label}-installer-tail`,
     timeoutMs: 30_000,
   });
-  expect(result.exitCode, `${label} NemoClaw installer failed:\n${resultText(tail)}`).toBe(0);
+  expect(
+    result.exitCode,
+    `${label} NemoClaw installer returned an unexpected exit code:\n${resultText(tail)}`,
+  ).toBe(options.expectedExitCode ?? 0);
   return result;
 }
 
@@ -980,6 +990,7 @@ async function installCurrentNemoclawUpgrade(
     currentEnv,
     redactionValues,
     {
+      expectedExitCode: LEGACY_GATEWAY_PRESERVES_LIVE_POLICY ? 0 : 1,
       hiddenOpenShellDir: exerciseOrdinaryUpgrade ? hiddenOldOpenShellDir : undefined,
       // One answer covers a changed usage notice, when present, and the other
       // confirms the legacy managed-image recovery prompt.
@@ -999,7 +1010,23 @@ async function installCurrentNemoclawUpgrade(
       : currentLog.includes(expectedConfirmation),
   ).toBe(true);
   expect(currentLog).toContain("Pre-upgrade backup: 1 backed up, 0 failed, 0 skipped");
-  expect(currentLog).toContain("Existing sandboxes recovered; skipping generic onboarding");
+  const assertRecoveredInstaller = (): void => {
+    expect(currentLog).toContain("Existing sandboxes recovered; skipping generic onboarding");
+  };
+  const assertFailClosedInstaller = (): void => {
+    expect(currentLog).not.toContain("Existing sandboxes recovered; skipping generic onboarding");
+    expect(currentLog).toContain(
+      "Rebuild cannot recover its missing OpenShell policy or live workspace from NemoClaw registry metadata.",
+    );
+    expect(currentLog).toContain(
+      "Cannot rebuild an absent sandbox without its authoritative OpenShell policy.",
+    );
+    expect(currentLog).toContain("Generic onboarding will not run");
+    expect(currentLog).toContain(
+      "Installation incomplete: one or more existing sandboxes failed to upgrade.",
+    );
+  };
+  (LEGACY_GATEWAY_PRESERVES_LIVE_POLICY ? assertRecoveredInstaller : assertFailClosedInstaller)();
 
   const openshellVersion = await bash(host, `openshell --version`, {
     artifactName: "current-openshell-version",
@@ -1054,6 +1081,51 @@ async function assertSurvivorSandboxAfterUpgrade(host: HostCliClient): Promise<v
   });
   expectExitZero(list, "nemoclaw list after gateway upgrade");
   expectOutputContains(list, SURVIVOR_SANDBOX, "nemoclaw list must still show survivor sandbox");
+}
+
+async function assertMissingSurvivorFailsClosedAfterUpgrade(
+  host: HostCliClient,
+  currentInstallLog: string,
+): Promise<void> {
+  const currentLog = fs.readFileSync(currentInstallLog, "utf8");
+  const backupLine = currentLog
+    .split(/\r?\n/u)
+    .find((line) => line.includes(`✓ ${SURVIVOR_SANDBOX}:`) && line.includes("→ "));
+  const backupPath = backupLine?.split("→ ").at(-1)?.trim() ?? "";
+  expect(path.isAbsolute(backupPath), `upgrade backup path must be absolute: ${backupLine}`).toBe(
+    true,
+  );
+  expect(fs.existsSync(path.join(backupPath, "rebuild-manifest.json"))).toBe(true);
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(backupPath, "rebuild-manifest.json"), "utf8"),
+  ) as Record<string, unknown>;
+  expect(manifest.rebuildPolicyHandoff).toBeUndefined();
+  expect(
+    fs.readdirSync(backupPath).some((entry) => entry.startsWith("rebuild-policy-handoff.")),
+  ).toBe(false);
+
+  expect(fs.existsSync(REGISTRY_FILE), `${REGISTRY_FILE} must remain after failed recovery`).toBe(
+    true,
+  );
+  expect(fs.readFileSync(REGISTRY_FILE, "utf8")).toContain(`"${SURVIVOR_SANDBOX}"`);
+
+  const liveList = await bash(host, "openshell sandbox list", {
+    artifactName: "post-upgrade-openshell-sandbox-list",
+    timeoutMs: 60_000,
+  });
+  expectExitZero(liveList, "OpenShell sandbox list after fail-closed upgrade");
+  expect(resultText(liveList)).not.toContain(SURVIVOR_SANDBOX);
+
+  const registryList = await bash(host, "nemoclaw list", {
+    artifactName: "post-upgrade-nemoclaw-list",
+    timeoutMs: 60_000,
+  });
+  expectExitZero(registryList, "nemoclaw list after fail-closed upgrade");
+  expectOutputContains(
+    registryList,
+    SURVIVOR_SANDBOX,
+    "failed recovery must preserve the stranded registry record for explicit cleanup",
+  );
 }
 
 function runMacInstallerProbe(
@@ -1115,7 +1187,7 @@ const runOpenShellGatewayUpgrade = test;
 const runLinuxOpenShellGatewayUpgrade = test.skipIf(process.platform !== "linux");
 
 runLinuxOpenShellGatewayUpgrade(
-  "openshell-gateway-upgrade: upgrades old working OpenClaw claw and restores survivor state",
+  "openshell-gateway-upgrade: preserves live OpenShell state or fails closed without it",
   {
     timeout: TEST_TIMEOUT_MS,
     meta: {
@@ -1124,7 +1196,7 @@ runLinuxOpenShellGatewayUpgrade(
         "install pinned legacy NemoClaw and its sandbox",
         "start the survivor agent and workspace marker",
         "upgrade to the current OpenShell gateway",
-        "confirm survivor state and registry after upgrade",
+        "verify version-specific upgrade outcome",
       ],
     },
   },
@@ -1138,7 +1210,9 @@ runLinuxOpenShellGatewayUpgrade(
         "exact-name confirmation for the known-managed legacy fixture",
         "current scripts/install.sh gateway upgrade path",
         "sandbox exec /proc process probe",
-        "NemoClaw registry and durable workspace restore",
+        LEGACY_GATEWAY_PRESERVES_LIVE_POLICY
+          ? "NemoClaw registry and durable workspace restore"
+          : "fail-closed missing-policy diagnostics and preserved backup",
       ],
       oldNemoclawRef: OLD_NEMOCLAW_REF,
       oldNemoclawCommit: OLD_NEMOCLAW_COMMIT,
@@ -1226,16 +1300,25 @@ runLinuxOpenShellGatewayUpgrade(
     expect(Number.isInteger(survivorPid) && survivorPid > 0).toBe(true);
 
     progress.phase("upgrade to the current OpenShell gateway");
+    const currentInstallLog = artifacts.pathFor("current-install.log");
     await installCurrentNemoclawUpgrade(
       host,
       fake.baseUrl,
-      artifacts.pathFor("current-install.log"),
+      currentInstallLog,
       hiddenOldOpenShellDir,
     );
 
-    progress.phase("confirm survivor state and registry after upgrade");
-    await assertSurvivorSandboxAfterUpgrade(host);
-    await verifyOpenClawStateUpgradeProof(host, fake, artifacts, legacyStateContract);
+    const assertRecoveredUpgrade = async (): Promise<void> => {
+      await assertSurvivorSandboxAfterUpgrade(host);
+      await verifyOpenClawStateUpgradeProof(host, fake, artifacts, legacyStateContract);
+    };
+    const assertFailClosedUpgrade = async (): Promise<void> => {
+      await assertMissingSurvivorFailsClosedAfterUpgrade(host, currentInstallLog);
+    };
+    progress.phase("verify version-specific upgrade outcome");
+    await (
+      LEGACY_GATEWAY_PRESERVES_LIVE_POLICY ? assertRecoveredUpgrade : assertFailClosedUpgrade
+    )();
   },
 );
 
