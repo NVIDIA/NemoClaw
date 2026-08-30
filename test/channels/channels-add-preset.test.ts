@@ -387,19 +387,40 @@ describe("channels add applies a matching policy preset (#3437)", () => {
   });
 
   it.each(["telegram", "slack", "discord"])(
-    "applies the '%s' preset before triggering rebuild",
+    "applies the '%s' preset before provider registration and binds credentials afterward",
     async (channel) => {
       await addSandboxChannel("test-sb", { channel });
 
-      expect(applyPresetSpy).toHaveBeenCalledOnce();
-      expect(applyPresetSpy).toHaveBeenCalledWith("test-sb", channel, {
-        disclosedPresetState: "absent",
-        includeMessagingCredentialBindings: true,
-      });
+      expect(applyPresetSpy.mock.calls).toEqual([
+        [
+          "test-sb",
+          channel,
+          {
+            disclosedPresetState: "absent",
+            includeMessagingCredentialBindings: false,
+          },
+        ],
+        [
+          "test-sb",
+          channel,
+          {
+            disclosedPresetState: "absent",
+            includeMessagingCredentialBindings: true,
+          },
+        ],
+      ]);
       expect(loadPresetForSandboxSpy).toHaveBeenCalledWith("test-sb", channel);
-      expect(callOrder.indexOf(`applyPreset:${channel}`)).toBeLessThan(
-        callOrder.indexOf("promptAndRebuild"),
+      const presetCallIndexes = callOrder.flatMap((entry, index) =>
+        entry === `applyPreset:${channel}` ? [index] : [],
       );
+      expect(presetCallIndexes).toHaveLength(2);
+      expect(presetCallIndexes[0]).toBeLessThan(
+        callOrder.indexOf("upsertMessagingProviders"),
+      );
+      expect(callOrder.indexOf("upsertMessagingProviders")).toBeLessThan(
+        presetCallIndexes[1],
+      );
+      expect(presetCallIndexes[1]).toBeLessThan(callOrder.indexOf("promptAndRebuild"));
     },
   );
 
@@ -541,7 +562,15 @@ describe("channels add applies a matching policy preset (#3437)", () => {
   });
 
   it("rolls back providers and credentials without writing plan state when applyPreset fails", async () => {
-    applyPresetResult = false;
+    applyPresetSpy
+      .mockImplementationOnce((_name, presetName) => {
+        callOrder.push(`applyPreset:${presetName}`);
+        return true;
+      })
+      .mockImplementationOnce((_name, presetName) => {
+        callOrder.push(`applyPreset:${presetName}`);
+        return false;
+      });
 
     await expectExit(() => addSandboxChannel("test-sb", { channel: "telegram" }));
 
@@ -555,7 +584,15 @@ describe("channels add applies a matching policy preset (#3437)", () => {
   });
 
   it("keeps plan state and skips provider delete when rollback detach fails", async () => {
-    applyPresetResult = false;
+    applyPresetSpy
+      .mockImplementationOnce((_name, presetName) => {
+        callOrder.push(`applyPreset:${presetName}`);
+        return true;
+      })
+      .mockImplementationOnce((_name, presetName) => {
+        callOrder.push(`applyPreset:${presetName}`);
+        return false;
+      });
     runOpenshellSpy.mockImplementation((args: string[]) =>
       args.slice(0, 3).join(" ") === "sandbox provider detach"
         ? { ...successfulOpenshellResult(), status: 1, stderr: "permission denied" }
