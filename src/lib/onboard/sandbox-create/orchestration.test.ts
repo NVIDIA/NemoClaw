@@ -12,6 +12,7 @@ import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../sand
 import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import {
   assertApfCreateIntent,
+  bindRebuildPolicyProvidersToCreateArgs,
   bindRebuildPolicyProvidersToCreateIntent,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
@@ -60,6 +61,24 @@ describe("rebuild policy provider handoff", () => {
 
     expect(rebound.extraProviders).toEqual(["operator-provider", "mcp-provider"]);
     expect(original.extraProviders).toEqual(["operator-provider"]);
+  });
+
+  it("adds missing live-policy providers to the final create arguments", () => {
+    expect(
+      bindRebuildPolicyProvidersToCreateArgs(
+        ["--from", "image", "--provider", "operator-provider"],
+        {
+          credentialBindingProviders: ["operator-provider", "wechat-provider"],
+        },
+      ),
+    ).toEqual([
+      "--from",
+      "image",
+      "--provider",
+      "operator-provider",
+      "--provider",
+      "wechat-provider",
+    ]);
   });
 });
 

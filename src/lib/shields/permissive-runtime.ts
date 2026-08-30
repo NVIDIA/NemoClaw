@@ -38,7 +38,7 @@ export function describeCanonicalPolicyReference(policy: Record<string, unknown>
 import { materializeMessagingPolicySandboxName } from "../messaging/channels/policy";
 import { cleanupTempDir, secureTempFile } from "../onboard/temp-files";
 
-import { composeLiveMcpPolicies } from "./mcp-policy-transition";
+import { composeLiveNetworkPolicies } from "./mcp-policy-transition";
 
 const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
 
@@ -118,9 +118,7 @@ export function buildRuntimePermissivePolicy(
     !Array.isArray(live.network_policies)
       ? (live.network_policies as Record<string, unknown>)
       : {};
-  const hasLiveMcpPolicies = Object.keys(liveNetworkPolicies).some((key) =>
-    key.startsWith("mcp_bridge_"),
-  );
+  const hasLiveNetworkPolicies = Object.keys(liveNetworkPolicies).length > 0;
   const discordProviderName = deps.sandboxName ? `${deps.sandboxName}-discord-bridge` : null;
   const slackProviderNames = deps.sandboxName
     ? [`${deps.sandboxName}-slack-app`, `${deps.sandboxName}-slack-bridge`]
@@ -133,13 +131,13 @@ export function buildRuntimePermissivePolicy(
   const preserveCredentialBinding = preserveDiscordBinding || preserveSlackBinding;
 
   // No live startup-sealed or filesystem state to carry forward — keep the
-  // static path so the caller's apply path is unchanged unless live MCP
+  // static path so the caller's apply path is unchanged unless live network
   // entries must survive the complete-policy replacement.
   if (
     liveRw.length === 0 &&
     liveRo.length === 0 &&
     live?.landlock === undefined &&
-    !hasLiveMcpPolicies &&
+    !hasLiveNetworkPolicies &&
     deps.sandboxName === undefined
   ) {
     return basePermissivePath;
@@ -149,10 +147,13 @@ export function buildRuntimePermissivePolicy(
   try {
     baseYaml = deps.readBasePolicy();
   } catch (error) {
-    if (hasLiveMcpPolicies) {
-      throw new Error("Cannot read the Shields-down policy while live MCP policies are active", {
-        cause: error,
-      });
+    if (hasLiveNetworkPolicies) {
+      throw new Error(
+        "Cannot read the Shields-down policy while live network policies are active",
+        {
+          cause: error,
+        },
+      );
     }
     if (deps.sandboxName !== undefined) {
       throw new Error("Cannot read the Shields-down policy with credential provider bindings", {
@@ -163,8 +164,10 @@ export function buildRuntimePermissivePolicy(
   }
   let base = safeYamlObject(baseYaml);
   if (!base) {
-    if (hasLiveMcpPolicies) {
-      throw new Error("Cannot parse the Shields-down policy while live MCP policies are active");
+    if (hasLiveNetworkPolicies) {
+      throw new Error(
+        "Cannot parse the Shields-down policy while live network policies are active",
+      );
     }
     if (deps.sandboxName !== undefined) {
       throw new Error("Cannot parse the Shields-down policy with credential provider bindings");
@@ -226,16 +229,19 @@ export function buildRuntimePermissivePolicy(
   }
 
   const yaml = live
-    ? composeLiveMcpPolicies(YAML.stringify(base), deps.livePolicyYaml)
+    ? composeLiveNetworkPolicies(YAML.stringify(base), deps.livePolicyYaml)
     : YAML.stringify(base);
   if (deps.writeTempPolicy) {
     try {
       return deps.writeTempPolicy(yaml);
     } catch (error) {
-      if (hasLiveMcpPolicies) {
-        throw new Error("Cannot stage the Shields-down policy while live MCP policies are active", {
-          cause: error,
-        });
+      if (hasLiveNetworkPolicies) {
+        throw new Error(
+          "Cannot stage the Shields-down policy while live network policies are active",
+          {
+            cause: error,
+          },
+        );
       }
       if (deps.sandboxName !== undefined) {
         throw new Error("Cannot stage the Shields-down credential provider binding", {
@@ -255,10 +261,13 @@ export function buildRuntimePermissivePolicy(
     // writeFileSync failed. Clean it up so we do not leak a 0700 dir
     // on /tmp every time the write path errors.
     if (tmpPath) cleanupTempDir(tmpPath, TEMP_FILE_PREFIX);
-    if (hasLiveMcpPolicies) {
-      throw new Error("Cannot stage the Shields-down policy while live MCP policies are active", {
-        cause: error,
-      });
+    if (hasLiveNetworkPolicies) {
+      throw new Error(
+        "Cannot stage the Shields-down policy while live network policies are active",
+        {
+          cause: error,
+        },
+      );
     }
     if (deps.sandboxName !== undefined) {
       throw new Error("Cannot stage the Shields-down credential provider binding", {
@@ -269,34 +278,35 @@ export function buildRuntimePermissivePolicy(
   }
 }
 
-export interface LiveMcpRuntimePolicyDeps {
+export interface LiveNetworkRuntimePolicyDeps {
   livePolicyYaml: string;
   readBasePolicy: () => string;
   writeTempPolicy?: (yaml: string) => string;
 }
 
 /**
- * Preserve current live MCP policy entries in a custom Shields-down policy.
- * OpenShell's live document is the only source used for their keys and content.
+ * Preserve current live OpenShell policy entries in a custom Shields-down
+ * policy. OpenShell's live document is the only source used for their keys and
+ * content.
  */
-export function buildRuntimePolicyWithLiveMcpEntries(
+export function buildRuntimePolicyWithLiveNetworkEntries(
   _basePolicyPath: string,
-  deps: LiveMcpRuntimePolicyDeps,
+  deps: LiveNetworkRuntimePolicyDeps,
 ): string {
   let baseYaml: string;
   try {
     baseYaml = deps.readBasePolicy();
   } catch (error) {
-    throw new Error("Cannot read the Shields policy while preserving live MCP entries", {
+    throw new Error("Cannot read the Shields policy while preserving live network entries", {
       cause: error,
     });
   }
-  const yaml = composeLiveMcpPolicies(baseYaml, deps.livePolicyYaml);
+  const yaml = composeLiveNetworkPolicies(baseYaml, deps.livePolicyYaml);
   if (deps.writeTempPolicy) {
     try {
       return deps.writeTempPolicy(yaml);
     } catch (error) {
-      throw new Error("Cannot stage the Shields policy with live MCP entries", {
+      throw new Error("Cannot stage the Shields policy with live network entries", {
         cause: error,
       });
     }
@@ -309,7 +319,7 @@ export function buildRuntimePolicyWithLiveMcpEntries(
     return tmpPath;
   } catch (error) {
     if (tmpPath) cleanupTempDir(tmpPath, TEMP_FILE_PREFIX);
-    throw new Error("Cannot stage the Shields policy with live MCP entries", {
+    throw new Error("Cannot stage the Shields policy with live network entries", {
       cause: error,
     });
   }

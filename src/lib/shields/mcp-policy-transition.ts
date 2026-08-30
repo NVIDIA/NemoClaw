@@ -31,18 +31,24 @@ function readNetworkPolicies(
 }
 
 /**
- * Preserve the live MCP policy namespace while composing a temporary Shields
- * policy. OpenShell is the authority for both the keys and their content; MCP
- * registry state is deliberately not consulted or used as an ownership claim.
+ * Preserve OpenShell's live policy while composing a temporary Shields policy.
+ * The target's intentional permissive entries win ordinary name collisions;
+ * live MCP entries win because their exact runtime-generated content has no
+ * static equivalent. Every other live-only entry is carried through unchanged.
  */
-export function composeLiveMcpPolicies(targetPolicyYaml: string, livePolicyYaml: string): string {
+export function composeLiveNetworkPolicies(
+  targetPolicyYaml: string,
+  livePolicyYaml: string,
+): string {
   const target = parsePolicyDocument(targetPolicyYaml, "Target Shields policy");
   const targetPolicies = readNetworkPolicies(target, "Target Shields policy");
   const live = parsePolicyDocument(livePolicyYaml, "Live OpenShell policy");
   const livePolicies = readNetworkPolicies(live, "Live OpenShell policy");
 
   for (const [key, policy] of Object.entries(livePolicies)) {
-    if (key.startsWith(MCP_POLICY_KEY_PREFIX)) targetPolicies[key] = structuredClone(policy);
+    if (key.startsWith(MCP_POLICY_KEY_PREFIX) || !Object.hasOwn(targetPolicies, key)) {
+      targetPolicies[key] = structuredClone(policy);
+    }
   }
 
   target.network_policies = targetPolicies;

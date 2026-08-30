@@ -75,7 +75,7 @@ const {
   resolveAgentStateLockContract,
 }: typeof import("../sandbox/agent-config") = require("../sandbox/agent-config");
 const {
-  buildRuntimePolicyWithLiveMcpEntries,
+  buildRuntimePolicyWithLiveNetworkEntries,
   buildRuntimePermissivePolicy,
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
 const { cleanupTempDir, secureTempFile } = require("../onboard/temp-files");
@@ -5221,8 +5221,9 @@ function shieldsDownWithoutHostLock(
       // GPU, /opt/hermes on Hermes, /home/linuxbrew on post-#3913 OpenClaw,
       // etc.) are not present in the static YAML. See #3942, #3957, #3168.
       // policyYaml is the pre-parsed body we already captured for the
-      // snapshot above — reuse it instead of re-fetching. Exact generated MCP
-      // entries are overlaid without copying any unrelated live egress.
+      // snapshot above — reuse it instead of re-fetching. OpenShell-only
+      // entries are carried through without replacing the intentional
+      // permissive forms of baseline entries with the same names.
       policyFile = buildRuntimePermissivePolicy(basePath, {
         livePolicyYaml: policyYaml,
         readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
@@ -5231,7 +5232,7 @@ function shieldsDownWithoutHostLock(
       policyFileIsTemp = policyFile !== basePath;
     } else if (fs.existsSync(policyName)) {
       const basePath = path.resolve(policyName);
-      policyFile = buildRuntimePolicyWithLiveMcpEntries(basePath, {
+      policyFile = buildRuntimePolicyWithLiveNetworkEntries(basePath, {
         livePolicyYaml: policyYaml,
         readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
       });

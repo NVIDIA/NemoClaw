@@ -25,6 +25,7 @@ import {
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
 import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
@@ -208,6 +209,14 @@ export async function resolveRebuildLiveState(
 
   if (reconciled.state === "missing") {
     if (options.authoritativeRecoveryPolicyAvailable === true) {
+      try {
+        removeStaleRebuildDockerOrphan(sandboxName, sb.openshellDriver, log);
+      } catch (error) {
+        bail(
+          `Prepared-recovery Docker orphan cleanup failed: ${error instanceof Error ? error.message : String(error)}.`,
+        );
+        return null;
+      }
       log(
         "Stale-sandbox recovery: the sandbox is absent, but its transaction-bound policy handoff is intact",
       );

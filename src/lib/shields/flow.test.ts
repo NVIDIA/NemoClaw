@@ -194,7 +194,7 @@ describe("shields command flow", () => {
     ).toThrow("policy verification failed");
 
     expect(harness.policySetBodies.map((body) => YAML.parse(body).network_policies)).toEqual([
-      {},
+      { test: {} },
       { test: {} },
     ]);
     expect(harness.getOpenClawPosture()).toBe("mutable");
@@ -207,35 +207,31 @@ describe("shields command flow", () => {
     ).toEqual([]);
   });
 
-  it(
-    "shieldsDown preserves an exact live MCP policy without shadow ownership state (#7952)",
-    {
-      timeout: 15_000,
-    },
-    () => {
-      const alpha = managedMcpPolicy("alpha");
-      const harness = createHarness({
-        livePolicyYaml: YAML.stringify({
-          version: 1,
-          network_policies: {
-            restrictive_baseline: { endpoints: [{ host: "baseline.example.com" }] },
-            mcp_bridge_alpha: alpha.networkPolicy,
-          },
-        }),
-        sandboxEntry: managedMcpSandbox([alpha]),
-      });
+  it("shieldsDown preserves exact live OpenShell policy without shadow ownership state (#7952)", () => {
+    const alpha = managedMcpPolicy("alpha");
+    const harness = createHarness({
+      livePolicyYaml: YAML.stringify({
+        version: 1,
+        network_policies: {
+          restrictive_baseline: { endpoints: [{ host: "baseline.example.com" }] },
+          mcp_bridge_alpha: alpha.networkPolicy,
+        },
+      }),
+      sandboxEntry: managedMcpSandbox([alpha]),
+    });
 
-      harness.shieldsDown("openclaw", {
-        timeout: "5m",
-        reason: "managed MCP transition coverage",
-        throwOnError: true,
-      });
+    harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "managed MCP transition coverage",
+      throwOnError: true,
+    });
 
-      const applied = YAML.parse(harness.policySetBodies.at(-1)!);
-      expect(applied.network_policies.mcp_bridge_alpha).toEqual(alpha.networkPolicy);
-      expect(applied.network_policies).not.toHaveProperty("restrictive_baseline");
-    },
-  );
+    const applied = YAML.parse(harness.policySetBodies.at(-1)!);
+    expect(applied.network_policies.mcp_bridge_alpha).toEqual(alpha.networkPolicy);
+    expect(applied.network_policies.restrictive_baseline).toEqual({
+      endpoints: [{ host: "baseline.example.com" }],
+    });
+  });
 
   it("isolates same-millisecond policy snapshots and cleanup across sandboxes", () => {
     const fixedNow = Date.now();
@@ -1198,13 +1194,7 @@ describe("shields command flow", () => {
     const processToken = "6".repeat(32);
     fs.mkdirSync(stateDir, { recursive: true });
     const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
-    writeActivePolicyTransition(
-      stateDir,
-      "openclaw",
-      processToken,
-      snapshotPath,
-      snapshotPolicy,
-    );
+    writeActivePolicyTransition(stateDir, "openclaw", processToken, snapshotPath, snapshotPolicy);
     fs.writeFileSync(
       path.join(stateDir, "shields-openclaw.json"),
       JSON.stringify({
@@ -1292,13 +1282,7 @@ describe("shields command flow", () => {
     expect(startIdentity).toBeTypeOf("string");
     fs.mkdirSync(stateDir, { recursive: true });
     const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
-    writeActivePolicyTransition(
-      stateDir,
-      "openclaw",
-      processToken,
-      snapshotPath,
-      snapshotPolicy,
-    );
+    writeActivePolicyTransition(stateDir, "openclaw", processToken, snapshotPath, snapshotPolicy);
     fs.writeFileSync(
       path.join(stateDir, "shields-openclaw.json"),
       JSON.stringify({

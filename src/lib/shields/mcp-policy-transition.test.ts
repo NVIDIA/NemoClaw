@@ -4,10 +4,10 @@
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { composeLiveMcpPolicies } from "./mcp-policy-transition";
+import { composeLiveNetworkPolicies } from "./mcp-policy-transition";
 
-describe("live MCP Shields policy composition", () => {
-  it("preserves externally edited MCP entries directly from OpenShell", () => {
+describe("live OpenShell Shields policy composition", () => {
+  it("preserves externally edited and live-only entries directly from OpenShell", () => {
     const target = YAML.stringify({
       version: 1,
       network_policies: { permissive_baseline: {} },
@@ -21,11 +21,12 @@ describe("live MCP Shields policy composition", () => {
       },
     });
 
-    const composed = YAML.parse(composeLiveMcpPolicies(target, live));
+    const composed = YAML.parse(composeLiveNetworkPolicies(target, live));
 
     expect(composed.network_policies).toEqual({
       permissive_baseline: {},
       mcp_bridge_alpha: edited,
+      unrelated_live_entry: { endpoints: [{ host: "unrelated.example.com" }] },
     });
   });
 
@@ -40,13 +41,13 @@ describe("live MCP Shields policy composition", () => {
     });
 
     expect(
-      YAML.parse(composeLiveMcpPolicies(target, live)).network_policies.mcp_bridge_alpha,
+      YAML.parse(composeLiveNetworkPolicies(target, live)).network_policies.mcp_bridge_alpha,
     ).toEqual({ endpoints: [{ host: "live.example.com" }] });
   });
 
   it("preserves every live key in the MCP namespace without an ownership manifest", () => {
     const result = YAML.parse(
-      composeLiveMcpPolicies(
+      composeLiveNetworkPolicies(
         "version: 1\nnetwork_policies: {}\n",
         "version: 1\nnetwork_policies:\n  mcp_bridge_: {}\n",
       ),
@@ -56,7 +57,17 @@ describe("live MCP Shields policy composition", () => {
 
   it("rejects a malformed live document instead of inventing MCP state", () => {
     expect(() =>
-      composeLiveMcpPolicies("version: 1\nnetwork_policies: {}\n", "network_policies: ["),
+      composeLiveNetworkPolicies("version: 1\nnetwork_policies: {}\n", "network_policies: ["),
     ).toThrow(/Live OpenShell policy is not valid YAML/);
+  });
+
+  it("keeps an intentional permissive target entry on an ordinary name collision", () => {
+    const composed = YAML.parse(
+      composeLiveNetworkPolicies(
+        "version: 1\nnetwork_policies:\n  npm: {access: full}\n",
+        "version: 1\nnetwork_policies:\n  npm: {access: restricted}\n",
+      ),
+    );
+    expect(composed.network_policies.npm).toEqual({ access: "full" });
   });
 });

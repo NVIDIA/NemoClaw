@@ -77,6 +77,25 @@ export function bindRebuildPolicyProvidersToCreateIntent(
   };
 }
 
+/** Finalize provider arguments from the exact policy that creation consumes. */
+export function bindRebuildPolicyProvidersToCreateArgs(
+  createArgs: readonly string[],
+  policy: Pick<import("../initial-policy").InitialSandboxPolicy, "credentialBindingProviders">,
+): string[] {
+  const result = [...createArgs];
+  const attached = new Set(
+    result.flatMap((value, index) =>
+      index > 0 && result[index - 1] === "--provider" ? [value] : [],
+    ),
+  );
+  for (const provider of policy.credentialBindingProviders ?? []) {
+    if (attached.has(provider)) continue;
+    result.push("--provider", provider);
+    attached.add(provider);
+  }
+  return result;
+}
+
 function bindRebuildPolicySourceProvidersToCreateIntent(
   intent: ResolvedSandboxCreateIntent,
   policySourcePath: string | undefined,
@@ -2044,8 +2063,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         )
       : materializedInitialSandboxPolicy;
     const createArgv = createIntent?.rebuildPolicySourcePath
-      ? materializedCreateArgv.map((value, index, argv) =>
-          index > 0 && argv[index - 1] === "--policy" ? initialSandboxPolicy.policyPath : value,
+      ? bindRebuildPolicyProvidersToCreateArgs(
+          materializedCreateArgv.map((value, index, argv) =>
+            index > 0 && argv[index - 1] === "--policy" ? initialSandboxPolicy.policyPath : value,
+          ),
+          initialSandboxPolicy,
         )
       : materializedCreateArgv;
     const restoreBackupPath =

@@ -537,6 +537,8 @@ test(
           oldDockerfile,
           "--gateway",
           "nemoclaw",
+          "--policy",
+          path.join(REPO_ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
           "--no-tty",
           "--",
           "true",
@@ -742,7 +744,7 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     );
     expectExitZero(rebuild, "nemoclaw rebuild");
     const rebuildText = resultText(rebuild);
-    expect(rebuildText).toContain(`Sandbox '${SANDBOX_NAME}' rebuilt successfully`);
+    expect(rebuildText).toContain(`Sandbox '${SANDBOX_NAME}' rebuild completed`);
     expect(rebuildText).not.toContain("post-restore steps were incomplete");
 
     // Phase 7: state preservation, upgrade, token rotation, backup hygiene, and
