@@ -299,7 +299,10 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     )) as never);
   const recoverHermesPortableOllamaInferenceSpy = vi
     .spyOn(hermesInferenceRecovery, "recoverHermesPortableInferenceForConnectProbe")
-    .mockImplementation(((input: { verifyRoute: () => unknown }) => {
+    .mockImplementation(((input: {
+      verifyRoute: () => unknown;
+      prepareProbeDependency?: () => { release: () => void };
+    }) => {
       if (options.hermesInferenceRecoveryPhase) {
         throw new hermesOllamaInference.HermesPortableOllamaRecoveryPhaseError(
           options.hermesInferenceRecoveryPhase,
@@ -315,6 +318,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         );
       }
       input.verifyRoute();
+      input.prepareProbeDependency?.().release();
       return "reused";
     }) as never);
   const requalifyPortableAgentAuthoritySpy = vi

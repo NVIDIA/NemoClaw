@@ -352,6 +352,12 @@ export interface HermesPortableOllamaRecoveryInput {
   readonly runGatewayOpenshell: HermesPortableOllamaGatewayRunner;
   readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
   readonly verifyRoute: () => SandboxEntry;
+  readonly prepareProbeDependency?: () => HermesPortableOllamaPreparedProbeDependency;
+}
+
+export interface HermesPortableOllamaPreparedProbeDependency {
+  readonly release: () => void;
+  readonly rollback: () => void;
 }
 
 interface HermesPortableOllamaRecoveryDeps {
@@ -639,20 +645,35 @@ export function recoverHermesPortableOllamaInference(
       return current;
     });
     if (inspected.running) {
-      requireExactRecoveryReceipt(
-        serializedRegistryReceipt,
-        runtime.preserveForRebuild(receipt),
-        "running runtime validation changed receipt",
-      );
-      requireCurrent();
-      verifyFinalRoute();
-      requireCurrent();
-      registryRecovery.release();
-      return "reused";
+      let preparedDependency: HermesPortableOllamaPreparedProbeDependency | null = null;
+      try {
+        requireExactRecoveryReceipt(
+          serializedRegistryReceipt,
+          runtime.preserveForRebuild(receipt),
+          "running runtime validation changed receipt",
+        );
+        requireCurrent();
+        verifyFinalRoute();
+        preparedDependency = input.prepareProbeDependency?.() ?? null;
+        requireCurrent();
+        registryRecovery.release();
+        preparedDependency?.release();
+        return "reused";
+      } catch (error) {
+        if (preparedDependency) {
+          try {
+            preparedDependency.rollback();
+          } catch (rollbackError) {
+            throw rollbackError;
+          }
+        }
+        throw error;
+      }
     }
 
     let prepared: HostLocalInferencePreparedStartup;
     ollamaStateRestored = false;
+    let preparedDependency: HermesPortableOllamaPreparedProbeDependency | null = null;
     try {
       requireCurrent();
       prepared = deps.prepareStartup(
@@ -695,6 +716,7 @@ export function recoverHermesPortableOllamaInference(
       );
       requireCurrent();
       verifyFinalRoute();
+      preparedDependency = input.prepareProbeDependency?.() ?? null;
       const finalizePublishedResume = prepared.finalizePublishedResume;
       if (!finalizePublishedResume) {
         failRecovery("runtime provider lacks rollback-safe published resume finalization");
@@ -706,8 +728,17 @@ export function recoverHermesPortableOllamaInference(
       );
       ollamaStateRestored = true;
       registryRecovery.release();
+      preparedDependency?.release();
       return "recovered";
     } catch (error) {
+      let dependencyRollbackError: unknown = null;
+      if (preparedDependency) {
+        try {
+          preparedDependency.rollback();
+        } catch (rollbackError) {
+          dependencyRollbackError = rollbackError;
+        }
+      }
       try {
         restoreStoppedRuntime(prepared, serializedRegistryReceipt);
         ollamaStateRestored = true;
@@ -717,6 +748,7 @@ export function recoverHermesPortableOllamaInference(
           "runtime-restoration-unproved",
         );
       }
+      if (dependencyRollbackError) throw dependencyRollbackError;
       throw error;
     }
   } catch (error) {

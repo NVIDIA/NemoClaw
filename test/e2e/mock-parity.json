@@ -138,15 +138,20 @@
     },
     {
       "live": "test/e2e/live/full-e2e.test.ts",
-      "liveSources": ["test/e2e/live/full-e2e-workload-evidence.ts"],
+      "liveSources": [
+        "test/e2e/live/full-e2e-workload-evidence.ts",
+        "test/e2e/live/agent-turn-latency-helpers.ts",
+        "test/e2e/live/full-e2e-inference-probe.ts"
+      ],
       "fast": [
         "test/e2e/support/hosted-inference.test.ts",
         "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/launch-agent-turn.test.ts",
-        "test/e2e/support/onboard-performance.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/managed-image-receipt.test.ts"
+        "test/e2e/support/managed-image-receipt.test.ts",
+        "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
     {
@@ -184,6 +189,8 @@
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/workflow-e2e-progress.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts",
+        "test/helpers/e2e-answer-assertions.test.ts",
         "test/install/installer-hash-check.test.ts",
         "test/e2e-runtime/runner.test.ts"
       ]
@@ -202,6 +209,7 @@
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
+        "test/helpers/e2e-answer-assertions.test.ts",
         "test/process-recovery/process-recovery-supervisor-relaunch.test.ts",
         "test/onboarding/docker-final-handoff-lifecycle.test.ts"
       ]
@@ -307,10 +315,13 @@
     },
     {
       "live": "test/e2e/live/agent-turn-latency.test.ts",
+      "liveSources": ["test/e2e/live/agent-turn-latency-helpers.ts"],
       "fast": [
         "test/e2e/support/agent-turn-latency-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts",
+        "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
     {
@@ -319,7 +330,8 @@
       "fast": [
         "test/e2e/support/bedrock-runtime-compatible-anthropic-progress.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },
     {
@@ -333,7 +345,8 @@
         "src/lib/onboard/policy-resume-selection.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/onboard-performance.test.ts"
+        "test/e2e/support/brave-search-config.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },
     {
@@ -369,10 +382,15 @@
     },
     {
       "live": "test/e2e/live/common-egress-agent.test.ts",
+      "liveSources": [
+        "test/e2e/live/common-egress-agent-helpers.ts",
+        "test/e2e/live/openclaw-agent-assertion.ts"
+      ],
       "fast": [
+        "test/e2e/support/common-egress-agent-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/common-egress-agent-helpers.test.ts"
+        "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },
     {
@@ -411,19 +429,25 @@
       "live": "test/e2e/live/gpu-double-onboard.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/gpu-e2e.test.ts",
-      "liveSources": ["test/e2e/live/gpu-e2e-helpers.ts"],
+      "liveSources": [
+        "test/e2e/live/gpu-e2e-helpers.ts",
+        "test/e2e/live/hermes-cli-adapter-live.ts"
+      ],
       "fast": [
         "test/e2e/support/gpu-e2e-helpers.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/workflow-plan.test.ts",
+        "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
     {
@@ -440,13 +464,15 @@
     },
     {
       "live": "test/e2e/live/hermes-e2e.test.ts",
+      "liveSources": ["test/e2e/live/hermes-cli-adapter-live.ts"],
       "fast": [
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
-        "test/e2e/support/inference-adapter.test.ts"
+        "test/e2e/support/inference-adapter.test.ts",
+        "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },
     {
@@ -492,12 +518,14 @@
     {
       "live": "test/e2e/live/kimi-inference-compat.test.ts",
       "fast": [
+        "test/e2e/support/openclaw-agent-output.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/mcp-bridge.test.ts",
+      "liveSources": ["test/e2e/live/mcp-bridge-cleanup.ts"],
       "fast": [
         "src/lib/actions/sandbox/mcp-bridge-adapter-registration.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-adapter-teardown.test.ts",
@@ -505,6 +533,7 @@
         "src/lib/actions/sandbox/mcp-bridge-provider.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/mcp-bridge-cleanup.test.ts",
         "test/e2e/support/mcp-bridge-hermes-lifecycle.test.ts",
         "test/e2e/support/mcp-bridge-onboard-env.test.ts",
         "test/e2e/support/mcp-bridge-reliability.test.ts",
@@ -515,9 +544,11 @@
     },
     {
       "live": "test/e2e/live/messaging-compatible-endpoint.test.ts",
+      "liveSources": ["test/e2e/live/messaging-compatible-endpoint-helpers.ts"],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },
     {
@@ -564,7 +595,8 @@
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },
     {
@@ -595,7 +627,8 @@
       "live": "test/e2e/live/openshell-gateway-upgrade.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/openclaw-agent-output.test.ts"
       ]
     },
     {
@@ -809,8 +842,13 @@
     },
     {
       "live": "test/e2e/live/windows-mxc-openclaw-process-container.test.ts",
+      "liveSources": [
+        "test/e2e/live/windows-mxc-inactive-onboarding-composition.ts",
+        "test/e2e/live/windows-mxc-openclaw-process-container-helpers.ts"
+      ],
       "fast": [
         "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/windows-mxc-inactive-onboarding-composition.test.ts",
         "test/e2e/support/windows-mxc-openclaw-process-container.test.ts"
       ]
     }
