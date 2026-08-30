@@ -105,8 +105,6 @@ describe("onboarding policy application", () => {
         withSandboxMutationLock: async (_sandboxName, action) => await action(),
         waitForSandboxReady: vi.fn(() => true),
         waitForSandboxControlPlaneReady: vi.fn(() => true),
-        setPolicyTier: vi.fn(),
-        getRecordedPolicyTier: vi.fn(() => "open"),
         parsePolicyPresetEnv: vi.fn(() => []),
         env: {},
       });

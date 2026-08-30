@@ -42,5 +42,4 @@ describe("makeMessagingPlan", () => {
     expect(disabledChannels).toEqual(["telegram"]);
     expect(credentialBindings[0].providerName).toBe("my-assistant-telegram-bridge");
   });
-
 });

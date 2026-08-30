@@ -92,11 +92,7 @@ describe("messaging policy presets", () => {
       ),
     ).toEqual(["npm", "slack", "custom-egress"]);
     expect(
-      pruneInactiveMessagingPolicyPresets(
-        ["npm", "slack", "googlechat"],
-        ["googlechat"],
-        "hermes",
-      ),
+      pruneInactiveMessagingPolicyPresets(["npm", "slack", "googlechat"], ["googlechat"], "hermes"),
     ).toEqual(["npm", "googlechat"]);
   });
 
@@ -123,9 +119,9 @@ describe("messaging policy presets", () => {
   it.each(["hermes", "openclaw"])(
     "treats a missing messaging plan as no authority to call a channel inactive for %s (#10153)",
     (agent) => {
-      expect(
-        pruneInactiveMessagingPolicyPresets(["npm", "slack", "discord"], null, agent),
-      ).toEqual(["npm", "slack", "discord"]);
+      expect(pruneInactiveMessagingPolicyPresets(["npm", "slack", "discord"], null, agent)).toEqual(
+        ["npm", "slack", "discord"],
+      );
       expect(
         pruneInactiveMessagingPolicyPresets(["npm", "slack", "discord"], undefined, agent),
       ).toEqual(["npm", "slack", "discord"]);

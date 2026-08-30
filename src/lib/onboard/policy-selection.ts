@@ -255,8 +255,8 @@ export function computeSetupPresetSuggestions(
           !isStaleBuiltinWebSearchPolicyPreset(name, {
             webSearchConfig,
             customPresetNames: options.customPresetNames,
-            tierName,
-            agentName: agent,
+            tier: deps.tiers.getTier(tierName),
+            agent,
           }),
       )
       .filter(
@@ -290,8 +290,8 @@ export function computeSetupPresetSuggestions(
       isStaleBuiltinWebSearchPolicyPreset(name, {
         webSearchConfig,
         customPresetNames: options.customPresetNames,
-        tierName,
-        agentName: agent,
+        tier: deps.tiers.getTier(tierName),
+        agent,
       })
     ) {
       return;
