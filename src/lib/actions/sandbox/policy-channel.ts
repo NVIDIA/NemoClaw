@@ -1725,6 +1725,7 @@ const CHANNEL_CLEAR_SENTINEL = "NEMOCLAW_CHANNEL_CLEAR_OK";
 const STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE = {
   "sandbox-registry-unavailable": "Restore the NemoClaw sandbox registry entry.",
   "driver-not-docker": "Restore normal OpenShell lifecycle access for this non-Docker sandbox.",
+  "state-paths-invalid": "Restore the channel's declared state-path contract.",
   "docker-discovery-failed": "Start Docker or restore access to its daemon.",
   "no-eligible-stopped-container": "Restore the registered stopped OpenShell container.",
   "container-ownership-invalid": "Reconcile the sandbox registry and Docker container identity.",
@@ -1756,8 +1757,10 @@ function clearSandboxChannelDurableState(sandboxName: string, channelName: strin
     result = executeSandboxCommand(sandboxName, cmd);
   }
   if (!sentinelSeen(result) && agent.name === "openclaw" && channelName === "wechat") {
-    const stoppedCleanup =
-      policyChannelDependencies.clearStoppedDockerSandboxChannelState(sandboxName);
+    const stoppedCleanup = policyChannelDependencies.clearStoppedDockerSandboxChannelState(
+      sandboxName,
+      paths,
+    );
     if (stoppedCleanup.cleared) {
       console.log(`  ${G}✓${R} Cleared stopped-sandbox '${channelName}' channel state.`);
       return true;

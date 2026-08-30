@@ -68,9 +68,10 @@ export const policyChannelDependencies = {
   /** Use a stopped Docker volume only when the sandbox entrypoint blocks normal cleanup. */
   clearStoppedDockerSandboxChannelState(
     sandboxName: string,
+    paths: readonly string[],
   ): ReturnType<PrivilegedExecModule["clearStoppedDockerSandboxChannelState"]> {
     const cleanup = require("../../sandbox/privileged-exec") as PrivilegedExecModule;
-    return cleanup.clearStoppedDockerSandboxChannelState(sandboxName);
+    return cleanup.clearStoppedDockerSandboxChannelState(sandboxName, paths);
   },
   deleteMessagingProviderWithRecovery(
     providerName: string,

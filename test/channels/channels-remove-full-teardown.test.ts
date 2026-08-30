@@ -132,8 +132,6 @@ credentials.prompt = async (msg) => { throw new Error("unexpected prompt: " + ms
 const onboard = require(${j("onboard.js")});
 onboard.isNonInteractive = () => true;
 
-const agentDefinitions = require(${j("agent/defs.js")});
-
 const onboardSession = require(${j("state/onboard-session.js")});
 const sessionStore = {
   sandboxName: "test-sb",
@@ -183,8 +181,8 @@ policies.removePreset = (sandboxName, presetName) => {
 const callOrder = [];
 const stoppedDockerCleanupCalls = [];
 const policyChannelDeps = require(${j("actions/sandbox/policy-channel-dependencies.js")});
-policyChannelDeps.policyChannelDependencies.clearStoppedDockerSandboxChannelState = (sandboxName) => {
-  stoppedDockerCleanupCalls.push({ sandboxName });
+policyChannelDeps.policyChannelDependencies.clearStoppedDockerSandboxChannelState = (sandboxName, paths) => {
+  stoppedDockerCleanupCalls.push({ sandboxName, paths });
   return ${JSON.stringify(stoppedDockerCleanupResult)};
 };
 const origLog = console.log;
@@ -219,14 +217,13 @@ module.exports = {
   callOrder,
   stoppedDockerCleanupCalls,
   errors,
-  agentDefinitions,
   getExitCode: () => exitCode,
 };
 `;
 }
 
 describe("channels remove full teardown (#3998)", () => {
-  it("clears both state generations from the checked-in OpenClaw WeChat definition", () => {
+  it("clears both required OpenClaw WeChat state generations before rebuild", () => {
     const script = `${buildPreamble({
       presetNamesApplied: ["npm", "pypi", "huggingface", "brew", "wechat"],
       sandboxAgent: "openclaw",
@@ -239,7 +236,6 @@ const ctx = module.exports;
     await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "wechat" });
     process.stdout.write("\\n__RESULT__" + JSON.stringify({
       sandboxExecCalls: ctx.sandboxExecCalls,
-      openclawStateDirs: ctx.agentDefinitions.loadAgent("openclaw").stateDirs,
       callOrder: ctx.callOrder,
       exitCode: ctx.getExitCode(),
     }) + "\\n");
@@ -255,7 +251,6 @@ const ctx = module.exports;
     const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
     assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
     assert.equal(payload.exitCode, null, "WeChat removal must complete before rebuild");
-    assert.ok(payload.openclawStateDirs.includes("wechat"));
 
     const cleanup = payload.sandboxExecCalls.find((call: { command: string }) =>
       call.command.startsWith("rm -rf"),
@@ -446,6 +441,7 @@ const ctx = module.exports;
     assert.deepEqual(payload.stoppedDockerCleanupCalls, [
       {
         sandboxName: "test-sb",
+        paths: ["/sandbox/.openclaw/wechat", "/sandbox/.openclaw/openclaw-weixin"],
       },
     ]);
     assert.deepEqual(payload.removedPresets, [{ sandboxName: "test-sb", presetName: "wechat" }]);

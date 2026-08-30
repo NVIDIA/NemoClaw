@@ -21,6 +21,10 @@ const persistedLifecyclePath =
 const statePathsPath = require.resolve("../state/paths");
 const transitionLockPath = require.resolve("../shields/transition-lock");
 const { containerNameMatchesSandbox, selectDirectSandboxContainer } = require(helperPath);
+const EXPECTED_WECHAT_STATE_PATHS = [
+  "/sandbox/.openclaw/wechat",
+  "/sandbox/.openclaw/openclaw-weixin",
+] as const;
 
 function restoreRequireCacheEntry(modulePath: string, priorEntry: unknown): void {
   if (priorEntry) requireCache[modulePath] = priorEntry;
@@ -222,7 +226,9 @@ describe("privileged sandbox exec routing", () => {
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
       ({ clearStoppedDockerSandboxChannelState }) => {
-        expect(clearStoppedDockerSandboxChannelState("alpha")).toEqual({ cleared: true });
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          { cleared: true },
+        );
       },
     );
 
@@ -247,9 +253,24 @@ describe("privileged sandbox exec routing", () => {
     expect(helperArgv?.join("\0")).not.toContain("/home/operator/project");
     expect(helperArgv?.join("\0")).not.toContain("/sandbox/project");
     expect(helperArgv).not.toContain("start");
-    expect(helperArgv?.at(-1)).toContain(
-      "rm -rf -- /sandbox/.openclaw/wechat /sandbox/.openclaw/openclaw-weixin",
+    expect(helperArgv?.at(-1)).toContain(`rm -rf -- ${EXPECTED_WECHAT_STATE_PATHS.join(" ")}`);
+  });
+
+  it("refuses an unsafe stopped-cleanup path before Docker discovery", () => {
+    const captureDocker = vi.fn(() => "");
+    withPrivilegedExecMocks(
+      {
+        dockerCapture: captureDocker,
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+      },
+      ({ clearStoppedDockerSandboxChannelState }) => {
+        expect(
+          clearStoppedDockerSandboxChannelState("alpha", ["/sandbox/.openclaw/../project"]),
+        ).toEqual({ cleared: false, failure: "state-paths-invalid" });
+      },
     );
+    expect(captureDocker).not.toHaveBeenCalled();
   });
 
   it("refuses stopped cleanup for a non-Docker sandbox before Docker discovery", () => {
@@ -266,10 +287,12 @@ describe("privileged sandbox exec routing", () => {
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
       ({ clearStoppedDockerSandboxChannelState }) => {
-        expect(clearStoppedDockerSandboxChannelState("alpha")).toEqual({
-          cleared: false,
-          failure: "driver-not-docker",
-        });
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "driver-not-docker",
+          },
+        );
       },
     );
 
@@ -297,10 +320,12 @@ describe("privileged sandbox exec routing", () => {
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
       ({ clearStoppedDockerSandboxChannelState }) => {
-        expect(clearStoppedDockerSandboxChannelState("alpha")).toEqual({
-          cleared: false,
-          failure: "sandbox-volume-unavailable",
-        });
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "sandbox-volume-unavailable",
+          },
+        );
       },
     );
 
@@ -317,10 +342,12 @@ describe("privileged sandbox exec routing", () => {
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
       ({ clearStoppedDockerSandboxChannelState }) => {
-        expect(clearStoppedDockerSandboxChannelState("alpha")).toEqual({
-          cleared: false,
-          failure: "docker-discovery-failed",
-        });
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "docker-discovery-failed",
+          },
+        );
       },
     );
   });
@@ -333,10 +360,12 @@ describe("privileged sandbox exec routing", () => {
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
       ({ clearStoppedDockerSandboxChannelState }) => {
-        expect(clearStoppedDockerSandboxChannelState("alpha")).toEqual({
-          cleared: false,
-          failure: "no-eligible-stopped-container",
-        });
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "no-eligible-stopped-container",
+          },
+        );
       },
     );
   });
@@ -349,10 +378,12 @@ describe("privileged sandbox exec routing", () => {
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
       ({ clearStoppedDockerSandboxChannelState }) => {
-        expect(clearStoppedDockerSandboxChannelState("alpha")).toEqual({
-          cleared: false,
-          failure: "container-ownership-invalid",
-        });
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "container-ownership-invalid",
+          },
+        );
       },
     );
   });
@@ -380,10 +411,12 @@ describe("privileged sandbox exec routing", () => {
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
       ({ clearStoppedDockerSandboxChannelState }) => {
-        expect(clearStoppedDockerSandboxChannelState("alpha")).toEqual({
-          cleared: false,
-          failure: "cleanup-command-failed",
-        });
+        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
+          {
+            cleared: false,
+            failure: "cleanup-command-failed",
+          },
+        );
       },
     );
   });

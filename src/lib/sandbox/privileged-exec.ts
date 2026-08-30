@@ -6,7 +6,6 @@ import path from "node:path";
 
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { resolveSandboxContainerOwner } from "../domain/sandbox/container-owner";
-import { WECHAT_OPENCLAW_STATE_PATHS } from "../messaging/channels/wechat/contract";
 import { resolvePortableDemoPrivilegedExecTarget } from "../onboard/experimental/portable-demo-lifecycle";
 import { isImmutableDockerImageId } from "../onboard/openshell-docker-sandbox-containers";
 import {
@@ -32,6 +31,7 @@ type LabeledSandboxContainer = {
 export type StoppedDockerSandboxChannelStateCleanupFailure =
   | "sandbox-registry-unavailable"
   | "driver-not-docker"
+  | "state-paths-invalid"
   | "docker-discovery-failed"
   | "no-eligible-stopped-container"
   | "container-ownership-invalid"
@@ -49,9 +49,7 @@ export type StoppedDockerSandboxChannelStateCleanupResult =
 const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const DOCKER_VOLUME_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
-const OFFLINE_WECHAT_CLEANUP_COMMAND =
-  `rm -rf -- ${WECHAT_OPENCLAW_STATE_PATHS.join(" ")} && ` +
-  WECHAT_OPENCLAW_STATE_PATHS.map((statePath) => `test ! -e ${statePath}`).join(" && ");
+const STOPPED_CHANNEL_STATE_PATH_RE = /^\/sandbox\/\.(?:openclaw|hermes)\/[A-Za-z0-9_-]+$/u;
 const OFFLINE_DOCKER_OPERATION_OPTIONS = {
   encoding: "utf-8",
   ignoreError: true,
@@ -333,10 +331,28 @@ function stoppedDockerCleanupFailure(
   return { cleared: false, failure };
 }
 
-/** Clear OpenClaw WeChat state without starting a failed Docker sandbox. */
+function stoppedDockerCleanupCommand(paths: readonly string[]): string | null {
+  if (
+    paths.length === 0 ||
+    paths.length > 4 ||
+    new Set(paths).size !== paths.length ||
+    paths.some((statePath) => !STOPPED_CHANNEL_STATE_PATH_RE.test(statePath))
+  ) {
+    return null;
+  }
+  return (
+    `rm -rf -- ${paths.join(" ")} && ` +
+    paths.map((statePath) => `test ! -e ${statePath}`).join(" && ")
+  );
+}
+
+/** Clear validated channel state without starting a failed Docker sandbox. */
 function clearStoppedDockerSandboxChannelState(
   sandboxName: string,
+  paths: readonly string[],
 ): StoppedDockerSandboxChannelStateCleanupResult {
+  const cleanupCommand = stoppedDockerCleanupCommand(paths);
+  if (!cleanupCommand) return stoppedDockerCleanupFailure("state-paths-invalid");
   const entry = readSandboxEntry(sandboxName);
   if (!entry) return stoppedDockerCleanupFailure("sandbox-registry-unavailable");
   if (normalizeDriver(entry?.openshellDriver) !== "docker") {
@@ -344,7 +360,7 @@ function clearStoppedDockerSandboxChannelState(
   }
 
   try {
-    return withPrivilegedSandboxExecutionLease(sandboxName, "offline WeChat state cleanup", () => {
+    return withPrivilegedSandboxExecutionLease(sandboxName, "offline channel state cleanup", () => {
       let containerId: string | null;
       try {
         containerId = findStoppedDirectSandboxContainer(sandboxName);
@@ -394,7 +410,7 @@ function clearStoppedDockerSandboxChannelState(
             "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "/bin/sh",
             "-c",
-            OFFLINE_WECHAT_CLEANUP_COMMAND,
+            cleanupCommand,
           ],
           OFFLINE_DOCKER_OPERATION_OPTIONS,
         );
