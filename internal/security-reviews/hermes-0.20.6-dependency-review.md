@@ -29,9 +29,9 @@ job is supplemental evidence and does not replace the selected job set.
 | Target source | `5fc308a70719a83cccdbba4c0e39c23f5a8239d5` |
 | Target source archive SHA-256 | `e622723b5bf3cd6c1db974d92d32242f1cb63f61c1112b6f708b34d619ef0fc7` |
 | Target npm integrity cross-check | `sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq15YvnSyiNvsTOWNBi6t3shFpIg+H7+9MJsOiSkg==` |
-| Target base image | `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:07bc8218f9daa157df1d7ad183fc4a193b194c1ba3f6e883f0be3c690cfb84e1` |
-| Base image publication | NVIDIA/NemoClaw run `33283109772`, attempt `1`, source `8206ea9931356f570c1ca0a7e32110f5370550de` |
-| Base image contract SHA-256 | `4ff73e2d6853b616121598555c890250d18285ba0f9bb6c3c90c438a10a8bf5a` |
+| Target base image | `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:378c7a2586261dc6ab2c36fb58f4874dde7c91587afb1efd1923227092d62ec1` |
+| Base image publication | NVIDIA/NemoClaw run `33290836352`, attempt `1`, source `13574de0d24ffc535c996951b6d91e13bb4e1405` |
+| Base image contract SHA-256 | `0aed2feac82586b19fae3108d199449e2c1363b6ffa36403a7a082491d67bbbc` |
 | NemoPin comparison base | `4e0e663a9a4cf6bac8df8972ea23dfc26ce3c309` |
 | NVIDIA/NemoClaw authoring base | `b12bede8bfa5bc7a8c083f54fc79a4f5663b81df` |
 | NemoPin handoff manifest | `sha256:ec3f152824a843b9970aa8342de0ad15289d99899af06e6eb94baec8e29e5744` |

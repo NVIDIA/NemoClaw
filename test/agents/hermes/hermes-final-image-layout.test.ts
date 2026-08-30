@@ -15,7 +15,7 @@ import {
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const HERMES_PINNED_BASE_IMAGE =
-  "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:07bc8218f9daa157df1d7ad183fc4a193b194c1ba3f6e883f0be3c690cfb84e1";
+  "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:378c7a2586261dc6ab2c36fb58f4874dde7c91587afb1efd1923227092d62ec1";
 const HERMES_PINNED_BASE_LAYER_COUNT = 44;
 const HERMES_COMBINED_LAYER_BUDGET = 121;
 const NPM_ROOT_ARGUMENTS = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
