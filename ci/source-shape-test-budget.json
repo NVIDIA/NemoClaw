@@ -92,6 +92,11 @@
       "category": "security"
     },
     {
+      "file": "test/agents/hermes/hermes-final-image-layout.test.ts",
+      "test": "keeps the final image below the reviewed BuildKit layer-depth budget",
+      "category": "compatibility"
+    },
+    {
       "file": "test/agents/hermes/hermes-dependency-review.test.ts",
       "test": "binds the image to the reviewed Hermes migration",
       "category": "security"

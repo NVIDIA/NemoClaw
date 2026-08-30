@@ -14,6 +14,10 @@ import {
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
+const HERMES_PINNED_BASE_IMAGE =
+  "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:07bc8218f9daa157df1d7ad183fc4a193b194c1ba3f6e883f0be3c690cfb84e1";
+const HERMES_PINNED_BASE_LAYER_COUNT = 44;
+const HERMES_COMBINED_LAYER_BUDGET = 121;
 const NPM_ROOT_ARGUMENTS = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const BUILD_ONLY_MIGRATION_PATCHER_PATHS = [
   "/opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
@@ -255,6 +259,21 @@ function runFinalBuildOnlyPathGuard(buildOnlyPath: string) {
 }
 
 describe("Hermes final image layout", () => {
+  // source-shape-contract: compatibility -- The pinned base and final image must stay below the BuildKit snapshot depth that gates managed-image publication.
+  it("keeps the final image below the reviewed BuildKit layer-depth budget", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const baseDeclarations = dockerfile
+      .split("\n")
+      .filter((line) => line.startsWith("ARG BASE_IMAGE="));
+    const finalStage = dockerfile.slice(indexOfRequired(dockerfile, "FROM ${BASE_IMAGE}"));
+    const finalStageLayerCount = finalStage.match(/^(?:ADD|COPY|RUN)\b/gmu)?.length ?? 0;
+
+    expect(baseDeclarations).toEqual([`ARG BASE_IMAGE=${HERMES_PINNED_BASE_IMAGE}`]);
+    expect(HERMES_PINNED_BASE_LAYER_COUNT + finalStageLayerCount).toBeLessThanOrEqual(
+      HERMES_COMBINED_LAYER_BUDGET,
+    );
+  });
+
   // source-shape-contract: security -- Every security-critical Hermes source must match the reviewed Dockerfile digest before image construction proceeds.
   it.each(HERMES_INTEGRITY_FILES)(
     "pins $source to its current bytes at $target",
