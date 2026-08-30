@@ -97,10 +97,11 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
     resumeManaged: vi.fn(),
     inspectManaged: vi.fn(() => ({ running, receipt })),
     inspectPublishedRecoveryRestoration: vi.fn(() => ({ running, receipt })),
-    preserveForRebuild: vi.fn(() => {
+    validatePublishedResume: vi.fn(() => {
       events.push("provider-validate");
       return receipt;
     }),
+    preserveForRebuild: vi.fn(() => receipt),
   };
   const prepared: HostLocalInferencePreparedStartup = {
     receipt,
@@ -493,11 +494,29 @@ describe("Hermes Portable Ollama inference recovery", () => {
       "reused",
     );
 
-    expect(harness.runtime.preserveForRebuild).toHaveBeenCalledOnce();
+    expect(harness.runtime.validatePublishedResume).toHaveBeenCalledOnce();
+    expect(harness.runtime.preserveForRebuild).not.toHaveBeenCalled();
     expect(harness.prepareStartup).not.toHaveBeenCalled();
     expect(harness.events).toContain("route");
     expect(harness.events).not.toContain("registry-start");
     expect(harness.events.at(-1)).toBe("registry-release");
+  });
+
+  it("rejects a running runtime when published resume validation is unavailable", () => {
+    const harness = createHarness(true, true);
+    const { validatePublishedResume: _validatePublishedResume, ...runtimeWithoutValidator } =
+      harness.runtime;
+    harness.overrides.requireOperation.mockReturnValue({
+      managedRuntime: runtimeWithoutValidator as never,
+    });
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
+    ).toThrow("runtime provider lacks published resume validation");
+
+    expect(harness.input.verifyRoute).not.toHaveBeenCalled();
+    expect(harness.prepareStartup).not.toHaveBeenCalled();
+    expect(harness.events).not.toContain("registry-release");
   });
 
   it("does not invent runtime rollback for an already-running Ollama dependency failure", () => {
@@ -539,7 +558,8 @@ describe("Hermes Portable Ollama inference recovery", () => {
     );
 
     expect(harness.events).toContain("registry-start");
-    expect(harness.runtime.preserveForRebuild).toHaveBeenCalledOnce();
+    expect(harness.runtime.validatePublishedResume).toHaveBeenCalledOnce();
+    expect(harness.runtime.preserveForRebuild).not.toHaveBeenCalled();
     expect(harness.prepareStartup).not.toHaveBeenCalled();
     expect(harness.registryRunning()).toBe(true);
     expect(harness.events.at(-1)).toBe("registry-release");
@@ -649,7 +669,8 @@ describe("Hermes Portable Ollama inference recovery", () => {
     );
 
     expect(harness.prepareStartup).toHaveBeenCalledOnce();
-    expect(harness.runtime.preserveForRebuild).toHaveBeenCalledOnce();
+    expect(harness.runtime.validatePublishedResume).toHaveBeenCalledOnce();
+    expect(harness.runtime.preserveForRebuild).not.toHaveBeenCalled();
     expect(harness.events.filter((event) => event === "registry-start")).toHaveLength(1);
     expect(harness.events.filter((event) => event === "registry-release")).toHaveLength(2);
   });

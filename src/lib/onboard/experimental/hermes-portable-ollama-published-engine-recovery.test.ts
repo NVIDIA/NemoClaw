@@ -35,6 +35,7 @@ import { requireRuntimeProviderHostLocalInferenceOperation } from "../runtime-pr
 import {
   createPodmanHostLocalInferenceOperation,
   PODMAN_INFERENCE_SPEC_LABEL,
+  type PodmanPublishedResumeTiming,
 } from "../runtime-provider/podman-host-local-inference";
 import {
   createHermesPortableOllamaRuntimeAuthority,
@@ -105,6 +106,7 @@ function setup(
   options: {
     readonly creationAuthority?: (value: PersistedEngineAuthority) => PersistedEngineAuthority;
     readonly serializedReceipt?: (value: string) => string;
+    readonly publishedResumeTiming?: PodmanPublishedResumeTiming;
     readonly transformCapture?: (
       args: readonly string[],
       result: ContainerEngineCommandResult,
@@ -193,6 +195,9 @@ function setup(
         serializedReceipt: publishedSerializedReceipt,
         assertForwardAuthority,
       },
+      ...(options.publishedResumeTiming
+        ? { publishedResumeTiming: options.publishedResumeTiming }
+        : {}),
       onFailureEvidence: harness.onFailureEvidence,
       redactSensitive: harness.redactSensitive,
     },
@@ -316,6 +321,16 @@ function observePublishedFinalization(events: string[]) {
 }
 
 describe("Hermes Portable published engine recovery", () => {
+  it("retains full generated, tool, and model-placement proof during creation (#10423)", () => {
+    const fixture = setup();
+
+    expect(fixture.harness.events.some((event) => event.includes("/api/tags"))).toBe(true);
+    expect(fixture.harness.events.some((event) => event.includes("/v1/chat/completions"))).toBe(
+      true,
+    );
+    expect(fixture.harness.events.some((event) => event.includes("/api/ps"))).toBe(true);
+  });
+
   it("carries the exact published receipt through the production runtime factory (#10423)", async () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-published-factory-"));
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -378,7 +393,7 @@ describe("Hermes Portable published engine recovery", () => {
         receipt,
       );
       const recoveryEvents = fixture.harness.events.slice(recoveryEventStart);
-      expect(recoveryEvents.filter((event) => event.includes("/api/tags"))).toHaveLength(1);
+      expect(recoveryEvents.filter((event) => event.includes("/api/tags"))).toHaveLength(0);
       expect(
         recoveryEvents.filter(
           (event) => event.includes("podman:exec ") && event.includes(" nvidia-smi "),
@@ -396,7 +411,7 @@ describe("Hermes Portable published engine recovery", () => {
         );
       expect(timingLines).toHaveLength(1);
       expect(timingLines[0]).toMatch(
-        /^  Hermes Portable Ollama resume timing: start=\d+ms managedReady=\d+ms gpuIdentity=\d+ms generatedProof=0ms modelPlacement=0ms cleanupCurrentness=\d+ms total=\d+ms runtimeAction=started result=proved$/u,
+        /^  Hermes Portable Ollama resume timing: start=\d+ms managedReady=0ms gpuIdentity=\d+ms generatedProof=0ms modelPlacement=0ms cleanupCurrentness=\d+ms total=\d+ms runtimeAction=started result=proved$/u,
       );
       expect(timingLines[0]).not.toContain(receipt.inference?.model);
       expect(timingLines[0]).not.toContain(
@@ -536,7 +551,6 @@ describe("Hermes Portable published engine recovery", () => {
     expect(dependency.release).toHaveBeenCalledOnce();
     expect(dependency.rollback).not.toHaveBeenCalled();
     const recoveryOrder = fixture.harness.events.slice(recoveryEventStart);
-    const readyIndex = recoveryOrder.findIndex((event) => event.includes("/api/tags"));
     const gpuIndex = recoveryOrder.findIndex(
       (event) => event.includes("podman:exec ") && event.includes(" nvidia-smi "),
     );
@@ -545,8 +559,8 @@ describe("Hermes Portable published engine recovery", () => {
     const finalizedIndex = recoveryOrder.indexOf("test:publication-finalized");
     const releasedIndex = recoveryOrder.indexOf("test:registry-released");
     const dependencyReleasedIndex = recoveryOrder.indexOf("test:dependency-released");
-    expect(readyIndex).toBeGreaterThanOrEqual(0);
-    expect(gpuIndex).toBeGreaterThan(readyIndex);
+    expect(recoveryOrder.some((event) => event.includes("/api/tags"))).toBe(false);
+    expect(gpuIndex).toBeGreaterThanOrEqual(0);
     expect(routeIndex).toBeGreaterThan(gpuIndex);
     expect(dependencyIndex).toBeGreaterThan(routeIndex);
     expect(finalizedIndex).toBeGreaterThan(dependencyIndex);
@@ -554,8 +568,9 @@ describe("Hermes Portable published engine recovery", () => {
     expect(dependencyReleasedIndex).toBeGreaterThan(releasedIndex);
   });
 
-  it("reuses a running published runtime with one ready and GPU proof before route health (#10423)", () => {
-    const fixture = setup();
+  it("reuses a running published runtime with one GPU proof before route health (#10423)", () => {
+    const onComplete = vi.fn();
+    const fixture = setup({ publishedResumeTiming: { onComplete } });
     fixture.harness.container()!.running = true;
     fixture.harness.container()!.status = "running";
     const runningContainer = fixture.harness.container()!;
@@ -575,7 +590,7 @@ describe("Hermes Portable published engine recovery", () => {
     );
 
     const recoveryEvents = fixture.harness.events.slice(recoveryEventStart);
-    expect(recoveryEvents.filter((event) => event.includes("/api/tags"))).toHaveLength(1);
+    expect(recoveryEvents.filter((event) => event.includes("/api/tags"))).toHaveLength(0);
     expect(
       recoveryEvents.filter(
         (event) => event.includes("podman:exec ") && event.includes(" nvidia-smi "),
@@ -610,6 +625,16 @@ describe("Hermes Portable published engine recovery", () => {
     expect(composed.input.verifyRoute).toHaveBeenCalledOnce();
     expect(composed.registryRecovery.release).toHaveBeenCalledOnce();
     expect(composed.registryRecovery.rollback).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledOnce();
+    expect(onComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generatedProofMs: 0,
+        managedReadyMs: 0,
+        modelPlacementMs: 0,
+        runtimeAction: "reused",
+        startMs: 0,
+      }),
+    );
   });
 
   it("rolls both stopped resources back when private publication drifts after start (#10423)", () => {
@@ -657,10 +682,12 @@ describe("Hermes Portable published engine recovery", () => {
     expect(composed.registryRecovery.release).not.toHaveBeenCalled();
   });
 
-  it("restores both stopped resources when provider readiness fails (#10423)", () => {
+  it("restores both stopped resources when final managed route health fails (#10423)", () => {
     const fixture = setup();
-    fixture.harness.state.probeFailure = "ready";
     const composed = composedRecovery(fixture);
+    composed.input.verifyRoute.mockImplementation(() => {
+      throw new Error("managed route unavailable");
+    });
     const observed = observePublishedFinalization([]);
     Object.assign(composed.overrides, { prepareStartup: observed.prepareStartup });
     composed.input.prepareProbeDependency = vi.fn(() => ({
@@ -673,7 +700,7 @@ describe("Hermes Portable published engine recovery", () => {
     ).toThrow();
 
     expect(fixture.harness.container()).toMatchObject({ running: false, status: "exited" });
-    expect(composed.input.verifyRoute).not.toHaveBeenCalled();
+    expect(composed.input.verifyRoute).toHaveBeenCalledOnce();
     expect(composed.input.prepareProbeDependency).not.toHaveBeenCalled();
     expect(observed.finalize).not.toHaveBeenCalled();
     expect(composed.registryRecovery.rollback).toHaveBeenCalledOnce();
@@ -709,7 +736,9 @@ describe("Hermes Portable published engine recovery", () => {
     const fixture = setup({
       transformCapture: (args, result) => {
         validationReached ||=
-          recoveryStarted && args.some((argument) => argument.includes("/api/tags"));
+          recoveryStarted &&
+          args[0] === "exec" &&
+          args.some((argument) => argument === "nvidia-smi");
         return result;
       },
     });

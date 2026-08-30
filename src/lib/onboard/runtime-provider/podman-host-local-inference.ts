@@ -3522,19 +3522,21 @@ export function createPodmanHostLocalInferenceRuntime(
       stage: PodmanPublishedResumeTimingStage,
       operation: () => T,
     ): T => (publishedResumeTiming ? publishedResumeTiming.measure(stage, operation) : operation());
-    measurePublishedResumeStage("managedReady", () =>
-      probeManagedReady(
-        engine,
-        authority,
-        assertReceiptAuthority,
-        spec,
-        receiptProbeParent(inspected.receipt),
-        onFailureEvidence,
-        sensitiveRedactor,
-        probeCleanupTiming,
-        publishedResumeTiming,
-      ),
-    );
+    if (proof === "full") {
+      measurePublishedResumeStage("managedReady", () =>
+        probeManagedReady(
+          engine,
+          authority,
+          assertReceiptAuthority,
+          spec,
+          receiptProbeParent(inspected.receipt),
+          onFailureEvidence,
+          sensitiveRedactor,
+          probeCleanupTiming,
+          publishedResumeTiming,
+        ),
+      );
+    }
     if (!("devices" in inspected.receipt.runtime.gpu)) {
       throw new Error("Podman managed inference receipt lacks exact CDI device authority.");
     }
@@ -4367,6 +4369,18 @@ export function createPodmanHostLocalInferenceRuntime(
       const inspected = inspectReceipt(receipt);
       return Object.freeze({ running: inspected.container.running, receipt: inspected.receipt });
     },
+    ...(publishedEngineAuthority
+      ? {
+          validatePublishedResume(receipt: HostLocalInferenceReceipt): HostLocalInferenceReceipt {
+            const resumeTiming = createPodmanPublishedResumeTimingRecorder(
+              options.publishedResumeTiming,
+            );
+            const validated = validateReceipt(receipt, true, resumeTiming, "published-resume");
+            resumeTiming.finish("reused");
+            return validated;
+          },
+        }
+      : {}),
     stopManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection {
       if (publishedEngineAuthority) {
         throw new Error(
@@ -4402,13 +4416,7 @@ export function createPodmanHostLocalInferenceRuntime(
       );
       return Object.freeze({ running: false, receipt: inspected.receipt });
     },
-    preserveForRebuild: (receipt: HostLocalInferenceReceipt) =>
-      validateReceipt(
-        receipt,
-        true,
-        undefined,
-        publishedEngineAuthority ? "published-resume" : "full",
-      ),
+    preserveForRebuild: (receipt: HostLocalInferenceReceipt) => validateReceipt(receipt),
     validate: validateReceipt,
     prepareDestroy(receipt: HostLocalInferenceReceipt) {
       const normalized = authorizeReceipt(receipt);

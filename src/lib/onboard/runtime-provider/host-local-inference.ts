@@ -257,7 +257,12 @@ export interface HostLocalInferencePreparedStartup {
   readonly rollbackPriorState: HostLocalInferencePriorRuntimeState;
   /** Durable publication state used to decide whether exact rollback is still safe. */
   publicationState(): HostLocalInferencePublicationState;
-  /** Fresh provider-native proof while rollback is still safe. */
+  /**
+   * Revalidate the prepared runtime while rollback is still safe. Published
+   * recovery may defer semantic provider health to its caller's exact managed
+   * route proof; creation and ordinary recovery retain full provider-native
+   * validation.
+   */
   validateBeforeCommit(): HostLocalInferenceReceipt;
   /** Cross only the external publication boundary after validation succeeds. */
   commit(): HostLocalInferenceReceipt;
@@ -354,6 +359,12 @@ export interface HostLocalInferenceRuntime {
   inspectPublishedRecoveryRestoration?(
     receipt: HostLocalInferenceReceipt,
   ): HostLocalManagedInferenceInspection;
+  /**
+   * Re-prove exact published-runtime authority and GPU identity before the
+   * caller performs its final managed route health proof. This path never
+   * replaces creation-time or explicit deep inference qualification.
+   */
+  validatePublishedResume?(receipt: HostLocalInferenceReceipt): HostLocalInferenceReceipt;
   inspectManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection;
   stopManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection;
   /**

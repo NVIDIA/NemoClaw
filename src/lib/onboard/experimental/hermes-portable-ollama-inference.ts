@@ -669,9 +669,13 @@ export function recoverHermesPortableOllamaInference(
     if (inspected.running) {
       let preparedDependency: HermesPortableOllamaPreparedProbeDependency | null = null;
       try {
+        const validatePublishedResume = runtime.validatePublishedResume;
+        if (!validatePublishedResume) {
+          failRecovery("runtime provider lacks published resume validation");
+        }
         requireExactRecoveryReceipt(
           serializedRegistryReceipt,
-          runtime.preserveForRebuild(receipt),
+          validatePublishedResume(receipt),
           "running runtime validation changed receipt",
         );
         requireCurrent();
