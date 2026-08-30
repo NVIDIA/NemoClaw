@@ -11,13 +11,14 @@ import { pathToFileURL } from "node:url";
 import { getDiff } from "../advisors/git.mts";
 import { ADVISOR_OPENSHELL_INFERENCE_BASE_URL } from "../advisors/provider-constants.mts";
 import {
-  configureOpenShellInference,
+  startOwnedOpenShellInference,
+  type OwnedOpenShellInference,
   createOpenShellSandbox,
   credentialFreeEnvironment,
   defaultOpenShellTools,
   deleteOpenShellSandbox,
   downloadOpenShellPath,
-  execOpenShellSandbox,
+  execOpenShellSandboxAsync,
   type OpenShellTools,
   required,
 } from "../openshell-agent/runtime.mts";
@@ -246,20 +247,20 @@ export async function prepareAdvisorSandboxInputs(
   fs.chmodSync(toolsDirectory, 0o755);
 }
 
-export async function configureAdvisorOpenShellInference(
+function advisorInferenceOptions(env: NodeJS.ProcessEnv) {
+  return {
+    enableBindMounts: true,
+    gatewayId: "pr-review-advisor",
+    modelId: required(env.PR_REVIEW_ADVISOR_MODEL, "PR_REVIEW_ADVISOR_MODEL"),
+    providerName: "advisor",
+  } as const;
+}
+
+export function startAdvisorOpenShellInference(
   env: NodeJS.ProcessEnv,
   tools: OpenShellTools = defaultOpenShellTools,
-): Promise<void> {
-  await configureOpenShellInference(
-    env,
-    {
-      enableBindMounts: true,
-      gatewayId: "pr-review-advisor",
-      modelId: required(env.PR_REVIEW_ADVISOR_MODEL, "PR_REVIEW_ADVISOR_MODEL"),
-      providerName: "advisor",
-    },
-    tools,
-  );
+): OwnedOpenShellInference {
+  return startOwnedOpenShellInference(env, advisorInferenceOptions(env), tools);
 }
 
 export function writeUnavailableAdvisorArtifacts(
@@ -394,12 +395,12 @@ function advisorArtifactDirectory(env: NodeJS.ProcessEnv): string {
   return value;
 }
 
-export function runAdvisorSandbox(
+export function runAdvisorSandboxAsync(
   env: NodeJS.ProcessEnv,
   tools: OpenShellTools = defaultOpenShellTools,
-): void {
+): ReturnType<typeof execOpenShellSandboxAsync> {
   advisorArtifactDirectory(env);
-  execOpenShellSandbox(
+  return execOpenShellSandboxAsync(
     env,
     {
       name: required(env.SANDBOX_NAME, "SANDBOX_NAME"),
@@ -602,39 +603,19 @@ export function initializeAdvisorSandboxRuntime(): void {
   checkAdvisorSandboxRuntime();
 }
 
-async function main(): Promise<void> {
-  const command = required(process.argv[2], "openshell command");
-  switch (command) {
-    case "prepare":
-      await prepareAdvisorSandboxInputs(process.env);
-      return;
-    case "configure":
-      await configureAdvisorOpenShellInference(process.env);
-      return;
-    case "unavailable":
-      writeUnavailableAdvisorArtifacts(process.env);
-      return;
-    case "create":
-      createAdvisorSandbox(process.env);
-      return;
-    case "run":
-      runAdvisorSandbox(process.env);
-      return;
-    case "download":
-      downloadAdvisorArtifacts(process.env);
-      return;
-    case "delete":
-      deleteAdvisorSandbox(process.env);
-      return;
-    case "initialize":
-      initializeAdvisorSandboxRuntime();
-      return;
-    case "check":
-      checkAdvisorSandboxRuntime();
-      return;
-    default:
-      throw new Error(`Unsupported OpenShell advisor command: ${command}`);
+export function runOpenShellAdvisorCommand(
+  command: string | undefined,
+  initialize: () => void = initializeAdvisorSandboxRuntime,
+): void {
+  const requiredCommand = required(command, "openshell command");
+  if (requiredCommand !== "initialize") {
+    throw new Error(`Unsupported OpenShell advisor command: ${requiredCommand}`);
   }
+  initialize();
+}
+
+async function main(): Promise<void> {
+  runOpenShellAdvisorCommand(process.argv[2]);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
