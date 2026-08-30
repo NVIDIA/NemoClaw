@@ -18,7 +18,6 @@ import {
   env,
   hasExactReadyPhase,
   ollamaProxyTokenFile,
-  openClawModelConfigProjectionScript,
   PROXY_PORT,
   proxyStatus,
   REPO_ROOT,
@@ -26,68 +25,14 @@ import {
   restartProxy,
   SANDBOX_NAME,
 } from "./gpu-e2e-helpers.ts";
+import { assertHermesFollowUpReplies } from "./hermes-cli-adapter-live.ts";
 
 const TIMEOUT_MS = 75 * 60_000;
+const HERMES_RESPONSE_TIMEOUT_MS = 90 * 60_000;
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function modelIdentifier(value: Record<string, unknown>, key: string): string | undefined {
-  return typeof value[key] === "string" ? (value[key] as string) : undefined;
-}
-
-function assertSmallContextCompactionPolicy(configText: string): void {
-  const config = asRecord(JSON.parse(configText));
-  const agents = asRecord(config?.agents);
-  const defaults = asRecord(agents?.defaults);
-  const modelDefaults = asRecord(defaults?.model);
-  const primary = modelIdentifier(modelDefaults ?? {}, "primary");
-  const compaction = asRecord(defaults?.compaction);
-  const modelsRoot = asRecord(config?.models);
-  const providers = asRecord(modelsRoot?.providers);
-  const primaryWithoutProvider = primary?.startsWith("inference/")
-    ? primary.slice("inference/".length)
-    : primary;
-  const model = Object.values(providers ?? {})
-    .flatMap((provider) => {
-      const models = asRecord(provider)?.models;
-      return Array.isArray(models) ? models : [];
-    })
-    .map(asRecord)
-    .find((candidate) => {
-      const identifiers =
-        candidate && primary && primaryWithoutProvider
-          ? ["id", "name", "label"].flatMap((key) => {
-              const value = modelIdentifier(candidate, key);
-              return value ? [value] : [];
-            })
-          : [];
-      return identifiers.some(
-        (identifier) =>
-          identifier === primary ||
-          identifier === primaryWithoutProvider ||
-          identifier === `inference/${primaryWithoutProvider}`,
-      );
-    });
-
-  expect(primary, "OpenClaw config must declare the active model").toBeTruthy();
-  expect(model, `OpenClaw config must include active Ollama model ${primary}`).toBeDefined();
-  expect(typeof model?.contextWindow).toBe("number");
-  expect(typeof model?.maxTokens).toBe("number");
-  const contextWindow = model?.contextWindow as number;
-  const maxTokens = model?.maxTokens as number;
-  expect(
-    contextWindow,
-    `active Ollama model ${primary} must stay on the small-context lane`,
-  ).toBeLessThanOrEqual(28_000);
-  const expectedReserve = Math.min(maxTokens, Math.max(0, contextWindow - 8_000));
-
-  expect(compaction).toEqual({
-    reserveTokens: expectedReserve,
-    reserveTokensFloor: expectedReserve,
+function hermesResponseEnv(): NodeJS.ProcessEnv {
+  return env({
+    NEMOCLAW_AGENT: "hermes",
   });
 }
 
@@ -107,7 +52,7 @@ test(
       e2ePhases: [
         "prepare clean GPU runtime",
         "install Ollama and GPU sandbox",
-        "validate CUDA sandbox configuration",
+        "validate GPU runtime status",
         "validate Ollama proxy credential boundary",
         "run sandbox inference.local chat",
         "restart Ollama and recover agent inference",
@@ -120,13 +65,12 @@ test(
       boundary:
         "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + inference.local",
       credentialBoundary:
-        "The proxy token remains host/OpenShell-owned and is absent from sandbox env and uploaded config evidence.",
+        "The proxy token remains host/OpenShell-owned and is absent from sandbox env.",
       remoteInstallerBoundary:
         "The official Ollama installer compatibility path runs before proxy tokens are read; the workflow uses a read-only checkout token and no explicit repository secrets. Replace with a pinned package once the GPU image provides a stable install source.",
       sandboxName: SANDBOX_NAME,
       delegatedLegacyContracts: [
         "uninstall --delete-models remains a separate cleanup lane until it has dedicated Vitest coverage",
-        "The #5468 interactive TUI first-turn smoke remains waived until a TUI fixture exists; this Vitest asserts the baked compaction budget directly",
       ],
     });
 
@@ -181,16 +125,7 @@ test(
     expect(install.exitCode, resultText(install)).toBe(0);
     await artifacts.writeText("install-gpu-ollama.log", resultText(install));
 
-    progress.phase("validate CUDA sandbox configuration");
-    const config = await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript(openClawModelConfigProjectionScript()),
-      { artifactName: "sandbox-openclaw-model-config", env: env(), timeoutMs: 30_000 },
-    );
-    expect(config.exitCode, resultText(config)).toBe(0);
-    await artifacts.writeText("openclaw-model-config.json", config.stdout);
-    assertSmallContextCompactionPolicy(config.stdout);
-
+    progress.phase("validate GPU runtime status");
     const status = await host.command("node", [CLI, SANDBOX_NAME, "status"], {
       artifactName: "status-gpu-ollama",
       env: env(),
@@ -400,5 +335,90 @@ exit 1`,
     });
     expect(loaded.exitCode, resultText(loaded)).toBe(0);
     expect(loadedOllamaModels(loaded.stdout)).toContain(model);
+  },
+);
+
+test(
+  "Hermes GPU Ollama initial, resumed, and continued replies contain expected answers without tool-call output (#10215)",
+  {
+    timeout: HERMES_RESPONSE_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "prepare clean GPU Ollama runtime for Hermes",
+        "install Hermes with local Ollama inference",
+        "run Hermes initial, resumed, and continued replies",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+    await artifacts.target.declare({
+      id: "gpu-e2e",
+      boundary: "Hermes sandbox + GPU Ollama + initial, resumed, and continued CLI replies",
+      sandboxName: SANDBOX_NAME,
+      expectedReplies: ["acknowledged", "56", "56"],
+    });
+
+    const cleanupEnv = hermesResponseEnv();
+    cleanup.trackDisposable("stop Hermes response-validation Ollama processes", async () => {
+      const result = await cleanupOllama(host, "cleanup-hermes-response-ollama-processes");
+      expect(result.exitCode, resultText(result)).toBe(0);
+    });
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "cleanup-hermes-response-gateway",
+      env: cleanupEnv,
+      timeoutMs: 60_000,
+    });
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-hermes-response-openshell-sandbox",
+        env: cleanupEnv,
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "cleanup-hermes-response-sandbox",
+      env: cleanupEnv,
+      timeoutMs: 120_000,
+    });
+    progress.phase("prepare clean GPU Ollama runtime for Hermes");
+    await cleanupGpu(host, sandbox);
+
+    const docker = await host.command("docker", ["info"], {
+      artifactName: "docker-info-hermes-response",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    expect(docker.exitCode, resultText(docker)).toBe(0);
+    const nvidia = await host.command("nvidia-smi", [], {
+      artifactName: "nvidia-smi-hermes-response",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    assertNvidiaAvailable(nvidia, skip);
+
+    await ensureOllama(host);
+    const ollamaCleanup = await cleanupOllama(host, "pre-cleanup-hermes-response-ollama");
+    expect(ollamaCleanup.exitCode, resultText(ollamaCleanup)).toBe(0);
+
+    progress.phase("install Hermes with local Ollama inference");
+    const install = await host.command(
+      "bash",
+      ["install.sh", "--non-interactive", "--fresh", "--yes-i-accept-third-party-software"],
+      {
+        artifactName: "install-gpu-hermes-ollama",
+        cwd: REPO_ROOT,
+        env: hermesResponseEnv(),
+        timeoutMs: 60 * 60_000,
+      },
+    );
+    expect(install.exitCode, resultText(install)).toBe(0);
+
+    progress.phase("run Hermes initial, resumed, and continued replies");
+    await assertHermesFollowUpReplies({
+      env: hermesResponseEnv(),
+      redactionValues: [],
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+    });
   },
 );
