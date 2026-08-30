@@ -33,7 +33,6 @@ const HERMES_RESPONSE_TIMEOUT_MS = 90 * 60_000;
 function hermesResponseEnv(): NodeJS.ProcessEnv {
   return env({
     NEMOCLAW_AGENT: "hermes",
-    NEMOCLAW_CONTEXT_WINDOW: "65536",
   });
 }
 
