@@ -3,6 +3,7 @@
 
 import { stripAnsi } from "../../adapters/openshell/client";
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import { reportsExactProviderNotFound } from "../../onboard/extra-provider-diagnostic-parser";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
 import { listExtraProviders, type McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -36,6 +37,11 @@ export type McpProviderAttachmentInspection = {
   error?: string;
 };
 
+export type McpProviderInspectionRuntimeSelection = {
+  gatewayName: string;
+  workspace: string;
+};
+
 const MCP_PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
 export function parseMcpProviderMetadata(output: string): Omit<McpProviderInspection, "exists"> {
@@ -65,7 +71,10 @@ export function parseMcpProviderMetadata(output: string): Omit<McpProviderInspec
   };
 }
 
-export function inspectMcpProvider(providerName: string | undefined): McpProviderInspection {
+export function inspectMcpProvider(
+  providerName: string | undefined,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
+): McpProviderInspection {
   if (!providerName) {
     return {
       exists: false,
@@ -77,11 +86,12 @@ export function inspectMcpProvider(providerName: string | undefined): McpProvide
   }
   const result = runOpenshellProviderCommand(["provider", "get", providerName], {
     ignoreError: true,
+    runtimeSelection,
     stdio: ["ignore", "pipe", "pipe"],
   }) as OpenShellCommandResult;
   if (result.status !== 0) {
     const output = commandOutput(result);
-    if (/not\s+found|NotFound|does\s+not\s+exist|unknown\s+provider/i.test(output)) {
+    if (result.status === 1 && reportsExactProviderNotFound(output, providerName, output.length)) {
       return {
         exists: false,
         id: null,
@@ -125,9 +135,11 @@ export function parseMcpProviderAttachmentNames(output: string): string[] {
 
 export function inspectMcpProviderAttachments(
   sandboxName: string,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): McpProviderAttachmentInspection {
   const result = runOpenshellProviderCommand(["sandbox", "provider", "list", sandboxName], {
     ignoreError: true,
+    runtimeSelection,
     stdio: ["ignore", "pipe", "pipe"],
   }) as OpenShellCommandResult;
   const output = commandOutput(result);
@@ -139,7 +151,7 @@ export function inspectMcpProviderAttachments(
     if (/^No providers attached to sandbox\b/m.test(clean)) return { attachments: [] };
     const names = parseMcpProviderAttachmentNames(clean);
     const attachments = names.map((name) => {
-      const provider = inspectMcpProvider(name);
+      const provider = inspectMcpProvider(name, runtimeSelection);
       if (
         provider.exists !== true ||
         !provider.id ||
@@ -406,9 +418,10 @@ export async function preflightMcpEntryTargets(
 export function providerAttached(
   sandboxName: string,
   providerName: string | undefined,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): boolean | null {
   if (!providerName) return null;
-  const inspection = inspectMcpProviderAttachments(sandboxName);
+  const inspection = inspectMcpProviderAttachments(sandboxName, runtimeSelection);
   if (!inspection.attachments) return null;
   return inspection.attachments.some((attachment) => attachment.name === providerName);
 }

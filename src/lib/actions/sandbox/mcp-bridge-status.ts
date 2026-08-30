@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../agent/defs";
+import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import type { McpBridgeEntry } from "../../state/registry";
+import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
 import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
@@ -183,6 +185,10 @@ export async function statusMcpBridge(
   validateSandboxName(sandboxName);
   if (server !== undefined) validateMcpServerName(server);
   const sandbox = getSandboxOrThrow(sandboxName);
+  const providerRuntimeSelection = {
+    gatewayName: getPersistedSandboxTargetGatewayName(sandbox),
+    workspace: OPENSHELL_DEFAULT_WORKSPACE,
+  };
   const agent = getSandboxAgent(sandbox);
   const bridges = bridgeState(sandbox);
   if (Object.keys(bridges).length > 0) {
@@ -299,7 +305,7 @@ export async function statusMcpBridge(
         )
       : [];
     const expectedCredential = entry?.env.length === 1 ? entry.env[0] : undefined;
-    const providerInspection = inspectMcpProvider(entry?.providerName);
+    const providerInspection = inspectMcpProvider(entry?.providerName, providerRuntimeSelection);
     const providerCredentialReady = providerMatchesCredential(
       providerInspection,
       expectedCredential,
@@ -310,7 +316,7 @@ export async function statusMcpBridge(
       expectedCredential,
       entry?.providerId,
     );
-    const attached = providerAttached(sandboxName, entry?.providerName);
+    const attached = providerAttached(sandboxName, entry?.providerName, providerRuntimeSelection);
     const warnings: string[] = [];
     let credentialWarning: string | undefined;
     if (entry) {

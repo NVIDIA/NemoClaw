@@ -139,7 +139,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
           stdout: "Id: " + expectedId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: LD_PRELOAD\n",
           stderr: "",
         }
-      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+      : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     return {
@@ -343,7 +343,7 @@ const attached = new Set(["alpha-mcp-fake", "alpha-mcp-second"]);
 providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "provider" && args[1] === "get") {
-    return { status: 1, stdout: "", stderr: "NotFound: provider" };
+    return { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     return attached.size > 0
@@ -497,7 +497,7 @@ const calls = [];
 providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "provider" && args[1] === "get") {
-    return { status: 1, stdout: "", stderr: "NotFound: provider" };
+    return { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   throw new Error("unexpected call: " + args.join(" "));
 };

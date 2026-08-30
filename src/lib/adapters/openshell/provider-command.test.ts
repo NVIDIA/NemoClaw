@@ -66,4 +66,30 @@ describe("OpenShell provider command runtime", () => {
     );
     expect(result).toEqual({ status: 0 });
   });
+
+  it("pins provider inspection to the recorded gateway and workspace (#10514)", () => {
+    mocks.buildSubprocessEnv.mockReturnValue({
+      OPENSHELL_GATEWAY: "ambient-gateway",
+      OPENSHELL_GATEWAY_ENDPOINT: "https://other.example.test",
+      OPENSHELL_GATEWAY_INSECURE: "true",
+      OPENSHELL_WORKSPACE: "ambient-workspace",
+      PATH: "/usr/bin",
+    });
+
+    runOpenshellProviderCommand(["provider", "get", "alpha-mcp-fake"], {
+      runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
+    });
+
+    expect(mocks.runOpenshell).toHaveBeenCalledWith(
+      ["provider", "get", "alpha-mcp-fake"],
+      expect.objectContaining({
+        env: {
+          OPENSHELL_GATEWAY: "recorded-gateway",
+          OPENSHELL_WORKSPACE: "default",
+          PATH: "/usr/bin",
+        },
+        replaceEnv: true,
+      }),
+    );
+  });
 });

@@ -11,6 +11,10 @@ export { OPENSHELL_OPERATION_TIMEOUT_MS };
 export type ProviderCommandOptions = {
   env?: Record<string, string | undefined>;
   ignoreError?: boolean;
+  runtimeSelection?: {
+    gatewayName: string;
+    workspace: string;
+  };
   stdio?: StdioOptions;
   timeout?: number;
 };
@@ -26,14 +30,23 @@ export function setProviderCommandRuntimeHooksForTest(hooks: ProviderCommandRunt
 }
 
 export function runOpenshellProviderCommand(args: string[], opts?: ProviderCommandOptions) {
+  const { runtimeSelection, ...runtimeOptions } = opts ?? {};
   const explicitEnv = Object.fromEntries(
-    Object.entries(opts?.env ?? {}).filter(
+    Object.entries(runtimeOptions.env ?? {}).filter(
       (entry): entry is [string, string] => entry[1] !== undefined,
     ),
   );
+  const env = buildSubprocessEnv(explicitEnv);
+  if (runtimeSelection) {
+    for (const name of Object.keys(env)) {
+      if (name.startsWith("OPENSHELL_")) delete env[name];
+    }
+    env.OPENSHELL_GATEWAY = runtimeSelection.gatewayName;
+    env.OPENSHELL_WORKSPACE = runtimeSelection.workspace;
+  }
   const providerOpts = {
-    ...opts,
-    env: buildSubprocessEnv(explicitEnv),
+    ...runtimeOptions,
+    env,
     replaceEnv: true,
   };
   const commandRunner = runtimeHooks.runOpenshell ?? runOpenshell;
