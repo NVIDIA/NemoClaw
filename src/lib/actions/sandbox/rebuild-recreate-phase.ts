@@ -68,6 +68,17 @@ export interface RebuildRecreatePhaseInput {
   bail: RebuildBail;
 }
 
+function normalizeOnboardExitCode(
+  value: number | string | null | undefined,
+  fallback: number,
+): number {
+  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) {
+    return fallback;
+  }
+  const exitCode = Number(value);
+  return Number.isInteger(exitCode) ? exitCode : fallback;
+}
+
 /**
  * Recreate the deleted sandbox from its validated registry-derived contract.
  * Boundary coverage: rebuild-flow.test.ts exercises success, process-exit and
@@ -248,7 +259,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const savedExit = process.exit;
   process.exit = ((code) => {
     onboardFailed = true;
-    onboardExitCode = typeof code === "number" ? code : 1;
+    onboardExitCode = normalizeOnboardExitCode(code, 1);
     const error = new Error(`onboard exited with code ${onboardExitCode}`);
     error.name = "RebuildOnboardExit";
     throw error;
@@ -295,7 +306,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         : {}),
       recreateJournalTargetIntentFingerprint: recreateJournal.targetIntentFingerprint,
     });
-    const returnedExitCode = Number(process.exitCode ?? 0);
+    const returnedExitCode = normalizeOnboardExitCode(process.exitCode, 0);
     if (returnedExitCode !== 0) {
       onboardFailed = true;
       onboardExitCode = returnedExitCode;

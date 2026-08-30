@@ -490,6 +490,21 @@ describe("runRebuildRecreatePhase handoff", () => {
     }
   });
 
+  it("preserves an integer-string exit code from intercepted inner onboarding", async () => {
+    const input = makeInput();
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+      process.exit("7");
+    });
+
+    await expect(runRebuildRecreatePhase(input)).rejects.toThrow(
+      "bail: Recreate failed (stale-sandbox recovery).",
+    );
+
+    expect(input.onCreated).not.toHaveBeenCalled();
+    expect(input.registryRollback.restoreForRetry).toHaveBeenCalledOnce();
+    expect(input.bail).toHaveBeenCalledWith("Recreate failed (stale-sandbox recovery).", 7);
+  });
+
   it("retains enabled observability through inner onboard failure, recovery, and bail", async () => {
     const checkpoints: Array<[string, boolean]> = [];
     vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
