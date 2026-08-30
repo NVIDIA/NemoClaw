@@ -12,6 +12,7 @@ import {
   buildGlobalPolicyListArgs,
   buildPolicyGetArgs,
   buildPolicyGetFullJsonArgs,
+  buildPolicyGetRevisionArgs,
 } from "../../policy/commands";
 import {
   assertPolicyRequirementContainment,
@@ -212,6 +213,35 @@ export function captureSandboxBasePolicy(sandboxName: string, gatewayName: strin
   const validatedGatewayName = validatePolicyName(gatewayName, "gateway name");
   const raw = capturePolicyRead(
     buildPolicyGetArgs(validatePolicyName(sandboxName, "sandbox name"), validatedGatewayName),
+    "sandbox",
+    { gatewayName: validatedGatewayName },
+  );
+  try {
+    return parseOpenShellPolicy(raw).yamlBody;
+  } catch (error) {
+    failInspection(
+      "sandbox",
+      error instanceof Error ? error.message : "OpenShell returned invalid base policy output",
+    );
+  }
+}
+
+/** Read one immutable base-policy revision through the selected gateway. */
+export function captureSandboxBasePolicyRevision(
+  sandboxName: string,
+  gatewayName: string,
+  revision: number,
+): string {
+  if (!Number.isSafeInteger(revision) || revision < 1) {
+    failInspection("sandbox", "the requested policy revision is invalid");
+  }
+  const validatedGatewayName = validatePolicyName(gatewayName, "gateway name");
+  const raw = capturePolicyRead(
+    buildPolicyGetRevisionArgs(
+      validatePolicyName(sandboxName, "sandbox name"),
+      validatedGatewayName,
+      revision,
+    ),
     "sandbox",
     { gatewayName: validatedGatewayName },
   );

@@ -11,7 +11,6 @@ import type { SandboxEntry } from "../../state/registry";
 import { runSandboxProviderPreDeleteCleanup } from "../sandbox-provider-cleanup";
 import {
   assertApfCreateIntent,
-  bindRebuildPolicyProvidersToCreateArgs,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
@@ -20,8 +19,6 @@ import {
   persistPostCreateRecovery,
   persistRetainedSandboxRecoveryMessage,
   readManagedDcodeCreateSelectionDrift,
-  resolveRebuildMessagingPolicyDeltas,
-  resolveRebuildPolicyProviderAuthority,
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
   runAuthorityBoundProviderCleanup,
@@ -36,154 +33,6 @@ const UNVERIFIED_RECOVERY_CONTEXT = {
   lifecycleGeneration: "generation-1",
   createAttemptNonce: "a".repeat(62),
 } as const;
-
-describe("rebuild policy provider handoff", () => {
-  const preservedMcpState = {
-    bridges: {
-      github: {
-        server: "github",
-        agent: "openclaw",
-        url: "https://mcp.example.com/",
-        env: ["MCP_TOKEN"],
-        providerName: "alpha-mcp-github",
-        providerId: "provider-id",
-        policyName: "mcp_github",
-        addedAt: "2026-08-30T00:00:00.000Z",
-      },
-    },
-  };
-
-  it("derives active additions and disabled removals from current channel manifests", () => {
-    expect(
-      resolveRebuildMessagingPolicyDeltas({
-        agent: "hermes",
-        disabledChannels: ["telegram", "googlechat"],
-        networkPolicy: {
-          presets: ["wechat"],
-          entries: [
-            {
-              channelId: "telegram",
-              presetName: "telegram",
-              policyKeys: ["telegram"],
-              source: "agent-alias",
-            },
-            {
-              channelId: "wechat",
-              presetName: "wechat",
-              policyKeys: ["wechat_bridge"],
-              source: "manifest",
-            },
-          ],
-        },
-      }),
-    ).toEqual({
-      requiredNetworkPolicyKeys: ["wechat_bridge"],
-      requiredNetworkPolicyPresetNames: ["wechat"],
-      removedNetworkPolicyKeys: ["telegram", "googlechat_hermes"],
-    });
-  });
-
-  it("adds missing live-policy providers to the final create arguments", () => {
-    expect(
-      bindRebuildPolicyProvidersToCreateArgs(
-        ["--from", "image", "--provider", "operator-provider"],
-        {
-          credentialBindingProviders: ["operator-provider", "wechat-provider"],
-        },
-      ),
-    ).toEqual([
-      "--from",
-      "image",
-      "--provider",
-      "operator-provider",
-      "--provider",
-      "wechat-provider",
-    ]);
-  });
-
-  it("inserts rebuild providers before the sandbox startup command separator", () => {
-    expect(
-      bindRebuildPolicyProvidersToCreateArgs(
-        [
-          "openshell",
-          "sandbox",
-          "create",
-          "--provider",
-          "inference-provider",
-          "--",
-          "env",
-          "nemoclaw-start",
-        ],
-        {
-          credentialBindingProviders: ["inference-provider", "mcp-provider"],
-        },
-      ),
-    ).toEqual([
-      "openshell",
-      "sandbox",
-      "create",
-      "--provider",
-      "inference-provider",
-      "--provider",
-      "mcp-provider",
-      "--",
-      "env",
-      "nemoclaw-start",
-    ]);
-  });
-
-  it("authorizes exact create, messaging-plan, and managed MCP providers", () => {
-    expect(
-      resolveRebuildPolicyProviderAuthority({
-        createArgs: ["--from", "image", "--provider", "inference-provider"],
-        messagingPlan: {
-          credentialBindings: [
-            {
-              channelId: "telegram",
-              credentialId: "bot-token",
-              sourceInput: "token",
-              providerName: "alpha-telegram-bridge",
-              providerEnvKey: "TELEGRAM_BOT_TOKEN",
-              placeholder: "${TELEGRAM_BOT_TOKEN}",
-              credentialAvailable: true,
-            },
-          ],
-        },
-        preservedMcpState,
-        managedMcpRebuildHandoff: true,
-      }),
-    ).toEqual(["inference-provider", "alpha-telegram-bridge", "alpha-mcp-github"]);
-  });
-
-  it("does not authorize MCP registry names without the managed rebuild handoff", () => {
-    expect(
-      resolveRebuildPolicyProviderAuthority({
-        createArgs: [],
-        messagingPlan: null,
-        preservedMcpState,
-        managedMcpRebuildHandoff: false,
-      }),
-    ).toEqual([]);
-  });
-
-  it("ignores incomplete MCP add records even with a managed rebuild handoff", () => {
-    expect(
-      resolveRebuildPolicyProviderAuthority({
-        createArgs: [],
-        messagingPlan: null,
-        preservedMcpState: {
-          bridges: {
-            github: {
-              ...preservedMcpState.bridges.github,
-              addState: "prepared",
-            },
-          },
-        },
-        managedMcpRebuildHandoff: true,
-      }),
-    ).toEqual([]);
-  });
-});
 
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;

@@ -10,6 +10,7 @@ import { digestBaselineEntry } from "./baseline-exclusion";
 
 const mocks = vi.hoisted(() => ({
   captureSandboxBasePolicy: vi.fn(),
+  captureSandboxBasePolicyRevision: vi.fn(),
   getSandbox: vi.fn(),
   inspectSandboxPolicy: vi.fn(),
   resolveOpenshell: vi.fn(),
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../adapters/openshell/policy-state", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../adapters/openshell/policy-state")>()),
   captureSandboxBasePolicy: mocks.captureSandboxBasePolicy,
+  captureSandboxBasePolicyRevision: mocks.captureSandboxBasePolicyRevision,
   inspectSandboxPolicy: mocks.inspectSandboxPolicy,
 }));
 vi.mock("../adapters/openshell/resolve", async (importOriginal) => ({
@@ -67,6 +69,7 @@ describe("live OpenShell policy mutations", () => {
       policyIdentity: { hash: "sha256:live", activeVersion: 1 },
     }));
     mocks.captureSandboxBasePolicy.mockImplementation(() => livePolicy);
+    mocks.captureSandboxBasePolicyRevision.mockImplementation(() => livePolicy);
     mocks.runCapture.mockImplementation(() => livePolicy);
     mocks.resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
     mocks.run.mockImplementation((command: readonly string[]) => {
@@ -131,6 +134,54 @@ describe("live OpenShell policy mutations", () => {
     expect(YAML.parse(livePolicy).network_policies).toHaveProperty("concurrent_host_edit");
   });
 
+  it("preserves a host edit made after the final reread but before policy set", () => {
+    let activeVersion = 1;
+    let concurrentRevision = livePolicy;
+    mocks.inspectSandboxPolicy.mockImplementation(() => {
+      const policy = YAML.parse(livePolicy);
+      return {
+        policySource: "sandbox",
+        effectivePolicy: policy,
+        policy,
+        policyIdentity: { hash: `sha256:live-${String(activeVersion)}`, activeVersion },
+      };
+    });
+    mocks.captureSandboxBasePolicyRevision.mockImplementation(() => concurrentRevision);
+    let writes = 0;
+    mocks.run
+      .mockImplementationOnce((command: readonly string[]) => {
+        writes += 1;
+        const policyIndex = command.indexOf("--policy");
+        const requested = fs.readFileSync(command[policyIndex + 1] as string, "utf8");
+        const concurrent = YAML.parse(livePolicy);
+        concurrent.network_policies.concurrent_host_edit = {
+          endpoints: [{ host: "concurrent.example.com", port: 443 }],
+        };
+        concurrentRevision = YAML.stringify(concurrent);
+        activeVersion = 2;
+        livePolicy = requested;
+        activeVersion += 1;
+        return { status: 0 };
+      })
+      .mockImplementation((command: readonly string[]) => {
+        writes += 1;
+        const policyIndex = command.indexOf("--policy");
+        livePolicy = fs.readFileSync(command[policyIndex + 1] as string, "utf8");
+        activeVersion += 1;
+        return { status: 0 };
+      });
+
+    expect(applyPresetContent(sandboxName, "weather", preset, { nonFatal: true })).toBe(true);
+    expect(writes).toBe(2);
+    expect(YAML.parse(livePolicy).network_policies).toEqual(
+      expect.objectContaining({
+        host_approval: hostEntry,
+        weather: expect.any(Object),
+        concurrent_host_edit: expect.any(Object),
+      }),
+    );
+  });
+
   it("accepts an ambiguous write only when live readback matches", () => {
     const desiredPolicy = YAML.stringify({
       version: 1,
@@ -162,9 +213,11 @@ describe("live OpenShell policy mutations", () => {
   it("rejects an ambiguous write when live readback is unavailable", () => {
     const desiredPolicy = YAML.stringify({ version: 1, network_policies: {} });
     mocks.run.mockReturnValue({ status: 3, stderr: "openshell: response stream reset" });
-    mocks.captureSandboxBasePolicy.mockImplementation(() => {
-      throw new PolicyObservationError("OpenShell policy read timed out");
-    });
+    mocks.captureSandboxBasePolicy
+      .mockImplementationOnce(() => livePolicy)
+      .mockImplementation(() => {
+        throw new PolicyObservationError("OpenShell policy read timed out");
+      });
 
     expect(setPolicyDocument(sandboxName, desiredPolicy, { nonFatal: true })).toBe(false);
     expect(console.error).toHaveBeenCalledWith(

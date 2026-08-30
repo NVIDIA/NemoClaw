@@ -13,6 +13,7 @@ import YAML from "yaml";
 // Namespace access keeps resolveOpenshell spyable in focused policy tests.
 import {
   captureSandboxBasePolicy,
+  captureSandboxBasePolicyRevision,
   inspectSandboxPolicy,
   PolicyObservationError,
   type SandboxPolicyInspection,
@@ -649,11 +650,13 @@ function policyObservationError(error: unknown): string {
 export interface PolicyMutationContext {
   readonly gatewayName: string;
   readonly inspection: SandboxPolicyInspection;
+  readonly basePolicyDocument?: string;
 }
 
 interface LivePolicyBoundary {
   readonly gatewayName: string;
   readonly inspection: SandboxPolicyInspection;
+  readonly basePolicyDocument: string;
 }
 
 function inspectLivePolicyBoundary(
@@ -700,7 +703,8 @@ function inspectLivePolicyBoundary(
     sandboxName,
     gatewayName,
   });
-  return { gatewayName, inspection };
+  const basePolicyDocument = captureSandboxBasePolicy(sandboxName, gatewayName);
+  return { gatewayName, inspection, basePolicyDocument };
 }
 
 /** Read the current live policy through the sandbox's recorded gateway binding. */
@@ -710,6 +714,17 @@ export function inspectPolicyMutationContext(
   requestedGatewayName?: string,
 ): PolicyMutationContext {
   return inspectLivePolicyBoundary(sandboxName, operation, requestedGatewayName);
+}
+
+/**
+ * Read the round-trippable base policy through the sandbox's recorded gateway.
+ * Destructive lifecycle callers use this instead of the ambient CLI gateway.
+ */
+export function captureRecordedSandboxBasePolicy(
+  sandboxName: string,
+  operation: string,
+): string {
+  return inspectLivePolicyBoundary(sandboxName, operation).basePolicyDocument;
 }
 
 function preparePolicyMutationContext(
@@ -727,7 +742,11 @@ export function recheckPolicyMutationContext(
   previous: PolicyMutationContext,
 ): PolicyMutationContext {
   const current = inspectPolicyMutationContext(sandboxName, operation, previous.gatewayName);
-  if (!isDeepStrictEqual(current.inspection.effectivePolicy, previous.inspection.effectivePolicy)) {
+  if (
+    !isDeepStrictEqual(current.inspection.effectivePolicy, previous.inspection.effectivePolicy) ||
+    (previous.basePolicyDocument !== undefined &&
+      !policyDocumentsMatch(current.basePolicyDocument ?? "", previous.basePolicyDocument))
+  ) {
     throw new PolicyObservationError(
       `Refusing to ${operation}: the current OpenShell policy changed while NemoClaw prepared the requested update. Rerun the command against the current policy.`,
     );
@@ -887,6 +906,89 @@ function inspectPolicyDocumentReadback(
   }
 }
 
+const POLICY_RECONCILE_ATTEMPTS = 5;
+const MISSING_POLICY_VALUE = Symbol("missing-policy-value");
+type MergePolicyValue = PolicyValue | typeof MISSING_POLICY_VALUE;
+
+function clonePolicyMergeValue(value: MergePolicyValue): MergePolicyValue {
+  return value === MISSING_POLICY_VALUE ? value : structuredClone(value);
+}
+
+function mergeConcurrentPolicyValue(
+  original: MergePolicyValue,
+  requested: MergePolicyValue,
+  external: MergePolicyValue,
+  pathSegments: readonly string[],
+  conflicts: string[],
+): MergePolicyValue {
+  if (isDeepStrictEqual(requested, original)) return clonePolicyMergeValue(external);
+  if (isDeepStrictEqual(external, original)) return clonePolicyMergeValue(requested);
+  if (isDeepStrictEqual(requested, external)) return clonePolicyMergeValue(requested);
+
+  if (
+    original !== MISSING_POLICY_VALUE &&
+    requested !== MISSING_POLICY_VALUE &&
+    external !== MISSING_POLICY_VALUE &&
+    isPolicyObject(original) &&
+    isPolicyObject(requested) &&
+    isPolicyObject(external)
+  ) {
+    const merged: PolicyObject = {};
+    const keys = new Set([
+      ...Object.keys(original),
+      ...Object.keys(requested),
+      ...Object.keys(external),
+    ]);
+    for (const key of keys) {
+      const value = mergeConcurrentPolicyValue(
+        Object.prototype.hasOwnProperty.call(original, key)
+          ? original[key]
+          : MISSING_POLICY_VALUE,
+        Object.prototype.hasOwnProperty.call(requested, key)
+          ? requested[key]
+          : MISSING_POLICY_VALUE,
+        Object.prototype.hasOwnProperty.call(external, key)
+          ? external[key]
+          : MISSING_POLICY_VALUE,
+        [...pathSegments, key],
+        conflicts,
+      );
+      if (value !== MISSING_POLICY_VALUE) merged[key] = value;
+    }
+    return merged;
+  }
+
+  conflicts.push(pathSegments.join(".") || "<policy>");
+  return clonePolicyMergeValue(external);
+}
+
+function rebasePolicyDocumentOntoConcurrentEdit(
+  originalDocument: string,
+  requestedDocument: string,
+  externalDocument: string,
+): { readonly document: string; readonly conflicts: readonly string[] } {
+  const original = YAML.parse(originalDocument) as PolicyValue;
+  const requested = YAML.parse(requestedDocument) as PolicyValue;
+  const external = YAML.parse(externalDocument) as PolicyValue;
+  if (
+    !isPolicyDocument(original) ||
+    !isPolicyDocument(requested) ||
+    !isPolicyDocument(external)
+  ) {
+    throw new PolicyObservationError(
+      "OpenShell returned an invalid policy revision while NemoClaw reconciled a concurrent policy edit.",
+    );
+  }
+  const conflicts: string[] = [];
+  const merged = mergeConcurrentPolicyValue(original, requested, external, [], conflicts);
+  if (merged === MISSING_POLICY_VALUE || !isPolicyDocument(merged)) {
+    throw new PolicyObservationError(
+      "OpenShell returned an invalid policy revision while NemoClaw reconciled a concurrent policy edit.",
+    );
+  }
+  return { document: YAML.stringify(merged), conflicts };
+}
+
 /**
  * Apply a composed policy document while optionally keeping control in the
  * caller on failure. Lifecycle code that owns compensating actions must use
@@ -918,15 +1020,96 @@ export function setPolicyDocument(
     process.exit(1);
   }
 
-  const { outcome, status } = submitComposedPolicy(
-    sandboxName,
-    policyDocument,
-    context.gatewayName,
-  );
-  if (outcome.kind === "applied") {
+  let requestedDocument = policyDocument;
+  let recoveryOnly = false;
+
+  for (let attempt = 1; attempt <= POLICY_RECONCILE_ATTEMPTS; attempt += 1) {
+    if (attempt > 1) {
+      try {
+        context = recheckPolicyMutationContext(sandboxName, operation, context);
+      } catch (error) {
+        console.error(`  ${policyObservationError(error)}`);
+        if (options.nonFatal) return false;
+        process.exit(1);
+      }
+    }
+
+    const originalDocument =
+      context.basePolicyDocument ?? captureSandboxBasePolicy(sandboxName, context.gatewayName);
+    const originalVersion = context.inspection.policyIdentity.activeVersion;
+    const { outcome, status } = submitComposedPolicy(
+      sandboxName,
+      requestedDocument,
+      context.gatewayName,
+    );
+    if (outcome.kind === "rejected") {
+      console.error(`  ${policySetFailure(sandboxName, outcome).message}`);
+      if (options.nonFatal) return false;
+      process.exit(status || 1);
+    }
+
+    let observed: PolicyMutationContext;
     try {
-      verifyAppliedPolicyDocument(sandboxName, policyDocument, context);
-      return true;
+      observed = preparePolicyMutationContext(sandboxName, operation, context.gatewayName);
+    } catch (error) {
+      if (outcome.kind === "ambiguous") {
+        console.error(
+          `  Could not confirm the policy update for sandbox '${sandboxName}': ${redact(outcome.detail)}. ` +
+            "The current live policy could not be read; the update remains unconfirmed.",
+        );
+      } else {
+        console.error(`  ${policyObservationError(error)}`);
+      }
+      if (options.nonFatal) return false;
+      process.exit(1);
+    }
+    const observedDocument =
+      observed.basePolicyDocument ?? captureSandboxBasePolicy(sandboxName, observed.gatewayName);
+    const observedVersion = observed.inspection.policyIdentity.activeVersion;
+    const requestedIsCurrent = policyDocumentsMatch(observedDocument, requestedDocument);
+    const concurrentRevision = observedVersion > originalVersion + 1;
+
+    if (!concurrentRevision) {
+      if (requestedIsCurrent) return !recoveryOnly;
+      if (outcome.kind === "ambiguous") {
+        console.error(
+          `  Could not confirm the policy update for sandbox '${sandboxName}': ${redact(outcome.detail)}. ` +
+            "The current live policy differs from the requested document; the update remains unconfirmed.",
+        );
+      } else {
+        console.error(
+          `  NemoClaw applied the sandbox policy for '${sandboxName}', but the resulting base policy did not match the requested policy. The policy update is incomplete.`,
+        );
+      }
+      if (options.nonFatal) return false;
+      process.exit(status || 1);
+    }
+
+    let externalDocument: string;
+    try {
+      externalDocument = requestedIsCurrent
+        ? captureSandboxBasePolicyRevision(
+            sandboxName,
+            context.gatewayName,
+            observedVersion - 1,
+          )
+        : observedDocument;
+      const rebased = rebasePolicyDocumentOntoConcurrentEdit(
+        originalDocument,
+        requestedDocument,
+        externalDocument,
+      );
+      context = observed;
+      if (rebased.conflicts.length > 0) {
+        recoveryOnly = true;
+        requestedDocument = externalDocument;
+        console.error(
+          `  The current OpenShell policy changed in the same fields while NemoClaw prepared ${operation}. ` +
+            "The external policy is being restored; rerun the command against the current policy.",
+        );
+      } else {
+        requestedDocument = rebased.document;
+      }
     } catch (error) {
       console.error(`  ${policyObservationError(error)}`);
       if (options.nonFatal) return false;
@@ -934,24 +1117,11 @@ export function setPolicyDocument(
     }
   }
 
-  if (outcome.kind === "ambiguous") {
-    const readback = inspectPolicyDocumentReadback(sandboxName, policyDocument, context);
-    if (readback === "matched") return true;
-    const observedResult =
-      readback === "different"
-        ? "The current live policy differs from the requested document"
-        : "The current live policy could not be read";
-    console.error(
-      `  Could not confirm the policy update for sandbox '${sandboxName}': ${redact(outcome.detail)}. ` +
-        `${observedResult}; the update remains unconfirmed.`,
-    );
-    if (options.nonFatal) return false;
-    process.exit(status || 1);
-  }
-
-  console.error(`  ${policySetFailure(sandboxName, outcome).message}`);
+  console.error(
+    `  Refusing to ${operation}: the current OpenShell policy kept changing while NemoClaw reconciled the requested update. Rerun the command against the current policy.`,
+  );
   if (options.nonFatal) return false;
-  process.exit(status || 1);
+  process.exit(1);
 }
 
 /**

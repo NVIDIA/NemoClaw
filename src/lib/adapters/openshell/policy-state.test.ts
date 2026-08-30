@@ -8,6 +8,7 @@ import {
   assertObservedPolicyRequirements,
   assertOpenShellGatewayPortBinding,
   captureSandboxBasePolicy,
+  captureSandboxBasePolicyRevision,
   inspectActiveGlobalPolicy,
   inspectSandboxPolicy,
   isPolicyObservationError,
@@ -82,6 +83,28 @@ describe("OpenShell policy observation", () => {
       ) as never,
     );
     expect(captureSandboxBasePolicy("alpha", "nemoclaw")).toBe("version: 1\nnetwork_policies: {}");
+  });
+
+  it("reads an immutable base-policy revision through the selected gateway", () => {
+    const spy = vi
+      .spyOn(openshellRuntime, "captureResolvedOpenshell")
+      .mockReturnValue(
+        capture("Version: 7\nHash: sha256:prior\n---\nversion: 1\nnetwork_policies: {}\n") as never,
+      );
+
+    expect(captureSandboxBasePolicyRevision("alpha", "nemoclaw", 7)).toBe(
+      "version: 1\nnetwork_policies: {}",
+    );
+    expect(spy.mock.calls[0]?.[0]).toEqual([
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--rev",
+      "7",
+      "--base",
+      "alpha",
+    ]);
   });
 
   it("rejects a metadata-only base policy display", () => {

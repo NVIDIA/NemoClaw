@@ -202,7 +202,16 @@ export async function runRebuildPostRestorePhase(
     // `inference set` before this rebuild, while the gateway is still down.
     reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log);
 
-    await reapplyMessagingManifestAfterOpenClawDoctor(sandboxName, messagingPlan, log);
+    try {
+      await reapplyMessagingManifestAfterOpenClawDoctor(sandboxName, messagingPlan, log);
+    } catch (error) {
+      log(
+        `Messaging manifest reapply failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      console.error(`  ${YW}\u26a0${R} Messaging manifest config reapply failed after doctor.`);
+      bail("OpenClaw messaging manifest config reapply failed during rebuild.");
+      return;
+    }
 
     log("Restoring mutable OpenClaw config permissions after post-restore config writes");
     let permRepair: ReturnType<typeof shields.repairMutableConfigPerms> | null = null;

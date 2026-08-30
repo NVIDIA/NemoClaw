@@ -10,6 +10,7 @@ import {
   buildPolicyGetCommand,
   buildPolicyGetFullCommand,
   buildPolicyGetFullJsonArgs,
+  buildPolicyGetRevisionArgs,
   buildPolicySetCommand,
 } from "./commands";
 
@@ -38,6 +39,16 @@ describe("OpenShell policy command builders", () => {
       "get",
       "-g",
       "nemoclaw",
+      "--base",
+      "alpha",
+    ]);
+    expect(buildPolicyGetRevisionArgs("alpha", "nemoclaw", 7)).toEqual([
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--rev",
+      "7",
       "--base",
       "alpha",
     ]);

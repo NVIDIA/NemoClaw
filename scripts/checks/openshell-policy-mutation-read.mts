@@ -94,6 +94,7 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
     relativePath: "src/lib/adapters/openshell/policy-state.ts",
     expectedReads: [
       unclassifiedBase("captureSandboxBasePolicy"),
+      unclassifiedBase("captureSandboxBasePolicyRevision"),
       unclassifiedFull("inspectSandboxPolicy"),
     ],
   },
@@ -125,6 +126,7 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
         view: "base",
         failureHandling: "unclassified",
       },
+      unclassifiedBase("buildPolicyGetRevisionArgs"),
       {
         site: "buildPolicyGetFullCommand",
         view: "full",
@@ -144,6 +146,7 @@ export interface DiscoveredPolicyReadSite {
 const POLICY_GET_BUILDERS = new Map<string, PolicyReadView>([
   ["buildPolicyGetCommand", "base"],
   ["buildPolicyGetArgs", "base"],
+  ["buildPolicyGetRevisionArgs", "base"],
   ["buildPolicyGetFullCommand", "full"],
   ["buildPolicyGetFullJsonArgs", "full"],
 ]);

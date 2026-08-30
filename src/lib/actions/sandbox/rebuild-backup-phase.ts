@@ -59,7 +59,9 @@ export function captureRebuildPolicySource(
   sandboxName: string,
   policySourcePath?: string,
 ): string | null {
-  const policy = policyGet.getSandboxPolicy(sandboxName).yaml;
+  const policy = policyGet.getSandboxPolicy(sandboxName, {
+    recordedGatewayOperation: "capture the live policy before sandbox replacement",
+  }).yaml;
   if (!policy) return null;
   const resolvedPolicySourcePath =
     policySourcePath ?? secureTempFile("nemoclaw-rebuild-policy", ".yaml");

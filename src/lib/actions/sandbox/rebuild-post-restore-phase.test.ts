@@ -216,6 +216,27 @@ describe("rebuild post-restore phase", () => {
     expect(output).not.toContain("rebuilt successfully");
   });
 
+  it("stops rebuild when OpenClaw messaging config reapply fails", async () => {
+    vi.mocked(
+      rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor,
+    ).mockRejectedValue(new Error("config write failed"));
+    const args = input();
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(shields.repairMutableConfigPerms).not.toHaveBeenCalled();
+    expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
+    expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
+    expect(args.bail).toHaveBeenCalledWith(
+      "OpenClaw messaging manifest config reapply failed during rebuild.",
+    );
+    expect(args.log).toHaveBeenCalledWith(
+      "Messaging manifest reapply failed: config write failed",
+    );
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain("Messaging manifest config reapply failed after doctor");
+  });
+
   it("captures a completed doctor mutation and rejects a later config change (#9946)", async () => {
     let configHashValid = true;
     vi.mocked(processRecovery.executeSandboxExecCommand).mockImplementation(() => {

@@ -69,6 +69,9 @@ describe("rebuild policy handoff", () => {
     expect(fs.readFileSync(policyPath, "utf8")).toContain("host_changed");
     expect(fs.statSync(policyPath).mode & 0o777).toBe(0o600);
     expect(result).not.toHaveProperty("policyPresets");
+    expect(mocks.getSandboxPolicy).toHaveBeenCalledWith("alpha", {
+      recordedGatewayOperation: "capture the live policy before sandbox replacement",
+    });
   });
 
   it("never reconstructs a missing live policy from NemoClaw state", () => {

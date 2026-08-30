@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
-import { RD as _RD, D, G, R } from "../../cli/terminal-style";
+import { RD as _RD, G, R } from "../../cli/terminal-style";
 import { MessagingSetupApplier } from "../../messaging/applier/setup-applier";
 import type {
   MessagingHookApplyRequest,
@@ -103,21 +103,15 @@ export async function reapplyMessagingManifestAfterOpenClawDoctor(
     return;
   }
 
-  try {
-    log("Reapplying messaging manifest render and post-agent-install hooks after doctor");
-    const result = await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
-      runOpenshell: runMessagingOpenshell,
-      runHook: (request) => hookOutputsFromBuildSteps(plan, request),
-    });
-    log(
-      `messaging manifest reapply: targets=${result.appliedTargets.join(",")}, hooks=${result.appliedHooks.join(",")}`,
-    );
-    if (result.appliedTargets.length > 0 || result.appliedHooks.length > 0) {
-      console.log(`  ${G}\u2713${R} Messaging manifest config reapplied`);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    log(`Messaging manifest reapply failed: ${message}`);
-    console.log(`  ${D}Messaging manifest config reapply skipped (${message})${R}`);
+  log("Reapplying messaging manifest render and post-agent-install hooks after doctor");
+  const result = await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, {
+    runOpenshell: runMessagingOpenshell,
+    runHook: (request) => hookOutputsFromBuildSteps(plan, request),
+  });
+  log(
+    `messaging manifest reapply: targets=${result.appliedTargets.join(",")}, hooks=${result.appliedHooks.join(",")}`,
+  );
+  if (result.appliedTargets.length > 0 || result.appliedHooks.length > 0) {
+    console.log(`  ${G}\u2713${R} Messaging manifest config reapplied`);
   }
 }

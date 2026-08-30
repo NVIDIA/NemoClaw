@@ -53,7 +53,6 @@ describe("non-resumed replacement target fingerprint (#7735)", () => {
     { toolDisclosure: "direct" },
     { sandboxGpuConfig: { sandboxGpuEnabled: true, mode: "all" } },
     { dcodeAutoApprovalMode: "thread-opt-in" },
-    { policyTier: "balanced" },
   ])("changes when a recorded replacement input changes [case %#]", (drift) => {
     expect(fingerprintOnboardRecreateTargetIntent({ ...BASE_INTENT, ...drift })).not.toBe(
       fingerprintOnboardRecreateTargetIntent(BASE_INTENT),

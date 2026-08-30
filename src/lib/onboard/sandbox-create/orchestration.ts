@@ -93,7 +93,10 @@ export function bindRebuildPolicyProvidersToCreateArgs(
  */
 export function resolveRebuildPolicyProviderAuthority(input: {
   readonly createArgs: readonly string[];
-  readonly messagingPlan: Pick<SandboxMessagingPlan, "credentialBindings"> | null | undefined;
+  readonly messagingPlan:
+    | Pick<SandboxMessagingPlan, "credentialBindings" | "disabledChannels">
+    | null
+    | undefined;
   readonly preservedMcpState: SandboxMcpState | undefined;
   readonly managedMcpRebuildHandoff: boolean;
 }): string[] {
@@ -102,7 +105,9 @@ export function resolveRebuildPolicyProviderAuthority(input: {
       index > 0 && args[index - 1] === "--provider" ? [value] : [],
     ),
   );
+  const disabledChannels = new Set(input.messagingPlan?.disabledChannels ?? []);
   for (const binding of input.messagingPlan?.credentialBindings ?? []) {
+    if (disabledChannels.has(binding.channelId)) continue;
     providers.add(binding.providerName);
   }
   if (input.managedMcpRebuildHandoff) {
