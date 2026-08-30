@@ -442,6 +442,7 @@
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/workflow-plan.test.ts",
         "test/helpers/e2e-answer-assertions.test.ts"
       ]
     },

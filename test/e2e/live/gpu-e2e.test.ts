@@ -426,7 +426,7 @@ test(
   },
   async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
     await artifacts.target.declare({
-      id: "gpu-hermes-response-validation",
+      id: "gpu-e2e",
       boundary: "Hermes sandbox + GPU Ollama + initial, resumed, and continued CLI replies",
       sandboxName: SANDBOX_NAME,
       expectedReplies: ["acknowledged", "56", "56"],

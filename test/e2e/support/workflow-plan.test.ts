@@ -690,6 +690,8 @@ describe("E2E workflow plan", () => {
       expectedRunner,
       expectedRunner,
     ]);
+    expect(gpuE2e.selector).toBeUndefined();
+    expect(gpuE2e.owningPaths).toContain("test/e2e/live/hermes-cli-adapter-live.ts");
     expect(llamaCpp.environment).toEqual(
       expect.objectContaining({
         NEMOCLAW_LLAMACPP_RECIPE: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
