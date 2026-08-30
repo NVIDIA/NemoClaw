@@ -33,7 +33,10 @@ import {
   printMcpRestoreRecovery,
   restoreMcpAfterRebuild,
 } from "./rebuild-mcp-phase";
-import { reapplyMessagingManifestAfterOpenClawDoctor } from "./rebuild-messaging-phase";
+import {
+  finalizePendingMessagingRemovalsAfterRestore,
+  reapplyMessagingManifestAfterOpenClawDoctor,
+} from "./rebuild-messaging-phase";
 import { reconcileStalePinnedSessionModelsAfterRebuild } from "./reconcile-session-models";
 
 export {
@@ -170,6 +173,7 @@ export async function runRebuildPostRestorePhase(
   let mutableConfigHashRefreshUnverified = false;
   let finalMutableConfigHashUnverified = false;
   let messagingHostForwardUnverified = false;
+  let effectiveMessagingPlan = messagingPlan;
 
   if (targetAgentName === "openclaw") {
     log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
@@ -229,6 +233,31 @@ export async function runRebuildPostRestorePhase(
         `  ${YW}\u26a0${R} Mutable config permission repair incomplete: ${permRepair.errors.join("; ")}`,
       );
     }
+  }
+
+  try {
+    const finalizedMessagingPlan = finalizePendingMessagingRemovalsAfterRestore(
+      effectiveMessagingPlan,
+      log,
+    );
+    if (finalizedMessagingPlan !== effectiveMessagingPlan && finalizedMessagingPlan) {
+      if (
+        !registry.updateSandbox(sandboxName, {
+          messaging: { schemaVersion: 1, plan: finalizedMessagingPlan },
+        })
+      ) {
+        bail("Could not retire pending messaging removals after rebuild.");
+        return;
+      }
+      effectiveMessagingPlan = finalizedMessagingPlan;
+    }
+  } catch (error) {
+    bail(
+      `Could not finalize pending messaging removals after rebuild: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return;
   }
 
   // Restart before restoring MCP. The Hermes MCP transaction performs an
@@ -336,7 +365,7 @@ export async function runRebuildPostRestorePhase(
     bail("Failed to re-apply shields lockdown.");
     return;
   }
-  if (!ensureMessagingHostForwardAfterRebuild(sandboxName, messagingPlan)) {
+  if (!ensureMessagingHostForwardAfterRebuild(sandboxName, effectiveMessagingPlan)) {
     messagingHostForwardUnverified = true;
   }
   if (

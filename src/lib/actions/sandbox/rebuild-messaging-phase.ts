@@ -10,6 +10,7 @@ import type {
 } from "../../messaging/applier/types";
 import type { MessagingHookOutputMap } from "../../messaging/hooks";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import { retireUnconfiguredMessagingPlanChannels } from "../../messaging/compiler/workflow-planner";
 import type { SandboxEntry } from "../../state/registry";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-stage";
@@ -51,6 +52,27 @@ const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
     input: options.input,
     stdio: options.stdio as never,
   });
+
+export function finalizePendingMessagingRemovalsAfterRestore(
+  plan: SandboxMessagingPlan | null,
+  log: (message: string) => void,
+): SandboxMessagingPlan | null {
+  if (!plan) return null;
+  const pendingRemovals = plan.channels.filter(
+    (channel) => channel.configured === false && channel.disabled === true,
+  );
+  for (const channel of pendingRemovals) {
+    const result = MessagingSetupApplier.removeDisabledChannelAgentConfigAtOpenShell(
+      plan,
+      channel.channelId,
+      { runOpenshell: runMessagingOpenshell },
+    );
+    log(
+      `Retired messaging config for '${channel.channelId}' after restore: ${result.appliedTargets.join(",") || "no config target"}`,
+    );
+  }
+  return pendingRemovals.length > 0 ? retireUnconfiguredMessagingPlanChannels(plan) : plan;
+}
 
 function hookOutputsFromBuildSteps(
   plan: SandboxMessagingPlan,
