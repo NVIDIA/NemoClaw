@@ -98,6 +98,7 @@ vi.mock("../../runtime-recovery", () => ({
 
 vi.mock("../../shields", () => ({
   isShieldsDown: vi.fn(() => true),
+  recoverCompletedAutoRestoreBeforeCommand: vi.fn(),
   repairMutableConfigPerms: vi.fn(() => ({ applied: true, verified: true, errors: [] })),
 }));
 

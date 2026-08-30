@@ -27,10 +27,10 @@ import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
 import * as shields from "./index";
 import { relockAndReconfirm } from "./relock-reconfirm";
 import {
+  clearTimerMarkerGeneration,
   hasExactTimerAuthorizationProof,
   isProcessAlive,
   readProcessStartIdentity,
-  removeTimerAuthorizationProof,
   writeTimerAuthorizationProofForMarker,
 } from "./timer-control";
 import { withShieldsTransitionLock } from "./transition-lock";
@@ -224,38 +224,17 @@ function markerRecordMatchesCurrentTimer(
 }
 
 function cleanupOwnedTimerMarker(args: TimerArgs): boolean {
-  const quarantinePath = `${args.markerPath}.completed-${String(process.pid)}-${Date.now().toString(16)}`;
-  try {
-    fs.renameSync(args.markerPath, quarantinePath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
-  }
-
-  if (markerRecordMatchesCurrentTimer(readTimerMarker(quarantinePath), args)) {
-    fs.unlinkSync(quarantinePath);
-    removeTimerAuthorizationProof(args.sandboxName, args.processToken);
-    const directoryFd = fs.openSync(path.dirname(args.markerPath), "r");
-    try {
-      fs.fsyncSync(directoryFd);
-    } finally {
-      fs.closeSync(directoryFd);
-    }
-    return true;
-  }
-
-  // We moved a replacement marker, not our authority record. Restore it only
-  // if no newer canonical marker exists; link cannot overwrite a concurrent
-  // timer generation.
-  try {
-    fs.linkSync(quarantinePath, args.markerPath);
-    fs.unlinkSync(quarantinePath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    // Preserve the quarantined record for explicit inspection rather than
-    // deleting either timer generation.
-  }
-  return false;
+  const marker = readTimerMarker(args.markerPath);
+  if (!marker || !markerRecordMatchesCurrentTimer(marker, args)) return false;
+  const result = clearTimerMarkerGeneration(
+    args.sandboxName,
+    marker,
+    STATE_DIR,
+    args.markerPath,
+  );
+  if (result.status === "removed") return true;
+  if (result.status === "missing" || result.status === "changed") return false;
+  throw new Error(result.warning ?? "Failed to retire the owned Shields timer marker");
 }
 
 function resolveLockAgentConfig(): LockAgentConfig {
