@@ -479,10 +479,10 @@ test(
       accountEnabled: false,
       accountPresent: false,
       channelEnabled: false,
-      channelPresent: true,
+      channelPresent: false,
       credentialPresent: false,
       pluginEnabled: false,
-      pluginPresent: true,
+      pluginPresent: false,
     });
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-2-policy-list-baseline");
 
