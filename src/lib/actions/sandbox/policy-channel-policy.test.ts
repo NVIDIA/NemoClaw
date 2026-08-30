@@ -97,9 +97,7 @@ beforeEach(() => {
   getSandboxMock = vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: "test-sandbox",
     agent: null,
-    policies: ["pypi"],
   });
-  vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
 
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
   vi.spyOn(onboardSession, "updateSession").mockReturnValue(
@@ -319,21 +317,20 @@ describe("addSandboxPolicy", () => {
       expected: "curl is not in the preset binary allowlist, so curl probes can fail",
       detail: "https://discord.com/api/v10/gateway",
     },
-  ])("prints validation guidance when $preset is selected interactively", async ({
-    preset,
-    expected,
-    detail,
-  }) => {
-    selectFromListMock.mockResolvedValue(preset);
+  ])(
+    "prints validation guidance when $preset is selected interactively",
+    async ({ preset, expected, detail }) => {
+      selectFromListMock.mockResolvedValue(preset);
 
-    await addSandboxPolicy("test-sandbox");
+      await addSandboxPolicy("test-sandbox");
 
-    expect(printedText()).toContain(expected);
-    expect(printedText()).toContain(detail);
-    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", preset, {
-      suppressDisclosure: true,
-    });
-  });
+      expect(printedText()).toContain(expected);
+      expect(printedText()).toContain(detail);
+      expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", preset, {
+        suppressDisclosure: true,
+      });
+    },
+  );
 
   it("prints Discord validation guidance when the preset name is provided", async () => {
     await addSandboxPolicy("test-sandbox", { preset: "discord", yes: true });

@@ -37,11 +37,19 @@ import { buildSubprocessEnv } from "../../subprocess-env";
 import {
   ensureHermesDashboardPortForwardIfEnabled,
   ensureSandboxPortForward,
+  HermesPortableForwardRecoveryError,
   isSandboxForwardHealthy,
+  prepareHermesPortableLaunchForwards,
   recoverDeclaredAgentForwardPorts,
+  recoverHermesPortableLaunchForwards,
   recoverMessagingHostForward,
   resolveSandboxDashboardPort,
+  resolveSandboxLaunchForwardPorts,
   resolveSandboxHealthProbeUrl,
+  type HermesPortableForwardRecoveryFailure,
+  type HermesPortableForwardRecoveryInput,
+  type HermesPortableForwardRecoveryResult,
+  type PreparedHermesPortableForwardRecovery,
 } from "./forward-recovery";
 import {
   classifyGatewayRestartFailure,
@@ -78,7 +86,18 @@ export {
   classifyForwardHealthWithReachability,
   classifySandboxForwardHealth,
 } from "./forward-health";
-export { resolveSandboxDashboardPort } from "./forward-recovery";
+export { resolveSandboxDashboardPort, resolveSandboxLaunchForwardPorts } from "./forward-recovery";
+export {
+  HermesPortableForwardRecoveryError,
+  prepareHermesPortableLaunchForwards,
+  recoverHermesPortableLaunchForwards,
+};
+export type {
+  HermesPortableForwardRecoveryFailure,
+  HermesPortableForwardRecoveryInput,
+  HermesPortableForwardRecoveryResult,
+  PreparedHermesPortableForwardRecovery,
+};
 export type {
   GatewayRestartDeps,
   GatewayRestartFailureLayer,
@@ -833,32 +852,32 @@ export function restartSandboxGateway(
   return withUnsupportedHermesPortableGatewayRestartFence(sandboxName, () => {
     return withTimerBoundShieldsMutationLock(sandboxName, "gateway restart", () =>
       restartSandboxGatewayWithDeps(sandboxName, {
-      quiet,
-      deps: {
-        getSessionAgent: agentRuntime.getSessionAgent,
-        getSandbox: registry.getSandbox,
-        resolveSandboxDashboardPort,
-        requestGatewaySupervisorAction: executeGatewaySupervisorAction,
-        executeSandboxExecCommand,
-        waitForRecoveredSandboxGateway: (name, options) =>
-          waitForRecoveredSandboxGateway(name, {
-            ...options,
-            initialManagedHealthPassed: true,
-            timeoutSeconds: gatewayRecoveryTimeoutSeconds(agentRuntime.getSessionAgent(name)),
-            managedProbeImpl: (sandboxName) =>
-              confirmRecoveredSandboxGatewayManaged(sandboxName, {
-                requestGatewaySupervisorActionImpl:
-                  deps.requestGatewaySupervisorAction ?? executeGatewaySupervisorAction,
-              }),
+        quiet,
+        deps: {
+          getSessionAgent: agentRuntime.getSessionAgent,
+          getSandbox: registry.getSandbox,
+          resolveSandboxDashboardPort,
+          requestGatewaySupervisorAction: executeGatewaySupervisorAction,
+          executeSandboxExecCommand,
+          waitForRecoveredSandboxGateway: (name, options) =>
+            waitForRecoveredSandboxGateway(name, {
+              ...options,
+              initialManagedHealthPassed: true,
+              timeoutSeconds: gatewayRecoveryTimeoutSeconds(agentRuntime.getSessionAgent(name)),
+              managedProbeImpl: (sandboxName) =>
+                confirmRecoveredSandboxGatewayManaged(sandboxName, {
+                  requestGatewaySupervisorActionImpl:
+                    deps.requestGatewaySupervisorAction ?? executeGatewaySupervisorAction,
+                }),
             }),
-        ensureSandboxPortForward,
-        ensureHermesDashboardPortForwardIfEnabled,
-        recoverMessagingHostForward,
-        recoverDeclaredAgentForwardPorts,
-        printGatewayWedgeDiagnostics,
-        inspectHermesMcpReconciliationRefusal,
-        ...deps,
-      },
+          ensureSandboxPortForward,
+          ensureHermesDashboardPortForwardIfEnabled,
+          recoverMessagingHostForward,
+          recoverDeclaredAgentForwardPorts,
+          printGatewayWedgeDiagnostics,
+          inspectHermesMcpReconciliationRefusal,
+          ...deps,
+        },
       }),
     );
   });
@@ -882,7 +901,10 @@ const OPENSHELL_RELAY_TARGET_NOT_FOUND = 'message: "No such file or directory (o
 const OPENSHELL_RELAY_TARGET_REFUSED = 'message: "Connection refused (os error 111)"';
 
 function normalizeOpenshellStructuredError(value: string): string {
-  return stripAnsi(value).replace(/[×│]/gu, " ").replace(/\s+/gu, " ").trim();
+  return stripAnsi(value)
+    .replace(/[×│]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function hasRetryableOpenshellFailureShape(result: ReturnType<typeof captureOpenshell>): boolean {

@@ -245,3 +245,30 @@ export function captureHermesPortablePodmanExecutableAuthority(
   ).assertCurrent();
   return authority;
 }
+
+/**
+ * Capture the exact Podman executable generation without querying the engine.
+ * Read-only OpenShell operations use this proof after launch readiness has
+ * already established live sandbox, route, and policy health. Any Podman
+ * operation still uses the full matrix-qualified command authority above.
+ */
+export function captureHermesPortablePodmanExecutableFileAuthority(
+  socketAuthority: PodmanSocketAuthority,
+  receipt: { readonly runtimeAuthority: CheckpointPortableRuntimeAuthority } & {
+    readonly podmanExecutableAuthority: HermesPortablePodmanExecutableAuthority;
+  },
+  sourceEnv: NodeJS.ProcessEnv = process.env,
+  deps: HermesPortablePodmanAuthorityDeps = {},
+): HermesPortablePodmanExecutableAuthority {
+  requireExpectedAuthority(receipt.podmanExecutableAuthority);
+  requireRuntimeAuthority(receipt.runtimeAuthority, socketAuthority, deps);
+  buildHermesPortablePodmanEnvironment(receipt.runtimeAuthority, sourceEnv);
+  requireResolvedExecutable(receipt.podmanExecutableAuthority, sourceEnv, deps);
+  return Object.freeze({
+    version: HERMES_PORTABLE_PODMAN_VERSION,
+    executable: capturePodmanExecutableAuthority(
+      receipt.podmanExecutableAuthority.executable.executablePath,
+      deps.executableAuthorityDeps,
+    ),
+  });
+}

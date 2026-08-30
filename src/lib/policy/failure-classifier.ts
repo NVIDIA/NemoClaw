@@ -30,7 +30,7 @@ export interface AccessFailureInput {
    * Optional caller-provided context. When omitted, the classifier builds
    * its own context for `sandboxName`. Callers that already hold a
    * context (the explain command, the agent runtime) should pass it to
-   * avoid a second registry/gateway probe and to keep the verification
+   * avoid a second gateway probe and to keep the verification
    * status consistent with what the caller already rendered.
    */
   context?: PolicyContext;
@@ -53,8 +53,8 @@ export interface AccessFailureClassification {
    * `high` when the underlying signal unambiguously maps to {@link kind}
    * AND the matched preset (if any) was confirmed by a live gateway
    * probe. `low` when either the signal is ambiguous (notably HTTP 403
-   * on an allowed host) or the matched preset is `registry-only` /
-   * `gateway-unavailable`, in which case the agent must treat the
+   * on an allowed host) or the matched preset is `gateway-unavailable`,
+   * in which case the agent must treat the
    * verdict as advisory.
    */
   confidence: "high" | "low";
@@ -93,19 +93,12 @@ function findMatchingPreset(
 }
 
 function isVerified(preset: PolicyContextPreset): boolean {
-  return (
-    preset.verification === "verified" ||
-    preset.verification === "gateway-only" ||
-    preset.verification === "agent-base"
-  );
+  return preset.verification === "verified";
 }
 
 function verificationNote(preset: PolicyContextPreset): string {
   if (isVerified(preset)) return "";
-  if (preset.verification === "registry-only") {
-    return " The local registry lists this preset but the OpenShell gateway is not enforcing it (drift); treat this verdict as advisory.";
-  }
-  return " The OpenShell gateway is unreachable, so this verdict is registry-derived and advisory.";
+  return " The OpenShell gateway is unreachable, so current enforcement could not be verified.";
 }
 
 function resolveContext(input: AccessFailureInput): PolicyContext {

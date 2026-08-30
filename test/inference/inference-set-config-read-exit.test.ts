@@ -45,7 +45,6 @@ describe("inference set sandbox configuration read failures", () => {
             gpuEnabled: false,
             model: "nvidia/llama-3.3-nemotron-super-49b-v1",
             name: SANDBOX,
-            policies: [],
             provider: "nvidia-prod",
           },
         },
