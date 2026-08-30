@@ -562,11 +562,15 @@ describe("local PR review advisor", () => {
     expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
   });
 
-  it("reports lifecycle context and the underlying OpenShell failure while preserving its cause (#10611)", async () => {
+  it("redacts lifecycle credentials while preserving actionable OpenShell context (#10611)", async () => {
     const source = repository();
     const specialist = ADVISOR_SPECIALISTS[0]!;
     let sandboxName = "";
-    const underlying = new Error("openshell sandbox exec failed: connection refused");
+    const credential = "advisor-secret-value";
+    vi.stubEnv("PR_REVIEW_ADVISOR_API_KEY", credential);
+    const underlying = new Error(
+      `openshell sandbox exec failed: connection refused; api_key=${credential}; Authorization: Bearer secondary-token`,
+    );
     const lifecycle: LocalReviewLifecycle = {
       prepare: async () => undefined,
       startGateway: () => undefined,
@@ -579,21 +583,28 @@ describe("local PR review advisor", () => {
       remove: () => undefined,
     };
 
-    const failure = await runLocalReview({
+    const failure = (await runLocalReview({
       source,
       temporaryRoot: temporaryDirectory(),
       specialists: ADVISOR_SPECIALISTS.slice(0, 1),
       lifecycle,
-    }).catch((error: unknown) => error);
+    }).catch((error: unknown) => error)) as Error;
 
     expect(failure).toMatchObject({
       message: expect.stringContaining(
         `Local review failed during run for specialist ${specialist.interest}`,
       ),
-      cause: underlying,
+      cause: expect.objectContaining({
+        message: expect.stringContaining("openshell sandbox exec failed: connection refused"),
+      }),
     });
     expect(failure).toMatchObject({ message: expect.stringContaining(`sandbox ${sandboxName}`) });
-    expect(failure).toMatchObject({ message: expect.stringContaining(underlying.message) });
+    expect(failure.message).toContain("openshell sandbox exec failed: connection refused");
+    expect(failure.message).toContain("api_key=[REDACTED]");
+    expect(failure.message).toContain("Authorization: [REDACTED]");
+    expect((failure.cause as Error).message).not.toContain(credential);
+    expect(failure.message).not.toContain(credential);
+    expect(failure.message).not.toContain("secondary-token");
   });
 
   it("removes partial staging output after artifact copy failure (#10611)", async () => {

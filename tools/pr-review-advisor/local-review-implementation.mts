@@ -48,19 +48,57 @@ const defaultLocalReviewPublication: LocalReviewPublication = {
   rename: fs.renameSync,
 };
 
+const SECRET_ENVIRONMENT_NAME = /(auth|credential|key|password|secret|token)/iu;
+const SECRET_ASSIGNMENT =
+  /\b((?:api[_-]?key|credential|password|secret|token)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
+const AUTHORIZATION_CREDENTIAL =
+  /\b(authorization\s*[:=]\s*)(?:bearer\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
+const BEARER_CREDENTIAL = /\b(bearer)\s+[^\s,;]+/giu;
+
+function redactDiagnosticText(detail: string): string {
+  let redacted = detail;
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value && SECRET_ENVIRONMENT_NAME.test(name))
+      redacted = redacted.replaceAll(value, "[REDACTED]");
+  }
+  return redacted
+    .replace(AUTHORIZATION_CREDENTIAL, "$1[REDACTED]")
+    .replace(SECRET_ASSIGNMENT, "$1[REDACTED]")
+    .replace(BEARER_CREDENTIAL, "$1 [REDACTED]");
+}
+
+function safeDiagnostic(error: unknown): string {
+  return redactDiagnosticText(error instanceof Error ? error.message : "Unknown non-Error failure");
+}
+
+function safeFailure(error: unknown): Error {
+  if (error instanceof AggregateError) {
+    const failures = error.errors.map((failure: unknown) => safeFailure(failure));
+    return new AggregateError(failures, safeDiagnostic(error), {
+      cause: error.cause === undefined ? undefined : safeFailure(error.cause),
+    });
+  }
+  if (error instanceof Error) {
+    return new Error(safeDiagnostic(error), {
+      cause: error.cause === undefined ? undefined : safeFailure(error.cause),
+    });
+  }
+  return new Error(safeDiagnostic(error));
+}
+
 function contextualError(message: string, cause: unknown): Error {
-  const detail = cause instanceof Error ? cause.message : String(cause);
-  return new Error(`${message}: ${detail}`, { cause });
+  const safeCause = safeFailure(cause);
+  return new Error(`${message}: ${safeCause.message}`, { cause: safeCause });
 }
 
 function combineFailures(first: unknown, next: unknown): unknown {
   if (next === undefined) return first;
   if (first === undefined) return next;
-  return new AggregateError(
-    [first, next],
-    `${first instanceof Error ? first.message : String(first)}; ${next instanceof Error ? next.message : String(next)}`,
-    { cause: first },
-  );
+  const safeFirst = safeFailure(first);
+  const safeNext = safeFailure(next);
+  return new AggregateError([safeFirst, safeNext], `${safeFirst.message}; ${safeNext.message}`, {
+    cause: safeFirst,
+  });
 }
 
 export const defaultLocalReviewLifecycle: LocalReviewLifecycle = {
@@ -172,7 +210,7 @@ function publishArtifacts(
     if (hadPrevious) publication.remove(previous, { recursive: true });
     return;
   } catch (error) {
-    failure = error;
+    failure = safeFailure(error);
   }
   failure = combineFailures(failure, removePublicationPath(staged, publication));
   if (hadPrevious && fs.existsSync(previous)) {
@@ -366,10 +404,9 @@ export async function runLocalReview(input: {
         stage = "validate";
         validateSpecialistArtifacts(outputRoot, specialist.interest);
       } catch (error: unknown) {
-        const detail = error instanceof Error ? error.message : String(error);
-        specialistFailure = new Error(
-          `Local review failed during ${stage} for specialist ${specialist.interest} in sandbox ${env.SANDBOX_NAME}: ${detail}`,
-          { cause: error },
+        specialistFailure = contextualError(
+          `Local review failed during ${stage} for specialist ${specialist.interest} in sandbox ${env.SANDBOX_NAME}`,
+          error,
         );
       }
       let specialistCleanupFailure: unknown;
@@ -385,10 +422,12 @@ export async function runLocalReview(input: {
         );
       }
       if (specialistFailure !== undefined && specialistCleanupFailure !== undefined) {
+        const primary = safeFailure(specialistFailure);
+        const cleanup = safeFailure(specialistCleanupFailure);
         throw new AggregateError(
-          [specialistFailure, specialistCleanupFailure],
-          `${specialistFailure instanceof Error ? specialistFailure.message : String(specialistFailure)}; cleanup also failed: ${specialistCleanupFailure instanceof Error ? specialistCleanupFailure.message : String(specialistCleanupFailure)}`,
-          { cause: specialistFailure },
+          [primary, cleanup],
+          `${primary.message}; cleanup also failed: ${cleanup.message}`,
+          { cause: primary },
         );
       }
       if (specialistFailure !== undefined) throw specialistFailure;
@@ -398,20 +437,18 @@ export async function runLocalReview(input: {
     publishArtifacts(path.join(outputRoot, "artifacts"), destination, publication);
     result = destination;
   } catch (error) {
-    primaryFailure = error;
+    primaryFailure = safeFailure(error);
   }
   for (const [signal, handler] of signalHandlers) process.off(signal, handler);
   try {
     await cleanup();
   } catch (error) {
-    cleanupFailure = error;
+    cleanupFailure = safeFailure(error);
   }
   if (primaryFailure !== undefined) {
     if (cleanupFailure !== undefined) {
-      const primary =
-        primaryFailure instanceof Error ? primaryFailure.message : String(primaryFailure);
-      const cleanup =
-        cleanupFailure instanceof Error ? cleanupFailure.message : String(cleanupFailure);
+      const primary = safeFailure(primaryFailure).message;
+      const cleanup = safeFailure(cleanupFailure).message;
       throw new AggregateError(
         [primaryFailure, cleanupFailure],
         `${primary}; cleanup also failed: ${cleanup}`,
@@ -432,7 +469,7 @@ async function main(): Promise<void> {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(safeDiagnostic(error));
     process.exit(1);
   });
 }
