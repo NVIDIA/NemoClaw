@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import type { RetainedSandboxRecoveryContext } from "../state/onboard-session";
+import { cliName } from "./branding";
 
 // Re-exported so the onboard entrypoint imports its sandbox default/cancel
 // lifecycle helpers from a single module.
@@ -54,10 +56,16 @@ export interface SandboxCancelRollback {
 export function buildCancelRollbackMessage(
   sandboxName: string,
   sandboxIdentityFingerprint?: string,
+  recoveryContext?: Pick<RetainedSandboxRecoveryContext, "createAttemptNonce">,
 ): string[] {
   return [
     "",
     `  Onboarding cancelled — preserved incomplete sandbox '${sandboxName}'.`,
+    ...(recoveryContext
+      ? [
+          `  Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${recoveryContext.createAttemptNonce}`,
+        ]
+      : []),
     ...(sandboxIdentityFingerprint
       ? [
           `  Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}`,
@@ -70,10 +78,16 @@ export function buildCancelRollbackMessage(
     "  NemoClaw did not run OpenShell's mutable-name deletion command because the name may now identify a replacement sandbox.",
     "  Do not delete the sandbox by mutable sandbox name.",
     "  Shared inference providers are gateway configuration and are not sandbox cleanup targets.",
-    "  Sandbox-scoped provider registrations or gateway-bound credentials may remain when the durable recovery record lists them.",
-    "  Ask an OpenShell administrator to inspect the exact sandbox identity and remove only sandbox-scoped resources whose ownership is confirmed for this retained sandbox.",
-    "  A recorded credential environment name alone does not prove exposure; rotate a credential only when identity-bound inspection proves that it was exposed or attached to a retained sandbox-scoped resource.",
-    "  NemoClaw has no supported operation to clear this recovery record; use a different sandbox name for later onboarding.",
+    ...(sandboxIdentityFingerprint
+      ? [
+          `  Run '${cliName()} ${sandboxName} destroy'. If OpenShell confirms the retained sandbox absent, destroy removes only verified residual containers and can clear the matching recovery record.`,
+          recoveryContext
+            ? "  If it is still live, give the displayed create-attempt label to an OpenShell administrator for identity-bound removal."
+            : "  If it is still live, preserve the displayed fingerprint and ask an OpenShell administrator for identity-bound removal.",
+        ]
+      : [
+          "  NemoClaw cannot clear this recovery record until an OpenShell administrator establishes the exact sandbox identity.",
+        ]),
   ];
 }
 
@@ -200,6 +214,7 @@ export function createSandboxCancelRollback(
         for (const line of buildCancelRollbackMessage(
           sandboxName,
           identityFingerprint ?? undefined,
+          armedSandbox.context,
         )) {
           deps.log(line);
         }

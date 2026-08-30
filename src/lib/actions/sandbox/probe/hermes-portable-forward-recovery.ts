@@ -4,7 +4,11 @@
 import { isIP } from "node:net";
 
 import { parseForwardList } from "../../../state/sandbox-session";
-import { classifySandboxForwardHealth, isLocalForwardReachable } from "../forward-health";
+import {
+  classifySandboxForwardHealth,
+  isLiveSandboxForwardStatus,
+  isLocalForwardReachable,
+} from "../forward-health";
 
 const FORWARD_SETTLEMENT_TIMEOUT_MS = 3_000;
 const FORWARD_SETTLEMENT_INTERVAL_MS = 100;
@@ -57,6 +61,12 @@ export type HermesPortableForwardRecoveryResult = {
   readonly restoredPorts: readonly number[];
 };
 
+export interface PreparedHermesPortableForwardRecovery {
+  readonly result: HermesPortableForwardRecoveryResult;
+  readonly release: () => HermesPortableForwardRecoveryResult;
+  readonly rollback: () => void;
+}
+
 function failure(failureClass: HermesPortableForwardRecoveryFailure): never {
   throw new HermesPortableForwardRecoveryError(failureClass);
 }
@@ -92,7 +102,8 @@ function isSupportedForwardRow(parts: readonly string[]): boolean {
     /^\d+$/u.test(pidValue) &&
     Number.isSafeInteger(pid) &&
     pid > 0 &&
-    ["running", "stopped"].includes(status.toLowerCase())
+    (isLiveSandboxForwardStatus(status.toLowerCase()) ||
+      ["dead", "stopped"].includes(status.toLowerCase()))
   );
 }
 
@@ -281,10 +292,31 @@ function rollbackTouchedPorts(
   for (const port of [...touchedPorts].reverse()) rollbackPort(input, port);
 }
 
-/** Restore the exact launch-readiness forward set for one Hermes probe. */
-export function recoverHermesPortableLaunchForwards(
+function retainForwardRecovery(
   input: HermesPortableForwardRecoveryInput,
-): HermesPortableForwardRecoveryResult {
+  touchedPorts: readonly number[],
+  result: HermesPortableForwardRecoveryResult,
+): PreparedHermesPortableForwardRecovery {
+  let state: "prepared" | "released" | "rolled-back" = "prepared";
+  return Object.freeze({
+    result,
+    release: () => {
+      if (state !== "prepared") failure("recovery-failed");
+      state = "released";
+      return result;
+    },
+    rollback: () => {
+      if (state !== "prepared") failure("restoration-unproved");
+      state = "rolled-back";
+      if (touchedPorts.length > 0) rollbackTouchedPorts(input, touchedPorts);
+    },
+  });
+}
+
+/** Prepare the exact launch-readiness forward set while retaining rollback authority. */
+export function prepareHermesPortableLaunchForwards(
+  input: HermesPortableForwardRecoveryInput,
+): PreparedHermesPortableForwardRecovery {
   validatePorts(input);
   const touchedPorts: number[] = [];
   try {
@@ -293,7 +325,7 @@ export function recoverHermesPortableLaunchForwards(
     const missing = input.ports.filter((port) => initial.get(port) !== "healthy");
     if (missing.length === 0) {
       requireCurrent(input, false);
-      return { kind: "verified", restoredPorts: [] };
+      return retainForwardRecovery(input, touchedPorts, { kind: "verified", restoredPorts: [] });
     }
 
     const requiredHealthy = new Set(input.ports.filter((port) => initial.get(port) === "healthy"));
@@ -326,7 +358,10 @@ export function recoverHermesPortableLaunchForwards(
       failure("recovery-failed");
     }
     requireCurrent(input, false);
-    return { kind: "restored", restoredPorts: [...missing] };
+    return retainForwardRecovery(input, touchedPorts, {
+      kind: "restored",
+      restoredPorts: [...missing],
+    });
   } catch (error) {
     if (touchedPorts.length > 0) {
       try {
@@ -337,6 +372,13 @@ export function recoverHermesPortableLaunchForwards(
     }
     throw normalizeFailure(error);
   }
+}
+
+/** Restore and commit the exact launch-readiness forward set for one Hermes probe. */
+export function recoverHermesPortableLaunchForwards(
+  input: HermesPortableForwardRecoveryInput,
+): HermesPortableForwardRecoveryResult {
+  return prepareHermesPortableLaunchForwards(input).release();
 }
 
 function sleepMilliseconds(milliseconds: number): void {

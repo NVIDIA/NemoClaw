@@ -4,9 +4,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const runSandboxSnapshot = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const hasShieldsTimerRecoveryArtifact = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock("../../lib/actions/sandbox/snapshot", () => ({
   runSandboxSnapshot,
+}));
+
+vi.mock("../../lib/state/mcp-lifecycle-lock/shields-timer-authority", async (importOriginal) => ({
+  ...(await importOriginal()),
+  hasShieldsTimerRecoveryArtifact,
 }));
 
 import SnapshotCommand from "./snapshot";
@@ -19,9 +25,10 @@ const rootDir = process.cwd();
 describe("snapshot oclif commands", () => {
   beforeEach(() => {
     runSandboxSnapshot.mockClear();
+    hasShieldsTimerRecoveryArtifact.mockClear();
   });
 
-  it("shows parent snapshot usage through the action", async () => {
+  it("shows parent snapshot usage through the action", { timeout: 30_000 }, async () => {
     await SnapshotCommand.run(["alpha"], rootDir);
 
     expect(runSandboxSnapshot).toHaveBeenCalledWith("alpha", { kind: "help" });
@@ -45,6 +52,19 @@ describe("snapshot oclif commands", () => {
     expect(runSandboxSnapshot).toHaveBeenCalledWith("alpha", {
       kind: "restore",
       selector: "v2",
+      to: "beta",
+      force: undefined,
+      yes: undefined,
+    });
+  });
+
+  it("leaves multi-sandbox recovery entirely to the snapshot action", async () => {
+    await SnapshotRestoreCommand.run(["alpha", "--to", "beta"], rootDir);
+
+    expect(hasShieldsTimerRecoveryArtifact).not.toHaveBeenCalled();
+    expect(runSandboxSnapshot).toHaveBeenCalledWith("alpha", {
+      kind: "restore",
+      selector: undefined,
       to: "beta",
       force: undefined,
       yes: undefined,

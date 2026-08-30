@@ -86,6 +86,7 @@ export type PortableLifecycleTimingRecorder = {
   beginOpenClawGatewayStartup(): void;
   measureOpenClawGatewayProbe<T>(operation: () => T): T;
   measureOpenClawGatewaySleep<T>(operation: () => T): T;
+  recordOpenClawGatewayWaitSleep(milliseconds: number): void;
   readOpenClawGatewayStartupTiming(
     operation: () => PortableOpenClawGatewayTimingReadResult,
     maxCorrelationWindowMs: number,
@@ -336,6 +337,13 @@ export function createPortableLifecycleTimingRecorder(
       return measureGatewayDuration(operation, (elapsed) => {
         gatewaySleepMs += elapsed;
       });
+    },
+    recordOpenClawGatewayWaitSleep(milliseconds: number): void {
+      // The enclosing OpenShell command is measured as probe time. Reclassify
+      // only the fixed waiter's reported sleep into the existing sleep field.
+      const boundedSleep = Math.min(gatewayProbeMs, boundedGatewayTimingValue(milliseconds));
+      gatewayProbeMs -= boundedSleep;
+      gatewaySleepMs += boundedSleep;
     },
     readOpenClawGatewayStartupTiming(
       operation: () => PortableOpenClawGatewayTimingReadResult,

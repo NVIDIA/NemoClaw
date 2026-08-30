@@ -145,7 +145,13 @@ export async function reuseBraveSandboxWithWebSearchDisabled(
 ): Promise<ShellProbeResult> {
   return await host.command(
     "node",
-    [CLI_ENTRYPOINT, "onboard", "--fresh", "--non-interactive", "--yes-i-accept-third-party-software"],
+    [
+      CLI_ENTRYPOINT,
+      "onboard",
+      "--fresh",
+      "--non-interactive",
+      "--yes-i-accept-third-party-software",
+    ],
     {
       artifactName: "phase-5-reonboard-brave-disabled-reuse",
       cwd: REPO_ROOT,

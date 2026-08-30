@@ -159,13 +159,13 @@ describe("dedicated local model profile onboarder", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("resumed vLLM model conflicts"));
   });
 
-  it("refuses vLLM install intent persistence when policy authority changes (#9833)", async () => {
+  it("refuses vLLM install intent persistence when sandbox identity changes (#9833)", async () => {
     const selection = state();
     const checkpointVllmInstallModel = vi.fn();
     const installEffect = vi.fn();
     const handleVllmSelection = vi.fn(async () => "selected" as const);
     const observedRoutes: Array<Record<string, unknown>> = [];
-    selection.revalidatePolicyRequirements = (operation) => {
+    selection.revalidateSandboxIdentity = (operation) => {
       observedRoutes.push({
         operation,
         provider: selection.provider,
@@ -174,7 +174,7 @@ describe("dedicated local model profile onboarder", () => {
         credentialEnv: selection.credentialEnv,
         preferredInferenceApi: selection.preferredInferenceApi,
       });
-      throw new Error("external policy authority must supply local inference");
+      throw new Error("Sandbox identity changed before local inference");
     };
     const installVllm = vi.fn(async (_profile: VllmProfile, options) => {
       options.checkpointInstallIntent?.("nvidia/Qwen3.6-35B-A3B-NVFP4");
@@ -206,7 +206,7 @@ describe("dedicated local model profile onboarder", () => {
         },
         selection,
       ),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    ).rejects.toThrow(/Sandbox identity changed before/u);
 
     expect(checkpointVllmInstallModel).not.toHaveBeenCalled();
     expect(installEffect).not.toHaveBeenCalled();
