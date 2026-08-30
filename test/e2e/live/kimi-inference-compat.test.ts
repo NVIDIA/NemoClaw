@@ -5,6 +5,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   assertKimiUpstreamTraffic,
   assertTrajectory,
@@ -146,6 +147,9 @@ test(
     },
   );
   expect(toolAgent.exitCode, resultText(toolAgent)).toBe(0);
+  expect(parseOpenClawAgentText(toolAgent.stdout), resultText(toolAgent)).toBe(
+    "hostname, date, and uptime completed successfully.",
+  );
   await assertTrajectory(sandbox, mode);
   progress.phase("confirm Kimi upstream traffic");
   await assertKimiUpstreamTraffic({ fake, host, mode, apiKey });

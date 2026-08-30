@@ -45,6 +45,7 @@ import {
   writeInferenceSwitchRetryEvidence,
 } from "../fixtures/inference-switch-retry.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { runBoundedRetry } from "../fixtures/retry-policy.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -729,83 +730,6 @@ async function checkSandboxInference(
   throw new Error(`Sandbox inference.local did not work after switch: ${lastFailure}`);
 }
 
-function collectOpenClawAgentText(value: unknown, parts: string[], visited: Set<unknown>): void {
-  if (value === null || value === undefined || visited.has(value)) return;
-  if (typeof value === "string") {
-    if (value.trim()) parts.push(value.trim());
-    return;
-  }
-  if (typeof value !== "object") return;
-  visited.add(value);
-  if (Array.isArray(value)) {
-    for (const item of value) collectOpenClawAgentText(item, parts, visited);
-    return;
-  }
-
-  const record = value as Record<string, unknown>;
-  for (const key of ["text", "content", "reasoning_content"]) {
-    const text = record[key];
-    if (typeof text === "string" && text.trim()) parts.push(text.trim());
-  }
-  const choices = record.choices;
-  if (Array.isArray(choices)) {
-    for (const choice of choices) {
-      if (!choice || typeof choice !== "object") continue;
-      const choiceRecord = choice as Record<string, unknown>;
-      collectOpenClawAgentText(choiceRecord.message, parts, visited);
-      collectOpenClawAgentText(choiceRecord.delta, parts, visited);
-      const text = choiceRecord.text;
-      if (typeof text === "string" && text.trim()) parts.push(text.trim());
-    }
-  }
-  for (const key of [
-    "result",
-    "payloads",
-    "payload",
-    "messages",
-    "response",
-    "data",
-    "output",
-    "outputs",
-    "items",
-    "segments",
-    "delta",
-  ]) {
-    if (Object.hasOwn(record, key)) collectOpenClawAgentText(record[key], parts, visited);
-  }
-}
-
-function parseOpenClawAgentText(raw: string): string {
-  if (!raw.trim()) return "";
-  const parts: string[] = [];
-  try {
-    const doc = JSON.parse(raw) as unknown;
-    const root =
-      doc && typeof doc === "object" && "result" in doc
-        ? (doc as { result?: unknown }).result
-        : doc;
-    collectOpenClawAgentText(root, parts, new Set());
-  } catch {
-    const decoder = new RegExp("{", "g");
-    let match: RegExpExecArray | null;
-    while ((match = decoder.exec(raw)) !== null) {
-      try {
-        const doc = JSON.parse(raw.slice(match.index)) as unknown;
-        const before = parts.length;
-        const root =
-          doc && typeof doc === "object" && "result" in doc
-            ? (doc as { result?: unknown }).result
-            : doc;
-        collectOpenClawAgentText(root, parts, new Set());
-        if (parts.length > before) break;
-      } catch {
-        // Try the next JSON-looking offset; wrappers sometimes print chatter
-        // before the actual OpenClaw JSON envelope.
-      }
-    }
-  }
-  return parts.join("\n");
-}
 
 async function checkOpenClawAgentTurn(
   host: HostCliClient,

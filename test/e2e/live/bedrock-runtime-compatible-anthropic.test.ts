@@ -30,6 +30,7 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 import { summarizeSandboxSnapshot } from "./bedrock-runtime-compatible-anthropic-artifacts.ts";
 import {
@@ -789,77 +790,6 @@ function parseChatContent(raw: string): string {
   return typeof content === "string" ? content.trim() : "";
 }
 
-function parseOpenClawAgentText(raw: string): string {
-  if (!raw.trim()) return "";
-  const docs: unknown[] = [];
-  try {
-    docs.push(JSON.parse(raw));
-  } catch {
-    const first = raw.indexOf("{");
-    const last = raw.lastIndexOf("}");
-    if (first >= 0 && last > first) {
-      try {
-        docs.push(JSON.parse(raw.slice(first, last + 1)));
-      } catch {
-        for (const line of raw.split("\n")) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("{")) continue;
-          try {
-            docs.push(JSON.parse(trimmed));
-          } catch {
-            // Ignore non-JSON wrapper lines.
-          }
-        }
-      }
-    }
-  }
-
-  const parts: string[] = [];
-  const visited = new Set<unknown>();
-  const collect = (value: unknown): void => {
-    if (value == null || visited.has(value)) return;
-    if (typeof value === "string") {
-      if (value.trim()) parts.push(value.trim());
-      return;
-    }
-    if (typeof value !== "object") return;
-    visited.add(value);
-    if (Array.isArray(value)) {
-      for (const item of value) collect(item);
-      return;
-    }
-    const record = value as Record<string, unknown>;
-    for (const key of ["text", "content", "reasoning_content"]) {
-      collect(record[key]);
-    }
-    for (const choice of Array.isArray(record.choices) ? record.choices : []) {
-      collect(choice);
-    }
-    for (const key of [
-      "result",
-      "payloads",
-      "payload",
-      "messages",
-      "response",
-      "data",
-      "output",
-      "outputs",
-      "items",
-      "segments",
-      "delta",
-      "message",
-    ]) {
-      collect(record[key]);
-    }
-  };
-
-  for (const doc of docs) {
-    const record =
-      doc && typeof doc === "object" && !Array.isArray(doc) ? (doc as Record<string, unknown>) : {};
-    collect(record.result && typeof record.result === "object" ? record.result : doc);
-  }
-  return parts.join("\n");
-}
 
 async function assertOpenClawConfig(sandbox: SandboxClient, home: string): Promise<void> {
   const output = await sandbox.exec(
