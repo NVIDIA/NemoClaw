@@ -6,7 +6,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { dockerRunCommandBetween, runDockerShell } from "../../helpers/dockerfile-run-shell";
+import {
+  dockerRunCommandBetween,
+  runDockerShell,
+  runLoggedDockerShell,
+} from "../../helpers/dockerfile-run-shell";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
@@ -159,8 +163,6 @@ function indexOfRequired(haystack: string, needle: string): number {
   return index;
 }
 
-
-
 function runFinalLayout({
   legacyData = "none",
   openclaw = "none",
@@ -200,6 +202,51 @@ function runFinalLayout({
   return { hermesDir, legacyTarget, openclawTarget, result, sandboxRoot, tmp };
 }
 
+function runNeutralPatcherCleanup() {
+  const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-neutral-patcher-"));
+  const neutralPatcherPath = path.join(tmp, "patch-neutral-platform-env-activation.py");
+  fs.writeFileSync(neutralPatcherPath, "build only\n", { flag: "wx" });
+  const probeIndex = dockerfile.indexOf("image-build-probes.py neutral-platform-inertness");
+  const runIndex = dockerfile.lastIndexOf(
+    'RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]',
+    probeIndex,
+  );
+  const command = dockerRunCommandBetween(
+    dockerfile.slice(runIndex),
+    'RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]',
+    "RUN set -eu; \\\n    profile_probe_root=",
+  ).replaceAll(
+    "/opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
+    neutralPatcherPath,
+  );
+  const result = runLoggedDockerShell(command, tmp, [], {
+    env: { NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "0" },
+  }).result;
+  return { neutralPatcherPath, result, tmp };
+}
+
+function runFinalNeutralPatcherGuard() {
+  const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-neutral-guard-"));
+  const neutralPatcherPath = path.join(tmp, "patch-neutral-platform-env-activation.py");
+  fs.writeFileSync(neutralPatcherPath, "build only\n", { flag: "wx" });
+  const fullCommand = dockerRunCommandBetween(
+    dockerfile,
+    "RUN check_metadata() {",
+    "# Verify the immutable security package inventory",
+  ).replaceAll(
+    "/opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
+    neutralPatcherPath,
+  );
+  const guardedClause = `&& check_absent ${neutralPatcherPath}`;
+  const guardedIndex = fullCommand.indexOf(guardedClause);
+  const nextClauseIndex = fullCommand.indexOf(" && ", guardedIndex + guardedClause.length);
+  const command = fullCommand.slice(0, nextClauseIndex);
+  const result = runLoggedDockerShell(command, tmp).result;
+  return { result, tmp };
+}
+
 describe("Hermes final image layout", () => {
   // source-shape-contract: security -- Every security-critical Hermes source must match the reviewed Dockerfile digest before image construction proceeds.
   it.each(HERMES_INTEGRITY_FILES)(
@@ -223,6 +270,26 @@ describe("Hermes final image layout", () => {
       expect(declarations[0]?.slice(declarationPrefix.length), source).toBe(digest);
     },
   );
+
+  it("removes the neutral-platform patcher after its image probe", () => {
+    const run = runNeutralPatcherCleanup();
+    try {
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(fs.existsSync(run.neutralPatcherPath)).toBe(false);
+    } finally {
+      fs.rmSync(run.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a retained neutral-platform patcher from the final layout", () => {
+    const run = runFinalNeutralPatcherGuard();
+    try {
+      expect(run.result.status).toBe(1);
+      expect(run.result.stderr).toContain("build-only Hermes path leaked into the final image");
+    } finally {
+      fs.rmSync(run.tmp, { recursive: true, force: true });
+    }
+  });
 
   it("rejects retired OpenClaw state represented as a directory", () => {
     const run = runFinalLayout({ openclaw: "directory" });
@@ -266,22 +333,21 @@ describe("Hermes final image layout", () => {
     }
   });
 
-  it.each([
-    "directory-symlink",
-    "entry-symlink",
-    "nested-symlink",
-  ] as const)("refuses a legacy data %s before migration", (legacyData) => {
-    const run = runFinalLayout({ legacyData });
-    try {
-      expect(run.result.status).toBe(1);
-      expect(run.result.stderr).toContain("refusing legacy layout cleanup");
-      const sentinel =
-        legacyData === "directory-symlink"
-          ? path.join(run.legacyTarget, "sentinel")
-          : run.legacyTarget;
-      expect(readText(sentinel)).toBe("keep\n");
-    } finally {
-      fs.rmSync(run.tmp, { recursive: true, force: true });
-    }
-  });
+  it.each(["directory-symlink", "entry-symlink", "nested-symlink"] as const)(
+    "refuses a legacy data %s before migration",
+    (legacyData) => {
+      const run = runFinalLayout({ legacyData });
+      try {
+        expect(run.result.status).toBe(1);
+        expect(run.result.stderr).toContain("refusing legacy layout cleanup");
+        const sentinel =
+          legacyData === "directory-symlink"
+            ? path.join(run.legacyTarget, "sentinel")
+            : run.legacyTarget;
+        expect(readText(sentinel)).toBe("keep\n");
+      } finally {
+        fs.rmSync(run.tmp, { recursive: true, force: true });
+      }
+    },
+  );
 });

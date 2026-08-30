@@ -15,7 +15,8 @@ homes. It also fixes independent config copies and loaders that bypass
 ``DEFAULT_CONFIG``:
 
 * ``tools.browser_tool`` reads raw per-home YAML, so its missing-key and error
-  fallbacks must keep the sensitive-expression denylist enabled.
+  fallbacks must keep the sensitive-expression denylist enabled. Its runtime
+  npx fallback must also remain offline after all ambient values are copied.
 * ``gateway.config.SessionResetPolicy`` constructs its own defaults, so both
   its dataclass and ``from_dict`` fallback must retain the prior 24-hour/daily
   reset policy.
@@ -161,6 +162,14 @@ def patch_browser_source(source: str, values: dict[str, object]) -> str:
             'logger.debug("Could not read browser.restrict_evaluate from config: %s", e)\n'
             "        # NemoClaw compatibility override: config errors fail restricted.\n"
             f"        return {expected}",
+        ),
+        (
+            "            env[_key] = os.environ[_key]\n"
+            "    return env",
+            "            env[_key] = os.environ[_key]\n"
+            "    # NemoClaw compatibility override: runtime npx never uses the network.\n"
+            '    env["npm_config_offline"] = "true"\n'
+            "    return env",
         ),
     )
     return _replace_exact(source, replacements, label="Hermes browser policy")

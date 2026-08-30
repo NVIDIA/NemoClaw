@@ -22,8 +22,10 @@ const review = fs.readFileSync(
   "utf8",
 );
 const targetBaseImage =
-  "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:1cd5ba5ba0c7e6837dfc3d54130a21471cee76a6fa6d1cbdea686aa746eb3f73";
-const targetBaseSource = "2bbd3d33c22b363a39736aee0dfe61f43974de4b";
+  "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:07bc8218f9daa157df1d7ad183fc4a193b194c1ba3f6e883f0be3c690cfb84e1";
+const targetBaseSource = "8206ea9931356f570c1ca0a7e32110f5370550de";
+const targetBaseContractSha256 =
+  "4ff73e2d6853b616121598555c890250d18285ba0f9bb6c3c90c438a10a8bf5a";
 const securityDependenciesPatch = fs.readFileSync(
   path.join(root, "agents/hermes/security-dependencies.patch"),
   "utf8",
@@ -89,7 +91,10 @@ describe("Hermes 0.20.6 dependency review", () => {
     );
     expect(review).toContain(`| Target base image | \`${targetBaseImage}\` |`);
     expect(review).toContain(
-      `| Base image publication | NVIDIA/NemoClaw run \`33249017773\`, source \`${targetBaseSource}\` |`,
+      `| Base image publication | NVIDIA/NemoClaw run \`33283109772\`, attempt \`1\`, source \`${targetBaseSource}\` |`,
+    );
+    expect(review).toContain(
+      `| Base image contract SHA-256 | \`${targetBaseContractSha256}\` |`,
     );
     expect(review).toContain("five exact preview queries");
     expect(review).toContain("Unresolved upgrade-created high-impact concerns: `0`");

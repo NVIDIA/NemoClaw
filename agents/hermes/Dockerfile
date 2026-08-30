@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:1cd5ba5ba0c7e6837dfc3d54130a21471cee76a6fa6d1cbdea686aa746eb3f73
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:07bc8218f9daa157df1d7ad183fc4a193b194c1ba3f6e883f0be3c690cfb84e1
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 # BuildKit supplies this automatic platform argument. The Portable staged
@@ -258,7 +258,6 @@ RUN grep -Fq 'from tools.lazy_deps import install_specs' /opt/hermes/hermes_cli/
     && grep -Fq 'outcome = install_specs(missing, timeout=120)' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
     && grep -Fqx 'AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"' /opt/hermes/tools/browser_tool.py \
-    && grep -Fqx '    env["npm_config_offline"] = "true"' /opt/hermes/tools/browser_tool.py \
     && install -o sandbox -g sandbox -m 0400 /dev/null \
         /tmp/nemoclaw-agent-browser-userconfig \
     && install -o sandbox -g sandbox -m 0400 /dev/null \
@@ -914,13 +913,14 @@ RUN install -o root -g root -m 0444 \
 
 # Fresh named profiles do not receive config.yaml. Patch the pinned Hermes
 # fallback readers from the generated manifest, then validate a real profile.
-ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=1319a6303eb9ff9cd7651aff4b6cc2f2559e05f59a25ab0b5535f5f82ec66b1a
+ARG NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256=71388064485328862ea1783d24dc576f0c99a6d22057d2bc0f81af15697c05f6
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
     | sha256sum -c - \
     || { echo "ERROR: patch-hermes-profile-policy-defaults.py hash mismatch (update NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256)" >&2; exit 1; }
 RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
+    && grep -Fqx '    env["npm_config_offline"] = "true"' /opt/hermes/tools/browser_tool.py \
     && rm /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
         /opt/nemoclaw-hermes-config/managed_policy.py
 # Hermes v0.20.6 has several built-in environment override paths that can
@@ -953,7 +953,8 @@ RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
         WHATSAPP_CLOUD_ACCESS_TOKEN=nemoclaw-hostile \
         HERMES_HOME=/sandbox/.hermes /opt/hermes/.venv/bin/python -I \
             /opt/nemoclaw-hermes-config/image-build-probes.py neutral-platform-inertness; \
-    fi
+    fi \
+    && rm /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py
 
 RUN set -eu; \
     profile_probe_root="$(mktemp -d)"; \
@@ -1434,6 +1435,7 @@ RUN check_metadata() { \
     && check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     && check_absent /opt/nemoclaw-hermes-config/patch-profile-policy-defaults.py \
+    && check_absent /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
     && check_absent /opt/nemoclaw-hermes-config/managed_policy.py \
     && check_absent /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py \
     && check_absent /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py \

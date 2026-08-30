@@ -29,8 +29,9 @@ or a missing Brev shadow as qualification.
 | Target source | `5fc308a70719a83cccdbba4c0e39c23f5a8239d5` |
 | Target source archive SHA-256 | `e622723b5bf3cd6c1db974d92d32242f1cb63f61c1112b6f708b34d619ef0fc7` |
 | Target npm integrity cross-check | `sha512-s5q1IEBifCBb77QMwkse4MRaAaoZSxIa4IkicIO3jL7MIdq15YvnSyiNvsTOWNBi6t3shFpIg+H7+9MJsOiSkg==` |
-| Target base image | `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:1cd5ba5ba0c7e6837dfc3d54130a21471cee76a6fa6d1cbdea686aa746eb3f73` |
-| Base image publication | NVIDIA/NemoClaw run `33249017773`, source `2bbd3d33c22b363a39736aee0dfe61f43974de4b` |
+| Target base image | `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:07bc8218f9daa157df1d7ad183fc4a193b194c1ba3f6e883f0be3c690cfb84e1` |
+| Base image publication | NVIDIA/NemoClaw run `33283109772`, attempt `1`, source `8206ea9931356f570c1ca0a7e32110f5370550de` |
+| Base image contract SHA-256 | `4ff73e2d6853b616121598555c890250d18285ba0f9bb6c3c90c438a10a8bf5a` |
 | NemoPin comparison base | `4e0e663a9a4cf6bac8df8972ea23dfc26ce3c309` |
 | NVIDIA/NemoClaw authoring base | `b12bede8bfa5bc7a8c083f54fc79a4f5663b81df` |
 | NemoPin handoff manifest | `sha256:ec3f152824a843b9970aa8342de0ad15289d99899af06e6eb94baec8e29e5744` |
@@ -118,9 +119,10 @@ integrity. The base image caches the exact-version packument and archive, then
 reads its integrity without network access and requires it to match the reviewed
 lockfile. The network-disabled `npx` execution verifies the cached archive and
 exact version. The final image inherits that immutable source and cache boundary
-and repeats only the network-disabled version probe. The patched browser
-subprocess environment also forces npm offline mode, so a missing runtime cache
-fails closed instead of contacting the registry.
+and repeats only the network-disabled version probe. The final-image profile
+policy patch also forces the browser subprocess into npm offline mode after
+ambient values are copied, so a missing runtime cache fails closed instead of
+contacting the registry.
 
 No new supported integration is introduced. Optional upstream features remain
 subject to their existing NVIDIA/NemoClaw product and policy gates.

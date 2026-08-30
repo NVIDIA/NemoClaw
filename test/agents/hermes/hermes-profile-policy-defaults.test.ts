@@ -49,6 +49,17 @@ DEFAULT_CONFIG = {
 `;
 
 const browserFixture = `\
+import os
+
+_BROWSER_PASSTHROUGH_KEYS = ()
+
+def _build_browser_env() -> dict:
+    env = {}
+    for _key in _BROWSER_PASSTHROUGH_KEYS:
+        if _key in os.environ:
+            env[_key] = os.environ[_key]
+    return env
+
 def _restrict_browser_evaluate() -> bool:
     try:
         cfg = {}
@@ -172,13 +183,14 @@ describe("Hermes profile policy defaults", () => {
     expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(6);
   });
 
-  it("keeps the raw browser loader fail-safe when config is missing or unreadable", () => {
+  it("keeps the browser loader restricted and its runtime npx fallback offline", () => {
     const result = patchSource("browser", browserFixture);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('cfg_get(cfg, "browser", "restrict_evaluate"), default=True');
     expect(result.stdout).toMatch(/Could not read browser[.]restrict_evaluate[\s\S]*?return True/u);
-    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(2);
+    expect(result.stdout).toContain('env["npm_config_offline"] = "true"');
+    expect(result.stdout.match(/NemoClaw compatibility override/gu)).toHaveLength(3);
   });
 
   it("keeps the gateway reset policy fail-safe without config.yaml", () => {
@@ -315,5 +327,4 @@ module._verify_session_reset_policy(reset_policy, expected)
 
     expect(result.status, result.stderr).toBe(0);
   });
-
 });

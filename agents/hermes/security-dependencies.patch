@@ -22,12 +22,6 @@ diff --git a/plugins/memory/hindsight/plugin.yaml b/plugins/memory/hindsight/plu
 diff --git a/tools/browser_tool.py b/tools/browser_tool.py
 --- a/tools/browser_tool.py
 +++ b/tools/browser_tool.py
-@@ -141,4 +141,5 @@ def _build_browser_env() -> dict:
-     for _key in _BROWSER_PASSTHROUGH_KEYS:
-         if _key in os.environ:
-             env[_key] = os.environ[_key]
-+    env["npm_config_offline"] = "true"
-     return env
 @@ -957,8 +957,7 @@ NPX_AGENT_BROWSER_SENTINEL = "npx agent-browser"
 -# Pinned to match scripts/install.sh / scripts/install.ps1's
 -# "agent-browser@^0.26.0" managed install so a git-clone install resolving
@@ -38,7 +32,7 @@ diff --git a/tools/browser_tool.py b/tools/browser_tool.py
 -
 +# NemoClaw pins the npx fallback to the reviewed 0.26.0 release so managed
 +# image execution cannot float to a later registry version. Update the image
-+# warm-cache, runtime offline environment, and probes with this authority.
++# warm-cache and offline probes with this source authority.
 +AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"
 +
 +

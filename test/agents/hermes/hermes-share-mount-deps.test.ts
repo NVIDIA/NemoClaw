@@ -15,6 +15,12 @@ import {
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
+const HERMES_PROFILE_POLICY_PATCHER = path.join(
+  ROOT,
+  "agents",
+  "hermes",
+  "patch-profile-policy-defaults.py",
+);
 const HERMES_ARCHIVE_HELPER = path.join(
   ROOT,
   "scripts",
@@ -831,6 +837,14 @@ describe("Hermes share mount package parity (#2947)", () => {
           "            env[_key] = os.environ[_key]",
           "    return env",
           "",
+          "def _restrict_browser_evaluate() -> bool:",
+          "    try:",
+          "        cfg = {}",
+          '        return is_truthy_value(cfg_get(cfg, "browser", "restrict_evaluate"), default=False)',
+          "    except Exception as e:",
+          '        logger.debug("Could not read browser.restrict_evaluate from config: %s", e)',
+          "        return False",
+          "",
         ].join("\n") +
           "\n".repeat(900) +
           [
@@ -858,6 +872,28 @@ describe("Hermes share mount package parity (#2947)", () => {
         .split("\n")
         .find((line) => line.startsWith("AGENT_BROWSER_NPX_SPEC ="));
       expect(patchedSpec).toBe('AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"');
+      const profilePatched = spawnSync(
+        "python3",
+        [
+          "-I",
+          "-c",
+          [
+            "import importlib.util, pathlib, sys",
+            "patcher_path = pathlib.Path(sys.argv[1])",
+            "browser_path = pathlib.Path(sys.argv[2])",
+            "sys.path.insert(0, str(patcher_path.parent))",
+            'spec = importlib.util.spec_from_file_location("profile_policy_patcher", patcher_path)',
+            "module = importlib.util.module_from_spec(spec)",
+            "spec.loader.exec_module(module)",
+            'values = {"browser.restrict_evaluate": True}',
+            'browser_path.write_text(module.patch_browser_source(browser_path.read_text(encoding="utf-8"), values), encoding="utf-8")',
+          ].join("; "),
+          HERMES_PROFILE_POLICY_PATCHER,
+          browserToolPath,
+        ],
+        { encoding: "utf-8" },
+      );
+      expect(profilePatched.status, profilePatched.stderr).toBe(0);
       const runtimeEnvironment = spawnSync(
         "python3",
         [
@@ -1064,11 +1100,21 @@ describe("Hermes share mount package parity (#2947)", () => {
       expect(missingCache.status).not.toBe(0);
       expect(fs.existsSync(browserExecutionMarker)).toBe(false);
 
-      fs.writeFileSync(archiveMarker, "tampered\n");
+      const tamperedCacheRoot = path.join(tmp, "tampered-cache");
+      fs.mkdirSync(tamperedCacheRoot);
+      fs.writeFileSync(path.join(tamperedCacheRoot, "exact-packument"), "exact\n", {
+        flag: "wx",
+      });
+      fs.writeFileSync(path.join(tamperedCacheRoot, "locked-archive"), "tampered\n", {
+        flag: "wx",
+      });
       const tamperedCache = spawnSync(
         fakeNpx,
         ["--ignore-scripts", "--prefer-offline", "-y", "agent-browser@0.26.0", "--version"],
-        { encoding: "utf-8", env: runtimeNpxEnvironment },
+        {
+          encoding: "utf-8",
+          env: { ...runtimeNpxEnvironment, npm_config_cache: tamperedCacheRoot },
+        },
       );
       expect(tamperedCache.status).not.toBe(0);
       expect(fs.existsSync(browserExecutionMarker)).toBe(false);
