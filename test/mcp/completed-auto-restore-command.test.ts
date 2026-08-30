@@ -15,6 +15,8 @@ import {
   runCompletedAutoRestoreFixtureChild as runChild,
 } from "../support/completed-auto-restore-fixture";
 
+const SHIELDS_MODULE_PATH = path.resolve("src/lib/shields/index.ts");
+
 async function loadCleanPublicShieldsStatusCommand() {
   vi.resetModules();
   const shields = await import("../../src/lib/shields/index");
@@ -139,6 +141,99 @@ describe("completed auto-restore command admission", () => {
       );
     },
   );
+
+  it.each([
+    ["containment", "containmentPath", [true, true, true]],
+    ["main", "lockPath", [true, true, false]],
+    ["deadline", "deadlinePath", [false, true, false]],
+  ] as const)(
+    "recovers in the next process after %s gate cleanup fails (#10094)",
+    async (_label, targetKey, retainedGates) => {
+      const orphan = await reproduceCompletedAutoRestoreContainment(
+        stateDir,
+        "alpha",
+        "b".repeat(32),
+      );
+      const cleanupScript = String.raw`
+const fs = require("node:fs");
+const shields = require(process.argv[1]);
+const stateDir = process.argv[2];
+const sandboxName = process.argv[3];
+const targetPath = process.argv[4];
+const realRename = fs.renameSync.bind(fs);
+let injected = false;
+fs.renameSync = (source, destination) => {
+  if (!injected && String(source) === targetPath) {
+    injected = true;
+    const error = new Error("injected lifecycle gate cleanup failure");
+    error.code = "EIO";
+    throw error;
+  }
+  return realRename(source, destination);
+};
+try {
+  shields.recoverCompletedAutoRestoreBeforeCommand(sandboxName, stateDir);
+  process.exit(5);
+} catch {
+  if (!injected) process.exit(6);
+  fs.writeSync(1, "INJECTED\n");
+}
+`;
+
+      await runChild(
+        cleanupScript,
+        [SHIELDS_MODULE_PATH, stateDir, "alpha", orphan[targetKey]],
+        "INJECTED",
+        `${_label} cleanup`,
+      );
+
+      expect(
+        [orphan.lockPath, orphan.deadlinePath, orphan.containmentPath].map((file) =>
+          fs.existsSync(file),
+        ),
+      ).toEqual(retainedGates);
+
+      await expect(StatusCommand.run(["alpha"], process.cwd())).resolves.toBeUndefined();
+
+      expect(StatusCommand.entered).toBe(true);
+      expect(
+        [orphan.markerPath, orphan.lockPath, orphan.deadlinePath, orphan.containmentPath].map(
+          (file) => fs.existsSync(file),
+        ),
+      ).toEqual([false, false, false, false]);
+    },
+    30_000,
+  );
+
+  it("recovers after lifecycle gate directory sync fails (#10094)", async () => {
+    const orphan = await reproduceCompletedAutoRestoreContainment(
+      stateDir,
+      "alpha",
+      "3".repeat(32),
+    );
+    const realFsync = fs.fsyncSync.bind(fs);
+    vi.spyOn(fs, "fsyncSync")
+      .mockImplementationOnce(() => {
+        const error = new Error(
+          "injected lifecycle gate directory sync failure",
+        ) as NodeJS.ErrnoException;
+        error.code = "EIO";
+        throw error;
+      })
+      .mockImplementation(realFsync);
+
+    await expect(StatusCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+      "lifecycle gate directory sync failure",
+    );
+
+    expect(StatusCommand.entered).toBe(false);
+    expect(fs.existsSync(orphan.markerPath)).toBe(true);
+
+    await expect(StatusCommand.run(["alpha"], process.cwd())).resolves.toBeUndefined();
+
+    expect(StatusCommand.entered).toBe(true);
+    expect(fs.existsSync(orphan.markerPath)).toBe(false);
+  });
 
   it("denies public Shields status for an ambiguous live timer owner (#10094)", async () => {
     const processToken = "d".repeat(32);

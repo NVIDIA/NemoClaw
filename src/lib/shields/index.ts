@@ -64,6 +64,7 @@ const {
   readTimerMarker,
   clearTimerMarker,
   clearTimerMarkerGeneration,
+  formatTerminalSafeDiagnosticValue,
   sameTimerMarkerGeneration,
   hasExactTimerAuthorizationProof,
   hasQuarantinedShieldsTimerRecoveryArtifact,
@@ -2443,7 +2444,7 @@ function withCompletedAbandonedAutoRestoreFence<T>(
             throw completedAutoRestoreRecoveryError(
               sandboxName,
               result.retainedPath
-                ? `Completed auto-restore cleanup retained '${result.retainedPath}' for retry`
+                ? `Completed auto-restore cleanup retained ${formatTerminalSafeDiagnosticValue(result.retainedPath)} for retry`
                 : result.status === "changed"
                   ? "Completed auto-restore cleanup found replacement timer authority"
                   : "Completed auto-restore cleanup could not confirm durable removal and requires an explicit retry",

@@ -451,9 +451,13 @@ function recoverCompletedAutoRestoreGatesSync(
       refuseCompletedAutoRestoreRecovery(lockPath, `the ${label} generation changed`);
     }
   };
+  // Retire containment while the stale main and deadline gates still deny
+  // admission. A failure after this point remains recoverable from either gate.
+  reclaim(containmentPath, containment, "containment");
   reclaim(lockPath, main, "main");
   reclaim(deadlinePath, deadline, "deadline");
-  reclaim(containmentPath, containment, "containment");
+  recovery.assertAuthority();
+  if (containment || main || deadline) fsyncLockDirectorySync(lockPath);
   recovery.assertAuthority();
 }
 

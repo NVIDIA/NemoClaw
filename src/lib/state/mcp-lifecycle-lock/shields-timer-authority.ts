@@ -113,6 +113,13 @@ function completedTimerMarkerPrefix(markerPath: string): string {
   return `${path.basename(markerPath)}.completed-`;
 }
 
+export function formatTerminalSafeDiagnosticValue(value: string): string {
+  return JSON.stringify(value).replace(
+    /[\u007f-\u009f\u2028\u2029]/gu,
+    (character) => `\\u${character.codePointAt(0)!.toString(16).padStart(4, "0")}`,
+  );
+}
+
 export function sameShieldsTimerMarkerGeneration(
   current: ShieldsTimerMarker | null,
   expected: ShieldsTimerMarker,
@@ -139,7 +146,7 @@ function ambiguousRecoveryArtifactsError(
   artifactPaths: readonly string[],
 ): Error {
   return new Error(
-    `Automatic Shields timer recovery stopped for sandbox '${sandboxName}' in state directory '${stateDir}' because its recovery artifacts are invalid or represent different generations. Stop all NemoClaw processes for this sandbox. Inspect each artifact and record its PID, process token, restore deadline, snapshot path, and process-start identity: ${artifactPaths.map((artifactPath) => `'${artifactPath}'`).join(", ")}. Remove only an artifact whose exact process generation is proven obsolete, then rerun Shields status.`,
+    `Automatic Shields timer recovery stopped for sandbox '${sandboxName}' in state directory ${formatTerminalSafeDiagnosticValue(stateDir)} because its recovery artifacts are invalid or represent different generations. Stop all NemoClaw processes for this sandbox. Inspect each artifact and record its PID, process token, restore deadline, snapshot path, and process-start identity: ${artifactPaths.map(formatTerminalSafeDiagnosticValue).join(", ")}. Remove only an artifact whose exact process generation is proven obsolete, then rerun Shields status.`,
   );
 }
 

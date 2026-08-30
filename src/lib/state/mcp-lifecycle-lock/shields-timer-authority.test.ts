@@ -12,6 +12,7 @@ import {
   hasShieldsTimerRecoveryArtifact,
   isShieldsTimerDeadlineAbandoned,
   readShieldsTimerMarker,
+  readShieldsTimerRecoveryCandidate,
   shieldsTimerMarkerPath,
 } from "./shields-timer-authority";
 
@@ -65,6 +66,28 @@ describe("Shields timer marker authority", () => {
     writeMarker(stateDir, "alpha", "beta");
 
     expect(readShieldsTimerMarker("alpha", stateDir)).toBeNull();
+  });
+
+  it("escapes terminal control characters in recovery artifact diagnostics", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-marker-"));
+    tempDirs.push(stateDir);
+    const markerPath = shieldsTimerMarkerPath("alpha", stateDir);
+    writeMarker(stateDir, "alpha", "alpha");
+    const hostilePath = `${markerPath}.completed-hostile\u001b[31m\n\u009b31m`;
+    fs.renameSync(markerPath, hostilePath);
+    fs.writeFileSync(`${markerPath}.completed-invalid`, "{}");
+
+    let message = "";
+    try {
+      readShieldsTimerRecoveryCandidate("alpha", stateDir);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("\\u001b");
+    expect(message).toContain("\\n");
+    expect(message).toContain("\\u009b");
+    expect(message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
   });
 });
 

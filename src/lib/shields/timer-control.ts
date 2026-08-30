@@ -8,6 +8,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import {
+  formatTerminalSafeDiagnosticValue,
   hasQuarantinedShieldsTimerRecoveryArtifact,
   isShieldsTimerDeadlineAbandoned,
   isShieldsTimerMarkerAbandoned,
@@ -300,7 +301,7 @@ function clearTimerMarkerGeneration(
     if (errno.code === "ENOENT") return { status: "missing" };
     return {
       status: "failed",
-      warning: `Failed to claim shields timer recovery artifact '${sourcePath}': ${errno.message}`,
+      warning: `Failed to claim Shields timer recovery artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}: ${formatTerminalSafeDiagnosticValue(errno.message)}`,
     };
   }
 
@@ -320,8 +321,8 @@ function clearTimerMarkerGeneration(
           ...(retainedPath ? { retainedPath } : {}),
           retryRequired: true,
           warning: restoreFailure
-            ? `Removed completed Shields timer recovery artifact '${sourcePath}', but could not confirm durable cleanup or restore it for retry: ${detail}; ${restoreFailure}`
-            : `Could not confirm durable cleanup for completed Shields timer recovery artifact '${sourcePath}'; restored it for an explicit retry: ${detail}`,
+            ? `Removed completed Shields timer recovery artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}, but could not confirm durable cleanup or restore it for retry: ${formatTerminalSafeDiagnosticValue(detail)}; ${formatTerminalSafeDiagnosticValue(restoreFailure)}`
+            : `Could not confirm durable cleanup for completed Shields timer recovery artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}; restored it for an explicit retry: ${formatTerminalSafeDiagnosticValue(detail)}`,
         };
       }
       try {
@@ -329,7 +330,7 @@ function clearTimerMarkerGeneration(
         fs.unlinkSync(quarantinePath);
         return {
           status: "failed",
-          warning: `Could not remove completed Shields timer recovery artifact '${sourcePath}'; restored it for retry: ${detail}`,
+          warning: `Could not remove completed Shields timer recovery artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}; restored it for retry: ${formatTerminalSafeDiagnosticValue(detail)}`,
         };
       } catch (restoreError) {
         const restoreDetail =
@@ -337,7 +338,7 @@ function clearTimerMarkerGeneration(
         return {
           status: "failed",
           retainedPath: quarantinePath,
-          warning: `Could not remove completed Shields timer recovery artifact '${sourcePath}' or restore it; retained '${quarantinePath}' for recovery: ${detail}; ${restoreDetail}`,
+          warning: `Could not remove completed Shields timer recovery artifact ${formatTerminalSafeDiagnosticValue(sourcePath)} or restore it; retained ${formatTerminalSafeDiagnosticValue(quarantinePath)} for recovery: ${formatTerminalSafeDiagnosticValue(detail)}; ${formatTerminalSafeDiagnosticValue(restoreDetail)}`,
         };
       }
     }
@@ -352,12 +353,12 @@ function clearTimerMarkerGeneration(
     return {
       status: errno.code === "EEXIST" ? "changed" : "failed",
       retainedPath: quarantinePath,
-      warning: `Shields timer authority changed while retiring completed artifact '${sourcePath}'; retained '${quarantinePath}' for recovery: ${detail}`,
+      warning: `Shields timer authority changed while retiring completed artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}; retained ${formatTerminalSafeDiagnosticValue(quarantinePath)} for recovery: ${formatTerminalSafeDiagnosticValue(detail)}`,
     };
   }
   return {
     status: "changed",
-    warning: `Shields timer authority changed while retiring completed artifact '${sourcePath}'`,
+    warning: `Shields timer authority changed while retiring completed artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}`,
   };
 }
 
@@ -541,6 +542,7 @@ export type {
 export {
   clearTimerMarker,
   clearTimerMarkerGeneration,
+  formatTerminalSafeDiagnosticValue,
   hasExactTimerAuthorizationProof,
   hasQuarantinedShieldsTimerRecoveryArtifact,
   isShieldsTimerDeadlineAbandoned,

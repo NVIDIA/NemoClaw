@@ -107,6 +107,32 @@ describe("timer marker generation cleanup", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
+  it("escapes terminal control characters in completed marker cleanup warnings", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "timer-marker-diagnostic-"));
+    const expected = marker("alpha", "e".repeat(32));
+    const markerPath = timerMarkerPath("alpha", stateDir);
+    const hostilePath = `${markerPath}.completed-hostile\u001b[31m\n\u009b31m`;
+    fs.writeFileSync(hostilePath, JSON.stringify(expected));
+    const realUnlink = fs.unlinkSync.bind(fs);
+    vi.spyOn(fs, "unlinkSync")
+      .mockImplementationOnce(() => {
+        const error = new Error(
+          `injected unlink failure for ${hostilePath}`,
+        ) as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      })
+      .mockImplementation(realUnlink);
+
+    const result = clearTimerMarkerGeneration("alpha", expected, stateDir, hostilePath);
+
+    expect(result.warning).toContain("\\u001b");
+    expect(result.warning).toContain("\\n");
+    expect(result.warning).toContain("\\u009b");
+    expect(result.warning).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  });
+
   it("restores the exact artifact and requires retry when directory sync fails", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "timer-marker-fsync-failure-"));
     vi.stubEnv("HOME", home);
