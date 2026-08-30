@@ -48,6 +48,17 @@ export interface CredentialProviderRegistrationDeps {
   persistMigratedLegacyKeys(): void;
 }
 
+/** Late-bound messaging provider boundary used by rebuild and focused E2E fixtures. */
+export const credentialProviderRegistrationDependencies = {
+  upsertMessagingProviders(
+    tokenDefs: MessagingTokenDef[],
+    runOpenshell: OpenshellCliHelpers["runOpenshell"],
+    options: MessagingProviderRegistrationOptions,
+  ): string[] {
+    return providers.upsertMessagingProviders(tokenDefs, runOpenshell, options) as string[];
+  },
+};
+
 function recordMigratedLegacyMessagingCredentials(
   tokenDefs: readonly MessagingTokenDef[],
   registeredProviderNames: readonly string[],
@@ -180,11 +191,11 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     options: MessagingProviderRegistrationOptions = {},
     runOpenshell: OpenshellCliHelpers["runOpenshell"] = deps.runOpenshell,
   ): string[] {
-    const upserted = providers.upsertMessagingProviders(
+    const upserted = credentialProviderRegistrationDependencies.upsertMessagingProviders(
       tokenDefs,
       runOpenshell,
       options,
-    ) as string[];
+    );
     recordMigratedLegacyMessagingCredentials(
       tokenDefs,
       upserted,

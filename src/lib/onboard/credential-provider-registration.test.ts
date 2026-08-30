@@ -7,6 +7,7 @@ import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
 import { requiredMessagingProviderBindings } from "./checkpoint-replay";
 import {
+  credentialProviderRegistrationDependencies,
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
 } from "./credential-provider-registration";
@@ -90,6 +91,26 @@ function sandboxInput(bindings: ReturnType<typeof requiredBindings>) {
 }
 
 describe("credential provider registration", () => {
+  it("routes messaging provider creation through the late-bound rebuild boundary", () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn();
+    const registration = createCredentialProviderRegistration(
+      registrationDeps(runOpenshell, session),
+    );
+    const tokenDefs: MessagingTokenDef[] = [
+      { name: "alpha-discord-bridge", envKey: "DISCORD_BOT_TOKEN", token: DISCORD_SECRET },
+    ];
+    const options = { revalidatePolicyRequirements: vi.fn() };
+    const upsert = vi
+      .spyOn(credentialProviderRegistrationDependencies, "upsertMessagingProviders")
+      .mockReturnValue(["alpha-discord-bridge"]);
+
+    expect(registration.upsertMessagingProviders(tokenDefs, options)).toEqual([
+      "alpha-discord-bridge",
+    ]);
+    expect(upsert).toHaveBeenCalledWith(tokenDefs, runOpenshell, options);
+  });
+
   it.each([
     { condition: "matches", endpoints: [], expected: true },
     {
