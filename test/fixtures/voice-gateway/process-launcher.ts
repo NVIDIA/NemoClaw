@@ -7,6 +7,25 @@ import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
 
+import { ownChildProcess } from "../../helpers/child-process-lifecycle";
+
+export const VOICE_GATEWAY_STARTUP_TIMEOUT_MS = 15_000;
+export const VOICE_GATEWAY_SESSION_REQUEST_TIMEOUT_MS = 5_000;
+export const VOICE_GATEWAY_GRACEFUL_STOP_TIMEOUT_MS = 1_000;
+export const VOICE_GATEWAY_FORCE_STOP_TIMEOUT_MS = 1_000;
+const VOICE_GATEWAY_PROCESS_CONTRACT_CLEANUP_MARGIN_MS = 5_000;
+
+/**
+ * Two launches, three session requests, and two bounded shutdowns make up the
+ * real-process package contract. Keep its test ceiling outside every fixture
+ * phase so a phase-specific error wins before Vitest's generic timeout.
+ */
+export const VOICE_GATEWAY_PROCESS_CONTRACT_TIMEOUT_MS =
+  2 * VOICE_GATEWAY_STARTUP_TIMEOUT_MS +
+  3 * VOICE_GATEWAY_SESSION_REQUEST_TIMEOUT_MS +
+  2 * (VOICE_GATEWAY_GRACEFUL_STOP_TIMEOUT_MS + VOICE_GATEWAY_FORCE_STOP_TIMEOUT_MS) +
+  VOICE_GATEWAY_PROCESS_CONTRACT_CLEANUP_MARGIN_MS;
+
 /** Reserve and release an ephemeral loopback port for a process-contract test. */
 export async function reserveLoopbackPort(): Promise<number> {
   const server = net.createServer();
@@ -25,22 +44,34 @@ export async function reserveLoopbackPort(): Promise<number> {
 export async function waitForGatewayListening(child: ChildProcess): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     let stdout = "";
-    const timeout = setTimeout(() => reject(new Error("voice gateway did not start")), 15_000);
-    const rejectAfterCleanup = (error: Error) => {
+    const cleanup = (): void => {
       clearTimeout(timeout);
+      child.off("error", onError);
+      child.off("exit", onExit);
+      child.stdout?.off("data", onData);
+    };
+    const fail = (error: Error): void => {
+      cleanup();
       reject(error);
     };
-    child.once("error", rejectAfterCleanup);
-    child.once("exit", (code) =>
-      rejectAfterCleanup(new Error(`voice gateway exited before startup: ${code}`)),
-    );
-    child.stdout?.on("data", (chunk) => {
+    const onError = (error: Error): void => fail(error);
+    const onExit = (code: number | null): void =>
+      fail(new Error(`voice gateway exited before startup: ${code}`));
+    const onData = (chunk: Buffer | string): void => {
       stdout += String(chunk);
       if (stdout.includes('"state":"listening"')) {
-        clearTimeout(timeout);
+        cleanup();
         resolve();
       }
-    });
+    };
+    const timeout = setTimeout(
+      () => fail(new Error("voice gateway startup timed out")),
+      VOICE_GATEWAY_STARTUP_TIMEOUT_MS,
+    );
+    timeout.unref();
+    child.once("error", onError);
+    child.once("exit", onExit);
+    child.stdout?.on("data", onData);
   });
 }
 
@@ -77,9 +108,51 @@ export function openFileTargets(pid: number): string[] {
 export async function requestSession(
   port: number,
   bearer: string,
+  timeoutMs = VOICE_GATEWAY_SESSION_REQUEST_TIMEOUT_MS,
 ): Promise<{ readonly status: number; readonly body: string }> {
   const body = JSON.stringify({ runtimeConversationId: "process-contract" });
   return new Promise((resolve, reject) => {
+    let response: http.IncomingMessage | null = null;
+    let settled = false;
+    const chunks: Buffer[] = [];
+    const cleanup = (): void => {
+      clearTimeout(timeout);
+      request.off("error", onRequestError);
+      response?.off("data", onResponseData);
+      response?.off("end", onResponseEnd);
+      response?.off("error", onResponseError);
+      response?.off("aborted", onResponseAborted);
+    };
+    const fail = (error: Error, destroy = false): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (destroy) {
+        response?.once("error", () => undefined);
+        request.once("error", () => undefined);
+        response?.destroy();
+        request.destroy();
+      }
+      reject(error);
+    };
+    const onRequestError = (error: Error): void =>
+      fail(new Error(`voice gateway session request transport failed: ${error.message}`));
+    const onResponseData = (chunk: Buffer | string): void => {
+      chunks.push(Buffer.from(chunk));
+    };
+    const onResponseEnd = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve({
+        status: response?.statusCode ?? 0,
+        body: Buffer.concat(chunks).toString("utf8"),
+      });
+    };
+    const onResponseError = (error: Error): void =>
+      fail(new Error(`voice gateway session response failed: ${error.message}`));
+    const onResponseAborted = (): void =>
+      fail(new Error("voice gateway session response was aborted"));
     const request = http.request(
       {
         host: "127.0.0.1",
@@ -92,29 +165,28 @@ export async function requestSession(
           "content-type": "application/json",
         },
       },
-      (response) => {
-        const chunks: Buffer[] = [];
-        response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-        response.on("end", () =>
-          resolve({
-            status: response.statusCode ?? 0,
-            body: Buffer.concat(chunks).toString("utf8"),
-          }),
-        );
+      (incoming) => {
+        response = incoming;
+        response.on("data", onResponseData);
+        response.once("end", onResponseEnd);
+        response.once("error", onResponseError);
+        response.once("aborted", onResponseAborted);
       },
     );
-    request.once("error", reject);
+    const timeout = setTimeout(
+      () => fail(new Error(`voice gateway session request timed out after ${timeoutMs} ms`), true),
+      timeoutMs,
+    );
+    timeout.unref();
+    request.once("error", onRequestError);
     request.end(body);
   });
 }
 
 /** Stop a gateway child and wait for process termination. */
 export async function stopGateway(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise<void>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", () => resolve());
-  });
-  child.kill("SIGTERM");
-  await exited;
+  await ownChildProcess(child, {
+    gracefulTimeoutMs: VOICE_GATEWAY_GRACEFUL_STOP_TIMEOUT_MS,
+    forceTimeoutMs: VOICE_GATEWAY_FORCE_STOP_TIMEOUT_MS,
+  }).terminate();
 }
