@@ -616,4 +616,35 @@ describe("rebuild recreate shields state", () => {
     );
     expect(clearShieldsState).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["without a backup", null, "    3. Restore shields lockdown:"],
+    [
+      "with a backup",
+      { backupPath: "/tmp/rebuild-backup", timestamp: "2026-08-30T00:00:00.000Z" },
+      "    4. Restore shields lockdown:",
+    ],
+  ])(
+    "keeps manual recovery steps sequential %s",
+    async (_scenario, backupManifest, expectedStep) => {
+      vi.mocked(rebuildOnboardDependencies.onboard).mockRejectedValue(
+        new Error("inner onboard failed"),
+      );
+
+      await expect(
+        runRebuildRecreatePhase(
+          makeInput({
+            backupManifest: backupManifest as never,
+            rebuildShieldsWindow: { relocked: false, wasLocked: true },
+          }),
+        ),
+      ).rejects.toThrow(
+        backupManifest
+          ? "bail: Recreate failed (sandbox destroyed). Backup: /tmp/rebuild-backup"
+          : "bail: Recreate failed (stale-sandbox recovery).",
+      );
+
+      expect(console.error).toHaveBeenCalledWith(expectedStep);
+    },
+  );
 });

@@ -380,7 +380,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       );
     }
     if (rebuildShieldsWindow.wasLocked) {
-      console.error("    4. Restore shields lockdown:");
+      console.error(`    ${backupManifest ? 4 : 3}. Restore shields lockdown:`);
       console.error(`       ${CLI_NAME} ${sandboxName} shields up`);
     }
     console.error("");
