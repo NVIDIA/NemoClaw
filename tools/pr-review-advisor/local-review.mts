@@ -5,6 +5,7 @@ import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+// Keep this bootstrap built-in-only: contributor imports execute before the trusted origin/main checkout exists.
 const IMPLEMENTATION = "tools/pr-review-advisor/local-review-implementation.mts";
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 function hostEnv(source: string): NodeJS.ProcessEnv {

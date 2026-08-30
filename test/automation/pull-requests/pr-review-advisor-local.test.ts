@@ -630,6 +630,7 @@ describe("local PR review advisor", () => {
 
   it("redacts lifecycle credentials while preserving actionable OpenShell context (#10611)", async () => {
     const source = repository();
+    const before = sourceState(source);
     const specialist = ADVISOR_SPECIALISTS[0]!;
     let sandboxName = "";
     const credential = "advisor-secret-value";
@@ -671,6 +672,8 @@ describe("local PR review advisor", () => {
     expect((failure.cause as Error).message).not.toContain(credential);
     expect(failure.message).not.toContain(credential);
     expect(failure.message).not.toContain("secondary-token");
+    expect(sourceState(source)).toEqual(before);
+    expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
   });
 
   it("removes partial staging output after artifact copy failure (#10611)", async () => {
