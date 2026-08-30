@@ -146,7 +146,6 @@ const {
   OllamaProbeFailureTracker,
 }: typeof import("./onboard/ollama-probe-failure-tracker") = require("./onboard/ollama-probe-failure-tracker");
 const crypto = require("node:crypto");
-const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const runner: typeof import("./runner") = require("./runner");
@@ -238,11 +237,10 @@ const {
 } = require("./inference/ollama/windows");
 const vllmInference = require("./inference/vllm");
 const inferenceConfig: typeof import("./inference/config") = require("./inference/config");
-const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
+const { getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
 const onboardProviders = require("./onboard/providers");
 const credentialProviderRegistration: typeof import("./onboard/credential-provider-registration") = require("./onboard/credential-provider-registration");
-const inferenceProviders: typeof import("./onboard/inference-providers") = require("./onboard/inference-providers");
 const setupInferenceFactory: typeof import("./onboard/setup-inference") = require("./onboard/setup-inference");
 const hermesProviderAuth = require("./hermes-provider-auth");
 const onboardHermesDashboard: typeof import("./onboard/hermes-dashboard") = require("./onboard/hermes-dashboard");
@@ -327,7 +325,6 @@ const {
   removeLegacyCredentialsFile,
   normalizeCredentialValue,
   resolveProviderCredential,
-  saveCredential,
 } = credentials;
 const {
   hashCredential,
@@ -338,8 +335,6 @@ const {
 const registry: typeof import("./state/registry") = require("./state/registry");
 const sandboxMutationLock: typeof import("./state/mcp-lifecycle-lock") = require("./state/mcp-lifecycle-lock");
 const gatewayRouteMutationLock: typeof import("./inference/gateway-route-mutation-lock") = require("./inference/gateway-route-mutation-lock");
-const { resolveSandboxImageTagFromCreateOutput } =
-  require("./domain/sandbox/image-tag") as typeof import("./domain/sandbox/image-tag");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const { markCancellationRecovery: recordRecovery } = onboardSession;
@@ -415,7 +410,6 @@ const sandboxLifecycle: typeof import("./onboard/sandbox-lifecycle") = require("
 const sandboxRegistryMetadata: typeof import("./onboard/sandbox-registry-metadata") = require("./onboard/sandbox-registry-metadata");
 const sandboxReuse: typeof import("./onboard/sandbox-reuse") = require("./onboard/sandbox-reuse");
 const sandboxRecreateTransaction: typeof import("./onboard/sandbox-recreate-transaction") = require("./onboard/sandbox-recreate-transaction");
-const sandboxRegistration: typeof import("./onboard/sandbox-registration") = require("./onboard/sandbox-registration");
 const {
   formatSandboxAgentName,
   getAgentInferenceProviderOptions,
@@ -436,7 +430,6 @@ const promptValidatedSandboxName = sandboxAgent.createPromptValidatedSandboxName
 });
 const modelRouter: typeof import("./onboard/model-router") = require("./onboard/model-router");
 const {
-  DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV,
   isRoutedInferenceProvider,
   loadBlueprintProfile,
   reconcileModelRouter,
@@ -472,7 +465,6 @@ const {
 const {
   skippedStepMessage,
 }: typeof import("./onboard/skipped-step-message") = require("./onboard/skipped-step-message");
-const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
 const {
   findAvailableDashboardPort,
   preflightDashboardPortRangeAvailability,
@@ -525,8 +517,6 @@ const agentOnboard = require("./agent/onboard");
 const agentDefs = require("./agent/defs");
 
 const gatewayState: typeof import("./state/gateway") = require("./state/gateway");
-const openClawPluginRestore: typeof import("./state/openclaw-plugin-restore") = require("./state/openclaw-plugin-restore");
-const sandboxState: typeof import("./state/sandbox") = require("./state/sandbox");
 const validation: typeof import("./validation") = require("./validation");
 const urlUtils: typeof import("./core/url-utils") = require("./core/url-utils");
 const buildContext = require("./build-context");
@@ -534,10 +524,8 @@ const httpProbe: typeof import("./adapters/http/probe") = require("./adapters/ht
 const modelPrompts: typeof import("./inference/model-prompts") = require("./inference/model-prompts");
 const providerModels: typeof import("./inference/provider-models") = require("./inference/provider-models");
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
-const webSearch: typeof import("./inference/web-search") = require("./inference/web-search");
 const openshellInstallFlow: typeof import("./onboard/openshell-install") = require("./onboard/openshell-install");
 const openshellPinFlow: typeof import("./onboard/openshell-pin") = require("./onboard/openshell-pin");
-const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-failure") = require("./onboard/sandbox-create-failure");
 
 import type { CurlProbeResult } from "./adapters/http/probe";
 import type { AgentDefinition } from "./agent/defs";
@@ -984,7 +972,7 @@ const { validateSelectedRemoteModel } = createRemoteModelValidator({
   ...reasoningMode.compatibleEndpointReasoningConfigureDeps,
 });
 
-const { promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
+const { promptRemoteModel, promptInputModel } = modelPrompts;
 const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
 const nousModels: typeof import("./inference/nous-models") = require("./inference/nous-models");
 
@@ -1125,7 +1113,6 @@ const {
   removeDockerDriverGatewayRegistration,
   retireLegacyGatewayForDockerDriverUpgrade,
   runQuietOpenshell,
-  stopDockerDriverGatewayProcess,
 } = createGatewayProcessLifecycle({
   gatewayName: () => GATEWAY_NAME,
   dashboardPort: getOnboardDashboardPort,
@@ -1522,13 +1509,10 @@ const gatewayRecovery = createGatewayRecoveryOrchestration({
 });
 
 const {
-  attachGatewayMetadataIfNeeded,
   recoverGatewayRuntime,
-  registerDockerDriverGatewayEndpoint,
   startDockerDriverGateway,
   startGateway,
   startGatewayForRecovery,
-  startGatewayWithOptions,
 } = createGatewayLifecycleApplication({
   dockerDriverStart: dockerDriverGatewayStart,
   recovery: gatewayRecovery,
@@ -1599,7 +1583,6 @@ const sandboxCreateOrchestrationRuntime = {
   isWsl,
   managedWorkloadOnboard,
   messagingChannelSetup,
-  nim,
   normalizeHermesAuthMethod,
   normalizeHermesToolGatewaySelections,
   note,
@@ -1611,7 +1594,6 @@ const sandboxCreateOrchestrationRuntime = {
   openshellArgv,
   path,
   planRegisteredExtraProviders,
-  policyPresetCarry,
   preparedDcodeRebuild,
   promptValidatedSandboxName,
   promptYesNoOrDefault,
@@ -1636,7 +1618,6 @@ const sandboxCreateOrchestrationRuntime = {
   sandboxLifecycle,
   sandboxMutationLock,
   sandboxRecreateTransaction,
-  sandboxRegistration,
   sandboxRegistryMetadata,
   sandboxReuse,
   shouldSkipPreRecreateBackup,
@@ -2593,13 +2574,10 @@ const {
   buildControlUiUrls,
   buildOrphanedSandboxRollbackMessage,
   ensureDashboardForward,
-  ensureAgentDashboardForward,
   ensureFinalizationAgentDashboardForward,
-  ensureFinalizationDashboardForward,
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
-  getWslHostAddress,
   printDashboard,
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({
@@ -2648,9 +2626,6 @@ const {
   withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
   waitForSandboxReady,
   waitForSandboxControlPlaneReady: finalizationHandlerDeps.waitForSandboxControlPlaneReady,
-  setPolicyTier: (sandboxName, tierName) =>
-    registry.updateSandbox(sandboxName, { policyTier: tierName }),
-  getRecordedPolicyTier: (sandboxName) => registry.getSandbox(sandboxName)?.policyTier ?? null,
   parsePolicyPresetEnv,
   env: process.env,
 });
@@ -2976,11 +2951,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         requestedGpuPassthrough: opts.gpu === true,
       };
       type InitialOnboardFlowContext = typeof initialFlowContext;
-      const policyAuthorityBindings =
-        sandboxCreateOrchestration.createOnboardPolicyAuthorityBindings(
-          sandboxCreateOrchestrationRuntime,
-          opts.policyTier,
-        );
       const [preflightPhase, gatewayPhase]: readonly [
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
         import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
@@ -3022,7 +2992,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         assertGatewayReadiness: () =>
           onboardPreflightGatewayAuthority.collectGatewayReadiness().then(() => undefined),
         gatewayName: GATEWAY_NAME,
-        bindPolicyAuthority: policyAuthorityBindings.bindPolicyAuthority,
         recreateSandbox: isRecreateSandbox,
         requiresBindMounts: effectiveHostMounts.length > 0,
         gatewayDeps: {
@@ -3114,7 +3083,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           deps: {
             checkGatewayRouteCompatibility,
             preflightGatewayRouteDiscovery,
-            preflightPolicyRequirements: policyAuthorityBindings.preflightPolicyRequirements,
             getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
             withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
             normalizeHermesAuthMethod,
@@ -3127,7 +3095,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
               assertRouteCompatible,
               canProbeRoute,
               recoverySessionId,
-              revalidatePolicyRequirements,
+              revalidateSandboxIdentity,
             ) =>
               setupNim(
                 g,
@@ -3139,7 +3107,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
                 assertRouteCompatible,
                 canProbeRoute,
                 recoverySessionId,
-                revalidatePolicyRequirements,
+                revalidateSandboxIdentity,
               ),
             setupInference,
             resolveHostLocalInferenceStartupSelection:
@@ -3250,7 +3218,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             getRegistrySandboxMessagingAuthority:
               messagingChannelSetup.getRegistrySandboxMessagingAuthority,
             providerMatchesGatewayCredential,
-            preflightPolicyRequirements: policyAuthorityBindings.preflightPolicyRequirements,
             stageSandboxCredentialProviders,
             promptValidatedSandboxName,
             selectResourceProfileForSandbox: () =>
@@ -3312,25 +3279,24 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         import("./verify-deployment").VerifyDeploymentResult
       >({
         branchState: agent ? "agent_setup" : "openclaw",
-        authoritativePolicyTier:
-          opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
-        revalidatePolicyRequirements: policyAuthorityBindings.revalidatePolicyRequirements,
+        preserveRebuildLivePolicy: opts.rebuildPolicySourcePath !== undefined,
         agentSetupDeps: {
           handleAgentSetup: agentOnboard.handleAgentSetup,
-          agentSetupContext: (revalidatePolicyRequirements) => ({
-            ...{ step, runCaptureOpenshell, captureOpenshell, revalidatePolicyRequirements },
+          agentSetupContext: () => ({
+            ...{ step, runCaptureOpenshell, captureOpenshell },
             openshellShellCommand,
             openshellBinary: getOpenshellBinary(),
+            gatewayName: GATEWAY_NAME,
             startRecordedStep,
             recordStepComplete,
             recordStepFailed,
             skippedStepMessage,
           }),
-          ensureAgentDashboardForward: (name, selectedAgent, revalidate) =>
+          ensureAgentDashboardForward: (name, selectedAgent) =>
             ensureFinalizationAgentDashboardForward(
               name,
               selectedAgent,
-              revalidate,
+              undefined,
               hermesApiPortReservationScope,
             ),
           persistDashboardPort: (name, port) =>
@@ -3364,11 +3330,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           recordStateSkipped,
           startRecordedStep,
           setupPoliciesWithSelection,
-          updateSession: onboardSession.updateSession,
           recordStepComplete,
           toSessionUpdates: (updates) =>
             toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
-          persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
         },
         finalization: {
           stagedLegacyKeys,

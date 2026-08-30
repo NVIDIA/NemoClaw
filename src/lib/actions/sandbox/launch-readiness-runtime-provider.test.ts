@@ -19,9 +19,6 @@ const SANDBOX: SandboxEntry = {
   agentVersion: "1.0.0",
   nemoclawVersion: "2.0.0",
   imageTag: "example@sha256:immutable",
-  policyPresetsFinalized: true,
-  policies: ["managed_inference"],
-  policyTier: "standard",
   provider: null,
   model: null,
   endpointUrl: null,
@@ -31,7 +28,6 @@ const SANDBOX: SandboxEntry = {
   compatibleEndpointReasoningEffort: null,
   nimContainer: null,
 };
-const DIGEST = "c".repeat(64);
 
 describe("launch readiness runtime-provider projection", () => {
   it("accepts qualification-registered providers without a provider-name branch", () => {
@@ -54,26 +50,6 @@ describe("launch readiness runtime-provider projection", () => {
     expect(() =>
       buildLaunchReadinessRegistryProjection(
         { ...SANDBOX, pendingRouteReservation: true, reservationSessionId: "session" },
-        agent,
-      ),
-    ).toThrow();
-    expect(() =>
-      buildLaunchReadinessRegistryProjection(
-        {
-          ...SANDBOX,
-          baselineExclusionTransition: {
-            id: "transition",
-            operation: "exclude",
-            exclusion: {
-              version: 1,
-              agent: "openclaw",
-              key: "phone_home",
-              digest: DIGEST,
-            },
-            targetLiveDigest: null,
-            startedAt: "2026-01-01T00:00:00.000Z",
-          },
-        },
         agent,
       ),
     ).toThrow();

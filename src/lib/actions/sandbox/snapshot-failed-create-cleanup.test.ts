@@ -37,7 +37,6 @@ vi.mock("../../shields/timer-bound-lock", () => ({
 }));
 
 vi.mock("../../state/registry", () => ({
-  getBaselineExclusions: vi.fn(() => []),
   getSandbox: vi.fn(() => ({ name: "alpha", agent: "openclaw" })),
 }));
 

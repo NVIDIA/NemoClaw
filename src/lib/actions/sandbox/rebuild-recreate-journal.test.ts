@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -22,11 +26,15 @@ import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
+import type { RebuildManifest } from "../../state/sandbox";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
+  clearRebuildRecoveryBackup,
+  findRebuildRecoveryBackup,
   fingerprintRebuildRecreateTargetIntent,
   observeRebuildSandbox,
   openRebuildRecreateJournal,
+  recordRebuildRecoveryBackup,
 } from "./rebuild-recreate-journal";
 
 const SANDBOX_ID = "sbx-0d6f4c2a91";
@@ -37,7 +45,7 @@ const HOST_MOUNT = {
   sourceIdentity: { device: "66306", inode: "12345" },
 } as const;
 const PRE_HOST_MOUNT_FINGERPRINT =
-  "99603c8bf987561b783e2f38a1dcf260703537e5a680cae2198605ab13e181fe";
+  "831bd40537ec3112f056079c89476ef2d62ce30664d0d11573c98301de81139e";
 
 const NON_DEFAULT_TARGET = {
   sandboxName: "alpha",
@@ -61,6 +69,7 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   nonInteractive: true,
   recreateSandbox: true,
   authoritativeResumeConfig: true,
+  rebuildPolicySourcePath: "/tmp/current-policy.yaml",
   acceptThirdPartySoftware: true,
   agent: "langchain-deepagents-code",
   recreateProvider: "nvidia",
@@ -80,7 +89,6 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   dcodeAutoApprovalRequestedExplicitly: false,
   observabilityEnabled: true,
   observabilityRequestedExplicitly: true,
-  policyTier: "restricted",
   baseImageResolutionHint: null,
 };
 
@@ -122,7 +130,6 @@ describe("rebuild replacement target fingerprint", () => {
   it.each([
     { dcodeAutoApprovalMode: "thread-opt-in" },
     { endpointSource: "onboard" },
-    { policyTier: "balanced" },
     { recreateProvider: "compatible-endpoint" },
     { recreateModel: "model-b" },
     { recreatePreferredInferenceApi: "anthropic" },
@@ -538,5 +545,70 @@ describe("rebuild replacement journal", () => {
       /cannot be retired before its replacement is proven/,
     );
     expect(session.checkpoint?.sandboxRecreate?.phase).toBe("planned");
+  });
+});
+
+describe("rebuild replacement recovery backup", () => {
+  const transactionId = "11111111-1111-4111-8111-111111111111";
+  const otherTransactionId = "22222222-2222-4222-8222-222222222222";
+  let backupPath: string;
+  let manifest: RebuildManifest;
+
+  const identity = (selectedTransactionId = transactionId) => ({
+    sandboxName: "alpha",
+    agentName: "openclaw",
+    transactionId: selectedTransactionId,
+  });
+
+  beforeEach(() => {
+    backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-recovery-test-"));
+    manifest = {
+      version: 1,
+      sandboxName: "alpha",
+      timestamp: "2026-08-28T00-00-00-000Z",
+      agentType: "openclaw",
+      agentVersion: null,
+      expectedVersion: null,
+      stateDirs: [],
+      dir: "/sandbox/.openclaw",
+      backupPath,
+      blueprintDigest: null,
+    };
+  });
+
+  afterEach(() => {
+    fs.rmSync(backupPath, { recursive: true, force: true });
+  });
+
+  const deps = () => ({
+    listBackups: () => [{ ...manifest, snapshotVersion: 1 }],
+    validateManifest: (_name: string, _agent: string | null | undefined, value: RebuildManifest) =>
+      ({ ok: true, manifest: value }) as const,
+  });
+
+  it("binds, resolves, and clears one transaction backup", () => {
+    recordRebuildRecoveryBackup({ ...identity(), backupManifest: manifest }, deps());
+
+    const recordPath = path.join(backupPath, ".nemoclaw-rebuild-recovery.json");
+    expect(fs.statSync(recordPath).mode & 0o777).toBe(0o600);
+    expect(findRebuildRecoveryBackup(identity(), deps())).toEqual(
+      expect.objectContaining({ backupPath, timestamp: manifest.timestamp }),
+    );
+
+    clearRebuildRecoveryBackup({ ...identity(), backupManifest: manifest }, deps());
+    expect(fs.existsSync(recordPath)).toBe(false);
+  });
+
+  it("rejects another transaction and preserves the original binding", () => {
+    recordRebuildRecoveryBackup({ ...identity(), backupManifest: manifest }, deps());
+
+    expect(() =>
+      recordRebuildRecoveryBackup(
+        { ...identity(otherTransactionId), backupManifest: manifest },
+        deps(),
+      ),
+    ).toThrow("already belongs to another transaction");
+    expect(findRebuildRecoveryBackup(identity(), deps())).not.toBeNull();
+    expect(findRebuildRecoveryBackup(identity(otherTransactionId), deps())).toBeNull();
   });
 });

@@ -12,7 +12,6 @@ import {
   MessagingWorkflowPlanner,
 } from "../../messaging";
 import * as policies from "../../policy";
-import * as runner from "../../runner";
 import type { SandboxEntry } from "../../state/registry/types";
 import * as registry from "../../state/registry";
 import { removeSandboxChannel, startSandboxChannel, stopSandboxChannel } from "./policy-channel";
@@ -59,7 +58,6 @@ describe("policy channel remove/enable flows", () => {
     const current = {
       name: "alpha",
       agent: "hermes",
-      policies: ["whatsapp"],
       messaging: {
         schemaVersion: 1,
         plan,
@@ -75,6 +73,10 @@ describe("policy channel remove/enable flows", () => {
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["whatsapp"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
     const updateSandbox = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+    vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation(
+      ((args: string[]) =>
+        args.includes("cat") ? { status: 1, stderr: "missing" } : { status: 0 }) as never,
+    );
     vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["whatsapp"]);
     vi.spyOn(policies, "listPresets").mockReturnValue([{ name: "whatsapp" } as never]);
     const removePreset = vi.spyOn(policies, "removePreset").mockReturnValue(true);
@@ -89,9 +91,7 @@ describe("policy channel remove/enable flows", () => {
     expect(String(command)).toContain(
       "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session",
     );
-    expect(String(command)).toContain(
-      "/sandbox/.hermes/dashboard-home/platforms/whatsapp/session",
-    );
+    expect(String(command)).toContain("/sandbox/.hermes/dashboard-home/platforms/whatsapp/session");
   }
 
   async function removeWhatsappNonInteractive() {
@@ -150,7 +150,9 @@ describe("policy channel remove/enable flows", () => {
   it.each([
     { scenario: "exec transport", execStatus: 0, usesSsh: false },
     { scenario: "SSH fallback", execStatus: 1, usesSsh: true },
-  ])("clears every Hermes WhatsApp session path through $scenario", async ({ execStatus, usesSsh }) => {
+  ])(
+    "clears every Hermes WhatsApp session path through $scenario",
+    async ({ execStatus, usesSsh }) => {
       const { updateSandbox } = await arrangeHermesWhatsappRemoval();
       vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
         status: execStatus,
@@ -180,36 +182,35 @@ describe("policy channel remove/enable flows", () => {
       expect(transport.mock.invocationCallOrder[0]).toBeLessThan(
         updateSandbox.mock.invocationCallOrder[0],
       );
-    });
+    },
+  );
 
   it("keeps channel state unchanged when both Hermes cleanup transports fail", async () => {
-      const { rebuildSandbox, removePreset, updateSandbox } = await arrangeHermesWhatsappRemoval();
-      const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
-      vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
-        status: 1,
-        stdout: "",
-        stderr: "exec unavailable",
-      });
-      vi.mocked(processRecovery.executeSandboxCommand).mockReturnValue({
-        status: 1,
-        stdout: "",
-        stderr: "ssh unavailable",
-      });
-
-      await expect(removeWhatsappNonInteractive()).rejects.toThrow("process.exit(1)");
-
-      expectHermesSessionCleanup(
-        vi.mocked(processRecovery.executeSandboxExecCommand).mock.calls[0]?.[1],
-      );
-      expectHermesSessionCleanup(
-        vi.mocked(processRecovery.executeSandboxCommand).mock.calls[0]?.[1],
-      );
-
-      expect(runOpenshell).not.toHaveBeenCalled();
-      expect(updateSandbox).not.toHaveBeenCalled();
-      expect(removePreset).not.toHaveBeenCalled();
-      expect(rebuildSandbox).not.toHaveBeenCalled();
+    const { rebuildSandbox, removePreset, updateSandbox } = await arrangeHermesWhatsappRemoval();
+    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
+    vi.mocked(processRecovery.executeSandboxExecCommand).mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "exec unavailable",
     });
+    vi.mocked(processRecovery.executeSandboxCommand).mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "ssh unavailable",
+    });
+
+    await expect(removeWhatsappNonInteractive()).rejects.toThrow("process.exit(1)");
+
+    expectHermesSessionCleanup(
+      vi.mocked(processRecovery.executeSandboxExecCommand).mock.calls[0]?.[1],
+    );
+    expectHermesSessionCleanup(vi.mocked(processRecovery.executeSandboxCommand).mock.calls[0]?.[1]);
+
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(removePreset).not.toHaveBeenCalled();
+    expect(rebuildSandbox).not.toHaveBeenCalled();
+  });
 
   it("supports stop dry runs for configured Hermes channels", async () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: "hermes" });
@@ -233,7 +234,7 @@ describe("policy channel remove/enable flows", () => {
     const updateSandboxSpy = vi.spyOn(registry, "updateSandbox");
     const applyPresetSpy = vi.spyOn(policies, "applyPreset");
     const rebuildSpy = vi.spyOn(policyChannelDependencies, "rebuildSandbox");
-    vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies: {}\n");
+    vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("absent");
     await expect(
       startSandboxChannel("alpha", { channel: "telegram", dryRun: true }),
     ).resolves.toBeUndefined();
@@ -258,29 +259,7 @@ describe("policy channel remove/enable flows", () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha" });
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue(["telegram"]);
-    const liveTelegramPolicy = [
-      "version: 1",
-      "network_policies:",
-      "  telegram_bot:",
-      "    name: telegram_bot",
-      "    endpoints:",
-      "      - host: api.telegram.org",
-      "        port: 443",
-      "        protocol: rest",
-      "        enforcement: enforce",
-      // An already-matching live policy carries the materialized provider.
-      "        credential_binding:",
-      "          provider: alpha-telegram-bridge",
-      "        rules:",
-      "          - allow: { method: GET, path: '/bot*/**' }",
-      "          - allow: { method: POST, path: '/bot*/**' }",
-      "          - allow: { method: GET, path: '/file/bot*/**' }",
-      "    binaries:",
-      "      - { path: /usr/local/bin/node }",
-      "      - { path: /usr/bin/node }",
-      "",
-    ].join("\n");
-    vi.spyOn(runner, "runCapture").mockReturnValue(liveTelegramPolicy);
+    vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("match");
 
     await expect(
       startSandboxChannel("alpha", { channel: "telegram", dryRun: true }),

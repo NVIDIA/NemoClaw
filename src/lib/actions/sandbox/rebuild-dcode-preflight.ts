@@ -240,21 +240,6 @@ function loadMatchingDcodeSession(
   return session?.sandboxName === sandboxName ? session : null;
 }
 
-function matchesRecordedTargetAfterPolicyMutation(
-  expected: RebuildSandboxEntry,
-  current: RebuildSandboxEntry,
-): boolean {
-  const { policyCreationReceipt: expectedReceipt, ...expectedEntry } = expected;
-  const { policyCreationReceipt: currentReceipt, ...currentEntry } = current;
-  if (!isDeepStrictEqual(currentEntry, expectedEntry)) return false;
-  if (!expectedReceipt || !currentReceipt) return expectedReceipt === currentReceipt;
-  const { policyHash: _expectedHash, policyVersion: _expectedVersion, ...expectedAuthority } =
-    expectedReceipt;
-  const { policyHash: _currentHash, policyVersion: _currentVersion, ...currentAuthority } =
-    currentReceipt;
-  return isDeepStrictEqual(currentAuthority, expectedAuthority);
-}
-
 function requireCurrentTarget(
   sandboxName: string,
   entry: RebuildSandboxEntry,
@@ -264,7 +249,7 @@ function requireCurrentTarget(
   gatewayPort?: number,
 ): void {
   const currentEntry = registry.getSandbox(sandboxName) as RebuildSandboxEntry | null;
-  if (!currentEntry || !matchesRecordedTargetAfterPolicyMutation(entry, currentEntry)) {
+  if (!currentEntry || !isDeepStrictEqual(currentEntry, entry)) {
     fail("the recorded sandbox target changed during preflight", bail);
   }
   const currentTarget = resolveTarget(currentEntry, resumeConfig, bail, gatewayPort);

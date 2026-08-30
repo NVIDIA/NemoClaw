@@ -10,6 +10,7 @@ import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { captureOpenshell } from "./adapters/openshell/runtime";
 import { recoverRegistryEntries } from "./registry-recovery-action";
 import * as registry from "./state/registry";
+import * as policy from "./policy";
 
 interface RecoveredRegistry {
   sandboxes: SandboxEntry[];
@@ -17,6 +18,8 @@ interface RecoveredRegistry {
   recoveredFromSession?: boolean;
   recoveredFromGateway?: number;
 }
+
+const INVENTORY_POLICY_PROBE_TIMEOUT_MS = 2_000;
 
 interface RegistryFallback {
   sandboxes: SandboxEntry[];
@@ -87,6 +90,13 @@ export function buildListCommandDeps(): ListSandboxesCommandDeps {
       }
     },
     loadLastSession: () => onboardSession.loadSession(),
+    getPolicyPresets: (sandboxName) => {
+      try {
+        return policy.getAppliedPresets(sandboxName, INVENTORY_POLICY_PROBE_TIMEOUT_MS);
+      } catch {
+        return [];
+      }
+    },
     getActiveSessionCount: sessionDeps
       ? (name) => {
           try {

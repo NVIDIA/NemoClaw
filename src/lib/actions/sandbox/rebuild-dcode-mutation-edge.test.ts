@@ -15,60 +15,6 @@ import {
 describe("rebuildSandbox DCode flow: mutation edge", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
 
-  it("accepts the policy receipt rotation performed by MCP teardown", async () => {
-    const originalEntry = {
-      ...makeDcodeSandboxEntry(),
-      policyCreationReceipt: {
-        schemaVersion: 1 as const,
-        origin: "sandbox-create" as const,
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        sandboxName: "alpha",
-        lifecycleGeneration: "generation-1",
-        sandboxIdentityFingerprint: "sandbox-fingerprint",
-        policyHash: "before",
-        policyVersion: 14,
-      },
-      compatibleEndpointReasoning: null,
-      compatibleEndpointReasoningEffort: null,
-      webSearchEnabled: false,
-      webSearchProvider: null,
-      fromDockerfile: null,
-      hermesAuthMethod: null,
-    };
-    const rotatedEntry = {
-      ...originalEntry,
-      policyCreationReceipt: {
-        ...originalEntry.policyCreationReceipt,
-        policyHash: "after",
-        policyVersion: 15,
-      },
-    };
-    const harness = createRebuildFlowHarness({
-      agentName: "langchain-deepagents-code",
-      sandboxEntry: originalEntry,
-      sandboxEntryReads: [
-        originalEntry,
-        originalEntry,
-        originalEntry,
-        originalEntry,
-        originalEntry,
-        rotatedEntry,
-      ],
-      dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }, { ok: true }],
-      mcpPreparation: {
-        entries: [{ server: "search", providerName: "mcp-search" }],
-        detachedProviderEntries: [],
-        scrubbedAdapterEntries: [],
-      },
-    });
-    configureDcodeSession(harness);
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
-  });
-
   it("finishes DCode preparation and recheck before backup, delete, and recreate (#6195)", async () => {
     const mcpEntry = { server: "search", providerName: "mcp-search" };
     const harness = createRebuildFlowHarness({

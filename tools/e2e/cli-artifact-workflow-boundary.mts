@@ -202,7 +202,7 @@ export function validateCliArtifactRestoreAction(
     "node --input-type=module --eval",
     'import { createHash } from "node:crypto"',
     'import { createReadStream } from "node:fs"',
-    'for await (const chunk of createReadStream(process.argv[1])) hash.update(chunk)',
+    "for await (const chunk of createReadStream(process.argv[1])) hash.update(chunk)",
     'process.stdout.write(hash.digest("hex"))',
     'lockfile_sha256="$(sha256_file package-lock.json)"',
     ".candidate.sha == $candidateSha",
@@ -318,8 +318,9 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
     !isDeepStrictEqual(record(packageStep.env), {
       CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository || github.repository }}",
       CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
-      MANAGED_IMAGE_PUBLICATION_SHA:
-        "${{ inputs.managed_image_publication_sha || inputs.checkout_sha || github.sha }}",
+      MANAGED_IMAGE_CATALOG: "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}",
+      MANAGED_IMAGE_CATALOG_SHA256:
+        "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog_sha256 }}",
       RUN_ATTEMPT: "${{ github.run_attempt }}",
       RUN_ID: "${{ github.run_id }}",
       WORKFLOW_SHA: "${{ github.workflow_sha }}",

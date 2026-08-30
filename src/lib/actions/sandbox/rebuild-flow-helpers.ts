@@ -25,7 +25,6 @@ import {
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
-import { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
 import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
@@ -39,6 +38,7 @@ import * as shields from "../../shields";
 import type { SandboxEntry } from "../../state/registry";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
+import { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
   getReconciledSandboxGatewayState,
@@ -49,11 +49,18 @@ import {
 import { openRebuildShieldsWindow, type RebuildShieldsWindow } from "./rebuild-shields";
 import * as snapshotBackup from "./snapshot/backup-authority";
 
+export { removeStaleRebuildDockerOrphan };
+
 export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
 export type RebuildLiveState = {
   staleRecovery: boolean;
   staleRegistrySnapshot: ReturnType<typeof loadRegistry> | null;
+};
+
+export type RebuildLiveStateOptions = {
+  /** A digest-verified policy handoff bound to the prepared recovery manifest. */
+  authoritativeRecoveryPolicyAvailable?: boolean;
 };
 
 export type RebuildAgentBaseImageOptions = {
@@ -155,6 +162,7 @@ export async function resolveRebuildLiveState(
   sb: RebuildSandboxEntry,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
+  options: RebuildLiveStateOptions = {},
 ): Promise<RebuildLiveState | null> {
   const recordedGateway = resolveSandboxGatewayName(sb);
   log(`Checking sandbox liveness on ${recordedGateway}: openshell sandbox list`);
@@ -203,36 +211,37 @@ export async function resolveRebuildLiveState(
   }
 
   if (reconciled.state === "missing") {
-    // Source boundary: the local registry is the durable NemoClaw intent record,
-    // while OpenShell owns live sandbox presence. A missing live sandbox on a
-    // healthy named gateway can come from external deletion or failed prior
-    // provisioning, so rebuild recovers from registry metadata instead of
-    // treating the preserved local entry as corrupt. Keep until OpenShell exposes
-    // an atomic recreate-from-registry recovery API.
-    if (usesLegacyRuntimeLifecycleCompatibility(sb)) {
-      try {
-        removeStaleRebuildDockerOrphan(sandboxName, sb.openshellDriver, log);
-      } catch (error) {
-        bail(
-          `Stale-recovery Docker orphan cleanup failed: ${error instanceof Error ? error.message : String(error)}.`,
-        );
-        return null;
+    if (options.authoritativeRecoveryPolicyAvailable === true) {
+      if (usesLegacyRuntimeLifecycleCompatibility(sb)) {
+        try {
+          removeStaleRebuildDockerOrphan(sandboxName, sb.openshellDriver, log);
+        } catch (error) {
+          bail(
+            `Stale-recovery Docker orphan cleanup failed: ${error instanceof Error ? error.message : String(error)}.`,
+          );
+          return null;
+        }
       }
+      log(
+        "Stale-sandbox recovery: the sandbox is absent, but its transaction-bound policy handoff is intact",
+      );
+      return { staleRecovery: true, staleRegistrySnapshot: loadRegistry() };
     }
     console.log("");
-    console.log(
+    console.error(
       `  ${YW}⚠${R} Sandbox '${sandboxName}' is registered locally but absent from the live OpenShell gateway.`,
     );
-    console.log(
-      "  No live workspace state to back up — recreating from the preserved registry metadata.",
+    console.error(
+      "  Rebuild cannot recover its missing OpenShell policy or live workspace from NemoClaw registry metadata.",
     );
-    log(
-      "Stale-sandbox recovery: live sandbox missing on healthy named gateway; skipping backup/restore and recreating from registry metadata",
+    console.error("  To create a clean replacement:");
+    console.error(`    1. ${CLI_NAME} ${sandboxName} destroy --yes`);
+    console.error(`    2. ${CLI_NAME} onboard`);
+    console.error(
+      "  The missing sandbox's state cannot be recovered unless you have a separate snapshot to restore after onboarding.",
     );
-    return {
-      staleRecovery: true,
-      staleRegistrySnapshot: JSON.parse(JSON.stringify(loadRegistry())),
-    };
+    bail("Cannot rebuild an absent sandbox without its authoritative OpenShell policy.");
+    return null;
   }
 
   if (reconciled.state === "gateway_schema_mismatch") {

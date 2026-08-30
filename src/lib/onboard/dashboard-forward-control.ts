@@ -30,7 +30,7 @@ export interface DashboardForwardOptions {
   /** Exact siblings observed live before a long sandbox create/build begins. */
   preservedSiblingForwards?: readonly PreservedDashboardForward[];
   allowPortReallocation?: boolean;
-  revalidatePolicyAuthority?: (operation: string) => void;
+  revalidateSandboxIdentity?: (operation: string) => void;
   onForwardStarted?: (port: number) => void;
 }
 
@@ -251,7 +251,7 @@ export function createSandboxForwardStopper(deps: {
   runOpenshell: Parameters<typeof bestEffortForwardStopForSandbox>[0];
   runCaptureOpenshell: (args: string[], opts?: Record<string, unknown>) => string | null;
   sandboxName: string;
-  revalidatePolicyAuthority?: (operation: string) => void;
+  revalidateSandboxIdentity?: (operation: string) => void;
 }): (port: string | number) => ReturnType<typeof bestEffortForwardStopForSandbox> | null {
   const stoppedPorts = new Set<string>();
   return (port: string | number) => {
@@ -263,7 +263,7 @@ export function createSandboxForwardStopper(deps: {
       port,
       deps.sandboxName,
       () =>
-        deps.revalidatePolicyAuthority?.(
+        deps.revalidateSandboxIdentity?.(
           `stop dashboard forward ${String(port)} for sandbox '${deps.sandboxName}'`,
         ),
     );

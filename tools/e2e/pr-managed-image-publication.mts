@@ -26,53 +26,14 @@ const WORKFLOW_PATH = ".github/workflows/managed-images.yaml";
 const WORKFLOW_FILE = "managed-images.yaml";
 const WORKFLOW_NAME = "Images / Build, Test, and Publish Managed Images";
 const MAX_CHANGED_FILES = 3_000;
-const PAGE_SIZE = 100;
+const MAX_COMMIT_TREE_ENTRIES = 100_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/*-]+$/u;
-const PUBLIC_PULL_REQUEST_METADATA_PATH =
-  /^\/repos\/NVIDIA\/NemoClaw\/pulls\/[1-9][0-9]*(?:$|\/files(?:\?|$))/u;
-const REUSABLE_NON_IMAGE_PATHS = [
-  /^ci\/test-file-size-budget[.]json$/u,
-  /^[.]github\/actions\/restore-e2e-cli-artifact\/action[.]yaml$/u,
-  /^[.]github\/actions\/setup-native-podman-e2e\/action[.]yaml$/u,
-  /^[.]github\/workflows\/e2e(?:-standard-profile)?[.]yaml$/u,
-  /^scripts\/install[.]sh$/u,
-  /^scripts\/checks\/run-managed-image-openshell-e2e[.]ts$/u,
-  /^src\/lib\/actions\/maintenance(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/actions\/sandbox\/connect-probe-observe[.]test[.]ts$/u,
-  /^src\/lib\/actions\/sandbox\/(?:gateway-failure-classifier|status-preflight)(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/actions\/sandbox\/launch-readiness-ordinary-pairing[.]test[.]ts$/u,
-  /^src\/lib\/actions\/sandbox\/process-recovery[.]ts$/u,
-  /^src\/lib\/actions\/sandbox\/rebuild-dcode-mutation-edge[.]test[.]ts$/u,
-  /^src\/lib\/actions\/sandbox\/rebuild-dcode-preflight[.]ts$/u,
-  /^src\/lib\/actions\/sandbox\/rebuild-destroy-phase(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/actions\/sandbox\/mcp-bridge-tool-discovery(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/actions\/sandbox\/mcp-bridge-input-targets[.]test[.]ts$/u,
-  /^src\/lib\/actions\/sandbox\/stopped-sandbox-backup(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/adapters\/podman\/index(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/inference\/serving\/profile-list[.]test[.]ts$/u,
-  /^src\/lib\/onboard[.]ts$/u,
-  /^src\/lib\/shields\/.*[.]ts$/u,
-  /^src\/lib\/tunnel\/agent-forward-stop(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/onboard\/credential-provider-registration(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/onboard\/initial-policy-real-policy[.]test[.]ts$/u,
-  /^src\/lib\/onboard\/managed-bootstrap\/docker-runtime(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/onboard\/managed-bootstrap\/podman-bootstrap-replacement(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/onboard\/managed-bootstrap\/podman-image-transaction(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/onboard\/managed-bootstrap\/podman-runtime(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/onboard\/managed-bootstrap\/runtime-create[.]ts$/u,
-  /^src\/lib\/onboard\/managed-startup\/state-roots[.]ts$/u,
-  /^src\/lib\/onboard\/sandbox-gpu-create-(?:flow|run-attempt)(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/onboard\/managed-workload\/onboard-orchestration(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/onboard\/machine\/finalization-deps(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/onboard\/machine\/messaging-credential-convergence(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/onboard\/runtime-provider\/(?:docker-state-mutation|podman-host-local-inference(?:-[a-z-]+)?|podman-runtime-surfaces|podman-state-mutation)(?:[.]test)?[.]ts$/u,
-  /^src\/lib\/onboard\/sandbox-create\/orchestration[.]ts$/u,
-  /^src\/lib\/onboard\/sandbox-workload-preparation[.]test[.]ts$/u,
-  /^src\/lib\/onboard\/workload\/preparation[.]ts$/u,
-  /^test\//u,
-  /^tools\/e2e\//u,
-] as const;
+const TREE_ENTRY_MODES = new Map([
+  ["blob", new Set(["100644", "100755", "120000"])],
+  ["commit", new Set(["160000"])],
+  ["tree", new Set(["040000"])],
+]);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -80,11 +41,6 @@ export interface ManagedImagePublicationRun {
   readonly id: number;
   readonly attempt: number;
   readonly headSha: string;
-}
-
-export interface ManagedImagePublicationComparison {
-  readonly changedFiles: readonly string[];
-  readonly commits: number;
 }
 
 function record(value: unknown, label: string): JsonRecord {
@@ -103,6 +59,13 @@ function positiveInteger(value: unknown, label: string): number {
 
 function exactString(value: unknown, expected: string, label: string): void {
   if (value !== expected) throw new Error(`${label} must be ${expected}`);
+}
+
+function sha(value: unknown, label: string): string {
+  if (typeof value !== "string" || !SHA_PATTERN.test(value)) {
+    throw new Error(`${label} must be a lowercase 40-character SHA`);
+  }
+  return value;
 }
 
 function compileManagedImagePath(pattern: string): RegExp {
@@ -127,19 +90,6 @@ function compileManagedImagePath(pattern: string): RegExp {
     return new RegExp(`^${escaped}$`, "u");
   }
   throw new Error(`managed-image PR path '${pattern}' uses an unsupported glob`);
-}
-
-function validateChangedFilePath(file: string): void {
-  if (
-    file.length === 0 ||
-    file.length > 4_096 ||
-    /[\0\r\n]/u.test(file) ||
-    file.startsWith("/") ||
-    file.includes("//") ||
-    file.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
-  ) {
-    throw new Error("PR changed-file path is invalid");
-  }
 }
 
 /** Read the managed-image workflow path filter from the trusted workflow source. */
@@ -176,87 +126,19 @@ export function managedImagePublicationRequired(
   }
   const matchers = patterns.map(compileManagedImagePath);
   for (const file of changedFiles) {
-    validateChangedFilePath(file);
+    if (
+      file.length === 0 ||
+      file.length > 4_096 ||
+      /[\0\r\n]/u.test(file) ||
+      file.startsWith("/") ||
+      file.includes("//") ||
+      file.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+    ) {
+      throw new Error("PR changed-file path is invalid");
+    }
     if (matchers.some((matcher) => matcher.test(file))) return true;
   }
   return false;
-}
-
-/**
- * Allow an older exact PR publication only when every later change is outside
- * the managed-image Dockerfile inputs. This intentionally stays narrower than
- * the workflow trigger: the host installer and E2E planning/tests do not enter
- * any shipped managed image.
- */
-export function managedImagePublicationReuseAllowed(changedFiles: readonly string[]): boolean {
-  if (changedFiles.length > MAX_CHANGED_FILES) {
-    throw new Error(`managed-image reuse changed-path count exceeds ${MAX_CHANGED_FILES}`);
-  }
-  return changedFiles.every((file) => {
-    validateChangedFilePath(file);
-    return REUSABLE_NON_IMAGE_PATHS.some((pattern) => pattern.test(file));
-  });
-}
-
-/** Validate one complete ancestor comparison used as image-reuse authority. */
-export function parseManagedImagePublicationComparison(
-  payload: unknown,
-  expected: { readonly candidateSha: string; readonly publicationSha: string },
-): ManagedImagePublicationComparison {
-  if (!SHA_PATTERN.test(expected.candidateSha) || !SHA_PATTERN.test(expected.publicationSha)) {
-    throw new Error("managed-image reuse SHAs are invalid");
-  }
-  const comparison = record(payload, "managed-image publication comparison");
-  exactString(
-    record(comparison.base_commit, "managed-image comparison base").sha,
-    expected.publicationSha,
-    "managed-image comparison base commit",
-  );
-  exactString(
-    record(comparison.merge_base_commit, "managed-image comparison merge base").sha,
-    expected.publicationSha,
-    "managed-image comparison merge base commit",
-  );
-  if (comparison.status !== "ahead" || comparison.behind_by !== 0) {
-    throw new Error("managed-image publication must be an ancestor of the candidate");
-  }
-  const commits = positiveInteger(comparison.total_commits, "managed-image reuse commit count");
-  if (commits > 250 || comparison.ahead_by !== commits) {
-    throw new Error("managed-image reuse comparison is incomplete");
-  }
-  if (!Array.isArray(comparison.commits) || comparison.commits.length !== commits) {
-    throw new Error("managed-image reuse commit listing is incomplete");
-  }
-  exactString(
-    record(comparison.commits.at(-1), "managed-image comparison candidate").sha,
-    expected.candidateSha,
-    "managed-image comparison candidate commit",
-  );
-  if (
-    !Array.isArray(comparison.files) ||
-    comparison.files.length === 0 ||
-    comparison.files.length >= 300
-  ) {
-    throw new Error("managed-image reuse changed-file listing is incomplete");
-  }
-  const changedFiles = comparison.files.flatMap((value) => {
-    const file = record(value, "managed-image comparison file");
-    if (typeof file.filename !== "string") {
-      throw new Error("managed-image comparison file name is invalid");
-    }
-    const paths = [file.filename];
-    if (file.previous_filename !== undefined) {
-      if (typeof file.previous_filename !== "string") {
-        throw new Error("managed-image comparison previous file name is invalid");
-      }
-      paths.push(file.previous_filename);
-    }
-    return paths;
-  });
-  if (!managedImagePublicationReuseAllowed(changedFiles)) {
-    throw new Error("candidate changes managed-image inputs after the requested publication");
-  }
-  return { changedFiles: [...new Set(changedFiles)], commits };
 }
 
 /** Select the unique successful managed-image workflow run for one PR commit. */
@@ -371,49 +253,71 @@ function validateWorkflow(payload: unknown): number {
   return id;
 }
 
+async function readCommitTree(
+  revision: string,
+  label: string,
+  request: (path: string) => Promise<unknown>,
+): Promise<Map<string, string>> {
+  const commit = record(
+    await request(`/repos/${REPOSITORY}/git/commits/${revision}`),
+    `${label} commit`,
+  );
+  exactString(commit.sha, revision, `${label} commit SHA`);
+  const treeSha = sha(record(commit.tree, `${label} commit tree`).sha, `${label} tree SHA`);
+  const payload = record(
+    await request(`/repos/${REPOSITORY}/git/trees/${treeSha}?recursive=1`),
+    `${label} tree`,
+  );
+  exactString(payload.sha, treeSha, `${label} tree SHA`);
+  if (payload.truncated !== false) {
+    throw new Error(`${label} commit tree is truncated`);
+  }
+  if (!Array.isArray(payload.tree) || payload.tree.length > MAX_COMMIT_TREE_ENTRIES) {
+    throw new Error(`${label} commit tree is invalid or exceeds the entry limit`);
+  }
+
+  const entries = new Map<string, string>();
+  const paths = new Set<string>();
+  for (const value of payload.tree) {
+    const entry = record(value, `${label} tree entry`);
+    if (typeof entry.path !== "string" || entry.path.length === 0) {
+      throw new Error(`${label} tree entry path is invalid`);
+    }
+    if (paths.has(entry.path)) throw new Error(`${label} commit tree contains duplicate paths`);
+    paths.add(entry.path);
+    const validModes =
+      typeof entry.type === "string" ? TREE_ENTRY_MODES.get(entry.type) : undefined;
+    if (!validModes) {
+      throw new Error(`${label} tree entry type is invalid`);
+    }
+    if (typeof entry.mode !== "string" || !validModes.has(entry.mode)) {
+      throw new Error(`${label} tree entry mode is invalid`);
+    }
+    const entrySha = sha(entry.sha, `${label} tree entry SHA`);
+    if (entry.type === "tree") continue;
+    entries.set(entry.path, `${entry.mode}:${entry.type}:${entrySha}`);
+  }
+  return entries;
+}
+
 async function readChangedFiles(
-  prNumber: number,
-  count: number,
+  input: { readonly baseSha: string; readonly candidateSha: string },
   request: (path: string) => Promise<unknown>,
 ): Promise<string[]> {
-  if (!Number.isSafeInteger(count) || count < 0 || count > MAX_CHANGED_FILES) {
-    throw new Error("PR changed-file count is invalid");
+  const baseTree = await readCommitTree(input.baseSha, "PR base", request);
+  const candidateTree = await readCommitTree(input.candidateSha, "PR candidate", request);
+  const changedFiles: string[] = [];
+  for (const changedPath of new Set([...baseTree.keys(), ...candidateTree.keys()])) {
+    if (baseTree.get(changedPath) === candidateTree.get(changedPath)) continue;
+    changedFiles.push(changedPath);
   }
-  const files: string[] = [];
-  let listedFiles = 0;
-  for (let page = 1; listedFiles < count; page += 1) {
-    if (page > Math.ceil(MAX_CHANGED_FILES / PAGE_SIZE)) {
-      throw new Error("PR changed-file pagination exceeded the safety cap");
-    }
-    const payload = await request(
-      `/repos/${REPOSITORY}/pulls/${prNumber}/files?per_page=${PAGE_SIZE}&page=${page}`,
-    );
-    if (!Array.isArray(payload) || payload.length === 0 || payload.length > PAGE_SIZE) {
-      throw new Error("PR changed-file page is invalid or incomplete");
-    }
-    for (const value of payload) {
-      const file = record(value, "PR changed file");
-      if (typeof file.filename !== "string") throw new Error("PR changed-file name is invalid");
-      files.push(file.filename);
-      if (file.previous_filename !== undefined) {
-        if (typeof file.previous_filename !== "string") {
-          throw new Error("PR previous changed-file name is invalid");
-        }
-        files.push(file.previous_filename);
-      }
-      listedFiles += 1;
-    }
-  }
-  if (listedFiles !== count) {
-    throw new Error("PR changed-file listing is incomplete");
-  }
-  return [...new Set(files)];
+  return changedFiles;
 }
 
 function validatePr(
   payload: unknown,
   expected: { readonly baseSha: string; readonly candidateSha: string; readonly prNumber: number },
-): number {
+): void {
   const pull = record(payload, "pull request");
   exactString(pull.state, "open", "pull request state");
   exactString(
@@ -437,7 +341,6 @@ function validatePr(
     REPOSITORY,
     "pull request source repository",
   );
-  return positiveInteger(pull.changed_files, "PR changed-file count");
 }
 
 /** Resolve and download the exact all-agent catalog before candidate code executes. */
@@ -447,49 +350,31 @@ export async function resolvePrManagedImageCatalog(
     readonly candidateRepository: string;
     readonly candidateSha: string;
     readonly outputPath: string;
-    readonly publicationSha?: string;
     readonly prNumber: number;
     readonly token: string;
     readonly workflowSource: string;
   },
-  request: (path: string) => Promise<unknown> = (apiPath) =>
-    githubRequest(apiPath, input.token, {
-      authenticated: !PUBLIC_PULL_REQUEST_METADATA_PATH.test(apiPath),
-    }),
-): Promise<"not-required" | "reused" | "written"> {
+  request: (path: string) => Promise<unknown> = (apiPath) => githubRequest(apiPath, input.token),
+): Promise<"not-required" | "written"> {
   if (input.candidateRepository !== REPOSITORY) return "not-required";
   if (!SHA_PATTERN.test(input.baseSha) || !SHA_PATTERN.test(input.candidateSha)) {
     throw new Error("PR base and candidate SHAs are required");
   }
   positiveInteger(input.prNumber, "PR number");
   if (!input.token) throw new Error("GITHUB_TOKEN is required");
-  const changedCount = validatePr(
-    await request(`/repos/${REPOSITORY}/pulls/${input.prNumber}`),
-    input,
-  );
-  const changedFiles = await readChangedFiles(input.prNumber, changedCount, request);
+  validatePr(await request(`/repos/${REPOSITORY}/pulls/${input.prNumber}`), input);
+  const changedFiles = await readChangedFiles(input, request);
   const patterns = parseManagedImagePullRequestPaths(input.workflowSource);
   if (!managedImagePublicationRequired(changedFiles, patterns)) return "not-required";
-
-  const publicationSha = input.publicationSha?.trim() || input.candidateSha;
-  if (!SHA_PATTERN.test(publicationSha)) {
-    throw new Error("managed-image publication SHA is invalid");
-  }
-  if (publicationSha !== input.candidateSha) {
-    parseManagedImagePublicationComparison(
-      await request(`/repos/${REPOSITORY}/compare/${publicationSha}...${input.candidateSha}`),
-      { candidateSha: input.candidateSha, publicationSha },
-    );
-  }
 
   const workflowId = validateWorkflow(
     await request(`/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}`),
   );
   const runs = await request(
-    `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?event=pull_request&head_sha=${publicationSha}&per_page=100`,
+    `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?event=pull_request&head_sha=${input.candidateSha}&per_page=100`,
   );
   const run = selectManagedImagePublicationRun(runs, {
-    headSha: publicationSha,
+    headSha: input.candidateSha,
     prNumber: input.prNumber,
     workflowId,
   });
@@ -517,14 +402,14 @@ export async function resolvePrManagedImageCatalog(
         JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown as ManagedImageContractV1,
       );
     }
-    const catalog = assembleManagedImageCatalog(contracts, publicationSha);
+    const catalog = assembleManagedImageCatalog(contracts, input.candidateSha);
     fs.mkdirSync(path.dirname(path.resolve(input.outputPath)), { mode: 0o700, recursive: true });
     fs.writeFileSync(input.outputPath, `${JSON.stringify(catalog)}\n`, {
       encoding: "utf8",
       flag: "wx",
       mode: 0o600,
     });
-    return publicationSha === input.candidateSha ? "written" : "reused";
+    return "written";
   } finally {
     fs.rmSync(tempDirectory, { force: true, recursive: true });
   }
@@ -552,7 +437,6 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     candidateRepository: env.CANDIDATE_REPOSITORY ?? "",
     candidateSha,
     outputPath: argv[0],
-    publicationSha: env.MANAGED_IMAGE_PUBLICATION_SHA,
     prNumber: requiredInteger(env.PR_NUMBER, "PR_NUMBER"),
     token: env.GITHUB_TOKEN ?? "",
     workflowSource: fs.readFileSync(WORKFLOW_PATH, "utf8"),

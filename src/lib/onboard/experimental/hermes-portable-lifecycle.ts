@@ -3,7 +3,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
-import { isDeepStrictEqual, TextDecoder } from "node:util";
+import { TextDecoder } from "node:util";
 
 import {
   fingerprintOpenShellSandboxId,
@@ -48,12 +48,12 @@ import { assertCurrentHermesPortableStoredStartupContract } from "./hermes-porta
 import {
   proveHermesPortableLivePolicy,
   type HermesPortablePolicyCaptureResult,
-} from "./hermes-portable-policy-authority";
+} from "./hermes-portable-policy-state";
 import {
-  assertHermesPortableDurablePolicyAuthority,
+  publishHermesPortableSuccessorReceipt,
   readHermesPortableLifecycleReceipt,
   readHermesPortableLifecycleReceiptForRequalification,
-  publishHermesPortableSuccessorReceipt,
+  retireHermesPortableCreatePolicyState,
   type HermesPortableConfiguredReceipt,
   type HermesPortableLifecycleReceipt,
   type HermesPortableReceiptSnapshot,
@@ -103,6 +103,7 @@ export interface HermesPortableLifecycleDeps {
   readonly podmanAuthorityDeps?: HermesPortablePodmanAuthorityDeps;
   readonly operatingAuthority?: HermesPortableOperatingAuthorityDeps;
   readonly publishSuccessorReceipt?: typeof publishHermesPortableSuccessorReceipt;
+  readonly retireCreatePolicyState?: typeof retireHermesPortableCreatePolicyState;
   readonly now?: () => number;
   readonly sleep?: (milliseconds: number) => void;
   readonly log?: (message: string) => void;
@@ -250,7 +251,6 @@ function sameSnapshot(
     left.identity.ino === right.identity.ino &&
     left.sha256 === right.sha256 &&
     left.bytes.equals(right.bytes) &&
-    isDeepStrictEqual(left.receipt.policy, right.receipt.policy) &&
     left.successorPublicationPending === right.successorPublicationPending &&
     left.successor?.path === right.successor?.path &&
     left.successor?.identity.dev === right.successor?.identity.dev &&
@@ -260,6 +260,22 @@ function sameSnapshot(
       right.successor === undefined ||
       left.successor.bytes.equals(right.successor.bytes))
   );
+}
+
+export function retainRequalifiedOperatingAuthority(
+  sandboxName: string,
+  stateDir: string,
+  published: HermesPortableReceiptSnapshot,
+  assertOperatingAuthority: () => void,
+  readReceipt: typeof readHermesPortableLifecycleReceipt = readHermesPortableLifecycleReceipt,
+): () => void {
+  return () => {
+    const reread = readReceipt(sandboxName, stateDir);
+    if (!reread || !sameSnapshot(reread, published)) {
+      fail("receipt authority changed after schema-6 requalification");
+    }
+    assertOperatingAuthority();
+  };
 }
 
 function contextMatches(
@@ -383,7 +399,6 @@ function qualify(
   const receipt = operatingAuthority.receipt;
   if (!contextMatches(receipt, context)) fail("registry context disagrees with the active receipt");
   assertCurrentHermesPortableStoredStartupContract(receipt.startup, sandboxName);
-  const durablePolicy = assertHermesPortableDurablePolicyAuthority(receipt.policy);
   const assertExecutable =
     deps.assertOpenShellExecutableAuthority ?? assertHermesPortableOpenShellExecutableAuthority;
   const initialCommandAuthority = buildHermesPortableOpenShellCommandAuthority(
@@ -406,21 +421,12 @@ function qualify(
     return rawCapture(args, timeoutMs);
   };
   const liveIdentity = observeOpenShellIdentity(receipt, capture, acceptedPhases);
-  const registryEntry = requireRegistry(receipt, liveIdentity.liveIdentityFingerprint, deps);
-  const policy = proveHermesPortableLivePolicy({
+  requireRegistry(receipt, liveIdentity.liveIdentityFingerprint, deps);
+  proveHermesPortableLivePolicy({
     gatewayName: receipt.gatewayName,
     sandboxName,
-    createPolicyBytes: durablePolicy,
-    finalizedRegistryEntry: registryEntry,
     capture: policyCapture(capture),
   });
-  if (
-    policy.expectedPolicySource === "create" &&
-    (policy.intendedSemanticSha256 !== receipt.policy.intendedSemanticSha256 ||
-      policy.verifiedLivePolicySemanticSha256 !== receipt.verifiedLivePolicySemanticSha256)
-  ) {
-    fail("live policy authority disagrees with the active receipt");
-  }
   const baseContainerDeps =
     typeof deps.container === "function"
       ? deps.container(receipt)
@@ -447,10 +453,18 @@ function qualify(
 
 export type HermesPortableAuthorityRequalificationResult =
   | { readonly kind: "not-installed" }
-  | { readonly kind: "already-current"; readonly snapshot: HermesPortableReceiptSnapshot }
-  | { readonly kind: "migrated"; readonly snapshot: HermesPortableReceiptSnapshot };
+  | {
+      readonly kind: "already-current";
+      readonly snapshot: HermesPortableReceiptSnapshot;
+      readonly assertCurrent: () => void;
+    }
+  | {
+      readonly kind: "migrated";
+      readonly snapshot: HermesPortableReceiptSnapshot;
+      readonly assertCurrent: () => void;
+    };
 
-/** Publish schema 6 only after the exact schema-5 authority passes the probe fence. */
+/** Publish policy-free authority and retire create-policy history after the probe fence. */
 export function requalifyHermesPortableSandboxAuthority(
   sandboxName: string,
   context: PortableDemoLifecycleContext,
@@ -477,9 +491,23 @@ export function requalifyHermesPortableSandboxAuthority(
     },
   );
   qualified.assertOperatingAuthority();
-  qualify(sandboxName, context, deps, published, ["Ready", "Error", "Stopped"]);
-  qualified.assertOperatingAuthority();
-  return { kind: snapshot.successor ? "already-current" : "migrated", snapshot: published };
+  const current = qualify(sandboxName, context, deps, published, ["Ready", "Error", "Stopped"]);
+  current.assertOperatingAuthority();
+  const retireCreatePolicyState =
+    deps.retireCreatePolicyState ?? retireHermesPortableCreatePolicyState;
+  const compacted = retireCreatePolicyState(sandboxName, published.receipt.transactionId, stateDir);
+  current.assertOperatingAuthority();
+  const assertCurrent = retainRequalifiedOperatingAuthority(
+    sandboxName,
+    stateDir,
+    compacted,
+    current.assertOperatingAuthority,
+  );
+  return {
+    kind: snapshot.successor ? "already-current" : "migrated",
+    snapshot: compacted,
+    assertCurrent,
+  };
 }
 
 function openshellExecArgs(receipt: HermesPortableConfiguredReceipt, command: readonly string[]) {
@@ -806,7 +834,6 @@ export function prepareHermesPortableSandboxRemoval(
     if (!snapshot || !sameSnapshot(snapshot, expectedSnapshot)) fail("receipt authority changed");
     operatingAuthority.assertCurrent();
     assertCurrentHermesPortableStoredStartupContract(receipt.startup, sandboxName);
-    assertHermesPortableDurablePolicyAuthority(receipt.policy);
     requireStaticRegistry(receipt, deps);
     const assertExecutable =
       deps.assertOpenShellExecutableAuthority ?? assertHermesPortableOpenShellExecutableAuthority;
@@ -920,4 +947,5 @@ export const hermesPortableLifecycleInternals = {
   buildHermesPortableOpenShellEnv,
   createContainerDeps,
   qualify,
+  retainRequalifiedOperatingAuthority,
 };

@@ -403,22 +403,22 @@ async function prerequisiteOrSkip(
 }
 
 test(
-  "double-onboard: reuses gateway, preserves sibling sandbox, and recovers stale registry",
+  "double-onboard: reuses gateway, preserves sibling sandbox, and replaces stale registry",
   {
-  timeout: TEST_TIMEOUT_MS,
-  meta: {
-    e2ePhases: [
-      "validate double-onboard lifecycle prerequisites",
-      "onboard first sandbox",
-      "re-onboard same sandbox on existing gateway",
-      "recreate same sandbox on existing gateway",
-      "onboard sibling sandbox with isolated dashboard",
-      "stop sibling sandbox without disturbing the first forward",
-      "recover sandbox from stale registry",
-      "validate gateway-stop lifecycle guidance",
-      "remove double-onboard resources",
-    ],
-  },
+    timeout: TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "validate double-onboard lifecycle prerequisites",
+        "onboard first sandbox",
+        "re-onboard same sandbox on existing gateway",
+        "recreate same sandbox on existing gateway",
+        "onboard sibling sandbox with isolated dashboard",
+        "stop sibling sandbox without disturbing the first forward",
+        "replace sandbox after stale registry refusal",
+        "validate gateway-stop lifecycle guidance",
+        "remove double-onboard resources",
+      ],
+    },
   },
   async ({ artifacts, cleanup, gateway, host, lifecycle, progress, runtimeProvider, sandbox, skip }) => {
   expect(
@@ -502,7 +502,7 @@ test(
       "explicit same-name recreation preserves the healthy gateway",
       "different-name onboard preserves the first sandbox and allocates distinct dashboard forwards",
       "stopping one sandbox releases only its dashboard forward and reports the container stopped",
-      "stale OpenShell deletion preserves registry metadata through status/connect and rebuild recovers it",
+      "stale OpenShell deletion preserves registry metadata through status/connect and rebuild directs a clean replacement",
       "status after gateway stop gives explicit lifecycle guidance without deleting registry state",
     ],
   });
@@ -749,9 +749,10 @@ test(
   );
   expect(restoredForwardBAfterStart.owner, restoredForwardBAfterStart.output).toBe(SANDBOX_B);
 
-  progress.phase("recover sandbox from stale registry");
+  progress.phase("replace sandbox after stale registry refusal");
   // Phase 5: direct OpenShell deletion leaves a stale registry entry that
-  // status/connect preserve and rebuild can recover.
+  // status/connect preserve the stale record; rebuild refuses to invent its
+  // missing policy and directs an explicit clean replacement.
   await sandbox.openshell(["sandbox", "delete", SANDBOX_A], {
     artifactName: "phase-5-delete-sandbox-a-directly",
     env: commandEnv(),
@@ -783,7 +784,7 @@ test(
   expect(registryHas(SANDBOX_A), "connect removed stale registry entry").toBe(true);
 
   const rebuild = await command(host, [SANDBOX_A, "rebuild", "--yes"], {
-    artifactName: "phase-5-stale-rebuild-recovery",
+    artifactName: "phase-5-stale-rebuild-refusal",
     env: staleRebuildEnv(SANDBOX_A, fake.baseUrl),
     timeoutMs: PHASE_TIMEOUT_MS,
   });
@@ -792,9 +793,27 @@ test(
   expect(rebuildText).not.toContain("Cannot back up state");
   expect(rebuildText).not.toContain("does not exist");
   expect(rebuildText).toContain("absent from the live OpenShell gateway");
-  expect(rebuildText).toContain("No live workspace state to back up");
-  expect(rebuildText).toContain("Creating new sandbox with current image");
-  expect(rebuild.exitCode, rebuildText).toBe(0);
+  expect(rebuildText).toContain("Rebuild cannot recover its missing OpenShell policy");
+  expect(rebuildText).toContain(`nemoclaw ${SANDBOX_A} destroy --yes`);
+  expect(rebuildText).toContain("nemoclaw onboard");
+  expect(rebuildText).not.toContain("Creating new sandbox with current image");
+  expect(rebuild.exitCode, rebuildText).not.toBe(0);
+
+  const removeStale = await command(host, [SANDBOX_A, "destroy", "--yes"], {
+    artifactName: "phase-5-remove-stale-registry-a",
+    env: commandEnv(),
+    timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+  });
+  expect(removeStale.exitCode, resultText(removeStale)).toBe(0);
+  expect(registryHas(SANDBOX_A), "destroy kept stale sandbox A registry entry").toBe(false);
+
+  const cleanReplacement = await runOnboard(
+    host,
+    SANDBOX_A,
+    fake.baseUrl,
+    "phase-5-clean-replacement-onboard",
+  );
+  expect(cleanReplacement.exitCode, resultText(cleanReplacement)).toBe(0);
 
   const sandboxAAfterRebuild = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
     artifactName: "phase-5-openshell-sandbox-a-after-rebuild",

@@ -181,16 +181,14 @@ function expectHostTelegramPlan(expected: "active" | "removed", context: string)
   const channel = channels.find((item) => item.channelId === "telegram");
   const disabledChannels = stringArray(plan.disabledChannels);
   const credentialBindings = planArray(plan, "credentialBindings");
-  const networkPolicy =
-    plan.networkPolicy && typeof plan.networkPolicy === "object"
-      ? (plan.networkPolicy as JsonRecord)
-      : {};
-  const networkEntries = planArray(networkPolicy, "entries");
-  const networkPresets = stringArray(networkPolicy.presets);
 
   expect(Object.hasOwn(plan, "agentRender"), "messaging.plan.agentRender should not persist").toBe(
     false,
   );
+  expect(
+    Object.hasOwn(plan, "networkPolicy"),
+    "messaging.plan.networkPolicy should not persist",
+  ).toBe(false);
   expect(
     channels.some((entry) => Object.hasOwn(entry, "hooks")),
     "messaging.plan.channels hooks should not persist",
@@ -203,14 +201,6 @@ function expectHostTelegramPlan(expected: "active" | "removed", context: string)
     ).toBeTruthy();
     expect(channel?.active, `telegram plan active expected true ${context}`).toBe(true);
     expect(channel?.disabled, `telegram plan disabled unexpectedly true ${context}`).not.toBe(true);
-    expect(
-      networkPresets,
-      `telegram missing from messaging.plan.networkPolicy.presets ${context}`,
-    ).toContain("telegram");
-    expect(
-      networkEntries.some((entry) => entry.channelId === "telegram"),
-      `telegram missing from messaging.plan.networkPolicy.entries ${context}`,
-    ).toBe(true);
     expect(
       credentialBindings.some(
         (entry) => entry.channelId === "telegram" && entry.providerEnvKey === "TELEGRAM_BOT_TOKEN",
@@ -226,15 +216,24 @@ function expectHostTelegramPlan(expected: "active" | "removed", context: string)
     "telegram",
   );
   expect(
-    networkPresets,
-    `telegram still present in networkPolicy.presets ${context}`,
-  ).not.toContain("telegram");
-  expect(
-    networkEntries.some((entry) => entry.channelId === "telegram"),
-    `telegram still present in networkPolicy.entries ${context}`,
-  ).toBe(false);
-  expect(
     credentialBindings.some((entry) => entry.channelId === "telegram"),
+    `telegram credential binding still present ${context}`,
+  ).toBe(false);
+}
+
+function expectQueuedTelegramRemoval(context: string): void {
+  const plan = messagingPlan();
+  const channel = planArray(plan, "channels").find((item) => item.channelId === "telegram");
+  expect(channel, `telegram removal tombstone missing ${context}`).toMatchObject({
+    active: false,
+    configured: false,
+    disabled: true,
+  });
+  expect(stringArray(plan.disabledChannels), `telegram not queued disabled ${context}`).toContain(
+    "telegram",
+  );
+  expect(
+    planArray(plan, "credentialBindings").some((entry) => entry.channelId === "telegram"),
     `telegram credential binding still present ${context}`,
   ).toBe(false);
 }
@@ -419,10 +418,11 @@ test(
       sandboxName: SANDBOX_NAME,
       contract: [
         "onboard creates an OpenClaw sandbox with no Telegram channel",
-        "channels add telegram registers the bridge and persists messaging.plan",
+        "channels add telegram registers the bridge and persists a policy-free messaging.plan",
         "post-add rebuild reuses the gateway-stored inference credential when COMPATIBLE_API_KEY is absent",
         "post-add rebuild applies the Telegram policy preset and renders openclaw.json channel state",
         "channels remove telegram removes provider, policy, registry plan, and rendered channel state after rebuild",
+        "an unrelated direct OpenShell policy edit survives channel add, remove, and both rebuilds",
         "post-remove rebuild does not use stale Telegram host env inputs that would stage a fresh channel add",
       ],
     });
@@ -485,6 +485,27 @@ test(
       pluginPresent: true,
     });
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-2-policy-list-baseline");
+
+    const hostPolicyEdit = await sandbox.openshell(
+      [
+        "policy",
+        "update",
+        SANDBOX_NAME,
+        "--add-endpoint",
+        "host-edit-channels.example.com:443:read-only:rest:enforce",
+        "--rule-name",
+        "channels_host_edit_e2e",
+        "--binary",
+        "/usr/bin/curl",
+        "--wait",
+      ],
+      {
+        artifactName: "phase-2-host-policy-edit-before-channel-add",
+        env: baseEnv(),
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      },
+    );
+    assertExitZero(hostPolicyEdit, "direct OpenShell policy edit before channel add");
 
     progress.phase("add Telegram and rebuild sandbox");
     const add = await host.nemoclaw([SANDBOX_NAME, "channels", "add", "telegram"], {
@@ -564,7 +585,7 @@ test(
     });
     assertExitZero(remove, `nemoclaw ${SANDBOX_NAME} channels remove telegram`);
     expect(resultText(remove)).toContain("Removed telegram");
-    expectHostTelegramPlan("removed", "after channels remove");
+    expectQueuedTelegramRemoval("after channels remove");
 
     const rebuildRemove = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "phase-5-rebuild-after-remove-with-stale-telegram-env",
@@ -579,6 +600,7 @@ test(
       attempts: 12,
       delayMs: 5_000,
     });
+    expectHostTelegramPlan("removed", "after remove rebuild");
 
     progress.phase("validate Telegram removal");
     const removedTelegram = await readOpenClawTelegramState(
@@ -590,13 +612,23 @@ test(
       accountEnabled: false,
       accountPresent: false,
       channelEnabled: false,
-      channelPresent: true,
+      channelPresent: false,
       credentialPresent: false,
       pluginEnabled: false,
-      pluginPresent: true,
+      pluginPresent: false,
     });
     await expectProvider(host, "absent", "phase-6-provider-get-after-remove");
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-6-policy-list-after-remove");
+    const policyAfterChannelLifecycle = await sandbox.openshell(
+      ["policy", "get", "--full", SANDBOX_NAME],
+      {
+        artifactName: "phase-6-policy-after-channel-lifecycle",
+        env: baseEnv(),
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      },
+    );
+    assertExitZero(policyAfterChannelLifecycle, "read policy after channel lifecycle");
+    expect(policyAfterChannelLifecycle.stdout).toContain("channels_host_edit_e2e");
     expectHostTelegramPlan("removed", "after remove+rebuild");
   },
 );

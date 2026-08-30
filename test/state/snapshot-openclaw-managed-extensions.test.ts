@@ -75,7 +75,6 @@ function writeOpenClawRegistry(sandboxName: string): void {
           model: "m",
           provider: "p",
           gpuEnabled: false,
-          policies: [],
           agent: null,
         },
       },
@@ -118,77 +117,77 @@ describe("OpenClaw managed extension snapshot restore", () => {
     pluginTransitions.map((transition) => ({ installIndexSource, ...transition })),
   );
 
-  it.each(
-    installIndexCases,
-  )("preserves fresh extensions and handles image-plugin $name from the $installIndexSource install index", ({
-    installIndexSource,
-    previousPlugin,
-    freshPlugin,
-  }) => {
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-extension-restore-"));
-    const oldPath = process.env.PATH;
-    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
-    try {
-      const binDir = path.join(fixture, "bin");
-      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
-      const freshRegistryPath = path.join(fixture, "fresh-installs.json");
-      const sshLog = path.join(fixture, "ssh-log.jsonl");
-      const extensionsDir = path.join(openclawDir, "extensions");
-      const builtInManagedExtensions =
-        "nemoclaw,diagnostics-otel,brave,discord,openclaw-weixin,slack,whatsapp,msteams".split(",");
-      const freshImagePlugins = freshPlugin ? [freshPlugin] : [];
-      const managedExtensions = [...builtInManagedExtensions, ...freshImagePlugins];
-      fs.mkdirSync(binDir, { recursive: true });
-      for (const extensionName of managedExtensions) {
-        const extensionDir = path.join(extensionsDir, extensionName);
-        fs.mkdirSync(extensionDir, { recursive: true });
-        const marker = `fresh-${extensionName}\n`;
-        fs.writeFileSync(path.join(extensionDir, "marker.txt"), marker);
-      }
-      fs.mkdirSync(path.join(extensionsDir, "stale-user-extension"), { recursive: true });
-      fs.writeFileSync(path.join(extensionsDir, "stale-user-extension", "marker.txt"), "stale\n");
-      fs.writeFileSync(
-        freshRegistryPath,
-        JSON.stringify({
-          version: 1,
-          loadPaths: [],
-          installRecords: Object.fromEntries(
-            freshImagePlugins.map((id) => [
-              id,
-              {
-                source: "path",
-                sourcePath: `/sandbox/.openclaw/extensions/${id}`,
-                installPath: `/sandbox/.openclaw/extensions/${id}`,
-              },
-            ]),
-          ),
-        }),
+  it.each(installIndexCases)(
+    "preserves fresh extensions and handles image-plugin $name from the $installIndexSource install index",
+    ({ installIndexSource, previousPlugin, freshPlugin }) => {
+      const fixture = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-openclaw-extension-restore-"),
       );
+      const oldPath = process.env.PATH;
+      const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+      try {
+        const binDir = path.join(fixture, "bin");
+        const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+        const freshRegistryPath = path.join(fixture, "fresh-installs.json");
+        const sshLog = path.join(fixture, "ssh-log.jsonl");
+        const extensionsDir = path.join(openclawDir, "extensions");
+        const builtInManagedExtensions =
+          "nemoclaw,diagnostics-otel,brave,discord,openclaw-weixin,slack,whatsapp,msteams".split(
+            ",",
+          );
+        const freshImagePlugins = freshPlugin ? [freshPlugin] : [];
+        const managedExtensions = [...builtInManagedExtensions, ...freshImagePlugins];
+        fs.mkdirSync(binDir, { recursive: true });
+        for (const extensionName of managedExtensions) {
+          const extensionDir = path.join(extensionsDir, extensionName);
+          fs.mkdirSync(extensionDir, { recursive: true });
+          const marker = `fresh-${extensionName}\n`;
+          fs.writeFileSync(path.join(extensionDir, "marker.txt"), marker);
+        }
+        fs.mkdirSync(path.join(extensionsDir, "stale-user-extension"), { recursive: true });
+        fs.writeFileSync(path.join(extensionsDir, "stale-user-extension", "marker.txt"), "stale\n");
+        fs.writeFileSync(
+          freshRegistryPath,
+          JSON.stringify({
+            version: 1,
+            loadPaths: [],
+            installRecords: Object.fromEntries(
+              freshImagePlugins.map((id) => [
+                id,
+                {
+                  source: "path",
+                  sourcePath: `/sandbox/.openclaw/extensions/${id}`,
+                  installPath: `/sandbox/.openclaw/extensions/${id}`,
+                },
+              ]),
+            ),
+          }),
+        );
 
-      const manifest = writeBackup("alpha", "2026-05-19T12-00-00-000Z", [
-        {
-          id: previousPlugin,
-          installPath: `/sandbox/.openclaw/extensions/${previousPlugin}`,
-          loadPaths: [],
-        },
-      ]);
-      const backupExtensionsDir = path.join(manifest.backupPath, "extensions");
-      for (const extensionName of [...builtInManagedExtensions, previousPlugin]) {
-        const extensionDir = path.join(backupExtensionsDir, extensionName);
-        fs.mkdirSync(extensionDir, { recursive: true });
-        const marker = `old-${extensionName}\n`;
-        fs.writeFileSync(path.join(extensionDir, "marker.txt"), marker);
-      }
-      fs.mkdirSync(path.join(backupExtensionsDir, "user-extension"), { recursive: true });
-      fs.writeFileSync(
-        path.join(backupExtensionsDir, "user-extension", "marker.txt"),
-        "restored\n",
-      );
+        const manifest = writeBackup("alpha", "2026-05-19T12-00-00-000Z", [
+          {
+            id: previousPlugin,
+            installPath: `/sandbox/.openclaw/extensions/${previousPlugin}`,
+            loadPaths: [],
+          },
+        ]);
+        const backupExtensionsDir = path.join(manifest.backupPath, "extensions");
+        for (const extensionName of [...builtInManagedExtensions, previousPlugin]) {
+          const extensionDir = path.join(backupExtensionsDir, extensionName);
+          fs.mkdirSync(extensionDir, { recursive: true });
+          const marker = `old-${extensionName}\n`;
+          fs.writeFileSync(path.join(extensionDir, "marker.txt"), marker);
+        }
+        fs.mkdirSync(path.join(backupExtensionsDir, "user-extension"), { recursive: true });
+        fs.writeFileSync(
+          path.join(backupExtensionsDir, "user-extension", "marker.txt"),
+          "restored\n",
+        );
 
-      const openshell = writeFakeOpenshell(binDir);
-      writeExecutable(
-        path.join(binDir, "ssh"),
-        `#!/usr/bin/env node
+        const openshell = writeFakeOpenshell(binDir);
+        writeExecutable(
+          path.join(binDir, "ssh"),
+          `#!/usr/bin/env node
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
@@ -235,89 +234,90 @@ if (cmd.includes("tar --no-same-owner -xf -")) {
 if (cmd.includes("chown") || cmd.includes("[ -d ")) process.exit(0);
 process.exit(0);
 `,
-      );
+        );
 
-      writeOpenClawRegistry("alpha");
-      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}:${oldPath || ""}`;
+        writeOpenClawRegistry("alpha");
+        process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+        process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const restore = sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
-        targetAgentType: "openclaw",
-      });
-      expect(restore.success).toBe(true);
-      expect(restore.restoredDirs).toEqual(["extensions"]);
-      for (const extensionName of managedExtensions) {
+        const restore = sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
+          targetAgentType: "openclaw",
+        });
+        expect(restore.success).toBe(true);
+        expect(restore.restoredDirs).toEqual(["extensions"]);
+        for (const extensionName of managedExtensions) {
+          expect(
+            fs.readFileSync(path.join(extensionsDir, extensionName, "marker.txt"), "utf-8"),
+          ).toBe(`fresh-${extensionName}\n`);
+        }
+        expect(fs.existsSync(path.join(extensionsDir, previousPlugin))).toBe(
+          previousPlugin === freshPlugin,
+        );
+        expect(fs.existsSync(path.join(extensionsDir, "stale-user-extension"))).toBe(false);
         expect(
-          fs.readFileSync(path.join(extensionsDir, extensionName, "marker.txt"), "utf-8"),
-        ).toBe(`fresh-${extensionName}\n`);
-      }
-      expect(fs.existsSync(path.join(extensionsDir, previousPlugin))).toBe(
-        previousPlugin === freshPlugin,
-      );
-      expect(fs.existsSync(path.join(extensionsDir, "stale-user-extension"))).toBe(false);
-      expect(
-        fs.readFileSync(path.join(extensionsDir, "user-extension", "marker.txt"), "utf-8"),
-      ).toBe("restored\n");
+          fs.readFileSync(path.join(extensionsDir, "user-extension", "marker.txt"), "utf-8"),
+        ).toBe("restored\n");
 
-      const loggedCommands = fs
-        .readFileSync(sshLog, "utf-8")
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line).cmd as string);
-      const cleanupCommands = loggedCommands.filter(
-        (cmd) => cmd.includes("/sandbox/.openclaw/extensions") && cmd.includes("-exec rm -rf"),
-      );
-      expect(cleanupCommands).toHaveLength(1);
-      expect(loggedCommands.some((cmd) => cmd.includes("installed_plugin_index"))).toBe(true);
-      expect(loggedCommands.some((cmd) => cmd.includes("plugins/installs.json"))).toBe(
-        installIndexSource === "legacy",
-      );
-      const cleanupCommand = cleanupCommands[0];
-      expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
-      for (const extensionName of managedExtensions) {
-        expect(cleanupCommand).toContain(`! -name '${extensionName}'`);
-      }
-
-      fs.writeFileSync(
-        freshRegistryPath,
-        JSON.stringify({
-          version: 1,
-          loadPaths: [],
-          installRecords: {
-            "\u001b[31m../weather": {
-              source: "path",
-              sourcePath: "/sandbox/.openclaw/extensions/../weather",
-              installPath: "/sandbox/.openclaw/extensions/../weather",
-            },
-          },
-        }),
-      );
-      const rejected = sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
-        targetAgentType: "openclaw",
-      });
-      expect(rejected.success).toBe(false);
-      expect(rejected.error).toBe("fresh OpenClaw plugin install registry failed validation");
-      expect(fs.existsSync(path.join(extensionsDir, previousPlugin))).toBe(
-        previousPlugin === freshPlugin,
-      );
-      for (const extensionName of managedExtensions) {
-        expect(
-          fs.readFileSync(path.join(extensionsDir, extensionName, "marker.txt"), "utf-8"),
-        ).toBe(`fresh-${extensionName}\n`);
-      }
-      const commandsAfterRejectedRestore = fs
-        .readFileSync(sshLog, "utf-8")
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line).cmd as string);
-      expect(
-        commandsAfterRejectedRestore.filter(
+        const loggedCommands = fs
+          .readFileSync(sshLog, "utf-8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line).cmd as string);
+        const cleanupCommands = loggedCommands.filter(
           (cmd) => cmd.includes("/sandbox/.openclaw/extensions") && cmd.includes("-exec rm -rf"),
-        ),
-      ).toHaveLength(1);
-    } finally {
-      restoreEnvBulk({ NEMOCLAW_OPENSHELL_BIN: oldOpenshell, PATH: oldPath });
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
-  });
+        );
+        expect(cleanupCommands).toHaveLength(1);
+        expect(loggedCommands.some((cmd) => cmd.includes("installed_plugin_index"))).toBe(true);
+        expect(loggedCommands.some((cmd) => cmd.includes("plugins/installs.json"))).toBe(
+          installIndexSource === "legacy",
+        );
+        const cleanupCommand = cleanupCommands[0];
+        expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
+        for (const extensionName of managedExtensions) {
+          expect(cleanupCommand).toContain(`! -name '${extensionName}'`);
+        }
+
+        fs.writeFileSync(
+          freshRegistryPath,
+          JSON.stringify({
+            version: 1,
+            loadPaths: [],
+            installRecords: {
+              "\u001b[31m../weather": {
+                source: "path",
+                sourcePath: "/sandbox/.openclaw/extensions/../weather",
+                installPath: "/sandbox/.openclaw/extensions/../weather",
+              },
+            },
+          }),
+        );
+        const rejected = sandboxState.restoreRecreatedSandboxState("alpha", manifest.backupPath, {
+          targetAgentType: "openclaw",
+        });
+        expect(rejected.success).toBe(false);
+        expect(rejected.error).toBe("fresh OpenClaw plugin install registry failed validation");
+        expect(fs.existsSync(path.join(extensionsDir, previousPlugin))).toBe(
+          previousPlugin === freshPlugin,
+        );
+        for (const extensionName of managedExtensions) {
+          expect(
+            fs.readFileSync(path.join(extensionsDir, extensionName, "marker.txt"), "utf-8"),
+          ).toBe(`fresh-${extensionName}\n`);
+        }
+        const commandsAfterRejectedRestore = fs
+          .readFileSync(sshLog, "utf-8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line).cmd as string);
+        expect(
+          commandsAfterRejectedRestore.filter(
+            (cmd) => cmd.includes("/sandbox/.openclaw/extensions") && cmd.includes("-exec rm -rf"),
+          ),
+        ).toHaveLength(1);
+      } finally {
+        restoreEnvBulk({ NEMOCLAW_OPENSHELL_BIN: oldOpenshell, PATH: oldPath });
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
 });

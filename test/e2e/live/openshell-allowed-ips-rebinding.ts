@@ -7,11 +7,6 @@ import path from "node:path";
 import YAML from "yaml";
 import { isPrivateIp } from "../../../nemoclaw/src/blueprint/private-networks.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
-import {
-  finalizePolicyMutationReceipt,
-  inspectPolicyMutationAuthority,
-  type PolicyMutationAuthority,
-} from "../../../src/lib/policy/index";
 import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -195,10 +190,8 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
 }): Promise<void> {
   const env = options.env ?? buildAvailabilityProbeEnv();
   const server = await startCountingMcpServer();
-  let basePolicyYaml: string | undefined;
   let basePolicyPath: string | undefined;
   let hostsFixture: DnsRebindingHostsFixture | undefined;
-  let policyAuthority: PolicyMutationAuthority | undefined;
   let policyMutationAttempted = false;
   try {
     const reboundAddress = await hostAddressForSandbox(options.host);
@@ -230,11 +223,7 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
       },
     );
     expect(basePolicy.exitCode, resultText(basePolicy)).toBe(0);
-    basePolicyYaml = parseOpenShellPolicy(basePolicy.stdout).yamlBody;
-    policyAuthority = inspectPolicyMutationAuthority(
-      options.sandboxName,
-      "prepare the raw OpenShell allowed_ips E2E proof",
-    );
+    const basePolicyYaml = parseOpenShellPolicy(basePolicy.stdout).yamlBody;
     basePolicyPath = options.artifacts.pathFor(
       "policies/raw-openshell-allowed-ips-rebinding.base.yaml",
     );
@@ -304,7 +293,7 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
     ).toBe(0);
   } finally {
     try {
-      if (policyMutationAttempted && basePolicyPath && basePolicyYaml && policyAuthority) {
+      if (policyMutationAttempted && basePolicyPath) {
         const restorePolicy = await options.sandbox.openshell(
           ["policy", "set", "--policy", basePolicyPath, "--wait", options.sandboxName],
           {
@@ -325,7 +314,6 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
         );
         expect(restoredPolicy.exitCode, resultText(restoredPolicy)).toBe(0);
         expect(restoredPolicy.stdout).not.toContain(RAW_OPENSHELL_REBIND_POLICY_KEY);
-        finalizePolicyMutationReceipt(options.sandboxName, basePolicyYaml, policyAuthority);
       }
     } finally {
       try {

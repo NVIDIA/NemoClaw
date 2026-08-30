@@ -129,6 +129,56 @@ export async function applyAgentConfigAtOpenShell(
   };
 }
 
+/** Remove only one disabled channel's manifest-owned config before plan retirement. */
+export function removeDisabledChannelAgentConfigAtOpenShell(
+  plan: SandboxMessagingPlan,
+  channelId: string,
+  options: { readonly runOpenshell: MessagingOpenShellRunner },
+): { readonly appliedTargets: readonly string[] } {
+  if (!plan.disabledChannels.includes(channelId)) {
+    throw new Error(`Cannot remove active messaging channel config '${channelId}'.`);
+  }
+  const disabledRender = plan.agentRender.filter((entry) => entry.channelId === channelId);
+  const appliedTargets: string[] = [];
+  for (const [target, render] of groupRenderByTarget(disabledRender)) {
+    const resolvedTarget = resolveSandboxAgentConfigTarget(target, plan.agent);
+    const kind = render[0]?.kind;
+    if (!kind || render.some((entry) => entry.kind !== kind)) {
+      throw new Error(`Cannot remove mixed messaging render kinds from ${target}.`);
+    }
+    const existing = readSandboxFileForRemoval(
+      plan.sandboxName,
+      resolvedTarget,
+      options.runOpenshell,
+    );
+    if (existing === undefined) continue;
+    const contents =
+      kind === "json-fragment"
+        ? applyJsonFragments(plan, existing, [], render.filter(isJsonRender), resolvedTarget)
+        : removeOwnedEnvLines(existing, render.filter(isEnvLinesRender));
+    writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
+    appliedTargets.push(resolvedTarget);
+  }
+  return { appliedTargets: uniqueStrings(appliedTargets) };
+}
+
+function removeOwnedEnvLines(
+  existing: string,
+  render: readonly SandboxMessagingEnvLinesRenderPlan[],
+): string {
+  const ownedKeys = new Set(
+    render.flatMap((entry) => entry.lines.map(readEnvLineKey).filter((key) => key !== null)),
+  );
+  const output = existing
+    .split(/\n/u)
+    .filter((line, index, lines) => line.length > 0 || index < lines.length - 1)
+    .filter((line) => {
+      const key = readEnvLineKey(line);
+      return key === null || !ownedKeys.has(key);
+    });
+  return output.length > 0 ? `${output.join("\n")}\n` : "";
+}
+
 /**
  * Repair the Hermes env file after starting an image built with an older
  * applier. This deliberately touches only the manifest-owned credential key
@@ -150,34 +200,38 @@ export function reconcileCredentialEnvAtOpenShell(
   const existing = readSandboxFile(plan.sandboxName, target, options.runOpenshell);
   if (existing === undefined) return { changed: false };
 
-  const runtimeAliasLines = readRuntimeCredentialAliasLines(plan, options.runOpenshell);
-  const contents = applyEnvLines(plan, existing, render, runtimeAliasLines);
+  const runtimeAliasRender = readHermesRuntimeAliasRender(plan, options.runOpenshell);
+  const contents = applyEnvLines(plan, existing, [...render, ...runtimeAliasRender]);
   if (contents === existing) return { changed: false };
   writeSandboxFile(plan.sandboxName, target, contents, options.runOpenshell);
   return { changed: true, target };
 }
 
-const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/u;
+const ENV_KEY_PATTERN = /^[A-Z][A-Z0-9_]*$/u;
 
 /**
- * A direct OpenShell exec receives revision-scoped provider placeholders even
- * when the selected OCI runtime isolates it from the long-running workload's
- * process namespace. Capture only validated placeholders and map cross-key
- * aliases as manifest data; raw credential values are rejected before write.
+ * Resolve only manifest-derived cross-key aliases from OpenShell's injected,
+ * revision-scoped placeholders. The exact placeholder grammar prevents a raw
+ * provider credential or arbitrary sandbox value from entering Hermes state.
  */
-function readRuntimeCredentialAliasLines(
+function readHermesRuntimeAliasRender(
   plan: SandboxMessagingPlan,
   runOpenshell: MessagingOpenShellRunner,
-): string[] {
-  const aliases = filterEnabledPlanEntries(plan, plan.runtimeSetup?.envAliases ?? []).filter(
-    (alias) => typeof alias.targetEnvKey === "string",
-  );
-  const lines: string[] = [];
-  for (const alias of aliases) {
-    const targetEnvKey = alias.targetEnvKey as string;
-    if (!ENV_KEY_PATTERN.test(alias.envKey) || !ENV_KEY_PATTERN.test(targetEnvKey)) {
-      throw new Error("Messaging runtime credential alias contains an invalid environment key.");
+): SandboxMessagingEnvLinesRenderPlan[] {
+  return filterEnabledPlanEntries(plan, plan.runtimeSetup?.envAliases ?? []).flatMap((alias) => {
+    const sourceKey = alias.envKey;
+    const targetKey = alias.targetEnvKey;
+    if (
+      !targetKey ||
+      sourceKey === targetKey ||
+      !ENV_KEY_PATTERN.test(sourceKey) ||
+      !ENV_KEY_PATTERN.test(targetKey)
+    ) {
+      return [];
     }
+    const expectedPattern = `^openshell:resolve:env:v[0-9]+_${sourceKey}$`;
+    const expectedValue = `openshell:resolve:env:${sourceKey}`;
+    if (alias.match !== expectedPattern || alias.value !== expectedValue) return [];
     const result = runOpenshell(
       [
         "sandbox",
@@ -187,30 +241,29 @@ function readRuntimeCredentialAliasLines(
         "--",
         "sh",
         "-c",
-        `printf '%s' "\${${alias.envKey}-}"`,
+        'printenv "$1"',
+        "sh",
+        sourceKey,
       ],
-      { suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
+      {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
-    if ((result.status ?? 0) !== 0) {
-      throw new Error(
-        `Failed to inspect messaging runtime credential alias '${alias.envKey}'.`,
-      );
-    }
-    const value = String(result.stdout ?? "");
-    if (value.length === 0) continue;
-    if (
-      value.length > 512 ||
-      /[\0\r\n]/u.test(value) ||
-      !new RegExp(alias.match, "u").test(value) ||
-      !isProviderPlaceholderForEnvKey(value, alias.envKey)
-    ) {
-      throw new Error(
-        `Messaging runtime credential alias '${alias.envKey}' did not resolve to a provider placeholder.`,
-      );
-    }
-    lines.push(`${targetEnvKey}=${value}`);
-  }
-  return lines;
+    if ((result.status ?? 0) !== 0) return [];
+    const placeholder = String(result.stdout ?? "").replace(/\r?\n$/u, "");
+    if (!new RegExp(expectedPattern, "u").test(placeholder)) return [];
+    return [
+      {
+        agent: "hermes",
+        channelId: alias.channelId,
+        kind: "env-lines",
+        lines: [`${targetKey}=${placeholder}`],
+        target: HERMES_ENV_RENDER_TARGET,
+        templateRefs: [],
+      },
+    ];
+  });
 }
 
 function hookRequestsForPhases(
@@ -756,6 +809,24 @@ function readSandboxFile(
   });
   const status = result.status ?? 0;
   return status === 0 ? String(result.stdout ?? "") : undefined;
+}
+
+function readSandboxFileForRemoval(
+  sandboxName: string,
+  target: string,
+  runOpenshell: MessagingOpenShellRunner,
+): string | undefined {
+  const result = runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "cat", target], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if ((result.status ?? 0) === 0) return String(result.stdout ?? "");
+  const missing = runOpenshell(
+    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", 'test ! -e "$1"', "sh", target],
+    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if ((missing.status ?? 0) === 0) return undefined;
+  throw new Error(`Failed to read messaging agent config '${target}': ${compactOutput(result)}`);
 }
 
 function writeSandboxFile(

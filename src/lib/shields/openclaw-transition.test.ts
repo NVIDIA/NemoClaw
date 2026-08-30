@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
@@ -17,6 +18,7 @@ import {
   createShieldsFlowHarness,
   type ShieldsFlowHarnessOptions,
 } from "../../../test/helpers/shields-flow-harness";
+import { createCompletedAutoRestoreFixture } from "../../../test/support/completed-auto-restore-fixture";
 import type { AgentConfigTarget } from "../sandbox/agent-config";
 
 const requireSource = createRequire(import.meta.url);
@@ -52,6 +54,20 @@ function openClawTarget() {
     sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
     stateLockPlan: STATE_LOCK_PLAN,
     stateLockPlanInImage: true,
+  };
+}
+
+function boundPolicySnapshot(snapshotPath: string, content: string) {
+  const metadata = fs.statSync(snapshotPath);
+  return {
+    schemaVersion: 1 as const,
+    path: snapshotPath,
+    sha256: createHash("sha256").update(content).digest("hex"),
+    size: Buffer.byteLength(content),
+    mode: 0o600,
+    uid: metadata.uid,
+    gid: metadata.gid,
+    nlink: 1 as const,
   };
 }
 
@@ -507,6 +523,78 @@ describe("OpenClaw shields flow rollback and recovery", () => {
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-openclaw-recovery-"));
     vi.stubEnv("HOME", tmpDir);
+  });
+
+  it(
+    "retires an orphaned completed auto-restore generation and containment (#10094)",
+    {
+      timeout: 30_000,
+    },
+    async () => {
+      const harness = createHarness();
+      const paths = await createCompletedAutoRestoreFixture(
+        path.join(tmpDir, ".nemoclaw", "state"),
+        "openclaw",
+        "c".repeat(32),
+      );
+      const status = () =>
+        harness.shieldsStatus("openclaw", true, {
+          verifyLockState: () => ({ ok: true, issues: [] }),
+          verifyStateLockPlan: () => [],
+        });
+
+      status();
+      status();
+
+      expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
+      expect(
+        [paths.containmentPath, paths.deadlinePath, paths.lockPath, paths.markerPath].map((file) =>
+          fs.existsSync(file),
+        ),
+      ).toEqual([false, false, false, false]);
+    },
+  );
+
+  it("preserves completed containment for a live ambiguous timer PID", async () => {
+    const harness = createHarness();
+    const paths = await createCompletedAutoRestoreFixture(
+      path.join(tmpDir, ".nemoclaw", "state"),
+      "openclaw",
+      "c".repeat(32),
+    );
+    const marker = JSON.parse(fs.readFileSync(paths.markerPath, "utf8"));
+    marker.pid = process.pid;
+    delete marker.timerProcessStartIdentity;
+    fs.writeFileSync(paths.markerPath, JSON.stringify(marker));
+
+    expect(() => harness.shieldsStatus("openclaw")).toThrow("containment is active");
+    expect([paths.lockPath, paths.containmentPath, paths.markerPath].map(fs.existsSync)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+  });
+
+  it("gives safe retry guidance when completed recovery authority changes", async () => {
+    const harness = createHarness();
+    const paths = await createCompletedAutoRestoreFixture(
+      path.join(tmpDir, ".nemoclaw", "state"),
+      "openclaw",
+      "c".repeat(32),
+    );
+    const realRename = fs.renameSync.bind(fs);
+    vi.spyOn(fs, "renameSync").mockImplementationOnce((source, destination) => {
+      realRename(source, destination);
+      const marker = JSON.parse(fs.readFileSync(paths.markerPath, "utf8"));
+      marker.restoreAt = new Date(Date.now() + 60_000).toISOString();
+      fs.writeFileSync(paths.markerPath, JSON.stringify(marker));
+    });
+
+    expect(() => harness.shieldsStatus("openclaw")).toThrow(
+      "Rerun nemoclaw openclaw shields status. Do not modify lifecycle-lock or timer files",
+    );
+    expect(fs.existsSync(paths.lockPath)).toBe(true);
+    expect(fs.existsSync(paths.containmentPath)).toBe(true);
   });
 
   afterEach(() => {
@@ -1005,22 +1093,14 @@ describe("OpenClaw shields flow rollback and recovery", () => {
   });
 
   it("reports staged driver-neutral recovery when snapshot restoration fails (#6126)", () => {
-    const harness = createHarness({ run: () => ({ status: 1 }) });
-    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-    const snapshotPath = path.join(stateDir, "policy-snapshot-failed-restore.yaml");
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsDownAt: new Date().toISOString(),
-        shieldsDownTimeout: 300,
-        shieldsDownReason: "recovery-hint coverage",
-        shieldsDownPolicy: "permissive",
-        shieldsPolicySnapshotPath: snapshotPath,
-      }),
-    );
+    const harness = createHarness();
+    harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "recovery-hint coverage",
+      policy: "permissive",
+      throwOnError: true,
+    });
+    harness.runSpy.mockImplementation(() => ({ status: 1 }) as never);
 
     expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
       "policy restore exited with status 1",
@@ -1028,6 +1108,49 @@ describe("OpenClaw shields flow rollback and recovery", () => {
 
     const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw");
     expect(output).toContain("Config remains unlocked — manual intervention required");
+  });
+
+  it.each([
+    ["changed bytes", (snapshotPath: string) => fs.appendFileSync(snapshotPath, "# changed\n")],
+    [
+      "replacement symlink",
+      (snapshotPath: string) => {
+        const replacement = `${snapshotPath}.replacement`;
+        fs.writeFileSync(replacement, "version: 1\nnetwork_policies: {}\n", { mode: 0o600 });
+        fs.unlinkSync(snapshotPath);
+        fs.symlinkSync(replacement, snapshotPath);
+      },
+    ],
+    ["changed mode", (snapshotPath: string) => fs.chmodSync(snapshotPath, 0o644)],
+  ])("rejects a restrictive snapshot with %s before any policy write", (_label, mutate) => {
+    const harness = createHarness();
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const snapshotPath = path.join(stateDir, "policy-snapshot-tamper.yaml");
+    const snapshotContent = "version: 1\nnetwork_policies: {}\n";
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, snapshotContent, { mode: 0o600 });
+    fs.writeFileSync(
+      path.join(stateDir, "shields-openclaw.json"),
+      JSON.stringify({
+        shieldsDown: true,
+        shieldsDownAt: new Date().toISOString(),
+        shieldsDownTimeout: 300,
+        shieldsDownReason: "snapshot binding coverage",
+        shieldsDownPolicy: "permissive",
+        shieldsPolicySnapshotPath: snapshotPath,
+        shieldsPolicySnapshot: boundPolicySnapshot(snapshotPath, snapshotContent),
+      }),
+    );
+    mutate(snapshotPath);
+    harness.runSpy.mockClear();
+
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
+      /Restrictive policy snapshot/u,
+    );
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf8")).shieldsDown,
+    ).toBe(true);
   });
 
   it("reports staged driver-neutral recovery when the initial config lock fails (#6126)", () => {
@@ -1177,46 +1300,23 @@ describe("OpenClaw shields flow rollback and recovery", () => {
   });
 
   it("retains the bounded auto-restore owner when manual shields-up fails", () => {
-    const harness = createHarness();
-    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-    const snapshotPath = path.join(stateDir, "policy-snapshot-relock-failure.yaml");
-    const markerPath = path.join(stateDir, "shields-timer-openclaw.json");
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsDownAt: new Date().toISOString(),
-        shieldsDownTimeout: 1800,
-        shieldsDownReason: "rebuild",
-        shieldsDownPolicy: "permissive",
-        shieldsPolicySnapshotPath: snapshotPath,
-      }),
-    );
-    fs.writeFileSync(
-      markerPath,
-      JSON.stringify({
-        pid: 4242,
-        sandboxName: "openclaw",
-        snapshotPath,
-        restoreAt: new Date(Date.now() + 60_000).toISOString(),
-        processToken: "timer-token",
-        allowLegacyHermesProtocol: false,
-      }),
-    );
+    const harness = createHarness({ failOpenClawGuardActions: ["lock"] });
+    harness.shieldsDown("openclaw", {
+      timeout: "30m",
+      reason: "rebuild",
+      policy: "permissive",
+      throwOnError: true,
+    });
+    const before = readStateAndTimer("openclaw");
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
 
     expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      /Config not locked/,
+      /startup-not-ready/,
     );
 
-    expect(fs.existsSync(markerPath)).toBe(true);
+    expect(fs.existsSync(before.timerPath)).toBe(true);
     expect(killSpy).not.toHaveBeenCalled();
-    expect(
-      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8"))
-        .shieldsDown,
-    ).toBe(true);
+    expect(JSON.parse(fs.readFileSync(before.statePath, "utf-8")).shieldsDown).toBe(true);
   });
 });
 

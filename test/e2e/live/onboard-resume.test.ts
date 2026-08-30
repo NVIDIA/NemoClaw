@@ -591,8 +591,8 @@ test(
     );
     const unavailableResumeText = `${unavailableResumeRun.stdout}\n${unavailableResumeRun.stderr}`;
     expect(unavailableResumeRun.exitCode, unavailableResumeText).not.toBe(0);
-    expect(unavailableResumeText).toMatch(/is not ready|transient HTTP 503/u);
-    expect(unavailableResumeText).toContain("inference");
+    expect(unavailableResumeText).toContain("Compatible endpoint sandbox smoke check failed");
+    expect(unavailableResumeText).toContain("inference.local");
     expect(unavailableResumeText).not.toContain(
       `Deleting and recreating sandbox '${SANDBOX_NAME}'`,
     );

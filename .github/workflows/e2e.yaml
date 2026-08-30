@@ -88,12 +88,6 @@ on:
         default: ""
         type: string
 
-      managed_image_publication_sha:
-        description: Optional exact same-PR managed-image publication to reuse when all later changes are outside managed-image inputs.
-        required: false
-        default: ""
-        type: string
-
       correlation_id:
         description: Run correlation ID (UUIDv4).
         required: false
@@ -303,8 +297,8 @@ jobs:
       pull-requests: read
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
-      managed_image_catalog: ${{ steps.package_cli_artifact.outputs.managed_image_catalog }}
       e2e_credentials_allowed: ${{ steps.e2e_credentials.outputs.allowed }}
+      managed_image_catalog: ${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}
       matrix: ${{ steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
@@ -673,16 +667,32 @@ jobs:
             fi
           fi
 
-      - name: Resolve exact PR managed-image catalog
+      - id: resolve_pr_managed_image_catalog
+        name: Resolve exact PR managed-image catalog
         if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha }}
-          GITHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && steps.candidate_authorization.outputs.nvidia_owned == 'true' && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || github.token }}
-          MANAGED_IMAGE_PUBLICATION_SHA: ${{ inputs.managed_image_publication_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
-        run: node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "${RUNNER_TEMP}/pr-managed-image-catalog.json"
+        shell: bash
+        run: |
+          set -euo pipefail
+          catalog_path="${RUNNER_TEMP}/pr-managed-image-catalog.json"
+          rm -f -- "$catalog_path"
+          node --experimental-strip-types --no-warnings \
+            tools/e2e/pr-managed-image-publication.mts "$catalog_path"
+          if [[ -e "$catalog_path" ]]; then
+            [[ -f "$catalog_path" && ! -L "$catalog_path" && -s "$catalog_path" ]] || {
+              echo "::error::trusted PR managed-image catalog is not a nonempty regular file" >&2
+              exit 1
+            }
+            catalog="$(jq -c . "$catalog_path")"
+            catalog_sha256="$(printf '%s\n' "$catalog" | sha256sum | awk '{print $1}')"
+            printf 'catalog=%s\n' "$catalog" >>"$GITHUB_OUTPUT"
+            printf 'catalog_sha256=%s\n' "$catalog_sha256" >>"$GITHUB_OUTPUT"
+          fi
 
       # Publish immutable source-run toolchains before candidate checkout or
       # candidate-controlled workspace preparation can execute on this runner.
@@ -691,6 +701,7 @@ jobs:
         with:
           enabled: ${{ contains(format(',{0},', inputs.gateway_runtimes || inputs.gateway_runtime || 'docker'), ',podman,') && 'true' || 'false' }}
           github-token: ${{ github.token }}
+
       - name: Check out E2E candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
@@ -767,7 +778,8 @@ jobs:
         env:
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
-          MANAGED_IMAGE_PUBLICATION_SHA: ${{ inputs.managed_image_publication_sha || inputs.checkout_sha || github.sha }}
+          MANAGED_IMAGE_CATALOG: ${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}
+          MANAGED_IMAGE_CATALOG_SHA256: ${{ steps.resolve_pr_managed_image_catalog.outputs.catalog_sha256 }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -805,25 +817,43 @@ jobs:
           ' dist/build-identity.json >/dev/null ||
             { echo "::error::candidate CLI build identity does not match the candidate commit SHA"; exit 1; }
 
+          # BEGIN exact managed-image catalog staging
           managed_catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"
-          rm -f -- dist/e2e-managed-image-catalog.json
-          if [[ -e "$managed_catalog" ]]; then
-            [[ -f "$managed_catalog" && ! -L "$managed_catalog" && -s "$managed_catalog" ]] ||
-              { echo "::error::trusted PR managed-image catalog is not a nonempty regular file"; exit 1; }
-            jq -e --arg revision "$MANAGED_IMAGE_PUBLICATION_SHA" '
-              type == "object" and length > 0 and
-              all(.[];
-                .source.revision == $revision and
-                (.source.release | type == "string" and length > 0) and
-                (.source.cohort | type == "string" and length > 0)
-              ) and
-              ([.[].source.release] | unique | length) == 1 and
-              ([.[].source.cohort] | unique | length) == 1
-            ' "$managed_catalog" >/dev/null ||
-              { echo "::error::managed-image catalog source identity does not match the selected publication"; exit 1; }
-            install -m 0600 "$managed_catalog" dist/e2e-managed-image-catalog.json
-            printf 'managed_image_catalog=%s\n' "$(jq -c . "$managed_catalog")" >>"$GITHUB_OUTPUT"
+          artifact_catalog="dist/e2e-managed-image-catalog.json"
+          [[ ! -e "$artifact_catalog" && ! -L "$artifact_catalog" ]] || {
+            echo "::error::candidate build created the trusted managed-image catalog path" >&2
+            exit 1
+          }
+          if [[ -n "$MANAGED_IMAGE_CATALOG" ]]; then
+            [[ "$MANAGED_IMAGE_CATALOG_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
+              echo "::error::trusted PR managed-image catalog digest is invalid" >&2
+              exit 1
+            }
+            [[ -f "$managed_catalog" && ! -L "$managed_catalog" && -s "$managed_catalog" ]] || {
+              echo "::error::trusted PR managed-image catalog is not a nonempty regular file" >&2
+              exit 1
+            }
+            [[ "$(sha256sum "$managed_catalog" | awk '{print $1}')" == "$MANAGED_IMAGE_CATALOG_SHA256" ]] || {
+              echo "::error::trusted PR managed-image catalog changed after authentication" >&2
+              exit 1
+            }
+            (umask 077 && set -o noclobber && printf '%s\n' "$MANAGED_IMAGE_CATALOG" >"$artifact_catalog")
+            [[ -f "$artifact_catalog" && ! -L "$artifact_catalog" && -s "$artifact_catalog" ]] || {
+              echo "::error::packaged PR managed-image catalog is invalid" >&2
+              exit 1
+            }
+            [[ "$(sha256sum "$artifact_catalog" | awk '{print $1}')" == "$MANAGED_IMAGE_CATALOG_SHA256" ]] || {
+              echo "::error::packaged PR managed-image catalog does not match trusted output" >&2
+              exit 1
+            }
+          else
+            [[ -z "$MANAGED_IMAGE_CATALOG_SHA256" && ! -e "$managed_catalog" && ! -L "$managed_catalog" ]] || {
+              echo "::error::managed-image catalog authority is inconsistent" >&2
+              exit 1
+            }
           fi
+          # END exact managed-image catalog staging
+
           artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
           install -d -m 0700 "$artifact_dir"
           payload="$artifact_dir/nemoclaw-cli.tar"

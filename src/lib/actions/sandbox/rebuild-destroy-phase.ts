@@ -23,7 +23,6 @@ import {
   prepareMcpForRebuild,
   reattachMcpAfterDeleteFailure,
 } from "./rebuild-mcp-phase";
-import { blockRebuildOnPendingBaselineTransition } from "./rebuild-preflight-guards";
 import type {
   RebuildRecreateJournal,
   RebuildRecreateSourcePresence,
@@ -43,8 +42,11 @@ export interface RebuildDestroyPhaseInput {
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   force?: boolean;
-  validateAfterMcpPreparation?: () => Promise<RebuildDeleteValidationResult>;
+  validateAfterMcpPreparation?: (
+    preparation: McpRebuildPreparation,
+  ) => Promise<RebuildDeleteValidationResult>;
   validateAtDeleteEdge?: () => RebuildDeleteValidationResult;
+  cleanupDockerOrphanAfterDelete?: () => void;
   onDeleted: () => void;
   onDeleteStateAmbiguous?: () => void;
 }
@@ -237,12 +239,11 @@ export async function runRebuildDestroyPhase(
     relockShieldsIfNeeded,
     validateAfterMcpPreparation,
     validateAtDeleteEdge,
+    cleanupDockerOrphanAfterDelete,
     onDeleted,
   } = input;
   const deleteTarget = resolveRebuildDeleteTarget(sandboxName, input.sandboxEntry);
   const { gatewayName } = deleteTarget;
-
-  if (blockRebuildOnPendingBaselineTransition(input.sandboxEntry, sandboxName, bail)) return null;
 
   // Step 3: Delete sandbox without tearing down gateway or session.
   // sandboxDestroy() cleans up the gateway when it's the last sandbox and
@@ -289,7 +290,7 @@ export async function runRebuildDestroyPhase(
       if (validateAfterMcpPreparation) {
         let validation: RebuildDeleteValidationResult;
         try {
-          validation = await validateAfterMcpPreparation();
+          validation = await validateAfterMcpPreparation(preparation);
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
           log(`Unexpected DCode replacement validation failure: ${redactFull(detail)}`);
@@ -336,10 +337,17 @@ export async function runRebuildDestroyPhase(
       await mcpPreparation.revalidateBeforeDelete?.();
       mcpPreparation.assertDeleteEdgeUnchanged?.();
     } catch (error) {
+      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+        sandboxName,
+        rebuildDetachedMcpProviderEntries,
+        rebuildScrubbedMcpAdapterEntries,
+      );
       relockShieldsIfNeeded(true);
       const detail = error instanceof Error ? error.message : String(error);
       bail(
-        `Failed to revalidate read-only MCP recovery before sandbox deletion: ${redactFull(detail)}`,
+        mcpRecoveryFailure
+          ? `Failed to revalidate MCP recovery before sandbox deletion: ${redactFull(detail)} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          : `Failed to revalidate MCP recovery before sandbox deletion: ${redactFull(detail)}`,
       );
       return null;
     }
@@ -511,6 +519,18 @@ export async function runRebuildDestroyPhase(
     bail(
       `Sandbox '${sandboxName}' was deleted, but its host port forwards were not released; retry rebuild after the forward listener stops.`,
     );
+    return null;
+  }
+  try {
+    cleanupDockerOrphanAfterDelete?.();
+  } catch (error) {
+    stopNimBestEffort();
+    onDeleted();
+    if (backupManifest) {
+      console.error("  State backup is preserved at: " + backupManifest.backupPath);
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    bail(`Post-delete Docker orphan cleanup failed: ${redactFull(detail)}`);
     return null;
   }
   stopNimBestEffort();

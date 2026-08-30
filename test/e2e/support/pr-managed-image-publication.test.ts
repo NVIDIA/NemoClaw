@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
@@ -21,23 +24,22 @@ import {
   assembleManagedImageCatalog,
   main,
   managedImagePublicationRequired,
-  managedImagePublicationReuseAllowed,
   parseManagedImagePullRequestPaths,
-  parseManagedImagePublicationComparison,
+  resolvePrManagedImageCatalog,
   selectManagedImagePublicationRun,
 } from "../../../tools/e2e/pr-managed-image-publication.mts";
+import {
+  readE2eOperationsWorkflow,
+  validateE2eOperationsWorkflow,
+} from "../../../tools/e2e/operations-workflow-boundary.mts";
 
+const BASE_SHA = "b".repeat(40);
 const CANDIDATE_SHA = "a".repeat(40);
+const BASE_TREE_SHA = "c".repeat(40);
+const CANDIDATE_TREE_SHA = "d".repeat(40);
 const PR_NUMBER = 8746;
 const WORKFLOW_ID = 12345;
-const MANAGED_IMAGE_DOCKERFILES = [
-  "Dockerfile",
-  "Dockerfile.base",
-  "agents/hermes/Dockerfile",
-  "agents/hermes/Dockerfile.base",
-  "agents/langchain-deepagents-code/Dockerfile",
-  "agents/langchain-deepagents-code/Dockerfile.base",
-] as const;
+const MANAGED_IMAGE_WORKFLOW = fs.readFileSync(".github/workflows/managed-images.yaml", "utf8");
 
 function contract(agent: ManagedImageAgent, index: number): ManagedImageContractV1 {
   const image = MANAGED_IMAGE_REPOSITORIES[agent];
@@ -83,6 +85,39 @@ function run(overrides: Record<string, unknown> = {}): unknown {
   };
 }
 
+function exactCommitRequest(changedPath: string, onUnexpected: (apiPath: string) => unknown) {
+  const baseBlob = "1".repeat(40);
+  const candidateBlob = "2".repeat(40);
+  return async (apiPath: string): Promise<unknown> => {
+    switch (apiPath) {
+      case `/repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}`:
+        return {
+          state: "open",
+          base: { sha: BASE_SHA, repo: { full_name: "NVIDIA/NemoClaw" } },
+          head: { sha: CANDIDATE_SHA, repo: { full_name: "NVIDIA/NemoClaw" } },
+        };
+      case `/repos/NVIDIA/NemoClaw/git/commits/${BASE_SHA}`:
+        return { sha: BASE_SHA, tree: { sha: BASE_TREE_SHA } };
+      case `/repos/NVIDIA/NemoClaw/git/commits/${CANDIDATE_SHA}`:
+        return { sha: CANDIDATE_SHA, tree: { sha: CANDIDATE_TREE_SHA } };
+      case `/repos/NVIDIA/NemoClaw/git/trees/${BASE_TREE_SHA}?recursive=1`:
+        return {
+          sha: BASE_TREE_SHA,
+          truncated: false,
+          tree: [{ path: changedPath, mode: "100644", type: "blob", sha: baseBlob }],
+        };
+      case `/repos/NVIDIA/NemoClaw/git/trees/${CANDIDATE_TREE_SHA}?recursive=1`:
+        return {
+          sha: CANDIDATE_TREE_SHA,
+          truncated: false,
+          tree: [{ path: changedPath, mode: "100644", type: "blob", sha: candidateBlob }],
+        };
+      default:
+        return onUnexpected(apiPath);
+    }
+  };
+}
+
 describe("exact PR managed-image publication (#8746, #9464)", () => {
   it("derives applicability from the trusted managed-image workflow", () => {
     const patterns = parseManagedImagePullRequestPaths(
@@ -119,164 +154,226 @@ on:
     ).toThrow("unsupported glob");
   });
 
-  it("allows reuse only across host-installer and E2E-only changes", () => {
-    expect(
-      managedImagePublicationReuseAllowed([
-        "ci/test-file-size-budget.json",
-        ".github/actions/restore-e2e-cli-artifact/action.yaml",
-        ".github/actions/setup-native-podman-e2e/action.yaml",
-        ".github/workflows/e2e-standard-profile.yaml",
-        ".github/workflows/e2e.yaml",
-        "scripts/install.sh",
-        "scripts/checks/run-managed-image-openshell-e2e.ts",
-        "src/lib/actions/maintenance.test.ts",
-        "src/lib/actions/maintenance.ts",
-        "src/lib/actions/sandbox/connect-probe-observe.test.ts",
-        "src/lib/actions/sandbox/gateway-failure-classifier.test.ts",
-        "src/lib/actions/sandbox/gateway-failure-classifier.ts",
-        "src/lib/actions/sandbox/launch-readiness-ordinary-pairing.test.ts",
-        "src/lib/actions/sandbox/process-recovery.ts",
-        "src/lib/actions/sandbox/rebuild-dcode-mutation-edge.test.ts",
-        "src/lib/actions/sandbox/rebuild-dcode-preflight.ts",
-        "src/lib/actions/sandbox/rebuild-destroy-phase.test.ts",
-        "src/lib/actions/sandbox/rebuild-destroy-phase.ts",
-        "src/lib/actions/sandbox/mcp-bridge-input-targets.test.ts",
-        "src/lib/actions/sandbox/mcp-bridge-tool-discovery.test.ts",
-        "src/lib/actions/sandbox/mcp-bridge-tool-discovery.ts",
-        "src/lib/actions/sandbox/stopped-sandbox-backup.test.ts",
-        "src/lib/actions/sandbox/stopped-sandbox-backup.ts",
-        "src/lib/actions/sandbox/status-preflight.ts",
-        "src/lib/adapters/podman/index.test.ts",
-        "src/lib/adapters/podman/index.ts",
-        "src/lib/inference/serving/profile-list.test.ts",
-        "src/lib/onboard.ts",
-        "src/lib/shields/index.ts",
-        "src/lib/shields/state-dir-lock.test.ts",
-        "src/lib/tunnel/agent-forward-stop.test.ts",
-        "src/lib/tunnel/agent-forward-stop.ts",
-        "src/lib/onboard/credential-provider-registration.test.ts",
-        "src/lib/onboard/credential-provider-registration.ts",
-        "src/lib/onboard/initial-policy-real-policy.test.ts",
-        "src/lib/onboard/managed-bootstrap/docker-runtime.test.ts",
-        "src/lib/onboard/managed-bootstrap/docker-runtime.ts",
-        "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.test.ts",
-        "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.ts",
-        "src/lib/onboard/managed-bootstrap/podman-image-transaction.test.ts",
-        "src/lib/onboard/managed-bootstrap/podman-image-transaction.ts",
-        "src/lib/onboard/managed-bootstrap/podman-runtime.test.ts",
-        "src/lib/onboard/managed-bootstrap/podman-runtime.ts",
-        "src/lib/onboard/managed-bootstrap/runtime-create.ts",
-        "src/lib/onboard/managed-startup/state-roots.ts",
-        "src/lib/onboard/managed-workload/onboard-orchestration.test.ts",
-        "src/lib/onboard/managed-workload/onboard-orchestration.ts",
-        "src/lib/onboard/machine/finalization-deps.test.ts",
-        "src/lib/onboard/machine/finalization-deps.ts",
-        "src/lib/onboard/machine/messaging-credential-convergence.test.ts",
-        "src/lib/onboard/machine/messaging-credential-convergence.ts",
-        "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
-        "src/lib/onboard/runtime-provider/podman-host-local-inference-cleanup-settlement.test.ts",
-        "src/lib/onboard/runtime-provider/podman-host-local-inference.ts",
-        "src/lib/onboard/runtime-provider/podman-runtime-surfaces.ts",
-        "src/lib/onboard/runtime-provider/podman-state-mutation.test.ts",
-        "src/lib/onboard/runtime-provider/podman-state-mutation.ts",
-        "src/lib/onboard/sandbox-create/orchestration.ts",
-        "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
-        "src/lib/onboard/sandbox-gpu-create-flow.ts",
-        "src/lib/onboard/sandbox-gpu-create-run-attempt.ts",
-        "src/lib/onboard/sandbox-workload-preparation.test.ts",
-        "src/lib/onboard/workload/preparation.ts",
-        "test/e2e/fixtures/security-posture.ts",
-        "test/install-preflight-docker-bootstrap.test.ts",
-        "tools/e2e/target-catalogue.mts",
-      ]),
-    ).toBe(true);
-    expect(managedImagePublicationReuseAllowed(["scripts/managed-gateway-control.py"])).toBe(false);
-    expect(managedImagePublicationReuseAllowed(["src/lib/onboard/workload/rebuild.ts"])).toBe(
-      false,
-    );
-  });
+  it("classifies immutable commit trees without reading the mutable PR file listing", async () => {
+    const requests: string[] = [];
+    const request = exactCommitRequest("docs/upgrade.md", (apiPath) => {
+      requests.push(apiPath);
+      throw new Error(`unexpected request: ${apiPath}`);
+    });
 
-  it.each(MANAGED_IMAGE_DOCKERFILES)("keeps reusable paths outside %s", (dockerfile) => {
-    const source = fs.readFileSync(dockerfile, "utf8");
-    expect(source).not.toContain("restore-e2e-cli-artifact");
-    expect(source).not.toContain("scripts/install.sh");
-    expect(source).not.toContain("scripts/checks/run-managed-image-openshell-e2e.ts");
-    expect(source).not.toContain("src/lib/actions/maintenance.ts");
-    expect(source).not.toContain("src/lib/actions/sandbox/process-recovery.ts");
-    expect(source).not.toContain("src/lib/actions/sandbox/rebuild-dcode-preflight.ts");
-    expect(source).not.toContain("src/lib/actions/sandbox/rebuild-destroy-phase.ts");
-    expect(source).not.toContain("src/lib/actions/sandbox/gateway-failure-classifier.ts");
-    expect(source).not.toContain("src/lib/actions/sandbox/status-preflight.ts");
-    expect(source).not.toContain("src/lib/actions/sandbox/mcp-bridge-tool-discovery.ts");
-    expect(source).not.toContain("src/lib/actions/sandbox/stopped-sandbox-backup.ts");
-    expect(source).not.toContain("src/lib/adapters/podman/index.ts");
-    expect(source).not.toContain("src/lib/tunnel/agent-forward-stop.ts");
-    expect(source).not.toContain("src/lib/onboard/credential-provider-registration.ts");
-    expect(source).not.toContain("src/lib/onboard.ts");
-    expect(source).not.toContain("src/lib/onboard/initial-policy-real-policy.test.ts");
-    expect(source).not.toContain("src/lib/onboard/managed-bootstrap/docker-runtime.ts");
-    expect(source).not.toContain("src/lib/onboard/machine/finalization-deps.ts");
-    expect(source).not.toContain("src/lib/onboard/machine/messaging-credential-convergence.ts");
-    expect(source).not.toContain(
-      "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.ts",
-    );
-    expect(source).not.toContain("src/lib/onboard/managed-bootstrap/podman-image-transaction.ts");
-    expect(source).not.toContain("src/lib/onboard/managed-bootstrap/podman-runtime.ts");
-    expect(source).not.toContain("src/lib/onboard/managed-bootstrap/runtime-create.ts");
-    expect(source).not.toContain("src/lib/onboard/managed-startup/state-roots.ts");
-    expect(source).not.toContain("src/lib/onboard/managed-workload/onboard-orchestration.ts");
-    expect(source).not.toContain("src/lib/onboard/sandbox-create/orchestration.ts");
-    expect(source).not.toContain("src/lib/onboard/sandbox-gpu-create-flow.ts");
-    expect(source).not.toContain("src/lib/onboard/sandbox-gpu-create-run-attempt.ts");
-    expect(source).not.toContain("src/lib/onboard/workload/preparation.ts");
-    expect(source).not.toMatch(/^COPY [.]github\/workflows\/e2e/mu);
-    expect(source).not.toMatch(/^COPY src\/lib\/onboard\/.*[.]test[.]ts/mu);
-    expect(source).not.toMatch(/^COPY test\//mu);
-    expect(source).not.toMatch(/^COPY tools\/e2e\//mu);
-  });
-
-  it("accepts one complete ancestor comparison with only reusable changes", () => {
-    const publicationSha = "b".repeat(40);
-    expect(
-      parseManagedImagePublicationComparison(
+    await expect(
+      resolvePrManagedImageCatalog(
         {
-          status: "ahead",
-          ahead_by: 2,
-          behind_by: 0,
-          total_commits: 2,
-          base_commit: { sha: publicationSha },
-          merge_base_commit: { sha: publicationSha },
-          commits: [{ sha: "c".repeat(40) }, { sha: CANDIDATE_SHA }],
-          files: [
-            { filename: "scripts/install.sh" },
-            { filename: "test/e2e/support/security-posture.test.ts" },
+          baseSha: BASE_SHA,
+          candidateRepository: "NVIDIA/NemoClaw",
+          candidateSha: CANDIDATE_SHA,
+          outputPath: path.join(os.tmpdir(), "unused-pr-managed-image-catalog.json"),
+          prNumber: PR_NUMBER,
+          token: "test-token",
+          workflowSource: MANAGED_IMAGE_WORKFLOW,
+        },
+        async (apiPath) => {
+          requests.push(apiPath);
+          return request(apiPath);
+        },
+      ),
+    ).resolves.toBe("not-required");
+    expect(requests).toContain(`/repos/NVIDIA/NemoClaw/git/commits/${BASE_SHA}`);
+    expect(requests).toContain(`/repos/NVIDIA/NemoClaw/git/commits/${CANDIDATE_SHA}`);
+    expect(requests.some((apiPath) => apiPath.includes(`/pulls/${PR_NUMBER}/files`))).toBe(false);
+  });
+
+  it("requires exact publication after an immutable managed-image input change", async () => {
+    const request = exactCommitRequest("agents/hermes/plugin/__init__.py", (apiPath) => {
+      throw new Error(`publication lookup reached: ${apiPath}`);
+    });
+
+    await expect(
+      resolvePrManagedImageCatalog(
+        {
+          baseSha: BASE_SHA,
+          candidateRepository: "NVIDIA/NemoClaw",
+          candidateSha: CANDIDATE_SHA,
+          outputPath: path.join(os.tmpdir(), "unused-pr-managed-image-catalog.json"),
+          prNumber: PR_NUMBER,
+          token: "test-token",
+          workflowSource: MANAGED_IMAGE_WORKFLOW,
+        },
+        request,
+      ),
+    ).rejects.toThrow("publication lookup reached: /repos/NVIDIA/NemoClaw/actions/workflows");
+  });
+
+  it("rejects a truncated immutable commit tree", async () => {
+    const request = exactCommitRequest("docs/upgrade.md", (apiPath) => {
+      throw new Error(`unexpected request: ${apiPath}`);
+    });
+    const truncatedTreePath = `/repos/NVIDIA/NemoClaw/git/trees/${BASE_TREE_SHA}?recursive=1`;
+    const substitutedResponses = new Map<string, unknown>([
+      [
+        truncatedTreePath,
+        {
+          sha: BASE_TREE_SHA,
+          truncated: true,
+          tree: [
+            {
+              path: "docs/upgrade.md",
+              mode: "100644",
+              type: "blob",
+              sha: "1".repeat(40),
+            },
           ],
         },
-        { candidateSha: CANDIDATE_SHA, publicationSha },
+      ],
+    ]);
+    await expect(
+      resolvePrManagedImageCatalog(
+        {
+          baseSha: BASE_SHA,
+          candidateRepository: "NVIDIA/NemoClaw",
+          candidateSha: CANDIDATE_SHA,
+          outputPath: path.join(os.tmpdir(), "unused-pr-managed-image-catalog.json"),
+          prNumber: PR_NUMBER,
+          token: "test-token",
+          workflowSource: MANAGED_IMAGE_WORKFLOW,
+        },
+        async (apiPath) => substitutedResponses.get(apiPath) ?? request(apiPath),
       ),
-    ).toEqual({
-      changedFiles: ["scripts/install.sh", "test/e2e/support/security-posture.test.ts"],
-      commits: 2,
-    });
+    ).rejects.toThrow("PR base commit tree is truncated");
   });
 
-  it("rejects reuse when a managed-image input changed", () => {
-    const publicationSha = "b".repeat(40);
-    expect(() =>
-      parseManagedImagePublicationComparison(
+  it.each([
+    [
+      "duplicate directories",
+      [
+        { path: "agents", mode: "040000", type: "tree", sha: "1".repeat(40) },
+        { path: "agents", mode: "040000", type: "tree", sha: "2".repeat(40) },
+      ],
+    ],
+    [
+      "directory and file collisions",
+      [
+        { path: "agents", mode: "040000", type: "tree", sha: "1".repeat(40) },
+        { path: "agents", mode: "100644", type: "blob", sha: "2".repeat(40) },
+      ],
+    ],
+  ])("rejects %s in an immutable commit tree", async (_description, tree) => {
+    const request = exactCommitRequest("docs/upgrade.md", (apiPath) => {
+      throw new Error(`unexpected request: ${apiPath}`);
+    });
+    const baseTreePath = `/repos/NVIDIA/NemoClaw/git/trees/${BASE_TREE_SHA}?recursive=1`;
+
+    await expect(
+      resolvePrManagedImageCatalog(
         {
-          status: "ahead",
-          ahead_by: 1,
-          behind_by: 0,
-          total_commits: 1,
-          base_commit: { sha: publicationSha },
-          merge_base_commit: { sha: publicationSha },
-          commits: [{ sha: CANDIDATE_SHA }],
-          files: [{ filename: "agents/hermes/Dockerfile" }],
+          baseSha: BASE_SHA,
+          candidateRepository: "NVIDIA/NemoClaw",
+          candidateSha: CANDIDATE_SHA,
+          outputPath: path.join(os.tmpdir(), "unused-pr-managed-image-catalog.json"),
+          prNumber: PR_NUMBER,
+          token: "test-token",
+          workflowSource: MANAGED_IMAGE_WORKFLOW,
         },
-        { candidateSha: CANDIDATE_SHA, publicationSha },
+        async (apiPath) =>
+          apiPath === baseTreePath
+            ? { sha: BASE_TREE_SHA, truncated: false, tree }
+            : request(apiPath),
       ),
-    ).toThrow("changes managed-image inputs");
+    ).rejects.toThrow("PR base commit tree contains duplicate paths");
+  });
+
+  it.each([
+    ["blob", "040000"],
+    ["commit", "100644"],
+    ["tree", "100755"],
+  ])("rejects an immutable %s entry with Git mode %s", async (type, mode) => {
+    const request = exactCommitRequest("docs/upgrade.md", (apiPath) => {
+      throw new Error(`unexpected request: ${apiPath}`);
+    });
+    const baseTreePath = `/repos/NVIDIA/NemoClaw/git/trees/${BASE_TREE_SHA}?recursive=1`;
+
+    await expect(
+      resolvePrManagedImageCatalog(
+        {
+          baseSha: BASE_SHA,
+          candidateRepository: "NVIDIA/NemoClaw",
+          candidateSha: CANDIDATE_SHA,
+          outputPath: path.join(os.tmpdir(), "unused-pr-managed-image-catalog.json"),
+          prNumber: PR_NUMBER,
+          token: "test-token",
+          workflowSource: MANAGED_IMAGE_WORKFLOW,
+        },
+        async (apiPath) =>
+          apiPath === baseTreePath
+            ? {
+                sha: BASE_TREE_SHA,
+                truncated: false,
+                tree: [{ path: "agents", mode, type, sha: "1".repeat(40) }],
+              }
+            : request(apiPath),
+      ),
+    ).rejects.toThrow("PR base tree entry mode is invalid");
+  });
+
+  it("rejects a manual PR catalog without a trusted pre-checkout producer", () => {
+    const workflow = readE2eOperationsWorkflow();
+    delete workflow.jobs["generate-matrix"].outputs?.managed_image_catalog;
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "Manual PR managed-image catalog must be authenticated before candidate checkout",
+    );
+  });
+
+  it("rejects a candidate mutation of the authenticated managed-image catalog", () => {
+    const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8"));
+    const packageCli = workflow.jobs["generate-matrix"].steps.find(
+      (step: Record<string, unknown>) => step.name === "Package exact-commit CLI",
+    );
+    const stagingMatch = packageCli.run.match(
+      /# BEGIN exact managed-image catalog staging\n([\s\S]*?)# END exact managed-image catalog staging/u,
+    );
+    const stagingSource = stagingMatch?.[1] ?? "";
+
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-catalog-stage-test-"));
+    try {
+      fs.mkdirSync(path.join(directory, "dist"), { mode: 0o700 });
+      const trustedCatalog = JSON.stringify(
+        Object.fromEntries(
+          SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => [agent, contract(agent, index)]),
+        ),
+      );
+      const trustedDigest = createHash("sha256")
+        .update(`${trustedCatalog}\n`, "utf8")
+        .digest("hex");
+      fs.writeFileSync(
+        path.join(directory, "pr-managed-image-catalog.json"),
+        '{"candidateMutation":true}\n',
+        { mode: 0o600 },
+      );
+      const scriptPath = path.join(directory, "stage-managed-image-catalog.sh");
+      fs.writeFileSync(scriptPath, `set -euo pipefail\n${stagingSource}`, { mode: 0o700 });
+
+      const result = spawnSync("/bin/bash", ["--noprofile", "--norc", scriptPath], {
+        cwd: directory,
+        encoding: "utf8",
+        env: {
+          MANAGED_IMAGE_CATALOG: trustedCatalog,
+          MANAGED_IMAGE_CATALOG_SHA256: trustedDigest,
+          PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+          RUNNER_TEMP: directory,
+        },
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "trusted PR managed-image catalog changed after authentication",
+      );
+      expect(fs.existsSync(path.join(directory, "dist/e2e-managed-image-catalog.json"))).toBe(
+        false,
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it("selects one successful workflow run for the candidate commit", () => {

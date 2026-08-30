@@ -52,10 +52,13 @@ import {
 } from "./auto-pair-approval";
 import {
   captureLaunchReadiness,
+  createBoundLaunchReadinessDeps,
   LaunchReadinessEvidenceError,
   type LaunchReadinessFailedCheck,
   type LaunchReadinessHealthDeps,
+  type LaunchReadinessObservationStage,
   LaunchReadinessObservationError as ObservationError,
+  recordLaunchReadinessObservationFailure,
   requireLaunchSemanticHealth,
   resolveLaunchInteractiveCommand,
   resolveTrustedLaunchAgent,
@@ -75,6 +78,7 @@ import {
 } from "./launch-readiness/openclaw-pairing-qualification";
 
 export { createProbeTimingRecorder, type ProbeTimingRecorder } from "./probe/timing";
+export { createBoundLaunchReadinessDeps };
 
 const LIVE_POLICY_MAX_BYTES = 2 * 1_024 * 1_024;
 
@@ -197,6 +201,18 @@ function recordPerformanceStage(stage: LaunchReadinessPerformanceStage, startedA
   }
 }
 
+function recordObservationTiming(
+  deps: LaunchReadinessDeps,
+  stage: LaunchReadinessObservationStage,
+  startedAt: number,
+): void {
+  try {
+    deps.recordObservationTiming?.(stage, Math.max(0, performance.now() - startedAt));
+  } catch {
+    // Timing evidence must never change readiness behavior.
+  }
+}
+
 function normalizedString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
@@ -288,10 +304,6 @@ function projectOptionalBoolean(value: unknown): boolean {
   if (value === undefined) return false;
   if (typeof value !== "boolean") throw new ObservationError("config");
   return value;
-}
-
-export function launchReadinessPolicyDigest(content: string): string {
-  return launchReadinessDigest(parseAndValidateSandboxPolicy(content));
 }
 
 function projectWorkload(workload: SandboxWorkloadReceipt | undefined): unknown {
@@ -394,7 +406,6 @@ function projectMessagingState(entry: SandboxEntry): unknown {
       agent: persisted.plan.agent,
       workflow: persisted.plan.workflow,
       disabledChannels: [...persisted.plan.disabledChannels],
-      networkPolicy: persisted.plan.networkPolicy,
       channels: persisted.plan.channels.map((channel) => {
         const originalInputs = new Map(
           (originalChannels.get(channel.channelId)?.inputs ?? []).map((input) => [
@@ -529,27 +540,6 @@ export function buildLaunchReadinessRegistryProjection(
   if (entry.pendingRouteReservation === true) {
     throw new ObservationError("config");
   }
-  if (entry.baselineExclusionTransition) throw new ObservationError("config");
-
-  const customPolicies = (entry.customPolicies ?? []).map((policy) => ({
-    name: policy.name,
-    contentSha256: exactContentDigest(policy.content),
-    pendingContentSha256:
-      typeof policy.pendingContent === "string" ? exactContentDigest(policy.pendingContent) : null,
-    pinAuthoritySha256: policy.trustedPrivatePins
-      ? launchReadinessDigest({
-          version: policy.trustedPrivatePins.version,
-          contentDigest: policy.trustedPrivatePins.contentDigest,
-        })
-      : null,
-  }));
-  const baselineExclusions = (entry.baselineExclusions ?? []).map((exclusion) => ({
-    version: exclusion.version,
-    agent: exclusion.agent,
-    key: exclusion.key,
-    digest: exclusion.digest,
-    appliedAgentVersion: exclusion.appliedAgentVersion ?? null,
-  }));
   const inference = normalizeInferenceSelection(entry);
   if (
     inference.credentialEnv !== null &&
@@ -626,17 +616,12 @@ export function buildLaunchReadinessRegistryProjection(
         }
       : null,
     inference,
-    policies: [...(entry.policies ?? [])],
-    policyTier: normalizedString(entry.policyTier),
-    policyPresetsFinalized: entry.policyPresetsFinalized === true,
     ...(portableRuntimeAuthoritySha256
       ? {
           portableLifecycleReceipt: "current",
           portableRuntimeAuthoritySha256,
         }
       : {}),
-    customPolicies,
-    baselineExclusions,
     webSearchEnabled: entry.webSearchEnabled === true,
     webSearchProvider: entry.webSearchProvider ?? null,
     toolDisclosure: entry.toolDisclosure ?? null,
@@ -667,17 +652,17 @@ function classifyReceipt(
   return read.kind === "valid" ? "config" : read.kind;
 }
 
-function captureLivePolicy(
+function validateLivePolicy(
   sandboxName: string,
   gatewayName: string,
   deps: LaunchReadinessDeps,
-): string {
+): void {
   const result = (
     deps.capture ?? ((args) => captureLaunchReadiness(args, { maxBuffer: LIVE_POLICY_MAX_BYTES }))
   )(["policy", "get", "-g", gatewayName, "--full", sandboxName]);
   if (result.status !== 0 || !result.output?.trim()) throw new LaunchReadinessEvidenceError();
   try {
-    return launchReadinessPolicyDigest(result.output);
+    parseAndValidateSandboxPolicy(result.output);
   } catch {
     throw new LaunchReadinessEvidenceError();
   }
@@ -720,10 +705,7 @@ async function captureLaunchIdentity(
   if (entry.agent === "openclaw") {
     if (portableReceipt.kind === "invalid-or-legacy") throw new ObservationError("config");
     if (portableReceipt.kind === "current") {
-      if (
-        entry.policyPresetsFinalized !== true ||
-        entry.lifecycleGeneration !== portableReceipt.registryGeneration
-      ) {
+      if (entry.lifecycleGeneration !== portableReceipt.registryGeneration) {
         throw new ObservationError("config");
       }
       portableRuntimeAuthoritySha256 = launchReadinessDigest(portableReceipt.runtimeAuthority);
@@ -752,6 +734,7 @@ async function captureLaunchIdentity(
   if (!lifecycleGeneration || !recordedFingerprint) throw new ObservationError("identity");
 
   let live: ReturnType<SandboxRecreateObserver>;
+  const sandboxIdentityStartedAt = performance.now();
   try {
     live = (deps.observeSandbox ?? observeSandboxOnGateway)({
       sandboxName,
@@ -759,31 +742,78 @@ async function captureLaunchIdentity(
       gatewayPort,
     });
   } catch {
+    recordLaunchReadinessObservationFailure(deps, "sandbox-identity");
     throw new LaunchReadinessEvidenceError();
+  } finally {
+    recordObservationTiming(deps, "sandbox-identity", sandboxIdentityStartedAt);
   }
-  if (live.state === "missing") throw new ObservationError("identity");
-  if (live.state !== "ready") throw new ObservationError("health");
+  if (live.state === "missing") {
+    recordLaunchReadinessObservationFailure(deps, "sandbox-identity");
+    throw new ObservationError("identity");
+  }
+  if (live.state !== "ready") {
+    recordLaunchReadinessObservationFailure(deps, "sandbox-identity");
+    throw new ObservationError("health");
+  }
   if (live.liveIdentityFingerprint !== recordedFingerprint) {
+    recordLaunchReadinessObservationFailure(deps, "sandbox-identity");
     throw new ObservationError("identity");
   }
 
-  const livePolicy = captureLivePolicy(sandboxName, gatewayName, deps);
+  const policyStartedAt = performance.now();
+  try {
+    validateLivePolicy(sandboxName, gatewayName, deps);
+  } catch (error) {
+    recordLaunchReadinessObservationFailure(deps, "policy-get");
+    throw error;
+  } finally {
+    recordObservationTiming(deps, "policy-get", policyStartedAt);
+  }
   const inferenceSelection = normalizeInferenceSelection(entry);
   const inference = registry.getSandboxEntryInference(entry);
-  const inferenceResult = (deps.capture ?? ((args) => captureLaunchReadiness(args)))(
-    buildGatewayInferenceGetArgs(gatewayName),
-  );
-  if (inferenceResult.status !== 0) throw new LaunchReadinessEvidenceError();
-  const liveInference = parseGatewayInference(inferenceResult.output);
-  const liveInferenceAbsent = reportsInferenceNotConfigured(inferenceResult.output);
+  const inferenceGetStartedAt = performance.now();
+  let inferenceResult: ReturnType<typeof captureLaunchReadiness>;
+  try {
+    inferenceResult = (deps.capture ?? ((args) => captureLaunchReadiness(args)))(
+      buildGatewayInferenceGetArgs(gatewayName),
+    );
+  } catch (error) {
+    recordLaunchReadinessObservationFailure(deps, "inference-get");
+    throw error;
+  } finally {
+    recordObservationTiming(deps, "inference-get", inferenceGetStartedAt);
+  }
+  if (inferenceResult.status !== 0) {
+    recordLaunchReadinessObservationFailure(deps, "inference-get");
+    throw new LaunchReadinessEvidenceError();
+  }
+  let liveInference: ReturnType<typeof parseGatewayInference>;
+  let liveInferenceAbsent: boolean;
+  try {
+    liveInference = parseGatewayInference(inferenceResult.output);
+    liveInferenceAbsent = reportsInferenceNotConfigured(inferenceResult.output);
+  } catch (error) {
+    recordLaunchReadinessObservationFailure(deps, "inference-get");
+    throw error;
+  }
   if (inference.kind === "configured") {
-    if (!liveInference && !liveInferenceAbsent) throw new LaunchReadinessEvidenceError();
+    if (!liveInference && !liveInferenceAbsent) {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
+      throw new LaunchReadinessEvidenceError();
+    }
     if (planInferenceRouteReconcile(liveInference, inference).kind !== "aligned") {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
       throw new ObservationError("config");
     }
   } else {
-    if (liveInference) throw new ObservationError("config");
-    if (!liveInferenceAbsent) throw new LaunchReadinessEvidenceError();
+    if (liveInference) {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
+      throw new ObservationError("config");
+    }
+    if (!liveInferenceAbsent) {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
+      throw new LaunchReadinessEvidenceError();
+    }
   }
 
   await requireLaunchSemanticHealth(
@@ -822,7 +852,6 @@ async function captureLaunchIdentity(
     identity: {
       registry: launchReadinessDigest(projection),
       agent: launchReadinessDigest(projectAgent(agent)),
-      livePolicy,
       liveInference: launchReadinessDigest({
         selection: inferenceSelection,
         live: liveInference
@@ -846,7 +875,6 @@ function compareIdentity(
   const baseMatches =
     left.registry === right.registry &&
     left.agent === right.agent &&
-    left.livePolicy === right.livePolicy &&
     left.liveInference === right.liveInference &&
     left.gatewayName === right.gatewayName &&
     left.lifecycleGeneration === right.lifecycleGeneration &&
@@ -1045,7 +1073,7 @@ export async function settlePortableOpenClawPairing(
   sandboxName: string,
   options: {
     readonly portableRequired?: boolean;
-    readonly revalidatePolicyRequirements?: (operation: string) => void;
+    readonly revalidateSandboxIdentity?: (operation: string) => void;
   } = {},
   deps: LaunchReadinessDeps = {},
 ): Promise<PortableOpenClawPairingSettlementResult> {
@@ -1060,7 +1088,7 @@ export async function settlePortableOpenClawPairing(
     deps.observeOpenClawPairingSettlement ?? observeOpenClawPairingSettlement;
   const runProducer = deps.runPortablePairingProducer ?? runPortableOpenClawPairingRequestProducer;
   const runApproval = deps.runPortablePairingApproval ?? runPortableOpenClawPairingApproval;
-  const revalidatePolicyRequirements = options.revalidatePolicyRequirements;
+  const revalidateSandboxIdentity = options.revalidateSandboxIdentity;
   const now = deps.now ?? (() => performance.now());
   const sleep =
     deps.sleep ??
@@ -1081,10 +1109,9 @@ export async function settlePortableOpenClawPairing(
     if (
       firstEntry?.agent === null &&
       options.portableRequired === true &&
-      firstEntry.policyPresetsFinalized === true &&
       portableLifecycleReceiptMatchesGeneration(firstReceipt, firstEntry.lifecycleGeneration)
     ) {
-      revalidatePolicyRequirements?.(`update the recorded agent for sandbox '${sandboxName}'`);
+      revalidateSandboxIdentity?.(`update the recorded agent for sandbox '${sandboxName}'`);
       if (!updateSandbox(sandboxName, { agent: "openclaw" })) {
         return incompletePortablePairing("portable-runtime-identity-invalid");
       }
@@ -1107,9 +1134,6 @@ export async function settlePortableOpenClawPairing(
     if (firstReceipt.kind !== "current") {
       return incompletePortablePairing("portable-receipt-invalid");
     }
-    if (firstEntry.policyPresetsFinalized !== true) {
-      return incompletePortablePairing("portable-policy-incomplete");
-    }
     const firstTarget = resolveOpenClawPairingSettlementTarget(
       sandboxName,
       firstEntry,
@@ -1123,9 +1147,6 @@ export async function settlePortableOpenClawPairing(
       const lockedEntry = getSandbox(sandboxName);
       if (lockedReceipt.kind !== "current" || portableReceiptChanged(firstReceipt, lockedReceipt)) {
         return incompletePortablePairing("portable-receipt-invalid");
-      }
-      if (lockedEntry?.policyPresetsFinalized !== true) {
-        return incompletePortablePairing("portable-policy-incomplete");
       }
       const target = resolveOpenClawPairingSettlementTarget(
         sandboxName,
@@ -1161,7 +1182,7 @@ export async function settlePortableOpenClawPairing(
       }
       const first = initial.value;
       if (first.state === "settled") {
-        revalidatePolicyRequirements?.(
+        revalidateSandboxIdentity?.(
           `publish settled Portable OpenClaw pairing for sandbox '${sandboxName}'`,
         );
         return { kind: "settled" };
@@ -1169,12 +1190,12 @@ export async function settlePortableOpenClawPairing(
 
       // A canonical pending transition is the producer's completed output.
       if (first.state === "pairing-only") {
-        revalidatePolicyRequirements?.(
+        revalidateSandboxIdentity?.(
           `request Portable OpenClaw pairing for sandbox '${sandboxName}'`,
         );
         runProducer(sandboxName, target.gatewayName);
       }
-      revalidatePolicyRequirements?.(
+      revalidateSandboxIdentity?.(
         `approve Portable OpenClaw pairing for sandbox '${sandboxName}'`,
       );
       runApproval(sandboxName, target.gatewayName, first.deviceIdentitySha256);
@@ -1206,7 +1227,7 @@ export async function settlePortableOpenClawPairing(
       if (final.kind !== "observed") {
         return incompletePortablePairing("portable-pairing-incomplete");
       }
-      revalidatePolicyRequirements?.(
+      revalidateSandboxIdentity?.(
         `publish settled Portable OpenClaw pairing for sandbox '${sandboxName}'`,
       );
       return { kind: "settled" };

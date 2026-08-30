@@ -2688,44 +2688,6 @@ function validateTrustedE2ePlannerBoundary(
   }
 }
 
-function validateExactPrManagedImageCatalogBoundary(
-  errors: string[],
-  generateSteps: WorkflowRecord[],
-  generate: WorkflowRecord | undefined,
-  generateCheckout: WorkflowRecord | undefined,
-): void {
-  const managedCatalog = requireStep(
-    errors,
-    generateSteps,
-    "Resolve exact PR managed-image catalog",
-  );
-  if (
-    managedCatalog?.if !==
-      "${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
-    !isDeepStrictEqual(asRecord(managedCatalog?.env), {
-      BASE_SHA: "${{ inputs.base_sha }}",
-      CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
-      CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
-      GITHUB_TOKEN:
-        "${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && steps.candidate_authorization.outputs.nvidia_owned == 'true' && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || github.token }}",
-      MANAGED_IMAGE_PUBLICATION_SHA: "${{ inputs.managed_image_publication_sha }}",
-      PR_NUMBER: "${{ inputs.pr_number }}",
-    }) ||
-    managedCatalog?.run !==
-      'node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "${RUNNER_TEMP}/pr-managed-image-catalog.json"'
-  ) {
-    errors.push("manual PR E2E must resolve the selected exact managed-image publication");
-  }
-  if (
-    generate &&
-    managedCatalog &&
-    generateCheckout &&
-    (generateSteps.indexOf(managedCatalog) <= generateSteps.indexOf(generate) ||
-      generateSteps.indexOf(managedCatalog) >= generateSteps.indexOf(generateCheckout))
-  ) {
-    errors.push("exact managed-image publication must resolve before candidate checkout");
-  }
-}
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
