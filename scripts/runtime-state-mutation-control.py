@@ -2788,7 +2788,7 @@ def _discover_fence(expected_mount_namespace: str) -> FenceProof:
         _fail("start-process-identity-drift")
     if len(second_support) != len(support_references) or any(
         not _process_matches_reference(process, reference)
-        for process, reference in zip(second_support, support_references)
+        for process, reference in zip(second_support, support_references, strict=True)
     ):
         _fail("startup-support-identity-drift")
     return FenceProof(
