@@ -20,7 +20,7 @@ export type SnapshotGatewayProbeClassification =
 export type SnapshotRestoreResultClassification =
   | "restored"
   | "restored-pairing-unverified"
-  | "managed-clone-rebind-required"
+  | "managed-clone-not-available"
   | "command-failure"
   | "missing-restored-marker";
 
@@ -75,10 +75,10 @@ export function classifySnapshotRestoreResult(result: {
   if (
     result.exitCode !== null &&
     result.exitCode !== 0 &&
-    /requires managed-profile clone rebind/i.test(output) &&
+    /uses a NemoClaw-managed image/i.test(output) &&
     /Destination '.+' was not changed/i.test(output)
   ) {
-    return "managed-clone-rebind-required";
+    return "managed-clone-not-available";
   }
   if (result.exitCode !== 0) return "command-failure";
   return /\bRestored\b/.test(output) ? "restored" : "missing-restored-marker";
