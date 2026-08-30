@@ -95,14 +95,14 @@ export async function assertHermesFollowUpReplies({
   };
 
   const beforeSeedSessions = await listDefaultSessions("phase-4-issue-5254-sessions-before-seed");
-  const seedPrompt = "Reply with exactly one word: PONG";
+  const seedPrompt = "Start a session. Reply with exactly one word: PONG";
   const seedResult = await runHermesCli(["-z", seedPrompt], "phase-4-issue-5254-seed-oneshot");
   expect(containsAnswer(stripAnsi(seedResult.stdout), "PONG"), resultText(seedResult)).toBe(true);
   const seedSessionId = onlyNewHermesSessionId(
     beforeSeedSessions,
     await listDefaultSessions("phase-4-issue-5254-sessions-after-seed"),
   );
-  const resumePrompt = "Reply with exactly one word: PONG";
+  const resumePrompt = "Resume this session. Reply with exactly one word: PONG";
   await expectNoNewDefaultSessions(
     await listDefaultSessions("phase-4-issue-5254-sessions-before-resume"),
     "phase-4-issue-5254-session-before-resume-metadata",
@@ -112,7 +112,7 @@ export async function assertHermesFollowUpReplies({
     "phase-4-issue-5254-resume-oneshot",
     "phase-4-issue-5254-sessions-after-resume",
   );
-  const continuePrompt = "Again, reply with exactly one word: PONG";
+  const continuePrompt = "Continue this session. Reply with exactly one word: PONG";
   await expectNoNewDefaultSessions(
     await listDefaultSessions("phase-4-issue-5254-sessions-before-continue"),
     "phase-4-issue-5254-session-before-continue-metadata",

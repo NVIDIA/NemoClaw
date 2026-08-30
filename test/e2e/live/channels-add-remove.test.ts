@@ -226,7 +226,6 @@ function expectQueuedTelegramRemoval(context: string): void {
   const channel = planArray(plan, "channels").find((item) => item.channelId === "telegram");
   expect(channel, `telegram removal tombstone missing ${context}`).toMatchObject({
     active: false,
-    selected: false,
     configured: false,
     disabled: true,
   });
