@@ -217,6 +217,11 @@ function removeTimerAuthorizationProof(
 }
 
 interface ClearTimerMarkerResult {
+  warning?: string;
+}
+
+interface TimerMarkerRetirementResult {
+  status: "removed" | "missing" | "changed" | "failed";
   retainedPath?: string;
   retryRequired?: boolean;
   warning?: string;
@@ -284,15 +289,16 @@ function clearTimerMarkerGeneration(
   expected: ShieldsTimerMarker,
   stateDir?: string,
   sourcePath = timerMarkerPath(sandboxName, stateDir),
-): ClearTimerMarkerResult {
+): TimerMarkerRetirementResult {
   const markerPath = timerMarkerPath(sandboxName, stateDir);
   const quarantinePath = `${markerPath}.completed-${String(process.pid)}-${randomUUID()}`;
   try {
     fs.renameSync(sourcePath, quarantinePath);
   } catch (error) {
     const errno = error as NodeJS.ErrnoException;
-    if (errno.code === "ENOENT") return {};
+    if (errno.code === "ENOENT") return { status: "missing" };
     return {
+      status: "failed",
       warning: `Failed to claim shields timer recovery artifact '${sourcePath}': ${errno.message}`,
     };
   }
@@ -302,13 +308,14 @@ function clearTimerMarkerGeneration(
       fs.unlinkSync(quarantinePath);
       removeTimerAuthorizationProof(sandboxName, expected.processToken, stateDir);
       fsyncTimerArtifactDirectory(markerPath);
-      return {};
+      return { status: "removed" };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       if (!fs.existsSync(quarantinePath)) {
         const restoreFailure = restoreTimerArtifactAfterDurabilityFailure(sourcePath, expected);
         const retainedPath = fs.existsSync(sourcePath) ? sourcePath : undefined;
         return {
+          status: "failed",
           ...(retainedPath ? { retainedPath } : {}),
           retryRequired: true,
           warning: restoreFailure
@@ -320,12 +327,14 @@ function clearTimerMarkerGeneration(
         fs.linkSync(quarantinePath, sourcePath);
         fs.unlinkSync(quarantinePath);
         return {
+          status: "failed",
           warning: `Could not remove completed Shields timer recovery artifact '${sourcePath}'; restored it for retry: ${detail}`,
         };
       } catch (restoreError) {
         const restoreDetail =
           restoreError instanceof Error ? restoreError.message : String(restoreError);
         return {
+          status: "failed",
           retainedPath: quarantinePath,
           warning: `Could not remove completed Shields timer recovery artifact '${sourcePath}' or restore it; retained '${quarantinePath}' for recovery: ${detail}; ${restoreDetail}`,
         };
@@ -337,13 +346,16 @@ function clearTimerMarkerGeneration(
     fs.linkSync(quarantinePath, sourcePath);
     fs.unlinkSync(quarantinePath);
   } catch (error) {
+    const errno = error as NodeJS.ErrnoException;
     const detail = error instanceof Error ? error.message : String(error);
     return {
+      status: errno.code === "EEXIST" ? "changed" : "failed",
       retainedPath: quarantinePath,
       warning: `Shields timer authority changed while retiring completed artifact '${sourcePath}'; retained '${quarantinePath}' for recovery: ${detail}`,
     };
   }
   return {
+    status: "changed",
     warning: `Shields timer authority changed while retiring completed artifact '${sourcePath}'`,
   };
 }
@@ -519,7 +531,12 @@ function killTimer(sandboxName: string): KillTimerResult {
   };
 }
 
-export type { ClearTimerMarkerResult, KillTimerResult, ShieldsTimerMarker as TimerMarker };
+export type {
+  ClearTimerMarkerResult,
+  KillTimerResult,
+  ShieldsTimerMarker as TimerMarker,
+  TimerMarkerRetirementResult,
+};
 export {
   clearTimerMarker,
   clearTimerMarkerGeneration,
