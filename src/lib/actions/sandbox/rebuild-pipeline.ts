@@ -486,6 +486,8 @@ async function rebuildSandboxUnlocked(
         });
         recreateJournal.completeAcceptedTarget();
         retainPolicyHandoffForRecovery = false;
+        console.log(`  Recovered the accepted replacement for '${sandboxName}'.`);
+        console.log(`  Backup is preserved at: ${recoveryBackup.backupPath}`);
         log(
           `Recovered and restored journaled replacement ${recreateJournal.id} for '${sandboxName}'`,
         );

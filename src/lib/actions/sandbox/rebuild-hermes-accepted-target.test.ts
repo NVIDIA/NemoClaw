@@ -213,6 +213,10 @@ describe("Hermes accepted replacement recovery", () => {
     );
     expect(phaseMocks.clearPolicyHandoff).toHaveBeenCalledOnce();
     expect(phaseMocks.cleanupPolicySource).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith("  Recovered the accepted replacement for 'alpha'.");
+    expect(console.log).toHaveBeenCalledWith(
+      `  Backup is preserved at: ${recoveryBackupPath}`,
+    );
   });
 
   it("retires both the unused current policy handoff and the recovered transaction handoff", async () => {

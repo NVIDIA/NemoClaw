@@ -146,7 +146,7 @@ seccomp:
     });
   });
 
-  it("adds only explicitly required messaging keys and lets live collisions win", () => {
+  it("rejects an incompatible live collision on an explicitly required messaging key", () => {
     const live = `
 version: 1
 network_policies:
@@ -161,13 +161,25 @@ network_policies:
   unrelated: {name: unrelated}
 `;
 
-    const merged = mergeReplacementPolicyAccess(live, replacement, ["teams", "wechat"]);
+    expect(() => mergeReplacementPolicyAccess(live, replacement, ["teams", "wechat"])).toThrow(
+      "live network policy 'teams' does not match the enabled channel requirement",
+    );
+  });
 
-    expect(merged.changed).toBe(true);
-    expect(YAML.parse(merged.source).network_policies).toEqual({
-      host_edit: { name: "host_edit" },
-      teams: { name: "host_teams" },
-      wechat: { name: "generated_wechat" },
+  it("accepts a matching enabled-channel entry and preserves unrelated host policy", () => {
+    const live = `version: 1
+network_policies:
+  host_edit: {name: host_edit}
+  teams: {name: generated_teams}
+`;
+    const replacement = `version: 1
+network_policies:
+  teams: {name: generated_teams}
+`;
+
+    expect(mergeReplacementPolicyAccess(live, replacement, ["teams"])).toEqual({
+      changed: false,
+      source: live,
     });
   });
 

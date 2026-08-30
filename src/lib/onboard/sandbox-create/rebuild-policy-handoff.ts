@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import { parseOpenShellPolicy } from "../../policy/merge";
@@ -169,9 +170,14 @@ function mergeRequestedReplacementNetworkPolicies(
         "required network policy source network_policies",
       );
       for (const [key, value] of Object.entries(policies)) {
-        if (!Object.hasOwn(replacementPolicies, key)) {
-          replacementPolicies[key] = structuredClone(value);
+        if (!required.has(key)) continue;
+        const existing = replacementPolicies[key];
+        if (existing !== undefined && !isDeepStrictEqual(existing, value)) {
+          throw new Error(
+            `Cannot prepare rebuild policy handoff: required network policy '${key}' has conflicting replacement sources.`,
+          );
         }
+        replacementPolicies[key] = structuredClone(value);
       }
     }
   }
@@ -187,11 +193,18 @@ function mergeRequestedReplacementNetworkPolicies(
     changed = true;
   }
   for (const key of required) {
-    if (Object.hasOwn(livePolicies, key)) continue;
     if (!Object.hasOwn(replacementPolicies, key)) {
       throw new Error(
         `Cannot prepare rebuild policy handoff: required network policy '${key}' is absent from the replacement policy.`,
       );
+    }
+    if (Object.hasOwn(livePolicies, key)) {
+      if (!isDeepStrictEqual(livePolicies[key], replacementPolicies[key])) {
+        throw new Error(
+          `Cannot prepare rebuild policy handoff: live network policy '${key}' does not match the enabled channel requirement.`,
+        );
+      }
+      continue;
     }
     livePolicies[key] = structuredClone(replacementPolicies[key]);
     changed = true;
@@ -203,10 +216,12 @@ function mergeRequestedReplacementNetworkPolicies(
 
 /**
  * Build one replacement-create input from OpenShell's live policy. Host edits
- * win completely outside missing non-root process identity, filesystem
- * access, and network keys required by an explicit active messaging command.
- * Those bounded image/command requirements are added only to the replacement
- * create input; they are never persisted as a NemoClaw-owned policy shadow.
+ * win completely outside missing non-root process identity, filesystem access,
+ * and network keys required by an explicit active messaging command. A live
+ * collision on an enabled channel key must already match the selected channel
+ * policy or rebuild stops before deletion. Those bounded image/command
+ * requirements are added only to the replacement create input; they are never
+ * persisted as a NemoClaw-owned policy shadow.
  */
 export function mergeReplacementPolicyAccess(
   livePolicySource: string,

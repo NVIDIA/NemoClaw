@@ -133,6 +133,8 @@ export interface RebuildManifest {
   rebuildPolicyHandoff?: {
     file: string;
     sha256: string;
+    /** Cleanup-only identity; retired handoffs cannot be consumed for recovery. */
+    retired?: boolean;
   };
   /** Allowlisted non-secret environment assignments captured for image recreation. */
   preservedEnv?: PreservedEnvFile[];
@@ -393,6 +395,8 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
         typeof value.rebuildPolicyHandoff.file === "string" &&
         typeof value.rebuildPolicyHandoff.sha256 === "string" &&
         /^[a-f0-9]{64}$/.test(value.rebuildPolicyHandoff.sha256) &&
+        (value.rebuildPolicyHandoff.retired === undefined ||
+          value.rebuildPolicyHandoff.retired === true) &&
         value.rebuildPolicyHandoff.file ===
           `rebuild-policy-handoff.${value.rebuildPolicyHandoff.sha256}.yaml`)) &&
     (value.preservedEnv === undefined ||
@@ -2602,30 +2606,47 @@ export function writeRebuildPolicyHandoff(
 /** Read a transaction-bound policy only when its exact published digest still matches. */
 export function readRebuildPolicyHandoff(manifest: RebuildManifest): string | null {
   const handoff = manifest.rebuildPolicyHandoff;
-  if (!handoff) return null;
+  if (!handoff || handoff.retired === true) return null;
   const content = readBoundRebuildPolicyHandoff(path.join(manifest.backupPath, handoff.file));
   if (content === null) return null;
   return createHash("sha256").update(content).digest("hex") === handoff.sha256 ? content : null;
 }
 
-/** Retire manifest authority before deleting the no-longer-needed handoff artifact. */
-export function clearRebuildPolicyHandoff(manifest: RebuildManifest): boolean {
+/** Retire recovery authority, retain cleanup identity, then delete the handoff artifact. */
+export function clearRebuildPolicyHandoff(
+  manifest: RebuildManifest,
+  ops: {
+    write?: typeof writeManifest;
+    remove?: typeof rmSync;
+  } = {},
+): boolean {
   const handoff = manifest.rebuildPolicyHandoff;
   if (!handoff) return true;
-  const next = { ...manifest };
-  delete next.rebuildPolicyHandoff;
+  const write = ops.write ?? writeManifest;
+  const remove = ops.remove ?? rmSync;
+  if (handoff.retired !== true) {
+    const retired = { ...manifest, rebuildPolicyHandoff: { ...handoff, retired: true as const } };
+    try {
+      write(manifest.backupPath, retired);
+    } catch {
+      return false;
+    }
+    Object.assign(manifest, retired);
+  }
   try {
-    writeManifest(manifest.backupPath, next);
+    remove(path.join(manifest.backupPath, handoff.file), { force: true });
+  } catch {
+    return false;
+  }
+  const cleared = { ...manifest };
+  delete cleared.rebuildPolicyHandoff;
+  try {
+    write(manifest.backupPath, cleared);
   } catch {
     return false;
   }
   delete manifest.rebuildPolicyHandoff;
-  try {
-    rmSync(path.join(manifest.backupPath, handoff.file), { force: true });
-    return true;
-  } catch {
-    return false;
-  }
+  return true;
 }
 
 function readManifestPayload(backupPath: string): unknown | null {

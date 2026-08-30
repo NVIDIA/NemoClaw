@@ -116,4 +116,34 @@ describe("bounded rebuild policy handoff", () => {
       JSON.parse(fs.readFileSync(path.join(backupPath, "rebuild-manifest.json"), "utf8")),
     ).not.toHaveProperty("rebuildPolicyHandoff");
   });
+
+  it("retains cleanup identity after deletion fails and removes it on retry", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-cleanup-"));
+    tempDirs.push(backupPath);
+    const published = manifest(backupPath);
+    __test.writeManifest(backupPath, published);
+    const withHandoff = writeRebuildPolicyHandoff(
+      published,
+      "version: 1\nnetwork_policies: {}\n",
+    );
+    const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
+
+    expect(
+      clearRebuildPolicyHandoff(withHandoff, {
+        remove: vi.fn(() => {
+          throw new Error("injected deletion failure");
+        }),
+      }),
+    ).toBe(false);
+    expect(withHandoff.rebuildPolicyHandoff).toMatchObject({ retired: true });
+    expect(readRebuildPolicyHandoff(withHandoff)).toBeNull();
+    expect(fs.existsSync(handoffPath)).toBe(true);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(backupPath, "rebuild-manifest.json"), "utf8")),
+    ).toMatchObject({ rebuildPolicyHandoff: { retired: true } });
+
+    expect(clearRebuildPolicyHandoff(withHandoff)).toBe(true);
+    expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(withHandoff).not.toHaveProperty("rebuildPolicyHandoff");
+  });
 });
