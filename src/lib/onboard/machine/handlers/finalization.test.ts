@@ -115,42 +115,6 @@ async function runFinalizationHandlers(
 }
 
 describe("finalization handlers", () => {
-  it("refuses finalization before its first mutation when policy authority drifts (#9833)", async () => {
-    const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("policy authority changed");
-    });
-    const { deps, calls } = createDeps({ revalidatePolicyRequirements });
-
-    await expect(handleFinalizationPhase(baseOptions(deps))).rejects.toThrow(
-      "policy authority changed",
-    );
-
-    expect(calls.setDefaultSandbox).not.toHaveBeenCalled();
-    expect(calls.removeLegacy).not.toHaveBeenCalled();
-    expect(calls.cleanupHost).not.toHaveBeenCalled();
-    expect(calls.recoverProcesses).not.toHaveBeenCalled();
-  });
-
-  it("refuses post-verification before pairing or success publication after drift (#9833)", async () => {
-    const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("policy authority changed");
-    });
-    const { deps, calls } = createDeps({ revalidatePolicyRequirements });
-
-    await expect(
-      handlePostVerifyState({
-        ...baseOptions(deps),
-        agent: { name: "openclaw" },
-        portableProfileSelected: true,
-      }),
-    ).rejects.toThrow("policy authority changed");
-
-    expect(calls.settlePortablePairing).not.toHaveBeenCalled();
-    expect(calls.verify).not.toHaveBeenCalled();
-    expect(calls.dashboard).not.toHaveBeenCalled();
-    expect(calls.reportReadiness).not.toHaveBeenCalled();
-  });
-
   it("advances to post verification before deployment verification runs", async () => {
     const { deps, calls } = createDeps();
 
@@ -238,30 +202,6 @@ describe("finalization handlers", () => {
     expect(calls.settlePortablePairing).toHaveBeenCalledExactlyOnceWith("my-assistant", {
       portableRequired: true,
     });
-  });
-
-  it("passes the bound policy check through pairing settlement (#9833)", async () => {
-    const revalidatePolicyRequirements = vi.fn();
-    const portable = createDeps({ revalidatePolicyRequirements });
-
-    await runFinalizationHandlers({
-      ...baseOptions(portable.deps),
-      agent: { name: "openclaw" },
-      portableProfileSelected: true,
-    });
-
-    expect(portable.calls.settlePortablePairing).toHaveBeenCalledExactlyOnceWith("my-assistant", {
-      portableRequired: true,
-      revalidatePolicyRequirements,
-    });
-
-    const ordinary = createDeps({ revalidatePolicyRequirements });
-    await runFinalizationHandlers(baseOptions(ordinary.deps));
-
-    expect(ordinary.calls.settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith(
-      "my-assistant",
-      revalidatePolicyRequirements,
-    );
   });
 
   it("fails selected Portable OpenClaw closed before ordinary writers when registry identity is invalid (#9207)", async () => {
@@ -407,44 +347,6 @@ describe("finalization handlers", () => {
     expect(persistDashboardPort).toHaveBeenCalledWith("my-assistant", 18792);
   });
 
-  it("withholds dashboard-port persistence when authority drifts after forwarding (#9833)", async () => {
-    const persistDashboardPort = vi.fn();
-    const refuseDashboardPersistence = () => {
-      throw new Error("policy authority changed");
-    };
-    const policyChecks = new Map([
-      ["persist the dashboard port for sandbox 'my-assistant'", refuseDashboardPersistence],
-    ]);
-    const revalidatePolicyRequirements = vi.fn<(operation: string) => void>((operation) =>
-      policyChecks.get(operation)?.(),
-    );
-    const ensureAgentDashboardForward = vi.fn(
-      (_sandboxName, _agent, revalidate?: (operation: string) => void) => {
-        revalidate?.("start dashboard forward");
-        return 18792;
-      },
-    );
-    const { deps } = createDeps({
-      ensureAgentDashboardForward,
-      persistDashboardPort,
-      revalidatePolicyRequirements,
-    });
-
-    await expect(
-      handleFinalizationPhase({
-        ...baseOptions(deps),
-        agent: { name: "hermes" },
-      }),
-    ).rejects.toThrow("policy authority changed");
-
-    expect(ensureAgentDashboardForward).toHaveBeenCalledWith(
-      "my-assistant",
-      { name: "hermes" },
-      revalidatePolicyRequirements,
-    );
-    expect(persistDashboardPort).not.toHaveBeenCalled();
-  });
-
   it("does not persist a zero dashboard port after final recovery (#8214)", async () => {
     const persistDashboardPort = vi.fn();
     const { deps } = createDeps({
@@ -556,33 +458,8 @@ describe("finalization handlers", () => {
 
     expect(calls.dashboard).not.toHaveBeenCalled();
     // The sandbox reached finalization (policies confirmed), so it stays the default
-    // even when post-policy verification flakes — only a pre-policy cancel rolls back.
+    // even when post-identity verification flakes — only a pre-policy cancel rolls back.
     expect(calls.setDefaultSandbox).toHaveBeenCalledWith("my-assistant");
-  });
-
-  it("withholds verified deployment output when authority drifts during the probe (#9833)", async () => {
-    const refuseStatusPublication = () => {
-      throw new Error("policy authority changed");
-    };
-    const policyChecks = new Map([
-      ["publish deployment status for sandbox 'my-assistant'", refuseStatusPublication],
-    ]);
-    const revalidatePolicyRequirements = vi.fn<(operation: string) => void>((operation) =>
-      policyChecks.get(operation)?.(),
-    );
-    const { deps, calls } = createDeps({ revalidatePolicyRequirements });
-
-    await expect(runFinalizationHandlers(baseOptions(deps))).rejects.toThrow(
-      "policy authority changed",
-    );
-
-    expect(calls.verify).toHaveBeenCalledOnce();
-    expect(calls.log).not.toHaveBeenCalled();
-    expect(calls.dashboard).not.toHaveBeenCalled();
-    expect(calls.reportReadiness).not.toHaveBeenCalled();
-    expect(revalidatePolicyRequirements).not.toHaveBeenCalledWith(
-      "complete onboarding for sandbox 'my-assistant'",
-    );
   });
 
   it("removes legacy credentials only when all staged values migrated", async () => {

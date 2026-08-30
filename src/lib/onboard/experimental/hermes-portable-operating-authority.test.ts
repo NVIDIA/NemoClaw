@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -82,8 +82,6 @@ function environment(): NodeJS.ProcessEnv {
 function snapshot(withSuccessor = true): HermesPortableReceiptSnapshot & {
   readonly receipt: HermesPortableConfiguredReceipt;
 } {
-  const bytes = fs.readFileSync(policyPath);
-  const stat = fs.statSync(policyPath, { bigint: true });
   const openshellExecutableAuthority: HermesPortableOpenShellExecutableAuthority = {
     version: "0.0.106",
     executable: executable("/usr/bin/openshell", "b".repeat(64)),
@@ -93,7 +91,7 @@ function snapshot(withSuccessor = true): HermesPortableReceiptSnapshot & {
     executable: executable("/usr/bin/podman", "c".repeat(64)),
   };
   const receipt: HermesPortableConfiguredReceipt = {
-    schemaVersion: 5,
+    schemaVersion: 7,
     phase: "active",
     agent: "hermes",
     transactionId: randomUUID(),
@@ -132,22 +130,7 @@ function snapshot(withSuccessor = true): HermesPortableReceiptSnapshot & {
       configDir: "/sandbox/.hermes",
       stateIdentitySha256: "e".repeat(64),
     },
-    policy: {
-      sourcePath: policyPath,
-      sourceSha256: createHash("sha256").update(bytes).digest("hex"),
-      intendedSemanticSha256: "f".repeat(64),
-      sourceIdentity: {
-        dev: String(stat.dev),
-        ino: String(stat.ino),
-        size: String(stat.size),
-        mode: 0o600,
-        uid: uid(),
-        mtimeNs: String(stat.mtimeNs),
-        ctimeNs: String(stat.ctimeNs),
-      },
-    },
     previousPhaseSha256: SHA,
-    verifiedLivePolicySemanticSha256: "f".repeat(64),
     container: {
       containerId: "1".repeat(64),
       sandboxId: "sandbox-id",
@@ -187,8 +170,8 @@ beforeEach(() => {
 
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
-describe("Hermes Portable schema-6 operation authority", () => {
-  it("keeps schema-5 authority durable unless requalification is explicit (#10423)", () => {
+describe("Hermes Portable schema-8 operation authority", () => {
+  it("keeps schema-7 authority durable unless requalification is explicit (#10423)", () => {
     const durable = snapshot(false);
     const captureSocketAuthority = vi.fn(() => socket("99"));
     const captureOpenShellExecutableAuthority = vi.fn();
@@ -208,7 +191,7 @@ describe("Hermes Portable schema-6 operation authority", () => {
     expect(capturePodmanExecutableAuthority).not.toHaveBeenCalled();
   });
 
-  it("captures operation-local authority for an explicitly admitted schema-5 receipt (#10423)", () => {
+  it("captures operation-local authority for an explicitly admitted schema-7 receipt (#10423)", () => {
     const captureSocketAuthority = vi.fn(() => socket("99"));
     const captureOpenShellExecutableAuthority = vi.fn(() => ({
       version: "0.0.106" as const,
@@ -330,7 +313,7 @@ describe("Hermes Portable schema-6 operation authority", () => {
     );
   });
 
-  it("rejects operation-local policy replacement before completion (#10423)", () => {
+  it("does not treat the old create-policy file as operating authority (#10423)", () => {
     const authority = qualifyHermesPortableOperatingAuthority(snapshot(), {
       env: environment(),
       captureSocketAuthority: () => socket("99"),
@@ -347,9 +330,7 @@ describe("Hermes Portable schema-6 operation authority", () => {
     fs.writeFileSync(replacement, fs.readFileSync(policyPath), { mode: 0o600 });
     fs.renameSync(replacement, policyPath);
 
-    expect(authority.assertCurrent).toThrow(
-      "operation-local filesystem or runtime identity changed",
-    );
+    expect(authority.assertCurrent).not.toThrow();
   });
 
   it.each(["openshell", "podman"] as const)(

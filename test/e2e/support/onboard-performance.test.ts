@@ -11,9 +11,7 @@ import {
 } from "../fixtures/onboard-performance.ts";
 import {
   buildOpenClawFirstTurnLatencyEvidence,
-  extractOpenClawAgentText,
   extractOpenClawAgentDurationEvidence,
-  extractOpenClawAgentPayloadText,
 } from "../live/agent-turn-latency-helpers.ts";
 
 const TRACE_ID = "0123456789abcdef0123456789abcdef";
@@ -456,46 +454,13 @@ describe("onboard performance evidence", () => {
     );
   });
 
-  it("rejects echoed user messages as first-agent-response evidence", () => {
-    expect(
-      extractOpenClawAgentPayloadText(
-        JSON.stringify({
-          messages: [{ role: "user", content: "Reply with exactly: NEMOCLAW_E2E_READY_6002" }],
-        }),
-      ),
-    ).toBe("");
-  });
-
-  it("accepts a framed OpenClaw agent-output payload", () => {
-    expect(
-      extractOpenClawAgentPayloadText(
-        `progress\n${JSON.stringify({ result: { payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }] } })}`,
-      ),
-    ).toBe("NEMOCLAW_E2E_READY_6002");
-  });
-
-  it("finds OpenClaw agent text in a later JSON envelope", () => {
-    expect(
-      extractOpenClawAgentText(
-        `leading output\n${JSON.stringify({ status: "starting" })}\n${JSON.stringify({ response: { text: "NVIDIA" } })}`,
-      ),
-    ).toBe("NVIDIA");
-  });
-
-  it("joins top-level agent-output payload fragments", () => {
-    expect(
-      extractOpenClawAgentPayloadText(
-        JSON.stringify({
-          payloads: [{ text: "NEMOCLAW_" }, { text: "E2E_READY_6002" }],
-        }),
-      ),
-    ).toBe("NEMOCLAW_\nE2E_READY_6002");
-  });
-
   it("records OpenClaw internal-agent duration with an explicit availability state", () => {
     expect(
       buildOpenClawFirstTurnLatencyEvidence(
-        `progress\n${JSON.stringify({ result: { meta: { durationMs: 8_916 } } })}`,
+        `progress\n${JSON.stringify({
+          status: "ok",
+          result: { payloads: [], meta: { durationMs: 8_916 } },
+        })}`,
         10_125,
       ),
     ).toEqual({
@@ -504,10 +469,29 @@ describe("onboard performance evidence", () => {
     });
   });
 
+  it("reads local OpenClaw duration metadata from the shared response envelope", () => {
+    expect(
+      extractOpenClawAgentDurationEvidence(
+        JSON.stringify({ payloads: [{ text: "ready" }], meta: { durationMs: 4_200 } }),
+      ),
+    ).toEqual({ durationMs: 4_200, status: "available" });
+  });
+
+  it("ignores duration metadata nested in an event record", () => {
+    expect(
+      extractOpenClawAgentDurationEvidence(
+        JSON.stringify({ event: "progress", data: { meta: { durationMs: 4_200 } } }),
+      ),
+    ).toEqual({ reason: "missing", status: "unavailable" });
+  });
+
   it("records missing OpenClaw duration metadata as unavailable", () => {
     expect(
       extractOpenClawAgentDurationEvidence(
-        JSON.stringify({ result: { payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }] } }),
+        `progress\n${JSON.stringify({
+          payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }],
+          meta: {},
+        })}`,
       ),
     ).toEqual({ reason: "missing", status: "unavailable" });
   });
@@ -515,7 +499,7 @@ describe("onboard performance evidence", () => {
   it("records malformed OpenClaw duration metadata as unavailable", () => {
     expect(
       extractOpenClawAgentDurationEvidence(
-        JSON.stringify({ result: { meta: { durationMs: "8916" } } }),
+        `progress\n${JSON.stringify({ payloads: [], meta: { durationMs: "8916" } })}`,
       ),
     ).toEqual({ reason: "malformed", status: "unavailable" });
   });

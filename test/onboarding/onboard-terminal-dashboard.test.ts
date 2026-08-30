@@ -14,10 +14,6 @@ type CommandEntry = {
   env?: Record<string, string | undefined> | null;
 };
 
-function writeExecutable(target: string, contents: string) {
-  fs.writeFileSync(target, contents, { mode: 0o755 });
-}
-
 function parseStdoutJson<T>(stdout: string): T {
   const line = stdout
     .trim()
@@ -164,7 +160,7 @@ runner.runCapture = (command) => {
 
 registry.getSandbox = () =>
   scenario === "reuse"
-    ? fixtureMocks.managedSandboxPolicyReceiptFixture({
+    ? fixtureMocks.sandboxLifecycleFixture({
         name: sandboxName,
         gpuEnabled: false,
         agent: "langchain-deepagents-code",

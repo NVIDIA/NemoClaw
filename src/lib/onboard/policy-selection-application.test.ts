@@ -62,8 +62,6 @@ describe("onboarding policy application", () => {
         error: null,
       })),
       waitForSandboxControlPlaneReady: vi.fn(() => true),
-      setPolicyTier: vi.fn(),
-      getRecordedPolicyTier: vi.fn(() => null),
       parsePolicyPresetEnv: vi.fn(() => []),
       env: {},
     });
@@ -112,8 +110,6 @@ describe("onboarding policy application", () => {
           error: null,
         })),
         waitForSandboxControlPlaneReady: vi.fn(() => true),
-        setPolicyTier: vi.fn(),
-        getRecordedPolicyTier: vi.fn(() => "balanced"),
         parsePolicyPresetEnv: vi.fn((value: string) =>
           value
             .split(",")

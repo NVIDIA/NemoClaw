@@ -47,7 +47,7 @@ PRODUCTION_FAIL_CLOSED_CONFIG_DIRS = frozenset(
     {"/sandbox/.openclaw", "/sandbox/.hermes", "/sandbox/.deepagents"}
 )
 OPENCLAW_CONFIG_DIR = "/sandbox/.openclaw"
-OPENCLAW_NATIVE_MUTABLE_ROOT = "devices"
+OPENCLAW_NATIVE_MUTABLE_ROOTS = ("devices", "identity")
 OPENCLAW_MUTATION_MUTEX_PATH = "/run/nemoclaw/openclaw-config-mutation.lock"
 MAX_TRANSITION_LOCK_BYTES = 16 * 1024
 # Keep this exact source/target contract aligned with
@@ -699,9 +699,9 @@ class TraversalContext:
         )
 
     def is_openclaw_native_mutable_path(self, relative_path: str) -> bool:
-        return self.config_path == OPENCLAW_CONFIG_DIR and (
-            relative_path == OPENCLAW_NATIVE_MUTABLE_ROOT
-            or relative_path.startswith(f"{OPENCLAW_NATIVE_MUTABLE_ROOT}/")
+        return self.config_path == OPENCLAW_CONFIG_DIR and any(
+            relative_path == root or relative_path.startswith(f"{root}/")
+            for root in OPENCLAW_NATIVE_MUTABLE_ROOTS
         )
 
     def is_under_writable_root(self, relative_path: str) -> bool:

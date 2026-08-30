@@ -179,12 +179,6 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 
 const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
-const policyAuthorityPreflight = require(${JSON.stringify(
-        path.join(repoRoot, "src", "lib", "onboard", "policy-authority", "preflight.ts"),
-      )});
-policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
-  authority: "nemoclaw-managed",
-});
 
 childProcess.spawn = (...args) => {
   const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
@@ -415,7 +409,6 @@ if (mode === "seed") {
       toolDisclosure: "progressive",
       dcodeAutoApprovalMode: null,
       observabilityEnabled: false,
-      policyTier: null,
     },
   });
 }
@@ -434,16 +427,15 @@ if (mode === "resume" && scenario === "foreign-reservation") {
   registry.save(data);
 }
 if (mode === "resume" && scenario === "changed-checkpoint") {
-  const requireCurrent = registry.requireCurrentPendingSandboxPolicyVerification;
+  const requireCurrent = registry.requireCurrentPendingSandboxCreateIdentity;
   let reads = 0;
-  registry.requireCurrentPendingSandboxPolicyVerification = (reservation, checkpoint) => {
+  registry.requireCurrentPendingSandboxCreateIdentity = (reservation, checkpoint) => {
     const current = requireCurrent(reservation, checkpoint);
     reads += 1;
     if (reads === 1) {
       const data = registry.load();
-      const changed = data.sandboxes["my-assistant"].pendingPolicyVerification;
-      changed.policyVersion += 1;
-      changed.policyCreationReceipt.policyVersion += 1;
+      const changed = data.sandboxes["my-assistant"].pendingCreateIdentity;
+      changed.route = changed.route === "native" ? "none" : "native";
       registry.save(data);
     }
     return current;
@@ -521,7 +513,7 @@ const createArgs = fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
   createFixture,
 );
 createArgs[15] = {
-  deferSandboxEffectsUntilPolicyVerification: true,
+  deferSandboxEffectsUntilIdentityVerification: true,
   recreate: false,
   toolDisclosure: "progressive",
   observabilityEnabled: false,
@@ -578,14 +570,14 @@ createArgs[16] = async () => {
         error: string;
         registryEntry: {
           pendingRouteReservation?: boolean;
-          pendingPolicyVerification?: unknown;
+          pendingCreateIdentity?: unknown;
           lifecycleLiveIdentityFingerprint?: string;
         };
         journal: { phase: string; targetLiveIdentityFingerprint?: string };
       }>(first.stdout);
       assert.match(retained.error, /automatic sandbox cleanup was not safe/u);
       assert.equal(retained.registryEntry.pendingRouteReservation, true);
-      assert.ok(retained.registryEntry.pendingPolicyVerification);
+      assert.ok(retained.registryEntry.pendingCreateIdentity);
       assert.match(
         retained.registryEntry.lifecycleLiveIdentityFingerprint ?? "",
         /^[0-9a-f]{64}$/u,
@@ -606,8 +598,7 @@ createArgs[16] = async () => {
         error: string | null;
         registryEntry: {
           pendingRouteReservation?: boolean;
-          pendingPolicyVerification?: unknown;
-          policyAuthority?: string;
+          pendingCreateIdentity?: unknown;
         };
       }>(second.stdout);
       const createEvents = fs
@@ -627,11 +618,7 @@ createArgs[16] = async () => {
       );
       assert.equal(recovered.sandboxName, resumes ? "my-assistant" : null);
       assert.equal(recovered.registryEntry.pendingRouteReservation, resumes ? undefined : true);
-      assert.equal(Boolean(recovered.registryEntry.pendingPolicyVerification), !resumes);
-      assert.equal(
-        recovered.registryEntry.policyAuthority,
-        resumes ? "nemoclaw-managed" : undefined,
-      );
+      assert.equal(Boolean(recovered.registryEntry.pendingCreateIdentity), !resumes);
       assert.deepEqual(effectEvents, resumes ? ["seed", "resume"] : ["seed"]);
     },
   );

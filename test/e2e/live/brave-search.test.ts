@@ -5,6 +5,7 @@ import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/san
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertBraveConfig,
@@ -20,7 +21,6 @@ import {
   SANDBOX_NAME,
   sandboxShell,
 } from "./brave-search-helpers.ts";
-import { extractOpenClawAgentText } from "./agent-turn-latency-helpers.ts";
 
 const LIVE_TIMEOUT_MS = 35 * 60_000;
 
@@ -109,7 +109,7 @@ test("Brave search preset wires policy/config, performs real searches, and survi
     /SsrFBlockedError|Blocked hostname|ECONNREFUSED|EAI_AGAIN|gateway unavailable|network connection error/i,
   );
   expect(agent.exitCode, resultText(agent)).toBe(0);
-  expect(extractOpenClawAgentText(agent.stdout), resultText(agent)).toMatch(
+  expect(parseOpenClawAgentText(agent.stdout), resultText(agent)).toMatch(
     /nvidia|geforce|cuda|gpu/i,
   );
 

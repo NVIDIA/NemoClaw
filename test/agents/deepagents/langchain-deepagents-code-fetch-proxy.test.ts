@@ -129,9 +129,7 @@ print("root-owned-proxy-verification-ok")
     }
   });
 
-  it.each(
-    ["example.com", "169.254.169.254", "127.0.0.1"],
-  )(
+  it.each(["example.com", "169.254.169.254", "127.0.0.1"])(
     "prepares read-only raw GitHub access without opening denied fetch targets [%s]",
     (deniedHost) => {
       const prepared = prepareInitialSandboxCreatePolicy(
@@ -139,7 +137,6 @@ print("root-owned-proxy-verification-ok")
         [],
         {
           agentName: "langchain-deepagents-code",
-          policyTier: "balanced",
           additionalPresets: ["observability-otlp-local"],
         },
       );
