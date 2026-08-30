@@ -8,6 +8,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import {
+  hasQuarantinedShieldsTimerRecoveryArtifact,
   isShieldsTimerDeadlineAbandoned,
   isShieldsTimerMarkerAbandoned,
   readShieldsTimerMarker,
@@ -541,6 +542,7 @@ export {
   clearTimerMarker,
   clearTimerMarkerGeneration,
   hasExactTimerAuthorizationProof,
+  hasQuarantinedShieldsTimerRecoveryArtifact,
   isShieldsTimerDeadlineAbandoned,
   isShieldsTimerMarkerAbandoned,
   isProcessAlive,

@@ -150,6 +150,18 @@ export function hasShieldsTimerRecoveryArtifact(
   try {
     const markerPath = shieldsTimerMarkerPath(sandboxName, stateDir);
     if (fs.existsSync(markerPath)) return true;
+    return hasQuarantinedShieldsTimerRecoveryArtifact(sandboxName, stateDir);
+  } catch {
+    return false;
+  }
+}
+
+export function hasQuarantinedShieldsTimerRecoveryArtifact(
+  sandboxName: string,
+  stateDir = resolveNemoclawStateDir(),
+): boolean {
+  try {
+    const markerPath = shieldsTimerMarkerPath(sandboxName, stateDir);
     const prefix = completedTimerMarkerPrefix(markerPath);
     return fs.readdirSync(path.dirname(markerPath)).some((name) => name.startsWith(prefix));
   } catch {

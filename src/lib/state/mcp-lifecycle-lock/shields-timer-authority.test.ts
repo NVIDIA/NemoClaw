@@ -8,6 +8,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  hasQuarantinedShieldsTimerRecoveryArtifact,
+  hasShieldsTimerRecoveryArtifact,
   isShieldsTimerDeadlineAbandoned,
   readShieldsTimerMarker,
   shieldsTimerMarkerPath,
@@ -34,6 +36,21 @@ function writeMarker(stateDir: string, requestedSandbox: string, markerSandbox: 
 }
 
 describe("Shields timer marker authority", () => {
+  it("distinguishes canonical and quarantined recovery artifacts", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-marker-"));
+    tempDirs.push(stateDir);
+    const markerPath = shieldsTimerMarkerPath("alpha", stateDir);
+    writeMarker(stateDir, "alpha", "alpha");
+
+    expect(hasShieldsTimerRecoveryArtifact("alpha", stateDir)).toBe(true);
+    expect(hasQuarantinedShieldsTimerRecoveryArtifact("alpha", stateDir)).toBe(false);
+
+    fs.renameSync(markerPath, `${markerPath}.completed-test`);
+
+    expect(hasShieldsTimerRecoveryArtifact("alpha", stateDir)).toBe(true);
+    expect(hasQuarantinedShieldsTimerRecoveryArtifact("alpha", stateDir)).toBe(true);
+  });
+
   it("accepts a marker bound to the requested sandbox", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-marker-"));
     tempDirs.push(stateDir);

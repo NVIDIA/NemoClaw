@@ -66,6 +66,7 @@ const {
   clearTimerMarkerGeneration,
   sameTimerMarkerGeneration,
   hasExactTimerAuthorizationProof,
+  hasQuarantinedShieldsTimerRecoveryArtifact,
   isShieldsTimerMarkerAbandoned,
   isProcessAlive,
   readProcessStartIdentity,
@@ -2325,7 +2326,6 @@ function inspectExpiredAutoRestoreMarker(sandboxName: string): TimerMarker | nul
 type CompletedAutoRestoreMarker = {
   artifactPaths: string[];
   marker: TimerMarker & { processToken: string };
-  markerPath: string;
   quarantined: boolean;
 };
 
@@ -2339,6 +2339,16 @@ function inspectCompletedAbandonedAutoRestoreMarker(
   sandboxName: string,
   stateDir = STATE_DIR,
 ): CompletedAutoRestoreMarker | null {
+  const state = loadShieldsState(sandboxName, stateDir);
+  if (state._isCorrupt || state.shieldsDown !== false) {
+    if (hasQuarantinedShieldsTimerRecoveryArtifact(sandboxName, stateDir)) {
+      throw completedAutoRestoreRecoveryError(
+        sandboxName,
+        "Completed auto-restore cleanup cannot confirm that Shields are UP",
+      );
+    }
+    return null;
+  }
   let candidate: ReturnType<typeof readShieldsTimerRecoveryCandidate>;
   try {
     candidate = readShieldsTimerRecoveryCandidate(sandboxName, stateDir);
@@ -2350,16 +2360,6 @@ function inspectCompletedAbandonedAutoRestoreMarker(
     );
   }
   if (!candidate) return null;
-  const state = loadShieldsState(sandboxName, stateDir);
-  if (state._isCorrupt || state.shieldsDown !== false) {
-    if (candidate.quarantined) {
-      throw completedAutoRestoreRecoveryError(
-        sandboxName,
-        "Completed auto-restore cleanup cannot confirm that Shields are UP",
-      );
-    }
-    return null;
-  }
   const marker = candidate.marker;
   if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) {
     if (candidate.quarantined) {
