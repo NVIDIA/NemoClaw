@@ -34,6 +34,7 @@ interface SharedStateFixture {
 }
 
 interface SharedStateFixtureOptions {
+  readonly daemonTransferStatus?: number;
   readonly stateAfterCommitFailure?: "committed" | "none" | "pending";
   readonly stateAfterStop?: "committed" | "none" | "pending";
 }
@@ -66,16 +67,31 @@ function fixture(
   const dockerRun = vi.fn((args: readonly string[]) => {
     commands.push([...args]);
     switch (args[0]) {
+      case "volume":
+      case "create":
+      case "rm":
+        return { status: 0 };
       case "cp": {
-        const source = String(args[2] ?? "");
-        const destination = String(args[3] ?? "");
-        const sourcePath = source.slice(`${CONTAINER_ID}:`.length);
-        const present =
-          (sourcePath === MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY &&
-            state === "committed") ||
-          (sourcePath === MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY && state === "pending");
-        events.push(`copy:${path.basename(sourcePath)}:${present ? "present" : "absent"}`);
-        return present ? copyPresentReceipt(destination) : copyMissingReceipt(sourcePath);
+        const daemonTransfer =
+          args[1] === "-a" && String(args[3]).includes("nemoclaw-managed-startup-receipt-seed");
+        switch (daemonTransfer) {
+          case true:
+            return {
+              status: options.daemonTransferStatus ?? 0,
+              stderr: options.daemonTransferStatus ? "daemon transfer failed" : "",
+            };
+          default: {
+            const source = String(args[2] ?? "");
+            const destination = String(args[3] ?? "");
+            const sourcePath = source.slice(`${CONTAINER_ID}:`.length);
+            const present =
+              (sourcePath === MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY &&
+                state === "committed") ||
+              (sourcePath === MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY && state === "pending");
+            events.push(`copy:${path.basename(sourcePath)}:${present ? "present" : "absent"}`);
+            return present ? copyPresentReceipt(destination) : copyMissingReceipt(sourcePath);
+          }
+        }
       }
       case "run": {
         const action = args.includes("--shared-state-transaction-status")
@@ -146,7 +162,7 @@ describe("Docker managed-bootstrap shared-state rollback authority", () => {
     expect(statusCommand).toContainEqual(
       expect.stringMatching(
         new RegExp(
-          `^type=bind,src=.+,dst=${MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY},readonly$`,
+          `^type=volume,src=nemoclaw-managed-startup-receipt-volume-[a-f0-9]+,dst=${path.posix.dirname(MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY)},readonly$`,
           "u",
         ),
       ),
@@ -175,11 +191,34 @@ describe("Docker managed-bootstrap shared-state rollback authority", () => {
     expect(rollbackCommand).toContainEqual(
       expect.stringMatching(
         new RegExp(
-          `^type=bind,src=.+,dst=${MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY},readonly$`,
+          `^type=volume,src=nemoclaw-managed-startup-receipt-volume-[a-f0-9]+,dst=${path.posix.dirname(MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY)},readonly$`,
           "u",
         ),
       ),
     );
+    expect(fake.deps.dockerRm).not.toHaveBeenCalled();
+    expect(fake.commands.flat().some((value) => value.includes("type=bind"))).toBe(false);
+  });
+
+  it("retains host authority and cleans daemon staging when receipt transfer fails", () => {
+    const fake = fixture("pending", { daemonTransferStatus: 1 });
+
+    expect(() =>
+      finalizeDockerManagedStartupSharedState(
+        { transaction: TRANSACTION, supervisorReady: false },
+        fake.deps,
+      ),
+    ).toThrow(/Could not transfer managed-startup receipt to Docker/u);
+
+    const hostCopy = fake.commands.find(
+      (args) =>
+        args[0] === "cp" &&
+        String(args[2]).startsWith(`${CONTAINER_ID}:`) &&
+        String(args[2]).endsWith(MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY),
+    );
+    expect(fs.existsSync(String(hostCopy?.[3] ?? ""))).toBe(true);
+    expect(fake.commands.some((args) => args[0] === "rm" && args[1] === "-f")).toBe(true);
+    expect(fake.commands.some((args) => args[0] === "volume" && args[1] === "rm")).toBe(true);
     expect(fake.deps.dockerRm).not.toHaveBeenCalled();
   });
 
@@ -223,10 +262,6 @@ describe("Docker managed-bootstrap shared-state rollback authority", () => {
         message: expect.stringContaining("commit helper failed"),
       }),
     );
-    const pendingSource = CONTAINER_ID + ":" + MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY;
-    const pendingCopies = fake.commands.filter(
-      (args) => args[0] === "cp" && args[2] === pendingSource,
-    );
     expect(
       fake.events.filter(
         (event) =>
@@ -234,16 +269,19 @@ describe("Docker managed-bootstrap shared-state rollback authority", () => {
           "copy:" + path.basename(MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY) + ":present",
       ),
     ).toHaveLength(1);
-    const preservedReceiptPath = String(pendingCopies[0]?.[3] ?? "");
+    const volumeCreates = fake.commands.filter(
+      (args) => args[0] === "volume" && args[1] === "create",
+    );
     const rollbackCommand = fake.commands.find((args) =>
       args.includes("--rollback-shared-state-transaction"),
     );
-    expect(rollbackCommand).toContain(
-      "type=bind,src=" +
-        preservedReceiptPath +
-        ",dst=" +
-        MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY +
-        ",readonly",
+    const rollbackMount = String(rollbackCommand?.[rollbackCommand.indexOf("--mount") + 1] ?? "");
+    expect(volumeCreates).toHaveLength(1);
+    expect(rollbackMount).toMatch(
+      new RegExp(
+        `^type=volume,src=${String(volumeCreates[0]?.[2])},dst=${path.posix.dirname(MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY)},readonly$`,
+        "u",
+      ),
     );
     expect(fake.deps.dockerRm).not.toHaveBeenCalled();
   });

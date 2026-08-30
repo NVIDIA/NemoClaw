@@ -5,8 +5,9 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { isObjectRecord } from "../../core/json-types";
-import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
+import { isValidName, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
 import { processIsAlive } from "../mcp-lifecycle-lock-identity";
 import { resolveNemoclawStateDir } from "../paths";
 
@@ -24,6 +25,14 @@ export interface ShieldsTimerMarker {
   leaseOwnerPid?: number;
   leaseOwnerStartIdentity?: string;
 }
+
+export interface ShieldsTimerRecoveryCandidate {
+  artifactPaths: string[];
+  marker: ShieldsTimerMarker;
+  quarantined: boolean;
+}
+
+const MAX_SHIELDS_TIMER_MARKER_BYTES = 64 * 1024;
 
 function isShieldsTimerMarker(value: unknown): value is ShieldsTimerMarker {
   if (!isObjectRecord(value)) return false;
@@ -87,20 +96,144 @@ export function readShieldsTimerMarker(
 
 export function readShieldsTimerMarkerFile(markerPath: string): ShieldsTimerMarker | null {
   try {
-    const markerFd = fs.openSync(
-      markerPath,
-      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-    );
+    const markerFile = openRegularFileNoFollow(markerPath);
     try {
-      if (!fs.fstatSync(markerFd).isFile()) return null;
-      const parsed = JSON.parse(fs.readFileSync(markerFd, "utf-8"));
+      const parsed = JSON.parse(
+        markerFile.readBytes(MAX_SHIELDS_TIMER_MARKER_BYTES).toString("utf-8"),
+      );
       return isShieldsTimerMarker(parsed) ? parsed : null;
     } finally {
-      fs.closeSync(markerFd);
+      markerFile.close();
     }
   } catch {
     return null;
   }
+}
+
+function completedTimerMarkerPrefix(markerPath: string): string {
+  return `${path.basename(markerPath)}.completed-`;
+}
+
+export function formatTerminalSafeDiagnosticValue(value: string): string {
+  return JSON.stringify(value).replace(
+    /[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu,
+    (character) => `\\u${character.codePointAt(0)!.toString(16).padStart(4, "0")}`,
+  );
+}
+
+function timerRecoveryArtifactInspectionError(
+  sandboxName: string,
+  stateDir: string,
+  error: unknown,
+): Error {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(
+    `Automatic Shields timer recovery could not inspect artifacts for sandbox '${sandboxName}' in state directory ${formatTerminalSafeDiagnosticValue(stateDir)}: ${formatTerminalSafeDiagnosticValue(detail)}. Correct the state-directory access failure, then rerun Shields status.`,
+    { cause: error },
+  );
+}
+
+export function sameShieldsTimerMarkerGeneration(
+  current: ShieldsTimerMarker | null,
+  expected: ShieldsTimerMarker,
+): boolean {
+  return (
+    current?.pid === expected.pid &&
+    current.sandboxName === expected.sandboxName &&
+    current.snapshotPath === expected.snapshotPath &&
+    current.restoreAt === expected.restoreAt &&
+    current.processToken === expected.processToken &&
+    current.timerProcessStartIdentity === expected.timerProcessStartIdentity &&
+    current.allowLegacyHermesProtocol === expected.allowLegacyHermesProtocol &&
+    current.agentName === expected.agentName &&
+    current.configPath === expected.configPath &&
+    current.configDir === expected.configDir &&
+    current.leaseOwnerPid === expected.leaseOwnerPid &&
+    current.leaseOwnerStartIdentity === expected.leaseOwnerStartIdentity
+  );
+}
+
+function ambiguousRecoveryArtifactsError(
+  sandboxName: string,
+  stateDir: string,
+  artifactPaths: readonly string[],
+): Error {
+  return new Error(
+    `Automatic Shields timer recovery stopped for sandbox '${sandboxName}' in state directory ${formatTerminalSafeDiagnosticValue(stateDir)} because its recovery artifacts are invalid or represent different generations. Stop all NemoClaw processes for this sandbox. Inspect each artifact and record its PID, process token, restore deadline, snapshot path, and process-start identity: ${artifactPaths.map(formatTerminalSafeDiagnosticValue).join(", ")}. Remove only an artifact whose exact process generation is proven obsolete, then rerun Shields status.`,
+  );
+}
+
+export function hasShieldsTimerRecoveryArtifact(
+  sandboxName: string,
+  stateDir = resolveNemoclawStateDir(),
+): boolean {
+  if (!isValidName(sandboxName)) return false;
+  try {
+    const markerPath = shieldsTimerMarkerPath(sandboxName, stateDir);
+    if (fs.existsSync(markerPath)) return true;
+    return hasQuarantinedShieldsTimerRecoveryArtifact(sandboxName, stateDir);
+  } catch {
+    // Route an unreadable state directory through the detailed recovery path.
+    return true;
+  }
+}
+
+export function hasQuarantinedShieldsTimerRecoveryArtifact(
+  sandboxName: string,
+  stateDir = resolveNemoclawStateDir(),
+): boolean {
+  try {
+    const markerPath = shieldsTimerMarkerPath(sandboxName, stateDir);
+    const prefix = completedTimerMarkerPrefix(markerPath);
+    return fs.readdirSync(path.dirname(markerPath)).some((name) => name.startsWith(prefix));
+  } catch (error) {
+    const errno = error as NodeJS.ErrnoException;
+    if (errno.code === "ENOENT") return false;
+    throw timerRecoveryArtifactInspectionError(sandboxName, stateDir, error);
+  }
+}
+
+export function readShieldsTimerRecoveryCandidate(
+  sandboxName: string,
+  stateDir = resolveNemoclawStateDir(),
+): ShieldsTimerRecoveryCandidate | null {
+  const markerPath = shieldsTimerMarkerPath(sandboxName, stateDir);
+  const prefix = completedTimerMarkerPrefix(markerPath);
+  let quarantinePaths: string[];
+  try {
+    quarantinePaths = fs
+      .readdirSync(path.dirname(markerPath))
+      .filter((name) => name.startsWith(prefix))
+      .map((name) => path.join(path.dirname(markerPath), name))
+      .sort();
+  } catch (error) {
+    const errno = error as NodeJS.ErrnoException;
+    if (errno.code !== "ENOENT") {
+      throw timerRecoveryArtifactInspectionError(sandboxName, stateDir, error);
+    }
+    quarantinePaths = [];
+  }
+  const candidates = [...(fs.existsSync(markerPath) ? [markerPath] : []), ...quarantinePaths];
+  if (candidates.length === 0) return null;
+  const markers = candidates.map((candidatePath) => readShieldsTimerMarkerFile(candidatePath));
+  const marker = markers[0];
+  if (
+    !marker ||
+    marker.sandboxName !== sandboxName ||
+    markers.some(
+      (candidate) =>
+        candidate?.sandboxName !== sandboxName ||
+        !sameShieldsTimerMarkerGeneration(candidate, marker),
+    )
+  ) {
+    throw ambiguousRecoveryArtifactsError(sandboxName, stateDir, candidates);
+  }
+  const candidatePath = candidates[0];
+  return {
+    artifactPaths: candidates,
+    marker,
+    quarantined: candidatePath !== markerPath,
+  };
 }
 
 export function readShieldsTimerTakeoverToken(
@@ -207,9 +340,21 @@ export function isShieldsTimerDeadlineAbandoned(
   now = Date.now(),
   probes: ShieldsTimerLivenessProbes = LOCAL_TIMER_LIVENESS_PROBES,
 ): boolean {
-  if (!isShieldsTimerDeadlineExpired(sandboxName, stateDir, now)) return false;
   const marker = readShieldsTimerMarker(sandboxName, stateDir);
   if (!marker) return false;
+  return isShieldsTimerMarkerAbandoned(marker, now, probes);
+}
+
+export function isShieldsTimerMarkerAbandoned(
+  marker: ShieldsTimerMarker,
+  now = Date.now(),
+  probes: ShieldsTimerLivenessProbes = LOCAL_TIMER_LIVENESS_PROBES,
+): boolean {
+  if (typeof marker.processToken !== "string" || !/^[0-9a-f]{32}$/.test(marker.processToken)) {
+    return false;
+  }
+  const restoreAtMs = new Date(marker.restoreAt).getTime();
+  if (!Number.isFinite(restoreAtMs) || restoreAtMs > now) return false;
   const recorded = marker.timerProcessStartIdentity;
   if (typeof recorded === "string" && recorded.length > 0) {
     const observed = probes.readProcessStartIdentity

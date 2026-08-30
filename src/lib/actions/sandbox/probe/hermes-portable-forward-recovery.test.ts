@@ -239,6 +239,17 @@ describe("Hermes Portable connect composition", () => {
     };
   };
 
+  const bindAcceptedReadinessToCurrentEntry = (
+    harness: ReturnType<typeof createConnectHarness>,
+  ): void => {
+    harness.inspectLaunchReadinessSpy.mockResolvedValue({
+      kind: "accepted",
+      category: "accepted",
+      agent: { name: "hermes" },
+      sb: harness.registryEntries[0]!,
+    } as never);
+  };
+
   beforeEach(() => {
     process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
     Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
@@ -269,6 +280,14 @@ describe("Hermes Portable connect composition", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ agent: "hermes" }),
+      "nemoclaw",
+      expect.objectContaining({
+        assertCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+      }),
+    );
     const startCall = harness.captureResolvedOpenshellSpy.mock.calls.find(
       ([args]) => Array.isArray(args) && args[0] === "forward" && args[1] === "start",
     );
@@ -336,6 +355,7 @@ describe("Hermes Portable connect composition", () => {
         portableRecoveryResult: { kind: "already-running" },
         readinessDecision: accepted.readinessDecision,
       });
+      bindAcceptedReadinessToCurrentEntry(harness);
       configureMissingHermesForwardCapture(harness, {
         initialStatus,
         afterStart: () => {
@@ -373,6 +393,7 @@ describe("Hermes Portable connect composition", () => {
       portableRecoveryResult: { kind: "already-running" },
       readinessDecision: accepted.readinessDecision,
     });
+    bindAcceptedReadinessToCurrentEntry(harness);
     const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
     harness.captureResolvedOpenshellSpy.mockImplementation(((args: unknown, options: unknown) => {
       const argv = Array.isArray(args) ? args : [];
@@ -566,7 +587,7 @@ describe("Hermes Portable connect composition", () => {
     ).toBe(false);
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
     const output = harness.errorSpy.mock.calls.flat().join("\n");
-    expect(output).toContain("authority changed during host-forward recovery");
+    expect(output).toContain("changed during launch-readiness verification");
     expect(output).not.toContain("same-path executable replacement canary");
   });
 

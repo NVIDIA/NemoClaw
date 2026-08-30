@@ -333,15 +333,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-review-advisor\.yaml$/,
-    testsToRun: runTests(
-      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
-    ),
+    testsToRun: runTests("test/e2e/support/e2e-operations-workflow-boundary.test.ts"),
   },
   {
     pattern: /(?:^|\/)tools\/pr-review-advisor\/openshell-policy\.yaml$/,
-    testsToRun: runTests(
-      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
-    ),
+    testsToRun: runTests("test/automation/pull-requests/pr-review-advisor-openshell.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/e2e-main-retry\.yaml$/,
