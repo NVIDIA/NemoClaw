@@ -337,4 +337,49 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
+
+  it("rejects retained command-authority drift after fallback before recovery", async () => {
+    const entry = {
+      name: "alpha",
+      agent: "hermes",
+      provider: "ollama-local",
+      model: "qwen3-vl:4b",
+      policies: [],
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+    } as never;
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      sessionAgent: { name: "hermes" },
+      registryEntry: entry,
+      portableReceiptDisposition: { kind: "hermes", phase: "active" },
+      readinessDecision: {
+        kind: "fallback",
+        category: "health",
+        fence: { epochId: "a".repeat(64) },
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        fenceFailed: false,
+        recoveryBlocked: false,
+      },
+    });
+    harness.assertHermesPortableOperatingCommandCurrentSpy
+      .mockReturnValueOnce(undefined)
+      .mockReturnValueOnce(undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("retained OpenShell command generation changed");
+      });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledOnce();
+    expect(harness.assertHermesPortableOperatingCommandCurrentSpy).toHaveBeenCalledTimes(3);
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
+    expect(harness.captureResolvedOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
 });

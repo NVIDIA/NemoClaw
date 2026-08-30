@@ -364,6 +364,98 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.registryRunning()).toBe(false);
   });
 
+  it("restores forwards, the stopped runtime, and the registry after retained command drift", () => {
+    const harness = createHarness();
+    const commandDrift = new Error("retained command authority changed");
+    const assertCallerCurrent = vi.fn(() => {
+      harness.events.push("caller-current");
+    });
+    const dependency = {
+      release: vi.fn(() => harness.events.push("dependency-release")),
+      rollback: vi.fn(() => harness.events.push("dependency-rollback")),
+    };
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(
+        {
+          ...harness.input,
+          assertCallerCurrent,
+          prepareProbeDependency: vi.fn(() => {
+            harness.events.push("dependency-prepare");
+            assertCallerCurrent.mockImplementation(() => {
+              throw commandDrift;
+            });
+            return dependency;
+          }),
+        },
+        harness.overrides as never,
+      ),
+    ).toThrow(commandDrift);
+
+    expect(dependency.release).not.toHaveBeenCalled();
+    expect(dependency.rollback).toHaveBeenCalledOnce();
+    expect(harness.prepared.rollback).toHaveBeenCalledOnce();
+    expect(harness.events.indexOf("dependency-rollback")).toBeLessThan(
+      harness.events.indexOf("rollback"),
+    );
+    expect(harness.events.indexOf("rollback")).toBeLessThan(
+      harness.events.indexOf("registry-rollback"),
+    );
+    expect(harness.running()).toBe(false);
+    expect(harness.registryRunning()).toBe(false);
+  });
+
+  it("keeps runtime restoration uncertainty dominant when command drift also breaks forward rollback", () => {
+    const harness = createHarness();
+    const commandDrift = new Error("retained command authority changed");
+    const assertCallerCurrent = vi.fn();
+    const dependency = {
+      release: vi.fn(),
+      rollback: vi.fn(() => {
+        harness.events.push("dependency-rollback");
+        throw new Error("forward restoration unproved");
+      }),
+    };
+    vi.mocked(harness.prepared.rollback).mockImplementation(() => {
+      harness.events.push("rollback");
+      return {
+        priorState: "stopped",
+        status: "retained",
+        receipt: harness.receipt,
+      } as never;
+    });
+
+    let caught: unknown;
+    try {
+      recoverHermesPortableOllamaInference(
+        {
+          ...harness.input,
+          assertCallerCurrent,
+          prepareProbeDependency: vi.fn(() => {
+            assertCallerCurrent.mockImplementation(() => {
+              throw commandDrift;
+            });
+            return dependency;
+          }),
+        },
+        harness.overrides as never,
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(HermesPortableOllamaRecoveryError);
+    expect(caught).toMatchObject({ failure: "runtime-restoration-unproved" });
+    expect(dependency.rollback).toHaveBeenCalledOnce();
+    expect(harness.prepared.rollback).toHaveBeenCalledOnce();
+    expect(harness.events.indexOf("dependency-rollback")).toBeLessThan(
+      harness.events.indexOf("rollback"),
+    );
+    expect(harness.events).not.toContain("registry-rollback");
+    expect(harness.running()).toBe(true);
+    expect(harness.registryRunning()).toBe(true);
+  });
+
   it("preserves probe-dependency restoration uncertainty after restoring Ollama", () => {
     const harness = createHarness();
     const restorationError = new Error("forward restoration unproved");

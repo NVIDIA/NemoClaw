@@ -280,6 +280,14 @@ describe("Hermes Portable connect composition", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ agent: "hermes" }),
+      "nemoclaw",
+      expect.objectContaining({
+        assertCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+      }),
+    );
     const startCall = harness.captureResolvedOpenshellSpy.mock.calls.find(
       ([args]) => Array.isArray(args) && args[0] === "forward" && args[1] === "start",
     );
