@@ -49,6 +49,17 @@ describe("external gateway health workflow boundary", () => {
     );
   });
 
+  it("rejects a Runner invocation that bypasses the redacted shell fixture", () => {
+    const source = readRepoText("test/e2e/live/external-gateway-health-helpers.ts").replace(
+      "const result = await shellProbe.run(",
+      "const result = spawnSync(",
+    );
+
+    expect(validateExternalGatewayHealthHelper(source)).toContain(
+      "external gateway health helper must run exact Blueprint Runner external status",
+    );
+  });
+
   it("rejects package credentials or untrusted candidate execution in the package job", () => {
     const workflow = readExternalGatewayHealthWorkflow();
     const job = workflow.jobs["package-openshell-sdk"];

@@ -118,7 +118,7 @@
     },
     {
       "file": "test/package-contract/blueprint-external-target-plan.test.ts",
-      "test": "maps the package command to the reviewed Runner entry point (#9872)",
+      "test": "executes the installed package command and fails before effects when the SDK is absent (#9872)",
       "category": "compatibility"
     },
     {

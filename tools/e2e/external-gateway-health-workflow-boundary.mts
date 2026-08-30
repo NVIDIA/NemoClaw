@@ -296,9 +296,14 @@ export function validateExternalGatewayHealthHelper(source: string): string[] {
 );`;
   const required = [
     exactRunnerPath,
-    "[BLUEPRINT_RUNNER, \"status\", \"--external-target\"]",
+    '[BLUEPRINT_RUNNER, "status", "--external-target"]',
+    `const result = await shellProbe.run(
+    trustedShellCommand({
+      command: process.execPath,`,
     '"status", "--external-target"',
+    "captureLimitBytes: 64 * 1024",
     "NEMOCLAW_BLUEPRINT_PATH: blueprintRoot",
+    "redactionValues: [privateStateRoot, UNUSED_AUTHENTICATION_SENTINEL]",
   ];
   if (required.some((fragment) => !source.includes(fragment))) {
     errors.push("external gateway health helper must run exact Blueprint Runner external status");

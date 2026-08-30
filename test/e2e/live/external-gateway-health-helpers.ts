@@ -16,8 +16,14 @@ import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-quali
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { runBoundedRetry } from "../fixtures/retry-policy.ts";
+import {
+  type ShellProbe,
+  type ShellProbeResult,
+  trustedShellCommand,
+} from "../fixtures/shell-probe.ts";
 
 export const EXTERNAL_GATEWAY_HEALTH_TIMEOUT_MS = 3 * 60_000;
+const UNUSED_AUTHENTICATION_SENTINEL = "unused-public-health-credential";
 const BLUEPRINT_RUNNER = path.join(
   import.meta.dirname,
   "..",
@@ -31,6 +37,7 @@ type ScenarioFixtures = Readonly<{
   artifacts: ArtifactSink;
   cleanup: CleanupRegistry;
   progress: TestProgress;
+  shellProbe: ShellProbe;
   skip: (message?: string) => void;
 }>;
 
@@ -156,19 +163,31 @@ async function waitForGatewayPort(options: {
   }
 }
 
-function runBlueprintRunnerHealth(blueprintRoot: string): Record<string, unknown> {
-  const result = spawnSync(
-    process.execPath,
-    [BLUEPRINT_RUNNER, "status", "--external-target"],
+function requireProbeSuccess(result: ShellProbeResult, operation: string): void {
+  if (!result.timedOut && result.signal === null && result.exitCode === 0) return;
+  throw new Error(`${operation} failed. See the redacted E2E artifacts.`);
+}
+
+async function runBlueprintRunnerHealth(
+  shellProbe: ShellProbe,
+  blueprintRoot: string,
+  privateStateRoot: string,
+): Promise<Record<string, unknown>> {
+  const result = await shellProbe.run(
+    trustedShellCommand({
+      command: process.execPath,
+      args: [BLUEPRINT_RUNNER, "status", "--external-target"],
+      reason: "observe public OpenShell health through the packaged Blueprint Runner",
+    }),
     {
-      encoding: "utf8",
-      env: { ...process.env, NEMOCLAW_BLUEPRINT_PATH: blueprintRoot },
-      killSignal: "SIGKILL",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 10_000,
+      artifactName: "external-gateway-blueprint-runner-health",
+      captureLimitBytes: 64 * 1024,
+      env: { NEMOCLAW_BLUEPRINT_PATH: blueprintRoot },
+      redactionValues: [privateStateRoot, UNUSED_AUTHENTICATION_SENTINEL],
+      timeoutMs: 10_000,
     },
   );
-  expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  requireProbeSuccess(result, "Blueprint Runner public health observation");
   return parseRunnerStatus(result.stdout);
 }
 
@@ -176,20 +195,30 @@ export async function runExternalGatewayHealthScenario({
   artifacts,
   cleanup,
   progress,
+  shellProbe,
   skip,
 }: ScenarioFixtures): Promise<void> {
   const gatewayBin = resolveGatewayBin();
   if (!gatewayBin) skip("openshell-gateway 0.0.106 is required");
 
   progress.phase("confirm the exact OpenShell gateway and SDK prerequisites");
-  const version = spawnSync(gatewayBin!, ["--version"], {
-    encoding: "utf8",
-    killSignal: "SIGKILL",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 5_000,
-  });
-  expect(version.status, `${version.stdout}\n${version.stderr}`).toBe(0);
-  expect(`${version.stdout}\n${version.stderr}`).toContain(OPENSHELL_V0106_QUALIFICATION.version);
+  const version = await shellProbe.run(
+    trustedShellCommand({
+      command: gatewayBin!,
+      args: ["--version"],
+      reason: "confirm the local OpenShell gateway release",
+    }),
+    {
+      artifactName: "external-gateway-version",
+      captureLimitBytes: 16 * 1024,
+      redactionValues: [gatewayBin!],
+      timeoutMs: 5_000,
+    },
+  );
+  requireProbeSuccess(version, "OpenShell gateway version check");
+  if (!`${version.stdout}\n${version.stderr}`.includes(OPENSHELL_V0106_QUALIFICATION.version)) {
+    throw new Error("The OpenShell gateway release does not match the required release.");
+  }
 
   const address = externalHostAddress();
   const port = await pickPort(address);
@@ -199,17 +228,20 @@ export async function runExternalGatewayHealthScenario({
     fs.rmSync(stateDir, { recursive: true, force: true }),
   );
   const tls = getDockerDriverGatewayLocalTlsBundle(stateDir);
-  const certificate = spawnSync(
-    gatewayBin!,
-    ["generate-certs", "--output-dir", tls.localTlsDir, "--server-san", address],
+  const certificate = await shellProbe.run(
+    trustedShellCommand({
+      command: gatewayBin!,
+      args: ["generate-certs", "--output-dir", tls.localTlsDir, "--server-san", address],
+      reason: "create the temporary TLS identity for the local OpenShell gateway",
+    }),
     {
-      encoding: "utf8",
-      killSignal: "SIGKILL",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 15_000,
+      artifactName: "external-gateway-generate-certs",
+      captureLimitBytes: 16 * 1024,
+      redactionValues: [gatewayBin!, stateDir],
+      timeoutMs: 15_000,
     },
   );
-  expect(certificate.status, `${certificate.stdout}\n${certificate.stderr}`).toBe(0);
+  requireProbeSuccess(certificate, "OpenShell gateway certificate generation");
   const configPath = path.join(stateDir, "gateway.toml");
   fs.writeFileSync(
     configPath,
@@ -260,7 +292,7 @@ export async function runExternalGatewayHealthScenario({
     const blueprintRoot = path.join(stateDir, "blueprint");
     const authenticationPath = path.join(stateDir, "authentication");
     fs.mkdirSync(blueprintRoot);
-    fs.writeFileSync(authenticationPath, "unused-public-health-credential\n", { mode: 0o600 });
+    fs.writeFileSync(authenticationPath, `${UNUSED_AUTHENTICATION_SENTINEL}\n`, { mode: 0o600 });
     fs.writeFileSync(
       path.join(blueprintRoot, "blueprint.yaml"),
       YAML.stringify({
@@ -286,7 +318,7 @@ export async function runExternalGatewayHealthScenario({
       gateway,
       port,
     });
-    const status = runBlueprintRunnerHealth(blueprintRoot);
+    const status = await runBlueprintRunnerHealth(shellProbe, blueprintRoot, stateDir);
     expect(status.compatibility).toBe("compatible");
     expect(status.gateway).toEqual({
       release: OPENSHELL_V0106_QUALIFICATION.version,

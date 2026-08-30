@@ -213,51 +213,16 @@ describe("packaged Blueprint Runner npm cache", () => {
 });
 
 describe("packaged Blueprint Runner external target", () => {
-  // source-shape-contract: compatibility -- The published package command must select the reviewed Blueprint Runner entry point
+  // source-shape-contract: compatibility -- The installed command must select the protected root wrapper before its runtime behavior is trusted
   it(
-    "maps the package command to the reviewed Runner entry point (#9872)",
-    { timeout: 30_000 },
-    () => {
-      const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runner-command-"));
-      const archiveRoot = path.join(fixtureRoot, "archive");
-      const packedRoot = path.join(fixtureRoot, "packed");
-
-      try {
-        fs.mkdirSync(archiveRoot, { recursive: true });
-        fs.mkdirSync(packedRoot, { recursive: true });
-        const pack = spawnSync(
-          "npm",
-          ["pack", "--ignore-scripts", "--silent", "--pack-destination", archiveRoot],
-          { cwd: REPOSITORY_ROOT, encoding: "utf8", env: npmEnvironment() },
-        );
-        assertCommandSucceeded(pack, "root package archive creation");
-        const archives = fs.readdirSync(archiveRoot).filter((entry) => entry.endsWith(".tgz"));
-        expect(archives).toHaveLength(1);
-        const extract = spawnSync(
-          "tar",
-          ["-xzf", path.join(archiveRoot, archives[0]!), "--strip-components=1", "-C", packedRoot],
-          { encoding: "utf8", env: npmEnvironment() },
-        );
-        assertCommandSucceeded(extract, "root package manifest extraction");
-        const manifest = JSON.parse(
-          fs.readFileSync(path.join(packedRoot, "package.json"), "utf8"),
-        ) as { bin?: Record<string, string> };
-
-        expect(manifest.bin?.["nemoclaw-blueprint-runner"]).toBe("./dist/lib/blueprint-runner.js");
-      } finally {
-        fs.rmSync(fixtureRoot, { force: true, recursive: true });
-      }
-    },
-  );
-
-  it(
-    "executes the root package entry point and fails before effects when the SDK is absent (#9872)",
+    "executes the installed package command and fails before effects when the SDK is absent (#9872)",
     { timeout: 240_000 },
     () => {
       const fixtureRoot = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-external-target-package-"),
       );
       const archiveRoot = path.join(fixtureRoot, "archive");
+      const consumerRoot = path.join(fixtureRoot, "consumer");
       const installRoot = path.join(fixtureRoot, "install");
       const runtimeRoot = path.join(fixtureRoot, "runtime");
       const blueprintRoot = path.join(runtimeRoot, "blueprint");
@@ -286,6 +251,12 @@ describe("packaged Blueprint Runner external target", () => {
           { encoding: "utf8", env: npmEnvironment() },
         );
         assertCommandSucceeded(extract, "root package archive extraction");
+        const packedManifest = JSON.parse(
+          fs.readFileSync(path.join(installRoot, "package.json"), "utf8"),
+        ) as { bin?: Record<string, string> };
+        expect(packedManifest.bin?.["nemoclaw-blueprint-runner"]).toBe(
+          "./dist/lib/blueprint-runner.js",
+        );
         fs.copyFileSync(
           path.join(REPOSITORY_ROOT, "package-lock.json"),
           path.join(installRoot, "package-lock.json"),
@@ -296,6 +267,29 @@ describe("packaged Blueprint Runner external target", () => {
           env: npmEnvironment(),
         });
         assertCommandSucceeded(install, "locked installation of the packed Runner graph");
+
+        fs.mkdirSync(consumerRoot, { recursive: true });
+        fs.writeFileSync(
+          path.join(consumerRoot, "package.json"),
+          JSON.stringify({ name: "nemoclaw-blueprint-runner-consumer", private: true }),
+        );
+        const consumerInstall = spawnSync(
+          "npm",
+          [
+            "install",
+            "--ignore-scripts",
+            "--offline",
+            "--omit=dev",
+            "--no-save",
+            "--package-lock=false",
+            installRoot,
+          ],
+          { cwd: consumerRoot, encoding: "utf8", env: npmEnvironment() },
+        );
+        assertCommandSucceeded(
+          consumerInstall,
+          "offline consumer installation of the packed Runner",
+        );
 
         const installedPackage = installRoot;
         const installedRunner = path.join(
@@ -327,7 +321,12 @@ describe("packaged Blueprint Runner external target", () => {
           "shared",
           "openshell-gateway-health-sdk.js",
         );
-        const installedBinary = path.join(installedPackage, "dist", "lib", "blueprint-runner.js");
+        const installedBinary = path.join(
+          consumerRoot,
+          "node_modules",
+          ".bin",
+          "nemoclaw-blueprint-runner",
+        );
         expect(fs.existsSync(installedRunner)).toBe(true);
         expect(fs.existsSync(installedRootObserver)).toBe(true);
         expect(fs.existsSync(installedSdkObserver)).toBe(true);
@@ -406,7 +405,7 @@ describe("packaged Blueprint Runner external target", () => {
         ];
         const runRunner = (argv: string[]) => {
           fs.rmSync(evidencePath, { force: true });
-          const result = spawnSync(process.execPath, [installedBinary, ...argv], {
+          const result = spawnSync(installedBinary, argv, {
             cwd: runtimeRoot,
             encoding: "utf8",
             env: {

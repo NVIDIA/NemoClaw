@@ -229,7 +229,7 @@ function expectFixedReachabilityFailure(
 ): void {
   expect(result.timedOut, result.stderr).toBe(false);
   expect(result.code, result.stderr).toBe(1);
-  expect(result.durationMs).toBeLessThan(8_000);
+  expect(result.durationMs).toBeLessThan(7_000);
   expect(result.stderr).toContain("NemoClaw could not reach the external OpenShell target.");
   expect(result.stderr).not.toContain(fixtureRoot);
   expect(result.stderr).not.toContain("BEGIN CERTIFICATE");
