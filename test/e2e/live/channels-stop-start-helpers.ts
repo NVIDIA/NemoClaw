@@ -11,9 +11,11 @@ import {
   type AddSandboxChannelDependencies,
 } from "../../../src/lib/actions/sandbox/policy-channel.ts";
 import { runOpenshell } from "../../../src/lib/adapters/openshell/runtime.ts";
+import * as sourceOnboardModule from "../../../src/lib/onboard.ts";
 import { credentialProviderRegistrationDependencies as onboardProviders } from "../../../src/lib/onboard/credential-provider-registration.ts";
 import { ensureMessagingBridgeProfiles } from "../../../src/lib/onboard/messaging-bridge-provider.ts";
 import { ROOT } from "../../../src/lib/state/paths.ts";
+import { rebuildOnboardDependencies } from "../../../src/lib/actions/sandbox/rebuild-onboard-dependencies.ts";
 import {
   assertCleanupSucceededOrAbsent,
   cleanupWhenOpenShellAvailable,
@@ -83,6 +85,17 @@ type OnboardProviderDependencies = {
     options?: ProviderUpsertOptions,
   ): string[];
 };
+type SourceOnboard = typeof rebuildOnboardDependencies.onboard;
+
+const sourceOnboardNamespace = sourceOnboardModule as unknown as {
+  readonly default?: { readonly onboard: SourceOnboard };
+  readonly onboard?: SourceOnboard;
+};
+const sourceOnboard: SourceOnboard = (() => {
+  const candidate = sourceOnboardNamespace.default?.onboard ?? sourceOnboardNamespace.onboard;
+  if (!candidate) throw new Error("Source onboarding boundary is unavailable");
+  return candidate;
+})();
 
 interface GooglechatLiveE2eComposition {
   readonly sandboxName: string;
@@ -135,6 +148,7 @@ export function installGooglechatCredentialFixture(
   const expectedType = PROVIDER_TYPE_BY_AGENT[agent];
   const original = providerDependencies.upsertMessagingProviders;
   const originalOnboard = onboardProviderDependencies.upsertMessagingProviders;
+  const originalRebuildOnboard = rebuildOnboardDependencies.onboard;
 
   const fixtureUpsert = (
     tokenDefs: ProviderTokenDefinitions,
@@ -239,10 +253,12 @@ export function installGooglechatCredentialFixture(
     );
   };
   onboardProviderDependencies.upsertMessagingProviders = onboardUpsert;
+  rebuildOnboardDependencies.onboard = sourceOnboard;
 
   return () => {
     providerDependencies.upsertMessagingProviders = original;
     onboardProviderDependencies.upsertMessagingProviders = originalOnboard;
+    rebuildOnboardDependencies.onboard = originalRebuildOnboard;
   };
 }
 

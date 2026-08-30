@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { rebuildOnboardDependencies } from "../../../src/lib/actions/sandbox/rebuild-onboard-dependencies.ts";
 import { credentialProviderRegistrationDependencies } from "../../../src/lib/onboard/credential-provider-registration.ts";
 import {
   addAndRebuildGooglechatForChannelsStopStartLiveE2e,
@@ -43,6 +44,7 @@ type FixtureOnboardProviderDependencies = {
 describe("channels stop/start Google Chat live composition", () => {
   it("patches the named startup registration boundary used by onboarding", () => {
     const original = credentialProviderRegistrationDependencies.upsertMessagingProviders;
+    const originalRebuildOnboard = rebuildOnboardDependencies.onboard;
     const providerDependencies: FixtureProviderDependencies = {
       upsertMessagingProviders: vi.fn(() => []),
       runGatewayOpenshell: vi.fn() as FixtureProviderDependencies["runGatewayOpenshell"],
@@ -56,10 +58,12 @@ describe("channels stop/start Google Chat live composition", () => {
       expect(credentialProviderRegistrationDependencies.upsertMessagingProviders).not.toBe(
         original,
       );
+      expect(rebuildOnboardDependencies.onboard).not.toBe(originalRebuildOnboard);
     } finally {
       restore();
     }
     expect(credentialProviderRegistrationDependencies.upsertMessagingProviders).toBe(original);
+    expect(rebuildOnboardDependencies.onboard).toBe(originalRebuildOnboard);
   });
 
   it("grants a process-local audience capability to the exact live sandbox", async () => {
