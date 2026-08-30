@@ -432,6 +432,10 @@ export function runAdvisorSandboxAsync(
         env.PR_REVIEW_ADVISOR_INTEREST
           ? `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-specialist.mts`
           : `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-analysis.mts`,
+        "--base",
+        required(env.BASE_REF, "BASE_REF"),
+        "--head",
+        required(env.HEAD_REF, "HEAD_REF"),
       ],
     },
     tools,
