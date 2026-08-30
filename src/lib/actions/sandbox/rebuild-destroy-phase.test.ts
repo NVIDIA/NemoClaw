@@ -36,7 +36,7 @@ const mocks = vi.hoisted(() => ({
   ),
   stopNimContainer: vi.fn(),
   stopNimContainerByName: vi.fn(),
-  stopAgentForwardPortsForStop: vi.fn(),
+  settleAgentForwardPortsForRebuild: vi.fn(),
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
@@ -54,7 +54,7 @@ vi.mock("../../inference/nim", () => ({
 }));
 
 vi.mock("../../tunnel/agent-forward-stop", () => ({
-  stopAgentForwardPortsForStop: mocks.stopAgentForwardPortsForStop,
+  settleAgentForwardPortsForRebuild: mocks.settleAgentForwardPortsForRebuild,
 }));
 
 vi.mock("../../state/registry", async (importOriginal) => ({
@@ -134,7 +134,7 @@ describe("rebuild destroy phase", () => {
     mocks.waitUntil.mockImplementation(
       (condition: () => boolean) => condition() || condition() || condition(),
     );
-    mocks.stopAgentForwardPortsForStop.mockReturnValue(true);
+    mocks.settleAgentForwardPortsForRebuild.mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -947,7 +947,7 @@ describe("rebuild destroy phase", () => {
   it("journals the delete boundary before the destructive command (#7734)", async () => {
     const order: string[] = [];
     const recreateJournal = stubRecreateJournal();
-    mocks.stopAgentForwardPortsForStop.mockImplementation(() => {
+    mocks.settleAgentForwardPortsForRebuild.mockImplementation(() => {
       order.push("forward:stop");
       return true;
     });

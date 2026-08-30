@@ -139,7 +139,7 @@ describe("stopAll with sandbox channels", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const stopAgentForwards = vi
       .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
-      .mockImplementation(() => true);
+      .mockImplementation(() => {});
     const releaseGateway = vi
       .spyOn(gatewayStop, "releaseGatewayPortForStop")
       .mockImplementation(() => "attempted");

@@ -3529,8 +3529,9 @@ export function validateNativePodmanSetupAction(
   }
   if (
     !run.includes('export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus"') ||
+    !run.includes('systemctl --user start "$service_name.socket"') ||
     run.indexOf('export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus"') >
-      run.indexOf('system service --time=0 "unix://$socket_path"')
+      run.indexOf('systemctl --user start "$service_name.socket"')
   ) {
     errors.push("native Podman setup must bind user D-Bus before starting the API service");
   }

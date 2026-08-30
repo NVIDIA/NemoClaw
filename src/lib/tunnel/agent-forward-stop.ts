@@ -107,7 +107,7 @@ function makeRunCaptureOpenshell(openshell: string): ForwardListRunner {
   };
 }
 
-export function stopAgentForwardPortsForStop(
+function stopAndConfirmAgentForwardPorts(
   sandboxName: string | undefined,
   deps: StopAgentForwardPortsDeps = {},
 ): boolean {
@@ -223,4 +223,18 @@ export function stopAgentForwardPortsForStop(
     }
   }
   return released;
+}
+
+export function stopAgentForwardPortsForStop(
+  sandboxName: string | undefined,
+  deps: StopAgentForwardPortsDeps = {},
+): void {
+  stopAndConfirmAgentForwardPorts(sandboxName, deps);
+}
+
+export function settleAgentForwardPortsForRebuild(
+  sandboxName: string | undefined,
+  deps: StopAgentForwardPortsDeps = {},
+): boolean {
+  return stopAndConfirmAgentForwardPorts(sandboxName, deps);
 }

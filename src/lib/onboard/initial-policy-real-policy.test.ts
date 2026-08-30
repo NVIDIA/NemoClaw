@@ -303,6 +303,8 @@ describe("initial sandbox policy real preset merge", () => {
     expect(slackBinaries).toEqual([
       "/usr/local/bin/hermes",
       "/usr/bin/python3*",
+      "/usr/bin/python3.13",
+      "/opt/hermes/.venv/bin/python3",
       "/opt/hermes/.venv/bin/python",
     ]);
 
