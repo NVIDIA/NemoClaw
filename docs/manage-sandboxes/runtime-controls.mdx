@@ -164,7 +164,7 @@ NemoClaw removes the timer artifacts and lifecycle gates only when they all iden
 Running the command again after successful cleanup is safe because the retired generation no longer supplies recovery authority.
 A live or ambiguous owner, a replaced or unrelated generation, conflicting artifacts, or a missing protected generation remains fail-closed.
 Those conditions and retained gates keep new mutations blocked until the reported recovery completes.
-A `--dry-run` run of a `channels` or `policy` command takes no mutation lock, so you can still preview the change while mutations are blocked.
+Wait for recovery to finish before running any sandbox-scoped command, including a `channels` or `policy` command with `--dry-run`.
 
 If the error reports a live or ambiguous owner, let that process finish or stop it through normal process controls, then rerun `$$nemoclaw <name> shields status` without modifying lifecycle-lock or timer files.
 If the error says that completed recovery authority changed, rerun `$$nemoclaw <name> shields status` without modifying those files so NemoClaw can evaluate the current authority.

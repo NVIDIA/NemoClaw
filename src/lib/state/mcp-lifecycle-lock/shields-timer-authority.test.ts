@@ -69,6 +69,37 @@ describe("Shields timer marker authority", () => {
     expect(readShieldsTimerMarker("alpha", stateDir)).toBeNull();
   });
 
+  it("rejects a hard-linked recovery marker", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-marker-"));
+    tempDirs.push(stateDir);
+    const markerPath = shieldsTimerMarkerPath("alpha", stateDir);
+    writeMarker(stateDir, "alpha", "alpha");
+    fs.linkSync(markerPath, path.join(stateDir, "linked-marker.json"));
+
+    expect(readShieldsTimerMarker("alpha", stateDir)).toBeNull();
+    expect(() => readShieldsTimerRecoveryCandidate("alpha", stateDir)).toThrow(
+      /recovery artifacts are invalid/,
+    );
+  });
+
+  it("rejects a recovery marker replaced during its read", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-marker-"));
+    tempDirs.push(stateDir);
+    const markerPath = shieldsTimerMarkerPath("alpha", stateDir);
+    const openedPath = path.join(stateDir, "opened-marker.json");
+    writeMarker(stateDir, "alpha", "alpha");
+    const originalReadSync = fs.readSync.bind(fs);
+    vi.spyOn(fs, "readSync").mockImplementation(((...args: unknown[]) => {
+      fs.renameSync(markerPath, openedPath);
+      writeMarker(stateDir, "alpha", "alpha");
+      return Reflect.apply(originalReadSync, fs, args);
+    }) as typeof fs.readSync);
+
+    expect(() => readShieldsTimerRecoveryCandidate("alpha", stateDir)).toThrow(
+      /recovery artifacts are invalid/,
+    );
+  });
+
   it("escapes terminal control characters in recovery artifact diagnostics", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-marker-"));
     tempDirs.push(stateDir);

@@ -225,7 +225,6 @@ interface ClearTimerMarkerResult {
 interface TimerMarkerRetirementResult {
   status: "removed" | "missing" | "changed" | "failed";
   retainedPath?: string;
-  retryRequired?: boolean;
   warning?: string;
 }
 
@@ -319,7 +318,6 @@ function clearTimerMarkerGeneration(
         return {
           status: "failed",
           ...(retainedPath ? { retainedPath } : {}),
-          retryRequired: true,
           warning: restoreFailure
             ? `Removed completed Shields timer recovery artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}, but could not confirm durable cleanup or restore it for retry: ${formatTerminalSafeDiagnosticValue(detail)}; ${formatTerminalSafeDiagnosticValue(restoreFailure)}`
             : `Could not confirm durable cleanup for completed Shields timer recovery artifact ${formatTerminalSafeDiagnosticValue(sourcePath)}; restored it for an explicit retry: ${formatTerminalSafeDiagnosticValue(detail)}`,

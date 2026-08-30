@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { isObjectRecord } from "../../core/json-types";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
 import { processIsAlive } from "../mcp-lifecycle-lock-identity";
@@ -30,6 +31,8 @@ export interface ShieldsTimerRecoveryCandidate {
   marker: ShieldsTimerMarker;
   quarantined: boolean;
 }
+
+const MAX_SHIELDS_TIMER_MARKER_BYTES = 64 * 1024;
 
 function isShieldsTimerMarker(value: unknown): value is ShieldsTimerMarker {
   if (!isObjectRecord(value)) return false;
@@ -93,16 +96,14 @@ export function readShieldsTimerMarker(
 
 export function readShieldsTimerMarkerFile(markerPath: string): ShieldsTimerMarker | null {
   try {
-    const markerFd = fs.openSync(
-      markerPath,
-      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-    );
+    const markerFile = openRegularFileNoFollow(markerPath);
     try {
-      if (!fs.fstatSync(markerFd).isFile()) return null;
-      const parsed = JSON.parse(fs.readFileSync(markerFd, "utf-8"));
+      const parsed = JSON.parse(
+        markerFile.readBytes(MAX_SHIELDS_TIMER_MARKER_BYTES).toString("utf-8"),
+      );
       return isShieldsTimerMarker(parsed) ? parsed : null;
     } finally {
-      fs.closeSync(markerFd);
+      markerFile.close();
     }
   } catch {
     return null;

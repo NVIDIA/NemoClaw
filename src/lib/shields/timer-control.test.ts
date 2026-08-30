@@ -158,7 +158,6 @@ describe("timer marker generation cleanup", () => {
 
     expect(clearTimerMarkerGeneration("alpha", expected)).toMatchObject({
       retainedPath: markerPath,
-      retryRequired: true,
       warning: expect.stringContaining("restored it for an explicit retry"),
     });
     expect(readTimerMarker("alpha")).toEqual(expected);
