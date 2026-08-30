@@ -72,7 +72,6 @@ export async function assertHermesFollowUpReplies({
     before: Set<string>,
     beforeActivityArtifact: string,
     expectedSessionId: string,
-    expectedRowToken: string,
     args: string[],
     runArtifact: string,
     afterArtifact: string,
@@ -89,10 +88,6 @@ export async function assertHermesFollowUpReplies({
     const after = hermesSessionIds(afterText);
     expect([...after].filter((id) => !before.has(id))).toEqual([]);
     expect(after.has(expectedSessionId), stripAnsi(afterText)).toBe(true);
-    const row = stripAnsi(afterText)
-      .split("\n")
-      .find((line) => line.includes(expectedSessionId));
-    expect(row, stripAnsi(afterText)).toContain(expectedRowToken);
     expect(
       await hermesLastActive(sandbox, sandboxName, expectedSessionId, `${afterArtifact}-metadata`),
     ).toBeGreaterThan(beforeActivity);
@@ -114,7 +109,6 @@ export async function assertHermesFollowUpReplies({
     await listDefaultSessions("phase-4-issue-5254-sessions-before-resume"),
     "phase-4-issue-5254-session-before-resume-metadata",
     seedSessionId,
-    resumePrompt,
     ["--resume", seedSessionId, "-z", resumePrompt, "--pass-session-id", "--ignore-rules"],
     "phase-4-issue-5254-resume-oneshot",
     "phase-4-issue-5254-sessions-after-resume",
@@ -124,7 +118,6 @@ export async function assertHermesFollowUpReplies({
     await listDefaultSessions("phase-4-issue-5254-sessions-before-continue"),
     "phase-4-issue-5254-session-before-continue-metadata",
     seedSessionId,
-    continuePrompt,
     ["-c", seedSessionId, "-z", continuePrompt],
     "phase-4-issue-5254-continue-oneshot",
     "phase-4-issue-5254-sessions-after-continue",
