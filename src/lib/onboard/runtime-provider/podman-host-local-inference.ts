@@ -8,7 +8,7 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
-import type { PodmanContainerEngine } from "../../adapters/podman";
+import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
 import {
   HOST_LOCAL_INFERENCE_SANDBOX_HOST,
   type HostLocalInferenceEndpointAuthority,
@@ -274,6 +274,20 @@ export interface PodmanHostLocalInferenceOperationOptions {
   readonly routeAuthorityStore: HostLocalInferenceRouteAuthorityStore;
   readonly onFailureEvidence: (evidence: PodmanInferenceFailureEvidence) => void;
   readonly redactSensitive: PodmanInferenceRedactor;
+}
+
+export type PodmanPreparedHostLocalInferenceOperationOptions = Omit<
+  PodmanHostLocalInferenceOperationOptions,
+  "acceleration" | "authority" | "authorityQualification" | "engine" | "env" | "redactSensitive"
+>;
+
+/** One fully qualified Podman authority that can create one operation without recapturing it. */
+export interface PreparedPodmanHostLocalInferenceOperationAuthority {
+  readonly createOperation: (
+    options: PodmanPreparedHostLocalInferenceOperationOptions,
+  ) => HostLocalInferenceOperation;
+  readonly assertTransactionCurrent: () => void;
+  readonly assertCurrent: () => void;
 }
 
 export type PodmanInferenceRedactor = (value: string) => string;
@@ -3455,9 +3469,9 @@ export function createPodmanHostLocalInferenceRuntime(
     );
     return { receipt: normalized as ManagedReceipt, container };
   };
-  const inspectPublishedResumeTransaction = (
+  const requirePublishedResumeTransactionCurrent = (
     receipt: HostLocalInferenceReceipt,
-  ): { readonly receipt: ManagedReceipt; readonly container: ManagedContainer } => {
+  ): ManagedReceipt => {
     if (!publishedEngineAuthority) {
       throw new Error("Podman published inference transaction authority is unavailable.");
     }
@@ -3490,17 +3504,18 @@ export function createPodmanHostLocalInferenceRuntime(
         "Podman published inference transaction differs from its persisted engine authority.",
       );
     }
+    return normalized as ManagedReceipt;
+  };
+  const inspectPublishedResumeTransaction = (
+    receipt: HostLocalInferenceReceipt,
+  ): { readonly receipt: ManagedReceipt; readonly container: ManagedContainer } => {
+    const normalized = requirePublishedResumeTransactionCurrent(receipt);
     inspectNetwork(requireProofEndpoint(normalized.endpoint));
     const container = requireReceiptIdentity(
       inspectContainer(engine, normalized.runtime.runtimeId),
       normalized,
     );
-    try {
-      publishedEngineAuthority.assertForwardAuthority();
-    } catch {
-      throw new PublishedInferenceForwardAuthorityError();
-    }
-    assertBoundEngineTransactionCurrent();
+    requirePublishedResumeTransactionCurrent(normalized);
     return Object.freeze({ receipt: normalized as ManagedReceipt, container });
   };
   const validatePublishedResumeReceipt = (
@@ -3511,25 +3526,28 @@ export function createPodmanHostLocalInferenceRuntime(
     if (!inspected.container.running) {
       throw new Error("Podman published inference validation requires a running runtime.");
     }
-    timing.measure("gpuIdentity", () =>
-      proveManagedGpu(
-        engine,
-        () => {
-          const current = inspectPublishedResumeTransaction(inspected.receipt);
-          if (!current.container.running) {
-            throw new Error("Podman published inference runtime stopped during GPU validation.");
-          }
-        },
-        inspected.container.runtimeId,
-        inspected.receipt.runtime.gpu.devices,
-      ),
-    );
+    let gpuFailure: unknown;
+    try {
+      timing.measure("gpuIdentity", () =>
+        proveManagedGpu(
+          engine,
+          () => requirePublishedResumeTransactionCurrent(inspected.receipt),
+          inspected.container.runtimeId,
+          inspected.receipt.runtime.gpu.devices,
+        ),
+      );
+    } catch (error) {
+      gpuFailure = error;
+    }
     timing.measure("cleanupCurrentness", () => {
       const current = inspectPublishedResumeTransaction(inspected.receipt);
       if (!current.container.running) {
         throw new Error("Podman published inference runtime stopped before final currentness.");
       }
     });
+    if (gpuFailure !== undefined) {
+      throw gpuFailure;
+    }
     return inspected.receipt;
   };
   const validateReceipt = (
@@ -4581,19 +4599,13 @@ export function createPodmanHostLocalInferenceRuntime(
   });
 }
 
-export function createPodmanHostLocalInferenceOperation(
+function createPodmanHostLocalInferenceOperationFromAuthority(
   options: PodmanHostLocalInferenceOperationOptions,
+  qualifiedEngine: PodmanContainerEngine,
+  authority: PodmanInferenceAuthorityReceipt,
+  acceleration: HostLocalOllamaAccelerationAuthority,
 ): HostLocalInferenceOperation {
-  const acceleration = normalizeOperationAcceleration(options.acceleration);
   const redactor = requireRedactor(options.redactSensitive);
-  const qualifiedEngine = redactingEngine(options.engine, redactor);
-  const authority = options.authority
-    ? revalidatePodmanInferenceAuthority(
-        qualifiedEngine,
-        options.authority,
-        options.authorityQualification,
-      )
-    : qualifyPodmanInferenceAuthority(qualifiedEngine, options.authorityQualification);
   const runtime = createPodmanHostLocalInferenceRuntime({
     ...options,
     engine: qualifiedEngine,
@@ -4650,4 +4662,88 @@ export function createPodmanHostLocalInferenceOperation(
     },
     managedRuntime: runtime,
   });
+}
+
+/** Fully qualify one engine generation before a delayed, single operation construction. */
+export function preparePodmanHostLocalInferenceOperationAuthority(
+  options: Omit<
+    Pick<
+      PodmanHostLocalInferenceOperationOptions,
+      | "acceleration"
+      | "authority"
+      | "authorityQualification"
+      | "engine"
+      | "env"
+      | "redactSensitive"
+    >,
+    "engine"
+  > & { readonly engine: PodmanBoundContainerEngine },
+): PreparedPodmanHostLocalInferenceOperationAuthority {
+  const acceleration = normalizeOperationAcceleration(options.acceleration);
+  const redactor = requireRedactor(options.redactSensitive);
+  const qualifiedEngine = redactingEngine(options.engine, redactor);
+  const authority = options.authority
+    ? revalidatePodmanInferenceAuthority(
+        qualifiedEngine,
+        options.authority,
+        options.authorityQualification,
+      )
+    : qualifyPodmanInferenceAuthority(qualifiedEngine, options.authorityQualification);
+  let operationCreated = false;
+  const assertTransactionCurrent = (): void => {
+    options.engine.assertAuthority();
+  };
+  const assertCurrent = (): void => {
+    revalidatePodmanInferenceAuthority(qualifiedEngine, authority, options.authorityQualification);
+  };
+  return Object.freeze({
+    createOperation(
+      operationOptions: PodmanPreparedHostLocalInferenceOperationOptions,
+    ): HostLocalInferenceOperation {
+      if (operationCreated) {
+        throw new Error("Podman inference operation authority was already consumed.");
+      }
+      operationCreated = true;
+      assertTransactionCurrent();
+      const operation = createPodmanHostLocalInferenceOperationFromAuthority(
+        {
+          ...operationOptions,
+          engine: options.engine,
+          env: options.env,
+          acceleration,
+          authority,
+          authorityQualification: options.authorityQualification,
+          redactSensitive: options.redactSensitive,
+        },
+        qualifiedEngine,
+        authority,
+        acceleration,
+      );
+      assertTransactionCurrent();
+      return operation;
+    },
+    assertTransactionCurrent,
+    assertCurrent,
+  });
+}
+
+export function createPodmanHostLocalInferenceOperation(
+  options: PodmanHostLocalInferenceOperationOptions,
+): HostLocalInferenceOperation {
+  const acceleration = normalizeOperationAcceleration(options.acceleration);
+  const redactor = requireRedactor(options.redactSensitive);
+  const qualifiedEngine = redactingEngine(options.engine, redactor);
+  const authority = options.authority
+    ? revalidatePodmanInferenceAuthority(
+        qualifiedEngine,
+        options.authority,
+        options.authorityQualification,
+      )
+    : qualifyPodmanInferenceAuthority(qualifiedEngine, options.authorityQualification);
+  return createPodmanHostLocalInferenceOperationFromAuthority(
+    options,
+    qualifiedEngine,
+    authority,
+    acceleration,
+  );
 }

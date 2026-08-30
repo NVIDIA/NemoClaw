@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createHermesPortableUninstallFixture } from "../../../../test/helpers/hermes-portable-uninstall-fixture";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import type { ContainerEngineCommandResult } from "../../adapters/container-engine";
-import type { PodmanContainerEngine } from "../../adapters/podman";
+import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
 import type { SandboxEntry } from "../../state/registry";
 import {
   normalizeHostLocalInferenceReceipt,
@@ -34,6 +34,7 @@ import { createPodmanRuntimeProviderBundle } from "../runtime-provider/podman";
 import { requireRuntimeProviderHostLocalInferenceOperation } from "../runtime-provider/registry";
 import {
   createPodmanHostLocalInferenceOperation,
+  preparePodmanHostLocalInferenceOperationAuthority,
   PODMAN_INFERENCE_SPEC_LABEL,
   type PodmanPublishedResumeTiming,
 } from "../runtime-provider/podman-host-local-inference";
@@ -60,7 +61,7 @@ function engineFor(
     operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle",
     captures: readonly string[],
   ) => void,
-): PodmanContainerEngine {
+): PodmanBoundContainerEngine {
   return Object.freeze({
     ...source,
     operation,
@@ -180,42 +181,66 @@ function setup(
   const transactionAuthorityAssertions: string[] = [];
   const transformCapture = options.transformCapture ?? ((_args, result) => result);
   const assertTransactionAuthority = options.assertTransactionAuthority ?? (() => undefined);
+  const hostDoctorEngine = engineFor(
+    harness.engine,
+    "host-doctor",
+    currentExecutionCaptures,
+    transactionAuthorityAssertions,
+    transformCapture,
+    assertTransactionAuthority,
+  );
+  const hostLocalInferenceEngine = engineFor(
+    harness.engine,
+    "host-local-inference",
+    currentExecutionCaptures,
+    transactionAuthorityAssertions,
+    transformCapture,
+    assertTransactionAuthority,
+  );
+  const sandboxLifecycleEngine = engineFor(
+    harness.engine,
+    "sandbox-lifecycle",
+    currentExecutionCaptures,
+    transactionAuthorityAssertions,
+    transformCapture,
+    assertTransactionAuthority,
+  );
+  const publishedEngineAuthority = {
+    intent: (options.publishedIntent ?? "connect-probe-only") as "connect-probe-only",
+    creationAuthority: publishedCreationAuthority,
+    serializedReceipt: publishedSerializedReceipt,
+    assertForwardAuthority,
+  } as const;
+  const publishedOperationAuthority = preparePodmanHostLocalInferenceOperationAuthority({
+    engine: hostLocalInferenceEngine,
+    env: harness.env,
+    acceleration: harness.operationAcceleration,
+    redactSensitive: harness.redactSensitive,
+  });
+  const publishedOperation = publishedOperationAuthority.createOperation({
+    authorityStore: harness.authorityStore,
+    routeAuthorityStore: harness.routeAuthorityStore,
+    externalNetwork,
+    hermesPortablePublishedEngineAuthority: publishedEngineAuthority,
+    ...(options.publishedResumeTiming
+      ? { publishedResumeTiming: options.publishedResumeTiming }
+      : {}),
+    onFailureEvidence: harness.onFailureEvidence,
+  });
   const bundle = createPodmanRuntimeProviderBundle({
     engines: {
-      hostDoctor: engineFor(
-        harness.engine,
-        "host-doctor",
-        currentExecutionCaptures,
-        transactionAuthorityAssertions,
-        transformCapture,
-        assertTransactionAuthority,
-      ),
-      hostLocalInference: engineFor(
-        harness.engine,
-        "host-local-inference",
-        currentExecutionCaptures,
-        transactionAuthorityAssertions,
-        transformCapture,
-        assertTransactionAuthority,
-      ),
-      sandboxLifecycle: engineFor(
-        harness.engine,
-        "sandbox-lifecycle",
-        currentExecutionCaptures,
-        transactionAuthorityAssertions,
-        transformCapture,
-        assertTransactionAuthority,
-      ),
+      hostDoctor: hostDoctorEngine,
+      hostLocalInference: hostLocalInferenceEngine,
+      sandboxLifecycle: sandboxLifecycleEngine,
     },
     hostLocalInference: {
       authorityStore: harness.authorityStore,
       routeAuthorityStore: harness.routeAuthorityStore,
       externalNetwork,
-      hermesPortablePublishedEngineAuthority: {
-        intent: (options.publishedIntent ?? "connect-probe-only") as "connect-probe-only",
-        creationAuthority: publishedCreationAuthority,
-        serializedReceipt: publishedSerializedReceipt,
-        assertForwardAuthority,
+      hermesPortablePublishedEngineAuthority: publishedEngineAuthority,
+      hermesPortablePublishedRecoveryOperation: {
+        operation: publishedOperation,
+        environment: harness.env,
       },
       ...(options.publishedResumeTiming
         ? { publishedResumeTiming: options.publishedResumeTiming }
@@ -247,6 +272,8 @@ function setup(
     harness,
     input,
     providerEntry,
+    publishedOperation,
+    publishedOperationAuthority,
     receipt,
     serializedReceipt,
     transactionAuthorityAssertions,
@@ -269,7 +296,11 @@ function composedRecovery(fixture: ReturnType<typeof setup>, assertPublished = v
     sandboxName: "alpha",
   } as HermesPortableConfiguredReceipt;
   const assertOperating = vi.fn();
-  const assertRuntime = vi.fn(() => fixture.externalNetwork.assertCurrent());
+  const assertRuntimeTransaction = vi.fn(() => fixture.externalNetwork.assertCurrent());
+  const assertRuntime = vi.fn(() => {
+    fixture.externalNetwork.assertCurrent();
+    fixture.harness.events.push("test:full-runtime-qualified");
+  });
   const registryRecovery = {
     started: true,
     assertTransactionCurrent: vi.fn(),
@@ -278,15 +309,15 @@ function composedRecovery(fixture: ReturnType<typeof setup>, assertPublished = v
     release: vi.fn(),
   };
   const createRuntimeAuthority = vi.fn(
-    (options: Parameters<typeof createHermesPortableOllamaRuntimeAuthority>[0]) => {
-      const forward = options.publishedRecovery?.assertForwardAuthority;
-      expect(forward).toBeTypeOf("function");
-      fixture.assertForwardAuthority.mockImplementation(forward!);
+    (options: { readonly assertForwardAuthority: () => void }) => {
+      expect(options.assertForwardAuthority).toBeTypeOf("function");
+      fixture.assertForwardAuthority.mockImplementation(options.assertForwardAuthority);
       return {
         bundle: fixture.bundle,
         inferenceStateDir: "/state/portable-inference/alpha",
         network: fixture.externalNetwork,
-        assertTransactionCurrent: assertRuntime,
+        operation: fixture.publishedOperation,
+        assertTransactionCurrent: assertRuntimeTransaction,
         assertCurrent: assertRuntime,
       };
     },
@@ -313,7 +344,10 @@ function composedRecovery(fixture: ReturnType<typeof setup>, assertPublished = v
       assertTransactionCurrent: assertOperating,
       assertCurrent: assertOperating,
     })),
-    createRuntimeAuthority,
+    prepareRecoveryEntry: vi.fn(() => ({
+      registryRecovery,
+      createRuntimeAuthority,
+    })),
     prepareInferenceAuthority: vi.fn(
       prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority,
     ),
@@ -324,9 +358,16 @@ function composedRecovery(fixture: ReturnType<typeof setup>, assertPublished = v
       assertTransactionCurrent: assertPublished,
       assertCurrent: assertPublished,
     })),
-    prepareRegistryRecovery: vi.fn(() => registryRecovery),
   };
-  return { assertOperating, assertPublished, assertRuntime, input, overrides, registryRecovery };
+  return {
+    assertOperating,
+    assertPublished,
+    assertRuntime,
+    assertRuntimeTransaction,
+    input,
+    overrides,
+    registryRecovery,
+  };
 }
 
 function observePublishedFinalization(events: string[]) {
@@ -399,6 +440,11 @@ describe("Hermes Portable published engine recovery", () => {
         runtimeAuthority.bundle,
         providerEntry,
         { environment: fixture.cleanupInput.env },
+        undefined,
+        requireRuntimeProviderHostLocalInferenceOperation(runtimeAuthority.bundle, "ollama", {
+          env: fixture.cleanupInput.env,
+          acceleration: "nvidia-gpu",
+        }),
       );
       expect(preparedAuthority?.serializedReceipt).toBe(serializedReceipt);
       const operation = requireRuntimeProviderHostLocalInferenceOperation(
@@ -470,6 +516,8 @@ describe("Hermes Portable published engine recovery", () => {
       fixture.bundle,
       fixture.providerEntry,
       { environment: fixture.harness.env },
+      undefined,
+      fixture.publishedOperation,
     );
     expect(prepared?.serializedReceipt).toBe(fixture.serializedReceipt);
     expect(Object.isFrozen(prepared?.managedInspection)).toBe(true);
@@ -585,12 +633,14 @@ describe("Hermes Portable published engine recovery", () => {
     expect(observed.finalize).toHaveBeenCalledOnce();
     expect(dependency.release).toHaveBeenCalledOnce();
     expect(dependency.rollback).not.toHaveBeenCalled();
+    expect(composed.assertRuntime).toHaveBeenCalledOnce();
     const recoveryOrder = fixture.harness.events.slice(recoveryEventStart);
     const gpuIndex = recoveryOrder.findIndex(
       (event) => event.includes("podman:exec ") && event.includes(" nvidia-smi "),
     );
     const routeIndex = recoveryOrder.indexOf("test:route-verified");
     const dependencyIndex = recoveryOrder.indexOf("test:dependency-prepared");
+    const fullyQualifiedIndex = recoveryOrder.indexOf("test:full-runtime-qualified");
     const finalizedIndex = recoveryOrder.indexOf("test:publication-finalized");
     const releasedIndex = recoveryOrder.indexOf("test:registry-released");
     const dependencyReleasedIndex = recoveryOrder.indexOf("test:dependency-released");
@@ -598,7 +648,8 @@ describe("Hermes Portable published engine recovery", () => {
     expect(gpuIndex).toBeGreaterThanOrEqual(0);
     expect(routeIndex).toBeGreaterThan(gpuIndex);
     expect(dependencyIndex).toBeGreaterThan(routeIndex);
-    expect(finalizedIndex).toBeGreaterThan(dependencyIndex);
+    expect(fullyQualifiedIndex).toBeGreaterThan(dependencyIndex);
+    expect(finalizedIndex).toBeGreaterThan(fullyQualifiedIndex);
     expect(releasedIndex).toBeGreaterThan(finalizedIndex);
     expect(dependencyReleasedIndex).toBeGreaterThan(releasedIndex);
   });
@@ -662,15 +713,12 @@ describe("Hermes Portable published engine recovery", () => {
     expect(composed.registryRecovery.release).toHaveBeenCalledOnce();
     expect(composed.registryRecovery.rollback).not.toHaveBeenCalled();
     expect(composed.overrides.prepareInferenceAuthority).toHaveBeenCalledOnce();
-    expect(fixture.transactionAuthorityAssertions).toHaveLength(19);
+    expect(fixture.transactionAuthorityAssertions).toHaveLength(14);
     expect(
       fixture.currentExecutionCaptures
         .slice(captureStart)
         .filter((event) => event.includes("version") || event.includes("info")),
-    ).toEqual([
-      "host-local-inference:version --format json",
-      "host-local-inference:info --format json",
-    ]);
+    ).toEqual([]);
     expect(onComplete).toHaveBeenCalledOnce();
     expect(onComplete).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -681,6 +729,126 @@ describe("Hermes Portable published engine recovery", () => {
         startMs: 0,
       }),
     );
+  });
+
+  it("qualifies one retained published operation at entry and once at completion (#10423)", () => {
+    const fixture = setup();
+    const qualificationCommands = () =>
+      fixture.currentExecutionCaptures.filter(
+        (event) => event.includes("version") || event.includes("info"),
+      );
+
+    expect(qualificationCommands()).toEqual([
+      "host-local-inference:version --format json",
+      "host-local-inference:info --format json",
+    ]);
+    expect(
+      requireRuntimeProviderHostLocalInferenceOperation(fixture.bundle, "ollama", {
+        env: fixture.harness.env,
+        acceleration: "nvidia-gpu",
+      }),
+    ).toBe(fixture.publishedOperation);
+    expect(
+      requireRuntimeProviderHostLocalInferenceOperation(fixture.bundle, "ollama", {
+        env: fixture.harness.env,
+        acceleration: "nvidia-gpu",
+      }),
+    ).toBe(fixture.publishedOperation);
+    expect(qualificationCommands()).toEqual([
+      "host-local-inference:version --format json",
+      "host-local-inference:info --format json",
+    ]);
+    expect(() => fixture.publishedOperationAuthority.createOperation({} as never)).toThrow(
+      "operation authority was already consumed",
+    );
+    fixture.publishedOperationAuthority.assertCurrent();
+    expect(qualificationCommands()).toEqual([
+      "host-local-inference:version --format json",
+      "host-local-inference:info --format json",
+      "host-local-inference:version --format json",
+      "host-local-inference:info --format json",
+    ]);
+  });
+
+  it("settles exact published-runtime authority after a failed GPU command (#10423)", () => {
+    let gpuAttempted = false;
+    let postGpuInspection = false;
+    const fixture = setup({
+      transformCapture(args, result) {
+        postGpuInspection ||= gpuAttempted && args[0] === "container" && args[1] === "inspect";
+        const gpuCommand = args[0] === "exec" && args[2] === "nvidia-smi";
+        gpuAttempted ||= gpuCommand;
+        return gpuCommand
+          ? { ...result, status: 1, stdout: "", stderr: "gpu proof failed" }
+          : result;
+      },
+    });
+    fixture.harness.container()!.running = true;
+    fixture.harness.container()!.status = "running";
+
+    expect(() =>
+      fixture.publishedOperation.managedRuntime?.validatePublishedResume?.(fixture.receipt),
+    ).toThrow("managed GPU proof failed");
+    expect(gpuAttempted).toBe(true);
+    expect(postGpuInspection).toBe(true);
+  });
+
+  it("reports post-GPU runtime drift instead of masking it with the GPU failure (#10423)", () => {
+    let gpuAttempted = false;
+    let postGpuInspection = false;
+    const fixture = setup({
+      transformCapture(args, result) {
+        postGpuInspection ||= gpuAttempted && args[0] === "container" && args[1] === "inspect";
+        const gpuCommand = args[0] === "exec" && args[2] === "nvidia-smi";
+        gpuAttempted ||= gpuCommand;
+        return gpuCommand
+          ? (() => {
+              fixture.harness.container()!.labels[PODMAN_INFERENCE_SPEC_LABEL] = "0".repeat(64);
+              return { ...result, status: 1, stdout: "", stderr: "gpu proof failed" };
+            })()
+          : result;
+      },
+    });
+    fixture.harness.container()!.running = true;
+    fixture.harness.container()!.status = "running";
+
+    let failure: unknown;
+    try {
+      fixture.publishedOperation.managedRuntime?.validatePublishedResume?.(fixture.receipt);
+    } catch (error) {
+      failure = error;
+    }
+    expect(gpuAttempted).toBe(true);
+    expect(postGpuInspection).toBe(true);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).not.toContain("managed GPU proof failed");
+  });
+
+  it("uses two full runtime inspections and no behavioral qualification around GPU proof (#10423)", () => {
+    const fixture = setup();
+    fixture.harness.container()!.running = true;
+    fixture.harness.container()!.status = "running";
+    const captureStart = fixture.currentExecutionCaptures.length;
+    fixture.transactionAuthorityAssertions.splice(0);
+
+    expect(
+      fixture.publishedOperation.managedRuntime?.validatePublishedResume?.(fixture.receipt),
+    ).toEqual(fixture.receipt);
+
+    const captures = fixture.currentExecutionCaptures.slice(captureStart);
+    expect(
+      captures.filter((event) => event.startsWith("host-local-inference:network inspect ")),
+    ).toHaveLength(2);
+    expect(
+      captures.filter((event) => event.startsWith("host-local-inference:container inspect ")),
+    ).toHaveLength(2);
+    expect(
+      captures.filter((event) => event.includes("exec") && event.includes("nvidia-smi")),
+    ).toHaveLength(1);
+    expect(captures.filter((event) => event.includes("version") || event.includes("info"))).toEqual(
+      [],
+    );
+    expect(fixture.transactionAuthorityAssertions).toHaveLength(6);
   });
 
   it.each([
@@ -1014,13 +1182,9 @@ describe("Hermes Portable published engine recovery", () => {
   });
 
   it("rejects noncanonical receipt bytes and a mismatched persisted authority (#10423)", () => {
-    const noncanonical = setup({ serializedReceipt: (value) => value.trimEnd() });
-    expect(() =>
-      requireRuntimeProviderHostLocalInferenceOperation(noncanonical.bundle, "ollama", {
-        env: noncanonical.harness.env,
-        acceleration: "nvidia-gpu",
-      }),
-    ).toThrow("serialized receipt is not canonical");
+    expect(() => setup({ serializedReceipt: (value) => value.trimEnd() })).toThrow(
+      "serialized receipt is not canonical",
+    );
 
     const mismatched = setup({
       creationAuthority: (value) => ({ ...value, bindingSha256: "9".repeat(64) }),
@@ -1030,20 +1194,17 @@ describe("Hermes Portable published engine recovery", () => {
         mismatched.bundle,
         mismatched.providerEntry,
         { environment: mismatched.harness.env },
+        undefined,
+        mismatched.publishedOperation,
       ),
     ).toThrow("differs from its persisted engine authority");
     expect(mismatched.harness.container()).toMatchObject({ running: false });
   });
 
   it("rejects a published operation outside connect probe-only intent (#10423)", () => {
-    const fixture = setup({ publishedIntent: "interactive-launch" });
-
-    expect(() =>
-      requireRuntimeProviderHostLocalInferenceOperation(fixture.bundle, "ollama", {
-        env: fixture.harness.env,
-        acceleration: "nvidia-gpu",
-      }),
-    ).toThrow("invalid creation engine authority");
+    expect(() => setup({ publishedIntent: "interactive-launch" })).toThrow(
+      "invalid creation engine authority",
+    );
   });
 
   it("denies unrelated provider mutation surfaces in published recovery mode (#10423)", () => {

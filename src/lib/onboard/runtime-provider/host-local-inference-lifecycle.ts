@@ -226,6 +226,7 @@ function requireRuntime(
   sandbox: HostLocalInferenceLifecycleSandbox,
   options: HostLocalInferenceLifecycleOptions,
   authorityMode: "current" | "published-recovery" = "current",
+  publishedRecoveryOperation?: HostLocalInferenceOperation,
 ): {
   readonly operation: HostLocalInferenceOperation;
   readonly runtime: HostLocalInferenceRuntime;
@@ -233,10 +234,18 @@ function requireRuntime(
 } {
   const acceleration =
     receipt.runtime.kind === "host" ? receipt.runtime.acceleration : "nvidia-gpu";
-  const operation = requireRuntimeProviderHostLocalInferenceOperation(provider, receipt.service, {
-    env: options.environment ?? process.env,
-    acceleration,
-  });
+  if (publishedRecoveryOperation && authorityMode !== "published-recovery") {
+    fail("a retained operation is restricted to published recovery");
+  }
+  const operation = requireRuntimeProviderHostLocalInferenceOperation(
+    provider,
+    receipt.service,
+    {
+      env: options.environment ?? process.env,
+      acceleration,
+    },
+    publishedRecoveryOperation,
+  );
   if (authorityMode === "published-recovery") {
     if (!operation.assertTransactionCurrent) {
       fail("published recovery operation currentness is missing after full qualification");
@@ -313,11 +322,19 @@ function prepare(
   options: HostLocalInferenceLifecycleOptions,
   authorityMode: "current" | "published-recovery" = "current",
   publishedRecoveryEntryTiming?: HostLocalInferencePublishedRecoveryEntryTiming,
+  publishedRecoveryOperation?: HostLocalInferenceOperation,
 ): PreparedHostLocalInferenceAuthority | null {
   const receipt = parseManagedReceipt(serialized, sandbox);
   if (!receipt) return null;
   const sandboxAuthority = captureSandboxAuthority(provider, sandbox, serialized, receipt);
-  const required = requireRuntime(provider, receipt, sandbox, options, authorityMode);
+  const required = requireRuntime(
+    provider,
+    receipt,
+    sandbox,
+    options,
+    authorityMode,
+    publishedRecoveryOperation,
+  );
   const { runtime } = required;
   let reproved: HostLocalInferenceReceipt;
   let managedInspection: HostLocalManagedInferenceInspection | undefined;
@@ -439,13 +456,26 @@ export function prepareHermesPortableHostLocalInferencePublishedRecoveryAuthorit
   sandbox: HostLocalInferenceLifecycleSandbox,
   options: HostLocalInferenceLifecycleOptions = {},
   entryTiming?: HostLocalInferencePublishedRecoveryEntryTiming,
+  operation?: HostLocalInferenceOperation,
 ): PreparedHostLocalInferenceAuthority | null {
   if (sandbox.agent !== "hermes" || sandbox.provider !== "ollama-local") {
     fail("published inference requalification is restricted to Hermes Portable Ollama");
   }
+  if (!operation) {
+    fail("published inference recovery requires its retained operation authority");
+  }
   const serialized = sandbox.hostLocalInferenceReceipt;
   return typeof serialized === "string"
-    ? prepare(provider, sandbox, serialized, "destroy", options, "published-recovery", entryTiming)
+    ? prepare(
+        provider,
+        sandbox,
+        serialized,
+        "destroy",
+        options,
+        "published-recovery",
+        entryTiming,
+        operation,
+      )
     : null;
 }
 

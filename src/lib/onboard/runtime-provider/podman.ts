@@ -9,7 +9,10 @@ import {
   type RuntimeProviderLifecycleResult,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
-import type { HostLocalInferenceRouteAuthorityStore } from "./host-local-inference";
+import type {
+  HostLocalInferenceOperation,
+  HostLocalInferenceRouteAuthorityStore,
+} from "./host-local-inference";
 import type { PersistedEngineAuthorityStore } from "./persisted-engine-authority";
 import {
   createPodmanHostLocalInferenceOperation,
@@ -48,6 +51,10 @@ export interface PodmanHostLocalInferenceOptions {
   readonly authority?: PodmanInferenceAuthorityReceipt;
   readonly authorityQualification?: PodmanInferenceQualificationOptions;
   readonly hermesPortablePublishedEngineAuthority?: PodmanHostLocalInferenceOperationOptions["hermesPortablePublishedEngineAuthority"];
+  readonly hermesPortablePublishedRecoveryOperation?: {
+    readonly operation: HostLocalInferenceOperation;
+    readonly environment: NodeJS.ProcessEnv;
+  };
   readonly publishedResumeTiming?: PodmanPublishedResumeTiming;
 }
 
@@ -114,6 +121,7 @@ export function createPodmanRuntimeProviderBundle(
     stateMutation: stateMutationEngine,
   } = options.engines;
   const inferenceOptions = options.hostLocalInference;
+  const publishedRecoveryOperation = inferenceOptions?.hermesPortablePublishedRecoveryOperation;
   const stateMutationOptions = options.stateMutation;
   requireEngine(hostDoctor, "host-doctor");
   requireEngine(sandboxLifecycle, "sandbox-lifecycle");
@@ -131,6 +139,16 @@ export function createPodmanRuntimeProviderBundle(
     if (inferenceEngine.endpointAuthorityId !== providerEndpointAuthority) {
       throw new Error("Podman provider engines must bind the same endpoint authority.");
     }
+  }
+  if (
+    publishedRecoveryOperation &&
+    (!inferenceOptions?.hermesPortablePublishedEngineAuthority ||
+      publishedRecoveryOperation.operation.providerId !== providerId ||
+      publishedRecoveryOperation.operation.engine.operation !== "host-local-inference" ||
+      publishedRecoveryOperation.operation.engine.engineId !== inferenceEngine?.engineId ||
+      !publishedRecoveryOperation.operation.assertTransactionCurrent)
+  ) {
+    throw new Error("Podman published recovery operation authority is incomplete.");
   }
   if (stateMutationEngine !== undefined) {
     requireEngine(stateMutationEngine, "state-mutation");
@@ -187,8 +205,18 @@ export function createPodmanRuntimeProviderBundle(
             providerId,
             supported: true,
             services: ["ollama", "nim", "vllm"],
-            createOperation: ({ env, acceleration }) =>
-              createPodmanHostLocalInferenceOperation({
+            createOperation: ({ env, acceleration }) => {
+              if (publishedRecoveryOperation) {
+                if (
+                  env !== publishedRecoveryOperation.environment ||
+                  acceleration !== "nvidia-gpu"
+                ) {
+                  throw new Error("Podman published recovery operation input changed.");
+                }
+                publishedRecoveryOperation.operation.assertTransactionCurrent!();
+                return publishedRecoveryOperation.operation;
+              }
+              return createPodmanHostLocalInferenceOperation({
                 engine: inferenceEngine,
                 env,
                 acceleration,
@@ -212,7 +240,8 @@ export function createPodmanRuntimeProviderBundle(
                 ...(inferenceOptions.publishedResumeTiming
                   ? { publishedResumeTiming: inferenceOptions.publishedResumeTiming }
                   : {}),
-              }),
+              });
+            },
           }
         : unsupported(
             providerId,

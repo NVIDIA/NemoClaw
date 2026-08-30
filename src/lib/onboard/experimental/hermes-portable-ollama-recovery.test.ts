@@ -189,6 +189,34 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
       };
     },
   );
+  const createRuntimeAuthority = vi.fn(() => ({
+    bundle: { identity: { id: "podman" } },
+    inferenceStateDir: "/state/portable-inference/alpha",
+    operation: managedOperation,
+    assertTransactionCurrent: assertRuntime,
+    assertCurrent: assertRuntime,
+  }));
+  const prepareRegistryRecovery = vi.fn(() => {
+    const started = !registryRunning;
+    started ? events.push("registry-start") : undefined;
+    registryRunning = started ? true : registryRunning;
+    return {
+      started,
+      assertCurrent: vi.fn(() => {
+        events.push("registry-current");
+        expect(registryRunning).toBe(true);
+      }),
+      assertTransactionCurrent: vi.fn(() => {
+        events.push("registry-transaction-current");
+        expect(registryRunning).toBe(true);
+      }),
+      rollback: vi.fn(() => {
+        events.push("registry-rollback");
+        registryRunning = started ? false : registryRunning;
+      }),
+      release: vi.fn(() => events.push("registry-release")),
+    };
+  });
   const overrides = {
     readReceipt: vi.fn(() => ({ receipt: { phase: "active" }, successor: {} })),
     qualifyOperatingAuthority: vi.fn(() => ({
@@ -196,11 +224,10 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
       assertTransactionCurrent: assertOperating,
       assertCurrent: assertOperating,
     })),
-    createRuntimeAuthority: vi.fn(() => ({
-      bundle: { identity: { id: "podman" } },
-      inferenceStateDir: "/state/portable-inference/alpha",
-      assertTransactionCurrent: assertRuntime,
-      assertCurrent: assertRuntime,
+    createRuntimeAuthority,
+    prepareRecoveryEntry: vi.fn(() => ({
+      registryRecovery: prepareRegistryRecovery(),
+      createRuntimeAuthority,
     })),
     prepareInferenceAuthority,
     assertPreparedInferenceAuthorityCurrent: vi.fn(() => ({ running, receipt })),
@@ -215,27 +242,7 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
       assertTransactionCurrent: assertPublished,
       assertCurrent: assertPublished,
     })),
-    prepareRegistryRecovery: vi.fn(() => {
-      const started = !registryRunning;
-      started ? events.push("registry-start") : undefined;
-      registryRunning = started ? true : registryRunning;
-      return {
-        started,
-        assertCurrent: vi.fn(() => {
-          events.push("registry-current");
-          expect(registryRunning).toBe(true);
-        }),
-        assertTransactionCurrent: vi.fn(() => {
-          events.push("registry-transaction-current");
-          expect(registryRunning).toBe(true);
-        }),
-        rollback: vi.fn(() => {
-          events.push("registry-rollback");
-          registryRunning = started ? false : registryRunning;
-        }),
-        release: vi.fn(() => events.push("registry-release")),
-      };
-    }),
+    prepareRegistryRecovery,
     prepareStartup,
   };
   const input = {
@@ -814,6 +821,24 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.prepareStartup).not.toHaveBeenCalled();
     expect(harness.registryRunning()).toBe(false);
     expect(harness.events).toContain("registry-rollback");
+  });
+
+  it("keeps engine qualification distinct from registry recovery postconditions", () => {
+    const harness = createHarness();
+    harness.overrides.prepareRecoveryEntry.mockImplementation(() => {
+      throw new HermesPortableOllamaRecoveryPhaseError("REGISTRY_PREPARATION_AUTHORITY");
+    });
+
+    let caught: unknown;
+    try {
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HermesPortableOllamaRecoveryPhaseError);
+    expect(caught).toMatchObject({ phase: "REGISTRY_PREPARATION_AUTHORITY" });
+    expect(harness.overrides.prepareRegistryRecovery).not.toHaveBeenCalled();
+    expect(harness.prepareStartup).not.toHaveBeenCalled();
   });
 
   it.each([

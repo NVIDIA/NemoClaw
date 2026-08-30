@@ -15,6 +15,7 @@ import {
   parseHostLocalInferenceReceipt,
   serializeHostLocalInferenceReceipt,
   type HostLocalInferencePreparedStartup,
+  type HostLocalInferenceOperation,
   type HostLocalInferenceProofEndpointAuthority,
   type HostLocalInferenceReceipt,
   type HostLocalInferenceReceiptWriter,
@@ -38,6 +39,7 @@ import {
 } from "../runtime-provider/persisted-engine-authority";
 import { createPodmanRuntimeProviderBundle } from "../runtime-provider/podman";
 import {
+  preparePodmanHostLocalInferenceOperationAuthority,
   PublishedInferenceForwardAuthorityError,
   type PodmanPublishedResumeTiming,
   type PodmanPublishedResumeTimingEvidence,
@@ -317,13 +319,23 @@ function writeHermesPortablePublishedResumeTiming(
   );
 }
 
-function prepareHermesPortableOllamaRegistryRecovery(options: {
+interface PreparedHermesPortableOllamaRecoveryEntry {
+  readonly registryRecovery: PreparedPortableRegistryRecovery;
+  readonly createRuntimeAuthority: (options: {
+    readonly assertForwardAuthority: () => void;
+    readonly publishedResumeTiming?: PodmanPublishedResumeTiming;
+  }) => HermesPortableOllamaRuntimeAuthority & {
+    readonly operation: HostLocalInferenceOperation;
+  };
+}
+
+function prepareHermesPortableOllamaRecoveryEntry(options: {
   readonly receipt: HermesPortableConfiguredReceipt;
   readonly inferenceReceipt: HostLocalInferenceReceipt;
+  readonly stateDir: string;
   readonly env: NodeJS.ProcessEnv;
-  readonly assertCallerCurrent: () => void;
   readonly assertCallerTransactionCurrent: () => void;
-}): PreparedPortableRegistryRecovery {
+}): PreparedHermesPortableOllamaRecoveryEntry {
   if (!("networkId" in options.inferenceReceipt.endpoint)) {
     failRecovery("published Ollama network authority is missing");
   }
@@ -338,38 +350,126 @@ function prepareHermesPortableOllamaRegistryRecovery(options: {
       options.receipt.runtimeAuthority,
       sourceEnv,
     );
-    const captureGpuDevices = () =>
-      captureQualifiedGpuDevices(captureCurrentGpuDevices, captureCurrentCdiDevices);
     const qualification = Object.freeze({
       expectedVersion: HERMES_PORTABLE_PODMAN_VERSION,
-      captureCurrentCdiDevices: () => captureGpuDevices(),
+      captureCurrentCdiDevices: () =>
+        captureQualifiedGpuDevices(captureCurrentGpuDevices, captureCurrentCdiDevices),
       assertCurrentAuthority: engines.assertTransactionCurrent,
     });
-    const authority = qualifyPodmanInferenceAuthority(engines.hostLocalInference, qualification);
-    const assertEngineCurrent = (): void => {
-      revalidatePodmanInferenceAuthority(engines.hostLocalInference, authority, qualification);
-    };
-    return Object.freeze({
-      engines,
-      assertEngineCurrent,
-      assertEngineTransactionCurrent: engines.assertTransactionCurrent,
+    const operationAuthority = preparePodmanHostLocalInferenceOperationAuthority({
+      engine: engines.hostLocalInference,
+      env: options.env,
+      acceleration: "nvidia-gpu",
+      authorityQualification: qualification,
+      redactSensitive: redactOnboardDiagnosticText,
     });
+    return Object.freeze({ engines, operationAuthority });
   });
+  const { engines, operationAuthority } = preparedAuthority;
+  let registryRecovery: PreparedPortableRegistryRecovery;
   try {
-    return preparePortableRegistryRecovery(
-      preparedAuthority.engines.hostLocalInference,
+    registryRecovery = preparePortableRegistryRecovery(
+      engines.hostLocalInference,
       options.inferenceReceipt.endpoint.networkAuthoritySha256,
-      preparedAuthority.assertEngineCurrent,
-      options.assertCallerCurrent,
+      operationAuthority.assertTransactionCurrent,
+      options.assertCallerTransactionCurrent,
       {},
       {
-        assertEngineCurrent: preparedAuthority.assertEngineTransactionCurrent,
+        assertEngineCurrent: operationAuthority.assertTransactionCurrent,
         assertCallerCurrent: options.assertCallerTransactionCurrent,
       },
     );
   } catch (error) {
     rethrowHermesPortableOllamaRegistryRecoveryError(error);
   }
+  let runtimeCreated = false;
+  return Object.freeze({
+    registryRecovery,
+    createRuntimeAuthority(runtimeOptions: {
+      readonly assertForwardAuthority: () => void;
+      readonly publishedResumeTiming?: PodmanPublishedResumeTiming;
+    }) {
+      if (runtimeCreated) {
+        failRecovery("published recovery runtime authority was already created");
+      }
+      runtimeCreated = true;
+      const network = capturePortableNetworkAuthority(engines.hostLocalInference);
+      const inferenceStateDir = hermesPortableInferenceStateDir(
+        options.stateDir,
+        options.receipt.sandboxName,
+      );
+      const authorityStore = openFilePersistedEngineAuthorityStore(inferenceStateDir);
+      const routeAuthorityStore = createUnusedRouteAuthorityStore();
+      const operation = operationAuthority.createOperation({
+        authorityStore,
+        routeAuthorityStore,
+        externalNetwork: network,
+        hermesPortablePublishedEngineAuthority: {
+          intent: "connect-probe-only",
+          creationAuthority: options.inferenceReceipt.engineAuthority,
+          serializedReceipt: serializeHostLocalInferenceReceipt(options.inferenceReceipt),
+          assertForwardAuthority: runtimeOptions.assertForwardAuthority,
+        },
+        publishedResumeTiming:
+          runtimeOptions.publishedResumeTiming ??
+          Object.freeze({ onComplete: writeHermesPortablePublishedResumeTiming }),
+        onFailureEvidence: (evidence) => {
+          const message = redactOnboardDiagnosticText(evidence.message);
+          if (message) console.error(`  Podman inference ${evidence.phase}: ${message}`);
+        },
+      });
+      const bundle = createPodmanRuntimeProviderBundle({
+        engines: {
+          hostDoctor: engines.hostDoctor,
+          hostLocalInference: engines.hostLocalInference,
+          sandboxLifecycle: engines.sandboxLifecycle,
+        },
+        hostLocalInference: {
+          authorityStore,
+          routeAuthorityStore,
+          externalNetwork: network,
+          hermesPortablePublishedEngineAuthority: {
+            intent: "connect-probe-only",
+            creationAuthority: options.inferenceReceipt.engineAuthority,
+            serializedReceipt: serializeHostLocalInferenceReceipt(options.inferenceReceipt),
+            assertForwardAuthority: runtimeOptions.assertForwardAuthority,
+          },
+          hermesPortablePublishedRecoveryOperation: {
+            operation,
+            environment: options.env,
+          },
+          publishedResumeTiming:
+            runtimeOptions.publishedResumeTiming ??
+            Object.freeze({ onComplete: writeHermesPortablePublishedResumeTiming }),
+          onFailureEvidence: (evidence) => {
+            const message = redactOnboardDiagnosticText(evidence.message);
+            if (message) console.error(`  Podman inference ${evidence.phase}: ${message}`);
+          },
+          redactSensitive: redactOnboardDiagnosticText,
+        },
+        preflight: { platform: "linux", architecture: "x64" },
+      });
+      const assertTransactionCurrent = (): void => {
+        runtimeOptions.assertForwardAuthority();
+        operationAuthority.assertTransactionCurrent();
+        network.assertCurrent();
+      };
+      const assertCurrent = (): void => {
+        runtimeOptions.assertForwardAuthority();
+        operationAuthority.assertCurrent();
+        network.assertCurrent();
+      };
+      assertTransactionCurrent();
+      return Object.freeze({
+        bundle,
+        inferenceStateDir,
+        network,
+        operation,
+        assertTransactionCurrent,
+        assertCurrent,
+      });
+    },
+  });
 }
 
 /** Reconstruct the exact schema-5 Podman inference owner without acquiring images. */
@@ -558,11 +658,10 @@ export interface HermesPortableOllamaPreparedProbeDependency {
 interface HermesPortableOllamaRecoveryDeps {
   readonly readReceipt: typeof readHermesPortableLifecycleReceipt;
   readonly qualifyOperatingAuthority: typeof qualifyHermesPortableOperatingAuthority;
-  readonly createRuntimeAuthority: typeof createHermesPortableOllamaRuntimeAuthority;
+  readonly prepareRecoveryEntry: typeof prepareHermesPortableOllamaRecoveryEntry;
   readonly prepareInferenceAuthority: typeof prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority;
   readonly assertPreparedInferenceAuthorityCurrent: typeof assertHermesPortableHostLocalInferencePublishedRecoveryAuthorityCurrent;
   readonly preparePublishedAuthority: typeof prepareHermesPortableOllamaPublishedInferenceAuthority;
-  readonly prepareRegistryRecovery: typeof prepareHermesPortableOllamaRegistryRecovery;
   readonly prepareStartup: typeof prepareHermesPortablePublishedHostLocalInferenceStartup;
   readonly recoveryTiming: HermesPortableOllamaRecoveryTiming;
 }
@@ -570,12 +669,11 @@ interface HermesPortableOllamaRecoveryDeps {
 const DEFAULT_RECOVERY_DEPS: HermesPortableOllamaRecoveryDeps = Object.freeze({
   readReceipt: readHermesPortableLifecycleReceipt,
   qualifyOperatingAuthority: qualifyHermesPortableOperatingAuthority,
-  createRuntimeAuthority: createHermesPortableOllamaRuntimeAuthority,
+  prepareRecoveryEntry: prepareHermesPortableOllamaRecoveryEntry,
   prepareInferenceAuthority: prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority,
   assertPreparedInferenceAuthorityCurrent:
     assertHermesPortableHostLocalInferencePublishedRecoveryAuthorityCurrent,
   preparePublishedAuthority: prepareHermesPortableOllamaPublishedInferenceAuthority,
-  prepareRegistryRecovery: prepareHermesPortableOllamaRegistryRecovery,
   prepareStartup: prepareHermesPortablePublishedHostLocalInferenceStartup,
   recoveryTiming: Object.freeze({ onComplete: writeHermesPortableOllamaRecoveryTiming }),
 });
@@ -760,17 +858,18 @@ export function recoverHermesPortableOllamaInference(
     }
     input.assertCallerTransactionCurrent?.();
   };
-  const registryRecovery = recoveryTiming.measureEntry("registryPreparation", () =>
+  const recoveryEntry = recoveryTiming.measureEntry("registryPreparation", () =>
     atOllamaRecoveryPhase("REGISTRY_PREPARATION_POSTCONDITION", () =>
-      deps.prepareRegistryRecovery({
+      deps.prepareRecoveryEntry({
         receipt: operating.receipt,
         inferenceReceipt: receipt,
+        stateDir,
         env,
-        assertCallerCurrent,
         assertCallerTransactionCurrent,
       }),
     ),
   );
+  const { registryRecovery } = recoveryEntry;
   let ollamaStateRestored = true;
   try {
     const published = recoveryTiming.measureEntry("privatePublication", () =>
@@ -798,12 +897,7 @@ export function recoverHermesPortableOllamaInference(
     };
     const runtimeAuthority = recoveryTiming.measureEntry("runtimeAuthority", () =>
       atOllamaRecoveryPhase("RUNTIME_AUTHORITY", () => {
-        const current = deps.createRuntimeAuthority({
-          receipt: operating.receipt,
-          publishedRecovery: { inferenceReceipt: receipt, assertForwardAuthority },
-          stateDir,
-          env,
-        });
+        const current = recoveryEntry.createRuntimeAuthority({ assertForwardAuthority });
         current.assertTransactionCurrent();
         if (current.bundle.identity.id !== receipt.providerId) {
           failRecovery("published runtime provider authority changed");
@@ -820,6 +914,7 @@ export function recoverHermesPortableOllamaInference(
             providerEntry,
             { environment: env },
             recoveryTiming.entryTiming("exactRuntimeInspection"),
+            runtimeAuthority.operation,
           );
           if (
             !currentPreparedAuthority ||
@@ -869,11 +964,18 @@ export function recoverHermesPortableOllamaInference(
       assertCallerTransactionCurrent();
     };
     const requireCompletionCurrent = (): void => {
-      requireTransactionCurrent(true);
+      assertCallerTransactionCurrent();
+      registryRecovery.assertTransactionCurrent();
+      runtimeAuthority.assertTransactionCurrent();
+      published.assertTransactionCurrent();
+      assertCallerTransactionCurrent();
       assertCallerCurrent();
       runtimeAuthority.assertCurrent();
       published.assertCurrent();
       assertPreparedAuthorityCurrent(true);
+      registryRecovery.assertTransactionCurrent();
+      runtimeAuthority.assertTransactionCurrent();
+      published.assertTransactionCurrent();
       assertCallerTransactionCurrent();
     };
     const verifyFinalRoute = (): void => {

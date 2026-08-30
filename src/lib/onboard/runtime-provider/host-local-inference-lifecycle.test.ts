@@ -719,6 +719,7 @@ describe("host-local inference lifecycle authority", () => {
         entry,
         {},
         { now: () => (now += 4), onComplete: onTimingComplete },
+        runtimeProvider.operation,
       ),
     );
 
@@ -738,6 +739,9 @@ describe("host-local inference lifecycle authority", () => {
       prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority(
         runtimeProvider.bundle,
         sandbox("alpha", receipt("ollama"), { agent: "hermes" }),
+        {},
+        undefined,
+        runtimeProvider.operation,
       ),
     ).toThrow("published recovery runtime entry authority is missing");
     expect(runtimeProvider.prepareDestroy).not.toHaveBeenCalled();
