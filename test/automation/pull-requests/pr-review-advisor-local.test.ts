@@ -16,6 +16,7 @@ import {
 } from "../../../tools/pr-review-advisor/local-review-implementation.mts";
 import { defaultOpenShellTools } from "../../../tools/openshell-agent/runtime.mts";
 import { ADVISOR_PI_IMAGE } from "../../../tools/pr-review-advisor/runtime-constants.mts";
+import { runAdvisorSpecialist } from "../../../tools/pr-review-advisor/specialist-lifecycle.mts";
 import { ADVISOR_SPECIALISTS } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
 
 const temporaryDirectories: string[] = [];
@@ -655,6 +656,35 @@ describe("local PR review advisor", () => {
     expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
   });
 
+  it("redacts specialist lifecycle failures without importing local review diagnostics", async () => {
+    const credential = "specialist-lifecycle-secret";
+    vi.stubEnv("PR_REVIEW_ADVISOR_API_KEY", credential);
+
+    const failure = (await runAdvisorSpecialist({
+      env: {
+        PR_REVIEW_ADVISOR_INTEREST: "security",
+        SANDBOX_NAME: "pr-adv-security",
+      },
+      lifecycle: {
+        prepare: async () => undefined,
+        startGateway: () => undefined,
+        create: () => undefined,
+        run: () => {
+          throw new Error(
+            `sandbox failed; api_key=${credential}; Authorization: Bearer other-secret`,
+          );
+        },
+        download: () => undefined,
+        remove: () => undefined,
+      },
+    }).catch((error: unknown) => error)) as Error;
+
+    expect(failure.message).toContain("sandbox failed; api_key=[REDACTED]");
+    expect(failure.message).toContain("Authorization: [REDACTED]");
+    expect(failure.message).not.toContain(credential);
+    expect(failure.message).not.toContain("other-secret");
+  });
+
   it("redacts lifecycle credentials while preserving actionable OpenShell context (#10611)", async () => {
     const source = repository();
     const specialist = ADVISOR_SPECIALISTS[0]!;
@@ -728,6 +758,29 @@ describe("local PR review advisor", () => {
     expect(
       fs.readdirSync(path.dirname(destination)).filter((name) => name.includes(".staged-")),
     ).toEqual([]);
+  });
+
+  it("removes a run-created artifacts parent after copy failure (#10611)", async () => {
+    const source = repository();
+    const parent = path.join(source, "artifacts");
+    fs.rmSync(parent, { recursive: true, force: true });
+
+    await expect(
+      runLocalReview({
+        source,
+        temporaryRoot: temporaryDirectory(),
+        specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+        lifecycle: artifactLifecycle(),
+        publication: {
+          copy: () => {
+            throw new Error("copy failed");
+          },
+          remove: fs.rmSync,
+          rename: fs.renameSync,
+        },
+      }),
+    ).rejects.toThrow("copy failed");
+    expect(fs.existsSync(parent)).toBe(false);
   });
 
   it("restores prior output after previous-output removal fails (#10611)", async () => {

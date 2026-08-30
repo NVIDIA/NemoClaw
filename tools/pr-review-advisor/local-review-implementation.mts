@@ -11,30 +11,19 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { DEFAULT_ADVISOR_MODEL } from "../advisors/provider-constants.mts";
 import { ADVISOR_PI_IMAGE, LOCAL_OPENSHELL_GATEWAY_ENDPOINT } from "./runtime-constants.mts";
 import {
-  startAdvisorOpenShellInference,
   createAdvisorSandbox,
   deleteAdvisorSandbox,
   downloadAdvisorArtifacts,
   prepareAdvisorSandboxInputs,
   runAdvisorSandbox,
+  startAdvisorOpenShellInference,
 } from "./openshell.mts";
+import { runAdvisorSpecialist, type AdvisorSpecialistLifecycle } from "./specialist-lifecycle.mts";
 import { ADVISOR_SPECIALISTS, type AdvisorSpecialist } from "./specialist-catalog.mts";
 
 const LOCAL_OUTPUT_DIRECTORY = path.join("artifacts", "pr-review-advisor-local");
 
-export type LocalReviewGateway = {
-  configure: Promise<void>;
-  stop: () => Promise<void>;
-};
-
-export type LocalReviewLifecycle = {
-  prepare: (env: NodeJS.ProcessEnv) => Promise<void>;
-  startGateway: (env: NodeJS.ProcessEnv) => LocalReviewGateway | undefined;
-  create: (env: NodeJS.ProcessEnv) => void;
-  run: (env: NodeJS.ProcessEnv) => void;
-  download: (env: NodeJS.ProcessEnv) => void;
-  remove: (env: NodeJS.ProcessEnv) => void;
-};
+export type LocalReviewLifecycle = AdvisorSpecialistLifecycle;
 
 export type LocalReviewPublication = {
   copy: typeof fs.cpSync;
@@ -103,7 +92,7 @@ function combineFailures(first: unknown, next: unknown): unknown {
 
 export const defaultLocalReviewLifecycle: LocalReviewLifecycle = {
   prepare: (env) => prepareAdvisorSandboxInputs(env, { collectContext: async () => null }),
-  startGateway: startAdvisorOpenShellInference,
+  startGateway: (env) => startAdvisorOpenShellInference(env)!,
   create: createAdvisorSandbox,
   run: runAdvisorSandbox,
   download: downloadAdvisorArtifacts,
@@ -260,7 +249,9 @@ function publishArtifacts(
   const previous = `${destination}.previous-${nonce}`;
   let failure: unknown;
   let hadPrevious = false;
-  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  const parent = path.dirname(destination);
+  const hadParent = fs.existsSync(parent);
+  fs.mkdirSync(parent, { recursive: true });
   try {
     publication.copy(artifacts, staged, { recursive: true, errorOnExist: true });
     hadPrevious = fs.existsSync(destination);
@@ -297,6 +288,9 @@ function publishArtifacts(
       failure,
       new Error(`Prior output remains at ${previous}; restore it to ${destination} manually`),
     );
+  }
+  if (!hadParent && fs.existsSync(parent) && fs.readdirSync(parent).length === 0) {
+    failure = combineFailures(failure, removePublicationPath(parent, publication));
   }
   throw failure;
 }
@@ -368,8 +362,8 @@ export async function runLocalReview(input: {
   const lifecycle = input.lifecycle ?? defaultLocalReviewLifecycle;
   const publication = input.publication ?? defaultLocalReviewPublication;
   const removeTemporaryRoot = input.removeTemporaryRoot ?? fs.rmSync;
-  let gatewayCleanup: (() => Promise<void>) | undefined;
-  let activeEnvironment: NodeJS.ProcessEnv | undefined;
+  let activeLifecycleCleanup: (() => Promise<void>) | undefined;
+  let sharedGateway: ReturnType<LocalReviewLifecycle["startGateway"]>;
   let cleanupPromise: Promise<void> | undefined;
   let primaryFailure: unknown;
   let cleanupFailure: unknown;
@@ -378,20 +372,15 @@ export async function runLocalReview(input: {
     if (cleanupPromise) return cleanupPromise;
     cleanupPromise = (async () => {
       let failure: unknown;
-      const environment = activeEnvironment;
       try {
-        if (environment) lifecycle.remove(environment);
-        activeEnvironment = undefined;
+        await activeLifecycleCleanup?.();
+        activeLifecycleCleanup = undefined;
       } catch (error) {
-        failure = contextualError(
-          `Local review failed during cleanup for specialist ${environment?.PR_REVIEW_ADVISOR_INTEREST} in sandbox ${environment?.SANDBOX_NAME}`,
-          error,
-        );
+        failure = safeFailure(error);
       }
-      const stopGateway = gatewayCleanup;
       try {
-        await stopGateway?.();
-        gatewayCleanup = undefined;
+        await sharedGateway?.stop?.();
+        sharedGateway = undefined;
       } catch (error) {
         failure = combineFailures(
           failure,
@@ -443,54 +432,23 @@ export async function runLocalReview(input: {
         refs,
         specialist,
       });
-      let specialistFailure: unknown;
-      let stage = "prepare";
-      try {
-        await lifecycle.prepare(env);
-        stage = "configure";
-        if (!gatewayCleanup) {
-          const gateway = lifecycle.startGateway(env);
-          gatewayCleanup = gateway?.stop;
-          await gateway?.configure;
-        }
-        stage = "create";
-        activeEnvironment = env;
-        lifecycle.create(env);
-        stage = "run";
-        lifecycle.run(env);
-        stage = "download";
-        lifecycle.download(env);
-        stage = "validate";
-        validateSpecialistArtifacts(outputRoot, specialist.interest);
-      } catch (error: unknown) {
-        specialistFailure = contextualError(
-          `Local review failed during ${stage} for specialist ${specialist.interest} in sandbox ${env.SANDBOX_NAME}`,
-          error,
-        );
-      }
-      let specialistCleanupFailure: unknown;
-      try {
-        if (activeEnvironment === env) {
-          lifecycle.remove(env);
-          activeEnvironment = undefined;
-        }
-      } catch (error) {
-        specialistCleanupFailure = contextualError(
-          `Local review failed during cleanup for specialist ${specialist.interest} in sandbox ${env.SANDBOX_NAME}`,
-          error,
-        );
-      }
-      if (specialistFailure !== undefined && specialistCleanupFailure !== undefined) {
-        const primary = safeFailure(specialistFailure);
-        const cleanup = safeFailure(specialistCleanupFailure);
-        throw new AggregateError(
-          [primary, cleanup],
-          `${primary.message}; cleanup also failed: ${cleanup.message}`,
-          { cause: primary },
-        );
-      }
-      if (specialistFailure !== undefined) throw specialistFailure;
-      if (specialistCleanupFailure !== undefined) throw specialistCleanupFailure;
+      const specialistLifecycle: LocalReviewLifecycle = {
+        ...lifecycle,
+        startGateway: (currentEnv) => {
+          if (sharedGateway) return undefined;
+          sharedGateway = lifecycle.startGateway(currentEnv);
+          return sharedGateway;
+        },
+      };
+      await runAdvisorSpecialist({
+        env,
+        lifecycle: specialistLifecycle,
+        cleanupGateway: false,
+        validate: () => validateSpecialistArtifacts(outputRoot, specialist.interest),
+        setActiveCleanup: (cleanup) => {
+          activeLifecycleCleanup = cleanup;
+        },
+      });
     }
     const destination = path.join(source, LOCAL_OUTPUT_DIRECTORY);
     publishArtifacts(path.join(outputRoot, "artifacts"), destination, publication);
@@ -503,6 +461,7 @@ export async function runLocalReview(input: {
     await cleanup();
   } catch (error) {
     cleanupFailure = safeFailure(error);
+    if (primaryFailure === undefined) activeLifecycleCleanup = undefined;
   }
   if (primaryFailure !== undefined) {
     if (cleanupFailure !== undefined) {

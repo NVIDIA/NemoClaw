@@ -105,6 +105,15 @@ describe("PR review advisor workflow boundary", () => {
     expect(errors).toEqual([expectedError]);
   });
 
+  it.each([
+    ["missing install", (steps: Record<string, any>[]) => steps.splice(steps.findIndex((step) => step.name === "Install OpenShell"), 1), "OpenShell must be installed before inference configuration"],
+    ["ungated configure", (steps: Record<string, any>[]) => delete steps.find((step) => step.name === "Configure OpenShell inference")!.if, "OpenShell installation and configuration must run only when analysis is requested"],
+    ["lost disabled reason", (steps: Record<string, any>[]) => steps.find((step) => step.name === "Complete advisor specialist")!.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON = "configuration failed", "disabled analysis must preserve its unavailable reason"],
+  ])("rejects %s lifecycle regression", (_case, mutate, expected) => {
+    const errors = validateMutation((value) => mutate(value.jobs["review-specialists"].steps));
+    expect(errors).toContain(expected);
+  });
+
   it("rejects a non-artifact specialist upload action", () => {
     const errors = validateMutation((workflow) => {
       const upload = workflow.jobs["review-specialists"].steps.find(

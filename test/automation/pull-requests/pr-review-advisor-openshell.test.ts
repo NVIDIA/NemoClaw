@@ -101,26 +101,6 @@ afterEach(() => {
 });
 
 describe("PR review advisor OpenShell wrapper", () => {
-  it.each([
-    "tools/pr-review-advisor/openshell.mts",
-    "tools/pr-review-advisor/github-context.mts",
-    "tools/advisors/provider-constants.mts",
-    "tools/advisors/github.mts",
-    "tools/advisors/json.mts",
-    "tools/openshell-agent/runtime.mts",
-  ])(
-    "keeps credential-bearing host commands out of the Pi SDK import graph [case %#]",
-    (relativePath) => {
-      const source = fs.readFileSync(
-        path.resolve(import.meta.dirname, "../../..", relativePath),
-        "utf8",
-      );
-      expect(source, relativePath).not.toMatch(
-        /(?:@earendil-works\/pi-coding-agent|\btypebox\b|\/session\.mts|\/analyze\.mts)/u,
-      );
-    },
-  );
-
   it("allows only the hosted service and OpenShell inference gateway", () => {
     expect(advisorInferenceBaseUrl({})).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
     expect(

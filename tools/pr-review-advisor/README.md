@@ -192,8 +192,9 @@ credential or starts the implementation, the built-in-only bootstrap runs `npm c
 cache behavior, and a credential-free environment with user and global npm configuration disabled.
 Failure stops the run before the credential-bearing advisor lifecycle starts.
 
-The command removes its temporary snapshot, trusted dependencies, gateway, and each sandbox after
-success, failure, or a handled termination signal.
+The command attempts to remove its temporary snapshot, trusted dependencies, gateway, and each
+sandbox after success, failure, or a handled termination signal. It reports cleanup failures with the
+remaining resource name or path. Remove that named resource before retrying.
 
 ## Output contract
 
