@@ -14,7 +14,6 @@ import {
   type LocalReviewLifecycle,
   type LocalReviewPublication,
 } from "../../../tools/pr-review-advisor/local-review-implementation.mts";
-import { defaultOpenShellTools } from "../../../tools/openshell-agent/runtime.mts";
 import { ADVISOR_PI_IMAGE } from "../../../tools/pr-review-advisor/runtime-constants.mts";
 import { ADVISOR_SPECIALISTS } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
 
