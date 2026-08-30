@@ -39,6 +39,7 @@ import {
   type SandboxMessagingPlan,
   toMessagingAgentId,
   tryGetMessagingAgentId,
+  WECHAT_OPENCLAW_STATE_PATHS,
 } from "../../messaging";
 import { findChannelConflicts } from "../../messaging/applier/conflict-detection/registry";
 import type { GooglechatNonInteractiveAudienceCapability } from "../../messaging/channels/googlechat/hooks/tunnel-audience-gate";
@@ -1685,13 +1686,13 @@ export function applyChannelPresetIfAvailable(
   }
 }
 
-function getSandboxChannelStatePaths(agent: AgentDefinition, channelName: string): string[] {
+function getSandboxChannelStatePaths(
+  agent: AgentDefinition,
+  channelName: string,
+): readonly string[] {
   const configDir = agent.configPaths.dir;
   if (agent.name === "openclaw" && channelName === "wechat") {
-    // Keep both generations independent of manifest drift: the OpenClaw
-    // manifest owns the original `wechat` state root, while the current
-    // Tencent plugin stores account state under `openclaw-weixin`.
-    return [`${configDir}/wechat`, `${configDir}/openclaw-weixin`];
+    return WECHAT_OPENCLAW_STATE_PATHS;
   }
   const stateDirs = new Set(agent.stateDirs);
   const paths: string[] = [];

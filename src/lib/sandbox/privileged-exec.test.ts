@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createPersistedLifecycleStoreOrThrow } from "../../../test/helpers/privileged-exec-test-helpers";
+import { WECHAT_OPENCLAW_STATE_PATHS } from "../messaging/channels/wechat/contract";
 
 // The shared source hook preserves the writable CommonJS cache used by these mocks.
 const require = createRequire(import.meta.url);
@@ -222,12 +223,9 @@ describe("privileged sandbox exec routing", () => {
         listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
       },
       ({ clearStoppedDockerSandboxChannelState }) => {
-        expect(
-          clearStoppedDockerSandboxChannelState("alpha", [
-            "/sandbox/.openclaw/wechat",
-            "/sandbox/.openclaw/openclaw-weixin",
-          ]),
-        ).toBe(true);
+        expect(clearStoppedDockerSandboxChannelState("alpha", WECHAT_OPENCLAW_STATE_PATHS)).toBe(
+          true,
+        );
       },
     );
 
@@ -252,9 +250,7 @@ describe("privileged sandbox exec routing", () => {
     expect(helperArgv?.join("\0")).not.toContain("/home/operator/project");
     expect(helperArgv?.join("\0")).not.toContain("/sandbox/project");
     expect(helperArgv).not.toContain("start");
-    expect(helperArgv?.at(-1)).toContain(
-      "rm -rf -- /sandbox/.openclaw/wechat /sandbox/.openclaw/openclaw-weixin",
-    );
+    expect(helperArgv?.at(-1)).toContain(`rm -rf -- ${WECHAT_OPENCLAW_STATE_PATHS.join(" ")}`);
   });
 
   it("refuses a broader OpenClaw cleanup path before Docker discovery", () => {

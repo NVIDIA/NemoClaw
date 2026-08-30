@@ -6,6 +6,10 @@ import path from "node:path";
 
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { resolveSandboxContainerOwner } from "../domain/sandbox/container-owner";
+import {
+  isExactWechatOpenClawStatePathSet,
+  WECHAT_OPENCLAW_STATE_PATHS,
+} from "../messaging/channels/wechat/contract";
 import { resolvePortableDemoPrivilegedExecTarget } from "../onboard/experimental/portable-demo-lifecycle";
 import { isImmutableDockerImageId } from "../onboard/openshell-docker-sandbox-containers";
 import {
@@ -31,15 +35,9 @@ type LabeledSandboxContainer = {
 const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const DOCKER_VOLUME_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
-// Keep this exact set aligned with the OpenClaw manifest's original WeChat
-// state root and the current Tencent plugin account-state root.
-const OFFLINE_WECHAT_STATE_PATHS = new Set([
-  "/sandbox/.openclaw/wechat",
-  "/sandbox/.openclaw/openclaw-weixin",
-]);
 const OFFLINE_WECHAT_CLEANUP_COMMAND =
-  "rm -rf -- /sandbox/.openclaw/wechat /sandbox/.openclaw/openclaw-weixin && " +
-  "test ! -e /sandbox/.openclaw/wechat && test ! -e /sandbox/.openclaw/openclaw-weixin";
+  `rm -rf -- ${WECHAT_OPENCLAW_STATE_PATHS.join(" ")} && ` +
+  WECHAT_OPENCLAW_STATE_PATHS.map((statePath) => `test ! -e ${statePath}`).join(" && ");
 const OFFLINE_DOCKER_OPERATION_OPTIONS = {
   encoding: "utf-8",
   ignoreError: true,
@@ -301,13 +299,7 @@ function clearStoppedDockerSandboxChannelState(
 ): boolean {
   const entry = readSandboxEntry(sandboxName);
   if (normalizeDriver(entry?.openshellDriver) !== "docker") return false;
-  if (
-    paths.length !== OFFLINE_WECHAT_STATE_PATHS.size ||
-    new Set(paths).size !== paths.length ||
-    paths.some((path) => !OFFLINE_WECHAT_STATE_PATHS.has(path))
-  ) {
-    return false;
-  }
+  if (!isExactWechatOpenClawStatePathSet(paths)) return false;
 
   try {
     return withPrivilegedSandboxExecutionLease(sandboxName, "offline WeChat state cleanup", () => {

@@ -18,6 +18,7 @@ import path from "node:path";
 import { describe, it } from "vitest";
 
 import type { MessagingAgentId } from "../../src/lib/messaging";
+import { WECHAT_OPENCLAW_STATE_PATHS } from "../../src/lib/messaging/channels/wechat/contract";
 import { makeMessagingPlan } from "../helpers/messaging-plan-fixtures";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
@@ -251,8 +252,9 @@ const ctx = module.exports;
       call.command.startsWith("rm -rf"),
     );
     assert.ok(cleanup, "WeChat removal must clear its managed state");
-    assert.ok(cleanup.command.includes("/sandbox/.openclaw/wechat"));
-    assert.ok(cleanup.command.includes("/sandbox/.openclaw/openclaw-weixin"));
+    assert.ok(
+      WECHAT_OPENCLAW_STATE_PATHS.every((statePath) => cleanup.command.includes(statePath)),
+    );
     assert.ok(
       payload.callOrder.indexOf("clearedSandboxState") <
         payload.callOrder.indexOf("promptAndRebuild"),
@@ -436,7 +438,7 @@ const ctx = module.exports;
     assert.deepEqual(payload.stoppedDockerCleanupCalls, [
       {
         sandboxName: "test-sb",
-        paths: ["/sandbox/.openclaw/wechat", "/sandbox/.openclaw/openclaw-weixin"],
+        paths: WECHAT_OPENCLAW_STATE_PATHS,
       },
     ]);
     assert.deepEqual(payload.removedPresets, [{ sandboxName: "test-sb", presetName: "wechat" }]);
