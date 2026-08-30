@@ -572,6 +572,41 @@ describe("local PR review advisor", () => {
     expect(sourceState(source)).toEqual(before);
   });
 
+  it.each([
+    ["success", artifactLifecycle(), { status: "fulfilled" }],
+    [
+      "lifecycle failure",
+      {
+        ...artifactLifecycle(),
+        run: () => {
+          throw new Error("run failed");
+        },
+      },
+      {
+        status: "rejected",
+        reason: expect.objectContaining({ message: expect.stringContaining("failed during run") }),
+      },
+    ],
+  ])("removes its temporary root after %s (#10611)", async (_case, lifecycle, expected) => {
+    const source = repository();
+    let removedRoot = "";
+    const [result] = await Promise.allSettled([
+      runLocalReview({
+        source,
+        specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+        lifecycle,
+        removeTemporaryRoot: (root, options) => {
+          removedRoot = root as string;
+          fs.rmSync(root, options);
+        },
+      }),
+    ]);
+
+    expect(result).toMatchObject(expected);
+    expect(path.basename(removedRoot)).toMatch(/^nemoclaw-local-review-/u);
+    expect(fs.existsSync(removedRoot)).toBe(false);
+  });
+
   it("owns gateway cleanup while provider configuration is pending (#10611)", async () => {
     const source = repository();
     let rejectConfiguration!: (error: Error) => void;
