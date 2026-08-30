@@ -36,6 +36,10 @@ A missing or changed value causes a configuration drift error instead of runner 
 It then creates the runner, sends one validation request for the selected model, and confirms that Ollama loaded the selected model.
 This path does not inspect, start, or use a host Ollama process, and it does not use the default Docker runtime.
 
+If the published runner later stops, use `$$nemoclaw <name> recover` or `$$nemoclaw <name> connect --probe-only` to resume only the exact receipt-owned runner.
+Ordinary `connect` and direct `launch` do not recover it.
+Follow [Recover Portable Published Ollama](../../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#recover-portable-published-ollama) for the authority checks, route proof, and failure procedure.
+
 <Warning title="Portable Cleanup Boundary">
 Run `$$nemoclaw uninstall` for full cleanup of a receipt-owned Portable Ollama runner.
 Before its first mutation, NemoClaw records the schema `5` lifecycle receipt, sandbox registry revision and lifecycle generation, sandbox and Podman container identities, committed gateway provider revision and profile, inference runtime, socket, and Portable network.

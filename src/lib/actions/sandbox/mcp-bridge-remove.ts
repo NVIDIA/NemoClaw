@@ -324,7 +324,7 @@ async function removeMcpBridgeUnlocked(
       if (adapterRemoval === "unowned") {
         adapterCleanupProved = false;
         throw new McpBridgeError(
-          `Could not prove removal of the exact managed adapter entry for MCP server '${entry.server}'. Preserved provider, policy, and registry ownership state.`,
+          `Could not prove removal of the exact managed adapter entry for MCP server '${entry.server}'. Preserved the provider and MCP bridge lifecycle record.`,
         );
       }
       if (adapter === "hermes-config") {
@@ -392,7 +392,7 @@ async function removeMcpBridgeUnlocked(
   }
   if (!reservationCleanupProved) {
     failures.push(
-      `Provider detach or policy cleanup state for '${entry.providerName}' is unknown; preserved the MCP ownership manifest.`,
+      `Provider detach or policy cleanup state for '${entry.providerName}' is unknown; preserved the MCP bridge record.`,
     );
   }
   if (

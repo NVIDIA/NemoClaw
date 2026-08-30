@@ -71,9 +71,9 @@ describe("handleSandboxState provider effect replay", () => {
     const createSandbox = vi.fn(async (...args: unknown[]) => {
       events.push("sandbox-create");
       const createIntent = args.at(-1) as {
-        deferSandboxEffectsUntilPolicyVerification?: boolean;
+        deferSandboxEffectsUntilIdentityVerification?: boolean;
       };
-      expect(createIntent.deferSandboxEffectsUntilPolicyVerification).toBeUndefined();
+      expect(createIntent.deferSandboxEffectsUntilIdentityVerification).toBeUndefined();
       return "my-assistant";
     });
     const session = createSession({ sandboxName: "my-assistant", agent: "hermes" });
@@ -212,7 +212,6 @@ describe("handleSandboxState provider effect replay", () => {
       webSearchConfig: null,
       agent: null,
       requiredBindings: slackProviderBindings,
-      revalidatePolicyRequirements: expect.any(Function),
     });
     expect(calls.createSandbox).toHaveBeenCalledTimes(1);
     expect(result.session?.checkpoint?.bindings).toEqual({
@@ -300,7 +299,6 @@ describe("handleSandboxState provider effect replay", () => {
       webSearchConfig: { fetchEnabled: true, provider: "tavily" },
       agent: null,
       requiredBindings: [tavilyBinding],
-      revalidatePolicyRequirements: expect.any(Function),
     });
     expect(calls.createSandbox).toHaveBeenCalledTimes(1);
     expect(result.session?.checkpoint?.bindings).toEqual({

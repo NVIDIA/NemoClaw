@@ -37,10 +37,9 @@ import {
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
 import type { ShellProbeOutputEvent, ShellProbeResult } from "../fixtures/shell-probe.ts";
-import {
-  buildOpenClawFirstTurnLatencyEvidence,
-  extractOpenClawAgentPayloadText,
-} from "./agent-turn-latency-helpers.ts";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
+import { buildOpenClawFirstTurnLatencyEvidence } from "./agent-turn-latency-helpers.ts";
 import {
   FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
   fullE2eInferenceProbeEvidence,
@@ -293,10 +292,9 @@ async function assertColdOnboardPerformance(input: {
     performanceEvaluation.rootStartToFirstTurnCompletionMs / 1_000,
   );
   const turnText = resultText(turn);
-  const assistantReply = extractOpenClawAgentPayloadText(turnText).trim();
+  const assistantReply = parseOpenClawAgentText(turnText).trim();
   const firstTurnLatency = buildOpenClawFirstTurnLatencyEvidence(turnText, firstTurnCommandMs);
-  const compactAssistantReply = assistantReply.replace(/\s+/gu, "");
-  const firstTurnSentinelMatched = compactAssistantReply.includes(EXPECTED_FIRST_REPLY);
+  const firstTurnSentinelMatched = containsAnswer(assistantReply, EXPECTED_FIRST_REPLY);
   const responseChars = assistantReply.length;
 
   await input.artifacts.writeJson("onboard-progress-budget.json", {

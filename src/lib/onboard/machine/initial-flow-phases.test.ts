@@ -163,7 +163,6 @@ describe("initial onboard flow phases", () => {
       getInitialGatewayReuseState: () => "healthy",
       assertGatewayReadiness: vi.fn(async () => undefined),
       gatewayName: "nemoclaw",
-      bindPolicyAuthority: async (_gatewayName, session) => session,
       recreateSandbox: () => false,
       gatewayDeps: {
         resolveGatewayOwner: () =>
@@ -435,7 +434,6 @@ describe("initial onboard flow phases", () => {
         calls.push("assert-gateway-readiness");
       }),
       gatewayName: "nemoclaw",
-      bindPolicyAuthority: async (_gatewayName, gatewaySession) => gatewaySession,
       recreateSandbox: () => false,
       gatewayDeps: {
         resolveGatewayOwner: () =>

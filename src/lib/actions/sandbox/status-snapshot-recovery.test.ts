@@ -11,7 +11,6 @@ import { collectSandboxStatusSnapshot, getSandboxStatusReport } from "./status-s
 const sandbox: SandboxEntry = {
   name: "alpha",
   agent: "openclaw",
-  policies: [],
   provider: "nvidia",
   model: "nvidia/nemotron",
   openshellDriver: "docker",

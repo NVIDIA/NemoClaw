@@ -122,7 +122,7 @@ describe("sandbox recreate reservation ownership", () => {
         name: "alpha",
         pendingRouteReservation: true as const,
         ...(reservationSessionId ? { reservationSessionId } : {}),
-        pendingPolicyVerification: {} as never,
+        pendingCreateIdentity: {} as never,
       };
 
       expect(() => removeSandboxUnlessSessionReservation(entry, "alpha")).toThrow(

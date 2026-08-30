@@ -7,7 +7,7 @@ import type { ConnectHarness } from "./connect-flow-test-harness";
 type ForwardRecord = {
   owner: string;
   reachable: boolean;
-  status: "dead" | "running";
+  status: "active" | "dead" | "running" | "stopped";
 };
 
 function forwardList(records: ReadonlyMap<number, ForwardRecord>): string {
@@ -21,7 +21,10 @@ function forwardList(records: ReadonlyMap<number, ForwardRecord>): string {
 
 export function createHermesPortableForwardRecoveryFixture({
   ports = [18_789],
+  active = [],
+  dead = [],
   running = [],
+  stopped = [],
   occupied = [],
   malformedList = false,
   listStatus = 0,
@@ -32,7 +35,10 @@ export function createHermesPortableForwardRecoveryFixture({
   listOutput,
 }: {
   ports?: readonly number[];
+  active?: readonly number[];
+  dead?: readonly number[];
   running?: readonly number[];
+  stopped?: readonly number[];
   occupied?: readonly number[];
   malformedList?: boolean;
   listStatus?: number;
@@ -43,8 +49,17 @@ export function createHermesPortableForwardRecoveryFixture({
   listOutput?: string;
 } = {}) {
   const records = new Map<number, ForwardRecord>();
+  for (const port of active) {
+    records.set(port, { owner: "alpha", reachable: true, status: "active" });
+  }
+  for (const port of dead) {
+    records.set(port, { owner: "alpha", reachable: false, status: "dead" });
+  }
   for (const port of running) {
     records.set(port, { owner: "alpha", reachable: true, status: "running" });
+  }
+  for (const port of stopped) {
+    records.set(port, { owner: "alpha", reachable: false, status: "stopped" });
   }
   for (const port of occupied) {
     records.set(port, { owner: "beta", reachable: true, status: "running" });
@@ -119,12 +134,15 @@ export function createHermesPortableForwardRecoveryFixture({
 
 export function configureMissingHermesForwardCapture(
   harness: ConnectHarness,
-  options: { readonly afterStart?: () => void } = {},
+  options: {
+    readonly afterStart?: () => void;
+    readonly initialStatus?: "dead" | "missing";
+  } = {},
 ): { readonly isRunning: () => boolean } {
-  let forwardRunning = false;
+  let forwardStatus: "dead" | "missing" | "running" = options.initialStatus ?? "missing";
   const captureResolved = harness.captureResolvedOpenshellSpy.getMockImplementation()!;
   harness.spawnSyncSpy.mockImplementation(((command: unknown) => ({
-    status: String(command) === process.execPath && !forwardRunning ? 1 : 0,
+    status: String(command) === process.execPath && forwardStatus !== "running" ? 1 : 0,
     signal: null,
   })) as never);
   harness.captureResolvedOpenshellSpy.mockImplementation(((
@@ -135,21 +153,22 @@ export function configureMissingHermesForwardCapture(
     if (argv[0] === "forward" && argv[1] === "list") {
       return {
         status: 0,
-        output: forwardRunning
-          ? "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 running"
-          : "SANDBOX BIND PORT PID STATUS",
+        output:
+          forwardStatus === "missing"
+            ? "SANDBOX BIND PORT PID STATUS"
+            : `SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 12345 ${forwardStatus}`,
       };
     }
     if (argv[0] === "forward" && argv[1] === "stop") {
-      forwardRunning = false;
+      forwardStatus = "missing";
       return { status: 0, output: "" };
     }
     if (argv[0] === "forward" && argv[1] === "start") {
-      forwardRunning = true;
+      forwardStatus = "running";
       options.afterStart?.();
       return { status: 0, output: "" };
     }
     return captureResolved(args, captureOptions);
   }) as never);
-  return { isRunning: () => forwardRunning };
+  return { isRunning: () => forwardStatus === "running" };
 }

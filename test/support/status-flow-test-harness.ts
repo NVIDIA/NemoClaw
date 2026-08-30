@@ -12,12 +12,7 @@ import type {
   ServingProcessHealth,
 } from "../../src/lib/actions/sandbox/status-snapshot";
 import type { ProviderHealthStatus } from "../../src/lib/inference/health";
-import type { BaselineExclusionRuntimeStatus } from "../../src/lib/policy/baseline-exclusion";
-import type {
-  BaselineExclusionTransition,
-  SandboxHostMount,
-  SandboxQuarantineFence,
-} from "../../src/lib/state/registry";
+import type { SandboxHostMount, SandboxQuarantineFence } from "../../src/lib/state/registry";
 
 type ShowSandboxStatus =
   (typeof import("../../src/lib/actions/sandbox/status"))["showSandboxStatus"];
@@ -55,7 +50,6 @@ const baseSandboxEntry = {
   name: "alpha",
   model: "nvidia/nemotron",
   provider: "ollama-local",
-  policies: ["npm", "telegram"],
   hostGpuDetected: true,
   gpuEnabled: true,
   sandboxGpuEnabled: true,
@@ -78,6 +72,7 @@ const baseSandboxEntry = {
 export type StatusFlowHarnessOptions = {
   currentModel?: string;
   currentProvider?: string;
+  gatewayPresets?: string[] | null;
   routeDrift?: SandboxStatusRouteDrift | null;
   inferenceHealth?: ProviderHealthStatus | null;
   servingProcessHealth?: ServingProcessHealth | null;
@@ -87,7 +82,6 @@ export type StatusFlowHarnessOptions = {
     | (() => PortableAgentReceiptDisposition | Error);
   registryEntry?: "present" | "missing";
   withMcpLifecycleLock?: WithMcpLifecycleLock;
-  baselineExclusionStatus?: BaselineExclusionRuntimeStatus;
   lookup?: SandboxGatewayState;
   lookupState?: "present" | "missing";
   gatewayRunning?: boolean;
@@ -99,8 +93,6 @@ export type StatusFlowHarnessOptions = {
         agent?: string | null;
         agentVersion?: string | null;
         dcodeAutoApprovalMode?: "disabled" | "thread-opt-in";
-        baselineExclusions?: Array<{ version: 1; agent: string; key: string; digest: string }>;
-        baselineExclusionTransition?: BaselineExclusionTransition;
         preferredInferenceApi?: string | null;
         compatibleEndpointReasoningEffort?: "low" | "medium" | "high" | null;
         hostMounts?: SandboxHostMount[];
@@ -280,8 +272,8 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
     container: null,
   });
   vi.spyOn(nim, "shouldShowNimLine").mockReturnValue(true);
-  vi.spyOn(policy, "getBaselineExclusionRuntimeStatus").mockReturnValue(
-    options.baselineExclusionStatus ?? "excluded",
+  vi.spyOn(policy, "getGatewayPresets").mockReturnValue(
+    options.gatewayPresets === undefined ? ["npm", "telegram"] : options.gatewayPresets,
   );
   const checkAgentVersionSpy = vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue(
     options.versionCheck ?? {

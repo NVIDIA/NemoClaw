@@ -405,7 +405,7 @@ describe("NemoClawCommand", () => {
           ),
         ).toBe(true);
         expect(isMcpLifecycleLockHeld(sandboxName)).toBe(true);
-        return { kind: "already-current", snapshot: {} as never };
+        return { kind: "already-current", snapshot: {} as never, assertCurrent: vi.fn() };
       });
     ProbeOnlyConnectCommand.operation = (sandboxName) => {
       portableAgentLifecycle.requalifyPortableAgentSandboxAuthority(sandboxName, {

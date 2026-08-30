@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
+import { containsAnswer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
@@ -33,6 +33,7 @@ import {
   resourceLimitOutputFilterScript,
 } from "../fixtures/resource-limit-diagnostics.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
@@ -173,110 +174,6 @@ async function execInSandbox(
   });
 }
 
-function findJsonObjectEnd(raw: string, start: number): number | null {
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let index = start; index < raw.length; index += 1) {
-    const char = raw[index];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (char === '"') {
-      inString = true;
-    } else if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-      if (depth === 0) return index + 1;
-    }
-  }
-  return null;
-}
-
-function parseOpenClawAgentText(raw: string): string {
-  if (!raw.trim()) return "";
-  const parts: string[] = [];
-  const visited = new Set<unknown>();
-  const textKeys = new Set(["text", "content", "reasoning_content"]);
-  const containerKeys = new Set([
-    "result",
-    "payloads",
-    "payload",
-    "messages",
-    "choices",
-    "response",
-    "data",
-    "output",
-    "outputs",
-    "items",
-    "segments",
-    "delta",
-  ]);
-
-  const add = (value: unknown) => {
-    if (typeof value === "string" && value.trim()) parts.push(value.trim());
-  };
-  const collect = (value: unknown) => {
-    if (visited.has(value)) return;
-    visited.add(value);
-    if (typeof value === "string") {
-      add(value);
-      return;
-    }
-    if (Array.isArray(value)) {
-      value.forEach(collect);
-      return;
-    }
-    if (!value || typeof value !== "object") return;
-    const record = value as Record<string, unknown>;
-    for (const key of textKeys) add(record[key]);
-    const choices = record.choices;
-    if (Array.isArray(choices)) {
-      for (const choice of choices) {
-        if (!choice || typeof choice !== "object") continue;
-        collect((choice as Record<string, unknown>).message);
-        collect((choice as Record<string, unknown>).delta);
-        add((choice as Record<string, unknown>).text);
-      }
-    }
-    for (const key of containerKeys) {
-      if (key in record) collect(record[key]);
-    }
-  };
-  const collectDoc = (doc: unknown) => {
-    if (doc && typeof doc === "object" && (doc as Record<string, unknown>).result) {
-      collect((doc as Record<string, unknown>).result);
-    } else {
-      collect(doc);
-    }
-  };
-
-  try {
-    collectDoc(JSON.parse(raw));
-  } catch {
-    for (const match of raw.matchAll(/{/g)) {
-      try {
-        const before = parts.length;
-        const start = match.index;
-        const end = findJsonObjectEnd(raw, start);
-        if (end === null) continue;
-        collectDoc(JSON.parse(raw.slice(start, end)));
-        if (parts.length > before) break;
-      } catch {
-        // Continue scanning for a later JSON object, matching the legacy parser.
-      }
-    }
-  }
-  return parts.join("\n");
-}
 
 async function assertAgentCanAnswer(
   host: HostCliClient,
@@ -304,7 +201,7 @@ async function assertAgentCanAnswer(
   );
   const reply = parseOpenClawAgentText(result.stdout);
   expectExitZero(result, `nemoclaw ${sandboxName} agent --json`);
-  expect(containsInteger42Answer(reply), resultText(result)).toBe(true);
+  expect(containsAnswer(reply, "42"), resultText(result)).toBe(true);
 }
 
 async function assertForcedGatewayRestart(

@@ -38,6 +38,7 @@ export type SandboxGatewayPresence = "present" | "missing";
 type SandboxGatewayPresenceTarget = Pick<SandboxRecreateTarget, "sandboxName" | "gatewayName">;
 
 export type SandboxRecreateObserver = (target: SandboxRecreateTarget) => SandboxRecreateObservation;
+export type SandboxRecreateCapture = typeof captureOpenshell;
 
 /**
  * Strict absence classifier for destructive owner-gateway reconciliation.
@@ -93,8 +94,11 @@ export function observeSandboxPresenceOnGateway(
   );
 }
 
-export function observeSandboxOnGateway(target: SandboxRecreateTarget): SandboxRecreateObservation {
-  const probe = captureOpenshell(["sandbox", "get", "-g", target.gatewayName, target.sandboxName], {
+export function observeSandboxOnGateway(
+  target: SandboxRecreateTarget,
+  capture: SandboxRecreateCapture = captureOpenshell,
+): SandboxRecreateObservation {
+  const probe = capture(["sandbox", "get", "-g", target.gatewayName, target.sandboxName], {
     ignoreError: true,
     includeStderr: true,
     includeStreams: true,

@@ -48,9 +48,6 @@ function createDoctorHarness(
   captureHostCommandSpy: MockInstance;
   configuredMessagingChannelsSpy: MockInstance;
   executeSandboxCommandForVerificationSpy: MockInstance;
-  getBaselineExclusionsSpy: MockInstance;
-  getBaselineExclusionTransitionSpy: MockInstance;
-  getBaselineExclusionRuntimeStatusSpy: MockInstance;
   getSandboxSpy: MockInstance;
   getNamedGatewayLifecycleStateSpy: MockInstance;
   healthProbeSpy: MockInstance;
@@ -78,7 +75,6 @@ function createDoctorHarness(
   const health = requireDist("../../inference/health.js");
   const dockerDriverPlatform = requireDist("../../onboard/docker-driver-platform.js");
   const gatewayBinding = requireDist("../../onboard/gateway-binding.js");
-  const policy = requireDist("../../policy/index.js");
   const sandboxVerificationExec = requireDist("../../onboard/sandbox-verification-exec.js");
   const sandboxVersion = requireDist("../../sandbox/version.js");
   const shields = requireDist("../../shields/index.js");
@@ -145,13 +141,6 @@ function createDoctorHarness(
     .spyOn(registry, "getConfiguredMessagingChannelsFromEntry")
     .mockReturnValue([]);
   vi.spyOn(registry, "getDisabledMessagingChannelsFromEntry").mockReturnValue([]);
-  const getBaselineExclusionsSpy = vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([]);
-  const getBaselineExclusionTransitionSpy = vi
-    .spyOn(registry, "getBaselineExclusionTransition")
-    .mockReturnValue(null);
-  const getBaselineExclusionRuntimeStatusSpy = vi
-    .spyOn(policy, "getBaselineExclusionRuntimeStatus")
-    .mockReturnValue("excluded");
   const resolveOpenShellSpy = vi
     .spyOn(resolve, "resolveOpenshell")
     .mockReturnValue("/usr/bin/openshell");
@@ -282,9 +271,6 @@ function createDoctorHarness(
     captureHostCommandSpy,
     configuredMessagingChannelsSpy,
     executeSandboxCommandForVerificationSpy,
-    getBaselineExclusionsSpy,
-    getBaselineExclusionTransitionSpy,
-    getBaselineExclusionRuntimeStatusSpy,
     getSandboxSpy,
     getNamedGatewayLifecycleStateSpy,
     healthProbeSpy,
@@ -565,152 +551,6 @@ describe("runSandboxDoctor flow", () => {
       });
     },
   );
-
-  it(
-    "reports baseline exclusions and flags content drift since approval (#7194)",
-    testTimeoutOptions(30_000),
-    async () => {
-      const harness = createDoctorHarness();
-      harness.getBaselineExclusionsSpy.mockReturnValue([
-        {
-          version: 1,
-          agent: "openclaw",
-          key: "nous_research",
-          digest: "digest-1",
-          acknowledgedAt: "2026-07-19T00:00:00.000Z",
-        },
-        {
-          version: 1,
-          agent: "openclaw",
-          key: "changed_entry",
-          digest: "digest-stale",
-          acknowledgedAt: "2026-07-18T00:00:00.000Z",
-        },
-        {
-          version: 1,
-          agent: "openclaw",
-          key: "dropped_entry",
-          digest: "digest-2",
-          acknowledgedAt: "2026-07-17T00:00:00.000Z",
-        },
-      ]);
-      const statuses: Record<string, "excluded" | "content-changed" | "no-longer-in-baseline"> = {
-        nous_research: "excluded",
-        changed_entry: "content-changed",
-        dropped_entry: "no-longer-in-baseline",
-      };
-      harness.getBaselineExclusionRuntimeStatusSpy.mockImplementation(
-        (_sandbox, entry) => statuses[entry.key],
-      );
-
-      const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
-
-      expect(report?.checks).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            group: "Sandbox",
-            label: "Baseline exclusion: nous_research",
-            status: "info",
-          }),
-          expect.objectContaining({
-            group: "Sandbox",
-            label: "Baseline exclusion: changed_entry",
-            status: "warn",
-            hint: expect.stringContaining("policy restore changed_entry"),
-          }),
-          expect.objectContaining({
-            group: "Sandbox",
-            label: "Baseline exclusion: dropped_entry",
-            status: "warn",
-            detail:
-              "Baseline entry 'dropped_entry' no longer exists; rebuild fails closed until the stale exclusion is cleared.",
-            hint: "key no longer exists in the baseline; run `nemoclaw alpha policy restore dropped_entry` to clear the stale record",
-          }),
-        ]),
-      );
-    },
-  );
-
-  it("fails when registry intent is not enforced by the live policy (#7194)", async () => {
-    const harness = createDoctorHarness();
-    harness.getBaselineExclusionsSpy.mockReturnValue([
-      {
-        version: 1,
-        agent: "hermes",
-        key: "pypi",
-        digest: "a".repeat(64),
-      },
-    ]);
-    harness.getBaselineExclusionRuntimeStatusSpy.mockReturnValue("live-policy-mismatch");
-
-    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
-
-    expect(report?.checks).toContainEqual(
-      expect.objectContaining({
-        label: "Baseline exclusion: pypi",
-        status: "fail",
-        detail: expect.stringContaining("not enforced"),
-      }),
-    );
-  });
-
-  it("flags an interrupted baseline transaction as a rebuild-blocking repair (#7178)", async () => {
-    const harness = createDoctorHarness();
-    harness.getBaselineExclusionTransitionSpy.mockReturnValue({
-      id: "tx-1",
-      operation: "restore",
-      exclusion: { version: 1, agent: "openclaw", key: "nous_research", digest: "approved" },
-      targetLiveDigest: "current",
-      startedAt: "2026-07-19T00:00:00.000Z",
-    });
-
-    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
-
-    expect(report?.checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          group: "Sandbox",
-          label: "Baseline exclusion: nous_research",
-          status: "warn",
-          detail: expect.stringContaining("interrupted"),
-          hint: "re-run `nemoclaw alpha policy restore nous_research`",
-        }),
-      ]),
-    );
-  });
-
-  it("keeps repair guidance visible when another exclusion baseline is unreadable (#7194)", async () => {
-    const harness = createDoctorHarness();
-    harness.getBaselineExclusionsSpy.mockReturnValue([
-      { version: 1, agent: "openclaw", key: "another_entry", digest: "c".repeat(64) },
-      { version: 1, agent: "openclaw", key: "nous_research", digest: "a".repeat(64) },
-    ]);
-    harness.getBaselineExclusionTransitionSpy.mockReturnValue({
-      id: "0b2f3297-a9ab-4c2f-80da-bf1760a1afbf",
-      operation: "restore",
-      exclusion: { version: 1, agent: "openclaw", key: "nous_research", digest: "a".repeat(64) },
-      targetLiveDigest: "b".repeat(64),
-      startedAt: "2026-07-19T00:00:00.000Z",
-    });
-    harness.getBaselineExclusionRuntimeStatusSpy.mockReturnValue("baseline-unreadable");
-
-    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
-
-    expect(report?.checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          label: "Baseline exclusion: another_entry",
-          status: "warn",
-          detail: expect.stringContaining("unreadable"),
-        }),
-        expect.objectContaining({
-          label: "Baseline exclusion: nous_research",
-          status: "warn",
-          detail: expect.stringContaining("interrupted"),
-        }),
-      ]),
-    );
-  });
 
   it.each(["openclaw", "hermes"] as const)(
     "pins %s health to the recorded gateway and leaves serving-process health unchecked (#7003)",

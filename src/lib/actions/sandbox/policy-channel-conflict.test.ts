@@ -224,7 +224,6 @@ function makeHermesDiscordEntry(name: string): SandboxEntry {
   return {
     name,
     agent: "hermes",
-    policies: [],
     messaging: {
       schemaVersion: 1,
       plan: {
@@ -353,7 +352,7 @@ beforeEach(() => {
 
   // Lazy legacy-provider seam: no onboarding graph is loaded for this suite.
   upsertMock = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders").mockReturnValue([]);
-  vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicyAuthority").mockImplementation(
+  vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
     () => undefined,
   );
 
@@ -550,6 +549,49 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(upsertMock).not.toHaveBeenCalled();
   });
 
+  it("does not create or attach a provider when credential-free policy fails", async () => {
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
+    applyPresetMock.mockReturnValueOnce(false);
+
+    await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(applyPresetMock).toHaveBeenCalledWith(
+      "alpha",
+      "telegram",
+      expect.objectContaining({ includeMessagingCredentialBindings: false }),
+    );
+    expect(upsertMock).not.toHaveBeenCalled();
+    expect(runOpenshellMock).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["provider", "attach"]),
+      expect.anything(),
+    );
+  });
+
+  it("removes credential-free policy when provider attachment fails", async () => {
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+    getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
+    upsertMock.mockReturnValue(["alpha-telegram-bridge"]);
+    vi.mocked(policy.listPresets).mockReturnValue([
+      { file: "telegram.yaml", name: "telegram", description: "Telegram" },
+    ]);
+    vi.mocked(policy.getAppliedPresets).mockReturnValue(["telegram"]);
+    const removePresetMock = vi.spyOn(policy, "removePreset").mockReturnValue(true);
+    runOpenshellMock.mockImplementation((args: readonly string[]) =>
+      args.includes("attach")
+        ? { ...successfulOpenshellResult(), status: 1 }
+        : successfulOpenshellResult(),
+    );
+
+    await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "telegram");
+  });
+
   // Scenario 5b
   it("different hash on the other sandbox is NOT a conflict (no warning, add proceeds)", async () => {
     arrangeRegistry({
@@ -609,13 +651,10 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
       key === "DISCORD_BOT_TOKEN" ? DISCORD_TOKEN : null,
     );
     upsertMock.mockImplementationOnce(() => {
-      throw Object.assign(
-        new Error("alpha-discord-bridge does not match the required binding"),
-        {
-          code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
-          mutatedProviderNames: [],
-        },
-      );
+      throw Object.assign(new Error("alpha-discord-bridge does not match the required binding"), {
+        code: "NEMOCLAW_MESSAGING_PROVIDER_BINDING_CONFLICT",
+        mutatedProviderNames: [],
+      });
     });
 
     await expect(addSandboxChannel("alpha", { channel: "discord" })).rejects.toThrow(
@@ -652,7 +691,16 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
 
     expect(upsertMock.mock.calls[0]?.[0]).toHaveLength(2);
     expect(saveCredentialMock).not.toHaveBeenCalled();
-    expect(applyPresetMock).not.toHaveBeenCalled();
+    expect(applyPresetMock).toHaveBeenCalledWith(
+      "alpha",
+      "slack",
+      expect.objectContaining({ includeMessagingCredentialBindings: false }),
+    );
+    expect(applyPresetMock).not.toHaveBeenCalledWith(
+      "alpha",
+      "slack",
+      expect.objectContaining({ includeMessagingCredentialBindings: true }),
+    );
     expect(updateSandboxMock).not.toHaveBeenCalled();
     expect(rebuildSandboxMock).not.toHaveBeenCalled();
     expect(registry.getSandbox("alpha")).toBe(originalEntry);

@@ -122,17 +122,21 @@ describe("command-registry", () => {
       const discoveredIds = new Set(Object.keys(getRegisteredOclifCommandsMetadata()));
       expect(discoveredIds.has(command.commandId), command.usage).toBe(true);
     });
+
+    it("does not discover the removed deploy command (#10572)", () => {
+      expect(getRegisteredOclifCommandsMetadata()).not.toHaveProperty("deploy");
+    });
   });
 
   describe("deprecated commands", () => {
-    it("should include setup, setup-spark, deploy, start, stop", () => {
+    it("includes the remaining compatibility commands and excludes deploy (#10572)", () => {
       const deprecated = COMMANDS.filter((c) => c.deprecated);
       const usages = deprecated.map((c) => c.usage).sort();
       expect(usages).toContain("nemoclaw setup");
       expect(usages).toContain("nemoclaw setup-spark");
-      expect(usages).toContain("nemoclaw deploy");
       expect(usages).toContain("nemoclaw start");
       expect(usages).toContain("nemoclaw stop");
+      expect(usages).not.toContain("nemoclaw deploy");
     });
   });
 
@@ -171,7 +175,7 @@ describe("command-registry", () => {
   });
 
   describe("globalCommandTokens()", () => {
-    it("returns the exact set of 30 tokens matching the global dispatch commands", () => {
+    it("returns the exact set of 29 tokens matching the global dispatch commands", () => {
       const tokens = globalCommandTokens();
       const expected = new Set([
         "agents",
@@ -183,7 +187,6 @@ describe("command-registry", () => {
         "list",
         "use",
         "launch",
-        "deploy",
         "setup",
         "setup-spark",
         "start",

@@ -44,8 +44,6 @@ function makeBackupResult(): ReturnType<typeof sandboxState.backupSandboxState> 
       dir: "/sandbox/.deepagents",
       backupPath: "/tmp/nemoclaw-rebuild-backup",
       blueprintDigest: null,
-      policyPresets: [],
-      customPolicies: [],
     } as ReturnType<typeof sandboxState.backupSandboxState>["manifest"],
   };
 }
@@ -56,8 +54,6 @@ function makeSandboxEntry(): Parameters<typeof backupSandboxStateForRebuild>[1] 
     agent: "langchain-deepagents-code",
     provider: null,
     model: null,
-    policies: [],
-    customPolicies: [],
     nimContainer: null,
   } satisfies Parameters<typeof backupSandboxStateForRebuild>[1];
 }
