@@ -282,6 +282,10 @@ network_policies:
       "test/e2e/live/openshell-allowed-ips-rebinding.ts",
       "utf8",
     );
+    const exactMainContractSource = fs.readFileSync(
+      "test/e2e/live/openshell-exact-main-runtime-contracts.ts",
+      "utf8",
+    );
     expect(
       mcpBridgeSource.match(
         /await runFullMcpBridgeE2eCoverage\(\s*mcpBridgeE2eScope,\s*\(\) =>\s*assertRawOpenShellAllowedIpsRebindingDenied\(/gu,
@@ -291,6 +295,8 @@ network_policies:
     expect(mcpBridgeSource).toContain("url: redactString(options.mcpUrl, [HOST_SECRET])");
     expect(contractSource).toContain("setReceiptBoundPolicyDocument");
     expect(contractSource).not.toContain('["policy", "set", "--policy"');
+    expect(exactMainContractSource).toContain("setReceiptBoundPolicyDocument");
+    expect(exactMainContractSource).not.toContain('["policy", "set", "--policy"');
     expect(contractSource).toContain("server.requestCount()");
     expect(contractSource).toContain("raw-openshell-rebinding-policy-restore");
     expect(contractSource).toContain("raw-openshell-rebinding-policy-verify-restored");
