@@ -990,10 +990,11 @@ describe("local PR review advisor", () => {
     ).toEqual([]);
   });
 
-  it("reports gateway cleanup context after successful specialist work (#10611)", async () => {
+  it("publishes no output when gateway cleanup fails after successful specialist work (#10611)", async () => {
+    const source = repository();
     const underlying = new Error("gateway stop failed");
     const failure = (await runLocalReview({
-      source: repository(),
+      source,
       specialists: ADVISOR_SPECIALISTS.slice(0, 1),
       lifecycle: artifactLifecycle(async () => {
         throw underlying;
@@ -1005,12 +1006,17 @@ describe("local PR review advisor", () => {
       message: expect.stringContaining("failed during cleanup for gateway"),
       cause: underlying,
     });
+    expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
   });
 
-  it("reports temporary-root cleanup context after successful specialist work (#10611)", async () => {
+  it("preserves prior output when temporary-root cleanup fails (#10611)", async () => {
+    const source = repository();
+    const destination = path.join(source, "artifacts", "pr-review-advisor-local");
+    fs.mkdirSync(destination, { recursive: true });
+    fs.writeFileSync(path.join(destination, "prior.txt"), "prior\n");
     const underlying = new Error("temporary root removal failed");
     const failure = (await runLocalReview({
-      source: repository(),
+      source,
       specialists: ADVISOR_SPECIALISTS.slice(0, 1),
       lifecycle: artifactLifecycle(),
       removeTemporaryRoot: () => {
@@ -1024,6 +1030,8 @@ describe("local PR review advisor", () => {
       ),
       cause: underlying,
     });
+    expect(fs.readdirSync(destination)).toEqual(["prior.txt"]);
+    expect(fs.readFileSync(path.join(destination, "prior.txt"), "utf8")).toBe("prior\n");
   });
 
   it("retries sandbox deletion after successful work and publishes no output (#10611)", async () => {

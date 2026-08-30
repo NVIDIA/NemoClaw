@@ -271,71 +271,103 @@ function removePublicationPath(
   }
 }
 
-function publishArtifacts(
+type StagedPublication = {
+  discard: () => unknown;
+  publish: () => void;
+};
+
+function stageArtifacts(
   source: string,
   artifacts: string,
   destination: string,
   publication: LocalReviewPublication,
-): void {
+): StagedPublication {
   const nonce = randomUUID();
   const staged = `${destination}.staged-${nonce}`;
   const previous = `${destination}.previous-${nonce}`;
-  let failure: unknown;
-  let hadPrevious = false;
   const parent = path.dirname(destination);
   assertPublicationPath(source, parent);
   const hadParent = fs.existsSync(parent);
   fs.mkdirSync(parent, { recursive: true });
   assertPublicationPath(source, destination, { destination: true });
+
+  const removeEmptyCreatedParent = (): unknown => {
+    if (!hadParent && fs.existsSync(parent) && fs.readdirSync(parent).length === 0)
+      return removePublicationPath(source, parent, publication);
+  };
+  const discard = (): unknown => {
+    let failure = removePublicationPath(source, staged, publication);
+    failure = combineFailures(failure, removeEmptyCreatedParent());
+    if (fs.existsSync(staged))
+      failure = combineFailures(
+        failure,
+        new Error(
+          `Residual staged output remains at ${staged}; remove it manually before retrying`,
+        ),
+      );
+    return failure;
+  };
+
   try {
     assertPublicationPath(source, staged, { requireParent: true });
     publication.copy(artifacts, staged, { recursive: true, errorOnExist: true });
-    assertPublicationPath(source, destination, { destination: true });
-    hadPrevious = fs.existsSync(destination);
-    if (hadPrevious) publication.rename(destination, previous);
-    assertPublicationPath(source, staged, { destination: true });
-    publication.rename(staged, destination);
-    if (hadPrevious) {
-      assertPublicationPath(source, previous, { destination: true });
-      publication.remove(previous, { recursive: true });
-    }
-    return;
   } catch (error) {
-    failure = safeFailure(error);
+    const failure = combineFailures(safeFailure(error), discard());
+    throw failure;
   }
-  failure = combineFailures(failure, removePublicationPath(source, staged, publication));
-  if (hadPrevious && fs.existsSync(previous)) {
-    failure = combineFailures(failure, removePublicationPath(source, destination, publication));
-    try {
-      assertPublicationPath(source, previous, { destination: true });
-      assertPublicationPath(source, destination, { destination: true, requireParent: true });
-      if (!fs.existsSync(destination)) publication.rename(previous, destination);
-    } catch (error) {
-      failure = combineFailures(
-        failure,
-        contextualError(
-          `Failed to restore prior output from ${previous} to ${destination}; recover it manually`,
-          error,
-        ),
-      );
-    }
-  }
-  if (fs.existsSync(staged)) {
-    failure = combineFailures(
-      failure,
-      new Error(`Residual staged output remains at ${staged}; remove it manually before retrying`),
-    );
-  }
-  if (fs.existsSync(previous)) {
-    failure = combineFailures(
-      failure,
-      new Error(`Prior output remains at ${previous}; restore it to ${destination} manually`),
-    );
-  }
-  if (!hadParent && fs.existsSync(parent) && fs.readdirSync(parent).length === 0) {
-    failure = combineFailures(failure, removePublicationPath(source, parent, publication));
-  }
-  throw failure;
+
+  return {
+    discard,
+    publish: () => {
+      let failure: unknown;
+      let hadPrevious = false;
+      try {
+        assertPublicationPath(source, destination, { destination: true });
+        hadPrevious = fs.existsSync(destination);
+        if (hadPrevious) publication.rename(destination, previous);
+        assertPublicationPath(source, staged, { destination: true });
+        publication.rename(staged, destination);
+        if (hadPrevious) {
+          assertPublicationPath(source, previous, { destination: true });
+          publication.remove(previous, { recursive: true });
+        }
+        return;
+      } catch (error) {
+        failure = safeFailure(error);
+      }
+      failure = combineFailures(failure, removePublicationPath(source, staged, publication));
+      if (hadPrevious && fs.existsSync(previous)) {
+        failure = combineFailures(failure, removePublicationPath(source, destination, publication));
+        try {
+          assertPublicationPath(source, previous, { destination: true });
+          assertPublicationPath(source, destination, { destination: true, requireParent: true });
+          if (!fs.existsSync(destination)) publication.rename(previous, destination);
+        } catch (error) {
+          failure = combineFailures(
+            failure,
+            contextualError(
+              `Failed to restore prior output from ${previous} to ${destination}; recover it manually`,
+              error,
+            ),
+          );
+        }
+      }
+      if (fs.existsSync(staged))
+        failure = combineFailures(
+          failure,
+          new Error(
+            `Residual staged output remains at ${staged}; remove it manually before retrying`,
+          ),
+        );
+      if (fs.existsSync(previous))
+        failure = combineFailures(
+          failure,
+          new Error(`Prior output remains at ${previous}; restore it to ${destination} manually`),
+        );
+      failure = combineFailures(failure, removeEmptyCreatedParent());
+      throw failure;
+    },
+  };
 }
 
 function validateSpecialistArtifacts(outputRoot: string, interest: string): void {
@@ -410,6 +442,7 @@ export async function runLocalReview(input: {
   let cleanupPromise: Promise<void> | undefined;
   let primaryFailure: unknown;
   let cleanupFailure: unknown;
+  let stagedPublication: StagedPublication | undefined;
   let result: string | undefined;
   const cleanup = (): Promise<void> => {
     if (cleanupPromise) return cleanupPromise;
@@ -456,7 +489,16 @@ export async function runLocalReview(input: {
         process.off(signal, handler);
         process.kill(process.pid, signal);
       };
-      void cleanup().then(resumeSignal, resumeSignal);
+      void cleanup().then(
+        () => {
+          stagedPublication?.discard();
+          resumeSignal();
+        },
+        () => {
+          stagedPublication?.discard();
+          resumeSignal();
+        },
+      );
     };
     signalHandlers.set(signal, handler);
     process.once(signal, handler);
@@ -494,7 +536,12 @@ export async function runLocalReview(input: {
       });
     }
     const destination = path.join(source, LOCAL_OUTPUT_DIRECTORY);
-    publishArtifacts(source, path.join(outputRoot, "artifacts"), destination, publication);
+    stagedPublication = stageArtifacts(
+      source,
+      path.join(outputRoot, "artifacts"),
+      destination,
+      publication,
+    );
     result = destination;
   } catch (error) {
     primaryFailure = safeFailure(error);
@@ -505,6 +552,10 @@ export async function runLocalReview(input: {
   } catch (error) {
     cleanupFailure = safeFailure(error);
     if (primaryFailure === undefined) activeLifecycleCleanup = undefined;
+  }
+  if (primaryFailure !== undefined || cleanupFailure !== undefined) {
+    const publicationCleanupFailure = stagedPublication?.discard();
+    cleanupFailure = combineFailures(cleanupFailure, publicationCleanupFailure);
   }
   if (primaryFailure !== undefined) {
     if (cleanupFailure !== undefined) {
@@ -519,6 +570,7 @@ export async function runLocalReview(input: {
     throw primaryFailure;
   }
   if (cleanupFailure !== undefined) throw cleanupFailure;
+  stagedPublication!.publish();
   return result!;
 }
 
