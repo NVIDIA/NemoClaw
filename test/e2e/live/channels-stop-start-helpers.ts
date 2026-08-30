@@ -1136,6 +1136,12 @@ export async function runChannelsStopStartTarget({
     redactionValues: redactions,
     timeoutMs: 60_000,
   });
+  registerChannelsStopStartProviderCleanup(cleanup, host, {
+    agent: AGENT,
+    env,
+    redactions,
+    sandboxName: SANDBOX_NAME,
+  });
   trackSandboxCleanup(
     cleanup,
     host,
@@ -1145,12 +1151,6 @@ export async function runChannelsStopStartTarget({
     redactions,
     `cleanup-channels-stop-start-${AGENT}`,
   );
-  registerChannelsStopStartProviderCleanup(cleanup, host, {
-    agent: AGENT,
-    env,
-    redactions,
-    sandboxName: SANDBOX_NAME,
-  });
   await precleanSandbox(
     host,
     SANDBOX_NAME,

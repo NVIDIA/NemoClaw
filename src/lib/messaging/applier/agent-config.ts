@@ -150,10 +150,71 @@ export function reconcileCredentialEnvAtOpenShell(
   const existing = readSandboxFile(plan.sandboxName, target, options.runOpenshell);
   if (existing === undefined) return { changed: false };
 
-  const contents = applyEnvLines(plan, existing, render);
+  const runtimeAliasRender = readHermesRuntimeAliasRender(plan, options.runOpenshell);
+  const contents = applyEnvLines(plan, existing, [...render, ...runtimeAliasRender]);
   if (contents === existing) return { changed: false };
   writeSandboxFile(plan.sandboxName, target, contents, options.runOpenshell);
   return { changed: true, target };
+}
+
+const ENV_KEY_PATTERN = /^[A-Z][A-Z0-9_]*$/u;
+
+/**
+ * Resolve only manifest-derived cross-key aliases from OpenShell's injected,
+ * revision-scoped placeholders. The exact placeholder grammar prevents a raw
+ * provider credential or arbitrary sandbox value from entering Hermes state.
+ */
+function readHermesRuntimeAliasRender(
+  plan: SandboxMessagingPlan,
+  runOpenshell: MessagingOpenShellRunner,
+): SandboxMessagingEnvLinesRenderPlan[] {
+  return filterEnabledPlanEntries(plan, plan.runtimeSetup?.envAliases ?? []).flatMap((alias) => {
+    const sourceKey = alias.envKey;
+    const targetKey = alias.targetEnvKey;
+    if (
+      !targetKey ||
+      sourceKey === targetKey ||
+      !ENV_KEY_PATTERN.test(sourceKey) ||
+      !ENV_KEY_PATTERN.test(targetKey)
+    ) {
+      return [];
+    }
+    const expectedPattern = `^openshell:resolve:env:v[0-9]+_${sourceKey}$`;
+    const expectedValue = `openshell:resolve:env:${sourceKey}`;
+    if (alias.match !== expectedPattern || alias.value !== expectedValue) return [];
+
+    const result = runOpenshell(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        plan.sandboxName,
+        "--",
+        "sh",
+        "-c",
+        'printenv "$1"',
+        "sh",
+        sourceKey,
+      ],
+      {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    if ((result.status ?? 0) !== 0) return [];
+    const placeholder = String(result.stdout ?? "").replace(/\r?\n$/u, "");
+    if (!new RegExp(expectedPattern, "u").test(placeholder)) return [];
+    return [
+      {
+        agent: "hermes",
+        channelId: alias.channelId,
+        kind: "env-lines",
+        lines: [`${targetKey}=${placeholder}`],
+        target: HERMES_ENV_RENDER_TARGET,
+        templateRefs: [],
+      },
+    ];
+  });
 }
 
 function hookRequestsForPhases(

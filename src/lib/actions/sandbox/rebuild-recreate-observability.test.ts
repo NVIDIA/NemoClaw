@@ -13,10 +13,27 @@ import * as onboardSession from "../../state/onboard-session";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
-import { type RebuildRecreatePhaseInput, runRebuildRecreatePhase } from "./rebuild-recreate-phase";
+import {
+  describeRebuildOnboardFailure,
+  type RebuildRecreatePhaseInput,
+  runRebuildRecreatePhase,
+} from "./rebuild-recreate-phase";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
 const DCODE_AGENT = "langchain-deepagents-code";
+
+describe("rebuild onboard failure diagnostics", () => {
+  it("surfaces the first actionable AggregateError cause", () => {
+    expect(
+      describeRebuildOnboardFailure(
+        new AggregateError(
+          [new Error("exact create identity unavailable"), new Error("recovery persisted")],
+          "outer recovery wrapper",
+        ),
+      ),
+    ).toBe("exact create identity unavailable");
+  });
+});
 
 const STANDALONE_GATEWAY_AUTHORITY: CheckpointGatewayAuthority = {
   gatewayName: "nemoclaw",

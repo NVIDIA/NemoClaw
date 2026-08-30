@@ -68,6 +68,16 @@ export interface RebuildRecreatePhaseInput {
   bail: RebuildBail;
 }
 
+/** Prefer the actionable nested failure over the recovery wrapper around it. */
+export function describeRebuildOnboardFailure(error: unknown): string {
+  if (error instanceof AggregateError) {
+    const nested = error.errors.find((entry) => entry instanceof Error);
+    if (nested) return describeRebuildOnboardFailure(nested);
+  }
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
 /**
  * Recreate the deleted sandbox from its validated registry-derived contract.
  * Boundary coverage: rebuild-flow.test.ts exercises success, process-exit and
@@ -282,7 +292,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     log("onboard() returned successfully");
   } catch (error) {
     onboardFailed = true;
-    const message = error instanceof Error ? error.message : String(error);
+    const message = describeRebuildOnboardFailure(error);
     const name = error instanceof Error ? error.name : "";
     if (name !== "RebuildOnboardExit") {
       log(`onboard() threw: ${message}`);
