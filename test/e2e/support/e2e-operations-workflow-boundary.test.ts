@@ -1484,7 +1484,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
 
       writeFileSync(
         advisorPath,
-        'permissions: read-all\njobs:\n  advisor:\n    permissions:\n      actions: "write"\n    steps:\n      - run: createWorkflowDispatch()\n',
+        'permissions: read-all\njobs:\n  review-specialists:\n    env: { BASE_REF: target/base~1, HEAD_REF: HEAD~1 }\n    permissions:\n      actions: "write"\n    steps:\n      - run: createWorkflowDispatch()\n',
       );
       expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toEqual(
         expect.arrayContaining([

@@ -1453,12 +1453,9 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
     errors.push("Unified advisor must not auto-dispatch workflows");
   }
   const specialistEnv = advisor.jobs?.["review-specialists"]?.env ?? {};
-  if (
-    typeof specialistEnv.BASE_REF !== "string" ||
-    !specialistEnv.BASE_REF.includes("target/base") ||
-    typeof specialistEnv.HEAD_REF !== "string" ||
-    !specialistEnv.HEAD_REF.includes("HEAD")
-  ) {
+  const expectedBaseRef = "${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}";
+  const expectedHeadRef = "${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}";
+  if (specialistEnv.BASE_REF !== expectedBaseRef || specialistEnv.HEAD_REF !== expectedHeadRef) {
     errors.push("Unified advisor specialists must retain target refs through execution");
   }
 }
