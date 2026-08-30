@@ -2184,7 +2184,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
   probeTiming?: ProbeTimingRecorder,
 ): Promise<PreparedConnectChild | null> {
   if (probeOnly) {
-    let portableAuthorityRequalified = false;
+    let portableAuthorityReady = false;
     const initialEntry = registry.getSandbox(sandboxName);
     let hermesReadinessAuthority: {
       readonly active: HermesPortableActiveLifecycleAuthority;
@@ -2209,7 +2209,6 @@ async function prepareConnectSandboxWithinLifecycleFence(
               portableAgentLifecycleAuthorityDeps(),
             ),
           );
-          portableAuthorityRequalified = true;
           if (requalified.kind === "not-installed" || requalified.kind === "not-hermes") {
             throw new Error("Hermes portable lifecycle authority changed during probe");
           }
@@ -2230,6 +2229,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
           }
         }
         probeTiming!.measure("authority", qualified.commandAuthority.assertCurrent);
+        portableAuthorityReady = true;
         hermesReadinessAuthority = {
           active,
           command: qualified.commandAuthority,
@@ -2315,14 +2315,14 @@ async function prepareConnectSandboxWithinLifecycleFence(
         console.log(`  Probe complete: launch readiness is healthy for '${sandboxName}'.`);
         return null;
       }
-      if (!portableAuthorityRequalified) {
+      if (!portableAuthorityReady) {
         probeTiming!.measure("authority", () =>
           requalifyPortableAgentSandboxAuthority(
             sandboxName,
             portableAgentLifecycleAuthorityDeps(),
           ),
         );
-        portableAuthorityRequalified = true;
+        portableAuthorityReady = true;
       }
       // Refuse recovery only when a prior epoch might exist and could not be
       // durably rotated. When the authority and receipt are both securely
