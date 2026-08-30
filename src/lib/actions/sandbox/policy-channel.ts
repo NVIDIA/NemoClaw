@@ -1687,6 +1687,12 @@ export function applyChannelPresetIfAvailable(
 
 function getSandboxChannelStatePaths(agent: AgentDefinition, channelName: string): string[] {
   const configDir = agent.configPaths.dir;
+  if (agent.name === "openclaw" && channelName === "wechat") {
+    // Keep both generations independent of manifest drift: the OpenClaw
+    // manifest owns the original `wechat` state root, while the current
+    // Tencent plugin stores account state under `openclaw-weixin`.
+    return [`${configDir}/wechat`, `${configDir}/openclaw-weixin`];
+  }
   const stateDirs = new Set(agent.stateDirs);
   const paths: string[] = [];
   const isHermesWhatsapp = agent.name === "hermes" && channelName === "whatsapp";
@@ -1704,13 +1710,6 @@ function getSandboxChannelStatePaths(agent: AgentDefinition, channelName: string
   }
   if (paths.length === 0 && stateDirs.has(channelName)) {
     paths.push(`${configDir}/${channelName}`);
-  }
-  if (agent.name === "openclaw" && channelName === "wechat") {
-    // The OpenClaw manifest still owns the original `wechat` state root above;
-    // the current Tencent plugin stores account state under `openclaw-weixin`.
-    // Removal clears both declared generations so a rebuild cannot restore
-    // stale channel credentials from the legacy root.
-    paths.push(`${configDir}/openclaw-weixin`);
   }
   return paths;
 }
