@@ -1912,37 +1912,39 @@ async function runConnectEntryPreflight(
             portableAgentLifecycleAuthorityDeps(),
           ),
         );
-        const activeAuthority = hermesAuthority;
-        const currentGateway = resolveSandboxGatewayName(activeAuthority.entry);
         measure("authority", () => hermesPortableCommandAuthority?.assertCurrent());
-        const recovery = measure("lifecycle", () =>
-          hermesPortableCommandAuthority
-            ? recoverPortableDemoSandboxLifecycleForConnect(
-                sandboxName,
-                activeAuthority.entry,
-                currentGateway,
-                hermesPortableCommandAuthority,
-              )
-            : recoverPortableDemoSandboxLifecycleForConnect(
-                sandboxName,
-                activeAuthority.entry,
-                currentGateway,
-              ),
-        );
-        if (recovery.kind === "not-installed") {
-          probeTiming?.setLifecycleAction("failed");
-          probeTiming?.markFailureStage("lifecycle");
-          throw new Error("Hermes portable lifecycle authority disappeared during connect");
+        if (!probeOnly) {
+          const activeAuthority = hermesAuthority;
+          const currentGateway = resolveSandboxGatewayName(activeAuthority.entry);
+          const recovery = measure("lifecycle", () =>
+            hermesPortableCommandAuthority
+              ? recoverPortableDemoSandboxLifecycleForConnect(
+                  sandboxName,
+                  activeAuthority.entry,
+                  currentGateway,
+                  hermesPortableCommandAuthority,
+                )
+              : recoverPortableDemoSandboxLifecycleForConnect(
+                  sandboxName,
+                  activeAuthority.entry,
+                  currentGateway,
+                ),
+          );
+          if (recovery.kind === "not-installed") {
+            probeTiming?.setLifecycleAction("failed");
+            probeTiming?.markFailureStage("lifecycle");
+            throw new Error("Hermes portable lifecycle authority disappeared during connect");
+          }
+          const recoveredAuthority = activeAuthority;
+          hermesAuthority = measure("authority", () =>
+            requireHermesPortableActiveLifecycleAuthority(
+              sandboxName,
+              recoveredAuthority,
+              portableAgentLifecycleAuthorityDeps(),
+            ),
+          );
+          measure("authority", () => hermesPortableCommandAuthority?.assertCurrent());
         }
-        const recoveredAuthority = activeAuthority;
-        hermesAuthority = measure("authority", () =>
-          requireHermesPortableActiveLifecycleAuthority(
-            sandboxName,
-            recoveredAuthority,
-            portableAgentLifecycleAuthorityDeps(),
-          ),
-        );
-        measure("authority", () => hermesPortableCommandAuthority?.assertCurrent());
       };
     } catch (error) {
       probeTiming?.markFailureStage("authority");

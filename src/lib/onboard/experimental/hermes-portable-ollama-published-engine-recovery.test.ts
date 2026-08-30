@@ -270,6 +270,9 @@ function composedRecovery(fixture: ReturnType<typeof setup>, assertPublished = v
     runGatewayOpenshell: vi.fn(),
     readRegistry: vi.fn(() => fixture.entry),
     verifyRoute: vi.fn(() => fixture.entry),
+    prepareProbeDependency: undefined as Parameters<
+      typeof recoverHermesPortableOllamaInference
+    >[0]["prepareProbeDependency"],
   };
   const overrides = {
     readReceipt: vi.fn(() => ({ receipt: operatingReceipt, successor: {} })),
@@ -289,9 +292,33 @@ function composedRecovery(fixture: ReturnType<typeof setup>, assertPublished = v
   return { assertOperating, assertPublished, assertRuntime, input, overrides, registryRecovery };
 }
 
+function observePublishedFinalization(events: string[]) {
+  const finalize = vi.fn();
+  const prepareStartup = vi.fn(
+    (...args: Parameters<typeof prepareHermesPortablePublishedHostLocalInferenceStartup>) => {
+      const route = prepareHermesPortablePublishedHostLocalInferenceStartup(...args);
+      const finalizePublishedResume = route.prepared.finalizePublishedResume!;
+      return Object.freeze({
+        ...route,
+        prepared: Object.freeze({
+          ...route.prepared,
+          finalizePublishedResume(assertPublishedAuthority: () => void) {
+            const receipt = finalizePublishedResume(assertPublishedAuthority);
+            finalize();
+            events.push("test:publication-finalized");
+            return receipt;
+          },
+        }),
+      });
+    },
+  );
+  return { finalize, prepareStartup };
+}
+
 describe("Hermes Portable published engine recovery", () => {
   it("carries the exact published receipt through the production runtime factory (#10423)", async () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-published-factory-"));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const fixture = await createHermesPortableUninstallFixture(homeDir);
     try {
       const serializedReceipt = fixture.targetRow.hostLocalInferenceReceipt!;
@@ -340,6 +367,7 @@ describe("Hermes Portable published engine recovery", () => {
         >),
         resumeReceipt: receipt,
       };
+      const recoveryEventStart = fixture.harness.events.length;
       const route = prepareHermesPortablePublishedHostLocalInferenceStartup(
         operation,
         publishedRequest,
@@ -349,9 +377,33 @@ describe("Hermes Portable published engine recovery", () => {
       expect(route.prepared.finalizePublishedResume?.(runtimeAuthority.assertCurrent)).toEqual(
         receipt,
       );
+      const recoveryEvents = fixture.harness.events.slice(recoveryEventStart);
+      expect(recoveryEvents.filter((event) => event.includes("/api/tags"))).toHaveLength(1);
+      expect(
+        recoveryEvents.filter(
+          (event) => event.includes("podman:exec ") && event.includes(" nvidia-smi "),
+        ),
+      ).toHaveLength(1);
+      expect(recoveryEvents.some((event) => event.includes("/v1/chat/completions"))).toBe(false);
+      expect(recoveryEvents.some((event) => event.includes("/api/ps"))).toBe(false);
       expect(fixture.harness.container()).toMatchObject({ running: true, status: "running" });
       expect(assertForwardAuthority).toHaveBeenCalled();
+      const timingLines = log.mock.calls
+        .map(([line]) => line)
+        .filter(
+          (line) =>
+            typeof line === "string" && line.startsWith("  Hermes Portable Ollama resume timing:"),
+        );
+      expect(timingLines).toHaveLength(1);
+      expect(timingLines[0]).toMatch(
+        /^  Hermes Portable Ollama resume timing: start=\d+ms managedReady=\d+ms gpuIdentity=\d+ms generatedProof=0ms modelPlacement=0ms cleanupCurrentness=\d+ms total=\d+ms runtimeAction=started result=proved$/u,
+      );
+      expect(timingLines[0]).not.toContain(receipt.inference?.model);
+      expect(timingLines[0]).not.toContain(
+        receipt.runtime.kind === "container" ? receipt.runtime.name : "unexpected-host-runtime",
+      );
     } finally {
+      log.mockRestore();
       fixture.restore();
       fs.rmSync(homeDir, { force: true, recursive: true });
     }
@@ -443,6 +495,24 @@ describe("Hermes Portable published engine recovery", () => {
       createArguments: beforeContainer.createArguments,
     });
     const composed = composedRecovery(fixture);
+    const observed = observePublishedFinalization(fixture.harness.events);
+    Object.assign(composed.overrides, { prepareStartup: observed.prepareStartup });
+    const recoveryEventStart = fixture.harness.events.length;
+    composed.input.verifyRoute.mockImplementation(() => {
+      fixture.harness.events.push("test:route-verified");
+      return fixture.entry;
+    });
+    const dependency = {
+      release: vi.fn(() => fixture.harness.events.push("test:dependency-released")),
+      rollback: vi.fn(() => fixture.harness.events.push("test:dependency-rolled-back")),
+    };
+    composed.input.prepareProbeDependency = vi.fn(() => {
+      fixture.harness.events.push("test:dependency-prepared");
+      return dependency;
+    });
+    composed.registryRecovery.release.mockImplementation(() => {
+      fixture.harness.events.push("test:registry-released");
+    });
 
     expect(recoverHermesPortableOllamaInference(composed.input, composed.overrides as never)).toBe(
       "recovered",
@@ -462,6 +532,84 @@ describe("Hermes Portable published engine recovery", () => {
     expect(composed.registryRecovery.release).toHaveBeenCalledOnce();
     expect(composed.registryRecovery.rollback).not.toHaveBeenCalled();
     expect(composed.assertPublished).toHaveBeenCalled();
+    expect(observed.finalize).toHaveBeenCalledOnce();
+    expect(dependency.release).toHaveBeenCalledOnce();
+    expect(dependency.rollback).not.toHaveBeenCalled();
+    const recoveryOrder = fixture.harness.events.slice(recoveryEventStart);
+    const readyIndex = recoveryOrder.findIndex((event) => event.includes("/api/tags"));
+    const gpuIndex = recoveryOrder.findIndex(
+      (event) => event.includes("podman:exec ") && event.includes(" nvidia-smi "),
+    );
+    const routeIndex = recoveryOrder.indexOf("test:route-verified");
+    const dependencyIndex = recoveryOrder.indexOf("test:dependency-prepared");
+    const finalizedIndex = recoveryOrder.indexOf("test:publication-finalized");
+    const releasedIndex = recoveryOrder.indexOf("test:registry-released");
+    const dependencyReleasedIndex = recoveryOrder.indexOf("test:dependency-released");
+    expect(readyIndex).toBeGreaterThanOrEqual(0);
+    expect(gpuIndex).toBeGreaterThan(readyIndex);
+    expect(routeIndex).toBeGreaterThan(gpuIndex);
+    expect(dependencyIndex).toBeGreaterThan(routeIndex);
+    expect(finalizedIndex).toBeGreaterThan(dependencyIndex);
+    expect(releasedIndex).toBeGreaterThan(finalizedIndex);
+    expect(dependencyReleasedIndex).toBeGreaterThan(releasedIndex);
+  });
+
+  it("reuses a running published runtime with one ready and GPU proof before route health (#10423)", () => {
+    const fixture = setup();
+    fixture.harness.container()!.running = true;
+    fixture.harness.container()!.status = "running";
+    const runningContainer = fixture.harness.container()!;
+    const immutableRuntime = JSON.stringify({
+      id: runningContainer.id,
+      name: runningContainer.name,
+      imageRef: runningContainer.imageRef,
+      labels: runningContainer.labels,
+      createArguments: runningContainer.createArguments,
+    });
+    const composed = composedRecovery(fixture);
+    const recoveryEventStart = fixture.harness.events.length;
+    const captureStart = fixture.currentExecutionCaptures.length;
+
+    expect(recoverHermesPortableOllamaInference(composed.input, composed.overrides as never)).toBe(
+      "reused",
+    );
+
+    const recoveryEvents = fixture.harness.events.slice(recoveryEventStart);
+    expect(recoveryEvents.filter((event) => event.includes("/api/tags"))).toHaveLength(1);
+    expect(
+      recoveryEvents.filter(
+        (event) => event.includes("podman:exec ") && event.includes(" nvidia-smi "),
+      ),
+    ).toHaveLength(1);
+    expect(recoveryEvents.some((event) => event.includes("/v1/chat/completions"))).toBe(false);
+    expect(recoveryEvents.some((event) => event.includes("/api/ps"))).toBe(false);
+    const reconciledContainer = fixture.harness.container()!;
+    expect(
+      JSON.stringify({
+        id: reconciledContainer.id,
+        name: reconciledContainer.name,
+        imageRef: reconciledContainer.imageRef,
+        labels: reconciledContainer.labels,
+        createArguments: reconciledContainer.createArguments,
+      }),
+    ).toBe(immutableRuntime);
+    expect(
+      fixture.currentExecutionCaptures
+        .slice(captureStart)
+        .filter(
+          (event) =>
+            event === `host-local-inference:start ${runningContainer.id}` ||
+            (event.startsWith("host-local-inference:stop ") &&
+              event.endsWith(` ${runningContainer.id}`)) ||
+            (event.startsWith("host-local-inference:rm ") &&
+              event.endsWith(` ${runningContainer.id}`)) ||
+            (event.startsWith("host-local-inference:run ") &&
+              event.includes(` --name ${runningContainer.name} `)),
+        ),
+    ).toEqual([]);
+    expect(composed.input.verifyRoute).toHaveBeenCalledOnce();
+    expect(composed.registryRecovery.release).toHaveBeenCalledOnce();
+    expect(composed.registryRecovery.rollback).not.toHaveBeenCalled();
   });
 
   it("rolls both stopped resources back when private publication drifts after start (#10423)", () => {
@@ -505,6 +653,79 @@ describe("Hermes Portable published engine recovery", () => {
     expect(failure).toBeInstanceOf(HermesPortableOllamaRecoveryError);
     expect((failure as HermesPortableOllamaRecoveryError).failure).toBe("authority-drift");
     expect(fixture.harness.container()).toMatchObject({ running: false, status: "exited" });
+    expect(composed.registryRecovery.rollback).toHaveBeenCalledOnce();
+    expect(composed.registryRecovery.release).not.toHaveBeenCalled();
+  });
+
+  it("restores both stopped resources when provider readiness fails (#10423)", () => {
+    const fixture = setup();
+    fixture.harness.state.probeFailure = "ready";
+    const composed = composedRecovery(fixture);
+    const observed = observePublishedFinalization([]);
+    Object.assign(composed.overrides, { prepareStartup: observed.prepareStartup });
+    composed.input.prepareProbeDependency = vi.fn(() => ({
+      release: vi.fn(),
+      rollback: vi.fn(),
+    }));
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(composed.input, composed.overrides as never),
+    ).toThrow();
+
+    expect(fixture.harness.container()).toMatchObject({ running: false, status: "exited" });
+    expect(composed.input.verifyRoute).not.toHaveBeenCalled();
+    expect(composed.input.prepareProbeDependency).not.toHaveBeenCalled();
+    expect(observed.finalize).not.toHaveBeenCalled();
+    expect(composed.registryRecovery.rollback).toHaveBeenCalledOnce();
+    expect(composed.registryRecovery.release).not.toHaveBeenCalled();
+  });
+
+  it("restores both stopped resources when exact GPU identity changes (#10423)", () => {
+    const fixture = setup();
+    fixture.harness.state.gpuIdentities = ["GPU-00000000-0000-0000-0000-000000000000"];
+    const composed = composedRecovery(fixture);
+    const observed = observePublishedFinalization([]);
+    Object.assign(composed.overrides, { prepareStartup: observed.prepareStartup });
+    composed.input.prepareProbeDependency = vi.fn(() => ({
+      release: vi.fn(),
+      rollback: vi.fn(),
+    }));
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(composed.input, composed.overrides as never),
+    ).toThrow("requested CDI UUID authority");
+
+    expect(fixture.harness.container()).toMatchObject({ running: false, status: "exited" });
+    expect(composed.input.verifyRoute).not.toHaveBeenCalled();
+    expect(composed.input.prepareProbeDependency).not.toHaveBeenCalled();
+    expect(observed.finalize).not.toHaveBeenCalled();
+    expect(composed.registryRecovery.rollback).toHaveBeenCalledOnce();
+    expect(composed.registryRecovery.release).not.toHaveBeenCalled();
+  });
+
+  it("restores stopped state when published authority drifts during precommit validation (#10423)", () => {
+    let recoveryStarted = false;
+    let validationReached = false;
+    const fixture = setup({
+      transformCapture: (args, result) => {
+        validationReached ||=
+          recoveryStarted && args.some((argument) => argument.includes("/api/tags"));
+        return result;
+      },
+    });
+    const assertPublished = vi.fn(() => {
+      expect(validationReached ? "published authority changed during validation" : null).toBeNull();
+    });
+    const composed = composedRecovery(fixture, assertPublished);
+    recoveryStarted = true;
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(composed.input, composed.overrides as never),
+    ).toThrow();
+
+    expect(validationReached).toBe(true);
+    expect(fixture.harness.container()).toMatchObject({ running: false, status: "exited" });
+    expect(composed.input.verifyRoute).not.toHaveBeenCalled();
     expect(composed.registryRecovery.rollback).toHaveBeenCalledOnce();
     expect(composed.registryRecovery.release).not.toHaveBeenCalled();
   });

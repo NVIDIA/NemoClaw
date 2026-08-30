@@ -975,7 +975,7 @@ describe("connectSandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("keeps active Hermes probe on receipt-owned recovery with every Docker path poisoned (#9203)", async () => {
+  it("runs one mutation-capable Hermes lifecycle recovery through the public probe fallback (#9203)", async () => {
     const harness = createConnectHarness({
       agentName: "hermes",
       sessionAgent: { name: "hermes" },
@@ -985,7 +985,7 @@ describe("connectSandbox flow", () => {
         lifecycleGeneration: "generation-1",
       },
       portableReceiptDisposition: { kind: "hermes", phase: "active" },
-      portableRecoveryResult: { kind: "already-running" },
+      portableRecoveryResult: { kind: "recovered" },
     });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
@@ -1010,7 +1010,8 @@ describe("connectSandbox flow", () => {
       ),
     ).toBe(false);
     expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
-    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalled();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -1120,6 +1121,8 @@ describe("connectSandbox flow", () => {
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain("changed during verification");
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
     expect(harness.getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
   it("keeps active Hermes interactive setup inside receipt-owned recovery (#9203)", async () => {

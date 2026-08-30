@@ -241,9 +241,15 @@ export function hostLocalInferenceRollbackStatus(
 export type HostLocalInferencePublicationState = "unpublished" | "indeterminate" | "published";
 
 /**
- * Operation-scoped startup transaction. The provider returns this only after
- * Ready, GPU, and real inference proofs pass. Central routing commits the
- * receipt after its own route mutation, or restores the exact prior runtime.
+ * Operation-scoped startup transaction. Central routing validates the
+ * provider before its own route mutation, then commits the receipt or restores
+ * the exact prior runtime.
+ *
+ * The experimental published-resume path may return after starting the exact
+ * receipt-owned runtime but before its Ready and GPU proofs. That interval is
+ * deliberately unpublished and rollback-safe: the caller must validate then
+ * finalize, or roll back. If the caller is interrupted, the next recovery
+ * reconciles the same exact running receipt-owned runtime before publication.
  */
 export interface HostLocalInferencePreparedStartup {
   readonly receipt: HostLocalInferenceReceipt;

@@ -36,7 +36,11 @@ import {
   openFilePersistedEngineAuthorityStore,
 } from "../runtime-provider/persisted-engine-authority";
 import { createPodmanRuntimeProviderBundle } from "../runtime-provider/podman";
-import { PublishedInferenceForwardAuthorityError } from "../runtime-provider/podman-host-local-inference";
+import {
+  PublishedInferenceForwardAuthorityError,
+  type PodmanPublishedResumeTiming,
+  type PodmanPublishedResumeTimingEvidence,
+} from "../runtime-provider/podman-host-local-inference";
 import {
   qualifyPodmanInferenceAuthority,
   revalidatePodmanInferenceAuthority,
@@ -147,6 +151,14 @@ export interface HermesPortableOllamaRuntimeAuthority {
   readonly assertCurrent: () => void;
 }
 
+function writeHermesPortablePublishedResumeTiming(
+  evidence: PodmanPublishedResumeTimingEvidence,
+): void {
+  console.log(
+    `  Hermes Portable Ollama resume timing: start=${String(evidence.startMs)}ms managedReady=${String(evidence.managedReadyMs)}ms gpuIdentity=${String(evidence.gpuIdentityMs)}ms generatedProof=${String(evidence.generatedProofMs)}ms modelPlacement=${String(evidence.modelPlacementMs)}ms cleanupCurrentness=${String(evidence.cleanupCurrentnessMs)}ms total=${String(evidence.totalMs)}ms runtimeAction=${evidence.runtimeAction} result=proved`,
+  );
+}
+
 function prepareHermesPortableOllamaRegistryRecovery(options: {
   readonly receipt: HermesPortableConfiguredReceipt;
   readonly inferenceReceipt: HostLocalInferenceReceipt;
@@ -205,6 +217,7 @@ export function createHermesPortableOllamaRuntimeAuthority(options: {
   readonly podmanAuthorityDeps?: HermesPortablePodmanAuthorityDeps;
   readonly captureGpuDevices?: () => readonly string[];
   readonly captureCdiDevices?: () => readonly string[];
+  readonly publishedResumeTiming?: PodmanPublishedResumeTiming;
 }): HermesPortableOllamaRuntimeAuthority {
   const sourceEnv = {
     ...(options.env ?? process.env),
@@ -261,6 +274,9 @@ export function createHermesPortableOllamaRuntimeAuthority(options: {
               ),
               assertForwardAuthority: options.publishedRecovery.assertForwardAuthority,
             },
+            publishedResumeTiming:
+              options.publishedResumeTiming ??
+              Object.freeze({ onComplete: writeHermesPortablePublishedResumeTiming }),
           }
         : {}),
       authorityStore: openFilePersistedEngineAuthorityStore(inferenceStateDir),

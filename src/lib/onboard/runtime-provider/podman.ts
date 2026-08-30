@@ -16,6 +16,7 @@ import {
   type PodmanExternalInferenceNetworkAuthority,
   type PodmanHostLocalInferenceOperationOptions,
   type PodmanInferenceFailureEvidence,
+  type PodmanPublishedResumeTiming,
   type PodmanInferenceRedactor,
 } from "./podman-host-local-inference";
 import type {
@@ -47,6 +48,7 @@ export interface PodmanHostLocalInferenceOptions {
   readonly authority?: PodmanInferenceAuthorityReceipt;
   readonly authorityQualification?: PodmanInferenceQualificationOptions;
   readonly hermesPortablePublishedEngineAuthority?: PodmanHostLocalInferenceOperationOptions["hermesPortablePublishedEngineAuthority"];
+  readonly publishedResumeTiming?: PodmanPublishedResumeTiming;
 }
 
 export interface PodmanRuntimeProviderOptions {
@@ -206,6 +208,9 @@ export function createPodmanRuntimeProviderBundle(
                       hermesPortablePublishedEngineAuthority:
                         inferenceOptions.hermesPortablePublishedEngineAuthority,
                     }
+                  : {}),
+                ...(inferenceOptions.publishedResumeTiming
+                  ? { publishedResumeTiming: inferenceOptions.publishedResumeTiming }
                   : {}),
               }),
           }
