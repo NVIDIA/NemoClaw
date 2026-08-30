@@ -11,13 +11,13 @@
 #
 # ── Why these layers are safe to cache ──────────────────────────────────
 #
-# Everything in this file is either pinned to an exact version or is
+# Everything in this file is either version-pinned or is
 # structural (users, directories, symlinks) that doesn't depend on
 # NemoClaw application code. Specifically:
 #
 #   node:22-trixie-slim — pinned by sha256 digest, checked weekly by
 #                          docker-pin-check.yaml
-#   apt packages        — pinned to exact Debian trixie versions
+#   apt packages        — pinned to Debian trixie versions
 #   util-linux          — pinned Debian package providing setpriv
 #   npm 11.18.0         — reviewed archive + sha512 integrity
 #   gateway/sandbox     — OS users and groups; names and UIDs are a
@@ -26,7 +26,7 @@
 #                          CLI layout; new dirs are additive (add them
 #                          here and rebuild)
 #   openclaw CLI        — version set by ARG OPENCLAW_VERSION (default below); override with --build-arg
-#   pyyaml              — pinned to exact pip version (6.0.3)
+#   pyyaml              — pinned to pip version 6.0.3
 #
 # Nothing here references NemoClaw plugin source, blueprint files,
 # startup scripts, or build-time config (model, provider, auth token).
@@ -445,7 +445,7 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
 RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# npm 11.18.0 restores affected tar 7.5.19. Replace it from the exact
+# npm 11.18.0 restores affected tar 7.5.19. Replace it from the
 # registry- and SRI-verified 7.5.21 archive before any npm consumers run.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
@@ -650,7 +650,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 #
 # Cost: ~80 to 150 MB (Homebrew core only; formulae download on demand).
 #
-# HOMEBREW_VERSION pins the exact upstream Homebrew tag we ship, so the
+# HOMEBREW_VERSION pins the upstream Homebrew tag we ship, so the
 # base image layer is reproducible across rebuilds. Bump on demand; the
 # base-image workflow re-runs on push to main. Latest stable tags are
 # at https://github.com/Homebrew/brew/releases.

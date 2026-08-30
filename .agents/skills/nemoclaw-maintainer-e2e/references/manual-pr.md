@@ -29,7 +29,7 @@ Before dispatch, review the complete candidate diff. After a failure:
 - remove resources that cleanup left behind; and
 - rotate or revoke exposed credentials when necessary.
 
-`Exact staging Brev Launchable` is available only when the source is an NVIDIA-owned branch in
+`Staging Brev Launchable` is available only when the source is an NVIDIA-owned branch in
 `NVIDIA/NemoClaw`. Its trusted host receives the Brev API key and image-dispatch token. The guest
 receives the NVIDIA inference API key. The protected managed-image and native-runtime qualification
 jobs define narrower trusted-host boundaries in the workflow.

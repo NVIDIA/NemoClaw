@@ -23,11 +23,11 @@ import {
   listMessagingConfigEnvKeys,
   listMessagingCredentialEnvAssignments,
   listMessagingPackageInstallSpecs,
+  listMessagingPolicyPresetMetadata,
   listMessagingProviderNamesForChannel,
   listOpenClawManagedChannelNames,
   listOpenClawPluginExtensionIds,
   listOpenClawRuntimeChannelMetadata,
-  listMessagingPolicyPresetMetadata,
   listRequiredCreateTimeMessagingPolicyPresetNames,
 } from "./metadata";
 
@@ -106,6 +106,23 @@ describe("built-in messaging channel metadata", () => {
     ).toEqual([]);
   });
 
+  it("ignores stale runtime aliases for unsupported agents (#10079)", () => {
+    const wechatManifest = listBuiltInMessagingChannelManifests().find(
+      (manifest) => manifest.id === "wechat",
+    );
+    expect(wechatManifest).toBeDefined();
+    const staleManifest: ChannelManifest = {
+      ...wechatManifest!,
+      supportedAgents: ["openclaw"],
+    };
+
+    expect(
+      listMessagingCredentialEnvAssignments({ manifests: [staleManifest] }).filter(
+        ({ agent }) => agent === "hermes",
+      ),
+    ).toEqual([]);
+  });
+
   it("resolves config env keys from manifests and compatibility aliases from metadata", () => {
     expect(listMessagingConfigEnvKeys()).toEqual([
       "TELEGRAM_ALLOWED_IDS",
@@ -167,6 +184,7 @@ describe("built-in messaging channel metadata", () => {
     expect(listRequiredCreateTimeMessagingPolicyPresetNames()).toEqual([
       "telegram",
       "discord",
+      "wechat",
       "slack",
       "teams",
     ]);
@@ -223,13 +241,6 @@ describe("built-in messaging channel metadata", () => {
         agents: ["hermes"],
         manager: "hermes-uv-pip",
         spec: "microsoft-teams-apps==2.0.13.4",
-      },
-      {
-        channelId: "teams",
-        packageId: "hermesAiohttpPackage",
-        agents: ["hermes"],
-        manager: "hermes-uv-pip",
-        spec: "aiohttp==3.14.3",
       },
       {
         channelId: "googlechat",
@@ -481,7 +492,9 @@ describe("messaging policy credential bindings", () => {
           const selectorsFor = (hostPort: string) =>
             declared.filter((endpoint) => endpoint.hostPort === hostPort).map((e) => e.selector);
           return [...new Set(declared.map((endpoint) => endpoint.hostPort))]
-            .filter((hostPort) => new Set(selectorsFor(hostPort)).size !== selectorsFor(hostPort).length)
+            .filter(
+              (hostPort) => new Set(selectorsFor(hostPort)).size !== selectorsFor(hostPort).length,
+            )
             .map((hostPort) => `${entry.label} ${policyKey} ${hostPort}`);
         });
       })

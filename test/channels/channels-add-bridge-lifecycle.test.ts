@@ -120,7 +120,6 @@ beforeEach(() => {
     gatewayName: "nemoclaw",
     lifecycleGeneration: "generation-1",
     lifecycleLiveIdentityFingerprint: LIVE_IDENTITY_FINGERPRINT,
-    policies: [],
   } as SandboxEntry;
   vi.spyOn(registry, "getSandbox").mockImplementation(() => registryEntry);
   vi.spyOn(registry, "listSandboxes").mockImplementation(() => ({
@@ -155,7 +154,6 @@ beforeEach(() => {
 
   session = {
     sandboxName: "test-sb",
-    policyPresets: [],
   } as unknown as onboardSession.Session;
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
   vi.spyOn(onboardSession, "updateSession").mockImplementation((update) => {
@@ -167,14 +165,12 @@ beforeEach(() => {
   // crosses the direct channel action, generic provider upsert, and OpenShell
   // refresh boundary. Individual failure tests override the spy below.
   providerSpy = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders");
-  vi.spyOn(
-    policyChannelDependencies,
-    "revalidateChannelProviderPolicyAuthority",
-  ).mockImplementation(() => undefined);
-  vi.spyOn(
-    policyChannelDependencies,
-    "inspectMessagingProviderAttachmentTarget",
-  ).mockReturnValue(LIVE_IDENTITY_FINGERPRINT);
+  vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
+    () => undefined,
+  );
+  vi.spyOn(policyChannelDependencies, "inspectMessagingProviderAttachmentTarget").mockReturnValue(
+    LIVE_IDENTITY_FINGERPRINT,
+  );
   vi.spyOn(policyChannelDependencies, "rebuildSandbox").mockImplementation(async () => undefined);
   stopGooglechatWebhookTunnelSpy = vi
     .spyOn(policyChannelDependencies, "stopGooglechatWebhookTunnel")
@@ -329,7 +325,6 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
       "googlechat",
     );
     expect(appliedPresets).not.toContain("googlechat");
-    expect(session.policyPresets).not.toContain("googlechat");
     expect(stopGooglechatWebhookTunnelSpy).toHaveBeenCalledWith("test-sb");
   });
 
@@ -357,7 +352,6 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(process.env.GOOGLECHAT_SERVICE_ACCOUNT).toBe(SA_JSON);
     expect(registry.getConfiguredMessagingChannelsFromEntry(registryEntry)).toContain("googlechat");
     expect(appliedPresets).toContain("googlechat");
-    expect(session.policyPresets).toContain("googlechat");
     expect(providerSpy).not.toHaveBeenCalled();
     expect(openshellCalls()).toEqual([]);
     expect(policies.removePreset).not.toHaveBeenCalled();
@@ -399,7 +393,6 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(startedPlan?.networkPolicy.presets).toContain("googlechat");
     expect(policies.applyPreset).not.toHaveBeenCalled();
     expect(appliedPresets).toContain("googlechat");
-    expect(session.policyPresets).toContain("googlechat");
     expect(providerSpy).not.toHaveBeenCalled();
     expect(openshellCalls()).toEqual([]);
     expect(stopGooglechatWebhookTunnelSpy).not.toHaveBeenCalled();

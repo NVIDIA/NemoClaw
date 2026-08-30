@@ -9,14 +9,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "../..", "scripts", "install.sh");
-const UPDATE_SANDBOXES_DOCS = path.join(
-  import.meta.dirname,
-  "../..",
-  "docs",
-  "manage-sandboxes",
-  "update-sandboxes.mdx",
-);
-const COMMANDS_DOCS = path.join(import.meta.dirname, "../..", "docs", "reference", "commands.mdx");
 
 function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
@@ -306,7 +298,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
       const runtimeDir = path.join(tmp, "runtime");
       const gatewayBin = path.join(tmp, "openshell-gateway");
       fs.mkdirSync(runtimeDir, { recursive: true });
-      fs.copyFileSync("/bin/sleep", gatewayBin);
+      fs.copyFileSync(process.execPath, gatewayBin);
       fs.chmodSync(gatewayBin, 0o755);
 
       const result = spawnSync(
@@ -315,7 +307,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
           "-c",
           `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
 NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="${runtimeDir}"
-"${gatewayBin}" 60 &
+"${gatewayBin}" -e 'setTimeout(() => {}, 60000)' &
 gateway_pid=$!
 printf '%s\\n' "$gateway_pid" >"${runtimeDir}/openshell-gateway.pid"
 stop_legacy_openshell_gateway_process
@@ -607,18 +599,6 @@ esac`,
     expect(output).not.toContain("pkill -f openshell-gateway");
     expect(cliLog).toBe("");
     expect(openshellLog).toBe("");
-  });
-
-  it("documents the selected gateway port for a manually prepared upgrade", () => {
-    const preparedUpgradeCommand =
-      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=<selected-port> NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash";
-    const retryInstruction =
-      "If the installation fails, rerun the same install-pipeline command to preserve `NEMOCLAW_GATEWAY_PORT` and `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED`.";
-
-    expect(fs.readFileSync(UPDATE_SANDBOXES_DOCS, "utf-8")).toContain(preparedUpgradeCommand);
-    expect(fs.readFileSync(COMMANDS_DOCS, "utf-8")).toContain(preparedUpgradeCommand);
-    expect(fs.readFileSync(UPDATE_SANDBOXES_DOCS, "utf-8")).toContain(retryInstruction);
-    expect(fs.readFileSync(COMMANDS_DOCS, "utf-8")).toContain(retryInstruction);
   });
 
   it("requires separate managed-image confirmation before preparing a backup (#6114)", () => {

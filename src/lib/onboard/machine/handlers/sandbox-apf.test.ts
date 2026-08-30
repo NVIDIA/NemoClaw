@@ -11,7 +11,7 @@ describe("APF sandbox create selection", () => {
   it("binds selection to the future deferred create intent (#9833)", () => {
     expect(apfCreateIntentFields(true)).toEqual({
       apfInterceptorRequested: true,
-      deferSandboxEffectsUntilPolicyVerification: true,
+      deferSandboxEffectsUntilIdentityVerification: true,
     });
     expect(apfCreateIntentFields(false)).toEqual({});
   });
@@ -60,14 +60,14 @@ describe("APF sandbox create selection", () => {
     const createCall = calls.createSandbox.mock.calls[0] ?? [];
     expect(createCall.at(-2)).toMatchObject({
       apfInterceptorRequested: true,
-      deferSandboxEffectsUntilPolicyVerification: true,
+      deferSandboxEffectsUntilIdentityVerification: true,
     });
     const activateVerifiedEffects = createCall.at(-1);
     expect(activateVerifiedEffects).toEqual(expect.any(Function));
 
     const sessionUpdatesBeforeVerifiedEffects = calls.updateSession.mock.calls.length;
     await (activateVerifiedEffects as unknown as (context: unknown) => Promise<void>)({
-      revalidatePolicyRequirements: () => undefined,
+      revalidateSandboxIdentity: () => undefined,
     });
     expect(calls.updateSession.mock.calls.length).toBeGreaterThan(
       sessionUpdatesBeforeVerifiedEffects,

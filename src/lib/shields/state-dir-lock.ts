@@ -52,7 +52,11 @@ type GuardSummary = {
 };
 
 function resultFailure(label: string, result: PrivilegedExecResult): string {
-  const details = [result.error, result.stderr.trim(), result.stdout.trim()]
+  const details = [
+    result.error,
+    String(result.stderr ?? "").trim(),
+    String(result.stdout ?? "").trim(),
+  ]
     .filter((value): value is string => Boolean(value))
     .join("; ");
   const termination =
@@ -128,10 +132,10 @@ function inspectRuntimePlan(
     };
   }
   const read = privileged.run(["cat", CONTAINER_STATE_LOCK_PLAN]);
-  if (!successful(read) || read.stderr.trim()) {
+  if (!successful(read) || String(read.stderr ?? "").trim()) {
     return { kind: "error", issue: resultFailure("installed state lock plan read failed", read) };
   }
-  const parsed = parseInstalledPlan(read.stdout);
+  const parsed = parseInstalledPlan(String(read.stdout ?? ""));
   if (typeof parsed === "string") return { kind: "error", issue: parsed };
   if (!plansMatch(parsed, expected)) {
     return {
@@ -156,8 +160,10 @@ function parseGuardOutput(action: GuardAction, result: PrivilegedExecResult): st
   const issues: GuardIssue[] = [];
   const summaries: GuardSummary[] = [];
   const contractIssues: string[] = [];
+  const stdout = String(result.stdout ?? "");
+  const stderr = String(result.stderr ?? "");
 
-  for (const line of result.stdout.split("\n")) {
+  for (const line of stdout.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     let value: unknown;
@@ -220,8 +226,8 @@ function parseGuardOutput(action: GuardAction, result: PrivilegedExecResult): st
   } else if (result.status !== 0 && issues.length === 0) {
     contractIssues.push(resultFailure("state-dir guard failed without a diagnostic", result));
   }
-  if (result.stderr.trim()) {
-    contractIssues.push(`state-dir guard wrote unexpected stderr: ${result.stderr.trim()}`);
+  if (stderr.trim()) {
+    contractIssues.push(`state-dir guard wrote unexpected stderr: ${stderr.trim()}`);
   }
 
   return [

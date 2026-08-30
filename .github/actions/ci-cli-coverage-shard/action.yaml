@@ -101,6 +101,8 @@ runs:
 
     - name: Install dependencies
       shell: bash
+      env:
+        NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && github.token || '' }}
       run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"
 
     - name: Validate changed live E2E mock parity

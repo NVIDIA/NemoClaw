@@ -47,43 +47,6 @@ async function loadShieldsModule() {
 }
 
 describe("Shields status state lock plan drift", () => {
-  it("reports unavailable policy authority during temporary unlock (#9833)", async () => {
-    const sandboxName = "openclaw";
-    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(stateDir, `shields-${sandboxName}.json`),
-      JSON.stringify({ shieldsDown: true, shieldsDownAt: new Date().toISOString() }),
-      { mode: 0o600 },
-    );
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {
-      throw new Error(`exit ${String(code)}`);
-    });
-
-    const { shieldsStatus } = await loadShieldsModule();
-    expect(() =>
-      shieldsStatus(sandboxName, false, {
-        inspectPolicyRecovery: () => ({
-          status: "unavailable",
-          detail: "OpenShell sandbox policy authority inspection failed: the query timed out.",
-        }),
-      }),
-    ).toThrow("exit 2");
-
-    const output = logSpy.mock.calls.flat().join("\n");
-    const errors = errorSpy.mock.calls.flat().join("\n");
-    expect(exitSpy).toHaveBeenCalledWith(2);
-    expect(output).not.toContain("DOWN (temporarily unlocked)");
-    expect(output).not.toContain("Auto-lockdown in:");
-    expect(errors).toContain("Shields: DOWN (RECOVERY REQUIRED — policy authority unavailable)");
-    expect(errors).toContain("OpenShell sandbox policy authority inspection failed");
-    expect(errors).toContain(
-      "Recovery: restore policy authority inspection for sandbox 'openclaw'",
-    );
-  });
-
   it("reports a mismatched installed state lock plan as drift", async () => {
     const sandboxName = "openclaw";
     writeSealedLockedState(sandboxName);

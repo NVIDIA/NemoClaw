@@ -124,7 +124,6 @@ function completeSession(sandboxName: string) {
     preferredInferenceApi: null,
     nimContainer: null,
     webSearchConfig: null,
-    policyPresets: [],
     messagingPlan: null,
     metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
     steps: {
@@ -135,7 +134,6 @@ function completeSession(sandboxName: string) {
       inference: step,
       openclaw: step,
       agent_setup: { status: "pending", startedAt: null, completedAt: null, error: null },
-      policies: step,
     },
   };
 }
@@ -159,7 +157,6 @@ function createConflictFixture() {
     gatewayPort: 8080,
     dashboardPort: 18789,
     fromDockerfile: null,
-    policies: [],
     agent: null,
     messaging: { schemaVersion: 1, plan: teamsPlan(name, "shared-teams-hash") },
   });
@@ -291,38 +288,46 @@ function registryHasSandbox(nemoclawDir: string, name: string): boolean {
 }
 
 describe("rebuild messaging credential conflict preflight (#5954)", () => {
-  it("aborts BEFORE backup/delete when another sandbox shares the Teams credential", {
-    timeout: 90_000,
-  }, () => {
-    const f = createConflictFixture();
-    const result = runRebuild(f.tmpDir);
-    const output = `${result.stderr || ""}${result.stdout || ""}`;
+  it(
+    "aborts BEFORE backup/delete when another sandbox shares the Teams credential",
+    {
+      timeout: 90_000,
+    },
+    () => {
+      const f = createConflictFixture();
+      const result = runRebuild(f.tmpDir);
+      const output = `${result.stderr || ""}${result.stdout || ""}`;
 
-    // Aborted, with the actionable conflict explanation.
-    expect(result.status).not.toBe(0);
-    expect(output).toContain("uses the same teams credential");
-    expect(output).toContain("Aborting");
+      // Aborted, with the actionable conflict explanation.
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("uses the same teams credential");
+      expect(output).toContain("Aborting");
 
-    // Nothing destructive ran: the sandbox is untouched and still registered.
-    expect(output).not.toContain("Backing up sandbox state");
-    expect(output).not.toContain("Old sandbox deleted");
-    expect(output).not.toContain("must not run before the conflict preflight");
-    expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
-  });
+      // Nothing destructive ran: the sandbox is untouched and still registered.
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(output).not.toContain("must not run before the conflict preflight");
+      expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
+    },
+  );
 
-  it("aborts BEFORE backup/delete when an unrelated process owns the Teams webhook port", {
-    timeout: 90_000,
-  }, () => {
-    const f = createHostPortConflictFixture();
-    const result = runRebuild(f.tmpDir);
-    const output = `${result.stderr || ""}${result.stdout || ""}`;
+  it(
+    "aborts BEFORE backup/delete when an unrelated process owns the Teams webhook port",
+    { timeout: 90_000 },
+    () => {
+      const f = createHostPortConflictFixture();
+      const result = runRebuild(f.tmpDir);
+      const output = `${result.stderr || ""}${result.stdout || ""}`;
 
-    expect(result.status).not.toBe(0);
-    expect(output).toContain("Microsoft Teams webhook port 3978 is already in use by nc (PID 4321)");
-    expect(output).toContain("MSTEAMS_PORT");
-    expect(output).not.toContain("Backing up sandbox state");
-    expect(output).not.toContain("Old sandbox deleted");
-    expect(output).not.toContain("must not run before the conflict preflight");
-    expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
-  });
+      expect(result.status).not.toBe(0);
+      expect(output).toContain(
+        "Microsoft Teams webhook port 3978 is already in use by nc (PID 4321)",
+      );
+      expect(output).toContain("MSTEAMS_PORT");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(output).not.toContain("must not run before the conflict preflight");
+      expect(registryHasSandbox(f.nemoclawDir, "my-assistant")).toBe(true);
+    },
+  );
 });

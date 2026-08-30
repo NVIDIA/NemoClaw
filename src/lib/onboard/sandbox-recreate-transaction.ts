@@ -198,15 +198,7 @@ const ROUTE_RESERVATION_FIELDS: readonly (keyof SandboxEntry)[] = [
   "gatewayName",
   "gatewayPort",
 ];
-// Rebuild may update these independently receipt-bound projections before delete.
-// The source fingerprint still binds policyAuthority and every sandbox, gateway,
-// lifecycle, agent, and workload ownership field.
-const RECEIPT_BOUND_PROJECTION_FIELDS: readonly (keyof SandboxEntry)[] = [
-  "policyCreationReceipt",
-  "policies",
-  "customPolicies",
-  "mcp",
-];
+const RECEIPT_BOUND_PROJECTION_FIELDS: readonly (keyof SandboxEntry)[] = ["mcp"];
 
 export function fingerprintSandboxRegistryEntry(entry: SandboxEntry): string {
   const durable: Record<string, unknown> = { ...entry };
@@ -237,6 +229,10 @@ export interface CreatedSandboxLifecycleTarget {
   readonly gatewayName: string;
 }
 
+export interface CreatedSandboxLifecycleRevalidationOptions {
+  readonly allowNotReadyWithMatchingIdentity?: boolean;
+}
+
 type ObserveCreatedSandbox = (
   sandboxName: string,
   gatewayName: string,
@@ -254,15 +250,10 @@ function requireLifecycleGeneration(sandboxName: string, lifecycleGeneration: st
   }
 }
 
-function requireReadyIdentity(
+function requireValidLiveIdentity(
   target: CreatedSandboxLifecycleTarget,
   observation: SandboxRecreateObservation,
 ): string {
-  if (observation.state !== "ready") {
-    throw new Error(
-      `Cannot register sandbox '${target.sandboxName}': its owning gateway did not report it Ready.`,
-    );
-  }
   const fingerprint = observation.liveIdentityFingerprint;
   if (!fingerprint || !/^[0-9a-f]{64}$/u.test(fingerprint)) {
     throw new Error(
@@ -270,6 +261,36 @@ function requireReadyIdentity(
     );
   }
   return fingerprint;
+}
+
+function requireReadyIdentity(
+  target: CreatedSandboxLifecycleTarget,
+  observation: SandboxRecreateObservation,
+): string {
+  if (observation.state !== "ready") {
+    // `missing` and `not_ready` need different answers: one says the gateway cannot see the
+    // sandbox at all, the other says it sees it and withholds Ready. Name which one was observed.
+    throw new Error(
+      `Cannot register sandbox '${target.sandboxName}': its owning gateway did not report it Ready (observed ${observation.state}).`,
+    );
+  }
+  return requireValidLiveIdentity(target, observation);
+}
+
+function requireObservedIdentity(
+  target: CreatedSandboxLifecycleTarget,
+  observation: SandboxRecreateObservation,
+  allowNotReadyWithMatchingIdentity: boolean,
+): string {
+  if (
+    observation.state !== "ready" &&
+    !(allowNotReadyWithMatchingIdentity && observation.state === "not_ready")
+  ) {
+    throw new Error(
+      `Cannot register sandbox '${target.sandboxName}': its owning gateway did not report it Ready (observed ${observation.state}).`,
+    );
+  }
+  return requireValidLiveIdentity(target, observation);
 }
 
 /** Pin the Ready sandbox identity observed from its owning gateway after creation. */
@@ -326,11 +347,13 @@ export function revalidateCreatedSandboxLifecycleRegistration(
   target: CreatedSandboxLifecycleTarget,
   registration: CreatedSandboxLifecycleRegistration,
   observe: ObserveCreatedSandbox,
+  options: CreatedSandboxLifecycleRevalidationOptions = {},
 ): CreatedSandboxLifecycleRegistration {
   requireLifecycleGeneration(target.sandboxName, registration.lifecycleGeneration);
-  const liveIdentityFingerprint = requireReadyIdentity(
+  const liveIdentityFingerprint = requireObservedIdentity(
     target,
     observe(target.sandboxName, target.gatewayName),
+    options.allowNotReadyWithMatchingIdentity === true,
   );
   if (liveIdentityFingerprint !== registration.lifecycleLiveIdentityFingerprint) {
     throw new Error(
@@ -348,6 +371,7 @@ export interface CreatedSandboxLifecycle {
   ): CreatedSandboxLifecycleRegistration;
   revalidate(
     registration: CreatedSandboxLifecycleRegistration,
+    options?: CreatedSandboxLifecycleRevalidationOptions,
   ): CreatedSandboxLifecycleRegistration;
 }
 
@@ -377,8 +401,13 @@ export function createCreatedSandboxLifecycle(
       });
       return captured;
     },
-    revalidate: (registration) => {
-      const verified = revalidateCreatedSandboxLifecycleRegistration(target, registration, observe);
+    revalidate: (registration, options) => {
+      const verified = revalidateCreatedSandboxLifecycleRegistration(
+        target,
+        registration,
+        observe,
+        options,
+      );
       runtime.recordCreated({
         state: "ready",
         liveIdentityFingerprint: verified.lifecycleLiveIdentityFingerprint,
