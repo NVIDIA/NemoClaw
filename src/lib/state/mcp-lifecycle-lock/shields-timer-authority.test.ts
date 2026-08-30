@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   hasQuarantinedShieldsTimerRecoveryArtifact,
@@ -19,6 +19,7 @@ import {
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const tempDir of tempDirs.splice(0)) {
     fs.rmSync(tempDir, { force: true, recursive: true });
   }
@@ -84,6 +85,32 @@ describe("Shields timer marker authority", () => {
       message = error instanceof Error ? error.message : String(error);
     }
 
+    expect(message).toContain("\\u001b");
+    expect(message).toContain("\\n");
+    expect(message).toContain("\\u009b");
+    expect(message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
+  });
+
+  it("fails into recovery with terminal-safe directory inspection diagnostics", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-marker-"));
+    tempDirs.push(stateDir);
+    const error = new Error(
+      `cannot inspect ${stateDir}\u001b[31m\n\u009b31m`,
+    ) as NodeJS.ErrnoException;
+    error.code = "EACCES";
+    vi.spyOn(fs, "readdirSync").mockImplementation(() => {
+      throw error;
+    });
+
+    expect(hasShieldsTimerRecoveryArtifact("alpha", stateDir)).toBe(true);
+
+    let message = "";
+    try {
+      readShieldsTimerRecoveryCandidate("alpha", stateDir);
+    } catch (caught) {
+      message = caught instanceof Error ? caught.message : String(caught);
+    }
+    expect(message).toContain("could not inspect artifacts");
     expect(message).toContain("\\u001b");
     expect(message).toContain("\\n");
     expect(message).toContain("\\u009b");

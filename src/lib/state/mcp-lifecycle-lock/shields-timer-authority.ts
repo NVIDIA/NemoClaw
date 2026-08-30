@@ -120,6 +120,18 @@ export function formatTerminalSafeDiagnosticValue(value: string): string {
   );
 }
 
+function timerRecoveryArtifactInspectionError(
+  sandboxName: string,
+  stateDir: string,
+  error: unknown,
+): Error {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(
+    `Automatic Shields timer recovery could not inspect artifacts for sandbox '${sandboxName}' in state directory ${formatTerminalSafeDiagnosticValue(stateDir)}: ${formatTerminalSafeDiagnosticValue(detail)}. Correct the state-directory access failure, then rerun Shields status.`,
+    { cause: error },
+  );
+}
+
 export function sameShieldsTimerMarkerGeneration(
   current: ShieldsTimerMarker | null,
   expected: ShieldsTimerMarker,
@@ -159,7 +171,8 @@ export function hasShieldsTimerRecoveryArtifact(
     if (fs.existsSync(markerPath)) return true;
     return hasQuarantinedShieldsTimerRecoveryArtifact(sandboxName, stateDir);
   } catch {
-    return false;
+    // Route an unreadable state directory through the detailed recovery path.
+    return true;
   }
 }
 
@@ -171,8 +184,10 @@ export function hasQuarantinedShieldsTimerRecoveryArtifact(
     const markerPath = shieldsTimerMarkerPath(sandboxName, stateDir);
     const prefix = completedTimerMarkerPrefix(markerPath);
     return fs.readdirSync(path.dirname(markerPath)).some((name) => name.startsWith(prefix));
-  } catch {
-    return false;
+  } catch (error) {
+    const errno = error as NodeJS.ErrnoException;
+    if (errno.code === "ENOENT") return false;
+    throw timerRecoveryArtifactInspectionError(sandboxName, stateDir, error);
   }
 }
 
@@ -191,7 +206,9 @@ export function readShieldsTimerRecoveryCandidate(
       .sort();
   } catch (error) {
     const errno = error as NodeJS.ErrnoException;
-    if (errno.code !== "ENOENT") throw error;
+    if (errno.code !== "ENOENT") {
+      throw timerRecoveryArtifactInspectionError(sandboxName, stateDir, error);
+    }
     quarantinePaths = [];
   }
   const candidates = [...(fs.existsSync(markerPath) ? [markerPath] : []), ...quarantinePaths];
