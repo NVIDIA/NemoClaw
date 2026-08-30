@@ -483,10 +483,30 @@ const ctx = module.exports;
     );
     assert.deepEqual(
       messagingPlanUpdate.updates.messaging.plan.channels.map(
-        (channel: { channelId: string }) => channel.channelId,
+        (channel: {
+          channelId: string;
+          active: boolean;
+          selected: boolean;
+          configured: boolean;
+          disabled: boolean;
+        }) => ({
+          channelId: channel.channelId,
+          active: channel.active,
+          selected: channel.selected,
+          configured: channel.configured,
+          disabled: channel.disabled,
+        }),
       ),
-      [],
-      "messaging.plan.channels must be empty after removing telegram",
+      [
+        {
+          channelId: "telegram",
+          active: false,
+          selected: false,
+          configured: false,
+          disabled: true,
+        },
+      ],
+      "messaging.plan must retain only the pending Telegram config tombstone until rebuild",
     );
   });
 });

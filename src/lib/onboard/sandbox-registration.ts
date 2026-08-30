@@ -12,6 +12,7 @@ import {
   normalizeInferenceSelection,
 } from "../inference/selection";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
+import { retireUnconfiguredMessagingPlanChannels } from "../messaging/compiler/workflow-planner";
 import * as onboardSession from "../state/onboard-session";
 import type { OpenClawImagePluginInstall } from "../state/openclaw-plugin-restore";
 import type { SandboxEntry, SandboxMcpState, SandboxMessagingState } from "../state/registry";
@@ -179,10 +180,19 @@ export function buildCreatedSandboxRegistryEntry(
     session?.sandboxName === input.sandboxName
       ? (session.servingProfileProvenance ?? undefined)
       : undefined;
-  const messagingState =
+  const plannedMessagingState =
     input.plannedMessagingState?.plan.sandboxName === input.sandboxName
       ? input.plannedMessagingState
       : undefined;
+  const retiredMessagingPlan = plannedMessagingState
+    ? retireUnconfiguredMessagingPlanChannels(plannedMessagingState.plan)
+    : undefined;
+  const messagingState =
+    plannedMessagingState && retiredMessagingPlan === plannedMessagingState.plan
+      ? plannedMessagingState
+      : retiredMessagingPlan
+        ? { schemaVersion: 1 as const, plan: retiredMessagingPlan }
+        : undefined;
   const workload = cloneSandboxWorkloadReceipt(input.workload);
   if (input.workload !== undefined && workload === undefined) {
     throw new RuntimeProviderSelectionError(

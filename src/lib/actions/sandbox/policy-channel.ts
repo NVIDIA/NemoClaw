@@ -1264,7 +1264,7 @@ export async function persistManifestChannelRemovePlan(
     undefined,
     createBuiltInRenderTemplateResolver(),
   );
-  const plan = await planner.buildChannelRemovePlanFromSandboxEntry({
+  const plan = await planner.buildChannelRemovalTombstonePlanFromSandboxEntry({
     sandboxName,
     agent: agentId,
     channelId,
