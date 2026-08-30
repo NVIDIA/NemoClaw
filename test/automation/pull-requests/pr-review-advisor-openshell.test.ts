@@ -893,6 +893,10 @@ describe("PR review advisor OpenShell wrapper", () => {
         "GIT_WORK_TREE=/pr-workdir",
         "TARGET_REPO=NVIDIA/NemoClaw",
         "/advisor/tools/pr-review-advisor/run-analysis.mts",
+        "--base",
+        "target/base",
+        "--head",
+        "HEAD",
       ]),
     );
     expect(runArgs.join("\n")).not.toContain("github-host-secret");
@@ -956,6 +960,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     );
     fs.symlinkSync(sessionDirectory, sessionAlias, "dir");
     env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR = sessionAlias;
+    env.PR_REVIEW_ADVISOR_INTEREST = "behavior";
     const tools = advisorTools();
 
     createAdvisorSandbox(env, tools);
@@ -975,11 +980,12 @@ describe("PR review advisor OpenShell wrapper", () => {
       vi
         .mocked(tools.runAsync)
         .mock.calls.find(([, args]) =>
-          args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"),
+          args.includes("/advisor/tools/pr-review-advisor/run-specialist.mts"),
         )?.[1] ?? [];
     expect(runArgs).toContain(
       "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR=/pr-workdir/.pr-review-advisor-sessions",
     );
+    expect(runArgs.slice(-4)).toEqual(["--base", "target/base", "--head", "HEAD"]);
     expect(runArgs).not.toContain(expect.stringContaining("session-reader"));
   });
 
