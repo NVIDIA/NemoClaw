@@ -174,13 +174,12 @@ describe("registry", () => {
     // the durable SandboxEntry type; serializeSandboxEntryForDisk strips them.
     registry.registerSandbox({ name: "alpha", model: "m", provider: "p" });
     registry.updateSandbox("alpha", {
-      policies: ["npm"],
       recoveredFromGateway: true,
       livePhase: "Ready",
     });
 
     const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
-    expect(data.sandboxes.alpha.policies).toEqual(["npm"]);
+    expect(data.sandboxes.alpha.policies).toBeUndefined();
     expect(data.sandboxes.alpha.recoveredFromGateway).toBeUndefined();
     expect(data.sandboxes.alpha.livePhase).toBeUndefined();
   });
@@ -262,34 +261,34 @@ describe("registry", () => {
       trustedPrivateHost: "mcp.corp.example",
       allowedIps: ["fd00::40", "10.20.30.40"],
     },
-  ])("rejects $label from durable trusted-private MCP authority (#8267)", ({
-    trustedPrivateHost,
-    allowedIps,
-  }) => {
-    registry.registerSandbox({
-      name: "noncanonical-private-mcp",
-      agent: "hermes",
-      mcp: {
-        bridges: {
-          local: {
-            server: "local",
-            agent: "hermes",
-            adapter: "hermes-config",
-            url: "https://mcp.corp.example/mcp",
-            env: ["LOCAL_MCP_TOKEN"],
-            trustedPrivateHost,
-            allowedIps,
-            providerName: "noncanonical-private-mcp-mcp-local",
-            providerId: "11111111-2222-4333-8444-555555555555",
-            policyName: "mcp-bridge-local",
-            addedAt: new Date(0).toISOString(),
+  ])(
+    "rejects $label from durable trusted-private MCP authority (#8267)",
+    ({ trustedPrivateHost, allowedIps }) => {
+      registry.registerSandbox({
+        name: "noncanonical-private-mcp",
+        agent: "hermes",
+        mcp: {
+          bridges: {
+            local: {
+              server: "local",
+              agent: "hermes",
+              adapter: "hermes-config",
+              url: "https://mcp.corp.example/mcp",
+              env: ["LOCAL_MCP_TOKEN"],
+              trustedPrivateHost,
+              allowedIps,
+              providerName: "noncanonical-private-mcp-mcp-local",
+              providerId: "11111111-2222-4333-8444-555555555555",
+              policyName: "mcp-bridge-local",
+              addedAt: new Date(0).toISOString(),
+            },
           },
         },
-      },
-    });
+      });
 
-    expect(registry.getSandbox("noncanonical-private-mcp").mcp?.bridges?.local).toBeUndefined();
-  });
+      expect(registry.getSandbox("noncanonical-private-mcp").mcp?.bridges?.local).toBeUndefined();
+    },
+  );
 
   it("retains sanitized managed MCP names after the active bridge map is emptied", () => {
     registry.registerSandbox({
@@ -373,7 +372,7 @@ describe("registry", () => {
     registry.registerSandbox({ name: "up" });
     registry.updateSandbox("up", { policies: ["pypi", "npm"], model: "new-model" });
     const sb = registry.getSandbox("up");
-    expect(sb.policies).toEqual(["pypi", "npm"]);
+    expect(sb.policies).toBeUndefined();
     expect(sb.model).toBe("new-model");
   });
 
@@ -497,16 +496,6 @@ describe("registry", () => {
 
   it("updateSandbox returns false for nonexistent sandbox", () => {
     expect(registry.updateSandbox("nope", {})).toBe(false);
-  });
-
-  it("registerSandbox does not inherit a finalized policy marker (#4621)", () => {
-    // Snapshot restore spreads the source entry (possibly finalized) but resets
-    // policies; the clone must not carry a stale finalized marker.
-    registry.registerSandbox({ name: "clone", policies: [], policyPresetsFinalized: true });
-    expect(registry.getSandbox("clone").policyPresetsFinalized).toBeUndefined();
-    // The marker is set only by the post-policy registry write.
-    registry.updateSandbox("clone", { policyPresetsFinalized: true });
-    expect(registry.getSandbox("clone").policyPresetsFinalized).toBe(true);
   });
 
   it("updateSandbox rejects name changes", () => {
@@ -862,10 +851,7 @@ describe("registry", () => {
       sandboxName: "messaging",
       channels: [{ channelId: "telegram" }],
     });
-    expect(data.sandboxes.messaging.messaging.plan.networkPolicy).toEqual({
-      presets: [],
-      entries: [],
-    });
+    expect(data.sandboxes.messaging.messaging.plan.networkPolicy).toBeUndefined();
     expect(data.sandboxes.messaging.messaging.plan.agentRender).toBeUndefined();
     expect(data.sandboxes.messaging.messaging.plan.buildSteps).toBeUndefined();
     expect(data.sandboxes.messaging.messaging.plan.runtimeSetup).toBeUndefined();
@@ -1085,52 +1071,6 @@ describe("registry", () => {
       messaging: registry.getSandbox("s1").messaging,
     });
     expect(registry.getDisabledChannels("s1")).toEqual(["telegram"]);
-  });
-
-  it("addCustomPolicy persists name, content, and sourcePath", () => {
-    registry.registerSandbox({ name: "cp1" });
-    const added = registry.addCustomPolicy("cp1", {
-      name: "my-api",
-      content: "preset:\n  name: my-api\nnetwork_policies: {}\n",
-      sourcePath: "/tmp/my-api.yaml",
-    });
-    expect(added).toBe(true);
-    const list = registry.getCustomPolicies("cp1");
-    expect(list.length).toBe(1);
-    expect(list[0].name).toBe("my-api");
-    expect(list[0].content).toMatch(/name: my-api/);
-    expect(list[0].sourcePath).toBe("/tmp/my-api.yaml");
-    expect(typeof list[0].appliedAt).toBe("string");
-  });
-
-  it("addCustomPolicy replaces an existing entry with the same name", () => {
-    registry.registerSandbox({ name: "cp2" });
-    registry.addCustomPolicy("cp2", { name: "dup", content: "v1" });
-    registry.addCustomPolicy("cp2", { name: "dup", content: "v2" });
-    const list = registry.getCustomPolicies("cp2");
-    expect(list.length).toBe(1);
-    expect(list[0].content).toBe("v2");
-  });
-
-  it("removeCustomPolicyByName removes an entry and returns true", () => {
-    registry.registerSandbox({ name: "cp3" });
-    registry.addCustomPolicy("cp3", { name: "a", content: "x" });
-    registry.addCustomPolicy("cp3", { name: "b", content: "y" });
-    expect(registry.removeCustomPolicyByName("cp3", "a")).toBe(true);
-    const list = registry.getCustomPolicies("cp3");
-    expect(list.length).toBe(1);
-    expect(list[0].name).toBe("b");
-  });
-
-  it("removeCustomPolicyByName returns false when the entry is missing", () => {
-    registry.registerSandbox({ name: "cp4" });
-    expect(registry.removeCustomPolicyByName("cp4", "nope")).toBe(false);
-  });
-
-  it("getCustomPolicies returns [] for unknown or fresh sandboxes", () => {
-    expect(registry.getCustomPolicies("nonexistent")).toEqual([]);
-    registry.registerSandbox({ name: "cp5" });
-    expect(registry.getCustomPolicies("cp5")).toEqual([]);
   });
 
   describe("extra providers", () => {

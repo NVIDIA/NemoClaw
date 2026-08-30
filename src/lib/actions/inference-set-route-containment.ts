@@ -12,7 +12,9 @@ import {
   isHttpsPinRuntimeEligible,
 } from "../inference/https-pin-runtime";
 import { unsafeEndpointUrlViolation } from "../core/url-utils";
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../inference/ollama/contract";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import { gatewayReachableCompatibleEndpointUrl } from "../onboard/inference-providers/compatible-endpoint-gateway-route";
 import { isAllowedOpenShellSandboxBridgeUrl } from "../private-networks";
 import { ConfigUrlValidationError } from "../sandbox/config";
 import type { ConfigValue } from "../security/credential-filter";
@@ -95,6 +97,39 @@ const CUSTOM_COMPATIBLE_CREDENTIAL_ENV: Record<string, string> = {
   "compatible-endpoint": "COMPATIBLE_API_KEY",
   "compatible-anthropic-endpoint": "COMPATIBLE_ANTHROPIC_API_KEY",
 };
+
+/**
+ * A loopback custom endpoint onboarded without authentication
+ * (`NEMOCLAW_COMPATIBLE_AUTH_MODE=none`) is published to the gateway through
+ * NemoClaw's local no-auth proxy: the gateway provider carries the proxy
+ * credential key and a `host.openshell.internal` base URL, while the registry
+ * keeps the operator's loopback URL together with the proxy credential env.
+ * That registry row is the sandbox's durable provenance, so `inference set`
+ * must compare, persist, and verify against it instead of the canonical
+ * API-key binding, which this sandbox never had.
+ */
+export function usesLoopbackNoAuthProxyRoute(
+  entry: Pick<SandboxEntry, "provider" | "endpointUrl" | "credentialEnv">,
+  provider: string,
+): boolean {
+  return (
+    isCustomCompatibleProvider(provider) &&
+    entry.provider === provider &&
+    entry.credentialEnv === OLLAMA_LOCAL_CREDENTIAL_ENV &&
+    Boolean(entry.endpointUrl) &&
+    gatewayReachableCompatibleEndpointUrl(provider, entry.endpointUrl) !== entry.endpointUrl
+  );
+}
+
+/** The credential env a sandbox's custom-compatible provider is durably bound to. */
+export function sandboxCustomCompatibleCredentialEnv(
+  entry: Pick<SandboxEntry, "provider" | "endpointUrl" | "credentialEnv">,
+  provider: string,
+): string {
+  return usesLoopbackNoAuthProxyRoute(entry, provider)
+    ? OLLAMA_LOCAL_CREDENTIAL_ENV
+    : CUSTOM_COMPATIBLE_CREDENTIAL_ENV[provider];
+}
 
 const INFERENCE_SET_APIS = new Set([
   "openai-completions",
@@ -217,12 +252,15 @@ export async function normalizeCustomEndpointUrl(
 function normalizeExplicitCredentialEnv(
   provider: string,
   value: string | null | undefined,
+  expected: string,
 ): string {
-  const expected = CUSTOM_COMPATIBLE_CREDENTIAL_ENV[provider];
   const normalized = typeof value === "string" && value.trim() ? value.trim() : expected;
   if (normalized !== expected) {
     throw new InferenceSetError(
-      `credential-env for '${provider}' must be '${expected}' so rebuild can safely reuse it.`,
+      expected === OLLAMA_LOCAL_CREDENTIAL_ENV
+        ? `credential-env for '${provider}' must be '${expected}': this sandbox's endpoint was ` +
+          `onboarded without authentication, so its provider is bound to the local no-auth proxy credential.`
+        : `credential-env for '${provider}' must be '${expected}' so rebuild can safely reuse it.`,
       2,
     );
   }
@@ -258,6 +296,7 @@ function explicitCustomProviderMetadataWithoutDns(
   options: ExplicitCustomRouteOptions,
   gatewayName: string,
   onboardEndpointUrl: string | null,
+  durableCredentialEnv: string,
 ): {
   metadata: RegistryInferenceMetadata | null;
   sourceEndpointUrl: string | null;
@@ -289,7 +328,11 @@ function explicitCustomProviderMetadataWithoutDns(
     metadata: {
       endpointUrl,
       endpointSource: reusesOnboardEndpoint ? "onboard" : "inference-set",
-      credentialEnv: normalizeExplicitCredentialEnv(provider, options.credentialEnv),
+      credentialEnv: normalizeExplicitCredentialEnv(
+        provider,
+        options.credentialEnv,
+        durableCredentialEnv,
+      ),
       preferredInferenceApi: normalizeExplicitInferenceApi(provider, options.inferenceApi),
       nimContainer: null,
     },
@@ -404,6 +447,7 @@ export function prepareInferenceSetRoute(options: {
     options.entry.provider === options.provider && options.entry.endpointSource === "onboard"
       ? (options.entry.endpointUrl ?? null)
       : null,
+    sandboxCustomCompatibleCredentialEnv(options.entry, options.provider),
   );
   const preliminaryExplicitMetadata = explicit.metadata;
   const preliminaryRegistryMetadata = registryMetadataForProviderSwitch({
@@ -457,14 +501,17 @@ export async function finalizeInferenceSetRoute(options: {
       httpsPinProviderBinding: null,
     };
   }
-  // Bound once per finalize call: the credential env var name is fixed per
-  // provider (normalizeExplicitCredentialEnv already enforced this), and the
-  // real credential value is resolved once at invocation time through the
-  // injected credential resolver. Direct routes return it only in the
-  // invocation-local provider binding consumed below; no registry or sandbox
-  // field receives it.
-  const httpsPinCredentialEnv = CUSTOM_COMPATIBLE_CREDENTIAL_ENV[options.provider];
-  const credentialValue = options.resolveCredentialValue(httpsPinCredentialEnv);
+  // Bound once per finalize call: preparation already pinned the credential env
+  // var name to this sandbox's durable provenance — the canonical provider key,
+  // or the loopback no-auth proxy key for an endpoint onboarded without
+  // authentication (normalizeExplicitCredentialEnv enforced this). The real
+  // credential value is resolved once at invocation time through the injected
+  // credential resolver. Direct routes return it only in the invocation-local
+  // provider binding consumed below; no registry or sandbox field receives it.
+  const providerCredentialEnv =
+    prepared.preliminaryExplicitMetadata.credentialEnv ??
+    CUSTOM_COMPATIBLE_CREDENTIAL_ENV[options.provider];
+  const credentialValue = options.resolveCredentialValue(providerCredentialEnv);
   const providerType: HttpsPinCredentialProviderType =
     (options.effectiveInferenceApi ??
       prepared.preliminaryExplicitMetadata.preferredInferenceApi) === "anthropic-messages"
@@ -487,11 +534,11 @@ export async function finalizeInferenceSetRoute(options: {
     });
     httpsPinProviderBinding = {
       ...adapter,
-      // Keep the provider's one canonical credential key. Only its
+      // Keep the provider's one durable credential key. Only its
       // invocation-local value changes to the route-scoped token; using a
       // second key risks OpenShell merging credential bindings on an attached
       // provider instead of replacing the old key.
-      credentialEnv: httpsPinCredentialEnv,
+      credentialEnv: providerCredentialEnv,
       providerType,
     };
     return adapter.baseUrl;
@@ -550,7 +597,7 @@ export async function finalizeInferenceSetRoute(options: {
     ? null
     : {
         baseUrl: endpointUrl,
-        credentialEnv: httpsPinCredentialEnv,
+        credentialEnv: providerCredentialEnv,
         token: credentialValue,
         providerType,
       };
