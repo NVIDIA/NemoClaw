@@ -6,10 +6,7 @@ import path from "node:path";
 
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { resolveSandboxContainerOwner } from "../domain/sandbox/container-owner";
-import {
-  isExactWechatOpenClawStatePathSet,
-  WECHAT_OPENCLAW_STATE_PATHS,
-} from "../messaging/channels/wechat/contract";
+import { WECHAT_OPENCLAW_STATE_PATHS } from "../messaging/channels/wechat/contract";
 import { resolvePortableDemoPrivilegedExecTarget } from "../onboard/experimental/portable-demo-lifecycle";
 import { isImmutableDockerImageId } from "../onboard/openshell-docker-sandbox-containers";
 import {
@@ -31,6 +28,23 @@ type LabeledSandboxContainer = {
   id: string;
   name: string;
 };
+
+export type StoppedDockerSandboxChannelStateCleanupFailure =
+  | "sandbox-registry-unavailable"
+  | "driver-not-docker"
+  | "docker-discovery-failed"
+  | "no-eligible-stopped-container"
+  | "container-ownership-invalid"
+  | "container-inspection-failed"
+  | "container-not-stopped"
+  | "sandbox-volume-unavailable"
+  | "cleanup-command-failed"
+  | "container-revalidation-failed"
+  | "lifecycle-authority-unavailable";
+
+export type StoppedDockerSandboxChannelStateCleanupResult =
+  | { readonly cleared: true }
+  | { readonly cleared: false; readonly failure: StoppedDockerSandboxChannelStateCleanupFailure };
 
 const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
@@ -217,20 +231,28 @@ function findDirectSandboxContainer(sandboxName: string): string | null {
 /** Select one label-owned container across all states and reject GPU rollback siblings. */
 function findStoppedDirectSandboxContainer(sandboxName: string): string | null {
   const names = registeredSandboxNames(sandboxName);
-  const output = dockerCapture(
-    [
-      "ps",
-      "-a",
-      "--no-trunc",
-      "--filter",
-      `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
-      "--filter",
-      `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
-      "--format",
-      "{{.ID}}\t{{.Names}}",
-    ],
-    { timeout: DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS },
-  );
+  let output: string;
+  try {
+    output = dockerCapture(
+      [
+        "ps",
+        "-a",
+        "--no-trunc",
+        "--filter",
+        `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+        "--filter",
+        `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
+        "--format",
+        "{{.ID}}\t{{.Names}}",
+      ],
+      { timeout: DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS },
+    );
+  } catch (error) {
+    throw new DirectSandboxFallbackUnavailableError(
+      `Stopped Docker sandbox discovery failed for '${sandboxName}'.`,
+      { cause: error },
+    );
+  }
   const candidates = parseLabeledSandboxContainers(output);
   const selected = selectDirectSandboxContainer(sandboxName, output, names);
   if (/-nemoclaw-gpu-backup-\d+$/u.test(candidates[0]?.name ?? "")) return null;
@@ -241,21 +263,32 @@ type InspectedStoppedContainer = {
   readonly id: string;
   readonly image: string;
   readonly running: boolean;
-  readonly sandboxVolumeName: string | null;
+  readonly sandboxVolumeName: string;
 };
 
+type StoppedContainerInspection =
+  | { readonly inspected: InspectedStoppedContainer }
+  | { readonly failure: StoppedDockerSandboxChannelStateCleanupFailure };
+
 /** Read immutable image, lifecycle, and shared-state mount data for one container ID. */
-function inspectStoppedContainer(containerId: string): InspectedStoppedContainer | null {
-  const result = dockerRun(
-    [
-      "inspect",
-      "--format",
-      "{{.Id}}\t{{.Image}}\t{{.State.Running}}\t{{json .Mounts}}",
-      containerId,
-    ],
-    OFFLINE_DOCKER_OPERATION_OPTIONS,
-  );
-  if (result.status !== 0 || typeof result.stdout !== "string") return null;
+function inspectStoppedContainer(containerId: string): StoppedContainerInspection {
+  let result: ReturnType<typeof dockerRun>;
+  try {
+    result = dockerRun(
+      [
+        "inspect",
+        "--format",
+        "{{.Id}}\t{{.Image}}\t{{.State.Running}}\t{{json .Mounts}}",
+        containerId,
+      ],
+      OFFLINE_DOCKER_OPERATION_OPTIONS,
+    );
+  } catch {
+    return { failure: "container-inspection-failed" };
+  }
+  if (result.status !== 0 || typeof result.stdout !== "string") {
+    return { failure: "container-inspection-failed" };
+  }
   const [id, image, running, mountsJson, ...unexpected] = result.stdout.trim().split("\t");
   if (
     unexpected.length > 0 ||
@@ -266,15 +299,15 @@ function inspectStoppedContainer(containerId: string): InspectedStoppedContainer
     !mountsJson ||
     (running !== "true" && running !== "false")
   ) {
-    return null;
+    return { failure: "container-ownership-invalid" };
   }
   let mounts: unknown;
   try {
     mounts = JSON.parse(mountsJson);
   } catch {
-    return null;
+    return { failure: "sandbox-volume-unavailable" };
   }
-  if (!Array.isArray(mounts)) return null;
+  if (!Array.isArray(mounts)) return { failure: "sandbox-volume-unavailable" };
   const sandboxMounts = mounts.filter(
     (mount) =>
       typeof mount === "object" &&
@@ -289,74 +322,99 @@ function inspectStoppedContainer(containerId: string): InspectedStoppedContainer
     DOCKER_VOLUME_NAME_RE.test(sandboxMount.Name)
       ? sandboxMount.Name
       : null;
-  return { id, image, running: running === "true", sandboxVolumeName };
+  return sandboxVolumeName
+    ? { inspected: { id, image, running: running === "true", sandboxVolumeName } }
+    : { failure: "sandbox-volume-unavailable" };
+}
+
+function stoppedDockerCleanupFailure(
+  failure: StoppedDockerSandboxChannelStateCleanupFailure,
+): StoppedDockerSandboxChannelStateCleanupResult {
+  return { cleared: false, failure };
 }
 
 /** Clear OpenClaw WeChat state without starting a failed Docker sandbox. */
 function clearStoppedDockerSandboxChannelState(
   sandboxName: string,
-  paths: readonly string[],
-): boolean {
+): StoppedDockerSandboxChannelStateCleanupResult {
   const entry = readSandboxEntry(sandboxName);
-  if (normalizeDriver(entry?.openshellDriver) !== "docker") return false;
-  if (!isExactWechatOpenClawStatePathSet(paths)) return false;
+  if (!entry) return stoppedDockerCleanupFailure("sandbox-registry-unavailable");
+  if (normalizeDriver(entry?.openshellDriver) !== "docker") {
+    return stoppedDockerCleanupFailure("driver-not-docker");
+  }
 
   try {
     return withPrivilegedSandboxExecutionLease(sandboxName, "offline WeChat state cleanup", () => {
-      const containerId = findStoppedDirectSandboxContainer(sandboxName);
-      if (!containerId) return false;
-      const inspected = inspectStoppedContainer(containerId);
-      if (
-        !inspected ||
-        inspected.running ||
-        inspected.id !== containerId ||
-        !inspected.sandboxVolumeName
-      ) {
-        return false;
+      let containerId: string | null;
+      try {
+        containerId = findStoppedDirectSandboxContainer(sandboxName);
+      } catch (error) {
+        return stoppedDockerCleanupFailure(
+          isDirectSandboxFallbackUnavailableError(error)
+            ? "docker-discovery-failed"
+            : "container-ownership-invalid",
+        );
       }
-      const cleared = dockerRun(
-        [
-          "run",
-          "--rm",
-          "--pull",
-          "never",
-          "--network",
-          "none",
-          "--read-only",
-          "--user",
-          "0:0",
-          "--security-opt",
-          "no-new-privileges",
-          "--cap-drop",
-          "ALL",
-          "--cap-add",
-          "DAC_OVERRIDE",
-          "--pids-limit",
-          "64",
-          ...NEUTRALIZED_OFFLINE_HELPER_ENV,
-          "--mount",
-          `type=volume,src=${inspected.sandboxVolumeName},dst=/sandbox,volume-nocopy`,
-          "--entrypoint",
-          "/usr/bin/env",
-          inspected.image,
-          "-i",
-          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-          "/bin/sh",
-          "-c",
-          OFFLINE_WECHAT_CLEANUP_COMMAND,
-        ],
-        OFFLINE_DOCKER_OPERATION_OPTIONS,
-      );
-      if (cleared.status !== 0) return false;
-      const confirmed = inspectStoppedContainer(containerId);
-      return (
-        confirmed?.id === inspected.id &&
+      if (!containerId) return stoppedDockerCleanupFailure("no-eligible-stopped-container");
+      const inspection = inspectStoppedContainer(containerId);
+      if ("failure" in inspection) return stoppedDockerCleanupFailure(inspection.failure);
+      const { inspected } = inspection;
+      if (inspected.id !== containerId) {
+        return stoppedDockerCleanupFailure("container-ownership-invalid");
+      }
+      if (inspected.running) return stoppedDockerCleanupFailure("container-not-stopped");
+      let cleared: ReturnType<typeof dockerRun>;
+      try {
+        cleared = dockerRun(
+          [
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--network",
+            "none",
+            "--read-only",
+            "--user",
+            "0:0",
+            "--security-opt",
+            "no-new-privileges",
+            "--cap-drop",
+            "ALL",
+            "--cap-add",
+            "DAC_OVERRIDE",
+            "--pids-limit",
+            "64",
+            ...NEUTRALIZED_OFFLINE_HELPER_ENV,
+            "--mount",
+            `type=volume,src=${inspected.sandboxVolumeName},dst=/sandbox,volume-nocopy`,
+            "--entrypoint",
+            "/usr/bin/env",
+            inspected.image,
+            "-i",
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "/bin/sh",
+            "-c",
+            OFFLINE_WECHAT_CLEANUP_COMMAND,
+          ],
+          OFFLINE_DOCKER_OPERATION_OPTIONS,
+        );
+      } catch {
+        return stoppedDockerCleanupFailure("cleanup-command-failed");
+      }
+      if (cleared.status !== 0) return stoppedDockerCleanupFailure("cleanup-command-failed");
+      const confirmation = inspectStoppedContainer(containerId);
+      if ("failure" in confirmation) {
+        return stoppedDockerCleanupFailure("container-revalidation-failed");
+      }
+      const { inspected: confirmed } = confirmation;
+      return confirmed.id === inspected.id &&
         confirmed.sandboxVolumeName === inspected.sandboxVolumeName &&
         !confirmed.running
-      );
+        ? { cleared: true }
+        : stoppedDockerCleanupFailure("container-revalidation-failed");
     });
   } catch {
-    return false;
+    return stoppedDockerCleanupFailure("lifecycle-authority-unavailable");
   }
 }
 

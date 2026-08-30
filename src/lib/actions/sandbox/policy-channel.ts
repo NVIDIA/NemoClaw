@@ -1722,6 +1722,19 @@ function isSafeChannelStatePath(p: string): boolean {
 }
 
 const CHANNEL_CLEAR_SENTINEL = "NEMOCLAW_CHANNEL_CLEAR_OK";
+const STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE = {
+  "sandbox-registry-unavailable": "Restore the NemoClaw sandbox registry entry.",
+  "driver-not-docker": "Restore normal OpenShell lifecycle access for this non-Docker sandbox.",
+  "docker-discovery-failed": "Start Docker or restore access to its daemon.",
+  "no-eligible-stopped-container": "Restore the registered stopped OpenShell container.",
+  "container-ownership-invalid": "Reconcile the sandbox registry and Docker container identity.",
+  "container-inspection-failed": "Restore Docker inspection access for the stopped container.",
+  "container-not-stopped": "Stop the registered sandbox container before retrying removal.",
+  "sandbox-volume-unavailable": "Restore a single writable Docker volume at /sandbox.",
+  "cleanup-command-failed": "Repair the stopped sandbox image or volume permissions.",
+  "container-revalidation-failed": "Reconcile the stopped container identity and state.",
+  "lifecycle-authority-unavailable": "Finish the active lifecycle transition or repair its lock.",
+} as const;
 
 /**
  * Wipe durable channel state before rebuild can preserve an obsolete auth blob.
@@ -1742,14 +1755,17 @@ function clearSandboxChannelDurableState(sandboxName: string, channelName: strin
   if (!sentinelSeen(result)) {
     result = executeSandboxCommand(sandboxName, cmd);
   }
-  if (
-    !sentinelSeen(result) &&
-    agent.name === "openclaw" &&
-    channelName === "wechat" &&
-    policyChannelDependencies.clearStoppedDockerSandboxChannelState(sandboxName, paths)
-  ) {
-    console.log(`  ${G}✓${R} Cleared stopped-sandbox '${channelName}' channel state.`);
-    return true;
+  if (!sentinelSeen(result) && agent.name === "openclaw" && channelName === "wechat") {
+    const stoppedCleanup =
+      policyChannelDependencies.clearStoppedDockerSandboxChannelState(sandboxName);
+    if (stoppedCleanup.cleared) {
+      console.log(`  ${G}✓${R} Cleared stopped-sandbox '${channelName}' channel state.`);
+      return true;
+    }
+    console.error(
+      `  ${YW}⚠${R} Stopped-Docker cleanup failed (${stoppedCleanup.failure}). ` +
+        `${STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE[stoppedCleanup.failure]} Then retry removal.`,
+    );
   }
   if (!sentinelSeen(result)) {
     console.error(
@@ -1939,7 +1955,7 @@ async function removeSandboxChannelUnlocked(
       `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,
     );
     console.error(
-      `    Restore sandbox lifecycle access, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
+      `    Restore sandbox lifecycle access or follow the cleanup diagnostic above, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
     );
     process.exit(1);
   }

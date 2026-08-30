@@ -18,7 +18,6 @@ import path from "node:path";
 import { describe, it } from "vitest";
 
 import type { MessagingAgentId } from "../../src/lib/messaging";
-import { WECHAT_OPENCLAW_STATE_PATHS } from "../../src/lib/messaging/channels/wechat/contract";
 import { makeMessagingPlan } from "../helpers/messaging-plan-fixtures";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
@@ -74,7 +73,10 @@ function buildPreamble({
   disabledChannels = [] as string[],
   sandboxExecResult = { status: 0, stdout: "NEMOCLAW_CHANNEL_CLEAR_OK", stderr: "" },
   sshFallbackResult = null as { status: number; stdout: string; stderr: string } | null,
-  stoppedDockerCleanupResult = false,
+  stoppedDockerCleanupResult = {
+    cleared: false,
+    failure: "sandbox-volume-unavailable",
+  } as { cleared: true } | { cleared: false; failure: string },
 }: {
   presetNamesApplied?: string[];
   sandboxAgent?: MessagingAgentId;
@@ -82,7 +84,7 @@ function buildPreamble({
   disabledChannels?: string[];
   sandboxExecResult?: { status: number; stdout: string; stderr: string } | null;
   sshFallbackResult?: { status: number; stdout: string; stderr: string } | null;
-  stoppedDockerCleanupResult?: boolean;
+  stoppedDockerCleanupResult?: { cleared: true } | { cleared: false; failure: string };
 } = {}): string {
   const j = (p: string) =>
     JSON.stringify(path.join(repoRoot, "src", "lib", p.replace(/\.js$/, ".ts")));
@@ -181,8 +183,8 @@ policies.removePreset = (sandboxName, presetName) => {
 const callOrder = [];
 const stoppedDockerCleanupCalls = [];
 const policyChannelDeps = require(${j("actions/sandbox/policy-channel-dependencies.js")});
-policyChannelDeps.policyChannelDependencies.clearStoppedDockerSandboxChannelState = (sandboxName, paths) => {
-  stoppedDockerCleanupCalls.push({ sandboxName, paths });
+policyChannelDeps.policyChannelDependencies.clearStoppedDockerSandboxChannelState = (sandboxName) => {
+  stoppedDockerCleanupCalls.push({ sandboxName });
   return ${JSON.stringify(stoppedDockerCleanupResult)};
 };
 const origLog = console.log;
@@ -191,6 +193,12 @@ console.log = (...args) => {
   if (line.includes("Change queued")) callOrder.push("promptAndRebuild");
   if (line.includes("Cleared in-sandbox")) callOrder.push("clearedSandboxState");
   origLog.call(console, ...args);
+};
+const errors = [];
+const origError = console.error;
+console.error = (...args) => {
+  errors.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
+  origError.call(console, ...args);
 };
 const origExit = process.exit;
 let exitCode = null;
@@ -210,6 +218,7 @@ module.exports = {
   sessionStore,
   callOrder,
   stoppedDockerCleanupCalls,
+  errors,
   agentDefinitions,
   getExitCode: () => exitCode,
 };
@@ -252,9 +261,8 @@ const ctx = module.exports;
       call.command.startsWith("rm -rf"),
     );
     assert.ok(cleanup, "WeChat removal must clear its managed state");
-    assert.ok(
-      WECHAT_OPENCLAW_STATE_PATHS.every((statePath) => cleanup.command.includes(statePath)),
-    );
+    assert.ok(cleanup.command.includes("/sandbox/.openclaw/wechat"));
+    assert.ok(cleanup.command.includes("/sandbox/.openclaw/openclaw-weixin"));
     assert.ok(
       payload.callOrder.indexOf("clearedSandboxState") <
         payload.callOrder.indexOf("promptAndRebuild"),
@@ -409,7 +417,7 @@ const ctx = module.exports;
       disabledChannels: ["wechat"],
       sandboxExecResult: { status: 1, stdout: "", stderr: "startup failed: account missing" },
       sshFallbackResult: { status: 255, stdout: "", stderr: "sandbox is not running" },
-      stoppedDockerCleanupResult: true,
+      stoppedDockerCleanupResult: { cleared: true },
     })}
 const ctx = module.exports;
 (async () => {
@@ -438,7 +446,6 @@ const ctx = module.exports;
     assert.deepEqual(payload.stoppedDockerCleanupCalls, [
       {
         sandboxName: "test-sb",
-        paths: WECHAT_OPENCLAW_STATE_PATHS,
       },
     ]);
     assert.deepEqual(payload.removedPresets, [{ sandboxName: "test-sb", presetName: "wechat" }]);
@@ -459,12 +466,14 @@ const ctx = module.exports;
       channel: "whatsapp",
       disabledChannels: [] as string[],
       presetNamesApplied: ["npm", "pypi", "huggingface", "brew", "whatsapp"],
+      expectedError: "Restore sandbox lifecycle access or follow the cleanup diagnostic above",
     },
     {
       label: "the host-QR WeChat channel",
       channel: "wechat",
       disabledChannels: ["wechat"],
       presetNamesApplied: ["npm", "pypi", "huggingface", "brew", "wechat"],
+      expectedError: "Restore a single writable Docker volume at /sandbox. Then retry removal.",
     },
   ])("aborts before rebuild when cleanup fails for $label", (testCase) => {
     const script = `${buildPreamble({
@@ -483,6 +492,7 @@ const ctx = module.exports;
     sessionPolicyPresets: ctx.sessionStore.policyPresets,
     removedPresets: ctx.removedPresets,
     registryUpdates: ctx.registryUpdates,
+    errors: ctx.errors,
     callOrder: ctx.callOrder,
     exitCode: ctx.getExitCode(),
   });
@@ -524,6 +534,10 @@ const ctx = module.exports;
       payload.sessionPolicyPresets,
       testCase.presetNamesApplied,
       "session.policyPresets must be unchanged on early-bail",
+    );
+    assert.ok(
+      payload.errors.some((line: string) => line.includes(testCase.expectedError)),
+      `cleanup failure must include safe remediation; errors=${JSON.stringify(payload.errors)}`,
     );
 
     const cleanupCalls = payload.sandboxExecCalls.filter((c: { command: string }) =>

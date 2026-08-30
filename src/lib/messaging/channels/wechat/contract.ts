@@ -31,14 +31,6 @@ export const WECHAT_OPENCLAW_STATE_PATHS = [
   "/sandbox/.openclaw/openclaw-weixin",
 ] as const;
 
-export function isExactWechatOpenClawStatePathSet(paths: readonly string[]): boolean {
-  return (
-    paths.length === WECHAT_OPENCLAW_STATE_PATHS.length &&
-    new Set(paths).size === paths.length &&
-    paths.every((path) => WECHAT_OPENCLAW_STATE_PATHS.some((allowed) => allowed === path))
-  );
-}
-
 export interface WechatManagedStartupPlaceholderAuthorization {
   readonly path: readonly string[];
   readonly value: string;
