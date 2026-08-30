@@ -1490,6 +1490,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
         expect.arrayContaining([
           "Unified advisor must not hold actions: write",
           "Unified advisor must not auto-dispatch workflows",
+          "Unified advisor specialists must retain target refs through execution",
         ]),
       );
     } finally {
