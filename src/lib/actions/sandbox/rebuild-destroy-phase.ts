@@ -507,6 +507,12 @@ export async function runRebuildDestroyPhase(
     bail(`Sandbox deletion could not be journaled: ${redactFull(detail)}`);
     return null;
   }
+  if (!stopAgentForwardPortsForStop(sandboxName, { info: log, warn: log })) {
+    bail(
+      `Sandbox '${sandboxName}' was deleted, but its host port forwards were not released; retry rebuild after the forward listener stops.`,
+    );
+    return null;
+  }
   stopNimBestEffort();
   onDeleted();
   const removalReceipt: registry.SandboxRemovalReceipt | null = null;

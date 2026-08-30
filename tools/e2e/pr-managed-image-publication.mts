@@ -50,6 +50,7 @@ const REUSABLE_NON_IMAGE_PATHS = [
   /^src\/lib\/adapters\/podman\/index(?:[.]test)?[.]ts$/u,
   /^src\/lib\/inference\/serving\/profile-list[.]test[.]ts$/u,
   /^src\/lib\/shields\/.*[.]ts$/u,
+  /^src\/lib\/tunnel\/agent-forward-stop(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/credential-provider-registration(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/managed-bootstrap\/docker-runtime(?:[.]test)?[.]ts$/u,
   /^src\/lib\/onboard\/managed-bootstrap\/podman-bootstrap-replacement(?:[.]test)?[.]ts$/u,

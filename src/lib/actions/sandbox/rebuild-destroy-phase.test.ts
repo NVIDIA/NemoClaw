@@ -134,6 +134,7 @@ describe("rebuild destroy phase", () => {
     mocks.waitUntil.mockImplementation(
       (condition: () => boolean) => condition() || condition() || condition(),
     );
+    mocks.stopAgentForwardPortsForStop.mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -948,6 +949,7 @@ describe("rebuild destroy phase", () => {
     const recreateJournal = stubRecreateJournal();
     mocks.stopAgentForwardPortsForStop.mockImplementation(() => {
       order.push("forward:stop");
+      return true;
     });
     vi.mocked(recreateJournal.markDeleting).mockImplementation(() => {
       order.push("journal:deleting");
@@ -974,7 +976,12 @@ describe("rebuild destroy phase", () => {
       onDeleted: vi.fn(),
     });
 
-    expect(order).toEqual(["forward:stop", "journal:deleting", "openshell:delete"]);
+    expect(order).toEqual([
+      "forward:stop",
+      "journal:deleting",
+      "openshell:delete",
+      "forward:stop",
+    ]);
   });
 
   it("reattaches MCP providers when the delete boundary cannot be journaled (#7734)", async () => {

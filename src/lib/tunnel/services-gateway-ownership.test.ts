@@ -243,6 +243,7 @@ describe("stopAll gateway-stop wiring", () => {
       .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
       .mockImplementation(() => {
         order.push("host-forwards");
+        return true;
       });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -278,7 +279,7 @@ describe("stopAll gateway-stop wiring", () => {
       .mockImplementation(() => "attempted");
     const stopAgentForwards = vi
       .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
-      .mockImplementation(() => {});
+      .mockImplementation(() => true);
     vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
 
     try {
@@ -299,7 +300,7 @@ describe("stopAll gateway-stop wiring", () => {
       .mockImplementation(() => "attempted");
     const stopAgentForwards = vi
       .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
-      .mockImplementation(() => {});
+      .mockImplementation(() => true);
     vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -323,7 +324,7 @@ describe("stopAll gateway-stop wiring", () => {
     const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-unscoped-gateway-stop-"));
     vi.stubEnv("PATH", "");
     vi.spyOn(gatewayStop, "releaseGatewayPortForStop").mockImplementation(() => "not-scoped");
-    vi.spyOn(agentForwardStop, "stopAgentForwardPortsForStop").mockImplementation(() => {});
+    vi.spyOn(agentForwardStop, "stopAgentForwardPortsForStop").mockImplementation(() => true);
     vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -344,7 +345,7 @@ describe("stopAll gateway-stop wiring", () => {
     vi.stubEnv("PATH", "");
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "8814");
     vi.spyOn(gatewayStop, "releaseGatewayPortForStop").mockImplementation(() => "unconfirmed");
-    vi.spyOn(agentForwardStop, "stopAgentForwardPortsForStop").mockImplementation(() => {});
+    vi.spyOn(agentForwardStop, "stopAgentForwardPortsForStop").mockImplementation(() => true);
     vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
