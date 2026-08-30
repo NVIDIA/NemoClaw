@@ -1640,9 +1640,14 @@ export function recoverPortableDemoSandboxLifecycle(
     if (startupProbe.status === 0 && !startupProbe.error) {
       lifecycleTiming.setGatewayAction("waited");
       const recovered = lifecycleTiming.measure("gatewayReady", () =>
-        waitFor(STARTUP_TIMEOUT_MS, timing, (remainingMs) => {
-          return gatewayIsRunning(receipt, gatewayName, capture, remainingMs, lifecycleTiming);
-        }),
+        waitForLaunchedGateway(
+          receipt,
+          gatewayName,
+          capture,
+          STARTUP_TIMEOUT_MS,
+          timing,
+          lifecycleTiming,
+        ),
       );
       if (recovered) {
         lifecycleTiming.finish("already-running");

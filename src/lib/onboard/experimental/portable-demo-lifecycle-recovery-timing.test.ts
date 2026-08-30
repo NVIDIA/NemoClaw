@@ -329,6 +329,48 @@ describe("portable lifecycle recovery timing output", () => {
     ]);
   });
 
+  it("uses one bounded waiter when the managed startup process already exists (#9200)", () => {
+    const stateDir = temporaryStateDir();
+    const podman = createPodman(true);
+    const launchOpenshell = vi.fn();
+    let now = 0;
+    installReceipt(stateDir, podman);
+    const captureOpenshell = vi.fn((args: readonly string[]) => {
+      const command = args.find((arg) => ["true", "pgrep", "curl", "python3"].includes(arg));
+      switch (command) {
+        case "true":
+        case "pgrep":
+          return { status: 0 };
+        case "curl":
+          return { status: 0, stdout: "000" };
+        case "python3":
+          now += 2_000;
+          return gatewayWaitResult("ready", { notReady: 1, sleepMs: 2_000 });
+        default:
+          throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+      }
+    });
+
+    expect(
+      recover(stateDir, {
+        podman,
+        captureOpenshell,
+        launchOpenshell,
+        now: () => now,
+        sleep: (milliseconds) => {
+          now += milliseconds;
+        },
+      }),
+    ).toEqual({ kind: "already-running" });
+    expect(now).toBe(2_000);
+    expect(
+      captureOpenshell.mock.calls.map(([args]) =>
+        args.find((arg) => ["true", "pgrep", "curl", "python3"].includes(arg)),
+      ),
+    ).toEqual(["true", "curl", "pgrep", "python3"]);
+    expect(launchOpenshell).not.toHaveBeenCalled();
+  });
+
   it("preserves recovered lifecycle semantics when the startup timing read throws (#9200)", () => {
     const stateDir = temporaryStateDir();
     const podman = createPodman(false);
@@ -646,8 +688,21 @@ describe("portable lifecycle recovery timing output", () => {
     expect(() =>
       recover(stateDir, {
         podman,
-        captureOpenshell: (args) =>
-          args.includes("curl") ? { status: 0, stdout: "000" } : { status: 0 },
+        captureOpenshell: (args) => {
+          const command = args.find((arg) => ["true", "pgrep", "curl", "python3"].includes(arg));
+          switch (command) {
+            case "true":
+            case "pgrep":
+              return { status: 0 };
+            case "curl":
+              return { status: 0, stdout: "000" };
+            case "python3":
+              deadlineNow = 90_000;
+              return gatewayWaitResult("not-ready");
+            default:
+              throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+          }
+        },
         launchOpenshell: vi.fn(),
         log,
         now: () => deadlineNow,
@@ -662,7 +717,7 @@ describe("portable lifecycle recovery timing output", () => {
     ).toThrow("has a startup process, but its agent gateway did not pass");
     expect(timingLines(log)).toHaveLength(1);
     expect(timingLines(log)[0]).toContain(
-      "gatewayAttempts=91 gatewayNotReady=91 gatewayTimeouts=0 gatewayErrors=0",
+      "gatewayAttempts=2 gatewayNotReady=2 gatewayTimeouts=0 gatewayErrors=0",
     );
     expect(timingLines(log)[0]).toContain("result=failed failedStage=gatewayReady");
     expect(timingLines(log)[0]).not.toContain("has a startup process");
@@ -694,7 +749,7 @@ describe("portable lifecycle recovery timing output", () => {
         status: 1,
         error: Object.assign(new Error("transport"), { code: "EPIPE" }),
       },
-      { status: 0, stdout: "200" },
+      gatewayWaitResult(),
     ];
     installReceipt(stateDir, podman);
 
@@ -702,12 +757,13 @@ describe("portable lifecycle recovery timing output", () => {
       recover(stateDir, {
         podman,
         captureOpenshell: (args) => {
-          const command = args.find((arg) => ["true", "pgrep", "curl"].includes(arg));
+          const command = args.find((arg) => ["true", "pgrep", "curl", "python3"].includes(arg));
           switch (command) {
             case "true":
               return execResults.shift() ?? { status: 0 };
             case "curl":
-              return gatewayResults.shift() ?? { status: 0, stdout: "200" };
+            case "python3":
+              return gatewayResults.shift() ?? gatewayWaitResult();
             case "pgrep":
               return { status: 0 };
             default:
