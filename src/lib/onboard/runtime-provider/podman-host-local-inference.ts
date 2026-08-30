@@ -1655,12 +1655,15 @@ export function inspectPodmanPublishedOllamaReadinessRuntime(options: {
   ) {
     throw new Error("Podman published readiness engine authority changed.");
   }
-  requirePersistedEngineAuthority(
-    options.persistedEngineAuthority,
-    PROVIDER_ID,
-    options.engine,
-    receipt.engineAuthority.bindingSha256,
-  );
+  if (
+    options.persistedEngineAuthority.providerId !== PROVIDER_ID ||
+    options.persistedEngineAuthority.operation !== "host-local-inference" ||
+    options.persistedEngineAuthority.engineId !== PROVIDER_ID ||
+    options.engine.operation !== options.persistedEngineAuthority.operation ||
+    options.engine.engineId !== options.persistedEngineAuthority.engineId
+  ) {
+    throw new Error("Podman published readiness engine authority is invalid.");
+  }
   options.assertCurrent();
   let inspected: ManagedContainer | undefined;
   let failure: unknown;

@@ -135,11 +135,21 @@ describe("Hermes accepted launch-readiness probe", () => {
   });
 
   it("publishes missing readiness for one running exact runtime without recovery", async () => {
+    vi.stubEnv("PATH", "/hostile/ambient/bin");
     const harness = missingHermesHarness();
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.inspectHermesPortableOllamaReadinessRuntimeSpy).toHaveBeenCalledOnce();
+    expect(harness.inspectHermesPortableOllamaReadinessRuntimeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env: {
+          HOME: "/home/test",
+          XDG_CONFIG_HOME: "/home/test/.config",
+          XDG_RUNTIME_DIR: "/run/user/1000",
+        },
+      }),
+    );
     expect(harness.verifyHermesPortableLaunchForwardsSpy).toHaveBeenCalledOnce();
     expect(harness.launchReadinessMutationGateSpy).toHaveBeenCalledOnce();
     expect(harness.requalifyPortableAgentAuthoritySpy).not.toHaveBeenCalled();

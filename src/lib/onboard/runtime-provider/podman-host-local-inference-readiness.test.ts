@@ -67,6 +67,111 @@ describe("Podman published Ollama readiness inspection", () => {
     expect(harness.events.join("\n")).not.toContain("nvidia-smi");
   });
 
+  it("keeps creation authority immutable across a requalified current endpoint", () => {
+    const { harness, receipt, persistedEngineAuthority } = publishedRuntime();
+    const currentEngine = Object.freeze({
+      ...harness.engine,
+      authorityId: "test:current-post-home-endpoint",
+      endpointAuthorityId: "test:current-post-home-endpoint",
+    });
+    const assertCurrent = vi.fn();
+    harness.events.length = 0;
+
+    expect(currentEngine.authorityId).not.toBe(persistedEngineAuthority.authorityId);
+    expect(
+      inspectPodmanPublishedOllamaReadinessRuntime({
+        engine: currentEngine,
+        persistedEngineAuthority,
+        serializedReceipt: serializeHostLocalInferenceReceipt(receipt),
+        assertCurrent,
+      }),
+    ).toMatchObject({ running: true, receipt });
+
+    expect(assertCurrent).toHaveBeenCalledTimes(2);
+    expect(harness.events.filter((event) => event.includes("container inspect"))).toHaveLength(1);
+    expect(harness.events.join("\n")).not.toMatch(/\b(?:version|info|start|stop|nvidia-smi)\b/u);
+  });
+
+  it.each([
+    ["provider", { engineId: "docker" }],
+    ["operation", { operation: "host-doctor" }],
+  ] as const)("rejects a current engine with another %s", (_label, change) => {
+    const { harness, receipt, persistedEngineAuthority } = publishedRuntime();
+    const currentEngine = Object.freeze({ ...harness.engine, ...change });
+    harness.events.length = 0;
+
+    expect(() =>
+      inspectPodmanPublishedOllamaReadinessRuntime({
+        engine: currentEngine as typeof harness.engine,
+        persistedEngineAuthority,
+        serializedReceipt: serializeHostLocalInferenceReceipt(receipt),
+        assertCurrent: vi.fn(),
+      }),
+    ).toThrow("Podman published readiness engine authority is invalid.");
+
+    expect(harness.events).toHaveLength(0);
+  });
+
+  it("rejects a changed creation authority before inspecting the current runtime", () => {
+    const { harness, receipt, persistedEngineAuthority } = publishedRuntime();
+    harness.events.length = 0;
+
+    expect(() =>
+      inspectPodmanPublishedOllamaReadinessRuntime({
+        engine: harness.engine,
+        persistedEngineAuthority: {
+          ...persistedEngineAuthority,
+          bindingSha256: "a".repeat(64),
+        },
+        serializedReceipt: serializeHostLocalInferenceReceipt(receipt),
+        assertCurrent: vi.fn(),
+      }),
+    ).toThrow("Podman published readiness engine authority changed.");
+
+    expect(harness.events).toHaveLength(0);
+  });
+
+  it("rejects current endpoint drift before the exact inspection", () => {
+    const { harness, receipt, persistedEngineAuthority } = publishedRuntime();
+    const assertCurrent = vi.fn(() => {
+      throw new Error("current endpoint changed");
+    });
+    harness.events.length = 0;
+
+    expect(() =>
+      inspectPodmanPublishedOllamaReadinessRuntime({
+        engine: harness.engine,
+        persistedEngineAuthority,
+        serializedReceipt: serializeHostLocalInferenceReceipt(receipt),
+        assertCurrent,
+      }),
+    ).toThrow("current endpoint changed");
+
+    expect(harness.events).toHaveLength(0);
+  });
+
+  it("rejects current endpoint drift after the exact inspection", () => {
+    const { harness, receipt, persistedEngineAuthority } = publishedRuntime();
+    const assertCurrent = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        throw new Error("current endpoint changed");
+      });
+    harness.events.length = 0;
+
+    expect(() =>
+      inspectPodmanPublishedOllamaReadinessRuntime({
+        engine: harness.engine,
+        persistedEngineAuthority,
+        serializedReceipt: serializeHostLocalInferenceReceipt(receipt),
+        assertCurrent,
+      }),
+    ).toThrow("current endpoint changed");
+
+    expect(harness.events.filter((event) => event.includes("container inspect"))).toHaveLength(1);
+  });
+
   it("classifies one exact stopped runtime without starting it", () => {
     const { harness, runtime, receipt, persistedEngineAuthority } = publishedRuntime();
     runtime.stopManaged(receipt);

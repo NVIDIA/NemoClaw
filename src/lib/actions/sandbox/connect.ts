@@ -2396,6 +2396,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
                 operatingReceipt: retainedAuthority.command.receipt,
                 readRegistry: registry.getSandbox,
                 assertCallerCurrent: assertBaseCurrent,
+                env: retainedAuthority.command.env,
               }),
             );
           } catch {
