@@ -54,7 +54,7 @@ vi.mock("./ssrf.js", async (importOriginal) => {
 
 const { validateEndpointUrl } = await import("./ssrf.js");
 const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
-const { main } = await import("./runner.js");
+const { actionExternalOpenShellTargetPlan, main } = await import("./runner.js");
 
 const EXTERNAL_CA_FILE = "/var/run/openshell-target/private-ca.pem";
 const EXTERNAL_AUTHENTICATION_FILE = "/var/run/openshell-target/private-authentication";
@@ -102,6 +102,15 @@ describe("Blueprint Runner external OpenShell target", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("requires an external target and a complete OpenShell version range", () => {
+    expect(() => actionExternalOpenShellTargetPlan({})).toThrow(
+      /does not declare an external OpenShell target/,
+    );
+    expect(() =>
+      actionExternalOpenShellTargetPlan({ openshell_target: {} }),
+    ).toThrow(/requires blueprint min_openshell_version and max_openshell_version/);
   });
 
   it("emits only the sanitized plan without subprocess or network calls (#9872)", async () => {

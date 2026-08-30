@@ -69,10 +69,12 @@
     },
     {
       "live": "test/e2e/live/pi-agent-qualification.test.ts",
+      "liveSources": ["test/e2e/live/onboard-interactive-pty.ts"],
       "fast": [
         "src/lib/agent/candidate.test.ts",
         "src/lib/agent/pi-lifecycle.test.ts",
         "src/lib/onboard/pi-candidate-rebuild.test.ts",
+        "test/e2e/support/onboard-interactive-pty.test.ts",
         "test/e2e/support/pi-agent-qualification-events.test.ts",
         "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts"
       ]
@@ -214,7 +216,9 @@
     },
     {
       "live": "test/e2e/live/network-policy.test.ts",
+      "liveSources": ["test/e2e/live/policy-list-state.ts"],
       "fast": [
+        "src/lib/actions/sandbox/policy-channel-add-drift.test.ts",
         "test/channels/channels-add-preset.test.ts",
         "test/runtime/policy/policy-channel-agent-resolution.test.ts",
         "test/onboarding/validate-blueprint.test.ts",
@@ -305,6 +309,7 @@
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/snapshot-command-host-local-authority.test.ts",
         "test/e2e/support/snapshot-commands-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -383,6 +388,7 @@
         "test/e2e/live/openclaw-agent-assertion.ts"
       ],
       "fast": [
+        "src/lib/policy/policy-live-state.test.ts",
         "test/e2e/support/common-egress-agent-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
@@ -521,8 +527,12 @@
     },
     {
       "live": "test/e2e/live/mcp-bridge.test.ts",
-      "liveSources": ["test/e2e/live/mcp-bridge-cleanup.ts"],
+      "liveSources": [
+        "test/e2e/live/mcp-bridge-cleanup.ts",
+        "test/e2e/live/mcp-bridge-sandbox.ts"
+      ],
       "fast": [
+        "src/lib/actions/sandbox/mcp-bridge-policy.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-adapter-registration.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-adapter-teardown.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-input-targets.test.ts",
@@ -556,6 +566,7 @@
         "src/lib/onboard/providers.test.ts",
         "test/channels/channels-add-bridge-lifecycle.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
+        "test/onboarding/onboard-messaging.test.ts",
         "test/runtime/messaging/messaging-build-applier.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -622,6 +633,7 @@
     {
       "live": "test/e2e/live/openshell-gateway-upgrade.test.ts",
       "fast": [
+        "test/e2e/support/e2e-live-target-gating.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/openclaw-agent-output.test.ts"
@@ -637,7 +649,9 @@
     },
     {
       "live": "test/e2e/live/rebuild-hermes.test.ts",
+      "liveSources": ["test/e2e/live/rebuild-hermes-host-policy.ts"],
       "fast": [
+        "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/rebuild-hermes-env.test.ts",
@@ -650,6 +664,7 @@
     {
       "live": "test/e2e/live/rebuild-openclaw.test.ts",
       "fast": [
+        "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -671,6 +686,7 @@
     {
       "live": "test/e2e/live/shields-config.test.ts",
       "fast": [
+        "src/lib/shields/policy-delta.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
         "test/e2e/support/shields-failed-startup.test.ts"
@@ -737,6 +753,7 @@
         "test/e2e/live/channels-stop-start-plan-state.ts"
       ],
       "fast": [
+        "test/channels/channels-add-bridge-lifecycle.test.ts",
         "test/e2e/support/channels-stop-start-cleanup.test.ts",
         "test/e2e/support/channels-stop-start-config-state.test.ts",
         "test/e2e/support/channels-stop-start-googlechat.test.ts",

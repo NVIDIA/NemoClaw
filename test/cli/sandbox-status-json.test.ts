@@ -11,7 +11,6 @@ import {
   inferenceInvocationStubLines,
   runWithEnv,
   testTimeoutOptions,
-  writeHealthyDockerStub,
   writeSandboxRegistry,
 } from "./helpers";
 
@@ -116,7 +115,6 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       model: "configured-model",
       provider: "configured-provider",
       gpuEnabled: true,
-      policies: ["npm"],
       hostGpuDetected: true,
       sandboxGpuEnabled: true,
       sandboxGpuMode: "passthrough",
@@ -201,7 +199,6 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       sandboxGpuDevice: "0",
       openshellDriver: "docker",
       openshellVersion: "0.0.44",
-      policies: ["npm"],
       rpcIssue: null,
     });
     expect(typeof parsed.openshellDriver).toBe("string");
@@ -282,55 +279,57 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     );
   });
 
-  it.each([
-    401, 403,
-  ])("sandbox status --json fails an inference.local HTTP %s that rejects an agent request", (httpStatus) => {
-    const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
-      routeOutput: `OK ${httpStatus}`,
-      invocationHttpStatus: String(httpStatus),
-      invocationExit: 1,
-    });
+  it.each([401, 403])(
+    "sandbox status --json fails an inference.local HTTP %s that rejects an agent request",
+    (httpStatus) => {
+      const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
+        routeOutput: `OK ${httpStatus}`,
+        invocationHttpStatus: String(httpStatus),
+        invocationExit: 1,
+      });
 
-    const result = runWithEnv(`${sandboxName} status --json`, {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
+      const result = runWithEnv(`${sandboxName} status --json`, {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
 
-    expect(result.code).toBe(1);
-    const parsed = JSON.parse(result.out);
-    expect(parsed.inferenceHealth).toMatchObject({
-      ok: false,
-      probed: true,
-      failureLabel: "unauthorized",
-      endpoint: "https://inference.local/v1/models",
-    });
-    expect(parsed.inferenceHealth.detail).toContain(String(httpStatus));
-    expect(parsed.inferenceHealth.subprobes).toContainEqual(
-      expect.objectContaining({ ok: true, probeLabel: "route reachability" }),
-    );
-  });
+      expect(result.code).toBe(1);
+      const parsed = JSON.parse(result.out);
+      expect(parsed.inferenceHealth).toMatchObject({
+        ok: false,
+        probed: true,
+        failureLabel: "unauthorized",
+        endpoint: "https://inference.local/v1/models",
+      });
+      expect(parsed.inferenceHealth.detail).toContain(String(httpStatus));
+      expect(parsed.inferenceHealth.subprobes).toContainEqual(
+        expect.objectContaining({ ok: true, probeLabel: "route reachability" }),
+      );
+    },
+  );
 
-  it.each([
-    401, 403,
-  ])("sandbox status --json keeps an inference.local HTTP %s reachable when it still serves an agent request (#6192)", (httpStatus) => {
-    const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
-      routeOutput: `OK ${httpStatus}`,
-    });
+  it.each([401, 403])(
+    "sandbox status --json keeps an inference.local HTTP %s reachable when it still serves an agent request (#6192)",
+    (httpStatus) => {
+      const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
+        routeOutput: `OK ${httpStatus}`,
+      });
 
-    const result = runWithEnv(`${sandboxName} status --json`, {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
+      const result = runWithEnv(`${sandboxName} status --json`, {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
 
-    expect(result.code).toBe(0);
-    const parsed = JSON.parse(result.out);
-    expect(parsed.inferenceHealth).toMatchObject({
-      ok: true,
-      probed: true,
-      endpoint: "https://inference.local/v1/models",
-    });
-    expect(parsed.inferenceHealth).not.toHaveProperty("failureLabel");
-  });
+      expect(result.code).toBe(0);
+      const parsed = JSON.parse(result.out);
+      expect(parsed.inferenceHealth).toMatchObject({
+        ok: true,
+        probed: true,
+        endpoint: "https://inference.local/v1/models",
+      });
+      expect(parsed.inferenceHealth).not.toHaveProperty("failureLabel");
+    },
+  );
 
   it("sandbox status --json fails closed when the injected CA bundle is missing (#6192)", () => {
     const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({

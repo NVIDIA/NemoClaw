@@ -300,7 +300,7 @@ function waitForCreatedOpenShellSandboxPublication(
       }
       if (publishedSandboxId !== sandboxId) {
         throw new Error(
-          `Created sandbox '${input.sandboxName}' changed identity before policy verification.`,
+          `Created sandbox '${input.sandboxName}' changed identity before identity verification completed.`,
         );
       }
       return;
@@ -314,7 +314,7 @@ function waitForCreatedOpenShellSandboxPublication(
     );
   }
   throw new Error(
-    `Created sandbox '${input.sandboxName}' did not become visible through its owning gateway before policy verification.`,
+    `Created sandbox '${input.sandboxName}' did not become visible through its owning gateway before identity verification completed.`,
   );
 }
 
@@ -453,7 +453,7 @@ export function createSandboxGpuCreateAttemptRunner(
         throw new Error("Verified sandbox creation has no durable recovery evidence owner.");
       }
       const identityEvidence = sandboxIdentityFingerprint
-        ? `Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}. Sandbox '${input.sandboxName}' did not remain visible through owning gateway '${input.gatewayName}' before policy verification. `
+        ? `Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}. Sandbox '${input.sandboxName}' did not remain visible through owning gateway '${input.gatewayName}' before identity verification completed. `
         : `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. Gateway '${input.gatewayName}'. OpenShell did not return one exact durable sandbox identity for this create attempt. `;
       const message =
         `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}. ` +
@@ -732,10 +732,12 @@ export function createSandboxGpuCreateAttemptRunner(
                 : resolveOpenShellSandboxId(input.sandboxName, deps.runCaptureOpenshell);
             } catch (error) {
               if (createAttemptNonce) persistIdentitySettlementRecovery();
+              const diagnostic =
+                error instanceof Error ? ` ${error.message}` : " Identity settlement failed.";
               throw new Error(
                 createFailure?.kind === "sandbox_create_incomplete"
-                  ? "Managed bootstrap incomplete create did not return one exact durable sandbox identity after Ready."
-                  : "Managed bootstrap create did not return one exact durable sandbox identity after Ready.",
+                  ? `Managed bootstrap incomplete create did not return one exact durable sandbox identity after Ready.${diagnostic}`
+                  : `Managed bootstrap create did not return one exact durable sandbox identity after Ready.${diagnostic}`,
                 { cause: error },
               );
             }

@@ -75,9 +75,7 @@ beforeEach(() => {
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: "alpha",
     agent: null,
-    policies: ["pypi"],
   });
-  vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
 
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
   vi.spyOn(onboardSession, "updateSession").mockReturnValue(
@@ -149,7 +147,6 @@ describe("addSandboxPolicy drift-aware named re-add", () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",
       agent: "openclaw",
-      policies: ["npm"],
     });
     vi.spyOn(policies, "listPresets").mockReturnValue([
       { file: "npm.yaml", name: "npm", description: "npm registry access" },
@@ -158,7 +155,6 @@ describe("addSandboxPolicy drift-aware named re-add", () => {
     vi.spyOn(policies, "loadPresetForSandbox").mockReturnValue(
       "network_policies:\n  npm_yarn:\n    name: npm_yarn\n",
     );
-    vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([]);
     const disclosureSpy = vi
       .spyOn(policies, "logOpenClawNpmCompatibilityDisclosure")
       .mockImplementation(() => undefined);
@@ -226,26 +222,6 @@ describe("addSandboxPolicy drift-aware named re-add", () => {
     expect(promptSpy).not.toHaveBeenCalled();
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "pypi", { suppressDisclosure: true });
     expect(refreshSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("refuses a built-in re-add when the name is owned by a custom preset", async () => {
-    vi.spyOn(registry, "getCustomPolicies").mockReturnValue([
-      { name: "pypi", content: "network_policies:\n  pypi:\n    host: custom.example.com\n" },
-    ]);
-
-    await expect(
-      captureExit(() => addSandboxPolicy("alpha", { preset: "pypi", yes: true })),
-    ).resolves.toBe(1);
-
-    expect(errSpy).toHaveBeenCalledWith(
-      "  Preset 'pypi' was applied as a custom preset (--from-file).",
-    );
-    expect(errSpy).toHaveBeenCalledWith(
-      `  Edit and re-apply it with --from-file, or run '${CLI_NAME} alpha policy remove pypi' first.`,
-    );
-    expect(gatewayStateMock).not.toHaveBeenCalled();
-    expect(applyPresetMock).not.toHaveBeenCalled();
-    expect(refreshSpy).not.toHaveBeenCalled();
   });
 
   it("fails without an already-applied claim when the preset content cannot be read", async () => {

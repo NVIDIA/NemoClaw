@@ -1452,6 +1452,12 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
   if (/createWorkflowDispatch|workflow_dispatches/u.test(source)) {
     errors.push("Unified advisor must not auto-dispatch workflows");
   }
+  const specialistEnv = advisor.jobs?.["review-specialists"]?.env ?? {};
+  const expectedBaseRef = "${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}";
+  const expectedHeadRef = "${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}";
+  if (specialistEnv.BASE_REF !== expectedBaseRef || specialistEnv.HEAD_REF !== expectedHeadRef) {
+    errors.push("Unified advisor specialists must retain target refs through execution");
+  }
 }
 
 export function validateE2eOperationsWorkflow(
