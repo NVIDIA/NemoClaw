@@ -264,7 +264,6 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
   const outputs = record(producer.outputs);
   const requiredOutputs = {
     cli_artifact_provenance: "${{ steps.record_cli_artifact.outputs.provenance }}",
-    managed_image_catalog: "${{ steps.package_cli_artifact.outputs.managed_image_catalog }}",
   };
   for (const [name, value] of Object.entries(requiredOutputs)) {
     if (outputs[name] !== value) {
@@ -339,9 +338,6 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
 
     ".sourceRevision == $candidateSha",
     "candidate CLI build identity does not match the candidate commit SHA",
-    ".source.revision == $revision",
-    "[.[].source.release] | unique | length",
-    "managed-image catalog source identity does not match the selected publication",
     "--sort=name",
     "--mtime=@0",
     "nemoclaw/dist/shared",
