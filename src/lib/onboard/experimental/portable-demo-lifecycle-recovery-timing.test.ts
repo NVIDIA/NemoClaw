@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -60,6 +62,45 @@ function temporaryStateDir(): string {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-timing-"));
   temporaryDirectories.push(directory);
   return directory;
+}
+
+function runCommand(
+  command: string,
+  args: readonly string[],
+): Promise<{ status: number | null; stderr: string; stdout: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, [...args], { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    let stdout = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.once("error", reject);
+    child.once("close", (status) => resolve({ status, stderr, stdout }));
+  });
+}
+
+async function withLoopbackHealthStatus<T>(
+  statusCode: number,
+  run: (port: number) => Promise<T>,
+): Promise<T> {
+  const server = createServer((_request, response) => {
+    response.writeHead(statusCode).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  try {
+    return await run(address.port);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 }
 
 function socketAuthorityDeps(): PodmanSocketAuthorityDeps {
@@ -395,7 +436,7 @@ describe("portable lifecycle recovery timing output", () => {
     expect(gatewayTimingLines(log)[0]).toContain(`diagnosticReadOutcome=${outcome}`);
   });
 
-  it("observes launched gateway health inside one bounded OpenShell exec (#9200)", () => {
+  it("executes the launched gateway health waiter against loopback responses (#9200)", async () => {
     const stateDir = temporaryStateDir();
     const podman = createPodman(false);
     const launchOpenshell = vi.fn();
@@ -405,6 +446,7 @@ describe("portable lifecycle recovery timing output", () => {
     let diagnosticNow = 0;
     let epochNow = EPOCH_BASE_MS;
     let gatewayWaitTimeout = 0;
+    let gatewayWaitCommand: string[] | undefined;
     installReceipt(stateDir, podman);
 
     expect(
@@ -417,6 +459,7 @@ describe("portable lifecycle recovery timing output", () => {
           switch (command) {
             case "python3": {
               gatewayWaitTimeout = timeoutMs;
+              gatewayWaitCommand = args.slice(args.lastIndexOf("--") + 1);
               deadlineNow += 250;
               diagnosticNow += 250;
               epochNow = EPOCH_BASE_MS + 2_110;
@@ -460,6 +503,42 @@ describe("portable lifecycle recovery timing output", () => {
     expect(gatewayTimingLines(log)[0]).toContain(
       "probe=50ms sleep=200ms firstReadyAttempt=3 lastFailure=not-ready diagnosticRead=20ms diagnosticReadOutcome=recorded",
     );
+
+    expect(gatewayWaitCommand).toBeDefined();
+    const emittedGatewayWaitCommand = gatewayWaitCommand as string[];
+    const runEmittedWaiter = (statusCode: number) =>
+      withLoopbackHealthStatus(statusCode, (port) => {
+        const [command, ...args] = emittedGatewayWaitCommand;
+        args[3] = String(port);
+        args[4] = "100";
+        args[5] = "10";
+        return runCommand(command, args);
+      });
+
+    const readyReceipt = expect.stringMatching(
+      /^schema=1 result=ready attempts=1 notReady=0 timeouts=0 errors=0 lastFailure=none probeMs=\d+ sleepMs=0\n$/u,
+    );
+    await expect(runEmittedWaiter(200)).resolves.toEqual({
+      status: 0,
+      stderr: "",
+      stdout: readyReceipt,
+    });
+    await expect(runEmittedWaiter(401)).resolves.toEqual({
+      status: 0,
+      stderr: "",
+      stdout: readyReceipt,
+    });
+
+    const notReady = await runEmittedWaiter(503);
+    expect(notReady.status).toBe(75);
+    expect(notReady.stderr).toBe("");
+    const receipt =
+      /^schema=1 result=not-ready attempts=(\d+) notReady=(\d+) timeouts=0 errors=0 lastFailure=not-ready probeMs=(\d+) sleepMs=(\d+)\n$/u.exec(
+        notReady.stdout,
+      );
+    expect(receipt).not.toBeNull();
+    expect(Number(receipt?.[1])).toBeGreaterThan(0);
+    expect(receipt?.[2]).toBe(receipt?.[1]);
   });
 
   it.each([

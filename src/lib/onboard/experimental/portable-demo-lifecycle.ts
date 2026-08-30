@@ -61,6 +61,7 @@ const MAX_RECEIPT_DIRECTORY_ENTRIES = 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const EXEC_READY_TIMEOUT_MS = 90_000;
+const EXEC_READY_POLL_INTERVAL_MS = 100;
 const STOP_SETTLEMENT_TIMEOUT_MS = 30_000;
 const STARTUP_STOP_TIMEOUT_MS = 30_000;
 const STARTUP_TIMEOUT_MS = 90_000;
@@ -1559,15 +1560,21 @@ export function recoverPortableDemoSandboxLifecycle(
   const timing = { now: clock, sleep: deps.sleep ?? defaultSleep };
   const gatewayName = context.gatewayName;
   const execReady = lifecycleTiming.measure("execReady", () =>
-    waitFor(EXEC_READY_TIMEOUT_MS, timing, (remainingMs) => {
-      const result = capture(
-        openshellExecArgs(gatewayName, sandboxName, ["true"]),
-        Math.min(PROBE_TIMEOUT_MS, remainingMs),
-      );
-      const ready = result.status === 0 && !result.error;
-      lifecycleTiming.recordExecAttempt(commandAttemptOutcome(result, ready));
-      return ready;
-    }),
+    waitFor(
+      EXEC_READY_TIMEOUT_MS,
+      timing,
+      (remainingMs) => {
+        const result = capture(
+          openshellExecArgs(gatewayName, sandboxName, ["true"]),
+          Math.min(PROBE_TIMEOUT_MS, remainingMs),
+        );
+        const ready = result.status === 0 && !result.error;
+        lifecycleTiming.recordExecAttempt(commandAttemptOutcome(result, ready));
+        return ready;
+      },
+      undefined,
+      EXEC_READY_POLL_INTERVAL_MS,
+    ),
   );
   if (!execReady) {
     lifecycleTiming.markFailureStage("execReady");

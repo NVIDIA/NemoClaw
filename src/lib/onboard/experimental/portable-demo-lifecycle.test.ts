@@ -810,7 +810,7 @@ describe("portable demo sandbox lifecycle", () => {
       const command = args.find((arg) => ["true", "pgrep", "curl", "python3"].includes(arg));
       switch (command) {
         case "true":
-          return { status: now >= 31_000 ? 0 : 1 };
+          return { status: now >= 30_100 ? 0 : 1 };
         case "pgrep":
           return { status: 1 };
         case "curl":
@@ -839,7 +839,7 @@ describe("portable demo sandbox lifecycle", () => {
         },
       ),
     ).toEqual({ kind: "recovered" });
-    expect(now).toBe(31_000);
+    expect(now).toBe(30_100);
     expect(launchOpenshell).toHaveBeenCalledOnce();
   });
 
