@@ -15,8 +15,11 @@ const POLICY_SHADOW_FIELDS = [
   "policyAuthority",
   "policyCreationReceipt",
   "pendingPolicyVerification",
+  "policyHash",
   "policyPresetsFinalized",
   "policyTier",
+  "policyVersion",
+  "observedPolicyAuthority",
 ] as const;
 
 /** Remove legacy policy shadow state without interpreting or replaying it. */

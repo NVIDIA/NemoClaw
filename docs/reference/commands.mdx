@@ -359,7 +359,7 @@ Before the configuration review, NemoClaw records the sandbox name and the selec
 
 If onboarding cannot complete after sandbox creation, NemoClaw preserves the sandbox.
 When available, NemoClaw records and prints the create-attempt label as the exact `ai.nvidia.nemoclaw.create-attempt=<value>` selector.
-When available, NemoClaw also records a durable identity fingerprint and verified policy evidence for recovery.
+When available, NemoClaw also records a durable identity fingerprint for recovery.
 Automatic and explicit resume, reuse, recreation, and fresh onboarding with that sandbox name remain blocked.
 When the recovery record contains a durable identity fingerprint, run `$$nemoclaw <sandbox-name> destroy` to attempt identity-bound recovery.
 

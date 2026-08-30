@@ -155,6 +155,7 @@ const MISSING_PROVIDER_INSPECTION_PATTERN =
   /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
 const POLICY_INSPECTION_MAX_BYTES = 1024 * 1024;
 const POLICY_INSPECTION_TIMEOUT_MS = 30_000;
+const BLUEPRINT_POLICY_REBASE_ATTEMPTS = 3;
 
 interface InferenceRouteBinding {
   provider: string;
@@ -589,6 +590,49 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
   return YAML.stringify(output);
 }
 
+function blueprintBasePoliciesMatch(left: string, right: string): boolean {
+  return isDeepStrictEqual(
+    parseOpenShellPolicy(left).policy,
+    parseOpenShellPolicy(right).policy,
+  );
+}
+
+function assertNoConflictingBlueprintPolicyChange(
+  previousSource: string,
+  currentSource: string,
+  additions: PolicyAdditions,
+): void {
+  const previous = parseOpenShellPolicy(previousSource).policy.network_policies ?? {};
+  const current = parseOpenShellPolicy(currentSource).policy.network_policies ?? {};
+  for (const [key, required] of Object.entries(additions)) {
+    const previousHasKey = Object.hasOwn(previous, key);
+    const currentHasKey = Object.hasOwn(current, key);
+    if (
+      previousHasKey === currentHasKey &&
+      (!currentHasKey || isDeepStrictEqual(previous[key], current[key]))
+    ) {
+      continue;
+    }
+    if (currentHasKey && isDeepStrictEqual(current[key], required)) continue;
+    throw new Error(
+      `Cannot reconcile the blueprint policy transition: network policy '${key}' changed concurrently.`,
+    );
+  }
+}
+
+function blueprintPolicyPreservationRequirements(
+  basePolicySource: string,
+  additions: PolicyAdditions,
+): UnknownRecord {
+  const base = structuredClone(parseOpenShellPolicy(basePolicySource).policy) as UnknownRecord;
+  const preservedNetwork = withoutProviderComposedPolicies(
+    (base.network_policies as UnknownRecord | undefined) ?? {},
+  );
+  for (const key of Object.keys(additions)) delete preservedNetwork[key];
+  base.network_policies = preservedNetwork;
+  return base;
+}
+
 export function loadBlueprint(): Blueprint {
   const blueprintPath = process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".";
   const bpFile = join(blueprintPath, "blueprint.yaml");
@@ -792,6 +836,16 @@ function blueprintPolicyRequirementsSatisfied(
   }
 }
 
+async function readBlueprintBasePolicy(gatewayName: string, sandboxName: string): Promise<string> {
+  return (
+    await runBlueprintInspectionCommand(
+      ["openshell", "policy", "get", "-g", gatewayName, "--base", sandboxName],
+      gatewayName,
+      { kind: "state", subject: "policy" },
+    )
+  ).stdout;
+}
+
 async function applyBlueprintPolicyAdditions(
   gateway: GatewayBinding,
   sandboxName: string,
@@ -802,47 +856,67 @@ async function applyBlueprintPolicyAdditions(
   const current = await inspectBlueprintPolicy(gateway.name, sandboxName);
   if (blueprintPolicyRequirementsSatisfied(current, additions)) return;
 
-  const base = await runBlueprintInspectionCommand(
-    ["openshell", "policy", "get", "-g", gateway.name, "--base", sandboxName],
-    gateway.name,
-    { kind: "state", subject: "policy" },
-  );
+  let basePolicySource = await readBlueprintBasePolicy(gateway.name, sandboxName);
   const policyPath = join(temporaryDirectory, "policy-update.yaml");
-  writeFileSync(policyPath, mergePolicyAdditions(base.stdout, additions), {
-    encoding: "utf-8",
-    mode: 0o600,
-  });
-  try {
-    const result = await runCmd(
-      [
-        "openshell",
-        "policy",
-        "set",
-        "-g",
-        gateway.name,
-        "--policy",
-        policyPath,
-        "--wait",
-        sandboxName,
-      ],
-      { gateway: gateway.name, reject: false },
-    );
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to apply policy additions: ${boundedCommandError(result.stderr)}`);
+
+  for (let attempt = 1; attempt <= BLUEPRINT_POLICY_REBASE_ATTEMPTS; attempt += 1) {
+    const latestPolicySource = await readBlueprintBasePolicy(gateway.name, sandboxName);
+    if (!blueprintBasePoliciesMatch(basePolicySource, latestPolicySource)) {
+      assertNoConflictingBlueprintPolicyChange(basePolicySource, latestPolicySource, additions);
+      basePolicySource = latestPolicySource;
+      continue;
     }
-  } finally {
+
+    writeFileSync(policyPath, mergePolicyAdditions(latestPolicySource, additions), {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
     try {
-      unlinkSync(policyPath);
-    } catch {
-      // The file contains policy material; surface cleanup failure even if set succeeded.
-      if (existsSync(policyPath)) {
-        throw new Error(`Temporary blueprint policy remains at ${policyPath}`);
+      const result = await runCmd(
+        [
+          "openshell",
+          "policy",
+          "set",
+          "-g",
+          gateway.name,
+          "--policy",
+          policyPath,
+          "--wait",
+          sandboxName,
+        ],
+        { gateway: gateway.name, reject: false },
+      );
+      if (result.exitCode !== 0) {
+        throw new Error(`Failed to apply policy additions: ${boundedCommandError(result.stderr)}`);
+      }
+    } finally {
+      try {
+        unlinkSync(policyPath);
+      } catch {
+        // The file contains policy material; surface cleanup failure even if set succeeded.
+        if (existsSync(policyPath)) {
+          throw new Error(`Temporary blueprint policy remains at ${policyPath}`);
+        }
       }
     }
+    const applied = await inspectBlueprintPolicy(gateway.name, sandboxName);
+    assertBlueprintPolicyRequirements(applied, additions);
+    try {
+      assertPolicyRequirementContainment(
+        applied,
+        blueprintPolicyPreservationRequirements(latestPolicySource, additions),
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "the live policy changed";
+      throw new Error(
+        `Cannot reconcile the blueprint policy transition: unrelated live policy was not preserved: ${detail}.`,
+      );
+    }
+    return;
   }
-  assertBlueprintPolicyRequirements(
-    await inspectBlueprintPolicy(gateway.name, sandboxName),
-    additions,
+
+  throw new Error(
+    "Cannot reconcile the blueprint policy transition: the live OpenShell policy kept changing.",
   );
 }
 

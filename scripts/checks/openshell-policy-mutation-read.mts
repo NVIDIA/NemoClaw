@@ -75,7 +75,7 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
   {
     relativePath: "nemoclaw/src/blueprint/runner.ts",
     expectedReads: [
-      unclassifiedBase("applyBlueprintPolicyAdditions"),
+      unclassifiedBase("readBlueprintBasePolicy"),
       unclassifiedFull("inspectBlueprintPolicy"),
       unclassifiedFull("inspectBlueprintPolicy"),
     ],

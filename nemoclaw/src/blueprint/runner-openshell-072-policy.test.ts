@@ -82,6 +82,9 @@ describe("blueprint policy convenience", () => {
   let globalActive: boolean;
   let basePolicyFailure: string | null;
   let basePolicyOutput: string | null;
+  let basePolicyReads: number;
+  let mutateBasePolicyOnRead: number | null;
+  let mutateBasePolicy: (() => void) | null;
 
   beforeEach(() => {
     store.clear();
@@ -95,6 +98,9 @@ describe("blueprint policy convenience", () => {
     globalActive = false;
     basePolicyFailure = null;
     basePolicyOutput = null;
+    basePolicyReads = 0;
+    mutateBasePolicyOnRead = null;
+    mutateBasePolicy = null;
     mockExeca.mockReset().mockImplementation(async (_command: string, args: string[]) => {
       const joined = args.join(" ");
       switch (joined) {
@@ -116,6 +122,8 @@ describe("blueprint policy convenience", () => {
             livePolicy,
           );
         case "policy get -g test-gateway --base test-sandbox":
+          basePolicyReads += 1;
+          (basePolicyReads === mutateBasePolicyOnRead ? mutateBasePolicy : null)?.();
           return basePolicyFailure
             ? { exitCode: 1, stdout: "", stderr: basePolicyFailure }
             : {
@@ -159,6 +167,52 @@ describe("blueprint policy convenience", () => {
       }),
     );
     expect([...store.keys()].some((path) => path.endsWith("policy-update.yaml"))).toBe(false);
+  });
+
+  it("rebases additions when an unrelated host edit races the initial base-policy read", async () => {
+    mutateBasePolicyOnRead = 2;
+    mutateBasePolicy = () => {
+      livePolicy.network_policies = {
+        ...(livePolicy.network_policies as Record<string, unknown>),
+        concurrent_host_edit: {
+          endpoints: [{ host: "concurrent.example", port: 443 }],
+        },
+      };
+    };
+
+    await actionApply("default", blueprint());
+
+    expect(livePolicy.network_policies).toEqual(
+      expect.objectContaining({
+        concurrent_host_edit: expect.any(Object),
+        nim_service: additions.nim_service,
+      }),
+    );
+  });
+
+  it("stops when a host edit races the blueprint-owned policy key", async () => {
+    mutateBasePolicyOnRead = 2;
+    mutateBasePolicy = () => {
+      livePolicy.network_policies = {
+        ...(livePolicy.network_policies as Record<string, unknown>),
+        nim_service: {
+          name: "nim_service",
+          endpoints: [{ host: "operator.example", port: 443, access: "full" }],
+        },
+      };
+    };
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      "network policy 'nim_service' changed concurrently",
+    );
+    expect(
+      mockExeca.mock.calls.some(
+        ([, args]) => Array.isArray(args) && args[0] === "policy" && args[1] === "set",
+      ),
+    ).toBe(false);
+    expect(livePolicy.network_policies).toMatchObject({
+      nim_service: { endpoints: [{ host: "operator.example" }] },
+    });
   });
 
   it("skips the convenience mutation when OpenShell already contains the requirement", async () => {
