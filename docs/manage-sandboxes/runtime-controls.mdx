@@ -163,11 +163,14 @@ When Shields are already UP after an abandoned auto-restore completes, run `$$ne
 NemoClaw removes the timer artifacts and lifecycle gates only when they all identify that completed process generation, the recorded owners are gone, and no Shields transition remains.
 Running the command again after successful cleanup is safe because the retired generation no longer supplies recovery authority.
 A live or ambiguous owner, a replaced or unrelated generation, conflicting artifacts, or a missing protected generation remains fail-closed.
-Those cases, retained gates, and fail-closed state-directory errors keep new mutations blocked until you complete generation operator recovery.
+Those conditions and retained gates keep new mutations blocked until the reported recovery completes.
 A `--dry-run` run of a `channels` or `policy` command takes no mutation lock, so you can still preview the change while mutations are blocked.
 
-For a fail-closed case, stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
+If the error reports a live or ambiguous owner, let that process finish or stop it through normal process controls, then rerun `$$nemoclaw <name> shields status` without modifying lifecycle-lock or timer files.
+If the error says that completed recovery authority changed, rerun `$$nemoclaw <name> shields status` without modifying those files so NemoClaw can evaluate the current authority.
+If the error instead reports invalid or conflicting artifacts, a replaced or unrelated lifecycle generation, or a missing protected generation, stop all NemoClaw processes for the sandbox and follow the paths, identities, tokens, and removal order in that error.
 Verify each recorded generation is unchanged, remove only the stale generations first, and remove the containment generation last.
+Then rerun `$$nemoclaw <name> shields status`.
 
 ### Preserve Managed MCP Policy
 

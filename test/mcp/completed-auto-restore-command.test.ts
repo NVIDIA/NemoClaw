@@ -134,8 +134,34 @@ try {
 function writeShieldsUpState(stateDir: string, sandboxName: string): void {
   fs.writeFileSync(
     path.join(stateDir, `shields-${sandboxName}.json`),
-    JSON.stringify({ shieldsDown: false, updatedAt: new Date().toISOString() }),
+    JSON.stringify({
+      shieldsDown: false,
+      updatedAt: new Date().toISOString(),
+      fileHashes: { "/sandbox/.openclaw/openclaw.json": "a".repeat(64) },
+    }),
   );
+}
+
+async function loadCleanPublicShieldsStatusCommand() {
+  vi.resetModules();
+  const shields = await import("../../src/lib/shields/index");
+  const realShieldsStatus = shields.shieldsStatus;
+  vi.spyOn(shields, "shieldsStatus").mockImplementation((sandboxName, allowInlineRecovery, deps) =>
+    realShieldsStatus(sandboxName, allowInlineRecovery, {
+      ...deps,
+      resolveConfig: () => ({
+        agentName: "openclaw",
+        configPath: "/sandbox/.openclaw/openclaw.json",
+        configDir: "/sandbox/.openclaw",
+        configFile: "openclaw.json",
+        format: "json",
+        stateLockPlanInImage: true,
+      }),
+      verifyLockState: () => ({ ok: true, issues: [] }),
+      verifyStateLockPlan: () => [],
+    }),
+  );
+  return (await import("../../src/commands/sandbox/shields/status")).default;
 }
 
 class StatusCommand extends NemoClawCommand {
@@ -172,7 +198,7 @@ describe("completed auto-restore command admission", () => {
   });
 
   it(
-    "enters status after exact completed auto-restore recovery (#10094)",
+    "runs public Shields status after exact completed auto-restore recovery (#10094)",
     { timeout: 30_000 },
     async () => {
       const processToken = "c".repeat(32);
@@ -183,10 +209,12 @@ describe("completed auto-restore command admission", () => {
       );
       writeShieldsUpState(stateDir, "alpha");
       const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const ShieldsStatusCommand = await loadCleanPublicShieldsStatusCommand();
 
-      await expect(StatusCommand.run(["alpha"], process.cwd())).resolves.toBeUndefined();
+      await expect(ShieldsStatusCommand.run(["alpha"], process.cwd())).resolves.toBeUndefined();
 
-      expect(StatusCommand.entered).toBe(true);
+      expect(log).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
       expect(
         [orphan.markerPath, lockPath, `${lockPath}.deadline`, `${lockPath}.containment`].map(
           (file) => fs.existsSync(file),
@@ -195,19 +223,25 @@ describe("completed auto-restore command admission", () => {
     },
   );
 
-  it("denies command entry for an ambiguous live timer owner (#10094)", async () => {
+  it("denies public Shields status for an ambiguous live timer owner (#10094)", async () => {
     const processToken = "d".repeat(32);
     const orphan = await reproduceCompletedAutoRestoreContainment(stateDir, "alpha", processToken);
     writeShieldsUpState(stateDir, "alpha");
     const marker = JSON.parse(fs.readFileSync(orphan.markerPath, "utf8"));
     marker.pid = process.pid;
     fs.writeFileSync(orphan.markerPath, JSON.stringify(marker));
+    const ShieldsStatusCommand = await loadCleanPublicShieldsStatusCommand();
 
-    await expect(StatusCommand.run(["alpha"], process.cwd())).rejects.toThrow(
+    await expect(ShieldsStatusCommand.run(["alpha"], process.cwd())).rejects.toThrow(
       "containment is active",
     );
-    expect(StatusCommand.entered).toBe(false);
     expect(fs.existsSync(orphan.markerPath)).toBe(true);
+    const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
+    expect(
+      [lockPath, `${lockPath}.deadline`, `${lockPath}.containment`].map((file) =>
+        fs.existsSync(file),
+      ),
+    ).toEqual([true, true, true]);
   });
 
   it(
