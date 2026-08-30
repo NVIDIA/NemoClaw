@@ -73,48 +73,6 @@ describe("rebuildSandbox flow: target credentials", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
-  it("preserves legacy Brave web search during a nonmatching-session rebuild", async () => {
-    const harness = createRebuildFlowHarness({
-      applyPreset: () => true,
-      sandboxEntry: { policies: ["brave"], webSearchEnabled: undefined },
-      sessionSandboxName: "some-other-sandbox",
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.ensureValidatedBraveSearchCredentialSpy).toHaveBeenCalledWith(
-      { fetchEnabled: true, provider: "brave" },
-      true,
-    );
-    expect(harness.session.webSearchConfig).toEqual({ fetchEnabled: true, provider: "brave" });
-  });
-
-  it("reconciles stale Brave policy state to the durable Tavily provider", async () => {
-    const harness = createRebuildFlowHarness({
-      applyPreset: (name) => name === "tavily",
-      backupPolicyPresets: ["brave"],
-      sandboxEntry: {
-        policies: ["brave"],
-        webSearchEnabled: true,
-        webSearchProvider: "tavily",
-      },
-      sessionSandboxName: "some-other-sandbox",
-    });
-
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
-
-    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "tavily");
-    expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "brave");
-    expect(harness.session.webSearchConfig).toEqual({
-      fetchEnabled: true,
-      provider: "tavily",
-    });
-  });
-
   it("restores the caller Tavily credential environment after rebuild", async () => {
     const restoreEnv = snapshotEnv(["TAVILY_API_KEY"]);
     process.env.TAVILY_API_KEY = "caller-tavily-key";

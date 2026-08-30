@@ -69,7 +69,7 @@ describe("createSetupNim vLLM resume", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
-  it("refuses checkpoint-first vLLM installation when policy authority changes (#9833)", async () => {
+  it("refuses checkpoint-first vLLM installation when sandbox identity changes (#9833)", async () => {
     const profile = { name: "DGX Spark" } as VllmProfile;
     const checkpointVllmInstallModel = vi.fn();
     const installEffect = vi.fn();
@@ -99,8 +99,8 @@ describe("createSetupNim vLLM resume", () => {
         handleVllmSelection,
       }),
     );
-    const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("external policy authority must supply local inference");
+    const revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("Sandbox identity changed before local inference");
     });
 
     await expect(
@@ -114,11 +114,11 @@ describe("createSetupNim vLLM resume", () => {
         undefined,
         undefined,
         undefined,
-        revalidatePolicyRequirements,
+        revalidateSandboxIdentity,
       ),
-    ).rejects.toThrow(/external policy authority must supply/u);
+    ).rejects.toThrow(/Sandbox identity changed before/u);
 
-    expect(revalidatePolicyRequirements).toHaveBeenCalledWith(
+    expect(revalidateSandboxIdentity).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "vllm-local",
         model: "nvidia/resumed-model",

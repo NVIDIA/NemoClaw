@@ -4,7 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
-import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-authority";
+import { inspectOpenShellSandboxIdentityFingerprint } from "../../adapters/openshell/policy-state";
 import { R, YW } from "../../cli/terminal-style";
 import {
   type PreparedPortableDemoSandboxDestroyAuthority,
@@ -314,7 +314,7 @@ export async function executeSandboxDestroy({
       | { status: "changed"; subject?: string }
       | { status: "ambiguous"; detail: string; subject?: string }
       | { status: "probe-failed"; detail: string; subject?: string };
-    const pendingPolicyVerification = sandbox?.pendingPolicyVerification;
+    const pendingCreateIdentity = sandbox?.pendingCreateIdentity;
     const expectedContainerProof: DestroyContainerIdentityProof =
       expectedContainerIdentities === undefined ? {} : { identities: expectedContainerIdentities };
     const proofFromVerdict = (
@@ -326,57 +326,57 @@ export async function executeSandboxDestroy({
       if (verdict.status === "recovery") return { identities: verdict.identities };
       return null;
     };
-    const inspectPendingPolicyVerificationContinuity = (): IdentityContinuity => {
-      if (!pendingPolicyVerification) return { status: "match" };
+    const inspectPendingCreateVerificationContinuity = (): IdentityContinuity => {
+      if (!pendingCreateIdentity) return { status: "match" };
       if (!getSandbox) {
         return {
           status: "probe-failed",
-          subject: "Pending policy verification sandbox identity",
+          subject: "Pending create sandbox identity",
           detail: "an exact registry reader is unavailable",
         };
       }
-      const readCurrentCheckpoint = () => getSandbox(sandboxName)?.pendingPolicyVerification;
+      const readCurrentCheckpoint = () => getSandbox(sandboxName)?.pendingCreateIdentity;
       try {
-        if (!isDeepStrictEqual(readCurrentCheckpoint(), pendingPolicyVerification)) {
-          return { status: "changed", subject: "Pending policy verification authority" };
+        if (!isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateIdentity)) {
+          return { status: "changed", subject: "Pending create identity" };
         }
         if (
           sandboxConfirmedAbsent &&
           expectedContainerIdentities !== undefined &&
           expectedContainerIdentityFingerprint ===
-            pendingPolicyVerification.sandboxIdentityFingerprint
+            pendingCreateIdentity.sandboxIdentityFingerprint
         ) {
-          return isDeepStrictEqual(readCurrentCheckpoint(), pendingPolicyVerification)
+          return isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateIdentity)
             ? { status: "match" }
-            : { status: "changed", subject: "Pending policy verification authority" };
+            : { status: "changed", subject: "Pending create identity" };
         }
         const inspectIdentity =
           deps.inspectOpenShellSandboxIdentityFingerprint ??
           inspectOpenShellSandboxIdentityFingerprint;
         const liveFingerprint = inspectIdentity({
           sandboxName,
-          gatewayName: pendingPolicyVerification.gatewayName,
+          gatewayName: pendingCreateIdentity.gatewayName,
         });
         if (
-          liveFingerprint !== pendingPolicyVerification.sandboxIdentityFingerprint ||
-          !isDeepStrictEqual(readCurrentCheckpoint(), pendingPolicyVerification)
+          liveFingerprint !== pendingCreateIdentity.sandboxIdentityFingerprint ||
+          !isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateIdentity)
         ) {
           return {
             status: "changed",
-            subject: "Pending policy verification sandbox identity",
+            subject: "Pending create sandbox identity",
           };
         }
         return { status: "match" };
       } catch (error) {
         return {
           status: "probe-failed",
-          subject: "Pending policy verification sandbox identity",
+          subject: "Pending create sandbox identity",
           detail: redactDestroyError(error),
         };
       }
     };
     const inspectIdentityContinuity = (): IdentityContinuity => {
-      const pendingContinuity = inspectPendingPolicyVerificationContinuity();
+      const pendingContinuity = inspectPendingCreateVerificationContinuity();
       if (pendingContinuity.status !== "match") return pendingContinuity;
       if (portableContainerAuthority) {
         try {
@@ -611,8 +611,8 @@ export async function executeSandboxDestroy({
         ` Managed inference cleanup and workspace wipe or hardening may already have run; inspect those resources before retrying.${detachedDetail}`,
       );
     }
-    const deleteArgs = pendingPolicyVerification
-      ? ["sandbox", "delete", "-g", pendingPolicyVerification.gatewayName, sandboxName]
+    const deleteArgs = pendingCreateIdentity
+      ? ["sandbox", "delete", "-g", pendingCreateIdentity.gatewayName, sandboxName]
       : ["sandbox", "delete", sandboxName];
     // A successful preflight absence is already the required OpenShell
     // lifecycle proof. Do not issue a later mutable-name delete that could

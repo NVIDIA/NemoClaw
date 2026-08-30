@@ -312,18 +312,12 @@ registry.registerSandbox({
     destroyPreparedAt: "2026-06-27T01:00:00.000Z",
   },
 });
-registry.addCustomPolicy("stuck-sandbox", {
-  name: entry.policyName,
-  content: "network_policies: {}",
-  sourcePath: "generated:nemoclaw-mcp-bridge",
-});
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
   () => {
     const after = registry.getSandbox("stuck-sandbox");
     process.stdout.write("<<REPRO_JSON>>" + JSON.stringify({
       mcp: after && after.mcp,
-      customPolicies: after && after.customPolicies || [],
       events,
       commands,
       providerExists,
@@ -350,7 +344,6 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
       result.stdout.slice(result.stdout.indexOf(jsonMarker) + jsonMarker.length),
     ) as {
       mcp: SandboxMcpSnapshot | undefined;
-      customPolicies: unknown[];
       events: string[];
       commands: string[];
       providerExists: boolean;
@@ -360,7 +353,6 @@ bridge.removeMcpBridge("stuck-sandbox", "github", { force: true }).then(
     expect(parsed.attached).toBe(false);
     expect(parsed.providerExists).toBe(false);
     expect(parsed.policyState).toBe("absent");
-    expect(parsed.customPolicies).toEqual([]);
     expect(parsed.mcp?.bridges).toEqual({});
     expect(parsed.mcp?.managedServerNames).toEqual(["github"]);
     expect(parsed.mcp?.destroyPreparedAt).toBeUndefined();

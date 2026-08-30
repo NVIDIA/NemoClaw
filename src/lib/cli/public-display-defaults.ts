@@ -385,7 +385,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Policy Presets",
       order: 21,
       usage: "nemoclaw <name> policy exclude <key>",
-      description: "Exclude a baseline policy entry (persisted, replayed on rebuild)",
+      description: "Remove a baseline entry from the current OpenShell policy",
       flags: "(--force, --yes, -y, --dry-run)",
     },
   ],

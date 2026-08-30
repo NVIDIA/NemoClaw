@@ -25,7 +25,6 @@ function policies(
     listSetupPolicyPresets: () => setupPresets,
     listCustomPresets: () => customPresets,
     customPresetOwnsNetworkPolicyKey: () => options.customOwnsObservability === true,
-    removeBuiltinPresetAttribution: () => undefined,
     getAppliedPresets: () => options.applied ?? [],
     clampSetupPolicyPresetNames(
       names: string[],
@@ -40,17 +39,20 @@ function policies(
 }
 
 function prepare(
-  recordedPolicyPresets: string[],
+  livePolicyPresets: string[],
   provider: "brave" | "tavily",
   webSearchConfigChanged = false,
 ) {
-  return preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
-    recordedPolicyPresets,
-    agent: "openclaw",
-    webSearchConfig: { fetchEnabled: true, provider },
-    webSearchConfigChanged,
-    webSearchSupported: true,
-  });
+  return preparePolicyPresetResumeSelection(
+    { policies: policies({ applied: livePolicyPresets }) },
+    "alpha",
+    {
+      agent: "openclaw",
+      webSearchConfig: { fetchEnabled: true, provider },
+      webSearchConfigChanged,
+      webSearchSupported: true,
+    },
+  );
 }
 
 describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
@@ -58,29 +60,28 @@ describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
     const result = prepare(["brave"], "tavily");
 
     expect(result.policyPresets).toEqual(["tavily"]);
-    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
   it("adds Tavily when web search becomes enabled on resume", () => {
     const result = prepare(["npm"], "tavily", true);
 
     expect(result.policyPresets).toEqual(["npm", "tavily"]);
-    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
   it("preserves an intentionally removed provider preset when configuration is unchanged", () => {
     const result = prepare(["npm"], "tavily");
 
     expect(result.policyPresets).toEqual(["npm"]);
-    expect(result.recordedPolicyPresetsNeedReconcile).toBe(false);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(false);
   });
 
   it("preserves an operator-owned preset name while adding the active provider", () => {
     const result = preparePolicyPresetResumeSelection(
-      { policies: policies({ custom: ["brave"] }) },
+      { policies: policies({ applied: ["brave"], custom: ["brave"] }) },
       "alpha",
       {
-        recordedPolicyPresets: ["brave"],
         agent: "openclaw",
         webSearchConfig: { fetchEnabled: true, provider: "tavily" },
         webSearchConfigChanged: true,
@@ -89,30 +90,32 @@ describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
     );
 
     expect(result.policyPresets).toEqual(["brave", "tavily"]);
-    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 });
 
 describe("preparePolicyPresetResumeSelection required preset reconciliation", () => {
   it.each(["openclaw", "hermes", "langchain-deepagents-code", "pi"])(
-    "repairs a Personal recording missing its tier-defining preset: %s",
+    "repairs a Personal live policy missing its tier-defining preset: %s",
     (agent) => {
-      const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
-        recordedPolicyPresets: ["npm"],
-        agent,
-        tierName: "personal",
-        webSearchConfig: null,
-        webSearchSupported: true,
-      });
+      const result = preparePolicyPresetResumeSelection(
+        { policies: policies({ applied: ["npm"] }) },
+        "alpha",
+        {
+          agent,
+          tierName: "personal",
+          webSearchConfig: null,
+          webSearchSupported: true,
+        },
+      );
 
       expect(result.policyPresets).toEqual(["personal-open-internet", "npm"]);
-      expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+      expect(result.livePolicyPresetsNeedUpdate).toBe(true);
     },
   );
 
-  it("returns the Personal requirement when the legacy recording is null", () => {
+  it("returns the Personal requirement when the legacy live policy is null", () => {
     const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
-      recordedPolicyPresets: null,
       agent: "pi",
       tierName: "personal",
       webSearchConfig: null,
@@ -122,30 +125,36 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
     expect(result.policyPresets).toEqual(["personal-open-internet"]);
   });
 
-  it("marks an explicit empty Personal recording for reconciliation", () => {
-    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
-      recordedPolicyPresets: [],
-      agent: "pi",
-      tierName: "personal",
-      webSearchConfig: null,
-      webSearchSupported: true,
-    });
+  it("marks an explicit empty Personal live policy for reconciliation", () => {
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: [] }) },
+      "alpha",
+      {
+        agent: "pi",
+        tierName: "personal",
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
 
     expect(result.policyPresets).toEqual(["personal-open-internet"]);
-    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
-  it("marks an empty recording for reconciliation when Slack becomes required (#6042)", () => {
-    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
-      recordedPolicyPresets: [],
-      enabledChannels: ["slack"],
-      agent: "openclaw",
-      webSearchConfig: null,
-      webSearchSupported: true,
-    });
+  it("marks an empty live policy for reconciliation when Slack becomes required (#6042)", () => {
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: [] }) },
+      "alpha",
+      {
+        enabledChannels: ["slack"],
+        agent: "openclaw",
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
 
     expect(result.policyPresets).toEqual(["slack"]);
-    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
   it("removes a stale Hermes Slack preset when no messaging channel is enabled", () => {
@@ -153,7 +162,6 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
       { policies: policies({ applied: ["npm", "slack"] }) },
       "alpha",
       {
-        recordedPolicyPresets: ["npm", "slack"],
         enabledChannels: [],
         agent: "hermes",
         webSearchConfig: null,
@@ -162,7 +170,7 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
     );
 
     expect(result.policyPresets).toEqual(["npm"]);
-    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
   it("keeps only the enabled Hermes messaging preset during resume", () => {
@@ -170,7 +178,6 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
       { policies: policies({ applied: ["npm", "slack", "discord"] }) },
       "alpha",
       {
-        recordedPolicyPresets: ["npm", "slack", "discord"],
         enabledChannels: ["discord"],
         agent: "hermes",
         webSearchConfig: null,
@@ -179,7 +186,7 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
     );
 
     expect(result.policyPresets).toEqual(["npm", "discord"]);
-    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
   it("preserves custom ownership of an inactive Hermes messaging preset name", () => {
@@ -187,7 +194,6 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
       { policies: policies({ applied: ["npm", "slack"], custom: ["slack"] }) },
       "alpha",
       {
-        recordedPolicyPresets: ["npm", "slack"],
         enabledChannels: [],
         agent: "hermes",
         webSearchConfig: null,
@@ -196,7 +202,7 @@ describe("preparePolicyPresetResumeSelection required preset reconciliation", ()
     );
 
     expect(result.policyPresets).toEqual(["npm", "slack"]);
-    expect(result.recordedPolicyPresetsNeedReconcile).toBe(false);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(false);
   });
 });
 
@@ -205,42 +211,51 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
   // is a Balanced default, and Restricted lists no such default.
 
   it("preserves brave on reuse when it is a Balanced-tier default and web search is off", () => {
-    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
-      recordedPolicyPresets: ["npm", "brave"],
-      agent: "openclaw",
-      webSearchConfig: null,
-      webSearchSupported: true,
-      tierName: "balanced",
-    });
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["npm", "brave"] }) },
+      "alpha",
+      {
+        agent: "openclaw",
+        webSearchConfig: null,
+        webSearchSupported: true,
+        tierName: "balanced",
+      },
+    );
 
     // brave is a Balanced default (an egress preset), not a stale web-search
     // leftover — it must survive reuse just like npm, and no reconcile is needed.
     expect(result.policyPresets).toEqual(["npm", "brave"]);
-    expect(result.recordedPolicyPresetsNeedReconcile).toBe(false);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(false);
   });
 
   it("still prunes a stale brave on the Restricted tier (no brave default)", () => {
-    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
-      recordedPolicyPresets: ["npm", "brave"],
-      agent: "openclaw",
-      webSearchConfig: null,
-      webSearchSupported: true,
-      tierName: "restricted",
-    });
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["npm", "brave"] }) },
+      "alpha",
+      {
+        agent: "openclaw",
+        webSearchConfig: null,
+        webSearchSupported: true,
+        tierName: "restricted",
+      },
+    );
 
     expect(result.policyPresets).toEqual(["npm"]);
-    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
   it("keeps brave on Balanced even when web search is set to a different provider", () => {
-    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
-      recordedPolicyPresets: ["npm", "brave"],
-      agent: "openclaw",
-      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
-      webSearchConfigChanged: true,
-      webSearchSupported: true,
-      tierName: "balanced",
-    });
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["npm", "brave"] }) },
+      "alpha",
+      {
+        agent: "openclaw",
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+        webSearchConfigChanged: true,
+        webSearchSupported: true,
+        tierName: "balanced",
+      },
+    );
 
     // brave stays as the tier egress default; tavily is added as the active provider.
     expect(result.policyPresets).toEqual(["npm", "brave", "tavily"]);
@@ -250,16 +265,19 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
     // Boundary: the exemption is scoped to real tier defaults. tavily is NOT a
     // Balanced default (brave is), so a leftover tavily with no matching provider
     // is still a stale web-search preset and must be pruned.
-    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
-      recordedPolicyPresets: ["npm", "tavily"],
-      agent: "openclaw",
-      webSearchConfig: null,
-      webSearchSupported: true,
-      tierName: "balanced",
-    });
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["npm", "tavily"] }) },
+      "alpha",
+      {
+        agent: "openclaw",
+        webSearchConfig: null,
+        webSearchSupported: true,
+        tierName: "balanced",
+      },
+    );
 
     expect(result.policyPresets).toEqual(["npm"]);
-    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
   it.each(["hermes", "langchain-deepagents-code"])(
@@ -269,7 +287,6 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
         { policies: policies({ applied: ["npm", "brave"] }) },
         "alpha",
         {
-          recordedPolicyPresets: ["npm", "brave"],
           agent,
           webSearchConfig: null,
           webSearchSupported: true,
@@ -278,43 +295,52 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
       );
 
       expect(result.policyPresets).toEqual(["npm"]);
-      expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+      expect(result.livePolicyPresetsNeedUpdate).toBe(true);
     },
   );
 });
 
 describe("preparePolicyPresetResumeSelection observability reconciliation", () => {
   it("adds the local OTLP preset only while Deep Agents Code observability is enabled", () => {
-    const enabled = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
-      recordedPolicyPresets: ["npm"],
-      agent: "langchain-deepagents-code",
-      observabilityEnabled: true,
-      webSearchConfig: null,
-      webSearchSupported: true,
-    });
-    const disabled = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
-      recordedPolicyPresets: ["npm", "observability-otlp-local"],
-      agent: "langchain-deepagents-code",
-      observabilityEnabled: false,
-      webSearchConfig: null,
-      webSearchSupported: true,
-    });
+    const enabled = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["npm"] }) },
+      "alpha",
+      {
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
+    const disabled = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["npm", "observability-otlp-local"] }) },
+      "alpha",
+      {
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: false,
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
 
     expect(enabled.policyPresets).toEqual(["npm", "observability-otlp-local"]);
-    expect(enabled.recordedPolicyPresetsNeedReconcile).toBe(true);
+    expect(enabled.livePolicyPresetsNeedUpdate).toBe(true);
     expect(disabled.policyPresets).toEqual(["npm"]);
-    expect(disabled.recordedPolicyPresetsNeedReconcile).toBe(true);
+    expect(disabled.livePolicyPresetsNeedUpdate).toBe(true);
   });
 
   it("suppresses the enabled local OTLP preset on the restricted tier", () => {
-    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
-      recordedPolicyPresets: ["npm"],
-      agent: "langchain-deepagents-code",
-      observabilityEnabled: true,
-      webSearchConfig: null,
-      webSearchSupported: true,
-      tierName: "restricted",
-    });
+    const result = preparePolicyPresetResumeSelection(
+      { policies: policies({ applied: ["npm"] }) },
+      "alpha",
+      {
+        agent: "langchain-deepagents-code",
+        observabilityEnabled: true,
+        webSearchConfig: null,
+        webSearchSupported: true,
+        tierName: "restricted",
+      },
+    );
 
     expect(result.policyPresets).toEqual(["npm"]);
   });
@@ -330,7 +356,6 @@ describe("preparePolicyPresetResumeSelection observability reconciliation", () =
       },
       "alpha",
       {
-        recordedPolicyPresets: ["observability-otlp-local", "corp-otel"],
         agent: "langchain-deepagents-code",
         observabilityEnabled: true,
         webSearchConfig: null,
@@ -339,15 +364,19 @@ describe("preparePolicyPresetResumeSelection observability reconciliation", () =
     );
 
     expect(result.policyPresets).toEqual(["corp-otel"]);
-    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+    expect(result.livePolicyPresetsNeedUpdate).toBe(false);
   });
 
   it("preserves same-name different-key custom collision semantics on resume", () => {
     const result = preparePolicyPresetResumeSelection(
-      { policies: policies({ custom: ["observability-otlp-local"] }) },
+      {
+        policies: policies({
+          applied: ["observability-otlp-local"],
+          custom: ["observability-otlp-local"],
+        }),
+      },
       "alpha",
       {
-        recordedPolicyPresets: ["observability-otlp-local"],
         agent: "langchain-deepagents-code",
         observabilityEnabled: true,
         webSearchConfig: null,

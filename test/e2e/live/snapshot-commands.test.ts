@@ -260,31 +260,12 @@ async function rootSandboxPathMetadata(
   return { mode, owner };
 }
 
-async function expectBaselineExclusionAgreement(
-  host: HostCliClient,
+async function expectLiveBaselineExcluded(
+  _host: HostCliClient,
   sandbox: SandboxClient,
   sandboxName: string,
   artifactPrefix: string,
 ): Promise<void> {
-  const status = await host.command("nemoclaw", [sandboxName, "status", "--json"], {
-    artifactName: `${artifactPrefix}-nemoclaw-status-json`,
-    env: commandEnv(),
-    timeoutMs: 60_000,
-  });
-  expect(status.exitCode, resultText(status)).toBe(0);
-  const statusJson = JSON.parse(status.stdout) as { baselineExclusions: string[] };
-  expect(statusJson.baselineExclusions).toContain(BASELINE_EXCLUSION_KEY);
-
-  const policyList = await host.command("nemoclaw", [sandboxName, "policy", "list"], {
-    artifactName: `${artifactPrefix}-nemoclaw-policy-list`,
-    env: commandEnv(),
-    timeoutMs: 60_000,
-  });
-  expect(policyList.exitCode, resultText(policyList)).toBe(0);
-  expect(resultText(policyList)).toMatch(
-    new RegExp(`^[ \\t]+- ${BASELINE_EXCLUSION_KEY} \\(active\\)`, "m"),
-  );
-
   const livePolicy = await sandbox.openshell(["policy", "get", "--base", sandboxName], {
     artifactName: `${artifactPrefix}-openshell-policy-get-base`,
     env: commandEnv(),
@@ -347,8 +328,8 @@ test(
         "snapshot create reports Snapshot v<N> created",
         "snapshot list shows versioned snapshots and parseable timestamps",
         "snapshot restore recovers canonical OpenClaw USER.md and SOUL.md after destroy and fresh same-name onboarding",
-        "baseline exclusions remain active in registry and live policy across rebuild",
-        "legacy snapshot restore --to carries baseline exclusions into clone registry and live policy; managed snapshots refuse before destination effects until clone rebind is activated",
+        "a live baseline-key removal remains in the OpenShell policy across rebuild",
+        "legacy snapshot restore --to carries the source live OpenShell policy into the clone; managed snapshots refuse before destination effects until clone rebind is activated",
         "legacy snapshot restore --to returns only after restored gateway pairing is authenticated",
         "post-restore legacy clone verification sends one clone-fixture request, stores its unique session only in the clone, and sends no source-sandbox negative-control request",
         "latest snapshot restore recovers latest workspace state",
@@ -489,7 +470,7 @@ test(
       },
     );
     expect(excludeBaseline.exitCode, resultText(excludeBaseline)).toBe(0);
-    await expectBaselineExclusionAgreement(host, sandbox, SANDBOX_NAME, "phase-2-after-exclude");
+    await expectLiveBaselineExcluded(host, sandbox, SANDBOX_NAME, "phase-2-after-exclude");
 
     const rebuild = await host.command("nemoclaw", [SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "phase-2-rebuild-with-baseline-exclusion",
@@ -497,7 +478,7 @@ test(
       timeoutMs: 15 * 60_000,
     });
     expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
-    await expectBaselineExclusionAgreement(host, sandbox, SANDBOX_NAME, "phase-2-after-rebuild");
+    await expectLiveBaselineExcluded(host, sandbox, SANDBOX_NAME, "phase-2-after-rebuild");
 
     const markerContent = `SNAPSHOT_E2E_${Date.now()}`;
     const secondContent = `SNAPSHOT_E2E_SECOND_${Date.now()}`;
@@ -596,7 +577,7 @@ printf '%s' ${JSON.stringify(soulContent)} > "$OPENCLAW_WORKSPACE_DIR/SOUL.md"`,
       },
     );
     expect(reapplyBaselineExclusion.exitCode, resultText(reapplyBaselineExclusion)).toBe(0);
-    await expectBaselineExclusionAgreement(
+    await expectLiveBaselineExcluded(
       host,
       sandbox,
       SANDBOX_NAME,
@@ -655,7 +636,7 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
       soulContent,
       "phase-4-read-restored-soul-file",
     );
-    await expectBaselineExclusionAgreement(
+    await expectLiveBaselineExcluded(
       host,
       sandbox,
       SANDBOX_NAME,
@@ -720,7 +701,7 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
           markerContent,
           "phase-4-read-clone-marker",
         );
-        await expectBaselineExclusionAgreement(
+        await expectLiveBaselineExcluded(
           host,
           sandbox,
           CLONE_SANDBOX_NAME,
@@ -1221,7 +1202,7 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
       id: "snapshot-commands",
       status: "passed",
       firstSnapshotTimestamp: timestamp,
-      baselineExclusionKey: BASELINE_EXCLUSION_KEY,
+      excludedLiveBaselineKey: BASELINE_EXCLUSION_KEY,
       cloneSandboxName: CLONE_SANDBOX_NAME,
       cloneRestoreResult,
       stoppedBackupTimestamp,

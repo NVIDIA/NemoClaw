@@ -11,34 +11,33 @@ content:
 skill:
   priority: 20
 ---
-Run NemoClaw on a remote Linux server through SSH without exposing the OpenShell gateway or dashboard to the network.
-This guide covers unattended onboarding, verified readiness, routine updates, and manual recovery after a host reboot.
+
+Run NemoClaw on a remote Linux server through SSH without exposing the OpenShell gateway or dashboard to the network. This guide covers unattended onboarding, verified readiness, routine updates, and manual recovery after a host reboot.
 
 <Note title="Headless Describes Operation, Not a Provider">
-A Linux VM that you provision through Brev is one example of a headless server.
-These instructions also apply to Linux hosts on other clouds, VPS services, or on-premises infrastructure.
-NemoClaw setup starts after server provisioning and does not depend on Brev or its web UI.
+  A Linux VM that you provision through Brev is one example of a headless server. These instructions
+  also apply to Linux hosts on other clouds, VPS services, or on-premises infrastructure. NemoClaw
+  setup starts after server provisioning and does not depend on Brev or its web UI.
 </Note>
 
 <Warning title="Host Reboot Recovery Is Manual">
-NemoClaw does not guarantee that Docker, the OpenShell gateway, sandboxes, tunnels, or host forwards start automatically after a host reboot.
-Use the [manual recovery sequence](#recover-after-a-host-reboot) after each reboot.
-Do not install an unofficial service unit as a substitute for this sequence.
+  NemoClaw does not guarantee that Docker, the OpenShell gateway, sandboxes, tunnels, or host
+  forwards start automatically after a host reboot. Use the [manual recovery
+  sequence](#recover-after-a-host-reboot) after each reboot. Do not install an unofficial service
+  unit as a substitute for this sequence.
 </Warning>
 
 ## Check the Server
 
-Use a Linux host that meets the supported [NemoClaw prerequisites](../get-started/prerequisites).
-The primary tested server path is Linux with Docker.
+Use a Linux host that meets the supported [NemoClaw prerequisites](../get-started/prerequisites). The primary tested server path is Linux with Docker.
 
-| Resource | Minimum | Recommended |
-|---|---:|---:|
-| CPU | 4 vCPU | 4 or more vCPU |
-| RAM | 8 GB | 16 GB |
-| Free disk | 20 GB | 40 GB |
+| Resource  | Minimum |    Recommended |
+| --------- | ------: | -------------: |
+| CPU       |  4 vCPU | 4 or more vCPU |
+| RAM       |    8 GB |          16 GB |
+| Free disk |   20 GB |          40 GB |
 
-The image build, Docker daemon, and OpenShell gateway can exhaust a smaller host during onboarding.
-If the host has less than 8 GB of RAM, configure at least 8 GB of swap before onboarding.
+The image build, Docker daemon, and OpenShell gateway can exhaust a smaller host during onboarding. If the host has less than 8 GB of RAM, configure at least 8 GB of swap before onboarding.
 
 Run these checks from the remote host:
 
@@ -53,17 +52,13 @@ free -h
 swapon --show
 ```
 
-`docker info` must succeed for the same account that runs NemoClaw.
-Membership in the `docker` group grants root-level control of the Docker daemon, so grant it only to trusted accounts.
+`docker info` must succeed for the same account that runs NemoClaw. Membership in the `docker` group grants root-level control of the Docker daemon, so grant it only to trusted accounts.
 
-The host firewall must allow the outbound DNS, HTTPS, image-registry, package-registry, and inference-provider traffic selected during onboarding.
-The OpenShell policy controls traffic from the sandbox and does not replace the host firewall.
-Keep inbound dashboard and OpenShell gateway ports closed when you use SSH forwarding.
+The host firewall must allow the outbound DNS, HTTPS, image-registry, package-registry, and inference-provider traffic selected during onboarding. The OpenShell policy controls traffic from the sandbox and does not replace the host firewall. Keep inbound dashboard and OpenShell gateway ports closed when you use SSH forwarding.
 
 ## Keep Remote Access on Loopback
 
-The OpenShell gateway binds to `127.0.0.1` by default.
-Dashboard and API forwards also stay on loopback outside WSL unless you explicitly change the bind setting.
+The OpenShell gateway binds to `127.0.0.1` by default. Dashboard and API forwards also stay on loopback outside WSL unless you explicitly change the bind setting.
 
 Connect to the server from your workstation:
 
@@ -73,40 +68,32 @@ ssh <user>@<server>
 
 <AgentOnly variant="openclaw,hermes">
 
-After onboarding, keep the server-side forward on loopback and create a second SSH tunnel from your workstation.
-The default dashboard port is `18789`, but NemoClaw can select the next free port through `18799`.
-Use the port printed by `$$nemoclaw headless-agent dashboard-url`.
+After onboarding, keep the server-side forward on loopback and create a second SSH tunnel from your workstation. The default dashboard port is `18789`, but NemoClaw can select the next free port through `18799`. Use the port printed by `$$nemoclaw headless-agent dashboard-url`.
 
 ```bash
 ssh -N -L 18789:127.0.0.1:18789 <user>@<server>
 ```
 
-Then open the loopback URL printed by `$$nemoclaw headless-agent dashboard-url --quiet` on your workstation.
-Replace both `18789` values when NemoClaw selected another port.
+Then open the loopback URL printed by `$$nemoclaw headless-agent dashboard-url --quiet` on your workstation. Replace both `18789` values when NemoClaw selected another port.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents Code is a terminal runtime and has no dashboard port.
-Run `$$nemoclaw launch headless-agent` through the SSH session to start `dcode` in that session.
-Use `$$nemoclaw headless-agent connect` instead when you want a sandbox shell.
+Deep Agents Code is a terminal runtime and has no dashboard port. Run `$$nemoclaw launch headless-agent` through the SSH session to start `dcode` in that session. Use `$$nemoclaw headless-agent connect` instead when you want a sandbox shell.
 
 </AgentOnly>
 
-Do not open port `8080` for remote access.
-Do not bind the dashboard to every interface when an SSH tunnel meets the access requirement.
+Do not open port `8080` for remote access. Do not bind the dashboard to every interface when an SSH tunnel meets the access requirement.
 
 ## Protect a Long Onboarding Run
 
-Run onboarding inside a `tmux` or `screen` session so an SSH disconnect does not terminate the host process.
-To start a `tmux` session, run:
+Run onboarding inside a `tmux` or `screen` session so an SSH disconnect does not terminate the host process. To start a `tmux` session, run:
 
 ```bash
 tmux new-session -s nemoclaw-onboard
 ```
 
-Detach with `Ctrl-b`, then `d` while onboarding continues.
-After you reconnect through SSH, reattach to the session:
+Detach with `Ctrl-b`, then `d` while onboarding continues. After you reconnect through SSH, reattach to the session:
 
 ```bash
 tmux attach-session -t nemoclaw-onboard
@@ -118,15 +105,13 @@ To use `screen` instead, start a session:
 screen -S nemoclaw-onboard
 ```
 
-Detach with `Ctrl-a`, then `d` while onboarding continues.
-After you reconnect through SSH, reattach to the session:
+Detach with `Ctrl-a`, then `d` while onboarding continues. After you reconnect through SSH, reattach to the session:
 
 ```bash
 screen -r nemoclaw-onboard
 ```
 
-Do not enable shell tracing with `set -x` in a session that contains credentials.
-Do not save the session transcript when it can contain a dashboard URL or token.
+Do not enable shell tracing with `set -x` in a session that contains credentials. Do not save the session transcript when it can contain a dashboard URL or token.
 
 If the onboarding process exited after it saved a resumable session, export the same required credential variables and resume it:
 
@@ -136,18 +121,11 @@ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
 $$nemoclaw onboard --resume --yes-i-accept-third-party-software --yes
 ```
 
-`--resume` uses the provider, model, sandbox name, agent, and completed non-secret choices from the saved session.
-Raw credentials are not stored in the onboarding session.
-If resume reports a missing credential variable, inject that variable again and repeat the command.
-Use `--fresh` only when you intend to discard the saved onboarding session and start again.
+`--resume` uses the provider, model, sandbox name, agent, and completed non-secret choices from the saved session. Raw credentials are not stored in the onboarding session. If resume reports a missing credential variable, inject that variable again and repeat the command. Use `--fresh` only when you intend to discard the saved onboarding session and start again.
 
 ## Run Unattended Onboarding
 
-Select a reviewed NemoClaw commit and set its full 40-character SHA before unattended installation.
-The example uses that SHA in both the immutable bootstrap URL and `NEMOCLAW_INSTALL_REF`, so the bootstrap and cloned installer payload come from the same repository state.
-Do not use the mutable `lkg` or `latest` references as the primary install source for a persistent server.
-Inject provider credentials from your secret manager into the host environment before you run this example.
-The example fails before the network install if the commit SHA or `NVIDIA_INFERENCE_API_KEY` is missing or invalid.
+Select a reviewed NemoClaw commit and set its full 40-character SHA before unattended installation. The example uses that SHA in both the immutable bootstrap URL and `NEMOCLAW_INSTALL_REF`, so the bootstrap and cloned installer payload come from the same repository state. Do not use the mutable `lkg` or `latest` references as the primary install source for a persistent server. Inject provider credentials from your secret manager into the host environment before you run this example. The example fails before the network install if the commit SHA or `NVIDIA_INFERENCE_API_KEY` is missing or invalid.
 
 <AgentOnly variant="openclaw">
 
@@ -195,20 +173,16 @@ curl -fsSL "https://raw.githubusercontent.com/NVIDIA/NemoClaw/${NEMOCLAW_INSTALL
   bash
 ```
 
-Pass every onboarding `NEMOCLAW_*` value on the `bash` side of the pipeline so the downloaded installer can read it.
-The commit pin also appears in the bootstrap URL so no mutable tag selects the code that enters the pipeline.
-Do not put a credential before `curl`, in a command-line argument, or in a committed script.
-Unset the credential from the interactive shell after onboarding completes:
+Pass every onboarding `NEMOCLAW_*` value on the `bash` side of the pipeline so the downloaded installer can read it. The commit pin also appears in the bootstrap URL so no mutable tag selects the code that enters the pipeline. Do not put a credential before `curl`, in a command-line argument, or in a committed script. Unset the credential from the interactive shell after onboarding completes:
 
 ```bash
 unset NVIDIA_INFERENCE_API_KEY
 ```
 
-Use the matching credential variable when you select another provider.
-Refer to the [CLI commands reference](../reference/commands#nemoclaw-onboard) for provider-specific variables and accepted values.
+Use the matching credential variable when you select another provider. Refer to the [CLI commands reference](../reference/commands#nemoclaw-onboard) for provider-specific variables and accepted values.
 
 | Variable | Requirement | Secret | Purpose |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `NEMOCLAW_NON_INTERACTIVE=1` | Required for unattended use | No | Disables interactive onboarding prompts. |
 | `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` | Required for unattended use | No | Records explicit acceptance for the current run. |
 | `NEMOCLAW_AGENT` | Required when the agent must not use the default | No | Selects `openclaw`, `hermes`, or `langchain-deepagents-code`. |
@@ -222,9 +196,7 @@ Refer to the [CLI commands reference](../reference/commands#nemoclaw-onboard) fo
 
 ## Verify Readiness
 
-Do not use process presence as the sandbox-ready signal.
-The authoritative OpenShell signal is the row for `headless-agent` in phase `Ready` or `Running`.
-The substring `NotReady` is not a ready state.
+Do not use process presence as the sandbox-ready signal. The authoritative OpenShell signal is the row for `headless-agent` in phase `Ready` or `Running`. The substring `NotReady` is not a ready state.
 
 Run each verification on the remote host:
 
@@ -234,25 +206,17 @@ $$nemoclaw headless-agent status
 $$nemoclaw headless-agent connect --probe-only
 ```
 
-`$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified.
-Its main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox, then sends one inference request over the same route when that probe reports the route reachable.
-The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` when the route returned HTTP `500` through `599`.
+`$$nemoclaw headless-agent status` exits nonzero when the sandbox, gateway, local container, or authoritative inference route is not verified. Its main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox, then sends one inference request over the same route when that probe reports the route reachable. The line reports `healthy` when the route served the request, `unauthorized` when the route rejected it with HTTP `401` or `403`, and `unhealthy` when the route returned HTTP `500` through `599`.
+
 <AgentOnly variant="openclaw,hermes">
 
-During an SSH session, `status` points to `$$nemoclaw headless-agent dashboard-url` only when the agent gateway is running and loopback dashboard access needs a port forward.
-The printed command quotes the sandbox name so that the shell treats it as one argument.
+During an SSH session, `status` points to `$$nemoclaw headless-agent dashboard-url` only when the agent gateway is running and loopback dashboard access needs a port forward. The printed command quotes the sandbox name so that the shell treats it as one argument.
 
 </AgentOnly>
 
-`connect --probe-only` waits up to 300 seconds by default for a cold sandbox to become ready.
-It then verifies or repairs the in-sandbox agent process and host forwards without opening a shell.
-It does not restart or replace the shared host OpenShell gateway.
+`connect --probe-only` waits up to 300 seconds by default for a cold sandbox to become ready. It then verifies or repairs the in-sandbox agent process and host forwards without opening a shell. It does not restart or replace the shared host OpenShell gateway.
 
-The command prints one `Probe timing:` line with elapsed milliseconds for `readiness`, `authority`, `lifecycle`, `gateway`, `processes`, `forward`, `inference`, `pairing`, and `publication` stages.
-Use the stage values to identify where a slow or failed deployment spent its time.
-The line also reports lifecycle and forward actions and names the failed stage when available.
-Timing collection is diagnostic and fail-open.
-The command exit status remains the readiness decision: status `0` means the complete probe passed, and any nonzero status means the host is not ready for launch.
+The command prints one `Probe timing:` line with elapsed milliseconds for `readiness`, `authority`, `lifecycle`, `gateway`, `processes`, `forward`, `inference`, `pairing`, and `publication` stages. Use the stage values to identify where a slow or failed deployment spent its time. The line also reports lifecycle and forward actions and names the failed stage when available. Timing collection is diagnostic and fail-open. The command exit status remains the readiness decision: status `0` means the complete probe passed, and any nonzero status means the host is not ready for launch.
 
 Readiness requires all of these results:
 
@@ -262,8 +226,7 @@ Readiness requires all of these results:
 
 ## Access the Dashboard and API
 
-Retrieve dashboard URLs and API tokens only when you need them.
-Do not write either value to logs, shell history, support bundles, or version control.
+Retrieve dashboard URLs and API tokens only when you need them. Do not write either value to logs, shell history, support bundles, or version control.
 
 <AgentOnly variant="openclaw">
 
@@ -273,8 +236,7 @@ Print the complete authenticated dashboard URL:
 $$nemoclaw headless-agent dashboard-url --quiet
 ```
 
-Use the raw gateway token only for automation that cannot use the tokenized dashboard URL.
-This example authenticates the supported Control UI configuration endpoint on the server loopback interface:
+Use the raw gateway token only for automation that cannot use the tokenized dashboard URL. This example authenticates the supported Control UI configuration endpoint on the server loopback interface:
 
 ```bash
 TOKEN=$($$nemoclaw headless-agent gateway-token --quiet)
@@ -283,8 +245,7 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 unset TOKEN
 ```
 
-An unauthenticated request to this endpoint returns `401`.
-The static path `controlui.bootstrap.config.json` does not exist and returns `404`.
+An unauthenticated request to this endpoint returns `401`. The static path `controlui.bootstrap.config.json` does not exist and returns `404`.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -295,11 +256,7 @@ Print the Hermes dashboard URL:
 $$nemoclaw headless-agent dashboard-url --quiet
 ```
 
-The Hermes OpenAI-compatible API uses the loopback forward on the sandbox's own API port, which onboarding allocates from `8642` through `8652`.
-Run `openshell forward list` and select the `headless-agent` row whose local port is in that range.
-Replace `<api-port>` below with that port.
-For a Hermes sandbox, `gateway-token` is agent-aware and retrieves `API_SERVER_KEY` through the registered `bearer_token` web-auth contract.
-Use it as a bearer token, then clear the shell variable:
+The Hermes OpenAI-compatible API uses the loopback forward on the sandbox's own API port, which onboarding allocates from `8642` through `8652`. Run `openshell forward list` and select the `headless-agent` row whose local port is in that range. Replace `<api-port>` below with that port. For a Hermes sandbox, `gateway-token` is agent-aware and retrieves `API_SERVER_KEY` through the registered `bearer_token` web-auth contract. Use it as a bearer token, then clear the shell variable:
 
 ```bash
 TOKEN=$($$nemoclaw headless-agent gateway-token --quiet)
@@ -311,23 +268,18 @@ unset TOKEN
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents Code does not expose a dashboard URL or gateway token.
-Model traffic uses the OpenShell-managed `inference.local` route.
+Deep Agents Code does not expose a dashboard URL or gateway token. Model traffic uses the OpenShell-managed `inference.local` route.
 
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
 
-OpenClaw generates a new gateway token when the sandbox container starts with mutable configuration.
-If Shields are up, a non-root start preserves the sealed token because the sandbox user cannot replace the protected configuration.
-Retrieve the dashboard URL or token again after the container starts or a replacement sandbox is created.
+OpenClaw generates a new gateway token when the sandbox container starts with mutable configuration. If Shields are up, a non-root start preserves the sealed token because the sandbox user cannot replace the protected configuration. Retrieve the dashboard URL or token again after the container starts or a replacement sandbox is created.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Hermes preserves its `API_SERVER_KEY` when the same sandbox container restarts.
-A replacement sandbox generates a new `API_SERVER_KEY`.
-Retrieve the dashboard URL or token again after a replacement sandbox is created.
+Hermes preserves its `API_SERVER_KEY` when the same sandbox container restarts. A replacement sandbox generates a new `API_SERVER_KEY`. Retrieve the dashboard URL or token again after a replacement sandbox is created.
 
 </AgentOnly>
 
@@ -336,16 +288,14 @@ Retrieve the dashboard URL or token again after a replacement sandbox is created
 NemoClaw separates provider credentials, host metadata, and sandbox state.
 
 | Boundary | Stored data | Rebuild behavior |
-|---|---|---|
+| --- | --- | --- |
 | OpenShell gateway | Provider credentials and provider registrations | Reused when the gateway and provider binding remain available. Raw values cannot be read back. |
-| `~/.nemoclaw/` on the host | Sandbox registry, provider names, policy metadata, and onboarding session state | Preserved by normal updates. The directory contains metadata, not provider credential values. |
+| `~/.nemoclaw/` on the host | Sandbox registry, provider names, and onboarding session state | Preserved by normal updates. The directory contains no sandbox policy or provider credential values. |
 | Agent configuration in the sandbox | Generated inference routes, OpenShell resolver placeholders, and agent-specific settings | Regenerated from host registry and OpenShell state. Generated files are not a credential store. |
 | Manifest-defined sandbox state | Agent workspace, memory, skills, and agent-specific durable files | Snapshotted and restored according to the selected agent manifest. |
 | Arbitrary environment and profile edits | Direct shell exports and edits outside the manifest contract | Not guaranteed. Export host variables again and use documented host commands for durable configuration. |
 
-NemoClaw holds an environment-supplied provider credential in memory while it registers the value with OpenShell.
-The sandbox receives a resolver placeholder, and OpenShell substitutes the raw value at egress.
-For details, refer to [Credential Storage](../security/credential-storage).
+NemoClaw holds an environment-supplied provider credential in memory while it registers the value with OpenShell. The sandbox receives a resolver placeholder, and OpenShell substitutes the raw value at egress. For details, refer to [Credential Storage](../security/credential-storage).
 
 Install a declarative agent skill through the supported host command:
 
@@ -353,13 +303,11 @@ Install a declarative agent skill through the supported host command:
 $$nemoclaw headless-agent skill install ./my-skill/
 ```
 
-The skill directory must contain `SKILL.md` with a `name` field in its YAML frontmatter.
-Do not assume that packages, shell exports, or profile edits made by a skill survive a rebuild.
+The skill directory must contain `SKILL.md` with a `name` field in its YAML frontmatter. Do not assume that packages, shell exports, or profile edits made by a skill survive a rebuild.
 
 ## Add a Least-Privilege Policy
 
-Use an additive custom preset when the sandbox needs a destination that the current policy does not allow.
-Scope the host, port, method, path, and executable to the smallest required set.
+Use an additive custom preset when the sandbox needs a destination that the current policy does not allow. Scope the host, port, method, path, and executable to the smallest required set.
 
 Save a reviewed preset as `./presets/internal-status.yaml`, preview it, then apply it without a prompt:
 
@@ -369,15 +317,9 @@ $$nemoclaw headless-agent policy add --from-file ./presets/internal-status.yaml 
 $$nemoclaw headless-agent policy list
 ```
 
-`--yes` skips the confirmation prompt but does not skip schema, destination, or SSRF validation.
-NemoClaw records the full validated YAML content in the sandbox registry.
-Snapshot restore and rebuild replay that recorded preset even when the original host file is unavailable.
-Keep the source YAML in your configuration repository so operators can review and change it.
-For the preset schema and removal workflow, refer to [Network Policies](../reference/network-policies).
+`--yes` skips the confirmation prompt but does not skip schema, destination, or SSRF validation. NemoClaw merges the validated content into the current OpenShell policy and stores no second copy in the sandbox registry. Snapshot clone and rebuild carry the complete current OpenShell policy forward. Keep the source YAML in your configuration repository so operators can review and intentionally reapply changes. For the preset schema and removal workflow, refer to [Network Policies](../reference/network-policies).
 
-An SSH command without `-t`, a service unit, and a CI job have no terminal on stdin, so the preset picker cannot run there.
-Pass the preset name, `--from-file`, or `--from-dir` in such a session.
-`policy add` and `policy remove` skip their confirmation prompts without a terminal on stdin, so neither needs `--yes` or `NEMOCLAW_NON_INTERACTIVE=1`.
+An SSH command without `-t`, a service unit, and a CI job have no terminal on stdin, so the preset picker cannot run there. Pass the preset name, `--from-file`, or `--from-dir` in such a session. `policy add` and `policy remove` skip their confirmation prompts without a terminal on stdin, so neither needs `--yes` or `NEMOCLAW_NON_INTERACTIVE=1`.
 
 ## Plan for Updates and Rebuilds
 
@@ -396,30 +338,31 @@ curl -fsSL "https://raw.githubusercontent.com/NVIDIA/NemoClaw/${NEMOCLAW_INSTALL
 $$nemoclaw upgrade-sandboxes --check
 ```
 
-Use a newly reviewed commit SHA for each planned update instead of relying on the mutable installer default.
-The installer requires current backups before it changes an existing managed installation.
-Use `$$nemoclaw headless-agent rebuild` when you need the current agent image while preserving supported state.
+Use a newly reviewed commit SHA for each planned update instead of relying on the mutable installer default. The installer requires current backups before it changes an existing managed installation. Use `$$nemoclaw headless-agent rebuild` when you need the current agent image while preserving supported state.
 
 | Item | Same-container restart | Snapshot and restore | Rebuild or sandbox upgrade |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Provider configuration | Preserved | Provider names are recorded, but raw credentials are not in the snapshot | Regenerated from registry and OpenShell provider state |
-| Custom preset YAML applied with `policy add` | Preserved in registry | Stored content is included in snapshot metadata | Replayed from stored content |
+| Current OpenShell policy, including custom presets and host edits | Remains in OpenShell | Read live for a clone handoff, not stored in snapshot metadata | Read live and handed to replacement creation |
 | Manifest-defined user and agent state | Preserved | Preserved | Preserved when backup and restore succeed |
 | Arbitrary files outside manifest state | Usually remain in the same writable layer | Not preserved | Not preserved |
 | Manually installed system or global packages | Usually remain in the same writable layer | Not preserved | Not preserved |
 | Direct edits to generated profile, config, or environment files | May remain until regeneration | Agent-specific and usually excluded or filtered | Regenerated or filtered by the current manifest |
+
 <AgentOnly variant="openclaw">
-| OpenClaw gateway token | Rotated when the container starts with mutable configuration; preserved for a non-root start while Shields are up | Not captured; a replacement sandbox generates a new token | Rotated for the replacement sandbox |
+  | OpenClaw gateway token | Rotated when the container starts with mutable configuration; preserved
+  for a non-root start while Shields are up | Not captured; a replacement sandbox generates a new
+  token | Rotated for the replacement sandbox |
 </AgentOnly>
 <AgentOnly variant="hermes">
-| Hermes `API_SERVER_KEY` | Preserved | Not captured; a replacement sandbox generates a new token | Rotated for the replacement sandbox |
+  | Hermes `API_SERVER_KEY` | Preserved | Not captured; a replacement sandbox generates a new token
+  | Rotated for the replacement sandbox |
 </AgentOnly>
-| Host tunnel process | Not applicable to a container restart | Not preserved | Not preserved |
-| Dashboard, API, messaging, and agent forwards | Preserved only while their host processes remain active | Re-established during supported recovery | Re-established and verified after rebuild |
+| Host tunnel process | Not applicable to a container restart | Not preserved | Not preserved | |
+Dashboard, API, messaging, and agent forwards | Preserved only while their host processes remain
+active | Re-established during supported recovery | Re-established and verified after rebuild |
 
-Snapshot only the state that the current agent manifest declares.
-Download any required file outside that contract before a destructive operation.
-Refer to [Understand Sandbox State](../manage-sandboxes/state-and-backups/understand-sandbox-state) and [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) for agent-specific exclusions.
+Snapshot only the state that the current agent manifest declares. Download any required file outside that contract before a destructive operation. Refer to [Understand Sandbox State](../manage-sandboxes/state-and-backups/understand-sandbox-state) and [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) for agent-specific exclusions.
 
 ## Recover After a Host Reboot
 
@@ -460,26 +403,23 @@ If the sandbox is ready but the in-sandbox agent gateway or host forward remains
 $$nemoclaw headless-agent recover
 ```
 
-`recover`, `start`, and `connect --probe-only` do not restart the shared host OpenShell gateway.
-If they report a host gateway RPC error, follow the printed host gateway recovery guidance.
+`recover`, `start`, and `connect --probe-only` do not restart the shared host OpenShell gateway. If they report a host gateway RPC error, follow the printed host gateway recovery guidance.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents Code has no in-sandbox gateway to recover.
-If status reports a degraded terminal runtime after the sandbox becomes ready, rebuild the sandbox.
+Deep Agents Code has no in-sandbox gateway to recover. If status reports a degraded terminal runtime after the sandbox becomes ready, rebuild the sandbox.
 
 </AgentOnly>
 
-If the registry entry remains but the sandbox container is missing, rebuild from recorded metadata and the latest valid snapshot:
+If the registry entry remains but the sandbox container is missing, rebuild cannot recover the sandbox because its authoritative OpenShell policy and live workspace are gone. Remove the stale local entry and create a clean replacement:
 
 ```bash
-$$nemoclaw headless-agent rebuild --yes
+$$nemoclaw headless-agent destroy --yes
+$$nemoclaw onboard
 ```
 
-Do not destroy the registry entry before this recovery attempt because rebuild needs that metadata.
-If you intentionally deleted the sandbox and want a new installation, destroy the stale registry entry and run onboarding again.
-For failure-specific recovery boundaries, refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+The missing sandbox's state cannot be recovered unless you have a separate snapshot. After onboarding, restore that snapshot explicitly. For failure-specific recovery boundaries, refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -493,20 +433,15 @@ Use the failure layer from `$$nemoclaw headless-agent status` before you choose 
 
 ### Onboarding Was Interrupted
 
-Reattach to the `tmux` or `screen` session first.
-If the process exited with a resumable session, inject the required credentials and use `onboard --resume`.
-Do not use `--fresh` unless discarding the saved choices and progress is intentional.
+Reattach to the `tmux` or `screen` session first. If the process exited with a resumable session, inject the required credentials and use `onboard --resume`. Do not use `--fresh` unless discarding the saved choices and progress is intentional.
 
 ### The Sandbox Is Missing or Not Ready
 
-Run `openshell sandbox list` and inspect the row for `headless-agent`.
-`NotReady` does not satisfy readiness.
-Run `$$nemoclaw headless-agent status`, then use its `start`, `connect --probe-only`, or `rebuild --yes` guidance.
+Run `openshell sandbox list` and inspect the row for `headless-agent`. `NotReady` does not satisfy readiness. Run `$$nemoclaw headless-agent status`, then use its `start`, `connect --probe-only`, or `rebuild --yes` guidance.
 
 ### Inference Returns HTTP 5xx
 
-An HTTP status from `500` through `599` makes the authoritative `inference.local` route unhealthy.
-Check the configured provider and host egress, then run:
+An HTTP status from `500` through `599` makes the authoritative `inference.local` route unhealthy. Check the configured provider and host egress, then run:
 
 ```bash
 $$nemoclaw headless-agent doctor
@@ -520,9 +455,7 @@ Do not treat a running agent process as proof that inference works.
 
 ### Dashboard or Token Retrieval Fails
 
-Run `$$nemoclaw headless-agent status` and `connect --probe-only` before retrieving the URL or token again.
-The token command exits nonzero when the sandbox is not registered, not running, or cannot expose its agent-specific token.
-Do not paste a token into diagnostics.
+Run `$$nemoclaw headless-agent status` and `connect --probe-only` before retrieving the URL or token again. The token command exits nonzero when the sandbox is not registered, not running, or cannot expose its agent-specific token. Do not paste a token into diagnostics.
 
 </AgentOnly>
 
