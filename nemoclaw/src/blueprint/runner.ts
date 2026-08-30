@@ -2356,6 +2356,23 @@ function safeRunDir(runsDir: string, rid: string): string {
   return resolved;
 }
 
+/**
+ * Assert the run's state directory can be read, distinguishing "no such run"
+ * from "cannot read it". A bare catch reports an EACCES run directory as
+ * missing, sending the operator after state that is present but unreadable.
+ */
+function assertRunDirReadable(stateDir: string, rid: string): void {
+  try {
+    readdirSync(stateDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(`Run ${rid} not found.`);
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Cannot read run directory for run ${rid}: ${detail}`);
+  }
+}
+
 export function actionStatus(rid?: string): void {
   emitRunId();
   const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
@@ -2435,11 +2452,7 @@ export async function actionReconcile(rid: string): Promise<void> {
 
   const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
   const stateDir = safeRunDir(runsDir, rid);
-  try {
-    readdirSync(stateDir);
-  } catch {
-    throw new Error(`Run ${rid} not found.`);
-  }
+  assertRunDirReadable(stateDir, rid);
 
   const planFile = join(stateDir, "plan.json");
   let plan: ReconciliationPlanSource;
@@ -2553,11 +2566,7 @@ export async function actionRollback(rid: string): Promise<void> {
 
   const runsDir = join(homedir(), ".nemoclaw", "state", "runs");
   const stateDir = safeRunDir(runsDir, rid);
-  try {
-    readdirSync(stateDir);
-  } catch {
-    throw new Error(`Run ${rid} not found.`);
-  }
+  assertRunDirReadable(stateDir, rid);
 
   const planFile = join(stateDir, "plan.json");
   let sandboxName: string;

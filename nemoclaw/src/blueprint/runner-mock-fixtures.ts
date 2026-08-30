@@ -42,7 +42,7 @@ export function createRunnerFsStore(): RunnerFsStore {
 }
 
 function missingEntry(path: string): never {
-  throw new Error(`ENOENT: ${path}`);
+  throw Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
 }
 
 /** Behavior options for inMemoryFsMethods. */
@@ -89,7 +89,7 @@ export function inMemoryFsMethods(store: Map<string, RunnerFsEntry>, options?: I
       store.set(destination, entry);
       store.delete(source);
     }),
-    readdirSync: (p: string) => {
+    readdirSync: spy((p: string) => {
       const prefix = p.endsWith("/") ? p : `${p}/`;
       const entries = new Set(
         [...store.keys()]
@@ -98,7 +98,7 @@ export function inMemoryFsMethods(store: Map<string, RunnerFsEntry>, options?: I
           .filter((first): first is string => Boolean(first)),
       );
       return entries.size === 0 && !store.has(p) ? missingEntry(p) : [...entries].sort();
-    },
+    }),
     realpathSync: (p: string) => {
       const resolved = resolve(p);
       const mapped = options?.realpaths?.get(resolved);
