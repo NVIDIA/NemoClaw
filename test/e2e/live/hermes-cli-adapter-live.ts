@@ -39,13 +39,13 @@ export function onlyNewHermesSessionId(before: Set<string>, after: Set<string>):
   return created[0];
 }
 
-export async function assertHermesFollowUpReplies({
+function createHermesCliRunner({
   env,
   redactionValues,
   sandbox,
   sandboxName,
-}: HermesFollowUpReplyOptions): Promise<HermesFollowUpReplyEvidence> {
-  const runHermesCli = async (args: string[], artifactName: string, timeoutMs = 6 * 60_000) => {
+}: HermesFollowUpReplyOptions) {
+  return async (args: string[], artifactName: string, timeoutMs = 6 * 60_000) => {
     const result = await sandbox.exec(sandboxName, ["hermes", ...args], {
       artifactName,
       env,
@@ -55,6 +55,15 @@ export async function assertHermesFollowUpReplies({
     expect(result.exitCode, resultText(result)).toBe(0);
     return result;
   };
+}
+
+export async function assertHermesFollowUpReplies({
+  env,
+  redactionValues,
+  sandbox,
+  sandboxName,
+}: HermesFollowUpReplyOptions): Promise<HermesFollowUpReplyEvidence> {
+  const runHermesCli = createHermesCliRunner({ env, redactionValues, sandbox, sandboxName });
   const listDefaultSessionsText = async (artifactName: string) =>
     resultText(await runHermesCli(["sessions", "list"], artifactName, 60_000));
   const listDefaultSessions = async (artifactName: string) =>
@@ -130,16 +139,7 @@ export async function assertHermesCliAdapterLiveContract({
   sandbox,
   sandboxName,
 }: HermesCliAdapterLiveOptions): Promise<void> {
-  const runHermesCli = async (args: string[], artifactName: string, timeoutMs = 6 * 60_000) => {
-    const result = await sandbox.exec(sandboxName, ["hermes", ...args], {
-      artifactName,
-      env,
-      redactionValues,
-      timeoutMs,
-    });
-    expect(result.exitCode, resultText(result)).toBe(0);
-    return result;
-  };
+  const runHermesCli = createHermesCliRunner({ env, redactionValues, sandbox, sandboxName });
   const listDefaultSessions = async (artifactName: string) =>
     hermesSessionIds(resultText(await runHermesCli(["sessions", "list"], artifactName, 60_000)));
 
