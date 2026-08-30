@@ -244,17 +244,30 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     errors.push(
       "specialist job env.PR_REVIEW_ADVISOR_INTEREST must be ${{ matrix.advisor.interest }}",
     );
-  const prepareInputs = namedStep(specialists, "Prepare advisor sandbox inputs");
-  const prepareEnvironment = object(prepareInputs?.env);
-  if (prepareEnvironment.BASE_REF !== BASE_REF_EXPRESSION)
-    errors.push("Prepare advisor sandbox inputs must receive the selected base ref");
-  if (prepareEnvironment.HEAD_REF !== HEAD_REF_EXPRESSION)
-    errors.push("Prepare advisor sandbox inputs must receive the selected head ref");
+  const prepare = namedStep(specialists, "Prepare advisor sandbox inputs");
+  const preparationEnvironment = object(prepare?.env);
+  if (preparationEnvironment.BASE_REF !== BASE_REF_EXPRESSION)
+    errors.push("advisor preparation must receive the selected base ref");
+  if (preparationEnvironment.HEAD_REF !== HEAD_REF_EXPRESSION)
+    errors.push("advisor preparation must receive the selected head ref");
   if (
-    prepareEnvironment.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH !==
+    preparationEnvironment.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH !==
     "${{ runner.temp }}/shared-pr-review-advisor-context/github-context.json"
   )
-    errors.push("Prepare advisor sandbox inputs must receive the downloaded GitHub context");
+    errors.push("advisor preparation must receive the downloaded GitHub context");
+  if (
+    preparationEnvironment.OPENAI_API_KEY !== undefined ||
+    preparationEnvironment.PR_REVIEW_ADVISOR_API_KEY !== undefined
+  )
+    errors.push("advisor preparation must not receive model credentials");
+  const install = namedStep(specialists, "Install Pi SDK");
+  const lifecycle = namedStep(specialists, "Run advisor specialist lifecycle");
+  const steps = jobSteps(specialists);
+  if (
+    steps.indexOf(install ?? {}) >= steps.indexOf(prepare ?? {}) ||
+    steps.indexOf(prepare ?? {}) >= steps.indexOf(lifecycle ?? {})
+  )
+    errors.push("advisor workflow must order install, credential-free preparation, then analysis");
   const specialistUpload = namedStep(specialists, "Upload specialist review");
   if (!String(specialistUpload?.uses ?? "").startsWith("actions/upload-artifact@"))
     errors.push("specialist review step must use actions/upload-artifact");

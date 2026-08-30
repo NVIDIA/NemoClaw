@@ -607,6 +607,43 @@ describe("local PR review advisor", () => {
     expect(fs.existsSync(removedRoot)).toBe(false);
   });
 
+  it("stops between specialists and restores a received signal after cleanup (#10611)", async () => {
+    const source = repository();
+    const calls: string[] = [];
+    let receiveSignal!: (signal: NodeJS.Signals) => void;
+    let removedRoot = "";
+    const restore = vi.fn();
+    const lifecycle: LocalReviewLifecycle = {
+      ...artifactLifecycle(),
+      prepare: async (env) => void calls.push("prepare:" + env.PR_REVIEW_ADVISOR_INTEREST),
+      remove: () => receiveSignal("SIGTERM"),
+    };
+
+    await expect(
+      runLocalReview({
+        source,
+        specialists: ADVISOR_SPECIALISTS.slice(0, 2),
+        lifecycle,
+        signals: {
+          listen: (callback) => {
+            receiveSignal = callback;
+            return () => undefined;
+          },
+          restore,
+        },
+        removeTemporaryRoot: (root, options) => {
+          removedRoot = root as string;
+          fs.rmSync(root, options);
+        },
+      }),
+    ).resolves.toBe(path.join(source, "artifacts", "pr-review-advisor-local"));
+
+    expect(calls).toEqual(["prepare:" + ADVISOR_SPECIALISTS[0]!.interest]);
+    expect(restore).toHaveBeenCalledWith("SIGTERM");
+    expect(fs.existsSync(removedRoot)).toBe(false);
+    expect(fs.existsSync(path.join(source, "artifacts", "pr-review-advisor-local"))).toBe(false);
+  });
+
   it("owns gateway cleanup while provider configuration is pending (#10611)", async () => {
     const source = repository();
     let rejectConfiguration!: (error: Error) => void;

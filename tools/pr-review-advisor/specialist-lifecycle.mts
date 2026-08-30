@@ -67,9 +67,11 @@ export async function runAdvisorSpecialist(input: {
   env: NodeJS.ProcessEnv;
   lifecycle?: AdvisorSpecialistLifecycle;
   unavailableIsSuccess?: boolean;
+  prepare?: boolean;
   validate?: () => void;
   setActiveCleanup?: (cleanup: (() => Promise<void>) | undefined) => void;
-}): Promise<"complete" | "unavailable"> {
+  cancelled?: () => boolean;
+}): Promise<"complete" | "unavailable" | "cancelled"> {
   const lifecycle = input.lifecycle ?? defaultAdvisorSpecialistLifecycle;
   let gateway: ReturnType<AdvisorSpecialistLifecycle["startGateway"]>;
   let sandbox = false;
@@ -77,48 +79,52 @@ export async function runAdvisorSpecialist(input: {
   let cleanupPromise: Promise<void> | undefined;
   let stage = "prepare";
   const cleanup = (): Promise<void> =>
-    (cleanupPromise ??= (async () => {
-      const errors: Error[] = [];
-      if (execution) {
-        try {
-          await (execution.cancel() ?? execution.completion);
-        } catch (error) {
-          errors.push(failure("execution cleanup", input.env, error));
+    (cleanupPromise ??= Promise.resolve()
+      .then(async () => {
+        const errors: Error[] = [];
+        if (execution) {
+          try {
+            await (execution.cancel() ?? execution.completion);
+          } catch (error) {
+            errors.push(failure("execution cleanup", input.env, error));
+          }
+          execution = undefined;
         }
-        execution = undefined;
-      }
-      if (sandbox) {
-        try {
-          lifecycle.remove(input.env);
-          sandbox = false;
-        } catch (error) {
-          errors.push(failure("cleanup", input.env, error));
+        if (sandbox) {
+          try {
+            lifecycle.remove(input.env);
+            sandbox = false;
+          } catch (error) {
+            errors.push(failure("cleanup", input.env, error));
+          }
         }
-      }
-      try {
-        await gateway?.stop?.();
-        gateway = undefined;
-      } catch (error) {
-        errors.push(failure("gateway cleanup", input.env, error));
-      }
-      if (errors.length)
-        throw new AggregateError(errors, errors.map((error) => error.message).join("; "), {
-          cause: errors[0],
-        });
-    })().catch((error) => {
-      cleanupPromise = undefined;
-      throw error;
-    }));
+        try {
+          await gateway?.stop?.();
+          gateway = undefined;
+        } catch (error) {
+          errors.push(failure("gateway cleanup", input.env, error));
+        }
+        if (errors.length)
+          throw new AggregateError(errors, errors.map((error) => error.message).join("; "), {
+            cause: errors[0],
+          });
+      })
+      .catch((error) => {
+        cleanupPromise = undefined;
+        throw error;
+      }));
   let primary: Error | undefined;
   let cleanupError: unknown;
-  let result: "complete" | "unavailable" = "complete";
+  let result: "complete" | "unavailable" | "cancelled" = "complete";
   try {
-    await lifecycle.prepare(input.env);
+    if (input.prepare !== false) await lifecycle.prepare(input.env);
+    if (input.cancelled?.()) result = "cancelled";
     stage = "configure";
-    gateway = lifecycle.startGateway(input.env);
+    if (result === "complete") gateway = lifecycle.startGateway(input.env);
     input.setActiveCleanup?.(cleanup);
     try {
       await gateway?.configure;
+      if (input.cancelled?.()) result = "cancelled";
     } catch (error) {
       lifecycle.unavailable?.(input.env, error);
       if (input.unavailableIsSuccess) result = "unavailable";
@@ -134,11 +140,14 @@ export async function runAdvisorSpecialist(input: {
       if (execution) {
         await execution.completion;
         execution = undefined;
+        if (input.cancelled?.()) result = "cancelled";
       }
-      stage = "download";
-      lifecycle.download(input.env);
-      stage = "validate";
-      input.validate?.();
+      if (result === "complete") {
+        stage = "download";
+        lifecycle.download(input.env);
+        stage = "validate";
+        input.validate?.();
+      }
     }
   } catch (error) {
     primary = failure(stage, input.env, error);
@@ -172,7 +181,7 @@ export async function runAdvisorSpecialistCommand(
     lifecycle.unavailable?.(env, new Error("Advisor inference is unavailable"));
     return;
   }
-  await runAdvisorSpecialist({ env, lifecycle });
+  await runAdvisorSpecialist({ env, lifecycle, prepare: false });
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   runAdvisorSpecialistCommand(process.argv[2]).catch((error) => {

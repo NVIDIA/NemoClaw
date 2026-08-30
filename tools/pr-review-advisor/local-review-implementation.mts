@@ -334,6 +334,10 @@ export async function runLocalReview(input: {
   advisorDirectory?: string;
   publication?: LocalReviewPublication;
   removeTemporaryRoot?: typeof fs.rmSync;
+  signals?: {
+    listen: (handler: (signal: NodeJS.Signals) => void) => () => void;
+    restore: (signal: NodeJS.Signals) => void;
+  };
 }): Promise<string> {
   const source = fs.realpathSync(input.source);
   if (!input.lifecycle && !process.env.PR_REVIEW_ADVISOR_API_KEY)
@@ -349,18 +353,23 @@ export async function runLocalReview(input: {
   let activeCleanup: (() => Promise<void>) | undefined;
   let staged: StagedPublication | undefined;
   let receivedSignal: NodeJS.Signals | undefined;
-  const handlers = new Map<NodeJS.Signals, () => void>();
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-    const handler = (): void => {
-      receivedSignal ??= signal;
-      void activeCleanup?.().catch(() => undefined);
-    };
-    handlers.set(signal, handler);
-    process.once(signal, handler);
-  }
-  const removeHandlers = (): void => {
-    for (const [signal, handler] of handlers) process.off(signal, handler);
+  const receiveSignal = (signal: NodeJS.Signals): void => {
+    receivedSignal ??= signal;
+    void activeCleanup?.().catch(() => undefined);
   };
+  const removeHandlers = input.signals
+    ? input.signals.listen(receiveSignal)
+    : (() => {
+        const handlers = new Map<NodeJS.Signals, () => void>();
+        for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+          const handler = (): void => receiveSignal(signal);
+          handlers.set(signal, handler);
+          process.once(signal, handler);
+        }
+        return (): void => {
+          for (const [signal, handler] of handlers) process.off(signal, handler);
+        };
+      })();
   let primary: unknown;
   let cleanup: unknown;
   try {
@@ -386,7 +395,9 @@ export async function runLocalReview(input: {
         setActiveCleanup: (value) => {
           activeCleanup = value;
         },
+        cancelled: () => receivedSignal !== undefined,
       });
+      if (receivedSignal) break;
     }
     staged = stageArtifacts(
       source,
@@ -411,7 +422,10 @@ export async function runLocalReview(input: {
   removeHandlers();
   if (receivedSignal) {
     if (cleanup) console.error(safeDiagnostic(cleanup));
-    process.kill(process.pid, receivedSignal);
+    (input.signals?.restore ?? ((signal) => void process.kill(process.pid, signal)))(
+      receivedSignal,
+    );
+    if (input.signals) return destination;
   }
   if (primary) {
     if (cleanup)

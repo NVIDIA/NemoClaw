@@ -33,6 +33,10 @@ import {
   writeUnavailableAdvisorArtifacts,
 } from "../../../tools/pr-review-advisor/openshell.mts";
 import { runPrReviewAdvisorAnalysis } from "../../../tools/pr-review-advisor/run-analysis.mts";
+import {
+  runAdvisorSpecialistCommand,
+  type AdvisorSpecialistLifecycle,
+} from "../../../tools/pr-review-advisor/specialist-lifecycle.mts";
 import { ADVISOR_INTERESTS } from "../../../tools/pr-review-advisor/specialists.mts";
 
 const temporaryDirectories: string[] = [];
@@ -103,6 +107,33 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+describe("PR review advisor specialist lifecycle", () => {
+  it.each([
+    ["enabled", "1", ["prepare", "configure", "create", "run", "download", "remove"]],
+    ["disabled", "0", ["prepare", "unavailable"]],
+  ])("uses one prior preparation for %s analysis", async (_case, enabled, expected) => {
+    const calls: string[] = [];
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => void calls.push("prepare"),
+      startGateway: () => {
+        calls.push("configure");
+        return { configure: Promise.resolve() };
+      },
+      create: () => void calls.push("create"),
+      run: () => void calls.push("run"),
+      download: () => void calls.push("download"),
+      remove: () => void calls.push("remove"),
+      unavailable: () => void calls.push("unavailable"),
+    };
+
+    const env = { PR_REVIEW_ADVISOR_RUN_ANALYSIS: enabled };
+    await runAdvisorSpecialistCommand("prepare", env, lifecycle);
+    await runAdvisorSpecialistCommand("analysis", env, lifecycle);
+
+    expect(calls).toEqual(expected);
+  });
 });
 
 describe("PR review advisor OpenShell wrapper", () => {
