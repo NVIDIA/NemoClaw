@@ -96,7 +96,6 @@ seccomp:
     });
     expect(policy).toMatchObject({
       landlock: { compatibility: "host_choice" },
-      seccomp: { profile: "replacement-default" },
     });
     expect(policy.network_policies).toEqual({
       host_edit: {
@@ -107,12 +106,9 @@ seccomp:
         name: "npm",
         endpoints: [{ host: "host-npm.example.com", port: 443 }],
       },
-      replacement_network: {
-        name: "replacement_network",
-        endpoints: [{ host: "replacement.example.com", port: 443 }],
-      },
     });
     expect(policy.network_policies).not.toHaveProperty("npm");
+    expect(policy).not.toHaveProperty("seccomp");
   });
 
   it("reuses the exact live source when the replacement needs no additional access", () => {
@@ -123,19 +119,13 @@ seccomp:
     });
   });
 
-  it("adds missing baseline network access when no filesystem change is needed", () => {
+  it("preserves live network policy when no filesystem change is needed", () => {
     const live = "version: 1\nnetwork_policies:\n  host_edit: {name: host_edit}\n";
     const replacement =
       "version: 1\nnetwork_policies:\n  managed_inference: {name: managed_inference}\n";
-    const merged = mergeReplacementPolicyAccess(live, replacement);
-
-    expect(merged.changed).toBe(true);
-    expect(YAML.parse(merged.source)).toEqual({
-      version: 1,
-      network_policies: {
-        host_edit: { name: "host_edit" },
-        managed_inference: { name: "managed_inference" },
-      },
+    expect(mergeReplacementPolicyAccess(live, replacement)).toEqual({
+      changed: false,
+      source: live,
     });
   });
 
@@ -164,8 +154,9 @@ seccomp:
     expect(materialized.mode).toBe(0o600);
     expect(materialized.policy).toMatchObject({
       filesystem_policy: { read_only: ["/usr", "/run/replacement"] },
-      network_policies: { host_edit: {}, replacement: {} },
+      network_policies: { host_edit: {} },
     });
+    expect(materialized.policy).not.toMatchObject({ network_policies: { replacement: {} } });
     expect(handoff.appliedPresets).toEqual([]);
     expect(handoff.cleanup?.()).toBe(true);
     expect(cleanupReplacement).toHaveBeenCalledOnce();

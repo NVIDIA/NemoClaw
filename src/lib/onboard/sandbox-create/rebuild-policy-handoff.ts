@@ -88,60 +88,10 @@ function mergeReplacementFilesystemAccess(
   return true;
 }
 
-function networkPolicyIdentity(key: string, value: unknown): string {
-  if (!isPolicyMapping(value)) return key;
-  const name = value.name;
-  return typeof name === "string" && name.trim().length > 0 ? name : key;
-}
-
-function mergeReplacementNetworkPolicies(live: PolicyMapping, replacement: PolicyMapping): boolean {
-  const replacementNetworkValue = replacement.network_policies;
-  if (replacementNetworkValue === undefined) return false;
-  const replacementNetwork = policyMapping(replacementNetworkValue, "replacement network_policies");
-  const liveNetworkValue = live.network_policies;
-  const liveNetwork =
-    liveNetworkValue === undefined
-      ? {}
-      : structuredClone(policyMapping(liveNetworkValue, "live network_policies"));
-  const liveIdentities = new Set(
-    Object.entries(liveNetwork).flatMap(([key, value]) => [key, networkPolicyIdentity(key, value)]),
-  );
-  let changed = false;
-  for (const [key, value] of Object.entries(replacementNetwork)) {
-    const identity = networkPolicyIdentity(key, value);
-    if (liveIdentities.has(key) || liveIdentities.has(identity)) continue;
-    liveNetwork[key] = structuredClone(value);
-    liveIdentities.add(key);
-    liveIdentities.add(identity);
-    changed = true;
-  }
-  if (changed) live.network_policies = liveNetwork;
-  return changed;
-}
-
-function mergeReplacementTopLevelDefaults(
-  live: PolicyMapping,
-  replacement: PolicyMapping,
-): boolean {
-  let changed = false;
-  for (const [key, value] of Object.entries(replacement)) {
-    if (
-      key === "version" ||
-      key === "filesystem_policy" ||
-      key === "network_policies" ||
-      Object.hasOwn(live, key)
-    ) {
-      continue;
-    }
-    live[key] = structuredClone(value);
-    changed = true;
-  }
-  return changed;
-}
-
 /**
  * Build one replacement-create input from OpenShell's live policy. Host edits
- * and same-name entries win; only missing current-image access is added.
+ * win completely outside filesystem access; only missing paths required by the
+ * replacement image are added for this one create.
  */
 export function mergeReplacementPolicyAccess(
   livePolicySource: string,
@@ -149,10 +99,7 @@ export function mergeReplacementPolicyAccess(
 ): { readonly changed: boolean; readonly source: string } {
   const live = structuredClone(parseOpenShellPolicy(livePolicySource).policy) as PolicyMapping;
   const replacement = parseOpenShellPolicy(replacementPolicySource).policy as PolicyMapping;
-  const filesystemChanged = mergeReplacementFilesystemAccess(live, replacement);
-  const networkChanged = mergeReplacementNetworkPolicies(live, replacement);
-  const topLevelChanged = mergeReplacementTopLevelDefaults(live, replacement);
-  const changed = filesystemChanged || networkChanged || topLevelChanged;
+  const changed = mergeReplacementFilesystemAccess(live, replacement);
   return changed
     ? { changed: true, source: YAML.stringify(live) }
     : { changed: false, source: livePolicySource };
