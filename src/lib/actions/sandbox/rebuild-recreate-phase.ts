@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
+import { normalizeProcessExitCode } from "../../core/process-exit";
 import { MessagingSetupApplier, type SandboxMessagingPlan } from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { gatewayOwnerFromCheckpoint } from "../../onboard/gateway-authority-checkpoint";
@@ -33,14 +34,11 @@ import {
   printMcpRebuildRetryCommand,
   restoreMcpRegistryForRebuildRetry,
 } from "./rebuild-mcp-phase";
-import {
-  normalizeProcessExitCode,
-  rebuildOnboardDependencies,
-} from "./rebuild-onboard-dependencies";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
-import { printRebuildShieldsRecovery, type RebuildShieldsWindow } from "./rebuild-shields";
+import type { RebuildShieldsWindow } from "./rebuild-shields";
 
 export interface RebuildRecreatePhaseInput {
   sandboxName: string;
@@ -381,7 +379,10 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         `       ${CLI_NAME} ${sandboxName} snapshot restore "${backupManifest.timestamp}"`,
       );
     }
-    printRebuildShieldsRecovery(sandboxName, rebuildShieldsWindow, CLI_NAME);
+    if (rebuildShieldsWindow.wasLocked) {
+      console.error("    4. Restore shields lockdown:");
+      console.error(`       ${CLI_NAME} ${sandboxName} shields up`);
+    }
     console.error("");
     relockShieldsIfNeeded(false);
     bail(
