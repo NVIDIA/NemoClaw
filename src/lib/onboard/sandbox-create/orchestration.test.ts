@@ -22,6 +22,7 @@ import {
   persistPostCreateRecovery,
   persistRetainedSandboxRecoveryMessage,
   readManagedDcodeCreateSelectionDrift,
+  resolveRebuildMessagingPolicyDeltas,
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
   runAuthorityBoundProviderCleanup,
@@ -38,6 +39,29 @@ const UNVERIFIED_RECOVERY_CONTEXT = {
 } as const;
 
 describe("rebuild policy provider handoff", () => {
+  it("derives active additions and disabled removals from current channel manifests", () => {
+    expect(
+      resolveRebuildMessagingPolicyDeltas({
+        agent: "hermes",
+        disabledChannels: ["telegram", "googlechat"],
+        networkPolicy: {
+          presets: ["wechat"],
+          entries: [
+            {
+              channelId: "wechat",
+              presetName: "wechat",
+              policyKeys: ["wechat_bridge"],
+              source: "manifest",
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      requiredNetworkPolicyKeys: ["wechat_bridge"],
+      removedNetworkPolicyKeys: ["telegram", "googlechat_hermes"],
+    });
+  });
+
   it("adds exact credential-binding providers to the replacement create intent", () => {
     const original = {
       extraProviders: ["operator-provider"],

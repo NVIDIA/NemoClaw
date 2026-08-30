@@ -10,6 +10,7 @@ import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/reso
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-identity";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
+import { getMessagingPolicyKeysByChannel } from "../../messaging/channels/metadata";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import type { BackupResult } from "../../state/sandbox";
 import type { RetainedSandboxRecoveryContext, Session } from "../../state/onboard-session";
@@ -103,6 +104,31 @@ function bindRebuildPolicySourceProvidersToCreateIntent(
   return policySourcePath
     ? bindRebuildPolicyProvidersToCreateIntent(intent, fs.readFileSync(policySourcePath, "utf8"))
     : intent;
+}
+
+export function resolveRebuildMessagingPolicyDeltas(
+  plan:
+    | Pick<SandboxMessagingPlan, "agent" | "disabledChannels" | "networkPolicy">
+    | null
+    | undefined,
+): {
+  readonly requiredNetworkPolicyKeys: readonly string[];
+  readonly removedNetworkPolicyKeys: readonly string[];
+} {
+  if (!plan) {
+    return { requiredNetworkPolicyKeys: [], removedNetworkPolicyKeys: [] };
+  }
+  const policyKeysByChannel = getMessagingPolicyKeysByChannel({ agent: plan.agent });
+  return {
+    requiredNetworkPolicyKeys: [
+      ...new Set(plan.networkPolicy.entries.flatMap((entry) => entry.policyKeys)),
+    ],
+    removedNetworkPolicyKeys: [
+      ...new Set(
+        plan.disabledChannels.flatMap((channelId) => policyKeysByChannel[channelId] ?? []),
+      ),
+    ],
+  };
 }
 
 /** Preserve OpenShell's live policy plus bounded requirements for this explicit create. */
@@ -2060,17 +2086,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxStartupCommand,
       },
     } = preparedOnboardLaunch;
+    const rebuildMessagingPolicyDeltas = resolveRebuildMessagingPolicyDeltas(
+      plannedMessagingState?.plan,
+    );
     const initialSandboxPolicy = createIntent?.rebuildPolicySourcePath
       ? selectRebuildCreatePolicy(
           createIntent.rebuildPolicySourcePath,
           materializedInitialSandboxPolicy,
-          plannedMessagingState?.plan.networkPolicy.entries.flatMap((entry) => entry.policyKeys) ??
-            [],
-          existingEntry?.messaging?.plan.networkPolicy.entries
-            .filter((entry) =>
-              plannedMessagingState?.plan.disabledChannels.includes(entry.channelId),
-            )
-            .flatMap((entry) => entry.policyKeys) ?? [],
+          rebuildMessagingPolicyDeltas.requiredNetworkPolicyKeys,
+          rebuildMessagingPolicyDeltas.removedNetworkPolicyKeys,
         )
       : materializedInitialSandboxPolicy;
     const createArgv = createIntent?.rebuildPolicySourcePath
