@@ -93,6 +93,7 @@ function mergeRequestedReplacementNetworkPolicies(
   replacement: PolicyMapping,
   requiredKeys: readonly string[],
   removedKeys: readonly string[],
+  requiredPolicySources: readonly string[],
 ): boolean {
   if (requiredKeys.length === 0 && removedKeys.length === 0) return false;
 
@@ -106,9 +107,33 @@ function mergeRequestedReplacementNetworkPolicies(
     }
   }
   const replacementPolicies =
-    required.size === 0
+    replacement.network_policies === undefined
       ? {}
-      : policyMapping(replacement.network_policies, "replacement network_policies");
+      : structuredClone(
+          policyMapping(replacement.network_policies, "replacement network_policies"),
+        );
+  if (required.size > 0) {
+    for (const source of requiredPolicySources) {
+      let parsed: unknown;
+      try {
+        parsed = YAML.parse(source);
+      } catch {
+        throw new Error(
+          "Cannot prepare rebuild policy handoff: required network policy source is invalid YAML.",
+        );
+      }
+      const policy = policyMapping(parsed, "required network policy source");
+      const policies = policyMapping(
+        policy.network_policies,
+        "required network policy source network_policies",
+      );
+      for (const [key, value] of Object.entries(policies)) {
+        if (!Object.hasOwn(replacementPolicies, key)) {
+          replacementPolicies[key] = structuredClone(value);
+        }
+      }
+    }
+  }
   const livePolicies =
     live.network_policies === undefined
       ? {}
@@ -147,6 +172,7 @@ export function mergeReplacementPolicyAccess(
   replacementPolicySource: string,
   requiredNetworkPolicyKeys: readonly string[] = [],
   removedNetworkPolicyKeys: readonly string[] = [],
+  requiredNetworkPolicySources: readonly string[] = [],
 ): { readonly changed: boolean; readonly source: string } {
   const live = structuredClone(parseOpenShellPolicy(livePolicySource).policy) as PolicyMapping;
   const replacement = parseOpenShellPolicy(replacementPolicySource).policy as PolicyMapping;
@@ -156,6 +182,7 @@ export function mergeReplacementPolicyAccess(
     replacement,
     requiredNetworkPolicyKeys,
     removedNetworkPolicyKeys,
+    requiredNetworkPolicySources,
   );
   const changed = filesystemChanged || networkChanged;
   return changed
@@ -169,6 +196,7 @@ export function materializeRebuildPolicyHandoff(input: {
   readonly replacementPolicy: InitialSandboxPolicy;
   readonly requiredNetworkPolicyKeys?: readonly string[];
   readonly removedNetworkPolicyKeys?: readonly string[];
+  readonly requiredNetworkPolicySources?: readonly string[];
 }): InitialSandboxPolicy {
   const liveSource = fs.readFileSync(input.livePolicyPath, "utf8");
   const replacementSource =
@@ -179,6 +207,7 @@ export function materializeRebuildPolicyHandoff(input: {
     replacementSource,
     input.requiredNetworkPolicyKeys,
     input.removedNetworkPolicyKeys,
+    input.requiredNetworkPolicySources,
   );
   if (!merged.changed) {
     return {

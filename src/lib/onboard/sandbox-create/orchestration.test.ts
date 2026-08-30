@@ -64,6 +64,7 @@ describe("rebuild policy provider handoff", () => {
       }),
     ).toEqual({
       requiredNetworkPolicyKeys: ["wechat_bridge"],
+      requiredNetworkPolicyPresetNames: ["wechat"],
       removedNetworkPolicyKeys: ["telegram", "googlechat_hermes"],
     });
   });

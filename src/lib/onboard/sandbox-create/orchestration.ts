@@ -11,6 +11,7 @@ import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
 import { getMessagingPolicyKeysByChannel } from "../../messaging/channels/metadata";
+import { loadMessagingChannelPolicyPreset } from "../../messaging/channels/policy";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import type { BackupResult } from "../../state/sandbox";
 import type { RetainedSandboxRecoveryContext, Session } from "../../state/onboard-session";
@@ -113,10 +114,15 @@ export function resolveRebuildMessagingPolicyDeltas(
     | undefined,
 ): {
   readonly requiredNetworkPolicyKeys: readonly string[];
+  readonly requiredNetworkPolicyPresetNames: readonly string[];
   readonly removedNetworkPolicyKeys: readonly string[];
 } {
   if (!plan) {
-    return { requiredNetworkPolicyKeys: [], removedNetworkPolicyKeys: [] };
+    return {
+      requiredNetworkPolicyKeys: [],
+      requiredNetworkPolicyPresetNames: [],
+      removedNetworkPolicyKeys: [],
+    };
   }
   const disabledChannels = new Set(plan.disabledChannels);
   const policyKeysByChannel = getMessagingPolicyKeysByChannel({ agent: plan.agent });
@@ -126,6 +132,13 @@ export function resolveRebuildMessagingPolicyDeltas(
         plan.networkPolicy.entries
           .filter((entry) => !disabledChannels.has(entry.channelId))
           .flatMap((entry) => entry.policyKeys),
+      ),
+    ],
+    requiredNetworkPolicyPresetNames: [
+      ...new Set(
+        plan.networkPolicy.entries
+          .filter((entry) => !disabledChannels.has(entry.channelId))
+          .map((entry) => entry.presetName),
       ),
     ],
     removedNetworkPolicyKeys: [
@@ -142,12 +155,28 @@ function selectRebuildCreatePolicy(
   generatedPolicy: import("../initial-policy").InitialSandboxPolicy,
   requiredNetworkPolicyKeys: readonly string[],
   removedNetworkPolicyKeys: readonly string[],
+  requiredNetworkPolicyPresetNames: readonly string[],
+  messagingPlan: SandboxMessagingPlan | null | undefined,
+  sandboxName: string,
 ): import("../initial-policy").InitialSandboxPolicy {
+  const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
+    const source = loadMessagingChannelPolicyPreset(presetName, {
+      agent: messagingPlan?.agent,
+      sandboxName,
+    });
+    if (!source) {
+      throw new Error(
+        `Cannot prepare rebuild policy handoff: required messaging policy preset '${presetName}' is unavailable.`,
+      );
+    }
+    return source;
+  });
   return materializeRebuildPolicyHandoff({
     livePolicyPath: policySourcePath,
     replacementPolicy: generatedPolicy,
     requiredNetworkPolicyKeys,
     removedNetworkPolicyKeys,
+    requiredNetworkPolicySources,
   });
 }
 
@@ -2100,6 +2129,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           materializedInitialSandboxPolicy,
           rebuildMessagingPolicyDeltas.requiredNetworkPolicyKeys,
           rebuildMessagingPolicyDeltas.removedNetworkPolicyKeys,
+          rebuildMessagingPolicyDeltas.requiredNetworkPolicyPresetNames,
+          plannedMessagingState?.plan,
+          sandboxName,
         )
       : materializedInitialSandboxPolicy;
     const createArgv = createIntent?.rebuildPolicySourcePath

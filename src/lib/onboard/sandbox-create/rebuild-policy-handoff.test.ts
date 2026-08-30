@@ -198,6 +198,27 @@ network_policies:
     ).toThrow("network policy 'telegram' is both required and removed");
   });
 
+  it("uses active channel preset sources without copying unrequested keys", () => {
+    const merged = mergeReplacementPolicyAccess(
+      "version: 1\nnetwork_policies:\n  host_edit: {}\n",
+      "version: 1\nnetwork_policies: {}\n",
+      ["googlechat_hermes"],
+      [],
+      [
+        `preset: {name: googlechat}
+network_policies:
+  googlechat_hermes: {name: googlechat_hermes}
+  unrequested: {name: unrequested}
+`,
+      ],
+    );
+
+    expect(YAML.parse(merged.source).network_policies).toEqual({
+      host_edit: {},
+      googlechat_hermes: { name: "googlechat_hermes" },
+    });
+  });
+
   it("materializes one private handoff and cleans it with the generated replacement source", () => {
     const livePath = tempPolicy(
       "live.yaml",
