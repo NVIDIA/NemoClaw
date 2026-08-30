@@ -111,6 +111,27 @@ describe("credential provider registration", () => {
     expect(upsert).toHaveBeenCalledWith(tokenDefs, runOpenshell, options);
   });
 
+  it("keeps source-mode onboarding on the same late-bound rebuild boundary", async () => {
+    const tokenDefs: MessagingTokenDef[] = [
+      { name: "alpha-discord-bridge", envKey: "DISCORD_BOT_TOKEN", token: DISCORD_SECRET },
+    ];
+    const upsert = vi
+      .spyOn(credentialProviderRegistrationDependencies, "upsertMessagingProviders")
+      .mockReturnValue(["alpha-discord-bridge"]);
+
+    try {
+      const loaded = await import("../onboard");
+      const onboard = ("default" in loaded ? loaded.default : loaded) as {
+        upsertMessagingProviders(tokenDefs: MessagingTokenDef[]): string[];
+      };
+
+      expect(onboard.upsertMessagingProviders(tokenDefs)).toEqual(["alpha-discord-bridge"]);
+      expect(upsert).toHaveBeenCalledWith(tokenDefs, expect.any(Function), {});
+    } finally {
+      upsert.mockRestore();
+    }
+  });
+
   it.each([
     { condition: "matches", endpoints: [], expected: true },
     {

@@ -241,7 +241,6 @@ const inferenceConfig: typeof import("./inference/config") = require("./inferenc
 const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
 const onboardProviders = require("./onboard/providers");
-const credentialProviderRegistration: typeof import("./onboard/credential-provider-registration") = require("./onboard/credential-provider-registration");
 const inferenceProviders: typeof import("./onboard/inference-providers") = require("./onboard/inference-providers");
 const setupInferenceFactory: typeof import("./onboard/setup-inference") = require("./onboard/setup-inference");
 const hermesProviderAuth = require("./hermes-provider-auth");
@@ -542,6 +541,7 @@ const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-f
 import type { CurlProbeResult } from "./adapters/http/probe";
 import type { AgentDefinition } from "./agent/defs";
 import type { WebSearchConfig } from "./inference/web-search";
+import * as credentialProviderRegistration from "./onboard/credential-provider-registration";
 import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
@@ -3595,7 +3595,7 @@ module.exports = {
   hasResponsesToolCall,
   hasChatCompletionsToolCall,
   hasChatCompletionsToolCallLeak,
-  upsertProvider,
+  ...{ upsertProvider, upsertMessagingProviders },
   normalizeHermesAuthMethod,
   hashCredential,
   detectMessagingCredentialRotation,
