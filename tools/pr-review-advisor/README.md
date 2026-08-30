@@ -170,10 +170,12 @@ OpenShell. It writes each specialist's Markdown review and native JSONL session 
 
 Prerequisites:
 
-- Node.js 22 and the repository dependencies installed with `npm install`;
-- an `origin/main` remote-tracking commit in the local repository;
-- OpenShell, `git`, `rg`, and `fdfind` available as reported by `npm run dev:doctor`;
+- Node.js 22.19.0 or newer and the repository dependencies installed with `npm install`;
+- an `origin/main` remote-tracking commit that contains the trusted local review implementation;
+- `git`, `openshell`, `openshell-gateway`, `openshell-sandbox`, `rg`, and `fdfind` available on `PATH`;
 - `PR_REVIEW_ADVISOR_API_KEY` configured for the existing advisor provider.
+
+Run `npm run dev:doctor` for the additional contributor and runtime readiness checks.
 
 The executable advisor checkout is detached at the resolved `origin/main` commit. Branch changes,
 including advisor code and policy changes, exist only in the read-only review snapshot. The command

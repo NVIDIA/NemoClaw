@@ -12,6 +12,8 @@ import { getDiff } from "../advisors/git.mts";
 import { ADVISOR_OPENSHELL_INFERENCE_BASE_URL } from "../advisors/provider-constants.mts";
 import {
   configureOpenShellInference,
+  startOwnedOpenShellInference,
+  type OwnedOpenShellInference,
   createOpenShellSandbox,
   credentialFreeEnvironment,
   defaultOpenShellTools,
@@ -246,21 +248,27 @@ export async function prepareAdvisorSandboxInputs(
   fs.chmodSync(toolsDirectory, 0o755);
 }
 
+function advisorInferenceOptions(env: NodeJS.ProcessEnv) {
+  return {
+    enableBindMounts: true,
+    gatewayId: "pr-review-advisor",
+    modelId: required(env.PR_REVIEW_ADVISOR_MODEL, "PR_REVIEW_ADVISOR_MODEL"),
+    providerName: "advisor",
+  } as const;
+}
+
+export function startAdvisorOpenShellInference(
+  env: NodeJS.ProcessEnv,
+  tools: OpenShellTools = defaultOpenShellTools,
+): OwnedOpenShellInference {
+  return startOwnedOpenShellInference(env, advisorInferenceOptions(env), tools);
+}
+
 export async function configureAdvisorOpenShellInference(
   env: NodeJS.ProcessEnv,
   tools: OpenShellTools = defaultOpenShellTools,
-): Promise<() => Promise<void>> {
-  return configureOpenShellInference(
-    env,
-    {
-      enableBindMounts: true,
-      gatewayId: "pr-review-advisor",
-      modelId: required(env.PR_REVIEW_ADVISOR_MODEL, "PR_REVIEW_ADVISOR_MODEL"),
-      ownGateway: true,
-      providerName: "advisor",
-    },
-    tools,
-  );
+): Promise<void> {
+  await configureOpenShellInference(env, advisorInferenceOptions(env), tools);
 }
 
 export function writeUnavailableAdvisorArtifacts(

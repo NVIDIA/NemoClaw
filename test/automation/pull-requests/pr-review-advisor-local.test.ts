@@ -1,18 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  copyAdvisorCheckout,
   createLocalReviewSnapshot,
   runLocalReview,
   type LocalReviewLifecycle,
-} from "../../../tools/pr-review-advisor/local-review.mts";
+} from "../../../tools/pr-review-advisor/local-review-implementation.mts";
 import { defaultOpenShellTools } from "../../../tools/openshell-agent/runtime.mts";
 import { ADVISOR_PI_IMAGE } from "../../../tools/pr-review-advisor/runtime-constants.mts";
 import { ADVISOR_SPECIALISTS } from "../../../tools/pr-review-advisor/specialist-catalog.mts";
@@ -86,39 +85,82 @@ describe("local PR review advisor", () => {
     expect(ADVISOR_PI_IMAGE).toMatch(/@sha256:[0-9a-f]{64}$/u);
   });
 
-  it("copies trusted advisor code from origin/main while the review snapshot includes branch advisor changes (#10611)", () => {
-    const source = repository();
-    const advisorSource = path.join(source, "tools", "pr-review-advisor");
-    fs.writeFileSync(path.join(advisorSource, "policy.txt"), "branch policy\n");
-    git(source, ["commit", "-am", "advisor branch"]);
-    fs.mkdirSync(path.join(source, "node_modules"));
-    fs.writeFileSync(
-      path.join(source, "node_modules", "installed-package.txt"),
-      "installed bytes\n",
+  it("launches origin/main implementation without executing modified branch host code (#10611)", () => {
+    const source = temporaryDirectory();
+    git(source, ["init", "--initial-branch=main"]);
+    git(source, ["config", "user.name", "Test"]);
+    git(source, ["config", "user.email", "test@example.com"]);
+    fs.mkdirSync(path.join(source, "tools", "pr-review-advisor"), { recursive: true });
+    fs.copyFileSync(
+      path.resolve("tools/pr-review-advisor/local-review.mts"),
+      path.join(source, "tools", "pr-review-advisor", "local-review.mts"),
     );
-    const root = temporaryDirectory();
-    const advisor = path.join(root, "advisor");
-    const snapshot = path.join(root, "snapshot");
+    fs.writeFileSync(
+      path.join(source, "tools", "pr-review-advisor", "trusted-host.mts"),
+      'export const hostValue = "trusted host";\n',
+    );
+    fs.writeFileSync(
+      path.join(source, "tools", "pr-review-advisor", "policy.txt"),
+      "trusted policy\n",
+    );
+    fs.writeFileSync(
+      path.join(source, "tools", "pr-review-advisor", "local-review-implementation.mts"),
+      [
+        'import fs from "node:fs";',
+        'import path from "node:path";',
+        'import { hostValue } from "./trusted-host.mts";',
+        "const source = process.argv[2];",
+        'const policy = fs.readFileSync(path.join(source, "tools/pr-review-advisor/policy.txt"), "utf8").trim();',
+        'fs.writeFileSync(path.join(source, "bootstrap-result.txt"), [hostValue, policy].join("|") + "\\n");',
+      ].join("\n"),
+    );
+    git(source, ["add", "."]);
+    git(source, ["commit", "-m", "trusted base"]);
+    git(source, ["remote", "add", "origin", source]);
+    git(source, ["fetch", "origin", "main"]);
+    git(source, ["switch", "-c", "feature"]);
+    fs.writeFileSync(
+      path.join(source, "tools", "pr-review-advisor", "trusted-host.mts"),
+      'throw new Error("branch host executed");\n',
+    );
+    fs.writeFileSync(
+      path.join(source, "tools", "pr-review-advisor", "policy.txt"),
+      'branch policy data; throw new Error("policy executed")\n',
+    );
+    git(source, ["commit", "-am", "untrusted branch changes"]);
+    fs.mkdirSync(path.join(source, "node_modules"));
 
-    copyAdvisorCheckout(source, advisor);
-    createLocalReviewSnapshot(source, snapshot);
+    const result = spawnSync(
+      process.execPath,
+      ["--experimental-strip-types", "--no-warnings", "tools/pr-review-advisor/local-review.mts"],
+      { cwd: source, encoding: "utf8" },
+    );
 
-    expect(
-      fs.readFileSync(path.join(advisor, "tools", "pr-review-advisor", "policy.txt"), "utf8"),
-    ).toBe("base policy\n");
-    expect(
-      fs.readFileSync(path.join(snapshot, "tools", "pr-review-advisor", "policy.txt"), "utf8"),
-    ).toBe("branch policy\n");
-    expect(
-      fs.readFileSync(path.join(advisor, "node_modules", "installed-package.txt"), "utf8"),
-    ).toBe("installed bytes\n");
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.readFileSync(path.join(source, "bootstrap-result.txt"), "utf8")).toBe(
+      'trusted host|branch policy data; throw new Error("policy executed")\n',
+    );
   });
 
-  it("reports the prerequisite when copied dependencies are missing (#10611)", () => {
+  it("explains that local review requires the bootstrap repair on origin/main (#10611)", () => {
     const source = repository();
-    expect(() => copyAdvisorCheckout(source, path.join(temporaryDirectory(), "advisor"))).toThrow(
-      "Run npm install before local review",
+    fs.mkdirSync(path.join(source, "node_modules"));
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--no-warnings",
+        path.resolve("tools/pr-review-advisor/local-review.mts"),
+      ],
+      { cwd: source, encoding: "utf8" },
     );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "origin/main does not contain the trusted local review implementation",
+    );
+    expect(result.stderr).toContain("after the bootstrap repair is merged");
   });
 
   it("snapshots branch, staged, unstaged, and nonignored untracked changes without source mutation (#10610)", () => {
@@ -150,13 +192,13 @@ describe("local PR review advisor", () => {
       prepare: async (env) => {
         calls.push("prepare:" + env.PR_REVIEW_ADVISOR_INTEREST);
       },
-      configure: async (env) => {
+      startGateway: (env) => {
         calls.push("configure:" + env.PR_REVIEW_ADVISOR_INTEREST);
         expect(env.OPENSHELL_GATEWAY_ENDPOINT).toBe("http://127.0.0.1:8080");
         expect(env.PI_IMAGE).toMatch(/@sha256:[0-9a-f]{64}$/u);
         expect(env.SANDBOX_NAME).toMatch(/^lr-[0-9a-f]{4}-[0-9a-f]{8}$/u);
         expect(env.SANDBOX_NAME).toHaveLength(16);
-        return stopGateway;
+        return { configure: Promise.resolve(), stop: stopGateway };
       },
       create: (env) => {
         calls.push("create:" + env.PR_REVIEW_ADVISOR_INTEREST);
@@ -185,8 +227,6 @@ describe("local PR review advisor", () => {
       source,
       temporaryRoot: root,
       lifecycle,
-      prepareAdvisor: (_source, target) =>
-        fs.mkdirSync(path.join(target, ".git"), { recursive: true }),
     });
 
     expect(calls.filter((call) => call.startsWith("run:"))).toEqual(
@@ -205,6 +245,45 @@ describe("local PR review advisor", () => {
         .readdirSync(destination, { recursive: true })
         .filter((name) => typeof name === "string" && name.includes("final-result")),
     ).toEqual([]);
+  });
+
+  it("owns gateway cleanup while provider configuration is pending (#10611)", async () => {
+    const source = repository();
+    let rejectConfiguration!: (error: Error) => void;
+    const configuration = new Promise<void>((_resolve, reject) => {
+      rejectConfiguration = reject;
+    });
+    const stopGateway = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("first stop failed"))
+      .mockResolvedValueOnce();
+    const lifecycle: LocalReviewLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => ({ configure: configuration, stop: stopGateway }),
+      create: () => undefined,
+      run: () => undefined,
+      download: () => undefined,
+      remove: () => undefined,
+    };
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    const review = runLocalReview({
+      source,
+      specialists: ADVISOR_SPECIALISTS.slice(0, 1),
+      lifecycle,
+      temporaryRoot: temporaryDirectory(),
+    });
+    await vi.waitFor(() => expect(process.listenerCount("SIGTERM")).toBeGreaterThan(0));
+    process.emit("SIGTERM");
+    await vi.waitFor(() => expect(stopGateway).toHaveBeenCalledOnce());
+    rejectConfiguration(new Error("configuration failed"));
+
+    await expect(review).rejects.toMatchObject({
+      message: expect.stringContaining("failed during configure"),
+      cause: expect.objectContaining({ message: "configuration failed" }),
+    });
+    expect(stopGateway).toHaveBeenCalledTimes(2);
+    expect(kill).toHaveBeenCalledWith(process.pid, "SIGTERM");
   });
 
   it("stops an owned process group with bounded TERM then KILL and verifies exit (#10610)", async () => {
@@ -234,7 +313,7 @@ describe("local PR review advisor", () => {
     const source = repository();
     const lifecycle: LocalReviewLifecycle = {
       prepare: async () => undefined,
-      configure: async () => undefined,
+      startGateway: () => undefined,
       create: () => undefined,
       run: () => undefined,
       download: (env) => {
@@ -259,8 +338,6 @@ describe("local PR review advisor", () => {
         temporaryRoot: temporaryDirectory(),
         specialists: ADVISOR_SPECIALISTS.slice(0, 1),
         lifecycle,
-        prepareAdvisor: (_source, target) =>
-          fs.mkdirSync(path.join(target, ".git"), { recursive: true }),
       }),
     ).rejects.toThrow("cleanup failed");
   });
@@ -279,7 +356,7 @@ describe("local PR review advisor", () => {
     const source = repository();
     const lifecycle: LocalReviewLifecycle = {
       prepare: async () => undefined,
-      configure: async () => undefined,
+      startGateway: () => undefined,
       create: () => undefined,
       run: () => undefined,
       download: (env) => {
@@ -299,7 +376,6 @@ describe("local PR review advisor", () => {
         temporaryRoot: temporaryDirectory(),
         specialists: ADVISOR_SPECIALISTS.slice(0, 1),
         lifecycle,
-        prepareAdvisor: (_source, target) => fs.mkdirSync(target, { recursive: true }),
       }),
     ).rejects.toMatchObject({
       message: expect.stringContaining("failed during validate"),
@@ -320,7 +396,7 @@ describe("local PR review advisor", () => {
     let ownedRoot = "";
     const lifecycle: LocalReviewLifecycle = {
       prepare: async () => undefined,
-      configure: async () => stopGateway,
+      startGateway: () => ({ configure: Promise.resolve(), stop: stopGateway }),
       create: () => undefined,
       run: () => {
         throw new Error("primary run failed");
@@ -334,14 +410,19 @@ describe("local PR review advisor", () => {
         source,
         specialists: ADVISOR_SPECIALISTS.slice(0, 1),
         lifecycle,
-        prepareAdvisor: (_source, target) => {
+        prepareSnapshot: (snapshotSource, target, baseRef) => {
           ownedRoot = path.dirname(target);
-          fs.mkdirSync(target, { recursive: true });
+          return createLocalReviewSnapshot(snapshotSource, target, baseRef);
         },
       }),
     ).rejects.toMatchObject({
-      message: expect.stringContaining("failed during run"),
-      cause: expect.objectContaining({ message: "primary run failed" }),
+      message: expect.stringMatching(
+        /failed during run.*cleanup also failed: gateway cleanup failed/u,
+      ),
+      cause: expect.objectContaining({
+        message: expect.stringContaining("failed during run"),
+        cause: expect.objectContaining({ message: "primary run failed" }),
+      }),
     });
     expect(remove).toHaveBeenCalledOnce();
     expect(stopGateway).toHaveBeenCalledOnce();
@@ -354,7 +435,7 @@ describe("local PR review advisor", () => {
     const remove = vi.fn();
     const lifecycle: LocalReviewLifecycle = {
       prepare: async () => undefined,
-      configure: async () => undefined,
+      startGateway: () => undefined,
       create: () => undefined,
       run: () => {
         throw new Error("failed");
@@ -372,8 +453,6 @@ describe("local PR review advisor", () => {
         temporaryRoot: root,
         specialists: ADVISOR_SPECIALISTS.slice(0, 1),
         lifecycle,
-        prepareAdvisor: (_source, target) =>
-          fs.mkdirSync(path.join(target, ".git"), { recursive: true }),
       }),
     ).rejects.toMatchObject({
       message: expect.stringContaining("Local review failed during run for specialist"),

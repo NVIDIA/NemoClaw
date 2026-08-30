@@ -179,41 +179,48 @@ export const defaultOpenShellTools: OpenShellTools = {
       child.on("error", () => undefined);
       child.unref();
       let cleanup: Promise<void> | undefined;
-      return () =>
-        (cleanup ??= (async () => {
-          if (child.pid === undefined) return;
-          const pid = child.pid;
-          const groupExists = (): boolean => {
-            try {
-              process.kill(-pid, 0);
-              return true;
-            } catch (error) {
-              if (error instanceof Error && "code" in error && error.code === "ESRCH") return false;
-              throw error;
-            }
-          };
-          const signalGroup = (signal: NodeJS.Signals): void => {
-            try {
-              process.kill(-pid, signal);
-            } catch (error) {
-              if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH")
+      return async () => {
+        try {
+          await (cleanup ??= (async () => {
+            if (child.pid === undefined) return;
+            const pid = child.pid;
+            const groupExists = (): boolean => {
+              try {
+                process.kill(-pid, 0);
+                return true;
+              } catch (error) {
+                if (error instanceof Error && "code" in error && error.code === "ESRCH")
+                  return false;
                 throw error;
-            }
-          };
-          const waitForGroupExit = async (): Promise<boolean> => {
-            const deadline = Date.now() + 2000;
-            while (groupExists() && Date.now() < deadline) {
-              await new Promise((resolve) => setTimeout(resolve, 50));
-            }
-            return !groupExists();
-          };
-          if (!groupExists()) return;
-          signalGroup("SIGTERM");
-          if (await waitForGroupExit()) return;
-          signalGroup("SIGKILL");
-          if (await waitForGroupExit()) return;
-          throw new OpenShellAgentError(`Failed to stop owned process group ${pid}`);
-        })());
+              }
+            };
+            const signalGroup = (signal: NodeJS.Signals): void => {
+              try {
+                process.kill(-pid, signal);
+              } catch (error) {
+                if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH")
+                  throw error;
+              }
+            };
+            const waitForGroupExit = async (): Promise<boolean> => {
+              const deadline = Date.now() + 2000;
+              while (groupExists() && Date.now() < deadline) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+              }
+              return !groupExists();
+            };
+            if (!groupExists()) return;
+            signalGroup("SIGTERM");
+            if (await waitForGroupExit()) return;
+            signalGroup("SIGKILL");
+            if (await waitForGroupExit()) return;
+            throw new OpenShellAgentError(`Failed to stop owned process group ${pid}`);
+          })());
+        } catch (error) {
+          cleanup = undefined;
+          throw error;
+        }
+      };
     } finally {
       closeSync(log);
     }
@@ -223,21 +230,16 @@ export const defaultOpenShellTools: OpenShellTools = {
   },
 };
 
-export function configureOpenShellInference(
+export type OwnedOpenShellInference = {
+  configure: Promise<void>;
+  stop: () => Promise<void>;
+};
+
+export function startOwnedOpenShellInference(
   env: NodeJS.ProcessEnv,
-  input: OpenShellInferenceOptions & { ownGateway: true },
-  tools?: OpenShellTools,
-): Promise<() => Promise<void>>;
-export function configureOpenShellInference(
-  env: NodeJS.ProcessEnv,
-  input: OpenShellInferenceOptions,
-  tools?: OpenShellTools,
-): Promise<void>;
-export async function configureOpenShellInference(
-  env: NodeJS.ProcessEnv,
-  input: OpenShellInferenceOptions,
+  input: Omit<OpenShellInferenceOptions, "ownGateway">,
   tools: OpenShellTools = defaultOpenShellTools,
-): Promise<void | (() => Promise<void>)> {
+): OwnedOpenShellInference {
   validateIdentifier(input.gatewayId, "gatewayId");
   validateIdentifier(input.modelId, "modelId");
   validateIdentifier(input.providerName, "providerName");
@@ -277,58 +279,76 @@ export async function configureOpenShellInference(
       logPath: path.join(gatewayDirectory, "gateway.log"),
     }) ?? (async () => undefined);
 
-  try {
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      try {
-        tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
-        break;
-      } catch {
-        await tools.wait(1000);
-      }
-    }
-    tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
-    tools.run(
-      "openshell",
-      [
-        "provider",
-        "create",
-        "--name",
-        input.providerName,
-        "--type",
-        "openai",
-        "--credential",
-        "OPENAI_API_KEY",
-        "--config",
-        "OPENAI_BASE_URL=https://inference-api.nvidia.com/v1",
-      ],
-      { env: providerEnv },
-    );
-    const inferenceArgs = [
-      "inference",
-      "set",
-      "--provider",
-      input.providerName,
-      "--model",
-      input.modelId,
-      "--timeout",
-      "900",
-    ] as const;
-    for (let attempt = 0; attempt < INFERENCE_CONFIGURATION_ATTEMPTS; attempt += 1) {
-      try {
-        tools.run("openshell", inferenceArgs, { env: commandEnv });
-        return input.ownGateway ? stopGateway : undefined;
-      } catch (error) {
-        if (attempt === INFERENCE_CONFIGURATION_ATTEMPTS - 1) throw error;
-        await tools.wait(inferenceConfigurationRetryDelay(env, input, attempt));
-      }
-    }
-    throw new OpenShellAgentError("OpenShell inference configuration did not complete");
-  } catch (error) {
+  const configure = (async (): Promise<void> => {
     try {
-      await stopGateway();
-    } catch {}
-    throw error;
-  }
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        try {
+          tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
+          break;
+        } catch {
+          await tools.wait(1000);
+        }
+      }
+      tools.run("openshell", ["gateway", "info"], { env: commandEnv, timeout: 10_000 });
+      tools.run(
+        "openshell",
+        [
+          "provider",
+          "create",
+          "--name",
+          input.providerName,
+          "--type",
+          "openai",
+          "--credential",
+          "OPENAI_API_KEY",
+          "--config",
+          "OPENAI_BASE_URL=https://inference-api.nvidia.com/v1",
+        ],
+        { env: providerEnv },
+      );
+      const inferenceArgs = [
+        "inference",
+        "set",
+        "--provider",
+        input.providerName,
+        "--model",
+        input.modelId,
+        "--timeout",
+        "900",
+      ] as const;
+      for (let attempt = 0; attempt < INFERENCE_CONFIGURATION_ATTEMPTS; attempt += 1) {
+        try {
+          tools.run("openshell", inferenceArgs, { env: commandEnv });
+          return;
+        } catch (error) {
+          if (attempt === INFERENCE_CONFIGURATION_ATTEMPTS - 1) throw error;
+          await tools.wait(inferenceConfigurationRetryDelay(env, input, attempt));
+        }
+      }
+      throw new OpenShellAgentError("OpenShell inference configuration did not complete");
+    } catch (error) {
+      try {
+        await stopGateway();
+      } catch (cleanupError) {
+        const primary = error instanceof Error ? error.message : String(error);
+        const cleanup = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+        throw new Error(`${primary}; owned gateway cleanup also failed: ${cleanup}`, {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+  })();
+  return { configure, stop: stopGateway };
+}
+
+export async function configureOpenShellInference(
+  env: NodeJS.ProcessEnv,
+  input: OpenShellInferenceOptions,
+  tools: OpenShellTools = defaultOpenShellTools,
+): Promise<void> {
+  const owned = startOwnedOpenShellInference(env, input, tools);
+  await owned.configure;
 }
 
 export function createOpenShellSandbox(
