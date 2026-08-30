@@ -54,6 +54,7 @@ import {
   type LaunchReadinessHealthDeps,
   type LaunchReadinessObservationStage,
   LaunchReadinessObservationError as ObservationError,
+  recordLaunchReadinessObservationFailure,
   requireLaunchSemanticHealth,
   resolveLaunchInteractiveCommand,
   resolveTrustedLaunchAgent,
@@ -766,13 +767,21 @@ async function captureLaunchIdentity(
       gatewayPort,
     });
   } catch {
+    recordLaunchReadinessObservationFailure(deps, "sandbox-identity");
     throw new LaunchReadinessEvidenceError();
   } finally {
     recordObservationTiming(deps, "sandbox-identity", sandboxIdentityStartedAt);
   }
-  if (live.state === "missing") throw new ObservationError("identity");
-  if (live.state !== "ready") throw new ObservationError("health");
+  if (live.state === "missing") {
+    recordLaunchReadinessObservationFailure(deps, "sandbox-identity");
+    throw new ObservationError("identity");
+  }
+  if (live.state !== "ready") {
+    recordLaunchReadinessObservationFailure(deps, "sandbox-identity");
+    throw new ObservationError("health");
+  }
   if (live.liveIdentityFingerprint !== recordedFingerprint) {
+    recordLaunchReadinessObservationFailure(deps, "sandbox-identity");
     throw new ObservationError("identity");
   }
 
@@ -780,6 +789,9 @@ async function captureLaunchIdentity(
   let livePolicy: string;
   try {
     livePolicy = captureLivePolicy(sandboxName, gatewayName, deps);
+  } catch (error) {
+    recordLaunchReadinessObservationFailure(deps, "policy-get");
+    throw error;
   } finally {
     recordObservationTiming(deps, "policy-get", policyStartedAt);
   }
@@ -791,20 +803,43 @@ async function captureLaunchIdentity(
     inferenceResult = (deps.capture ?? ((args) => captureLaunchReadiness(args)))(
       buildGatewayInferenceGetArgs(gatewayName),
     );
+  } catch (error) {
+    recordLaunchReadinessObservationFailure(deps, "inference-get");
+    throw error;
   } finally {
     recordObservationTiming(deps, "inference-get", inferenceGetStartedAt);
   }
-  if (inferenceResult.status !== 0) throw new LaunchReadinessEvidenceError();
-  const liveInference = parseGatewayInference(inferenceResult.output);
-  const liveInferenceAbsent = reportsInferenceNotConfigured(inferenceResult.output);
+  if (inferenceResult.status !== 0) {
+    recordLaunchReadinessObservationFailure(deps, "inference-get");
+    throw new LaunchReadinessEvidenceError();
+  }
+  let liveInference: ReturnType<typeof parseGatewayInference>;
+  let liveInferenceAbsent: boolean;
+  try {
+    liveInference = parseGatewayInference(inferenceResult.output);
+    liveInferenceAbsent = reportsInferenceNotConfigured(inferenceResult.output);
+  } catch (error) {
+    recordLaunchReadinessObservationFailure(deps, "inference-get");
+    throw error;
+  }
   if (inference.kind === "configured") {
-    if (!liveInference && !liveInferenceAbsent) throw new LaunchReadinessEvidenceError();
+    if (!liveInference && !liveInferenceAbsent) {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
+      throw new LaunchReadinessEvidenceError();
+    }
     if (planInferenceRouteReconcile(liveInference, inference).kind !== "aligned") {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
       throw new ObservationError("config");
     }
   } else {
-    if (liveInference) throw new ObservationError("config");
-    if (!liveInferenceAbsent) throw new LaunchReadinessEvidenceError();
+    if (liveInference) {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
+      throw new ObservationError("config");
+    }
+    if (!liveInferenceAbsent) {
+      recordLaunchReadinessObservationFailure(deps, "inference-get");
+      throw new LaunchReadinessEvidenceError();
+    }
   }
 
   await requireLaunchSemanticHealth(

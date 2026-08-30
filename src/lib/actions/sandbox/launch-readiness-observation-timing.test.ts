@@ -110,6 +110,8 @@ describe("launch readiness observation timing", () => {
   it("records every fixed OpenShell-backed semantic observation without its values", async () => {
     const sandbox = entry();
     const stages: string[] = [];
+    const failures: string[] = [];
+    let inferenceHealthy = true;
     let publishedIdentity: LaunchReadinessIdentity | null = null;
     const deps: LaunchReadinessDeps = {
       getSandbox: () => sandbox,
@@ -128,10 +130,10 @@ describe("launch readiness observation timing", () => {
       gatewayHealth: async () => true,
       forwardsHealthy: () => true,
       inferenceProbe: () => ({
-        healthy: true,
+        healthy: inferenceHealthy,
         broken: false,
-        httpStatus: 200,
-        detail: "OK 200",
+        httpStatus: inferenceHealthy ? 200 : 503,
+        detail: inferenceHealthy ? "OK 200" : "ERROR 503",
       }),
       classifyPortableLifecycleReceipt: () => ({ kind: "absent" }),
       readLease: () =>
@@ -149,6 +151,7 @@ describe("launch readiness observation timing", () => {
         expect(elapsedMs).toBeGreaterThanOrEqual(0);
         stages.push(stage);
       },
+      recordObservationFailure: (stage) => failures.push(stage),
     };
 
     const initial = await inspectLaunchReadiness(SANDBOX, deps);
@@ -169,5 +172,15 @@ describe("launch readiness observation timing", () => {
       "forward-health",
       "inference-route",
     ]);
+    expect(failures).toEqual([]);
+
+    stages.length = 0;
+    inferenceHealthy = false;
+    await expect(inspectLaunchReadiness(SANDBOX, deps)).resolves.toMatchObject({
+      kind: "fallback",
+      category: "health",
+    });
+    expect(stages.at(-1)).toBe("inference-route");
+    expect(failures).toEqual(["inference-route"]);
   });
 });

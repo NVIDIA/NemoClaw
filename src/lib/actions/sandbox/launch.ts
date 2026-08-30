@@ -58,6 +58,43 @@ interface LaunchSandboxDeps {
   inspectLaunchReadiness?: typeof inspectLaunchReadiness;
   publishLaunchReadiness?: typeof publishLaunchReadiness;
   withLaunchReadinessMutationGate?: typeof withLaunchReadinessMutationGate;
+  now?: () => number;
+  writeLaunchTiming?: (line: string) => void;
+}
+
+type LaunchReadinessAction = "accepted" | "prepared";
+
+function createLaunchPreExecTiming(deps: LaunchSandboxDeps): {
+  emit(action: LaunchReadinessAction): void;
+} {
+  const now = deps.now ?? (() => performance.now());
+  const write = deps.writeLaunchTiming ?? ((line: string) => console.log(line));
+  const safeNow = (): number | null => {
+    try {
+      const value = now();
+      return Number.isFinite(value) ? value : null;
+    } catch {
+      return null;
+    }
+  };
+  const startedAt = safeNow();
+  let emitted = false;
+  return {
+    emit(action): void {
+      if (emitted) return;
+      emitted = true;
+      try {
+        const finishedAt = safeNow();
+        const elapsedMs =
+          startedAt === null || finishedAt === null
+            ? 0
+            : Math.max(0, Math.round(finishedAt - startedAt));
+        write(`  Launch timing: preExec=${String(elapsedMs)}ms readinessAction=${action}`);
+      } catch {
+        // Timing evidence must never change launch behavior.
+      }
+    },
+  };
 }
 
 type HermesPortableReadinessCommandAuthority = ReturnType<
@@ -141,9 +178,11 @@ async function launchAgentWithPortableAuthority(
   deps: LaunchSandboxDeps,
   acceptedHermesAuthority: HermesPortableAcceptedLaunchAuthority | null,
   beforeOrdinaryLaunch?: () => void,
+  beforeAgentExec?: () => void,
 ): Promise<void> {
   const runOrdinaryAgent = async (): Promise<void> => {
     prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
+    beforeAgentExec?.();
     await execSandbox(sandboxName, command, {
       tty: true,
       stdin: true,
@@ -161,6 +200,7 @@ async function launchAgentWithPortableAuthority(
       subprocessEnv: commandAuthority.env,
     } as const;
     commandAuthority.assertCurrent();
+    beforeAgentExec?.();
     const result = await runSandboxExecChild(
       commandAuthority.executablePath,
       buildOpenshellExecArgs(
@@ -257,12 +297,14 @@ export async function launchSandbox(
   sandboxName: string,
   deps: LaunchSandboxDeps = {},
 ): Promise<void> {
+  const launchTiming = createLaunchPreExecTiming(deps);
   const enterMutationGate = deps.withLaunchReadinessMutationGate ?? withLaunchReadinessMutationGate;
   let inspection = await inspectLaunchReadinessForLaunch(sandboxName, deps);
   let decision = inspection.decision;
   let acceptedHermesAuthority = inspection.hermesAuthority;
   let session: Awaited<ReturnType<typeof prepareInteractiveSession>>;
   let acceptedReadinessSetup: (() => void) | undefined;
+  let readinessAction: LaunchReadinessAction = "prepared";
   while (true) {
     if (decision.kind === "accepted") {
       const acceptedDecision = decision;
@@ -281,6 +323,7 @@ export async function launchSandbox(
         sb: acceptedDecision.sb,
         hermesPortable,
       };
+      readinessAction = "accepted";
       break;
     }
     if (
@@ -343,5 +386,6 @@ export async function launchSandbox(
     deps,
     acceptedHermesAuthority,
     acceptedReadinessSetup,
+    () => launchTiming.emit(readinessAction),
   );
 }

@@ -601,6 +601,8 @@ describe("launchSandbox", () => {
   it("launches accepted Hermes readiness without entering recovery (#9203)", async () => {
     const hermes = loadAgent("hermes");
     const entry = sandboxEntry("hermes");
+    const writeLaunchTiming = vi.fn();
+    const now = vi.fn().mockReturnValueOnce(10).mockReturnValueOnce(37);
     mocks.inspectLaunchReadiness.mockResolvedValue({
       kind: "accepted",
       category: "accepted",
@@ -613,6 +615,8 @@ describe("launchSandbox", () => {
       getSandbox: () => entry,
       resolveSandboxGatewayName: () => "gateway-alpha",
       withSandboxMutationLock: async (_name, operation) => await operation(),
+      now,
+      writeLaunchTiming,
     });
 
     expect(mocks.printInteractiveSessionHints).not.toHaveBeenCalled();
@@ -627,6 +631,10 @@ describe("launchSandbox", () => {
       expect.objectContaining({ boundReadinessCapture: true }),
     );
     expect(mocks.runSandboxExecChild).toHaveBeenCalledOnce();
+    expect(writeLaunchTiming).toHaveBeenCalledWith(
+      "  Launch timing: preExec=27ms readinessAction=accepted",
+    );
+    expect(writeLaunchTiming).toHaveBeenCalledBefore(mocks.runSandboxExecChild);
   });
 
   it("requalifies schema-5 before accepted Hermes readiness skips recovery (#9203)", async () => {

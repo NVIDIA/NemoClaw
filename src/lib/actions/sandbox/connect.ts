@@ -582,7 +582,12 @@ function hermesPortableLaunchReadinessDeps(
   ) => captureHermesPortableReadinessObservation(authority, args, options);
   return {
     ...createBoundLaunchReadinessDeps(capture),
-    ...(probeTiming ? { recordObservationTiming: probeTiming.recordReadinessObservation } : {}),
+    ...(probeTiming
+      ? {
+          recordObservationTiming: probeTiming.recordReadinessObservation,
+          recordObservationFailure: probeTiming.recordReadinessObservationFailure,
+        }
+      : {}),
   };
 }
 
@@ -2158,6 +2163,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
             : {},
         ),
       );
+      probeTiming!.recordReadinessDecision(readiness.category);
       const currentReadinessAuthority = hermesReadinessAuthority;
       if (currentReadinessAuthority) {
         probeTiming!.measure("authority", currentReadinessAuthority.command.assertCurrent);
@@ -2340,6 +2346,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
             inspectLaunchReadiness(sandboxName),
           );
         }
+        probeTiming!.recordReadinessDecision(readiness.category);
         continue;
       }
       if (gated.kind === "unsafe") {

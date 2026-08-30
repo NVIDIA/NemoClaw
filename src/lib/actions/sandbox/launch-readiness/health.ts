@@ -63,6 +63,7 @@ export interface LaunchReadinessHealthDeps {
   ) => ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
   inferenceInvocationProbe?: typeof runSandboxInferenceInvocationProbe;
   recordObservationTiming?: (stage: LaunchReadinessObservationStage, elapsedMs: number) => void;
+  recordObservationFailure?: (stage: LaunchReadinessObservationStage) => void;
 }
 
 export type LaunchReadinessBoundCapture = (
@@ -127,6 +128,17 @@ function recordObservationTiming(
     deps.recordObservationTiming?.(stage, Math.max(0, performance.now() - startedAt));
   } catch {
     // Timing evidence must never change readiness behavior.
+  }
+}
+
+export function recordLaunchReadinessObservationFailure(
+  deps: LaunchReadinessHealthDeps,
+  stage: LaunchReadinessObservationStage,
+): void {
+  try {
+    deps.recordObservationFailure?.(stage);
+  } catch {
+    // Diagnostic evidence must never change readiness behavior.
   }
 }
 
@@ -214,11 +226,20 @@ export async function requireLaunchSemanticHealth(
         sandboxName,
         gatewayName,
       );
+    } catch (error) {
+      recordLaunchReadinessObservationFailure(deps, "gateway-health");
+      throw error;
     } finally {
       recordObservationTiming(deps, "gateway-health", gatewayStartedAt);
     }
-    if (running === null) throw new LaunchReadinessEvidenceError();
-    if (!running) throw new LaunchReadinessObservationError("health");
+    if (running === null) {
+      recordLaunchReadinessObservationFailure(deps, "gateway-health");
+      throw new LaunchReadinessEvidenceError();
+    }
+    if (!running) {
+      recordLaunchReadinessObservationFailure(deps, "gateway-health");
+      throw new LaunchReadinessObservationError("health");
+    }
     const forwardStartedAt = performance.now();
     let forwards: boolean | null;
     try {
@@ -226,11 +247,18 @@ export async function requireLaunchSemanticHealth(
         sandboxName,
         gatewayName,
       );
+    } catch (error) {
+      recordLaunchReadinessObservationFailure(deps, "forward-health");
+      throw error;
     } finally {
       recordObservationTiming(deps, "forward-health", forwardStartedAt);
     }
-    if (forwards === null) throw new LaunchReadinessEvidenceError();
+    if (forwards === null) {
+      recordLaunchReadinessObservationFailure(deps, "forward-health");
+      throw new LaunchReadinessEvidenceError();
+    }
     if (!forwards) {
+      recordLaunchReadinessObservationFailure(deps, "forward-health");
       throw new LaunchReadinessObservationError("health");
     }
   }
@@ -239,6 +267,9 @@ export async function requireLaunchSemanticHealth(
     let inference: ReturnType<typeof parseSandboxInferenceRouteProbeResult>;
     try {
       inference = (deps.inferenceProbe ?? probeInferenceRoute)(sandboxName, agent, gatewayName);
+    } catch (error) {
+      recordLaunchReadinessObservationFailure(deps, "inference-route");
+      throw error;
     } finally {
       recordObservationTiming(deps, "inference-route", inferenceStartedAt);
     }
@@ -254,21 +285,33 @@ export async function requireLaunchSemanticHealth(
     if (openRouterDcodeModelsRouteUnsupported) {
       const provider = normalizedString(entry.provider);
       const model = normalizedString(entry.model);
-      if (!provider || !model) throw new LaunchReadinessEvidenceError();
-      const invocation = (deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe)({
-        sandboxName,
-        gatewayName,
-        agentName,
-        provider,
-        model,
-        preferredInferenceApi: normalizedString(entry.preferredInferenceApi),
-      });
+      if (!provider || !model) {
+        recordLaunchReadinessObservationFailure(deps, "inference-route");
+        throw new LaunchReadinessEvidenceError();
+      }
+      let invocation: ReturnType<typeof runSandboxInferenceInvocationProbe>;
+      try {
+        invocation = (deps.inferenceInvocationProbe ?? runSandboxInferenceInvocationProbe)({
+          sandboxName,
+          gatewayName,
+          agentName,
+          provider,
+          model,
+          preferredInferenceApi: normalizedString(entry.preferredInferenceApi),
+        });
+      } catch (error) {
+        recordLaunchReadinessObservationFailure(deps, "inference-route");
+        throw error;
+      }
       if (invocation.ok) return;
+      recordLaunchReadinessObservationFailure(deps, "inference-route");
       throw new LaunchReadinessObservationError("health", "inference request");
     }
     if (inference.broken || (inference.httpStatus >= 100 && inference.httpStatus < 600)) {
+      recordLaunchReadinessObservationFailure(deps, "inference-route");
       throw new LaunchReadinessObservationError("health");
     }
+    recordLaunchReadinessObservationFailure(deps, "inference-route");
     throw new LaunchReadinessEvidenceError();
   }
 }
