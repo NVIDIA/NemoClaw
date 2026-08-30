@@ -33,7 +33,10 @@ import {
   printMcpRebuildRetryCommand,
   restoreMcpRegistryForRebuildRetry,
 } from "./rebuild-mcp-phase";
-import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
+import {
+  normalizeProcessExitCode,
+  rebuildOnboardDependencies,
+} from "./rebuild-onboard-dependencies";
 import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
@@ -66,17 +69,6 @@ export interface RebuildRecreatePhaseInput {
   onCreated: () => void;
   log: RebuildLog;
   bail: RebuildBail;
-}
-
-function normalizeOnboardExitCode(
-  value: number | string | null | undefined,
-  fallback: number,
-): number {
-  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) {
-    return fallback;
-  }
-  const exitCode = Number(value);
-  return Number.isInteger(exitCode) ? exitCode : fallback;
 }
 
 /**
@@ -259,7 +251,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const savedExit = process.exit;
   process.exit = ((code) => {
     onboardFailed = true;
-    onboardExitCode = normalizeOnboardExitCode(code, 1);
+    onboardExitCode = normalizeProcessExitCode(code, 1);
     const error = new Error(`onboard exited with code ${onboardExitCode}`);
     error.name = "RebuildOnboardExit";
     throw error;
@@ -306,7 +298,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         : {}),
       recreateJournalTargetIntentFingerprint: recreateJournal.targetIntentFingerprint,
     });
-    const returnedExitCode = normalizeOnboardExitCode(process.exitCode, 0);
+    const returnedExitCode = normalizeProcessExitCode(process.exitCode);
     if (returnedExitCode !== 0) {
       onboardFailed = true;
       onboardExitCode = returnedExitCode;

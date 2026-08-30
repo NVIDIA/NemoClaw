@@ -5,6 +5,8 @@ import type { CheckpointGatewayAuthority } from "../../state/onboard-checkpoint-
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 
+export { normalizeProcessExitCode } from "../../core/process-exit";
+
 type RebuildAuthoritativePreflightOptions = RebuildRecreateOnboardOpts & {
   deferInferenceRouteUntilOnboard?: true;
   model: string;

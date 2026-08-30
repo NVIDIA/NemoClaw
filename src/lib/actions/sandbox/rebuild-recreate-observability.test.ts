@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
+import { wrapOnboardDeferredExit } from "../../onboard/session-bootstrap";
 import * as shields from "../../shields";
 import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
@@ -490,10 +491,13 @@ describe("runRebuildRecreatePhase handoff", () => {
     }
   });
 
-  it("preserves an integer-string exit code from intercepted inner onboarding", async () => {
+  it("preserves an integer-string exit code through nested onboarding", async () => {
     const input = makeInput();
-    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+    const nestedOnboard = wrapOnboardDeferredExit(async () => {
       process.exit("7");
+    });
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+      await nestedOnboard();
     });
 
     await expect(runRebuildRecreatePhase(input)).rejects.toThrow(
