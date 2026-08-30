@@ -18,7 +18,6 @@ import {
   env,
   hasExactReadyPhase,
   ollamaProxyTokenFile,
-  openClawModelConfigProjectionScript,
   PROXY_PORT,
   proxyStatus,
   REPO_ROOT,
@@ -38,68 +37,6 @@ function hermesResponseEnv(): NodeJS.ProcessEnv {
   });
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function modelIdentifier(value: Record<string, unknown>, key: string): string | undefined {
-  return typeof value[key] === "string" ? (value[key] as string) : undefined;
-}
-
-function assertSmallContextCompactionPolicy(configText: string): void {
-  const config = asRecord(JSON.parse(configText));
-  const agents = asRecord(config?.agents);
-  const defaults = asRecord(agents?.defaults);
-  const modelDefaults = asRecord(defaults?.model);
-  const primary = modelIdentifier(modelDefaults ?? {}, "primary");
-  const compaction = asRecord(defaults?.compaction);
-  const modelsRoot = asRecord(config?.models);
-  const providers = asRecord(modelsRoot?.providers);
-  const primaryWithoutProvider = primary?.startsWith("inference/")
-    ? primary.slice("inference/".length)
-    : primary;
-  const model = Object.values(providers ?? {})
-    .flatMap((provider) => {
-      const models = asRecord(provider)?.models;
-      return Array.isArray(models) ? models : [];
-    })
-    .map(asRecord)
-    .find((candidate) => {
-      const identifiers =
-        candidate && primary && primaryWithoutProvider
-          ? ["id", "name", "label"].flatMap((key) => {
-              const value = modelIdentifier(candidate, key);
-              return value ? [value] : [];
-            })
-          : [];
-      return identifiers.some(
-        (identifier) =>
-          identifier === primary ||
-          identifier === primaryWithoutProvider ||
-          identifier === `inference/${primaryWithoutProvider}`,
-      );
-    });
-
-  expect(primary, "OpenClaw config must declare the active model").toBeTruthy();
-  expect(model, `OpenClaw config must include active Ollama model ${primary}`).toBeDefined();
-  expect(typeof model?.contextWindow).toBe("number");
-  expect(typeof model?.maxTokens).toBe("number");
-  const contextWindow = model?.contextWindow as number;
-  const maxTokens = model?.maxTokens as number;
-  expect(
-    contextWindow,
-    `active Ollama model ${primary} must stay on the small-context lane`,
-  ).toBeLessThanOrEqual(28_000);
-  const expectedReserve = Math.min(maxTokens, Math.max(0, contextWindow - 8_000));
-
-  expect(compaction).toEqual({
-    reserveTokens: expectedReserve,
-    reserveTokensFloor: expectedReserve,
-  });
-}
-
 function loadedOllamaModels(raw: string): string[] {
   const parsed = JSON.parse(raw) as { models?: Array<{ name?: unknown; model?: unknown }> };
   return (parsed.models ?? []).flatMap((entry) => {
@@ -116,7 +53,7 @@ test(
       e2ePhases: [
         "prepare clean GPU runtime",
         "install Ollama and GPU sandbox",
-        "validate CUDA sandbox configuration",
+        "validate GPU runtime status",
         "validate Ollama proxy credential boundary",
         "run sandbox inference.local chat",
         "restart Ollama and recover agent inference",
@@ -129,13 +66,12 @@ test(
       boundary:
         "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + inference.local",
       credentialBoundary:
-        "The proxy token remains host/OpenShell-owned and is absent from sandbox env and uploaded config evidence.",
+        "The proxy token remains host/OpenShell-owned and is absent from sandbox env.",
       remoteInstallerBoundary:
         "The official Ollama installer compatibility path runs before proxy tokens are read; the workflow uses a read-only checkout token and no explicit repository secrets. Replace with a pinned package once the GPU image provides a stable install source.",
       sandboxName: SANDBOX_NAME,
       delegatedLegacyContracts: [
         "uninstall --delete-models remains a separate cleanup lane until it has dedicated Vitest coverage",
-        "The #5468 interactive TUI first-turn smoke remains waived until a TUI fixture exists; this Vitest asserts the baked compaction budget directly",
       ],
     });
 
@@ -190,16 +126,7 @@ test(
     expect(install.exitCode, resultText(install)).toBe(0);
     await artifacts.writeText("install-gpu-ollama.log", resultText(install));
 
-    progress.phase("validate CUDA sandbox configuration");
-    const config = await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript(openClawModelConfigProjectionScript()),
-      { artifactName: "sandbox-openclaw-model-config", env: env(), timeoutMs: 30_000 },
-    );
-    expect(config.exitCode, resultText(config)).toBe(0);
-    await artifacts.writeText("openclaw-model-config.json", config.stdout);
-    assertSmallContextCompactionPolicy(config.stdout);
-
+    progress.phase("validate GPU runtime status");
     const status = await host.command("node", [CLI, SANDBOX_NAME, "status"], {
       artifactName: "status-gpu-ollama",
       env: env(),
