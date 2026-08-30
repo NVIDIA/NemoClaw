@@ -80,6 +80,11 @@ while :; do
       printf '%s\n' '[SECURITY] Hermes startup held by an active runtime state mutation.' >&2
       /bin/sleep 1 || true
       ;;
+    76)
+      printf '%s\n' '[SECURITY] Hermes startup refused invalid runtime state mutation state.' >&2
+      printf '%s\n' "[SECURITY] Run 'nemoclaw <sandbox-name> shields status' on the host to recover the retained transition." >&2
+      exit 1
+      ;;
     *)
       printf '%s\n' '[SECURITY] Runtime state mutation startup gate failed.' >&2
       exit 1
@@ -106,7 +111,16 @@ nemoclaw_runtime_state_mutation_checkpoint() {
   fi
   kill -STOP "$$"
   if nemoclaw_runtime_state_mutation_gate resume; then
-    return 0
+    if nemoclaw_runtime_state_mutation_gate acknowledge; then
+      # The acknowledgement helper stops itself after publishing. The root
+      # controller resumes that exact child, then this parent stops only after
+      # Bash has reaped it and observed success.
+      kill -STOP "$$"
+      return 0
+    fi
+    printf '%s\n' '[SECURITY] Runtime state mutation release acknowledgement failed; holding startup.' >&2
+    kill -STOP "$$"
+    return 1
   else
     status=$?
   fi

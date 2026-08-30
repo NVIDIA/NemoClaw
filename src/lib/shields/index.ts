@@ -63,11 +63,17 @@ const {
   timerMarkerPath,
   readTimerMarker,
   clearTimerMarker,
+  clearTimerMarkerGeneration,
+  formatTerminalSafeDiagnosticValue,
+  sameTimerMarkerGeneration,
   hasExactTimerAuthorizationProof,
+  hasQuarantinedShieldsTimerRecoveryArtifact,
+  isShieldsTimerMarkerAbandoned,
   isProcessAlive,
   readProcessStartIdentity,
   processInspectionDeadlineAfter,
   processInspectionDeadlineReached,
+  readShieldsTimerRecoveryCandidate,
   verifyTimerMarkerIdentity,
   killTimer,
 } = require("./timer-control");
@@ -490,23 +496,6 @@ type ShieldsDownTransition = {
 
 const transitionPollBuffer = new Int32Array(new SharedArrayBuffer(4));
 
-function sameTimerMarkerGeneration(current: TimerMarker | null, expected: TimerMarker): boolean {
-  return (
-    current?.pid === expected.pid &&
-    current.sandboxName === expected.sandboxName &&
-    current.snapshotPath === expected.snapshotPath &&
-    current.restoreAt === expected.restoreAt &&
-    current.processToken === expected.processToken &&
-    current.timerProcessStartIdentity === expected.timerProcessStartIdentity &&
-    current.allowLegacyHermesProtocol === expected.allowLegacyHermesProtocol &&
-    current.agentName === expected.agentName &&
-    current.configPath === expected.configPath &&
-    current.configDir === expected.configDir &&
-    current.leaseOwnerPid === expected.leaseOwnerPid &&
-    current.leaseOwnerStartIdentity === expected.leaseOwnerStartIdentity
-  );
-}
-
 function assertTimerMarkerGeneration(sandboxName: string, expected: TimerMarker): void {
   if (!sameTimerMarkerGeneration(readTimerMarker(sandboxName), expected)) {
     throw new Error("Auto-restore authority changed before Shields transition takeover");
@@ -570,8 +559,12 @@ function appendAuditEntryBestEffort(entry: Parameters<typeof appendAuditEntry>[0
   }
 }
 
-function shieldsDownTransitionPath(sandboxName: string, processToken: string): string {
-  return path.join(STATE_DIR, `shields-transition-${sandboxName}-${processToken}.json`);
+function shieldsDownTransitionPath(
+  sandboxName: string,
+  processToken: string,
+  stateDir = STATE_DIR,
+): string {
+  return path.join(stateDir, `shields-transition-${sandboxName}-${processToken}.json`);
 }
 
 function shieldsDownForwardPolicyPath(sandboxName: string, processToken: string): string {
@@ -856,8 +849,9 @@ function requireShieldsDownForwardPolicy(transition: ShieldsDownTransition): str
 function readShieldsDownTransition(
   sandboxName: string,
   processToken: string,
+  stateDir = STATE_DIR,
 ): ShieldsDownTransition | null {
-  const transitionPath = shieldsDownTransitionPath(sandboxName, processToken);
+  const transitionPath = shieldsDownTransitionPath(sandboxName, processToken, stateDir);
   try {
     const value = JSON.parse(fs.readFileSync(transitionPath, "utf-8"));
     if (!isShieldsDownTransition(value)) return null;
@@ -1769,8 +1763,8 @@ const DEFAULT_TIMEOUT_SECONDS = DEFAULT_SECONDS;
 // State helpers — read/write shields state per sandbox
 // ---------------------------------------------------------------------------
 
-function stateFilePath(sandboxName: string): string {
-  return path.join(STATE_DIR, `shields-${sandboxName}.json`);
+function stateFilePath(sandboxName: string, stateDir = STATE_DIR): string {
+  return path.join(stateDir, `shields-${sandboxName}.json`);
 }
 
 function externalPolicyRecoveryArtifactPath(sandboxName: string): string {
@@ -2196,8 +2190,8 @@ function describeShieldsMode(mode: ShieldsPostureMode): Omit<ShieldsPosture, "st
   }
 }
 
-function loadShieldsState(sandboxName: string): LoadedShieldsState {
-  const filePath = stateFilePath(sandboxName);
+function loadShieldsState(sandboxName: string, stateDir = STATE_DIR): LoadedShieldsState {
+  const filePath = stateFilePath(sandboxName, stateDir);
   if (!fs.existsSync(filePath)) return { _hasStateFile: false };
   try {
     const contents = fs.readFileSync(filePath, "utf-8");
@@ -2328,6 +2322,164 @@ function inspectExpiredAutoRestoreMarker(sandboxName: string): TimerMarker | nul
   const marker = readTimerMarker(sandboxName);
   if (!marker) return null;
   return isExactLiveFutureTimerAuthority(marker) ? null : marker;
+}
+
+type CompletedAutoRestoreMarker = {
+  artifactPaths: string[];
+  marker: TimerMarker & { processToken: string };
+  quarantined: boolean;
+};
+
+function completedAutoRestoreRecoveryError(sandboxName: string, detail: string): Error {
+  return new Error(
+    `${detail} for sandbox '${sandboxName}'. Rerun ${CLI_NAME} ${sandboxName} shields status. Do not modify lifecycle-lock or timer files while recovery may be active.`,
+  );
+}
+
+function inspectCompletedAbandonedAutoRestoreMarker(
+  sandboxName: string,
+  stateDir = STATE_DIR,
+): CompletedAutoRestoreMarker | null {
+  const state = loadShieldsState(sandboxName, stateDir);
+  if (state._isCorrupt || state.shieldsDown !== false) {
+    if (hasQuarantinedShieldsTimerRecoveryArtifact(sandboxName, stateDir)) {
+      throw completedAutoRestoreRecoveryError(
+        sandboxName,
+        "Completed auto-restore cleanup cannot confirm that Shields are UP",
+      );
+    }
+    return null;
+  }
+  let candidate: ReturnType<typeof readShieldsTimerRecoveryCandidate>;
+  try {
+    candidate = readShieldsTimerRecoveryCandidate(sandboxName, stateDir);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `${detail} Then rerun ${CLI_NAME} ${sandboxName} shields status after completing that exact remediation.`,
+      { cause: error },
+    );
+  }
+  if (!candidate) return null;
+  const marker = candidate.marker;
+  if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) {
+    if (candidate.quarantined) {
+      throw completedAutoRestoreRecoveryError(
+        sandboxName,
+        "Completed auto-restore cleanup found a quarantined artifact without a usable process token",
+      );
+    }
+    return null;
+  }
+  if (!isShieldsTimerMarkerAbandoned(marker)) {
+    if (candidate.quarantined) {
+      throw completedAutoRestoreRecoveryError(
+        sandboxName,
+        "Completed auto-restore cleanup cannot prove that the timer owner is abandoned",
+      );
+    }
+    return null;
+  }
+  if (fs.existsSync(shieldsDownTransitionPath(sandboxName, marker.processToken, stateDir))) {
+    if (candidate.quarantined) {
+      throw completedAutoRestoreRecoveryError(
+        sandboxName,
+        "Completed auto-restore cleanup found a remaining Shields transition",
+      );
+    }
+    return null;
+  }
+  return {
+    ...candidate,
+    marker: marker as TimerMarker & { processToken: string },
+  };
+}
+
+function withCompletedAbandonedAutoRestoreFence<T>(
+  sandboxName: string,
+  candidate: CompletedAutoRestoreMarker,
+  operation: () => T,
+  stateDir: string,
+): T {
+  const marker = candidate.marker;
+  const assertCompletedAuthority = () => {
+    const currentState = loadShieldsState(sandboxName, stateDir);
+    const currentCandidate = readShieldsTimerRecoveryCandidate(sandboxName, stateDir);
+    if (
+      currentState._isCorrupt ||
+      currentState.shieldsDown !== false ||
+      fs.existsSync(shieldsDownTransitionPath(sandboxName, marker.processToken, stateDir)) ||
+      currentCandidate?.artifactPaths.length !== candidate.artifactPaths.length ||
+      candidate.artifactPaths.some(
+        (artifactPath, index) => currentCandidate?.artifactPaths[index] !== artifactPath,
+      ) ||
+      !sameTimerMarkerGeneration(currentCandidate?.marker ?? null, marker) ||
+      !isShieldsTimerMarkerAbandoned(marker)
+    ) {
+      throw completedAutoRestoreRecoveryError(
+        sandboxName,
+        "Completed auto-restore recovery authority changed",
+      );
+    }
+  };
+  return withMcpLifecycleDeadlineFenceSync(
+    sandboxName,
+    marker.processToken,
+    () => {
+      assertCompletedAuthority();
+      return operation();
+    },
+    {
+      stateDir,
+      throwOnCommittedContainment: true,
+      completedAutoRestoreRecovery: {
+        ownerPid: marker.pid,
+        assertAuthority: assertCompletedAuthority,
+      },
+      onReleased: () => {
+        for (const artifactPath of candidate.artifactPaths) {
+          const result = clearTimerMarkerGeneration(sandboxName, marker, stateDir, artifactPath);
+          if (result.warning) console.warn(`  ${result.warning}`);
+          if (result.status !== "removed") {
+            throw completedAutoRestoreRecoveryError(
+              sandboxName,
+              result.retainedPath
+                ? `Completed auto-restore cleanup retained ${formatTerminalSafeDiagnosticValue(result.retainedPath)} for retry`
+                : result.status === "changed"
+                  ? "Completed auto-restore cleanup found replacement timer authority"
+                  : "Completed auto-restore cleanup could not confirm durable removal and requires an explicit retry",
+            );
+          }
+        }
+      },
+    },
+  );
+}
+
+function recoverCompletedAutoRestoreBeforeCommand(
+  sandboxName: string,
+  stateDir = resolveShieldsStateDir(),
+): boolean {
+  validateName(sandboxName, "sandbox name");
+  let recovered = false;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const candidate = inspectCompletedAbandonedAutoRestoreMarker(sandboxName, stateDir);
+    if (!candidate) return recovered;
+    withCompletedAbandonedAutoRestoreFence(sandboxName, candidate, () => undefined, stateDir);
+    recovered = true;
+    const remaining = readShieldsTimerRecoveryCandidate(sandboxName, stateDir);
+    if (!remaining) return true;
+    if (!sameTimerMarkerGeneration(remaining.marker, candidate.marker)) {
+      throw completedAutoRestoreRecoveryError(
+        sandboxName,
+        "Completed auto-restore cleanup found replacement timer authority",
+      );
+    }
+  }
+  throw completedAutoRestoreRecoveryError(
+    sandboxName,
+    "Completed auto-restore timer cleanup did not finish",
+  );
 }
 
 function inspectExpiredAutoRestoreTakeover(
@@ -2463,6 +2615,18 @@ function withExpiredAutoRestoreDeadlineFence<T>(
   fallbackTakeoverToken?: string,
   assertCommandAvailable?: () => void,
 ): T {
+  const completedMarker = inspectCompletedAbandonedAutoRestoreMarker(sandboxName);
+  if (completedMarker) {
+    return withCompletedAbandonedAutoRestoreFence(
+      sandboxName,
+      completedMarker,
+      () => {
+        assertCommandAvailable?.();
+        return operation(false);
+      },
+      STATE_DIR,
+    );
+  }
   const expiredMarker = inspectExpiredAutoRestoreMarker(sandboxName);
   const takeover = inspectExpiredAutoRestoreTakeover(sandboxName, expiredMarker);
   const runWithHostLock = (callback: () => T) =>
@@ -4030,6 +4194,38 @@ function captureSealHashes(sandboxName: string, filesToHash: string[]): { [path:
   return hashes;
 }
 
+function verifyHermesProviderLockedPosture(
+  sandboxName: string,
+  target: AgentConfigTarget,
+): { chattrApplied: boolean; fileHashes: { [path: string]: string } } {
+  const chattrApplied = hermesProviderChattrApplied(sandboxName, target);
+  const verified = verifyShieldsLockState(sandboxName, target, {
+    verifyChattr: chattrApplied,
+    verifyParentProtection: true,
+    exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+    assertLegacyLayout: assertNoLegacyStateLayout,
+  });
+  if (verified.issues.length > 0) {
+    throw new Error(`Config not locked: ${verified.issues.join(", ")}`);
+  }
+  return {
+    chattrApplied,
+    fileHashes: captureSealHashes(sandboxName, [
+      target.configPath,
+      ...(target.sensitiveFiles || []),
+    ]),
+  };
+}
+
+function hermesProviderLockConfirmation(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  protocol: HermesShieldsProtocol,
+): (() => { chattrApplied: boolean; fileHashes: { [path: string]: string } }) | undefined {
+  if (protocol !== "provider-state-mutation-v2") return undefined;
+  return () => verifyHermesProviderLockedPosture(sandboxName, target);
+}
+
 function lockAgentConfigUnderMutationLock(
   sandboxName: string,
   rawTarget: AgentConfigTarget,
@@ -4038,36 +4234,17 @@ function lockAgentConfigUnderMutationLock(
 ): { chattrApplied: boolean; fileHashes: { [path: string]: string } } {
   const target = ensureConfigHashSensitiveFile(rawTarget);
   if (target.agentName === "hermes" && protocol === "provider-state-mutation-v2") {
-    const verifyProviderLockedPosture = () => {
-      const chattrApplied = hermesProviderChattrApplied(sandboxName, target);
-      const verified = verifyShieldsLockState(sandboxName, target, {
-        verifyChattr: chattrApplied,
-        verifyParentProtection: true,
-        exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
-        assertLegacyLayout: assertNoLegacyStateLayout,
-      });
-      if (verified.issues.length > 0) {
-        throw new Error(`Config not locked: ${verified.issues.join(", ")}`);
-      }
-      return {
-        chattrApplied,
-        fileHashes: captureSealHashes(sandboxName, [
-          target.configPath,
-          ...(target.sensitiveFiles || []),
-        ]),
-      };
-    };
     if (rollbackLocked) {
       runHermesProviderProtectionTransition(sandboxName, target, "locked", "locked");
       try {
-        return verifyProviderLockedPosture();
+        return verifyHermesProviderLockedPosture(sandboxName, target);
       } catch {
         // Repair a drifted live posture with a mutable rollback. Locked-target
         // failures retain the provider fence, so this remains fail-closed.
       }
     }
     runHermesProviderProtectionTransition(sandboxName, target, "locked", "mutable");
-    return verifyProviderLockedPosture();
+    return verifyHermesProviderLockedPosture(sandboxName, target);
   }
   const compatibilityIssues = stateLockPlanCompatibilityIssues(
     stateDirLockExec(sandboxName),
@@ -4904,8 +5081,9 @@ function rollbackShieldsDown(
     // the rolled-back config DRIFTED — same fail-closed treatment as the
     // auto-restore path. Leaves the hashes null (→ "manual intervention"
     // below) when the lock will not re-confirm.
-    const relock = relockAndReconfirm(() =>
-      lockAgentConfigUnderMutationLock(sandboxName, target, true, protocol),
+    const relock = relockAndReconfirm(
+      () => lockAgentConfigUnderMutationLock(sandboxName, target, true, protocol),
+      { confirm: hermesProviderLockConfirmation(sandboxName, target, protocol) },
     );
     if (relock.ok && relock.lastResult) {
       rollbackChattrApplied = relock.lastResult.chattrApplied;
@@ -5021,8 +5199,9 @@ function activateLockdownFromSnapshot(
   // which mark shields UP on this result — so a reconciler revert here would
   // otherwise leave the same DRIFTED state #4663 is about. relockAndReconfirm
   // fails closed (ok:false) when the lock will not hold past the settle window.
-  const relock = relockAndReconfirm(() =>
-    lockAgentConfig(sandboxName, target, false, allowLegacyHermesProtocol, protocol),
+  const relock = relockAndReconfirm(
+    () => lockAgentConfig(sandboxName, target, false, allowLegacyHermesProtocol, protocol),
+    { confirm: hermesProviderLockConfirmation(sandboxName, target, protocol) },
   );
   if (!relock.ok || !relock.lastResult) {
     return {
@@ -6407,8 +6586,16 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
     // reverted on DGX Station / DGX Spark, leaving the sandbox DRIFTED. This
     // narrows (does not close) the revert window; the chattr +i immutable bit
     // applied inside lockAgentConfig is the only fully durable defense.
-    const relock = relockAndReconfirm(() =>
-      lockAgentConfig(sandboxName, target, true, opts.allowLegacyHermesProtocol === true, protocol),
+    const relock = relockAndReconfirm(
+      () =>
+        lockAgentConfig(
+          sandboxName,
+          target,
+          true,
+          opts.allowLegacyHermesProtocol === true,
+          protocol,
+        ),
+      { confirm: hermesProviderLockConfirmation(sandboxName, target, protocol) },
     );
     if (!relock.ok || !relock.lastResult) {
       const message = relock.error ?? "Config re-lock did not re-confirm after settle window";
@@ -6514,22 +6701,25 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
     //     Each operation runs independently and the result is verified.
     //     If verification fails, config remains unlocked — we do not lie about state.
     console.log(`  Locking ${target.agentName} config (${target.configPath})...`);
-    let lockResult: { chattrApplied: boolean; fileHashes: { [path: string]: string } };
-    try {
-      lockResult = lockAgentConfig(
-        sandboxName,
-        target,
-        false,
-        opts.allowLegacyHermesProtocol === true,
-        protocol,
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+    const relock = relockAndReconfirm(
+      () =>
+        lockAgentConfig(
+          sandboxName,
+          target,
+          false,
+          opts.allowLegacyHermesProtocol === true,
+          protocol,
+        ),
+      { confirm: hermesProviderLockConfirmation(sandboxName, target, protocol) },
+    );
+    if (!relock.ok || !relock.lastResult) {
+      const message = relock.error ?? "Config lock did not re-confirm after settle window";
       console.error(`  ERROR: ${message}`);
       console.error("  Config remains unlocked — manual intervention required.");
       printManualRelockRecoveryHint(sandboxName);
       return failShieldsCommand(message, opts.throwOnError);
     }
+    const lockResult = relock.lastResult;
     saveShieldsState(sandboxName, {
       chattrApplied: lockResult.chattrApplied,
       fileHashes: lockResult.fileHashes,
@@ -6962,6 +7152,7 @@ export {
   DEFAULT_TIMEOUT_SECONDS,
   deriveShieldsMode,
   getShieldsPosture,
+  hermesProviderLockConfirmation,
   inspectMutableConfigPerms,
   isShieldsDown,
   killTimer,
@@ -6969,8 +7160,10 @@ export {
   MAX_TIMEOUT_SECONDS,
   parseDuration,
   prepareAutoRestoreTransitionTakeover,
+  recoverCompletedAutoRestoreBeforeCommand,
   repairMutableConfigPerms,
   resolvePersistedAutoRestoreTarget,
+  resolveHermesShieldsProtocol,
   restoreLockedStateDirStartupAccess,
   shieldsDown,
   shieldsStatus,
