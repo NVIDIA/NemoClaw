@@ -88,6 +88,28 @@ function mergeReplacementFilesystemAccess(
   return true;
 }
 
+function mergeMissingReplacementProcessIdentity(
+  live: PolicyMapping,
+  replacement: PolicyMapping,
+): boolean {
+  const replacementProcessValue = replacement.process;
+  if (replacementProcessValue === undefined) return false;
+  const replacementProcess = policyMapping(replacementProcessValue, "replacement process");
+  const liveProcessValue = live.process;
+  const liveProcess =
+    liveProcessValue === undefined
+      ? {}
+      : structuredClone(policyMapping(liveProcessValue, "live process"));
+  let changed = false;
+  for (const field of ["run_as_user", "run_as_group"] as const) {
+    if (liveProcess[field] !== undefined || typeof replacementProcess[field] !== "string") continue;
+    liveProcess[field] = replacementProcess[field];
+    changed = true;
+  }
+  if (changed) live.process = liveProcess;
+  return changed;
+}
+
 function mergeRequestedReplacementNetworkPolicies(
   live: PolicyMapping,
   replacement: PolicyMapping,
@@ -162,10 +184,10 @@ function mergeRequestedReplacementNetworkPolicies(
 
 /**
  * Build one replacement-create input from OpenShell's live policy. Host edits
- * win completely outside filesystem access and network keys required by an
- * explicit active messaging command. Those bounded requirements are added
- * only to the one replacement create input; they are never persisted as a
- * NemoClaw-owned policy shadow.
+ * win completely outside missing non-root process identity, filesystem
+ * access, and network keys required by an explicit active messaging command.
+ * Those bounded image/command requirements are added only to the replacement
+ * create input; they are never persisted as a NemoClaw-owned policy shadow.
  */
 export function mergeReplacementPolicyAccess(
   livePolicySource: string,
@@ -176,6 +198,7 @@ export function mergeReplacementPolicyAccess(
 ): { readonly changed: boolean; readonly source: string } {
   const live = structuredClone(parseOpenShellPolicy(livePolicySource).policy) as PolicyMapping;
   const replacement = parseOpenShellPolicy(replacementPolicySource).policy as PolicyMapping;
+  const processChanged = mergeMissingReplacementProcessIdentity(live, replacement);
   const filesystemChanged = mergeReplacementFilesystemAccess(live, replacement);
   const networkChanged = mergeRequestedReplacementNetworkPolicies(
     live,
@@ -184,7 +207,7 @@ export function mergeReplacementPolicyAccess(
     removedNetworkPolicyKeys,
     requiredNetworkPolicySources,
   );
-  const changed = filesystemChanged || networkChanged;
+  const changed = processChanged || filesystemChanged || networkChanged;
   return changed
     ? { changed: true, source: YAML.stringify(live) }
     : { changed: false, source: livePolicySource };

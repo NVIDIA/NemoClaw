@@ -66,6 +66,9 @@ filesystem_policy:
   include_workdir: true
   read_only: [/usr, /replacement-read, /replacement-write]
   read_write: [/sandbox, /host-read]
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
 network_policies:
   host_edit:
     name: host_edit
@@ -86,6 +89,7 @@ seccomp:
     const policy = YAML.parse(merged.source) as {
       filesystem_policy: { include_workdir: boolean; read_only: string[]; read_write: string[] };
       network_policies: Record<string, unknown>;
+      process: { run_as_user: string; run_as_group: string };
     };
 
     expect(merged.changed).toBe(true);
@@ -94,6 +98,7 @@ seccomp:
       read_only: ["/usr", "/replacement-read"],
       read_write: ["/sandbox", "/host-write", "/replacement-write", "/host-read"],
     });
+    expect(policy.process).toEqual({ run_as_user: "sandbox", run_as_group: "sandbox" });
     expect(policy).toMatchObject({
       landlock: { compatibility: "host_choice" },
     });
@@ -116,6 +121,18 @@ seccomp:
     expect(mergeReplacementPolicyAccess(live, live)).toEqual({
       changed: false,
       source: live,
+    });
+  });
+
+  it("fills only missing replacement process identity fields", () => {
+    const merged = mergeReplacementPolicyAccess(
+      "version: 1\nprocess:\n  run_as_user: operator\n",
+      "version: 1\nprocess:\n  run_as_user: sandbox\n  run_as_group: sandbox\n",
+    );
+
+    expect(YAML.parse(merged.source).process).toEqual({
+      run_as_user: "operator",
+      run_as_group: "sandbox",
     });
   });
 

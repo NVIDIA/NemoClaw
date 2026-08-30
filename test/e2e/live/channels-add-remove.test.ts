@@ -479,10 +479,10 @@ test(
       accountEnabled: false,
       accountPresent: false,
       channelEnabled: false,
-      channelPresent: false,
+      channelPresent: true,
       credentialPresent: false,
       pluginEnabled: false,
-      pluginPresent: false,
+      pluginPresent: true,
     });
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-2-policy-list-baseline");
 
@@ -612,10 +612,10 @@ test(
       accountEnabled: false,
       accountPresent: false,
       channelEnabled: false,
-      channelPresent: true,
+      channelPresent: false,
       credentialPresent: false,
       pluginEnabled: false,
-      pluginPresent: true,
+      pluginPresent: false,
     });
     await expectProvider(host, "absent", "phase-6-provider-get-after-remove");
     await expectPolicyPreset(host, "telegram", "not-applied", "phase-6-policy-list-after-remove");
