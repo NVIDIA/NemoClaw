@@ -304,5 +304,19 @@ network_policies:
         },
       }),
     ).toThrow("outside the verified replacement plan");
+
+    const authorized = materializeRebuildPolicyHandoff({
+      livePolicyPath: livePath,
+      replacementPolicy: {
+        policyPath: replacementPath,
+        appliedPresets: [],
+        credentialBindingProviders: ["planned-provider"],
+      },
+      authorizedCredentialBindingProviders: ["host-added-provider"],
+    });
+    expect(authorized.credentialBindingProviders).toEqual([
+      "planned-provider",
+      "host-added-provider",
+    ]);
   });
 });

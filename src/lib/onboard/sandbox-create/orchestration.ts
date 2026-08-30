@@ -133,6 +133,7 @@ function selectRebuildCreatePolicy(
   requiredNetworkPolicyPresetNames: readonly string[],
   messagingPlan: SandboxMessagingPlan | null | undefined,
   sandboxName: string,
+  authorizedCredentialBindingProviders: readonly string[],
 ): import("../initial-policy").InitialSandboxPolicy {
   const requiredNetworkPolicySources = requiredNetworkPolicyPresetNames.map((presetName) => {
     const source = loadMessagingChannelPolicyPreset(presetName, {
@@ -152,6 +153,7 @@ function selectRebuildCreatePolicy(
     requiredNetworkPolicyKeys,
     removedNetworkPolicyKeys,
     requiredNetworkPolicySources,
+    authorizedCredentialBindingProviders,
   });
 }
 
@@ -2104,6 +2106,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           rebuildMessagingPolicyDeltas.requiredNetworkPolicyPresetNames,
           plannedMessagingState?.plan,
           sandboxName,
+          materializedCreateArgv.flatMap((value, index, args) =>
+            index > 0 && args[index - 1] === "--provider" ? [value] : [],
+          ),
         )
       : materializedInitialSandboxPolicy;
     const createArgv = createIntent?.rebuildPolicySourcePath

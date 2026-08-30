@@ -15,9 +15,13 @@ type PolicyMapping = Record<string, unknown>;
 function authorizedCredentialBindingProviders(
   source: string,
   replacementPolicy: InitialSandboxPolicy,
+  additionalAuthorized: readonly string[],
 ): string[] {
   const observed = getCredentialBindingProviders(source);
-  const authorized = new Set(replacementPolicy.credentialBindingProviders ?? []);
+  const authorized = new Set([
+    ...(replacementPolicy.credentialBindingProviders ?? []),
+    ...additionalAuthorized,
+  ]);
   const unauthorized = observed.filter((provider) => !authorized.has(provider));
   if (unauthorized.length > 0) {
     throw new Error(
@@ -235,6 +239,7 @@ export function materializeRebuildPolicyHandoff(input: {
   readonly requiredNetworkPolicyKeys?: readonly string[];
   readonly removedNetworkPolicyKeys?: readonly string[];
   readonly requiredNetworkPolicySources?: readonly string[];
+  readonly authorizedCredentialBindingProviders?: readonly string[];
 }): InitialSandboxPolicy {
   const liveSource = fs.readFileSync(input.livePolicyPath, "utf8");
   const replacementSource =
@@ -255,6 +260,7 @@ export function materializeRebuildPolicyHandoff(input: {
       credentialBindingProviders: authorizedCredentialBindingProviders(
         liveSource,
         input.replacementPolicy,
+        input.authorizedCredentialBindingProviders ?? [],
       ),
       sourceBytes: Buffer.from(liveSource),
     };
@@ -280,6 +286,7 @@ export function materializeRebuildPolicyHandoff(input: {
       credentialBindingProviders: authorizedCredentialBindingProviders(
         merged.source,
         input.replacementPolicy,
+        input.authorizedCredentialBindingProviders ?? [],
       ),
       sourceBytes: Buffer.from(merged.source),
       cleanup,
