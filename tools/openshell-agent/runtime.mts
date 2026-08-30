@@ -32,7 +32,7 @@ export interface OpenShellExecution {
 
 export interface OpenShellTools {
   run: (command: string, args: readonly string[], options: OpenShellCommandOptions) => string;
-  runAsync?: (
+  runAsync: (
     command: string,
     args: readonly string[],
     options: OpenShellCommandOptions,
@@ -512,12 +512,6 @@ export function execOpenShellSandboxAsync(
   input: ExecOpenShellSandboxOptions,
   tools: OpenShellTools = defaultOpenShellTools,
 ): OpenShellExecution {
-  if (!tools.runAsync) {
-    return {
-      cancel: () => undefined,
-      completion: Promise.resolve().then(() => execOpenShellSandbox(env, input, tools)),
-    };
-  }
   return tools.runAsync("openshell", openShellSandboxExecArguments(input), {
     env: credentialFreeEnvironment(env),
   });

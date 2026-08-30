@@ -243,7 +243,7 @@ describe("local PR review advisor", () => {
       ...artifactLifecycle(stop),
       create: () => undefined,
       run: () => {
-        const execution = defaultOpenShellTools.runAsync!(
+        const execution = defaultOpenShellTools.runAsync(
           process.execPath,
           ["--experimental-strip-types", "--no-warnings", SIGTERM_IGNORING_CHILD_FIXTURE],
           { env: { ...process.env, PID_PATH: pidPath, TERM_PATH: termPath } },
@@ -507,6 +507,63 @@ describe("local PR review advisor", () => {
     ).toEqual([]);
   });
 
+  it("kills a SIGTERM-ignoring trusted child before removing its bootstrap checkout (#10611)", async () => {
+    const source = temporaryDirectory();
+    const temporaryRoot = temporaryDirectory();
+    git(source, ["init", "--initial-branch=main"]);
+    git(source, ["config", "user.name", "Test"]);
+    git(source, ["config", "user.email", "test@example.com"]);
+    fs.mkdirSync(path.join(source, "tools", "pr-review-advisor"), { recursive: true });
+    fs.copyFileSync(
+      path.resolve("tools/pr-review-advisor/local-review.mts"),
+      path.join(source, "tools", "pr-review-advisor", "local-review.mts"),
+    );
+    fs.copyFileSync(
+      SIGTERM_IGNORING_CHILD_FIXTURE,
+      path.join(source, "tools", "pr-review-advisor", "local-review-implementation.mts"),
+    );
+    const npmBin = installFakeNpm(source);
+    git(source, ["add", "."]);
+    git(source, ["commit", "-m", "trusted base"]);
+    git(source, ["remote", "add", "origin", source]);
+    git(source, ["fetch", "origin", "main"]);
+    const child = spawn(
+      process.execPath,
+      ["--experimental-strip-types", "--no-warnings", "tools/pr-review-advisor/local-review.mts"],
+      {
+        cwd: source,
+        env: {
+          ...process.env,
+          HOME: path.resolve(npmBin, "../.."),
+          PATH: npmBin + path.delimiter + process.env.PATH,
+          TMPDIR: temporaryRoot,
+        },
+        stdio: "pipe",
+      },
+    );
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => (stderr += chunk));
+    const pidPath = path.join(source, "trusted-child-pid");
+    const termPath = path.join(source, "trusted-child-term");
+    await vi.waitFor(() => expect(fs.existsSync(pidPath)).toBe(true));
+    const trustedPid = Number(fs.readFileSync(pidPath, "utf8"));
+
+    child.kill("SIGTERM");
+    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) => child.once("close", (code, signal) => resolve({ code, signal })),
+    );
+
+    expect(result, stderr).toEqual({ code: null, signal: "SIGTERM" });
+    expect(fs.readFileSync(termPath, "utf8")).toBe("SIGTERM");
+    expect(() => process.kill(trustedPid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    expect(
+      fs
+        .readdirSync(temporaryRoot)
+        .filter((name) => name.startsWith("nemoclaw-local-review-bootstrap-")),
+    ).toEqual([]);
+  });
+
   it.each([
     ["status", "process.exitCode = 23;", 23, null, "exited with status 23"],
     ["signal", 'process.kill(process.pid, "SIGTERM");', null, "SIGTERM", "terminated by SIGTERM"],
@@ -636,9 +693,13 @@ describe("local PR review advisor", () => {
     const source = repository();
     const home = temporaryDirectory();
     const marker = path.join(home, "filter-ran");
-    fs.writeFileSync(path.join(source, ".gitattributes"), "*.txt filter=hostile\n");
-    git(source, ["add", ".gitattributes"]);
-    git(source, ["commit", "-m", "select hostile filter"]);
+    fs.writeFileSync(path.join(source, "exported.txt"), "must be reviewed\n");
+    fs.writeFileSync(
+      path.join(source, ".gitattributes"),
+      "*.txt filter=hostile\nexported.txt export-ignore\n",
+    );
+    git(source, ["add", ".gitattributes", "exported.txt"]);
+    git(source, ["commit", "-m", "select hostile filter and export rule"]);
     execFileSync(
       "git",
       [
@@ -652,8 +713,11 @@ describe("local PR review advisor", () => {
     vi.stubEnv("HOME", home);
     vi.stubEnv("PR_REVIEW_ADVISOR_API_KEY", "must-not-reach-filter");
 
-    createLocalReviewSnapshot(source, path.join(temporaryDirectory(), "snapshot"));
+    const snapshot = path.join(temporaryDirectory(), "snapshot");
+    const refs = createLocalReviewSnapshot(source, snapshot);
 
+    expect(fs.readFileSync(path.join(snapshot, "exported.txt"), "utf8")).toBe("must be reviewed\n");
+    expect(git(snapshot, ["show", refs.headRef + ":exported.txt"])).toBe("must be reviewed");
     expect(fs.existsSync(marker)).toBe(false);
   });
 

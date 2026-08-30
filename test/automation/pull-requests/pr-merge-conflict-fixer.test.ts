@@ -83,6 +83,7 @@ function resolverEnvironment(): NodeJS.ProcessEnv {
 function resolverTools(outputs: string[] = []): ResolverTools {
   return {
     run: vi.fn(() => outputs.shift() ?? ""),
+    runAsync: vi.fn(() => ({ cancel: vi.fn(), completion: Promise.resolve() })),
     start: vi.fn(),
     wait: vi.fn(async () => undefined),
   };

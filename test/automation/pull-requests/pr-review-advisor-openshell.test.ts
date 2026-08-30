@@ -733,7 +733,7 @@ describe("PR review advisor OpenShell wrapper", () => {
 
     const runArgs =
       vi
-        .mocked(tools.runAsync!)
+        .mocked(tools.runAsync)
         .mock.calls.find(([, args]) =>
           args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"),
         )?.[1] ?? [];
@@ -834,7 +834,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     ).toEqual([expect.objectContaining({ read_only: true })]);
     const runArgs =
       vi
-        .mocked(tools.runAsync!)
+        .mocked(tools.runAsync)
         .mock.calls.find(([, args]) =>
           args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"),
         )?.[1] ?? [];

@@ -172,12 +172,8 @@ export function createLocalReviewSnapshot(
   git(path.dirname(destination), ["clone", "--no-hardlinks", "--no-checkout", source, destination]);
   const initialHead = gitValue(destination, ["rev-parse", "HEAD"]);
   git(destination, ["read-tree", initialHead]);
-  const archive = execFileSync("git", ["archive", initialHead], {
-    cwd: destination,
-    env: restrictedGitEnvironment(),
-    maxBuffer: Number.POSITIVE_INFINITY,
-  });
-  execFileSync("tar", ["-xf", "-", "-C", destination], { input: archive });
+  git(destination, [...disabledFilters(source), "checkout-index", "--all", "--force"]);
+  removeSnapshotSymlinks(destination);
   const patch = git(source, ["diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD"]);
   if (patch) {
     git(destination, ["apply", "--cached", "--binary", "-"], patch);

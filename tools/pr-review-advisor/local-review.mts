@@ -2,13 +2,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const TRUSTED_IMPLEMENTATION = "tools/pr-review-advisor/local-review-implementation.mts";
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+const PROCESS_TERMINATION_GRACE_MS = 250;
+const PROCESS_KILL_TIMEOUT_MS = 5_000;
+const PROCESS_POLL_INTERVAL_MS = 25;
 
 function trustedHostEnvironment(source: string): NodeJS.ProcessEnv {
   const homeBin = process.env.HOME ? path.join(process.env.HOME, ".local", "bin") : undefined;
@@ -105,9 +108,10 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-local-review-bootstrap-"));
   const trustedCheckout = path.join(root, "advisor");
   const handlers = new Map<NodeJS.Signals, () => void>();
-  let activeChild: ChildProcess | undefined;
+  let activeCancellation: (() => Promise<void>) | undefined;
   let forwardedSignal: NodeJS.Signals | undefined;
   let cleaned = false;
+  let cleanupAllowed = true;
   let cleanupError: unknown;
   let result: { code: number | null; signal: NodeJS.Signals | null } | undefined;
 
@@ -123,8 +127,7 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
   for (const signal of SIGNALS) {
     const handler = (): void => {
       forwardedSignal ??= signal;
-      activeChild?.kill(signal);
-      cleanup();
+      void activeCancellation?.().catch(() => undefined);
     };
     handlers.set(signal, handler);
     process.once(signal, handler);
@@ -137,17 +140,95 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
   ): Promise<{ code: number | null; signal: NodeJS.Signals | null }> => {
     const child = spawn(command, [...args], {
       cwd: options.cwd,
+      detached: true,
       env: options.env ?? hostEnvironment,
       stdio: options.stdio ?? ["ignore", "ignore", "inherit"],
     });
-    activeChild = child;
-    try {
-      return await new Promise((resolve, reject) => {
-        child.once("error", reject);
-        child.once("close", (code, signal) => resolve({ code, signal }));
+    const pid = child.pid;
+    if (pid === undefined) throw new Error(command + " did not report a process-group identifier");
+    let cancelPromise: Promise<void> | undefined;
+    let finishInterruption: (() => void) | undefined;
+    const interruption = new Promise<void>((resolve) => (finishInterruption = resolve));
+    const groupExists = (): boolean => {
+      try {
+        process.kill(-pid, 0);
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+        throw error;
+      }
+    };
+    const waitForGroupExit = async (timeout: number): Promise<boolean> => {
+      const deadline = Date.now() + timeout;
+      while (groupExists() && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, PROCESS_POLL_INTERVAL_MS));
+      }
+      return !groupExists();
+    };
+    const signalGroup = (signal: NodeJS.Signals): void => {
+      try {
+        process.kill(-pid, signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    };
+    const cancel = (): Promise<void> => {
+      cancelPromise ??= (async () => {
+        try {
+          signalGroup("SIGTERM");
+          if (!(await waitForGroupExit(PROCESS_TERMINATION_GRACE_MS))) {
+            signalGroup("SIGKILL");
+            if (!(await waitForGroupExit(PROCESS_KILL_TIMEOUT_MS))) {
+              cleanupAllowed = false;
+              throw new Error(
+                command +
+                  " process group " +
+                  pid +
+                  " did not exit after SIGKILL; bootstrap retained at " +
+                  root +
+                  " for manual cleanup",
+              );
+            }
+          }
+        } catch (error) {
+          cleanupAllowed = false;
+          const diagnostic = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            command +
+              " process group " +
+              pid +
+              " cleanup was not confirmed; bootstrap retained at " +
+              root +
+              " for manual cleanup: " +
+              diagnostic,
+            { cause: error },
+          );
+        } finally {
+          finishInterruption?.();
+        }
+      })();
+      void cancelPromise.catch((error) => {
+        cleanupError ??= error;
       });
+      return cancelPromise;
+    };
+    activeCancellation = cancel;
+    if (forwardedSignal) void cancel();
+    try {
+      const completion = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+        (resolve, reject) => {
+          child.once("error", reject);
+          child.once("close", (code, signal) => resolve({ code, signal }));
+        },
+      );
+      const interrupted = interruption.then(() => ({
+        code: null,
+        signal: forwardedSignal ?? null,
+      }));
+      return await Promise.race([completion, interrupted]);
     } finally {
-      if (activeChild === child) activeChild = undefined;
+      if (forwardedSignal) await cancel().catch(() => undefined);
+      if (activeCancellation === cancel) activeCancellation = undefined;
     }
   };
 
@@ -190,6 +271,10 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
     )
       return result!;
     git(trustedCheckout, ["checkout", "--detach", "--force", baseCommit], hostEnvironment);
+    if (forwardedSignal) {
+      result = { code: null, signal: forwardedSignal };
+      return result;
+    }
     if (
       !(await requireSuccess("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], {
         cwd: trustedCheckout,
@@ -211,7 +296,7 @@ async function main(): Promise<{ code: number | null; signal: NodeJS.Signals | n
     return result;
   } finally {
     for (const [signal, handler] of handlers) process.off(signal, handler);
-    cleanup();
+    if (cleanupAllowed) cleanup();
     if (cleanupError !== undefined) {
       const cleanup = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
       const original = result?.signal
