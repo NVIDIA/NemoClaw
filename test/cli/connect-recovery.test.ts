@@ -375,7 +375,7 @@ describe("CLI connect recovery process contracts", () => {
     },
   );
 
-  it("recovers a stopped Hermes Agent gateway with its assigned forwards through privileged Docker control (#9716)", async () => {
+  it("rejects a Hermes registry row without exact portable lifecycle authority before recovery (#9716)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-agent-"));
     const localBin = path.join(home, "bin");
     const openshellCalls = path.join(home, "openshell-calls");
@@ -429,26 +429,22 @@ describe("CLI connect recovery process contracts", () => {
     );
     writeGatewayControlDockerStub(localBin, { callsFile: dockerCalls, stateFile });
     writeRecordingCommand(localBin, "ssh", sshCalls, 98);
-    const stopForwardListeners = await startForwardListeners([18790, 8643]);
+    const result = runWithEnv("alpha connect --probe-only", {
+      HOME: home,
+      NODE_OPTIONS: nonWslPlatformNodeOptions(home),
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
 
-    try {
-      const result = runWithEnv("alpha connect --probe-only", {
-        HOME: home,
-        NODE_OPTIONS: nonWslPlatformNodeOptions(home),
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-      });
-
-      expectProbeOnlyPublicationOutcome(result);
-      expect(result.out).toContain("Probe complete: recovered Hermes Agent gateway");
-      const openshellLog = fs.readFileSync(openshellCalls, "utf8");
-      expect(openshellLog).toContain("sandbox exec --name alpha -- sh -c");
-      expect(openshellLog).not.toContain("sandbox ssh-config alpha");
-      expect(openshellLog).not.toContain("sandbox connect");
-      expect(fs.existsSync(sshCalls)).toBe(false);
-      expectGatewayControlRecovery(dockerCalls);
-    } finally {
-      await stopForwardListeners();
-    }
+    expect(result.code).toBe(1);
+    expect(result.out).toContain(
+      "Hermes portable lifecycle authority for 'alpha' is missing, incomplete, or changed",
+    );
+    expect(fs.readFileSync(stateFile, "utf8")).toBe("stopped");
+    expect(fs.existsSync(openshellCalls)).toBe(false);
+    expect(fs.readFileSync(dockerCalls, "utf8")).not.toContain(
+      "/usr/local/bin/nemoclaw-gateway-control recover",
+    );
+    expect(fs.existsSync(sshCalls)).toBe(false);
   });
 
   it("connect recovers a named sandbox from the last onboard session when the registry is empty", () => {
