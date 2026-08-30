@@ -292,6 +292,12 @@ function resolveDisplayAgent(sandbox: SandboxEntry): string {
  * Project a stored or recovered {@link SandboxEntry} into a display row,
  * resolving inference/GPU fields and marking gateway-recovered rows so unknown
  * agent/GPU state renders as "unknown" rather than OpenClaw/CPU defaults.
+ *
+ * Every string this row publishes goes through `safeStatusString`, exactly as
+ * {@link buildStatusSandboxRow} already does for the same entry. `list --json`
+ * predates that helper (#2147 landed two days before it), so its original
+ * name/model/provider/policies/agent fields were left raw while every field
+ * added afterwards was redacted.
  */
 function buildSandboxInventoryRow(
   sandbox: SandboxEntry,
@@ -306,9 +312,9 @@ function buildSandboxInventoryRow(
   const inference = getSandboxEntryDisplayInference(sandbox);
 
   return {
-    name: sandbox.name,
-    model: inference.model,
-    provider: inference.provider,
+    name: safeStatusString(sandbox.name) || sandbox.name,
+    model: safeStatusString(inference.model),
+    provider: safeStatusString(inference.provider),
     gpuEnabled: sandbox.gpuEnabled === true,
     hostGpuDetected: sandbox.hostGpuDetected === true,
     sandboxGpuEnabled,
@@ -316,13 +322,19 @@ function buildSandboxInventoryRow(
     sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
     openshellDriver: safeStatusString(sandbox.openshellDriver || null),
     openshellVersion: safeStatusString(sandbox.openshellVersion || null),
-    policies: Array.isArray(sandbox.policies) ? sandbox.policies : [],
-    agent: resolveDisplayAgent(sandbox),
+    policies: Array.isArray(sandbox.policies)
+      ? sandbox.policies
+          .filter((policy): policy is string => typeof policy === "string")
+          .map((policy) => safeStatusString(policy) || policy)
+      : [],
+    agent: redactFull(resolveDisplayAgent(sandbox)),
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
     isDefault: sandbox.name === defaultSandbox,
     activeSessionCount,
     ...(sandbox.recoveredFromGateway ? { recoveredFromGateway: true } : {}),
-    ...(sandbox.recoveredFromGateway ? { livePhase: sandbox.livePhase ?? null } : {}),
+    ...(sandbox.recoveredFromGateway
+      ? { livePhase: safeStatusString(sandbox.livePhase ?? null) }
+      : {}),
   };
 }
 
@@ -344,13 +356,18 @@ export async function getSandboxInventory(
 
   return {
     schemaVersion: 1,
-    defaultSandbox: resolvedDefault,
+    defaultSandbox: safeStatusString(resolvedDefault),
     recovery: {
       recoveredFromSession: recovery.recoveredFromSession === true,
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
     },
-    lastOnboardedSandbox,
-    incompleteOnboarding,
+    lastOnboardedSandbox: safeStatusString(lastOnboardedSandbox),
+    incompleteOnboarding: incompleteOnboarding
+      ? {
+          ...incompleteOnboarding,
+          name: safeStatusString(incompleteOnboarding.name) || incompleteOnboarding.name,
+        }
+      : null,
     // Pending rows are internal lifecycle state. They remain readable by their
     // recovery authority, but must not appear as completed sandboxes.
     sandboxes: recovery.sandboxes
