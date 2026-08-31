@@ -7,6 +7,8 @@ import path from "node:path";
 import YAML from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createSandboxCreateSourceCleanup } from "../sandbox-gpu-create-flow";
+import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
 import {
   materializeRebuildPolicyHandoff,
   mergeReplacementPolicyAccess,
@@ -20,6 +22,27 @@ function tempPolicy(name: string, source: string): string {
   const policyPath = path.join(root, name);
   fs.writeFileSync(policyPath, source, { mode: 0o600 });
   return policyPath;
+}
+
+function exactTempPolicy(
+  prefix: string,
+  source: string,
+): {
+  readonly policyPath: string;
+  readonly cleanup: () => boolean;
+  readonly cleanupExact: () => boolean;
+} {
+  const policyPath = secureTempFile(prefix, ".yaml");
+  roots.push(path.dirname(policyPath));
+  fs.writeFileSync(policyPath, source, { flag: "wx", mode: 0o600 });
+  return {
+    policyPath,
+    cleanup: () => {
+      cleanupTempDir(policyPath, prefix);
+      return !fs.existsSync(policyPath);
+    },
+    cleanupExact: createExactTempFileCleanup(policyPath, prefix),
+  };
 }
 
 function readPrivatePolicy(policyPath: string): { mode: number; policy: unknown } {
@@ -363,6 +386,81 @@ network_policies:
     expect(cleanupReplacement).toHaveBeenCalledOnce();
     expect(fs.existsSync(handoff.policyPath)).toBe(false);
     expect(fs.existsSync(livePath)).toBe(true);
+  });
+
+  it("withholds exact cleanup when the replacement source has only ordinary cleanup", () => {
+    const livePath = tempPolicy(
+      "live-ordinary-cleanup.yaml",
+      "version: 1\nfilesystem_policy:\n  read_only: [/usr]\n",
+    );
+    const replacementPath = tempPolicy(
+      "replacement-ordinary-cleanup.yaml",
+      "version: 1\nfilesystem_policy:\n  read_only: [/usr, /run/replacement]\n",
+    );
+    const cleanupReplacement = vi.fn(() => true);
+    const handoff = materializeRebuildPolicyHandoff({
+      livePolicyPath: livePath,
+      replacementPolicy: {
+        policyPath: replacementPath,
+        appliedPresets: [],
+        cleanup: cleanupReplacement,
+      },
+    });
+
+    expect(handoff.cleanupExact).toBeUndefined();
+    expect(() => createSandboxCreateSourceCleanup(handoff, true)()).toThrow(
+      "temporary policy source has no exact cleanup authority",
+    );
+    expect(cleanupReplacement).not.toHaveBeenCalled();
+    expect(handoff.cleanup?.()).toBe(true);
+  });
+
+  it("does not delete a replacement policy file through the exact cleanup aggregate", () => {
+    const livePath = tempPolicy(
+      "live-replacement-tamper.yaml",
+      "version: 1\nfilesystem_policy:\n  read_only: [/usr]\n",
+    );
+    const replacement = exactTempPolicy(
+      "nemoclaw-rebuild-replacement",
+      "version: 1\nfilesystem_policy:\n  read_only: [/usr, /run/replacement]\n",
+    );
+    const handoff = materializeRebuildPolicyHandoff({
+      livePolicyPath: livePath,
+      replacementPolicy: { ...replacement, appliedPresets: [] },
+    });
+    const original = path.join(path.dirname(replacement.policyPath), "original.yaml");
+    fs.renameSync(replacement.policyPath, original);
+    fs.writeFileSync(replacement.policyPath, "replacement\n", { mode: 0o600 });
+
+    expect(handoff.cleanupExact?.()).toBe(false);
+    expect(fs.readFileSync(replacement.policyPath, "utf8")).toBe("replacement\n");
+    expect(fs.existsSync(original)).toBe(true);
+    expect(fs.existsSync(handoff.policyPath)).toBe(false);
+  });
+
+  it("does not delete a replaced handoff policy through exact cleanup", () => {
+    const livePath = tempPolicy(
+      "live-handoff-tamper.yaml",
+      "version: 1\nfilesystem_policy:\n  read_only: [/usr]\n",
+    );
+    const replacement = exactTempPolicy(
+      "nemoclaw-rebuild-replacement",
+      "version: 1\nfilesystem_policy:\n  read_only: [/usr, /run/replacement]\n",
+    );
+    const handoff = materializeRebuildPolicyHandoff({
+      livePolicyPath: livePath,
+      replacementPolicy: { ...replacement, appliedPresets: [] },
+    });
+    const handoffParent = path.dirname(handoff.policyPath);
+    roots.push(handoffParent);
+    const original = path.join(handoffParent, "original.yaml");
+    fs.renameSync(handoff.policyPath, original);
+    fs.writeFileSync(handoff.policyPath, "replacement\n", { mode: 0o600 });
+
+    expect(handoff.cleanupExact?.()).toBe(false);
+    expect(fs.readFileSync(handoff.policyPath, "utf8")).toBe("replacement\n");
+    expect(fs.existsSync(original)).toBe(true);
+    expect(fs.existsSync(replacement.policyPath)).toBe(false);
   });
 
   it("rejects live credential bindings outside the verified replacement plan", () => {

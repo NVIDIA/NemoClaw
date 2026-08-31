@@ -53,6 +53,26 @@ function createIdentifiedPolicyCleanup(
   return cleanup ? () => cleanupRebuildPolicySources([{ policyPath, cleanup }]) : undefined;
 }
 
+function createExactPolicyCleanup(
+  requiredCleanups: readonly ((() => boolean) | undefined)[],
+): (() => boolean) | undefined {
+  if (requiredCleanups.length === 0 || requiredCleanups.some((cleanup) => !cleanup)) {
+    return undefined;
+  }
+  const cleanups = requiredCleanups as readonly (() => boolean)[];
+  return () => {
+    let completed = true;
+    for (const cleanup of [...cleanups].reverse()) {
+      try {
+        if (!cleanup()) completed = false;
+      } catch {
+        completed = false;
+      }
+    }
+    return completed;
+  };
+}
+
 function authorizedCredentialBindingProviders(
   source: string,
   replacementPolicy: InitialSandboxPolicy,
@@ -340,6 +360,12 @@ export function materializeRebuildPolicyHandoff(input: {
     input.removedCredentialBindingProviders,
   );
   if (!merged.changed) {
+    const replacementCleanupRequired = Boolean(
+      input.replacementPolicy.cleanup || input.replacementPolicy.cleanupExact,
+    );
+    const cleanupExact = createExactPolicyCleanup(
+      replacementCleanupRequired ? [input.replacementPolicy.cleanupExact] : [],
+    );
     return {
       ...input.replacementPolicy,
       policyPath: input.livePolicyPath,
@@ -354,10 +380,7 @@ export function materializeRebuildPolicyHandoff(input: {
         input.replacementPolicy.policyPath,
         input.replacementPolicy.cleanup,
       ),
-      cleanupExact: createIdentifiedPolicyCleanup(
-        input.replacementPolicy.policyPath,
-        input.replacementPolicy.cleanupExact,
-      ),
+      ...(cleanupExact ? { cleanupExact } : {}),
     };
   }
 
@@ -369,6 +392,9 @@ export function materializeRebuildPolicyHandoff(input: {
       mode: 0o600,
     });
     const cleanupHandoff = createExactTempFileCleanup(policyPath, REBUILD_POLICY_HANDOFF_PREFIX);
+    const replacementCleanupRequired = Boolean(
+      input.replacementPolicy.cleanup || input.replacementPolicy.cleanupExact,
+    );
     const cleanup = (): boolean =>
       cleanupRebuildPolicySources([
         { policyPath, cleanup: cleanupHandoff },
@@ -381,6 +407,10 @@ export function materializeRebuildPolicyHandoff(input: {
             ]
           : []),
       ]);
+    const cleanupExact = createExactPolicyCleanup([
+      cleanupHandoff,
+      ...(replacementCleanupRequired ? [input.replacementPolicy.cleanupExact] : []),
+    ]);
     return {
       ...input.replacementPolicy,
       policyPath,
@@ -392,7 +422,7 @@ export function materializeRebuildPolicyHandoff(input: {
       ),
       sourceBytes: Buffer.from(merged.source),
       cleanup,
-      cleanupExact: cleanup,
+      ...(cleanupExact ? { cleanupExact } : {}),
     };
   } catch (error) {
     cleanupTempDir(policyPath, REBUILD_POLICY_HANDOFF_PREFIX);

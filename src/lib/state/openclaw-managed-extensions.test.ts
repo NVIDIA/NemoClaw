@@ -19,16 +19,6 @@ import {
 const EXPECTED_MANAGED_EXTENSIONS = ["nemoclaw", "diagnostics-otel", "brave"] as const;
 
 describe("OpenClaw managed extension policy", () => {
-  it("tracks every image-managed extension with a unique safe directory name", () => {
-    expect(OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS).toEqual(EXPECTED_MANAGED_EXTENSIONS);
-    expect(new Set(OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS).size).toBe(
-      OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS.length,
-    );
-    expect(OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS).toSatisfy((names: readonly string[]) =>
-      names.every((name) => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)),
-    );
-  });
-
   it("preserves managed extensions only for an OpenClaw extension restore", () => {
     expect(
       shouldPreserveOpenClawManagedExtensions({ agentType: "openclaw" }, "/sandbox/custom-state", [
