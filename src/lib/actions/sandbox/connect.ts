@@ -81,6 +81,7 @@ import {
   ensureLiveSandboxOrExit,
   assertHermesPortableLifecycleForConnect,
   buildHermesPortableCommandAuthority,
+  emitPortableOpenClawAlreadyRunningTiming,
   type HermesPortableActiveLifecycleAuthority,
   getNamedGatewayLifecycleState,
   printGatewayLifecycleHint,
@@ -2383,7 +2384,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
           ),
         );
         probeTiming!.setLifecycleAction("reused");
-        if (authority.kind === "hermes") {
+        if (authority.kind === "openclaw") {
+          emitPortableOpenClawAlreadyRunningTiming();
+        } else if (authority.kind === "hermes") {
           const acceptedHermesAuthority = hermesReadinessAuthority;
           if (!acceptedHermesAuthority) {
             probeTiming!.markFailureStage("authority");

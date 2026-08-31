@@ -27,6 +27,7 @@ import {
 import { qualifyHermesPortableOperatingAuthority } from "./hermes-portable-operating-authority";
 import { captureHermesPortablePodmanExecutableFileAuthority } from "./hermes-portable-podman-authority";
 import {
+  emitPortableOpenClawAlreadyRunningTiming,
   recoverPortableDemoSandboxLifecycle,
   stopPortableDemoSandboxLifecycle,
   type PortableDemoLifecycleContext,
@@ -40,6 +41,7 @@ export type PortableAgentLifecycleDeps = PortableDemoLifecycleDeps & HermesPorta
 export type PortableAgentLifecycleStopResult = PortableDemoLifecycleStopResult & {
   readonly portableAgent?: "hermes";
 };
+export { emitPortableOpenClawAlreadyRunningTiming };
 
 export const HERMES_PORTABLE_UNSUPPORTED_COMMAND_MESSAGE =
   "This command is not supported for an experimental Hermes portable sandbox.";

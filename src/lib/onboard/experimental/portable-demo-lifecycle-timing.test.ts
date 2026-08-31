@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createPortableLifecycleTimingRecorder,
+  emitPortableOpenClawAlreadyRunningTiming,
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECONCILIATION_TOLERANCE_MS,
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MAX_BYTES,
   PORTABLE_OPENCLAW_GATEWAY_STARTUP_RECORD_MISSING_STATUS,
@@ -44,6 +45,25 @@ function timingMilliseconds(line: string, field: string): number {
 }
 
 describe("portable lifecycle timing recorder", () => {
+  it("emits zeroed already-running receipts without lifecycle work", () => {
+    const lines: string[] = [];
+
+    emitPortableOpenClawAlreadyRunningTiming((line) => lines.push(line));
+
+    expect(lines).toEqual([
+      "  Portable lifecycle timing: authority=0ms inspect=0ms containerStart=0ms execReady=0ms ollama=0ms gatewayHealth=0ms startupProbe=0ms startupLaunch=0ms gatewayReady=0ms total=0ms containerAction=reused gatewayAction=reused ollamaAction=not-applicable ollamaAttempts=0 execAttempts=0 execNotReady=0 execTimeouts=0 execErrors=0 gatewayAttempts=0 gatewayNotReady=0 gatewayTimeouts=0 gatewayErrors=0 result=already-running",
+      "  Portable OpenClaw gateway startup timing: launchToEntry=0ms entrySetup=0ms configIntegrity=0ms providerModelCors=0ms tokenPlaceholderHash=0ms messagingChannelsPreloadsScan=0ms workspaceAuthTemp=0ms gatewaySpawn=0ms spawnToFirstHealth=0ms launchToFirstHealth=0ms probe=0ms sleep=0ms firstReadyAttempt=0 lastFailure=none diagnosticRead=0ms diagnosticReadOutcome=not-applicable",
+    ]);
+  });
+
+  it("keeps already-running readiness fail-open when receipt output fails", () => {
+    expect(() =>
+      emitPortableOpenClawAlreadyRunningTiming(() => {
+        throw new Error("diagnostic writer failed");
+      }),
+    ).not.toThrow();
+  });
+
   it("emits one stable credential-free success line", () => {
     let clock = 0;
     const lines: string[] = [];

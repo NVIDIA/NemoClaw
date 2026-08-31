@@ -991,10 +991,13 @@ Every `connect --probe-only` completion prints at most one credential-free `Prob
 The line also reports `total`, `lifecycleAction=skipped|reused|recovered|failed`, `forwardAction=skipped|verified|restored|failed`, and `result=ready|failed`. A failed probe adds `failedStage=<stage>` or `failedStage=unknown`. Stages that do not apply or do not run report `0ms`. Timing collection and output are fail-open: clock or writer failures do not change the readiness work, command diagnostics, or exit status. Use the command exit status, not a duration or action field, as the readiness decision.
 
 <AgentOnly variant="openclaw">
-  Portable lifecycle recovery also emits one credential-free `Portable lifecycle timing:` line. It
-  reports fixed authority, container, exec-readiness, Ollama, startup, and gateway stages with their
-  durations, selected actions, attempt counts, result, and failed stage when available. This
-  diagnostic does not change recovery behavior or the command exit status.
+  Portable lifecycle recovery emits one credential-free `Portable lifecycle timing:` line.
+  It reports fixed authority, container, exec-readiness, Ollama, startup, and gateway stages with their durations, selected actions, attempt counts, result, and failed stage when available.
+  It also emits one credential-free `Portable OpenClaw gateway startup timing:` line.
+  When accepted launch-readiness evidence lets `connect --probe-only` or `recover` skip lifecycle work, NemoClaw emits each receipt once.
+  The lifecycle receipt reports `0ms` for timing fields, `0` for attempt fields, `containerAction=reused`, `gatewayAction=reused`, `ollamaAction=not-applicable`, and `result=already-running`.
+  The gateway receipt reports `0ms` for timing fields, `firstReadyAttempt=0`, `lastFailure=none`, and `diagnosticReadOutcome=not-applicable`.
+  These diagnostics do not change recovery behaviour or command exit status.
 </AgentOnly>
 
 Run it for health checks and scripted readiness probes; users continue to run only `$$nemoclaw launch <name>`.

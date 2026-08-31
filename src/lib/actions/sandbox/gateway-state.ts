@@ -71,6 +71,7 @@ import {
   assertHermesPortableAgentLifecycleAuthority,
   buildHermesPortableCommandEnvironment,
   buildHermesPortableCommandAuthority,
+  emitPortableOpenClawAlreadyRunningTiming,
   inspectPortableAgentReceiptDisposition,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
@@ -119,6 +120,7 @@ export type {
 export {
   buildHermesPortableCommandAuthority,
   buildHermesPortableCommandEnvironment,
+  emitPortableOpenClawAlreadyRunningTiming,
   inspectPortableAgentReceiptDisposition,
   qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
