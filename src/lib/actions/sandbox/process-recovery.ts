@@ -50,6 +50,7 @@ import {
   type HermesPortableForwardRecoveryFailure,
   type HermesPortableForwardRecoveryInput,
   type HermesPortableForwardRecoveryResult,
+  type HermesPortableForwardRecoveryTimingEvidence,
   type HermesPortableForwardVerificationResult,
   type PreparedHermesPortableForwardRecovery,
 } from "./forward-recovery";
@@ -99,6 +100,7 @@ export type {
   HermesPortableForwardRecoveryFailure,
   HermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryResult,
+  HermesPortableForwardRecoveryTimingEvidence,
   HermesPortableForwardVerificationResult,
   PreparedHermesPortableForwardRecovery,
 };

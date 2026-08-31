@@ -50,6 +50,8 @@ export type {
   HermesPortableForwardRecoveryFailure,
   HermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryResult,
+  HermesPortableForwardRecoveryTiming,
+  HermesPortableForwardRecoveryTimingEvidence,
   HermesPortableForwardVerificationResult,
   PreparedHermesPortableForwardRecovery,
 } from "./probe/hermes-portable-forward-recovery";

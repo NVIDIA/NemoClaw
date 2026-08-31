@@ -114,6 +114,7 @@ import {
   type GatewayRestartFailureLayer,
   HermesPortableForwardRecoveryError,
   type HermesPortableForwardRecoveryFailure,
+  type HermesPortableForwardRecoveryTimingEvidence,
   type ManagedGatewayControlCompletion,
   prepareHermesPortableLaunchForwards,
   verifyHermesPortableLaunchForwards,
@@ -684,6 +685,7 @@ function hermesPortableForwardInputForConnectProbe(
     operationTimeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
     ports,
     probeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    timing: { onComplete: writeHermesPortableForwardRecoveryTiming },
     deps: {
       assertCurrent: assertProductCurrent,
       assertRollbackCurrent: assertCommandCurrent,
@@ -698,6 +700,14 @@ function prepareHermesPortableForwardsForConnectProbe(
   input: HermesPortableForwardConnectRecoveryInput,
 ) {
   return prepareHermesPortableLaunchForwards(hermesPortableForwardInputForConnectProbe(input));
+}
+
+function writeHermesPortableForwardRecoveryTiming(
+  evidence: HermesPortableForwardRecoveryTimingEvidence,
+): void {
+  console.log(
+    `  Hermes Portable forward recovery timing: list=${String(evidence.listMs)}ms listCount=${String(evidence.listCount)} stop=${String(evidence.stopMs)}ms stopCount=${String(evidence.stopCount)} start=${String(evidence.startMs)}ms startCount=${String(evidence.startCount)} settle=${String(evidence.settleMs)}ms settleCount=${String(evidence.settleCount)} total=${String(evidence.totalMs)}ms result=proved`,
+  );
 }
 
 /** Verify the launch-readiness forwards without starting or stopping them. */
