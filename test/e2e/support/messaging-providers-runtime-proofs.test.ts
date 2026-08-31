@@ -231,10 +231,11 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it("publishes independent fake Slack REST and websocket ports", async () => {
+  it("publishes independent fake Slack REST and websocket ports from one fixture", async () => {
     const fixture = await startFakeSlackPortFixture();
 
     try {
+      expect(fixture.restPort).not.toBe(fixture.websocketPort);
       const listening = readFakeSlackCapture(fixture.captureFile).filter(
         (entry) => entry.event === "listening",
       );
