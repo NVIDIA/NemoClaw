@@ -23,6 +23,72 @@ function writePendingStationReceiptRetirement(tmp: string): void {
   );
 }
 
+function runPayloadOnlyRecoveryBootstrap(): { output: string; status: number | null } {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-payload-bootstrap-"));
+  const payloadRoot = path.join(tmp, "payload-only");
+  const childPayload = path.join(tmp, "child-install.sh");
+  const callLog = path.join(tmp, "calls.log");
+  const dockerHostContract = path.join(
+    path.dirname(INSTALLER_PAYLOAD),
+    "..",
+    "src",
+    "lib",
+    "domain",
+    "docker-host.ts",
+  );
+  fs.mkdirSync(payloadRoot);
+  fs.writeFileSync(
+    childPayload,
+    `#!/usr/bin/env bash
+set -euo pipefail
+NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1
+source_root="$(cd "$(dirname "$0")/.." && pwd)"
+node --experimental-strip-types --no-warnings -e '
+  const validator = require(process.argv[1]).isSupportedGatewayDockerHost;
+  process.exit(validator(process.argv[2]) ? 0 : 10);
+' "$source_root/src/lib/domain/docker-host.ts" "$DOCKER_HOST"
+printf 'ref=%s tag=%s bootstrap=%s host=%s recovery-started\n' "$NEMOCLAW_INSTALL_REF" "$NEMOCLAW_INSTALL_TAG" "$NEMOCLAW_BOOTSTRAP_PAYLOAD" "$DOCKER_HOST" > "$BOOTSTRAP_CALL_LOG"
+`,
+    { mode: 0o755 },
+  );
+  const result = spawnSync(
+    "bash",
+    [
+      "-c",
+      `
+set -e
+source "$INSTALLER_PAYLOAD" >/dev/null
+NEMOCLAW_SOURCE_ROOT="$PAYLOAD_ROOT"
+resolve_release_tag() { printf 'refs/tags/payload-test'; }
+clone_nemoclaw_ref() {
+  destination="$2"
+  mkdir -p "$destination/scripts" "$destination/src/lib/domain"
+  cp "$CHILD_PAYLOAD" "$destination/scripts/install.sh"
+  cp "$DOCKER_HOST_CONTRACT" "$destination/src/lib/domain/docker-host.ts"
+}
+standalone_installer_payload_needs_checkout --non-interactive
+bootstrap_standalone_installer_payload --non-interactive
+`,
+    ],
+    {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        BOOTSTRAP_CALL_LOG: callLog,
+        CHILD_PAYLOAD: childPayload,
+        DOCKER_HOST: "unix:///var/run/docker.sock",
+        DOCKER_HOST_CONTRACT: dockerHostContract,
+        INSTALLER_PAYLOAD,
+        NEMOCLAW_BOOTSTRAP_PAYLOAD: "",
+        PAYLOAD_ROOT: payloadRoot,
+      },
+    },
+  );
+  const output = `${result.stdout}${result.stderr}${fs.existsSync(callLog) ? fs.readFileSync(callLog, "utf-8") : ""}`;
+  fs.rmSync(tmp, { force: true, recursive: true });
+  return { output, status: result.status };
+}
+
 function runRecoveryBeforeOnboard(
   preexistingCount: number,
   recoveryExitCode: number | [first: number, second: number],
@@ -169,6 +235,15 @@ exit 0
 }
 
 describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
+  it("bootstraps a payload-only installer before recovery through a supported Docker socket", () => {
+    const result = runPayloadOnlyRecoveryBootstrap();
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toContain(
+      "ref=refs/tags/payload-test tag=refs/tags/payload-test bootstrap=1 host=unix:///var/run/docker.sock recovery-started",
+    );
+  });
+
   it("recovers through a supported Docker socket without generic onboarding", () => {
     const result = runRecoveryBeforeOnboard(2, 0, {
       dockerHost: "unix:///var/run/docker.sock",

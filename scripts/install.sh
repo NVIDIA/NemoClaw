@@ -189,6 +189,40 @@ clone_nemoclaw_ref() {
   )
 }
 
+standalone_installer_payload_needs_checkout() {
+  [[ -n "${DOCKER_HOST-}" ]] || return 1
+  [[ "${NEMOCLAW_BOOTSTRAP_PAYLOAD:-}" != "1" ]] || return 1
+  local source_root="${NEMOCLAW_SOURCE_ROOT:-$(resolve_repo_root)}" arg
+  [[ ! -f "${source_root}/src/lib/domain/docker-host.ts" ]] || return 1
+  for arg in "$@"; do
+    case "$arg" in
+      --help | -h | --version | -v) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+bootstrap_standalone_installer_payload() (
+  local ref bootstrap_tmpdir source_root payload_script docker_host_contract status=0
+  command_exists git || error "git was not found on PATH."
+  ref="$(resolve_release_tag)"
+  bootstrap_tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-installer-source-XXXXXX")" \
+    || error "Could not prepare the complete NemoClaw installer source."
+  trap 'rm -rf "$bootstrap_tmpdir"' EXIT
+  source_root="${bootstrap_tmpdir}/source"
+  clone_nemoclaw_ref "$ref" "$source_root"
+  payload_script="${source_root}/scripts/install.sh"
+  docker_host_contract="${source_root}/src/lib/domain/docker-host.ts"
+  if [[ ! -s "$payload_script" || ! -s "$docker_host_contract" ]] \
+    || ! grep -q 'NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1' "$payload_script" \
+    || ! bash -n "$payload_script"; then
+    error "The selected NemoClaw source does not contain a valid versioned installer and Docker host validation contract."
+  fi
+  NEMOCLAW_INSTALL_REF="$ref" NEMOCLAW_INSTALL_TAG="$ref" NEMOCLAW_BOOTSTRAP_PAYLOAD=1 \
+    bash "$payload_script" "$@" || status=$?
+  return "$status"
+)
+
 # ---------------------------------------------------------------------------
 # Color / style — disabled when NO_COLOR is set or stdout is not a TTY.
 # Uses exact NVIDIA green #76B900 on truecolor terminals; 256-color otherwise.
@@ -6564,6 +6598,11 @@ if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { 
     # Staging failed (mktemp / curl / empty / bad shebang / syntax check) —
     # fall through to direct main(). The legacy newgrp/re-curl path still applies.
     rm -f "${_staged:-}" 2>/dev/null
+  fi
+  if standalone_installer_payload_needs_checkout "$@"; then
+    _standalone_payload_status=0
+    bootstrap_standalone_installer_payload "$@" || _standalone_payload_status=$?
+    exit "$_standalone_payload_status"
   fi
   main "$@"
 fi
