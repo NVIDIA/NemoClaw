@@ -142,7 +142,11 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       }
     }
 
-    function runCalibratedProbeWithResults(results: ProbeResultFixture[], clock: number[]) {
+    function runCalibratedProbeWithResults(
+      results: ProbeResultFixture[],
+      clock: number[],
+      opts: { isWsl?: boolean } = {},
+    ) {
       const httpProbePath = require.resolve("../../src/lib/adapters/http/probe.js");
       const probesPath = require.resolve("../../src/lib/inference/onboard-probes.js");
       const httpProbe = require(httpProbePath);
@@ -167,6 +171,7 @@ describe("WSL2 inference verification timeouts (#987)", () => {
         };
         const result = probeOpenAiLikeEndpoint("http://localhost:8000", "test-model", "key", {
           calibrateTimeouts: true,
+          isWsl: opts.isWsl ?? false,
           skipResponsesProbe: true,
         });
         return { result, calls };
@@ -273,6 +278,36 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       expect(calls[0].at(-1)).toBe("http://localhost:8000/models");
       expect(calls[1]).toEqual(
         expect.arrayContaining(["--connect-timeout", "5", "--max-time", "15"]),
+      );
+    });
+
+    it("keeps the WSL floor through production probe calibration (#10413)", () => {
+      const calibration = {
+        ok: false,
+        curlStatus: 0,
+        httpStatus: 401,
+        body: "",
+        stderr: "",
+        message: "HTTP 401",
+      };
+      const success = {
+        ok: true,
+        curlStatus: 0,
+        httpStatus: 200,
+        body: "{}",
+        stderr: "",
+        message: "ok",
+      };
+      const { result, calls } = runCalibratedProbeWithResults(
+        [calibration, success],
+        [1000, 1180],
+        { isWsl: true },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(calls).toHaveLength(2);
+      expect(calls[1]).toEqual(
+        expect.arrayContaining(["--connect-timeout", "20", "--max-time", "30"]),
       );
     });
 

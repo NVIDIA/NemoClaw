@@ -1080,19 +1080,12 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     const baseMessage = failures
       .map((failure) => `${failure.name}: ${failure.message}`)
       .join(" | ");
-    const wslHint =
-      isWsl({ isWsl: options.isWsl }) && retriedAfterTimeout
-        ? " · " + WSL_SLOW_VERIFICATION_ADVISORY
-        : "";
-    return {
+    const result = {
       ok: false,
-      message: baseMessage + wslHint,
-      // Callers print failure summaries rather than `message`, because a raw
-      // probe message can carry provider response bodies. Carry the curated
-      // advisory beside it so the guidance survives that boundary (#10413).
-      ...(wslHint ? { advisory: WSL_SLOW_VERIFICATION_ADVISORY } : {}),
+      message: baseMessage,
       failures,
     };
+    return retriedAfterTimeout ? withWslSlowVerificationAdvisory(result, options) : result;
   } catch (error) {
     return openAiLikeFailureFromError(error);
   } finally {
@@ -1135,11 +1128,10 @@ export async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKe
   return withWslSlowVerificationAdvisory(result, options);
 }
 
-// The native validation session returns its own terminal failures instead of
-// delegating to the legacy probe, so it never reaches the advisory that the
-// legacy probe attaches. Re-attach it here from the transport status the
-// failure already carries, so both transports give a WSL2 operator the same
-// next step (#10413).
+// Callers print failure summaries rather than `message`, because a raw probe
+// message can carry provider response bodies. Attach the curated advisory in
+// one place so legacy and native failures give a WSL2 operator the same next
+// step without widening the displayed failure data (#10413).
 function withWslSlowVerificationAdvisory(result, options) {
   if (
     result.ok ||
