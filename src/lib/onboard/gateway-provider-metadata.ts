@@ -11,7 +11,7 @@ import type { OpenShellProviderMetadata } from "../adapters/openshell/provider-a
 const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
 const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 
-export type GatewayProviderMetadata = OpenShellProviderMetadata;
+export type GatewayProviderMetadata = Omit<OpenShellProviderMetadata, "revision">;
 
 export type GatewayProviderBinding = {
   name: string;
@@ -125,7 +125,10 @@ function providerCommandOutput(result: GatewayProviderCommandResult): string {
  * selected-provider context and cannot authorize credential reuse by itself.
  */
 export function parseGatewayProviderMetadata(output: string): GatewayProviderMetadata | null {
-  return parseCliOpenShellProviderMetadata(output);
+  const metadata = parseCliOpenShellProviderMetadata(output);
+  if (!metadata) return null;
+  const { revision: _revision, ...legacyMetadata } = metadata;
+  return legacyMetadata;
 }
 
 function inspectGatewayCredentialBinding(

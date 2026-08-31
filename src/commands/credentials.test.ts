@@ -86,6 +86,7 @@ describe("credentials oclif adapter source coverage", () => {
       ["provider", "list", "--names"],
       {
         ignoreError: true,
+        maxBuffer: 64 * 1024,
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 30_000,
       },
@@ -259,6 +260,7 @@ describe("credentials oclif adapter source coverage", () => {
       ["provider", "profile", "export", "openai", "--output", "json"],
       {
         ignoreError: true,
+        maxBuffer: 64 * 1024,
         suppressOutput: true,
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 30_000,
@@ -292,6 +294,7 @@ describe("credentials oclif adapter source coverage", () => {
       ["provider", "profile", "export", "openai", "--output", "json"],
       {
         ignoreError: true,
+        maxBuffer: 64 * 1024,
         suppressOutput: true,
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 30_000,
@@ -341,12 +344,14 @@ describe("credentials oclif adapter source coverage", () => {
     ).toEqual([
       {
         ignoreError: true,
+        maxBuffer: 64 * 1024,
         suppressOutput: true,
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 30_000,
       },
       {
         ignoreError: true,
+        maxBuffer: 64 * 1024,
         suppressOutput: true,
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 30_000,
