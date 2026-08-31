@@ -11,6 +11,7 @@ import { shellQuote } from "../../../src/lib/core/shell-quote";
 import {
   bashPrintfQ,
   extractShellFunction as extractShellFunctionFromSource,
+  runHermesDashboardPortBootstrap as runHermesDashboardPortBootstrapFromSource,
   runHermesSandboxInitPreludeWithFakePath,
 } from "../../support/hermes-shell-harness";
 
@@ -59,54 +60,8 @@ function runHermesLazyInstallTargetBootstrap(childEnv: NodeJS.ProcessEnv) {
   );
 }
 
-function extractDashboardPortBootstrap(src: string): string {
-  const start = src.indexOf('NEMOCLAW_CMD=("$@")');
-  const end = src.indexOf('\nHERMES="$(command -v hermes)"', start);
-  if (start < 0 || end < 0) {
-    throw new Error("Expected Hermes dashboard port bootstrap block in agents/hermes/start.sh");
-  }
-  return src.slice(start, end).trimEnd();
-}
-
 function runHermesDashboardPortBootstrap(env: Record<string, string | undefined> = {}) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-port-bootstrap-"));
-  const scriptPath = path.join(tmpDir, "run.sh");
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      // macOS Bash 3.2 treats an empty array expansion as unbound under nounset.
-      // This fixture deliberately starts with no command arguments.
-      "set -eo pipefail",
-      "set --",
-      `source ${shellQuote(path.join(import.meta.dirname, "../../../agents/hermes/dashboard-external-host.sh"))}`,
-      extractDashboardPortBootstrap(src),
-      'printf "CHAT_UI_URL=%s\\n" "${CHAT_UI_URL:-}"',
-      'printf "DASHBOARD_PUBLIC_PORT=%s\\n" "$DASHBOARD_PUBLIC_PORT"',
-      'printf "DASHBOARD_INTERNAL_PORT=%s\\n" "$DASHBOARD_INTERNAL_PORT"',
-      'printf "PUBLIC_PORT=%s\\n" "$PUBLIC_PORT"',
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  try {
-    const childEnv = { ...process.env };
-    for (const [key, value] of Object.entries(env)) {
-      if (value === undefined) {
-        delete childEnv[key];
-      } else {
-        childEnv[key] = value;
-      }
-    }
-    return spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      timeout: 5000,
-      env: childEnv,
-    });
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
+  return runHermesDashboardPortBootstrapFromSource(START_SCRIPT, env);
 }
 
 function runHermesDashboardArgs(tuiValue?: string) {
@@ -840,6 +795,17 @@ describe("agents/hermes/start.sh port validation", () => {
     });
     expect(invalidOverride.status).toBe(1);
     expect(invalidOverride.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT");
+  });
+
+  it("rejects an external dashboard URL that cannot supply the Host allowlist", () => {
+    const run = runHermesDashboardPortBootstrap({
+      CHAT_UI_URL: "http://dashboard.example.test:29443",
+      NEMOCLAW_DASHBOARD_PORT: undefined,
+    });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("Invalid CHAT_UI_URL for the Hermes dashboard");
+    expect(run.stderr).not.toContain("dashboard.example.test");
   });
 
   it("keeps the managed dashboard isolated and its in-browser Hermes TUI opt-in", () => {

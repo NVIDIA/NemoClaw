@@ -283,8 +283,16 @@ PYPORT
 HERMES_DASHBOARD_EXTERNAL_HOST=""
 if _dashboard_external_host="$(nemoclaw_hermes_dashboard_external_host "${CHAT_UI_URL:-}")"; then
   HERMES_DASHBOARD_EXTERNAL_HOST="$_dashboard_external_host"
+else
+  _dashboard_external_host_status=$?
+  if [ "$_dashboard_external_host_status" -ne 2 ]; then
+    printf '%s\n' \
+      '[SECURITY] Invalid CHAT_UI_URL for the Hermes dashboard. Use an HTTPS external URL without credentials or an HTTP(S) loopback URL, then restart the sandbox.' >&2
+    exit 1
+  fi
 fi
 unset _dashboard_external_host
+unset _dashboard_external_host_status
 unset -f nemoclaw_hermes_dashboard_external_host
 
 _dashboard_port_raw="${NEMOCLAW_DASHBOARD_PORT:-}"

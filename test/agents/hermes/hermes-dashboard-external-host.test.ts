@@ -193,14 +193,31 @@ it("derives the lowercase hostname from an HTTPS CHAT_UI_URL with a port and pat
 });
 
 it.each([
-  { condition: "the scheme is not HTTPS", url: "http://dashboard.example.test:29443" },
-  { condition: "the host is an IPv4 loopback address", url: "https://127.0.0.1:29443" },
-  { condition: "the host is localhost", url: "https://localhost:29443" },
-  { condition: "the URL includes user information", url: "https://user@dashboard.example.test" },
-  { condition: "the port is malformed", url: "https://dashboard.example.test:invalid" },
-])("rejects CHAT_UI_URL when $condition (#10651)", ({ url }) => {
+  {
+    condition: "the external scheme is not HTTPS",
+    status: 1,
+    url: "http://dashboard.example.test:29443",
+  },
+  { condition: "the host is an IPv4 loopback address", status: 2, url: "https://127.0.0.1:29443" },
+  { condition: "the host is localhost", status: 2, url: "http://localhost:29443" },
+  {
+    condition: "the host is an unspecified address",
+    status: 1,
+    url: "https://0.0.0.0:29443",
+  },
+  {
+    condition: "the URL includes user information",
+    status: 1,
+    url: "https://user@dashboard.example.test",
+  },
+  {
+    condition: "the port is malformed",
+    status: 1,
+    url: "https://dashboard.example.test:invalid",
+  },
+])("does not derive an external host when $condition (#10651)", ({ status, url }) => {
   const run = resolveExternalHost(url);
 
-  expect(run.status).not.toBe(0);
+  expect(run.status).toBe(status);
   expect(run.stdout).toBe("");
 });

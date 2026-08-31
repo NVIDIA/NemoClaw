@@ -98,6 +98,7 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "verify immutable non-force network removal",
   "build and publish the sandbox image",
   "build and publish the staged Hermes image",
+  "verify the staged Hermes dashboard host guard",
   "start the pinned Podman gateway",
   "verify distinct same-network routes",
   "record portable environment completion",
@@ -117,6 +118,47 @@ function run(command: string, args: readonly string[]): string {
     `${command} ${args.join(" ")} failed:\n${String(result.error?.message || result.stderr || result.stdout)}`,
   );
   return String(result.stdout).trim();
+}
+
+function probeHermesDashboardHostGuard(imageRef: string, chatUiUrl: string): Record<string, boolean> {
+  const pythonProbe = `
+import json
+from hermes_cli.web_server import _is_accepted_host
+
+accepted = _is_accepted_host
+print(json.dumps({
+    "external": accepted("nemoclaw0-abc123.brevlab.com", "127.0.0.1"),
+    "external_port": accepted("nemoclaw0-abc123.brevlab.com:443", "127.0.0.1"),
+    "external_upper": accepted("NEMOCLAW0-ABC123.BREVLAB.COM", "127.0.0.1"),
+    "loopback": accepted("localhost:18789", "127.0.0.1"),
+    "lookalike": accepted("nemoclaw0-abc123.brevlab.com.attacker.test", "127.0.0.1"),
+    "other": accepted("attacker.test", "127.0.0.1"),
+}))
+`;
+  const shellProbe = [
+    "set -euo pipefail",
+    "source /usr/local/lib/nemoclaw/hermes-dashboard-external-host.sh",
+    'external_host=""',
+    'if candidate="$(nemoclaw_hermes_dashboard_external_host "$CHAT_UI_URL")"; then',
+    '  external_host="$candidate"',
+    "fi",
+    '_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST="$external_host" exec /opt/hermes/.venv/bin/python3 -c "$1"',
+  ].join("\n");
+  return JSON.parse(
+    run("podman", [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "/bin/bash",
+      "--env",
+      `CHAT_UI_URL=${chatUiUrl}`,
+      imageRef,
+      "-c",
+      shellProbe,
+      "bash",
+      pythonProbe,
+    ]),
+  ) as Record<string, boolean>;
 }
 
 function parseOnePodmanRecord(raw: string, label: string): Record<string, unknown> {
@@ -376,6 +418,30 @@ async function main(progress: TestProgress): Promise<void> {
         hermesPrebuild.imageId.replace(/^sha256:/u, ""),
       );
       hermesImageId = inspectedHermesImageId;
+
+      progress.phase("verify the staged Hermes dashboard host guard");
+      assert.deepEqual(
+        probeHermesDashboardHostGuard(
+          hermesImageRef,
+          "https://NEMOCLAW0-ABC123.BREVLAB.COM:443/dashboard",
+        ),
+        {
+          external: true,
+          external_port: true,
+          external_upper: true,
+          loopback: true,
+          lookalike: false,
+          other: false,
+        },
+      );
+      assert.deepEqual(probeHermesDashboardHostGuard(hermesImageRef, "http://127.0.0.1:18789"), {
+        external: false,
+        external_port: false,
+        external_upper: false,
+        loopback: true,
+        lookalike: false,
+        other: false,
+      });
     } finally {
       try {
         hermesImageRef && run("podman", ["image", "rm", "--force", hermesImageRef]);
