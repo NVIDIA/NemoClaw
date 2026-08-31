@@ -63,6 +63,7 @@ function runRecoveryBeforeOnboard(
     recordInstallPhases?: boolean;
     recordPreinstall?: boolean;
     recordRuntimeTarget?: boolean;
+    recoveryLogAllocationFails?: boolean;
     recoveryLogWriteFails?: boolean;
     shellNeedsReload?: boolean;
     singleSession?: boolean;
@@ -148,6 +149,12 @@ exit 0
     info() { printf 'INFO:%s\n' "$*"; }
     warn() { printf 'WARN:%s\n' "$*"; }
     error() { printf 'ERROR:%s\n' "$*" >&2; exit 1; }
+    mktemp() {
+      if [[ "$RECOVERY_LOG_ALLOCATION_FAILS" = "1" ]]; then
+        return 1
+      fi
+      command mktemp "$@"
+    }
     tee() {
       if [[ "$RECOVERY_LOG_WRITE_FAILS" = "1" ]]; then
         cat >/dev/null
@@ -226,6 +233,7 @@ exit 0
       RECORD_INSTALL_PHASES: options.recordInstallPhases ? "1" : "",
       RECORD_PREINSTALL: options.recordPreinstall ? "1" : "",
       RECORD_RUNTIME_TARGET: options.recordRuntimeTarget ? "1" : "",
+      RECOVERY_LOG_ALLOCATION_FAILS: options.recoveryLogAllocationFails ? "1" : "",
       RECOVERY_LOG_WRITE_FAILS: options.recoveryLogWriteFails ? "1" : "",
     },
     home: tmp,
@@ -446,11 +454,14 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     );
   });
 
-  it("does not report an orphaned sandbox as recovered when output recording fails", () => {
+  it.each([
+    ["the recovery log cannot be allocated", { recoveryLogAllocationFails: true }],
+    ["recovery output cannot be written", { recoveryLogWriteFails: true }],
+  ])("does not report an orphaned sandbox as recovered when %s", (_name, failure) => {
     const result = runRecoveryBeforeOnboard(2, 0, {
+      ...failure,
       orphanedRecovery: true,
       realCompletionSummary: true,
-      recoveryLogWriteFails: true,
       shellNeedsReload: true,
     });
 
