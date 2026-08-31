@@ -55,10 +55,23 @@ function successfulShellResult(command: string[], stdout = ""): ShellProbeResult
 }
 
 describe("messaging provider installed-runtime proofs", () => {
-  it("publishes fake Docker API ports without masqueraded egress", async () => {
+  it("keeps fake Docker APIs internal and binds proxy ports to the OpenShell bridge", async () => {
     const invocations: string[][] = [];
     const cleanupTasks: Array<() => Promise<void>> = [];
     const responses: Array<(invocation: string[]) => ShellProbeResult> = [
+      (invocation) =>
+        successfulShellResult(
+          invocation,
+          JSON.stringify([
+            {
+              Driver: "bridge",
+              Id: "0123456789abcdef0123456789abcdef",
+              IPAM: { Config: [{ Subnet: "172.18.0.0/16", Gateway: "172.18.0.1" }] },
+              Options: {},
+            },
+          ]),
+        ),
+      (invocation) => successfulShellResult(invocation),
       (invocation) => successfulShellResult(invocation),
       (invocation) => {
         const mountSuffix = ":/tmp/fake";
@@ -67,8 +80,13 @@ describe("messaging provider installed-runtime proofs", () => {
         fs.writeFileSync(path.join(mount!.slice(0, -mountSuffix.length), "port"), "8080\n");
         return successfulShellResult(invocation, "fake-container-id\n");
       },
-      (invocation) => successfulShellResult(invocation, "0.0.0.0:41080\n"),
-      (invocation) => successfulShellResult(invocation, "0.0.0.0:41081\n"),
+      (invocation) => successfulShellResult(invocation),
+      (invocation) => successfulShellResult(invocation),
+      (invocation) => successfulShellResult(invocation),
+      (invocation) => successfulShellResult(invocation, "172.18.0.1:41080\n"),
+      (invocation) => successfulShellResult(invocation, "172.18.0.1:41081\n"),
+      (invocation) => successfulShellResult(invocation),
+      (invocation) => successfulShellResult(invocation),
       (invocation) => successfulShellResult(invocation),
       (invocation) => successfulShellResult(invocation),
     ];
@@ -101,11 +119,24 @@ describe("messaging provider installed-runtime proofs", () => {
           env: {},
         },
       );
-      const networkCreate = invocations.find(
+      const networkCreates = invocations.filter(
         ([command, group, action]) =>
           command === "docker" && group === "network" && action === "create",
       );
-      expect(networkCreate?.slice(0, -1)).toEqual([
+      expect(invocations).toContainEqual(["docker", "network", "inspect", "openshell-docker"]);
+      const internalNetworkCreate = networkCreates.find((invocation) =>
+        invocation.includes("--internal"),
+      );
+      const proxyNetworkCreate = networkCreates.find((invocation) =>
+        invocation.includes("com.docker.network.bridge.enable_ip_masquerade=false"),
+      );
+      expect(internalNetworkCreate?.slice(0, -1)).toEqual([
+        "docker",
+        "network",
+        "create",
+        "--internal",
+      ]);
+      expect(proxyNetworkCreate?.slice(0, -1)).toEqual([
         "docker",
         "network",
         "create",
@@ -114,7 +145,24 @@ describe("messaging provider installed-runtime proofs", () => {
         "--opt",
         "com.docker.network.bridge.enable_ip_masquerade=false",
       ]);
-      expect(networkCreate).not.toContain("--internal");
+      const containerRun = invocations.find(
+        ([command, action]) => command === "docker" && action === "run",
+      );
+      expect(containerRun).toContain(internalNetworkCreate?.at(-1));
+      expect(containerRun).not.toContain("-p");
+      expect(containerRun).not.toContain("0:8080");
+      expect(containerRun?.join("\n")).toContain("xoxb-fake-slack-network-test");
+      expect(containerRun?.join("\n")).toContain("xapp-fake-slack-network-test");
+      const proxyCreate = invocations.find(
+        ([command, action]) => command === "docker" && action === "create",
+      );
+      expect(proxyCreate).toContain(proxyNetworkCreate?.at(-1));
+      expect(proxyCreate).toContain("172.18.0.1:0:8080");
+      expect(proxyCreate).toContain("172.18.0.1:0:8081");
+      expect(proxyCreate).not.toContain("0:8080");
+      expect(proxyCreate?.join("\n")).not.toContain("xoxb-fake-slack-network-test");
+      expect(proxyCreate?.join("\n")).not.toContain("xapp-fake-slack-network-test");
+      expect(proxyCreate).toContain("/opt/nemoclaw-e2e/fake-api-port-proxy.mts");
       expect(api.port).toBe("41080");
       expect(api.alternatePort).toBe("41081");
     } finally {
