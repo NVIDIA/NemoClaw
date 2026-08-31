@@ -94,6 +94,29 @@ detect_express_platform
     expect(detectN1x(false, true).result.stdout).toBe("");
   });
 
+  it("detects an OEM DGX Spark from the trusted FastOS marker (#10717)", () => {
+    const result = runInstallerSourced(`
+function [ {
+  if [[ "$#" -eq 3 && "$1" = "-r" && "$2" = "/sys/class/dmi/id/product_name" && "$3" = "]" ]]; then
+    return 0
+  fi
+  builtin [ "$@"
+}
+cat() {
+  if [[ "$#" -eq 1 && "$1" = "/sys/class/dmi/id/product_name" ]]; then
+    printf "Dell Pro Max"
+    return
+  fi
+  command cat "$@"
+}
+is_wsl_host() { return 1; }
+spark_fastos_release_is_trusted() { return 0; }
+detect_express_platform
+`);
+
+    expect(result.result.stdout).toBe("DGX Spark");
+  });
+
   it.each([
     "a1ff:0:0:777:24:1:2",
     "81a4:1000:0:644:116:1:2",
