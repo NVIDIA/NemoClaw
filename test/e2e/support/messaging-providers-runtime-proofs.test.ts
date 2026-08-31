@@ -15,6 +15,7 @@ import {
   isNvidiaEndpointRateLimitFailure,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
+  slackCredentialBindingEvidence,
 } from "../live/messaging-providers-helpers.ts";
 import {
   parseInstalledSlackProof,
@@ -35,6 +36,56 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("distinguishes canonical Slack credential bindings from the legacy broad policy", () => {
+    const sandboxName = "e2e-msg-policy-proof";
+    const canonicalPolicy = `
+network_policies:
+  slack:
+    name: slack
+    endpoints:
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        path: /api/apps.connections.open
+        credential_binding:
+          provider: ${sandboxName}-slack-app
+        rules:
+          - allow: { method: POST, path: "/api/apps.connections.open" }
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        credential_binding:
+          provider: ${sandboxName}-slack-bridge
+        rules:
+          - allow: { method: POST, path: "/**" }
+`;
+    const legacyPolicy = `
+network_policies:
+  slack:
+    name: slack
+    endpoints:
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/**" }
+`;
+
+    expect(slackCredentialBindingEvidence(canonicalPolicy, sandboxName)).toEqual({
+      app: true,
+      bot: true,
+    });
+    expect(slackCredentialBindingEvidence(legacyPolicy, sandboxName)).toEqual({
+      app: false,
+      bot: false,
+    });
+  });
+
   it("publishes independent fake Slack REST and websocket ports", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-slack-ports-"));
     const portFile = path.join(dir, "port");
@@ -159,20 +210,12 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(parseRuntimeProofPort(rawPort)).toBe(expected);
   });
 
-  it.each([
-    "",
-    "0",
-    "65536",
-    "-1",
-    "+1",
-    "1.5",
-    "1e3",
-    " 443",
-    "443 ",
-    "abc",
-  ])("rejects invalid runtime-proof port %j", (rawPort) => {
-    expect(() => parseRuntimeProofPort(rawPort)).toThrow(/runtime proof port/u);
-  });
+  it.each(["", "0", "65536", "-1", "+1", "1.5", "1e3", " 443", "443 ", "abc"])(
+    "rejects invalid runtime-proof port %j",
+    (rawPort) => {
+      expect(() => parseRuntimeProofPort(rawPort)).toThrow(/runtime proof port/u);
+    },
+  );
 
   it("classifies only rate-limited NVIDIA endpoint validation failures", () => {
     expect(

@@ -527,10 +527,7 @@
     },
     {
       "live": "test/e2e/live/mcp-bridge.test.ts",
-      "liveSources": [
-        "test/e2e/live/mcp-bridge-cleanup.ts",
-        "test/e2e/live/mcp-bridge-sandbox.ts"
-      ],
+      "liveSources": ["test/e2e/live/mcp-bridge-cleanup.ts", "test/e2e/live/mcp-bridge-sandbox.ts"],
       "fast": [
         "src/lib/actions/sandbox/mcp-bridge-policy.test.ts",
         "src/lib/actions/sandbox/mcp-bridge-adapter-registration.test.ts",
@@ -559,6 +556,7 @@
     },
     {
       "live": "test/e2e/live/messaging-providers.test.ts",
+      "liveSources": ["test/e2e/live/messaging-providers-helpers.ts"],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/credential-provider-registration.test.ts",

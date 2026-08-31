@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { parseOpenShellPolicy } from "../../../src/lib/policy/merge.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
@@ -454,6 +455,41 @@ export function policyTextHasHost(text: string, host: string): boolean {
     `- host: '${host}'`,
   ]);
   return text.split(/\r?\n/).some((line) => accepted.has(line.trim()));
+}
+
+export function slackCredentialBindingEvidence(
+  policyText: string,
+  sandboxName = SANDBOX_NAME,
+): {
+  readonly app: boolean;
+  readonly bot: boolean;
+} {
+  const livePolicy = parseOpenShellPolicy(policyText).policy;
+  const slackPolicy = livePolicy.network_policies?.slack;
+  const slackPolicyRecord =
+    slackPolicy && typeof slackPolicy === "object" && !Array.isArray(slackPolicy)
+      ? (slackPolicy as Record<string, unknown>)
+      : null;
+  const endpoints =
+    slackPolicyRecord && Array.isArray(slackPolicyRecord.endpoints)
+      ? (slackPolicyRecord.endpoints as Array<Record<string, unknown>>)
+      : [];
+  const bindingProvider = (endpoint: Record<string, unknown> | undefined): unknown =>
+    (endpoint?.credential_binding as { provider?: unknown } | undefined)?.provider;
+  const botEndpoint = endpoints.find(
+    (endpoint) => endpoint.host === "slack.com" && endpoint.path === undefined,
+  );
+  const appEndpoint = endpoints.find(
+    (endpoint) => endpoint.host === "slack.com" && endpoint.path === "/api/apps.connections.open",
+  );
+  return {
+    app:
+      appEndpoint?.request_body_credential_rewrite === true &&
+      bindingProvider(appEndpoint) === `${sandboxName}-slack-app`,
+    bot:
+      botEndpoint?.request_body_credential_rewrite === true &&
+      bindingProvider(botEndpoint) === `${sandboxName}-slack-bridge`,
+  };
 }
 
 export async function readOpenClawConfig(
