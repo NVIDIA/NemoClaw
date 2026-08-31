@@ -151,22 +151,17 @@ export function resolveRebuildMessagingPolicyDeltas(
     };
   }
   const disabledChannels = new Set(plan.disabledChannels);
+  const activeNetworkPolicyEntries = plan.networkPolicy.entries.filter(
+    (entry) => !disabledChannels.has(entry.channelId),
+  );
   const policyKeysByChannel = getMessagingPolicyKeysByChannel({ agent: plan.agent });
   const bridgeProfiles = messagingBridgeProfilesForAgent(plan.agent);
   return {
     requiredNetworkPolicyKeys: [
-      ...new Set(
-        plan.networkPolicy.entries
-          .filter((entry) => !disabledChannels.has(entry.channelId))
-          .flatMap((entry) => entry.policyKeys),
-      ),
+      ...new Set(activeNetworkPolicyEntries.flatMap((entry) => entry.policyKeys)),
     ],
     requiredNetworkPolicyPresetNames: [
-      ...new Set(
-        plan.networkPolicy.entries
-          .filter((entry) => !disabledChannels.has(entry.channelId))
-          .map((entry) => entry.presetName),
-      ),
+      ...new Set(activeNetworkPolicyEntries.map((entry) => entry.presetName)),
     ],
     removedCredentialBindingProviders: [
       ...new Set([
@@ -734,18 +729,19 @@ export function reconcileCreatedHermesCredentialEnvironment(
 export async function finalizeCreatedSandboxBeforeHermesCredentialReconciliation<T>(
   completeRegistration: () => Promise<T>,
   reconcileCredentialEnvironment: () => void,
+  markCreateEffectsFinalized: () => void,
 ): Promise<T> {
   const registration = await completeRegistration();
   reconcileCredentialEnvironment();
+  markCreateEffectsFinalized();
   return registration;
 }
 
-/** Retire the temporary create policy after finalization or report retained state. */
+/** Retire the temporary create policy before reporting finalization success. */
 export async function finalizeCreatedSandboxWithTemporaryPolicyCleanup<T>(input: {
   readonly finalize: () => Promise<T>;
   readonly cleanup: () => boolean;
   readonly policyPath: string;
-  readonly recordCleanupRecovery: () => void;
 }): Promise<T> {
   let result: T | undefined;
   let finalizationFailed = false;
@@ -759,8 +755,9 @@ export async function finalizeCreatedSandboxWithTemporaryPolicyCleanup<T>(input:
 
   let cleanupError: Error | null = null;
   const retainedMessage =
-    `Temporary sandbox create policy cleanup did not complete for '${input.policyPath}'. ` +
-    "Preserve this path for identity-bound administrator recovery.";
+    `${finalizationFailed ? "Sandbox finalization also failed." : "Sandbox finalization completed."} ` +
+    `NemoClaw could not remove temporary sandbox create policy '${input.policyPath}'. ` +
+    "Do not modify the file or retry onboarding. Preserve the path and complete error for support.";
   try {
     if (!input.cleanup()) cleanupError = new Error(retainedMessage);
   } catch (cause) {
@@ -776,7 +773,7 @@ export async function finalizeCreatedSandboxWithTemporaryPolicyCleanup<T>(input:
     }
     throw finalizationError;
   }
-  if (cleanupError) return throwPostCreateFailure(cleanupError, input.recordCleanupRecovery);
+  if (cleanupError) throw cleanupError;
   return result as T;
 }
 
@@ -2884,7 +2881,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 () => completeCreatedSandboxRegistration(created, null),
                 () => recordPostCreateRecovery("registry publication"),
               );
-              createEffectsFinalized = true;
               return registration;
             },
             () =>
@@ -2899,10 +2895,12 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 ),
                 () => recordPostCreateRecovery("onboarding finalization"),
               ),
+            () => {
+              createEffectsFinalized = true;
+            },
           ),
         cleanup: cleanupInitialCreateSource,
         policyPath: initialSandboxPolicy.policyPath,
-        recordCleanupRecovery: () => recordPostCreateRecovery("onboarding finalization"),
       });
     }
     return runWithPostCreateRecovery(

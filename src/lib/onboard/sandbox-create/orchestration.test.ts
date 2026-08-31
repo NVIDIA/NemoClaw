@@ -41,25 +41,36 @@ describe("created Hermes credential environment reconciliation", () => {
 
   it("finalizes sandbox registration before reconciling credentials (#9833)", async () => {
     const events: string[] = [];
+    let createEffectsFinalized = false;
 
     await finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
       async () => {
+        expect(createEffectsFinalized).toBe(false);
         events.push("registration:start");
         await Promise.resolve();
         events.push("registration:complete");
         return { sandboxName: "alpha" };
       },
-      () => events.push("credentials:reconcile"),
+      () => {
+        expect(createEffectsFinalized).toBe(false);
+        events.push("credentials:reconcile");
+      },
+      () => {
+        createEffectsFinalized = true;
+        events.push("effects:finalized");
+      },
     );
 
     expect(events).toEqual([
       "registration:start",
       "registration:complete",
       "credentials:reconcile",
+      "effects:finalized",
     ]);
+    expect(createEffectsFinalized).toBe(true);
   });
 
-  it("records recovery when a successful rebuild cannot retire its handoff policy", async () => {
+  it("fails onboarding when a successful rebuild cannot retire its handoff policy", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-cleanup-test-"));
     const livePolicyPath = path.join(root, "live.yaml");
     const replacementPolicyPath = path.join(root, "replacement.yaml");
@@ -73,20 +84,20 @@ describe("created Hermes credential environment reconciliation", () => {
       livePolicyPath,
       replacementPolicy: { policyPath: replacementPolicyPath, appliedPresets: [] },
     });
-    const recordCleanupRecovery = vi.fn();
-
     try {
       fs.appendFileSync(handoff.policyPath, "# changed after cleanup authority capture\n");
 
-      await expect(
-        finalizeCreatedSandboxWithTemporaryPolicyCleanup({
-          finalize: async () => "created",
-          cleanup: handoff.cleanup ?? (() => true),
-          policyPath: handoff.policyPath,
-          recordCleanupRecovery,
-        }),
-      ).rejects.toThrow(handoff.policyPath);
-      expect(recordCleanupRecovery).toHaveBeenCalledOnce();
+      const error = await finalizeCreatedSandboxWithTemporaryPolicyCleanup({
+        finalize: async () => "created",
+        cleanup: handoff.cleanup ?? (() => true),
+        policyPath: handoff.policyPath,
+      }).catch((caught: unknown) => caught);
+
+      expect(error).toMatchObject({
+        message: expect.stringContaining("Sandbox finalization completed."),
+      });
+      expect((error as Error).message).toContain(handoff.policyPath);
+      expect((error as Error).message).toContain("Do not modify the file or retry onboarding");
       expect(fs.existsSync(handoff.policyPath)).toBe(true);
     } finally {
       fs.rmSync(path.dirname(handoff.policyPath), { recursive: true, force: true });
@@ -95,17 +106,13 @@ describe("created Hermes credential environment reconciliation", () => {
   });
 
   it("returns the finalization result after temporary policy cleanup succeeds", async () => {
-    const recordCleanupRecovery = vi.fn();
-
     await expect(
       finalizeCreatedSandboxWithTemporaryPolicyCleanup({
         finalize: async () => "created",
         cleanup: () => true,
         policyPath: "/verified/temporary-policy.yaml",
-        recordCleanupRecovery,
       }),
     ).resolves.toBe("created");
-    expect(recordCleanupRecovery).not.toHaveBeenCalled();
   });
 
   it("preserves finalization and temporary policy cleanup failures together", async () => {
@@ -117,7 +124,6 @@ describe("created Hermes credential environment reconciliation", () => {
       },
       cleanup: () => false,
       policyPath: "/verified/temporary-policy.yaml",
-      recordCleanupRecovery: vi.fn(),
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AggregateError);
@@ -127,9 +133,8 @@ describe("created Hermes credential environment reconciliation", () => {
     ]);
   });
 
-  it("records recovery when temporary policy cleanup throws after finalization", async () => {
+  it("preserves a thrown temporary policy cleanup cause after finalization", async () => {
     const cleanupError = new Error("cleanup transport failed");
-    const recordCleanupRecovery = vi.fn();
 
     const error = await finalizeCreatedSandboxWithTemporaryPolicyCleanup({
       finalize: async () => "created",
@@ -137,11 +142,9 @@ describe("created Hermes credential environment reconciliation", () => {
         throw cleanupError;
       },
       policyPath: "/verified/temporary-policy.yaml",
-      recordCleanupRecovery,
     }).catch((caught: unknown) => caught);
 
     expect(error).toMatchObject({ cause: cleanupError });
-    expect(recordCleanupRecovery).toHaveBeenCalledOnce();
   });
 
   it("restarts and rechecks the managed gateway after changing the env file", () => {
