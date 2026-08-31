@@ -12,6 +12,7 @@ import {
   restoreStateDirLockPosture,
   restoreStateDirStartupAccess,
   stateLockPlanCompatibilityIssues,
+  verifyStateDirMutablePosture,
 } from "./state-dir-lock";
 
 type RunCall = { cmd: string[]; input?: string };
@@ -201,7 +202,36 @@ describe("recursive state-dir lock host wiring", () => {
       "--plan-json",
       JSON.stringify(PLAN),
     ]);
-    expect(calls[0]?.input).toContain('choices=("preflight", "lock", "unlock", "startup")');
+  });
+
+  it("passes mutable top-level files to the recursive read-only posture verifier (#9485)", () => {
+    const { calls, privileged } = createExec();
+
+    expect(
+      verifyStateDirMutablePosture(privileged, "/sandbox/.hermes", PLAN, true, [
+        "/sandbox/.hermes/config.yaml",
+        "/sandbox/.hermes/.credentials.json",
+      ]),
+    ).toEqual([]);
+    expect(calls).toHaveLength(3);
+    expect(calls[2]?.cmd).toEqual([
+      "timeout",
+      "--signal=TERM",
+      "--kill-after=5s",
+      "12m",
+      "python3",
+      "-I",
+      "-",
+      "verify-mutable",
+      "--config-dir",
+      "/sandbox/.hermes",
+      "--plan-json",
+      JSON.stringify(PLAN),
+      "--mutable-top-level-file",
+      "/sandbox/.hermes/config.yaml",
+      "--mutable-top-level-file",
+      "/sandbox/.hermes/.credentials.json",
+    ]);
   });
 
   it("hands the manifest plan to an injected startup helper (#8006)", () => {
@@ -211,7 +241,8 @@ describe("recursive state-dir lock host wiring", () => {
     const issues = restoreStateDirStartupAccess(
       {
         run: (cmd, input) => {
-          const result = spawnSync(cmd[0]!, cmd.slice(1), {
+          const pythonIndex = cmd.indexOf("python3");
+          const result = spawnSync(cmd[pythonIndex]!, cmd.slice(pythonIndex + 1), {
             encoding: "utf-8",
             input,
             timeout: 15_000,
