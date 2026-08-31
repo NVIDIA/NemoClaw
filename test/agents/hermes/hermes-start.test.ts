@@ -59,6 +59,124 @@ function runHermesLazyInstallTargetBootstrap(childEnv: NodeJS.ProcessEnv) {
   );
 }
 
+function extractDashboardPortBootstrap(src: string): string {
+  const start = src.indexOf('NEMOCLAW_CMD=("$@")');
+  const end = src.indexOf('\nHERMES="$(command -v hermes)"', start);
+  if (start < 0 || end < 0) {
+    throw new Error("Expected Hermes dashboard port bootstrap block in agents/hermes/start.sh");
+  }
+  return src.slice(start, end).trimEnd();
+}
+
+function runHermesDashboardPortBootstrap(env: Record<string, string | undefined> = {}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-port-bootstrap-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      // macOS Bash 3.2 treats an empty array expansion as unbound under nounset.
+      // This fixture deliberately starts with no command arguments.
+      "set -eo pipefail",
+      "set --",
+      extractDashboardPortBootstrap(src),
+      'printf "CHAT_UI_URL=%s\\n" "${CHAT_UI_URL:-}"',
+      'printf "DASHBOARD_PUBLIC_PORT=%s\\n" "$DASHBOARD_PUBLIC_PORT"',
+      'printf "DASHBOARD_INTERNAL_PORT=%s\\n" "$DASHBOARD_INTERNAL_PORT"',
+      'printf "PUBLIC_PORT=%s\\n" "$PUBLIC_PORT"',
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const childEnv = { ...process.env };
+    for (const [key, value] of Object.entries(env)) {
+      if (value === undefined) {
+        delete childEnv[key];
+      } else {
+        childEnv[key] = value;
+      }
+    }
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: childEnv,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function runHermesDashboardArgs(tuiValue?: string) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-args-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "truthy_env"),
+      extractShellFunctionFromSource(src, "hermes_dashboard_tui_enabled"),
+      extractShellFunctionFromSource(src, "build_hermes_dashboard_args"),
+      "DASHBOARD_INTERNAL_PORT=19119",
+      tuiValue === undefined
+        ? 'HERMES_DASHBOARD_TUI="${HERMES_DASHBOARD_TUI:-0}"'
+        : `HERMES_DASHBOARD_TUI=${shellQuote(tuiValue)}`,
+      "build_hermes_dashboard_args",
+      'printf "%s\\n" "${HERMES_DASHBOARD_ARGS[@]}"',
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function runHermesPortValidation(opts: {
+  publicPort?: number;
+  internalPort?: number;
+  dashboardPublicPort?: number;
+  dashboardInternalPort?: number;
+}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-port-validation-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "validate_tcp_port"),
+      extractShellFunctionFromSource(src, "validate_port_configuration"),
+      `PUBLIC_PORT=${opts.publicPort ?? 8642}`,
+      `INTERNAL_PORT=${opts.internalPort ?? 18642}`,
+      `DASHBOARD_PUBLIC_PORT=${opts.dashboardPublicPort ?? 18789}`,
+      `DASHBOARD_INTERNAL_PORT=${opts.dashboardInternalPort ?? 19119}`,
+      "validate_port_configuration",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: boolean }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-env-boundary-"));
   const hermesHome = path.join(tmpDir, ".hermes");
@@ -690,6 +808,64 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.guardResult.status).toBe(1);
     expect(run.guardResult.stderr).toContain(
       "Error: 'hermes setup' cannot modify config inside the sandbox.",
+    );
+  });
+});
+
+describe("agents/hermes/start.sh port validation", () => {
+  it("derives the dashboard port from CHAT_UI_URL while preserving API port 8642", () => {
+    const run = runHermesDashboardPortBootstrap({
+      CHAT_UI_URL: "https://hermes.example.test:29443",
+      NEMOCLAW_DASHBOARD_PORT: undefined,
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("CHAT_UI_URL=https://hermes.example.test:29443");
+    expect(run.stdout).toContain("DASHBOARD_PUBLIC_PORT=29443");
+    expect(run.stdout).toContain("PUBLIC_PORT=8642");
+  });
+
+  it("rejects dashboard ports that collide with the API port during bootstrap", () => {
+    const fromChatUrl = runHermesDashboardPortBootstrap({
+      CHAT_UI_URL: "http://127.0.0.1:8642",
+      NEMOCLAW_DASHBOARD_PORT: undefined,
+    });
+    expect(fromChatUrl.status).toBe(1);
+    expect(fromChatUrl.stderr).toContain("reserved for the Hermes OpenAI-compatible API");
+
+    const invalidOverride = runHermesDashboardPortBootstrap({
+      CHAT_UI_URL: undefined,
+      NEMOCLAW_DASHBOARD_PORT: "not-a-port",
+    });
+    expect(invalidOverride.status).toBe(1);
+    expect(invalidOverride.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT");
+  });
+
+  it("keeps the managed dashboard isolated and its in-browser Hermes TUI opt-in", () => {
+    const defaultArgs = runHermesDashboardArgs();
+    expect(defaultArgs.status).toBe(0);
+    expect(defaultArgs.stdout.split("\n")).not.toContain("--tui");
+
+    const optInArgs = runHermesDashboardArgs("1");
+    expect(optInArgs.status).toBe(0);
+    expect(optInArgs.stdout.split("\n")).toEqual(expect.arrayContaining(["--isolated", "--tui"]));
+  });
+
+  it("rejects cross-collisions between API and dashboard ports", () => {
+    const dashboardPublicOnApiInternal = runHermesPortValidation({
+      dashboardPublicPort: 18642,
+    });
+    expect(dashboardPublicOnApiInternal.status).toBe(1);
+    expect(dashboardPublicOnApiInternal.stderr).toContain(
+      "DASHBOARD_PUBLIC_PORT must not equal INTERNAL_PORT",
+    );
+
+    const dashboardInternalOnApiPublic = runHermesPortValidation({
+      dashboardInternalPort: 8642,
+    });
+    expect(dashboardInternalOnApiPublic.status).toBe(1);
+    expect(dashboardInternalOnApiPublic.stderr).toContain(
+      "DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT",
     );
   });
 });

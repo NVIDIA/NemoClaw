@@ -182,24 +182,6 @@ fi
 # shellcheck source=scripts/lib/gateway-supervisor.sh
 source "$_GATEWAY_SUPERVISOR"
 
-_HERMES_DASHBOARD_EXTERNAL_HOST_HELPER="/usr/local/lib/nemoclaw/hermes-dashboard-external-host.sh"
-if [ ! -f "$_HERMES_DASHBOARD_EXTERNAL_HOST_HELPER" ]; then
-  _HERMES_START_SOURCE="${BASH_SOURCE[0]}"
-  _HERMES_START_DIR="${_HERMES_START_SOURCE%/*}"
-  if [ "$_HERMES_START_DIR" = "$_HERMES_START_SOURCE" ]; then
-    _HERMES_START_DIR="."
-  fi
-  _HERMES_DASHBOARD_EXTERNAL_HOST_HELPER="$(cd "$_HERMES_START_DIR" && pwd)/dashboard-external-host.sh"
-  unset _HERMES_START_SOURCE _HERMES_START_DIR
-fi
-if [ ! -f "$_HERMES_DASHBOARD_EXTERNAL_HOST_HELPER" ]; then
-  printf '%s\n' '[SECURITY] Required Hermes dashboard external-host helper is missing.' >&2
-  exit 1
-fi
-# shellcheck source=agents/hermes/dashboard-external-host.sh
-source "$_HERMES_DASHBOARD_EXTERNAL_HOST_HELPER"
-unset _HERMES_DASHBOARD_EXTERNAL_HOST_HELPER
-
 # Harden RLIMITs (nproc #809 + nofile #4527) as root PID 1, before any step-down.
 harden_resource_limits
 
@@ -260,44 +242,75 @@ drop_capabilities /usr/local/bin/nemoclaw-start "$@"
 NEMOCLAW_CMD=("$@")
 NEMOCLAW_RUNTIME_STATE_MUTATION_RETRY_ARGV=("${NEMOCLAW_CMD[@]}")
 
-_chat_ui_url_port() {
-  [ -n "${CHAT_UI_URL:-}" ] || return 1
+_chat_ui_url_dashboard_settings() {
+  [ -n "${CHAT_UI_URL:-}" ] || return 2
   python3 - "$CHAT_UI_URL" <<'PYPORT'
+import ipaddress
 import re
 import sys
 from urllib.parse import urlparse
 
 raw_url = sys.argv[1]
-if raw_url and not re.match(r"^[a-z][a-z0-9+.-]*://", raw_url, re.IGNORECASE):
-    raw_url = f"http://{raw_url}"
 try:
-    port = urlparse(raw_url).port
+    parsed = urlparse(raw_url)
+    host = parsed.hostname
+    port = parsed.port
 except ValueError:
     sys.exit(1)
-if port is None or port < 1024 or port > 65535:
+
+if (
+    parsed.scheme.lower() not in {"http", "https"}
+    or not re.match(r"^[a-z][a-z0-9+.-]*://", raw_url, re.IGNORECASE)
+    or not parsed.netloc
+    or not host
+    or parsed.username is not None
+    or parsed.password is not None
+):
     sys.exit(1)
-print(port)
+
+host = host.lower().rstrip(".")
+if not host:
+    sys.exit(1)
+
+external_host = host
+if host == "localhost":
+    external_host = ""
+else:
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        if address.is_loopback:
+            external_host = ""
+        elif address.is_unspecified:
+            sys.exit(1)
+
+if external_host and parsed.scheme.lower() != "https":
+    sys.exit(1)
+
+dashboard_port = port if port is not None and 1024 <= port <= 65535 else ""
+print(f"{dashboard_port}|{external_host}")
 PYPORT
 }
 
 HERMES_DASHBOARD_EXTERNAL_HOST=""
-if _dashboard_external_host="$(nemoclaw_hermes_dashboard_external_host "${CHAT_UI_URL:-}")"; then
-  HERMES_DASHBOARD_EXTERNAL_HOST="$_dashboard_external_host"
-else
-  _dashboard_external_host_status=$?
-  if [ "$_dashboard_external_host_status" -ne 2 ]; then
+_chat_ui_port=""
+if [ -n "${CHAT_UI_URL:-}" ]; then
+  if _chat_ui_settings="$(_chat_ui_url_dashboard_settings)"; then
+    _chat_ui_port="${_chat_ui_settings%%|*}"
+    HERMES_DASHBOARD_EXTERNAL_HOST="${_chat_ui_settings#*|}"
+  else
     printf '%s\n' \
       '[SECURITY] Invalid CHAT_UI_URL for the Hermes dashboard. Use an HTTPS external URL without credentials or an HTTP(S) loopback URL, then restart the sandbox.' >&2
     exit 1
   fi
 fi
-unset _dashboard_external_host
-unset _dashboard_external_host_status
-unset -f nemoclaw_hermes_dashboard_external_host
+unset _chat_ui_settings
 
 _dashboard_port_raw="${NEMOCLAW_DASHBOARD_PORT:-}"
 if [ -z "$_dashboard_port_raw" ]; then
-  if _chat_ui_port="$(_chat_ui_url_port)"; then
+  if [ -n "$_chat_ui_port" ]; then
     _dashboard_port="$_chat_ui_port"
   else
     _dashboard_port=18789

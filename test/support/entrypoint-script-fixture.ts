@@ -16,7 +16,7 @@ export function openClawBootstrapSnippet(
     "# Marker file the Docker HEALTHCHECK reads",
     environmentStart,
   );
-  const dashboardStart = source.indexOf("_chat_ui_url_port() {");
+  const dashboardStart = source.indexOf("_chat_ui_url_dashboard_settings() {");
   const dashboardEnd = source.indexOf("# ── Config integrity check", dashboardStart);
   if (
     entrypointStart === -1 ||

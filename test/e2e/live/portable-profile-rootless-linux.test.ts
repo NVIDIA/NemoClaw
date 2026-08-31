@@ -228,6 +228,36 @@ async function probeHermesDashboardProxyRoute(imageRef: string): Promise<Record<
   }
 }
 
+function assertHermesDashboardStartupRefusal(imageRef: string, chatUiUrl: string) {
+  const refusal = spawnSync(
+    "podman",
+    [
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "--user",
+      "sandbox",
+      "--env",
+      `CHAT_UI_URL=${chatUiUrl}`,
+      "--entrypoint",
+      "/usr/local/bin/nemoclaw-start",
+      imageRef,
+      "/bin/true",
+    ],
+    {
+      encoding: "utf-8",
+      env: process.env,
+      killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
+    },
+  );
+  assert.equal(refusal.status, 1, refusal.stderr || refusal.stdout);
+  assert.match(refusal.stderr, /Invalid CHAT_UI_URL for the Hermes dashboard/u);
+  assert.equal(refusal.stderr.includes(chatUiUrl), false);
+}
+
 function parseOnePodmanRecord(raw: string, label: string): Record<string, unknown> {
   const parsed: unknown = JSON.parse(raw);
   assert.ok(Array.isArray(parsed), `${label} must be a JSON array`);
@@ -494,6 +524,21 @@ async function main(progress: TestProgress): Promise<void> {
         lookalike: 400,
         other: 400,
       });
+
+      assertHermesDashboardStartupRefusal(
+        hermesImageRef,
+        "http://dashboard.example.test:29443",
+      );
+      assertHermesDashboardStartupRefusal(hermesImageRef, "https://0.0.0.0:29443");
+      assertHermesDashboardStartupRefusal(
+        hermesImageRef,
+        "https://user@dashboard.example.test:29443",
+      );
+      assertHermesDashboardStartupRefusal(
+        hermesImageRef,
+        "https://dashboard.example.test:invalid",
+      );
+      assertHermesDashboardStartupRefusal(hermesImageRef, "https://./");
     } finally {
       try {
         hermesImageRef && run("podman", ["image", "rm", "--force", hermesImageRef]);

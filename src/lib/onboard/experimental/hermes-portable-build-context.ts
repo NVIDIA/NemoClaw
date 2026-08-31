@@ -33,7 +33,6 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/build-mcp-digest.py",
   "agents/hermes/config/",
   "agents/hermes/cron-restore-control.py",
-  "agents/hermes/dashboard-external-host.sh",
   "agents/hermes/dashboard-external-host.patch",
   "agents/hermes/finalize-tirith-marker.py",
   "agents/hermes/generate-config.ts",

@@ -15,7 +15,6 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/config/write-config.ts", mode: "100644" },
   { path: "agents/hermes/config/yaml.ts", mode: "100644" },
   { path: "agents/hermes/cron-restore-control.py", mode: "100644" },
-  { path: "agents/hermes/dashboard-external-host.sh", mode: "100755" },
   { path: "agents/hermes/dashboard-external-host.patch", mode: "100644" },
   { path: "agents/hermes/Dockerfile", mode: "100644" },
   { path: "agents/hermes/finalize-tirith-marker.py", mode: "100755" },
