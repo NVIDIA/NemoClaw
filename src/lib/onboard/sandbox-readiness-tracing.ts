@@ -511,12 +511,13 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
           return false;
         }
         consecutiveReadyPolls = 0;
-        const failurePhase = sandbox?.readiness === "terminal" ? sandbox.phase : null;
+        const isTerminal = sandbox?.readiness === "terminal";
+        const failurePhase = isTerminal ? sandbox.phase : null;
         // Only the transient "Error" phase is debounced. It is the phase the
         // gateway briefly reports while re-registering the just-created sandbox
         // (#6043). Every other typed terminal phase must fast-fail immediately
         // rather than burn the debounce window.
-        if (failurePhase && failurePhase !== "Error") {
+        if (isTerminal && failurePhase !== "Error") {
           addTraceEvent("terminal_failure_phase", { attempt, failure_phase: failurePhase });
           result = { ready: false, reason: "terminal_failure_phase", failurePhase };
           return true;

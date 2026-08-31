@@ -9,7 +9,7 @@ import type {
 } from "../../adapters/openshell/sandbox-observer";
 
 export type SandboxObservationFrame = Readonly<{
-  phase: string;
+  phase: string | null;
   readiness: OpenShellSandboxReadiness;
 }> | null;
 
@@ -21,7 +21,7 @@ export function pendingSandboxFrame(phase: string): SandboxObservationFrame {
   return { phase, readiness: "not_ready" };
 }
 
-export function terminalSandboxFrame(phase: string): SandboxObservationFrame {
+export function terminalSandboxFrame(phase: string | null): SandboxObservationFrame {
   return { phase, readiness: "terminal" };
 }
 

@@ -584,6 +584,30 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     },
   );
 
+  it("fast-fails a typed terminal observation without a display phase", async () => {
+    const { observer, listSandboxes, sleep } = replay([
+      pendingSandboxFrame("Provisioning"),
+      terminalSandboxFrame(null),
+    ]);
+
+    const ready = await waitForCreatedSandboxReadyWithTrace({
+      sandboxName: NAME,
+      timeoutSecs: 600,
+      observer,
+      target: TARGET,
+      errorPhaseDebouncePolls: 999,
+      sleep,
+    });
+
+    expect(ready).toEqual({
+      ready: false,
+      reason: "terminal_failure_phase",
+      failurePhase: null,
+    });
+    expect(listSandboxes).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
   it("rounds a fractional debounce override (2.6 -> 3), matching envInt semantics", async () => {
     const { observer, listSandboxes, sleep } = replay([terminalSandboxFrame("Error")]);
 
