@@ -76,8 +76,10 @@ restore drain gained additional upstream constants, so its marker insertion
 anchor moved to the exact drain-request filename declaration. During an
 authenticated NVIDIA/NemoClaw release, the root-owned controller re-arms only
 enabled, scheduled, unclaimed one-shots that became due at or after gate
-acquisition while the drain was active. That durable update completes before
-dispatch resumes; a failed update keeps the gate closed.
+acquisition while the drain was active. The root-owned release recovery record
+retains that original acquisition time when it must recreate the gate. That
+durable update completes before dispatch resumes; a failed update keeps the
+gate closed.
 
 The target still contains direct credential-driven platform activation paths.
 The neutral-platform patch therefore remains necessary. It captures every
