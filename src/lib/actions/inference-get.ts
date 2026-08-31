@@ -8,6 +8,7 @@ import { getLiveGatewayInference } from "../inference/live";
 import { getSandboxTargetGatewayName } from "./sandbox/gateway-target";
 
 export interface InferenceGetOptions {
+  cliName?: string;
   json?: boolean;
   quiet?: boolean;
   sandboxName?: string;
@@ -53,7 +54,13 @@ export async function runInferenceGet(
   });
   if (result.failure) {
     throw new InferenceGetError(
-      formatLookupFailure(gatewayName, result.failure, result.status),
+      formatLookupFailure(
+        gatewayName,
+        result.failure,
+        result.status,
+        options.cliName ?? "nemoclaw",
+        options.sandboxName,
+      ),
       result.status || 1,
     );
   }
@@ -83,14 +90,19 @@ function formatLookupFailure(
   gatewayName: string,
   failure: NonNullable<ReturnType<typeof getLiveGatewayInference>["failure"]>,
   status: number | null,
+  cliName: string,
+  sandboxName: string | undefined,
 ): string {
+  const recovery = sandboxName
+    ? `Run '${cliName} ${sandboxName} status' to diagnose the sandbox's recorded gateway.`
+    : `Run '${cliName} status' to diagnose the selected gateway.`;
   if (failure === "timeout") {
-    return `OpenShell inference route lookup for gateway '${gatewayName}' timed out.`;
+    return `OpenShell inference route lookup for gateway '${gatewayName}' timed out. ${recovery}`;
   }
   if (failure === "exit") {
-    return `OpenShell inference route lookup for gateway '${gatewayName}' failed with exit status ${String(status ?? "unknown")}.`;
+    return `OpenShell inference route lookup for gateway '${gatewayName}' failed with exit status ${String(status ?? "unknown")}. ${recovery}`;
   }
-  return `OpenShell inference route lookup for gateway '${gatewayName}' failed before an exit status was available.`;
+  return `OpenShell inference route lookup for gateway '${gatewayName}' failed before an exit status was available. ${recovery}`;
 }
 
 function formatRouteValueForDisplay(value: string | null): string {

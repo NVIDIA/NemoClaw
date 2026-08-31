@@ -129,7 +129,8 @@ describe("runInferenceGet", () => {
     });
 
     await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
-      message: "OpenShell inference route lookup for gateway 'nemoclaw-19090' timed out.",
+      message:
+        "OpenShell inference route lookup for gateway 'nemoclaw-19090' timed out. Run 'nemoclaw beta status' to diagnose the sandbox's recorded gateway.",
     });
     expect(deps.log).not.toHaveBeenCalled();
   });
@@ -138,9 +139,26 @@ describe("runInferenceGet", () => {
     const deps = createDeps("secret stderr must not be rendered", 7);
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
 
+    await expect(runInferenceGet({}, deps)).rejects.toMatchObject({
+      message:
+        "OpenShell inference route lookup for gateway 'nemoclaw-19090' failed with exit status 7. Run 'nemoclaw status' to diagnose the selected gateway.",
+    });
+    expect(deps.log).not.toHaveBeenCalled();
+  });
+
+  it("reports sandbox diagnosis guidance when a lookup has no exit status (#10671)", async () => {
+    const deps = createDeps("", null);
+    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
+    deps.captureOpenshell.mockReturnValue({
+      status: null,
+      output: "secret stderr must not be rendered",
+      error: new Error("secret execution detail"),
+      signal: null,
+    });
+
     await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
       message:
-        "OpenShell inference route lookup for gateway 'nemoclaw-19090' failed with exit status 7.",
+        "OpenShell inference route lookup for gateway 'nemoclaw-19090' failed before an exit status was available. Run 'nemoclaw beta status' to diagnose the sandbox's recorded gateway.",
     });
     expect(deps.log).not.toHaveBeenCalled();
   });

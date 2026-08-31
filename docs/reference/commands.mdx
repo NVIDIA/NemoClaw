@@ -3019,6 +3019,8 @@ $$nemoclaw inference get --json
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
 When that registry contains `<name>`, the command resolves the sandbox's recorded gateway and reads that gateway's live route.
 It does not search registries for other gateway ports.
+When a lookup fails, the error names the gateway without rendering command output.
+It directs a direct lookup to `$$nemoclaw status` and a sandbox-first lookup to `$$nemoclaw <name> status`.
 
 ```bash
 $$nemoclaw my-assistant inference get

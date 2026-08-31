@@ -141,6 +141,7 @@ describe("sandbox inference oclif command adapters (#5977)", () => {
       await SandboxInferenceGetCommand.run(["alpha", "--json"], rootDir);
 
       expect(mocks.runInferenceGet).toHaveBeenCalledWith({
+        cliName: "nemoclaw",
         quiet: true,
         sandboxName: "alpha",
       });
