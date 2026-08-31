@@ -58,6 +58,8 @@ type NullableRunCaptureFn = (
 ) => string | null;
 type ProbeRunOpts = { timeout?: number };
 
+const DOCKER_PREFLIGHT_TIMEOUT_MS = 15_000;
+
 // ── Types ────────────────────────────────────────────────────────
 
 export interface PortProbeResult {
@@ -569,6 +571,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   if (dockerInstalled && !dockerHostInvalid && dockerInfoOutput === undefined) {
     dockerInfoOutput = runCaptureImpl(["docker", "info", "--format", "{{json .}}"], {
       ignoreError: true,
+      timeout: DOCKER_PREFLIGHT_TIMEOUT_MS,
     });
   }
   if (dockerInstalled && isDockerDaemonReachable(dockerInfoOutput)) {
@@ -583,6 +586,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   if (dockerReachable && !dockerHostInvalid && dockerVersionOutput === undefined) {
     dockerVersionOutput = runCaptureImpl(["docker", "version", "--format", "{{json .}}"], {
       ignoreError: true,
+      timeout: DOCKER_PREFLIGHT_TIMEOUT_MS,
     });
   }
 
