@@ -2676,10 +2676,8 @@ If another terminal has an active SSH session to the sandbox, `rebuild` prints a
 The sandbox normally must be reachable for the backup step to succeed.
 If any manifest-declared state directory or state file cannot be archived, `rebuild` reports each failed path and stops before deleting the original sandbox.
 This fail-closed behavior also applies to `--force`, even when the backup contains other usable entries.
-When an incomplete snapshot contains captured entries, NemoClaw retains them at the printed path for manual recovery, but excludes that snapshot from `snapshot list` and snapshot restore selection.
-Do not edit its manifest or try to make it selectable.
-Repair access to the original sandbox state, then rerun the rebuild.
-Remove the incomplete host-side snapshot only after you verify that the original sandbox or a later complete snapshot contains every required state item.
+An incomplete snapshot remains excluded from `snapshot list` and snapshot restore selection.
+Follow [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement) for the retained-snapshot recovery procedure.
 For a sandbox with managed MCP servers, `--force` probes sandbox execution before MCP teardown.
 If that no-op cannot run, NemoClaw requires complete bridge entries plus exact provider and target identities.
 It does not try an in-sandbox adapter scrub or change MCP lifecycle state.
@@ -2814,10 +2812,10 @@ Names must be 1 to 63 characters from `[A-Za-z0-9._-]`, start with an alphanumer
 $$nemoclaw my-assistant snapshot create --name before-upgrade
 ```
 
-When a directory or state file cannot be captured, the command reports the failed items, removes the incomplete snapshot, and exits nonzero.
-A removed snapshot does not appear in `snapshot list` and cannot be restored, so a later restore cannot select a capture that never completed.
-When removal fails, the command reports the retained snapshot path and exits nonzero.
-The incomplete snapshot remains excluded from `snapshot list` and restore selection.
+When a directory or state file cannot be captured, the command reports the failed items, attempts to remove the incomplete snapshot, and exits nonzero.
+When cleanup succeeds, the command removes the incomplete snapshot.
+When cleanup fails, the command reports the retained snapshot path.
+In either case, the incomplete snapshot remains excluded from `snapshot list` and restore selection.
 Remove the retained directory only after you verify that the original sandbox or a complete snapshot contains every required state item.
 
 ### `$$nemoclaw <name> snapshot list`
