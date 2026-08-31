@@ -7,6 +7,7 @@ import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import {
   registerChannelsStopStartCleanup,
   registerChannelsStopStartProviderCleanup,
+  STOPPED_CHANNEL_CLEANUP_IMAGE,
 } from "../live/channels-stop-start-helpers.ts";
 
 type CleanupAction = { name: string; run: () => Promise<void> | void };
@@ -139,5 +140,9 @@ describe("channels stop/start provider cleanup", () => {
       }),
     ).toThrow(/only accepts openclaw sandbox names with prefix e2e-oc-ch-/);
     expect(fixtures.trackDisposable).not.toHaveBeenCalled();
+  });
+
+  it("pins the stopped-cleanup helper image to an exact digest", () => {
+    expect(STOPPED_CHANNEL_CLEANUP_IMAGE).toMatch(/^node:22-trixie-slim@sha256:[a-f0-9]{64}$/);
   });
 });

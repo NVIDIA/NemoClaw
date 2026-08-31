@@ -428,6 +428,11 @@ async function withLiveE2eEnvironment<T>(
   }
 }
 
+// Matches the pinned image src/lib/sandbox/privileged-exec.ts creates the
+// stopped-container cleanup helper from with `--pull never`.
+export const STOPPED_CHANNEL_CLEANUP_IMAGE =
+  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
+
 const AGENT = (process.env.NEMOCLAW_CHANNELS_STOP_START_AGENT ??
   process.env.NEMOCLAW_AGENT ??
   "openclaw") as AgentKind;
@@ -1066,6 +1071,22 @@ async function removeChannelsAndRebuild(
       timeoutMs: 120_000,
     });
     expectExitZero(stop, "stop OpenClaw before WeChat cleanup");
+
+    // The privileged stopped-container cleanup helper creates with
+    // `--pull never` so it never reaches the network mid-cleanup; that
+    // requires the pinned image to already be cached locally. Warm it here,
+    // where the test harness (unlike the privileged cleanup path) already
+    // has network access.
+    const pullCleanupHelperImage = await host.command(
+      "docker",
+      ["pull", STOPPED_CHANNEL_CLEANUP_IMAGE],
+      {
+        artifactName: "pull-stopped-cleanup-helper-image",
+        redactionValues: redactions,
+        timeoutMs: 120_000,
+      },
+    );
+    expectExitZero(pullCleanupHelperImage, "pull the stopped-cleanup helper image");
 
     const cleanupResult = await withLiveE2eEnvironment(env, async () =>
       clearStoppedDockerSandboxChannelState(SANDBOX_NAME, [
