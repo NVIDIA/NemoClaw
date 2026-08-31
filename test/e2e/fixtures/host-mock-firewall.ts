@@ -24,7 +24,7 @@ interface DockerNetworkInspect {
   Options?: unknown;
 }
 
-interface BridgeTopology {
+export interface BridgeTopology {
   bridgeInterface: string;
   gatewayIp: string;
   prefixLength: number;
@@ -65,7 +65,7 @@ function parseBridgeCidr(value: string): { network: number; prefixLength: number
   return (network & mask) >>> 0 === network ? { network, prefixLength } : undefined;
 }
 
-function parseBridgeTopology(stdout: string): BridgeTopology {
+export function parseBridgeTopology(stdout: string): BridgeTopology {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
