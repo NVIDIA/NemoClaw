@@ -9,7 +9,7 @@ import {
 } from "../../../tools/e2e/operations-workflow-boundary.mts";
 
 describe("manual PR managed-image workflow boundary", () => {
-  it("rejects obsolete exact-candidate managed-image catalog authority", () => {
+  it("rejects restoration of the obsolete manual PR catalog resolver", () => {
     const workflow = readE2eOperationsWorkflow();
     const matrixJob = workflow.jobs["generate-matrix"];
     matrixJob.outputs!.managed_image_catalog =
@@ -30,7 +30,7 @@ describe("manual PR managed-image workflow boundary", () => {
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "Manual PR E2E must not resolve an exact candidate managed-image catalog",
-        "Manual PR CLI packaging must reject candidate-created managed-image catalogs without staging catalog authority",
+        "Manual PR CLI packaging must not accept obsolete managed-image catalog authority",
       ]),
     );
   });

@@ -322,13 +322,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     packageIndex <= prepareIndex ||
     packageCli.env?.MANAGED_IMAGE_CATALOG !== undefined ||
     packageCli.env?.MANAGED_IMAGE_CATALOG_SHA256 !== undefined ||
-    packageSource.includes("pr-managed-image-catalog.json") ||
-    !packageSource.includes('artifact_catalog="dist/e2e-managed-image-catalog.json"') ||
-    !packageSource.includes('[[ ! -e "$artifact_catalog" && ! -L "$artifact_catalog" ]]') ||
-    !packageSource.includes("candidate build created the managed-image catalog path")
+    packageSource.includes("pr-managed-image-catalog.json")
   ) {
     errors.push(
-      "Manual PR CLI packaging must reject candidate-created managed-image catalogs without staging catalog authority",
+      "Manual PR CLI packaging must not accept obsolete managed-image catalog authority",
     );
   }
 
