@@ -98,7 +98,7 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "verify immutable non-force network removal",
   "build and publish the sandbox image",
   "build and publish the staged Hermes image",
-  "verify the staged Hermes dashboard proxy route",
+  "verify Hermes accepts the configured external Host",
   "start the pinned Podman gateway",
   "verify distinct same-network routes",
   "record portable environment completion",
@@ -516,7 +516,7 @@ async function main(progress: TestProgress): Promise<void> {
       );
       hermesImageId = inspectedHermesImageId;
 
-      progress.phase("verify the staged Hermes dashboard proxy route");
+      progress.phase("verify Hermes accepts the configured external Host");
       assert.deepEqual(await probeHermesDashboardProxyRoute(hermesImageRef), {
         external: 200,
         externalPort: 200,
