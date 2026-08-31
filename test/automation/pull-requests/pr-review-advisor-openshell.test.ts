@@ -375,6 +375,7 @@ describe("PR review advisor specialist lifecycle", () => {
 
   it("cancels active analysis, cleans owned resources, and restores termination (#10611)", async () => {
     const calls: string[] = [];
+    const sandboxNames: string[] = [];
     let receive!: (signal: NodeJS.Signals) => void;
     let interrupt!: () => void;
     const completion = new Promise<void>(
@@ -388,16 +389,25 @@ describe("PR review advisor specialist lifecycle", () => {
         configure: Promise.resolve(),
         stop: async () => void calls.push("gateway"),
       }),
-      create: () => void calls.push("create"),
-      run: () => ({
+      create: (env) => {
+        calls.push("create");
+        sandboxNames.push(env.SANDBOX_NAME as string);
+      },
+      run: (env) => {
+        sandboxNames.push(env.SANDBOX_NAME as string);
+        return {
         completion,
         cancel: () => {
           calls.push("cancel");
           interrupt();
         },
-      }),
+      };
+      },
       download: () => void calls.push("download"),
-      remove: () => void calls.push("sandbox"),
+      remove: (env) => {
+        calls.push("sandbox");
+        sandboxNames.push(env.SANDBOX_NAME as string);
+      },
     };
 
     const command = runAdvisorSpecialistCommand(
@@ -417,6 +427,7 @@ describe("PR review advisor specialist lifecycle", () => {
     await command;
 
     expect(calls).toEqual(["create", "cancel", "sandbox", "gateway", "listeners"]);
+    expect(sandboxNames).toEqual([expect.stringMatching(/^pr-adv-[0-9a-f]{12}$/u), sandboxNames[0], sandboxNames[0]]);
     expect(restore).toHaveBeenCalledWith("SIGTERM");
     expect(stderr).not.toHaveBeenCalled();
     expect(calls).not.toContain("download");

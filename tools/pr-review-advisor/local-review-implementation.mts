@@ -321,7 +321,6 @@ function specialistEnvironment(
     PR_REVIEW_ADVISOR_INTEREST: specialist.interest,
     PR_REVIEW_ADVISOR_MODEL: DEFAULT_ADVISOR_MODEL,
     RUNNER_TEMP: runnerTemp,
-    SANDBOX_NAME: `lr-${specialist.sandboxName.slice(-4)}-${path.basename(runnerTemp).slice(-8)}`,
   };
 }
 
