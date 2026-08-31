@@ -16,6 +16,7 @@ This command reports configuration state and does not authenticate a model reque
 ## Read the Live Route
 
 Run the direct route command when you only need the active provider and model.
+The direct form reads the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
 
 ```bash
 $$nemoclaw inference get
@@ -43,7 +44,8 @@ Expected output:
 }
 ```
 
-The command exits non-zero with `OpenShell inference route is not configured.` when the gateway has no registered inference route.
+The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no registered inference route.
+If the lookup fails, the error names the selected gateway and reports a timeout, a nonzero exit status, or the absence of an exit status.
 Run `$$nemoclaw onboard` to configure one.
 
 ## Use the Sandbox-First Form
