@@ -341,22 +341,46 @@ function resolveStoppedContainerOverlaySandboxRoot(
   graphDriverName: string,
   upperDir: string,
 ): string | null {
-  if (graphDriverName !== "overlay2" || !isSafeAbsoluteOverlayPath(upperDir)) return null;
+  if (graphDriverName !== "overlay2" || !isSafeAbsoluteOverlayPath(upperDir)) {
+    diagnoseOverlayFallback(
+      `unsupported driver or unsafe path: driver=${graphDriverName} upperDir=${upperDir}`,
+    );
+    return null;
+  }
   let upperDirStat: fs.Stats;
   try {
     upperDirStat = fs.lstatSync(upperDir);
-  } catch {
+  } catch (error) {
+    diagnoseOverlayFallback(`upperDir lstat failed: ${upperDir}: ${String(error)}`);
     return null;
   }
-  if (!upperDirStat.isDirectory()) return null;
+  if (!upperDirStat.isDirectory()) {
+    diagnoseOverlayFallback(`upperDir is not a directory: ${upperDir}`);
+    return null;
+  }
   const overlaySandboxRoot = path.posix.join(upperDir, "sandbox");
   let sandboxRootStat: fs.Stats;
   try {
     sandboxRootStat = fs.lstatSync(overlaySandboxRoot);
-  } catch {
+  } catch (error) {
+    diagnoseOverlayFallback(
+      `overlaySandboxRoot lstat failed: ${overlaySandboxRoot}: ${String(error)}`,
+    );
     return null;
   }
-  return sandboxRootStat.isDirectory() ? overlaySandboxRoot : null;
+  if (!sandboxRootStat.isDirectory()) {
+    diagnoseOverlayFallback(`overlaySandboxRoot is not a directory: ${overlaySandboxRoot}`);
+    return null;
+  }
+  return overlaySandboxRoot;
+}
+
+// TEMPORARY: remove once the overlay2 fallback is confirmed against a real
+// GitHub-hosted runner. Surfaces the exact reason the fallback declined so a
+// live E2E failure carries evidence instead of the generic
+// sandbox-volume-unavailable code alone.
+function diagnoseOverlayFallback(reason: string): void {
+  process.stderr.write(`[stopped-cleanup-overlay-diagnostic] ${reason}\n`);
 }
 
 /** Read immutable lifecycle and shared-state mount data for one container ID. */
@@ -421,6 +445,9 @@ function inspectStoppedContainer(containerId: string): StoppedContainerInspectio
       },
     };
   }
+  diagnoseOverlayFallback(
+    `no /sandbox volume mount: sandboxMounts=${JSON.stringify(sandboxMounts)} graphDriverName=${graphDriverName} upperDir=${upperDir}`,
+  );
   const overlaySandboxRoot =
     sandboxMounts.length === 0
       ? resolveStoppedContainerOverlaySandboxRoot(graphDriverName ?? "", upperDir ?? "")
