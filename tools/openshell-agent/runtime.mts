@@ -510,6 +510,20 @@ export function setOpenShellSandboxPolicy(
   });
 }
 
+export function openShellSandboxExists(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  tools: OpenShellTools = defaultOpenShellTools,
+): boolean {
+  return tools
+    .run("openshell", ["sandbox", "list", "--names"], {
+      capture: true,
+      env: credentialFreeEnvironment(env),
+    })
+    .split(/\r?\n/u)
+    .includes(name);
+}
+
 export function deleteOpenShellSandbox(
   env: NodeJS.ProcessEnv,
   name: string,

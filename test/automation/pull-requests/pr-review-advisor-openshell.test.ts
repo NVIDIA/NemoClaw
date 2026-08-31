@@ -144,6 +144,7 @@ describe("PR review advisor specialist lifecycle", () => {
     fs.writeFileSync(jobSummary, "Existing summary.\n");
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
+      exists: () => false,
       startGateway: () => ({ configure: Promise.resolve() }),
       create: () => undefined,
       run: () => undefined,
@@ -186,6 +187,7 @@ describe("PR review advisor specialist lifecycle", () => {
     const restore = vi.fn();
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
+      exists: () => false,
       startGateway: () => ({ configure: Promise.resolve() }),
       create: () => undefined,
       run: () => undefined,
@@ -241,6 +243,7 @@ describe("PR review advisor specialist lifecycle", () => {
     const calls: string[] = [];
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => void calls.push("prepare"),
+      exists: () => false,
       startGateway: () => ({ configure: Promise.resolve() }),
       create: () => void calls.push("create"),
       run: () => void calls.push("run"),
@@ -280,6 +283,7 @@ describe("PR review advisor specialist lifecycle", () => {
     const fail = (stage: string): void => failures[stage]?.();
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
+      exists: () => false,
       startGateway: () => ({
         configure: Promise.resolve().then(() => fail("configure")),
         stop: async () => void (gatewayStopped = true),
@@ -324,9 +328,33 @@ describe("PR review advisor specialist lifecycle", () => {
     });
   });
 
+  it("does not remove a sandbox that existed before creation", async () => {
+    let removed = false;
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => undefined,
+      exists: () => true,
+      startGateway: () => ({ configure: Promise.resolve() }),
+      create: () => {
+        throw new Error("create must not run");
+      },
+      run: () => undefined,
+      download: () => undefined,
+      remove: () => void (removed = true),
+    };
+
+    await expect(
+      runAdvisorSpecialist({
+        env: { PR_REVIEW_ADVISOR_INTEREST: "behavior", SANDBOX_NAME: "existing" },
+        lifecycle,
+      }),
+    ).rejects.toThrow("Sandbox name already exists before creation");
+    expect(removed).toBe(false);
+  });
+
   it("preserves the primary failure when cleanup also fails", async () => {
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
+      exists: () => false,
       startGateway: () => ({
         configure: Promise.resolve(),
         stop: async () => {
@@ -369,6 +397,7 @@ describe("PR review advisor specialist lifecycle", () => {
     const restore = vi.fn();
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
+      exists: () => false,
       startGateway: () => ({
         configure: Promise.resolve(),
         stop: async () => void calls.push("gateway"),
@@ -415,6 +444,7 @@ describe("PR review advisor specialist lifecycle", () => {
     const restore = vi.fn();
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
+      exists: () => false,
       startGateway: () => ({ configure: Promise.resolve(), stop: async () => undefined }),
       create: () => undefined,
       run: () => ({

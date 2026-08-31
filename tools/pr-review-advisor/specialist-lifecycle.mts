@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  advisorSandboxExists,
   createAdvisorSandbox,
   deleteAdvisorSandbox,
   downloadAdvisorArtifacts,
@@ -17,6 +18,7 @@ export type AdvisorSpecialistLifecycle = {
   startGateway: (
     env: NodeJS.ProcessEnv,
   ) => { configure: Promise<void>; stop?: () => Promise<void> } | undefined;
+  exists: (env: NodeJS.ProcessEnv) => boolean;
   create: (env: NodeJS.ProcessEnv) => void;
   run: (
     env: NodeJS.ProcessEnv,
@@ -45,6 +47,7 @@ function diagnostic(error: unknown): string {
 export const defaultAdvisorSpecialistLifecycle: AdvisorSpecialistLifecycle = {
   prepare: prepareAdvisorSandboxInputs,
   startGateway: startAdvisorOpenShellInference,
+  exists: advisorSandboxExists,
   create: createAdvisorSandbox,
   run: runAdvisorSandboxAsync,
   download: downloadAdvisorArtifacts,
@@ -123,6 +126,7 @@ export async function runAdvisorSpecialist(input: {
     if (input.cancelled?.()) result = "cancelled";
     if (result === "complete") {
       stage = "create";
+      if (lifecycle.exists(input.env)) throw new Error("Sandbox name already exists before creation");
       sandbox = true;
       lifecycle.create(input.env);
       stage = "run";

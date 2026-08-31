@@ -17,6 +17,7 @@ import {
   credentialFreeEnvironment,
   defaultOpenShellTools,
   deleteOpenShellSandbox,
+  openShellSandboxExists,
   downloadOpenShellPath,
   execOpenShellSandboxAsync,
   type OpenShellTools,
@@ -265,6 +266,13 @@ export function startAdvisorOpenShellInference(
   tools: OpenShellTools = defaultOpenShellTools,
 ): OwnedOpenShellInference {
   return startOwnedOpenShellInference(env, advisorInferenceOptions(env), tools);
+}
+
+export function advisorSandboxExists(
+  env: NodeJS.ProcessEnv,
+  tools: OpenShellTools = defaultOpenShellTools,
+): boolean {
+  return openShellSandboxExists(env, required(env.SANDBOX_NAME, "SANDBOX_NAME"), tools);
 }
 
 export function createAdvisorSandbox(
