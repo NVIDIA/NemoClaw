@@ -65,11 +65,10 @@ export function requiredMessagingChannelPolicyPresets(
 // or a live-policy-derived resume set). We intentionally merge *all* of a channel's
 // presets, not just the create-time `requiredAtCreate` ones: `requiredAtCreate`
 // governs whether a preset is injected into the boot policy at sandbox-create
-// time (Discord and Slack today), while finalization applies any newly-merged preset
-// to the live gateway itself. Using only the create-time-required set here drops
-// every other channel's preset (Telegram, WhatsApp, Teams, WeChat) from
-// the command-time selection, so `policy-list` shows them unapplied even though the
-// channel was configured during onboard. See #5967.
+// time. Finalization must also apply the WhatsApp and Google Chat presets to the
+// live gateway. Using only the create-time-required set here drops those presets
+// from the command-time selection, so `policy-list` shows them unapplied even
+// though the channel was configured during onboard. See #5967.
 export function mergeEnabledMessagingChannelPolicyPresets(
   selectedPresets: string[],
   channels: string[] | null | undefined,
