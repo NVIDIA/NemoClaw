@@ -43,4 +43,15 @@ describe("getLiveGatewayInference", () => {
       ["inference", "get"],
     ]);
   });
+
+  it("does not query an unscoped gateway after a named non-default lookup fails (#10671)", () => {
+    const capture = vi.fn().mockReturnValue({ status: 1, output: "" });
+
+    expect(getLiveGatewayInference(capture, { gatewayName: "nemoclaw-19090" })).toMatchObject({
+      args: ["inference", "get", "-g", "nemoclaw-19090"],
+      inference: null,
+      status: 1,
+    });
+    expect(capture).toHaveBeenCalledTimes(1);
+  });
 });

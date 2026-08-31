@@ -5,10 +5,12 @@ import { captureOpenshell } from "../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { sanitizeRouteValueForDisplay } from "../inference/config";
 import { getLiveGatewayInference } from "../inference/live";
+import { getSandboxTargetGatewayName } from "./sandbox/gateway-target";
 
 export interface InferenceGetOptions {
   json?: boolean;
   quiet?: boolean;
+  sandboxName?: string;
 }
 
 export interface InferenceGetResult {
@@ -18,6 +20,7 @@ export interface InferenceGetResult {
 
 export interface InferenceGetDeps {
   captureOpenshell: typeof captureOpenshell;
+  getSandboxTargetGatewayName: typeof getSandboxTargetGatewayName;
   log: (message?: string) => void;
 }
 
@@ -34,6 +37,7 @@ export class InferenceGetError extends Error {
 function defaultDeps(): InferenceGetDeps {
   return {
     captureOpenshell,
+    getSandboxTargetGatewayName,
     log: console.log,
   };
 }
@@ -43,6 +47,7 @@ export async function runInferenceGet(
   deps: InferenceGetDeps = defaultDeps(),
 ): Promise<InferenceGetResult> {
   const result = getLiveGatewayInference(deps.captureOpenshell, {
+    gatewayName: deps.getSandboxTargetGatewayName(options.sandboxName),
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (result.status !== 0) {

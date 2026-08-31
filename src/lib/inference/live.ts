@@ -5,6 +5,8 @@ import type { CaptureOpenshellResult } from "../adapters/openshell/client";
 import { stripAnsi } from "../adapters/openshell/client";
 import { parseGatewayInference, type GatewayInference } from "./config";
 
+const BASE_GATEWAY_NAME = "nemoclaw";
+
 type CaptureLiveInference = (
   args: string[],
   opts?: { ignoreError?: boolean; timeout?: number },
@@ -23,11 +25,12 @@ function hasGatewayInferenceSection(output: string): boolean {
 
 export function getLiveGatewayInference(
   capture: CaptureLiveInference,
-  opts: { timeout?: number } = {},
+  opts: { timeout?: number; gatewayName?: string } = {},
 ): LiveGatewayInferenceResult {
+  const gatewayName = opts.gatewayName ?? BASE_GATEWAY_NAME;
   const attempts = [
-    ["inference", "get", "-g", "nemoclaw"],
-    ["inference", "get"],
+    ["inference", "get", "-g", gatewayName],
+    ...(gatewayName === BASE_GATEWAY_NAME ? [["inference", "get"]] : []),
   ];
   let last: LiveGatewayInferenceResult = {
     args: attempts[0],

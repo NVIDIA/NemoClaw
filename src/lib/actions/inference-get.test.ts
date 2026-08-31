@@ -19,12 +19,17 @@ function createDeps(
 ): InferenceGetDeps & {
   log: ReturnType<typeof vi.fn>;
   captureOpenshell: ReturnType<typeof vi.fn>;
+  getSandboxTargetGatewayName: ReturnType<typeof vi.fn>;
 } {
   const captureOpenshell = vi.fn(() => ({ status, output }));
+  const getSandboxTargetGatewayName = vi.fn(() => "nemoclaw");
   const log = vi.fn();
   return {
     captureOpenshell: captureOpenshell as unknown as InferenceGetDeps["captureOpenshell"] &
       ReturnType<typeof vi.fn>,
+    getSandboxTargetGatewayName:
+      getSandboxTargetGatewayName as unknown as InferenceGetDeps["getSandboxTargetGatewayName"] &
+        ReturnType<typeof vi.fn>,
     log: log as unknown as InferenceGetDeps["log"] & ReturnType<typeof vi.fn>,
   };
 }
@@ -57,6 +62,24 @@ describe("runInferenceGet", () => {
       provider: "openai-api",
       model: "gpt-5.4",
     });
+  });
+
+  it("queries the gateway recorded for the sandbox (#10671)", async () => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+    );
+    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
+
+    await expect(runInferenceGet({ quiet: true, sandboxName: "beta" }, deps)).resolves.toEqual({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+    });
+
+    expect(deps.getSandboxTargetGatewayName).toHaveBeenCalledWith("beta");
+    expect(deps.captureOpenshell).toHaveBeenCalledWith(
+      ["inference", "get", "-g", "nemoclaw-19090"],
+      expect.objectContaining({ ignoreError: true }),
+    );
   });
 
   it("sanitizes route values only for human-readable output", async () => {
