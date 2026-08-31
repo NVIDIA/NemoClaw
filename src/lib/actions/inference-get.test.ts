@@ -128,7 +128,18 @@ describe("runInferenceGet", () => {
   });
 
   it("reports unrecognized gateway output without rendering it (#10671)", async () => {
-    const deps = createDeps("secret output in an unexpected format");
+    const deps = createDeps("Gateway inference:\n  Unexpected: secret output");
+    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
+
+    await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
+      message:
+        "OpenShell inference route lookup for gateway 'nemoclaw-19090' returned output NemoClaw could not interpret. Run 'nemoclaw beta status' to diagnose the sandbox's recorded gateway.",
+    });
+    expect(deps.log).not.toHaveBeenCalled();
+  });
+
+  it("reports a partial gateway route without rendering it (#10671)", async () => {
+    const deps = createDeps("Gateway inference:\n  Provider: secret-partial-provider");
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
 
     await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({

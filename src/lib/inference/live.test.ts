@@ -58,8 +58,24 @@ describe("getLiveGatewayInference", () => {
     );
   });
 
-  it("classifies successful unrecognized gateway output as a lookup failure (#10671)", () => {
-    const capture = vi.fn().mockReturnValue({ status: 0, output: "unexpected format" });
+  it.each([
+    { label: "heading-free", output: "unexpected format" },
+    { label: "heading with unknown fields", output: "Gateway inference:\n  Unexpected: value" },
+  ] as const)("classifies $label successful output as a lookup failure (#10671)", ({ output }) => {
+    const capture = vi.fn().mockReturnValue({ status: 0, output });
+
+    expect(getLiveGatewayInference(capture, { gatewayName: "nemoclaw-19090" })).toMatchObject({
+      failure: "output",
+      inference: null,
+      status: 0,
+    });
+  });
+
+  it.each([
+    { label: "provider-only", output: "Gateway inference:\n  Provider: nvidia-prod" },
+    { label: "model-only", output: "Gateway inference:\n  Model: nvidia/model" },
+  ] as const)("classifies $label gateway output as a lookup failure (#10671)", ({ output }) => {
+    const capture = vi.fn().mockReturnValue({ status: 0, output });
 
     expect(getLiveGatewayInference(capture, { gatewayName: "nemoclaw-19090" })).toMatchObject({
       failure: "output",

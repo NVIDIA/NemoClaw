@@ -20,8 +20,17 @@ export interface LiveGatewayInferenceResult {
   status: number | null;
 }
 
-function hasGatewayInferenceSection(output: string): boolean {
-  return /^(?:Gateway )?Inference:\s*$/im.test(output);
+function hasUnconfiguredInferenceSection(output: string): boolean {
+  let inInferenceSection = false;
+  for (const line of output.split("\n")) {
+    if (/^(?:Gateway )?Inference:\s*$/i.test(line)) {
+      inInferenceSection = true;
+      continue;
+    }
+    if (inInferenceSection && /^\S.*:$/.test(line)) return false;
+    if (inInferenceSection && line.trim() === "Not configured") return true;
+  }
+  return false;
 }
 
 function classifyLookupFailure(
@@ -53,8 +62,11 @@ export function getLiveGatewayInference(
   for (const args of attempts) {
     const result = capture(args, { ignoreError: true, timeout: opts.timeout });
     const output = stripAnsi(result.output || "").trim();
-    const inference = parseGatewayInference(output);
-    const recognizedOutput = Boolean(inference) || hasGatewayInferenceSection(output);
+    const parsedInference = parseGatewayInference(output);
+    const inference =
+      parsedInference?.provider && parsedInference.model ? parsedInference : null;
+    const recognizedOutput =
+      Boolean(inference) || (!parsedInference && hasUnconfiguredInferenceSection(output));
     const failure = classifyLookupFailure(result);
     last = {
       failure: failure ?? (result.status === 0 && !recognizedOutput ? "output" : null),
