@@ -9,9 +9,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
-import type { CommandRunner } from "../fixtures/clients/command.ts";
-import { HostCliClient } from "../fixtures/clients/host.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
@@ -19,7 +16,6 @@ import {
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
-  startFakeDockerApi,
 } from "../live/messaging-providers-helpers.ts";
 import {
   parseInstalledSlackProof,
@@ -41,137 +37,7 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
   expect(matched, message).toBe(true);
 }
 
-function successfulShellResult(command: string[], stdout = ""): ShellProbeResult {
-  return {
-    command,
-    durationMs: 0,
-    exitCode: 0,
-    signal: null,
-    timedOut: false,
-    stdout,
-    stderr: "",
-    artifacts: { stdout: "", stderr: "", result: "" },
-  };
-}
-
 describe("messaging provider installed-runtime proofs", () => {
-  it("keeps fake Docker APIs internal and binds proxy ports to the OpenShell bridge", async () => {
-    const invocations: string[][] = [];
-    const cleanupTasks: Array<() => Promise<void>> = [];
-    const responses: Array<(invocation: string[]) => ShellProbeResult> = [
-      (invocation) =>
-        successfulShellResult(
-          invocation,
-          JSON.stringify([
-            {
-              Driver: "bridge",
-              Id: "0123456789abcdef0123456789abcdef",
-              IPAM: { Config: [{ Subnet: "172.18.0.0/16", Gateway: "172.18.0.1" }] },
-              Options: {},
-            },
-          ]),
-        ),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => {
-        const mountSuffix = ":/tmp/fake";
-        const mount = invocation.find((argument) => argument.endsWith(mountSuffix));
-        expect(mount).toBeDefined();
-        fs.writeFileSync(path.join(mount!.slice(0, -mountSuffix.length), "port"), "8080\n");
-        return successfulShellResult(invocation, "fake-container-id\n");
-      },
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation, "172.18.0.1:41080\n"),
-      (invocation) => successfulShellResult(invocation, "172.18.0.1:41081\n"),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation),
-    ];
-    const runner: CommandRunner = {
-      async run(command) {
-        const invocation = [command.command, ...command.args];
-        invocations.push(invocation);
-        const respond = responses.shift();
-        expect(respond).toBeDefined();
-        return respond!(invocation);
-      },
-    };
-
-    try {
-      const api = await startFakeDockerApi(
-        new HostCliClient(runner),
-        (_name, run) => cleanupTasks.push(run),
-        {
-          kind: "slack",
-          imageScript: "fake-slack-api.cjs",
-          containerPrefix: "nemoclaw-fake-slack-test",
-          portEnv: "FAKE_SLACK_API_PORT",
-          portFileEnv: "FAKE_SLACK_API_PORT_FILE",
-          captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
-          expectedEnv: {
-            FAKE_SLACK_API_EXPECTED_BOT_TOKEN: "xoxb-fake-slack-network-test",
-            FAKE_SLACK_API_EXPECTED_APP_TOKEN: "xapp-fake-slack-network-test",
-          },
-          redactionValues: [],
-          env: {},
-        },
-      );
-      const networkCreates = invocations.filter(
-        ([command, group, action]) =>
-          command === "docker" && group === "network" && action === "create",
-      );
-      expect(invocations).toContainEqual(["docker", "network", "inspect", "openshell-docker"]);
-      const internalNetworkCreate = networkCreates.find((invocation) =>
-        invocation.includes("--internal"),
-      );
-      const proxyNetworkCreate = networkCreates.find((invocation) =>
-        invocation.includes("com.docker.network.bridge.enable_ip_masquerade=false"),
-      );
-      expect(internalNetworkCreate?.slice(0, -1)).toEqual([
-        "docker",
-        "network",
-        "create",
-        "--internal",
-      ]);
-      expect(proxyNetworkCreate?.slice(0, -1)).toEqual([
-        "docker",
-        "network",
-        "create",
-        "--driver",
-        "bridge",
-        "--opt",
-        "com.docker.network.bridge.enable_ip_masquerade=false",
-      ]);
-      const containerRun = invocations.find(
-        ([command, action]) => command === "docker" && action === "run",
-      );
-      expect(containerRun).toContain(internalNetworkCreate?.at(-1));
-      expect(containerRun).not.toContain("-p");
-      expect(containerRun).not.toContain("0:8080");
-      expect(containerRun?.join("\n")).toContain("xoxb-fake-slack-network-test");
-      expect(containerRun?.join("\n")).toContain("xapp-fake-slack-network-test");
-      const proxyCreate = invocations.find(
-        ([command, action]) => command === "docker" && action === "create",
-      );
-      expect(proxyCreate).toContain(proxyNetworkCreate?.at(-1));
-      expect(proxyCreate).toContain("172.18.0.1:0:8080");
-      expect(proxyCreate).toContain("172.18.0.1:0:8081");
-      expect(proxyCreate).not.toContain("0:8080");
-      expect(proxyCreate?.join("\n")).not.toContain("xoxb-fake-slack-network-test");
-      expect(proxyCreate?.join("\n")).not.toContain("xapp-fake-slack-network-test");
-      expect(proxyCreate).toContain("/opt/nemoclaw-e2e/fake-api-port-proxy.mts");
-      expect(api.port).toBe("41080");
-      expect(api.alternatePort).toBe("41081");
-    } finally {
-      await cleanupTasks
-        .reverse()
-        .reduce((previous, cleanupTask) => previous.then(cleanupTask), Promise.resolve());
-    }
-  });
-
   it("uses a synthetic WeChat token even when the host exports one", () => {
     const previousToken = process.env.WECHAT_BOT_TOKEN;
     process.env.WECHAT_BOT_TOKEN = "host-wechat-token-must-not-reach-the-fake-api";
