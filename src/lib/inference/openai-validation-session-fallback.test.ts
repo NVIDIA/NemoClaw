@@ -354,7 +354,7 @@ describe("WSL2 advisory on native terminal failures (#10413)", () => {
     const result = await probeUntilNativeTransportFailure(true);
 
     expect(result.ok).toBe(false);
-    expect(result.advisory).toContain("--skip-verify");
+    expect(result.advisory).toContain("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS");
     expect(result.message).toContain("WSL2 detected");
   });
 

@@ -30,13 +30,19 @@ const { isWsl } = require("../platform");
 /**
  * Guidance for a WSL2 host whose endpoint verification keeps timing out.
  *
+ * Names the one lever onboarding actually honours for this failure:
+ * `withValidationMaxTimeOverride` applies NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS
+ * to every validation probe. Onboarding has no flag that bypasses validation,
+ * so this must not imply one.
+ *
  * Exported so the onboarding failure path can print the same wording it is
  * appended to `message` with. That path prints failure summaries rather than
  * the raw probe message, which can carry provider response bodies (#10413).
  */
 export const WSL_SLOW_VERIFICATION_ADVISORY =
   "WSL2 detected \u2014 network verification may be slower than expected. " +
-  "Run `nemoclaw onboard` with the `--skip-verify` flag if this endpoint is known to be reachable.";
+  "Check proxy and VPN health, then run onboarding again with a longer budget, for example " +
+  "`NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS=120`.";
 const httpProbe = require("../adapters/http/probe");
 const authConfigModule = require("../adapters/http/auth-config");
 const openrouter = require("./openrouter");
@@ -1128,7 +1134,7 @@ export async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKe
 // delegating to the legacy probe, so it never reaches the advisory that the
 // legacy probe attaches. Re-attach it here from the transport status the
 // failure already carries, so both transports give a WSL2 operator the same
-// `--skip-verify` next step (#10413).
+// next step (#10413).
 function withWslSlowVerificationAdvisory(result, options) {
   if (
     result.ok ||

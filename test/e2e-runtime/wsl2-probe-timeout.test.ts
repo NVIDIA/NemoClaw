@@ -250,7 +250,8 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       const { result } = runProbeWithResults([failure, failure, failure], { isWsl: true });
       expect(result.ok).toBe(false);
       expect(result.message).toContain("WSL2 detected");
-      expect(result.message).toContain("--skip-verify");
+      // Names the lever onboarding honours; there is no validation bypass flag.
+      expect(result.message).toContain("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS");
     });
 
     it("uses calibrated fast-network timing for provider validation", () => {
