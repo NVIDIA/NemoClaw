@@ -857,7 +857,7 @@ print_done() {
     fi
     if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
       printf "  ${C_YELLOW}The recovery command succeeded, but NemoClaw could not inspect its output.${C_RESET}\n"
-      printf "  ${C_DIM}Run '%s upgrade-sandboxes --check' to verify every recorded sandbox.${C_RESET}\n" "$_CLI_BIN"
+      printf "  ${C_DIM}Run '%s upgrade-sandboxes --check' to inspect the registered sandbox upgrade state.${C_RESET}\n" "$_CLI_BIN"
     elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
       # #6520: recovery exited 0 but recorded sandboxes were not found on
       # their own recorded gateway; do not report them as recovered, and give

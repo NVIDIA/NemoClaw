@@ -465,6 +465,8 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
       "The recovery command succeeded, but NemoClaw could not inspect its output",
     );
     expect(result.output).toContain("upgrade-sandboxes --check");
+    expect(result.output).toContain("inspect the registered sandbox upgrade state");
+    expect(result.output).not.toContain("verify every recorded sandbox");
     expect(result.output.indexOf("PATH_REFRESH_ACTION")).toBeLessThan(
       result.output.indexOf("upgrade-sandboxes --check"),
     );
