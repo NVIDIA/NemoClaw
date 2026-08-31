@@ -80,7 +80,12 @@ import {
   type ManagedStateVolumeDeps,
 } from "./managed-state-volumes";
 
-export { prepareManagedStateVolumes, removeManagedStateVolumes };
+export {
+  managedStartupStateRoots,
+  managedStartupWorkspaceRoot,
+  prepareManagedStateVolumes,
+  removeManagedStateVolumes,
+};
 
 type ManagedProfileInput = Omit<
   ManagedStartupOnboardProfileInput,
@@ -251,14 +256,15 @@ export function createManagedWorkloadOnboardRuntime(
     input.tempManagedRuntime ||
     input.tempManagedRuntimeCatalog !== null ||
     input.managedWorkloadRebuild !== null;
-  const runtimeCapabilities =
-    strictManagedRuntime || input.stockManagedRuntime
-      ? discoveredRuntimeCapabilities
-      : {
-          ...discoveredRuntimeCapabilities,
-          managedImageSelectionPolicy: "prefer-managed" as const,
-          managedImages: null,
-        };
+  const runtimeCapabilities = strictManagedRuntime
+    ? discoveredRuntimeCapabilities
+    : {
+        ...discoveredRuntimeCapabilities,
+        managedImageSelectionPolicy: "prefer-managed" as const,
+        managedImages: input.stockManagedRuntime
+          ? discoveredRuntimeCapabilities.managedImages
+          : null,
+      };
   const runtimeProvider = resolveRuntimeProviderBundle(
     input.computePlan.driverName,
     CURRENT_RUNTIME_PROVIDER_BUNDLES,

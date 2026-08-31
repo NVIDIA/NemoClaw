@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveAgent } from "../../src/lib/agent/onboard.ts";
 import { parseOpenShellSandboxId } from "../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { createCliOpenShellSandboxObserverFromRunner } from "../../src/lib/adapters/openshell/sandbox-observer-cli.ts";
 import { isValidName, NAME_ALLOWED_FORMAT } from "../../src/lib/name-validation.ts";
 import {
   type StopHostGatewayResult,
@@ -33,11 +34,6 @@ import {
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
-import {
-  managedStartupStateRoots,
-  managedStartupWorkspaceRoot,
-  type ManagedStartupStateRoot,
-} from "../../src/lib/onboard/managed-startup/state-roots.ts";
 import type {
   RuntimeProviderBundle,
   RuntimeProviderManagedImageBootstrapSurface,
@@ -161,6 +157,16 @@ export type ManagedImageOpenShellE2eResult<
 
 type Inputs = ManagedImageOpenShellE2eInputs;
 
+type ProtectedManagedStateRoot = {
+  readonly mountTarget: string;
+  readonly resourceIdentity: string;
+  readonly ownershipLabels: Readonly<Record<string, string>>;
+  readonly uid: number;
+  readonly gid: number;
+  readonly mode: number;
+  readonly readWrite: boolean;
+};
+
 type ProtectedManagedStateVolumeMount = {
   readonly type: "volume";
   readonly source: string;
@@ -196,12 +202,21 @@ const MANAGED_IMAGE_E2E_ENVIRONMENT_KEYS = [
 
 type OnboardModule = {
   managedWorkloadOnboard: {
+    managedStartupStateRoots(input: {
+      readonly agent: ShippedManagedImageAgent;
+      readonly sandboxName: string;
+      readonly agentIdentity: { readonly uid: number; readonly gid: number };
+    }): readonly ProtectedManagedStateRoot[];
+    managedStartupWorkspaceRoot(input: {
+      readonly agent: ShippedManagedImageAgent;
+      readonly agentIdentity: { readonly uid: number; readonly gid: number };
+    }): { readonly uid: number; readonly gid: number; readonly mode: number };
     prepareManagedStateVolumes(
-      input: { readonly roots: readonly ManagedStartupStateRoot[] },
+      input: { readonly roots: readonly ProtectedManagedStateRoot[] },
       deps: { readonly runtimeProvider: RuntimeProviderBundle },
     ): ProtectedManagedStateVolumeScope | null;
     removeManagedStateVolumes(
-      input: { readonly roots: readonly ManagedStartupStateRoot[] },
+      input: { readonly roots: readonly ProtectedManagedStateRoot[] },
       deps: { readonly runtimeProvider: RuntimeProviderBundle },
     ): readonly ProtectedManagedStateVolumeCleanupResult[];
   };
@@ -243,6 +258,8 @@ export function resolveManagedImageOnboardModule(onboardImport: unknown): Onboar
     | Record<string, unknown>
     | undefined;
   if (
+    typeof managedWorkload?.managedStartupStateRoots !== "function" ||
+    typeof managedWorkload.managedStartupWorkspaceRoot !== "function" ||
     typeof managedWorkload?.prepareManagedStateVolumes !== "function" ||
     typeof managedWorkload.removeManagedStateVolumes !== "function"
   ) {
@@ -256,7 +273,7 @@ export function resolveManagedImageOnboardModule(onboardImport: unknown): Onboar
 function cleanupProtectedManagedStateVolumes(input: {
   readonly onboard: OnboardModule | null;
   readonly runtimeProvider: RuntimeProviderBundle | null;
-  readonly roots: readonly ManagedStartupStateRoot[];
+  readonly roots: readonly ProtectedManagedStateRoot[];
   readonly scope: ProtectedManagedStateVolumeScope | null;
   readonly committed: boolean;
 }): string[] {
@@ -272,9 +289,7 @@ function cleanupProtectedManagedStateVolumes(input: {
     }
     return results.flatMap((result) =>
       result.status === "not-owned" || result.status === "failed"
-        ? [
-            `managed state volume ${result.volumeName} cleanup ${result.status}: ${result.detail}`,
-          ]
+        ? [`managed state volume ${result.volumeName} cleanup ${result.status}: ${result.detail}`]
         : [],
     );
   } catch (error) {
@@ -981,10 +996,12 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
   let onboard: OnboardModule | null = null;
   let ownedContainerId: string | null = null;
   let initialSandboxPolicy: InitialSandboxPolicy | null = null;
-  let runtimeProvider: (RuntimeProviderBundle & {
-    readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
-  }) | null = null;
-  let managedStateRoots: readonly ManagedStartupStateRoot[] = [];
+  let runtimeProvider:
+    | (RuntimeProviderBundle & {
+        readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
+      })
+    | null = null;
+  let managedStateRoots: readonly ProtectedManagedStateRoot[] = [];
   let managedStateVolumeScope: ProtectedManagedStateVolumeScope | null = null;
   let managedStateVolumesCommitted = false;
   let failureInjectionQualified = false;
@@ -1037,7 +1054,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     };
     runtimeProvider = selectedRuntimeProvider;
     const agentIdentity = managedImageRuntimeIdentity(input.agent);
-    managedStateRoots = managedStartupStateRoots({
+    managedStateRoots = onboard.managedWorkloadOnboard.managedStartupStateRoots({
       agent: input.agent,
       sandboxName: input.sandbox,
       agentIdentity,
@@ -1057,9 +1074,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       input.sandbox,
       "--policy",
       initialSandboxPolicy.policyPath,
-      ...(managedStateDriverConfig
-        ? ["--driver-config-json", managedStateDriverConfig]
-        : []),
+      ...(managedStateDriverConfig ? ["--driver-config-json", managedStateDriverConfig] : []),
       ...(input.gpu ? ["--gpu"] : []),
     ];
     const launch = prepareSandboxCreateLaunch({
@@ -1154,7 +1169,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
             request: launch.managedStartupRootApplyRequest,
             image,
             agentIdentity,
-            workspaceRoot: managedStartupWorkspaceRoot({
+            workspaceRoot: onboard.managedWorkloadOnboard.managedStartupWorkspaceRoot({
               agent: input.agent,
               agentIdentity,
             }),
@@ -1166,6 +1181,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         {
           runOpenshell: onboard.runOpenshell,
           runCaptureOpenshell: onboard.runCaptureOpenshell,
+          sandboxObserver: createCliOpenShellSandboxObserverFromRunner(onboard.runOpenshell),
           sleep: onboard.sleepSeconds,
           openshellArgv: onboard.openshellArgv,
           verifyDirectSandboxGpu,
@@ -1217,7 +1233,9 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         throw new Error("production managed-bootstrap flow returned no result");
       }
       if (flow.origin !== "created") {
-        throw new Error("production managed-bootstrap flow unexpectedly resumed an existing sandbox");
+        throw new Error(
+          "production managed-bootstrap flow unexpectedly resumed an existing sandbox",
+        );
       }
       const expectedRoute = gpuEnabled ? "native" : "none";
       if (flow.route !== expectedRoute || flow.createResult.status !== 0) {

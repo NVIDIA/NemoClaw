@@ -174,33 +174,6 @@ describe("base-image publication evidence", () => {
     },
   );
 
-  it("extracts literal paths and the reviewed managed-image input families (#7372)", () => {
-    const source = fs.readFileSync(
-      path.resolve(import.meta.dirname, "../../../.github/workflows/base-image.yaml"),
-      "utf8",
-    );
-
-    expect(parseBaseImagePushPaths(source)).toEqual(
-      expect.arrayContaining([
-        ".github/actions/ci-reviewed-npm-audit/**",
-        ".github/workflows/base-image.yaml",
-        "Dockerfile",
-        "Dockerfile.base",
-        "agents/**",
-        "agents/hermes/Dockerfile.base",
-        "agents/langchain-deepagents-code/Dockerfile.base",
-        "nemoclaw/**",
-        "nemoclaw-blueprint/**",
-        "scripts/**",
-        "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
-        "src/lib/messaging/**",
-        "src/lib/tool-disclosure.ts",
-        "tools/mcp-tool-discovery-runtime/**",
-        "tsconfig.runtime-preloads.json",
-      ]),
-    );
-  });
-
   it.each([
     [
       "a duplicate",

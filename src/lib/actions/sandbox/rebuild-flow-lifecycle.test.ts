@@ -56,6 +56,33 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
   });
 
+  it("keeps the original sandbox when the workspace backup is incomplete (#10639)", async () => {
+    const harness = createRebuildFlowHarness();
+    harness.backupSandboxStateSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: ["extensions"],
+      failedDirs: ["workspace"],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: {
+        agentType: "openclaw",
+        dir: "/sandbox/.openclaw",
+        backupPath: harness.backupPath,
+        timestamp: "2026-06-01T00:00:00.000Z",
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Failed to back up sandbox state");
+
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+    expectNoSandboxDelete(harness.runOpenshellSpy);
+  });
+
   it("backs up once, recreates with the captured OpenShell policy, restores, and relocks on a successful OpenClaw rebuild", async ({
     onTestFinished,
   }) => {
@@ -181,6 +208,32 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "rebuild completed",
     );
+  });
+
+  it("does not report rebuild success when inner onboarding returns a failure code (#10394)", async ({
+    onTestFinished,
+  }) => {
+    const previousExitCode = process.exitCode;
+    onTestFinished(() => {
+      process.exitCode = previousExitCode;
+    });
+    process.exitCode = undefined;
+    const harness = createRebuildFlowHarness({
+      onboard: () => {
+        process.exitCode = 1;
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recreate failed");
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).not.toContain("rebuilt successfully");
+    expect(errors).toContain("Inner onboarding completed with exit code 1");
+    expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
   });
 
   it("keeps the original sandbox when the post-MCP OpenShell policy is unavailable", async () => {
