@@ -99,6 +99,7 @@ mkdir -p node_modules`;
 function artifactLifecycle(stop = async (): Promise<void> => undefined): LocalReviewLifecycle {
   return {
     prepare: async () => undefined,
+    exists: () => false,
     startGateway: () => ({ configure: Promise.resolve(), stop }),
     create: () => undefined,
     run: () => undefined,
@@ -456,6 +457,7 @@ describe("local PR review advisor", () => {
     const calls: string[] = [];
     const stopGateway = vi.fn(async () => undefined);
     const lifecycle: LocalReviewLifecycle = {
+      exists: () => false,
       prepare: async (env) => {
         calls.push("prepare:" + env.PR_REVIEW_ADVISOR_INTEREST);
       },
@@ -601,6 +603,7 @@ describe("local PR review advisor", () => {
       .mockResolvedValueOnce();
     const lifecycle: LocalReviewLifecycle = {
       prepare: async () => undefined,
+      exists: () => false,
       startGateway: () => ({ configure: configuration, stop: stopGateway }),
       create: () => undefined,
       run: () => undefined,
@@ -640,6 +643,7 @@ describe("local PR review advisor", () => {
     );
     const lifecycle: LocalReviewLifecycle = {
       prepare: async () => undefined,
+      exists: () => false,
       startGateway: () => undefined,
       create: () => undefined,
       run: (env) => {
