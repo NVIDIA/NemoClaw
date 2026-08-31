@@ -12,7 +12,10 @@ import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/run
 import * as credentialProviderRegistrationModule from "../../../src/lib/onboard/credential-provider-registration.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
 import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
-import { clearStoppedDockerSandboxChannelState } from "../../../src/lib/sandbox/privileged-exec.ts";
+import {
+  clearStoppedDockerSandboxChannelState,
+  STOPPED_CHANNEL_CLEANUP_IMAGE,
+} from "../../../src/lib/sandbox/privileged-exec.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -428,10 +431,8 @@ async function withLiveE2eEnvironment<T>(
   }
 }
 
-// Matches the pinned image src/lib/sandbox/privileged-exec.ts creates the
-// stopped-container cleanup helper from with `--pull never`.
-export const STOPPED_CHANNEL_CLEANUP_IMAGE =
-  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
+// Share the image authority used by the privileged cleanup path.
+export { STOPPED_CHANNEL_CLEANUP_IMAGE };
 
 // The privileged stopped-container cleanup helper creates with `--pull
 // never` so it never reaches the network mid-cleanup; that requires the

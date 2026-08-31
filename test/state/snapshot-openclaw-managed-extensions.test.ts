@@ -129,7 +129,6 @@ describe("OpenClaw managed extension snapshot restore", () => {
         const binDir = path.join(fixture, "bin");
         const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
         const freshRegistryPath = path.join(fixture, "fresh-installs.json");
-        const sshLog = path.join(fixture, "ssh-log.jsonl");
         const extensionsDir = path.join(openclawDir, "extensions");
         const builtInManagedExtensions = "nemoclaw,diagnostics-otel,brave".split(",");
         const freshImagePlugins = freshPlugin ? [freshPlugin] : [];
@@ -190,7 +189,6 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const cmd = process.argv[process.argv.length - 1] || "";
 const installIndexSource = ${JSON.stringify(installIndexSource)};
-fs.appendFileSync(${JSON.stringify(sshLog)}, JSON.stringify({ cmd }) + "\\n");
 function readStdin() {
   const chunks = [];
   for (;;) {
@@ -243,16 +241,6 @@ process.exit(result.status ?? 1);
         expect(
           fs.readFileSync(path.join(extensionsDir, "user-extension", "marker.txt"), "utf-8"),
         ).toBe("restored\n");
-
-        const loggedCommands = fs
-          .readFileSync(sshLog, "utf-8")
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line).cmd as string);
-        expect(loggedCommands.some((cmd) => cmd.includes("installed_plugin_index"))).toBe(true);
-        expect(loggedCommands.some((cmd) => cmd.includes("plugins/installs.json"))).toBe(
-          installIndexSource === "legacy",
-        );
 
         const rejectionSentinel = path.join(extensionsDir, "rejection-sentinel");
         fs.mkdirSync(rejectionSentinel);

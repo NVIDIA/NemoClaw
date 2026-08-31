@@ -59,7 +59,7 @@ const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const DOCKER_VOLUME_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
 const STOPPED_CHANNEL_STATE_PATH_RE = /^\/sandbox\/\.(?:openclaw|hermes)\/[A-Za-z0-9_-]+$/u;
-const STOPPED_CHANNEL_CLEANUP_IMAGE =
+export const STOPPED_CHANNEL_CLEANUP_IMAGE =
   "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
 const STOPPED_CHANNEL_CLEANUP_LABEL = "com.nvidia.nemoclaw.channel-cleanup";
 const STOPPED_CHANNEL_CLEANUP_OWNER_LABEL = `${STOPPED_CHANNEL_CLEANUP_LABEL}.owner`;
