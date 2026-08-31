@@ -3,6 +3,7 @@
 
 import type { CaptureOpenshellResult } from "../adapters/openshell/client";
 import { stripAnsi } from "../adapters/openshell/client";
+import { buildGatewayInferenceGetArgs } from "../actions/sandbox/connect-inference-gateway";
 import { parseGatewayInference, type GatewayInference } from "./config";
 
 const BASE_GATEWAY_NAME = "nemoclaw";
@@ -39,7 +40,7 @@ export function getLiveGatewayInference(
 ): LiveGatewayInferenceResult {
   const gatewayName = opts.gatewayName ?? BASE_GATEWAY_NAME;
   const attempts = [
-    ["inference", "get", "-g", gatewayName],
+    buildGatewayInferenceGetArgs(gatewayName),
     ...(gatewayName === BASE_GATEWAY_NAME ? [["inference", "get"]] : []),
   ];
   let last: LiveGatewayInferenceResult = {
