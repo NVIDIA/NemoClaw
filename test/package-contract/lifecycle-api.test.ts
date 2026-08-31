@@ -50,6 +50,7 @@ describe("packaged lifecycle API", () => {
       const fixtureRoot = createPackageFixture({
         prefix: "nemoclaw-lifecycle-package-",
         entries: ["dist", "nemoclaw/dist"],
+        omitRuntimeDependencies: true,
       });
       const archiveRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-archive-"));
       const consumerRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-consumer-"));
