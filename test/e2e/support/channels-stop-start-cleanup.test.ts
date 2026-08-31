@@ -5,8 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
 import {
+  pullStoppedCleanupHelperImage,
   registerChannelsStopStartCleanup,
   registerChannelsStopStartProviderCleanup,
+  STOPPED_CHANNEL_CLEANUP_IMAGE,
 } from "../live/channels-stop-start-helpers.ts";
 
 type CleanupAction = { name: string; run: () => Promise<void> | void };
@@ -139,5 +141,19 @@ describe("channels stop/start provider cleanup", () => {
       }),
     ).toThrow(/only accepts openclaw sandbox names with prefix e2e-oc-ch-/);
     expect(fixtures.trackDisposable).not.toHaveBeenCalled();
+  });
+
+  it("warms the pinned stopped-cleanup helper image before privileged cleanup runs", async () => {
+    const fixtures = cleanupFixtures();
+    const redactions = ["e2e-oc-ch-warm-secret"];
+
+    const result = await pullStoppedCleanupHelperImage(fixtures.host, redactions);
+
+    expect(result).toEqual({ exitCode: 0, stderr: "", stdout: "" });
+    expect(fixtures.hostMock.command).toHaveBeenCalledWith(
+      "docker",
+      ["pull", STOPPED_CHANNEL_CLEANUP_IMAGE],
+      expect.objectContaining({ redactionValues: redactions }),
+    );
   });
 });
