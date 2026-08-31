@@ -27,6 +27,18 @@ describe("manual PR managed-image workflow boundary", () => {
     );
   });
 
+  it("rejects an obsolete staged catalog reference in CLI packaging", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const packageStep = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Package exact-commit CLI",
+    )!;
+    packageStep.run = `${packageStep.run ?? ""}\ncat pr-managed-image-catalog.json\n`;
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "Manual PR CLI packaging must not accept obsolete managed-image catalog authority",
+    );
+  });
+
   it("rejects restoration of the obsolete manual PR catalog resolver", () => {
     const workflow = readE2eOperationsWorkflow();
     const matrixJob = workflow.jobs["generate-matrix"];
