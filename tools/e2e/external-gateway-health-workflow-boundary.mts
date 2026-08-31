@@ -308,7 +308,7 @@ export function validateExternalGatewayHealthHelper(source: string): string[] {
     '"status", "--external-target"',
     "captureLimitBytes: 64 * 1024",
     "NEMOCLAW_BLUEPRINT_PATH: blueprintRoot",
-    "redactionValues: [privateStateRoot, UNUSED_AUTHENTICATION_SENTINEL]",
+    "redactionValues: [privateStateRoot]",
   ];
   if (required.some((fragment) => !source.includes(fragment))) {
     errors.push("external gateway health helper must run exact Blueprint Runner external status");
@@ -333,6 +333,16 @@ export function validateExternalGatewayHealthHelper(source: string): string[] {
   }
   if (!source.includes("artifacts.addRedactionValues([stateDir]);")) {
     errors.push("external gateway health helper must redact its private fixture path");
+  }
+  const missingCredentialAssertions =
+    source.match(/expect\(fs\.existsSync\(authenticationPath\)\)\.toBe\(false\);/g)?.length ?? 0;
+  if (
+    !source.includes('const authenticationPath = path.join(stateDir, "authentication");') ||
+    !source.includes("authentication: { credential_file: authenticationPath }") ||
+    missingCredentialAssertions < 2 ||
+    source.includes("fs.writeFileSync(authenticationPath")
+  ) {
+    errors.push("external gateway health helper must keep its credential path nonexistent");
   }
   if (source.includes("@nvidia/openshell-sdk")) {
     errors.push(

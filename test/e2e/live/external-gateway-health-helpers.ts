@@ -27,7 +27,6 @@ import {
 } from "../fixtures/shell-probe.ts";
 
 export const EXTERNAL_GATEWAY_HEALTH_TIMEOUT_MS = 3 * 60_000;
-const UNUSED_AUTHENTICATION_SENTINEL = "unused-public-health-credential";
 const BLUEPRINT_RUNNER = path.join(
   import.meta.dirname,
   "..",
@@ -173,7 +172,7 @@ async function runBlueprintRunnerHealth(
       artifactName: "external-gateway-blueprint-runner-health",
       captureLimitBytes: 64 * 1024,
       env: { NEMOCLAW_BLUEPRINT_PATH: blueprintRoot },
-      redactionValues: [privateStateRoot, UNUSED_AUTHENTICATION_SENTINEL],
+      redactionValues: [privateStateRoot],
       timeoutMs: 10_000,
     },
   );
@@ -284,7 +283,7 @@ export async function runExternalGatewayHealthScenario({
     const blueprintRoot = path.join(stateDir, "blueprint");
     const authenticationPath = path.join(stateDir, "authentication");
     fs.mkdirSync(blueprintRoot);
-    fs.writeFileSync(authenticationPath, `${UNUSED_AUTHENTICATION_SENTINEL}\n`, { mode: 0o600 });
+    expect(fs.existsSync(authenticationPath)).toBe(false);
     fs.writeFileSync(
       path.join(blueprintRoot, "blueprint.yaml"),
       YAML.stringify({
@@ -311,6 +310,7 @@ export async function runExternalGatewayHealthScenario({
       port,
     });
     const status = await runBlueprintRunnerHealth(shellProbe, blueprintRoot, stateDir);
+    expect(fs.existsSync(authenticationPath)).toBe(false);
     expect(status.compatibility).toBe("compatible");
     expect(status.gateway).toEqual({
       release: OPENSHELL_V0106_QUALIFICATION.version,
