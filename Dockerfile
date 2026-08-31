@@ -751,8 +751,6 @@ RUN set -eu; \
 # Install runtime dependencies before copying mutable build outputs so source
 # and blueprint changes keep the production dependency layer cached.
 COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
-COPY tools/mcp-tool-discovery-runtime/npm-ci-locked.sh /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh
-COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/ /usr/local/lib/nemoclaw-build-tools/npm-cache-seed/
 WORKDIR /opt/nemoclaw
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
@@ -762,14 +760,15 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=1000 \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=20000 \
     NPM_CONFIG_FETCH_TIMEOUT=60000
-RUN --network=default if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
+RUN --network=default \
+    --mount=type=bind,source=tools/mcp-tool-discovery-runtime/npm-ci-locked.sh,target=/usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh \
+    --mount=type=bind,source=tools/mcp-tool-discovery-runtime/npm-cache-seed,target=/usr/local/lib/nemoclaw-build-tools/npm-cache-seed \
+    if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
       export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
     fi; \
     NODE_OPTIONS=--dns-result-order=ipv4first \
-        /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev \
-    && rm -rf /usr/local/lib/nemoclaw-build-tools/npm-cache-seed \
-    && rm -f /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh
+        /usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh --omit=dev
 
 # Copy the grouped plugin and blueprint payload after runtime dependency
 # installation so source-only changes do not invalidate that cache boundary.
