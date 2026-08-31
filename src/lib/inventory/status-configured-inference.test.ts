@@ -55,6 +55,29 @@ describe("bare status configured-inference line (#10221)", () => {
     expect(lines).toContain("      Inference (configured): ollama-local / qwen3.5:9b");
   });
 
+  it("omits an endpoint that has no configured provider owner (#10221)", () => {
+    const lines: string[] = [];
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          {
+            name: "alpha",
+            model: "m",
+            provider: "   ",
+            endpointUrl: "https://internal.example/v1",
+          },
+        ],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines).toContain("      Inference (configured): m");
+    expect(lines.some((line) => line.includes("internal.example"))).toBe(false);
+  });
+
   it("redacts credentials embedded in the configured endpoint", () => {
     const lines: string[] = [];
     showStatusCommand({
@@ -78,6 +101,32 @@ describe("bare status configured-inference line (#10221)", () => {
     expect(inferenceLine).toContain("https://inference.example/v1");
     expect(inferenceLine).not.toContain("hunter2");
     expect(inferenceLine).not.toContain("sk-abc123");
+  });
+
+  it("renders endpoint control characters as inert text (#10221)", () => {
+    const lines: string[] = [];
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          {
+            name: "alpha",
+            model: "m",
+            provider: "compatible-endpoint",
+            endpointUrl: "not-a-url\n\u001b[31mforged\u202efailure",
+          },
+        ],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+
+    const inferenceLine = lines.find((line) => line.includes("Inference (configured):")) ?? "";
+    expect(inferenceLine).toContain(String.raw`not-a-url\u000a\u001b[31mforged\u202efailure`);
+    expect(inferenceLine).not.toMatch(
+      /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
+    );
   });
 
   // The stored endpoint belongs to the stored provider. The default sandbox's
@@ -187,5 +236,25 @@ describe("status --json configured endpoint (#10221)", () => {
     // provider, so the stored endpoint must not be attributed to it.
     expect(report.sandboxes[0]?.endpointUrl).toBeNull();
     expect(report.sandboxes[1]?.endpointUrl).toBe("https://inference.example/v1");
+  });
+
+  it("reports no JSON endpoint without a configured provider owner (#10221)", () => {
+    const report = getStatusReport({
+      listSandboxes: () => ({
+        sandboxes: [
+          {
+            name: "alpha",
+            model: "m",
+            provider: "   ",
+            endpointUrl: "https://internal.example/v1",
+          },
+        ],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+    });
+
+    expect(report.sandboxes[0]?.endpointUrl).toBeNull();
   });
 });

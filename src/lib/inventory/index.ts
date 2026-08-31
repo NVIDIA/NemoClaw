@@ -71,6 +71,9 @@ interface OnboardingSessionSummary {
   steps?: { sandbox?: { status?: string } | null } | null;
 }
 
+const UNSAFE_STATUS_CONTROL_PATTERN =
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu;
+
 export interface IncompleteOnboarding {
   name: string;
   status: "failed" | "in_progress";
@@ -222,8 +225,8 @@ function resolveConfiguredEndpoint(
   displayedProvider: string | null,
 ): string | null {
   const storedProvider = getSandboxEntryDisplayInference(sandbox).provider;
-  if (displayedProvider !== storedProvider) return null;
-  return redactUrl(sandbox.endpointUrl);
+  if (!storedProvider || !displayedProvider || displayedProvider !== storedProvider) return null;
+  return safeStatusString(redactUrl(sandbox.endpointUrl));
 }
 
 export interface StatusServiceRow {
@@ -248,7 +251,10 @@ export interface StatusReport {
 
 function safeStatusString(value: string | null | undefined): string | null {
   if (typeof value !== "string" || value.length === 0) return null;
-  return redactFull(value);
+  return redactFull(value).replace(
+    UNSAFE_STATUS_CONTROL_PATTERN,
+    (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
 }
 
 function projectIncompleteOnboarding(

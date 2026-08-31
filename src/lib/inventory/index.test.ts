@@ -1319,7 +1319,6 @@ describe("inventory commands", () => {
     expect(lines).toContain("      Inference (configured): live-provider / live-model");
   });
 
-
   it("emits an SSH sessions line per sandbox when getActiveSessionCount is provided (#2604)", () => {
     const lines: string[] = [];
     showStatusCommand({

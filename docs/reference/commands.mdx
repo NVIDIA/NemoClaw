@@ -2982,11 +2982,18 @@ Each JSON sandbox row reports `agent` as a string, never `null`.
 The row reports `openclaw` when the registry records no agent for the sandbox.
 This command reads the registry without gateway recovery, so it never reports `unknown`.
 For each listed sandbox, the text output includes the configured inference provider and model plus the number of active SSH sessions when the session probe is available.
-That line is labeled `Inference (configured):` and reports the route recorded in the registry; this command runs no inference health probe, so the line never reports reachability.
-It appends the upstream endpoint as `Inference (configured): <provider> / <model> (<endpoint>)` when the registry records one, and reports the same value as `endpointUrl` on each JSON sandbox row.
+That line is labeled `Inference (configured):` and reports the stored route for each sandbox, except that the default sandbox continues to prefer the live gateway provider and model.
+This command runs no inference health probe, so the line never reports reachability.
+It appends the stored upstream endpoint as `Inference (configured): <provider> / <model> (<endpoint>)` when that endpoint belongs to the provider shown on the row, and reports the same value as `endpointUrl` on each JSON sandbox row.
 Credentials embedded in that endpoint are redacted before it is reported.
-The endpoint is omitted (and `endpointUrl` is `null`) when the registry records none, and for the default sandbox when the live gateway route has drifted to a different provider than the stored one, because the stored endpoint no longer describes the route in use.
-For a live `Inference: healthy (<endpoint>)` reachability result, run `$$nemoclaw <name> status`, which probes the sandbox's inference route and reports the probe endpoint rather than the configured upstream.
+Terminal and bidirectional control characters in malformed legacy endpoint values are shown as escaped Unicode sequences.
+The endpoint is omitted (and `endpointUrl` is `null`) when the registry records none, when no configured provider owns it, and for the default sandbox when the live gateway route has drifted to a different provider than the stored one, because the stored endpoint no longer describes the route in use.
+For a live `Inference: healthy (<endpoint>)` reachability result on a gateway-based sandbox, run `$$nemoclaw <name> status`, which probes the sandbox's inference route and reports the probe endpoint rather than the configured upstream.
+
+<AgentOnly variant="hermes">
+Experimental portable Hermes reports its portable lifecycle phase instead and does not probe an inference route.
+</AgentOnly>
+
 Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
 
 ```bash
