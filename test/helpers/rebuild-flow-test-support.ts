@@ -96,6 +96,9 @@ export type RebuildFlowOverrides = {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
     scrubbedAdapterEntries?: Array<Record<string, unknown>>;
+    policyHandoff?: string;
+    revalidateBeforeDelete?: () => Promise<void>;
+    assertDeleteEdgeUnchanged?: () => void;
   };
   runOpenshell?: (args: string[]) =>
     | {
@@ -115,7 +118,6 @@ export type RebuildFlowOverrides = {
     stderr?: string;
     error?: Error;
   };
-  backupPolicyPresets?: string[];
   backupPreservedEnv?: PreservedEnvFile[];
   ensureValidatedBraveSearchCredential?: () => Promise<unknown>;
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
@@ -132,6 +134,7 @@ export type RebuildFlowOverrides = {
   clearShieldsState?: () => void;
 };
 export type RebuildFlowHarness = {
+  backupPath: string;
   rebuildSandbox: RebuildSandbox;
   applyPresetSpy: MockInstance;
   backupSandboxStateSpy: MockInstance;

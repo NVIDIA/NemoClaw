@@ -125,12 +125,12 @@ COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# Reassert the npm-private brace-expansion fix for the exact final filesystem.
+# Reassert the npm-private brace-expansion fix for the final filesystem.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# Reassert the npm-private ip-address fix for the exact final filesystem. When
+# Reassert the npm-private ip-address fix for the final filesystem. When
 # onboarding supplied a corporate CA, use it for the registry-backed download.
 # hadolint ignore=DL3059
 RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
@@ -271,6 +271,7 @@ RUN set -eu; \
         "vim-common=2:9.2.0858-1" \
         "vim-tiny=2:9.2.0858-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw2" \
+        "libssl3t64=3.5.7-1~deb13u2" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
         "perl-base=5.44.0-1nemoclaw1" \
         "perl=5.44.0-1nemoclaw1" \
@@ -282,6 +283,7 @@ RUN set -eu; \
     test "$(dpkg-query -W -f='${Version}' vim-common)" = "2:9.2.0858-1"; \
     test "$(dpkg-query -W -f='${Version}' vim-tiny)" = "2:9.2.0858-1"; \
     test "$(dpkg-query -W -f='${Version}' libssh2-1t64)" = "1.11.1-1+deb13u1+nemoclaw2"; \
+    test "$(dpkg-query -W -f='${Version}' libssl3t64)" = "3.5.7-1~deb13u2"; \
     test "$(dpkg-query -W -f='${Version}' nemoclaw-python3.13-htmlparser-fix)" = "3.13.5-2+deb13u4+nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1"; \
     test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1"; \

@@ -11,12 +11,16 @@ const REPOSITORY = "NVIDIA/NemoClaw";
 const MAIN_BRANCH = "main";
 const WORKFLOW_PATH = ".github/workflows/base-image.yaml";
 const WORKFLOW_FILE = "base-image.yaml";
-const WORKFLOW_NAME = "Images / Publish Base and Managed Images";
+const WORKFLOW_NAMES = new Set([
+  "Images / Publish Base and Managed Images",
+  "Images / Base Images",
+]);
 const API_ROOT = "https://api.github.com";
 const RUN_URL_ROOT = `https://github.com/${REPOSITORY}/actions/runs`;
 const WORKFLOW_URL = `https://github.com/${REPOSITORY}/blob/${MAIN_BRANCH}/${WORKFLOW_PATH}`;
 const PAGE_SIZE = 100;
 const MAX_API_PAGES = 10;
+const MAX_CHANGED_PATHS = 6_000;
 const PAGINATION_ATTEMPTS = 3;
 const REQUEST_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -75,6 +79,14 @@ export const REQUIRED_PUBLISHER_JOBS = [
   "Build and push Hermes base image",
   "Build and push Deep Agents Code base image",
 ] as const;
+const PUBLISHER_JOB_ALIASES = new Map<string, (typeof REQUIRED_PUBLISHER_JOBS)[number]>([
+  ["Build and push OpenClaw base image", "Build and push OpenClaw base image"],
+  ["Manifests / OpenClaw", "Build and push OpenClaw base image"],
+  ["Build and push Hermes base image", "Build and push Hermes base image"],
+  ["Manifests / Hermes", "Build and push Hermes base image"],
+  ["Build and push Deep Agents Code base image", "Build and push Deep Agents Code base image"],
+  ["Manifests / Deep Agents Code", "Build and push Deep Agents Code base image"],
+]);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -103,6 +115,7 @@ export interface PublicationWaitOptions {
   history: FirstParentHistory;
   request: (path: string) => Promise<unknown>;
   requireWorkflowSuccess?: boolean;
+  selectNearestSuccessfulRun?: boolean;
   waitMs: number;
   pollMs: number;
   now?: () => number;
@@ -122,6 +135,7 @@ export function writePublicationRunOutputs(path: string, run: PublicationRun): v
 }
 
 export interface GithubRequestOptions {
+  additionalRepository?: string;
   fetchImpl?: (input: string, init: RequestInit) => Promise<Response>;
   sleep?: (milliseconds: number) => Promise<void>;
   now?: () => number;
@@ -148,6 +162,13 @@ function exactString(value: unknown, expected: string, label: string): string {
     throw new Error(`${label} must be ${expected}`);
   }
   return expected;
+}
+
+function trustedWorkflowName(value: unknown, label: string): string {
+  if (typeof value !== "string" || !WORKFLOW_NAMES.has(value)) {
+    throw new Error(`${label} must be one of ${[...WORKFLOW_NAMES].join(", ")}`);
+  }
+  return value;
 }
 
 function sha(value: unknown, label: string): string {
@@ -185,6 +206,49 @@ function parseQuotedPath(raw: string, lineNumber: number): string {
     throw new Error(`base-image push path on line ${lineNumber} is not a safe literal path`);
   }
   return value;
+}
+
+/** Match one validated base-image workflow path without duplicating its glob semantics. */
+export function matchesBaseImagePushPath(pattern: string, changedPath: string): boolean {
+  if (
+    changedPath.length === 0 ||
+    changedPath.length > 4_096 ||
+    /[\0\r\n]/u.test(changedPath) ||
+    changedPath.startsWith("/") ||
+    changedPath.includes("//") ||
+    changedPath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error("base-image changed path is invalid");
+  }
+  const matcher = REVIEWED_PATH_GLOBS.get(pattern);
+  if (matcher) return matcher.test(changedPath);
+  if (
+    !SAFE_PATH_PATTERN.test(pattern) ||
+    pattern.startsWith("/") ||
+    pattern.startsWith("-") ||
+    pattern.startsWith(":") ||
+    pattern.includes("//") ||
+    pattern.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error("base-image push pattern is not reviewed");
+  }
+  return pattern === changedPath;
+}
+
+/** Determine whether reviewed base-image inputs contain a changed repository path. */
+export function baseImageInputsChanged(
+  changedFiles: readonly string[],
+  reviewedPaths: readonly string[],
+): boolean {
+  if (changedFiles.length > MAX_CHANGED_PATHS) {
+    throw new Error(`PR changed-path count exceeds ${MAX_CHANGED_PATHS}`);
+  }
+  for (const changedFile of changedFiles) {
+    if (reviewedPaths.some((reviewedPath) => matchesBaseImagePushPath(reviewedPath, changedFile))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -284,12 +348,13 @@ export function resolveFirstParentHistory(
   expectedSha: string,
   paths: readonly string[],
   runGit: (args: string[]) => string = defaultGit,
+  options: { readonly requireCheckedOutCommit?: boolean } = {},
 ): FirstParentHistory {
   sha(expectedSha, "expected SHA");
   if (paths.length === 0) throw new Error("at least one base-image path is required");
 
   const checkedOutSha = runGit(["rev-parse", "--verify", "HEAD^{commit}"]);
-  if (checkedOutSha !== expectedSha) {
+  if (options.requireCheckedOutCommit !== false && checkedOutSha !== expectedSha) {
     throw new Error(
       `checked-out commit ${checkedOutSha || "missing"} does not match ${expectedSha}`,
     );
@@ -342,7 +407,7 @@ export function resolveFirstParentHistory(
 export function validateWorkflow(payload: unknown): number {
   const workflow = asRecord(payload);
   const workflowId = positiveSafeInteger(workflow.id, "base-image workflow id");
-  exactString(workflow.name, WORKFLOW_NAME, "base-image workflow name");
+  trustedWorkflowName(workflow.name, "base-image workflow name");
   exactString(workflow.path, WORKFLOW_PATH, "base-image workflow path");
   exactString(workflow.state, "active", "base-image workflow state");
   exactString(workflow.html_url, WORKFLOW_URL, "base-image workflow URL");
@@ -367,7 +432,7 @@ function validateRun(value: unknown, index: number, expectedWorkflowId: number):
   exactString(run.event, "push", `workflow run ${index} event`);
   exactString(run.head_branch, MAIN_BRANCH, `workflow run ${index} branch`);
   exactString(run.path, WORKFLOW_PATH, `workflow run ${index} path`);
-  exactString(run.name, WORKFLOW_NAME, `workflow run ${index} name`);
+  trustedWorkflowName(run.name, `workflow run ${index} name`);
   exactString(asRecord(run.repository).full_name, REPOSITORY, `workflow run ${index} repository`);
   exactString(
     asRecord(run.head_repository).full_name,
@@ -405,6 +470,7 @@ export function selectPublicationRun(
   payload: unknown,
   history: FirstParentHistory,
   workflowId: number,
+  options: { readonly completedSuccessOnly?: boolean } = {},
 ): PublicationSelection {
   positiveSafeInteger(workflowId, "base-image workflow id");
   const response = asRecord(payload);
@@ -429,10 +495,13 @@ export function selectPublicationRun(
     const distance = history.distanceBySha.get(run.headSha);
     return distance === undefined ? [] : [{ run, distance }];
   });
-  if (eligible.length === 0) return { state: "missing" };
+  const selectable = options.completedSuccessOnly
+    ? eligible.filter(({ run }) => run.status === "completed" && run.conclusion === "success")
+    : eligible;
+  if (selectable.length === 0) return { state: "missing" };
 
-  const nearestDistance = Math.min(...eligible.map(({ distance }) => distance));
-  const nearest = eligible.filter(({ distance }) => distance === nearestDistance);
+  const nearestDistance = Math.min(...selectable.map(({ distance }) => distance));
+  const nearest = selectable.filter(({ distance }) => distance === nearestDistance);
   if (nearest.length !== 1) {
     throw new Error(
       `multiple trusted base-image workflow runs match ${nearest[0]?.run.headSha ?? history.relevantSha}`,
@@ -463,7 +532,7 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): "p
     if (typeof job.name !== "string" || job.name.length === 0) {
       throw new Error(`publisher job ${index} name is invalid`);
     }
-    const requiredName = REQUIRED_PUBLISHER_JOBS.find((name) => name === job.name);
+    const requiredName = PUBLISHER_JOB_ALIASES.get(job.name);
     if (!requiredName) continue;
     if (typeof job.status !== "string") {
       throw new Error(`publisher job ${requiredName} status is invalid; ${run.url}`);
@@ -631,7 +700,9 @@ export async function waitForBaseImagePublication(
   const runsPath = `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${MAIN_BRANCH}&event=push&per_page=100`;
   while (true) {
     const runs = await collectPaginated(options.request, runsPath, "workflow_runs");
-    const selection = selectPublicationRun(runs, options.history, workflowId);
+    const selection = selectPublicationRun(runs, options.history, workflowId, {
+      completedSuccessOnly: options.selectNearestSuccessfulRun === true,
+    });
     if (selection.state === "selected") {
       const jobsPath = `/repos/${REPOSITORY}/actions/runs/${selection.run.id}/attempts/${selection.run.attempt}/jobs?per_page=100`;
       if (now() > deadline) {
@@ -711,8 +782,21 @@ export async function githubRequest(
   token: string,
   options: GithubRequestOptions = {},
 ): Promise<unknown> {
-  if (!path.startsWith(`/repos/${REPOSITORY}/`) || path.includes("\r") || path.includes("\n")) {
-    throw new Error("GitHub API path must stay within the canonical NemoClaw repository");
+  const additionalRepository = options.additionalRepository;
+  if (
+    additionalRepository !== undefined &&
+    (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(additionalRepository) ||
+      additionalRepository.split("/").some((segment) => segment === "." || segment === ".."))
+  ) {
+    throw new Error("additional GitHub API repository is invalid");
+  }
+  const allowedRepositories = [REPOSITORY, ...(additionalRepository ? [additionalRepository] : [])];
+  if (
+    path.includes("\r") ||
+    path.includes("\n") ||
+    !allowedRepositories.some((repository) => path.startsWith(`/repos/${repository}/`))
+  ) {
+    throw new Error("GitHub API path must stay within an allowed repository");
   }
   const fetchImpl = options.fetchImpl ?? fetch;
   const sleep =
@@ -803,6 +887,8 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   const expectedSha = env.EXPECTED_SHA ?? "";
   const outputPath = env.GITHUB_OUTPUT ?? "";
   const requireManagedImagePublication = env.REQUIRE_MANAGED_IMAGE_PUBLICATION ?? "0";
+  const selectNearestSuccessfulRun = env.SELECT_NEAREST_SUCCESSFUL_PUBLICATION ?? "0";
+  const allowNonHeadHistory = env.PUBLICATION_HISTORY_ALLOW_NON_HEAD ?? "0";
   const workspace = env.GITHUB_WORKSPACE ?? process.cwd();
   if (token.length === 0 || token.includes("\r") || token.includes("\n")) {
     throw new Error("GITHUB_TOKEN must be a non-empty single-line value");
@@ -823,14 +909,26 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
   if (requireManagedImagePublication !== "0" && requireManagedImagePublication !== "1") {
     throw new Error("REQUIRE_MANAGED_IMAGE_PUBLICATION must be 0 or 1");
   }
+  if (selectNearestSuccessfulRun !== "0" && selectNearestSuccessfulRun !== "1") {
+    throw new Error("SELECT_NEAREST_SUCCESSFUL_PUBLICATION must be 0 or 1");
+  }
+  if (allowNonHeadHistory !== "0" && allowNonHeadHistory !== "1") {
+    throw new Error("PUBLICATION_HISTORY_ALLOW_NON_HEAD must be 0 or 1");
+  }
 
-  const workflowSource = readFileSync(resolve(workspace, WORKFLOW_PATH), "utf8");
+  const workflowSource =
+    allowNonHeadHistory === "1"
+      ? defaultGit(["show", `${expectedSha}:${WORKFLOW_PATH}`])
+      : readFileSync(resolve(workspace, WORKFLOW_PATH), "utf8");
   const paths = parseBaseImagePushPaths(workflowSource);
-  const history = resolveFirstParentHistory(expectedSha, paths);
+  const history = resolveFirstParentHistory(expectedSha, paths, defaultGit, {
+    requireCheckedOutCommit: allowNonHeadHistory !== "1",
+  });
   const run = await waitForBaseImagePublication({
     history,
     request: (path) => githubRequest(path, token),
     requireWorkflowSuccess: requireManagedImagePublication === "1",
+    selectNearestSuccessfulRun: selectNearestSuccessfulRun === "1",
     waitMs: waitSeconds * 1000,
     pollMs: pollSeconds * 1000,
   });

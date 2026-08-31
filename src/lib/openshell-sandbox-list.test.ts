@@ -114,18 +114,41 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("recovers a missing explicit gateway after its scoped observation (#6114)", async () => {
-    const options = { gatewayName: "nemoclaw-12345" };
-    mocks.captureOpenshell
-      .mockReturnValueOnce({ status: 1, output: "Unknown gateway 'nemoclaw-12345'." })
-      .mockReturnValueOnce({ status: 0, output: "alpha Ready" });
+  it("recovers a retired named gateway before sandbox observation (#10421)", async () => {
+    mocks.recoverNamedGatewayRuntime.mockResolvedValue({ recovered: true, attempted: true });
+    const listSandboxes = vi.fn(async () =>
+      mocks.recoverNamedGatewayRuntime.mock.calls.length === 0
+        ? {
+            ok: false as const,
+            error: {
+              kind: "command" as const,
+              reason: "failed" as const,
+              message: "The OpenShell sandbox observation failed.",
+            },
+          }
+        : {
+            ok: true as const,
+            value: {
+              sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" as const }],
+            },
+          },
+    );
 
-    const result = await captureSandboxListWithGatewayPreflightOrExit(context, options);
+    const result = await captureSandboxListWithGatewayRecovery({
+      gatewayName: "nemoclaw-12345",
+      observer: { listSandboxes },
+    });
 
     expect(result).toEqual({
-      sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
+      result: {
+        ok: true,
+        value: {
+          sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
+        },
+      },
+      recoveryAttempted: true,
+      recoverySucceeded: true,
     });
-    expect(mocks.detectPreflightIssue).toHaveBeenCalledWith(options);
     const expectedRecoveryOptions = {
       gatewayName: "nemoclaw-12345",
       recoverableStates: [
@@ -137,15 +160,13 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
     };
     expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledOnce();
     expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledWith(expectedRecoveryOptions);
-    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
-      ["sandbox", "list", "-g", "nemoclaw-12345"],
-      expect.anything(),
+    expect(listSandboxes).toHaveBeenCalledOnce();
+    expect(mocks.recoverNamedGatewayRuntime.mock.invocationCallOrder[0]).toBeLessThan(
+      listSandboxes.mock.invocationCallOrder[0]!,
     );
-    expect(mocks.captureOpenshell).toHaveBeenCalledTimes(2);
-    expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("observes a healthy explicit gateway without mutating gateway state (#6114)", async () => {
+  it("checks a named gateway that needs no recovery before sandbox observation (#6114)", async () => {
     const options = { gatewayName: "nemoclaw-12345" };
     mocks.captureOpenshell.mockReturnValue({ status: 0, output: "alpha Ready" });
 
@@ -157,7 +178,18 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
       ["sandbox", "list", "-g", "nemoclaw-12345"],
       expect.anything(),
     );
-    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-12345",
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
+    });
+    expect(mocks.recoverNamedGatewayRuntime.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.captureOpenshell.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("recovers a disconnected gateway once and retries the sandbox list", async () => {
@@ -229,9 +261,13 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
 
     expect(mocks.captureOpenshell).toHaveBeenCalledTimes(2);
     expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledOnce();
-    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
-      "gateway was recovered, but the sandbox query still failed",
+    const diagnostics = errorSpy.mock.calls.flat().join("\n");
+    expect(diagnostics).toContain("gateway was recovered, but the sandbox query still failed");
+    expect(diagnostics).toContain(
+      "kind=command; reason=invalid_request; gateway recovery attempted=yes",
     );
+    expect(diagnostics).toContain("The OpenShell sandbox observation failed.");
+    expect(diagnostics).not.toContain("unknown option: --json");
   });
 
   it("exits with recovery guidance when gateway recovery does not complete", async () => {
@@ -262,27 +298,106 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
     expect(errorSpy.mock.calls.flat().join("\n")).toContain("Failed to query running sandboxes");
   });
 
-  it("does not mutate a named gateway after an identity mismatch (#9803)", async () => {
-    const result = {
-      ok: false,
+  it.each([
+    {
+      label: "authentication",
+      error: {
+        kind: "authentication",
+        message: "OpenShell could not authenticate the sandbox observation.",
+      },
+    },
+    {
+      label: "schema validation",
+      error: {
+        kind: "schema",
+        message: "The OpenShell CLI and gateway sandbox schemas do not match.",
+      },
+    },
+    {
+      label: "gateway identity validation",
       error: {
         kind: "transport",
         reason: "identity_mismatch",
         message: "The selected OpenShell gateway identity does not match the recorded identity.",
       },
-    } as const;
+    },
+    {
+      label: "request validation",
+      error: {
+        kind: "command",
+        reason: "invalid_request",
+        message: "OpenShell rejected the sandbox observation request.",
+      },
+    },
+  ] as const)(
+    "does not retry named gateway recovery when $label fails (#10421)",
+    async ({ error }) => {
+      const result = { ok: false, error } as const;
+      const observer = observerReturning(result);
+
+      await expect(
+        captureSandboxListWithGatewayRecovery({
+          gatewayName: "nemoclaw-12345",
+          observer,
+        }),
+      ).resolves.toEqual({
+        result,
+        recoveryAttempted: false,
+        recoverySucceeded: false,
+      });
+      expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledOnce();
+      expect(observer.listSandboxes).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("does not observe sandbox inventory when named gateway recovery fails (#10421)", async () => {
+    mocks.recoverNamedGatewayRuntime.mockResolvedValue({ recovered: false, attempted: true });
+    const observer = observerReturning({ ok: true, value: { sandboxes: [] } });
 
     await expect(
       captureSandboxListWithGatewayRecovery({
         gatewayName: "nemoclaw-12345",
-        observer: observerReturning(result),
+        observer,
+      }),
+    ).resolves.toEqual({
+      result: {
+        ok: false,
+        error: {
+          kind: "transport",
+          reason: "unreachable",
+          message: "OpenShell could not reach the selected gateway.",
+        },
+      },
+      recoveryAttempted: true,
+      recoverySucceeded: false,
+    });
+    expect(observer.listSandboxes).not.toHaveBeenCalled();
+  });
+
+  it("does not repeat a completed named gateway recovery after observation fails (#10421)", async () => {
+    mocks.recoverNamedGatewayRuntime.mockResolvedValue({ recovered: true, attempted: true });
+    const result = {
+      ok: false,
+      error: {
+        kind: "transport",
+        reason: "unreachable",
+        message: "OpenShell could not reach the selected gateway.",
+      },
+    } as const;
+    const observer = observerReturning(result);
+
+    await expect(
+      captureSandboxListWithGatewayRecovery({
+        gatewayName: "nemoclaw-12345",
+        observer,
       }),
     ).resolves.toEqual({
       result,
-      recoveryAttempted: false,
-      recoverySucceeded: false,
+      recoveryAttempted: true,
+      recoverySucceeded: true,
     });
-    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledOnce();
+    expect(observer.listSandboxes).toHaveBeenCalledOnce();
   });
 
   it("classifies protobuf mismatch before recovery or generic failure handling", async () => {

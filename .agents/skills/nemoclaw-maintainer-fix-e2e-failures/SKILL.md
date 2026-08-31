@@ -75,7 +75,7 @@ Read [Review and Merge](references/review-and-merge.md) before reviewing, approv
 - Never approve your own PR. After an independent approval of the latest PR commit, either the author or another maintainer may perform the final merge.
 - Independently review another maintainer's commit under review. Do not exchange approvals without reviewing correctness, security, tests, and scope.
 - Do not duplicate an active peer review. Respect an explicit review claim for the same commit SHA in agent coordination, a PR comment, or a submitted review.
-- Do not manually request reviewers unless the current user or repository-owned configuration authorizes the exact request. Follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md).
+- Do not manually request reviewers unless the current user or repository-owned configuration authorizes the request. Follow [Follow Up on PR CI and Reviews](../_shared/pr-follow-up.md).
 - Require at least one approval of the latest PR commit from an account that did not open, author, or co-author the PR.
 - Require the maintainer gate checker, all GitHub-required checks, and any applicable security review to pass.
 - Refresh a branch only at the final merge gate and only when the decision table requires it. Refresh before approval because the new commit invalidates earlier approval and CI evidence.

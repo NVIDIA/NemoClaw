@@ -34,8 +34,7 @@ function getSmokeExitCode(output: string | null, requireManagedBoundary: boolean
   return Number.parseInt(exitMatches[0]![1]!, 10);
 }
 
-function smokeRunner(loginShell: boolean): string {
-  const shell = loginShell ? "sh -lc" : "sh -c";
+function smokeRunner(shell: "sh -c" | "sh -lc" | "/bin/bash -lc"): string {
   return `printf '${SMOKE_BEGIN_MARKER}\\n'; ${shell} "$1"; rc=$?; printf '\\n${SMOKE_EXIT_MARKER}%s\\n' "$rc"; exit 0`;
 }
 
@@ -78,11 +77,16 @@ export function buildAgentSmokeArgs(
       DCODE_MANAGED_EXEC_LAUNCHER,
       "/bin/sh",
       "-c",
-      smokeRunner(false),
+      smokeRunner("sh -c"),
       "nemoclaw-agent-smoke",
       command,
     ];
   }
+  // Pi's login profile enforces an exact nproc limit, which Ubuntu /bin/sh
+  // cannot inspect. Keep the profile active, but run it with the Bash shell
+  // the Pi image provisions for this contract.
+  const shellPath = agent.name === "pi" ? "/bin/bash" : "/bin/sh";
+  const commandShell = agent.name === "pi" ? "/bin/bash -lc" : "sh -lc";
   return [
     "sandbox",
     "exec",
@@ -90,9 +94,9 @@ export function buildAgentSmokeArgs(
     sandboxName,
     ...(gatewayName ? ["-g", gatewayName] : []),
     "--",
-    "sh",
+    shellPath,
     "-lc",
-    smokeRunner(true),
+    smokeRunner(commandShell),
     "nemoclaw-agent-smoke",
     command,
   ];

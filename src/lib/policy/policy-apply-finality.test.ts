@@ -7,46 +7,43 @@ import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  managedPolicyInspection,
+  livePolicyInspection,
   managedSandboxEntry,
   SANDBOX_IDENTITY,
-} from "../../../test/helpers/managed-policy-receipt-fixture";
+} from "../../../test/helpers/live-policy-fixture";
 
 const {
-  addCustomPolicy,
+  captureSandboxBasePolicy,
   getSandbox,
   inspectOpenShellSandboxIdentityFingerprint,
-  inspectSandboxPolicyAuthority,
+  inspectSandboxPolicy,
   resolveOpenshell,
   run,
-  runCapture,
   updateSandbox,
 } = vi.hoisted(() => ({
-  addCustomPolicy: vi.fn(),
+  captureSandboxBasePolicy: vi.fn(),
   getSandbox: vi.fn(),
   inspectOpenShellSandboxIdentityFingerprint: vi.fn(),
-  inspectSandboxPolicyAuthority: vi.fn(),
+  inspectSandboxPolicy: vi.fn(),
   resolveOpenshell: vi.fn(),
   run: vi.fn(),
-  runCapture: vi.fn(),
   updateSandbox: vi.fn(),
 }));
 
-vi.mock("../adapters/openshell/policy-authority", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../adapters/openshell/policy-authority")>()),
+vi.mock("../adapters/openshell/policy-state", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/openshell/policy-state")>()),
+  captureSandboxBasePolicy,
   inspectOpenShellSandboxIdentityFingerprint,
-  inspectSandboxPolicyAuthority,
+  inspectSandboxPolicy,
 }));
 
 vi.mock("../runner", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../runner")>()),
   run,
-  runCapture,
 }));
 
 vi.mock("../state/registry", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../state/registry")>()),
-  addCustomPolicy,
   getSandbox,
   updateSandbox,
 }));
@@ -157,19 +154,18 @@ function removeTemporaryDirectory(directory: string, removeDirectory: typeof fs.
 
 describe("applyPresets finality when openshell rejects the composed policy", () => {
   beforeEach(() => {
+    captureSandboxBasePolicy.mockReset();
     run.mockReset();
-    runCapture.mockReset();
     getSandbox.mockReset();
     inspectOpenShellSandboxIdentityFingerprint.mockReset();
-    inspectSandboxPolicyAuthority.mockReset();
+    inspectSandboxPolicy.mockReset();
     updateSandbox.mockReset();
-    addCustomPolicy.mockReset();
     resolveOpenshell.mockReset();
 
     resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
     inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
-    inspectSandboxPolicyAuthority.mockReturnValue(managedPolicyInspection());
-    runCapture.mockReturnValue(BASE_POLICY);
+    inspectSandboxPolicy.mockReturnValue(livePolicyInspection());
+    captureSandboxBasePolicy.mockReturnValue(BASE_POLICY);
     getSandbox.mockReturnValue(managedSandboxEntry(SANDBOX));
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -208,7 +204,6 @@ describe("applyPresets finality when openshell rejects the composed policy", () 
 
     expect(applyWeatherPreset()).toBeInstanceOf(Error);
     expect(updateSandbox).not.toHaveBeenCalled();
-    expect(addCustomPolicy).not.toHaveBeenCalled();
   });
 
   it("leaves local preset attribution unwritten when the outcome is unknown (#9206)", () => {
@@ -218,9 +213,10 @@ describe("applyPresets finality when openshell rejects the composed policy", () 
 
     const error = applyWeatherPreset();
 
-    expect((error as Error).message).toContain("read the current policy back before retrying");
+    expect((error as Error).message).toContain(
+      "The current live policy differs from the requested document",
+    );
     expect(updateSandbox).not.toHaveBeenCalled();
-    expect(addCustomPolicy).not.toHaveBeenCalled();
   });
 });
 
@@ -234,18 +230,18 @@ describe("single-preset mutations when openshell rejects the composed policy", (
   const REJECTION_MESSAGE = "unsupported field in network_policies.weather";
 
   beforeEach(() => {
+    captureSandboxBasePolicy.mockReset();
     run.mockReset();
-    runCapture.mockReset();
     getSandbox.mockReset();
     inspectOpenShellSandboxIdentityFingerprint.mockReset();
-    inspectSandboxPolicyAuthority.mockReset();
+    inspectSandboxPolicy.mockReset();
     updateSandbox.mockReset();
-    addCustomPolicy.mockReset();
     resolveOpenshell.mockReset();
 
     resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
     inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
-    inspectSandboxPolicyAuthority.mockReturnValue(managedPolicyInspection());
+    inspectSandboxPolicy.mockReturnValue(livePolicyInspection());
+    captureSandboxBasePolicy.mockReturnValue(BASE_POLICY);
     getSandbox.mockReturnValue({ ...managedSandboxEntry(SANDBOX), policies: ["weather"] });
     run.mockReturnValue(policySetResult(openshellRejection(REJECTION_MESSAGE)));
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -253,7 +249,7 @@ describe("single-preset mutations when openshell rejects the composed policy", (
   });
 
   it("returns false from a nonFatal removePreset and reports the OpenShell message (#9206)", () => {
-    runCapture.mockReturnValue(BASE_POLICY_WITH_WEATHER);
+    captureSandboxBasePolicy.mockReturnValue(BASE_POLICY_WITH_WEATHER);
 
     expect(removePreset(SANDBOX, "weather", { nonFatal: true })).toBe(false);
     expect(reportedText()).toContain(REJECTION_MESSAGE);
@@ -262,18 +258,14 @@ describe("single-preset mutations when openshell rejects the composed policy", (
   });
 
   it("returns false from a nonFatal applyPresetContent and reports the OpenShell message (#9206)", () => {
-    runCapture.mockReturnValue(BASE_POLICY);
-
     expect(applyPresetContent(SANDBOX, "weather", WEATHER_PRESET_CONTENT, { nonFatal: true })).toBe(
       false,
     );
     expect(reportedText()).toContain(REJECTION_MESSAGE);
     expect(updateSandbox).not.toHaveBeenCalled();
-    expect(addCustomPolicy).not.toHaveBeenCalled();
   });
 
   it("redacts a credential-shaped token before reporting a nonFatal failure (#9206)", () => {
-    runCapture.mockReturnValue(BASE_POLICY);
     run.mockReturnValue(
       policySetResult(openshellRejection(`rejected: header carries ${CREDENTIAL_TOKEN}`)),
     );
@@ -287,18 +279,18 @@ describe("single-preset mutations when openshell rejects the composed policy", (
 
 describe("applyPresets temporary policy material under local I/O failure", () => {
   beforeEach(() => {
+    captureSandboxBasePolicy.mockReset();
     run.mockReset();
-    runCapture.mockReset();
     getSandbox.mockReset();
     inspectOpenShellSandboxIdentityFingerprint.mockReset();
-    inspectSandboxPolicyAuthority.mockReset();
+    inspectSandboxPolicy.mockReset();
     updateSandbox.mockReset();
     resolveOpenshell.mockReset();
 
     resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
     inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
-    inspectSandboxPolicyAuthority.mockReturnValue(managedPolicyInspection());
-    runCapture.mockReturnValue(BASE_POLICY);
+    inspectSandboxPolicy.mockReturnValue(livePolicyInspection());
+    captureSandboxBasePolicy.mockReturnValue(BASE_POLICY);
     getSandbox.mockReturnValue(managedSandboxEntry(SANDBOX));
     run.mockReturnValue(policySetResult(openshellRejection("refused")));
     vi.spyOn(console, "log").mockImplementation(() => {});

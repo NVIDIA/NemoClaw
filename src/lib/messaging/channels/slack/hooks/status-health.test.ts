@@ -11,7 +11,7 @@ const BASE_INPUTS = {
   agent: "openclaw",
   probedAt: "2026-08-07T12:00:00.000Z",
   channelEnabledInRegistry: true,
-  presetInRegistry: true,
+  presetApplied: true,
   presetOnGateway: true as boolean | null,
 };
 const READY_ACCOUNT = {
@@ -102,7 +102,7 @@ describe("slack.statusHealth hook", () => {
 
   it.each([
     ["Slack is not registered", { channelEnabledInRegistry: false }, "channel_not_registered"],
-    ["the preset is not registered", { presetInRegistry: false }, "policy_missing"],
+    ["the preset is not registered", { presetApplied: false }, "policy_missing"],
     ["the preset is not applied", { presetOnGateway: false }, "policy_missing"],
     ["gateway policy is unknown", { presetOnGateway: null }, "policy_status_unavailable"],
   ] as const)("skips the live probe when %s (#7383)", (_condition, inputs, reason) => {

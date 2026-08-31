@@ -15,7 +15,9 @@ import type { HermesPortableOpenShellExecutableAuthority } from "../../adapters/
 import type { HermesPortablePodmanExecutableAuthority } from "./hermes-portable-podman-authority";
 import {
   HERMES_PORTABLE_RECEIPT_SCHEMA_VERSION,
+  HERMES_PORTABLE_SUCCESSOR_SCHEMA_VERSION,
   captureHermesPortablePolicySource,
+  hasHermesPortableReceiptCandidate,
   hermesPortablePolicySourcePath,
   hermesPortableReceiptDirectory,
   hermesPortableReceiptInternals,
@@ -24,10 +26,12 @@ import {
   inspectPortableAgentReceiptAuthorityForPublicationRecovery,
   publishHermesPortableDurablePolicySource,
   publishHermesPortableLifecycleReceipt,
+  publishHermesPortableSuccessorReceipt,
   readHermesPortableLifecycleReceipt,
+  retireHermesPortableCreatePolicyState,
   type HermesPortableConfiguredReceipt,
   type HermesPortablePendingReceipt,
-  type HermesPortablePolicyAuthority,
+  type HermesPortablePolicySource,
   type HermesPortableStartupContract,
 } from "./hermes-portable-receipt";
 import { portableDemoReceiptPath } from "./portable-runtime-receipt-readiness";
@@ -220,12 +224,11 @@ function startup(): HermesPortableStartupContract {
   };
 }
 
-function policy(transactionId: string): HermesPortablePolicyAuthority {
+function policy(transactionId: string): HermesPortablePolicySource {
   return publishHermesPortableDurablePolicySource({
     sandboxName: SANDBOX,
     transactionId,
     stateDir,
-    intendedSemanticSha256: "f".repeat(64),
     source: captureHermesPortablePolicySource(policyPath),
     hooks: { assertLifecycleLock: () => {} },
   });
@@ -258,12 +261,17 @@ function configuring(
   parent: ReturnType<typeof publishHermesPortableLifecycleReceipt>,
   overrides: Partial<HermesPortableConfiguredReceipt> = {},
 ): HermesPortableConfiguredReceipt {
-  const base = parent.receipt;
+  switch (parent.receipt.phase) {
+    case "pending":
+      break;
+    default:
+      throw new Error("pending fixture required");
+  }
+  const { policy: _policy, ...base } = parent.receipt;
   return {
     ...base,
     phase: "configuring",
     previousPhaseSha256: parent.sha256,
-    verifiedLivePolicySemanticSha256: base.policy.intendedSemanticSha256,
     container: {
       containerId: CONTAINER_ID,
       sandboxId: SANDBOX_ID,
@@ -306,6 +314,20 @@ function publish(
     assertLifecycleLock: () => {},
     ...hooks,
   });
+}
+
+function publishActiveReceipt() {
+  const reserved = publish(pending());
+  const configured = publish(configuring(reserved));
+  return publish(active(configured));
+}
+
+function publishSuccessor() {
+  return withMcpLifecycleLockSync(
+    SANDBOX,
+    () => publishHermesPortableSuccessorReceipt(SANDBOX, stateDir),
+    { stateDir: path.join(stateDir, "state") },
+  );
 }
 
 function leaveInterruptedReceiptPrefix(receipt: HermesPortablePendingReceipt): string {
@@ -351,7 +373,7 @@ afterEach(() => {
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
 
-describe("Hermes portable receipt authority", () => {
+describe("Hermes portable receipt identity", () => {
   it("requires the shared sandbox lifecycle lock before any receipt publication (#9203)", () => {
     expect(() => publishHermesPortableLifecycleReceipt(pending(), stateDir)).toThrow(
       "requires the sandbox lifecycle lock",
@@ -374,7 +396,7 @@ describe("Hermes portable receipt authority", () => {
     });
   });
 
-  it("rejects a schema-5 receipt without create intent before writing a stage (#9203)", () => {
+  it("rejects a schema-7 receipt without create intent before writing a stage (#9203)", () => {
     const receipt = pending();
     const missingIntent = { ...receipt } as Record<string, unknown>;
     delete missingIntent.createIntentSha256;
@@ -385,7 +407,7 @@ describe("Hermes portable receipt authority", () => {
     expect(fs.readdirSync(directory).sort()).toEqual([`policy.${receipt.transactionId}.yaml`]);
   });
 
-  it("rejects a schema-5 receipt outside the exact Podman 5.7.0 authority (#9203)", () => {
+  it("rejects a schema-7 receipt outside the exact Podman 5.7.0 authority (#9203)", () => {
     const receipt = pending();
     const wrongVersion = {
       ...receipt,
@@ -445,7 +467,7 @@ describe("Hermes portable receipt authority", () => {
       path: target,
     });
     expect(fs.readFileSync(target)).toEqual(legacyBytes);
-    expect(() => pending()).toThrow("will not reserve policy over OpenClaw authority");
+    expect(() => pending()).toThrow("will not reserve policy over an OpenClaw-owned source");
     expect(inspectPortableAgentReceiptAuthority(SANDBOX, stateDir)).toEqual({
       kind: "openclaw",
       path: target,
@@ -483,6 +505,119 @@ describe("Hermes portable receipt authority", () => {
       phase: "active",
       container: { containerId: CONTAINER_ID, restartPolicy: "unless-stopped", running: true },
     });
+  });
+
+  it("publishes deterministic policy-free schema-8 authority (#10423)", () => {
+    const historical = publishActiveReceipt();
+
+    const published = publishSuccessor();
+    const repeated = publishSuccessor();
+
+    expect(published.successor.receipt).toMatchObject({
+      schemaVersion: HERMES_PORTABLE_SUCCESSOR_SCHEMA_VERSION,
+      predecessorActiveSha256: historical.sha256,
+      phase: "active",
+    });
+    expect(repeated.successor.bytes).toEqual(published.successor.bytes);
+    expect(published.bytes).toEqual(historical.bytes);
+    expect(published.identity).toEqual(historical.identity);
+    expect(repeated.bytes).toEqual(historical.bytes);
+    expect(repeated.identity).toEqual(historical.identity);
+  });
+
+  it("retires policy-bearing create history after policy-free authority is durable (#10514)", () => {
+    const historical = publishActiveReceipt();
+    const published = publishSuccessor();
+    const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+    const sourcePath = hermesPortablePolicySourcePath(
+      SANDBOX,
+      historical.receipt.transactionId,
+      stateDir,
+    );
+
+    expect(fs.existsSync(sourcePath)).toBe(true);
+    const compacted = withMcpLifecycleLockSync(
+      SANDBOX,
+      () =>
+        retireHermesPortableCreatePolicyState(SANDBOX, historical.receipt.transactionId, stateDir),
+      { stateDir: path.join(stateDir, "state") },
+    );
+
+    expect(fs.readdirSync(directory).sort()).toEqual(["active.json", "authority.json"]);
+    expect(compacted.bytes).toEqual(historical.bytes);
+    expect(compacted.successor.bytes).toEqual(published.successor.bytes);
+    expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toEqual(compacted);
+  });
+
+  it("reads policy-free authority across interrupted history retirement (#10514)", () => {
+    const activeSnapshot = publishActiveReceipt();
+    publishSuccessor();
+    const directory = hermesPortableReceiptDirectory(SANDBOX, stateDir);
+    const sourcePath = hermesPortablePolicySourcePath(
+      SANDBOX,
+      activeSnapshot.receipt.transactionId,
+      stateDir,
+    );
+
+    fs.unlinkSync(sourcePath);
+    fs.unlinkSync(path.join(directory, "pending.json"));
+    expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor).toBeDefined();
+    fs.unlinkSync(path.join(directory, "configuring.json"));
+    expect(readHermesPortableLifecycleReceipt(SANDBOX, stateDir)?.successor).toBeDefined();
+  });
+
+  it("rejects a foreign-owned higher socket directory before schema-8 publication (#10423)", () => {
+    const socket = socketAuthority();
+    const reserved = publish(
+      pending({
+        socketAuthority: {
+          ...socket,
+          directoryChain: socket.directoryChain.map((entry, index) =>
+            index === 2 ? { ...entry, mode: String(0o40700), ownerUid: "2000" } : entry,
+          ),
+        },
+      }),
+    );
+    const configured = publish(configuring(reserved));
+    publish(active(configured));
+
+    expect(() => publishSuccessor()).toThrow("has invalid stable directory authority");
+  });
+
+  it("reconciles an exact interrupted schema-8 publication (#10423)", () => {
+    publishActiveReceipt();
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () =>
+          publishHermesPortableSuccessorReceipt(SANDBOX, stateDir, {
+            afterCanonicalLink: () => {
+              throw new Error("simulated schema-8 process exit");
+            },
+          }),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("simulated schema-8 process exit");
+    expect(hasHermesPortableReceiptCandidate(SANDBOX, stateDir)).toBe(true);
+    expect(() => readHermesPortableLifecycleReceipt(SANDBOX, stateDir)).toThrow(
+      "incomplete or unknown publication evidence",
+    );
+    expect(
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => inspectPortableAgentReceiptAuthorityForPublicationRecovery(SANDBOX, stateDir),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toMatchObject({
+      kind: "hermes",
+      snapshot: { receipt: { phase: "active" }, successor: { receipt: { schemaVersion: 8 } } },
+    });
+
+    const recovered = publishSuccessor();
+    expect(recovered.successor.receipt.schemaVersion).toBe(
+      HERMES_PORTABLE_SUCCESSOR_SCHEMA_VERSION,
+    );
+    expect(fs.statSync(recovered.successor.path).nlink).toBe(1);
   });
 
   it("rejects a phase whose previous digest does not match the durable prior bytes (#9203)", () => {
@@ -866,7 +1001,6 @@ describe("Hermes portable receipt authority", () => {
         sandboxName: SANDBOX,
         transactionId,
         stateDir,
-        intendedSemanticSha256: "f".repeat(64),
         source,
         hooks: {
           assertLifecycleLock: () => {},
@@ -891,7 +1025,6 @@ describe("Hermes portable receipt authority", () => {
       sandboxName: SANDBOX,
       transactionId,
       stateDir,
-      intendedSemanticSha256: "f".repeat(64),
       source,
     } as const;
 
@@ -925,7 +1058,6 @@ describe("Hermes portable receipt authority", () => {
       sandboxName: SANDBOX,
       transactionId,
       stateDir,
-      intendedSemanticSha256: "f".repeat(64),
       source,
     } as const;
 
@@ -945,7 +1077,6 @@ describe("Hermes portable receipt authority", () => {
       path.dirname(target),
       transactionId,
       source.sha256,
-      input.intendedSemanticSha256,
     );
     const external = path.join(stateDir, "unaccounted-policy-link.yaml");
     fs.linkSync(target, external);
@@ -972,7 +1103,6 @@ describe("Hermes portable receipt authority", () => {
         sandboxName: SANDBOX,
         transactionId,
         stateDir,
-        intendedSemanticSha256: "f".repeat(64),
         source,
       } as const;
       installShortWrite(prefixLength);
@@ -1002,7 +1132,6 @@ describe("Hermes portable receipt authority", () => {
       sandboxName: SANDBOX,
       transactionId,
       stateDir,
-      intendedSemanticSha256: "f".repeat(64),
       source,
     } as const;
     const authority = publishHermesPortableDurablePolicySource({
@@ -1013,7 +1142,6 @@ describe("Hermes portable receipt authority", () => {
       path.dirname(authority.sourcePath),
       transactionId,
       source.sha256,
-      input.intendedSemanticSha256,
     );
     const cleanup = `${staged}.cleanup`;
     fs.linkSync(authority.sourcePath, cleanup);
@@ -1045,14 +1173,12 @@ describe("Hermes portable receipt authority", () => {
       directory,
       transactionId,
       source.sha256,
-      "f".repeat(64),
     );
     expect(() =>
       publishHermesPortableDurablePolicySource({
         sandboxName: SANDBOX,
         transactionId,
         stateDir,
-        intendedSemanticSha256: "f".repeat(64),
         source,
         hooks: {
           assertLifecycleLock: () => {},
@@ -1073,11 +1199,10 @@ describe("Hermes portable receipt authority", () => {
         sandboxName: SANDBOX,
         transactionId,
         stateDir,
-        intendedSemanticSha256: "f".repeat(64),
         source: captureHermesPortablePolicySource(policyPath),
         hooks: { assertLifecycleLock: () => {} },
       }),
-    ).toThrow("directory contains other policy authority");
+    ).toThrow("directory contains other policy source");
     expect(fs.readFileSync(staged)).toEqual(prior);
     expect(fs.statSync(staged).ino).toBe(priorIdentity);
     expect(fs.existsSync(hermesPortablePolicySourcePath(SANDBOX, transactionId, stateDir))).toBe(
@@ -1092,7 +1217,6 @@ describe("Hermes portable receipt authority", () => {
       sandboxName: SANDBOX,
       transactionId,
       stateDir,
-      intendedSemanticSha256: "f".repeat(64),
       source,
     } as const;
 
@@ -1123,7 +1247,6 @@ describe("Hermes portable receipt authority", () => {
       sandboxName: SANDBOX,
       transactionId,
       stateDir,
-      intendedSemanticSha256: "f".repeat(64),
       source,
     } as const;
     vi.spyOn(fs, "fsyncSync").mockImplementationOnce(() => {

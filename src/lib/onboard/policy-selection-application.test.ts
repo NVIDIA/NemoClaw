@@ -58,8 +58,6 @@ describe("onboarding policy application", () => {
       withSandboxMutationLock,
       waitForSandboxReady: vi.fn(() => true),
       waitForSandboxControlPlaneReady: vi.fn(() => true),
-      setPolicyTier: vi.fn(),
-      getRecordedPolicyTier: vi.fn(() => null),
       parsePolicyPresetEnv: vi.fn(() => []),
       env: {},
     });
@@ -104,10 +102,11 @@ describe("onboarding policy application", () => {
         withSandboxMutationLock: async (_sandboxName, action) => await action(),
         waitForSandboxReady: vi.fn(() => true),
         waitForSandboxControlPlaneReady: vi.fn(() => true),
-        setPolicyTier: vi.fn(),
-        getRecordedPolicyTier: vi.fn(() => "balanced"),
         parsePolicyPresetEnv: vi.fn((value: string) =>
-          value.split(",").map((name) => name.trim()).filter(Boolean),
+          value
+            .split(",")
+            .map((name) => name.trim())
+            .filter(Boolean),
         ),
         env,
       });
@@ -186,6 +185,24 @@ describe("onboarding policy application", () => {
         ["npm", "pypi", "discord"],
         ["npm", "pypi"],
       );
+    });
+
+    it("adds an enabled channel preset when policy selection is skipped (#10153)", async () => {
+      const application = createApplication({ NEMOCLAW_POLICY_MODE: "skip" });
+      vi.mocked(policies.getAppliedPresets).mockReturnValue([]);
+
+      await expect(
+        application.setupPoliciesWithSelection("alpha", {
+          selectedPresets: null,
+          enabledChannels: ["discord"],
+          disabledChannels: [],
+          agent: "hermes",
+          webSearchSupported: false,
+          hermesToolGateways: [],
+        }),
+      ).resolves.toEqual(["discord"]);
+
+      expect(syncPresetSelection).toHaveBeenCalledWith("alpha", [], ["discord"]);
     });
   });
 });

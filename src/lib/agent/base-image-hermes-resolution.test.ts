@@ -101,6 +101,7 @@ describe("Hermes base-image resolver integration", () => {
     ]);
     const captureByEntrypoint = new Map([
       ["/opt/hermes/.venv/bin/python", "nemoclaw-hermes-mcp-runtime-ok"],
+      ["/bin/sh", "nemoclaw-security-inventory-ok"],
       ["/usr/bin/ldd", "ldd (GNU libc) 2.41"],
     ]);
 

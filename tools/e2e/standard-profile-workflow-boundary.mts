@@ -45,7 +45,6 @@ const SKILL_AGENT_UPLOAD_PATH = `${[
 const PROFILE_JOBS = {
   standard: {
     job: "catalogue-standard",
-    displayName: "${{ matrix.display_name }}",
     matrix: "catalogue_standard_matrix",
     credentialBoundary: "no provider credential",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME"],
@@ -54,7 +53,6 @@ const PROFILE_JOBS = {
   },
   "nvidia-api": {
     job: "catalogue-nvidia-api",
-    displayName: "${{ matrix.display_name }}",
     matrix: "catalogue_nvidia_api_matrix",
     credentialBoundary: "NVIDIA API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_API_KEY"],
@@ -63,7 +61,6 @@ const PROFILE_JOBS = {
   },
   "nvidia-inference": {
     job: "catalogue-nvidia-inference",
-    displayName: "${{ matrix.display_name }}",
     matrix: "catalogue_nvidia_inference_matrix",
     credentialBoundary: "NVIDIA inference API key",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
@@ -72,7 +69,6 @@ const PROFILE_JOBS = {
   },
   "github-read": {
     job: "catalogue-github-read",
-    displayName: "${{ matrix.display_name }}",
     matrix: "catalogue_github_read_matrix",
     credentialBoundary: "GitHub read token",
     secrets: ["DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME"],
@@ -81,10 +77,14 @@ const PROFILE_JOBS = {
   },
   "brave-nvidia-inference": {
     job: "catalogue-brave-nvidia-inference",
-    displayName: "${{ matrix.display_name }}",
     matrix: "catalogue_brave_nvidia_inference_matrix",
     credentialBoundary: "Brave and NVIDIA inference API keys",
-    secrets: ["BRAVE_API_KEY", "DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
+    secrets: [
+      "BRAVE_API_KEY",
+      "DOCKERHUB_TOKEN",
+      "DOCKERHUB_USERNAME",
+      "NVIDIA_INFERENCE_API_KEY",
+    ],
     githubToken: false,
     maxParallel: 2,
   },
@@ -137,7 +137,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
         `${contract.job} must call the standard E2E profile after matrix generation and base-image publication`,
       );
     }
-    if (job.name !== contract.displayName) {
+    if (job.name !== "${{ matrix.display_name }}") {
       errors.push(`${contract.job} must use the planned outcome-first display name`);
     }
     const matrixOutput = `needs.generate-matrix.outputs.${contract.matrix}`;
@@ -163,9 +163,9 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       risk_signal_correlation_id:
         "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
-      managed_image_catalog: "${{ needs.generate-matrix.outputs.managed_image_catalog }}",
-      managed_image_revision:
-        "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
+      managed_image_revision: "${{ needs.base-image-publication.outputs.managed_image_revision }}",
+      managed_image_receipt: "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
+      workload_source: "${{ needs.generate-matrix.outputs.workload_source }}",
       credential_boundary: contract.credentialBoundary,
       catalogue_id: "${{ matrix.id }}",
       target_id: "${{ matrix.target_id }}",
@@ -213,8 +213,9 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     risk_signal_expected_sha: "string",
     risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
-    managed_image_catalog: "string",
     managed_image_revision: "string",
+    managed_image_receipt: "string",
+    workload_source: "string",
     credential_boundary: "string",
     catalogue_id: "string",
     target_id: "string",
@@ -284,6 +285,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     E2E_JOB: "1",
     E2E_MANAGED_IMAGE_REVISION: "${{ inputs.managed_image_revision }}",
     E2E_TARGET_ID: "${{ inputs.target_id }}",
+    E2E_MANAGED_IMAGE_COHORT_RECEIPT: "${{ inputs.managed_image_receipt }}",
+    E2E_WORKLOAD_SOURCE: "${{ inputs.workload_source }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.candidate_sha }}",
     NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.risk_signal_correlation_id }}",
@@ -306,7 +309,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Install target host dependencies",
     "Prepare E2E workspace",
     "Restore exact-commit CLI artifact",
-    "Materialize temporary managed-image catalog",
     "Install reviewed cloudflared",
     "Add swap for Hermes image rebuild",
     "Initialize runner comparison telemetry",
@@ -457,38 +459,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must restore the planned exact-commit CLI artifact");
   }
-  const managedCatalog = requireStep(
-    errors,
-    workflowSteps,
-    "Materialize temporary managed-image catalog",
-  );
-  const managedCatalogRun = String(managedCatalog?.run ?? "");
-  if (
-    managedCatalog?.if !== "${{ inputs.managed_image_catalog != '' }}" ||
-    managedCatalog.shell !== EXECUTION_PLAN_SHELL ||
-    !isDeepStrictEqual(record(managedCatalog.env), {
-      CANDIDATE_SHA: "${{ inputs.candidate_sha }}",
-      MANAGED_IMAGE_CATALOG: "${{ inputs.managed_image_catalog }}",
-      RESTORE_CLI: "${{ inputs.restore_cli && 'true' || 'false' }}",
-    }) ||
-    !managedCatalogRun.includes(".source.revision == $revision") ||
-    !managedCatalogRun.includes("[.[].source.release] | unique | length") ||
-    !managedCatalogRun.includes("[.[].source.cohort] | unique | length") ||
-    !managedCatalogRun.includes('[[ "$RESTORE_CLI" == "true" ]]') ||
-    !managedCatalogRun.includes(".source.release == $release") ||
-    !managedCatalogRun.includes(
-      "managed-image catalog source identity does not match the candidate",
-    ) ||
-    !managedCatalogRun.includes("managed-image catalog release does not match the restored CLI") ||
-    !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG") ||
-    managedCatalogRun.includes("NEMOCLAW_E2E_EXACT_RELEASE") ||
-    managedCatalogRun.includes(".source.release = $release") ||
-    workflowSteps.indexOf(managedCatalog ?? {}) !== workflowSteps.indexOf(restore ?? {}) + 1
-  ) {
-    errors.push(
-      "standard E2E profile must materialize only the exact-candidate managed-image catalog",
-    );
-  }
   const cloudflared = requireStep(errors, workflowSteps, "Install reviewed cloudflared");
   const cloudflaredRun = String(cloudflared?.run ?? "");
   if (
@@ -496,16 +466,17 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     cloudflared.shell !== EXECUTION_PLAN_SHELL ||
     !isDeepStrictEqual(record(cloudflared.env), {
       CLOUDFLARED_VERSION: "2026.6.1",
-      CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
+      CLOUDFLARED_DEB_SHA256:
+        "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
     }) ||
     !cloudflaredRun.includes(
-      "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb",
+      'https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb',
     ) ||
     !cloudflaredRun.includes("sha256sum -c -") ||
     !cloudflaredRun.includes('dpkg-deb -f "${cloudflared_deb}" Package') ||
     !cloudflaredRun.includes('"${architecture}" != "amd64"') ||
     cloudflaredRun.includes("command -v cloudflared") ||
-    workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(managedCatalog ?? {}) + 1
+    workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(restore ?? {}) + 1
   ) {
     errors.push("standard E2E profile must install only the reviewed cloudflared package");
   }
@@ -602,7 +573,8 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       "${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
     executeEnv.COMPATIBLE_API_KEY !==
       "${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
-    executeEnv.BRAVE_API_KEY !== "${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}" ||
+    executeEnv.BRAVE_API_KEY !==
+      "${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}" ||
     executeEnv.GITHUB_TOKEN !==
       "${{ inputs.github_token && inputs.trusted_main && github.token || '' }}"
   ) {

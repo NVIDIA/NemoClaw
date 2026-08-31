@@ -9,7 +9,7 @@ import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-m
 import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
 import type { CheckpointSandboxRecreateTransaction } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
-import type { BaselineExclusionEntry, SandboxRemovalReceipt } from "../../../state/registry";
+import type { SandboxRemovalReceipt } from "../../../state/registry";
 import {
   advanceSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
@@ -183,7 +183,6 @@ export function createDeps(
     getRecordedChannels: vi.fn(() => null),
     showMessagingStage: vi.fn(),
     setupMessaging: vi.fn(async () => [] as string[]),
-    preflightPolicyRequirements: vi.fn(),
     stageCredentialProviders: vi.fn(async () => [] as CheckpointProviderBinding[]),
     promptName: vi.fn(async () => "my-assistant"),
     selectResourceProfile: vi.fn(async () => null as ResourceProfile | null),
@@ -198,7 +197,6 @@ export function createDeps(
         inferenceProvider?: string | null;
         extraProviders: readonly string[];
         staleExtraProviders: readonly string[];
-        baselineExclusions?: readonly BaselineExclusionEntry[];
       }) => ({
         sandboxName: input.sandboxName,
         inferenceProvider: input.inferenceProvider ?? null,
@@ -215,8 +213,6 @@ export function createDeps(
             directGpu: false,
             additionalPresets: [],
             policyTier: null,
-            baselineExclusions:
-              input.baselineExclusions?.map((exclusion) => ({ ...exclusion })) ?? [],
           },
         },
         gpuCreateArgs: [],
@@ -310,7 +306,6 @@ export function createDeps(
       clearPlanEnv: calls.clearPlanEnv,
       getRegistrySandboxMessagingAuthority: () => ({ authoritative: false, plan: null }),
       providerMatchesGatewayCredential: () => true,
-      preflightPolicyRequirements: calls.preflightPolicyRequirements,
       stageSandboxCredentialProviders: calls.stageCredentialProviders,
       promptValidatedSandboxName: calls.promptName,
       selectResourceProfileForSandbox: calls.selectResourceProfile,

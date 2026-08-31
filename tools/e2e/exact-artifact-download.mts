@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,6 +15,7 @@ import { githubRequest } from "./base-image-publication.mts";
 const REPOSITORY = "NVIDIA/NemoClaw";
 const API_ROOT = "https://api.github.com";
 const CONTRACT_FILE = "contract.json";
+const COHORT_FILE = "cohort.json";
 const MAX_ARCHIVE_BYTES = 1024 * 1024;
 const MAX_CONTRACT_BYTES = 64 * 1024;
 const MAX_ATTEMPTS = 3;
@@ -69,6 +70,11 @@ function positiveInteger(value: unknown, label: string): number {
 /** Derive the immutable contract artifact name for one publication attempt. */
 export function exactArtifactName(expected: ExactArtifactExpectation): string {
   return `managed-base-${expected.runId}-${expected.runAttempt}-langchain-deepagents-code`;
+}
+
+/** Derive the immutable all-agent cohort artifact name for one publication attempt. */
+export function exactManagedImageCohortArtifactName(expected: ExactArtifactExpectation): string {
+  return `managed-image-cohort-${expected.runId}-${expected.runAttempt}`;
 }
 
 /** Bind one named artifact and validate every immutable producer attribute. */
@@ -274,21 +280,30 @@ export async function downloadBoundArtifact(
 }
 
 /** Extract the sole bounded contract file from a validated artifact ZIP. */
-export function materializeContractArchive(archive: Buffer, outputDirectory: string): string {
+export function materializeExactJsonArchive(
+  archive: Buffer,
+  outputDirectory: string,
+  fileName: typeof CONTRACT_FILE | typeof COHORT_FILE,
+): string {
   const entries = listValidatedArtifactZipEntries(archive, { maxEntries: 2 });
-  if (JSON.stringify(entries) !== JSON.stringify([CONTRACT_FILE])) {
-    throw new Error("artifact archive must contain exactly one contract.json regular file");
+  if (JSON.stringify(entries) !== JSON.stringify([fileName])) {
+    throw new Error(`artifact archive must contain exactly one ${fileName} regular file`);
   }
-  const contract = readValidatedArtifactZipEntryBytes(archive, CONTRACT_FILE, {
+  const contract = readValidatedArtifactZipEntryBytes(archive, fileName, {
     maxBytes: MAX_CONTRACT_BYTES,
     maxEntries: 2,
   });
   if (!contract) throw new Error("artifact contract archive is malformed");
   const resolvedDirectory = path.resolve(outputDirectory);
   mkdirSync(resolvedDirectory, { mode: 0o700, recursive: true });
-  const contractPath = path.join(resolvedDirectory, CONTRACT_FILE);
+  const contractPath = path.join(resolvedDirectory, fileName);
   writeFileSync(contractPath, contract, { mode: 0o600 });
   return contractPath;
+}
+
+/** Extract the sole bounded contract file from a validated artifact ZIP. */
+export function materializeContractArchive(archive: Buffer, outputDirectory: string): string {
+  return materializeExactJsonArchive(archive, outputDirectory, CONTRACT_FILE);
 }
 
 /** Read one required positive integer environment value. */
@@ -307,14 +322,33 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     runAttempt: requiredInteger(env.PUBLICATION_RUN_ATTEMPT, "PUBLICATION_RUN_ATTEMPT"),
     runId: requiredInteger(env.PUBLICATION_RUN_ID, "PUBLICATION_RUN_ID"),
   };
-  const name = exactArtifactName(expected);
+  const kind = env.PUBLICATION_ARTIFACT_KIND ?? "dcode-base";
+  if (kind !== "dcode-base" && kind !== "managed-image-cohort") {
+    throw new Error("PUBLICATION_ARTIFACT_KIND must be dcode-base or managed-image-cohort");
+  }
+  const name =
+    kind === "managed-image-cohort"
+      ? exactManagedImageCohortArtifactName(expected)
+      : exactArtifactName(expected);
+  const fileName = kind === "managed-image-cohort" ? COHORT_FILE : CONTRACT_FILE;
   const response = await githubRequest(
     `/repos/${REPOSITORY}/actions/runs/${expected.runId}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
     token,
   );
-  const identity = bindExactArtifact(response, expected);
+  const identity = bindNamedExactArtifact(response, expected, name);
   const archive = await downloadBoundArtifact(identity, token);
-  materializeContractArchive(archive, argv[0]);
+  materializeExactJsonArchive(archive, argv[0], fileName);
+  if (env.GITHUB_OUTPUT) {
+    const provenance = JSON.stringify({
+      artifactDigest: identity.digest,
+      artifactId: identity.id,
+      artifactName: identity.name,
+      revision: identity.headSha,
+      runAttempt: identity.runAttempt,
+      runId: identity.runId,
+    });
+    appendFileSync(env.GITHUB_OUTPUT, `provenance=${provenance}\n`, "utf8");
+  }
 }
 
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
