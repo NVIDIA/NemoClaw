@@ -344,6 +344,13 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
+  it.each([
+    ["gemini-2.5-pro", 256, "max_tokens"],
+    ["gpt-5.4", 256, "max_completion_tokens"],
+  ])("accepts an explicit reply budget for %s", (model, replyBudget, field) => {
+    expect(getChatCompletionsProbePayload(model, replyBudget)[field]).toBe(replyBudget);
+  });
+
   it("bounds the hosted compatible inference probe for the served Nemotron model", () => {
     expect(getChatCompletionsProbePayload("nvidia/nvidia/nemotron-3-ultra")).toEqual({
       model: "nvidia/nvidia/nemotron-3-ultra",

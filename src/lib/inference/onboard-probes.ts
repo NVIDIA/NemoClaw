@@ -573,6 +573,7 @@ export function getChatCompletionsProbeCurlArgs(opts: {
   pinnedAddresses?: readonly string[];
   validationTiming?: unknown;
   useNvidiaEndpointProbePayload?: boolean;
+  replyBudget?: number;
 }) {
   const {
     credentialArgs,
@@ -583,6 +584,7 @@ export function getChatCompletionsProbeCurlArgs(opts: {
     pinnedAddresses,
     validationTiming,
     useNvidiaEndpointProbePayload,
+    replyBudget,
   } = opts;
   const platformOptions = getProbeTimingOptions({
     ...(typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : {}),
@@ -598,7 +600,9 @@ export function getChatCompletionsProbeCurlArgs(opts: {
     "Content-Type: application/json",
     ...credSlice,
     "-d",
-    JSON.stringify(getChatCompletionsProbePayload(model, { useNvidiaEndpointProbePayload })),
+    JSON.stringify(
+      getChatCompletionsProbePayload(model, { useNvidiaEndpointProbePayload, replyBudget }),
+    ),
     url,
   ];
 }
