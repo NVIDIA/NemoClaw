@@ -1102,27 +1102,13 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       redactionValues,
       `${SANDBOX_NAME}-wechat-bridge`,
     );
-    // TEMPORARY: diagnose a reproducible ECONNREFUSED at send time despite a
-    // successful proxy create/connect/start. Confirms whether the proxy
-    // container is still present/running immediately before the send.
-    await host.command(
-      "docker",
-      [
-        "ps",
-        "-a",
-        "--filter",
-        "name=nemoclaw-fake-wechat-proxy",
-        "--format",
-        "{{.Names}}\t{{.Status}}",
-      ],
-      {
-        artifactName: "diagnose-fake-wechat-proxy-state",
-        redactionValues,
-      },
-    );
-    // TEMPORARY: distinguish a proxy-side failure (host cannot reach it
-    // either) from a sandbox-scoped network-policy rejection (host can
-    // reach it, only the sandbox's outbound attempt is refused).
+    // TEMPORARY: diagnose a reproducible ECONNREFUSED at send time. The
+    // create/connect/start steps and the sandbox's network policy update all
+    // report success, and the proxy container is confirmed running at send
+    // time. Check whether the host itself can reach the same published port
+    // to distinguish a proxy/Docker-side failure (host also refused) from a
+    // sandbox-scoped network-policy rejection (host succeeds, only the
+    // sandbox's outbound attempt is refused).
     const diagnoseGateway = await host.command(
       "docker",
       ["network", "inspect", "openshell-docker", "--format", "{{(index .IPAM.Config 0).Gateway}}"],

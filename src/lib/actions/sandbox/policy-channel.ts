@@ -1742,7 +1742,8 @@ const STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE = {
   "container-ownership-invalid": "Reconcile the sandbox registry and Docker container identity.",
   "container-inspection-failed": "Restore Docker inspection access for the stopped container.",
   "container-not-stopped": "Stop the registered sandbox container before retrying removal.",
-  "sandbox-volume-unavailable": "Restore a single writable Docker volume at /sandbox.",
+  "sandbox-volume-unavailable":
+    "Restore a writable Docker volume at /sandbox or the stopped sandbox's Docker overlay2 writable layer.",
   "cleanup-helper-image-unavailable": "Restore the pinned NemoClaw cleanup image locally.",
   "cleanup-helper-ownership-invalid": "Remove the conflicting cleanup helper container.",
   "cleanup-helper-reconciliation-failed": "Reconcile the named cleanup helper container.",

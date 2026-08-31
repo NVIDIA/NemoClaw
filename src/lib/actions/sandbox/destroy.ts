@@ -92,8 +92,7 @@ function selectRetainedSandboxRecoveryAuthority(
   records: readonly RetainedSandboxRecoveryRecord[],
 ): RetainedSandboxRecoveryRecord | null {
   const candidates = records.filter(
-    (record) =>
-      record.sandboxName === sandboxName && record.sandboxIdentityFingerprint !== null,
+    (record) => record.sandboxName === sandboxName && record.sandboxIdentityFingerprint !== null,
   );
   if (!sandbox) {
     // Once resource cleanup has removed the registry row, a retry must still
@@ -110,8 +109,7 @@ function selectRetainedSandboxRecoveryAuthority(
         record.sandboxIdentityFingerprint!,
       );
       return (
-        verdict.status === "recovery" ||
-        (verdict.status === "clear" && verdict.identity !== null)
+        verdict.status === "recovery" || (verdict.status === "clear" && verdict.identity !== null)
       );
     });
     return observedMatches.length === 1 ? observedMatches[0]! : null;
@@ -608,9 +606,7 @@ async function destroySandboxUnlocked(
         registry.getSandbox(sandboxName)?.openshellDriver,
       ),
       redact: redactDestroyError,
-      ...(retainedSandboxIdentityFingerprint
-        ? { retainedSandboxIdentityFingerprint }
-        : {}),
+      ...(retainedSandboxIdentityFingerprint ? { retainedSandboxIdentityFingerprint } : {}),
     });
   const initialIdentity = portableContainerAuthority ? null : inspectContainerIdentity();
   if (initialIdentity === false) {
@@ -671,7 +667,10 @@ async function destroySandboxUnlocked(
   };
   let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
   destroyPreflight = abortPreparedCleanupOnError(() =>
-    prepareSandboxDestroy(sandboxName, retainedRecoveryAuthority?.gatewayName),
+    prepareSandboxDestroy(sandboxName, {
+      force: normalized.force === true,
+      retainedRecoveryGatewayName: retainedRecoveryAuthority?.gatewayName,
+    }),
   );
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } = destroyPreflight;
   if (retainedRecoveryAuthority && !sandboxConfirmedAbsent) {
@@ -1019,10 +1018,7 @@ async function destroySandboxUnlocked(
       );
     }
   }
-  if (
-    deleteSucceededOrAlreadyGone &&
-    retainedRecoveryAuthority
-  ) {
+  if (deleteSucceededOrAlreadyGone && retainedRecoveryAuthority) {
     let recoveryResolved: boolean;
     try {
       recoveryResolved = onboardSession.resolveRetainedSandboxRecovery(retainedRecoveryAuthority);

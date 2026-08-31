@@ -14,6 +14,7 @@ import {
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
+  finalizeCreatedSandboxWithTemporaryPolicyCleanup,
   hasManagedMcpRebuildHandoff,
   installPostCreateRecoveryRetryOwner,
   persistPostCreateRecovery,
@@ -21,6 +22,7 @@ import {
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
+  revalidateRegisteredSandboxCreateIdentity,
   runAuthorityBoundProviderCleanup,
   runAsyncWithPostCreateRecovery,
   runSandboxCreateWithIdentityVerification,
@@ -66,6 +68,95 @@ describe("created Hermes credential environment reconciliation", () => {
       "effects:finalized",
     ]);
     expect(createEffectsFinalized).toBe(true);
+  });
+
+  it("revalidates the published registry entry around post-registration effects (#9833)", () => {
+    const registered = {
+      name: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 18789,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    } as SandboxEntry;
+    const boundary = {
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 18789,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    };
+    let current: SandboxEntry | null = structuredClone(registered);
+    const readRegistry = vi.fn(() => current);
+    const revalidateLiveIdentity = vi.fn();
+
+    expect(
+      revalidateRegisteredSandboxCreateIdentity(
+        registered,
+        boundary,
+        "reconciling Hermes credentials",
+        { readRegistry, revalidateLiveIdentity },
+      ),
+    ).toEqual(registered);
+    expect(readRegistry).toHaveBeenCalledTimes(2);
+    expect(revalidateLiveIdentity).toHaveBeenCalledWith(
+      registered.lifecycleLiveIdentityFingerprint,
+      "reconciling Hermes credentials",
+    );
+
+    current = structuredClone(registered);
+    expect(() =>
+      revalidateRegisteredSandboxCreateIdentity(registered, boundary, "restarting Hermes", {
+        readRegistry: () => current,
+        revalidateLiveIdentity: () => {
+          current = { ...registered, gatewayPort: 18790 };
+        },
+      }),
+    ).toThrow(/registered identity changed/u);
+
+    const revalidateReplacement = vi.fn();
+    expect(() =>
+      revalidateRegisteredSandboxCreateIdentity(
+        { ...registered, lifecycleLiveIdentityFingerprint: "b".repeat(64) },
+        boundary,
+        "capturing registered identity",
+        {
+          readRegistry: () => current,
+          revalidateLiveIdentity: revalidateReplacement,
+        },
+      ),
+    ).toThrow(/does not match the verified create/u);
+    expect(revalidateReplacement).not.toHaveBeenCalled();
+  });
+
+  it("cleans the temporary policy after sandbox finalization", async () => {
+    const cleanup = vi.fn(() => true);
+
+    await expect(
+      finalizeCreatedSandboxWithTemporaryPolicyCleanup({
+        finalize: async () => "created",
+        cleanup,
+        policyPath: "/verified/temporary-policy.yaml",
+      }),
+    ).resolves.toBe("created");
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("preserves finalization and temporary policy cleanup failures", async () => {
+    const finalizationError = new Error("registration failed");
+
+    const error = await finalizeCreatedSandboxWithTemporaryPolicyCleanup({
+      finalize: async () => {
+        throw finalizationError;
+      },
+      cleanup: () => false,
+      policyPath: "/verified/temporary-policy.yaml",
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toEqual([
+      finalizationError,
+      expect.objectContaining({ message: expect.stringContaining("temporary-policy.yaml") }),
+    ]);
   });
 
   it("restarts and rechecks the managed gateway after changing the env file", () => {
