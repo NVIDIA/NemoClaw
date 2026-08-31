@@ -46,15 +46,21 @@ export async function runInferenceGet(
   options: InferenceGetOptions = {},
   deps: InferenceGetDeps = defaultDeps(),
 ): Promise<InferenceGetResult> {
+  const gatewayName = deps.getSandboxTargetGatewayName(options.sandboxName);
   const result = getLiveGatewayInference(deps.captureOpenshell, {
-    gatewayName: deps.getSandboxTargetGatewayName(options.sandboxName),
+    gatewayName,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
-  if (result.status !== 0) {
-    throw new InferenceGetError("OpenShell inference route lookup failed.", result.status || 1);
+  if (result.failure) {
+    throw new InferenceGetError(
+      formatLookupFailure(gatewayName, result.failure, result.status),
+      result.status || 1,
+    );
   }
   if (!result.inference) {
-    throw new InferenceGetError("OpenShell inference route is not configured.");
+    throw new InferenceGetError(
+      `OpenShell inference route is not configured for gateway '${gatewayName}'.`,
+    );
   }
 
   const payload = {
@@ -71,6 +77,20 @@ export async function runInferenceGet(
   }
 
   return payload;
+}
+
+function formatLookupFailure(
+  gatewayName: string,
+  failure: NonNullable<ReturnType<typeof getLiveGatewayInference>["failure"]>,
+  status: number | null,
+): string {
+  if (failure === "timeout") {
+    return `OpenShell inference route lookup for gateway '${gatewayName}' timed out.`;
+  }
+  if (failure === "exit") {
+    return `OpenShell inference route lookup for gateway '${gatewayName}' failed with exit status ${String(status ?? "unknown")}.`;
+  }
+  return `OpenShell inference route lookup for gateway '${gatewayName}' failed before an exit status was available.`;
 }
 
 function formatRouteValueForDisplay(value: string | null): string {

@@ -15,7 +15,7 @@ import { runInferenceGet, type InferenceGetDeps } from "./inference-get";
 
 function createDeps(
   output: string,
-  status = 0,
+  status: number | null = 0,
 ): InferenceGetDeps & {
   log: ReturnType<typeof vi.fn>;
   captureOpenshell: ReturnType<typeof vi.fn>;
@@ -110,8 +110,35 @@ describe("runInferenceGet", () => {
 
   it("fails when no route is configured", async () => {
     const deps = createDeps("Gateway inference:\n\n  Not configured\n");
+    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
 
-    await expect(runInferenceGet({}, deps)).rejects.toThrow(/not configured/);
+    await expect(runInferenceGet({}, deps)).rejects.toThrow(
+      "OpenShell inference route is not configured for gateway 'nemoclaw-19090'.",
+    );
     expect(deps.log).not.toHaveBeenCalled();
+  });
+
+  it("reports a safe timeout classification for the selected gateway (#10671)", async () => {
+    const deps = createDeps("", null);
+    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
+    deps.captureOpenshell.mockReturnValue({
+      status: null,
+      output: "secret stderr must not be rendered",
+      error: Object.assign(new Error("secret timeout detail"), { code: "ETIMEDOUT" }),
+      signal: "SIGKILL",
+    });
+
+    await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toThrow(
+      "OpenShell inference route lookup for gateway 'nemoclaw-19090' timed out.",
+    );
+  });
+
+  it("reports a safe exit classification for the selected gateway (#10671)", async () => {
+    const deps = createDeps("secret stderr must not be rendered", 7);
+    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
+
+    await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toThrow(
+      "OpenShell inference route lookup for gateway 'nemoclaw-19090' failed with exit status 7.",
+    );
   });
 });

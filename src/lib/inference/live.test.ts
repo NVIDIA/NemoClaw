@@ -20,7 +20,7 @@ describe("getLiveGatewayInference", () => {
     });
 
     expect(getLiveGatewayInference(capture)).toEqual({
-      args: ["inference", "get", "-g", "nemoclaw"],
+      failure: null,
       inference: { provider: "nvidia-prod", model: "nvidia/model" },
       output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/model",
       status: 0,
@@ -48,10 +48,13 @@ describe("getLiveGatewayInference", () => {
     const capture = vi.fn().mockReturnValue({ status: 1, output: "" });
 
     expect(getLiveGatewayInference(capture, { gatewayName: "nemoclaw-19090" })).toMatchObject({
-      args: ["inference", "get", "-g", "nemoclaw-19090"],
+      failure: "exit",
       inference: null,
       status: 1,
     });
-    expect(capture).toHaveBeenCalledTimes(1);
+    expect(capture).toHaveBeenCalledExactlyOnceWith(
+      ["inference", "get", "-g", "nemoclaw-19090"],
+      { ignoreError: true, timeout: undefined },
+    );
   });
 });
