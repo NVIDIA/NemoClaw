@@ -274,13 +274,16 @@ RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_
     && grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
     && rm /scripts/hermes-security-dependencies.patch \
-    && git -C /opt/hermes apply --check \
-        --include=hermes_cli/web_server.py \
-        /scripts/hermes-dashboard-external-host.patch \
-    && git -C /opt/hermes apply \
-        --include=hermes_cli/web_server.py \
-        /scripts/hermes-dashboard-external-host.patch \
-    && grep -Fq '_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST' /opt/hermes/hermes_cli/web_server.py \
+    && if ! grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py; then \
+        git -C /opt/hermes apply --check \
+            --include=hermes_cli/web_server.py \
+            /scripts/hermes-dashboard-external-host.patch; \
+        git -C /opt/hermes apply \
+            --include=hermes_cli/web_server.py \
+            /scripts/hermes-dashboard-external-host.patch; \
+    fi \
+    && grep -Fqx '_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = "_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST"' /opt/hermes/hermes_cli/web_server.py \
+    && grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py \
     && rm /scripts/hermes-dashboard-external-host.patch
 
 # The final Hermes image owns the shipped dependency boundary independently of
