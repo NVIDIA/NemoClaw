@@ -33,7 +33,8 @@ It also removes the deprecated Brev deploy wrapper and adds contributor and main
 - The deprecated `nemoclaw deploy` Brev compatibility command has been removed.
   Remote hosts use their provisioning workflow, the hosted installer, and `nemoclaw onboard`; `deploy` is now available as a sandbox name.
   Related change: [PR #10576](https://github.com/NVIDIA/NemoClaw/pull/10576).
-- Contributors can run the checked-in PR Review Advisor specialists on committed and working-tree changes with `npm run review:local` before PR publication.
+- Contributors with a prepared checkout can run the checked-in PR Review Advisor specialists on committed and working-tree changes with `npm run review:local` before PR publication.
+  The [local-run prerequisites](https://github.com/NVIDIA/NemoClaw/blob/main/tools/pr-review-advisor/README.md#local-run) name the required host tools, the `origin/main` trust base, and the credential boundary.
   Maintainer analysis now emits bounded slow-test evidence and Perfetto-compatible PR lifetime traces with revision, readiness, review-request, workflow, job, and step timelines.
   Related changes: [PR #10581](https://github.com/NVIDIA/NemoClaw/pull/10581), [PR #10604](https://github.com/NVIDIA/NemoClaw/pull/10604), [PR #10608](https://github.com/NVIDIA/NemoClaw/pull/10608), [PR #10611](https://github.com/NVIDIA/NemoClaw/pull/10611), [PR #10616](https://github.com/NVIDIA/NemoClaw/pull/10616), and [PR #10617](https://github.com/NVIDIA/NemoClaw/pull/10617).
 - Development qualification now contains a provider-owned record and dormant executor for the OpenShell v0.0.24 and MXC v0.7.0-rc1 checkpoint on physical Windows.

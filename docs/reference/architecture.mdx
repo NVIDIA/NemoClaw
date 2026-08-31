@@ -13,7 +13,7 @@ NemoClaw combines a host CLI, an in-sandbox integration layer, and a versioned Y
 
 ## System Overview
 
-NVIDIA OpenShell is a general-purpose agent runtime.
+NVIDIA OpenShell is a general-purpose sandbox runtime and policy platform.
 It provides sandbox containers, a credential-storing gateway, inference proxying, and policy enforcement, but it has no opinions about what runs inside.
 NemoClaw is an opinionated reference stack built on OpenShell that handles what goes in the sandbox, prepares agent-specific integration, and makes the setup accessible.
 
@@ -158,7 +158,7 @@ graph TB
 
         subgraph DOCKER["Docker daemon"]
             direction TB
-            SANDBOX["Sandbox container 🔒<br/><small>Landlock + seccomp + netns<br/>Compatible agent + NemoClaw integration</small>"]:::sandbox
+            SANDBOX["Sandbox container 🔒<br/><small>Landlock + seccomp + netns<br/>Supported agent runtime + NemoClaw integration</small>"]:::sandbox
         end
     end
 
@@ -347,7 +347,7 @@ Inference requests from the agent never leave the sandbox directly.
 OpenShell intercepts them and routes them to the configured provider:
 
 ```text
-Compatible agent (sandbox)  ──▶  OpenShell gateway  ──▶  Provider endpoint
+Supported agent runtime (sandbox)  ──▶  OpenShell gateway  ──▶  Provider endpoint
 ```
 
 When you select the Model Router provider, the OpenShell gateway routes to a host-side router process instead of a single upstream model.
