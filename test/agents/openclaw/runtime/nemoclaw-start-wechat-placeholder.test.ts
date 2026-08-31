@@ -36,6 +36,15 @@ interface OpenClawTestConfig {
   };
 }
 
+interface MultiAccountFailureFixture {
+  readonly accountFiles: readonly string[];
+  readonly primaryAfter: string;
+  readonly primaryBefore: string;
+  readonly result: ReturnType<typeof spawnSync>;
+  readonly secondaryAfter: string;
+  readonly secondaryBefore: string;
+}
+
 function wechatConfig(
   enabled: boolean | null,
   accountEnabled: boolean | null = true,
@@ -107,6 +116,81 @@ function runWechatRefresh(
     const accountMode = fs.statSync(accountPath).mode & 0o777;
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as OpenClawTestConfig;
     return { account, accountFiles, accountMode, config, result };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function runMultiAccountCommitFailure(): MultiAccountFailureFixture {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-placeholder-"));
+  const openclawDir = path.join(tmpDir, ".openclaw");
+  const accountsDir = path.join(openclawDir, "openclaw-weixin", "accounts");
+  const configPath = path.join(openclawDir, "openclaw.json");
+  const primaryPath = path.join(accountsDir, "primary.json");
+  const secondaryPath = path.join(accountsDir, "secondary.json");
+  const primaryBefore = `${JSON.stringify({ token: CANONICAL, savedAt: SAVED_AT }, null, 2)}\n`;
+  const secondaryBefore = `${JSON.stringify(
+    { token: "openshell:resolve:env:v41_WECHAT_BOT_TOKEN", savedAt: SAVED_AT },
+    null,
+    2,
+  )}\n`;
+
+  fs.mkdirSync(accountsDir, { recursive: true });
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify(
+      {
+        channels: {
+          "openclaw-weixin": {
+            enabled: true,
+            accounts: { primary: { enabled: true }, secondary: { enabled: true } },
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  fs.writeFileSync(primaryPath, primaryBefore, { mode: 0o600 });
+  fs.writeFileSync(secondaryPath, secondaryBefore, { mode: 0o600 });
+
+  try {
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        [
+          "import os, runpy, sys",
+          "real_replace = os.replace",
+          "failure = {'raised': False}",
+          "def fail_second_commit(src, dst, *args, **kwargs):",
+          "    if dst == 'secondary.json' and not failure['raised']:",
+          "        failure['raised'] = True",
+          "        raise OSError('forced second account commit failure')",
+          "    return real_replace(src, dst, *args, **kwargs)",
+          "os.replace = fail_second_commit",
+          `sys.argv = [${JSON.stringify(REFRESH_HELPER)}, ${JSON.stringify(configPath)}]`,
+          `runpy.run_path(${JSON.stringify(REFRESH_HELPER)}, run_name="__main__")`,
+        ].join("\n"),
+      ],
+      {
+        encoding: "utf-8",
+        env: {
+          PATH: process.env.PATH || "",
+          WECHAT_BOT_TOKEN: "openshell:resolve:env:v42_WECHAT_BOT_TOKEN",
+        },
+        timeout: 5000,
+      },
+    );
+    return {
+      accountFiles: fs.readdirSync(accountsDir),
+      primaryAfter: fs.readFileSync(primaryPath, "utf-8"),
+      primaryBefore,
+      result,
+      secondaryAfter: fs.readFileSync(secondaryPath, "utf-8"),
+      secondaryBefore,
+    };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -253,6 +337,18 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
       "restore owner write access to the managed account directory and retry startup",
     );
     expect(run.result.stderr).not.toContain(scoped);
+  });
+
+  it("restores earlier accounts when a later account commit fails", () => {
+    const run = runMultiAccountCommitFailure();
+
+    expect(run.result.status).toBe(1);
+    expect(run.primaryAfter).toBe(run.primaryBefore);
+    expect(run.secondaryAfter).toBe(run.secondaryBefore);
+    expect(run.accountFiles).toEqual(["primary.json", "secondary.json"]);
+    expect(run.result.stderr).toContain("original files were restored");
+    expect(run.result.stderr).not.toContain("v41_WECHAT_BOT_TOKEN");
+    expect(run.result.stderr).not.toContain("v42_WECHAT_BOT_TOKEN");
   });
 
   it.each([

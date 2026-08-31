@@ -110,6 +110,74 @@ def cleanup_stale_temporaries(accounts_fd, filename, account_metadata, account_m
             fail("the managed account directory could not persist temporary-file cleanup")
 
 
+def managed_file_identity(metadata):
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+    )
+
+
+def stage_managed_payload(
+    accounts_fd,
+    filename,
+    account_metadata,
+    account_mode,
+    payload,
+    preserve_timestamps=False,
+):
+    temporary = f".{filename}.nemoclaw-{os.getpid()}-{secrets.token_hex(8)}.tmp"
+    create_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    temporary_created = False
+    try:
+        temporary_fd = os.open(temporary, create_flags, 0o600, dir_fd=accounts_fd)
+        temporary_created = True
+        try:
+            os.fchmod(temporary_fd, account_mode)
+            if os.geteuid() == 0:
+                os.fchown(temporary_fd, account_metadata.st_uid, account_metadata.st_gid)
+            offset = 0
+            while offset < len(payload):
+                written = os.write(temporary_fd, payload[offset:])
+                if written == 0:
+                    raise OSError("managed account staging made no progress")
+                offset += written
+            os.fsync(temporary_fd)
+        finally:
+            os.close(temporary_fd)
+        if preserve_timestamps:
+            os.utime(
+                temporary,
+                ns=(account_metadata.st_atime_ns, account_metadata.st_mtime_ns),
+                dir_fd=accounts_fd,
+                follow_symlinks=False,
+            )
+        metadata = os.stat(temporary, dir_fd=accounts_fd, follow_symlinks=False)
+        return temporary, managed_file_identity(metadata)
+    except BaseException:
+        if temporary_created and not remove_managed_temporary(accounts_fd, temporary):
+            fail(
+                "managed account staging failed and its temporary file could not be removed; "
+                "restore owner write access to the managed account directory and retry startup"
+            )
+        raise
+
+
+def remove_managed_temporary(accounts_fd, temporary):
+    try:
+        os.unlink(temporary, dir_fd=accounts_fd)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
     fail("the platform cannot enforce no-follow account traversal")
 
@@ -192,8 +260,9 @@ try:
                 fail("a managed account file has unsafe ownership or permissions")
             cleanup_stale_temporaries(accounts_fd, filename, metadata, account_mode)
             try:
-                with os.fdopen(os.dup(account_fd), "r", encoding="utf-8") as stream:
-                    account_data = json.load(stream)
+                with os.fdopen(os.dup(account_fd), "rb") as stream:
+                    original_payload = stream.read()
+                account_data = json.loads(original_payload.decode("utf-8"))
             except Exception:
                 fail("a managed account file is unreadable")
         finally:
@@ -208,55 +277,124 @@ try:
             fail("a managed account token is neither canonical nor revision-scoped")
         account_data["token"] = runtime_placeholder
         payload = (json.dumps(account_data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-        pending.append((filename, metadata, account_mode, payload))
+        pending.append((filename, metadata, account_mode, original_payload, payload))
 
-    for filename, metadata, account_mode, payload in pending:
-        temporary = f".{filename}.nemoclaw-{os.getpid()}-{secrets.token_hex(8)}.tmp"
-        temporary_created = False
+    staged = []
+    try:
         try:
-            create_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
-            temporary_fd = os.open(temporary, create_flags, 0o600, dir_fd=accounts_fd)
-            temporary_created = True
-            try:
-                os.fchmod(temporary_fd, account_mode)
-                if os.geteuid() == 0:
-                    os.fchown(temporary_fd, metadata.st_uid, metadata.st_gid)
-                offset = 0
-                while offset < len(payload):
-                    offset += os.write(temporary_fd, payload[offset:])
-                os.fsync(temporary_fd)
-            finally:
-                os.close(temporary_fd)
+            for filename, metadata, account_mode, original_payload, payload in pending:
+                replacement, replacement_identity = stage_managed_payload(
+                    accounts_fd,
+                    filename,
+                    metadata,
+                    account_mode,
+                    payload,
+                )
+                entry = {
+                    "filename": filename,
+                    "original_identity": managed_file_identity(metadata),
+                    "replacement": replacement,
+                    "replacement_identity": replacement_identity,
+                    "rollback": None,
+                    "rollback_identity": None,
+                }
+                staged.append(entry)
+                rollback, rollback_identity = stage_managed_payload(
+                    accounts_fd,
+                    filename,
+                    metadata,
+                    account_mode,
+                    original_payload,
+                    preserve_timestamps=True,
+                )
+                entry["rollback"] = rollback
+                entry["rollback_identity"] = rollback_identity
+        except OSError:
+            fail("managed account replacements could not be staged safely")
 
-            current_metadata = os.stat(filename, dir_fd=accounts_fd, follow_symlinks=False)
-            before = (metadata.st_dev, metadata.st_ino, metadata.st_mtime_ns, metadata.st_size)
-            after = (
-                current_metadata.st_dev,
-                current_metadata.st_ino,
-                current_metadata.st_mtime_ns,
-                current_metadata.st_size,
-            )
-            if before != after or current_metadata.st_nlink != 1:
-                fail("a managed account file changed during refresh")
-            os.replace(
-                temporary,
-                filename,
-                src_dir_fd=accounts_fd,
-                dst_dir_fd=accounts_fd,
-            )
-            temporary_created = False
+        committed = []
+        commit_error = None
+        try:
+            for entry in staged:
+                current_metadata = os.stat(
+                    entry["filename"], dir_fd=accounts_fd, follow_symlinks=False
+                )
+                if managed_file_identity(current_metadata) != entry["original_identity"]:
+                    fail("a managed account file changed during refresh")
+                os.replace(
+                    entry["replacement"],
+                    entry["filename"],
+                    src_dir_fd=accounts_fd,
+                    dst_dir_fd=accounts_fd,
+                )
+                entry["replacement"] = None
+                committed.append(entry)
             os.fsync(accounts_fd)
-        finally:
-            if temporary_created:
+        except BaseException as error:
+            commit_error = error
+
+        if commit_error is not None:
+            rollback_failed = False
+            for entry in reversed(committed):
                 try:
-                    os.unlink(temporary, dir_fd=accounts_fd)
-                except OSError:
-                    print(
-                        "[SECURITY] WeChat provider placeholder refresh could not remove its "
-                        "temporary account file; restore owner write access to the managed "
-                        "account directory and retry startup",
-                        file=sys.stderr,
+                    current_metadata = os.stat(
+                        entry["filename"], dir_fd=accounts_fd, follow_symlinks=False
                     )
+                    if managed_file_identity(current_metadata) != entry["replacement_identity"]:
+                        rollback_failed = True
+                        continue
+                    os.replace(
+                        entry["rollback"],
+                        entry["filename"],
+                        src_dir_fd=accounts_fd,
+                        dst_dir_fd=accounts_fd,
+                    )
+                    entry["rollback"] = None
+                    restored_metadata = os.stat(
+                        entry["filename"], dir_fd=accounts_fd, follow_symlinks=False
+                    )
+                    if managed_file_identity(restored_metadata) != entry["rollback_identity"]:
+                        rollback_failed = True
+                except OSError:
+                    rollback_failed = True
+            try:
+                os.fsync(accounts_fd)
+            except OSError:
+                rollback_failed = True
+            if rollback_failed:
+                fail(
+                    "managed account refresh rollback could not be confirmed; restore owner "
+                    "write access to the managed account directory and retry startup"
+                )
+            if isinstance(commit_error, SystemExit):
+                raise commit_error
+            fail("managed account replacements could not be committed; original files were restored")
+
+        for entry in staged:
+            if entry["rollback"] is not None:
+                if remove_managed_temporary(accounts_fd, entry["rollback"]):
+                    entry["rollback"] = None
+    finally:
+        cleanup_failed = False
+        for entry in staged:
+            for key in ("replacement", "rollback"):
+                temporary = entry[key]
+                if temporary is not None:
+                    if remove_managed_temporary(accounts_fd, temporary):
+                        entry[key] = None
+                    else:
+                        cleanup_failed = True
+        try:
+            os.fsync(accounts_fd)
+        except OSError:
+            cleanup_failed = True
+        if cleanup_failed:
+            print(
+                "[SECURITY] WeChat provider placeholder refresh could not remove a temporary "
+                "account file; restore owner write access to the managed account directory and "
+                "retry startup",
+                file=sys.stderr,
+            )
 
     if pending:
         print(
