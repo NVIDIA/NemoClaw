@@ -834,7 +834,7 @@ When GPU passthrough is enabled and a gateway already exists without it, onboard
 
 ### `$$nemoclaw list`
 
-List the sandboxes registered for the gateway port that `NEMOCLAW_GATEWAY_PORT` selects, with their model, provider, and policy presets.
+List sandboxes in the registry for the gateway port that `NEMOCLAW_GATEWAY_PORT` selects and any sandbox entries recovered from that live gateway, with their model, provider, and policy presets.
 The command reads that port's registry and live gateway; it does not scan registries for other gateway ports.
 Pass `--json` for machine-readable output that includes a `schemaVersion`, the default sandbox, recovery metadata, and the sandbox inventory.
 When the latest resumable onboarding session owns the matching inference-route reservation but has not created a sandbox, text output shows it under `Incomplete onboarding` with the recorded step and resume command.
