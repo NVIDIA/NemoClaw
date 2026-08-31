@@ -163,6 +163,16 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "gives the %s build job sole compiled-artifact ownership",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "keeps coverage shards source-based and preserves shard-owned boundaries",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "executes pull request installer hash checks only from the PR base SHA",
       "category": "security"
     },

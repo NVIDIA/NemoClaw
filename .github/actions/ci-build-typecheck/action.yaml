@@ -30,6 +30,10 @@ runs:
       shell: bash
       run: npm run build:cli
 
+    - name: Verify CLI sourcemaps
+      shell: bash
+      run: npx tsx scripts/check-dist-sourcemaps.mts dist
+
     - name: Verify compiled package contracts
       shell: bash
       run: npx vitest run --project package-contract
