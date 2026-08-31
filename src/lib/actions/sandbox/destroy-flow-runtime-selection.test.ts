@@ -31,7 +31,7 @@ describe("destroySandbox OpenShell runtime selection", () => {
       mcpRuntimeSelection: runtimeSelection,
     });
 
-    await harness.destroySandbox("alpha", { yes: true });
+    await harness.destroySandbox("alpha", { yes: true, cleanupGateway: true });
 
     expectMcpFinalizeAfterDelete(harness);
     expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", {

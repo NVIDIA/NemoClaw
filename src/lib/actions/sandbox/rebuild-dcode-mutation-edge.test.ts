@@ -17,6 +17,7 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
 
   it("finishes DCode preparation and recheck before backup, delete, and recreate (#6195)", async () => {
     const mcpEntry = { server: "search", providerName: "mcp-search" };
+    const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
     const harness = createRebuildFlowHarness({
       agentName: "langchain-deepagents-code",
       sandboxEntry: makeDcodeSandboxEntry(),
@@ -25,6 +26,7 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
         entries: [mcpEntry],
         detachedProviderEntries: [],
         scrubbedAdapterEntries: [],
+        runtimeSelection,
       },
     });
     configureDcodeSession(harness);
@@ -90,11 +92,16 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       harness.preparedDcodeBuildContext,
     );
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      [mcpEntry],
+      runtimeSelection,
+    );
   });
   it("rolls back managed MCP mutation when DCode inputs drift during MCP preparation (#6195)", async () => {
     const detached = { server: "search", providerName: "mcp-search" };
     const scrubbed = { server: "filesystem", adapter: "deepagents-config" };
+    const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
     const harness = createRebuildFlowHarness({
       agentName: "langchain-deepagents-code",
       sandboxEntry: makeDcodeSandboxEntry(),
@@ -104,6 +111,7 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
         entries: [detached],
         detachedProviderEntries: [detached],
         scrubbedAdapterEntries: [scrubbed],
+        runtimeSelection,
       },
     });
     configureDcodeSession(harness);
@@ -112,12 +120,15 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("the prepared DCode replacement inputs changed before deletion");
 
-    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      runtimeSelection,
+    );
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledWith(
       "alpha",
       [detached],
       [scrubbed],
-      undefined,
+      runtimeSelection,
     );
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();
