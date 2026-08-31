@@ -86,19 +86,14 @@ function makePendingStreamingBodyFetch(): {
   fetch: FetchLike;
   bodyStarted: Promise<void>;
   cancelRequested: Promise<void>;
-  finishCancellation: () => void;
 } {
   let markBodyStarted = () => {};
   let markCancelRequested = () => {};
-  let finishCancellation = () => {};
   const bodyStarted = new Promise<void>((resolve) => {
     markBodyStarted = resolve;
   });
   const cancelRequested = new Promise<void>((resolve) => {
     markCancelRequested = resolve;
-  });
-  const cancellationFinished = new Promise<void>((resolve) => {
-    finishCancellation = resolve;
   });
   const fetch: FetchLike = async () => ({
     ok: true,
@@ -109,14 +104,14 @@ function makePendingStreamingBodyFetch(): {
       },
       cancel() {
         markCancelRequested();
-        return cancellationFinished;
+        return new Promise<void>(() => {});
       },
     }),
     text: async () => {
       throw new Error("streaming response must not use text()");
     },
   });
-  return { fetch, bodyStarted, cancelRequested, finishCancellation };
+  return { fetch, bodyStarted, cancelRequested };
 }
 
 afterEach(() => vi.useRealTimers());
@@ -194,25 +189,13 @@ describe("fetchWechatQrSession", () => {
   });
 
   it("cancels while the QR response body is pending (#10606)", async () => {
-    const { fetch, bodyStarted, cancelRequested, finishCancellation } =
-      makePendingStreamingBodyFetch();
+    const { fetch, bodyStarted, cancelRequested } = makePendingStreamingBodyFetch();
     const controller = new AbortController();
 
     const pending = fetchWechatQrSession({ fetch, signal: controller.signal });
-    let settled = false;
-    void pending.then(
-      () => {
-        settled = true;
-      },
-      () => {
-        settled = true;
-      },
-    );
     await bodyStarted;
     controller.abort();
     await cancelRequested;
-    expect(settled).toBe(false);
-    finishCancellation();
 
     await expect(pending).rejects.toMatchObject({
       kind: "network",
@@ -365,8 +348,7 @@ describe("pollWechatQrStatus", () => {
 
   it("returns wait when a successful poll body reaches its timeout (#10606)", async () => {
     vi.useFakeTimers();
-    const { fetch, bodyStarted, cancelRequested, finishCancellation } =
-      makePendingStreamingBodyFetch();
+    const { fetch, bodyStarted, cancelRequested } = makePendingStreamingBodyFetch();
     const debugEvents: string[] = [];
 
     const pending = pollWechatQrStatus({
@@ -376,16 +358,10 @@ describe("pollWechatQrStatus", () => {
       timeoutMs: 1_000,
       onDebug: (event) => debugEvents.push(event),
     });
-    let settled = false;
-    void pending.then(() => {
-      settled = true;
-    });
     await bodyStarted;
     const resolved = expect(pending).resolves.toEqual({ status: "wait" });
     await vi.advanceTimersByTimeAsync(1_000);
     await cancelRequested;
-    expect(settled).toBe(false);
-    finishCancellation();
     await resolved;
     expect(debugEvents).toContain("poll abort (treated as wait)");
   });

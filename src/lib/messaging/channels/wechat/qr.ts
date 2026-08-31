@@ -122,26 +122,33 @@ function makeAbortError(): Error {
   return error;
 }
 
-async function rejectBodyReadOnAbort<T>(
+function requestBodyReadCancellation(cancel?: () => Promise<void>): void {
+  if (!cancel) return;
+  try {
+    void cancel().catch(() => {
+      // Preserve the request cancellation result.
+    });
+  } catch {
+    // Preserve the request cancellation result.
+  }
+}
+
+function rejectBodyReadOnAbort<T>(
   pending: Promise<T>,
   signal: AbortSignal,
   cancel?: () => Promise<void>,
 ): Promise<T> {
-  const abortAfterCleanup = async (): Promise<never> => {
-    try {
-      await cancel?.();
-    } catch {
-      // Preserve the request cancellation result.
-    }
-    throw makeAbortError();
-  };
-  if (signal.aborted) return await abortAfterCleanup();
+  if (signal.aborted) {
+    requestBodyReadCancellation(cancel);
+    return Promise.reject(makeAbortError());
+  }
   return new Promise((resolve, reject) => {
     let aborted = false;
     const onAbort = () => {
       aborted = true;
       signal.removeEventListener("abort", onAbort);
-      void abortAfterCleanup().catch(reject);
+      requestBodyReadCancellation(cancel);
+      reject(makeAbortError());
     };
     signal.addEventListener("abort", onAbort, { once: true });
     void pending.then(
@@ -194,7 +201,11 @@ async function readBoundedResponseText(
         chunks.push(value);
       }
     } finally {
-      reader.releaseLock();
+      try {
+        reader.releaseLock();
+      } catch (err) {
+        if (!signal.aborted) throw err;
+      }
     }
     const joined = new Uint8Array(bytes);
     let offset = 0;

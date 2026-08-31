@@ -73,6 +73,28 @@ function pendingBodyResponse(
   });
 }
 
+function pendingStreamingBodyResponse(
+  markBodyStarted: () => void,
+  markCancelRequested: () => void,
+): ReturnType<FetchLike> {
+  return Promise.resolve({
+    ok: true,
+    status: 200,
+    body: new ReadableStream<Uint8Array>({
+      start() {
+        markBodyStarted();
+      },
+      cancel() {
+        markCancelRequested();
+        return new Promise<void>(() => {});
+      },
+    }),
+    text: async () => {
+      throw new Error("streaming response must not use text()");
+    },
+  });
+}
+
 afterEach(() => vi.useRealTimers());
 
 describe("runWechatHostQrLogin", () => {
@@ -377,8 +399,12 @@ describe("runWechatHostQrLogin", () => {
   it("bounds a pending poll body by the remaining login deadline (#10606)", async () => {
     vi.useFakeTimers();
     let markBodyStarted = () => {};
+    let markCancelRequested = () => {};
     const bodyStarted = new Promise<void>((resolve) => {
       markBodyStarted = resolve;
+    });
+    const cancelRequested = new Promise<void>((resolve) => {
+      markCancelRequested = resolve;
     });
     const responses: Array<(init?: Parameters<FetchLike>[1]) => ReturnType<FetchLike>> = [
       async () => ({
@@ -386,7 +412,7 @@ describe("runWechatHostQrLogin", () => {
         status: 200,
         text: async () => JSON.stringify({ qrcode: "q", qrcode_img_content: "u" }),
       }),
-      pendingBodyResponse(markBodyStarted),
+      () => pendingStreamingBodyResponse(markBodyStarted, markCancelRequested),
     ];
     const fetch: FetchLike = async (_url, init) => await responses.shift()!(init);
 
@@ -400,6 +426,7 @@ describe("runWechatHostQrLogin", () => {
     await bodyStarted;
     const resolved = expect(login).resolves.toEqual({ kind: "timeout" });
     await vi.advanceTimersByTimeAsync(1_000);
+    await cancelRequested;
     await resolved;
   });
 
