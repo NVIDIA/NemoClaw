@@ -221,7 +221,8 @@ Run only one Ollama instance on port `11434` at a time.
 Windows-host Ollama requires Docker Desktop WSL integration.
 When NemoClaw detects native Docker Engine inside WSL, it labels the Windows-host actions as requiring Docker Desktop integration; selecting one prints remediation guidance and returns to the menu, or exits when onboarding runs non-interactively.
 
-WSL Ollama paths do not use the authenticated reverse proxy described below.
+Qualified WSL Ollama paths use Docker Desktop integration and do not use the authenticated reverse proxy described below.
+Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration before onboarding.
 
 ## Understand the Authenticated Proxy
 
