@@ -93,6 +93,7 @@ const trustedActionDirs = [
 const cliShardCount = "12";
 const cliShardTimeoutMinutes = 30;
 const dependencyInstallJobs = [
+  "compile-artifacts",
   "build-typecheck",
   "cli-tests",
   "installer-integration",
@@ -493,20 +494,23 @@ describe("pull request and main workflow contracts", () => {
     ["main", mainWorkflow, sharedActionPaths.compileArtifacts],
   ] as const;
 
-  // source-shape-contract: security -- Base-trusted build outputs must reach each shard without executing candidate workflow code
+  // source-shape-contract: security -- Base-trusted build outputs must reach test consumers without executing candidate workflow code
   it.each(trustedCompileArtifactCases)(
-    "passes trusted compile outputs to %s CLI coverage shards",
+    "restores trusted compiled inputs for %s test consumers",
     (_workflowName, workflow, expectedCompileAction) => {
+      const compileJob = workflow.jobs["compile-artifacts"];
       const buildJob = workflow.jobs["build-typecheck"];
       const shardJob = workflow.jobs["cli-test-shards"];
+      const buildNeeds = Array.isArray(buildJob.needs) ? buildJob.needs : [buildJob.needs];
       const shardNeeds = Array.isArray(shardJob.needs) ? shardJob.needs : [shardJob.needs];
 
-      expect(shardNeeds).toContain("build-typecheck");
+      expect(buildNeeds).toContain("compile-artifacts");
+      expect(shardNeeds).toContain("compile-artifacts");
       expect(
-        requiredWorkflowStep(buildJob, "Compile and verify CLI and plugin outputs").uses,
+        requiredWorkflowStep(compileJob, "Compile and verify CLI and plugin outputs").uses,
       ).toBe(expectedCompileAction);
 
-      const upload = requiredWorkflowStep(buildJob, "Upload compiled CLI and plugin artifact");
+      const upload = requiredWorkflowStep(compileJob, "Upload compiled test inputs");
       expect(upload.uses).toBe(
         "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
       );
@@ -515,36 +519,67 @@ describe("pull request and main workflow contracts", () => {
         "nemoclaw/dist",
       ]);
       expect(upload.with).toMatchObject({
-        name: "cli-build-output",
+        name: "compiled-test-inputs",
         "if-no-files-found": "error",
         "retention-days": 1,
       });
 
-      const download = requiredWorkflowStep(
-        shardJob,
-        "Download compiled CLI and plugin artifact",
-      );
-      expect(download.uses).toBe(
+      expect(buildJob.permissions?.actions).toBe("read");
+      const buildDownload = requiredWorkflowStep(buildJob, "Download compiled test inputs");
+      expect(buildDownload.uses).toBe(
         "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
       );
-      expect(download.with).toMatchObject({ name: "cli-build-output", path: "." });
+      expect(buildDownload.with).toMatchObject({ name: "compiled-test-inputs", path: "." });
       expect(
-        requiredWorkflowStepIndex(shardJob, "Download compiled CLI and plugin artifact"),
-      ).toBeLessThan(requiredWorkflowStepIndex(shardJob, "Run CLI coverage shard"));
+        requiredWorkflowStepIndex(buildJob, "Download compiled test inputs"),
+      ).toBeLessThan(
+        requiredWorkflowStepIndex(buildJob, "Run package-contract and type checks"),
+      );
 
+      expect(shardJob.permissions?.actions).toBe("read");
+      const shardDownload = requiredWorkflowStep(shardJob, "Download compiled test inputs");
+      expect(shardDownload.uses).toBe(
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      );
+      expect(shardDownload.with).toMatchObject({ name: "compiled-test-inputs", path: "." });
+
+      const verifyIndex = requiredWorkflowStepIndex(shardJob, "Verify compiled test inputs");
+      expect(
+        requiredWorkflowStepIndex(shardJob, "Download compiled test inputs"),
+      ).toBeLessThan(verifyIndex);
+      expect(verifyIndex).toBeLessThan(
+        requiredWorkflowStepIndex(shardJob, "Run CLI coverage shard"),
+      );
+      expect(requiredWorkflowStep(shardJob, "Verify compiled test inputs").run).toBe(
+        [
+          "test -s dist/nemoclaw.js",
+          "test -s dist/managed-inference/catalog.json",
+          "test -s nemoclaw/dist/index.js",
+          "test -s nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs",
+          "test -s nemoclaw/dist/shared/sandbox-name.cjs",
+        ].join("\n") + "\n",
+      );
+
+      const cliUpload = requiredWorkflowStep(compileJob, "Upload compiled CLI artifact");
+      expect(cliUpload.uses).toBe(
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      );
+      expect(cliUpload.with).toMatchObject({
+        name: "cli-build-output",
+        path: "dist",
+        "if-no-files-found": "error",
+        "retention-days": 1,
+      });
       const mergeDownload = requiredStep(
         sharedActions.cliCoverageMerge,
-        "Download compiled CLI and plugin artifact",
+        "Download compiled CLI artifact",
       );
       expect(mergeDownload.uses).toBe(
         "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
       );
-      expect(mergeDownload.with).toMatchObject({ name: "cli-build-output", path: "." });
+      expect(mergeDownload.with).toMatchObject({ name: "cli-build-output", path: "dist" });
       expect(
-        requiredStepIndex(
-          sharedActions.cliCoverageMerge,
-          "Download compiled CLI and plugin artifact",
-        ),
+        requiredStepIndex(sharedActions.cliCoverageMerge, "Download compiled CLI artifact"),
       ).toBeLessThan(
         requiredStepIndex(sharedActions.cliCoverageMerge, "Verify compiled CLI artifact"),
       );

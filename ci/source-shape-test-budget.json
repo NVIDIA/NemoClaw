@@ -198,7 +198,7 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
-      "test": "passes trusted compile outputs to %s CLI coverage shards",
+      "test": "restores trusted compiled inputs for %s test consumers",
       "category": "security"
     },
     {
