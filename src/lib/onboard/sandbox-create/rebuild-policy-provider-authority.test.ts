@@ -149,7 +149,7 @@ describe("rebuild policy provider handoff", () => {
     ]);
   });
 
-  it("does not authorize provider-shaped sandbox startup arguments", () => {
+  it("authorizes enabled messaging and managed MCP providers but rejects disabled channels", () => {
     expect(
       resolveRebuildPolicyProviderAuthority({
         createArgs: [
@@ -162,17 +162,6 @@ describe("rebuild policy provider handoff", () => {
           "--provider",
           "startup-only-provider",
         ],
-        messagingPlan: null,
-        preservedMcpState: undefined,
-        managedMcpRebuildHandoff: false,
-      }),
-    ).toEqual(["inference-provider"]);
-  });
-
-  it("authorizes enabled messaging and managed MCP providers but rejects disabled channels", () => {
-    expect(
-      resolveRebuildPolicyProviderAuthority({
-        createArgs: ["--from", "image", "--provider", "inference-provider"],
         messagingPlan: {
           disabledChannels: ["discord"],
           credentialBindings: [

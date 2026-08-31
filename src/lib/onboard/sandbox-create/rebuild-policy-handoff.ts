@@ -13,28 +13,13 @@ const REBUILD_POLICY_HANDOFF_PREFIX = "nemoclaw-rebuild-policy-handoff";
 
 type PolicyMapping = Record<string, unknown>;
 
-type RebuildPolicyCleanupFailure = {
-  readonly policyPath: string;
-  readonly cause: unknown;
-};
-
 export class RebuildPolicyCleanupError extends AggregateError {
-  readonly retainedPolicyPaths: readonly string[];
-
-  constructor(failures: readonly RebuildPolicyCleanupFailure[]) {
-    const errors = failures.map(
-      ({ policyPath, cause }) =>
-        new Error(`Temporary sandbox create policy '${policyPath}' could not be removed.`, {
-          cause,
-        }),
-    );
-    const retainedPolicyPaths = failures.map(({ policyPath }) => policyPath);
-    super(
-      errors,
-      `Temporary sandbox create policy cleanup failed for: ${retainedPolicyPaths.join(", ")}.`,
-    );
+  constructor(
+    readonly retainedPolicyPaths: readonly string[],
+    errors: readonly Error[],
+  ) {
+    super(errors, `Temporary sandbox create policy cleanup failed for: ${retainedPolicyPaths}.`);
     this.name = "RebuildPolicyCleanupError";
-    this.retainedPolicyPaths = retainedPolicyPaths;
   }
 }
 
@@ -44,21 +29,28 @@ function cleanupRebuildPolicySources(
     readonly cleanup: () => boolean;
   }[],
 ): boolean {
-  const failures: RebuildPolicyCleanupFailure[] = [];
+  const retainedPolicyPaths: string[] = [];
+  const errors: Error[] = [];
   for (const source of sources) {
     try {
       if (!source.cleanup()) {
-        failures.push({
-          policyPath: source.policyPath,
-          cause: new Error("Policy cleanup returned false."),
-        });
+        retainedPolicyPaths.push(source.policyPath);
+        errors.push(new Error(`Policy cleanup returned false for '${source.policyPath}'.`));
       }
     } catch (cause) {
-      failures.push({ policyPath: source.policyPath, cause });
+      retainedPolicyPaths.push(source.policyPath);
+      errors.push(new Error(`Policy cleanup failed for '${source.policyPath}'.`, { cause }));
     }
   }
-  if (failures.length > 0) throw new RebuildPolicyCleanupError(failures);
+  if (errors.length > 0) throw new RebuildPolicyCleanupError(retainedPolicyPaths, errors);
   return true;
+}
+
+function createIdentifiedPolicyCleanup(
+  policyPath: string,
+  cleanup: (() => boolean) | undefined,
+): (() => boolean) | undefined {
+  return cleanup ? () => cleanupRebuildPolicySources([{ policyPath, cleanup }]) : undefined;
 }
 
 function authorizedCredentialBindingProviders(
@@ -358,6 +350,14 @@ export function materializeRebuildPolicyHandoff(input: {
         input.authorizedCredentialBindingProviders ?? [],
       ),
       sourceBytes: Buffer.from(liveSource),
+      cleanup: createIdentifiedPolicyCleanup(
+        input.replacementPolicy.policyPath,
+        input.replacementPolicy.cleanup,
+      ),
+      cleanupExact: createIdentifiedPolicyCleanup(
+        input.replacementPolicy.policyPath,
+        input.replacementPolicy.cleanupExact,
+      ),
     };
   }
 

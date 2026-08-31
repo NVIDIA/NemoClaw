@@ -140,34 +140,18 @@ export function resolveRebuildPolicyProviderAuthority(input: {
   return [...providers];
 }
 
-export function createSandboxCreatePolicyDisclosure(input: {
-  readonly rebuildPolicySourcePath: string | null | undefined;
-  readonly disclose: (policy: import("../initial-policy").InitialSandboxPolicy) => void;
-}): {
-  readonly discloseGeneratedPolicy: (
-    policy: import("../initial-policy").InitialSandboxPolicy,
-  ) => void;
-  readonly discloseSelectedPolicy: (
-    policy: import("../initial-policy").InitialSandboxPolicy,
-  ) => void;
-} {
-  if (!input.rebuildPolicySourcePath) {
-    return {
-      discloseGeneratedPolicy: input.disclose,
-      discloseSelectedPolicy: () => undefined,
-    };
+function discloseSelectedRebuildPolicy(
+  rebuildPolicySourcePath: string | null | undefined,
+  policy: import("../initial-policy").InitialSandboxPolicy,
+  disclose: (selected: import("../initial-policy").InitialSandboxPolicy) => void,
+): void {
+  if (!rebuildPolicySourcePath) return;
+  try {
+    disclose(policy);
+  } catch (error) {
+    policy.cleanup?.();
+    throw error;
   }
-  return {
-    discloseGeneratedPolicy: () => undefined,
-    discloseSelectedPolicy: (policy) => {
-      try {
-        input.disclose(policy);
-      } catch (error) {
-        policy.cleanup?.();
-        throw error;
-      }
-    },
-  };
 }
 
 export function resolveRebuildMessagingPolicyDeltas(
@@ -2156,10 +2140,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
       );
     });
-    const sandboxCreatePolicyDisclosure = createSandboxCreatePolicyDisclosure({
-      rebuildPolicySourcePath: createIntent?.rebuildPolicySourcePath,
-      disclose: discloseInitialSandboxPolicy,
-    });
     const preparedOnboardLaunch =
       await managedWorkloadOnboard.prepareSelectedOnboardSandboxWorkloadLaunch(
         agentCreateInput.hermesPortableLifecycle,
@@ -2277,7 +2257,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 }),
               getHermesToolGatewayProviderName: (targetSandbox) =>
                 getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
-              discloseInitialSandboxPolicy: sandboxCreatePolicyDisclosure.discloseGeneratedPolicy,
+              discloseInitialSandboxPolicy: createIntent?.rebuildPolicySourcePath
+                ? () => undefined
+                : discloseInitialSandboxPolicy,
             },
             launchInput: {
               agent,
@@ -2370,7 +2352,11 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           rebuildPolicyProviderAuthority,
         )
       : materializedInitialSandboxPolicy;
-    sandboxCreatePolicyDisclosure.discloseSelectedPolicy(initialSandboxPolicy);
+    discloseSelectedRebuildPolicy(
+      createIntent?.rebuildPolicySourcePath,
+      initialSandboxPolicy,
+      discloseInitialSandboxPolicy,
+    );
     const createArgv = createIntent?.rebuildPolicySourcePath
       ? bindRebuildPolicyProvidersToCreateArgs(
           materializedCreateArgv.map((value, index, argv) =>
