@@ -8,6 +8,7 @@ import {
   type FakeDockerApi,
   runSandboxNode,
 } from "./messaging-providers-helpers.ts";
+import { MANAGED_NPM_PROJECT_DISCOVERY_SOURCE } from "./messaging-providers-managed-npm-project-discovery.ts";
 
 export type InstalledWechatRuntimeProof = {
   ok: true;
@@ -17,48 +18,12 @@ export type InstalledWechatRuntimeProof = {
   pluginVersion: string;
 };
 
-export const WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-
-function invariant(condition, message) {
-  if (!condition) throw new Error(message);
-}
-
+export const WECHAT_EXTENSION_DISCOVERY_SOURCE = String.raw`
 function packageName(candidate) {
   try {
     return JSON.parse(fs.readFileSync(path.join(candidate, "package.json"), "utf8")).name;
   } catch {
     return undefined;
-  }
-}
-
-// A managed npm project cache (materialized offline at image-build time) is a
-// valid runtime location even when the plugin was never promoted into
-// extensions/. messaging-providers-slack-runtime-proof.ts already relies on
-// this same discovery for Slack; WeChat needs the identical fallback.
-function addManagedNpmProjectWeixinCandidates(projectsDir, addCandidate) {
-  let entries;
-  try {
-    entries = fs.readdirSync(projectsDir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (!entry.isDirectory()) continue;
-    const projectRoot = path.join(projectsDir, entry.name);
-    let dependencies;
-    try {
-      dependencies = JSON.parse(
-        fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
-      ).dependencies;
-    } catch {
-      continue;
-    }
-    if (!dependencies || !Object.hasOwn(dependencies, "@tencent-weixin/openclaw-weixin")) continue;
-    addCandidate(path.join(projectRoot, "node_modules", "@tencent-weixin", "openclaw-weixin"));
   }
 }
 
@@ -74,11 +39,31 @@ function resolveWeixinExtensionRoot(stateDir) {
     }
   };
   addCandidate(path.join(stateDir, "extensions", "openclaw-weixin"));
-  addManagedNpmProjectWeixinCandidates(path.join(stateDir, "npm", "projects"), addCandidate);
+  addManagedNpmProjectPackageCandidates(
+    path.join(stateDir, "npm", "projects"),
+    "@tencent-weixin/openclaw-weixin",
+    ["@tencent-weixin", "openclaw-weixin"],
+    addCandidate,
+  );
   return (
     candidates.find((candidate) => packageName(candidate) === "@tencent-weixin/openclaw-weixin") ||
     null
   );
+}
+`;
+
+export const WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+${MANAGED_NPM_PROJECT_DISCOVERY_SOURCE}
+
+${WECHAT_EXTENSION_DISCOVERY_SOURCE}
+
+function invariant(condition, message) {
+  if (!condition) throw new Error(message);
 }
 
 function resolveOpenClawRoot() {

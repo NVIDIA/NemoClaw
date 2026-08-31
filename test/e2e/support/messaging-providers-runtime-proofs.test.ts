@@ -17,11 +17,12 @@ import {
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
 } from "../live/messaging-providers-helpers.ts";
+import { MANAGED_NPM_PROJECT_DISCOVERY_SOURCE } from "../live/messaging-providers-managed-npm-project-discovery.ts";
+import { parseInstalledSlackProof } from "../live/messaging-providers-slack-runtime-proof.ts";
 import {
-  parseInstalledSlackProof,
-  SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
-} from "../live/messaging-providers-slack-runtime-proof.ts";
-import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-runtime-proof.ts";
+  parseInstalledWechatProof,
+  WECHAT_EXTENSION_DISCOVERY_SOURCE,
+} from "../live/messaging-providers-wechat-runtime-proof.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
@@ -263,10 +264,12 @@ describe("messaging provider installed-runtime proofs", () => {
       const source = [
         'import fs from "node:fs";',
         'import path from "node:path";',
-        SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
+        MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
         "const candidates = [];",
-        "addManagedNpmProjectSlackCandidates(",
+        "addManagedNpmProjectPackageCandidates(",
         "  process.env.NEMOCLAW_TEST_PROJECTS_DIR,",
+        '  "@openclaw/slack",',
+        '  ["@openclaw", "slack"],',
         "  (candidate) => candidates.push(path.resolve(candidate)),",
         ");",
         "process.stdout.write(JSON.stringify(candidates));",
@@ -279,6 +282,64 @@ describe("messaging provider installed-runtime proofs", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual([path.resolve(slackPackageRoot)]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("finds WeChat in the managed npm project when the extension directory is absent", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-managed-project-"));
+    const stateDir = path.join(dir, ".openclaw");
+    const projectsDir = path.join(stateDir, "npm", "projects");
+    const wechatProject = path.join(projectsDir, "openclaw-wechat-reviewed");
+    const unrelatedProject = path.join(projectsDir, "unrelated-plugin");
+    const malformedProject = path.join(projectsDir, "malformed-plugin");
+    const wechatPackageRoot = path.join(
+      wechatProject,
+      "node_modules",
+      "@tencent-weixin",
+      "openclaw-weixin",
+    );
+
+    try {
+      fs.mkdirSync(wechatPackageRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(wechatProject, "package.json"),
+        JSON.stringify({ dependencies: { "@tencent-weixin/openclaw-weixin": "2.4.3" } }),
+      );
+      fs.writeFileSync(
+        path.join(wechatPackageRoot, "package.json"),
+        JSON.stringify({ name: "@tencent-weixin/openclaw-weixin" }),
+      );
+      fs.mkdirSync(
+        path.join(unrelatedProject, "node_modules", "@tencent-weixin", "openclaw-weixin"),
+        { recursive: true },
+      );
+      fs.writeFileSync(
+        path.join(unrelatedProject, "package.json"),
+        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.7.1" } }),
+      );
+      fs.mkdirSync(malformedProject, { recursive: true });
+      fs.writeFileSync(path.join(malformedProject, "package.json"), "not json");
+
+      const source = [
+        'import fs from "node:fs";',
+        'import path from "node:path";',
+        MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
+        WECHAT_EXTENSION_DISCOVERY_SOURCE,
+        "process.stdout.write(JSON.stringify(resolveWeixinExtensionRoot(",
+        "  process.env.NEMOCLAW_TEST_STATE_DIR,",
+        ")));",
+      ].join("\n");
+      const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
+        encoding: "utf8",
+        env: { ...process.env, NEMOCLAW_TEST_STATE_DIR: stateDir },
+        input: source,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toBe(path.resolve(wechatPackageRoot));
+      expect(fs.existsSync(path.join(stateDir, "extensions", "openclaw-weixin"))).toBe(false);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

@@ -8,6 +8,7 @@ import {
   type FakeDockerApi,
   runSandboxNode,
 } from "./messaging-providers-helpers.ts";
+import { MANAGED_NPM_PROJECT_DISCOVERY_SOURCE } from "./messaging-providers-managed-npm-project-discovery.ts";
 
 export type InstalledSlackRuntimeProof = {
   ok: true;
@@ -20,33 +21,6 @@ export type InstalledSlackRuntimeProof = {
   channelId: string;
 };
 
-export const SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE = String.raw`
-function addManagedNpmProjectSlackCandidates(projectsDir, addExternalCandidate) {
-  let entries;
-  try {
-    entries = fs.readdirSync(projectsDir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (!entry.isDirectory()) continue;
-    const projectRoot = path.join(projectsDir, entry.name);
-    let dependencies;
-    try {
-      dependencies = JSON.parse(
-        fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
-      ).dependencies;
-    } catch {
-      continue;
-    }
-    if (!dependencies || !Object.hasOwn(dependencies, "@openclaw/slack")) continue;
-    addExternalCandidate(
-      path.join(projectRoot, "node_modules", "@openclaw", "slack"),
-    );
-  }
-}
-`;
-
 export const SLACK_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -55,7 +29,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-${SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE}
+${MANAGED_NPM_PROJECT_DISCOVERY_SOURCE}
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
@@ -95,8 +69,10 @@ function resolveOpenClawSlackApiLocation() {
   };
   const openclawStateDir = process.env.OPENCLAW_STATE_DIR || "/sandbox/.openclaw";
   addExternalCandidate(path.join(openclawStateDir, "extensions", "slack"));
-  addManagedNpmProjectSlackCandidates(
+  addManagedNpmProjectPackageCandidates(
     path.join(openclawStateDir, "npm", "projects"),
+    "@openclaw/slack",
+    ["@openclaw", "slack"],
     addExternalCandidate,
   );
   addExternalCandidate(process.env.OPENCLAW_SLACK_PACKAGE_ROOT);
