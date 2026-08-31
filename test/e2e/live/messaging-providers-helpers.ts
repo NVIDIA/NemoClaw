@@ -620,17 +620,12 @@ export async function startFakeDockerApi(
   const network = uniqueContainerName("nemoclaw-fake-api-network");
   fs.writeFileSync(captureFile, "");
 
-  const networkCreate = await runHost(
-    host,
-    "docker",
-    ["network", "create", "--internal", network],
-    {
-      artifactName: `create-fake-${options.kind}-api-network`,
-      env: options.env,
-      redactionValues: options.redactionValues,
-      timeoutMs: 30_000,
-    },
-  );
+  const networkCreate = await runHost(host, "docker", ["network", "create", network], {
+    artifactName: `create-fake-${options.kind}-api-network`,
+    env: options.env,
+    redactionValues: options.redactionValues,
+    timeoutMs: 30_000,
+  });
   try {
     expectExitZero(networkCreate, `create fake ${options.kind} API network`);
   } catch (error) {

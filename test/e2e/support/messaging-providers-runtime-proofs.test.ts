@@ -6,8 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { type CommandRunner, HostCliClient } from "../fixtures/clients/index.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import {
   buildSandboxNodeInvocation,
@@ -16,6 +18,7 @@ import {
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
+  startFakeDockerApi,
 } from "../live/messaging-providers-helpers.ts";
 import {
   parseInstalledSlackProof,
@@ -26,6 +29,27 @@ import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-ru
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
 const FAKE_WECHAT_API = path.resolve(import.meta.dirname, "../lib/fake-wechat-api.mts");
+
+function shellResult(
+  command: readonly string[],
+  exitCode = 0,
+  stdout = "",
+  stderr = "",
+): ShellProbeResult {
+  return {
+    command: [...command],
+    exitCode,
+    signal: null,
+    timedOut: false,
+    stdout,
+    stderr,
+    artifacts: {
+      stdout: "/tmp/stdout.txt",
+      stderr: "/tmp/stderr.txt",
+      result: "/tmp/result.json",
+    },
+  };
+}
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -38,6 +62,71 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("publishes fake API ports through its cleanup-owned bridge network", async () => {
+    const run = vi.fn<CommandRunner["run"]>();
+    run.mockResolvedValueOnce(shellResult(["docker", "network", "create"]));
+    run.mockImplementationOnce(async (command) => {
+      const mount = command.args.find((argument) => argument.endsWith(":/tmp/fake"));
+      expect(mount).toBeDefined();
+      fs.writeFileSync(path.join(mount!.slice(0, -":/tmp/fake".length), "port"), "8080\n");
+      return shellResult([command.command, ...command.args]);
+    });
+    run.mockResolvedValueOnce(shellResult(["docker", "port"], 0, "0.0.0.0:49152\n"));
+    run.mockResolvedValueOnce(shellResult(["docker", "rm", "-f"]));
+    run.mockResolvedValueOnce(shellResult(["docker", "network", "rm"]));
+    const cleanup: Array<() => Promise<void>> = [];
+
+    const api = await startFakeDockerApi(
+      new HostCliClient({ run }),
+      (_name, run) => cleanup.push(run),
+      {
+        kind: "telegram",
+        imageScript: "fake-telegram-api.cjs",
+        containerPrefix: "nemoclaw-fake-telegram-test",
+        portEnv: "FAKE_TELEGRAM_API_PORT",
+        portFileEnv: "FAKE_TELEGRAM_API_PORT_FILE",
+        captureFileEnv: "FAKE_TELEGRAM_API_CAPTURE_FILE",
+        expectedEnv: { FAKE_TELEGRAM_API_EXPECTED_TOKEN: "fake-token" },
+        redactionValues: ["fake-token"],
+        env: {},
+      },
+    );
+
+    try {
+      const calls = run.mock.calls.map(([command]) => ({
+        command: command.command,
+        args: [...command.args],
+      }));
+      const networkCreate = calls.find(
+        (call) => call.command === "docker" && call.args[0] === "network",
+      );
+      expect(networkCreate?.args).toEqual([
+        "network",
+        "create",
+        expect.stringMatching(/^nemoclaw-fake-api-network-/u),
+      ]);
+      const networkName = networkCreate?.args[2];
+      const containerStart = calls.find(
+        (call) => call.command === "docker" && call.args[0] === "run",
+      );
+      expect(containerStart?.args).toEqual(expect.arrayContaining(["-p", "0:8080"]));
+      const networkOptionIndex = containerStart?.args.indexOf("--network") ?? -1;
+      expect(networkOptionIndex).toBeGreaterThan(-1);
+      expect(containerStart?.args[networkOptionIndex + 1]).toBe(networkName);
+      expect(api.port).toBe("49152");
+    } finally {
+      await cleanup.pop()?.();
+      await cleanup.pop()?.();
+    }
+
+    expect(
+      run.mock.calls.some(
+        ([command]) =>
+          command.command === "docker" && command.args[0] === "network" && command.args[1] === "rm",
+      ),
+    ).toBe(true);
+  });
+
   it("uses a synthetic WeChat token even when the host exports one", () => {
     const previousToken = process.env.WECHAT_BOT_TOKEN;
     process.env.WECHAT_BOT_TOKEN = "host-wechat-token-must-not-reach-the-fake-api";
