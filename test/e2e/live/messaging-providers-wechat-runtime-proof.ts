@@ -35,6 +35,52 @@ function packageName(candidate) {
   }
 }
 
+// A managed npm project cache (materialized offline at image-build time) is a
+// valid runtime location even when the plugin was never promoted into
+// extensions/. messaging-providers-slack-runtime-proof.ts already relies on
+// this same discovery for Slack; WeChat needs the identical fallback.
+function addManagedNpmProjectWeixinCandidates(projectsDir, addCandidate) {
+  let entries;
+  try {
+    entries = fs.readdirSync(projectsDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory()) continue;
+    const projectRoot = path.join(projectsDir, entry.name);
+    let dependencies;
+    try {
+      dependencies = JSON.parse(
+        fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"),
+      ).dependencies;
+    } catch {
+      continue;
+    }
+    if (!dependencies || !Object.hasOwn(dependencies, "@tencent-weixin/openclaw-weixin")) continue;
+    addCandidate(path.join(projectRoot, "node_modules", "@tencent-weixin", "openclaw-weixin"));
+  }
+}
+
+function resolveWeixinExtensionRoot(stateDir) {
+  const candidates = [];
+  const seen = new Set();
+  const addCandidate = (candidate) => {
+    if (!candidate) return;
+    const normalized = path.resolve(candidate);
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      candidates.push(normalized);
+    }
+  };
+  addCandidate(path.join(stateDir, "extensions", "openclaw-weixin"));
+  addManagedNpmProjectWeixinCandidates(path.join(stateDir, "npm", "projects"), addCandidate);
+  return (
+    candidates.find((candidate) => packageName(candidate) === "@tencent-weixin/openclaw-weixin") ||
+    null
+  );
+}
+
 function resolveOpenClawRoot() {
   const candidates = [
     "/usr/local/lib/node_modules/openclaw",
@@ -60,14 +106,10 @@ function resolveOpenClawRoot() {
 }
 
 const stateDir = process.env.OPENCLAW_STATE_DIR || "/sandbox/.openclaw";
-const extensionRoot = path.join(stateDir, "extensions", "openclaw-weixin");
-invariant(fs.existsSync(extensionRoot), "installed openclaw-weixin extension is missing");
+const extensionRoot = resolveWeixinExtensionRoot(stateDir);
+invariant(extensionRoot, "installed openclaw-weixin extension is missing");
 const pluginRoot = fs.realpathSync(extensionRoot);
 const pluginMetadata = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8"));
-invariant(
-  pluginMetadata.name === "@tencent-weixin/openclaw-weixin",
-  "installed extension is not @tencent-weixin/openclaw-weixin",
-);
 const openclawRoot = resolveOpenClawRoot();
 invariant(openclawRoot, "installed OpenClaw package root is missing");
 
