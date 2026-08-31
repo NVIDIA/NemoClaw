@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as agentDefs from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
-import * as shields from "../../shields";
+import * as mutableConfigPerms from "../../sandbox/mutable-config-perms";
 import * as registry from "../../state/registry";
 import * as messagingHostForward from "./messaging-host-forward-lifecycle";
 import * as processRecovery from "./process-recovery";
@@ -56,10 +56,10 @@ describe("rebuild post-restore phase", () => {
       order.push("config-hash-final");
       return true;
     });
-    vi.spyOn(shields, "repairMutableConfigPerms").mockReturnValue({
+    vi.spyOn(mutableConfigPerms, "repairMutableConfigPerms").mockReturnValue({
       applied: false,
-      reason: "not needed",
-      skipReason: "not-needed",
+      reason: "agent does not use this contract",
+      skipReason: "agent",
     } as never);
     vi.spyOn(rebuildMcp, "restoreMcpAfterRebuild").mockImplementation(async () => {
       order.push("mcp");
@@ -118,11 +118,8 @@ describe("rebuild post-restore phase", () => {
       failedPresetRemovals: [],
       policyPresetReconciliationVerified: true,
       staleRecovery: false,
-      recoveryRecreate: false,
       preparedBackupRecovery: false,
-      staleSandboxWasLocked: false,
       versionCheck: { expectedVersion: null } as never,
-      relockShieldsIfNeeded: vi.fn(() => true),
       log: vi.fn(),
       bail: vi.fn() as never,
     };
@@ -198,7 +195,7 @@ describe("rebuild post-restore phase", () => {
 
     expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
     expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).not.toHaveBeenCalled();
-    expect(shields.repairMutableConfigPerms).not.toHaveBeenCalled();
+    expect(mutableConfigPerms.repairMutableConfigPerms).not.toHaveBeenCalled();
     expect(rebuildHermesPostRestore.restartHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
     expect(rebuildHermesPostRestore.verifyHermesGatewayAfterStateRestore).not.toHaveBeenCalled();
     expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
@@ -216,22 +213,20 @@ describe("rebuild post-restore phase", () => {
   });
 
   it("stops rebuild when OpenClaw messaging config reapply fails", async () => {
-    vi.mocked(
-      rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor,
-    ).mockRejectedValue(new Error("config write failed"));
+    vi.mocked(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).mockRejectedValue(
+      new Error("config write failed"),
+    );
     const args = input();
 
     await runRebuildPostRestorePhase(args);
 
-    expect(shields.repairMutableConfigPerms).not.toHaveBeenCalled();
+    expect(mutableConfigPerms.repairMutableConfigPerms).not.toHaveBeenCalled();
     expect(rebuildMcp.restoreMcpAfterRebuild).not.toHaveBeenCalled();
     expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw messaging manifest config reapply failed during rebuild.",
     );
-    expect(args.log).toHaveBeenCalledWith(
-      "Messaging manifest reapply failed: config write failed",
-    );
+    expect(args.log).toHaveBeenCalledWith("Messaging manifest reapply failed: config write failed");
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain("Messaging manifest config reapply failed after doctor");
   });
@@ -265,7 +260,6 @@ describe("rebuild post-restore phase", () => {
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
     ).toHaveBeenCalledOnce();
     expect(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).toHaveBeenCalledTimes(2);
-    expect(args.relockShieldsIfNeeded).toHaveBeenCalledWith(true);
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw config integrity verification failed after rebuild.",
     );
@@ -647,20 +641,7 @@ describe("rebuild post-restore phase", () => {
     expect(output).toContain("Hermes API bearer token changed during rebuild");
   });
 
-  it("does not print the Hermes API token notice after a shields relock failure (#7175)", async () => {
-    agentName = "hermes";
-    const args = input();
-    args.relockShieldsIfNeeded = vi.fn(() => false);
-
-    await runRebuildPostRestorePhase(args);
-
-    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(output).not.toContain("Hermes API bearer token changed during rebuild");
-    expect(output).not.toContain("gateway-token --quiet");
-    expect(args.bail).toHaveBeenCalledWith("Failed to re-apply shields lockdown.");
-  });
-
-  it("reconciles the registry, relocks shields, then verifies host forwarding in that order (#8283)", async () => {
+  it("reconciles the registry before verifying host forwarding (#8283)", async () => {
     const observed: string[] = [];
     vi.mocked(registry.updateSandbox).mockImplementation(() => {
       observed.push("registry");
@@ -673,25 +654,11 @@ describe("rebuild post-restore phase", () => {
       },
     );
     const args = input();
-    args.relockShieldsIfNeeded = vi.fn(() => {
-      observed.push("relock");
-      return true;
-    });
 
     await runRebuildPostRestorePhase(args);
 
-    expect(observed).toEqual(["registry", "relock", "forward"]);
+    expect(observed).toEqual(["registry", "forward"]);
     expect(args.bail).not.toHaveBeenCalled();
-  });
-
-  it("leaves host forwarding unattempted when the shields relock fails (#8283)", async () => {
-    const args = input();
-    args.relockShieldsIfNeeded = vi.fn(() => false);
-
-    await runRebuildPostRestorePhase(args);
-
-    expect(messagingHostForward.ensureMessagingHostForwardAfterRebuild).not.toHaveBeenCalled();
-    expect(args.bail).toHaveBeenCalledWith("Failed to re-apply shields lockdown.");
   });
 
   it("names the connect recovery command when host forwarding is unverified (#8283)", async () => {
@@ -706,27 +673,15 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).not.toHaveBeenCalled();
   });
 
-  it("warns that a recreated sandbox starts unlocked when shields were previously enabled (#8283)", async () => {
-    const args = input();
-    args.recoveryRecreate = true;
-    args.staleSandboxWasLocked = true;
-
-    await runRebuildPostRestorePhase(args);
-
-    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).toContain(
-      "Shields were previously enabled but the recreated sandbox starts unlocked",
-    );
-  });
-
   it("prints every incomplete OpenClaw recovery report in a fixed order (#8283)", async () => {
     vi.mocked(
       rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
     ).mockReturnValue(false);
-    vi.mocked(shields.repairMutableConfigPerms).mockReturnValue({
-      applied: false,
-      reason: "config is unreadable",
-      skipReason: "unreadable",
-    } as never);
+    vi.mocked(mutableConfigPerms.repairMutableConfigPerms).mockReturnValue({
+      applied: true,
+      verified: false,
+      errors: ["config is unreadable"],
+    });
     vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
     vi.mocked(rebuildMcp.restoreMcpAfterRebuild).mockResolvedValue(false);
     const args = {
@@ -736,8 +691,6 @@ describe("rebuild post-restore phase", () => {
       failedPresets: ["messaging-telegram"],
       failedPresetRemovals: ["messaging-discord"],
       policyPresetReconciliationVerified: false,
-      recoveryRecreate: true,
-      staleSandboxWasLocked: true,
     };
 
     await runRebuildPostRestorePhase(args);
@@ -753,7 +706,6 @@ describe("rebuild post-restore phase", () => {
       "Mutable OpenClaw config hash was not refreshed",
       "Messaging webhook forward was not verified",
       "MCP bridge definitions were preserved but not fully refreshed",
-      "Shields were previously enabled",
     ];
     const offsets = ordered.map((fragment) => output.indexOf(fragment));
     expect(offsets.every((offset) => offset >= 0)).toBe(true);

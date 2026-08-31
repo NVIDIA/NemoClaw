@@ -10,7 +10,6 @@ import { expectNoSandboxDelete } from "../../../../test/helpers/rebuild-delete-a
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
-  snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-dcode-harness";
 
 describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
@@ -29,12 +28,10 @@ describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("the prepared DCode replacement inputs changed before deletion");
 
-    expect(harness.openShieldsSpy).toHaveBeenCalledOnce();
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
-    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       harness.preparedDcodeBuildContext,
     );
@@ -44,11 +41,7 @@ describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
       agentName: "langchain-deepagents-code",
       sandboxEntry: makeDcodeSandboxEntry(),
       dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }],
-      dcodeBaseImageIds: [
-        `sha256:${"a".repeat(64)}`,
-        `sha256:${"a".repeat(64)}`,
-        "sha256:changed",
-      ],
+      dcodeBaseImageIds: [`sha256:${"a".repeat(64)}`, `sha256:${"a".repeat(64)}`, "sha256:changed"],
     });
     configureDcodeSession(harness);
 
@@ -56,49 +49,12 @@ describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("the prepared DCode replacement inputs changed before deletion");
 
-    expect(harness.openShieldsSpy).toHaveBeenCalledOnce();
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
-    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       harness.preparedDcodeBuildContext,
     );
-  });
-  it("restores the prior gateway and disposes DCode inputs when shields opening throws (#6195)", async () => {
-    const restoreEnv = snapshotEnv(["OPENSHELL_GATEWAY"]);
-    process.env.OPENSHELL_GATEWAY = "previous-gateway";
-    let gatewayAtShields: string | undefined;
-
-    try {
-      const harness = createRebuildFlowHarness({
-        agentName: "langchain-deepagents-code",
-        sandboxEntry: makeDcodeSandboxEntry(),
-        dcodeRouteResults: [{ ok: true }, { ok: true }],
-        openShieldsWindow: () => {
-          gatewayAtShields = process.env.OPENSHELL_GATEWAY;
-          throw new Error("shields opening threw unexpectedly");
-        },
-      });
-      configureDcodeSession(harness);
-
-      await expect(
-        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).rejects.toThrow("shields opening threw unexpectedly");
-
-      expect(gatewayAtShields).toBe("nemoclaw");
-      expect(process.env.OPENSHELL_GATEWAY).toBe("previous-gateway");
-      expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
-      expect(harness.openShieldsSpy).toHaveBeenCalledOnce();
-      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-      expectNoSandboxDelete(harness.runOpenshellSpy);
-      expect(harness.onboardSpy).not.toHaveBeenCalled();
-      expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
-        harness.preparedDcodeBuildContext,
-      );
-    } finally {
-      restoreEnv();
-    }
   });
 });

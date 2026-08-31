@@ -21,7 +21,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 19 as const;
+export const RISK_PLAN_VERSION = 20 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -93,7 +93,6 @@ const HERMES_MANAGED_POLICY_E2E_JOB_IDS = [
   "dashboard-remote-bind",
   "hermes-e2e",
   "hermes-inference-switch",
-  "hermes-shields-config",
   "security-posture",
 ] as const;
 const HERMES_MANAGED_POLICY_FILES = new Set([
@@ -226,7 +225,7 @@ const MUTATION_FILE = /(?:upgrade|rebuild|snapshot|backup|restore)/;
 const INSTALL_SCRIPT = /^(?:install\.sh|scripts\/(?:install|setup|dev-setup)[^/]*\.(?:sh|js|ts))$/;
 const INFERENCE_POLICY_FILE = /(?:^|[/.-])(?:inference|network-policy)(?:[/.-]|$)/;
 const CREDENTIAL_SECURITY_FILE =
-  /(?:^|[/.-])(?:credential|credentials|secret|secrets|redact|redaction|ssrf|shields|security)(?:[/.-]|$)/i;
+  /(?:^|[/.-])(?:credential|credentials|secret|secrets|redact|redaction|ssrf|security)(?:[/.-]|$)/i;
 const E2E_CONTROL_PLANE_FILES = new Set([
   ".github/workflows/e2e.yaml",
   ".github/workflows/pr.yaml",
@@ -238,14 +237,14 @@ const E2E_CONTROL_PLANE_FILES = new Set([
   "tools/advisors/risk-plan.mts",
   "vitest.config.ts",
 ]);
-// These checked-in paths and directories are the source boundary for private-network,
-// policy, and shields enforcement but are not all covered by the token heuristics above.
+// These checked-in paths and directories are the source boundary for private-network
+// and policy enforcement but are not all covered by the token heuristics above.
 // Keep the explicit floor until a machine-readable security-owner catalog replaces it.
 const PRIVATE_NETWORK_BOUNDARY_FILES = new Set([
   "nemoclaw-blueprint/private-networks.yaml",
   "nemoclaw/src/blueprint/private-networks.ts",
 ]);
-const POLICY_SECURITY_FILE = /^src\/lib\/(?:policy|shields)\//;
+const POLICY_SECURITY_FILE = /^src\/lib\/policy\//;
 // Ordinary tests do not raise the runtime floor. These files either define a live
 // platform contract or produce the evidence consumed by the trusted PR gate.
 const RISK_RELEVANT_TEST_FILES = new Set([

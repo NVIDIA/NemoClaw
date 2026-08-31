@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock-acquisition";
+import { isMcpLifecycleLockHeld } from "../../state/mcp-lifecycle-lock/inspection";
 import type { SandboxEntry } from "../../state/registry/types";
 import {
   assertHermesPortableSandboxLifecycleAuthority,
@@ -71,12 +71,6 @@ const RAW_SANDBOX_NAME_COMMANDS = new Set([
 
 const MULTI_SANDBOX_LIFECYCLE_COMMANDS = new Set(["sandbox:snapshot:restore"]);
 
-const SANDBOX_COMMANDS_WITH_INTERNAL_LIFECYCLE_FENCE = new Set([
-  "sandbox:shields:down",
-  "sandbox:shields:status",
-  "sandbox:shields:up",
-]);
-
 const HERMES_PORTABLE_UNSUPPORTED_HOST_EFFECTS = new Set([
   "debug",
   "inference:get",
@@ -113,7 +107,7 @@ export function classifyHermesPortableCommand(
         ? "deny"
         : null,
     multiSandboxLifecycle: MULTI_SANDBOX_LIFECYCLE_COMMANDS.has(commandId),
-    ownsLifecycleFence: SANDBOX_COMMANDS_WITH_INTERNAL_LIFECYCLE_FENCE.has(commandId),
+    ownsLifecycleFence: false,
     rawSandboxName: RAW_SANDBOX_NAME_COMMANDS.has(commandId),
   };
 }

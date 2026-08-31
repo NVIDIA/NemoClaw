@@ -7,7 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const START_SCRIPT = path.join(import.meta.dirname, "..", "../../..", "scripts", "nemoclaw-start.sh");
+const START_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "../../..",
+  "scripts",
+  "nemoclaw-start.sh",
+);
 const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
 function extractShellFunction(name: string): string {
@@ -73,8 +79,6 @@ function runApplyModelOverride(
     "id() { echo 0; }",
     "chown() { return 0; }",
     `stat() { if [ "$1" = "-c" ] && [ "$2" = "%U" ] && [ "$3" = ${JSON.stringify(openclawDir)} ]; then echo sandbox; return 0; fi; command stat "$@"; }`,
-    'relax_config_for_write() { chmod 644 "$@"; }',
-    'lock_config_after_write() { chmod 444 "$@"; }',
     helperFns,
     fn,
     "apply_model_override",

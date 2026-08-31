@@ -43,11 +43,9 @@ import {
 import {
   assertHermesConfig,
   assertHermesInspectionRejectsUnmanagedFields,
-  assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout,
+  assertHermesManagedAddSurvivesGatewayRestartAndStateLayout,
   assertHermesReloadRollback,
   assertHermesRemovalSurvivesGatewayRestart,
-  lowerHermesShieldsForCleanup,
-  reopenHermesMcpMaintenanceWindow,
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import {
   assertMcpBridgeManagedImageReceipt,
@@ -1174,16 +1172,15 @@ mcpBridgeShardTest("hermes")(
         await assertHermesConfig(sandbox, HERMES_SANDBOX_NAME, mcpUrl);
         await assertHermesInspectionRejectsUnmanagedFields(sandbox, HERMES_SANDBOX_NAME);
         await assertSecretAbsentFromSandbox(sandbox, HERMES_SANDBOX_NAME, ["/sandbox/.hermes"]);
-        progress.phase("restore Hermes shields, restart, and prove rollback");
-        await assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout(
+        progress.phase("restart Hermes and prove config rollback");
+        await assertHermesManagedAddSurvivesGatewayRestartAndStateLayout(
           host,
           sandbox,
           HERMES_SANDBOX_NAME,
           mcpUrl,
         );
       },
-      runModelTurn: () =>
-        assertHermesToolCall("hermes-real-mcp-tool-call-immediately-after-shields-down"),
+      runModelTurn: () => assertHermesToolCall("hermes-real-mcp-tool-call-after-gateway-restart"),
     });
     await assertHermesReloadRollback(sandbox, HERMES_SANDBOX_NAME, mcpUrl);
     await assertSecretAbsentFromSandbox(
@@ -1238,9 +1235,6 @@ mcpBridgeShardTest("hermes")(
     await captureHermesGatewayIdentity(sandbox, "hermes-gateway-identity-before-rebuild");
     await rebuildWithoutMcpHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     await captureHermesGatewayIdentity(sandbox, "hermes-gateway-identity-after-mcp-restore");
-    cleanup.add("lower Hermes Shields before teardown", async () => {
-      await lowerHermesShieldsForCleanup(host, HERMES_SANDBOX_NAME);
-    });
     cleanup.add("capture Hermes post-rebuild MCP evidence", async () => {
       await artifacts.writeJson(
         "hermes-post-rebuild-mcp-requests.json",
@@ -1252,11 +1246,6 @@ mcpBridgeShardTest("hermes")(
           rpcMethod: request.rpcMethod,
         })),
       );
-      await host.nemoclaw([HERMES_SANDBOX_NAME, "shields", "status"], {
-        artifactName: "hermes-post-rebuild-shields-status",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 60_000,
-      });
       await sandbox.execShell(
         HERMES_SANDBOX_NAME,
         trustedSandboxShellScript(buildHermesMcpRuntimeDiagnosticsScript()),
@@ -1289,7 +1278,6 @@ mcpBridgeShardTest("hermes")(
       artifactName: "hermes-real-mcp-tool-call-after-rebuild",
       expectedSecret: ROTATED_HOST_SECRET,
     });
-    await reopenHermesMcpMaintenanceWindow(host, HERMES_SANDBOX_NAME);
     await removeBridgeAndAssertEmpty(host, sandbox, {
       agent: "hermes",
       adapter: "hermes-config",

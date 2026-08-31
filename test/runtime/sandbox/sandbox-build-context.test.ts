@@ -117,7 +117,6 @@ describe("sandbox build context staging", () => {
 
     writeFixture("Dockerfile");
     writeFixture("tsconfig.runtime-preloads.json", "{}\n");
-    writeFixture(path.join("agents", "openclaw", "state-lock-plan.json"), "{}\n");
     writeFixture(
       path.join("ci", "npm-audit-exceptions.json"),
       `${JSON.stringify({ schemaVersion: 1, exceptions: [] })}\n`,
@@ -229,7 +228,6 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "managed-bootstrap-trampoline.sh"));
     writeFixture(path.join("scripts", "gateway-control.sh"));
     writeFixture(path.join("scripts", "managed-gateway-control.py"));
-    writeFixture(path.join("scripts", "state-dir-guard.py"));
     writeFixture(path.join("scripts", "openclaw-config-guard.py"));
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.mts"));

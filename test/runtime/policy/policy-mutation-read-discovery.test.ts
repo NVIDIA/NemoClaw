@@ -14,36 +14,30 @@ import {
   discoverPolicyReadSites,
 } from "../../../scripts/checks/openshell-policy-mutation-read.mts";
 
-function createShieldsAuditFixture(source: string): string {
-  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-read-audit-"));
-  const sourcePath = path.join(repoRoot, "src", "lib", "shields", "index.ts");
+function createPolicyInventoryAuditFixture(source: string): string {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-read-audit-"));
+  const sourcePath = path.join(repoRoot, "src", "lib", "policy", "index.ts");
   fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
   fs.writeFileSync(sourcePath, source);
   return repoRoot;
 }
 
-function shieldsAuditSource(
-  downRead = "runCapture(buildPolicyGetCommand(sandboxName));",
+function policyInventoryAuditSource(
+  inventoryRead =
+    "runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true });",
   extraRead = "",
   aliasDeclaration = "",
-  ignoreErrors = true,
 ): string {
-  const downFunction = ignoreErrors
-    ? [
-        "function shieldsDownWithoutHostLock(sandboxName: string) {",
-        "  try {",
-        `    ${downRead}`,
-        "  } catch {",
-        "    return;",
-        "  }",
-        "}",
-      ]
-    : ["function shieldsDownWithoutHostLock(sandboxName: string) {", `  ${downRead}`, "}"];
   return [
     'const { buildPolicyGetCommand, buildPolicyGetFullCommand } = require("../policy");',
     'const { runCapture } = require("../runner");',
     aliasDeclaration,
-    ...downFunction,
+    "function getGatewayPresets(sandboxName: string) {",
+    "  function readPolicy() {",
+    `    ${inventoryRead}`,
+    "  }",
+    "  return readPolicy();",
+    "}",
     extraRead,
   ].join("\n");
 }
@@ -391,21 +385,21 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
     }
   });
 
-  it("rejects an aliased full read substituted at an approved Shields site", () => {
-    const source = shieldsAuditSource(
-      "runCapture(readPolicy(sandboxName));",
+  it("rejects an aliased base read substituted at the approved policy inventory site", () => {
+    const source = policyInventoryAuditSource(
+      "runCapture(readPolicyBuilder(sandboxName), { ignoreError: true });",
       "",
-      "const readPolicy = buildPolicyGetFullCommand;",
+      "const readPolicyBuilder = buildPolicyGetCommand;",
     );
-    const repoRoot = createShieldsAuditFixture(source);
+    const repoRoot = createPolicyInventoryAuditFixture(source);
 
     try {
       expect(
-        countPolicyReadCalls(source, path.join(repoRoot, "src/lib/shields/index.ts"), repoRoot),
+        countPolicyReadCalls(source, path.join(repoRoot, "src/lib/policy/index.ts"), repoRoot),
       ).toBe(1);
       expect(auditOpenShellPolicyMutationReads(repoRoot)).toEqual(
         expect.arrayContaining([
-          expect.stringContaining("shieldsDownWithoutHostLock (full, ignore-error)"),
+          expect.stringContaining("getGatewayPresets/readPolicy (base, ignore-error)"),
         ]),
       );
     } finally {
@@ -413,25 +407,25 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
     }
   });
 
-  it("rejects a destructured full builder substituted at an approved Shields site", () => {
-    const source = shieldsAuditSource(
-      "runCapture(readPolicy(sandboxName));",
+  it("rejects a destructured base builder substituted at the approved inventory site", () => {
+    const source = policyInventoryAuditSource(
+      "runCapture(readPolicyBuilder(sandboxName), { ignoreError: true });",
       "",
       [
         'const policyNamespace = require("../policy");',
         "const policyAlias = policyNamespace;",
-        "const { buildPolicyGetFullCommand: readPolicy } = policyAlias;",
+        "const { buildPolicyGetCommand: readPolicyBuilder } = policyAlias;",
       ].join("\n"),
     );
-    const repoRoot = createShieldsAuditFixture(source);
+    const repoRoot = createPolicyInventoryAuditFixture(source);
 
     try {
       expect(
-        countPolicyReadCalls(source, path.join(repoRoot, "src/lib/shields/index.ts"), repoRoot),
+        countPolicyReadCalls(source, path.join(repoRoot, "src/lib/policy/index.ts"), repoRoot),
       ).toBe(1);
       expect(auditOpenShellPolicyMutationReads(repoRoot)).toEqual(
         expect.arrayContaining([
-          expect.stringContaining("shieldsDownWithoutHostLock (full, ignore-error)"),
+          expect.stringContaining("getGatewayPresets/readPolicy (base, ignore-error)"),
         ]),
       );
     } finally {
@@ -439,22 +433,19 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
     }
   });
 
-  it("rejects error-preserving behavior substituted at an approved Shields site", () => {
-    const source = shieldsAuditSource(
-      "runCapture(buildPolicyGetCommand(sandboxName));",
-      "",
-      "",
-      false,
+  it("rejects error-preserving behavior substituted at the approved inventory site", () => {
+    const source = policyInventoryAuditSource(
+      "runCapture(buildPolicyGetFullCommand(sandboxName));",
     );
-    const repoRoot = createShieldsAuditFixture(source);
+    const repoRoot = createPolicyInventoryAuditFixture(source);
 
     try {
       expect(
-        countPolicyReadCalls(source, path.join(repoRoot, "src/lib/shields/index.ts"), repoRoot),
+        countPolicyReadCalls(source, path.join(repoRoot, "src/lib/policy/index.ts"), repoRoot),
       ).toBe(1);
       expect(auditOpenShellPolicyMutationReads(repoRoot)).toEqual(
         expect.arrayContaining([
-          expect.stringContaining("shieldsDownWithoutHostLock (base, error-preserving)"),
+          expect.stringContaining("getGatewayPresets/readPolicy (full, error-preserving)"),
         ]),
       );
     } finally {
@@ -462,8 +453,8 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
     }
   });
 
-  it("rejects moving a Shields read to an unapproved site without changing the count", () => {
-    const source = shieldsAuditSource(
+  it("rejects moving an inventory read to an unapproved site without changing the count", () => {
+    const source = policyInventoryAuditSource(
       "return;",
       [
         "function inspectAnotherPolicy(sandboxName: string) {",
@@ -471,11 +462,11 @@ describe("OpenShell policy mutation read discovery (#6921)", () => {
         "}",
       ].join("\n"),
     );
-    const repoRoot = createShieldsAuditFixture(source);
+    const repoRoot = createPolicyInventoryAuditFixture(source);
 
     try {
       expect(
-        countPolicyReadCalls(source, path.join(repoRoot, "src/lib/shields/index.ts"), repoRoot),
+        countPolicyReadCalls(source, path.join(repoRoot, "src/lib/policy/index.ts"), repoRoot),
       ).toBe(1);
       expect(auditOpenShellPolicyMutationReads(repoRoot)).toEqual(
         expect.arrayContaining([

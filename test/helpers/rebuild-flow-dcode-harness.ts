@@ -24,6 +24,7 @@ import {
   mcpBridge,
   messaging,
   messagingHostForwardLifecycle,
+  mutableConfigPerms,
   nim,
   onboardCredentialEnv,
   onboardSession,
@@ -41,7 +42,7 @@ import {
   rebuildMessagingConflict,
   rebuildOnboardDependencies,
   rebuildRoutePreflight,
-  rebuildShields,
+  removedImmutabilityMigration,
   registry,
   registryPersistence,
   registerHarnessRebuildBackup,
@@ -50,7 +51,6 @@ import {
   sandboxSession,
   sandboxState,
   sandboxVersion,
-  shields,
   snapshotEnv,
   sourceSandboxGateway,
 } from "./rebuild-flow-harness";
@@ -86,7 +86,7 @@ export type RebuildFlowOverrides = {
   restartSandboxGateway?: () => GatewayRestartResult;
   onboard?: (session: RebuildFlowSession) => Promise<void> | void;
   repairMutableConfigPerms?: () =>
-    | { applied: false; skipReason: "agent" | "locked" | "unreadable"; reason: string }
+    | { applied: false; skipReason: "agent"; reason: string }
     | { applied: true; verified: boolean; errors: string[] };
   restoreSandboxState?: () => {
     success: boolean;
@@ -119,7 +119,6 @@ export type RebuildFlowOverrides = {
   dcodeImageResult?:
     | { ok: true; prepared: Record<string, unknown> & { cleanupBuildCtx: () => boolean } }
     | { ok: false; detail: string };
-  openShieldsWindow?: () => { relocked: boolean; wasLocked: boolean } | null;
   preflightMessagingConflicts?: () => Promise<void> | void;
   preflightAuthoritativeRebuildTarget?: (options: Record<string, unknown>) => Promise<void> | void;
   revalidateRebuildRouteBeforeDelete?: (
@@ -156,7 +155,6 @@ export type RebuildFlowHarness = {
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   logSpy: MockInstance;
   finalizeIncompleteOnboardStepSpy: MockInstance;
-  openShieldsSpy: MockInstance;
   onboardSpy: MockInstance;
   preflightAuthoritativeRebuildTargetSpy: MockInstance;
   preflightMessagingConflictsSpy: MockInstance;
@@ -166,7 +164,8 @@ export type RebuildFlowHarness = {
   removeSandboxRegistryEntrySpy: MockInstance;
   registryUpdateSpy: MockInstance;
   releaseOnboardLockSpy: MockInstance;
-  relockSpy: MockInstance;
+  enforceRemovedImmutabilityMigrationBoundarySpy: MockInstance;
+  retireRemovedImmutabilityStateRecordSpy: MockInstance;
   restoreSandboxEntrySpy: MockInstance;
   restoreRegistryEntryIfMissingSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
@@ -188,11 +187,16 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   });
 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const retireRemovedImmutabilityStateRecordSpy = vi
+    .spyOn(removedImmutabilityMigration, "retireRemovedImmutabilityStateRecord")
+    .mockReturnValue(true);
+  const enforceRemovedImmutabilityMigrationBoundarySpy = vi
+    .spyOn(removedImmutabilityMigration, "enforceRemovedImmutabilityMigrationBoundary")
+    .mockReturnValue({ stateRecord: null, recoveryArtifacts: [] });
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
-  const rebuildShieldsWindow = { relocked: false, wasLocked: false };
   const agentName = overrides.agentName ?? "openclaw";
   const agentDisplayName =
     agentName === "langchain-deepagents-code"
@@ -476,16 +480,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(rebuildManagedImage, "verifyPreparedDcodeRebuildImage").mockImplementation(
     () => imageVerificationResults.shift() ?? true,
   );
-  const openShieldsSpy = vi
-    .spyOn(rebuildShields, "openRebuildShieldsWindow")
-    .mockImplementation(overrides.openShieldsWindow ?? (() => rebuildShieldsWindow));
-  const relockSpy = vi
-    .spyOn(rebuildShields, "relockRebuildShieldsWindow")
-    .mockImplementation((...args: unknown[]) => {
-      const window = args[1] as typeof rebuildShieldsWindow;
-      window.relocked = true;
-      return true;
-    });
   const backupPath = createHarnessTempDir("nemoclaw-rebuild-backup-");
   const backupManifest = {
     agentType: overrides.agentName ?? "openclaw",
@@ -730,11 +724,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           forwardRecovered: false,
         })),
     );
-  vi.spyOn(shields, "repairMutableConfigPerms").mockImplementation(
+  vi.spyOn(mutableConfigPerms, "repairMutableConfigPerms").mockImplementation(
     overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
   );
-  vi.spyOn(shields, "isShieldsDown").mockReturnValue(true);
-  vi.spyOn(shields, "clearShieldsState").mockImplementation(() => undefined);
   const messagingRebuildPlanSpy = vi
     .spyOn(messaging.MessagingWorkflowPlanner.prototype, "buildRebuildPlanFromSandboxEntry")
     .mockImplementation(overrides.buildMessagingRebuildPlan ?? (() => null));
@@ -792,7 +784,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     ensureMessagingHostForwardAfterRebuildSpy,
     logSpy,
     finalizeIncompleteOnboardStepSpy,
-    openShieldsSpy,
     onboardSpy,
     preflightAuthoritativeRebuildTargetSpy,
     preflightMessagingConflictsSpy,
@@ -802,7 +793,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     removeSandboxRegistryEntrySpy,
     registryUpdateSpy,
     releaseOnboardLockSpy,
-    relockSpy,
+    enforceRemovedImmutabilityMigrationBoundarySpy,
+    retireRemovedImmutabilityStateRecordSpy,
     restoreSandboxEntrySpy,
     restoreRegistryEntryIfMissingSpy,
     restoreSandboxStateSpy,

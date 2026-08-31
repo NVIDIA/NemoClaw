@@ -121,9 +121,7 @@ const EXDEV_TMPFS_DRIVER_CONFIG = JSON.stringify({
   },
 });
 const STOCK_OPENCLAW_POLICY_PATHS = [
-  path.join(REPO_ROOT, "agents", "openclaw", "policy-permissive.yaml"),
   path.join(REPO_ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-  path.join(REPO_ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"),
 ] as const;
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -340,7 +338,9 @@ test(
           (marker) => `${DELEGATED_CAPABILITY_COMMENT_PREFIX}${marker}`,
         ),
       );
-      expect(REQUIRED_OPENSHELL_MCP_FEATURES.every((marker) => wrapperSource.split(marker).length === 2)).toBe(true);
+      expect(
+        REQUIRED_OPENSHELL_MCP_FEATURES.every((marker) => wrapperSource.split(marker).length === 2),
+      ).toBe(true);
       expect(components).toEqual({
         cli: fs.realpathSync(delegate),
         gateway: fs.realpathSync(gateway),

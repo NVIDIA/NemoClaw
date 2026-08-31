@@ -12,7 +12,6 @@ import {
   type NativeRuntimeQualificationExpectedSource,
 } from "./native-qualification-authority";
 import {
-  RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION,
   type RuntimeProviderBundle,
   type RuntimeProviderBundleRegistry,
   type RuntimeProviderContainerEngineOperation,
@@ -68,7 +67,6 @@ export const RUNTIME_PROVIDER_ACTIVATION_ENGINE_SCOPES = [
   "gateway-inspection",
   "host-local-inference",
   "sandbox-lifecycle",
-  "state-mutation",
   "workload-cleanup",
 ] as const satisfies readonly RuntimeProviderContainerEngineOperation[];
 
@@ -407,7 +405,6 @@ function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
     "hostLocalInference",
     "lifecycle",
     "mutationAuthority",
-    "stateMutation",
     "bootstrap",
     "snapshot",
     "recovery",
@@ -482,14 +479,6 @@ function validateCompleteBundle(bundle: RuntimeProviderBundle): void {
     REQUIRED_MUTATIONS,
     `provider '${providerId}' mutation authority`,
   );
-  if (
-    bundle.stateMutation.supported !== true ||
-    bundle.stateMutation.contractVersion !== RUNTIME_PROVIDER_STATE_MUTATION_CONTRACT_VERSION
-  ) {
-    throw new RuntimeProviderActivationError(
-      `provider '${providerId}' has incomplete state-mutation authority`,
-    );
-  }
   if (
     bundle.snapshot.supported !== true ||
     bundle.snapshot.capabilities.backup !== true ||

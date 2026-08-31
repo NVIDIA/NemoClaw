@@ -66,7 +66,6 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     const [firstRouteOrder, preBackupRouteOrder, preMcpRouteOrder, deleteEdgeRouteOrder] =
       harness.preflightDcodeRouteSpy.mock.invocationCallOrder;
     const imageOrder = harness.prepareManagedDcodeRebuildImageSpy.mock.invocationCallOrder[0];
-    const shieldsOrder = harness.openShieldsSpy.mock.invocationCallOrder[0];
     const backupOrder = harness.backupSandboxStateSpy.mock.invocationCallOrder[0];
     const mcpPreparationOrder = harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0];
     const warningProbeOrder =
@@ -79,8 +78,7 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
 
     expect(firstRouteOrder).toBeLessThan(imageOrder);
     expect(imageOrder).toBeLessThan(preBackupRouteOrder);
-    expect(preBackupRouteOrder).toBeLessThan(shieldsOrder);
-    expect(shieldsOrder).toBeLessThan(backupOrder);
+    expect(preBackupRouteOrder).toBeLessThan(backupOrder);
     expect(backupOrder).toBeLessThan(preMcpRouteOrder);
     expect(preMcpRouteOrder).toBeLessThan(mcpPreparationOrder);
     expect(mcpPreparationOrder).toBeLessThan(warningProbeOrder);
@@ -120,6 +118,5 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     );
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();
-    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
   });
 });

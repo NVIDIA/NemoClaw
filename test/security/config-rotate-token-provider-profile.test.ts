@@ -12,7 +12,10 @@ import {
 type CaptureResult = ReturnType<RotateTokenDeps["captureOpenshellCommand"]>;
 type RunResult = ReturnType<RotateTokenDeps["runOpenshellCommand"]>;
 
-function loadRotateTokenFixture(input: { providerType: string; captureResults: CaptureResult[] }) {
+function loadRotateTokenFixture(input: {
+  providerType: string;
+  captureResults: CaptureResult[];
+}) {
   const queuedCaptureResults = [...input.captureResults];
   const captureOpenshellCommand = vi.fn(
     (_binary: string, _args: string[], _options?: unknown): CaptureResult =>
@@ -61,25 +64,38 @@ describe("config rotate-token OpenAI provider profile", () => {
     const fixture = loadRotateTokenFixture({
       providerType: "openai",
       captureResults: [
-        { status: 1, output: "", stdout: "", stderr: "provider profile not found" },
+        {
+          status: 1,
+          output: "",
+          stdout: "",
+          stderr: "provider profile not found",
+        },
         { status: 0, output: "Imported", stdout: "Imported", stderr: "" },
       ],
     });
 
     await rotateSandboxToken("rotate-profile-test", {}, fixture.deps);
 
-    expect(fixture.captureOpenshellCommand.mock.calls.map(([, args]) => args)).toEqual([
+    expect(
+      fixture.captureOpenshellCommand.mock.calls.map(([, args]) => args),
+    ).toEqual([
       ["provider", "profile", "export", "openai", "--output", "json"],
-      ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/u)],
+      [
+        "provider",
+        "profile",
+        "import",
+        "--file",
+        expect.stringMatching(/openai\.yaml$/u),
+      ],
     ]);
     expect(fixture.captureOpenshellCommand.mock.calls[0]?.[2]).toMatchObject({
       ignoreError: true,
       includeStreams: true,
       timeout: 30_000,
     });
-    expect(fixture.captureOpenshellCommand.mock.invocationCallOrder[1]).toBeLessThan(
-      fixture.saveCredential.mock.invocationCallOrder[0]!,
-    );
+    expect(
+      fixture.captureOpenshellCommand.mock.invocationCallOrder[1],
+    ).toBeLessThan(fixture.saveCredential.mock.invocationCallOrder[0]!);
     expect(fixture.saveCredential.mock.invocationCallOrder[0]).toBeLessThan(
       fixture.runOpenshellCommand.mock.invocationCallOrder[0]!,
     );
@@ -96,11 +112,18 @@ describe("config rotate-token OpenAI provider profile", () => {
     const fixture = loadRotateTokenFixture({
       providerType: "openai",
       captureResults: [
-        { status: 0, output: incompatibleProfile, stdout: incompatibleProfile, stderr: "" },
+        {
+          status: 0,
+          output: incompatibleProfile,
+          stdout: incompatibleProfile,
+          stderr: "",
+        },
       ],
     });
 
-    await expect(rotateSandboxToken("rotate-profile-test", {}, fixture.deps)).rejects.toThrow(
+    await expect(
+      rotateSandboxToken("rotate-profile-test", {}, fixture.deps),
+    ).rejects.toThrow(
       "does not match NemoClaw's endpointless inference contract",
     );
     expect(fixture.saveCredential).not.toHaveBeenCalled();
@@ -112,7 +135,12 @@ describe("config rotate-token OpenAI provider profile", () => {
     const fixture = loadRotateTokenFixture({
       providerType: "openai",
       captureResults: [
-        { status: 1, output: "", stdout: "", stderr: "provider profile not found" },
+        {
+          status: 1,
+          output: "",
+          stdout: "",
+          stderr: "provider profile not found",
+        },
         {
           status: 1,
           output: `import rejected: ${profileSecret}`,
@@ -137,15 +165,28 @@ describe("config rotate-token OpenAI provider profile", () => {
   });
 
   it("does not inspect the OpenAI profile for another provider type (#10155)", async () => {
-    const fixture = loadRotateTokenFixture({ providerType: "nvidia", captureResults: [] });
+    const fixture = loadRotateTokenFixture({
+      providerType: "nvidia",
+      captureResults: [],
+    });
 
     await rotateSandboxToken("rotate-profile-test", {}, fixture.deps);
 
     expect(fixture.captureOpenshellCommand).not.toHaveBeenCalled();
-    expect(fixture.saveCredential).toHaveBeenCalledWith("OPENAI_API_KEY", "rotation-secret");
+    expect(fixture.saveCredential).toHaveBeenCalledWith(
+      "OPENAI_API_KEY",
+      "rotation-secret",
+    );
     expect(fixture.runOpenshellCommand).toHaveBeenCalledOnce();
     expect(fixture.appendAuditEntry).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "rotate_token" }),
+      expect.objectContaining({
+        action: "rotate_token",
+        sandbox: "rotate-profile-test",
+        reason: "rotate-token openclaw:OPENAI_API_KEY",
+      }),
+    );
+    expect(JSON.stringify(fixture.appendAuditEntry.mock.calls)).not.toContain(
+      "rotation-secret",
     );
   });
 });

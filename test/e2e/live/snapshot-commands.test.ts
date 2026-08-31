@@ -59,19 +59,13 @@ const SOURCE_PAIRING_NEGATIVE_CONTROL_REQUEST = JSON.stringify({
   max_tokens: 1,
 });
 const OPENCLAW_MAIN_SESSION_STORE = "/sandbox/.openclaw/agents/main/sessions/sessions.json";
-const PROTECTED_CREDENTIALS_DIR = "/sandbox/.openclaw/credentials";
-const PROTECTED_CREDENTIAL_FILE = `${PROTECTED_CREDENTIALS_DIR}/backup-all-fixture.json`;
-const PROTECTED_CREDENTIAL_MARKER = "snapshot-backup-non-secret-marker";
-const PROTECTED_CREDENTIAL_FIXTURE = JSON.stringify({
+const CREDENTIALS_DIR = "/sandbox/.openclaw/credentials";
+const CREDENTIAL_FILE = `${CREDENTIALS_DIR}/backup-all-fixture.json`;
+const CREDENTIAL_MARKER = "snapshot-backup-non-secret-marker";
+const CREDENTIAL_FIXTURE = JSON.stringify({
   apiKey: INFERENCE_API_KEY,
-  marker: PROTECTED_CREDENTIAL_MARKER,
+  marker: CREDENTIAL_MARKER,
 });
-const SHIELDS_TIMER_FILE = path.join(
-  os.homedir(),
-  ".nemoclaw",
-  "state",
-  `shields-timer-${SANDBOX_NAME}.json`,
-);
 
 function commandEnv(
   inference?: SnapshotInferenceFixture,
@@ -203,16 +197,6 @@ process.exit(found === expected ? 0 : 1);
   expect(result.exitCode, resultText(result)).toBe(0);
 }
 
-async function expectShieldsUp(host: HostCliClient, artifactName: string): Promise<void> {
-  const result = await host.command("nemoclaw", [SANDBOX_NAME, "shields", "status"], {
-    artifactName,
-    env: commandEnv(),
-    timeoutMs: 60_000,
-  });
-  expect(result.exitCode, resultText(result)).toBe(0);
-  expect(result.stdout).toContain("Shields: UP");
-}
-
 async function onlySandboxContainerId(
   host: HostCliClient,
   sandboxName: string,
@@ -238,26 +222,6 @@ async function onlySandboxContainerId(
   const containerIds = result.stdout.split(/\r?\n/).filter(Boolean);
   expect(containerIds).toHaveLength(1);
   return containerIds[0] as string;
-}
-
-async function rootSandboxPathMetadata(
-  host: HostCliClient,
-  containerId: string,
-  targetPath: string,
-  artifactName: string,
-): Promise<{ mode: string; owner: string }> {
-  const result = await host.command(
-    "docker",
-    ["exec", "-u", "0", containerId, "stat", "-c", "%a %U:%G", targetPath],
-    {
-      artifactName,
-      env: commandEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  expect(result.exitCode, resultText(result)).toBe(0);
-  const [mode = "", owner = ""] = result.stdout.trim().split(/\s+/, 2);
-  return { mode, owner };
 }
 
 async function expectLiveBaselineExcluded(
@@ -311,7 +275,7 @@ test(
         "restore latest and timestamped snapshots",
         "audit snapshot credentials and command help",
         "back up a stopped sandbox and restore its snapshot",
-        "back up protected credentials and restore Shields",
+        "back up credential state without secret leaks",
         "record snapshot lifecycle evidence",
       ],
     },
@@ -338,7 +302,7 @@ test(
         "snapshot directory excludes credential-bearing env/json files",
         "snapshot help advertises create/list/restore",
         "strict backup-all starts a stopped Docker sandbox, creates a snapshot, and returns it to exited state",
-        "backup-all stores a sanitized copy of root-owned credentials, restores Shields UP, and does not store the API key",
+        "backup-all stores a sanitized copy of credential state and does not store the API key",
       ],
     });
 
@@ -988,11 +952,6 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
       },
     );
     expect(rebuildAfterStoppedBackup.exitCode, resultText(rebuildAfterStoppedBackup)).toBe(0);
-    const rebuiltContainerId = await onlySandboxContainerId(
-      host,
-      SANDBOX_NAME,
-      "phase-10-rebuilt-container-lookup",
-    );
     // Verify the full delivery chain before the test mutates and restores the stopped-sandbox backup.
     const recoveryStatus = await host.command("nemoclaw", [SANDBOX_NAME, "status", "--json"], {
       artifactName: "phase-10-recover-rebuilt-sandbox-delivery",
@@ -1044,117 +1003,63 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
       stoppedBackupTimestamp,
     });
 
-    progress.phase("back up protected credentials and restore Shields");
-    const writeProtectedCredential = await sandbox.exec(
+    progress.phase("back up credential state without secret leaks");
+    const writeCredential = await sandbox.exec(
       SANDBOX_NAME,
       [
         "sh",
         "-lc",
         'mkdir -p "$1" && printf %s "$2" >"$3"',
-        "write-protected-credential",
-        PROTECTED_CREDENTIALS_DIR,
-        PROTECTED_CREDENTIAL_FIXTURE,
-        PROTECTED_CREDENTIAL_FILE,
+        "write-credential-state",
+        CREDENTIALS_DIR,
+        CREDENTIAL_FIXTURE,
+        CREDENTIAL_FILE,
       ],
       {
-        artifactName: "phase-11-write-protected-credential",
+        artifactName: "phase-11-write-credential-state",
         env: commandEnv(),
         redactionValues: [INFERENCE_API_KEY],
         timeoutMs: 30_000,
       },
     );
-    expect(writeProtectedCredential.exitCode, resultText(writeProtectedCredential)).toBe(0);
+    expect(writeCredential.exitCode, resultText(writeCredential)).toBe(0);
 
-    const lockForProtectedBackup = await host.command("nemoclaw", [SANDBOX_NAME, "shields", "up"], {
-      artifactName: "phase-11-shields-up-before-protected-backup",
-      env: commandEnv(),
-      redactionValues: [INFERENCE_API_KEY],
-      timeoutMs: 120_000,
-    });
-    expect(lockForProtectedBackup.exitCode, resultText(lockForProtectedBackup)).toBe(0);
-    expect(resultText(lockForProtectedBackup)).toContain("Lockdown active");
-    cleanup.trackDisposable(`restore Shields UP for ${SANDBOX_NAME} before destroy`, async () => {
-      const restore = await host.command("nemoclaw", [SANDBOX_NAME, "shields", "up"], {
-        artifactName: "cleanup-shields-up-after-protected-backup",
-        env: commandEnv(),
-        redactionValues: [INFERENCE_API_KEY],
-        timeoutMs: 120_000,
-      });
-      expect(restore.exitCode, resultText(restore)).toBe(0);
-      expect(resultText(restore)).toMatch(/Lockdown (?:is already )?active/);
-    });
-    await expectShieldsUp(host, "phase-11-shields-status-before-protected-backup");
-
-    const protectedDirBeforeBackup = await rootSandboxPathMetadata(
-      host,
-      rebuiltContainerId,
-      PROTECTED_CREDENTIALS_DIR,
-      "phase-11-protected-credentials-dir-before-backup",
-    );
-    // Confidentiality roots remain search-only for the sandbox group; every
-    // descendant stays root-only and unreadable to the sandbox.
-    expect(protectedDirBeforeBackup).toEqual({ mode: "710", owner: "root:sandbox" });
-    const protectedFileBeforeBackup = await rootSandboxPathMetadata(
-      host,
-      rebuiltContainerId,
-      PROTECTED_CREDENTIAL_FILE,
-      "phase-11-protected-credential-file-before-backup",
-    );
-    expect(protectedFileBeforeBackup).toEqual({ mode: "600", owner: "root:root" });
-
-    const unreadableBeforeBackup = await sandbox.exec(
-      SANDBOX_NAME,
-      ["cat", PROTECTED_CREDENTIAL_FILE],
-      {
-        artifactName: "phase-11-protected-credential-unreadable-before-backup",
-        env: commandEnv(),
-        redactionValues: [INFERENCE_API_KEY],
-        timeoutMs: 30_000,
-      },
-    );
-    expect(unreadableBeforeBackup.exitCode, resultText(unreadableBeforeBackup)).not.toBe(0);
-    expect(resultText(unreadableBeforeBackup)).not.toContain(INFERENCE_API_KEY);
-
-    const snapshotsBeforeProtectedBackup = snapshotManifestDirectories();
-    const protectedBackup = await host.command("nemoclaw", ["backup-all"], {
-      artifactName: "phase-11-backup-all-protected-credentials",
+    const snapshotsBeforeCredentialBackup = snapshotManifestDirectories();
+    const credentialBackup = await host.command("nemoclaw", ["backup-all"], {
+      artifactName: "phase-11-backup-all-credential-state",
       env: { ...commandEnv(), NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS: "1" },
       redactionValues: [INFERENCE_API_KEY],
       timeoutMs: 180_000,
     });
-    expect(protectedBackup.exitCode, resultText(protectedBackup)).toBe(0);
-    expect(resultText(protectedBackup)).toContain("Shields are UP");
-    expect(resultText(protectedBackup)).toContain("temporarily unlocking for backup-all");
-    expect(resultText(protectedBackup)).toContain("Re-applying shields lockdown");
-    expect(resultText(protectedBackup)).toContain("Shields restored to UP");
-    expect(resultText(protectedBackup)).toContain("1 backed up, 0 failed, 0 skipped");
+    expect(credentialBackup.exitCode, resultText(credentialBackup)).toBe(0);
+    expect(resultText(credentialBackup)).toContain("1 backed up, 0 failed, 0 skipped");
 
-    const snapshotsAfterProtectedBackup = snapshotManifestDirectories();
-    const protectedBackupSnapshots = snapshotsAfterProtectedBackup.filter(
-      (entry) => !snapshotsBeforeProtectedBackup.includes(entry),
+    const snapshotsAfterCredentialBackup = snapshotManifestDirectories();
+    const credentialBackupSnapshots = snapshotsAfterCredentialBackup.filter(
+      (entry) => !snapshotsBeforeCredentialBackup.includes(entry),
     );
-    expect(protectedBackupSnapshots).toHaveLength(1);
-    const protectedBackupTimestamp = protectedBackupSnapshots[0] as string;
-    const protectedBackupPath = path.join(BACKUP_DIR, protectedBackupTimestamp);
-    const protectedBackupManifest = JSON.parse(
-      fs.readFileSync(path.join(protectedBackupPath, "rebuild-manifest.json"), "utf8"),
+    expect(credentialBackupSnapshots).toHaveLength(1);
+    const credentialBackupTimestamp = credentialBackupSnapshots[0] as string;
+    const credentialBackupPath = path.join(BACKUP_DIR, credentialBackupTimestamp);
+    const credentialBackupManifest = JSON.parse(
+      fs.readFileSync(path.join(credentialBackupPath, "rebuild-manifest.json"), "utf8"),
     ) as { sandboxName?: unknown; backedUpDirs?: unknown };
-    expect(protectedBackupManifest.sandboxName).toBe(SANDBOX_NAME);
-    expect(protectedBackupManifest.backedUpDirs).toEqual(
+    expect(credentialBackupManifest.sandboxName).toBe(SANDBOX_NAME);
+    expect(credentialBackupManifest.backedUpDirs).toEqual(
       expect.arrayContaining(["credentials", "workspace"]),
     );
-    expect(fs.existsSync(path.join(protectedBackupPath, "openclaw.json"))).toBe(true);
+    expect(fs.existsSync(path.join(credentialBackupPath, "openclaw.json"))).toBe(true);
     expect(
       fs.readFileSync(
-        path.join(protectedBackupPath, "workspace", path.basename(MARKER_FILE)),
+        path.join(credentialBackupPath, "workspace", path.basename(MARKER_FILE)),
         "utf8",
       ),
     ).toBe(markerContent);
 
     const backedUpCredentialPath = path.join(
-      protectedBackupPath,
+      credentialBackupPath,
       "credentials",
-      path.basename(PROTECTED_CREDENTIAL_FILE),
+      path.basename(CREDENTIAL_FILE),
     );
     const backedUpCredentialText = fs.readFileSync(backedUpCredentialPath, "utf8");
     const backedUpCredential = JSON.parse(backedUpCredentialText) as {
@@ -1162,40 +1067,9 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
       marker?: unknown;
     };
     expect(backedUpCredential.apiKey).toBe("[STRIPPED_BY_MIGRATION]");
-    expect(backedUpCredential.marker).toBe(PROTECTED_CREDENTIAL_MARKER);
+    expect(backedUpCredential.marker).toBe(CREDENTIAL_MARKER);
     expect(backedUpCredentialText).not.toContain(INFERENCE_API_KEY);
-    expect(scanSnapshotCredentialLeaks(protectedBackupPath)).toEqual([]);
-
-    await expectShieldsUp(host, "phase-11-shields-status-after-protected-backup");
-    expect(
-      await rootSandboxPathMetadata(
-        host,
-        rebuiltContainerId,
-        PROTECTED_CREDENTIALS_DIR,
-        "phase-11-protected-credentials-dir-after-backup",
-      ),
-    ).toEqual({ mode: "710", owner: "root:sandbox" });
-    expect(
-      await rootSandboxPathMetadata(
-        host,
-        rebuiltContainerId,
-        PROTECTED_CREDENTIAL_FILE,
-        "phase-11-protected-credential-file-after-backup",
-      ),
-    ).toEqual({ mode: "600", owner: "root:root" });
-    const unreadableAfterBackup = await sandbox.exec(
-      SANDBOX_NAME,
-      ["cat", PROTECTED_CREDENTIAL_FILE],
-      {
-        artifactName: "phase-11-protected-credential-unreadable-after-backup",
-        env: commandEnv(),
-        redactionValues: [INFERENCE_API_KEY],
-        timeoutMs: 30_000,
-      },
-    );
-    expect(unreadableAfterBackup.exitCode, resultText(unreadableAfterBackup)).not.toBe(0);
-    expect(resultText(unreadableAfterBackup)).not.toContain(INFERENCE_API_KEY);
-    expect(fs.existsSync(SHIELDS_TIMER_FILE)).toBe(false);
+    expect(scanSnapshotCredentialLeaks(credentialBackupPath)).toEqual([]);
 
     progress.phase("record snapshot lifecycle evidence");
     await artifacts.target.complete({
@@ -1206,7 +1080,7 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
       cloneSandboxName: CLONE_SANDBOX_NAME,
       cloneRestoreResult,
       stoppedBackupTimestamp,
-      protectedBackupTimestamp,
+      credentialBackupTimestamp,
       backupDir: BACKUP_DIR,
     });
   },

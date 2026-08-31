@@ -13,10 +13,7 @@ import {
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../../state/registry/types";
 import * as sandboxState from "../../../state/sandbox";
-import {
-  privilegedSandboxExecArgv,
-  withPrivilegedSandboxExecutionLease,
-} from "../../../sandbox/privileged-exec";
+import { privilegedSandboxExecArgv } from "../../../sandbox/privileged-exec";
 import { sanitizeReadinessText } from "../../../readiness/sanitize";
 import { readManagedSnapshotProfileAuthority } from "./managed-profile";
 import { captureSandboxRuntimeSnapshot } from "./provider-lifecycle";
@@ -166,57 +163,51 @@ export function captureOpenClawStateFile(
     return null;
   }
   try {
-    return withPrivilegedSandboxExecutionLease(
+    const argv = privilegedSandboxExecArgv(
       sandboxName,
-      "OpenClaw config snapshot capture",
-      () => {
-        const argv = privilegedSandboxExecArgv(
-          sandboxName,
-          [
-            "/usr/bin/python3",
-            "-I",
-            "-S",
-            "-c",
-            OPENCLAW_CONFIG_CAPTURE_SCRIPT,
-            OPENCLAW_CONFIG_DIRECTORY,
-            OPENCLAW_CONFIG_NAME,
-          ],
-          false,
-          true,
-        );
-        const result = dockerSpawnSync(argv, {
-          encoding: null,
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS,
-          maxBuffer: OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER,
-        });
-        const protocolFailure = captureFailureProtocol(result.stderr);
-        if (
-          result.status === 2 &&
-          result.signal === null &&
-          !result.error &&
-          protocolFailure === "missing"
-        ) {
-          return { outcome: "missing" };
-        }
-        if (
-          result.status !== 0 ||
-          result.signal !== null ||
-          result.error ||
-          !Buffer.isBuffer(result.stdout)
-        ) {
-          const primaryDetail =
-            result.error?.message ??
-            (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
-          const stderrDetail = protocolFailure
-            ? `reason ${protocolFailure}`
-            : captureFailureDiagnostic(result.stderr);
-          const detail = stderrDetail ? `${primaryDetail}; ${stderrDetail}` : primaryDetail;
-          return { outcome: "failed", error: `privileged config capture failed: ${detail}` };
-        }
-        return { outcome: "backed_up", data: result.stdout };
-      },
+      [
+        "/usr/bin/python3",
+        "-I",
+        "-S",
+        "-c",
+        OPENCLAW_CONFIG_CAPTURE_SCRIPT,
+        OPENCLAW_CONFIG_DIRECTORY,
+        OPENCLAW_CONFIG_NAME,
+      ],
+      false,
+      true,
     );
+    const result = dockerSpawnSync(argv, {
+      encoding: null,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: OPENCLAW_CONFIG_CAPTURE_TIMEOUT_MS,
+      maxBuffer: OPENCLAW_CONFIG_CAPTURE_MAX_BUFFER,
+    });
+    const protocolFailure = captureFailureProtocol(result.stderr);
+    if (
+      result.status === 2 &&
+      result.signal === null &&
+      !result.error &&
+      protocolFailure === "missing"
+    ) {
+      return { outcome: "missing" };
+    }
+    if (
+      result.status !== 0 ||
+      result.signal !== null ||
+      result.error ||
+      !Buffer.isBuffer(result.stdout)
+    ) {
+      const primaryDetail =
+        result.error?.message ??
+        (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
+      const stderrDetail = protocolFailure
+        ? `reason ${protocolFailure}`
+        : captureFailureDiagnostic(result.stderr);
+      const detail = stderrDetail ? `${primaryDetail}; ${stderrDetail}` : primaryDetail;
+      return { outcome: "failed", error: `privileged config capture failed: ${detail}` };
+    }
+    return { outcome: "backed_up", data: result.stdout };
   } catch (error) {
     return {
       outcome: "failed",

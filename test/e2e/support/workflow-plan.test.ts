@@ -355,15 +355,6 @@ describe("E2E workflow plan", () => {
       },
     ],
     [
-      "hermes-shields-config",
-      {
-        profile: "standard",
-        runnerKey: "hermes-shields-config",
-        hostPreparation: "hermes-swap",
-        runnerComparison: true,
-      },
-    ],
-    [
       "skill-agent",
       {
         profile: "nvidia-inference",

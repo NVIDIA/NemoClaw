@@ -91,7 +91,10 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
   ): void {
     const realFstatSync = fs.fstatSync.bind(fs);
     const runtimeInode = fs.lstatSync(runtimeEnvironmentFile, { bigint: true }).ino;
-    vi.spyOn(fs, "fstatSync").mockImplementation(((descriptor: number, options: { bigint: true }) => {
+    vi.spyOn(fs, "fstatSync").mockImplementation(((
+      descriptor: number,
+      options: { bigint: true },
+    ) => {
       const stat = realFstatSync(descriptor, options);
       const isRuntimeDescriptor = stat.ino === runtimeInode;
       const ownership = new Map<PropertyKey, unknown>([
@@ -572,19 +575,17 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
     expect(fs.statSync(target).mode & 0o777).toBe(0o640);
   });
 
-  it("preserves a root-owned shields-up Hermes descriptor without chmod", () => {
+  it("rejects a root-owned read-only Hermes descriptor", () => {
     const directory = temporaryDirectory();
     const target = path.join(directory, ".env");
     fs.writeFileSync(target, "OPENAI_API_KEY=managed\n", { mode: 0o444 });
     mockDescriptorOwnership(0n, 0n);
-    const chmod = vi.spyOn(fs, "fchmodSync");
-
-    normalizeHermesManagedConfigDescriptor(target, {
-      uid: 501,
-      gid: 20,
-    });
-
-    expect(chmod).not.toHaveBeenCalled();
+    expect(() =>
+      normalizeHermesManagedConfigDescriptor(target, {
+        uid: 501,
+        gid: 20,
+      }),
+    ).toThrow(/unexpected Hermes managed config descriptor/u);
     expect(fs.readFileSync(target, "utf8")).toBe("OPENAI_API_KEY=managed\n");
   });
 

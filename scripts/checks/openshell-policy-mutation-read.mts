@@ -80,13 +80,6 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
       unclassifiedFull("inspectBlueprintPolicy"),
     ],
   },
-  {
-    relativePath: "src/lib/shields/index.ts",
-    expectedReads: [
-      preservingBase("applyShieldsPolicySnapshot"),
-      ignoredBase("shieldsDownWithoutHostLock"),
-    ],
-  },
 ];
 
 const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [

@@ -215,10 +215,9 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(compatibilityInstall.indexOf("/usr/local/bin/uv pip install")).toBeLessThan(
       compatibilityInstall.indexOf("import hindsight_client"),
     );
-    expect(dockerfile).toContain("state-dir-guard.py lock");
+    expect(dockerfile).not.toContain("state-dir-guard.py");
     expect(dockerfile).toContain("--reuid=gateway --regid=gateway --init-groups");
-    expect(dockerfile).toContain("gateway can modify locked Hermes lazy packages");
-    expect(dockerfile).toContain("sandbox can modify locked Hermes lazy packages");
+    expect(dockerfile).not.toContain("locked Hermes lazy packages");
     expect(dockerfile).toContain(
       `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"`,
     );

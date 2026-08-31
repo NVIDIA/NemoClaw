@@ -982,7 +982,6 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       bail: vi.fn((message: string): never => {
         throw new Error(message);
       }),
-      relockShieldsIfNeeded: vi.fn(() => true),
       onDeleted,
     });
 
@@ -1058,7 +1057,6 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
         bail: vi.fn((message: string): never => {
           throw new Error(message);
         }),
-        relockShieldsIfNeeded: vi.fn(() => true),
         onDeleted,
       }),
     ).rejects.toThrow("Failed to delete sandbox.");

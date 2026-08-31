@@ -23,6 +23,7 @@ import {
   mcpBridge,
   messaging,
   messagingHostForwardLifecycle,
+  mutableConfigPerms,
   nim,
   onboardCredentialEnv,
   onboardSession,
@@ -38,7 +39,7 @@ import {
   rebuildOnboardDependencies,
   rebuildPreparedImageContext,
   rebuildRoutePreflight,
-  rebuildShields,
+  removedImmutabilityMigration,
   rebuildUsageNotice,
   registry,
   registryPersistence,
@@ -48,7 +49,6 @@ import {
   sandboxSession,
   sandboxState,
   sandboxVersion,
-  shields,
   sourceSandboxGateway,
 } from "./rebuild-flow-harness";
 
@@ -68,6 +68,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const retireRemovedImmutabilityStateRecordSpy = vi
+    .spyOn(removedImmutabilityMigration, "retireRemovedImmutabilityStateRecord")
+    .mockReturnValue(true);
+  const enforceRemovedImmutabilityMigrationBoundarySpy = vi
+    .spyOn(removedImmutabilityMigration, "enforceRemovedImmutabilityMigrationBoundary")
+    .mockReturnValue({ stateRecord: null, recoveryArtifacts: [] });
   const backupPath = createHarnessTempDir("nemoclaw-rebuild-backup-");
   let latestValidatedRecoveryManifest: Record<string, unknown> | null = null;
   vi.spyOn(policyGet, "getSandboxPolicy").mockReturnValue({
@@ -75,7 +81,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   });
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
-  const rebuildShieldsWindow = { relocked: false, wasLocked: false };
   let policyAdditionsPath: string | null = null;
   if (typeof overrides.agentPolicyAdditionsContent === "string") {
     const policyDir = createHarnessTempDir("nemoclaw-rebuild-agent-policy-");
@@ -410,14 +415,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       }
     );
   });
-  vi.spyOn(rebuildShields, "openRebuildShieldsWindow").mockReturnValue(rebuildShieldsWindow);
-  const relockSpy = vi
-    .spyOn(rebuildShields, "relockRebuildShieldsWindow")
-    .mockImplementation((...args: unknown[]) => {
-      const window = args[1] as typeof rebuildShieldsWindow;
-      window.relocked = true;
-      return true;
-    });
   const backupSandboxStateSpy = vi
     .spyOn(sandboxState, "backupSandboxState")
     .mockImplementation(() => {
@@ -653,12 +650,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           forwardRecovered: false,
         })),
     );
-  vi.spyOn(shields, "repairMutableConfigPerms").mockImplementation(
+  vi.spyOn(mutableConfigPerms, "repairMutableConfigPerms").mockImplementation(
     overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
-  );
-  vi.spyOn(shields, "isShieldsDown").mockReturnValue(true);
-  vi.spyOn(shields, "clearShieldsState").mockImplementation(
-    overrides.clearShieldsState ?? (() => undefined),
   );
   const messagingRebuildPlanSpy = vi
     .spyOn(messaging.MessagingWorkflowPlanner.prototype, "buildRebuildPlanFromSandboxEntry")
@@ -728,7 +721,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       defaultSelectionRevision: currentDefaultSelectionRevision,
     }),
     releaseOnboardLockSpy,
-    relockSpy,
+    enforceRemovedImmutabilityMigrationBoundarySpy,
+    retireRemovedImmutabilityStateRecordSpy,
     restoreSandboxStateSpy,
     captureOpenshellSpy,
     runOpenshellSpy,

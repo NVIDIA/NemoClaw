@@ -34,7 +34,6 @@ import {
   type SandboxBaseImageResolutionMetadata,
   type TrustedLocalBaseImageOverride,
 } from "../../sandbox-base-image";
-import * as shields from "../../shields";
 import type { SandboxEntry } from "../../state/registry";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
@@ -44,7 +43,6 @@ import {
   printSandboxGatewayStateHint,
   printWrongGatewayActiveGuidance,
 } from "./gateway-state";
-import { openRebuildShieldsWindow, type RebuildShieldsWindow } from "./rebuild-shields";
 import * as snapshotBackup from "./snapshot/backup-authority";
 
 export { removeStaleRebuildDockerOrphan } from "../../onboard/openshell-docker-sandbox-containers";
@@ -256,22 +254,6 @@ export async function resolveRebuildLiveState(
   return null;
 }
 
-export function openRebuildShieldsWindowForState(
-  sandboxName: string,
-  recoveryRecreate: boolean,
-): { rebuildShieldsWindow: RebuildShieldsWindow | null; staleSandboxWasLocked: boolean } {
-  if (recoveryRecreate) {
-    return {
-      staleSandboxWasLocked: !shields.isShieldsDown(sandboxName),
-      rebuildShieldsWindow: { relocked: false, wasLocked: false },
-    };
-  }
-  return {
-    staleSandboxWasLocked: false,
-    rebuildShieldsWindow: openRebuildShieldsWindow(sandboxName, CLI_NAME),
-  };
-}
-
 export function ensureRebuildAgentBaseImage(
   rebuildAgent: string | null,
   bail: (msg: string, code?: number) => never,
@@ -457,7 +439,6 @@ export function backupSandboxStateForRebuild(
   sb: RebuildSandboxEntry,
   staleRecovery: boolean,
   log: (msg: string) => void,
-  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean,
   bail: (msg: string, code?: number) => never,
 ): sandboxState.RebuildManifest | null | undefined {
   if (staleRecovery) return null;
@@ -519,7 +500,6 @@ export function backupSandboxStateForRebuild(
       console.error("  It is excluded from snapshot restore selection.");
     }
     console.error("  Aborting rebuild to prevent data loss.");
-    relockShieldsIfNeeded(true);
     bail("Failed to back up sandbox state.");
     return undefined;
   }
@@ -527,7 +507,6 @@ export function backupSandboxStateForRebuild(
   if (!backupManifest) {
     console.error("  Failed to record backup metadata.");
     console.error("  Aborting rebuild to prevent data loss.");
-    relockShieldsIfNeeded(true);
     bail("Failed to record backup metadata.");
     return undefined;
   }

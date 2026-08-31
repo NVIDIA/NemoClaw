@@ -251,9 +251,9 @@ describe("rebuildSandbox flow: recovery", () => {
       persistedManifest.rebuildPolicyHandoff.file,
     );
     expect(fs.readFileSync(handoffPath, "utf8")).toBe(policyDocument);
-    expect(fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
-      true,
-    );
+    expect(
+      fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json")),
+    ).toBe(true);
     let recreatedPolicy = "";
     const restarted = createRebuildFlowHarness({
       staleRecovery: true,
@@ -274,9 +274,9 @@ describe("rebuildSandbox flow: recovery", () => {
 
     expect(recreatedPolicy).toBe(policyDocument);
     expect(fs.existsSync(handoffPath)).toBe(false);
-    expect(fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json"))).toBe(
-      false,
-    );
+    expect(
+      fs.existsSync(path.join(interrupted.backupPath, ".nemoclaw-rebuild-recovery.json")),
+    ).toBe(false);
   });
 
   function restartFromJournaledSource(probes: readonly (string | null)[], checkpoint: unknown) {
@@ -451,7 +451,6 @@ describe("rebuildSandbox flow: recovery", () => {
     expect(harness.errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("MCP bridge restore incomplete: MCP restore boom"),
     );
-    expect(harness.relockSpy).toHaveBeenCalled();
   });
 
   it("aborts before backup/delete when messaging manifest staging fails", async () => {
@@ -565,9 +564,9 @@ describe("rebuildSandbox flow: recovery", () => {
       sandboxEntry: {},
       executeSandboxCommand: () => ({ status: 1, stdout: "", stderr: "hash refresh failed" }),
       repairMutableConfigPerms: () => ({
-        applied: false,
-        skipReason: "unreadable",
-        reason: "cannot stat mutable config",
+        applied: true,
+        verified: false,
+        errors: ["cannot stat mutable config"],
       }),
       restoreSandboxState: () => ({
         success: false,
@@ -587,7 +586,6 @@ describe("rebuildSandbox flow: recovery", () => {
     expect(output).toContain("State restore was incomplete");
     expect(output).toContain("Mutable config permissions were not verified");
     expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
-    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });

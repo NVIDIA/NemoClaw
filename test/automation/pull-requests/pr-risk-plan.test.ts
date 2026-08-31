@@ -48,7 +48,6 @@ const HERMES_MANAGED_POLICY_JOBS = [
   "dashboard-remote-bind",
   "hermes-e2e",
   "hermes-inference-switch",
-  "hermes-shields-config",
   "security-posture",
 ];
 const HERMES_CLI_ADAPTER_REQUIRED_JOBS = [
@@ -60,7 +59,6 @@ const HERMES_MANAGED_POLICY_REQUIRED_JOBS = [
   "bedrock-runtime-compatible-anthropic",
   "channels-stop-start",
   "dashboard-remote-bind",
-  "hermes-shields-config",
 ];
 const HERMES_WRAPPER_FOCUSED_JOBS = [
   "bedrock-runtime-compatible-anthropic",
@@ -68,7 +66,6 @@ const HERMES_WRAPPER_FOCUSED_JOBS = [
   "dashboard-remote-bind",
   "hermes-e2e",
   "hermes-inference-switch",
-  "hermes-shields-config",
   "mcp-bridge",
   "security-posture",
 ];
@@ -108,7 +105,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(19);
+    expect(first.version).toBe(20);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -886,16 +883,6 @@ describe("deterministic PR risk plan", () => {
       file: "nemoclaw/src/blueprint/private-networks.ts",
       families: ["inference-policy", "credentials-security"],
       jobs: ["inference-routing", "network-policy", "cloud-inference", "security-posture"],
-    },
-    {
-      file: "src/lib/shields/mcp-policy-transition.ts",
-      families: ["credentials-security"],
-      jobs: ["cloud-inference", "security-posture"],
-    },
-    {
-      file: "src/lib/shields/verify-lock.ts",
-      families: ["credentials-security"],
-      jobs: ["cloud-inference", "security-posture"],
     },
   ])("keeps the $file security boundary in the deterministic floor", ({ file, families, jobs }) => {
     const result = plan(file);

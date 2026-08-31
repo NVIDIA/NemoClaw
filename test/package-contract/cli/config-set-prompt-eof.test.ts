@@ -15,18 +15,14 @@ const OPENSHELL_PATH = JSON.stringify(
   path.join(REPO_ROOT, "dist", "lib", "adapters", "openshell", "client.js"),
 );
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"));
-const SHIELDS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "shields", "index.js"));
-const SHIELDS_AUDIT_PATH = JSON.stringify(
-  path.join(REPO_ROOT, "dist", "lib", "shields", "audit.js"),
-);
-const TIMER_BOUND_LOCK_PATH = JSON.stringify(
-  path.join(REPO_ROOT, "dist", "lib", "shields", "timer-bound-lock.js"),
-);
 const LIFECYCLE_LOCK_PATH = JSON.stringify(
   path.join(REPO_ROOT, "dist", "lib", "state", "mcp-lifecycle-lock.js"),
 );
+const LIFECYCLE_LOCK_ACQUISITION_PATH = JSON.stringify(
+  path.join(REPO_ROOT, "dist", "lib", "state", "mcp-lifecycle-lock-acquisition.js"),
+);
 const CONFIG_LOCK_PATH = JSON.stringify(
-  path.join(REPO_ROOT, "dist", "lib", "shields", "openclaw-config-lock.js"),
+  path.join(REPO_ROOT, "dist", "lib", "sandbox", "openclaw-config-guard.js"),
 );
 const PRIVILEGED_EXEC_PATH = JSON.stringify(
   path.join(REPO_ROOT, "dist", "lib", "sandbox", "privileged-exec.js"),
@@ -59,33 +55,28 @@ function runConfigSetWithInput(input: string) {
     "  }),",
     "  runOpenshellCommand: () => ({ status: 0 }),",
     "});",
-    "install(" + SHIELDS_PATH + ", {",
-    "  isShieldsDown: () => true,",
-    "});",
-    "install(" + SHIELDS_AUDIT_PATH + ", {",
-    "  appendAuditEntry: () => undefined,",
-    "});",
-    "install(" + TIMER_BOUND_LOCK_PATH + ", {",
-    "  withTimerBoundShieldsMutationLock: (_sandboxName, _command, callback) => callback(),",
-    "});",
     "install(" + LIFECYCLE_LOCK_PATH + ", {",
+    "  withMcpLifecycleLock: async (_sandboxName, callback) => callback(),",
     "  withSandboxMutationLock: (_sandboxName, callback) => callback(),",
+    "});",
+    "install(" + LIFECYCLE_LOCK_ACQUISITION_PATH + ", {",
+    "  isMcpLifecycleLockHeld: () => true,",
+    "  withMcpLifecycleLock: async (_sandboxName, callback) => callback(),",
+    "  withMcpLifecycleLockSync: (_sandboxName, callback) => callback(),",
     "});",
     "install(" + CONFIG_LOCK_PATH + ", {",
     "  validateOpenClawConfigCandidate: () => [],",
-    "  runOpenClawConfigGuard: (_privileged, _action, options) => ({",
+    "  writeOpenClawConfigCandidate: (_privileged, input) => ({",
     "    issues: [],",
-    "    chattrApplied: true,",
     '    configSha256: require("node:crypto")',
     '      .createHash("sha256")',
-    '      .update(options.input || "")',
+    '      .update(input || "")',
     '      .digest("hex"),',
     "  }),",
     "});",
     "install(" + PRIVILEGED_EXEC_PATH + ", {",
     '  privilegedSandboxExecArgv: () => ["docker", "exec", "container-id"],',
     '  resolveDirectSandboxContainer: () => "container-id",',
-    "  withPrivilegedSandboxExecutionLease: (_sandboxName, _operation, callback) => callback(),",
     "});",
     "",
     'Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });',

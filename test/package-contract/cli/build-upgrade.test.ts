@@ -23,6 +23,37 @@ const PREVIOUS_COMMAND_SOURCE_MAP = "dist/commands/deploy.js.map";
 const PREVIOUS_ACTION_ARTIFACT = "dist/lib/actions/deploy.js";
 const PREVIOUS_ACTION_DECLARATION_MAP = "dist/lib/actions/deploy.d.ts.map";
 const PREVIOUS_IMPLEMENTATION_ARTIFACT = "dist/lib/deploy/index.js";
+const RETIRED_ARTIFACT_PRUNER = "scripts/lib/prune-retired-build-artifacts.mts";
+const RETIRED_CLI_ARTIFACTS = [
+  "dist/lib/actions/sandbox/agent/connect-shields-relock-notice.js",
+  "dist/lib/actions/sandbox/agent/passthrough-shields-warning.js.map",
+  "dist/lib/actions/sandbox/backup-shields-window.d.ts",
+  "dist/lib/actions/sandbox/rebuild-shields-phase.d.ts.map",
+  "dist/lib/actions/sandbox/rebuild-shields.js",
+  "dist/lib/domain/duration.js.map",
+  "dist/lib/onboard/runtime-provider/container-state-mutation.d.ts",
+  "dist/lib/onboard/runtime-provider/docker-state-mutation.d.ts.map",
+  "dist/lib/onboard/runtime-provider/persisted-engine-lifecycle.js",
+  "dist/lib/onboard/runtime-provider/podman-state-mutation.js.map",
+  "dist/lib/onboard/runtime-provider/state-mutation.d.ts",
+  "dist/lib/state/mcp-lifecycle-lock/shields-timer-authority.d.ts.map",
+  "dist/commands/sandbox/shields/up.js",
+  "dist/lib/shields/index.js",
+  "nemoclaw/dist/commands/shields-status.js",
+] as const;
+
+function copyRetiredArtifactPruner(fixtureRoot: string): void {
+  const fixturePruner = path.join(fixtureRoot, RETIRED_ARTIFACT_PRUNER);
+  mkdirSync(path.dirname(fixturePruner), { recursive: true });
+  copyFileSync(path.join(REPOSITORY_ROOT, RETIRED_ARTIFACT_PRUNER), fixturePruner);
+}
+
+function writeArtifact(root: string, relativePath: string): string {
+  const artifactPath = path.join(root, relativePath);
+  mkdirSync(path.dirname(artifactPath), { recursive: true });
+  writeFileSync(artifactPath, "export {};\n");
+  return artifactPath;
+}
 
 describe("CLI source-checkout upgrade build", () => {
   it("prunes compiled deploy artifacts before the normal build (#10572)", () => {
@@ -36,6 +67,7 @@ describe("CLI source-checkout upgrade build", () => {
         path.join(REPOSITORY_ROOT, "tsconfig.src.json"),
         path.join(fixtureRoot, "tsconfig.src.json"),
       );
+      copyRetiredArtifactPruner(fixtureRoot);
       writeFileSync(path.join(fixtureRoot, ".source-revision"), `${"a".repeat(40)}\n`);
 
       symlinkSync(path.join(REPOSITORY_ROOT, "bin"), path.join(fixtureRoot, "bin"), "junction");
@@ -102,6 +134,19 @@ describe("CLI source-checkout upgrade build", () => {
       writeFileSync(previousActionPath, "module.exports = {};\n");
       writeFileSync(previousActionDeclarationMapPath, "{}\n");
       writeFileSync(previousImplementationPath, "module.exports = {};\n");
+      const previousShieldsCommandPath = writeArtifact(
+        fixtureRoot,
+        "dist/commands/sandbox/shields/up.js",
+      );
+      const previousShieldsLibraryPath = writeArtifact(fixtureRoot, "dist/lib/shields/index.js");
+      const previousPluginShieldsCommandPath = writeArtifact(
+        fixtureRoot,
+        "nemoclaw/dist/commands/shields-status.js",
+      );
+      const preservedBuildArtifact = writeArtifact(
+        fixtureRoot,
+        "dist/lib/actions/sandbox/current-output.js",
+      );
 
       const staleMetadataPath = path.join(
         fixtureRoot,
@@ -130,6 +175,10 @@ describe("CLI source-checkout upgrade build", () => {
         false,
       );
       expect(existsSync(previousImplementationPath), PREVIOUS_IMPLEMENTATION_ARTIFACT).toBe(false);
+      expect(existsSync(previousShieldsCommandPath)).toBe(false);
+      expect(existsSync(previousShieldsLibraryPath)).toBe(false);
+      expect(existsSync(previousPluginShieldsCommandPath)).toBe(false);
+      expect(existsSync(preservedBuildArtifact)).toBe(true);
       const routing = spawnSync(
         process.execPath,
         [
@@ -158,4 +207,92 @@ describe("CLI source-checkout upgrade build", () => {
       rmSync(fixtureRoot, { force: true, recursive: true });
     }
   }, 150_000);
+
+  it.each(RETIRED_CLI_ARTIFACTS)(
+    "prunes the retired output %s without broad dist cleanup (#10696)",
+    (retiredArtifact) => {
+      const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-shields-cli-upgrade-build-"));
+      try {
+        copyFileSync(
+          path.join(REPOSITORY_ROOT, "package.json"),
+          path.join(fixtureRoot, "package.json"),
+        );
+        copyRetiredArtifactPruner(fixtureRoot);
+
+        const retiredArtifactPath = writeArtifact(fixtureRoot, retiredArtifact);
+        const preservedCliArtifact = writeArtifact(
+          fixtureRoot,
+          "dist/lib/actions/sandbox/current-output.js",
+        );
+        const preservedPluginArtifact = writeArtifact(
+          fixtureRoot,
+          "nemoclaw/dist/commands/current-command.js",
+        );
+
+        const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+        const prune = spawnSync(npmExecutable, ["run", "prune:retired-cli"], {
+          cwd: fixtureRoot,
+          encoding: "utf8",
+          env: process.env,
+          timeout: 30_000,
+        });
+        expect(prune.status, `${prune.stdout}\n${prune.stderr}`).toBe(0);
+
+        expect(existsSync(retiredArtifactPath), retiredArtifact).toBe(false);
+        expect(existsSync(preservedCliArtifact)).toBe(true);
+        expect(existsSync(preservedPluginArtifact)).toBe(true);
+      } finally {
+        rmSync(fixtureRoot, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it("prunes only the retired Shields plugin command during an in-place build (#10696)", () => {
+    const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-shields-plugin-upgrade-build-"));
+    const pluginRoot = path.join(fixtureRoot, "nemoclaw");
+    try {
+      mkdirSync(pluginRoot, { recursive: true });
+      copyFileSync(
+        path.join(REPOSITORY_ROOT, "nemoclaw", "package.json"),
+        path.join(pluginRoot, "package.json"),
+      );
+      copyFileSync(
+        path.join(REPOSITORY_ROOT, "nemoclaw", "tsconfig.json"),
+        path.join(pluginRoot, "tsconfig.json"),
+      );
+      copyRetiredArtifactPruner(fixtureRoot);
+      symlinkSync(
+        path.join(REPOSITORY_ROOT, "nemoclaw", "node_modules"),
+        path.join(pluginRoot, "node_modules"),
+        "junction",
+      );
+      writeArtifact(pluginRoot, "src/index.ts");
+
+      const retiredJavaScript = writeArtifact(pluginRoot, "dist/commands/shields-status.js");
+      const retiredJavaScriptMap = writeArtifact(pluginRoot, "dist/commands/shields-status.js.map");
+      const retiredDeclaration = writeArtifact(pluginRoot, "dist/commands/shields-status.d.ts");
+      const retiredDeclarationMap = writeArtifact(
+        pluginRoot,
+        "dist/commands/shields-status.d.ts.map",
+      );
+      const preservedArtifact = writeArtifact(pluginRoot, "dist/commands/current-command.js");
+
+      const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+      const build = spawnSync(npmExecutable, ["run", "build"], {
+        cwd: pluginRoot,
+        encoding: "utf8",
+        env: process.env,
+        timeout: 30_000,
+      });
+      expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0);
+
+      expect(existsSync(retiredJavaScript)).toBe(false);
+      expect(existsSync(retiredJavaScriptMap)).toBe(false);
+      expect(existsSync(retiredDeclaration)).toBe(false);
+      expect(existsSync(retiredDeclarationMap)).toBe(false);
+      expect(existsSync(preservedArtifact)).toBe(true);
+    } finally {
+      rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
 });

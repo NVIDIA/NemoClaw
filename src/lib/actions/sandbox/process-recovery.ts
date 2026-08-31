@@ -29,9 +29,8 @@ import {
   isDirectSandboxFallbackUnavailableError,
   isPinnedSandboxContainerIdentityChangedError,
   privilegedSandboxExecArgv,
-  withPrivilegedSandboxExecutionLease,
 } from "../../sandbox/privileged-exec";
-import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
+import { withMcpLifecycleLockSync } from "../../state/mcp-lifecycle-lock-acquisition";
 import * as registry from "../../state/registry";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import {
@@ -133,7 +132,6 @@ function commandTransportDependencies(): CommandTransportDependencies {
     openshellProbeTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
     privilegedSandboxExecArgv,
     root: ROOT,
-    withPrivilegedSandboxExecutionLease,
   };
 }
 
@@ -190,26 +188,20 @@ export function executePrivilegedSandboxCommand(
   command: readonly string[],
   timeout: number,
 ): SandboxCommandResult | null {
-  return withPrivilegedSandboxExecutionLease(
-    sandboxName,
-    "sandbox process recovery controller",
-    () => {
-      const argv = privilegedSandboxExecArgv(sandboxName, [...command], false, true);
-      const result = dockerSpawnSync(argv, {
-        cwd: ROOT,
-        encoding: "utf-8",
-        env: buildSubprocessEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout,
-      });
-      if (result.error) return null;
-      return {
-        status: result.status ?? 1,
-        stdout: String(result.stdout || ""),
-        stderr: String(result.stderr || ""),
-      };
-    },
-  );
+  const argv = privilegedSandboxExecArgv(sandboxName, [...command], false, true);
+  const result = dockerSpawnSync(argv, {
+    cwd: ROOT,
+    encoding: "utf-8",
+    env: buildSubprocessEnv(),
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout,
+  });
+  if (result.error) return null;
+  return {
+    status: result.status ?? 1,
+    stdout: String(result.stdout || ""),
+    stderr: String(result.stderr || ""),
+  };
 }
 
 export function executeSandboxExecCommand(
@@ -235,48 +227,46 @@ function executeGatewaySupervisorActionPinned(
 ): ManagedGatewaySupervisorActionResult | null {
   const nonce = randomBytes(32).toString("hex");
   try {
-    return withPrivilegedSandboxExecutionLease(sandboxName, `gateway supervisor ${action}`, () => {
-      const argv = privilegedSandboxExecArgv(
-        sandboxName,
-        [MANAGED_GATEWAY_CONTROL_PATH, action, nonce],
-        false,
-        true,
-        expectedContainerId,
-      );
-      const controlPathIndex = argv.lastIndexOf(MANAGED_GATEWAY_CONTROL_PATH);
-      const targetContainerId = controlPathIndex > 0 ? argv[controlPathIndex - 1] : null;
-      const result = dockerSpawnSync(argv, {
-        cwd: ROOT,
-        encoding: "utf-8",
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout,
-      });
-      if (result.error) return null;
-      const status = result.status ?? 1;
-      const stdout = String(result.stdout || "").trim();
-      let stderr = String(result.stderr || "").trim();
-      const restartingContainerMatch = stderr.match(DOCKER_CONTAINER_RESTARTING_ERROR);
-      const managedControlRestartingContainerId =
-        status === 1 &&
-        stdout === "" &&
-        restartingContainerMatch?.[1] !== undefined &&
-        restartingContainerMatch[1] === targetContainerId
-          ? restartingContainerMatch[1]
-          : undefined;
-      if (
-        (status === 126 || status === 127) &&
-        /(?:not found|no such file|executable file)/i.test(`${stdout}\n${stderr}`)
-      ) {
-        stderr = ["SUPERVISOR_REBUILD_REQUIRED", stderr].filter(Boolean).join("\n");
-      }
-      return {
-        status,
-        stdout,
-        stderr,
-        ...(managedControlRestartingContainerId ? { managedControlRestartingContainerId } : {}),
-      };
+    const argv = privilegedSandboxExecArgv(
+      sandboxName,
+      [MANAGED_GATEWAY_CONTROL_PATH, action, nonce],
+      false,
+      true,
+      expectedContainerId,
+    );
+    const controlPathIndex = argv.lastIndexOf(MANAGED_GATEWAY_CONTROL_PATH);
+    const targetContainerId = controlPathIndex > 0 ? argv[controlPathIndex - 1] : null;
+    const result = dockerSpawnSync(argv, {
+      cwd: ROOT,
+      encoding: "utf-8",
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout,
     });
+    if (result.error) return null;
+    const status = result.status ?? 1;
+    const stdout = String(result.stdout || "").trim();
+    let stderr = String(result.stderr || "").trim();
+    const restartingContainerMatch = stderr.match(DOCKER_CONTAINER_RESTARTING_ERROR);
+    const managedControlRestartingContainerId =
+      status === 1 &&
+      stdout === "" &&
+      restartingContainerMatch?.[1] !== undefined &&
+      restartingContainerMatch[1] === targetContainerId
+        ? restartingContainerMatch[1]
+        : undefined;
+    if (
+      (status === 126 || status === 127) &&
+      /(?:not found|no such file|executable file)/i.test(`${stdout}\n${stderr}`)
+    ) {
+      stderr = ["SUPERVISOR_REBUILD_REQUIRED", stderr].filter(Boolean).join("\n");
+    }
+    return {
+      status,
+      stdout,
+      stderr,
+      ...(managedControlRestartingContainerId ? { managedControlRestartingContainerId } : {}),
+    };
   } catch (error) {
     if (isDirectSandboxFallbackUnavailableError(error)) {
       // New clones can report Ready before their labeled direct container is
@@ -856,7 +846,7 @@ export function restartSandboxGateway(
   { quiet = false, deps = {} }: RestartSandboxGatewayOptions = {},
 ): GatewayRestartResult {
   return withUnsupportedHermesPortableGatewayRestartFence(sandboxName, () => {
-    return withTimerBoundShieldsMutationLock(sandboxName, "gateway restart", () =>
+    return withMcpLifecycleLockSync(sandboxName, () =>
       restartSandboxGatewayWithDeps(sandboxName, {
         quiet,
         deps: {
@@ -1885,7 +1875,7 @@ export function checkAndRecoverSandboxProcesses(
     probeTiming?: ProcessRecoveryProbeTiming;
   } = {},
 ) {
-  return withTimerBoundShieldsMutationLock(sandboxName, "gateway process recovery", () =>
+  return withMcpLifecycleLockSync(sandboxName, () =>
     checkAndRecoverSandboxProcessesWithoutHostLock(sandboxName, options),
   );
 }

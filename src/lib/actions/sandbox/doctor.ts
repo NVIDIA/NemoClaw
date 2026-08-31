@@ -34,7 +34,10 @@ import {
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
-import * as shields from "../../shields";
+import {
+  inspectMutableConfigPerms,
+  repairMutableConfigPerms,
+} from "../../sandbox/mutable-config-perms";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
@@ -54,7 +57,6 @@ import {
   buildDoctorReport,
   type DoctorCheck,
   type DoctorReport,
-  type DoctorStatus,
   renderDoctorReport,
 } from "./doctor-report";
 import {
@@ -440,29 +442,6 @@ function agentVersionDoctorCheck(sandboxName: string): DoctorCheck {
   }
 }
 
-function shieldsDoctorCheck(sandboxName: string): DoctorCheck {
-  const posture = shields.getShieldsPosture(sandboxName, false);
-  const status: DoctorStatus =
-    posture.mode === "locked"
-      ? "ok"
-      : posture.mode === "temporarily_unlocked" || posture.mode === "error"
-        ? "warn"
-        : "info";
-  const hint =
-    posture.mode === "mutable_default"
-      ? `run \`${CLI_NAME} ${sandboxName} shields up\` to opt into lockdown`
-      : posture.mode === "locked"
-        ? undefined
-        : `run \`${CLI_NAME} ${sandboxName} shields status\` for details`;
-  return {
-    group: "Sandbox",
-    label: "Shields",
-    status,
-    detail: posture.detail,
-    hint,
-  };
-}
-
 function collectRegisteredSandboxChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
@@ -470,7 +449,7 @@ function collectRegisteredSandboxChecks(
   sandboxReachable: boolean,
 ): DoctorCheck[] {
   if (!sb) return [];
-  const checks = [agentVersionDoctorCheck(sandboxName), shieldsDoctorCheck(sandboxName)];
+  const checks = [agentVersionDoctorCheck(sandboxName)];
   let dashboardPortRequired = true;
   try {
     dashboardPortRequired = shouldManageDashboardForAgent(loadAgent(sb.agent || "openclaw"));
@@ -481,8 +460,8 @@ function collectRegisteredSandboxChecks(
     buildLifecycleRegistrationCheck(sandboxName, sb, CLI_NAME, { dashboardPortRequired }),
   );
   const permsCheck = buildConfigPermsCheck(sandboxName, wantsFix, {
-    inspect: shields.inspectMutableConfigPerms,
-    repair: shields.repairMutableConfigPerms,
+    inspect: inspectMutableConfigPerms,
+    repair: repairMutableConfigPerms,
     cliName: CLI_NAME,
   });
   if (permsCheck) checks.push(permsCheck);

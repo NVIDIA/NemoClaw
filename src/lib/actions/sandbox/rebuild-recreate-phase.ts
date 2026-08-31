@@ -10,7 +10,6 @@ import { gatewayOwnerFromCheckpoint } from "../../onboard/gateway-authority-chec
 import { sameGatewayOwner } from "../../onboard/gateway-ownership";
 import { applyReasoningEffortEnv } from "../../onboard/reasoning-mode";
 import { isOnboardDeferredExitError } from "../../onboard/session-bootstrap";
-import * as shields from "../../shields";
 import { decisionSelected, isDecisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
 import type { Session } from "../../state/onboard-session";
@@ -39,7 +38,6 @@ import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
-import type { RebuildShieldsWindow } from "./rebuild-shields";
 
 export interface RebuildRecreatePhaseInput {
   sandboxName: string;
@@ -63,9 +61,6 @@ export interface RebuildRecreatePhaseInput {
   registryRollback: RebuildRegistryRollback;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
-  rebuildShieldsWindow: RebuildShieldsWindow;
-  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
-  onCreated: () => void;
   log: RebuildLog;
   bail: RebuildBail;
 }
@@ -108,9 +103,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     registryRollback,
     backupManifest,
     mcpEntries: rebuildMcpEntries,
-    rebuildShieldsWindow,
-    relockShieldsIfNeeded,
-    onCreated,
     log,
     bail,
   } = input;
@@ -321,7 +313,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     }
   }
 
-  if (!onboardFailed) onCreated();
   if (onboardFailed) {
     try {
       markLastStartedStepFailed(onboardSession, "Rebuild recreate failed");
@@ -364,12 +355,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         `       ${CLI_NAME} ${sandboxName} snapshot restore "${backupManifest.timestamp}"`,
       );
     }
-    if (rebuildShieldsWindow.wasLocked) {
-      console.error(`    ${backupManifest ? 4 : 3}. Restore shields lockdown:`);
-      console.error(`       ${CLI_NAME} ${sandboxName} shields up`);
-    }
     console.error("");
-    relockShieldsIfNeeded(false);
     bail(
       backupManifest
         ? `Recreate failed (sandbox destroyed). Backup: ${backupManifest.backupPath}`
@@ -379,7 +365,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     return false;
   }
 
-  if (recoveryRecreate) shields.clearShieldsState(sandboxName);
   const preservedRegistryFields = {
     ...(hasRebuildHermesToolGateways ? { hermesToolGateways: [...rebuildHermesToolGateways] } : {}),
   };

@@ -28,11 +28,7 @@ import {
 const EXECUTABLE_CONTENT_REVALIDATION_COMMAND_INTERVAL = 64;
 
 export interface PodmanContainerEngineOptions {
-  readonly operation:
-    | "host-doctor"
-    | "host-local-inference"
-    | "sandbox-lifecycle"
-    | "state-mutation";
+  readonly operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle";
   readonly socketAuthority: PodmanSocketAuthority;
   readonly executable?: string;
   readonly executableAuthority?: PodmanExecutableAuthority;
@@ -132,19 +128,21 @@ export function createPodmanContainerEngine(
   options: PodmanContainerEngineOptions,
 ): PodmanBoundContainerEngine {
   const assertAuthority = options.assertAuthority ?? assertPodmanSocketAuthority;
-  const protectsRuntimeMutation =
-    options.operation === "host-local-inference" || options.operation === "state-mutation";
+  const requiresExecutableAuthority =
+    options.operation === "host-local-inference" || options.executableAuthority !== undefined;
   const executable =
     options.executable ??
     options.executableAuthority?.executablePath ??
-    (protectsRuntimeMutation ? resolvePodmanExecutablePath(options.executableSearchEnv) : "podman");
+    (requiresExecutableAuthority
+      ? resolvePodmanExecutablePath(options.executableSearchEnv)
+      : "podman");
   if (options.executableAuthority && executable !== options.executableAuthority.executablePath) {
     throw new Error("Podman executable path disagrees with its recorded authority.");
   }
   if (options.executableAuthority) {
     assertPodmanExecutableAuthority(options.executableAuthority, options.executableAuthorityDeps);
   }
-  const executableAuthority = protectsRuntimeMutation
+  const executableAuthority = requiresExecutableAuthority
     ? (options.executableAuthority ??
       capturePodmanExecutableAuthority(executable, options.executableAuthorityDeps))
     : undefined;
@@ -218,7 +216,7 @@ export function createPodmanContainerEngine(
     endpointAuthorityId,
     assertAuthority: () => assertBoundAuthority(true),
   };
-  if (!protectsRuntimeMutation) return Object.freeze(boundEngine);
+  if (!requiresExecutableAuthority) return Object.freeze(boundEngine);
   return Object.freeze({
     ...boundEngine,
     captureHost: () => {

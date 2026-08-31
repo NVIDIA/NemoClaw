@@ -156,7 +156,6 @@ function makePassthroughDeps(
       events.push("dispatch");
       throw new Error("__exit:0");
     }) as NonNullable<AgentPassthroughDeps["execNonJson"]>,
-    getRecentShieldsAutoRestore: () => ({ kind: "none" }),
     process: {
       exit: ((code: number) => {
         throw new Error(`__exit:${code}`);

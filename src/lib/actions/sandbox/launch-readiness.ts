@@ -487,7 +487,6 @@ function projectAgent(agent: AgentDefinition): unknown {
       configFile: agent.configPaths.configFile,
       envFile: agent.configPaths.envFile,
       format: agent.configPaths.format,
-      shieldsFiles: [...agent.configPaths.shieldsFiles],
     },
     inference: {
       providerType: agent.inference?.provider_type ?? null,
@@ -499,15 +498,6 @@ function projectAgent(agent: AgentDefinition): unknown {
       adapter: agent.mcpCapability.adapter ?? null,
       reason: agent.mcpCapability.reason ?? null,
     },
-    stateLockPlan: {
-      version: agent.stateLockPlan.version,
-      readOnlyRoots: [...agent.stateLockPlan.readOnlyRoots],
-      confidentialRoots: [...agent.stateLockPlan.confidentialRoots],
-      readOnlyPrefixes: [...agent.stateLockPlan.readOnlyPrefixes],
-      confidentialPrefixes: [...agent.stateLockPlan.confidentialPrefixes],
-      writableSubpaths: [...agent.stateLockPlan.writableSubpaths],
-    },
-    stateLockPlanInImage: agent.stateLockPlanInImage,
   };
 }
 
@@ -1184,9 +1174,7 @@ export async function settlePortableOpenClawPairing(
         );
         runProducer(sandboxName, target.gatewayName);
       }
-      revalidateSandboxIdentity?.(
-        `approve Portable OpenClaw pairing for sandbox '${sandboxName}'`,
-      );
+      revalidateSandboxIdentity?.(`approve Portable OpenClaw pairing for sandbox '${sandboxName}'`);
       runApproval(sandboxName, target.gatewayName, first.deviceIdentitySha256);
 
       const finalDeadline = Math.min(

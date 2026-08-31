@@ -57,7 +57,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
-import { runConnectChildWithShieldsRelockNotice } from "./agent/connect-shields-relock-notice";
+import { runSandboxExecChild } from "./exec";
 import { runConnectAutoPairApprovalPass } from "./auto-pair-approval";
 import {
   exitOnMcpReconciliationRefusal,
@@ -253,9 +253,7 @@ export function parseSandboxConnectArgs(
     }
     switch (arg) {
       case "--dangerously-skip-permissions":
-        console.error(
-          "  --dangerously-skip-permissions was removed; use shields commands instead.",
-        );
+        console.error("  --dangerously-skip-permissions is not supported.");
         printSandboxConnectHelp(sandboxName);
         process.exit(1);
         break;
@@ -2232,16 +2230,11 @@ export async function connectSandbox(
       );
       if (!prepared) return null;
       return {
-        completion: runConnectChildWithShieldsRelockNotice(
-          prepared.binary,
-          prepared.args,
-          {
-            hostCwd: ROOT,
-            stdin: true,
-            ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
-          },
-          sandboxName,
-        ),
+        completion: runSandboxExecChild(prepared.binary, prepared.args, {
+          hostCwd: ROOT,
+          stdin: true,
+          ...(prepared.hostEnv ? { hostEnv: prepared.hostEnv } : {}),
+        }),
       };
     });
     if (!started) {

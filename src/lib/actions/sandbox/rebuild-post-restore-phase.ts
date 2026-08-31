@@ -7,7 +7,7 @@ import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
 import type * as sandboxVersion from "../../sandbox/version";
-import * as shields from "../../shields";
+import { repairMutableConfigPerms } from "../../sandbox/mutable-config-perms";
 import * as registry from "../../state/registry";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxExecCommand } from "./process-recovery";
@@ -84,20 +84,26 @@ export interface RebuildPostRestorePhaseInput {
   restoreSucceeded: boolean;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
   staleRecovery: boolean;
-  recoveryRecreate: boolean;
   preparedBackupRecovery: boolean;
-  staleSandboxWasLocked: boolean;
   versionCheck: ReturnType<typeof sandboxVersion.checkAgentVersion>;
-  relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   log: RebuildLog;
   bail: RebuildBail;
 }
 
-function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: string): void {
+export interface RebuildPostRestoreVerification {
+  readonly mutableConfigPermissionsVerified: boolean;
+}
+
+function printHermesApiTokenChangeNotice(
+  sandboxName: string,
+  targetAgentName: string,
+): void {
   if (targetAgentName !== "hermes") {
     return;
   }
-  console.log(`    ${YW}\u26a0${R} Hermes API bearer token changed during rebuild.`);
+  console.log(
+    `    ${YW}\u26a0${R} Hermes API bearer token changed during rebuild.`,
+  );
   console.log(
     `    Retrieve the new token with \`${CLI_NAME} ${sandboxName} gateway-token --quiet\`.`,
   );
@@ -107,12 +113,11 @@ function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: s
  * Repair agent state, restore MCP/forwarding, reconcile the registry, and report
  * the final transaction result. Boundary coverage: rebuild-flow.test.ts and
  * rebuild-config-hash.test.ts cover the complete/incomplete post-restore paths;
- * rebuild-post-restore-phase.test.ts covers the relock-then-forward order and
- * the shields and forwarding recovery reports.
+ * rebuild-post-restore-phase.test.ts covers forwarding recovery reports.
  */
 export async function runRebuildPostRestorePhase(
   input: RebuildPostRestorePhaseInput,
-): Promise<void> {
+): Promise<RebuildPostRestoreVerification | undefined> {
   const {
     sandboxName,
     sandboxEntry: sb,
@@ -123,11 +128,8 @@ export async function runRebuildPostRestorePhase(
     restoreSucceeded,
     hermesCronRestoreIdentity,
     staleRecovery,
-    recoveryRecreate,
     preparedBackupRecovery,
-    staleSandboxWasLocked,
     versionCheck,
-    relockShieldsIfNeeded,
     log,
     bail,
   } = input;
@@ -153,19 +155,24 @@ export async function runRebuildPostRestorePhase(
         bail,
       );
     }
-    bail("Recreated sandbox agent identity did not match the authoritative rebuild target.");
+    bail(
+      "Recreated sandbox agent identity did not match the authoritative rebuild target.",
+    );
     return;
   }
   const agentDef = loadAgent(targetAgentName);
   const rebuiltAgentName = agentDef.displayName;
   let mutablePermsRepairUnverified = false;
+  let mutableConfigPermissionsVerified = targetAgentName !== "openclaw";
   let mutableConfigHashRefreshUnverified = false;
   let finalMutableConfigHashUnverified = false;
   let messagingHostForwardUnverified = false;
   let effectiveMessagingPlan = messagingPlan;
 
   if (targetAgentName === "openclaw") {
-    log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
+    log(
+      "Running openclaw doctor --fix inside sandbox for post-upgrade structure repair",
+    );
     const doctorResult = executeSandboxExecCommand(
       sandboxName,
       "openclaw doctor --fix",
@@ -174,8 +181,12 @@ export async function runRebuildPostRestorePhase(
     );
     log(`doctor --fix: exit=${doctorResult?.status ?? "unverified"}`);
     if (doctorResult === null) {
-      console.log(`  ${D}Post-upgrade structure repair completion was not verified${R}`);
-      bail("OpenClaw post-upgrade structure repair completion was not verified after rebuild.");
+      console.log(
+        `  ${D}Post-upgrade structure repair completion was not verified${R}`,
+      );
+      bail(
+        "OpenClaw post-upgrade structure repair completion was not verified after rebuild.",
+      );
       return;
     }
     if (doctorResult.status !== 0) {
@@ -192,20 +203,28 @@ export async function runRebuildPostRestorePhase(
     reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log);
 
     try {
-      await reapplyMessagingManifestAfterOpenClawDoctor(sandboxName, messagingPlan, log);
+      await reapplyMessagingManifestAfterOpenClawDoctor(
+        sandboxName,
+        messagingPlan,
+        log,
+      );
     } catch (error) {
       log(
         `Messaging manifest reapply failed: ${error instanceof Error ? error.message : String(error)}`,
       );
-      console.error(`  ${YW}\u26a0${R} Messaging manifest config reapply failed after doctor.`);
+      console.error(
+        `  ${YW}\u26a0${R} Messaging manifest config reapply failed after doctor.`,
+      );
       bail("OpenClaw messaging manifest config reapply failed during rebuild.");
       return;
     }
 
-    log("Restoring mutable OpenClaw config permissions after post-restore config writes");
-    let permRepair: ReturnType<typeof shields.repairMutableConfigPerms> | null = null;
+    log(
+      "Restoring mutable OpenClaw config permissions after post-restore config writes",
+    );
+    let permRepair: ReturnType<typeof repairMutableConfigPerms> | null = null;
     try {
-      permRepair = shields.repairMutableConfigPerms(sandboxName);
+      permRepair = repairMutableConfigPerms(sandboxName);
     } catch (error) {
       mutablePermsRepairUnverified = true;
       console.error(
@@ -215,15 +234,9 @@ export async function runRebuildPostRestorePhase(
     if (permRepair === null) {
       // The thrown error was reported above.
     } else if (!permRepair.applied) {
-      if (permRepair.skipReason === "unreadable") {
-        mutablePermsRepairUnverified = true;
-        console.error(
-          `  ${YW}\u26a0${R} Mutable config permissions not restored: ${permRepair.reason}`,
-        );
-      } else {
-        log(`Mutable config permission repair skipped: ${permRepair.reason}`);
-      }
+      log(`Mutable config permission repair skipped: ${permRepair.reason}`);
     } else if (permRepair.verified) {
+      mutableConfigPermissionsVerified = true;
       console.log(`  ${G}\u2713${R} Mutable config permissions restored`);
     } else {
       mutablePermsRepairUnverified = true;
@@ -238,7 +251,10 @@ export async function runRebuildPostRestorePhase(
       effectiveMessagingPlan,
       log,
     );
-    if (finalizedMessagingPlan !== effectiveMessagingPlan && finalizedMessagingPlan) {
+    if (
+      finalizedMessagingPlan !== effectiveMessagingPlan &&
+      finalizedMessagingPlan
+    ) {
       if (
         !registry.updateSandbox(sandboxName, {
           messaging: { schemaVersion: 1, plan: finalizedMessagingPlan },
@@ -265,12 +281,17 @@ export async function runRebuildPostRestorePhase(
     sandboxName,
     targetAgentName,
   );
-  const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(sandboxName, mcpEntries));
+  const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
+    sandboxName,
+    mcpEntries,
+  ));
   if (targetAgentName === "openclaw" && mcpBridgeRestoreUnverified) {
     mutableConfigHashRefreshUnverified = true;
   } else if (targetAgentName === "openclaw") {
     log("Refreshing mutable OpenClaw config hash after MCP restoration");
-    if (!refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log)) {
+    if (
+      !refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log)
+    ) {
       mutableConfigHashRefreshUnverified = true;
     } else if (!verifyFinalMutableOpenClawConfigHash(sandboxName, log)) {
       finalMutableConfigHashUnverified = true;
@@ -292,7 +313,8 @@ export async function runRebuildPostRestorePhase(
         replacementIdentity: undefined,
       };
   const hermesGatewayRestoreState = hermesGatewayVerification.state;
-  const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
+  const hermesGatewayRestoreUnverified =
+    hermesGatewayRestoreState === "unverified";
   if (hermesCronRestoreIdentity) {
     const replacementIdentity = hermesGatewayVerification.replacementIdentity;
     if (
@@ -306,7 +328,9 @@ export async function runRebuildPostRestorePhase(
         "  Hermes cron dispatch remains drained because the replacement gateway was not verified.",
         "Hermes cron restore validation failed; dispatch was not re-enabled.",
         bail,
-        mcpBridgeRestoreUnverified ? () => printMcpRestoreRecovery(sandboxName, true) : undefined,
+        mcpBridgeRestoreUnverified
+          ? () => printMcpRestoreRecovery(sandboxName, true)
+          : undefined,
       );
     }
     if (mcpBridgeRestoreUnverified) {
@@ -327,7 +351,8 @@ export async function runRebuildPostRestorePhase(
         replacementIdentity,
       );
     } catch (error) {
-      const errorDetail = error instanceof Error ? error.message : String(error);
+      const errorDetail =
+        error instanceof Error ? error.message : String(error);
       if (isHermesCronRestoreDrainMarkerRollbackFailure(error)) {
         return bailAfterHermesCronRestoreFailure(
           sandboxName,
@@ -350,20 +375,22 @@ export async function runRebuildPostRestorePhase(
     );
   }
   if (hermesGatewayRestoreState === "healthy") {
-    console.log(`  ${G}\u2713${R} Hermes gateway restarted and verified after state restore`);
+    console.log(
+      `  ${G}\u2713${R} Hermes gateway restarted and verified after state restore`,
+    );
   } else if (hermesGatewayRestoreState === "recovered") {
-    console.log(`  ${G}\u2713${R} Hermes gateway recovered after state restore`);
+    console.log(
+      `  ${G}\u2713${R} Hermes gateway recovered after state restore`,
+    );
   }
   registry.updateSandbox(sandboxName, {
     agentVersion: agentDef.expectedVersion || null,
   });
   log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
 
-  if (!relockShieldsIfNeeded(true)) {
-    bail("Failed to re-apply shields lockdown.");
-    return;
-  }
-  if (!ensureMessagingHostForwardAfterRebuild(sandboxName, effectiveMessagingPlan)) {
+  if (
+    !ensureMessagingHostForwardAfterRebuild(sandboxName, effectiveMessagingPlan)
+  ) {
     messagingHostForwardUnverified = true;
   }
   if (
@@ -388,7 +415,9 @@ export async function runRebuildPostRestorePhase(
   if (postRestoreComplete) {
     console.log(`  ${G}✓${R} Sandbox '${sandboxName}' rebuild completed`);
     if (versionCheck.expectedVersion) {
-      console.log(`    Now running: ${rebuiltAgentName} v${versionCheck.expectedVersion}`);
+      console.log(
+        `    Now running: ${rebuiltAgentName} v${versionCheck.expectedVersion}`,
+      );
     }
   } else {
     console.log(
@@ -409,7 +438,10 @@ export async function runRebuildPostRestorePhase(
         `    Mutable OpenClaw config hash was not refreshed \u2014 restart the sandbox or re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
       );
     }
-    if (finalMutableConfigHashUnverified && !mutableConfigHashRefreshUnverified) {
+    if (
+      finalMutableConfigHashUnverified &&
+      !mutableConfigHashRefreshUnverified
+    ) {
       console.log(
         `    Final OpenClaw configuration hash verification failed after post-restore finalization \u2014 restart the sandbox or re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
       );
@@ -422,16 +454,13 @@ export async function runRebuildPostRestorePhase(
     printHermesGatewayRestoreRecovery(sandboxName, hermesGatewayRestoreState);
     printMcpRestoreRecovery(sandboxName, mcpBridgeRestoreUnverified);
   }
-  if (recoveryRecreate && staleSandboxWasLocked) {
-    console.log(
-      `    ${YW}\u26a0${R} Shields were previously enabled but the recreated sandbox starts unlocked \u2014 run \`${CLI_NAME} ${sandboxName} shields up\` to restore lockdown.`,
-    );
-  }
   if (!restoreSucceeded) {
     console.error(
       `  State recovery remains incomplete. Correct the restore error, then run \`${CLI_NAME} ${sandboxName} rebuild\` again.`,
     );
-    bail(`State restore remained incomplete after rebuilding '${sandboxName}'.`);
+    bail(
+      `State restore remained incomplete after rebuilding '${sandboxName}'.`,
+    );
     return;
   }
   if (
@@ -456,4 +485,5 @@ export async function runRebuildPostRestorePhase(
     return;
   }
   printHermesApiTokenChangeNotice(sandboxName, targetAgentName);
+  return { mutableConfigPermissionsVerified };
 }

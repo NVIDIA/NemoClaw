@@ -10,13 +10,14 @@ const phaseMocks = vi.hoisted(() => ({
   findRecoveryBackup: vi.fn(),
   openRecreateJournal: vi.fn(),
   recoverCronRestore: vi.fn(),
+  enforceRemovedImmutabilityMigrationBoundary: vi.fn(),
+  retireRemovedImmutabilityStateRecord: vi.fn(),
   runBackup: vi.fn(),
   runCronRestoreTransaction: vi.fn(),
   runDestroy: vi.fn(),
   runPostRestore: vi.fn(),
   runPreflight: vi.fn(),
   runRestore: vi.fn(),
-  runShields: vi.fn(),
 }));
 
 vi.mock("../../onboard/temp-files", async (importOriginal) => ({
@@ -27,6 +28,11 @@ vi.mock("../../onboard/temp-files", async (importOriginal) => ({
 vi.mock("../../state/sandbox", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/sandbox")>()),
   clearRebuildPolicyHandoff: phaseMocks.clearPolicyHandoff,
+}));
+vi.mock("../../state/migrations/removed-immutability", () => ({
+  enforceRemovedImmutabilityMigrationBoundary:
+    phaseMocks.enforceRemovedImmutabilityMigrationBoundary,
+  retireRemovedImmutabilityStateRecord: phaseMocks.retireRemovedImmutabilityStateRecord,
 }));
 
 const gatewayAuthority = {
@@ -63,10 +69,6 @@ vi.mock("./rebuild-destroy-phase", () => ({
   runRebuildDestroyPhase: phaseMocks.runDestroy,
 }));
 
-vi.mock("./rebuild-shields-phase", () => ({
-  runRebuildShieldsPhase: phaseMocks.runShields,
-}));
-
 vi.mock("./rebuild-restore-phase", () => ({
   runRebuildRestorePhase: phaseMocks.runRestore,
 }));
@@ -89,7 +91,6 @@ describe("Hermes accepted replacement recovery", () => {
   const completeAcceptedTarget = vi.fn();
   const log = vi.fn();
   const releaseOnboardLock = vi.fn();
-  const relockShields = vi.fn(() => true);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -106,7 +107,12 @@ describe("Hermes accepted replacement recovery", () => {
       timestamp: "2026-08-28T00-00-00-000Z",
     });
     phaseMocks.runRestore.mockReturnValue({ restoreSucceeded: true });
-    phaseMocks.runPostRestore.mockResolvedValue(undefined);
+    phaseMocks.runPostRestore.mockResolvedValue({ mutableConfigPermissionsVerified: true });
+    phaseMocks.retireRemovedImmutabilityStateRecord.mockReturnValue(true);
+    phaseMocks.enforceRemovedImmutabilityMigrationBoundary.mockReturnValue({
+      stateRecord: null,
+      recoveryArtifacts: [],
+    });
     phaseMocks.runPreflight.mockResolvedValue({
       sandboxEntry: { name: "alpha" },
       rebuildAgent: "hermes",
@@ -144,11 +150,6 @@ describe("Hermes accepted replacement recovery", () => {
       releaseOnboardLock,
       log,
       bail,
-    });
-    phaseMocks.runShields.mockReturnValue({
-      window: { relocked: false, wasLocked: false },
-      staleSandboxWasLocked: false,
-      relock: relockShields,
     });
     phaseMocks.runBackup.mockReturnValue({
       backupManifest: {
@@ -190,6 +191,15 @@ describe("Hermes accepted replacement recovery", () => {
     });
     phaseMocks.runPostRestore.mockImplementation(async () => {
       events.push("post-restore");
+      return { mutableConfigPermissionsVerified: true };
+    });
+    phaseMocks.enforceRemovedImmutabilityMigrationBoundary.mockReturnValue({
+      stateRecord: "/tmp/shields-alpha.json",
+      recoveryArtifacts: [],
+    });
+    phaseMocks.retireRemovedImmutabilityStateRecord.mockImplementation(() => {
+      events.push("retire-removed-immutability");
+      return true;
     });
     phaseMocks.clearRecoveryBackup.mockImplementation(() => events.push("clear-recovery"));
 
@@ -197,7 +207,14 @@ describe("Hermes accepted replacement recovery", () => {
       rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(events).toEqual(["recover", "restore", "post-restore", "clear-recovery", "complete"]);
+    expect(events).toEqual([
+      "recover",
+      "restore",
+      "post-restore",
+      "retire-removed-immutability",
+      "clear-recovery",
+      "complete",
+    ]);
     expect(log).toHaveBeenCalledWith(
       "Hermes cron restore recovery for accepted replacement: dispatch-reactivated",
     );
@@ -207,15 +224,16 @@ describe("Hermes accepted replacement recovery", () => {
       expect.objectContaining({
         backupManifest: expect.objectContaining({ backupPath: recoveryBackupPath }),
         preparedBackupRecovery: true,
-        recoveryRecreate: true,
       }),
+    );
+    expect(phaseMocks.retireRemovedImmutabilityStateRecord).toHaveBeenCalledWith(
+      "alpha",
+      "mutable-rebuild",
     );
     expect(phaseMocks.clearPolicyHandoff).toHaveBeenCalledOnce();
     expect(phaseMocks.cleanupPolicySource).not.toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith("  Recovered the accepted replacement for 'alpha'.");
-    expect(console.log).toHaveBeenCalledWith(
-      `  Backup is preserved at: ${recoveryBackupPath}`,
-    );
+    expect(console.log).toHaveBeenCalledWith(`  Backup is preserved at: ${recoveryBackupPath}`);
   });
 
   it("retires both the unused current policy handoff and the recovered transaction handoff", async () => {

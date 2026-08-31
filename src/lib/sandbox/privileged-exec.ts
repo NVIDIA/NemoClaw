@@ -8,12 +8,6 @@ import path from "node:path";
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { resolveSandboxContainerOwner } from "../domain/sandbox/container-owner";
 import { resolvePortableDemoPrivilegedExecTarget } from "../onboard/experimental/portable-demo-lifecycle";
-import {
-  createFilePersistedEngineLifecycleStore,
-  hasActivePersistedEngineStateMutationTarget,
-  PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
-} from "../onboard/runtime-provider/persisted-engine-lifecycle";
-import { resolveShieldsStateDir, withShieldsTransitionLock } from "../shields/transition-lock";
 import * as registry from "../state/registry";
 import { compareAndSetLegacySandboxLifecycleGeneration } from "../state/registry/lifecycle-generation";
 
@@ -503,112 +497,110 @@ function clearStoppedDockerSandboxChannelState(
   }
 
   try {
-    return withPrivilegedSandboxExecutionLease(sandboxName, "offline channel state cleanup", () => {
-      let containerId: string | null;
-      try {
-        containerId = findStoppedDirectSandboxContainer(sandboxName);
-      } catch (error) {
-        return stoppedDockerCleanupFailure(
-          isDirectSandboxFallbackUnavailableError(error)
-            ? "docker-discovery-failed"
-            : "container-ownership-invalid",
-        );
-      }
-      if (!containerId) return stoppedDockerCleanupFailure("no-eligible-stopped-container");
-      const inspection = inspectStoppedContainer(containerId);
-      if ("failure" in inspection) return stoppedDockerCleanupFailure(inspection.failure);
-      const { inspected } = inspection;
-      if (inspected.id !== containerId) {
-        return stoppedDockerCleanupFailure("container-ownership-invalid");
-      }
-      if (inspected.running) return stoppedDockerCleanupFailure("container-not-stopped");
-      if (!pinnedCleanupImageIsAvailable()) {
-        return stoppedDockerCleanupFailure("cleanup-helper-image-unavailable");
-      }
-      const helperName = cleanupHelperName(sandboxName);
-      const ownerIdentity = cleanupIdentity(sandboxName);
-      const volumeIdentity = cleanupIdentity(inspected.sandboxVolumeName);
-      const existingHelper = inspectCleanupHelper(helperName, ownerIdentity, volumeIdentity);
-      if (existingHelper.state === "invalid") {
-        return stoppedDockerCleanupFailure("cleanup-helper-ownership-invalid", helperName);
-      }
-      if (existingHelper.state === "owned" && !removeAndConfirmCleanupHelper(existingHelper.id)) {
-        return stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed", helperName);
-      }
-      let created: ReturnType<typeof dockerRun>;
-      try {
-        created = dockerRun(
-          [
-            "create",
-            "--name",
-            helperName,
-            "--pull",
-            "never",
-            "--network",
-            "none",
-            "--read-only",
-            "--user",
-            "0:0",
-            "--security-opt",
-            "no-new-privileges",
-            "--cap-drop",
-            "ALL",
-            "--cap-add",
-            "DAC_OVERRIDE",
-            "--pids-limit",
-            "64",
-            ...NEUTRALIZED_OFFLINE_HELPER_ENV,
-            "--label",
-            `${STOPPED_CHANNEL_CLEANUP_LABEL}=1`,
-            "--label",
-            `${STOPPED_CHANNEL_CLEANUP_OWNER_LABEL}=${ownerIdentity}`,
-            "--label",
-            `${STOPPED_CHANNEL_CLEANUP_VOLUME_LABEL}=${volumeIdentity}`,
-            "--mount",
-            `type=volume,src=${inspected.sandboxVolumeName},dst=/sandbox,volume-nocopy`,
-            "--entrypoint",
-            "/usr/local/bin/node",
-            STOPPED_CHANNEL_CLEANUP_IMAGE,
-            "-e",
-            STOPPED_CHANNEL_CLEANUP_SCRIPT,
-            JSON.stringify(cleanupPaths),
-          ],
-          OFFLINE_DOCKER_OPERATION_OPTIONS,
-        );
-      } catch {
-        return reconcileCleanupHelperAfterCreate(helperName, ownerIdentity, volumeIdentity)
-          ? stoppedDockerCleanupFailure("cleanup-helper-failed")
-          : stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed", helperName);
-      }
-      const helperId = String(created.stdout ?? "").trim();
-      if (created.status !== 0 || !FULL_CONTAINER_ID_RE.test(helperId)) {
-        return reconcileCleanupHelperAfterCreate(helperName, ownerIdentity, volumeIdentity)
-          ? stoppedDockerCleanupFailure("cleanup-helper-failed")
-          : stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed", helperName);
-      }
-      let cleared: ReturnType<typeof dockerRun> | null = null;
-      try {
-        cleared = dockerRun(["start", "--attach", helperId], OFFLINE_DOCKER_OPERATION_OPTIONS);
-      } catch {
-        cleared = null;
-      }
-      if (!removeAndConfirmCleanupHelper(helperId)) {
-        return stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed", helperName);
-      }
-      if (!cleared || cleared.status !== 0 || cleared.error) {
-        return stoppedDockerCleanupFailure(classifyCleanupHelperFailure(cleared));
-      }
-      const confirmation = inspectStoppedContainer(containerId);
-      if ("failure" in confirmation) {
-        return stoppedDockerCleanupFailure("container-revalidation-failed");
-      }
-      const { inspected: confirmed } = confirmation;
-      return confirmed.id === inspected.id &&
-        confirmed.sandboxVolumeName === inspected.sandboxVolumeName &&
-        !confirmed.running
-        ? { cleared: true }
-        : stoppedDockerCleanupFailure("container-revalidation-failed");
-    });
+    let containerId: string | null;
+    try {
+      containerId = findStoppedDirectSandboxContainer(sandboxName);
+    } catch (error) {
+      return stoppedDockerCleanupFailure(
+        isDirectSandboxFallbackUnavailableError(error)
+          ? "docker-discovery-failed"
+          : "container-ownership-invalid",
+      );
+    }
+    if (!containerId) return stoppedDockerCleanupFailure("no-eligible-stopped-container");
+    const inspection = inspectStoppedContainer(containerId);
+    if ("failure" in inspection) return stoppedDockerCleanupFailure(inspection.failure);
+    const { inspected } = inspection;
+    if (inspected.id !== containerId) {
+      return stoppedDockerCleanupFailure("container-ownership-invalid");
+    }
+    if (inspected.running) return stoppedDockerCleanupFailure("container-not-stopped");
+    if (!pinnedCleanupImageIsAvailable()) {
+      return stoppedDockerCleanupFailure("cleanup-helper-image-unavailable");
+    }
+    const helperName = cleanupHelperName(sandboxName);
+    const ownerIdentity = cleanupIdentity(sandboxName);
+    const volumeIdentity = cleanupIdentity(inspected.sandboxVolumeName);
+    const existingHelper = inspectCleanupHelper(helperName, ownerIdentity, volumeIdentity);
+    if (existingHelper.state === "invalid") {
+      return stoppedDockerCleanupFailure("cleanup-helper-ownership-invalid", helperName);
+    }
+    if (existingHelper.state === "owned" && !removeAndConfirmCleanupHelper(existingHelper.id)) {
+      return stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed", helperName);
+    }
+    let created: ReturnType<typeof dockerRun>;
+    try {
+      created = dockerRun(
+        [
+          "create",
+          "--name",
+          helperName,
+          "--pull",
+          "never",
+          "--network",
+          "none",
+          "--read-only",
+          "--user",
+          "0:0",
+          "--security-opt",
+          "no-new-privileges",
+          "--cap-drop",
+          "ALL",
+          "--cap-add",
+          "DAC_OVERRIDE",
+          "--pids-limit",
+          "64",
+          ...NEUTRALIZED_OFFLINE_HELPER_ENV,
+          "--label",
+          `${STOPPED_CHANNEL_CLEANUP_LABEL}=1`,
+          "--label",
+          `${STOPPED_CHANNEL_CLEANUP_OWNER_LABEL}=${ownerIdentity}`,
+          "--label",
+          `${STOPPED_CHANNEL_CLEANUP_VOLUME_LABEL}=${volumeIdentity}`,
+          "--mount",
+          `type=volume,src=${inspected.sandboxVolumeName},dst=/sandbox,volume-nocopy`,
+          "--entrypoint",
+          "/usr/local/bin/node",
+          STOPPED_CHANNEL_CLEANUP_IMAGE,
+          "-e",
+          STOPPED_CHANNEL_CLEANUP_SCRIPT,
+          JSON.stringify(cleanupPaths),
+        ],
+        OFFLINE_DOCKER_OPERATION_OPTIONS,
+      );
+    } catch {
+      return reconcileCleanupHelperAfterCreate(helperName, ownerIdentity, volumeIdentity)
+        ? stoppedDockerCleanupFailure("cleanup-helper-failed")
+        : stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed", helperName);
+    }
+    const helperId = String(created.stdout ?? "").trim();
+    if (created.status !== 0 || !FULL_CONTAINER_ID_RE.test(helperId)) {
+      return reconcileCleanupHelperAfterCreate(helperName, ownerIdentity, volumeIdentity)
+        ? stoppedDockerCleanupFailure("cleanup-helper-failed")
+        : stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed", helperName);
+    }
+    let cleared: ReturnType<typeof dockerRun> | null = null;
+    try {
+      cleared = dockerRun(["start", "--attach", helperId], OFFLINE_DOCKER_OPERATION_OPTIONS);
+    } catch {
+      cleared = null;
+    }
+    if (!removeAndConfirmCleanupHelper(helperId)) {
+      return stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed", helperName);
+    }
+    if (!cleared || cleared.status !== 0 || cleared.error) {
+      return stoppedDockerCleanupFailure(classifyCleanupHelperFailure(cleared));
+    }
+    const confirmation = inspectStoppedContainer(containerId);
+    if ("failure" in confirmation) {
+      return stoppedDockerCleanupFailure("container-revalidation-failed");
+    }
+    const { inspected: confirmed } = confirmation;
+    return confirmed.id === inspected.id &&
+      confirmed.sandboxVolumeName === inspected.sandboxVolumeName &&
+      !confirmed.running
+      ? { cleared: true }
+      : stoppedDockerCleanupFailure("container-revalidation-failed");
   } catch {
     return stoppedDockerCleanupFailure("lifecycle-authority-unavailable");
   }
@@ -650,46 +642,6 @@ function unsupportedDirectDriverError(sandboxName: string, driver: string): Erro
   );
 }
 
-function assertNoActiveStateMutationTarget(sandboxName: string): void {
-  const stateDir = resolveShieldsStateDir();
-  const lifecycleDirectory = path.join(stateDir, PERSISTED_ENGINE_LIFECYCLE_DIRECTORY);
-  try {
-    fs.lstatSync(lifecycleDirectory);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  const lifecycleStore = createFilePersistedEngineLifecycleStore(stateDir);
-  if (hasActivePersistedEngineStateMutationTarget(lifecycleStore, sandboxName)) {
-    throw new Error(
-      `Runtime provider state mutation owns direct-container execution for sandbox '${sandboxName}'; retry after the provider fence is released.`,
-    );
-  }
-}
-
-/**
- * Serialize one ordinary direct-container execution against provider fence
- * acquisition. The callback must include both argv resolution and the complete
- * synchronous Docker subprocess lifetime. Taking the lock before checking the
- * durable target claim closes the check/acquire/exec race: an older exec drains
- * before the provider can publish its fence, while a later exec observes the
- * claim and is rejected before it can spawn.
- */
-function withPrivilegedSandboxExecutionLease<T>(
-  sandboxName: string,
-  operation: string,
-  fn: () => T,
-): T {
-  return withShieldsTransitionLock(
-    sandboxName,
-    `privileged direct-container execution: ${operation}`,
-    () => {
-      assertNoActiveStateMutationTarget(sandboxName);
-      return fn();
-    },
-  );
-}
-
 function resolveDirectSandboxContainer(sandboxName: string, driver: string | null): string {
   const selected = findDirectSandboxContainer(sandboxName);
   if (selected) return selected;
@@ -709,7 +661,6 @@ function privilegedSandboxExecArgv(
   if (driver !== null && driver !== "docker" && driver !== "vm") {
     throw unsupportedDirectDriverError(sandboxName, driver);
   }
-  assertNoActiveStateMutationTarget(sandboxName);
   const portableTarget =
     driver === "docker"
       ? resolvePortableDemoPrivilegedExecTarget(sandboxName, {
@@ -771,5 +722,4 @@ export {
   privilegedSandboxExecArgv,
   resolveDirectSandboxContainer,
   selectDirectSandboxContainer,
-  withPrivilegedSandboxExecutionLease,
 };
