@@ -988,7 +988,9 @@ Every `connect --probe-only` completion prints at most one credential-free `Prob
 - `pairing` settles OpenClaw operator pairing when applicable.
 - `publication` publishes launch-readiness evidence on Linux.
 
-The line also reports `total`, `lifecycleAction=skipped|reused|recovered|failed`, `forwardAction=skipped|verified|restored|failed`, and `result=ready|failed`. A failed probe adds `failedStage=<stage>` or `failedStage=unknown`. Stages that do not apply or do not run report `0ms`. Timing collection and output are fail-open: clock or writer failures do not change the readiness work, command diagnostics, or exit status. Use the command exit status, not a duration or action field, as the readiness decision.
+The line also reports cumulative readiness-observation durations and attempt counts for `sandbox-identity`, `policy-get`, `inference-get`, `gateway-health`, `forward-health`, and `inference-route` as `readiness.<observation>=<milliseconds>ms` and `readiness.<observation>.attempts=<count>`. `readiness.firstFailedObservation` identifies the first failed observation, or is `none`. `readiness.firstDecision` identifies the first readiness decision, and `readiness.firstFallbackDecision` identifies the first decision that did not accept existing evidence, or is `none`.
+
+The line also reports `total`, `lifecycleAction=skipped|reused|recovered|failed`, `forwardAction=skipped|verified|restored|failed`, and `result=ready|failed`. A failed probe adds `failedStage=<stage>` or `failedStage=unknown`. Stages or observations that do not apply or do not run report `0ms` and `0` attempts. Timing collection and output are fail-open: clock or writer failures do not change the readiness work, command diagnostics, or exit status. Use the command exit status, not a duration or action field, as the readiness decision.
 
 <AgentOnly variant="openclaw">
   Portable lifecycle recovery also emits one credential-free `Portable lifecycle timing:` line. It
