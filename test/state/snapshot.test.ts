@@ -221,9 +221,9 @@ describe("listBackups computes virtual versions", () => {
     });
     expect(sandboxState.listBackups("test-sandbox")).toHaveLength(1);
 
-    expect(sandboxState.removeIncompleteSnapshot(String(incomplete.backupPath))).toEqual({
-      removed: true,
-    });
+    expect(
+      sandboxState.removeSandboxStateBackup("test-sandbox", String(incomplete.backupPath)),
+    ).toBe(true);
 
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
     expect(sandboxState.findBackup("test-sandbox", "failtest").match).toBeNull();
@@ -290,7 +290,7 @@ describe("listBackups computes virtual versions", () => {
       "2026-04-21T14-01-00-000Z",
     ]);
 
-    sandboxState.removeIncompleteSnapshot(String(incomplete.backupPath));
+    sandboxState.removeSandboxStateBackup("test-sandbox", String(incomplete.backupPath));
 
     expect(
       sandboxState.listBackups("test-sandbox").map((b) => [b.snapshotVersion, b.timestamp]),
