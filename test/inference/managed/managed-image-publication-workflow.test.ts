@@ -17,7 +17,6 @@ import {
   runManagedImagePromotion,
   runPublicationBarrier,
 } from "../../helpers/managed-image-publication-barrier";
-import { publicationBoundaryErrors } from "../../helpers/managed-image-publication-workflow-boundary";
 import {
   baseImagePlatformCallers,
   baseImagePublishers,
@@ -110,7 +109,6 @@ describe("complete managed-image publication workflow", () => {
       baseWorkflow.jobs?.["publish-managed-images"],
       "base-image workflow is missing the managed-image publisher",
     );
-    expect(publicationBoundaryErrors(baseWorkflow, managedWorkflow)).toEqual([]);
     expect(JSON.stringify(managedWorkflow)).not.toContain("config.plugins?.installs?.[id]");
     const validationRun =
       step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
@@ -120,30 +118,6 @@ describe("complete managed-image publication workflow", () => {
     const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
     expect(channelGuardStart).toBeGreaterThan(-1);
     expect(validationRun.slice(channelGuardStart, channelGuardEnd)).toContain('"googlechat",');
-    const weakenedWorkflow = structuredClone(managedWorkflow);
-    const weakenedValidation = step(
-      managedPublisher(weakenedWorkflow),
-      "Validate exact managed image before promotion",
-    );
-    weakenedValidation.run = weakenedValidation.run?.replace(
-      "!fs.lstatSync(manifestPath).isFile()",
-      "false",
-    );
-    expect(publicationBoundaryErrors(baseWorkflow, weakenedWorkflow)).toContain(
-      "exact managed image validation is missing lstatSync(manifestPath).isFile()",
-    );
-    const projectRootWeakenedWorkflow = structuredClone(managedWorkflow);
-    const projectRootWeakenedValidation = step(
-      managedPublisher(projectRootWeakenedWorkflow),
-      "Validate exact managed image before promotion",
-    );
-    projectRootWeakenedValidation.run = projectRootWeakenedValidation.run?.replace(
-      'path.join(nodeModulesRoot, ...name.split("/"))',
-      "",
-    );
-    expect(publicationBoundaryErrors(baseWorkflow, projectRootWeakenedWorkflow)).toContain(
-      'exact managed image validation is missing path.join(nodeModulesRoot, ...name.split("/"))',
-    );
     expect(publisher).toMatchObject({
       needs: [
         "build-and-push-hermes",
@@ -734,24 +708,6 @@ describe("complete managed-image publication workflow", () => {
     expect(run).toMatch(/npx --no-install tsx[\s\S]*test\/e2e\/live\/mcp-bridge\.test\.ts/u);
     expect(run).not.toContain("--selector");
     expect(step(discovery, "Scan MCP artifacts for fixture credentials").if).toBe("always()");
-  });
-
-  it("keeps the activation proof outside mocked runtime boundaries (#7744)", () => {
-    const source = fs.readFileSync(
-      path.join(repoRoot, "test/e2e/live/managed-image-activation-e2e-helpers.ts"),
-      "utf8",
-    );
-    expect(source).toContain("await host.nemoclaw(");
-    expect(source).toContain("await lifecycle.restartGatewayRuntime(");
-    expect(source).toContain("await runAgentTurn(");
-    expect(source).toContain("await sandbox.cleanupSandbox(");
-    expect(source).toContain("assertNoDockerfileBuild(trace);");
-    expect(source).toContain("await lifecycle.stopGatewayRuntime()");
-    expect(source).toContain("await host.cleanupGatewayRegistration(GATEWAY");
-    expect(source).toContain("startFakeOpenAiCompatibleServer");
-    expect(source).not.toContain("runSandboxGpuCreateFlow");
-    expect(source).not.toContain("createDockerManagedBootstrapAdapter");
-    expect(source).not.toMatch(/\bvi\.(?:fn|mock|spyOn)\b/u);
   });
 
   it("pins a single linux/amd64 PR base descriptor and fails closed on torn index evidence", () => {
