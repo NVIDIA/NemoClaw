@@ -1968,7 +1968,11 @@ Verify that the inference provider endpoint is reachable from the host. Check th
 $$nemoclaw <name> status
 ```
 
-The main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox and then sends one inference request over the same route, so it reflects the route the agent uses. If that line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route. For local Ollama and local vLLM, `Inference (ollama backend)` or the corresponding local-backend line reports the host-side service separately. For Local Ollama, current releases can also print `Inference (auth proxy)` when a proxy token is available. If a local-backend diagnostic fails, start the backend. If the auth-proxy result is `unreachable`, run `$$nemoclaw <name> connect` to restart the proxy with its persisted token. If it is `unauthorized`, rerun onboarding to rotate the rejected proxy token and refresh the route. Follow the printed detail for any other auth-proxy failure. For Ollama-backed OpenClaw sandboxes, agent passthrough uses the registered host route to warm an unloaded model after an Ollama daemon restart. If that bounded warm-up fails or times out, NemoClaw reports the result and continues so OpenClaw can emit its canonical backend error.
+The main `Inference` line probes `https://inference.local/v1/models` from inside the sandbox and then sends one inference request over the same route, so it reflects the route the agent uses. If that line shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled diagnostic lines to identify the failing hop. An `unauthorized` line means the route answered but rejected the request, so refresh the provider credential rather than the route.
+
+For local Ollama and local vLLM, `Inference (ollama backend)` or the corresponding local-backend line reports the host-side service separately. If a local-backend diagnostic fails, start the backend. For Local Ollama, current releases can also print `Inference (auth proxy)` when a proxy token is available. Docker Desktop on Windows Subsystem for Linux (WSL) reaches host loopback directly, so its auth-proxy diagnostic is non-authoritative. Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration, then rerun onboarding.
+
+On non-WSL hosts that front Ollama with the auth proxy, run `$$nemoclaw <name> connect` when the auth-proxy result is `unreachable` to restart the proxy with its persisted token. If the result is `unauthorized`, rerun onboarding to rotate the rejected proxy token and refresh the route. Follow the printed detail for any other auth-proxy failure. For Ollama-backed OpenClaw sandboxes, agent passthrough uses the registered host route to warm an unloaded model after an Ollama daemon restart. If that bounded warm-up fails or times out, NemoClaw reports the result and continues so OpenClaw can emit its canonical backend error.
 
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection. Then verify the credential and base URL for the provider you selected during onboarding.
 
@@ -2635,7 +2639,7 @@ sudo ufw allow from "$SUBNET" to any port 11435 proto tcp
 $$nemoclaw onboard
 ```
 
-Docker Desktop, WSL, and hosts without the OpenShell Docker network use different routing models. In those cases NemoClaw treats an unavailable sandbox-side probe as non-blocking and relies on the regular proxy health check.
+Qualified Docker Desktop WSL routes do not use the auth proxy. Other hosts without the OpenShell Docker network use different routing models; for proxy-fronted routes, NemoClaw treats an unavailable sandbox-side probe as non-blocking and relies on the regular proxy health check.
 
 ### `host.docker.internal` does not reliably reach the host from the sandbox
 
@@ -2661,13 +2665,13 @@ Expected output:
 * connect to 172.17.0.1 port 11434 failed: Connection refused
 ```
 
-For local Ollama, use the auth-proxy URL that NemoClaw's "Local Ollama" onboard option configures automatically:
+For local Ollama on non-WSL hosts, use the auth-proxy URL that NemoClaw's "Local Ollama" onboard option configures automatically:
 
 ```text
 http://host.openshell.internal:11435/v1
 ```
 
-`host.openshell.internal` resolves to the same gateway IP, and the [token-gated Ollama auth proxy](#ollama-auth-proxy-did-not-start) binds port `11435` there and forwards requests to `127.0.0.1:11434` on the host. If you need a different host service exposed to the sandbox, route it through the OpenShell gateway rather than relying on `host.docker.internal`. Refer to issue [#3136](https://github.com/NVIDIA/NemoClaw/issues/3136).
+`host.openshell.internal` resolves to the same gateway IP, and the [token-gated Ollama auth proxy](#ollama-auth-proxy-did-not-start) binds port `11435` there and forwards requests to `127.0.0.1:11434` on the host. Docker Desktop WSL routes reach host loopback directly and do not use this proxy. Native Docker Engine inside WSL is unqualified; enable Docker Desktop WSL integration instead of configuring the proxy URL manually. If you need a different host service exposed to the sandbox, route it through the OpenShell gateway rather than relying on `host.docker.internal`. Refer to issue [#3136](https://github.com/NVIDIA/NemoClaw/issues/3136).
 
 ### Local inference health check resolves to IPv6
 
