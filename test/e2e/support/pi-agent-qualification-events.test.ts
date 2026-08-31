@@ -4,10 +4,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  derivePiImageSourcePaths,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
-  parsePiRuntimePackageEvidence,
   qualifyPiReadTask,
 } from "../live/pi-agent-qualification-events.ts";
 
@@ -46,21 +44,6 @@ function events(...values: Record<string, unknown>[]): string {
 }
 
 describe("Pi qualification event oracle", () => {
-  it("derives source parity paths from Dockerfile inputs", () => {
-    expect(
-      derivePiImageSourcePaths([
-        "COPY agents/pi/start.sh /usr/local/bin/start\nCOPY extra/runtime.txt /runtime.txt",
-        "COPY --from=builder /built/runtime /runtime",
-      ]),
-    ).toEqual([".dockerignore", "agents/pi", "extra/runtime.txt"]);
-  });
-
-  it("rejects ambiguous Dockerfile copy inputs", () => {
-    expect(() => derivePiImageSourcePaths(['COPY ["source", "/destination"]'])).toThrow(
-      "must use plain path operands",
-    );
-  });
-
   it("accepts one successful read and an exact final response", () => {
     const events = parsePiJsonEvents(eventStream());
 
@@ -102,6 +85,13 @@ describe("Pi qualification event oracle", () => {
     ).toThrow("must start exactly one tool");
     expect(() =>
       qualifyPiReadTask(
+        [...valid, { ...valid[2], toolCallId: "unmatched-completion" }],
+        PATH,
+        TOKEN,
+      ),
+    ).toThrow("did not complete successfully");
+    expect(() =>
+      qualifyPiReadTask(
         parsePiJsonEvents(eventStream({ args: { path: "/sandbox/other" } })),
         PATH,
         TOKEN,
@@ -135,9 +125,12 @@ describe("Pi qualification event oracle", () => {
     expect(() =>
       qualifyPiReadTask(parsePiJsonEvents(events(start, success, success, reply)), PATH, TOKEN),
     ).toThrow("did not complete successfully");
+    expect(() =>
+      qualifyPiReadTask(parsePiJsonEvents(events(start, reply, success)), PATH, TOKEN),
+    ).toThrow("after the read completed");
   });
 
-  it("accepts the managed Pi inference route and runtime package evidence", () => {
+  it("accepts the managed Pi inference route", () => {
     expect(
       parsePiInferenceEvidence(
         JSON.stringify({
@@ -156,18 +149,6 @@ describe("Pi qualification event oracle", () => {
       model: "nvidia/test-model",
       route: "https://inference.local/v1",
     });
-    expect(
-      parsePiRuntimePackageEvidence(
-        JSON.stringify({
-          packages: {
-            "node_modules/@earendil-works/pi-coding-agent": {
-              integrity: "sha512-reviewed",
-              version: "0.84.1",
-            },
-          },
-        }),
-      ),
-    ).toEqual({ integrity: "sha512-reviewed", version: "0.84.1" });
   });
 
   it("rejects missing or inconsistent Pi qualification evidence", () => {
@@ -188,8 +169,5 @@ describe("Pi qualification event oracle", () => {
         "nvidia/test-model",
       ),
     ).toThrow("does not match the qualified route");
-    expect(() => parsePiRuntimePackageEvidence('{"packages":{}}')).toThrow(
-      "Pi runtime package lock entry must be an object",
-    );
   });
 });

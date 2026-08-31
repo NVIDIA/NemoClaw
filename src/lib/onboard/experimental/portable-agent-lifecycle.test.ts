@@ -140,6 +140,7 @@ describe("portable agent lifecycle dispatch", () => {
     });
     mocks.qualifyOperatingAuthority.mockImplementation((snapshot) => ({
       receipt: snapshot.receipt,
+      assertTransactionCurrent: vi.fn(),
       assertCurrent: vi.fn(),
     }));
     mocks.retainOperatingAuthority.mockImplementation(
@@ -223,12 +224,17 @@ describe("portable agent lifecycle dispatch", () => {
   it("uses operation-local schema-8 authority for a direct command (#10423)", () => {
     const historical = hermes("active").snapshot.receipt;
     const current = { ...historical, socketAuthority: { dev: "current" } };
+    const assertTransactionCurrent = vi.fn();
     const assertCurrent = vi.fn();
     mocks.inspect.mockReturnValue({
       kind: "hermes",
       snapshot: { receipt: historical, successor: { receipt: { schemaVersion: 8 } } },
     });
-    mocks.qualifyOperatingAuthority.mockReturnValue({ receipt: current, assertCurrent });
+    mocks.qualifyOperatingAuthority.mockReturnValue({
+      receipt: current,
+      assertTransactionCurrent,
+      assertCurrent,
+    });
 
     expect(buildHermesPortableCommandAuthority("alpha", { HOME: "/home/test" }, "/state")).toEqual({
       env: { HOME: "/home/test" },
@@ -243,18 +249,24 @@ describe("portable agent lifecycle dispatch", () => {
   it("retains one operation-local schema-6 command generation for recovery (#10423)", () => {
     const historical = hermes("active").snapshot.receipt;
     const current = { ...historical, socketAuthority: { dev: "current" } };
+    const assertTransactionCurrent = vi.fn();
     const assertCurrent = vi.fn();
     mocks.inspect.mockReturnValue({
       kind: "hermes",
       snapshot: { receipt: historical, successor: { receipt: { schemaVersion: 6 } } },
     });
-    mocks.qualifyOperatingAuthority.mockReturnValue({ receipt: current, assertCurrent });
+    mocks.qualifyOperatingAuthority.mockReturnValue({
+      receipt: current,
+      assertTransactionCurrent,
+      assertCurrent,
+    });
 
     const qualified = qualifyHermesPortableOperatingCommandAuthority(
       "alpha",
       { HOME: "/home/test" },
       "/state",
     );
+    qualified.assertTransactionCurrent();
     qualified.assertCurrent();
 
     expect(qualified).toMatchObject({
@@ -262,6 +274,7 @@ describe("portable agent lifecycle dispatch", () => {
       executablePath: "/usr/bin/openshell",
     });
     expect(mocks.qualifyOperatingAuthority).toHaveBeenCalledOnce();
+    expect(assertTransactionCurrent).toHaveBeenCalledOnce();
     expect(assertCurrent).toHaveBeenCalledTimes(2);
   });
 
@@ -282,6 +295,7 @@ describe("portable agent lifecycle dispatch", () => {
   it("retains current schema-6 command authority for accepted readiness (#10423)", () => {
     const historical = hermes("active").snapshot.receipt;
     const current = { ...historical, socketAuthority: { dev: "current" } };
+    const assertTransactionCurrent = vi.fn();
     const assertCurrent = vi.fn();
     const authority = {
       kind: "hermes",
@@ -289,7 +303,11 @@ describe("portable agent lifecycle dispatch", () => {
     };
     mocks.inspectClassification.mockReturnValue(authority);
     mocks.inspect.mockReturnValue(authority);
-    mocks.qualifyOperatingAuthority.mockReturnValue({ receipt: current, assertCurrent });
+    mocks.qualifyOperatingAuthority.mockReturnValue({
+      receipt: current,
+      assertTransactionCurrent,
+      assertCurrent,
+    });
 
     const accepted = qualifyHermesPortableAcceptedReadinessAuthority("alpha", {
       env: { HOME: "/home/test" },
@@ -304,9 +322,11 @@ describe("portable agent lifecycle dispatch", () => {
       },
     });
     const currentAuthority = accepted as Extract<typeof accepted, { kind: "current" }>;
+    currentAuthority.commandAuthority.assertTransactionCurrent();
     currentAuthority.commandAuthority.assertCurrent();
+    expect(assertTransactionCurrent).toHaveBeenCalledOnce();
     expect(assertCurrent).toHaveBeenCalledTimes(3);
-    expect(mocks.retainOperatingAuthority).toHaveBeenCalledTimes(3);
+    expect(mocks.retainOperatingAuthority).toHaveBeenCalledTimes(4);
   });
 
   it("retains migrated receipt currentness with accepted schema-6 authority (#10423)", () => {
@@ -327,6 +347,7 @@ describe("portable agent lifecycle dispatch", () => {
     mocks.inspect.mockReturnValue(authority);
     mocks.qualifyOperatingAuthority.mockReturnValue({
       receipt: authority.snapshot.receipt,
+      assertTransactionCurrent: vi.fn(),
       assertCurrent: commandCurrent,
     });
 

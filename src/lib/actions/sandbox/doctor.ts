@@ -207,7 +207,23 @@ async function collectGatewayChecks(
   openshellBin: ReturnType<typeof resolveOpenshell>,
   recoverGateway: boolean,
 ): Promise<GatewayProbe> {
-  const checks: DoctorCheck[] = [];
+  // #10223: the fail-only branch at the call site emits this label when the
+  // registered gateway binding cannot be resolved. This branch runs both
+  // when it resolved from a real sandbox entry and when the caller falls
+  // back to the ambient default gateway for an unregistered sandbox name
+  // (resolveDoctorGatewayName). Only the former is an actual registered
+  // binding, so gate the ok check on a real sandbox entry, or an
+  // unregistered sandbox name would misreport one that does not exist.
+  const checks: DoctorCheck[] = sb
+    ? [
+        {
+          group: "Gateway",
+          label: "Registered gateway binding",
+          status: "ok",
+          detail: `resolved to '${gatewayName}'`,
+        },
+      ]
+    : [];
   const gateway = openshellBin
     ? await probeOpenShellGateway(gatewayName, recoverGateway)
     : { check: null, connected: false };
