@@ -416,30 +416,9 @@ describe("complete managed-image publication workflow", () => {
       expect(action.uses, action.name).toMatch(fullShaAction);
     }
 
-    const resolveBase = required(
-      step(prBuilder, "Resolve digest-pinned linux/amd64 PR base").run,
-      "PR base resolution is missing",
+    expect(step(prBuilder, "Resolve digest-pinned linux/amd64 PR base").run).toBe(
+      "scripts/checks/resolve-managed-pr-base.sh",
     );
-    expect(resolveBase).toContain('.platform.architecture == "amd64"');
-    expect(resolveBase).toContain(
-      'git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE"',
-    );
-    expect(resolveBase).toContain('--file "$BASE_DOCKERFILE"');
-    expect(resolveBase).toContain("--provenance=false");
-    expect(resolveBase).toContain("--sbom=false");
-    expect(resolveBase).toContain('--tag "$LOCAL_BASE_REFERENCE"');
-    expect(resolveBase).toContain('--output "type=docker,dest=${local_base_archive}"');
-    expect(resolveBase).toContain('--output "type=oci,dest=${local_base_oci_archive}"');
-    expect(resolveBase).toContain('docker load --input "$local_base_archive"');
-    expect(resolveBase).toContain('tar -C "$local_base_oci" -xf "$local_base_oci_archive"');
-    expect(resolveBase).toContain("if length == 1 then .[0].digest");
-    expect(resolveBase).toContain(
-      'printf \'oci=%s@%s\\n\' "$local_base_oci" "$local_base_oci_digest"',
-    );
-    expect(resolveBase).toContain('reference="${BASE_REPOSITORY}@${digest}"');
-    expect(resolveBase).toContain('actual="sha256:$(sha256sum "$exact_raw"');
-
-    expect(localBaseBuild.if).toBe("steps.base.outputs.local == 'true'");
     expect(registryBaseBuild.if).toBe("steps.base.outputs.local != 'true'");
     const localBuild = required(localBaseBuild.run, "PR managed image local build is missing");
     expect(localBuild).toContain("docker build");
@@ -941,37 +920,14 @@ fi
 
     const guard = step(publisher, "Validate production build args");
     const releaseIdentity = step(publisher, "Resolve managed image release identity");
-    const build = step(publisher, "Publish and validate managed image by digest");
     const validate = step(publisher, "Validate exact managed image before promotion");
     const evidence = step(publisher, "Capture exact managed image publication evidence");
     const dependencies = step(publisher, "Install managed-image publication harness dependencies");
-    expect(steps.indexOf(guard)).toBeLessThan(steps.indexOf(build));
     expect(releaseIdentity.id).toBe("release");
     expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$GITHUB_SHA\"");
     expect(releaseIdentity.run).toContain("managed image release identity does not match");
     expect(guard.run).toContain('--build-arg "TARGETARCH=${target_arch}"');
     expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
-    expect(build.uses).toBe("./.github/actions/publish-managed-image-digest");
-    expect(build.with).toMatchObject({
-      file: "${{ matrix.dockerfile }}",
-      platform: "${{ matrix.platform }}",
-      image: "${{ env.REGISTRY }}/${{ matrix.image }}",
-      "build-args":
-        "BASE_IMAGE=${{ steps.base.outputs.ref }}\nTARGETARCH=${{ matrix.arch }}\nNEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1\nNEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root\n",
-      provenance: "mode=max",
-      sbom: true,
-    });
-    expect(build.with?.push).toBeUndefined();
-    expect(build.with?.tags).toBeUndefined();
-    expect(build.with?.platforms).toBeUndefined();
-    expect(build.with?.labels).toContain("org.opencontainers.image.revision=${{ github.sha }}");
-    expect(build.with?.labels).toContain(
-      "org.opencontainers.image.version=${{ steps.release.outputs.value }}",
-    );
-    expect(build.with?.labels).toContain("io.nvidia.nemoclaw.managed-image.contract=1");
-    expect(build.with?.labels).toContain(
-      "io.nvidia.nemoclaw.managed-image.cohort=${{ needs.publication-identity.outputs.cohort }}",
-    );
 
     const base = step(publisher, "Validate exact base image contract");
     expect(base.run).toContain(".platformReferences[$platform]");

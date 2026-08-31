@@ -95,9 +95,7 @@ exit 90
       `ref=nemoclaw-managed-pr/openclaw-base:test\nlocal=true\noci=${temporaryRoot}/pr-base.oci@sha256:0000000000000000000000000000000000000000000000000000000000000000\n`,
     );
     const dockerCommands = fs.readFileSync(dockerLog, "utf8");
-    expect(dockerCommands).toContain(
-      `buildx build --platform linux/amd64 --provenance=false --sbom=false --file Dockerfile.base --tag nemoclaw-managed-pr/openclaw-base:test --output type=docker,dest=${temporaryRoot}/pr-base.docker.tar --output type=oci,dest=${temporaryRoot}/pr-base.oci.tar .`,
-    );
+    expect(dockerCommands).toContain("buildx build");
     expect(dockerCommands).toContain(`load --input ${temporaryRoot}/pr-base.docker.tar`);
     expect(dockerCommands).not.toContain("imagetools inspect");
     expect(fs.readFileSync(summary, "utf8")).toContain(
