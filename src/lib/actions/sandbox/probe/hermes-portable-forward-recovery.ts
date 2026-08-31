@@ -58,8 +58,10 @@ export class HermesPortableForwardRecoveryError extends Error {
 export interface HermesPortableForwardRecoveryDeps {
   readonly assertCurrent: () => void;
   readonly assertRollbackCurrent: () => void;
-  readonly captureCurrent: (args: readonly string[], timeout: number) => CommandResult;
-  readonly captureRollback: (args: readonly string[], timeout: number) => CommandResult;
+  readonly captureCurrentList: (args: readonly string[], timeout: number) => CommandResult;
+  readonly captureRollbackList: (args: readonly string[], timeout: number) => CommandResult;
+  readonly runCurrentMutation: (args: readonly string[], timeout: number) => unknown;
+  readonly runRollbackMutation: (args: readonly string[], timeout: number) => unknown;
   readonly isPortReachable?: (port: number) => boolean;
   readonly now?: () => number;
   readonly sleep?: (milliseconds: number) => void;
@@ -224,7 +226,7 @@ function captureForwardEntries(
   requireCurrent(input, rollback);
   let result: CommandResult;
   try {
-    const capture = rollback ? input.deps.captureRollback : input.deps.captureCurrent;
+    const capture = rollback ? input.deps.captureRollbackList : input.deps.captureCurrentList;
     const operation = () =>
       capture(["forward", "list", "--gateway", input.gatewayName], input.probeTimeoutMs);
     result = timing ? timing.measure("list", operation) : operation();
@@ -310,7 +312,7 @@ function invokeMutation(
 ): void {
   requireCurrent(input, false);
   try {
-    timing.measure(stage, () => input.deps.captureCurrent(args, input.operationTimeoutMs));
+    timing.measure(stage, () => input.deps.runCurrentMutation(args, input.operationTimeoutMs));
   } catch (error) {
     throw normalizeFailure(error);
   }
@@ -358,7 +360,7 @@ function settleStartedPort(
 function rollbackPort(input: HermesPortableForwardRecoveryInput, port: number): void {
   try {
     requireCurrent(input, true);
-    input.deps.captureRollback(
+    input.deps.runRollbackMutation(
       ["forward", "stop", String(port), input.sandboxName, "--gateway", input.gatewayName],
       input.operationTimeoutMs,
     );

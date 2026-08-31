@@ -677,6 +677,16 @@ function hermesPortableForwardInputForConnectProbe(
       timeout,
     });
   };
+  const runMutation = (args: readonly string[], timeout: number) => {
+    return runOpenshell([...args], {
+      env: commandAuthority.env,
+      openshellBinary: commandAuthority.executablePath,
+      replaceEnv: true,
+      ignoreError: true,
+      stdio: "ignore",
+      timeout,
+    });
+  };
 
   return {
     intent: input.intent,
@@ -689,8 +699,10 @@ function hermesPortableForwardInputForConnectProbe(
     deps: {
       assertCurrent: assertProductCurrent,
       assertRollbackCurrent: assertCommandCurrent,
-      captureCurrent: capture,
-      captureRollback: capture,
+      captureCurrentList: capture,
+      captureRollbackList: capture,
+      runCurrentMutation: runMutation,
+      runRollbackMutation: runMutation,
     },
   } as const;
 }
