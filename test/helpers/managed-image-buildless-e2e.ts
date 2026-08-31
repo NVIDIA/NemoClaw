@@ -849,6 +849,27 @@ function assertManagedLaunch(
         ),
       ),
     ).toBe(true);
+    const sandboxGetCommands = result.payload.runnerCommands.filter(
+      (command) =>
+        command.includes("sandbox get") && command.includes(bootstrapRequest?.sandboxName ?? ""),
+    );
+    expect(
+      sandboxGetCommands.filter(
+        (command) =>
+          !command.includes("sandbox get -g nemoclaw") &&
+          !command.includes("sandbox get --gateway nemoclaw"),
+      ),
+    ).toEqual([]);
+    const sandboxExecCommands = result.payload.runnerCommands.filter(
+      (command) =>
+        command.includes("sandbox exec") && command.includes(bootstrapRequest?.sandboxName ?? ""),
+    );
+    expect(
+      sandboxExecCommands.filter(
+        (command) =>
+          !command.includes("sandbox exec -g nemoclaw") && !command.includes("--gateway nemoclaw"),
+      ),
+    ).toEqual([]);
   }
   expect(createArgs.filter((arg) => arg.startsWith("NEMOCLAW_CORPORATE_CA_B64="))).toEqual([]);
   expect(profile.proxy).toMatchObject({
