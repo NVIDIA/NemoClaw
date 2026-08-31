@@ -128,17 +128,18 @@ describe("runInferenceGet", () => {
       signal: "SIGKILL",
     });
 
-    await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toThrow(
-      "OpenShell inference route lookup for gateway 'nemoclaw-19090' timed out.",
-    );
+    await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
+      message: "OpenShell inference route lookup for gateway 'nemoclaw-19090' timed out.",
+    });
   });
 
   it("reports the gateway and exit status without command output (#10671)", async () => {
     const deps = createDeps("secret stderr must not be rendered", 7);
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
 
-    await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toThrow(
-      "OpenShell inference route lookup for gateway 'nemoclaw-19090' failed with exit status 7.",
-    );
+    await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
+      message:
+        "OpenShell inference route lookup for gateway 'nemoclaw-19090' failed with exit status 7.",
+    });
   });
 });
