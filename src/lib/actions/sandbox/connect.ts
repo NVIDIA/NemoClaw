@@ -725,7 +725,7 @@ function writeHermesPortableForwardRecoveryTiming(
   evidence: HermesPortableForwardRecoveryTimingEvidence,
 ): void {
   console.log(
-    `  Hermes Portable forward recovery timing: list=${String(evidence.listMs)}ms listCount=${String(evidence.listCount)} stop=${String(evidence.stopMs)}ms stopCount=${String(evidence.stopCount)} start=${String(evidence.startMs)}ms startCount=${String(evidence.startCount)} settle=${String(evidence.settleMs)}ms settleCount=${String(evidence.settleCount)} total=${String(evidence.totalMs)}ms result=proved`,
+    `  Hermes Portable forward recovery timing: list=${String(evidence.listMs)}ms listCount=${String(evidence.listCount)} stop=${String(evidence.stopMs)}ms stopCount=${String(evidence.stopCount)} start=${String(evidence.startMs)}ms startCount=${String(evidence.startCount)} settle=${String(evidence.settleMs)}ms settleCount=${String(evidence.settleCount)} total=${String(evidence.totalMs)}ms result=${evidence.result}`,
   );
 }
 
