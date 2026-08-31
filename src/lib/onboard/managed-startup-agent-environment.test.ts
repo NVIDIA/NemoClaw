@@ -557,6 +557,21 @@ describe("managed startup agent environment", () => {
     });
   });
 
+  it("refuses to start a legacy Hermes dashboard without its browser URL (#10651)", () => {
+    const profile = hermesProfile();
+    assert.equal(profile.dashboard.agent, "hermes");
+    const { browserUrl: _browserUrl, ...legacyDashboard } = profile.dashboard;
+
+    expect(() =>
+      mapManagedStartupProfileToAgentEnvironment({
+        ...profile,
+        dashboard: legacyDashboard,
+      }),
+    ).toThrow(
+      "Cannot start the Hermes dashboard because its managed startup profile has no recorded browser URL. Rerun onboarding before starting the sandbox.",
+    );
+  });
+
   it("keeps DCode routing, provider identity, and auto-approval in root-owned files", () => {
     const result = mapManagedStartupProfileToAgentEnvironment(dcodeProfile(), {
       NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "not-a-number",
