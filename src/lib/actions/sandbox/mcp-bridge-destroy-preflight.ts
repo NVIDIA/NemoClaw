@@ -10,7 +10,9 @@ import {
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
 import {
+  getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
+  type McpProviderInspectionRuntimeSelection,
   type McpProviderInspection,
   providerMatchesManagedCredential,
   providerShapeDetail,
@@ -71,13 +73,14 @@ export async function discardSafeIncompleteMcpAdds(
     (entry) => entry.addState === "preflighted" && !entry.providerId,
   );
   if (providerlessCandidates.length > 0) await ensureSandboxGatewaySelected(sandboxName);
+  const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   const remainingEntries: Array<[string, McpBridgeEntry]> = [];
   const providerlessPreflighted: McpBridgeEntry[] = [];
   for (const [server, entry] of Object.entries(bridges)) {
     if (entry.addState === "prepared") continue;
     if (entry.addState === "preflighted" && !entry.providerId) {
       assertAuthenticatedBridgeEntry(entry);
-      const inspection = inspectMcpProvider(entry.providerName);
+      const inspection = inspectMcpProvider(entry.providerName, providerRuntimeSelection);
       if (inspection.exists === false) {
         providerlessPreflighted.push(entry);
         continue;
@@ -122,7 +125,11 @@ export function assertMcpDestroySnapshotCurrent(
 
 export function inspectExactMcpDestroyProvider(
   entry: McpBridgeEntry,
-  options: { allowMissing: boolean; force?: boolean },
+  options: {
+    allowMissing: boolean;
+    force?: boolean;
+    runtimeSelection: McpProviderInspectionRuntimeSelection;
+  },
 ): McpProviderInspection {
   assertAuthenticatedBridgeEntry(entry);
   if (!entry.providerId) {
@@ -130,7 +137,7 @@ export function inspectExactMcpDestroyProvider(
       `MCP server '${entry.server}' has no stable OpenShell provider ID. Refusing destructive cleanup of same-name provider '${entry.providerName}'. Remove the legacy bridge with --force only after independently cleaning that provider.`,
     );
   }
-  const inspection = inspectMcpProvider(entry.providerName);
+  const inspection = inspectMcpProvider(entry.providerName, options.runtimeSelection);
   if (inspection.exists === null) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect OpenShell provider '${entry.providerName}'.`,
@@ -169,8 +176,13 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const destroyAlreadyPrepared = !!sandbox.mcp?.destroyPreparedAt;
   const destroyAlreadyPending = !!sandbox.mcp?.destroyPendingAt;
+  const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   for (const entry of entries) {
-    inspectExactMcpDestroyProvider(entry, { allowMissing: true, force: options.force });
+    inspectExactMcpDestroyProvider(entry, {
+      allowMissing: true,
+      force: options.force,
+      runtimeSelection: providerRuntimeSelection,
+    });
   }
   return {
     entries,

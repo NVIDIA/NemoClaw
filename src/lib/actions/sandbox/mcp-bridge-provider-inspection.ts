@@ -334,7 +334,10 @@ export function providerShapeDetail(
   return `Expected ${MCP_BRIDGE_PROVIDER_TYPE} provider with only credential key '${expectedCredential ?? "<missing>"}', found type '${type}' with keys '${keys}'.`;
 }
 
-export function assertMcpProviderRecoverable(entry: McpBridgeEntry): McpProviderInspection {
+export function assertMcpProviderRecoverable(
+  entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): McpProviderInspection {
   assertAuthenticatedBridgeEntry(entry);
   if (!entry.providerId) {
     throw new McpBridgeError(
@@ -342,7 +345,7 @@ export function assertMcpProviderRecoverable(entry: McpBridgeEntry): McpProvider
     );
   }
   const expectedCredential = entry.env[0];
-  const inspection = inspectMcpProvider(entry.providerName);
+  const inspection = inspectMcpProvider(entry.providerName, runtimeSelection);
   if (inspection.exists === null) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect OpenShell provider '${entry.providerName}'.`,

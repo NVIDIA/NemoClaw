@@ -42,6 +42,10 @@ vi.mock("./mcp-bridge-provider", () => ({
   assertNoProviderCredentialCollisions: vi.fn(),
   assertNoRegisteredProviderCredentialCollisions: vi.fn(),
   detachProvider: vi.fn(),
+  getMcpProviderInspectionRuntimeSelection: vi.fn(() => ({
+    gatewayName: "nemoclaw-8091",
+    workspace: "default",
+  })),
   inspectMcpProvider: mocks.inspectMcpProvider,
   preflightMcpEntryTargets: vi.fn(),
   waitForDetachedMcpCredential: vi.fn(),

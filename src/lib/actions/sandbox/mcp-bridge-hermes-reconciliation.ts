@@ -11,6 +11,7 @@ import {
 } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import { sleepMcpBridgeRetry } from "./mcp-bridge/timing";
 
@@ -161,10 +162,12 @@ export function inspectHermesMcpRuntimeIntent(
     managedServerNames,
     options.credentialRevisions,
   );
+  const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   let result: ReturnType<typeof runOpenshellProviderCommand>;
   try {
     result = runOpenshellProviderCommand(buildInspectArgs(sandboxName, JSON.stringify(payload)), {
       ignoreError: true,
+      runtimeSelection,
       stdio: ["ignore", "pipe", "pipe"],
       timeout: HERMES_MCP_INSPECT_TIMEOUT_MS,
     });

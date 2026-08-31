@@ -20,9 +20,16 @@ import {
   providerMatchesManagedCredential,
 } from "./mcp-bridge-provider-inspection";
 import {
+  attachProvider,
   assertMcpProviderRecoverable,
+  deleteProvider,
+  detachMissingProviderReference,
+  detachProvider,
+  ensureMcpBridgeProviderProfile,
+  MCP_BRIDGE_PROVIDER_TYPE,
   observeMcpCredentialRevision,
   refreshMcpProviderEnvironment,
+  upsertMcpProvider,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
@@ -30,6 +37,7 @@ import * as processRecovery from "./process-recovery";
 
 describe("OpenShell MCP provider state", () => {
   afterEach(() => {
+    providerCommand.setProviderCommandRuntimeHooksForTest({});
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
@@ -93,11 +101,7 @@ Provider:
     };
 
     expect(
-      providerMatchesCredential(
-        inspection,
-        "GITHUB_TOKEN",
-        "11111111-2222-4333-8444-555555555555",
-      ),
+      providerMatchesCredential(inspection, "GITHUB_TOKEN", "11111111-2222-4333-8444-555555555555"),
     ).toBe(false);
     expect(
       providerMatchesManagedCredential(
@@ -135,9 +139,12 @@ Provider:
       addedAt: "2026-08-19T00:00:00.000Z",
     };
 
-    expect(() => assertMcpProviderRecoverable(entry)).toThrow(
-      /legacy generic profile.*cannot bind to an MCP endpoint/,
-    );
+    expect(() =>
+      assertMcpProviderRecoverable(entry, {
+        gatewayName: "nemoclaw-8080",
+        workspace: "default",
+      }),
+    ).toThrow(/legacy generic profile.*cannot bind to an MCP endpoint/);
   });
 
   it("republishes an exact provider only after policy binding without reading its credential", () => {
@@ -168,20 +175,154 @@ Provider:
       .mockReturnValueOnce(providerResult(8));
 
     expect(
-      refreshMcpProviderEnvironment({
-        server: "github",
-        agent: "openclaw",
-        adapter: "mcporter",
-        url: "https://api.githubcopilot.com/mcp",
-        env: ["GITHUB_TOKEN"],
-        providerName: "alpha-mcp-github",
-        providerId: id,
-        policyName: "mcp-bridge-github",
-        addedAt: "2026-08-19T00:00:00.000Z",
-      }),
+      refreshMcpProviderEnvironment(
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "mcporter",
+          url: "https://api.githubcopilot.com/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "alpha-mcp-github",
+          providerId: id,
+          policyName: "mcp-bridge-github",
+          addedAt: "2026-08-19T00:00:00.000Z",
+        },
+        {
+          gatewayName: "nemoclaw-8080",
+          workspace: "default",
+        },
+      ),
     ).toMatchObject({ resourceVersion: 8 });
     expect(run.mock.calls[1]?.[0]).toEqual(["provider", "update", "alpha-mcp-github"]);
     expect(run.mock.calls[1]?.[0]).not.toContain("--credential");
+  });
+
+  it("pins every managed MCP provider lifecycle read and write to the recorded runtime target (#10514)", () => {
+    vi.stubEnv("EXPECTED_TOKEN", "host-only-secret");
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "http://ambient.invalid");
+    vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "ambient-workspace");
+
+    const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
+    const providerId = "11111111-2222-4333-8444-555555555555";
+    const commandFamilies = new Set<string>();
+    let providerExists = false;
+    let providerAttached = false;
+    let resourceVersion = 0;
+    const providerOutput = () =>
+      [
+        `Id: ${providerId}`,
+        `Type: ${MCP_BRIDGE_PROVIDER_TYPE}`,
+        `Resource version: ${resourceVersion}`,
+        "Credential keys: EXPECTED_TOKEN",
+      ].join("\n");
+    const profileOutput = (id: string, inferenceCapable: boolean) =>
+      JSON.stringify({
+        id,
+        credentials: [],
+        endpoints: [],
+        binaries: [],
+        inference_capable: inferenceCapable,
+      });
+
+    const runOpenshell = vi.fn((args: string[], options: { env?: Record<string, string> }) => {
+      const env = options.env ?? {};
+      expect(
+        Object.keys(env)
+          .filter((name) => name.startsWith("OPENSHELL_"))
+          .sort(),
+      ).toEqual(["OPENSHELL_GATEWAY", "OPENSHELL_WORKSPACE"]);
+      expect(env.OPENSHELL_GATEWAY).toBe(runtimeSelection.gatewayName);
+      expect(env.OPENSHELL_WORKSPACE).toBe(runtimeSelection.workspace);
+
+      const command = `${args[0]} ${args[1]} ${args[2] ?? ""}`;
+      switch (command) {
+        case "provider profile export":
+          commandFamilies.add("profile");
+          return {
+            status: 0,
+            stdout: profileOutput(args[3], args[3] === "openai"),
+            stderr: "",
+          };
+        case "provider get alpha-mcp-fake":
+          commandFamilies.add("get");
+          return providerExists
+            ? { status: 0, stdout: providerOutput(), stderr: "" }
+            : { status: 1, stdout: "", stderr: `provider '${args[2]}' not found` };
+        case "provider create --name":
+          commandFamilies.add("create");
+          providerExists = true;
+          resourceVersion = 1;
+          return { status: 0, stdout: "Created", stderr: "" };
+        case "provider update alpha-mcp-fake":
+          commandFamilies.add("update");
+          resourceVersion += 1;
+          return { status: 0, stdout: "Updated", stderr: "" };
+        case "provider delete alpha-mcp-fake":
+          commandFamilies.add("delete");
+          providerExists = false;
+          return { status: 0, stdout: "Deleted", stderr: "" };
+        case "sandbox provider list":
+          commandFamilies.add("list");
+          return providerAttached
+            ? {
+                status: 0,
+                stdout: `NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake ${MCP_BRIDGE_PROVIDER_TYPE} 1 0\n`,
+                stderr: "",
+              }
+            : {
+                status: 0,
+                stdout: "No providers attached to sandbox alpha.\n",
+                stderr: "",
+              };
+        case "sandbox provider attach":
+          commandFamilies.add("attach");
+          providerAttached = true;
+          return { status: 0, stdout: "Attached", stderr: "" };
+        case "sandbox provider detach": {
+          commandFamilies.add("detach");
+          const changed = providerAttached;
+          providerAttached = false;
+          return {
+            status: 0,
+            stdout: changed
+              ? "Detached provider alpha-mcp-fake from sandbox alpha."
+              : "Provider alpha-mcp-fake was not attached to sandbox alpha.",
+            stderr: "",
+          };
+        }
+        default:
+          throw new Error(`Unexpected OpenShell command: ${args.join(" ")}`);
+      }
+    });
+    providerCommand.setProviderCommandRuntimeHooksForTest({ runOpenshell: runOpenshell as never });
+
+    ensureMcpBridgeProviderProfile(runtimeSelection);
+    const created = upsertMcpProvider("alpha-mcp-fake", [{ name: "EXPECTED_TOKEN" }], {
+      allowExisting: false,
+      runtimeSelection,
+    });
+    const entry: McpBridgeEntry = {
+      server: "fake",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://mcp.example.test/mcp",
+      env: ["EXPECTED_TOKEN"],
+      providerName: "alpha-mcp-fake",
+      providerId: created.inspection.id ?? undefined,
+      policyName: "mcp-bridge-fake",
+      addedAt: "2026-06-01T00:00:00.000Z",
+    };
+    attachProvider("alpha", entry, runtimeSelection);
+    refreshMcpProviderEnvironment(entry, runtimeSelection);
+    expect(detachProvider("alpha", entry, { runtimeSelection })).toBe("detached");
+    deleteProvider(entry, { runtimeSelection });
+    expect(detachMissingProviderReference("alpha", entry, runtimeSelection)).toBe("absent");
+
+    expect(commandFamilies).toEqual(
+      new Set(["profile", "get", "create", "attach", "list", "update", "detach", "delete"]),
+    );
   });
 
   it("distinguishes a real detach from OpenShell's idempotent success", () => {
@@ -776,5 +917,4 @@ alpha-mcp-slack   generic  1                 0
     );
     expect(exec).toHaveBeenCalledTimes(1);
   });
-
 });

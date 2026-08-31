@@ -67,7 +67,7 @@ describe("OpenShell provider command runtime", () => {
     expect(result).toEqual({ status: 0 });
   });
 
-  it("pins provider inspection to the recorded gateway and workspace (#10514)", () => {
+  it("pins provider commands to the recorded gateway and workspace (#10514)", () => {
     mocks.buildSubprocessEnv.mockReturnValue({
       OPENSHELL_GATEWAY: "ambient-gateway",
       OPENSHELL_GATEWAY_ENDPOINT: "https://other.example.test",

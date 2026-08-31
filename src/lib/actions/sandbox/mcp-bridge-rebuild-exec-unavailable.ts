@@ -134,20 +134,22 @@ async function inspectReadOnlyRecoveryState(
   // it in CLI context. It does not mutate MCP lifecycle state or sandbox
   // contents; the provider and target checks below remain inspection-only.
   if (entries.length > 0) await ensureSandboxGatewaySelected(sandboxName);
+  const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(
+    getSandboxOrThrow(sandboxName),
+  );
 
   const providerByServer = new Map<string, string>();
   const targetsByServer = new Map<string, string>();
   for (const entry of entries) {
     const target = resolvedTargets.get(entry.server);
-    const provider = inspectExactMcpDestroyProvider(entry, { allowMissing: false });
+    const provider = inspectExactMcpDestroyProvider(entry, {
+      allowMissing: false,
+      runtimeSelection: providerRuntimeSelection,
+    });
     providerByServer.set(entry.server, providerFingerprint(provider));
     targetsByServer.set(entry.server, targetFingerprint(target));
   }
-  assertNoProviderCredentialCollisions(
-    sandboxName,
-    entries,
-    getMcpProviderInspectionRuntimeSelection(getSandboxOrThrow(sandboxName)),
-  );
+  assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
   return { providerByServer, targetsByServer };
 }
 

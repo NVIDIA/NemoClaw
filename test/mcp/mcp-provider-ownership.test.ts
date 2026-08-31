@@ -340,6 +340,7 @@ process.env.HOME = ${JSON.stringify(home)};
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const calls = [];
 const attached = new Set(["alpha-mcp-fake", "alpha-mcp-second"]);
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
 providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "provider" && args[1] === "get") {
@@ -372,17 +373,17 @@ const entry = {
   adapter: "mcporter",
   addedAt: "2026-06-01T00:00:00.000Z",
 };
-const before = providerActions.inspectMcpProviderAttachments("alpha");
-const firstOutcome = providerActions.detachMissingProviderReference("alpha", entry);
-const afterFirst = providerActions.inspectMcpProviderAttachments("alpha");
+const before = providerActions.inspectMcpProviderAttachments("alpha", runtimeSelection);
+const firstOutcome = providerActions.detachMissingProviderReference("alpha", entry, runtimeSelection);
+const afterFirst = providerActions.inspectMcpProviderAttachments("alpha", runtimeSelection);
 const secondOutcome = providerActions.detachMissingProviderReference("alpha", {
   ...entry,
   server: "second",
   providerName: "alpha-mcp-second",
   providerId: "22222222-3333-4444-8555-666666666666",
   policyName: "mcp-bridge-second",
-});
-const after = providerActions.inspectMcpProviderAttachments("alpha");
+}, runtimeSelection);
+const after = providerActions.inspectMcpProviderAttachments("alpha", runtimeSelection);
 process.stdout.write(JSON.stringify({ before, firstOutcome, afterFirst, secondOutcome, after, calls }));
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
@@ -429,6 +430,7 @@ process.env.EXPECTED_TOKEN = "host-only-secret";
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const calls = [];
 let resourceVersion = 4;
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
 providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "provider" && args[1] === "get") {
@@ -457,6 +459,7 @@ try {
     {
       allowExisting: true,
       expectedProviderId: "11111111-2222-4333-8444-555555555555",
+      runtimeSelection,
     },
   );
 } catch (error) {
@@ -494,6 +497,7 @@ process.env.HOME = ${JSON.stringify(home)};
 process.env.EXPECTED_TOKEN = "host-only-secret";
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const calls = [];
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
 providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "provider" && args[1] === "get") {
@@ -511,6 +515,7 @@ try {
       allowExisting: true,
       expectedProviderId: "11111111-2222-4333-8444-555555555555",
       requireExisting: true,
+      runtimeSelection,
     },
   );
 } catch (error) {

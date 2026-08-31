@@ -5,6 +5,7 @@ export type {
   McpProviderAttachment,
   McpProviderAttachmentInspection,
   McpProviderInspection,
+  McpProviderInspectionRuntimeSelection,
 } from "./mcp-bridge-provider-inspection";
 export {
   assertMcpProviderRecoverable,

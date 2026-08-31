@@ -97,6 +97,7 @@ function assertPreparedMcpAddResourcesAbsent(
   adapter: AgentMcpAdapter,
   entry: McpBridgeEntry,
   target: McpBridgeTargetValidation,
+  providerRuntimeSelection: ReturnType<typeof getMcpProviderInspectionRuntimeSelection>,
 ): void {
   const adapterInspection = inspectAgentAdapterRegistration(sandboxName, adapter, entry);
   if (adapterInspection.state !== "absent") {
@@ -109,7 +110,7 @@ function assertPreparedMcpAddResourcesAbsent(
     );
   }
 
-  const providerInspection = inspectMcpProvider(entry.providerName);
+  const providerInspection = inspectMcpProvider(entry.providerName, providerRuntimeSelection);
   if (providerInspection.exists !== false) {
     const detail =
       providerInspection.exists === null
@@ -325,7 +326,7 @@ async function addMcpBridgeUnlocked(
   try {
     let detachedMissingProviderReference = false;
     if (resumingPreflightedAdd) {
-      const providerInspection = inspectMcpProvider(entry.providerName);
+      const providerInspection = inspectMcpProvider(entry.providerName, providerRuntimeSelection);
       if (providerInspection.exists === null) {
         throw new McpBridgeError(
           providerInspection.error ??
@@ -339,7 +340,7 @@ async function addMcpBridgeUnlocked(
         // one recovery side effect that must precede the image capability
         // probe. It neither reads nor replaces credential material, and the
         // durable add manifest retains ownership if the later probe fails.
-        detachMissingProviderReference(sandboxName, entry);
+        detachMissingProviderReference(sandboxName, entry, providerRuntimeSelection);
         detachedMissingProviderReference = true;
       }
     }
@@ -352,7 +353,7 @@ async function addMcpBridgeUnlocked(
         // A retry may reuse an exact provider without re-exporting its secret,
         // but recreating a missing provider cannot. This check and any owned
         // policy cleanup happen only after the running-image capability probe.
-        assertMcpProviderRecoverable(entry);
+        assertMcpProviderRecoverable(entry, providerRuntimeSelection);
       } catch (error) {
         removeGeneratedPolicy(sandboxName, entry, { bestEffort: true });
         throw error;
@@ -360,7 +361,13 @@ async function addMcpBridgeUnlocked(
     }
 
     if (entry.addState === "prepared") {
-      assertPreparedMcpAddResourcesAbsent(sandboxName, adapter, entry, target);
+      assertPreparedMcpAddResourcesAbsent(
+        sandboxName,
+        adapter,
+        entry,
+        target,
+        providerRuntimeSelection,
+      );
       entry = { ...entry, addState: "preflighted" };
       // This second durable boundary proves the derived resource names and the
       // adapter slot were absent before any side effect. After a crash, retries
@@ -384,7 +391,7 @@ async function addMcpBridgeUnlocked(
     // supplied by a foreign attachment before opening its MCP route, then check
     // again after provider creation to close the intervening race.
     assertNoProviderCredentialCollisions(sandboxName, [entry], providerRuntimeSelection);
-    ensureMcpBridgeProviderProfile();
+    ensureMcpBridgeProviderProfile(providerRuntimeSelection);
     // Load the real protocol:mcp policy without a credential binding before
     // provider mutation. OpenShell requires the endpointless provider to be
     // attached before it accepts credential_binding.provider, and withholds
@@ -397,6 +404,7 @@ async function addMcpBridgeUnlocked(
       // provider whose immutable ID was already persisted by this add.
       allowExisting: resumingPreflightedAdd,
       expectedProviderId: entry.providerId,
+      runtimeSelection: providerRuntimeSelection,
       prepareMutation: (action) => {
         // A fresh create has no prior revision to compare. Observe only the
         // bounded placeholder classification for an actual update, after the
@@ -427,7 +435,7 @@ async function addMcpBridgeUnlocked(
       );
     }
     providerAttachAttempted = true;
-    attachProvider(sandboxName, entry);
+    attachProvider(sandboxName, entry, providerRuntimeSelection);
     applyGeneratedPolicy(sandboxName, entry, target);
     let refreshedAfterObservedAbsence = false;
     let credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
@@ -457,8 +465,11 @@ async function addMcpBridgeUnlocked(
           allowExisting: true,
           expectedProviderId: entry.providerId,
           requireExisting: true,
+          runtimeSelection: providerRuntimeSelection,
         });
-        if (republished.action !== "updated") refreshMcpProviderEnvironment(entry);
+        if (republished.action !== "updated") {
+          refreshMcpProviderEnvironment(entry, providerRuntimeSelection);
+        }
       },
     });
     if (Object.hasOwn(adapterEnvValues, entry.env[0]) && !refreshedAfterObservedAbsence) {
@@ -471,6 +482,7 @@ async function addMcpBridgeUnlocked(
         allowExisting: true,
         expectedProviderId: entry.providerId,
         requireExisting: true,
+        runtimeSelection: providerRuntimeSelection,
       });
       credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
         previousRevision: credentialRevision,
@@ -494,7 +506,7 @@ async function addMcpBridgeUnlocked(
   } catch (error) {
     const rollbackProviderInspection =
       (providerAttachAttempted || providerCreated) && entry.providerId
-        ? inspectMcpProvider(providerName)
+        ? inspectMcpProvider(providerName, providerRuntimeSelection)
         : undefined;
     const rollbackProviderOwned =
       !!rollbackProviderInspection &&
@@ -510,7 +522,10 @@ async function addMcpBridgeUnlocked(
       removeGeneratedPolicy(sandboxName, entry, { bestEffort: true });
     }
     const detachOutcome = providerAttachAttempted
-      ? detachProvider(sandboxName, entry, { bestEffort: true })
+      ? detachProvider(sandboxName, entry, {
+          bestEffort: true,
+          runtimeSelection: providerRuntimeSelection,
+        })
       : "absent";
     let reservationCleanupProved = !providerAttachAttempted;
     if (providerAttachAttempted && detachOutcome !== "unknown") {
@@ -522,9 +537,13 @@ async function addMcpBridgeUnlocked(
       }
     }
     if (providerCreated && rollbackProviderOwned && reservationCleanupProved) {
-      const beforeDelete = inspectMcpProvider(providerName);
+      const beforeDelete = inspectMcpProvider(providerName, providerRuntimeSelection);
       if (providerMatchesCredential(beforeDelete, entry.env[0], entry.providerId)) {
-        deleteProvider(entry, { allowMissing: true, bestEffort: true });
+        deleteProvider(entry, {
+          allowMissing: true,
+          bestEffort: true,
+          runtimeSelection: providerRuntimeSelection,
+        });
       }
     }
     // Exception rollback is best-effort and process death skips it entirely.

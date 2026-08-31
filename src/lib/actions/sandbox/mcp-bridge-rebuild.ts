@@ -152,7 +152,9 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   for (const entry of entries) {
     assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
   }
-  for (const entry of entries) assertMcpProviderRecoverable(entry);
+  for (const entry of entries) {
+    assertMcpProviderRecoverable(entry, providerRuntimeSelection);
+  }
   assertNoRegisteredProviderCredentialCollisions(entries, {
     runtimeSelection: providerRuntimeSelection,
   });
@@ -180,7 +182,9 @@ export async function prepareMcpBridgesForRebuild(
   const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
-  for (const entry of entries) assertMcpProviderRecoverable(entry);
+  for (const entry of entries) {
+    assertMcpProviderRecoverable(entry, providerRuntimeSelection);
+  }
   assertNoProviderCredentialCollisions(sandboxName, entries, providerRuntimeSelection);
   // This is the bounded replacement handoff, not a durable NemoClaw policy
   // record. Capture OpenShell immediately before the internal teardown
@@ -216,8 +220,13 @@ export async function prepareMcpBridgesForRebuild(
     for (const entry of entries) {
       // Keep the provider and its host-only credentials for the replacement
       // sandbox, but detach it before OpenShell deletes the old attachment.
-      inspectExactMcpDestroyProvider(entry, { allowMissing: false });
-      const detachOutcome = detachProvider(sandboxName, entry);
+      inspectExactMcpDestroyProvider(entry, {
+        allowMissing: false,
+        runtimeSelection: providerRuntimeSelection,
+      });
+      const detachOutcome = detachProvider(sandboxName, entry, {
+        runtimeSelection: providerRuntimeSelection,
+      });
       if (detachOutcome === "unknown") {
         throw new McpBridgeError(
           `Could not prove provider detach for MCP server '${entry.server}'.`,

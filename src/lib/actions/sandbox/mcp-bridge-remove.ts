@@ -17,7 +17,9 @@ import {
   deleteProvider,
   detachMissingProviderReference,
   detachProvider,
+  getMcpProviderInspectionRuntimeSelection,
   inspectMcpProvider,
+  type McpProviderInspectionRuntimeSelection,
   providerMatchesManagedCredential,
   providerShapeDetail,
   waitForDetachedMcpCredential,
@@ -56,7 +58,11 @@ function requiresProviderDetachBeforeAdapterCleanup(entry: McpBridgeEntry): bool
 
 function assertExactMcpRemoveProvider(
   entry: McpBridgeEntry,
-  options: { allowMissing: boolean; force?: boolean },
+  options: {
+    allowMissing: boolean;
+    force?: boolean;
+    runtimeSelection: McpProviderInspectionRuntimeSelection;
+  },
 ): void {
   assertPersistedAuthenticatedBridgeEntry(entry);
   if (!entry.providerId) {
@@ -64,7 +70,7 @@ function assertExactMcpRemoveProvider(
       `MCP server '${entry.server}' has no stable OpenShell provider ID. Refusing destructive cleanup of same-name provider '${entry.providerName}'. Remove the legacy bridge with --force only after independently cleaning that provider.`,
     );
   }
-  const inspection = inspectMcpProvider(entry.providerName);
+  const inspection = inspectMcpProvider(entry.providerName, options.runtimeSelection);
   if (inspection.exists === null) {
     throw new McpBridgeError(
       inspection.error ?? `Could not inspect OpenShell provider '${entry.providerName}'.`,
@@ -152,6 +158,7 @@ async function removeMcpBridgeUnlocked(
   validateSandboxName(sandboxName);
   validateMcpServerName(server);
   const sandbox = getSandboxOrThrow(sandboxName);
+  const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
   // #6376: `--force` on `mcp remove` is the documented non-destructive recovery
   // for a stuck MCP destroy transaction. It is PHASE-AWARE: only the prepared
   // (phase-one) marker — in-sandbox scrub + provider detach done, deletion not
@@ -216,7 +223,7 @@ async function removeMcpBridgeUnlocked(
   let providerWasMissing = false;
   if (entry.providerName) {
     if (!entry.providerId) {
-      const inspection = inspectMcpProvider(entry.providerName);
+      const inspection = inspectMcpProvider(entry.providerName, providerRuntimeSelection);
       if (inspection.exists === false) {
         // With no live provider there is no global object to adopt or destroy.
         // This lets an operator independently remove a legacy/orphan provider,
@@ -232,7 +239,7 @@ async function removeMcpBridgeUnlocked(
         failures.push(detail);
       }
     } else {
-      const inspection = inspectMcpProvider(entry.providerName);
+      const inspection = inspectMcpProvider(entry.providerName, providerRuntimeSelection);
       if (inspection.exists === false) {
         providerOwnershipProved = true;
         providerWasMissing = true;
@@ -268,7 +275,7 @@ async function removeMcpBridgeUnlocked(
     detachBeforeAdapterCleanup
   ) {
     try {
-      detachMissingProviderReference(sandboxName, entry);
+      detachMissingProviderReference(sandboxName, entry, providerRuntimeSelection);
       missingProviderReferenceDetached = true;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -284,7 +291,10 @@ async function removeMcpBridgeUnlocked(
         ? missingProviderReferenceDetached
           ? "detached"
           : "unknown"
-        : detachProvider(sandboxName, entry, { allowLegacyGeneric: true });
+        : detachProvider(sandboxName, entry, {
+            allowLegacyGeneric: true,
+            runtimeSelection: providerRuntimeSelection,
+          });
       providerDetachedBeforeAdapterCleanup = detachOutcome !== "unknown";
       if (!providerDetachedBeforeAdapterCleanup) {
         throw new McpBridgeError(
@@ -368,11 +378,14 @@ async function removeMcpBridgeUnlocked(
       if (providerWasMissing) {
         detachOutcome = missingProviderReferenceDetached
           ? "detached"
-          : detachMissingProviderReference(sandboxName, entry);
+          : detachMissingProviderReference(sandboxName, entry, providerRuntimeSelection);
       } else {
         detachOutcome = providerDetachedBeforeAdapterCleanup
           ? "detached"
-          : detachProvider(sandboxName, entry, { allowLegacyGeneric: true });
+          : detachProvider(sandboxName, entry, {
+              allowLegacyGeneric: true,
+              runtimeSelection: providerRuntimeSelection,
+            });
       }
       if (detachOutcome !== "unknown") {
         // A missing provider has no credential left to revoke. Its stock CLI
@@ -409,10 +422,12 @@ async function removeMcpBridgeUnlocked(
       assertExactMcpRemoveProvider(entry, {
         allowMissing: false,
         force: options.force,
+        runtimeSelection: providerRuntimeSelection,
       });
       deleteProvider(entry, {
         allowLegacyGeneric: true,
         allowMissing: options.force === true || entry.addState === "preflighted",
+        runtimeSelection: providerRuntimeSelection,
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
