@@ -759,7 +759,7 @@ async function main(progress: TestProgress): Promise<void> {
 }
 
 test(
-  "portable profile rootless environment completes distinct authenticated gateway and registry routes",
+  "portable profile rootless environment completes authenticated routes and enforces the configured Hermes dashboard Host",
   {
     meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
     timeout: 900_000,
