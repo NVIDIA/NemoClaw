@@ -251,6 +251,20 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     expect((result as { blockReason: string }).blockReason).toContain("NVIDIA API key");
   });
 
+  it("blocks write to an absolute named workspace containing an NVIDIA API key", () => {
+    const api = createMockApi();
+    const handler = getHookHandler(api);
+    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
+    const result = handler({
+      toolName: "write",
+      params: {
+        file_path: "/sandbox/.openclaw/workspace-main/memory/2026-05-29.md",
+        content: `api key: ${fakeKey}`,
+      },
+    });
+    expect(result).toMatchObject({ block: true });
+  });
+
   it("blocks edit to memory path containing secrets", () => {
     const api = createMockApi();
     const handler = getHookHandler(api);
