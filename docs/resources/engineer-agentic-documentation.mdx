@@ -41,22 +41,39 @@ A polished site with weak retrieval or verification is not agent-ready.
 
 ## Move Documentation Into the Engineering Loop
 
-A push to `main` that changes a path outside the allowed documentation paths starts `Docs / Author Post-Merge Catch-Up`. The workflow examines the implementation, tests, and documentation from the latest reachable semver tag through the pushed commit.
+A push to `main` that changes a path outside the allowed documentation paths starts `Docs / Author Post-Merge Catch-Up` on a GitHub-hosted runner.
+The workflow examines implementation, tests, and documentation from the latest reachable semver tag through the exact pushed commit.
+It proceeds only while no managed documentation PR exists or the existing managed PR remains a draft.
+Marking that PR ready for review transfers ownership to maintainers and stops later runs before model work begins.
 
-1. It authors documentation changes in a credential-free OpenShell sandbox.
-2. A separate offline sandbox reviews the documentation candidate with a read-only repository checkout.
-3. For an approved nonempty patch, a publisher with no model credential creates or refreshes one cumulative draft PR with a GitHub-verified commit.
+1. **Author.** GitHub Actions launches the Pi coding agent in a pinned OpenShell sandbox.
+   The author prompt directs the agent to read the committed range and repository guidance, verify behavior in source and tests, and edit only `docs/**`, `fern/docs.yml`, and `fern/assets/**`.
+2. **Validate.** The runner applies the candidate patch to a trusted checkout, runs `npm run docs`, and confirms that validation did not mutate the patch.
+3. **Review.** GitHub Actions launches a separate Pi agent in an offline OpenShell sandbox.
+   The repository is mounted read-only and the agent has no editing tools.
+   The reviewer evaluates whether the cumulative patch is complete, accurate, and non-speculative; a rejection uploads the review report.
+4. **Publish.** An approval record binds the exact patch hash, repository, reviewed `main` commit, range-start tag, and target release tag.
+   A separate publisher revalidates that record and the current GitHub state before creating or refreshing one cumulative draft PR.
 
-The first nonempty patch creates the managed PR.
-Its title names the next patch tag after the range-start tag.
-Its body names both tags, identifies the reviewed `main` boundary, states the branch owner, and
-links to the canonical development and release-cutoff procedure.
-Later pushes to `main` refresh that same PR only when they change a path outside `docs/**`, `fern/docs.yml`, and `fern/assets/**`.
-Each refresh uses a cumulative patch based on the triggering commit.
-Each refresh creates a merge commit whose tree exactly matches the reviewed patch applied to `main`, then fast-forwards the branch. The publisher never force-pushes or replaces a branch head that a person changed.
-A push that changes only the allowed documentation paths does not start another catch-up run.
-Follow [Post-Merge Documentation Catch-Up](https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#post-merge-documentation-catch-up) for the automation lifecycle and recovery. The maintainer release-train policy linked there owns release cutoff.
-The signed release brief records a proceed decision.
+Repository administrators retain the `POST_MERGE_DOCS_API_KEY` Actions secret until rotation or removal.
+The workflow exposes it only while the runner configures isolated inference, and hosted-runner cleanup removes the gateway runtime copy.
+Neither Pi sandbox, the review artifacts, nor the publisher receives that secret.
+The publisher receives GitHub write permission but no model credential, so the system that reasons about documentation cannot publish directly.
+
+When no managed PR exists, an approved empty patch completes without creating one.
+An existing managed draft remains pending when a later candidate is empty or unchanged.
+When a nonempty candidate changes the managed draft, the publisher creates or refreshes the PR and deliberately reports that documentation remains pending.
+The PR title names the next patch tag after the range-start tag, and its body records how to recover the reviewed `main` boundary from the latest workflow-created commit.
+Each refresh creates a merge commit whose tree exactly matches the reviewed patch applied to `main`, then fast-forwards the branch.
+The publisher never force-pushes or replaces a branch head or managed PR metadata that a person changed.
+
+At release cutoff, a maintainer takes ownership, adds or verifies the canonical changelog entry, completes human review and required checks, and merges the documentation PR.
+The release decision inventories commits after the last automated coverage point and records whether to proceed, update documentation, or stop.
+A push that changes only the allowed documentation paths does not start another catch-up run, so merging the cumulative documentation PR does not create an empty follow-up receipt.
+
+Follow [Post-Merge Documentation Catch-Up](https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#post-merge-documentation-catch-up) for the PR lifecycle and recovery procedure.
+The maintainer release-train policy linked there owns the cutoff evidence and signed proceed decision.
+The [post-merge automation guide](https://github.com/NVIDIA/NemoClaw/blob/main/tools/post-merge-docs/README.md) owns the credential boundary.
 
 ## Use a Layered Architecture
 
@@ -534,7 +551,8 @@ The current NemoClaw repository provides concrete examples for each layer.
 | Guide variant generation | `scripts/sync-agent-variant-docs.mts`. |
 | Route validation | `scripts/check-docs-published-routes.mts`. |
 | Documentation accuracy tests | Compiled CLI and installer parity, environment-variable coverage, generated platform documentation, and targeted procedure and guide variant regression tests under `test/`. |
-| Post-merge update workflow | `.github/workflows/post-merge-docs.yaml`, `tools/post-merge-docs/`, and `.agents/skills/nemoclaw-contributor-update-docs/SKILL.md`. |
+| Post-merge author and independent review | `.github/workflows/post-merge-docs.yaml`, `tools/post-merge-docs/run.mts`, `tools/post-merge-docs/README.md`, and `.agents/skills/nemoclaw-contributor-update-docs/SKILL.md`. |
+| Managed documentation PR publication and release handoff | `tools/post-merge-docs/publish.mts`, `docs/AUTOMATION.md`, and `.agents/skills/nemoclaw-maintainer-policies/references/release-train.md`. |
 | Information-architecture workflow | `.agents/skills/nemoclaw-maintainer-refactor-docs/SKILL.md`. |
 | Pull-request assurance | Docs link, product parity, and preview workflows under `.github/workflows/`. |
 | Release history | Dated entries under `docs/changelog/` that land before the release tag. |
