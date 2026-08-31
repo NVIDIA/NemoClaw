@@ -257,12 +257,28 @@ describe("listBackups computes virtual versions", () => {
         failedBackupDirs: ["workspace"],
       },
     },
+    {
+      scenario: "a legacy state-file manifest without the captured file",
+      overrides: {
+        stateFiles: [{ path: "openclaw.json", strategy: "copy" }],
+      },
+    },
   ])("keeps snapshots with $scenario out of snapshot selection (#10639)", ({ overrides }) => {
     const incomplete = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", overrides);
 
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
     expect(sandboxState.findBackup("test-sandbox", "v1").match).toBeNull();
     expect(fs.existsSync(String(incomplete.backupPath))).toBe(true);
+  });
+  it("keeps complete legacy state-file snapshots selectable (#10639)", () => {
+    const complete = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      stateFiles: [{ path: "openclaw.json", strategy: "copy" }],
+    });
+    fs.writeFileSync(path.join(String(complete.backupPath), "openclaw.json"), "{}\n");
+    expect(sandboxState.listBackups("test-sandbox")).toHaveLength(1);
+    expect(sandboxState.findBackup("test-sandbox", "v1").match?.backupPath).toBe(
+      complete.backupPath,
+    );
   });
   it("restores the versions of surviving snapshots once an incomplete one is removed (#8201)", () => {
     writeBackup("test-sandbox", "2026-04-21T14-01-00-000Z");

@@ -2716,6 +2716,17 @@ export type RebuildRecoveryManifestValidation =
   | { ok: true; manifest: RebuildManifest }
   | { ok: false; reason: string };
 
+function legacyStateFilesArePresent(backupPath: string, manifest: RebuildManifest): boolean {
+  if (manifest.backupComplete !== undefined) return true;
+  return (manifest.stateFiles ?? []).every((spec) => {
+    try {
+      return lstatSync(path.join(backupPath, spec.path)).isFile();
+    } catch {
+      return false;
+    }
+  });
+}
+
 /**
  * Remove one completed rebuild backup without allowing a caller-controlled
  * path to escape the sandbox's timestamped backup directory.
@@ -2848,8 +2859,14 @@ export function listBackups(sandboxName: string): SnapshotEntry[] {
 
   const manifests: RebuildManifest[] = [];
   for (const entry of rawEntries) {
-    const m = readManifest(path.join(dir, entry.name));
-    if (m && m.backupComplete !== false && (m.failedBackupDirs?.length ?? 0) === 0) {
+    const backupPath = path.join(dir, entry.name);
+    const m = readManifest(backupPath);
+    if (
+      m &&
+      m.backupComplete !== false &&
+      (m.failedBackupDirs?.length ?? 0) === 0 &&
+      legacyStateFilesArePresent(backupPath, m)
+    ) {
       manifests.push(m);
     }
   }

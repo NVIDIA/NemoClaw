@@ -130,6 +130,8 @@ The retained incomplete snapshot may contain unsanitized credentials.
 Do not restore, copy, share, or edit it.
 Repair access to the original sandbox state, then rerun `snapshot create`.
 Remove the retained directory only after you verify that the original sandbox or a complete snapshot contains every required state item.
+For a legacy snapshot whose manifest lacks a completion marker, NemoClaw excludes it from `snapshot list` and restore selection when any manifest-declared state file is absent from the snapshot directory.
+The legacy snapshot remains selectable when every declared state file is present or when its manifest declares no state files.
 
 ## Restore a Snapshot
 
