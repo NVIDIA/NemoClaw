@@ -75,21 +75,21 @@ function cancelRecoveryIdentity(
   };
 }
 
+function createOptionProviderNames(createArgs: readonly string[]): string[] {
+  const separator = createArgs.indexOf("--");
+  const createOptions = createArgs.slice(0, separator < 0 ? createArgs.length : separator);
+  return createOptions.flatMap((value, index, args) =>
+    index > 0 && args[index - 1] === "--provider" ? [value] : [],
+  );
+}
+
 /** Finalize provider arguments from the exact policy that creation consumes. */
 export function bindRebuildPolicyProvidersToCreateArgs(
   createArgs: readonly string[],
   policy: Pick<import("../initial-policy").InitialSandboxPolicy, "credentialBindingProviders">,
 ): string[] {
   const result = [...createArgs];
-  const startupCommandSeparator = result.indexOf("--");
-  const createOptionEnd = startupCommandSeparator < 0 ? result.length : startupCommandSeparator;
-  const attached = new Set(
-    result
-      .slice(0, createOptionEnd)
-      .flatMap((value, index, createOptions) =>
-        index > 0 && createOptions[index - 1] === "--provider" ? [value] : [],
-      ),
-  );
+  const attached = new Set(createOptionProviderNames(result));
   for (const provider of policy.credentialBindingProviders ?? []) {
     if (attached.has(provider)) continue;
     const separator = result.indexOf("--");
@@ -116,19 +116,10 @@ export function resolveRebuildPolicyProviderAuthority(input: {
   readonly preservedMcpState: SandboxMcpState | undefined;
   readonly managedMcpRebuildHandoff: boolean;
 }): string[] {
-  const startupCommandSeparator = input.createArgs.indexOf("--");
-  const createOptions = input.createArgs.slice(
-    0,
-    startupCommandSeparator < 0 ? input.createArgs.length : startupCommandSeparator,
-  );
-  const providers = new Set(
-    createOptions.flatMap((value, index, args) =>
-      index > 0 && args[index - 1] === "--provider" ? [value] : [],
-    ),
-  );
+  const providers = new Set(createOptionProviderNames(input.createArgs));
   const disabledChannels = new Set(input.messagingPlan?.disabledChannels ?? []);
   for (const binding of input.messagingPlan?.credentialBindings ?? []) {
-    if (disabledChannels.has(binding.channelId)) continue;
+    if (disabledChannels.has(binding.channelId) || binding.credentialAvailable !== true) continue;
     providers.add(binding.providerName);
   }
   if (input.managedMcpRebuildHandoff) {
@@ -147,6 +138,11 @@ function discloseSelectedRebuildPolicy(
 ): void {
   if (!rebuildPolicySourcePath) return;
   try {
+    console.log(
+      policy.policyPath === rebuildPolicySourcePath
+        ? "  Reusing live OpenShell policy for sandbox rebuild."
+        : "  Using a temporary OpenShell policy handoff for sandbox rebuild.",
+    );
     disclose(policy);
   } catch (error) {
     policy.cleanup?.();
