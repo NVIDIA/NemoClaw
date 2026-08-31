@@ -23,7 +23,10 @@ function writePendingStationReceiptRetirement(tmp: string): void {
   );
 }
 
-function runPayloadOnlyRecoveryBootstrap(): { output: string; status: number | null } {
+function runPayloadOnlyRecoveryBootstrap(dockerHost: string): {
+  output: string;
+  status: number | null;
+} {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-payload-bootstrap-"));
   const payloadRoot = path.join(tmp, "payload-only");
   const childPayload = path.join(tmp, "child-install.sh");
@@ -76,7 +79,7 @@ bootstrap_standalone_installer_payload --non-interactive
         ...process.env,
         BOOTSTRAP_CALL_LOG: callLog,
         CHILD_PAYLOAD: childPayload,
-        DOCKER_HOST: "unix:///var/run/docker.sock",
+        DOCKER_HOST: dockerHost,
         DOCKER_HOST_CONTRACT: dockerHostContract,
         INSTALLER_PAYLOAD,
         NEMOCLAW_BOOTSTRAP_PAYLOAD: "",
@@ -236,12 +239,19 @@ exit 0
 
 describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
   it("bootstraps a payload-only installer before recovery through a supported Docker socket", () => {
-    const result = runPayloadOnlyRecoveryBootstrap();
+    const result = runPayloadOnlyRecoveryBootstrap("unix:///var/run/docker.sock");
 
     expect(result.status, result.output).toBe(0);
     expect(result.output).toContain(
       "ref=refs/tags/payload-test tag=refs/tags/payload-test bootstrap=1 host=unix:///var/run/docker.sock recovery-started",
     );
+  });
+
+  it("rejects an unsupported Docker host after payload-only bootstrap before recovery", () => {
+    const result = runPayloadOnlyRecoveryBootstrap("tcp://203.0.113.10:2375");
+
+    expect(result.status).toBe(10);
+    expect(result.output).not.toContain("recovery-started");
   });
 
   it("recovers through a supported Docker socket without generic onboarding", () => {
