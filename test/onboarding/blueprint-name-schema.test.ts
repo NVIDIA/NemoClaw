@@ -1,11 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { compileConfigSchema } from "../../scripts/validate-configs.mts";
 
 const validate = compileConfigSchema("schemas/blueprint.schema.json");
+const blueprintSchema = JSON.parse(readFileSync("schemas/blueprint.schema.json", "utf8")) as {
+  $defs: {
+    externalOpenShellTarget: {
+      description: string;
+      properties: {
+        authentication: {
+          description: string;
+          properties: { credential_file: { description: string } };
+        };
+      };
+    };
+  };
+};
 
 interface BlueprintFixture {
   version: string;
@@ -96,6 +111,20 @@ describe("blueprint name schema", () => {
 });
 
 describe("blueprint external OpenShell target schema", () => {
+  it("documents credential validation for plan but not public health status (#9872)", () => {
+    const target = blueprintSchema.$defs.externalOpenShellTarget;
+    const descriptions = [
+      target.description,
+      target.properties.authentication.description,
+      target.properties.authentication.properties.credential_file.description,
+    ];
+
+    expect(descriptions[0]).toContain("Status does not access the authentication file");
+    expect(descriptions[1]).toContain("Planning validates the referenced file metadata");
+    expect(descriptions[1]).toContain("Status accepts the reference but does not access");
+    expect(descriptions[2]).toContain("Public health status does not access, validate, or require");
+  });
+
   it("accepts one explicit target without managed components", () => {
     expect(validate(blueprintWithExternalTarget()), JSON.stringify(validate.errors)).toBe(true);
   });

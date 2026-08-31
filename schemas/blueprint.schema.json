@@ -172,7 +172,7 @@
   "$defs": {
     "externalOpenShellTarget": {
       "type": "object",
-      "description": "Explicit externally managed OpenShell gateway target for target-only planning and credential-free public health status. File references use POSIX-rooted absolute paths. Planning validates and sanitizes target inputs without connecting. Status checks authentication file metadata, then uses the explicit HTTPS endpoint and validated CA bundle for one public health request. Status does not read authentication file contents or authenticate. This contract does not establish remote readiness or support for machine authentication or Kubernetes.",
+      "description": "Explicit externally managed OpenShell gateway target for target-only planning and credential-free public health status. File references use POSIX-rooted absolute paths. Planning validates and sanitizes target inputs without connecting. Status uses the explicit HTTPS endpoint and validated CA bundle for one public health request. Status does not access the authentication file or authenticate. This contract does not establish remote readiness or support for machine authentication or Kubernetes.",
       "required": [
         "endpoint",
         "workspace",
@@ -220,13 +220,13 @@
           "type": "object",
           "required": ["credential_file"],
           "additionalProperties": false,
-          "description": "File-backed authentication reference required for target-only planning and status. Both operations check file metadata only. Neither reads its contents, authenticates, or selects or validates a machine-authentication protocol.",
+          "description": "File-backed authentication reference required in the target shape for target-only planning and status. Planning validates the referenced file metadata without reading its contents. Status accepts the reference but does not access or validate the referenced file. Neither operation authenticates or selects or validates a machine-authentication protocol.",
           "properties": {
             "credential_file": {
               "type": "string",
               "minLength": 1,
               "pattern": "^/",
-              "description": "POSIX-rooted absolute path to a non-empty regular authentication file no larger than 1 MiB. Symbolic-link paths are not accepted. The planning and public health status operations inspect only file metadata. Neither operation reads the file contents or returns the path."
+              "description": "POSIX-rooted absolute authentication file path. Planning requires a non-empty regular file no larger than 1 MiB, rejects symbolic links, and inspects only file metadata. Public health status does not access, validate, or require the referenced file. Neither operation returns the path."
             }
           }
         }

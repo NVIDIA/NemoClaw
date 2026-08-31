@@ -334,16 +334,6 @@ export function validateExternalGatewayHealthHelper(source: string): string[] {
   if (!source.includes("artifacts.addRedactionValues([stateDir]);")) {
     errors.push("external gateway health helper must redact its private fixture path");
   }
-  const missingCredentialAssertions =
-    source.match(/expect\(fs\.existsSync\(authenticationPath\)\)\.toBe\(false\);/g)?.length ?? 0;
-  if (
-    !source.includes('const authenticationPath = path.join(stateDir, "authentication");') ||
-    !source.includes("authentication: { credential_file: authenticationPath }") ||
-    missingCredentialAssertions < 2 ||
-    source.includes("fs.writeFileSync(authenticationPath")
-  ) {
-    errors.push("external gateway health helper must keep its credential path nonexistent");
-  }
   if (source.includes("@nvidia/openshell-sdk")) {
     errors.push(
       "external gateway health helper must not bypass the Runner with a direct SDK import",

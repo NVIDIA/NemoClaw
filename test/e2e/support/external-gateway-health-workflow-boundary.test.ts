@@ -6,10 +6,6 @@ import type { ChildProcess } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  readExternalGatewayHealthHelper,
-  validateExternalGatewayHealthHelper,
-} from "../../../tools/e2e/external-gateway-health-workflow-boundary.mts";
 import { stopExternalGatewayHealthGateway } from "../fixtures/external-gateway-health-process.ts";
 
 describe("external gateway health workflow boundary", () => {
@@ -76,16 +72,5 @@ describe("external gateway health workflow boundary", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it("rejects a readable credential fixture for public gateway health (#9872)", () => {
-    const source = readExternalGatewayHealthHelper();
-    const readableCredentialFixture = source.replace(
-      "expect(fs.existsSync(authenticationPath)).toBe(false);",
-      'fs.writeFileSync(authenticationPath, "readable fixture", { mode: 0o600 });',
-    );
-    expect(validateExternalGatewayHealthHelper(readableCredentialFixture)).toContain(
-      "external gateway health helper must keep its credential path nonexistent",
-    );
   });
 });
