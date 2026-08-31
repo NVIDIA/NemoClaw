@@ -134,4 +134,29 @@ process.stdout.write(JSON.stringify({ result, calls, timeoutMs }));
     expect(payload.type).toBe("string");
     expect(payload.value).toContain("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS");
   });
+
+  it("no longer re-exports the validation timing helper from onboarding (#10413)", () => {
+    // The helper's owner is `probe-http-helpers`. The onboarding module used to
+    // forward it for one test and no production caller. Proving the new import
+    // works is not enough: the superseded path has to be gone from the public
+    // boundary, otherwise the coupling can return unnoticed.
+    const script = [
+      "const onboard = require('./dist/lib/onboard.js');",
+      "process.stdout.write(JSON.stringify({",
+      "  forwarded: Object.prototype.hasOwnProperty.call(onboard, 'getValidationProbeCurlArgs'),",
+      "  owner: typeof require('./dist/lib/inference/probe-http-helpers.js')",
+      "    .getValidationProbeCurlArgs,",
+      "}));",
+    ].join("");
+
+    const run = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+
+    expect(run.status).toBe(0);
+    const payload = JSON.parse(run.stdout) as { forwarded: boolean; owner: string };
+    expect(payload.forwarded).toBe(false);
+    expect(payload.owner).toBe("function");
+  });
 });
