@@ -122,7 +122,11 @@ Tag a snapshot with a human-readable label:
 $$nemoclaw my-assistant snapshot create --name before-upgrade
 ```
 
-When a directory or state file cannot be captured, `snapshot create` reports the failed items, removes the incomplete snapshot, and exits nonzero. `snapshot list` shows no new entry, so a later restore cannot select a capture that never completed. If removal fails, the command reports the listed snapshot path. Remove that directory manually before you run `snapshot restore` because the incomplete capture remains selectable.
+When a directory or state file cannot be captured, `snapshot create` reports the failed items, removes the incomplete snapshot, and exits nonzero.
+`snapshot list` shows no new entry, so a later restore cannot select a capture that never completed.
+If removal fails, the command reports the retained snapshot path.
+The incomplete snapshot remains excluded from `snapshot list` and restore selection.
+Remove the retained directory only after you verify that the original sandbox or a complete snapshot contains every required state item.
 
 ## Restore a Snapshot
 
