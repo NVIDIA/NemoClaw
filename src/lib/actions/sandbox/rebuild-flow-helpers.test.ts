@@ -835,6 +835,14 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(errorLines.some((line: string) => line.includes("workspace"))).toBe(true);
+    expect(
+      errorLines.some((line: string) =>
+        line.includes("Incomplete backup retained for manual recovery"),
+      ),
+    ).toBe(true);
+    expect(
+      errorLines.some((line: string) => line.includes("excluded from snapshot restore selection")),
+    ).toBe(true);
     expect(errorLines.some((line: string) => line.includes("Aborting rebuild"))).toBe(true);
   });
 });

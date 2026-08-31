@@ -111,7 +111,7 @@ describe("snapshot create cleanup after a failed capture", () => {
     expect(errors).toContain("Removed the incomplete snapshot.");
   });
 
-  it("names the snapshot that is still listed when removal fails", async () => {
+  it("reports that a retained incomplete snapshot cannot be selected", async () => {
     mocks.backupSandboxState.mockReturnValue(failedCaptureWithPublishedSnapshot());
     mocks.removeIncompleteSnapshot.mockReturnValue({
       removed: false,
@@ -123,7 +123,8 @@ describe("snapshot create cleanup after a failed capture", () => {
     expect(errors).toContain(
       `The incomplete snapshot at '${INCOMPLETE_PATH}' could not be removed: EACCES: permission denied`,
     );
-    expect(errors).toContain("Remove it before the next restore.");
+    expect(errors).toContain("excluded from `nemoclaw alpha snapshot list`");
+    expect(errors).toContain("Remove it after verifying any needed files.");
   });
 
   it("does not attempt removal when the capture failed before publishing a snapshot", async () => {

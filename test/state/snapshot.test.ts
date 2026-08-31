@@ -229,6 +229,28 @@ describe("listBackups computes virtual versions", () => {
     expect(sandboxState.findBackup("test-sandbox", "failtest").match).toBeNull();
     expect(fs.existsSync(String(incomplete.backupPath))).toBe(false);
   });
+  it("keeps retained incomplete backups out of snapshot selection (#10639)", () => {
+    const incomplete = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      backupComplete: false,
+      stateDirs: ["workspace", "extensions"],
+      backedUpDirs: ["extensions"],
+      failedBackupDirs: ["workspace"],
+    });
+
+    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
+    expect(sandboxState.findBackup("test-sandbox", "v1").match).toBeNull();
+    expect(fs.existsSync(String(incomplete.backupPath))).toBe(true);
+  });
+  it("keeps legacy partial-directory backups out of snapshot selection (#10639)", () => {
+    const incomplete = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      stateDirs: ["workspace", "extensions"],
+      backedUpDirs: ["extensions"],
+      failedBackupDirs: ["workspace"],
+    });
+
+    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
+    expect(fs.existsSync(String(incomplete.backupPath))).toBe(true);
+  });
   it("restores the versions of surviving snapshots once an incomplete one is removed (#8201)", () => {
     writeBackup("test-sandbox", "2026-04-21T14-01-00-000Z");
     const incomplete = writeBackup("test-sandbox", "2026-04-21T14-05-00-000Z");
@@ -601,6 +623,7 @@ describe("sandbox directory backup semantics", () => {
       expect(backup.success).toBe(true);
       expect(backup.failedDirs).toEqual([]);
       expect(backup.backedUpDirs).toEqual(existingDirs);
+      expect(backup.manifest?.backupComplete).toBe(true);
       expect(backup.manifest?.backedUpDirs).toEqual(existingDirs);
       expect(backup.manifest?.stateDirs.at(-1)).toBe("workspace-research");
       expect(backup.manifest?.reconcileOpenClawImagePluginProvenance).toBe(true);
@@ -1144,7 +1167,10 @@ process.exit(0);
         agents: "permission denied",
         workspace: "absent after extraction",
       });
+      expect(backup.manifest?.backupComplete).toBe(false);
       expect(backup.manifest?.backedUpDirs).toEqual(["extensions"]);
+      expect(sandboxState.listBackups("alpha")).toEqual([]);
+      expect(fs.existsSync(backup.manifest!.backupPath)).toBe(true);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "workspace"))).toBe(false);
     } finally {
       if (oldOpenshell === undefined) {

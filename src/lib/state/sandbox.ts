@@ -122,6 +122,8 @@ export interface RebuildManifest {
   backedUpDirs?: string[];
   /** Declared directories that could not be backed up. Absent on older manifests. */
   failedBackupDirs?: string[];
+  /** False when the retained files are incomplete and must not be selected for restore. */
+  backupComplete?: boolean;
   stateFiles?: StateFileSpec[];
   /** Single config/state directory */
   dir: string;
@@ -377,6 +379,7 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     (value.backedUpDirs === undefined || isBackedUpDirArray(value.backedUpDirs, value.stateDirs)) &&
     (value.failedBackupDirs === undefined ||
       isBackedUpDirArray(value.failedBackupDirs, value.stateDirs)) &&
+    (value.backupComplete === undefined || typeof value.backupComplete === "boolean") &&
     typeof dir === "string" &&
     (value.openclawImagePluginInstalls === undefined ||
       parseOpenClawImagePluginInstalls(value.openclawImagePluginInstalls, dir).ok) &&
@@ -1435,6 +1438,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       : {}),
     stateDirs,
     failedBackupDirs: [],
+    backupComplete: false,
     stateFiles,
     dir,
     backupPath,
@@ -1464,6 +1468,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         error: publicationError,
       };
     }
+    manifest.backupComplete = true;
     writeManifest(backupPath, manifest);
     return { success: true, manifest, backedUpDirs, failedDirs, backedUpFiles, failedFiles };
   }
@@ -1847,6 +1852,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
     manifest.stateDirs.includes(failedDir),
   );
+  manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
 
   const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
   if (publicationError) {
@@ -2843,7 +2849,9 @@ export function listBackups(sandboxName: string): SnapshotEntry[] {
   const manifests: RebuildManifest[] = [];
   for (const entry of rawEntries) {
     const m = readManifest(path.join(dir, entry.name));
-    if (m) manifests.push(m);
+    if (m && m.backupComplete !== false && (m.failedBackupDirs?.length ?? 0) === 0) {
+      manifests.push(m);
+    }
   }
 
   // Assign version numbers by timestamp-ascending position (v1 = oldest).
