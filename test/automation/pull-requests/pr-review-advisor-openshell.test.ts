@@ -306,8 +306,8 @@ describe("PR review advisor specialist lifecycle", () => {
         stop: async () => void (gatewayStopped = true),
       }),
       create: () => {
-        fail("create");
         sandboxOwned = true;
+        fail("create");
       },
       run: () => {
         fail("run");
@@ -346,7 +346,7 @@ describe("PR review advisor specialist lifecycle", () => {
       gatewayStopped: true,
       sandboxOwned: false,
     });
-    expect(removeCalls).toBe(["configure", "create"].includes(failedStage) ? 0 : 1);
+    expect(removeCalls).toBe(failedStage === "configure" ? 0 : 1);
   });
 
   it("preserves the primary failure when cleanup also fails", async () => {
@@ -432,7 +432,7 @@ describe("PR review advisor specialist lifecycle", () => {
     await command;
 
     expect(calls).toEqual(["create", "cancel", "sandbox", "gateway", "listeners"]);
-    expect(sandboxNames).toEqual([expect.stringMatching(/^pr-adv-[0-9a-f]{12}$/u), sandboxNames[0], sandboxNames[0]]);
+    expect(sandboxNames).toEqual([expect.stringMatching(/^pr-adv-[A-Za-z0-9_-]{12}$/u), sandboxNames[0], sandboxNames[0]]);
     expect(restore).toHaveBeenCalledWith("SIGTERM");
     expect(stderr).not.toHaveBeenCalled();
     expect(calls).not.toContain("download");
@@ -481,7 +481,7 @@ describe("PR review advisor specialist lifecycle", () => {
     await command;
 
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("execution cleanup"));
-    expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/sandbox pr-adv-[0-9a-f]{12}/u));
+    expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/sandbox pr-adv-[A-Za-z0-9_-]{12}/u));
     expect(stderr).not.toHaveBeenCalledWith(expect.stringContaining(credential));
     expect(restore).toHaveBeenCalledWith("SIGHUP");
   });

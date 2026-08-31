@@ -69,7 +69,7 @@ export async function runAdvisorSpecialist(input: {
   const lifecycle = input.lifecycle ?? defaultAdvisorSpecialistLifecycle;
   const env = {
     ...input.env,
-    SANDBOX_NAME: `pr-adv-${randomBytes(6).toString("hex")}`,
+    SANDBOX_NAME: `pr-adv-${randomBytes(9).toString("base64url")}`,
   };
   let gateway: ReturnType<AdvisorSpecialistLifecycle["startGateway"]>;
   let sandbox = false;
@@ -128,8 +128,10 @@ export async function runAdvisorSpecialist(input: {
     if (input.cancelled?.()) result = "cancelled";
     if (result === "complete") {
       stage = "create";
-      lifecycle.create(env);
+      // The cryptographically unique name is owned by this invocation before creation starts,
+      // so cleanup can reconcile a sandbox left by a partially failed create command.
       sandbox = true;
+      lifecycle.create(env);
       stage = "run";
       execution = lifecycle.run(env) || undefined;
       if (execution) {
