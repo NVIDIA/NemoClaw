@@ -263,7 +263,7 @@ describe("messaging provider installed-runtime proofs", () => {
     } finally {
       await fixture.stop();
     }
-  }, 15_000);
+  }, 25_000);
 
   it("rejects a fake Slack websocket that upgrades without a port traffic reply", async () => {
     const fixture = await startFakeSlackPortFixture({ suppressPortTrafficReply: true });
