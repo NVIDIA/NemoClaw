@@ -12,7 +12,7 @@ Approve a changed test only when it provides direct, stable, and readable eviden
 For each added or modified test:
 
 - State the behavior and triggering condition named by the title.
-- Trace the action through the production boundary.
+- Trace the action through the relevant production or component boundary.
 - Identify the externally observable result.
 - Confirm that the assertions prove that result.
 - Identify a plausible defect in the claimed behavior and confirm that the test would fail for it.
@@ -21,9 +21,8 @@ Report a finding when the test can pass despite that defect or without exercisin
 
 Require an independent oracle. Report:
 
-- Expected values derived with the production logic under test.
-- Assertions on values produced by the test itself.
-- Assertions that prove only execution, truthiness, a type, a mock call, or snapshot agreement.
+- Expected values or predicates computed by the production logic under test or by the same implementation path.
+- Assertions that prove only execution, truthiness, a type, an unverified mock interaction, or snapshot agreement rather than the contract result or side effect.
 - Assertions on the wrong result, state transition, side effect, error, or trust boundary.
 - Missing absence or non-mutation assertions when those results are part of the contract.
 
@@ -41,7 +40,7 @@ Apply this requirement to source files, YAML, manifests, scripts, workflows, env
 
 Configuration mutation is acceptable only when the test supplies independent synthetic input to a runtime consumer and observes accepted or rejected behavior. Loading and mutating a shipped file before passing it to a matching validator remains a source-shape test.
 
-An approved security or compatibility entry in `ci/source-shape-test-budget.json` is the only repository-owned exception.
+Only a security or compatibility entry that exists in the base branch's `ci/source-shape-test-budget.json` can establish a repository-owned exception. A PR cannot approve its own exception by adding or changing an entry.
 
 ## 3. Keep each test readable in isolation
 
@@ -63,7 +62,7 @@ Use separate tests or flatter control flow when each path represents a distinct 
 
 Each test case, fixture capability, helper, and matrix dimension must protect a current requirement, observed regression, or distinct risk.
 
-Report:
+Report only when repository evidence establishes:
 
 - Speculative edge cases.
 - Unused fixture capabilities.
@@ -72,13 +71,15 @@ Report:
 - Tests that duplicate an existing proof.
 - Tests that preserve obsolete behavior.
 
+When evidence is unavailable, report the missing evidence instead of rejecting the test-design component.
+
 Do not request tests for hypothetical behavior. Prefer the smallest test at the stable public or component boundary that catches the identified defect.
 
 ## Report the finding
 
-For each rejected test:
+For each rejected test-design component:
 
-1. Name the test and the behavior it claims to protect.
+1. Name the component type and identifier. For a test, also name the behavior it claims to protect.
 2. Name the plausible defect it misses or the harmless change that breaks it.
 3. Identify the title, assertion, fixture, helper, or matrix entry responsible.
 4. State what to replace or remove.
