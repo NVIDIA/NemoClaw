@@ -24,16 +24,20 @@
  * discovery succeeds and normal inference works, so a smaller value turns a
  * valid endpoint, model, and credential combination into a failed onboarding,
  * health, or rebuild preflight check (#7939). The Anthropic Messages probe
- * already requests 16; every other probe shares that floor here rather than
- * carrying its own literal.
+ * already requests 16; general Chat Completions probes share that floor here
+ * rather than carrying their own literal.
  */
 export const MIN_PROBE_REPLY_TOKENS = 16;
 
 /**
- * Gemini probe budget with room for reasoning before visible content.
- * Matches the established compatible-endpoint smoke budget (#10260).
+ * Gemini probe budget with room for reasoning before visible content (#10260).
  */
 export const GEMINI_PROBE_REPLY_TOKENS = 256;
+
+/** Returns the Chat Completions probe budget for a provider. */
+export function resolveProbeReplyTokens(provider: string | null | undefined): number {
+  return provider === "gemini-api" ? GEMINI_PROBE_REPLY_TOKENS : MIN_PROBE_REPLY_TOKENS;
+}
 
 // Matched by prefix rather than exact id: Azure OpenAI deployments append
 // version/suffix segments (e.g. "gpt-5.4", "gpt-5.4-turbo") and callers may or

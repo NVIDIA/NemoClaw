@@ -55,13 +55,20 @@ export function isKimiK26Model(model: unknown): boolean {
 
 export function getChatCompletionsProbePayload(
   model: string,
-  options: { useNvidiaEndpointProbePayload?: boolean } = {},
+  optionsOrReplyBudget:
+    | { useNvidiaEndpointProbePayload?: boolean; replyBudget?: number }
+    | number = {},
 ): Record<string, unknown> {
+  const options =
+    typeof optionsOrReplyBudget === "number"
+      ? { replyBudget: optionsOrReplyBudget }
+      : optionsOrReplyBudget;
   const maxTokensField = resolveMaxTokensField(model);
+  const defaultReplyBudget = options.replyBudget ?? MIN_PROBE_REPLY_TOKENS;
   const payload = {
     model,
     messages: [{ role: "user", content: "Reply with exactly: OK" }],
-    [maxTokensField]: MIN_PROBE_REPLY_TOKENS,
+    [maxTokensField]: defaultReplyBudget,
   };
 
   if (isDeepSeekV4ProModel(model)) {
@@ -69,7 +76,7 @@ export function getChatCompletionsProbePayload(
       ...payload,
       temperature: 1,
       top_p: 0.95,
-      [maxTokensField]: 8192,
+      [maxTokensField]: options.replyBudget ?? 8192,
       chat_template_kwargs: { thinking: false },
       stream: true,
     };
@@ -78,7 +85,7 @@ export function getChatCompletionsProbePayload(
   if (isKimiK26Model(model)) {
     return {
       ...payload,
-      [maxTokensField]: MIN_PROBE_REPLY_TOKENS,
+      [maxTokensField]: defaultReplyBudget,
       chat_template_kwargs: { thinking: false },
     };
   }
