@@ -97,10 +97,13 @@ type SelectionOptions = {
   applied?: string[];
 };
 
+type MessagingPolicyConfig = Readonly<Record<string, string>>;
+
 type PresetLoadOptions = {
   agent?: string | null;
   sandboxName?: string;
   credentialBoundMessagingChannels?: readonly string[];
+  messagingConfig?: MessagingPolicyConfig | null;
 };
 
 type PresetListOptions = {
@@ -111,10 +114,12 @@ type MergePresetNamesOptions = {
   agent?: string | null;
   sandboxName?: string;
   credentialBoundMessagingChannels?: readonly string[];
+  messagingConfig?: MessagingPolicyConfig | null;
 };
 
 type SandboxPresetLoadOptions = {
   includeMessagingCredentialBindings?: boolean;
+  messagingConfig?: MessagingPolicyConfig | null;
 };
 
 type SetupPolicyPresetSupportOptions = {
@@ -208,6 +213,7 @@ function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): stri
   const channelPreset = loadMessagingChannelPolicyPreset(name, {
     agent: options.agent,
     sandboxName: options.sandboxName,
+    messagingConfig: options.messagingConfig,
   });
   if (channelPreset) {
     const credentialBoundChannels = options.credentialBoundMessagingChannels;
@@ -389,10 +395,14 @@ function loadPresetForSandbox(
 ): string | null {
   let sandboxAgent: string | null = null;
   let configuredMessagingChannels: string[] = [];
+  let messagingConfig = options.messagingConfig;
   try {
     const sandbox = registry.getSandbox(sandboxName);
     sandboxAgent = sandbox?.agent ?? null;
     configuredMessagingChannels = getCredentialBoundMessagingChannelsFromEntry(sandbox);
+    if (messagingConfig === undefined) {
+      messagingConfig = registry.getMessagingChannelConfigFromEntry(sandbox);
+    }
   } catch {
     sandboxAgent = null;
     configuredMessagingChannels = [];
@@ -405,6 +415,7 @@ function loadPresetForSandbox(
   const channelPresetContent = loadMessagingChannelPolicyPreset(presetName, {
     agent: sandboxAgent,
     sandboxName,
+    messagingConfig,
   });
   if (channelPresetContent) {
     return channelId && !configuredMessagingChannels.includes(channelId)
@@ -1693,6 +1704,7 @@ function mergePresetNamesIntoPolicy(
       agent: options.agent,
       sandboxName: options.sandboxName,
       credentialBoundMessagingChannels: options.credentialBoundMessagingChannels,
+      messagingConfig: options.messagingConfig,
     });
     const presetEntries = extractPresetEntries(presetContent);
     if (!presetEntries) {
@@ -2456,6 +2468,7 @@ function applyPreset(
 ): boolean {
   const presetContent = loadPresetForSandbox(sandboxName, presetName, {
     includeMessagingCredentialBindings: options.includeMessagingCredentialBindings === true,
+    messagingConfig: options.messagingConfig as MessagingPolicyConfig | null | undefined,
   });
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);

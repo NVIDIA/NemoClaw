@@ -133,6 +133,66 @@ describe("runWechatHostQrLogin", () => {
     expect(statusCalls[1]).toContain("idc-3.weixin.qq.com");
   });
 
+  it.each([
+    "evil.example.com",
+    "idc-3.weixin.qq.com:8443",
+    "idc-3.weixin.qq.com.evil.example",
+    "idc-3.weixin.qq.com/path",
+  ])("rejects an invalid redirect before contacting it [case %#] (#10606)", async (redirectHost) => {
+    const { fetch, calls } = scriptedFetch([
+      {
+        match: isInit,
+        bodies: [{ qrcode: "qr-cookie-invalid", qrcode_img_content: "https://example.com/qr" }],
+      },
+      {
+        match: isStatus,
+        bodies: [{ status: "scaned_but_redirect", redirect_host: redirectHost }],
+      },
+    ]);
+
+    const result = await runWechatHostQrLogin({
+      fetch,
+      renderQr: noopRender,
+      log: noopLog,
+      sleep: fastSleep,
+    });
+
+    expect(result).toEqual({
+      kind: "error",
+      message: "WeChat login returned an invalid IDC redirect host.",
+    });
+    expect(calls.filter(isStatus)).toHaveLength(1);
+    expect(calls).not.toContainEqual(expect.stringContaining(redirectHost));
+  });
+
+  it("rejects an invalid confirmed origin without returning credentials (#10606)", async () => {
+    const { fetch } = scriptedFetch([
+      {
+        match: isInit,
+        bodies: [{ qrcode: "qr-cookie-invalid", qrcode_img_content: "https://example.com/qr" }],
+      },
+      {
+        match: isStatus,
+        bodies: [
+          {
+            status: "confirmed",
+            bot_token: "secret-bot-token",
+            ilink_bot_id: "bot-123",
+            baseurl: "https://evil.example.com",
+            ilink_user_id: "user-abc",
+          },
+        ],
+      },
+    ]);
+
+    await expect(
+      runWechatHostQrLogin({ fetch, renderQr: noopRender, log: noopLog, sleep: fastSleep }),
+    ).resolves.toEqual({
+      kind: "error",
+      message: "WeChat login returned an invalid iLink origin.",
+    });
+  });
+
   it("refreshes the QR up to 3 times before giving up with kind=expired", async () => {
     const { fetch } = scriptedFetch([
       {

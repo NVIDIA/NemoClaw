@@ -95,6 +95,8 @@ describe("WeChat hook implementations", () => {
   it.each([
     "http://ilinkai.wechat.com",
     "https://example.com",
+    "https://idc-3.weixin.qq.com:443",
+    "https://idc-3.weixin.qq.com:8443",
     "https://ilinkai.wechat.com/path",
     "https://ilinkai.wechat.com\nEVIL=1",
   ] as const)(
@@ -179,6 +181,8 @@ describe("WeChat hook implementations", () => {
   it.each([
     "http://ilinkai.wechat.com",
     "https://example.com",
+    "https://idc-3.weixin.qq.com:443",
+    "https://idc-3.weixin.qq.com:8443",
     "https://ilinkai.wechat.com/path",
     "https://ilinkai.wechat.com\nEVIL=1",
   ] as const)(

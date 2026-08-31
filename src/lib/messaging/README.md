@@ -290,7 +290,7 @@ It is a serializable declaration for one channel and one set of supported agents
 | `auth` | High-level enrollment mode: `none`, `token-paste`, `host-qr`, or `in-sandbox-qr`. |
 | `inputs` | Secret and config inputs, env keys, prompts, validation, and persistence paths. |
 | `credentials` | Provider bindings derived from secret inputs. |
-| `policyPresets` | Optional network policy presets and policy keys required by the channel. |
+| `policyPresets` | Optional network policy presets, policy keys, and exact config-derived endpoints required by the channel. |
 | `render` | Agent config fragments or env-file lines to render when the channel is active. |
 | `hostForward` | Optional host-side forward for inbound webhooks. |
 | `runtime` | Optional runtime visibility, preload, env alias, and secret scan metadata. |
@@ -299,6 +299,12 @@ It is a serializable declaration for one channel and one set of supported agents
 
 Secret inputs cannot declare `statePath` or defaults.
 Plans may carry `credentialAvailable`, `credentialHash`, and placeholders, but they must not carry raw tokens.
+
+When a trusted enrollment response selects an account-specific HTTPS origin, declare it with
+`policyPresets[].configuredEndpoints`. The declaration maps one config input to one policy key,
+an existing reviewed endpoint to clone, and an anchored hostname pattern. Policy loading rejects
+ports, credentials, paths, queries, fragments, and hosts outside that pattern; it never creates a
+wildcard endpoint.
 
 ## Manifest Skeleton
 

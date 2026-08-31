@@ -53,6 +53,39 @@ describe("built-in messaging channel metadata", () => {
     ]);
   });
 
+  it("binds the WeChat exact-origin policy declaration to its config env key (#10606)", () => {
+    const wechat = listMessagingPolicyPresetMetadata().find(
+      (preset) => preset.channelId === "wechat",
+    );
+
+    expect(wechat?.configuredEndpoints).toEqual([
+      {
+        envKey: "WECHAT_BASE_URL",
+        policyKey: "wechat_bridge",
+        templateHost: "ilinkai.wechat.com",
+        allowedHostPattern: "^idc-[0-9]+[.]weixin[.]qq[.]com$",
+      },
+    ]);
+  });
+
+  it("rejects configured policy endpoints that drift from manifest inputs (#10606)", () => {
+    const manifest = manifestWithPreset("wechat", {
+      name: "wechat",
+      configuredEndpoints: [
+        {
+          inputId: "missingBaseUrl",
+          policyKey: "wechat_bridge",
+          templateHost: "ilinkai.wechat.com",
+          allowedHostPattern: "^idc-[0-9]+[.]weixin[.]qq[.]com$",
+        },
+      ],
+    });
+
+    expect(() => listMessagingPolicyPresetMetadata({ manifests: [manifest] })).toThrow(
+      "references config input 'missingBaseUrl' without an environment key",
+    );
+  });
+
   it("resolves credential env keys, env-key ownership, and provider names", () => {
     expect(getMessagingCredentialEnvKeysByChannel()).toMatchObject({
       telegram: ["TELEGRAM_BOT_TOKEN"],

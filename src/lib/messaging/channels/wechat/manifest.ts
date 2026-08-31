@@ -3,6 +3,7 @@
 
 import type { ChannelManifest } from "../../manifest";
 import { WECHAT_OPENCLAW_ACCOUNT_FILE_CONTRACT } from "./contract.ts";
+import { WECHAT_ILINK_IDC_HOST_PATTERN_SOURCE } from "./ilink-base-url.ts";
 
 export const wechatManifest = {
   schemaVersion: 1,
@@ -74,7 +75,21 @@ export const wechatManifest = {
   },
   // Both agent policies bind the endpointless provider. Apply it before boot
   // so OpenShell injects WECHAT_BOT_TOKEN into the agent process environment.
-  policyPresets: [{ name: "wechat", policyKeys: ["wechat_bridge"], requiredAtCreate: true }],
+  policyPresets: [
+    {
+      name: "wechat",
+      policyKeys: ["wechat_bridge"],
+      requiredAtCreate: true,
+      configuredEndpoints: [
+        {
+          inputId: "baseUrl",
+          policyKey: "wechat_bridge",
+          templateHost: "ilinkai.wechat.com",
+          allowedHostPattern: WECHAT_ILINK_IDC_HOST_PATTERN_SOURCE,
+        },
+      ],
+    },
+  ],
   render: [
     {
       id: "wechat-openclaw-plugin",

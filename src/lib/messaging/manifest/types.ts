@@ -67,6 +67,16 @@ export interface ChannelPolicyPresetSpec {
   readonly agentPolicyKeys?: Partial<Record<MessagingAgentId, readonly string[]>>;
   readonly requiredAtCreate?: boolean;
   readonly validationWarningLines?: readonly string[];
+  /** Exact HTTPS origins captured by a config input and cloned from one reviewed endpoint. */
+  readonly configuredEndpoints?: readonly ChannelPolicyConfiguredEndpointSpec[];
+}
+
+export interface ChannelPolicyConfiguredEndpointSpec {
+  readonly inputId: string;
+  readonly policyKey: string;
+  readonly templateHost: string;
+  /** Anchored hostname-only regular expression stored as data in the manifest. */
+  readonly allowedHostPattern: string;
 }
 
 /** How a channel obtains credential or session material. */

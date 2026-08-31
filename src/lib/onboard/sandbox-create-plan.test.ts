@@ -217,6 +217,32 @@ describe("prepareSandboxCreatePolicy", () => {
 
     expect(seenOptions[0]).toMatchObject({ sandboxName: "bound-sandbox" });
   });
+
+  it("passes captured messaging config into create-time policy materialization (#10606)", () => {
+    const resolved = resolveDiscordCreateIntent({ selected: false });
+    const preparePolicy = vi.fn(() => ({
+      policyPath: "/tmp/policy.yaml",
+      appliedPresets: [],
+    }));
+
+    materializeSandboxCreatePlan({
+      ...resolved,
+      fromRef: "/tmp/Dockerfile",
+      messagingConfig: { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" },
+      prepareInitialSandboxCreatePolicy: preparePolicy,
+      runProviderPreDeleteCleanup: vi.fn(),
+      upsertMessagingProviders: vi.fn(() => []),
+      getHermesToolGatewayProviderName: vi.fn(),
+    });
+
+    expect(preparePolicy).toHaveBeenCalledWith(
+      expect.any(String),
+      [],
+      expect.objectContaining({
+        messagingConfig: { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" },
+      }),
+    );
+  });
 });
 
 describe("resolveSandboxCreatePolicyTier", () => {

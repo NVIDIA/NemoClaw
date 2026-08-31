@@ -25,6 +25,7 @@ import type {
   QualifiedPendingSandboxCreateReservation,
 } from "../../state/registry";
 import type { HermesAuthMethod } from "../hermes-auth";
+import { getMessagingChannelConfigFromPlan } from "../messaging-config";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
@@ -205,6 +206,7 @@ function selectRebuildCreatePolicy(
     const source = loadMessagingChannelPolicyPreset(presetName, {
       agent: messagingPlan?.agent,
       sandboxName,
+      messagingConfig: getMessagingChannelConfigFromPlan(messagingPlan),
     });
     if (!source) {
       throw new Error(

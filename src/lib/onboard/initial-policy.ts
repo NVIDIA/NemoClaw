@@ -8,6 +8,7 @@ import YAML from "yaml";
 
 import { isObjectRecord } from "../core/json-types";
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
+import type { MessagingChannelConfig } from "../messaging-channel-config";
 import * as policies from "../policy";
 import {
   collectPlatformIdentity,
@@ -322,6 +323,7 @@ type InitialPolicyOptions = {
   agentName?: string | null;
   sandboxName?: string;
   policyTier?: string | null;
+  messagingConfig?: MessagingChannelConfig | null;
 };
 
 type PolicyMaterializer = (content: string, prefix: string) => InitialSandboxPolicy;
@@ -551,6 +553,7 @@ function resolveInitialSandboxCreatePolicy(
       agent: policyAgent,
       sandboxName: options.sandboxName,
       credentialBoundMessagingChannels: activeMessagingChannels,
+      messagingConfig: options.messagingConfig,
     });
     if (mergedPolicy.missingPresets.length > 0) {
       throw new Error(

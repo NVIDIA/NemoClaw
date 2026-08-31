@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const WECHAT_ILINK_HOSTS = new Set(["ilinkai.weixin.qq.com", "ilinkai.wechat.com"]);
-const WECHAT_ILINK_IDC_HOST_PATTERN = /^idc-[0-9]+[.]weixin[.]qq[.]com$/;
+export const WECHAT_ILINK_IDC_HOST_PATTERN_SOURCE =
+  "^idc-[0-9]+[.]weixin[.]qq[.]com$";
+const WECHAT_ILINK_IDC_HOST_PATTERN = new RegExp(WECHAT_ILINK_IDC_HOST_PATTERN_SOURCE);
 
 export function normalizeWechatIlinkBaseUrl(value: unknown): string | undefined {
   const raw = String(value ?? "");
@@ -24,6 +26,10 @@ export function normalizeWechatIlinkBaseUrl(value: unknown): string | undefined 
   }
   if (url.username || url.password) {
     throw new Error("WeChat baseUrl must not include credentials.");
+  }
+  const authority = text.match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/iu)?.[1] ?? "";
+  if (authority.includes(":")) {
+    throw new Error("WeChat baseUrl must not include an explicit port.");
   }
   if (!isWechatIlinkHost(url.hostname)) {
     throw new Error("WeChat baseUrl must use an expected iLink host.");

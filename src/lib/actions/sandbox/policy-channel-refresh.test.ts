@@ -301,6 +301,18 @@ describe("applyChannelPresetIfAvailable refresh contract", () => {
     expect(ok).toBe(false);
     expect(refreshSpy).not.toHaveBeenCalled();
   });
+
+  it("passes captured non-secret config to the channel policy loader (#10606)", () => {
+    const messagingConfig = { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" };
+
+    expect(
+      applyChannelPresetIfAvailable("alpha", "wechat", "add", { messagingConfig }),
+    ).toBe(true);
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "wechat", {
+      includeMessagingCredentialBindings: true,
+      messagingConfig,
+    });
+  });
 });
 
 describe("removeChannelPresetIfPresent refresh contract", () => {

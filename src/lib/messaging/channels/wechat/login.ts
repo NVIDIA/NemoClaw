@@ -18,6 +18,7 @@ import {
   WechatQrError,
   WECHAT_ILINK_BOOTSTRAP_BASE_URL,
 } from "./qr";
+import { normalizeWechatIlinkBaseUrl } from "./ilink-base-url";
 
 /** Total deadline for a single login attempt. 8 minutes is long enough to
  *  cover a slow human + IDC redirects and short enough that a forgotten
@@ -188,9 +189,7 @@ export async function runWechatHostQrLogin(
       return { kind: "error", message: errorMessage(err) };
     }
     if (status.status !== lastStatus) {
-      debug(
-        `status=${status.status}${status.redirect_host ? ` redirect_host=${status.redirect_host}` : ""}`,
-      );
+      debug(`status=${status.status}${status.redirect_host ? " redirect_host=present" : ""}`);
       lastStatus = status.status;
     }
 
@@ -209,8 +208,15 @@ export async function runWechatHostQrLogin(
 
       case "scaned_but_redirect": {
         if (status.redirect_host) {
-          currentBaseUrl = `https://${status.redirect_host}`;
-          opts.log(`  → IDC redirect — continuing on ${status.redirect_host}`);
+          try {
+            currentBaseUrl = requireWechatIlinkBaseUrl(`https://${status.redirect_host}`);
+          } catch {
+            return {
+              kind: "error",
+              message: "WeChat login returned an invalid IDC redirect host.",
+            };
+          }
+          opts.log("  → IDC redirect — continuing on the validated WeChat host");
           debug(`polling ${currentBaseUrl}`);
         }
         await opts.sleep(opts.pollIntervalMs);
@@ -239,7 +245,15 @@ export async function runWechatHostQrLogin(
       }
 
       case "confirmed": {
-        const credentials = extractCredentials(status);
+        let credentials: WechatLoginCredentials | null;
+        try {
+          credentials = extractCredentials(status);
+        } catch {
+          return {
+            kind: "error",
+            message: "WeChat login returned an invalid iLink origin.",
+          };
+        }
         if (!credentials) {
           return {
             kind: "error",
@@ -267,9 +281,15 @@ function extractCredentials(status: WechatQrStatusResponse): WechatLoginCredenti
   return {
     token: status.bot_token,
     accountId: normalizeWeixinAccountId(status.ilink_bot_id),
-    baseUrl: status.baseurl,
+    baseUrl: requireWechatIlinkBaseUrl(status.baseurl),
     userId: status.ilink_user_id,
   };
+}
+
+function requireWechatIlinkBaseUrl(value: unknown): string {
+  const normalized = normalizeWechatIlinkBaseUrl(value);
+  if (!normalized) throw new Error("WeChat iLink origin is missing.");
+  return normalized;
 }
 
 /** Mirrors `normalizeAccountId` from `openclaw/plugin-sdk/account-id`, which
