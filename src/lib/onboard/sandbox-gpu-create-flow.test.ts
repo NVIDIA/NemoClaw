@@ -402,14 +402,12 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
         ([options]) => options.stableReadyPolls,
       ),
     ).toEqual([2, 2]);
-
     vi.mocked(deps.runCaptureOpenshell).mockClear();
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
     expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "list", "-g", "nemoclaw"],
       READY_CHECK_OPTIONS,
     );
-
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
     );
@@ -420,7 +418,6 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     prepareNetwork.mockClear();
     mocks.streamSandboxCreate.mockClear();
     mockExit();
-
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
     expect(prepareNetwork).not.toHaveBeenCalled();
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
@@ -480,7 +477,9 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       "Sandbox 'alpha' entered Failed phase before it became ready (waited up to 60s).",
     );
     expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledWith(
-      expect.objectContaining({ target: { kind: "named", gatewayName: input.gatewayName } }),
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: input.gatewayName },
+      }),
     );
   });
 });
