@@ -69,13 +69,17 @@ describe("fetchWechatQrSession", () => {
     expect(call.init?.headers?.["iLink-App-Id"]).toBe("bot");
   });
 
-  it("wraps non-2xx responses in a typed WechatQrError so callers can branch on .kind", async () => {
-    const { fetch } = makeFetch(() => ({ ok: false, status: 503, body: "gateway down" }));
-    await expect(fetchWechatQrSession({ fetch })).rejects.toMatchObject({
+  it("wraps non-2xx responses without forwarding their body", async () => {
+    const sensitiveBody = "bot_token=secret-value qrcode=session-value";
+    const { fetch } = makeFetch(() => ({ ok: false, status: 503, body: sensitiveBody }));
+    const error = await fetchWechatQrSession({ fetch }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
       name: "WechatQrError",
       kind: "http",
       status: 503,
     });
+    expect(String(error)).not.toContain(sensitiveBody);
   });
 
   it("rejects responses missing qrcode or qrcode_img_content fields with a parse error", async () => {
@@ -151,11 +155,12 @@ describe("pollWechatQrStatus", () => {
     expect(result.status).toBe("wait");
   });
 
-  it("redacts URL-like transport failures before forwarding debug events", async () => {
+  it("does not forward transport failure details through debug events", async () => {
     const debugEvents: string[] = [];
+    const sensitiveDetail = "bot_token=secret-value qrcode=session-value";
     const failing: FetchLike = async () => {
       throw new Error(
-        "ECONNRESET while polling https://idc-37.weixin.qq.com/ilink/bot/get_qrcode_status",
+        `${sensitiveDetail} while polling https://idc-37.weixin.qq.com/ilink/bot/get_qrcode_status`,
       );
     };
 
@@ -168,7 +173,8 @@ describe("pollWechatQrStatus", () => {
       }),
     ).resolves.toEqual({ status: "wait" });
 
-    expect(debugEvents.join("\n")).toContain("[redacted URL]");
+    expect(debugEvents).toContain("poll transport error (treated as wait)");
+    expect(debugEvents.join("\n")).not.toContain(sensitiveDetail);
     expect(debugEvents.join("\n")).not.toContain("idc-37.weixin.qq.com");
   });
 
@@ -182,15 +188,17 @@ describe("pollWechatQrStatus", () => {
     expect(result.status).toBe("wait");
   });
 
-  it("surfaces 4xx responses as a typed WechatQrError", async () => {
-    const { fetch } = makeFetch(() => ({ ok: false, status: 401, body: "unauthorized" }));
-    await expect(
-      pollWechatQrStatus({
-        baseUrl: "https://ilinkai.weixin.qq.com",
-        qrcode: "qrcode-cookie",
-        fetch,
-      }),
-    ).rejects.toMatchObject({ name: "WechatQrError", kind: "http", status: 401 });
+  it("surfaces 4xx responses without forwarding their body", async () => {
+    const sensitiveBody = "bot_token=secret-value qrcode=session-value";
+    const { fetch } = makeFetch(() => ({ ok: false, status: 401, body: sensitiveBody }));
+    const error = await pollWechatQrStatus({
+      baseUrl: "https://ilinkai.weixin.qq.com",
+      qrcode: "qrcode-cookie",
+      fetch,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ name: "WechatQrError", kind: "http", status: 401 });
+    expect(String(error)).not.toContain(sensitiveBody);
   });
 
   it("accepts a pre-aborted external signal as 'wait' rather than throwing", async () => {

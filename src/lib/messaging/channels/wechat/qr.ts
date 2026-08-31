@@ -154,24 +154,19 @@ export async function fetchWechatQrSession(
     if (isAbortError(err)) {
       throw new WechatQrError("network", `WeChat QR init request timed out after ${timeoutMs}ms`);
     }
-    throw new WechatQrError("network", `WeChat QR init request failed: ${stringify(err)}`);
+    throw new WechatQrError("network", "WeChat QR init request failed");
   } finally {
     clearTimeout(timer);
   }
   if (!response.ok) {
-    const body = await safeText(response);
-    throw new WechatQrError(
-      "http",
-      `WeChat QR init returned ${response.status}: ${body}`,
-      response.status,
-    );
+    throw new WechatQrError("http", `WeChat QR init returned ${response.status}`, response.status);
   }
   const text = await response.text();
   let parsed: { qrcode?: unknown; qrcode_img_content?: unknown };
   try {
     parsed = JSON.parse(text) as typeof parsed;
-  } catch (err) {
-    throw new WechatQrError("parse", `WeChat QR init returned non-JSON body: ${stringify(err)}`);
+  } catch {
+    throw new WechatQrError("parse", "WeChat QR init returned non-JSON body");
   }
   if (typeof parsed.qrcode !== "string" || typeof parsed.qrcode_img_content !== "string") {
     throw new WechatQrError(
@@ -234,7 +229,7 @@ export async function pollWechatQrStatus(params: {
         debug(`poll abort (treated as wait)`);
         return { status: "wait" };
       }
-      debug(`poll transport error: ${stringify(err)} (treated as wait)`);
+      debug(`poll transport error (treated as wait)`);
       return { status: "wait" };
     }
     debug(`poll response ← status=${response.status}`);
@@ -245,10 +240,9 @@ export async function pollWechatQrStatus(params: {
         debug(`poll http ${response.status} (treated as wait)`);
         return { status: "wait" };
       }
-      const body = await safeText(response);
       throw new WechatQrError(
         "http",
-        `WeChat QR status returned ${response.status}: ${body}`,
+        `WeChat QR status returned ${response.status}`,
         response.status,
       );
     }
@@ -256,20 +250,14 @@ export async function pollWechatQrStatus(params: {
     let parsed: WechatQrStatusResponse;
     try {
       parsed = JSON.parse(text) as WechatQrStatusResponse;
-    } catch (err) {
-      throw new WechatQrError(
-        "parse",
-        `WeChat QR status returned non-JSON body: ${stringify(err)}`,
-      );
+    } catch {
+      throw new WechatQrError("parse", "WeChat QR status returned non-JSON body");
     }
     if (typeof parsed?.status !== "string") {
       throw new WechatQrError("parse", "WeChat QR status response missing 'status' field");
     }
     if (!KNOWN_WECHAT_QR_STATUSES.has(parsed.status as WechatQrStatus)) {
-      throw new WechatQrError(
-        "parse",
-        `WeChat QR status returned unknown status '${parsed.status}'`,
-      );
+      throw new WechatQrError("parse", "WeChat QR status returned an unsupported status");
     }
     return parsed;
   } finally {
@@ -280,17 +268,4 @@ export async function pollWechatQrStatus(params: {
 
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
-}
-
-async function safeText(response: { text(): Promise<string> }): Promise<string> {
-  try {
-    return await response.text();
-  } catch {
-    return "";
-  }
-}
-
-function stringify(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
 }

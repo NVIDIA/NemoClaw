@@ -147,7 +147,7 @@ export async function runWechatHostQrLogin(
       bootstrapBaseUrl: opts.bootstrapBaseUrl,
     });
   } catch (err) {
-    return { kind: "error", message: errorMessage(err) };
+    return { kind: "error", message: safeWechatLoginErrorMessage(err) };
   }
 
   emitQr(session, opts);
@@ -185,7 +185,7 @@ export async function runWechatHostQrLogin(
       // pollWechatQrStatus already swallows abort + gateway timeouts; any
       // error escaping here is a real protocol/HTTP failure we can't recover
       // from without restarting the login.
-      const message = redactWechatLoginError(err);
+      const message = safeWechatLoginErrorMessage(err);
       debug(`poll fatal: ${message}`);
       return { kind: "error", message };
     }
@@ -236,7 +236,7 @@ export async function runWechatHostQrLogin(
             bootstrapBaseUrl: opts.bootstrapBaseUrl,
           });
         } catch (err) {
-          return { kind: "error", message: errorMessage(err) };
+          return { kind: "error", message: safeWechatLoginErrorMessage(err) };
         }
         currentBaseUrl = opts.bootstrapBaseUrl;
         scannedAnnounced = false;
@@ -303,12 +303,8 @@ export function normalizeWeixinAccountId(rawId: string): string {
   return rawId.replace(/[@.]/g, "-");
 }
 
-function errorMessage(err: unknown): string {
-  if (err instanceof WechatQrError) return `${err.kind}: ${err.message}`;
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
-
-function redactWechatLoginError(err: unknown): string {
-  return redactWechatIlinkDiagnostic(errorMessage(err));
+function safeWechatLoginErrorMessage(err: unknown): string {
+  return err instanceof WechatQrError
+    ? `${err.kind}: ${redactWechatIlinkDiagnostic(err.message)}`
+    : "WeChat QR login failed.";
 }

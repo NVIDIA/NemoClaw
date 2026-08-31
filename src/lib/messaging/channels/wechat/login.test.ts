@@ -136,8 +136,10 @@ describe("runWechatHostQrLogin", () => {
     expect(logs.join("\n")).not.toContain("idc-3.weixin.qq.com");
   });
 
-  it("redacts a URL-bearing fatal polling response from logs and the returned error", async () => {
+  it("omits a sensitive fatal polling body from logs and the returned error", async () => {
     const logs: string[] = [];
+    const sensitiveBody =
+      "bot_token=secret-value qrcode=session-value https://idc-37.weixin.qq.com/status";
     const fetch: FetchLike = async (url) =>
       isInit(url)
         ? {
@@ -152,8 +154,7 @@ describe("runWechatHostQrLogin", () => {
         : {
             ok: false,
             status: 400,
-            text: async () =>
-              "rejected by https://idc-37.weixin.qq.com/ilink/bot/get_qrcode_status",
+            text: async () => sensitiveBody,
           };
 
     const result = await runWechatHostQrLogin({
@@ -163,9 +164,9 @@ describe("runWechatHostQrLogin", () => {
       sleep: fastSleep,
     });
 
-    expect(result).toMatchObject({ kind: "error", message: expect.stringContaining("[redacted URL]") });
-    expect(JSON.stringify(result)).not.toContain("idc-37.weixin.qq.com");
-    expect(logs.join("\n")).not.toContain("idc-37.weixin.qq.com");
+    expect(result).toEqual({ kind: "error", message: "http: WeChat QR status returned 400" });
+    expect(JSON.stringify(result)).not.toContain(sensitiveBody);
+    expect(logs.join("\n")).not.toContain(sensitiveBody);
   });
 
   it.each([
@@ -301,9 +302,10 @@ describe("runWechatHostQrLogin", () => {
     expect(result).toEqual({ kind: "aborted" });
   });
 
-  it("returns kind=error when the QR init request fails", async () => {
+  it("omits sensitive transport details when the QR init request fails", async () => {
+    const sensitiveDetail = "bot_token=secret-value qrcode=session-value";
     const fetch: FetchLike = async () => {
-      throw new Error("DNS lookup failed");
+      throw new Error(`DNS lookup failed ${sensitiveDetail}`);
     };
     const result = await runWechatHostQrLogin({
       fetch,
@@ -311,7 +313,52 @@ describe("runWechatHostQrLogin", () => {
       log: noopLog,
       sleep: fastSleep,
     });
-    expect(result.kind).toBe("error");
+    expect(result).toEqual({ kind: "error", message: "network: WeChat QR init request failed" });
+    expect(JSON.stringify(result)).not.toContain(sensitiveDetail);
+  });
+
+  it("omits a sensitive QR initialization response body", async () => {
+    const sensitiveBody = "bot_token=secret-value qrcode=session-value";
+    const fetch: FetchLike = async () => ({
+      ok: false,
+      status: 401,
+      text: async () => sensitiveBody,
+    });
+
+    const result = await runWechatHostQrLogin({
+      fetch,
+      renderQr: noopRender,
+      log: noopLog,
+      sleep: fastSleep,
+    });
+
+    expect(result).toEqual({ kind: "error", message: "http: WeChat QR init returned 401" });
+    expect(JSON.stringify(result)).not.toContain(sensitiveBody);
+  });
+
+  it("omits a sensitive QR refresh response body", async () => {
+    const sensitiveBody = "bot_token=secret-value qrcode=session-value";
+    const responses = [
+      {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({ qrcode: "expired-qr", qrcode_img_content: "https://example.com/qr" }),
+      },
+      { ok: true, status: 200, text: async () => JSON.stringify({ status: "expired" }) },
+      { ok: false, status: 429, text: async () => sensitiveBody },
+    ];
+    const fetch: FetchLike = async () => responses.shift()!;
+
+    const result = await runWechatHostQrLogin({
+      fetch,
+      renderQr: noopRender,
+      log: noopLog,
+      sleep: fastSleep,
+    });
+
+    expect(result).toEqual({ kind: "error", message: "http: WeChat QR init returned 429" });
+    expect(JSON.stringify(result)).not.toContain(sensitiveBody);
   });
 
   it("returns kind=error when confirmed but the server omits required metadata", async () => {

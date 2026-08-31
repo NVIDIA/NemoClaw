@@ -323,6 +323,13 @@ async function addSandboxPolicyUnlocked(
   }
 
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
+  const storedMessagingConfig = getStoredMessagingChannelConfig(
+    sandboxName,
+    safeLoadOnboardSession(),
+  );
+  const messagingPolicyOptions = storedMessagingConfig
+    ? { messagingConfig: storedMessagingConfig }
+    : {};
   const allPresets = filterSetupPolicyPresetsForAgent(
     policies.listPresets({ agent: sandboxAgent }),
     sandboxAgent,
@@ -357,7 +364,11 @@ async function addSandboxPolicyUnlocked(
         );
         process.exit(1);
       }
-      const appliedContent = policies.loadPresetForSandbox(sandboxName, preset.name);
+      const appliedContent = policies.loadPresetForSandbox(
+        sandboxName,
+        preset.name,
+        messagingPolicyOptions,
+      );
       if (!appliedContent) {
         console.error(`  Could not read the content of preset '${preset.name}'.`);
         process.exit(1);
@@ -427,7 +438,11 @@ async function addSandboxPolicyUnlocked(
   }
   if (!answer) return;
 
-  const presetContent = policies.loadPresetForSandbox(sandboxName, answer);
+  const presetContent = policies.loadPresetForSandbox(
+    sandboxName,
+    answer,
+    messagingPolicyOptions,
+  );
   if (!presetContent) return;
 
   if (reapplyState) {
@@ -461,7 +476,12 @@ async function addSandboxPolicyUnlocked(
     if (confirm.trim().toLowerCase().startsWith("n")) return;
   }
 
-  if (!policies.applyPreset(sandboxName, answer, { suppressDisclosure: true })) {
+  if (
+    !policies.applyPreset(sandboxName, answer, {
+      suppressDisclosure: true,
+      ...messagingPolicyOptions,
+    })
+  ) {
     process.exit(1);
   }
   refreshSandboxPolicyContextFile(sandboxName);

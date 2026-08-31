@@ -524,6 +524,7 @@ describe("initial sandbox policy real preset merge", () => {
         ],
       });
       expect(endpoints.filter((endpoint) => endpoint.host?.startsWith("idc-"))).toHaveLength(1);
+      expect(endpoints.map((endpoint) => endpoint.host)).not.toContain("*.weixin.qq.com");
     },
   );
 

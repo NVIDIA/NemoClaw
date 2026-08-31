@@ -3,9 +3,8 @@
 
 # WeChat (personal) channel egress over Tencent's iLink Bot API.
 #
-# Used by two bridge implementations: @tencent-weixin/openclaw-weixin (Node,
-# OpenClaw) and the built-in Hermes WeChat adapter (Python aiohttp). Both
-# hit the same iLink hosts, so a single preset covers both agents.
+# OpenClaw and Hermes use separate policy files for their agent-specific
+# binaries. Both files authorize the same iLink host and request contract.
 #
 # OpenShell's SSRF engine matches `host:` as a literal string. NemoClaw clones
 # the reviewed ilinkai.wechat.com endpoint for the exact validated IDC origin
