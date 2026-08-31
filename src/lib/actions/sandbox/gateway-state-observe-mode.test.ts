@@ -131,6 +131,10 @@ describe("Hermes Portable inference recovery gateway", () => {
 });
 
 describe("Hermes Portable lifecycle recovery command authority", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("uses transaction currentness for intermediate captures and full currentness at recovery boundaries", () => {
     const assertCurrent = vi.fn();
     const assertTransactionCurrent = vi.fn();

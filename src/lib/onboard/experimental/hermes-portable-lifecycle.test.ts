@@ -556,6 +556,38 @@ describe("Hermes portable lifecycle", () => {
     expect(recorded.transactionCurrentnessCount).toBeGreaterThan(1);
   });
 
+  it("rejects live sandbox rebind before the name-addressed startup launch (#10423)", () => {
+    const receipt = activeReceipt();
+    publishSuccessor();
+    const fixture = lifecycleDeps(receipt, false);
+    const defaultCapture = fixture.captureOpenShell.getMockImplementation()!;
+    fixture.captureOpenShell
+      .mockImplementationOnce(defaultCapture)
+      .mockImplementationOnce(defaultCapture)
+      .mockImplementationOnce(defaultCapture)
+      .mockImplementationOnce(defaultCapture)
+      .mockReturnValueOnce({ status: 0, stdout: "unavailable\n", stderr: "" })
+      .mockImplementationOnce(defaultCapture)
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: sandboxListJson("rebound-sandbox-id", "Ready"),
+        stderr: "",
+      })
+      .mockImplementation(defaultCapture);
+
+    expect(() =>
+      withMcpLifecycleLockSync(
+        SANDBOX,
+        () => recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), fixture.deps),
+        { stateDir: path.join(stateDir, "state") },
+      ),
+    ).toThrow("OpenShell sandbox identity disagrees with the receipt container");
+
+    expect(fixture.launchOpenShell).not.toHaveBeenCalled();
+    expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
+    expect(fixture.podman.mock.calls.filter(([args]) => args[1] === "stop")).toHaveLength(1);
+  });
+
   it("rolls back when the final full qualification detects registry drift (#10423)", () => {
     const receipt = activeReceipt();
     publishSuccessor();

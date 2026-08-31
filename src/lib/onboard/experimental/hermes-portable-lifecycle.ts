@@ -786,6 +786,24 @@ function captureRetainedLifecycleCommand(
   }
 }
 
+/** Rebind the live target immediately before the name-addressed startup command. */
+function assertLiveHermesPortableStartupBinding(
+  qualified: QualifiedHermesPortableLifecycle,
+  deps: HermesPortableLifecycleDeps,
+  timing: HermesPortableLifecycleTimingRecorder,
+): void {
+  if (!qualified.hasTransactionAuthority) return;
+  const capture: NonNullable<HermesPortableLifecycleDeps["captureOpenShell"]> = (args, timeoutMs) =>
+    captureRetainedLifecycleCommand(qualified, timing, args, timeoutMs);
+  proveHermesPortableLivePolicy({
+    gatewayName: qualified.receipt.gatewayName,
+    sandboxName: qualified.receipt.sandboxName,
+    capture: policyCapture(capture),
+  });
+  const liveIdentity = observeOpenShellIdentity(qualified.receipt, capture);
+  requireRegistry(qualified.receipt, liveIdentity.liveIdentityFingerprint, deps);
+}
+
 /** Recover the exact receipt-owned container and manifest-owned Hermes startup. */
 export function recoverHermesPortableSandboxLifecycle(
   sandboxName: string,
@@ -907,10 +925,9 @@ export function recoverHermesPortableSandboxLifecycle(
       const rawLaunch =
         deps.launchOpenShell ??
         defaultLaunchOpenShell(executablePath, commandEnv, qualified.receipt.runtimeAuthority);
-      if (qualified.hasTransactionAuthority) {
-        timing.increment("transactionCurrentness");
-        qualified.assertTransactionCurrent();
-      }
+      timing.measure("preHealthCurrentness", () =>
+        assertLiveHermesPortableStartupBinding(qualified, deps, timing),
+      );
       timing.increment("startupLaunch");
       timing.measure("startupLaunch", () =>
         rawLaunch(openshellExecArgs(qualified.receipt, qualified.receipt.startup.argv)),
