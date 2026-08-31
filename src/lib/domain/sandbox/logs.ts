@@ -152,9 +152,10 @@ function leadingTimestampLength(line: string): number {
  * — alongside structured gateway lines. Those raw lines name no subsystem, so a
  * consumer reading the stream line by line cannot attribute them (#10340).
  *
- * Every line from this source is tagged by construction rather than by guessing
- * whether it "looks attributable": a heuristic that accepts any bracketed token
- * silently passes through the untagged banner lines this exists to catch.
+ * Every non-empty line from this source is tagged by construction rather than
+ * by guessing whether it "looks attributable": a heuristic that accepts any
+ * bracketed token silently passes through the untagged banner lines this exists
+ * to catch.
  *
  * The tag goes *after* any recognised leading timestamp so `parseLineTimestamp`
  * still sees the timestamp first and `mergeTailLogLines` keeps ordering the line
