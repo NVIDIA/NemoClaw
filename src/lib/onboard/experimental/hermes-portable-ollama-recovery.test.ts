@@ -802,22 +802,48 @@ describe("Hermes Portable Ollama inference recovery", () => {
     expect(harness.events.at(-1)).toBe("registry-release");
   });
 
-  it("restores the exact stopped state when final route verification fails", () => {
+  it("emits failed timing after final route failure restores the exact stopped state", () => {
     const harness = createHarness();
+    let now = 0;
+    const routeError = new Error("route unavailable");
+    const onComplete = vi.fn(() => harness.events.push("timing"));
+    Object.assign(harness.overrides, {
+      recoveryTiming: {
+        now: () => ++now,
+        onComplete,
+      },
+    });
     harness.input.verifyRoute.mockImplementation(() => {
-      throw new Error("route unavailable");
+      throw routeError;
     });
 
-    expect(() =>
-      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never),
-    ).toThrow("route unavailable");
+    let caught: unknown;
+    try {
+      recoverHermesPortableOllamaInference(harness.input, harness.overrides as never);
+    } catch (error) {
+      caught = error;
+    }
 
+    expect(caught).toBe(routeError);
     expect(harness.prepared.rollback).toHaveBeenCalledOnce();
     expect(harness.prepared.commit).not.toHaveBeenCalled();
     expect(harness.running()).toBe(false);
     expect(harness.registryRunning()).toBe(false);
     expect(harness.events.indexOf("rollback")).toBeLessThan(
       harness.events.indexOf("registry-rollback"),
+    );
+    expect(harness.events.indexOf("registry-rollback")).toBeLessThan(
+      harness.events.indexOf("timing"),
+    );
+    expect(onComplete).toHaveBeenCalledOnce();
+    expect(onComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dependencyMs: 0,
+        finalCurrentnessMs: 0,
+        result: "failed",
+        routeMs: 1,
+        runtimeAction: "recovered",
+      }),
     );
   });
 
@@ -940,6 +966,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
       "preparedInferenceAuthorityMs",
       "privatePublicationMs",
       "registryPreparationMs",
+      "result",
       "retainedCurrentnessCount",
       "routeMs",
       "runtimeAction",
@@ -955,6 +982,7 @@ describe("Hermes Portable Ollama inference recovery", () => {
       retainedCurrentnessCount: action === "recovered" ? 4 : 3,
       fullCurrentnessCount: 1,
       preparedAuthorityInspectionCount: 2,
+      result: "proved",
       runtimeAction: action,
       runtimeAuthorityMs: 1,
     });

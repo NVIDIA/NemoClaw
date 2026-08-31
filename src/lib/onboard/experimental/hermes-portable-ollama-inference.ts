@@ -176,7 +176,8 @@ export interface HermesPortableOllamaRecoveryTimingEvidence {
   readonly fullCurrentnessCount: number;
   readonly preparedAuthorityInspectionCount: number;
   readonly totalMs: number;
-  readonly runtimeAction: "reused" | "recovered";
+  readonly runtimeAction: "unknown" | "reused" | "recovered";
+  readonly result: "proved" | "failed";
 }
 
 export interface HermesPortableOllamaRecoveryTiming {
@@ -202,7 +203,7 @@ function writeHermesPortableOllamaRecoveryTiming(
   evidence: HermesPortableOllamaRecoveryTimingEvidence,
 ): void {
   console.log(
-    `  Hermes Portable Ollama recovery timing: entryAuthority=${String(evidence.entryAuthorityMs)}ms operatingAuthority=${String(evidence.operatingAuthorityMs)}ms registryPreparation=${String(evidence.registryPreparationMs)}ms privatePublication=${String(evidence.privatePublicationMs)}ms runtimeAuthority=${String(evidence.runtimeAuthorityMs)}ms preparedInferenceAuthority=${String(evidence.preparedInferenceAuthorityMs)}ms exactRuntimeInspection=${String(evidence.exactRuntimeInspectionMs)}ms preRouteCurrentness=${String(evidence.preRouteCurrentnessMs)}ms route=${String(evidence.routeMs)}ms dependency=${String(evidence.dependencyMs)}ms finalCurrentness=${String(evidence.finalCurrentnessMs)}ms retainedCurrentnessCount=${String(evidence.retainedCurrentnessCount)} fullCurrentnessCount=${String(evidence.fullCurrentnessCount)} preparedAuthorityInspectionCount=${String(evidence.preparedAuthorityInspectionCount)} total=${String(evidence.totalMs)}ms runtimeAction=${evidence.runtimeAction} result=proved`,
+    `  Hermes Portable Ollama recovery timing: entryAuthority=${String(evidence.entryAuthorityMs)}ms operatingAuthority=${String(evidence.operatingAuthorityMs)}ms registryPreparation=${String(evidence.registryPreparationMs)}ms privatePublication=${String(evidence.privatePublicationMs)}ms runtimeAuthority=${String(evidence.runtimeAuthorityMs)}ms preparedInferenceAuthority=${String(evidence.preparedInferenceAuthorityMs)}ms exactRuntimeInspection=${String(evidence.exactRuntimeInspectionMs)}ms preRouteCurrentness=${String(evidence.preRouteCurrentnessMs)}ms route=${String(evidence.routeMs)}ms dependency=${String(evidence.dependencyMs)}ms finalCurrentness=${String(evidence.finalCurrentnessMs)}ms retainedCurrentnessCount=${String(evidence.retainedCurrentnessCount)} fullCurrentnessCount=${String(evidence.fullCurrentnessCount)} preparedAuthorityInspectionCount=${String(evidence.preparedAuthorityInspectionCount)} total=${String(evidence.totalMs)}ms runtimeAction=${evidence.runtimeAction} result=${evidence.result}`,
   );
 }
 
@@ -225,6 +226,7 @@ function createHermesPortableOllamaRecoveryTimingRecorder(
       HermesPortableOllamaRecoveryTimingEvidence,
       "retainedCurrentnessCount" | "fullCurrentnessCount" | "preparedAuthorityInspectionCount"
     >,
+    result?: HermesPortableOllamaRecoveryTimingEvidence["result"],
   ) => void;
 } {
   const now = timing.now ?? (() => performance.now());
@@ -287,7 +289,7 @@ function createHermesPortableOllamaRecoveryTimingRecorder(
         onComplete: (durationMs: number) => recordExternalStage(stage, durationMs),
       }),
     measure: measureStage,
-    finish(runtimeAction, counts): void {
+    finish(runtimeAction, counts, result = "proved"): void {
       if (finished) return;
       finished = true;
       try {
@@ -307,6 +309,7 @@ function createHermesPortableOllamaRecoveryTimingRecorder(
             ...counts,
             totalMs: elapsed(startedAt, safeTimingNow(now)),
             runtimeAction,
+            result,
           }),
         );
       } catch {
@@ -1010,6 +1013,16 @@ export function recoverHermesPortableOllamaInference(
   );
   const { registryRecovery } = recoveryEntry;
   let ollamaStateRestored = true;
+  let runtimeAction: HermesPortableOllamaRecoveryTimingEvidence["runtimeAction"] = "unknown";
+  let retainedCurrentnessCount = 0;
+  let fullCurrentnessCount = 0;
+  let preparedAuthorityInspectionCount = 0;
+  const timingCounts = () =>
+    Object.freeze({
+      retainedCurrentnessCount,
+      fullCurrentnessCount,
+      preparedAuthorityInspectionCount,
+    });
   try {
     const published = recoveryTiming.measureEntry("privatePublication", () =>
       atOllamaRecoveryPhase("PRIVATE_PUBLICATION_AUTHORITY", () => {
@@ -1076,15 +1089,7 @@ export function recoverHermesPortableOllamaInference(
           });
         }),
     );
-    let retainedCurrentnessCount = 0;
-    let fullCurrentnessCount = 0;
-    let preparedAuthorityInspectionCount = 1;
-    const timingCounts = () =>
-      Object.freeze({
-        retainedCurrentnessCount,
-        fullCurrentnessCount,
-        preparedAuthorityInspectionCount,
-      });
+    preparedAuthorityInspectionCount = 1;
     const assertPreparedAuthorityTransactionCurrent = (): void => {
       const currentEntry = input.readRegistry(input.sandboxName);
       if (!currentEntry || !isDeepStrictEqual(currentEntry, input.entry)) {
@@ -1153,6 +1158,7 @@ export function recoverHermesPortableOllamaInference(
       );
       return current;
     });
+    runtimeAction = inspected.running ? "reused" : "recovered";
     recoveryTiming.finishEntryAuthority();
     if (inspected.running) {
       let preparedDependency: HermesPortableOllamaPreparedProbeDependency | null = null;
@@ -1282,22 +1288,27 @@ export function recoverHermesPortableOllamaInference(
       throw error;
     }
   } catch (error) {
-    if (!ollamaStateRestored) {
-      failRecovery(
-        "recovery failed before dependent runtime restoration was proved",
-        "runtime-restoration-unproved",
-      );
-    }
     try {
-      registryRecovery.rollback();
-    } catch {
-      failRecovery(
-        "recovery failed and exact stopped-registry restoration was not proved",
-        "registry-restoration-unproved",
-      );
+      if (!ollamaStateRestored) {
+        failRecovery(
+          "recovery failed before dependent runtime restoration was proved",
+          "runtime-restoration-unproved",
+        );
+      }
+      try {
+        registryRecovery.rollback();
+      } catch {
+        failRecovery(
+          "recovery failed and exact stopped-registry restoration was not proved",
+          "registry-restoration-unproved",
+        );
+      }
+      rethrowNestedHermesPortableRecoveryError(error);
+      throw error;
+    } finally {
+      recoveryTiming.finishEntryAuthority();
+      recoveryTiming.finish(runtimeAction, timingCounts(), "failed");
     }
-    rethrowNestedHermesPortableRecoveryError(error);
-    throw error;
   }
 }
 
