@@ -333,11 +333,12 @@ describe("platform helpers", () => {
           path.join(dockerConfig, "config.json"),
           JSON.stringify({ currentContext: "healthy-context" }),
         );
-        // Each guard below stands for a real host whose default authority
-        // answers only through that name: a named Docker context, a rootless
-        // daemon under the runtime directory, and a local endpoint kept off a
-        // forwarded host proxy. Answering Podman under an explicit DOCKER_HOST
-        // makes any missing name redirect the whole CLI to a fallback socket.
+        // The Docker context and proxy guards model variables that can affect
+        // the default authority. The XDG_RUNTIME_DIR guard is synthetic. It
+        // verifies that the probe receives an allowed XDG_* variable; this
+        // fixture does not test Docker authority selection from that value.
+        // Answering Podman under an explicit DOCKER_HOST makes any missing
+        // name redirect the whole CLI to a fallback socket.
         writeFileSync(
           docker,
           [

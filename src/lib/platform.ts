@@ -42,8 +42,8 @@ export interface DockerHostProbeResult {
   reachable: boolean;
   identity: DockerVersionIdentity;
   /**
-   * The probe never reached a verdict: the Docker CLI could not be spawned,
-   * it was killed by the probe timeout, or it produced no complete answer.
+   * The probe never reached a verdict: no process result was returned, the
+   * result contained an error, or the process had no exit status.
    * Unreachability was not observed, so this must not license a redirect.
    * The timeout therefore biases toward holding the host default — raising
    * it buys patience for a slow daemon, not more fallback coverage.
