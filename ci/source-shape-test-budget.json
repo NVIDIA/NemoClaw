@@ -103,7 +103,7 @@
     },
     {
       "file": "test/agents/hermes/hermes-share-mount-deps.test.ts",
-      "test": "binds the Hermes one-shot turn and cached agent-browser fallback before use",
+      "test": "binds the Hermes one-shot turn, writable cron lock, and cached browser fallback",
       "category": "security"
     },
     {

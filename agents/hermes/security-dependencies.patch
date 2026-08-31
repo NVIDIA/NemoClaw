@@ -8,6 +8,8 @@
 # fallback exact so runtime resolution cannot drift beyond the separately
 # verified build-time probes. Scope one-shot completion waits to the exact turn
 # so unrelated managed-runtime processes cannot hold a completed query open.
+# Keep the cron tick lock in writable runtime state while Shields keeps cron
+# definitions sealed read-only.
 diff --git a/plugins/memory/hindsight/plugin.yaml b/plugins/memory/hindsight/plugin.yaml
 --- a/plugins/memory/hindsight/plugin.yaml
 +++ b/plugins/memory/hindsight/plugin.yaml
@@ -62,3 +64,12 @@ diff --git a/hermes_cli/oneshot.py b/hermes_cli/oneshot.py
              except Exception:
                  logging.debug("oneshot background completion wait failed", exc_info=True)
              try:
+diff --git a/cron/scheduler.py b/cron/scheduler.py
+--- a/cron/scheduler.py
++++ b/cron/scheduler.py
+@@ -1569,4 +1569,4 @@ def _get_lock_paths() -> tuple[Path, Path]:
+     """Resolve cron lock paths at call time so profile/env changes are honored."""
+     hermes_home = _get_hermes_home()
+-    lock_dir = hermes_home / "cron"
++    lock_dir = hermes_home / "runtime"
+     return lock_dir, lock_dir / ".tick.lock"

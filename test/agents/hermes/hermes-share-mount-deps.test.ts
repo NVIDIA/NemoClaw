@@ -780,14 +780,15 @@ describe("Hermes share mount package parity (#2947)", () => {
     }
   });
 
-  // source-shape-contract: security -- The image must scope one-shot completion to the exact turn and retain the network-disabled browser package probe.
-  it("binds the Hermes one-shot turn and cached agent-browser fallback before use", () => {
+  // source-shape-contract: security -- The image must scope one-shot completion to the exact turn, keep the cron tick lock in writable runtime state, and retain the network-disabled browser package probe.
+  it("binds the Hermes one-shot turn, writable cron lock, and cached browser fallback", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-agent-browser-"));
     const fixtureRoot = path.join(tmp, "source");
     const pluginPath = path.join(fixtureRoot, "plugins", "memory", "hindsight", "plugin.yaml");
     const browserToolPath = path.join(fixtureRoot, "tools", "browser_tool.py");
     const oneshotPath = path.join(fixtureRoot, "hermes_cli", "oneshot.py");
+    const schedulerPath = path.join(fixtureRoot, "cron", "scheduler.py");
     const fakePython = path.join(tmp, "python");
     const fakeNpm = path.join(tmp, "npm");
     const fakeNpx = path.join(tmp, "npx");
@@ -803,6 +804,7 @@ describe("Hermes share mount package parity (#2947)", () => {
       fs.mkdirSync(path.dirname(pluginPath), { recursive: true });
       fs.mkdirSync(path.dirname(browserToolPath), { recursive: true });
       fs.mkdirSync(path.dirname(oneshotPath), { recursive: true });
+      fs.mkdirSync(path.dirname(schedulerPath), { recursive: true });
       fs.mkdirSync(sandboxHome);
       fs.mkdirSync(lockedRuntime);
       fs.copyFileSync(
@@ -921,6 +923,24 @@ describe("Hermes share mount package parity (#2947)", () => {
           "",
         ].join("\n"),
       );
+      fs.writeFileSync(
+        schedulerPath,
+        [
+          "from pathlib import Path",
+          "",
+          '_hermes_home = Path("/tmp/hermes-fixture")',
+          "",
+          "def _get_hermes_home() -> Path:",
+          "    return _hermes_home",
+          "",
+          "def _get_lock_paths() -> tuple[Path, Path]:",
+          '    \"\"\"Resolve cron lock paths at call time so profile/env changes are honored.\"\"\"',
+          "    hermes_home = _get_hermes_home()",
+          '    lock_dir = hermes_home / "cron"',
+          '    return lock_dir, lock_dir / ".tick.lock"',
+          "",
+        ].join("\n"),
+      );
 
       const applied = spawnSync(
         "git",
@@ -933,6 +953,27 @@ describe("Hermes share mount package parity (#2947)", () => {
         .split("\n")
         .find((line) => line.startsWith("AGENT_BROWSER_NPX_SPEC ="));
       expect(patchedSpec).toBe('AGENT_BROWSER_NPX_SPEC = "agent-browser@0.26.0"');
+      const cronLockProbe = spawnSync(
+        "python3",
+        [
+          "-I",
+          "-c",
+          [
+            "import importlib.util, pathlib, sys",
+            'spec = importlib.util.spec_from_file_location("scheduler_fixture", pathlib.Path(sys.argv[1]))',
+            "module = importlib.util.module_from_spec(spec)",
+            "spec.loader.exec_module(module)",
+            "module._hermes_home = pathlib.Path(sys.argv[2])",
+            "lock_dir, lock_file = module._get_lock_paths()",
+            'assert lock_dir == module._hermes_home / "runtime"',
+            'assert lock_file == module._hermes_home / "runtime" / ".tick.lock"',
+          ].join("; "),
+          schedulerPath,
+          sandboxHome,
+        ],
+        { encoding: "utf-8" },
+      );
+      expect(cronLockProbe.status, cronLockProbe.stderr).toBe(0);
       const oneShotRun = spawnSync(
         "python3",
         [

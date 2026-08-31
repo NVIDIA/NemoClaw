@@ -542,8 +542,24 @@ export async function startCompatibleMock(options: {
         toolName: string,
       ): "target" | "miss" | "invalid" => {
         const parsed = parsedToolResult(index, "call_hermes_tool_search");
-        if (!Array.isArray(parsed?.matches)) return "invalid";
-        const matches = parsed.matches;
+        if (!parsed) return "invalid";
+        const hasLegacyMatches = Object.hasOwn(parsed, "matches");
+        const hasMultiQueryResults = Object.hasOwn(parsed, "results");
+        if (hasLegacyMatches === hasMultiQueryResults) return "invalid";
+        let matches: unknown[];
+        if (hasLegacyMatches) {
+          if (!Array.isArray(parsed.matches)) return "invalid";
+          matches = parsed.matches;
+        } else {
+          if (!Array.isArray(parsed.results) || parsed.results.length !== 1) return "invalid";
+          const result = parsed.results[0];
+          if (!result || typeof result !== "object" || Array.isArray(result)) return "invalid";
+          const resultRecord = result as Record<string, unknown>;
+          if (resultRecord.query !== toolName || !Array.isArray(resultRecord.matches)) {
+            return "invalid";
+          }
+          matches = resultRecord.matches;
+        }
         const hasValidEntries = matches.every(
           (match) =>
             match &&

@@ -4,7 +4,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
-import { registerChannelsStopStartProviderCleanup } from "../live/channels-stop-start-helpers.ts";
+import {
+  registerChannelsStopStartProviderCleanup,
+  registerChannelsStopStartResourceCleanup,
+} from "../live/channels-stop-start-helpers.ts";
 
 type CleanupAction = { name: string; run: () => Promise<void> | void };
 
@@ -30,6 +33,38 @@ function cleanupFixtures(result = { exitCode: 0, stderr: "", stdout: "" }) {
 }
 
 describe("channels stop/start provider cleanup", () => {
+  it("registers sandbox cleanup after providers so reverse execution detaches first", () => {
+    const registrationOrder: string[] = [];
+    const cleanup = {
+      trackDisposable: vi.fn((name: string) => registrationOrder.push(name)),
+      trackGateway: vi.fn(() => registrationOrder.push("destroy gateway")),
+      trackSandbox: vi.fn(() => registrationOrder.push("destroy NemoClaw sandbox")),
+    };
+    const sandbox = { cleanupSandbox: vi.fn() };
+
+    registerChannelsStopStartResourceCleanup(
+      cleanup as unknown as E2ETargetFixtures["cleanup"],
+      {} as E2ETargetFixtures["host"],
+      sandbox as unknown as E2ETargetFixtures["sandbox"],
+      {
+        agent: "hermes",
+        env: {},
+        redactions: [],
+        sandboxName: "e2e-hm-ch-cycle",
+      },
+    );
+
+    const executionOrder = [...registrationOrder].reverse();
+    expect(executionOrder.slice(0, 2)).toEqual([
+      "destroy NemoClaw sandbox",
+      "delete OpenShell sandbox e2e-hm-ch-cycle",
+    ]);
+    expect(executionOrder.indexOf("delete OpenShell sandbox e2e-hm-ch-cycle")).toBeLessThan(
+      executionOrder.indexOf("delete OpenShell provider e2e-hm-ch-cycle-googlechat-bridge"),
+    );
+    expect(executionOrder.at(-1)).toBe("destroy gateway");
+  });
+
   it("registers every exact provider before the live lifecycle starts", () => {
     const fixtures = cleanupFixtures();
 

@@ -812,6 +812,26 @@ describe("Hermes deferred MCP tool discovery", () => {
     expect(finalMessage.tool_calls).toBeUndefined();
   });
 
+  it("accepts the Hermes 0.20.6 multi-query tool_search result", async () => {
+    compatibleMock = await startDeferredCompatibleMock();
+    const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
+
+    const firstSearch = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_search",
+      { query: DEFERRED_TOOL_NAME },
+    );
+    recordToolResult(messages, firstSearch, {
+      queries: [DEFERRED_TOOL_NAME],
+      results: [{ query: DEFERRED_TOOL_NAME, matches: [{ name: DEFERRED_TOOL_NAME }] }],
+      tools: { [DEFERRED_TOOL_NAME]: { name: DEFERRED_TOOL_NAME } },
+    });
+
+    expectToolCall(await requestCompatibleMessage(compatibleMock, messages), "tool_describe", {
+      name: DEFERRED_TOOL_NAME,
+    });
+  });
+
   it("stops after one well-formed tool_search miss", async () => {
     compatibleMock = await startDeferredCompatibleMock();
     const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
@@ -843,6 +863,28 @@ describe("Hermes deferred MCP tool discovery", () => {
     );
     expect(firstSearch.id).toBe("call_hermes_tool_search");
     recordToolResult(messages, firstSearch, { matches: [{ unexpected: true }] });
+
+    const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
+    expect(terminalMessage).toMatchObject({
+      role: "assistant",
+      content: "mock protocol error: Hermes returned an unexpected deferred tool result sequence",
+    });
+    expect(terminalMessage.tool_calls).toBeUndefined();
+  });
+
+  it("rejects ambiguous legacy and multi-query tool_search results", async () => {
+    compatibleMock = await startDeferredCompatibleMock();
+    const messages: CompatibleMessage[] = [{ role: "user", content: "call deferred tool" }];
+
+    const firstSearch = expectToolCall(
+      await requestCompatibleMessage(compatibleMock, messages),
+      "tool_search",
+      { query: DEFERRED_TOOL_NAME },
+    );
+    recordToolResult(messages, firstSearch, {
+      matches: [{ name: DEFERRED_TOOL_NAME }],
+      results: [{ query: DEFERRED_TOOL_NAME, matches: [{ name: DEFERRED_TOOL_NAME }] }],
+    });
 
     const terminalMessage = await requestCompatibleMessage(compatibleMock, messages);
     expect(terminalMessage).toMatchObject({

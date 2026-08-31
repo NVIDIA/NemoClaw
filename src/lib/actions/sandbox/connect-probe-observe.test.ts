@@ -39,6 +39,16 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("does not require portable authority for an ordinary Hermes probe-only recovery", async () => {
+    const harness = createConnectHarness({ agentName: "hermes" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.inspectPortableReceiptDispositionSpy).toHaveBeenCalled();
+    expect(harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it("runs portable lifecycle recovery before the live sandbox lookup (#8441)", async () => {
     const harness = createConnectHarness();
 

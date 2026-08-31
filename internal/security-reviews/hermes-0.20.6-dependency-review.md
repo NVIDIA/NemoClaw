@@ -57,6 +57,12 @@ compatibility patch preserves that behavior while redirecting the default
 ledger to `runtime/cron-executions.db`. The online backup inventory remains
 bound to the same runtime file.
 
+The upstream scheduler also writes its per-profile tick lock below `cron/`.
+NVIDIA/NemoClaw Shields seals that directory after configuration, so the
+source patch moves only `.tick.lock` to writable `runtime/` state. Cron
+definitions remain read-only while concurrent scheduler ticks retain the
+upstream file-lock behavior.
+
 The session-list implementation contains five exact preview queries in the
 target source. The patch remains necessary and changes each preview from the
 first message to the latest message. Its exact occurrence guard changed from
