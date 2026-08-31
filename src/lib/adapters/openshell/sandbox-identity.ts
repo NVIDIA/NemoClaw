@@ -207,10 +207,11 @@ function classifySelectorExecutionError(
     : "selector-execution-non-error";
 }
 
-function observeCreatedOpenShellSandboxId(
+export function observeCreatedOpenShellSandboxId(
   input: CreatedOpenShellSandboxIdentityInput,
   timeout: number,
 ): CreatedOpenShellSandboxIdentityObservation {
+  assertCreateAttemptNonce(input.createAttemptNonce);
   let output: string;
   try {
     output = input.runCaptureOpenshell(
@@ -289,17 +290,25 @@ export function resolveCreatedOpenShellSandboxId(
  * Settle the nonce-owned identity after OpenShell reports the create Ready.
  * An empty selector result or the one exact nonce-owned row with incomplete
  * publication metadata is retryable. Malformed, ambiguous, or mismatched
- * identity results remain terminal before any post-create effect.
+ * identity results remain terminal before any post-create effect. A prior ID
+ * observed while the create client was still running remains part of the same
+ * settlement, so disappearance or replacement cannot reset the identity gate.
  */
 export function settleCreatedOpenShellSandboxId(input: {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly createAttemptNonce: string;
   readonly runCaptureOpenshell: (args: string[], options?: Record<string, unknown>) => string;
+  readonly priorSandboxId?: string | null;
   readonly now?: () => number;
   readonly sleep: (milliseconds: number) => void;
 }): string {
   assertCreateAttemptNonce(input.createAttemptNonce);
+  if (input.priorSandboxId !== undefined && input.priorSandboxId !== null) {
+    if (!isOpenShellSandboxId(input.priorSandboxId)) {
+      throw createdIdentityError(input.sandboxName);
+    }
+  }
   const now = input.now ?? (() => performance.now());
   const startedAt = now();
   const deadlineMs = startedAt + CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS;
@@ -309,7 +318,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   }
 
   let previousNowMs = startedAt;
-  let pendingSandboxId: string | null = null;
+  let pendingSandboxId: string | null = input.priorSandboxId ?? null;
   let diagnostic = "settlement-incomplete";
   const readNow = (): number => {
     const currentNowMs = now();
