@@ -4166,8 +4166,11 @@ export function createPodmanHostLocalInferenceRuntime(
       const current = inspectPublishedResumeTransaction(receipt);
       container = current.container;
     };
+    const assertPublishedResumeTransactionCurrent = () => {
+      requirePublishedResumeTransactionCurrent(receipt);
+    };
     const assertResumeForwardAuthority = publishedEngineAuthority
-      ? assertReceiptTransactionAuthority
+      ? assertPublishedResumeTransactionCurrent
       : assertReceiptAuthority;
     const assertRollbackReceiptAuthority = () => {
       assertReceiptExecutionAuthority("rollback");
@@ -4306,7 +4309,9 @@ export function createPodmanHostLocalInferenceRuntime(
           validateReceipt(receipt, true, resumeTiming);
         }
       },
-      validatePublication: assertReceiptAuthority,
+      validatePublication: publishedEngineAuthority
+        ? assertPublishedResumeTransactionCurrent
+        : assertReceiptAuthority,
       publishedResume: true,
       onPublishedResumeFinalized: () => {
         resumeTiming.finish(wasRunning ? "reused" : "started");
