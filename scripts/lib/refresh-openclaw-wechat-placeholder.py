@@ -159,7 +159,7 @@ def stage_managed_payload(
             )
         metadata = os.stat(temporary, dir_fd=accounts_fd, follow_symlinks=False)
         return temporary, managed_file_identity(metadata)
-    except BaseException:
+    except (Exception, KeyboardInterrupt, SystemExit):
         if temporary_created and not remove_managed_temporary(accounts_fd, temporary):
             fail(
                 "managed account staging failed and its temporary file could not be removed; "
@@ -330,7 +330,7 @@ try:
                 entry["replacement"] = None
                 committed.append(entry)
             os.fsync(accounts_fd)
-        except BaseException as error:
+        except (Exception, KeyboardInterrupt, SystemExit) as error:
             commit_error = error
 
         if commit_error is not None:
