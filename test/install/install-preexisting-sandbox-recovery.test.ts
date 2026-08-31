@@ -1,16 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import { isSupportedGatewayDockerHost } from "../../src/lib/domain/docker-host";
-
-const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "../..", "scripts", "install.sh");
+import {
+  createInstallerCheckout,
+  runInstallerSourcedBody,
+} from "../helpers/installer-run-fixture";
+import { INSTALLER_PAYLOAD } from "../helpers/installer-sourced-env";
 
 function writePendingStationReceiptRetirement(tmp: string): void {
   fs.writeFileSync(
@@ -25,42 +26,42 @@ function writePendingStationReceiptRetirement(tmp: string): void {
   );
 }
 
-function installerSupportsDockerHost(value: string | undefined): boolean {
-  const childEnv = { ...process.env };
-  delete childEnv.DOCKER_HOST;
-  const result = spawnSync(
-    "bash",
-    [
-      "-c",
-      `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
-installer_docker_host_has_supported_shape`,
-    ],
-    {
-      encoding: "utf-8",
-      env: {
-        ...childEnv,
-        BASH_ENV: "",
-        ...(value !== undefined ? { DOCKER_HOST: value } : {}),
-        ENV: "",
-      },
-    },
+function writePersistedDockerContext(tmp: string, currentContext: string): string {
+  const dockerConfig = path.join(tmp, "docker-config");
+  fs.mkdirSync(dockerConfig);
+  fs.writeFileSync(
+    path.join(dockerConfig, "config.json"),
+    JSON.stringify({ currentContext }),
   );
-  expect([0, 1], result.stderr).toContain(result.status);
-  return result.status === 0;
+  return dockerConfig;
+}
+
+function installerSupportsDockerHost(value: string | undefined): boolean {
+  const run = runInstallerSourcedBody("installer_docker_host_has_supported_shape", {
+    extraEnv: value === undefined ? {} : { DOCKER_HOST: value },
+  });
+  onTestFinished(run.remove);
+  expect([0, 1], run.result.stderr).toContain(run.result.status);
+  return run.result.status === 0;
 }
 
 function runRecoveryBeforeOnboard(
   preexistingCount: number,
   recoveryExitCode: number | [first: number, second: number],
   options: {
+    detectedExpressPlatform?: string;
+    dockerContext?: string;
     dockerHost?: string;
     hostPreflightExitCode?: number;
     interactive?: boolean;
     orphanedRecovery?: boolean;
+    persistedDockerContext?: string;
+    portableProfile?: boolean;
     registryJson?: string;
     realCompletionSummary?: boolean;
     recordInstallPhases?: boolean;
     recordPreinstall?: boolean;
+    recordRuntimeTarget?: boolean;
     recoveryLogWriteFails?: boolean;
     singleSession?: boolean;
     stationExpressSelected?: boolean;
@@ -68,7 +69,9 @@ function runRecoveryBeforeOnboard(
     prepareState?: (tmp: string) => void;
   } = {},
 ): { status: number | null; calls: string[]; output: string } {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-recovery-order-"));
+  const checkout = createInstallerCheckout("nemoclaw-install-recovery-order-");
+  onTestFinished(checkout.remove);
+  const tmp = checkout.root;
   const cli = path.join(tmp, "nemoclaw");
   const callLog = path.join(tmp, "calls.log");
   const recoveryCallLog = path.join(tmp, "recovery-calls.log");
@@ -89,6 +92,10 @@ function runRecoveryBeforeOnboard(
     path.join(tmp, ".nemoclaw", "sandboxes.json"),
     options.registryJson ?? '{"sandboxes":{}}',
   );
+  const dockerConfig =
+    options.persistedDockerContext === undefined
+      ? undefined
+      : writePersistedDockerContext(tmp, options.persistedDockerContext);
   options.prepareState?.(tmp);
   fs.writeFileSync(
     path.join(payloadDir, "setup-jetson.sh"),
@@ -102,6 +109,9 @@ fi
   fs.writeFileSync(
     cli,
     `#!/usr/bin/env bash
+if [[ "\${RECORD_RUNTIME_TARGET:-}" = "1" ]]; then
+  printf 'cli-target=host:%s,context:%s argv=%s\n' "\${DOCKER_HOST-unset}" "\${DOCKER_CONTEXT-unset}" "$*" >> "${callLog}"
+fi
 printf 'restore=%s confirmed=%s argv=%s\n' "\${NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE:-}" "\${NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES:-}" "$*" >> "${callLog}"
 if [ "\${1:-}" = "upgrade-sandboxes" ]; then
   recovery_call=0
@@ -129,7 +139,6 @@ exit 0
 
   const snippet = `
     set -e
-    source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
     _CLI_BIN=nemoclaw
     _UPGRADE_SANDBOXES_FAILED=false
     _STATION_EXPRESS_RESUME_LOADED=${options.stationResumeLoaded ? "1" : ""}
@@ -146,6 +155,11 @@ exit 0
     }
     print_banner() { :; }
     preflight_usage_notice_prompt() { :; }
+    command_exists() {
+      [[ "$1" == "docker" ]] && return 1
+      command -v "$1" >/dev/null 2>&1
+    }
+    detect_express_platform() { printf '%s' "$DETECTED_EXPRESS_PLATFORM"; }
     record_install_phase() {
       if [[ "$RECORD_INSTALL_PHASES" = "1" ]]; then
         printf '%s\n' "$1" >> "${callLog}"
@@ -155,6 +169,14 @@ exit 0
     ensure_openshell_build_deps() { :; }
     maybe_offer_express_install() {
       ${options.stationExpressSelected ? '_SELECTED_EXPRESS_PLATFORM="DGX Station"' : ":"}
+    }
+    prepare_portable_experimental_runtime_override() {
+      [[ "\${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]] || return 0
+      unset DOCKER_CONTEXT
+      export DOCKER_HOST=unix:///run/user/4242/podman/podman.sock
+      if [[ "$RECORD_RUNTIME_TARGET" = "1" ]]; then
+        record_install_phase "portable-target=host:\${DOCKER_HOST},context:\${DOCKER_CONTEXT-unset}"
+      fi
     }
     sleep() { printf 'sleep=%s\n' "$*" >> "${callLog}"; }
     step() { :; }
@@ -174,35 +196,37 @@ exit 0
       printf 'host-preflight\n' >> "${callLog}"
       return ${options.hostPreflightExitCode ?? 0}
     }
-    ensure_station_express_host() { :; }
+    ensure_station_express_host() {
+      if [[ "$RECORD_RUNTIME_TARGET" = "1" && "\${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]]; then
+        record_install_phase "station-target=host:\${DOCKER_HOST-unset},context:\${DOCKER_CONTEXT-unset}"
+      fi
+    }
     ensure_station_express_pair() { :; }
     run_onboard() { "${cli}" onboard; }
     restore_onboard_forward_after_post_checks() { return 0; }
     ${options.realCompletionSummary ? "" : "print_done() { printf 'PRINT_DONE\\n'; }"}
-    main ${options.interactive ? "" : "--non-interactive --yes-i-accept-third-party-software"}
+    main ${options.interactive ? "" : "--non-interactive --yes-i-accept-third-party-software"} ${options.portableProfile ? "--experimental-profile portable" : ""}
   `;
-  const childEnv = { ...process.env };
-  delete childEnv.DOCKER_HOST;
-  delete childEnv.NEMOCLAW_SINGLE_SESSION;
-  const result = spawnSync("bash", ["-c", snippet], {
-    encoding: "utf-8",
-    env: {
-      ...childEnv,
-      BASH_ENV: "",
+  const run = runInstallerSourcedBody(snippet, {
+    extraEnv: {
+      DETECTED_EXPRESS_PLATFORM: options.detectedExpressPlatform ?? "",
+      ...(options.dockerContext !== undefined ? { DOCKER_CONTEXT: options.dockerContext } : {}),
+      ...(dockerConfig === undefined ? {} : { DOCKER_CONFIG: dockerConfig }),
       ...(options.dockerHost !== undefined ? { DOCKER_HOST: options.dockerHost } : {}),
-      ENV: "",
-      HOME: tmp,
       NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
       ...(options.singleSession ? { NEMOCLAW_SINGLE_SESSION: "1" } : {}),
       RECORD_INSTALL_PHASES: options.recordInstallPhases ? "1" : "",
       RECORD_PREINSTALL: options.recordPreinstall ? "1" : "",
+      RECORD_RUNTIME_TARGET: options.recordRuntimeTarget ? "1" : "",
       RECOVERY_LOG_WRITE_FAILS: options.recoveryLogWriteFails ? "1" : "",
     },
+    home: tmp,
+    includeNodeOnPath: true,
   });
   const calls = fs.existsSync(callLog)
     ? fs.readFileSync(callLog, "utf-8").trim().split(/\r?\n/).filter(Boolean)
     : [];
-  return { status: result.status, calls, output: `${result.stdout}${result.stderr}` };
+  return { status: run.result.status, calls, output: run.output };
 }
 
 describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
@@ -277,6 +301,76 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
       "Unset DOCKER_HOST or set it to an absolute local Unix socket URL",
     );
     expect(result.output).toContain("Sandbox recovery did not start");
+  });
+
+  it.each([
+    ["an explicit remote context", { dockerContext: "remote-context" }],
+    ["a persisted remote context", { persistedDockerContext: "remote-context" }],
+  ])("rejects %s before sandbox recovery", (_name, dockerTarget) => {
+    const result = runRecoveryBeforeOnboard(2, 0, {
+      ...dockerTarget,
+      recordInstallPhases: true,
+      recordPreinstall: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.calls).toEqual([]);
+    expect(result.output).toContain("Docker context does not select the local default target");
+    expect(result.output).toContain("docker context use default");
+    expect(result.output).toContain("Sandbox recovery did not start");
+  });
+
+  it.each([
+    ["a TCP endpoint", "tcp://203.0.113.10:2375"],
+    ["an SSH endpoint", "ssh://user@example.test"],
+  ])("lets the portable profile replace %s before recovery", (_name, dockerHost) => {
+    const result = runRecoveryBeforeOnboard(2, 0, {
+      dockerContext: "remote-context",
+      dockerHost,
+      portableProfile: true,
+      recordInstallPhases: true,
+      recordPreinstall: true,
+      recordRuntimeTarget: true,
+    });
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls[0]).toBe(
+      "portable-target=host:unix:///run/user/4242/podman/podman.sock,context:unset",
+    );
+    expect(result.calls).toContain("preinstall-backup-retirement");
+    expect(result.calls).toContain(
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+    );
+    expect(result.calls).toContain(
+      "cli-target=host:unix:///run/user/4242/podman/podman.sock,context:unset argv=upgrade-sandboxes --auto",
+    );
+    expect(result.output).not.toContain("Sandbox recovery did not start");
+  });
+
+  it.each([
+    ["a TCP endpoint", "tcp://203.0.113.10:2375"],
+    ["an SSH endpoint", "ssh://user@example.test"],
+  ])("lets DGX Station replace %s before recovery", (_name, dockerHost) => {
+    const result = runRecoveryBeforeOnboard(2, 0, {
+      detectedExpressPlatform: "DGX Station",
+      dockerContext: "remote-context",
+      dockerHost,
+      recordInstallPhases: true,
+      recordPreinstall: true,
+      recordRuntimeTarget: true,
+      stationExpressSelected: true,
+    });
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls[0]).toBe("station-target=host:unset,context:default");
+    expect(result.calls).toContain("preinstall-backup-retirement");
+    expect(result.calls).toContain(
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+    );
+    expect(result.calls).toContain(
+      "cli-target=host:unset,context:default argv=upgrade-sandboxes --auto",
+    );
+    expect(result.output).not.toContain("Sandbox recovery did not start");
   });
 
   it("does not report an orphaned sandbox as recovered when output recording fails", () => {

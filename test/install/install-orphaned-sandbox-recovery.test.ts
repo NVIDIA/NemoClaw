@@ -238,8 +238,13 @@ describe("install.sh print_done honesty for orphaned sandboxes (#6520)", () => {
       expect(output).toContain("completed with warnings");
       expect(output).not.toContain("Existing sandboxes were recovered and upgraded.");
       expect(output).not.toContain("No new sandbox onboarding was needed.");
+      expect(output).toContain("nemoclaw <name> status");
       expect(output).toContain("nemoclaw <name> destroy");
+      expect(output).toContain("nemoclaw <name> destroy --force");
+      expect(output).toContain("removes only the local record");
+      expect(output).toContain("verify or remove any remaining OpenShell sandbox");
       expect(output).toContain("nemoclaw onboard");
+      expect(output).not.toContain("Clear a stranded sandbox");
     } finally {
       cleanup();
     }

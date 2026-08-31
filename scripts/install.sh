@@ -16,6 +16,9 @@ _cleanup_files=()
 # exact value can be removed from the Hermes onboarding child.
 unset _PORTABLE_INSTALLER_DOCKER_HOST
 _PORTABLE_INSTALLER_DOCKER_HOST=""
+_PORTABLE_CALLER_DOCKER_CONTEXT=""
+_PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED=""
+_PORTABLE_CALLER_DOCKER_CONTEXT_SET=""
 # #4414: When re-launched as a staged copy via `curl | bash`, queue the
 # staged tmpfile for removal on EXIT. NEMOCLAW_INSTALLER_STAGED carries
 # the staged path forward so both the loop guard and cleanup use one var.
@@ -854,7 +857,9 @@ print_done() {
       # a concrete remediation path instead.
       printf "  ${C_YELLOW}Some recorded sandboxes were not found on their recorded gateway and were not recovered.${C_RESET}\n"
       printf "  ${C_YELLOW}Their gateway registration or Docker image may have been removed (see the recovery notes above).${C_RESET}\n"
-      printf "  ${C_DIM}Clear a stranded sandbox with '%s <name> destroy', then rebuild it with '%s onboard'.${C_RESET}\n" "$_CLI_BIN" "$_CLI_BIN"
+      printf "  ${C_DIM}Check or start the recorded gateway with '%s <name> status', then retry '%s <name> destroy'.${C_RESET}\n" "$_CLI_BIN" "$_CLI_BIN"
+      printf "  ${C_DIM}If the gateway is unavailable, '%s <name> destroy --force' removes only the local record.${C_RESET}\n" "$_CLI_BIN"
+      printf "  ${C_DIM}Before running '%s onboard', verify or remove any remaining OpenShell sandbox if the gateway returns.${C_RESET}\n" "$_CLI_BIN"
     else
       printf "  ${C_GREEN}Existing sandboxes were recovered and upgraded.${C_RESET}\n"
     fi
@@ -1247,13 +1252,29 @@ installer_docker_host_has_supported_shape() {
   [[ "$socket_path" == /* && "$socket_path" != *"'"* ]]
 }
 
-fail_unsupported_installer_docker_host() {
-  error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer. Sandbox recovery did not start."
+installer_docker_context_has_supported_target() {
+  case "${DOCKER_CONTEXT-}" in
+    "" | default) ;;
+    *) return 1 ;;
+  esac
+
+  local raw="${DOCKER_HOST-}" candidate active_context=""
+  candidate="${raw#"${raw%%[![:space:]]*}"}"
+  candidate="${candidate%"${candidate##*[![:space:]]}"}"
+  [[ -z "$candidate" ]] || return 0
+  if command_exists docker; then
+    active_context="$(docker context show 2>/dev/null)" || return 1
+  else
+    active_context="$(express_wsl_docker_active_context)"
+  fi
+  [[ "$active_context" == default ]]
 }
 
-validate_installer_docker_host_before_host_changes() {
-  [[ -n "${DOCKER_HOST-}" ]] || return 0
-  installer_docker_host_has_supported_shape || fail_unsupported_installer_docker_host
+validate_installer_docker_target_before_host_changes() {
+  installer_docker_host_has_supported_shape \
+    || error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer. Sandbox recovery did not start."
+  installer_docker_context_has_supported_target \
+    || error "The Docker context does not select the local default target. Unset DOCKER_CONTEXT or set it to default, and run 'docker context use default' if a non-default context is persisted. Then rerun the installer. Sandbox recovery did not start."
 }
 
 MIN_NODE_VERSION="22.19.0"
@@ -4285,7 +4306,13 @@ run_onboard() {
     -n "$_PORTABLE_INSTALLER_DOCKER_HOST" &&
     "${DOCKER_HOST:-}" == "$_PORTABLE_INSTALLER_DOCKER_HOST" ]]; then
     invoke_bin="/usr/bin/env"
-    invoke_args=(-u DOCKER_HOST "$cli_invoke" "${onboard_cmd[@]}")
+    invoke_args=(-u DOCKER_HOST)
+    if [[ "${_PORTABLE_CALLER_DOCKER_CONTEXT_SET:-}" == x ]]; then
+      invoke_args+=("DOCKER_CONTEXT=$_PORTABLE_CALLER_DOCKER_CONTEXT")
+    else
+      invoke_args+=(-u DOCKER_CONTEXT)
+    fi
+    invoke_args+=("$cli_invoke" "${onboard_cmd[@]}")
   fi
 
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
@@ -4495,6 +4522,13 @@ ensure_docker() {
   fi
 }
 
+capture_portable_caller_docker_context() {
+  [[ "${_PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED:-}" == "1" ]] && return 0
+  _PORTABLE_CALLER_DOCKER_CONTEXT_SET="${DOCKER_CONTEXT+x}"
+  _PORTABLE_CALLER_DOCKER_CONTEXT="${DOCKER_CONTEXT-}"
+  _PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED=1
+}
+
 # Select the rootless Podman API socket reported for the current user. This
 # must run before ensure_docker and the installer host preflight: both use
 # the Docker CLI, with DOCKER_HOST overriding its daemon to Podman's user
@@ -4502,6 +4536,7 @@ ensure_docker() {
 # local-registry configuration required by the OpenShell Podman driver.
 prepare_portable_experimental_runtime_override() {
   [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]] || return 0
+  capture_portable_caller_docker_context
   [[ "$(uname -s)" == "Linux" ]] \
     || error "The portable experimental profile requires Linux."
   command_exists podman \
@@ -4522,6 +4557,7 @@ prepare_portable_experimental_runtime_override() {
     /*) export DOCKER_HOST="unix://${podman_socket}" ;;
     *) error "Podman reported an invalid rootless API socket path: ${podman_socket:-empty}" ;;
   esac
+  unset DOCKER_CONTEXT
   _PORTABLE_INSTALLER_DOCKER_HOST="$DOCKER_HOST"
 
   info "Portable profile selected rootless Podman through DOCKER_HOST=${DOCKER_HOST}."
@@ -4754,6 +4790,7 @@ STATION_ULTRA_LEGACY_VLLM_IMAGE="vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899
 STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
 _SELECTED_EXPRESS_PLATFORM=""
+_PREFLIGHT_EXPRESS_PLATFORM=""
 _EXPRESS_WSL_PROVIDER_PENDING=""
 _STATION_EXPRESS_RESUME_REVISION=""
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
@@ -4872,11 +4909,10 @@ validate_station_deepseek_override() {
 }
 
 preflight_explicit_express_flags() {
-  local platform
-  platform="$(detect_express_platform)"
-  validate_express_platform_boundary "$platform"
-  validate_force_station_install_override "$platform"
-  validate_station_deepseek_override "$platform"
+  _PREFLIGHT_EXPRESS_PLATFORM="$(detect_express_platform)"
+  validate_express_platform_boundary "$_PREFLIGHT_EXPRESS_PLATFORM"
+  validate_force_station_install_override "$_PREFLIGHT_EXPRESS_PLATFORM"
+  validate_station_deepseek_override "$_PREFLIGHT_EXPRESS_PLATFORM"
 }
 
 configure_station_express_model() {
@@ -5957,6 +5993,10 @@ prepare_installer_host() {
     unset DOCKER_HOST
     export DOCKER_CONTEXT=default
   fi
+  if [[ "${_PREFLIGHT_EXPRESS_PLATFORM:-}" == "DGX Station" ]] \
+    || [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]]; then
+    validate_installer_docker_target_before_host_changes
+  fi
   # Intentional ordering: Station preparation owns the reboot boundary before
   # generic Docker bootstrap; ensure_station_express_host is a no-op elsewhere.
   ensure_station_express_host
@@ -6418,7 +6458,13 @@ main() {
   # repeats the same authoritative validation at the prompt boundary because
   # it is also exercised directly by sourced-installer callers and tests.
   preflight_explicit_express_flags
-  validate_installer_docker_host_before_host_changes
+  if [[ "${NEMOCLAW_EXPERIMENTAL_PROFILE:-}" == "portable" ]]; then
+    capture_portable_caller_docker_context
+    unset DOCKER_HOST
+    export DOCKER_CONTEXT=default
+  elif [[ "${_PREFLIGHT_EXPRESS_PLATFORM:-}" != "DGX Station" ]]; then
+    validate_installer_docker_target_before_host_changes
+  fi
 
   print_banner
 
