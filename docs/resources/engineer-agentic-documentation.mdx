@@ -41,20 +41,23 @@ A polished site with weak retrieval or verification is not agent-ready.
 
 ## Move Documentation Into the Engineering Loop
 
+NemoClaw keeps documentation current while separating documentation reasoning, publication authority, and maintainer release ownership.
+
+### Author and Independently Review the Candidate
+
 On qualifying pushes to `main`, `Docs / Author Post-Merge Catch-Up` examines implementation, tests, and documentation after the latest reachable release tag through the pushed commit.
+GitHub Actions launches the Pi coding agent in a pinned OpenShell sandbox, validates its bounded documentation patch in `author/repo`, and confirms that validation did not mutate the patch.
+The runner then applies that exact patch to `review/repo`, where a separate Pi agent reviews it in an offline, read-only sandbox without editing tools.
+
+### Separate Reasoning From Publication
+
+An approval record binds the exact patch hash, repository, reviewed `main` commit, range-start tag, and target release tag.
+A separate publisher revalidates that record and the current GitHub state before creating or refreshing a draft PR.
+The model-assisted author cannot publish, the reviewer is offline and read-only, and the GitHub-authorized publisher cannot invoke the model.
+
+### Maintain One Cumulative Draft Through Release Cutoff
+
 Automation owns one cumulative documentation draft until a maintainer marks it ready for review.
-
-1. **Author.** GitHub Actions launches the Pi coding agent in a pinned OpenShell sandbox.
-   The author prompt directs the agent to read the committed range and repository guidance, verify behavior in source and tests, and edit only `docs/**`, `fern/docs.yml`, and `fern/assets/**`.
-2. **Validate.** The runner runs `npm run docs` in `author/repo`, the candidate checkout prepared from the trusted source repository, and confirms that validation did not mutate the patch.
-3. **Review.** The runner applies the exact candidate patch to a separate `review/repo` checkout.
-   GitHub Actions then launches a separate Pi agent in an offline OpenShell sandbox.
-   The repository is mounted read-only and the agent has no editing tools.
-   The reviewer evaluates whether the cumulative patch is complete, accurate, and non-speculative; a rejection uploads the review report.
-4. **Publish.** An approval record binds the exact patch hash, repository, reviewed `main` commit, range-start tag, and target release tag.
-   A separate publisher revalidates that record and the current GitHub state before creating or refreshing one cumulative draft PR.
-
-The stages separate authority: the model-assisted author cannot publish, the reviewer is offline and read-only, and the GitHub-authorized publisher cannot invoke the model.
 The cumulative draft is the durable tracking record for approved agent updates until maintainers take ownership for release review.
 
 Follow [Post-Merge Documentation Catch-Up](https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#post-merge-documentation-catch-up) for trigger paths, managed-PR lifecycle, recovery, release cutoff, and the signed proceed decision.
