@@ -21,8 +21,8 @@
  *   sets stay fixed, and Landlock stays strict so filesystem policy fails
  *   closed.
  * - Pi runs as the sandbox user and group.
- * - The exact headless command ignores project-local resources, MCP stays
- *   disabled, and device pairing stays off.
+ * - The exact headless command keeps `--no-approve`, MCP stays disabled, and
+ *   device pairing stays off.
  * - The bin, prompts, sessions, themes, and tools state directories keep their
  *   exact Shields and backup settings.
  * - Neither the project-trust store nor the project-trust setting is declared
