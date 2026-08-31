@@ -3,6 +3,7 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -44,6 +45,19 @@ const SANDBOX_SOURCE_CHUNK_BYTES = 16_384;
 const SANDBOX_SHELL_BOOTSTRAP = `set -eu; printf '%s' "$@" | base64 -d | sh`;
 
 validateSandboxName(SANDBOX_NAME);
+
+async function acceptsTcpConnection(host: string, port: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port: Number(port) });
+    const finish = (ready: boolean) => {
+      socket.destroy();
+      resolve(ready);
+    };
+    socket.setTimeout(500, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
 
 export type CommandOutput = Pick<ShellProbeResult, "stdout" | "stderr" | "exitCode">;
 
@@ -783,14 +797,20 @@ export async function startFakeDockerApi(
         publishedWebsocketPort = websocketPort.stdout.trim().split(":").at(-1)?.trim() ?? "";
       }
       if (publishedRestPort && (options.kind !== "slack" || publishedWebsocketPort)) {
-        return {
-          kind: options.kind,
-          port: publishedRestPort,
-          ...(options.kind === "slack" ? { alternatePort: publishedWebsocketPort } : {}),
-          dir,
-          captureFile,
-          container,
-        };
+        const restReady = await acceptsTcpConnection(gatewayIp, publishedRestPort);
+        const websocketReady =
+          options.kind !== "slack" ||
+          (await acceptsTcpConnection(gatewayIp, publishedWebsocketPort));
+        if (restReady && websocketReady) {
+          return {
+            kind: options.kind,
+            port: publishedRestPort,
+            ...(options.kind === "slack" ? { alternatePort: publishedWebsocketPort } : {}),
+            dir,
+            captureFile,
+            container,
+          };
+        }
       }
     }
     await sleep(100);
