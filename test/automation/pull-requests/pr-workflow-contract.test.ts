@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { classifyManagedGatewayEndpointBinding } from "../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs";
 import {
   type CompositeAction,
   readYaml,
@@ -515,9 +516,9 @@ describe("pull request and main workflow contracts", () => {
       .filter((entry) => entry.isFile() && /\.ya?ml$/u.test(entry.name))
       .map((entry) => readFileSync(join(entry.parentPath, entry.name), "utf8"));
     expect(workflowSources.some((source) => source.includes("cli-build-output"))).toBe(false);
-    const vitestConfig = readFileSync("vitest.config.ts", "utf8");
-    expect(vitestConfig).toContain("nemoclaw/src/shared/openshell-gateway-endpoint-boundary.cts");
-    expect(vitestConfig).toContain("/^.*openshell-gateway-endpoint-boundary\\.cjs$/");
+    expect(classifyManagedGatewayEndpointBinding(["Gateway endpoint: http://127.0.0.1:18789"], 18_789)).toBe(
+      "match",
+    );
     expect(stepUses(buildJob)).toContain(
       workflowName === "pull_request"
         ? trustedPrActionPaths.buildTypecheck
