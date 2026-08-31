@@ -144,9 +144,9 @@
     {
       "live": "test/e2e/live/full-e2e.test.ts",
       "liveSources": [
-        "test/e2e/live/full-e2e-workload-evidence.ts",
         "test/e2e/live/agent-turn-latency-helpers.ts",
-        "test/e2e/live/full-e2e-inference-probe.ts"
+        "test/e2e/live/full-e2e-inference-probe.ts",
+        "test/e2e/live/full-e2e-workload-evidence.ts"
       ],
       "fast": [
         "test/e2e/support/hosted-inference.test.ts",

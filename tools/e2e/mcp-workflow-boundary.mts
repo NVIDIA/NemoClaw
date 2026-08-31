@@ -11,6 +11,7 @@ import {
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
 import {
   contentSha256,
+  MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256,
   MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256,
   MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256,
   MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256,
@@ -283,17 +284,13 @@ function validateJobSecurity(
   job: UnknownRecord,
   canonicalDockerAuth: UnknownRecord,
 ): void {
-  const environment = asRecord(job.env);
-  if (
-    jobName === "mcp-bridge-dev" &&
-    (Object.hasOwn(environment, "NODE_OPTIONS") ||
-      ["BASH_ENV", "ENV"].some(
-        (name) => Object.hasOwn(environment, name) && environment[name] !== "/dev/null",
-      ))
-  ) {
-    errors.push(
-      "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
-    );
+  if (jobName === "mcp-bridge-dev") {
+    const { steps: _jobSteps, ...jobExecutionContext } = job;
+    if (contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256) {
+      errors.push(
+        "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
+      );
+    }
   }
   const permissions = asRecord(job.permissions);
   if (Object.keys(permissions).sort().join(",") !== "contents" || permissions.contents !== "read") {
