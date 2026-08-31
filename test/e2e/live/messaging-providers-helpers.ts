@@ -155,25 +155,6 @@ export type FakeDockerApi = {
   container: string;
 };
 
-export function fakeDockerApiNetworkPlan(
-  kind: FakeDockerApiKind,
-  internalNetwork: string,
-  proxyContainer: string,
-): {
-  apiRunNetworkArgs: string[];
-  proxyRunNetworkArgs: string[];
-  proxyPublishArgs: string[];
-  proxyConnectArgs: string[];
-} {
-  const containerPorts = kind === "slack" ? [8080, 8081] : [8080];
-  return {
-    apiRunNetworkArgs: ["--network", internalNetwork],
-    proxyRunNetworkArgs: ["--network", "bridge"],
-    proxyPublishArgs: containerPorts.flatMap((port) => ["-p", String(port)]),
-    proxyConnectArgs: ["network", "connect", internalNetwork, proxyContainer],
-  };
-}
-
 export function outputText(result: CommandOutput): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
@@ -672,7 +653,7 @@ export async function startFakeDockerApi(
   const container = uniqueContainerName(options.containerPrefix);
   const proxyContainer = uniqueContainerName(`${options.containerPrefix}-proxy`);
   const network = uniqueContainerName("nemoclaw-fake-api-network");
-  const networkPlan = fakeDockerApiNetworkPlan(options.kind, network, proxyContainer);
+  const containerPorts = options.kind === "slack" ? [8080, 8081] : [8080];
   fs.writeFileSync(captureFile, "");
 
   const networkCreate = await runHost(
@@ -710,7 +691,8 @@ export async function startFakeDockerApi(
     "--rm",
     "--name",
     container,
-    ...networkPlan.apiRunNetworkArgs,
+    "--network",
+    network,
     "-e",
     `${options.portEnv}=8080`,
     "-e",
@@ -788,8 +770,9 @@ export async function startFakeDockerApi(
       "--rm",
       "--name",
       proxyContainer,
-      ...networkPlan.proxyRunNetworkArgs,
-      ...networkPlan.proxyPublishArgs,
+      "--network",
+      "bridge",
+      ...containerPorts.flatMap((port) => ["-p", `127.0.0.1::${String(port)}`]),
       "--read-only",
       "--cap-drop",
       "ALL",
@@ -800,7 +783,7 @@ export async function startFakeDockerApi(
       "-e",
       `NEMOCLAW_FAKE_API_UPSTREAM=${container}`,
       "-e",
-      `NEMOCLAW_FAKE_API_PROXY_PORTS=${options.kind === "slack" ? "8080,8081" : "8080"}`,
+      `NEMOCLAW_FAKE_API_PROXY_PORTS=${containerPorts.join(",")}`,
       FAKE_API_IMAGE,
       "node",
       "-e",
@@ -815,12 +798,17 @@ export async function startFakeDockerApi(
   );
   expectExitZero(proxyStart, `start fake ${options.kind} API proxy`);
 
-  const proxyConnect = await runHost(host, "docker", networkPlan.proxyConnectArgs, {
-    artifactName: `connect-fake-${options.kind}-api-proxy`,
-    env: options.env,
-    redactionValues: options.redactionValues,
-    timeoutMs: 30_000,
-  });
+  const proxyConnect = await runHost(
+    host,
+    "docker",
+    ["network", "connect", network, proxyContainer],
+    {
+      artifactName: `connect-fake-${options.kind}-api-proxy`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
   expectExitZero(proxyConnect, `connect fake ${options.kind} API proxy`);
 
   const publishedPort = async (containerPort: number, artifactName: string): Promise<string> => {
@@ -836,15 +824,16 @@ export async function startFakeDockerApi(
       },
     );
     expectExitZero(result, `read fake ${options.kind} API proxy port`);
-    return result.stdout.match(/:(\d+)\s*$/mu)?.[1] ?? "";
+    const hostPort = result.stdout.trim().match(/^127\.0\.0\.1:(\d+)$/u)?.[1];
+    if (!hostPort) {
+      throw new Error(`fake ${options.kind} API proxy port did not bind only to 127.0.0.1`);
+    }
+    return hostPort;
   };
 
   const publishedRestPort = await publishedPort(8080, `port-fake-${options.kind}-api`);
   const publishedWebsocketPort =
     options.kind === "slack" ? await publishedPort(8081, "port-fake-slack-websocket-api") : "";
-  if (!publishedRestPort || (options.kind === "slack" && !publishedWebsocketPort)) {
-    throw new Error(`fake ${options.kind} API proxy did not publish a port`);
-  }
 
   return {
     kind: options.kind,
