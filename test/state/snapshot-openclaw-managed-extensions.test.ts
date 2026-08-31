@@ -209,27 +209,16 @@ if (cmd.includes("plugins/installs.json") && cmd.includes("python3 -c")) {
   if (installIndexSource === "legacy") process.stdout.write(fs.readFileSync(${JSON.stringify(freshRegistryPath)}));
   process.exit(installIndexSource === "legacy" ? 0 : 2);
 }
-if (cmd.includes("/sandbox/.openclaw/extensions") && cmd.includes("-exec rm -rf")) {
-  const extensionsDir = ${JSON.stringify(extensionsDir)};
-  const managedExtensions = new Set(${JSON.stringify(managedExtensions)});
-  fs.mkdirSync(extensionsDir, { recursive: true });
-  for (const entry of fs.readdirSync(extensionsDir)) {
-    if (managedExtensions.has(entry)) continue;
-    fs.rmSync(path.join(extensionsDir, entry), { recursive: true, force: true });
-  }
-  process.exit(0);
-}
-if (cmd.includes("tar --no-same-owner -xf -")) {
-  const result = spawnSync("tar", ["--no-same-owner", "-xf", "-", "-C", ${JSON.stringify(openclawDir)}], {
-    input: readStdin(),
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  if (result.stdout) fs.writeSync(1, result.stdout);
-  if (result.stderr) fs.writeSync(2, result.stderr);
-  process.exit(result.status || 0);
-}
-if (cmd.includes("chown") || cmd.includes("[ -d ")) process.exit(0);
-process.exit(0);
+const mappedCmd = cmd.replaceAll("/sandbox/.openclaw", ${JSON.stringify(openclawDir)});
+const result = spawnSync("bash", ["-c", mappedCmd], {
+  input: readStdin(),
+  stdio: ["pipe", "pipe", "pipe"],
+  timeout: 30000,
+  killSignal: "SIGKILL",
+});
+if (result.stdout) fs.writeSync(1, result.stdout);
+if (result.stderr) fs.writeSync(2, result.stderr);
+process.exit(result.status ?? 1);
 `,
         );
 
@@ -260,19 +249,14 @@ process.exit(0);
           .trim()
           .split("\n")
           .map((line) => JSON.parse(line).cmd as string);
-        const cleanupCommands = loggedCommands.filter(
-          (cmd) => cmd.includes("/sandbox/.openclaw/extensions") && cmd.includes("-exec rm -rf"),
-        );
-        expect(cleanupCommands).toHaveLength(1);
         expect(loggedCommands.some((cmd) => cmd.includes("installed_plugin_index"))).toBe(true);
         expect(loggedCommands.some((cmd) => cmd.includes("plugins/installs.json"))).toBe(
           installIndexSource === "legacy",
         );
-        const cleanupCommand = cleanupCommands[0];
-        expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
-        for (const extensionName of managedExtensions) {
-          expect(cleanupCommand).toContain(`! -name '${extensionName}'`);
-        }
+
+        const rejectionSentinel = path.join(extensionsDir, "rejection-sentinel");
+        fs.mkdirSync(rejectionSentinel);
+        fs.writeFileSync(path.join(rejectionSentinel, "marker.txt"), "preserve\n");
 
         fs.writeFileSync(
           freshRegistryPath,
@@ -301,16 +285,9 @@ process.exit(0);
             fs.readFileSync(path.join(extensionsDir, extensionName, "marker.txt"), "utf-8"),
           ).toBe(`fresh-${extensionName}\n`);
         }
-        const commandsAfterRejectedRestore = fs
-          .readFileSync(sshLog, "utf-8")
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line).cmd as string);
-        expect(
-          commandsAfterRejectedRestore.filter(
-            (cmd) => cmd.includes("/sandbox/.openclaw/extensions") && cmd.includes("-exec rm -rf"),
-          ),
-        ).toHaveLength(1);
+        expect(fs.readFileSync(path.join(rejectionSentinel, "marker.txt"), "utf-8")).toBe(
+          "preserve\n",
+        );
       } finally {
         restoreEnvBulk({ NEMOCLAW_OPENSHELL_BIN: oldOpenshell, PATH: oldPath });
         fs.rmSync(fixture, { recursive: true, force: true });

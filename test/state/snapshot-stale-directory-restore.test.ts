@@ -71,7 +71,7 @@ it("clears snapshot-declared absent directories while preserving target-only sta
   const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
   try {
     const binDir = path.join(fixture, "bin");
-    const sshLog = path.join(fixture, "ssh-log.jsonl");
+    const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
     fs.mkdirSync(binDir, { recursive: true });
 
     const openshell = writeFakeOpenshell(binDir);
@@ -79,18 +79,17 @@ it("clears snapshot-declared absent directories while preserving target-only sta
       path.join(binDir, "ssh"),
       `#!/usr/bin/env node
 const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
 const cmd = process.argv[process.argv.length - 1] || "";
-fs.appendFileSync(${JSON.stringify(sshLog)}, JSON.stringify({ cmd }) + "\\n");
-if (cmd.includes("[ -d ") && cmd.includes("printf")) {
-  process.exit(0);
-}
-if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
-  process.exit(2);
-}
-if (cmd.includes("rm -rf")) {
-  process.exit(0);
-}
-process.exit(0);
+const mappedCmd = cmd.replaceAll("/sandbox/.openclaw", ${JSON.stringify(openclawDir)});
+const result = spawnSync("bash", ["-c", mappedCmd], {
+  stdio: ["ignore", "pipe", "pipe"],
+  timeout: 30000,
+  killSignal: "SIGKILL",
+});
+if (result.stdout) fs.writeSync(1, result.stdout);
+if (result.stderr) fs.writeSync(2, result.stderr);
+process.exit(result.status ?? 1);
 `,
     );
 
@@ -108,26 +107,36 @@ process.exit(0);
     manifest.stateDirs = manifest.stateDirs.filter((stateDir: string) => stateDir !== "agents");
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
+    const workspaceDir = path.join(openclawDir, "workspace");
+    const extensionsDir = path.join(openclawDir, "extensions");
+    const agentsDir = path.join(openclawDir, "agents");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.writeFileSync(path.join(workspaceDir, "stale.txt"), "remove\n");
+    const nemoclawExtensionDir = path.join(extensionsDir, "nemoclaw");
+    fs.mkdirSync(nemoclawExtensionDir, { recursive: true });
+    fs.writeFileSync(path.join(nemoclawExtensionDir, "marker.txt"), "nemoclaw\n");
+    const braveExtensionDir = path.join(extensionsDir, "brave");
+    fs.mkdirSync(braveExtensionDir, { recursive: true });
+    fs.writeFileSync(path.join(braveExtensionDir, "marker.txt"), "brave\n");
+    const staleExtensionDir = path.join(extensionsDir, "stale-user-extension");
+    fs.mkdirSync(staleExtensionDir, { recursive: true });
+    fs.writeFileSync(path.join(staleExtensionDir, "marker.txt"), "stale-user-extension\n");
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.writeFileSync(path.join(agentsDir, "target-only-marker"), "preserve\n");
+
     const restore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
     expect(restore.success).toBe(true);
     expect(restore.restoredDirs).toEqual([]);
-
-    const loggedCommands = fs
-      .readFileSync(sshLog, "utf-8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line).cmd as string);
-    const cleanupCommand = loggedCommands.find((cmd) =>
-      cmd.includes("d='/sandbox/.openclaw/workspace'"),
+    expect(fs.existsSync(workspaceDir)).toBe(true);
+    expect(fs.existsSync(path.join(workspaceDir, "stale.txt"))).toBe(false);
+    expect(fs.readFileSync(path.join(extensionsDir, "nemoclaw", "marker.txt"), "utf-8")).toBe(
+      "nemoclaw\n",
     );
-    expect(cleanupCommand).toBeDefined();
-    expect(cleanupCommand).toContain("! -name 'nemoclaw'");
-    expect(cleanupCommand).toContain("! -name 'brave'");
-    expect(cleanupCommand).not.toContain("rm -rf -- '/sandbox/.openclaw/extensions'");
-    expect(cleanupCommand).not.toContain("d='/sandbox/.openclaw/extensions'");
-    expect(loggedCommands).not.toEqual(
-      expect.arrayContaining([expect.stringContaining("d='/sandbox/.openclaw/agents'")]),
+    expect(fs.readFileSync(path.join(extensionsDir, "brave", "marker.txt"), "utf-8")).toBe(
+      "brave\n",
     );
+    expect(fs.existsSync(path.join(extensionsDir, "stale-user-extension"))).toBe(false);
+    expect(fs.readFileSync(path.join(agentsDir, "target-only-marker"), "utf-8")).toBe("preserve\n");
   } finally {
     restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
     restoreEnv("PATH", oldPath);
