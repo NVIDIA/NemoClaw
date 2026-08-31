@@ -219,8 +219,11 @@ export function assertStockManagedImageReceipt(options: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly expectedAgent?: string;
   readonly sandboxName: string;
-}): StockManagedImageReceiptEvidence {
+}): StockManagedImageReceiptEvidence | null {
   const environment = options.environment ?? process.env;
+  const workloadSource =
+    environment.E2E_WORKLOAD_SOURCE?.trim() ?? process.env.E2E_WORKLOAD_SOURCE?.trim();
+  if (workloadSource === "local-dockerfile") return null;
   const revision = selectedManagedImageRevision(environment);
   const home = environment.HOME?.trim() || os.homedir();
   const registryPath = path.join(
