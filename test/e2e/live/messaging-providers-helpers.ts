@@ -620,10 +620,20 @@ export async function startFakeDockerApi(
   const network = uniqueContainerName("nemoclaw-fake-api-network");
   fs.writeFileSync(captureFile, "");
 
+  // Docker ignores -p on internal-only networks. Disable IP masquerading on a
+  // regular bridge so host ports publish without NAT egress.
   const networkCreate = await runHost(
     host,
     "docker",
-    ["network", "create", "--internal", network],
+    [
+      "network",
+      "create",
+      "--driver",
+      "bridge",
+      "--opt",
+      "com.docker.network.bridge.enable_ip_masquerade=false",
+      network,
+    ],
     {
       artifactName: `create-fake-${options.kind}-api-network`,
       env: options.env,

@@ -9,6 +9,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
+import type { CommandRunner } from "../fixtures/clients/command.ts";
+import { HostCliClient } from "../fixtures/clients/host.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
@@ -16,6 +19,7 @@ import {
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
+  startFakeDockerApi,
 } from "../live/messaging-providers-helpers.ts";
 import {
   parseInstalledSlackProof,
@@ -37,7 +41,89 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
   expect(matched, message).toBe(true);
 }
 
+function successfulShellResult(command: string[], stdout = ""): ShellProbeResult {
+  return {
+    command,
+    durationMs: 0,
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    stdout,
+    stderr: "",
+    artifacts: { stdout: "", stderr: "", result: "" },
+  };
+}
+
 describe("messaging provider installed-runtime proofs", () => {
+  it("publishes fake Docker API ports without masqueraded egress", async () => {
+    const invocations: string[][] = [];
+    const cleanupTasks: Array<() => Promise<void>> = [];
+    const responses: Array<(invocation: string[]) => ShellProbeResult> = [
+      (invocation) => successfulShellResult(invocation),
+      (invocation) => {
+        const mountSuffix = ":/tmp/fake";
+        const mount = invocation.find((argument) => argument.endsWith(mountSuffix));
+        expect(mount).toBeDefined();
+        fs.writeFileSync(path.join(mount!.slice(0, -mountSuffix.length), "port"), "8080\n");
+        return successfulShellResult(invocation, "fake-container-id\n");
+      },
+      (invocation) => successfulShellResult(invocation, "0.0.0.0:41080\n"),
+      (invocation) => successfulShellResult(invocation, "0.0.0.0:41081\n"),
+      (invocation) => successfulShellResult(invocation),
+      (invocation) => successfulShellResult(invocation),
+    ];
+    const runner: CommandRunner = {
+      async run(command) {
+        const invocation = [command.command, ...command.args];
+        invocations.push(invocation);
+        const respond = responses.shift();
+        expect(respond).toBeDefined();
+        return respond!(invocation);
+      },
+    };
+
+    try {
+      const api = await startFakeDockerApi(
+        new HostCliClient(runner),
+        (_name, run) => cleanupTasks.push(run),
+        {
+          kind: "slack",
+          imageScript: "fake-slack-api.cjs",
+          containerPrefix: "nemoclaw-fake-slack-test",
+          portEnv: "FAKE_SLACK_API_PORT",
+          portFileEnv: "FAKE_SLACK_API_PORT_FILE",
+          captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
+          expectedEnv: {
+            FAKE_SLACK_API_EXPECTED_BOT_TOKEN: "xoxb-fake-slack-network-test",
+            FAKE_SLACK_API_EXPECTED_APP_TOKEN: "xapp-fake-slack-network-test",
+          },
+          redactionValues: [],
+          env: {},
+        },
+      );
+      const networkCreate = invocations.find(
+        ([command, group, action]) =>
+          command === "docker" && group === "network" && action === "create",
+      );
+      expect(networkCreate?.slice(0, -1)).toEqual([
+        "docker",
+        "network",
+        "create",
+        "--driver",
+        "bridge",
+        "--opt",
+        "com.docker.network.bridge.enable_ip_masquerade=false",
+      ]);
+      expect(networkCreate).not.toContain("--internal");
+      expect(api.port).toBe("41080");
+      expect(api.alternatePort).toBe("41081");
+    } finally {
+      await cleanupTasks
+        .reverse()
+        .reduce((previous, cleanupTask) => previous.then(cleanupTask), Promise.resolve());
+    }
+  });
+
   it("uses a synthetic WeChat token even when the host exports one", () => {
     const previousToken = process.env.WECHAT_BOT_TOKEN;
     process.env.WECHAT_BOT_TOKEN = "host-wechat-token-must-not-reach-the-fake-api";
