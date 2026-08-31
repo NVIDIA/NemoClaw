@@ -370,20 +370,20 @@ export function openRebuildRecreateJournal(
   const observation = observe(target);
   const active = onboardSession.loadSession()?.checkpoint?.sandboxRecreate ?? null;
   const recovery = active
-    ? planSandboxRecreateRecovery(active, observation, sourceEntry)
+    ? planSandboxRecreateRecovery(active, observation, sourceEntry, target)
     : { action: "continue_delete" as const };
   if (recovery.action === "reject") {
     throw new Error(
       `Cannot resume sandbox '${target.sandboxName}' replacement: ${recovery.reason}.`,
     );
   }
-  // The recorded replacement never took: the registry row and the live
-  // same-name sandbox name one identity, so this rebuild starts a fresh
-  // transaction against that source instead of inheriting a journal it can
-  // never resume (#10473).
+  // The recorded replacement never took: on this rebuild's own gateway the
+  // registry row and the live same-name sandbox name one identity, so this
+  // rebuild starts a fresh transaction against that source instead of
+  // inheriting a journal it can never resume (#10473).
   if (recovery.action === "restart_from_source" && active) {
     onboardSession.updateSession((current) => {
-      discardVoidSandboxRecreateTransaction(current, active.id, observation, sourceEntry);
+      discardVoidSandboxRecreateTransaction(current, active.id, observation, sourceEntry, target);
       return current;
     });
     log(

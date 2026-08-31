@@ -775,19 +775,25 @@ export function abandonSandboxRecreateTransaction(session: Session, id: string):
  * that decision instead of becoming a general escape hatch for a future caller.
  * It also re-reads the journal from the session it is handed, so a journal that
  * changed since the decision is not retired.
+ *
+ * `observedGateway` names the gateway `observation` was probed on. It is
+ * required because this discard runs before `beginSandboxRecreateTransaction`
+ * and nulls the journal, so `assertSameTransaction` never gets to refuse a
+ * caller working a different gateway (#10473).
  */
 export function discardVoidSandboxRecreateTransaction(
   session: Session,
   id: string,
   observation: SandboxRecreateObservation,
   registryEntry: SandboxEntry | null,
+  observedGateway: SandboxRecreateGateway,
 ): void {
   const checkpoint = baseCheckpoint(session);
   const current = checkpoint.sandboxRecreate;
   if (!current || current.id !== id) {
     throw new Error("Sandbox recreate transaction ownership changed and cannot be discarded.");
   }
-  if (!replacementIsVoid(current, observation, registryEntry)) {
+  if (!replacementIsVoid(current, observation, registryEntry, observedGateway)) {
     throw new Error(
       `Sandbox '${current.sandboxName}' recreate transaction still owns a replacement and cannot be discarded.`,
     );
@@ -828,6 +834,37 @@ function reject(reason: string): SandboxRecreateRecoveryPlan {
 }
 
 /**
+ * The gateway a piece of recreate evidence was gathered on.
+ *
+ * Structural so both a `SandboxEntry` and a probe target satisfy it without the
+ * transaction module importing the probe module it already feeds.
+ */
+export interface SandboxRecreateGateway {
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+}
+
+/**
+ * The same pairing as recorded on a registry row, where a legacy row may carry
+ * neither field. A journal always records both, so an unset row fails closed.
+ */
+interface SandboxRecreateGatewayEvidence {
+  readonly gatewayName?: string | null;
+  readonly gatewayPort?: number | null;
+}
+
+/** Whether evidence names the gateway the journal recorded. Absent evidence never matches. */
+function onSandboxRecreateGateway(
+  transaction: CheckpointSandboxRecreateTransaction,
+  gateway: SandboxRecreateGatewayEvidence | null | undefined,
+): boolean {
+  return (
+    gateway?.gatewayName === transaction.gatewayName &&
+    gateway.gatewayPort === transaction.gatewayPort
+  );
+}
+
+/**
  * A journal whose replacement provably never happened.
  *
  * The caller has already ruled out the registered replacement, so the journal
@@ -847,13 +884,29 @@ function reject(reason: string): SandboxRecreateRecoveryPlan {
  * holds one journal for the whole session, so a caller can present the row and
  * observation of a different sandbox; that pairing must keep refusing rather than
  * retire a journal protecting another sandbox's replacement.
+ *
+ * The gateway equality binds that evidence to the journal's own gateway. A
+ * sandbox name identifies one row per registry, not one sandbox per fleet, and
+ * `gatewayName`/`gatewayPort` sit in `ROUTE_RESERVATION_FIELDS` so the source
+ * fingerprint cannot notice a row that moved gateways under an open journal.
+ * Both openers evaluate this before `beginSandboxRecreateTransaction`, and a
+ * discard nulls the journal, so `assertSameTransaction` — the only other place
+ * that compares a journal's gateway to a caller's — never runs on this path.
+ * Without the checks below, evidence gathered on gateway B could retire a
+ * journal that still owns an unregistered replacement on gateway A and orphan
+ * it. Requiring the row and the observation to name the journaled gateway keeps
+ * that decision fail-closed, matching `assertSameTransaction` and
+ * `matchingSandboxRecreateTransaction`.
  */
 function replacementIsVoid(
   transaction: CheckpointSandboxRecreateTransaction,
   observation: SandboxRecreateObservation,
   registryEntry: SandboxEntry | null,
+  observedGateway: SandboxRecreateGateway | null | undefined,
 ): boolean {
   return Boolean(
+    onSandboxRecreateGateway(transaction, observedGateway) &&
+    onSandboxRecreateGateway(transaction, registryEntry) &&
     registryEntry?.name === transaction.sandboxName &&
     registryEntry.lifecycleLiveIdentityFingerprint &&
     observation.state !== "missing" &&
@@ -862,10 +915,17 @@ function replacementIsVoid(
   );
 }
 
+/**
+ * @param observedGateway The gateway `observation` was probed on. Omitting it
+ * withholds the `restart_from_source` downgrade entirely, so a caller that
+ * cannot name its gateway keeps the pre-#10473 refusal instead of retiring a
+ * journal it never proved is void.
+ */
 export function planSandboxRecreateRecovery(
   transaction: CheckpointSandboxRecreateTransaction,
   observation: SandboxRecreateObservation,
   registryEntry: SandboxEntry | null,
+  observedGateway?: SandboxRecreateGateway | null,
 ): SandboxRecreateRecoveryPlan {
   if (registryEntry?.lifecycleGeneration === transaction.targetGeneration) {
     if (!transaction.targetLiveIdentityFingerprint) {
@@ -892,7 +952,7 @@ export function planSandboxRecreateRecovery(
   // took, so a void journal stops blocking rebuild forever (#10473).
   if (
     unregistered.action === "reject" &&
-    replacementIsVoid(transaction, observation, registryEntry)
+    replacementIsVoid(transaction, observation, registryEntry, observedGateway)
   ) {
     return { action: "restart_from_source" };
   }
@@ -1095,6 +1155,7 @@ export function createSandboxRecreateRuntime(
     transaction,
     observe(sandboxName, transaction.gatewayName),
     registryEntry,
+    transaction,
   );
   if (recovery.action === "reject") {
     throw new Error(`Cannot resume sandbox '${sandboxName}' recreation: ${recovery.reason}.`);

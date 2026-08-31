@@ -69,6 +69,11 @@ const ABSENT_SOURCE: SandboxRecreateObservation = {
   liveIdentityFingerprint: null,
 };
 
+/** The gateway every journal, row, and probe in this suite belongs to. */
+const JOURNAL_GATEWAY = { gatewayName: "nemoclaw-31818", gatewayPort: 31818 } as const;
+/** A second gateway that never owns the journal under test. */
+const FOREIGN_GATEWAY = { gatewayName: "nemoclaw-9090", gatewayPort: 9090 } as const;
+
 function transactionAt(
   phase: CheckpointSandboxRecreatePhase,
   sourceEntry: SandboxEntry = REGISTERED_SOURCE_ENTRY,
@@ -97,10 +102,15 @@ describe("sandbox recreate recovery from a void journal", () => {
     "restarts from %s when the registered source outlived a journal it can no longer resume (#10473)",
     (phase) => {
       expect(
-        planSandboxRecreateRecovery(transactionAt(phase), LIVE_SOURCE, {
-          ...REGISTERED_SOURCE_ENTRY,
-          imageTag: "changed-out-of-band",
-        }),
+        planSandboxRecreateRecovery(
+          transactionAt(phase),
+          LIVE_SOURCE,
+          {
+            ...REGISTERED_SOURCE_ENTRY,
+            imageTag: "changed-out-of-band",
+          },
+          JOURNAL_GATEWAY,
+        ),
       ).toEqual({ action: "restart_from_source" });
     },
   );
@@ -113,6 +123,7 @@ describe("sandbox recreate recovery from a void journal", () => {
           transactionAt(phase),
           { state: "not_ready", liveIdentityFingerprint: SOURCE_ID },
           REGISTERED_SOURCE_ENTRY,
+          JOURNAL_GATEWAY,
         ),
       ).toEqual({ action: "restart_from_source" });
     },
@@ -122,7 +133,12 @@ describe("sandbox recreate recovery from a void journal", () => {
     "still continues source deletion from %s once the source row carries its live identity (#10473)",
     (phase) => {
       expect(
-        planSandboxRecreateRecovery(transactionAt(phase), LIVE_SOURCE, REGISTERED_SOURCE_ENTRY),
+        planSandboxRecreateRecovery(
+          transactionAt(phase),
+          LIVE_SOURCE,
+          REGISTERED_SOURCE_ENTRY,
+          JOURNAL_GATEWAY,
+        ),
       ).toEqual({ action: "continue_delete" });
     },
   );
@@ -131,17 +147,27 @@ describe("sandbox recreate recovery from a void journal", () => {
     "still continues target creation from %s once the source row carries its live identity (#10473)",
     (phase) => {
       expect(
-        planSandboxRecreateRecovery(transactionAt(phase), ABSENT_SOURCE, REGISTERED_SOURCE_ENTRY),
+        planSandboxRecreateRecovery(
+          transactionAt(phase),
+          ABSENT_SOURCE,
+          REGISTERED_SOURCE_ENTRY,
+          JOURNAL_GATEWAY,
+        ),
       ).toEqual({ action: "continue_create" });
     },
   );
 
   it("keeps refusing a changed source row while the source stays absent (#10473)", () => {
     expect(
-      planSandboxRecreateRecovery(transactionAt("deleted"), ABSENT_SOURCE, {
-        ...REGISTERED_SOURCE_ENTRY,
-        imageTag: "changed-out-of-band",
-      }),
+      planSandboxRecreateRecovery(
+        transactionAt("deleted"),
+        ABSENT_SOURCE,
+        {
+          ...REGISTERED_SOURCE_ENTRY,
+          imageTag: "changed-out-of-band",
+        },
+        JOURNAL_GATEWAY,
+      ),
     ).toMatchObject({
       action: "reject",
       reason: expect.stringMatching(/preserved source registry row changed/),
@@ -154,17 +180,23 @@ describe("sandbox recreate recovery from a void journal", () => {
         transactionAt("creating"),
         { state: "ready", liveIdentityFingerprint: fingerprintSandboxRecreateValue("new-id") },
         REGISTERED_SOURCE_ENTRY,
+        JOURNAL_GATEWAY,
       ),
     ).toMatchObject({ action: "reject", reason: expect.stringMatching(/appeared/) });
   });
 
   it("keeps refusing a live sandbox the preserved row does not identify (#10473)", () => {
     expect(
-      planSandboxRecreateRecovery(transactionAt("deleted"), LIVE_SOURCE, {
-        ...REGISTERED_SOURCE_ENTRY,
-        lifecycleLiveIdentityFingerprint: FOREIGN_ID,
-        imageTag: "changed-out-of-band",
-      }),
+      planSandboxRecreateRecovery(
+        transactionAt("deleted"),
+        LIVE_SOURCE,
+        {
+          ...REGISTERED_SOURCE_ENTRY,
+          lifecycleLiveIdentityFingerprint: FOREIGN_ID,
+          imageTag: "changed-out-of-band",
+        },
+        JOURNAL_GATEWAY,
+      ),
     ).toMatchObject({
       action: "reject",
       reason: expect.stringMatching(/preserved source registry row changed/),
@@ -173,10 +205,15 @@ describe("sandbox recreate recovery from a void journal", () => {
 
   it("keeps refusing a source row that never recorded a live identity (#10473)", () => {
     expect(
-      planSandboxRecreateRecovery(transactionAt("deleted", SOURCE_ENTRY), LIVE_SOURCE, {
-        ...SOURCE_ENTRY,
-        imageTag: "changed-out-of-band",
-      }),
+      planSandboxRecreateRecovery(
+        transactionAt("deleted", SOURCE_ENTRY),
+        LIVE_SOURCE,
+        {
+          ...SOURCE_ENTRY,
+          imageTag: "changed-out-of-band",
+        },
+        JOURNAL_GATEWAY,
+      ),
     ).toMatchObject({
       action: "reject",
       reason: expect.stringMatching(/preserved source registry row changed/),
@@ -189,6 +226,7 @@ describe("sandbox recreate recovery from a void journal", () => {
         transactionAt("created"),
         { state: "ready", liveIdentityFingerprint: TARGET_ID },
         { ...REGISTERED_SOURCE_ENTRY, lifecycleLiveIdentityFingerprint: TARGET_ID },
+        JOURNAL_GATEWAY,
       ),
     ).toMatchObject({
       action: "reject",
@@ -204,6 +242,7 @@ describe("sandbox recreate recovery from a void journal", () => {
           { ...transactionAt(phase), targetLiveIdentityFingerprint: null },
           LIVE_SOURCE,
           REGISTERED_SOURCE_ENTRY,
+          JOURNAL_GATEWAY,
         ),
       ).toEqual({ action: "restart_from_source" });
     },
@@ -215,8 +254,47 @@ describe("sandbox recreate recovery from a void journal", () => {
         { ...transactionAt("creating"), sandboxName: "beta" },
         LIVE_SOURCE,
         REGISTERED_SOURCE_ENTRY,
+        JOURNAL_GATEWAY,
       ),
     ).toMatchObject({ action: "reject", reason: expect.stringMatching(/appeared/) });
+  });
+
+  // The journal may still own an unregistered replacement on its own gateway.
+  // `gatewayName`/`gatewayPort` are excluded from the source fingerprint, so
+  // nothing else in the planner notices a row that moved gateways, and the
+  // openers run this before `assertSameTransaction` could refuse (#10473).
+  it("keeps refusing when the registry row names another gateway (#10473)", () => {
+    const movedRow = { ...REGISTERED_SOURCE_ENTRY, ...FOREIGN_GATEWAY };
+    // The row still satisfies the source-row proof, so only the gateway differs.
+    expect(fingerprintSandboxRegistryEntry(movedRow)).toBe(
+      fingerprintSandboxRegistryEntry(REGISTERED_SOURCE_ENTRY),
+    );
+
+    expect(
+      planSandboxRecreateRecovery(
+        transactionAt("creating"),
+        LIVE_SOURCE,
+        movedRow,
+        FOREIGN_GATEWAY,
+      ),
+    ).toMatchObject({ action: "reject" });
+  });
+
+  it("keeps refusing when only the observed gateway differs (#10473)", () => {
+    expect(
+      planSandboxRecreateRecovery(
+        transactionAt("creating"),
+        LIVE_SOURCE,
+        REGISTERED_SOURCE_ENTRY,
+        FOREIGN_GATEWAY,
+      ),
+    ).toMatchObject({ action: "reject" });
+  });
+
+  it("keeps refusing when the caller cannot name the observed gateway (#10473)", () => {
+    expect(
+      planSandboxRecreateRecovery(transactionAt("creating"), LIVE_SOURCE, REGISTERED_SOURCE_ENTRY),
+    ).toMatchObject({ action: "reject" });
   });
 
   it("resumes a journal recorded before messaging left the fingerprint (#10473)", () => {
@@ -250,6 +328,7 @@ describe("sandbox recreate recovery from a void journal", () => {
         { ...transactionAt("deleted"), sourceRegistryFingerprint: legacyFingerprint },
         ABSENT_SOURCE,
         rowWithChannel,
+        JOURNAL_GATEWAY,
       ),
     ).toEqual({ action: "continue_create" });
   });
@@ -264,6 +343,7 @@ describe("sandbox recreate recovery from a void journal", () => {
           lifecycleGeneration: TARGET_GENERATION,
           lifecycleLiveIdentityFingerprint: TARGET_ID,
         },
+        JOURNAL_GATEWAY,
       ),
     ).toEqual({ action: "accept_target" });
   });
@@ -290,7 +370,13 @@ describe("discarding a void recreate journal", () => {
   it("clears a journal whose registered source is still live (#10473)", () => {
     const session = strandedSession();
 
-    discardVoidSandboxRecreateTransaction(session, TX_ID, LIVE_SOURCE, REGISTERED_SOURCE_ENTRY);
+    discardVoidSandboxRecreateTransaction(
+      session,
+      TX_ID,
+      LIVE_SOURCE,
+      REGISTERED_SOURCE_ENTRY,
+      JOURNAL_GATEWAY,
+    );
 
     expect(session.checkpoint?.sandboxRecreate).toBeNull();
   });
@@ -299,7 +385,13 @@ describe("discarding a void recreate journal", () => {
     const session = strandedSession();
 
     expect(() =>
-      discardVoidSandboxRecreateTransaction(session, TX_ID, ABSENT_SOURCE, REGISTERED_SOURCE_ENTRY),
+      discardVoidSandboxRecreateTransaction(
+        session,
+        TX_ID,
+        ABSENT_SOURCE,
+        REGISTERED_SOURCE_ENTRY,
+        JOURNAL_GATEWAY,
+      ),
     ).toThrow(/still owns a replacement/);
     expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "creating" });
   });
@@ -329,10 +421,46 @@ describe("discarding a void recreate journal", () => {
     const session = strandedSession();
 
     expect(() =>
-      discardVoidSandboxRecreateTransaction(session, TX_ID, LIVE_SOURCE, {
-        ...REGISTERED_SOURCE_ENTRY,
-        name: "beta",
-      }),
+      discardVoidSandboxRecreateTransaction(
+        session,
+        TX_ID,
+        LIVE_SOURCE,
+        {
+          ...REGISTERED_SOURCE_ENTRY,
+          name: "beta",
+        },
+        JOURNAL_GATEWAY,
+      ),
+    ).toThrow(/still owns a replacement/);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "creating" });
+  });
+
+  it("refuses to discard a journal against another gateway's row (#10473)", () => {
+    const session = strandedSession();
+
+    expect(() =>
+      discardVoidSandboxRecreateTransaction(
+        session,
+        TX_ID,
+        LIVE_SOURCE,
+        { ...REGISTERED_SOURCE_ENTRY, ...FOREIGN_GATEWAY },
+        FOREIGN_GATEWAY,
+      ),
+    ).toThrow(/still owns a replacement/);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "creating" });
+  });
+
+  it("refuses to discard a journal from another gateway's probe (#10473)", () => {
+    const session = strandedSession();
+
+    expect(() =>
+      discardVoidSandboxRecreateTransaction(
+        session,
+        TX_ID,
+        LIVE_SOURCE,
+        REGISTERED_SOURCE_ENTRY,
+        FOREIGN_GATEWAY,
+      ),
     ).toThrow(/still owns a replacement/);
     expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "creating" });
   });
@@ -346,6 +474,7 @@ describe("discarding a void recreate journal", () => {
         "33333333-3333-4333-8333-333333333333",
         LIVE_SOURCE,
         REGISTERED_SOURCE_ENTRY,
+        JOURNAL_GATEWAY,
       ),
     ).toThrow(/ownership changed/);
   });

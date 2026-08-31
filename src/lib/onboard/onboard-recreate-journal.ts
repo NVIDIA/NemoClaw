@@ -93,17 +93,18 @@ export function openOnboardRecreateJournal(
   const observation = observe(target);
   const active = onboardSession.loadSession()?.checkpoint?.sandboxRecreate ?? null;
   if (active) {
-    const recovery = planSandboxRecreateRecovery(active, observation, sourceEntry);
+    const recovery = planSandboxRecreateRecovery(active, observation, sourceEntry, target);
     if (recovery.action === "reject") {
       throw new Error(
         `Cannot resume sandbox '${target.sandboxName}' replacement: ${recovery.reason}.`,
       );
     }
-    // The recorded replacement never took, so this run owns a fresh transaction
-    // against the live source rather than a journal it can never resume (#10473).
+    // The recorded replacement never took on this run's own gateway, so this run
+    // owns a fresh transaction against the live source rather than a journal it
+    // can never resume (#10473).
     if (recovery.action === "restart_from_source") {
       onboardSession.updateSession((current) => {
-        discardVoidSandboxRecreateTransaction(current, active.id, observation, sourceEntry);
+        discardVoidSandboxRecreateTransaction(current, active.id, observation, sourceEntry, target);
         return current;
       });
       note(

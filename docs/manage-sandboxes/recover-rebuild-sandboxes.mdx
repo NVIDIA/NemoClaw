@@ -317,7 +317,8 @@ If `rebuild` stops after recording the journal, rerun the command with the same 
 - It accepts an existing replacement only when its live identity and sandbox registry generation match the journal.
 - It starts a new replacement when the journaled replacement provably never took effect.
 
-NemoClaw treats a journaled replacement as void when the sandbox registry row and the live same-name sandbox report the same OpenShell identity, and that identity is not the journaled replacement.
+NemoClaw treats a journaled replacement as void when the sandbox registry row and the live same-name sandbox report the same OpenShell identity on the journaled gateway, and that identity is not the journaled replacement.
+A registry row or a live sandbox on any other gateway leaves the journal in place, because that journal may still own an unregistered replacement on its own gateway.
 The rerun then reports `Discarded the void replacement journal for '<name>'; its source sandbox is still registered and live.` and records a fresh journal against that live source.
 A journal whose replacement never took therefore stops blocking `rebuild` for the rest of the session.
 
