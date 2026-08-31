@@ -7,6 +7,7 @@ import path from "node:path";
 import YAML from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { resolveRebuildPolicyProviderAuthority } from "./orchestration";
 import {
   materializeRebuildPolicyHandoff,
   mergeReplacementPolicyAccess,
@@ -323,7 +324,7 @@ network_policies:
     expect(fs.existsSync(livePath)).toBe(true);
   });
 
-  it("rejects live credential bindings outside the verified replacement plan", () => {
+  it("rejects live credential bindings named only by the startup command", () => {
     const livePath = tempPolicy(
       "live-provider.yaml",
       `version: 1
@@ -346,6 +347,24 @@ network_policies:
 `,
     );
 
+    const authorizedCredentialBindingProviders = resolveRebuildPolicyProviderAuthority({
+      createArgs: [
+        "--from",
+        "image",
+        "--provider",
+        "planned-provider",
+        "--",
+        "node",
+        "agent.js",
+        "--provider",
+        "host-added-provider",
+      ],
+      messagingPlan: null,
+      preservedMcpState: undefined,
+      managedMcpRebuildHandoff: false,
+    });
+    expect(authorizedCredentialBindingProviders).toEqual(["planned-provider"]);
+
     expect(() =>
       materializeRebuildPolicyHandoff({
         livePolicyPath: livePath,
@@ -354,6 +373,7 @@ network_policies:
           appliedPresets: [],
           credentialBindingProviders: ["planned-provider"],
         },
+        authorizedCredentialBindingProviders,
       }),
     ).toThrow("outside the verified replacement plan");
 

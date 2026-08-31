@@ -74,8 +74,11 @@ function cancelRecoveryIdentity(
 }
 
 function providerNamesFromCreateArgs(createArgs: readonly string[]): string[] {
-  return createArgs.flatMap((value, index) =>
-    index > 0 && createArgs[index - 1] === "--provider" ? [value] : [],
+  const startupCommandSeparator = createArgs.indexOf("--");
+  const openshellArgs =
+    startupCommandSeparator < 0 ? createArgs : createArgs.slice(0, startupCommandSeparator);
+  return openshellArgs.flatMap((value, index) =>
+    index > 0 && openshellArgs[index - 1] === "--provider" ? [value] : [],
   );
 }
 

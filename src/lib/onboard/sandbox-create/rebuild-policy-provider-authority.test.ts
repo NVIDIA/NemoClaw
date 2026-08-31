@@ -176,6 +176,48 @@ describe("rebuild policy provider handoff", () => {
     ]);
   });
 
+  it("does not treat startup command text as provider authority", () => {
+    const createArgs = [
+      "openshell",
+      "sandbox",
+      "create",
+      "--provider",
+      "inference-provider",
+      "--",
+      "node",
+      "agent.js",
+      "--provider",
+      "host-added-provider",
+    ];
+
+    expect(
+      resolveRebuildPolicyProviderAuthority({
+        createArgs,
+        messagingPlan: null,
+        preservedMcpState: undefined,
+        managedMcpRebuildHandoff: false,
+      }),
+    ).toEqual(["inference-provider"]);
+    expect(
+      bindRebuildPolicyProvidersToCreateArgs(createArgs, {
+        credentialBindingProviders: ["host-added-provider"],
+      }),
+    ).toEqual([
+      "openshell",
+      "sandbox",
+      "create",
+      "--provider",
+      "inference-provider",
+      "--provider",
+      "host-added-provider",
+      "--",
+      "node",
+      "agent.js",
+      "--provider",
+      "host-added-provider",
+    ]);
+  });
+
   it("authorizes enabled messaging and managed MCP providers but rejects disabled channels", () => {
     expect(
       resolveRebuildPolicyProviderAuthority({
