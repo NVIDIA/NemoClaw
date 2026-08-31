@@ -12,7 +12,14 @@ import {
 import { createPodmanRuntimeProviderBundle } from "../runtime-provider/podman";
 import {
   MANAGED_HERMES_STATE_ROOT,
+  MANAGED_OPENCLAW_STATE_ROOT,
+  managedStartupStateRoots,
+} from "../managed-startup/state-roots";
+import { managedImageRuntimeIdentity } from "../managed-image/agents";
+import { prepareManagedStateVolumes } from "./managed-state-volumes";
+import {
   managedHermesStateVolumeName,
+  removeManagedAgentStateVolumes,
   prepareManagedHermesStateVolume,
   removeManagedHermesStateVolume,
 } from "./hermes-state-volume";
@@ -203,6 +210,39 @@ describe("managed Hermes state volume", () => {
       removeManagedHermesStateVolume(context, { runDocker: foreign.runDocker as never }),
     ).toMatchObject({ status: "not-owned", volumeName: name });
     expect(foreign.volume).not.toBeNull();
+  });
+
+  it("projects and retires the declared OpenClaw state root through the generic volume path", () => {
+    const docker = dockerHarness();
+    const roots = managedStartupStateRoots({
+      agent: "openclaw",
+      sandboxName: "alpha",
+      agentIdentity: managedImageRuntimeIdentity("openclaw"),
+    });
+    const scope = prepareManagedStateVolumes(
+      { roots },
+      {
+        runContainerEngine: docker.runDocker as never,
+        registerExitCleanup: () => () => undefined,
+      },
+    );
+
+    expect(scope?.mounts).toEqual([
+      {
+        type: "volume",
+        source: "nemoclaw-openclaw-state-v1-alpha",
+        target: MANAGED_OPENCLAW_STATE_ROOT,
+        read_only: false,
+      },
+    ]);
+    scope!.commit();
+    expect(
+      removeManagedAgentStateVolumes(
+        { ...context, agentName: "openclaw" },
+        { runDocker: docker.runDocker as never },
+      ),
+    ).toEqual([{ status: "removed" }]);
+    expect(docker.volume).toBeNull();
   });
 
   it.each([

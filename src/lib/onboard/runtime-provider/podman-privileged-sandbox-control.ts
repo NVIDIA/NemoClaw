@@ -108,7 +108,7 @@ function observeStoppedTarget(
     return { failure: "runtime-discovery-failed" };
   }
   if (!container) return { failure: "no-eligible-stopped-runtime" };
-  const stateResource = sandboxStateResourceFromMounts(container.inspect.Mounts);
+  const stateResource = sandboxStateResourceFromMounts(container.inspect.Mounts, input.paths);
   return stateResource
     ? {
         target: {

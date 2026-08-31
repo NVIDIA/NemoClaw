@@ -226,7 +226,7 @@ function observeStoppedDockerTarget(
   } catch {
     return { failure: "state-resource-unavailable" };
   }
-  const stateResource = sandboxStateResourceFromMounts(mounts);
+  const stateResource = sandboxStateResourceFromMounts(mounts, input.paths);
   return stateResource
     ? { target: { resourceHandle, running: running === "true", stateResource } }
     : { failure: "state-resource-unavailable" };

@@ -37,6 +37,7 @@ export interface StoppedSandboxStateTarget {
   readonly stateResource: {
     readonly type: "bind" | "volume";
     readonly source: string;
+    readonly target: string;
   };
 }
 
@@ -49,13 +50,13 @@ export interface StoppedSandboxStateCleanupEngine {
   observe(): StoppedSandboxStateObservation;
 }
 
-export function buildStoppedSandboxChannelCleanupScript(root = "/sandbox"): string {
+export function buildStoppedSandboxChannelCleanupScript(root?: string): string {
   return String.raw`
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
-const root = ${JSON.stringify(root)};
 const targets = JSON.parse(process.argv[1]);
+const root = ${root === undefined ? "process.argv[2]" : JSON.stringify(root)};
 function lstat(candidate) {
   try { return fs.lstatSync(candidate); }
   catch (error) { if (error && error.code === "ENOENT") return null; throw error; }
@@ -63,7 +64,7 @@ function lstat(candidate) {
 const rootMetadata = lstat(root);
 if (!rootMetadata || rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) process.exit(40);
 for (const target of targets) {
-  if (typeof target !== "string" || !target.startsWith(root + "/.")) process.exit(41);
+  if (typeof target !== "string" || !target.startsWith(root + "/")) process.exit(41);
   const relative = path.posix.relative(root, target);
   const segments = relative.split("/");
   if (!relative || relative.startsWith("../") || segments.some((part) => !part || part === "." || part === "..")) process.exit(42);
@@ -107,22 +108,32 @@ export function validateStoppedSandboxStatePaths(paths: readonly string[]): bool
 
 export function sandboxStateResourceFromMounts(
   value: unknown,
+  paths: readonly string[],
 ): StoppedSandboxStateTarget["stateResource"] | null {
-  if (!Array.isArray(value)) return null;
-  const mounts = value.filter(
-    (entry) =>
-      typeof entry === "object" &&
-      entry !== null &&
-      (entry as Record<string, unknown>).Destination === "/sandbox",
-  ) as Array<Record<string, unknown>>;
-  const mount = mounts.length === 1 ? mounts[0] : undefined;
-  if (mount?.RW !== true) return null;
+  if (!Array.isArray(value) || !validateStoppedSandboxStatePaths(paths)) return null;
+  const mounts = value
+    .filter((entry): entry is Record<string, unknown> => {
+      if (typeof entry !== "object" || entry === null) return false;
+      const target = (entry as Record<string, unknown>).Destination;
+      return (
+        (entry as Record<string, unknown>).RW === true &&
+        typeof target === "string" &&
+        path.posix.isAbsolute(target) &&
+        path.posix.normalize(target) === target &&
+        (target === "/sandbox" || /^\/sandbox\/\.(?:openclaw|hermes)$/u.test(target)) &&
+        paths.every((statePath) => statePath.startsWith(`${target}/`))
+      );
+    })
+    .sort((left, right) => String(right.Destination).length - String(left.Destination).length);
+  const mount = mounts[0];
+  if (!mount || mounts[1]?.Destination === mount.Destination) return null;
+  const target = String(mount.Destination);
   if (
     mount.Type === "volume" &&
     typeof mount.Name === "string" &&
     VOLUME_NAME_RE.test(mount.Name)
   ) {
-    return { type: "volume", source: mount.Name };
+    return { type: "volume", source: mount.Name, target };
   }
   if (
     mount.Type === "bind" &&
@@ -133,7 +144,7 @@ export function sandboxStateResourceFromMounts(
     mount.Source.length <= 4096 &&
     !/[\u0000-\u001f\u007f]/u.test(mount.Source)
   ) {
-    return { type: "bind", source: mount.Source };
+    return { type: "bind", source: mount.Source, target };
   }
   return null;
 }
@@ -142,13 +153,13 @@ function sameStateResource(
   left: StoppedSandboxStateTarget["stateResource"],
   right: StoppedSandboxStateTarget["stateResource"],
 ): boolean {
-  return left.type === right.type && left.source === right.source;
+  return left.type === right.type && left.source === right.source && left.target === right.target;
 }
 
 function stateResourceMount(resource: StoppedSandboxStateTarget["stateResource"]): string {
   return resource.type === "volume"
-    ? `type=volume,src=${resource.source},dst=/sandbox,volume-nocopy`
-    : `type=bind,src=${resource.source},dst=/sandbox`;
+    ? `type=volume,src=${resource.source},dst=${resource.target},volume-nocopy`
+    : `type=bind,src=${resource.source},dst=${resource.target}`;
 }
 
 function identity(value: string): string {
@@ -288,6 +299,7 @@ export function clearStoppedSandboxStateWithEngine(
     "-e",
     CLEANUP_SCRIPT,
     JSON.stringify(paths),
+    target.stateResource.target,
   ]);
   const helperId = created.stdout.trim();
   if (created.status !== 0 || created.error || !FULL_CONTAINER_ID_RE.test(helperId)) {

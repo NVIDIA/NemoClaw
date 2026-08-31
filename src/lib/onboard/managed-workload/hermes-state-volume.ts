@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { managedImageRuntimeIdentity } from "../managed-image/agents";
+import { isManagedImageAgent, managedImageRuntimeIdentity } from "../managed-image/agents";
 import {
   managedHermesStateVolumeLabels,
   managedHermesStateVolumeName,
@@ -40,6 +40,7 @@ export type ManagedHermesStateVolumeMount = ManagedStateVolumeMount & {
 };
 
 export type ManagedHermesStateVolumeCleanupResult = ManagedStateVolumeCleanupResult;
+export type ManagedAgentStateVolumeCleanupResult = ManagedStateVolumeCleanupResult;
 
 type LegacyContainerEngineRun = NonNullable<ManagedStateVolumeDeps["runContainerEngine"]>;
 
@@ -65,6 +66,21 @@ function hermesStateRoots(sandboxName: string) {
     agent: "hermes",
     sandboxName,
     agentIdentity: managedImageRuntimeIdentity("hermes"),
+  });
+}
+
+function managedAgentStateRoots(context: ManagedHermesStateVolumeContext) {
+  if (
+    context.workloadKind !== "managed-image" ||
+    typeof context.agentName !== "string" ||
+    !isManagedImageAgent(context.agentName)
+  ) {
+    return [];
+  }
+  return managedStartupStateRoots({
+    agent: context.agentName,
+    sandboxName: context.sandboxName,
+    agentIdentity: managedImageRuntimeIdentity(context.agentName),
   });
 }
 
@@ -161,5 +177,28 @@ export function removeManagedHermesStateVolume(
       { roots: hermesStateRoots(context.sandboxName) },
       genericDeps(deps, context.runtimeProviderId),
     )[0] ?? { status: "not-applicable" }
+  );
+}
+
+export function removeManagedAgentStateVolumes(
+  context: ManagedHermesStateVolumeContext,
+  deps: Pick<
+    ManagedHermesStateVolumeDeps,
+    "runDocker" | "runtimeProvider" | "runtimeProviders"
+  > = {},
+): readonly ManagedAgentStateVolumeCleanupResult[] {
+  const runtimeProvider = selectedRuntimeProvider(
+    context.runtimeProviderId,
+    deps.runtimeProviders,
+    deps.runtimeProvider,
+  );
+  const hasCleanupAuthority =
+    !deps.runtimeProviders && !deps.runtimeProvider
+      ? true
+      : supportsContainerEngineOperation(runtimeProvider, "workload-cleanup");
+  if (!hasCleanupAuthority) return [];
+  return removeManagedStateVolumes(
+    { roots: managedAgentStateRoots(context) },
+    genericDeps(deps, context.runtimeProviderId),
   );
 }

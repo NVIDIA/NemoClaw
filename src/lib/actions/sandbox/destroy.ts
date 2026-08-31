@@ -31,7 +31,7 @@ import {
 } from "../../onboard/runtime-provider/access";
 import {
   emitProviderDetachResidualHint,
-  removeManagedHermesStateVolume,
+  removeManagedAgentStateVolumes,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
@@ -865,8 +865,8 @@ async function destroySandboxUnlocked(
     preparedManagedLlamaCppCleanup?.abort();
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
-    const stateVolumeCleanup = abortPreparedCleanupOnError(() =>
-      removeManagedHermesStateVolume(
+    const stateVolumeCleanupResults = abortPreparedCleanupOnError(() =>
+      removeManagedAgentStateVolumes(
         {
           agentName: sandbox.agent,
           runtimeProviderId: normalizeRuntimeProviderIdentity(sandbox.openshellDriver),
@@ -878,20 +878,25 @@ async function destroySandboxUnlocked(
         },
       ),
     );
-    if (stateVolumeCleanup.status === "failed") {
+    const failedStateVolumeCleanup = stateVolumeCleanupResults.find(
+      (result) => result.status === "failed",
+    );
+    if (failedStateVolumeCleanup?.status === "failed") {
       console.error(
-        `  Sandbox '${sandboxName}' is gone, but its managed Hermes state volume '${stateVolumeCleanup.volumeName}' could not be removed: ${redactDestroyError(stateVolumeCleanup.detail)}`,
+        `  Sandbox '${sandboxName}' is gone, but its managed agent state volume '${failedStateVolumeCleanup.volumeName}' could not be removed: ${redactDestroyError(failedStateVolumeCleanup.detail)}`,
       );
       console.error("  The sandbox registry entry was preserved so exact cleanup can be retried.");
       preparedManagedLlamaCppCleanup?.abort();
       requestSandboxDestroyExit(1);
     }
-    if (stateVolumeCleanup.status === "not-owned") {
-      console.warn(
-        `  ${YW}⚠${R} Left Docker volume '${stateVolumeCleanup.volumeName}' untouched because ${stateVolumeCleanup.detail}.`,
-      );
-    } else if (stateVolumeCleanup.status === "removed") {
-      console.log(`  Removed managed Hermes state volume for '${sandboxName}'.`);
+    for (const stateVolumeCleanup of stateVolumeCleanupResults) {
+      if (stateVolumeCleanup.status === "not-owned") {
+        console.warn(
+          `  ${YW}⚠${R} Left managed state volume '${stateVolumeCleanup.volumeName}' untouched because ${stateVolumeCleanup.detail}.`,
+        );
+      } else if (stateVolumeCleanup.status === "removed") {
+        console.log(`  Removed managed agent state volume for '${sandboxName}'.`);
+      }
     }
   }
   abortPreparedCleanupOnError(() => {

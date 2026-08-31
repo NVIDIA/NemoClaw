@@ -35,7 +35,9 @@ type ManagedStartupStateRootDeclaration = {
 };
 
 export const MANAGED_HERMES_STATE_ROOT = "/sandbox/.hermes" as const;
+export const MANAGED_OPENCLAW_STATE_ROOT = "/sandbox/.openclaw" as const;
 const HERMES_STATE_VOLUME_NAME_PREFIX = "nemoclaw-hermes-state-v1";
+const OPENCLAW_STATE_VOLUME_NAME_PREFIX = "nemoclaw-openclaw-state-v1";
 
 /**
  * RFC_9909_FOLLOW_UP
@@ -52,7 +54,24 @@ const HERMES_STATE_VOLUME_NAME_PREFIX = "nemoclaw-hermes-state-v1";
  * state roots without adding agent IDs or production logic to NemoClaw core.
  */
 const MANAGED_AGENT_STATE_ROOTS = Object.freeze({
-  openclaw: Object.freeze([]),
+  openclaw: Object.freeze([
+    Object.freeze({
+      mountTarget: MANAGED_OPENCLAW_STATE_ROOT,
+      resourceIdentity: (sandboxName: string) =>
+        `${OPENCLAW_STATE_VOLUME_NAME_PREFIX}-${sandboxName}`,
+      ownershipLabels: (sandboxName: string, mountTarget: string) =>
+        Object.freeze({
+          "io.nvidia.nemoclaw.openclaw-state.managed": "true",
+          "io.nvidia.nemoclaw.openclaw-state.schema": "1",
+          "io.nvidia.nemoclaw.openclaw-state.sandbox": sandboxName,
+          "io.nvidia.nemoclaw.openclaw-state.target": mountTarget,
+        }),
+      uidAuthority: "agent",
+      gidAuthority: "agent",
+      mode: 0o2770,
+      readWrite: true,
+    } satisfies ManagedStartupStateRootDeclaration),
+  ]),
   hermes: Object.freeze([
     Object.freeze({
       mountTarget: MANAGED_HERMES_STATE_ROOT,
@@ -74,6 +93,10 @@ const MANAGED_AGENT_STATE_ROOTS = Object.freeze({
   "langchain-deepagents-code": Object.freeze([]),
   pi: Object.freeze([]),
 } satisfies Record<ManagedStartupAgent, readonly ManagedStartupStateRootDeclaration[]>);
+
+export function managedStartupStateRootMountTargets(agent: ManagedStartupAgent): readonly string[] {
+  return Object.freeze(MANAGED_AGENT_STATE_ROOTS[agent].map(({ mountTarget }) => mountTarget));
+}
 
 const MANAGED_AGENT_WORKSPACE_ROOTS = Object.freeze({
   openclaw: Object.freeze({ uidAuthority: "agent", gidAuthority: "agent", mode: 0o755 }),

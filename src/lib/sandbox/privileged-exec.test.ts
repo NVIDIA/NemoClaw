@@ -281,6 +281,12 @@ describe("privileged sandbox exec routing", () => {
     const helperId = "b".repeat(64);
     const mounts = JSON.stringify([
       {
+        Type: "volume",
+        Name: "nemoclaw-openclaw-state-v1-alpha",
+        Destination: "/sandbox/.openclaw",
+        RW: true,
+      },
+      {
         Type: "bind",
         Source: "/var/lib/openshell/sandboxes/alpha",
         Destination: "/sandbox",
@@ -370,7 +376,7 @@ describe("privileged sandbox exec routing", () => {
         "--cap-add",
         "DAC_OVERRIDE",
         "--mount",
-        "type=bind,src=/var/lib/openshell/sandboxes/alpha,dst=/sandbox",
+        "type=volume,src=nemoclaw-openclaw-state-v1-alpha,dst=/sandbox/.openclaw,volume-nocopy",
         PINNED_CLEANUP_IMAGE,
       ]),
     );
@@ -379,7 +385,8 @@ describe("privileged sandbox exec routing", () => {
     expect(helperArgv?.join("\0")).not.toContain("/sandbox/project");
     expect(helperArgv).not.toContain("/bin/sh");
     expect(helperArgv?.join("\0")).not.toContain("rm -rf");
-    expect(helperArgv?.at(-1)).toBe(JSON.stringify(EXPECTED_WECHAT_STATE_PATHS));
+    expect(helperArgv?.at(-2)).toBe(JSON.stringify(EXPECTED_WECHAT_STATE_PATHS));
+    expect(helperArgv?.at(-1)).toBe("/sandbox/.openclaw");
     expect(runDocker.mock.calls[5]?.[0]).toEqual(["start", "--attach", helperId]);
     expect(runDocker.mock.calls[6]?.[0]).toEqual(["rm", "-f", helperId]);
   });
@@ -594,7 +601,7 @@ describe("privileged sandbox exec routing", () => {
     const sandboxVolume = "nemoclaw-alpha-state";
     const ownerIdentity = createHash("sha256").update("alpha").digest("hex");
     const volumeIdentity = createHash("sha256")
-      .update(JSON.stringify({ type: "volume", source: sandboxVolume }))
+      .update(JSON.stringify({ type: "volume", source: sandboxVolume, target: "/sandbox" }))
       .digest("hex");
     const helperName = `nemoclaw-channel-cleanup-${ownerIdentity.slice(0, 24)}`;
     const mounts = JSON.stringify([
