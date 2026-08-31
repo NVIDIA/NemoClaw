@@ -14,7 +14,6 @@ import {
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
-  finalizeCreatedSandboxWithTemporaryPolicyCleanup,
   hasManagedMcpRebuildHandoff,
   installPostCreateRecoveryRetryOwner,
   persistPostCreateRecovery,
@@ -28,7 +27,6 @@ import {
   runSandboxCreateWithIdentityVerification,
   runWithPostCreateRecovery,
 } from "./orchestration";
-import { materializeRebuildPolicyHandoff } from "./rebuild-policy-handoff";
 
 const UNVERIFIED_RECOVERY_CONTEXT = {
   gatewayName: "nemoclaw",
@@ -128,83 +126,6 @@ describe("created Hermes credential environment reconciliation", () => {
       ),
     ).toThrow(/does not match the verified create/u);
     expect(revalidateReplacement).not.toHaveBeenCalled();
-  });
-
-  it("fails onboarding when a successful rebuild cannot retire its handoff policy", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-cleanup-test-"));
-    const livePolicyPath = path.join(root, "live.yaml");
-    const replacementPolicyPath = path.join(root, "replacement.yaml");
-    fs.writeFileSync(livePolicyPath, "version: 1\nnetwork_policies: {}\n", { mode: 0o600 });
-    fs.writeFileSync(
-      replacementPolicyPath,
-      "version: 1\nfilesystem_policy:\n  read_only: [/run/replacement]\n",
-      { mode: 0o600 },
-    );
-    const handoff = materializeRebuildPolicyHandoff({
-      livePolicyPath,
-      replacementPolicy: { policyPath: replacementPolicyPath, appliedPresets: [] },
-    });
-    try {
-      fs.appendFileSync(handoff.policyPath, "# changed after cleanup authority capture\n");
-
-      const error = await finalizeCreatedSandboxWithTemporaryPolicyCleanup({
-        finalize: async () => "created",
-        cleanup: handoff.cleanup ?? (() => true),
-        policyPath: handoff.policyPath,
-      }).catch((caught: unknown) => caught);
-
-      expect(error).toMatchObject({
-        message: expect.stringContaining("Sandbox finalization completed."),
-      });
-      expect((error as Error).message).toContain(handoff.policyPath);
-      expect((error as Error).message).toContain("Do not modify the file or retry onboarding");
-      expect(fs.existsSync(handoff.policyPath)).toBe(true);
-    } finally {
-      fs.rmSync(path.dirname(handoff.policyPath), { recursive: true, force: true });
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("returns the finalization result after temporary policy cleanup succeeds", async () => {
-    await expect(
-      finalizeCreatedSandboxWithTemporaryPolicyCleanup({
-        finalize: async () => "created",
-        cleanup: () => true,
-        policyPath: "/verified/temporary-policy.yaml",
-      }),
-    ).resolves.toBe("created");
-  });
-
-  it("preserves finalization and temporary policy cleanup failures together", async () => {
-    const finalizationError = new Error("registration failed");
-
-    const error = await finalizeCreatedSandboxWithTemporaryPolicyCleanup({
-      finalize: async () => {
-        throw finalizationError;
-      },
-      cleanup: () => false,
-      policyPath: "/verified/temporary-policy.yaml",
-    }).catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(AggregateError);
-    expect((error as AggregateError).errors).toEqual([
-      finalizationError,
-      expect.objectContaining({ message: expect.stringContaining("temporary-policy.yaml") }),
-    ]);
-  });
-
-  it("preserves a thrown temporary policy cleanup cause after finalization", async () => {
-    const cleanupError = new Error("cleanup transport failed");
-
-    const error = await finalizeCreatedSandboxWithTemporaryPolicyCleanup({
-      finalize: async () => "created",
-      cleanup: () => {
-        throw cleanupError;
-      },
-      policyPath: "/verified/temporary-policy.yaml",
-    }).catch((caught: unknown) => caught);
-
-    expect(error).toMatchObject({ cause: cleanupError });
   });
 
   it("restarts and rechecks the managed gateway after changing the env file", () => {

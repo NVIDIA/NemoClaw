@@ -13,6 +13,54 @@ const REBUILD_POLICY_HANDOFF_PREFIX = "nemoclaw-rebuild-policy-handoff";
 
 type PolicyMapping = Record<string, unknown>;
 
+type RebuildPolicyCleanupFailure = {
+  readonly policyPath: string;
+  readonly cause: unknown;
+};
+
+export class RebuildPolicyCleanupError extends AggregateError {
+  readonly retainedPolicyPaths: readonly string[];
+
+  constructor(failures: readonly RebuildPolicyCleanupFailure[]) {
+    const errors = failures.map(
+      ({ policyPath, cause }) =>
+        new Error(`Temporary sandbox create policy '${policyPath}' could not be removed.`, {
+          cause,
+        }),
+    );
+    const retainedPolicyPaths = failures.map(({ policyPath }) => policyPath);
+    super(
+      errors,
+      `Temporary sandbox create policy cleanup failed for: ${retainedPolicyPaths.join(", ")}.`,
+    );
+    this.name = "RebuildPolicyCleanupError";
+    this.retainedPolicyPaths = retainedPolicyPaths;
+  }
+}
+
+function cleanupRebuildPolicySources(
+  sources: readonly {
+    readonly policyPath: string;
+    readonly cleanup: () => boolean;
+  }[],
+): boolean {
+  const failures: RebuildPolicyCleanupFailure[] = [];
+  for (const source of sources) {
+    try {
+      if (!source.cleanup()) {
+        failures.push({
+          policyPath: source.policyPath,
+          cause: new Error("Policy cleanup returned false."),
+        });
+      }
+    } catch (cause) {
+      failures.push({ policyPath: source.policyPath, cause });
+    }
+  }
+  if (failures.length > 0) throw new RebuildPolicyCleanupError(failures);
+  return true;
+}
+
 function authorizedCredentialBindingProviders(
   source: string,
   replacementPolicy: InitialSandboxPolicy,
@@ -277,7 +325,7 @@ export function mergeReplacementPolicyAccess(
     : { changed: false, source: livePolicySource };
 }
 
-/** Materialize the single ephemeral policy input consumed by an explicit rebuild. */
+/** Select the live policy or materialize a temporary handoff policy for an explicit rebuild. */
 export function materializeRebuildPolicyHandoff(input: {
   readonly livePolicyPath: string;
   readonly replacementPolicy: InitialSandboxPolicy;
@@ -321,11 +369,18 @@ export function materializeRebuildPolicyHandoff(input: {
       mode: 0o600,
     });
     const cleanupHandoff = createExactTempFileCleanup(policyPath, REBUILD_POLICY_HANDOFF_PREFIX);
-    const cleanup = (): boolean => {
-      const handoffRemoved = cleanupHandoff();
-      const replacementRemoved = input.replacementPolicy.cleanup?.() ?? true;
-      return handoffRemoved && replacementRemoved;
-    };
+    const cleanup = (): boolean =>
+      cleanupRebuildPolicySources([
+        { policyPath, cleanup: cleanupHandoff },
+        ...(input.replacementPolicy.cleanup
+          ? [
+              {
+                policyPath: input.replacementPolicy.policyPath,
+                cleanup: input.replacementPolicy.cleanup,
+              },
+            ]
+          : []),
+      ]);
     return {
       ...input.replacementPolicy,
       policyPath,

@@ -60,7 +60,10 @@ import {
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
-import { materializeRebuildPolicyHandoff } from "./rebuild-policy-handoff";
+import {
+  materializeRebuildPolicyHandoff,
+  RebuildPolicyCleanupError,
+} from "./rebuild-policy-handoff";
 function cancelRecoveryIdentity(
   liveExists: boolean,
   requireVerifiedCreateBoundary: () => VerifiedSandboxCreateBoundary,
@@ -78,15 +81,19 @@ export function bindRebuildPolicyProvidersToCreateArgs(
   policy: Pick<import("../initial-policy").InitialSandboxPolicy, "credentialBindingProviders">,
 ): string[] {
   const result = [...createArgs];
+  const startupCommandSeparator = result.indexOf("--");
+  const createOptionEnd = startupCommandSeparator < 0 ? result.length : startupCommandSeparator;
   const attached = new Set(
-    result.flatMap((value, index) =>
-      index > 0 && result[index - 1] === "--provider" ? [value] : [],
-    ),
+    result
+      .slice(0, createOptionEnd)
+      .flatMap((value, index, createOptions) =>
+        index > 0 && createOptions[index - 1] === "--provider" ? [value] : [],
+      ),
   );
   for (const provider of policy.credentialBindingProviders ?? []) {
     if (attached.has(provider)) continue;
-    const startupCommandSeparator = result.indexOf("--");
-    const insertionIndex = startupCommandSeparator < 0 ? result.length : startupCommandSeparator;
+    const separator = result.indexOf("--");
+    const insertionIndex = separator < 0 ? result.length : separator;
     result.splice(insertionIndex, 0, "--provider", provider);
     attached.add(provider);
   }
@@ -109,8 +116,13 @@ export function resolveRebuildPolicyProviderAuthority(input: {
   readonly preservedMcpState: SandboxMcpState | undefined;
   readonly managedMcpRebuildHandoff: boolean;
 }): string[] {
+  const startupCommandSeparator = input.createArgs.indexOf("--");
+  const createOptions = input.createArgs.slice(
+    0,
+    startupCommandSeparator < 0 ? input.createArgs.length : startupCommandSeparator,
+  );
   const providers = new Set(
-    input.createArgs.flatMap((value, index, args) =>
+    createOptions.flatMap((value, index, args) =>
       index > 0 && args[index - 1] === "--provider" ? [value] : [],
     ),
   );
@@ -126,6 +138,36 @@ export function resolveRebuildPolicyProviderAuthority(input: {
     }
   }
   return [...providers];
+}
+
+export function createSandboxCreatePolicyDisclosure(input: {
+  readonly rebuildPolicySourcePath: string | null | undefined;
+  readonly disclose: (policy: import("../initial-policy").InitialSandboxPolicy) => void;
+}): {
+  readonly discloseGeneratedPolicy: (
+    policy: import("../initial-policy").InitialSandboxPolicy,
+  ) => void;
+  readonly discloseSelectedPolicy: (
+    policy: import("../initial-policy").InitialSandboxPolicy,
+  ) => void;
+} {
+  if (!input.rebuildPolicySourcePath) {
+    return {
+      discloseGeneratedPolicy: input.disclose,
+      discloseSelectedPolicy: () => undefined,
+    };
+  }
+  return {
+    discloseGeneratedPolicy: () => undefined,
+    discloseSelectedPolicy: (policy) => {
+      try {
+        input.disclose(policy);
+      } catch (error) {
+        policy.cleanup?.();
+        throw error;
+      }
+    },
+  };
 }
 
 export function resolveRebuildMessagingPolicyDeltas(
@@ -797,14 +839,16 @@ export async function finalizeCreatedSandboxWithTemporaryPolicyCleanup<T>(input:
   }
 
   let cleanupError: Error | null = null;
-  const retainedMessage =
-    `${finalizationFailed ? "Sandbox finalization also failed." : "Sandbox finalization completed."} ` +
-    `NemoClaw could not remove temporary sandbox create policy '${input.policyPath}'. ` +
-    "Do not modify the file or retry onboarding. Preserve the path and complete error for support.";
   try {
-    if (!input.cleanup()) cleanupError = new Error(retainedMessage);
+    if (!input.cleanup()) {
+      cleanupError = createRetainedPolicyCleanupError(finalizationFailed, [input.policyPath]);
+    }
   } catch (cause) {
-    cleanupError = new Error(retainedMessage, { cause });
+    cleanupError = createRetainedPolicyCleanupError(
+      finalizationFailed,
+      cause instanceof RebuildPolicyCleanupError ? cause.retainedPolicyPaths : [input.policyPath],
+      cause,
+    );
   }
 
   if (finalizationFailed) {
@@ -818,6 +862,19 @@ export async function finalizeCreatedSandboxWithTemporaryPolicyCleanup<T>(input:
   }
   if (cleanupError) throw cleanupError;
   return result as T;
+}
+
+function createRetainedPolicyCleanupError(
+  finalizationFailed: boolean,
+  policyPaths: readonly string[],
+  cause?: unknown,
+): Error {
+  const paths = policyPaths.map((policyPath) => `'${policyPath}'`).join(", ");
+  const message =
+    `${finalizationFailed ? "Sandbox finalization also failed." : "Sandbox finalization completed."} ` +
+    `NemoClaw could not remove temporary sandbox create policy source(s): ${paths}. ` +
+    "Preserve each path and the complete error for support. After confirming finalization state, remove the retained file before retrying onboarding.";
+  return cause === undefined ? new Error(message) : new Error(message, { cause });
 }
 
 /**
@@ -2099,6 +2156,10 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         },
       );
     });
+    const sandboxCreatePolicyDisclosure = createSandboxCreatePolicyDisclosure({
+      rebuildPolicySourcePath: createIntent?.rebuildPolicySourcePath,
+      disclose: discloseInitialSandboxPolicy,
+    });
     const preparedOnboardLaunch =
       await managedWorkloadOnboard.prepareSelectedOnboardSandboxWorkloadLaunch(
         agentCreateInput.hermesPortableLifecycle,
@@ -2216,7 +2277,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                 }),
               getHermesToolGatewayProviderName: (targetSandbox) =>
                 getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
-              discloseInitialSandboxPolicy,
+              discloseInitialSandboxPolicy: sandboxCreatePolicyDisclosure.discloseGeneratedPolicy,
             },
             launchInput: {
               agent,
@@ -2309,6 +2370,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           rebuildPolicyProviderAuthority,
         )
       : materializedInitialSandboxPolicy;
+    sandboxCreatePolicyDisclosure.discloseSelectedPolicy(initialSandboxPolicy);
     const createArgv = createIntent?.rebuildPolicySourcePath
       ? bindRebuildPolicyProvidersToCreateArgs(
           materializedCreateArgv.map((value, index, argv) =>

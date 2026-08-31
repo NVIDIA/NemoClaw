@@ -126,6 +126,8 @@ describe("rebuild policy provider handoff", () => {
           "--",
           "env",
           "nemoclaw-start",
+          "--provider",
+          "mcp-provider",
         ],
         {
           credentialBindingProviders: ["inference-provider", "mcp-provider"],
@@ -142,7 +144,29 @@ describe("rebuild policy provider handoff", () => {
       "--",
       "env",
       "nemoclaw-start",
+      "--provider",
+      "mcp-provider",
     ]);
+  });
+
+  it("does not authorize provider-shaped sandbox startup arguments", () => {
+    expect(
+      resolveRebuildPolicyProviderAuthority({
+        createArgs: [
+          "--from",
+          "image",
+          "--provider",
+          "inference-provider",
+          "--",
+          "nemoclaw-start",
+          "--provider",
+          "startup-only-provider",
+        ],
+        messagingPlan: null,
+        preservedMcpState: undefined,
+        managedMcpRebuildHandoff: false,
+      }),
+    ).toEqual(["inference-provider"]);
   });
 
   it("authorizes enabled messaging and managed MCP providers but rejects disabled channels", () => {

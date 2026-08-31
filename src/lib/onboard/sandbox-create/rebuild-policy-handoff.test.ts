@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   materializeRebuildPolicyHandoff,
   mergeReplacementPolicyAccess,
+  RebuildPolicyCleanupError,
 } from "./rebuild-policy-handoff";
 
 const roots: string[] = [];
@@ -413,6 +414,45 @@ network_policies:
     expect(cleanupReplacement).toHaveBeenCalledOnce();
     expect(fs.existsSync(handoff.policyPath)).toBe(false);
     expect(fs.existsSync(livePath)).toBe(true);
+  });
+
+  it("reports only the policy sources retained after independent cleanup attempts", () => {
+    const livePath = tempPolicy(
+      "live-cleanup-failure.yaml",
+      "version: 1\nfilesystem_policy:\n  read_only: [/usr]\n",
+    );
+    const replacementPath = tempPolicy(
+      "replacement-cleanup-failure.yaml",
+      "version: 1\nfilesystem_policy:\n  read_only: [/usr, /run/replacement]\n",
+    );
+    const replacementCleanupCause = new Error("replacement cleanup transport failed");
+    const handoff = materializeRebuildPolicyHandoff({
+      livePolicyPath: livePath,
+      replacementPolicy: {
+        policyPath: replacementPath,
+        appliedPresets: [],
+        cleanup: () => {
+          throw replacementCleanupCause;
+        },
+      },
+    });
+
+    const error = (() => {
+      try {
+        handoff.cleanup?.();
+      } catch (caught) {
+        return caught;
+      }
+      return undefined;
+    })();
+
+    expect(error).toBeInstanceOf(RebuildPolicyCleanupError);
+    expect((error as RebuildPolicyCleanupError).retainedPolicyPaths).toEqual([replacementPath]);
+    expect((error as RebuildPolicyCleanupError).errors).toEqual([
+      expect.objectContaining({ cause: replacementCleanupCause }),
+    ]);
+    expect(fs.existsSync(handoff.policyPath)).toBe(false);
+    expect(fs.existsSync(replacementPath)).toBe(true);
   });
 
   it("rejects live credential bindings outside the verified replacement plan", () => {
