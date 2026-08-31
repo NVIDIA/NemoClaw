@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: ci-compile-artifacts
+description: Compile and verify reusable CLI and plugin outputs from the checked-out source.
+
+runs:
+  using: composite
+  steps:
+    - name: Clean compiled outputs
+      shell: bash
+      run: |
+        npm run clean:cli
+        npm --prefix nemoclaw run clean
+
+    - name: Build TypeScript plugin
+      shell: bash
+      run: npm --prefix nemoclaw run build
+
+    - name: Build CLI TypeScript modules
+      shell: bash
+      run: npm run build:cli
+
+    - name: Verify CLI sourcemaps
+      shell: bash
+      run: npx tsx scripts/check-dist-sourcemaps.mts dist
+
+    - name: Verify compiled outputs
+      shell: bash
+      run: |
+        test -s dist/nemoclaw.js
+        test -s nemoclaw/dist/index.js
+        test -s nemoclaw/dist/shared/sandbox-name.cjs
