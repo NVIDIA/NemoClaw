@@ -48,7 +48,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Compile and verify reusable outputs
+      - name: Compile and verify CLI and plugin outputs
         uses: ./.github/actions/ci-compile-artifacts
 
       - name: Run package-contract and type checks

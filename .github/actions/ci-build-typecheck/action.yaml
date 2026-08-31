@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: ci-build-typecheck
-description: Run package-contract and type-check CI gates against compiled outputs.
+description: Run package-contract checks and CLI, plugin, and JavaScript type checks.
 
 runs:
   using: composite

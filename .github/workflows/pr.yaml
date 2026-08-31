@@ -368,7 +368,7 @@ jobs:
           name: openshell-sdk-package
           path: ${{ runner.temp }}/openshell-sdk
 
-      - name: Compile and verify reusable outputs
+      - name: Compile and verify CLI and plugin outputs
         uses: ./.trusted-ci-actions/.github/actions/ci-compile-artifacts
 
       - name: Run package-contract and type checks

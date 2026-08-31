@@ -4,14 +4,6 @@
 name: ci-compile-artifacts
 description: Install dependencies, then compile and verify fixed CLI and plugin outputs.
 
-outputs:
-  cli-dist:
-    description: Fixed caller-workspace path containing verified CLI outputs.
-    value: dist
-  plugin-dist:
-    description: Fixed caller-workspace path containing verified plugin outputs.
-    value: nemoclaw/dist
-
 runs:
   using: composite
   steps:
