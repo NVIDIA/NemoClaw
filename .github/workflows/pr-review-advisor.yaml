@@ -264,7 +264,6 @@ jobs:
 
       - name: Run advisor specialist lifecycle
         id: specialist-analysis
-        if: always()
         env:
           OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
         run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" analysis
