@@ -3956,6 +3956,26 @@ recover_preexisting_sandboxes_before_onboard() {
     return 0
   fi
 
+  local docker_host_contract="${NEMOCLAW_SOURCE_ROOT}/dist/lib/domain/docker-host.js"
+  if ! command_exists node || [[ ! -f "$docker_host_contract" ]]; then
+    error "Could not validate DOCKER_HOST before sandbox recovery. Existing sandboxes were not recovered."
+  fi
+  local docker_host_status=0
+  node -e '
+    const validator = require(process.argv[1]).isSupportedGatewayDockerHost;
+    if (typeof validator !== "function") process.exit(11);
+    process.exit(validator(process.argv[2]) ? 0 : 10);
+  ' "$docker_host_contract" "${DOCKER_HOST-}" >/dev/null 2>&1 || docker_host_status=$?
+  case "$docker_host_status" in
+    0) ;;
+    10)
+      error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Existing sandboxes were not recovered."
+      ;;
+    *)
+      error "Could not validate DOCKER_HOST before sandbox recovery. Existing sandboxes were not recovered."
+      ;;
+  esac
+
   info "Recovering and upgrading pre-existing sandboxes before onboarding…"
   # `--auto` is the existing non-interactive maintenance path. When the
   # pre-upgrade backup signal is present, the CLI also recovers registered
@@ -6459,6 +6479,8 @@ main() {
           fi
         elif [ "${NON_INTERACTIVE:-}" = "1" ]; then
           error "Skipping onboarding until the host prerequisites above are fixed."
+        elif [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
+          error "DGX Station reconciliation did not run. Fix the host prerequisites above, then rerun the installer."
         else
           warn "Skipping onboarding until the host prerequisites above are fixed."
         fi

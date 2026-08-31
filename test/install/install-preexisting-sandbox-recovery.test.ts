@@ -27,7 +27,9 @@ function runRecoveryBeforeOnboard(
   preexistingCount: number,
   recoveryExitCode: number | [first: number, second: number],
   options: {
+    dockerHost?: string;
     hostPreflightExitCode?: number;
+    interactive?: boolean;
     registryJson?: string;
     singleSession?: boolean;
     stationExpressSelected?: boolean;
@@ -123,15 +125,17 @@ exit 0
     run_onboard() { "${cli}" onboard; }
     restore_onboard_forward_after_post_checks() { return 0; }
     print_done() { printf 'PRINT_DONE\n'; }
-    main --non-interactive --yes-i-accept-third-party-software
+    main ${options.interactive ? "" : "--non-interactive --yes-i-accept-third-party-software"}
   `;
   const childEnv = { ...process.env };
+  delete childEnv.DOCKER_HOST;
   delete childEnv.NEMOCLAW_SINGLE_SESSION;
   const result = spawnSync("bash", ["-c", snippet], {
     encoding: "utf-8",
     env: {
       ...childEnv,
       BASH_ENV: "",
+      ...(options.dockerHost !== undefined ? { DOCKER_HOST: options.dockerHost } : {}),
       ENV: "",
       HOME: tmp,
       NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
@@ -145,8 +149,10 @@ exit 0
 }
 
 describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
-  it("uses successful automatic recovery instead of generic onboarding", () => {
-    const result = runRecoveryBeforeOnboard(2, 0);
+  it("recovers through a supported Docker socket without generic onboarding", () => {
+    const result = runRecoveryBeforeOnboard(2, 0, {
+      dockerHost: "unix:///var/run/docker.sock",
+    });
 
     expect(result.status, result.output).toBe(0);
     expect(result.calls).toEqual([
@@ -155,6 +161,22 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
     ]);
     expect(result.output).toContain("Existing sandboxes recovered; skipping generic onboarding");
+  });
+
+  it.each([
+    ["a TCP DOCKER_HOST endpoint", "tcp://203.0.113.10:2375"],
+    ["an SSH DOCKER_HOST endpoint", "ssh://user@example.test"],
+    ["a relative DOCKER_HOST socket", "unix://relative/docker.sock"],
+    ["a newline-bearing DOCKER_HOST socket", "unix:///var/run/docker.sock\n"],
+  ])("rejects %s before sandbox recovery", (_name, dockerHost) => {
+    const result = runRecoveryBeforeOnboard(2, 0, { dockerHost });
+
+    expect(result.status).toBe(1);
+    expect(result.calls).toEqual([]);
+    expect(result.output).toContain(
+      "DOCKER_HOST is not a supported absolute local Unix socket endpoint",
+    );
+    expect(result.output).toContain("Existing sandboxes were not recovered");
   });
 
   it("does not gate pre-existing recovery on generic host admission", () => {
@@ -206,6 +228,24 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
       "host-preflight",
     ]);
     expect(result.output).toContain("Skipping onboarding until the host prerequisites above are fixed");
+  });
+
+  it("fails interactive DGX Station reconciliation when host admission fails", () => {
+    const result = runRecoveryBeforeOnboard(2, 0, {
+      hostPreflightExitCode: 1,
+      interactive: true,
+      stationExpressSelected: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.calls).toEqual([
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+      "sleep=10",
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+      "host-preflight",
+    ]);
+    expect(result.output).toContain("DGX Station reconciliation did not run");
+    expect(result.output).not.toContain("PRINT_DONE");
   });
 
   it("stops before onboarding when any automatic recovery fails", () => {
