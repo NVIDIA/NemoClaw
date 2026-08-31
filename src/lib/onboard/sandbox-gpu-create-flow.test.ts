@@ -707,9 +707,9 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
-        ["sandbox get alpha", [readySandboxGetResult(), readySandboxGetResult()]],
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult(), readySandboxGetResult()]],
         [
-          "sandbox exec --name alpha -- true",
+          "sandbox exec -g nemoclaw --name alpha -- true",
           [{ status: 1, stdout: "", stderr: "permission denied" }],
         ],
       ]),
@@ -760,11 +760,11 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
         [
-          "sandbox get alpha",
+          "sandbox get -g nemoclaw alpha",
           [readySandboxGetResult(), readySandboxGetResult(), readySandboxGetResult()],
         ],
         [
-          "sandbox exec --name alpha -- true",
+          "sandbox exec -g nemoclaw --name alpha -- true",
           [
             {
               status: 1,
@@ -791,7 +791,9 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(
       vi
         .mocked(deps.runOpenshell)
-        .mock.calls.filter(([args]) => args.join(" ") === "sandbox exec --name alpha -- true"),
+        .mock.calls.filter(
+          ([args]) => args.join(" ") === "sandbox exec -g nemoclaw --name alpha -- true",
+        ),
     ).toHaveLength(2);
     expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(

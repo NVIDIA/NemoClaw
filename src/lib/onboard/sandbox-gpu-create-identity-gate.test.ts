@@ -149,6 +149,7 @@ describe("created sandbox identity gate", () => {
   it("reconfirms exact managed sandbox readiness after the runtime commit", async () => {
     const sandboxId = "alpha-sandbox-id";
     const input = noGpuInput();
+    input.gatewayName = "owner-gateway";
     input.resumeVerifiedCreate = {
       route: "none",
       liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
@@ -193,6 +194,14 @@ describe("created sandbox identity gate", () => {
     });
 
     expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledTimes(2);
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "owner-gateway", "alpha"],
+      expect.objectContaining({ suppressOutput: true }),
+    );
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "exec", "-g", "owner-gateway", "--name", "alpha", "--", "true"],
+      expect.objectContaining({ suppressOutput: true }),
+    );
     expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
       ["sandbox", "delete", "alpha"],
@@ -274,7 +283,7 @@ describe("created sandbox identity gate", () => {
     });
     const deps = createGpuFlowDeps();
     vi.mocked(deps.runOpenshell).mockImplementation((args) =>
-      args.join(" ") === "sandbox get alpha"
+      args.join(" ") === "sandbox get -g nemoclaw alpha"
         ? { status: 0, stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`, stderr: "" }
         : { status: 0, stdout: "", stderr: "" },
     );
@@ -319,7 +328,7 @@ describe("created sandbox identity gate", () => {
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     const deps = createGpuFlowDeps();
     vi.mocked(deps.runOpenshell).mockImplementation((args) =>
-      args.join(" ") === "sandbox get alpha"
+      args.join(" ") === "sandbox get -g nemoclaw alpha"
         ? { status: 0, stdout: "Name: alpha\nId: replacement-id\nState: Ready\n", stderr: "" }
         : { status: 0, stdout: "", stderr: "" },
     );
