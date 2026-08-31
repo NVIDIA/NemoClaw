@@ -1928,7 +1928,7 @@ def _verify_mutable_boundary_metadata(
     path: str,
     st: os.stat_result,
     kind: str,
-    mode: int,
+    modes: tuple[int, ...],
     identity: Identity,
 ) -> Issue | None:
     if st.st_uid != identity.sandbox_uid or st.st_gid != identity.sandbox_gid:
@@ -1939,11 +1939,12 @@ def _verify_mutable_boundary_metadata(
             f"expected {identity.sandbox_uid}:{identity.sandbox_gid}",
         )
     actual_mode = stat.S_IMODE(st.st_mode)
-    if actual_mode != mode:
+    if actual_mode not in modes:
+        expected = " or ".join(f"{mode:04o}" for mode in modes)
         return Issue(
             "verification-mode-mismatch",
             path,
-            f"{kind} mode is {actual_mode:04o}, expected {mode:04o}",
+            f"{kind} mode is {actual_mode:04o}, expected {expected}",
         )
     return None
 
@@ -1980,12 +1981,12 @@ def _verify_mutable_boundary(
             )
             return
         parent_issue = _verify_mutable_boundary_metadata(
-            parent_path, parent_st, "directory", 0o755, identity
+            parent_path, parent_st, "directory", (0o755,), identity
         )
         if parent_issue is not None:
             issues.append(parent_issue)
         config_issue = _verify_mutable_boundary_metadata(
-            config_path, config_st, "directory", 0o3770, identity
+            config_path, config_st, "directory", (0o700, 0o3770), identity
         )
         if config_issue is not None:
             issues.append(config_issue)
@@ -2029,7 +2030,7 @@ def _verify_mutable_boundary(
                 try:
                     file_st = os.fstat(file_fd)
                     metadata_issue = _verify_mutable_boundary_metadata(
-                        file_path, file_st, "file", 0o640, identity
+                        file_path, file_st, "file", (0o640,), identity
                     )
                     if metadata_issue is not None:
                         issues.append(metadata_issue)

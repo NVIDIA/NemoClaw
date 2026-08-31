@@ -113,6 +113,47 @@ afterEach(() => {
 });
 
 describe("read-only recursive mutable posture observation", () => {
+  it("accepts sandbox-owned 0700 Hermes config posture without mutation (#9485)", () => {
+    const { root, configDir } = fixture();
+    const configPath = path.join(configDir, "config.yaml");
+    fs.writeFileSync(configPath, "config\n", { mode: 0o640 });
+    fs.chmodSync(root, 0o755);
+    fs.chmodSync(configDir, 0o700);
+    const configDirBefore = fs.lstatSync(configDir);
+    const configBefore = fs.lstatSync(configPath);
+
+    const observed = runGuard(
+      "verify-mutable",
+      configDir,
+      { NEMOCLAW_TEST_OPENCLAW_TRANSACTION_LOCK: "1" },
+      [configPath],
+    );
+
+    expect(observed.status).toBe(0);
+    expect(observed.lines).toContainEqual({
+      type: "test-observation",
+      inodeFlagMutationCalls: 0,
+    });
+    expect(observed.lines.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "result",
+        action: "verify-mutable",
+        status: "ok",
+        issueCount: 0,
+      }),
+    );
+    expect(fs.lstatSync(configDir)).toMatchObject({
+      ino: configDirBefore.ino,
+      mode: configDirBefore.mode,
+    });
+    expect(observeFixtureFile(configPath)).toMatchObject({
+      ino: configBefore.ino,
+      mode: configBefore.mode,
+      content: "config\n",
+    });
+    expect(fs.existsSync(path.join(root, ".openclaw-config-mutation.lock"))).toBe(false);
+  });
+
   it("reports nested skills and pairing drift without changing either entry (#9485)", () => {
     const { root, configDir } = fixture();
     const skillState = path.join(configDir, "skills", "pairing", "state.json");
@@ -341,6 +382,10 @@ describe("read-only recursive mutable posture observation", () => {
           issueCount: 0,
         }),
       );
+      expect(observed.lines).toContainEqual({
+        type: "test-observation",
+        inodeFlagMutationCalls: 0,
+      });
       expect(fs.existsSync(path.join(profilesDir, "dashboard-home"))).toBe(false);
       expect(fs.existsSync(path.join(root, ".openclaw-config-mutation.lock"))).toBe(false);
     },
