@@ -14,6 +14,7 @@ import {
 } from "./forward-service";
 import {
   listForwardServiceReceipts,
+  listForwardServicePendingReceipts,
   readForwardServicePendingReceipt,
   readForwardServiceReceipt,
   removeForwardServicePendingReceipt,
@@ -86,9 +87,10 @@ describe("OpenShell ForwardTcp receipt storage (#10691)", () => {
     expect(readForwardServicePendingReceipt(target, { stateDirectory, uid })).toBeNull();
   });
 
-  it("blocks lifecycle-wide cleanup while unidentified pending authority exists", () => {
+  it("enumerates unidentified pending authority separately from completed receipts", () => {
     writeForwardServicePendingReceipt(pendingReceipt, { stateDirectory, uid });
-    expect(() => listForwardServiceReceipts({ stateDirectory, uid })).toThrow(/invalid/u);
+    expect(listForwardServiceReceipts({ stateDirectory, uid })).toEqual([]);
+    expect(listForwardServicePendingReceipts({ stateDirectory, uid })).toEqual([pendingReceipt]);
   });
 
   it("enumerates exact receipt paths for lifecycle-wide cleanup", () => {

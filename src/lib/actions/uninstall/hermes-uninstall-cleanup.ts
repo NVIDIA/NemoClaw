@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createForwardServiceController } from "../../adapters/openshell/forward-service-controller";
-import { listForwardServiceReceipts } from "../../adapters/openshell/forward-service-state";
+import {
+  listForwardServicePendingReceipts,
+  listForwardServiceReceipts,
+} from "../../adapters/openshell/forward-service-state";
 import type { ManagedHermesStateVolumeContext } from "../../onboard/managed-workload/hermes-state-volume";
 import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider/access";
 import { removeManagedHermesStateVolume } from "../../onboard/sandbox-provider-cleanup";
@@ -26,7 +29,8 @@ export function stopForwardServicesForUninstall(
   let receipts: ReturnType<typeof listForwardServiceReceipts>;
   try {
     receipts = listForwardServiceReceipts({ stateDirectory });
-    for (const receipt of receipts) {
+    const pending = listForwardServicePendingReceipts({ stateDirectory });
+    for (const receipt of [...receipts, ...pending]) {
       const entry = registrations[receipt.sandboxName];
       if (
         !entry ||

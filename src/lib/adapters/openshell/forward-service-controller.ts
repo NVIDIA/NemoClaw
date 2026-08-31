@@ -8,7 +8,10 @@ import {
   type ForwardServiceInspection,
 } from "./forward-service-process";
 import type { ForwardServiceTarget } from "./forward-service";
-import { listForwardServiceReceipts } from "./forward-service-state";
+import {
+  listForwardServicePendingReceipts,
+  listForwardServiceReceipts,
+} from "./forward-service-state";
 
 export interface ForwardServiceSandboxAuthority {
   readonly gatewayName: string;
@@ -63,6 +66,17 @@ function target(
   };
 }
 
+function matchesAuthority(
+  receipt: Pick<ForwardServiceTarget, "gatewayName" | "sandboxIdentityFingerprint" | "sandboxName">,
+  authority: ForwardServiceSandboxAuthority,
+): boolean {
+  return (
+    receipt.sandboxName === authority.sandboxName &&
+    receipt.gatewayName === authority.gatewayName &&
+    receipt.sandboxIdentityFingerprint === authority.sandboxIdentityFingerprint
+  );
+}
+
 /** Bind the receipt-owned ForwardTcp process primitive to one lifecycle lock owner. */
 export function createForwardServiceController(
   deps: ForwardServiceControllerDeps,
@@ -90,40 +104,52 @@ export function createForwardServiceController(
           (receipt) =>
             receipt.sandboxName === authority.sandboxName && receipt.localPort === localPort,
         );
-        if (receipts.length === 0) return "absent";
+        const pending = listForwardServicePendingReceipts({
+          stateDirectory: deps.stateDirectory,
+        }).filter(
+          (receipt) =>
+            receipt.sandboxName === authority.sandboxName && receipt.localPort === localPort,
+        );
+        if (receipts.length === 0 && pending.length === 0) return "absent";
         if (
-          receipts.length !== 1 ||
-          receipts[0]?.gatewayName !== authority.gatewayName ||
-          receipts[0]?.sandboxIdentityFingerprint !== authority.sandboxIdentityFingerprint
+          receipts.length > 1 ||
+          pending.length > 1 ||
+          [...receipts, ...pending].some((receipt) => !matchesAuthority(receipt, authority))
         ) {
           throw new Error("OpenShell forward service state disagrees with sandbox authority");
         }
-        return stopForwardServiceProcess(receipts[0], {
-          stateDirectory: deps.stateDirectory,
-          runExclusive: (operation) => operation(),
-        });
+        for (const receipt of pending.length > 0 ? pending : receipts) {
+          stopForwardServiceProcess(receipt, {
+            stateDirectory: deps.stateDirectory,
+            runExclusive: (operation) => operation(),
+          });
+        }
+        return "stopped";
       }),
     stopAll: (authority) =>
       deps.runExclusive(authority.sandboxName, () => {
         const receipts = listForwardServiceReceipts({ stateDirectory: deps.stateDirectory }).filter(
           (receipt) => receipt.sandboxName === authority.sandboxName,
         );
-        if (
-          receipts.some(
-            (receipt) =>
-              receipt.gatewayName !== authority.gatewayName ||
-              receipt.sandboxIdentityFingerprint !== authority.sandboxIdentityFingerprint,
-          )
-        ) {
+        const pending = listForwardServicePendingReceipts({
+          stateDirectory: deps.stateDirectory,
+        }).filter((receipt) => receipt.sandboxName === authority.sandboxName);
+        if ([...receipts, ...pending].some((receipt) => !matchesAuthority(receipt, authority))) {
           throw new Error("OpenShell forward service state disagrees with sandbox authority");
         }
-        for (const receipt of receipts) {
+        const lifecycleTargets = [
+          ...pending,
+          ...receipts.filter(
+            (receipt) => !pending.some((candidate) => candidate.localPort === receipt.localPort),
+          ),
+        ];
+        for (const receipt of lifecycleTargets) {
           stopForwardServiceProcess(receipt, {
             stateDirectory: deps.stateDirectory,
             runExclusive: (operation) => operation(),
           });
         }
-        return receipts.length;
+        return lifecycleTargets.length;
       }),
   };
 }

@@ -251,6 +251,28 @@ function pendingDisposition(
   return deps.processIsAlive(pending.pid) ? "unknown" : "stale";
 }
 
+function pendingMatchesCompleted(
+  pending: ForwardServicePendingReceipt,
+  completed: ForwardServiceReceipt,
+): boolean {
+  return (
+    pending.pid === completed.pid &&
+    pending.launcherUid === completed.uid &&
+    pending.hostIdentity === completed.hostIdentity &&
+    pending.pidNamespaceIdentity === completed.pidNamespaceIdentity &&
+    pending.executable === completed.executable &&
+    pending.gatewayName === completed.gatewayName &&
+    pending.sandboxName === completed.sandboxName &&
+    pending.sandboxIdentityFingerprint === completed.sandboxIdentityFingerprint &&
+    pending.localHost === completed.localHost &&
+    pending.localPort === completed.localPort &&
+    pending.targetHost === completed.targetHost &&
+    pending.targetPort === completed.targetPort &&
+    pending.expectedArgv.length === completed.argv.length &&
+    pending.expectedArgv.every((value, index) => value === completed.argv[index])
+  );
+}
+
 export function inspectForwardServiceProcess(
   target: ForwardServiceTarget,
   options: ForwardServiceProcessOptions,
@@ -301,13 +323,17 @@ function stopForwardServiceProcessUnlocked(
   const deps = options.deps ?? DEFAULT_DEPS;
   const pending = readForwardServicePendingReceipt(target, stateOptions(options));
   if (pending) {
+    const completed = readForwardServiceReceipt(target, stateOptions(options));
     const disposition = pendingDisposition(pending, deps);
-    if (disposition !== "stale") {
+    if (completed && pendingMatchesCompleted(pending, completed)) {
+      if (removeForwardServicePendingReceipt(pending, stateOptions(options)) !== "removed") {
+        throw new Error("OpenShell forward service pending receipt changed during reconciliation");
+      }
+    } else if (disposition !== "stale") {
       throw new Error(
         `OpenShell forward service pending process is ${disposition}; refusing signal`,
       );
-    }
-    if (removeForwardServicePendingReceipt(pending, stateOptions(options)) !== "removed") {
+    } else if (removeForwardServicePendingReceipt(pending, stateOptions(options)) !== "removed") {
       throw new Error("OpenShell forward service pending receipt changed during cleanup");
     }
   }
@@ -428,11 +454,19 @@ export function ensureForwardServiceProcess(
     const deps = options.deps ?? DEFAULT_DEPS;
     const existingPending = readForwardServicePendingReceipt(target, stateOptions(options));
     if (existingPending) {
+      const completed = readForwardServiceReceipt(target, stateOptions(options));
       const disposition = pendingDisposition(existingPending, deps);
-      if (disposition !== "stale") {
+      if (completed && pendingMatchesCompleted(existingPending, completed)) {
+        if (
+          removeForwardServicePendingReceipt(existingPending, stateOptions(options)) !== "removed"
+        ) {
+          throw new Error(
+            "OpenShell forward service pending receipt changed during reconciliation",
+          );
+        }
+      } else if (disposition !== "stale") {
         throw new Error(`OpenShell forward service pending process is ${disposition}`);
-      }
-      if (
+      } else if (
         removeForwardServicePendingReceipt(existingPending, stateOptions(options)) !== "removed"
       ) {
         throw new Error("OpenShell forward service pending receipt changed before start");

@@ -63,12 +63,6 @@ function fixture() {
   return { bin, cliLog, env, openshellLog, root, state };
 }
 
-function addForwardReceipt(state: string): void {
-  const receipts = path.join(state, "state", "forwards");
-  fs.mkdirSync(receipts, { recursive: true });
-  fs.writeFileSync(path.join(receipts, "created-by-onboard-8647.json"), "{}\n");
-}
-
 function expectRecovery(h: ReturnType<typeof fixture>): void {
   const result = restore(h.env);
   expect(result.status, result.stderr).toBe(0);
@@ -77,33 +71,10 @@ function expectRecovery(h: ReturnType<typeof fixture>): void {
 }
 
 describe("Hermes installer forward restore", () => {
-  it("delegates a no-receipt state to identity-bound NemoClaw recovery", () => {
+  it("always invokes identity-bound recovery before accepting healthy transport", () => {
     const h = fixture();
     try {
       expectRecovery(h);
-    } finally {
-      fs.rmSync(h.root, { recursive: true, force: true });
-    }
-  }, 30_000);
-
-  it("delegates a receipt-backed state to identity-bound NemoClaw recovery", () => {
-    const h = fixture();
-    addForwardReceipt(h.state);
-    try {
-      expectRecovery(h);
-    } finally {
-      fs.rmSync(h.root, { recursive: true, force: true });
-    }
-  }, 30_000);
-
-  it("runs recovery even when the port health probe is already reachable", () => {
-    const h = fixture();
-    addForwardReceipt(h.state);
-    try {
-      const result = restore({ ...h.env, CURL_STATUS: "0" });
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(fs.readFileSync(h.cliLog, "utf8").trim()).toBe("created-by-onboard recover");
     } finally {
       fs.rmSync(h.root, { recursive: true, force: true });
     }

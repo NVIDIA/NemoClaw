@@ -9,6 +9,11 @@ const mocks = vi.hoisted(() => ({
     sandboxIdentityFingerprint: string;
     sandboxName: string;
   }>,
+  pendingReceipts: [] as Array<{
+    gatewayName: string;
+    sandboxIdentityFingerprint: string;
+    sandboxName: string;
+  }>,
   stopAll: vi.fn(),
 }));
 
@@ -17,6 +22,7 @@ vi.mock("../../adapters/openshell/forward-service-controller", () => ({
 }));
 
 vi.mock("../../adapters/openshell/forward-service-state", () => ({
+  listForwardServicePendingReceipts: () => mocks.pendingReceipts,
   listForwardServiceReceipts: () => mocks.receipts,
 }));
 
@@ -35,6 +41,7 @@ describe("ForwardTcp uninstall cleanup", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.receipts = [];
+    mocks.pendingReceipts = [];
     mocks.stopAll.mockReturnValue(2);
   });
 
@@ -83,5 +90,21 @@ describe("ForwardTcp uninstall cleanup", () => {
     expect(runtime.warn).toHaveBeenCalledWith(
       expect.stringContaining("has no matching selected registry authority"),
     );
+  });
+
+  it("refuses to orphan pending authority without a selected registry row", () => {
+    const runtime = { log: vi.fn(), warn: vi.fn() };
+    mocks.pendingReceipts = [
+      {
+        gatewayName: "nemoclaw",
+        sandboxIdentityFingerprint: "f".repeat(64),
+        sandboxName: "pending-orphan",
+      },
+    ];
+
+    expect(
+      stopForwardServicesForUninstall(registration, "/private/state", runtime, () => "nemoclaw"),
+    ).toBe(false);
+    expect(mocks.stopAll).not.toHaveBeenCalled();
   });
 });

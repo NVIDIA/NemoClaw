@@ -140,33 +140,60 @@ function readForwardServiceReceiptFile(
 export function listForwardServiceReceipts(
   options: ForwardServiceStateOptions,
 ): ForwardServiceReceipt[] {
-  const directory = path.join(options.stateDirectory, "forwards");
-  try {
-    fs.lstatSync(directory);
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) return [];
-    throw error;
-  }
-  try {
-    assertOwnerOnlyDirectory(options.stateDirectory, options);
-    assertOwnerOnlyDirectory(directory, options);
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) return [];
-    throw error;
-  }
-  const entries = fs.readdirSync(directory, { withFileTypes: true });
-  if (entries.length > MAX_RECEIPT_FILES) {
-    throw new Error("OpenShell forward service state contains too many receipts");
-  }
+  const { directory, entries } = listForwardServiceStateEntries(options);
   const receipts: ForwardServiceReceipt[] = [];
   for (const entry of entries) {
-    if (!entry.name.endsWith(".json")) continue;
+    if (!entry.name.endsWith(".json") || entry.name.endsWith(".pending.json")) continue;
     if (!entry.isFile() || entry.isSymbolicLink()) {
       throw new Error("OpenShell forward service state contains a non-regular receipt");
     }
     const receipt = readForwardServiceReceiptFile(path.join(directory, entry.name), options);
     if (!receipt) {
       throw new Error("OpenShell forward service receipt disappeared during enumeration");
+    }
+    receipts.push(receipt);
+  }
+  return receipts;
+}
+
+function listForwardServiceStateEntries(options: ForwardServiceStateOptions): {
+  directory: string;
+  entries: fs.Dirent[];
+} {
+  const directory = path.join(options.stateDirectory, "forwards");
+  try {
+    fs.lstatSync(directory);
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return { directory, entries: [] };
+    throw error;
+  }
+  try {
+    assertOwnerOnlyDirectory(options.stateDirectory, options);
+    assertOwnerOnlyDirectory(directory, options);
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return { directory, entries: [] };
+    throw error;
+  }
+  const entries = fs.readdirSync(directory, { withFileTypes: true });
+  if (entries.length > MAX_RECEIPT_FILES) {
+    throw new Error("OpenShell forward service state contains too many receipts");
+  }
+  return { directory, entries };
+}
+
+export function listForwardServicePendingReceipts(
+  options: ForwardServiceStateOptions,
+): ForwardServicePendingReceipt[] {
+  const { directory, entries } = listForwardServiceStateEntries(options);
+  const receipts: ForwardServicePendingReceipt[] = [];
+  for (const entry of entries) {
+    if (!entry.name.endsWith(".pending.json")) continue;
+    if (!entry.isFile() || entry.isSymbolicLink()) {
+      throw new Error("OpenShell forward service state contains a non-regular pending receipt");
+    }
+    const receipt = readForwardServicePendingReceiptFile(path.join(directory, entry.name), options);
+    if (!receipt) {
+      throw new Error("OpenShell forward service pending receipt disappeared during enumeration");
     }
     receipts.push(receipt);
   }
@@ -201,6 +228,13 @@ export function readForwardServicePendingReceipt(
     if (hasErrorCode(error, "ENOENT")) return null;
     throw error;
   }
+  return readForwardServicePendingReceiptFile(filePath, options);
+}
+
+function readForwardServicePendingReceiptFile(
+  filePath: string,
+  options: ForwardServiceStateOptions,
+): ForwardServicePendingReceipt | null {
   let opened: ReturnType<typeof openRegularFileNoFollow>;
   try {
     opened = openRegularFileNoFollow(filePath);
