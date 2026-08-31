@@ -161,8 +161,11 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       risk_signal_correlation_id:
         "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
-      managed_image_revision: "${{ needs.base-image-publication.outputs.managed_image_revision }}",
-      managed_image_receipt: "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
+      managed_image_catalog: "${{ needs.generate-matrix.outputs.managed_image_catalog }}",
+      managed_image_revision:
+        "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
+      managed_image_receipt:
+        "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}",
       workload_source: "${{ needs.generate-matrix.outputs.workload_source }}",
       credential_boundary: contract.credentialBoundary,
       catalogue_id: "${{ matrix.id }}",
@@ -214,6 +217,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     risk_signal_expected_sha: "string",
     risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
+    managed_image_catalog: "string",
     managed_image_revision: "string",
     managed_image_receipt: "string",
     workload_source: "string",
@@ -313,6 +317,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Restore exact-commit CLI artifact",
     "Prepare native Podman E2E runtime",
     "Stage immutable stopped-state cleanup helper",
+    "Materialize temporary managed-image catalog",
     "Install reviewed cloudflared",
     "Add swap for Hermes image rebuild",
     "Initialize runner comparison telemetry",
@@ -507,6 +512,31 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must stage the immutable stopped-state helper once");
   }
+  const managedCatalog = requireStep(
+    errors,
+    workflowSteps,
+    "Materialize temporary managed-image catalog",
+  );
+  const managedCatalogRun = String(managedCatalog?.run ?? "");
+  if (
+    managedCatalog?.if !== "${{ inputs.managed_image_catalog != '' }}" ||
+    managedCatalog.shell !== EXECUTION_PLAN_SHELL ||
+    !isDeepStrictEqual(record(managedCatalog.env), {
+      MANAGED_IMAGE_CATALOG: "${{ inputs.managed_image_catalog }}",
+    }) ||
+    !managedCatalogRun.includes("[.[].source.revision] | unique | length") ||
+    !managedCatalogRun.includes("[.[].source.release] | unique | length") ||
+    !managedCatalogRun.includes("[.[].source.cohort] | unique | length") ||
+    !managedCatalogRun.includes(
+      "managed-image catalog does not contain one exact publication identity",
+    ) ||
+    !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG") ||
+    !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_REVISION") ||
+    workflowSteps.indexOf(managedCatalog ?? {}) !==
+      workflowSteps.indexOf(stoppedStateHelper ?? {}) + 1
+  ) {
+    errors.push("standard E2E profile must materialize the exact-candidate managed-image catalog");
+  }
   const cloudflared = requireStep(errors, workflowSteps, "Install reviewed cloudflared");
   const cloudflaredRun = String(cloudflared?.run ?? "");
   if (
@@ -523,7 +553,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     !cloudflaredRun.includes('dpkg-deb -f "${cloudflared_deb}" Package') ||
     !cloudflaredRun.includes('"${architecture}" != "amd64"') ||
     cloudflaredRun.includes("command -v cloudflared") ||
-    workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(stoppedStateHelper ?? {}) + 1
+    workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(managedCatalog ?? {}) + 1
   ) {
     errors.push("standard E2E profile must install only the reviewed cloudflared package");
   }

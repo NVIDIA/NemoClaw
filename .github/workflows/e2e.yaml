@@ -178,11 +178,10 @@ jobs:
       dcode_base_ref: ${{ steps.validate_dcode_base.outputs.base_ref }}
       managed_image_receipt: ${{ steps.validate_managed_cohort.outputs.receipt }}
       managed_image_revision: ${{ steps.validate_managed_cohort.outputs.revision }}
-      workload_source: ${{ steps.select_pr_source.outputs.workload_source || 'managed-image' }}
+      workload_source: managed-image
     permissions:
       actions: read
       contents: read
-      pull-requests: read
     steps:
       - id: publication_mode
         name: Classify base-image publication requirement
@@ -232,33 +231,14 @@ jobs:
         with:
           node-version: 22
 
-      - id: select_pr_source
-        name: Select PR workload source
-        if: ${{ inputs.pr_number != '' }}
-        env:
-          BASE_SHA: ${{ inputs.base_sha }}
-          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
-          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          workload_source="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts select-source)"
-          case "$workload_source" in
-            managed-image|local-dockerfile) ;;
-            *) echo "::error::PR workload source is invalid" >&2; exit 1 ;;
-          esac
-          printf 'workload_source=%s\n' "$workload_source" >>"$GITHUB_OUTPUT"
-
       - id: publication
-        name: Select base and optional managed-image publication
+        name: Select complete base and managed-image publication
         env:
           EXPECTED_SHA: ${{ steps.publication_mode.outputs.expected_sha }}
           GITHUB_TOKEN: ${{ github.token }}
           PUBLICATION_HISTORY_ALLOW_NON_HEAD: ${{ steps.publication_mode.outputs.allow_non_head }}
-          REQUIRE_MANAGED_IMAGE_PUBLICATION: ${{ steps.select_pr_source.outputs.workload_source == 'local-dockerfile' && '0' || '1' }}
-          SELECT_NEAREST_SUCCESSFUL_PUBLICATION: ${{ steps.select_pr_source.outputs.workload_source == 'local-dockerfile' && '0' || steps.publication_mode.outputs.select_nearest_successful }}
+          REQUIRE_MANAGED_IMAGE_PUBLICATION: "1"
+          SELECT_NEAREST_SUCCESSFUL_PUBLICATION: ${{ steps.publication_mode.outputs.select_nearest_successful }}
         shell: bash
         run: |
           set -euo pipefail
@@ -288,7 +268,6 @@ jobs:
 
       - id: download_managed_cohort
         name: Download immutable managed-image cohort contract
-        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.workload_source == 'managed-image' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PUBLICATION_ARTIFACT_KIND: managed-image-cohort
@@ -299,7 +278,6 @@ jobs:
 
       - id: validate_managed_cohort
         name: Validate immutable managed-image cohort contract
-        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.workload_source == 'managed-image' }}
         env:
           PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
           PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
@@ -316,8 +294,9 @@ jobs:
       pull-requests: read
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
-      workload_source: ${{ needs.base-image-publication.outputs.workload_source }}
+      workload_source: managed-image
       e2e_credentials_allowed: ${{ steps.e2e_credentials.outputs.allowed }}
+      managed_image_catalog: ${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}
       matrix: ${{ steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
@@ -686,6 +665,33 @@ jobs:
             fi
           fi
 
+      - id: resolve_pr_managed_image_catalog
+        name: Resolve exact PR managed-image catalog
+        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          catalog_path="${RUNNER_TEMP}/pr-managed-image-catalog.json"
+          rm -f -- "$catalog_path"
+          node --experimental-strip-types --no-warnings \
+            tools/e2e/pr-managed-image-publication.mts resolve-catalog "$catalog_path"
+          if [[ -e "$catalog_path" ]]; then
+            [[ -f "$catalog_path" && ! -L "$catalog_path" && -s "$catalog_path" ]] || {
+              echo "::error::trusted PR managed-image catalog is not a nonempty regular file" >&2
+              exit 1
+            }
+            catalog="$(jq -c . "$catalog_path")"
+            catalog_sha256="$(printf '%s\n' "$catalog" | sha256sum | awk '{print $1}')"
+            printf 'catalog=%s\n' "$catalog" >>"$GITHUB_OUTPUT"
+            printf 'catalog_sha256=%s\n' "$catalog_sha256" >>"$GITHUB_OUTPUT"
+          fi
+
       # Publish immutable source-run toolchains before candidate checkout or
       # candidate-controlled workspace preparation can execute on this runner.
       - name: Stage immutable native Podman E2E toolchains
@@ -770,6 +776,8 @@ jobs:
         env:
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          MANAGED_IMAGE_CATALOG: ${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}
+          MANAGED_IMAGE_CATALOG_SHA256: ${{ steps.resolve_pr_managed_image_catalog.outputs.catalog_sha256 }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -807,11 +815,42 @@ jobs:
           ' dist/build-identity.json >/dev/null ||
             { echo "::error::candidate CLI build identity does not match the candidate commit SHA"; exit 1; }
 
+          managed_catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"
           artifact_catalog="dist/e2e-managed-image-catalog.json"
+          catalog_json="${MANAGED_IMAGE_CATALOG:-}"
+          catalog_sha256="${MANAGED_IMAGE_CATALOG_SHA256:-}"
           [[ ! -e "$artifact_catalog" && ! -L "$artifact_catalog" ]] || {
             echo "::error::candidate build created the managed-image catalog path" >&2
             exit 1
           }
+          if [[ -n "$catalog_json" ]]; then
+            [[ "$catalog_sha256" =~ ^[a-f0-9]{64}$ ]] || {
+              echo "::error::trusted PR managed-image catalog digest is invalid" >&2
+              exit 1
+            }
+            [[ -f "$managed_catalog" && ! -L "$managed_catalog" && -s "$managed_catalog" ]] || {
+              echo "::error::trusted PR managed-image catalog is not a nonempty regular file" >&2
+              exit 1
+            }
+            [[ "$(sha256sum "$managed_catalog" | awk '{print $1}')" == "$catalog_sha256" ]] || {
+              echo "::error::trusted PR managed-image catalog changed after authentication" >&2
+              exit 1
+            }
+            (umask 077 && set -o noclobber && printf '%s\n' "$catalog_json" >"$artifact_catalog")
+            [[ -f "$artifact_catalog" && ! -L "$artifact_catalog" && -s "$artifact_catalog" ]] || {
+              echo "::error::packaged PR managed-image catalog is invalid" >&2
+              exit 1
+            }
+            [[ "$(sha256sum "$artifact_catalog" | awk '{print $1}')" == "$catalog_sha256" ]] || {
+              echo "::error::packaged PR managed-image catalog does not match trusted output" >&2
+              exit 1
+            }
+          else
+            [[ -z "$catalog_sha256" && ! -e "$managed_catalog" && ! -L "$managed_catalog" ]] || {
+              echo "::error::managed-image catalog authority is inconsistent" >&2
+              exit 1
+            }
+          fi
 
           artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
           install -d -m 0700 "$artifact_dir"
@@ -2809,8 +2848,8 @@ jobs:
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live
       E2E_EXECUTION_ID: ${{ matrix.execution_id }}
-      E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
@@ -3120,8 +3159,9 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      managed_image_receipt: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}
       workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: no provider credential
       target_id: ${{ matrix.target_id }}
@@ -3165,8 +3205,9 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      managed_image_receipt: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}
       workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: NVIDIA API key
       target_id: ${{ matrix.target_id }}
@@ -3211,8 +3252,9 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      managed_image_receipt: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}
       workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: NVIDIA inference API key
       target_id: ${{ matrix.target_id }}
@@ -3257,8 +3299,9 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      managed_image_receipt: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}
       workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: GitHub read token
       target_id: ${{ matrix.target_id }}
@@ -3303,8 +3346,9 @@ jobs:
       risk_signal_expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.checkout_sha || '' }}
       risk_signal_correlation_id: ${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-      managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+      managed_image_revision: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      managed_image_receipt: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}
       workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: Brave and NVIDIA inference API keys
       target_id: ${{ matrix.target_id }}
@@ -3502,8 +3546,8 @@ jobs:
             agent_runtime: langchain-deepagents-code
             coverage_variant: deepagents
     env:
-      E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       E2E_JOB: "1"
       E2E_GATEWAY_RUNTIMES: docker,podman
@@ -3849,8 +3893,8 @@ jobs:
       matrix:
         runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['openshell-credential-generation-window'] }}
     env:
-      E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       E2E_JOB: "1"
       E2E_GATEWAY_RUNTIMES: docker,podman
@@ -4033,8 +4077,8 @@ jobs:
             agent_runtime: langchain-deepagents-code
             coverage_variant: deepagents
     env:
-      E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       E2E_JOB: "1"
       E2E_GATEWAY_RUNTIMES: docker,podman
@@ -5219,8 +5263,8 @@ jobs:
       matrix:
         runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['hermes-e2e'] }}
     env:
-      E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       E2E_JOB: "1"
       E2E_GATEWAY_RUNTIMES: docker,podman
@@ -5334,8 +5378,8 @@ jobs:
           - scenario: compatibility-only
             runtime_provider: podman
     env:
-      E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       E2E_JOB: "1"
       E2E_GATEWAY_RUNTIMES: docker,podman
@@ -5654,8 +5698,8 @@ jobs:
       matrix:
         runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['cloud-onboard'] }}
     env:
-      E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       E2E_JOB: "1"
       E2E_GATEWAY_RUNTIMES: docker,podman
@@ -5719,6 +5763,37 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/setup-native-podman-e2e@c87144de2c8e2d90b14cf11b31718846e32c65de
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
+
+      - name: Materialize cloud-onboard managed-image catalog
+        if: ${{ needs.generate-matrix.outputs.managed_image_catalog != '' }}
+        env:
+          MANAGED_IMAGE_CATALOG: ${{ needs.generate-matrix.outputs.managed_image_catalog }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          catalog_path="${RUNNER_TEMP}/e2e-managed-image-catalog.json"
+          jq -e '
+            type == "object" and length > 0 and
+            all(.[];
+              (.source.revision | type == "string" and test("^[0-9a-f]{40}$")) and
+              (.source.release | type == "string" and length > 0) and
+              (.source.cohort | type == "string" and length > 0)
+            ) and
+            ([.[].source.revision] | unique | length) == 1 and
+            ([.[].source.release] | unique | length) == 1 and
+            ([.[].source.cohort] | unique | length) == 1
+          ' <<<"$MANAGED_IMAGE_CATALOG" >/dev/null || {
+            echo "::error::managed-image catalog does not contain one exact publication identity" >&2
+            exit 1
+          }
+          catalog_revision="$(jq -er '[.[].source.revision] | unique | .[0]' <<<"$MANAGED_IMAGE_CATALOG")"
+          jq -c . <<<"$MANAGED_IMAGE_CATALOG" >"$catalog_path"
+          [[ -s "$catalog_path" && ! -L "$catalog_path" ]] || {
+            echo "::error::temporary managed-image catalog is invalid" >&2
+            exit 1
+          }
+          printf 'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\n' "$catalog_path" >>"$GITHUB_ENV"
+          printf 'NEMOCLAW_E2E_MANAGED_IMAGE_REVISION=%s\n' "$catalog_revision" >>"$GITHUB_ENV"
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -5796,8 +5871,8 @@ jobs:
       matrix:
         runtime_provider: ${{ fromJSON(needs.generate-matrix.outputs.runtime_providers_by_job)['messaging-providers'] }}
     env:
-      E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
-      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      E2E_MANAGED_IMAGE_REVISION: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}
+      E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
       E2E_JOB: "1"
       E2E_GATEWAY_RUNTIMES: docker,podman

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,15 +10,24 @@ import {
   parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ManagedImageContractCatalog,
+  type ManagedImageContractV1,
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import {
   baseImageInputsChanged,
   githubRequest,
   parseBaseImagePushPaths,
 } from "./base-image-publication.mts";
+import {
+  bindNamedExactArtifact,
+  downloadBoundArtifact,
+  materializeContractArchive,
+} from "./exact-artifact-download.mts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const BASE_IMAGE_WORKFLOW_PATH = ".github/workflows/base-image.yaml";
+const MANAGED_IMAGE_WORKFLOW_FILE = "managed-images.yaml";
+const MANAGED_IMAGE_WORKFLOW_NAME = "Images / Build, Test, and Publish Managed Images";
+const MANAGED_IMAGE_WORKFLOW_PATH = ".github/workflows/managed-images.yaml";
 const MAX_COMMIT_TREE_ENTRIES = 100_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
@@ -26,6 +36,12 @@ const TREE_ENTRY_TYPES = new Set(["blob", "commit", "tree"]);
 type JsonRecord = Record<string, unknown>;
 
 export type PrManagedImageSource = "local-dockerfile" | "managed-image";
+
+export interface ManagedImagePublicationRun {
+  readonly id: number;
+  readonly attempt: number;
+  readonly headSha: string;
+}
 
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -45,7 +61,7 @@ function exactString(value: unknown, expected: string, label: string): void {
   if (value !== expected) throw new Error(`${label} must be ${expected}`);
 }
 
-function assembleManagedImageCatalog(
+export function assembleManagedImageCatalog(
   values: readonly unknown[],
   candidateSha: string,
 ): ManagedImageContractCatalog {
@@ -79,7 +95,7 @@ function assembleManagedImageCatalog(
   );
 }
 
-function writeManagedImageCatalog(
+export function writeManagedImageCatalog(
   contractPaths: readonly string[],
   candidateSha: string,
   outputPath: string,
@@ -235,6 +251,134 @@ export async function resolvePrManagedImageSource(
   return baseImageInputsChanged(changedFiles, patterns) ? "local-dockerfile" : "managed-image";
 }
 
+function validateManagedImageWorkflow(payload: unknown): number {
+  const workflow = record(payload, "managed-image workflow");
+  const id = positiveInteger(workflow.id, "managed-image workflow id");
+  exactString(workflow.name, MANAGED_IMAGE_WORKFLOW_NAME, "managed-image workflow name");
+  exactString(workflow.path, MANAGED_IMAGE_WORKFLOW_PATH, "managed-image workflow path");
+  exactString(workflow.state, "active", "managed-image workflow state");
+  return id;
+}
+
+export function selectManagedImagePublicationRun(
+  payload: unknown,
+  expected: { readonly headSha: string; readonly prNumber: number; readonly workflowId: number },
+): ManagedImagePublicationRun {
+  if (!SHA_PATTERN.test(expected.headSha)) throw new Error("candidate SHA is invalid");
+  positiveInteger(expected.prNumber, "PR number");
+  positiveInteger(expected.workflowId, "managed-image workflow id");
+  const response = record(payload, "managed-image workflow runs");
+  if (response.total_count !== 1 || !Array.isArray(response.workflow_runs)) {
+    throw new Error("exact managed-image workflow run is missing or ambiguous");
+  }
+  if (response.workflow_runs.length !== 1) {
+    throw new Error("exact managed-image workflow run listing is incomplete");
+  }
+  const run = record(response.workflow_runs[0], "managed-image workflow run");
+  const id = positiveInteger(run.id, "managed-image workflow run id");
+  const attempt = positiveInteger(run.run_attempt, "managed-image workflow run attempt");
+  if (run.workflow_id !== expected.workflowId) {
+    throw new Error("managed-image workflow run does not match the trusted workflow");
+  }
+  exactString(run.name, MANAGED_IMAGE_WORKFLOW_NAME, "managed-image workflow run name");
+  exactString(run.path, MANAGED_IMAGE_WORKFLOW_PATH, "managed-image workflow run path");
+  exactString(run.event, "pull_request", "managed-image workflow run event");
+  exactString(run.head_sha, expected.headSha, "managed-image workflow run commit");
+  exactString(
+    record(run.repository, "managed-image workflow repository").full_name,
+    REPOSITORY,
+    "managed-image workflow repository",
+  );
+  exactString(
+    record(run.head_repository, "managed-image workflow source repository").full_name,
+    REPOSITORY,
+    "managed-image workflow source repository",
+  );
+  if (
+    !Array.isArray(run.pull_requests) ||
+    run.pull_requests.length !== 1 ||
+    record(run.pull_requests[0], "managed-image workflow pull request").number !== expected.prNumber
+  ) {
+    throw new Error("managed-image workflow run does not match the PR number");
+  }
+  if (run.status !== "completed" || run.conclusion !== "success") {
+    throw new Error(
+      `managed-image workflow for candidate ${expected.headSha} must complete successfully before live E2E`,
+    );
+  }
+  return { id, attempt, headSha: expected.headSha };
+}
+
+/** Resolve the exact amd64 all-agent catalog before candidate code executes. */
+export async function resolvePrManagedImageCatalog(
+  input: {
+    readonly baseSha: string;
+    readonly candidateRepository: string;
+    readonly candidateSha: string;
+    readonly outputPath: string;
+    readonly prNumber: number;
+    readonly token: string;
+    readonly workflowSource: string;
+  },
+  request: (apiPath: string) => Promise<unknown> = (apiPath) => githubRequest(apiPath, input.token),
+): Promise<"not-required" | "written"> {
+  if (!SHA_PATTERN.test(input.baseSha) || !SHA_PATTERN.test(input.candidateSha)) {
+    throw new Error("PR base and candidate SHAs are required");
+  }
+  positiveInteger(input.prNumber, "PR number");
+  if (!input.token) throw new Error("GITHUB_TOKEN is required");
+  validatePr(await request(`/repos/${REPOSITORY}/pulls/${input.prNumber}`), input);
+  const changedFiles = await readChangedFiles(input, request);
+  const patterns = parseBaseImagePushPaths(input.workflowSource);
+  if (!baseImageInputsChanged(changedFiles, patterns)) return "not-required";
+  if (input.candidateRepository !== REPOSITORY) {
+    throw new Error("Podman candidate managed-image qualification requires an NVIDIA-owned PR");
+  }
+
+  const workflowId = validateManagedImageWorkflow(
+    await request(`/repos/${REPOSITORY}/actions/workflows/${MANAGED_IMAGE_WORKFLOW_FILE}`),
+  );
+  const runs = await request(
+    `/repos/${REPOSITORY}/actions/workflows/${MANAGED_IMAGE_WORKFLOW_FILE}/runs?event=pull_request&head_sha=${input.candidateSha}&per_page=100`,
+  );
+  const run = selectManagedImagePublicationRun(runs, {
+    headSha: input.candidateSha,
+    prNumber: input.prNumber,
+    workflowId,
+  });
+
+  const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-managed-catalog-"));
+  try {
+    const contracts: ManagedImageContractV1[] = [];
+    for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
+      const name = `managed-pr-contract-${run.id}-${run.attempt}-${agent}`;
+      const metadata = await request(
+        `/repos/${REPOSITORY}/actions/runs/${run.id}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
+      );
+      const identity = bindNamedExactArtifact(
+        metadata,
+        { headSha: run.headSha, runAttempt: run.attempt, runId: run.id },
+        name,
+      );
+      const archive = await downloadBoundArtifact(identity, input.token);
+      const contractPath = materializeContractArchive(archive, path.join(tempDirectory, agent));
+      contracts.push(
+        JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown as ManagedImageContractV1,
+      );
+    }
+    const catalog = assembleManagedImageCatalog(contracts, input.candidateSha);
+    fs.mkdirSync(path.dirname(path.resolve(input.outputPath)), { mode: 0o700, recursive: true });
+    fs.writeFileSync(input.outputPath, `${JSON.stringify(catalog)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    return "written";
+  } finally {
+    fs.rmSync(tempDirectory, { force: true, recursive: true });
+  }
+}
+
 function requiredInteger(value: string | undefined, label: string): number {
   if (!value || !/^[1-9][0-9]*$/u.test(value)) throw new Error(`${label} is required`);
   return positiveInteger(Number(value), label);
@@ -249,7 +393,23 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     console.log("pr-managed-image-catalog outcome=assembled");
     return;
   }
-  if (argv.length !== 1 || argv[0] !== "select-source") throw new Error("expected select-source");
+  if (argv[0] === "resolve-catalog") {
+    if (argv.length !== 2) throw new Error("expected resolve-catalog and one output path");
+    const result = await resolvePrManagedImageCatalog({
+      baseSha: env.BASE_SHA ?? "",
+      candidateRepository: env.CANDIDATE_REPOSITORY ?? "",
+      candidateSha: env.CANDIDATE_SHA ?? "",
+      outputPath: argv[1]!,
+      prNumber: requiredInteger(env.PR_NUMBER, "PR_NUMBER"),
+      token: env.GITHUB_TOKEN ?? "",
+      workflowSource: fs.readFileSync(BASE_IMAGE_WORKFLOW_PATH, "utf8"),
+    });
+    console.log(`pr-managed-image-catalog outcome=${result}`);
+    return;
+  }
+  if (argv.length !== 1 || argv[0] !== "select-source") {
+    throw new Error("expected select-source or resolve-catalog");
+  }
   const source = await resolvePrManagedImageSource({
     baseSha: env.BASE_SHA ?? "",
     candidateRepository: env.CANDIDATE_REPOSITORY ?? "",

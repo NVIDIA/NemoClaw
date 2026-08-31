@@ -317,6 +317,9 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
     !isDeepStrictEqual(record(packageStep.env), {
       CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository || github.repository }}",
       CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
+      MANAGED_IMAGE_CATALOG: "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}",
+      MANAGED_IMAGE_CATALOG_SHA256:
+        "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog_sha256 }}",
       RUN_ATTEMPT: "${{ github.run_attempt }}",
       RUN_ID: "${{ github.run_id }}",
       WORKFLOW_SHA: "${{ github.workflow_sha }}",
@@ -335,6 +338,9 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
     'artifact_catalog="dist/e2e-managed-image-catalog.json"',
     '[[ ! -e "$artifact_catalog" && ! -L "$artifact_catalog" ]]',
     "candidate build created the managed-image catalog path",
+    'managed_catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"',
+    "trusted PR managed-image catalog changed after authentication",
+    "packaged PR managed-image catalog does not match trusted output",
 
     ".sourceRevision == $candidateSha",
     "candidate CLI build identity does not match the candidate commit SHA",

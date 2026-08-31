@@ -27,6 +27,10 @@ const MATRIX_AGENT_EXPRESSION = "${{ matrix.agent }}";
 const MATRIX_RUNTIME_PROVIDER_EXPRESSION = "${{ matrix.runtime_provider }}";
 const DOCKER_EXACT_MAIN_PROOF_EXPRESSION =
   "${{ matrix.runtime_provider == 'docker' && '1' || '0' }}";
+const MANAGED_IMAGE_REVISION_EXPRESSION =
+  "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}";
+const MANAGED_IMAGE_RECEIPT_EXPRESSION =
+  "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}";
 const TERMINAL_JOBS = [
   "release-qualification",
   "relevant-e2e",
@@ -175,13 +179,13 @@ function validateJobIdentity(
   requireEqual(
     errors,
     env.E2E_MANAGED_IMAGE_REVISION,
-    "${{ needs.base-image-publication.outputs.managed_image_revision }}",
+    MANAGED_IMAGE_REVISION_EXPRESSION,
     `${jobName} must receive the selected managed-image cohort revision`,
   );
   requireEqual(
     errors,
     env.E2E_MANAGED_IMAGE_COHORT_RECEIPT,
-    "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
+    MANAGED_IMAGE_RECEIPT_EXPRESSION,
     `${jobName} must receive the complete selected managed-image cohort receipt`,
   );
   requireEqual(
@@ -881,10 +885,8 @@ function validateCredentialWindowJob(
 
   const env = asRecord(job.env);
   const expectedEnv = {
-    E2E_MANAGED_IMAGE_REVISION:
-      "${{ needs.base-image-publication.outputs.managed_image_revision }}",
-    E2E_MANAGED_IMAGE_COHORT_RECEIPT:
-      "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
+    E2E_MANAGED_IMAGE_REVISION: MANAGED_IMAGE_REVISION_EXPRESSION,
+    E2E_MANAGED_IMAGE_COHORT_RECEIPT: MANAGED_IMAGE_RECEIPT_EXPRESSION,
     E2E_WORKLOAD_SOURCE: "${{ needs.generate-matrix.outputs.workload_source }}",
     E2E_JOB: "1",
     E2E_GATEWAY_RUNTIMES: "docker,podman",

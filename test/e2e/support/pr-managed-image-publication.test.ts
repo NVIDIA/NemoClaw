@@ -4,7 +4,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { githubRequest } from "../../../tools/e2e/base-image-publication.mts";
-import { resolvePrManagedImageSource } from "../../../tools/e2e/pr-managed-image-publication.mts";
+import {
+  resolvePrManagedImageSource,
+  selectManagedImagePublicationRun,
+} from "../../../tools/e2e/pr-managed-image-publication.mts";
 
 const BASE_SHA = "b".repeat(40);
 const CANDIDATE_SHA = "a".repeat(40);
@@ -21,6 +24,29 @@ const WORKFLOW_SOURCE = `on:
   workflow_dispatch:
 jobs: {}
 `;
+const WORKFLOW_ID = 42;
+
+function publicationRun(status = "completed", conclusion: string | null = "success") {
+  return {
+    total_count: 1,
+    workflow_runs: [
+      {
+        id: 99,
+        run_attempt: 1,
+        workflow_id: WORKFLOW_ID,
+        name: "Images / Build, Test, and Publish Managed Images",
+        path: ".github/workflows/managed-images.yaml",
+        event: "pull_request",
+        head_sha: CANDIDATE_SHA,
+        repository: { full_name: CANONICAL_REPOSITORY },
+        head_repository: { full_name: CANONICAL_REPOSITORY },
+        pull_requests: [{ number: PR_NUMBER }],
+        status,
+        conclusion,
+      },
+    ],
+  };
+}
 
 function treeEntry(path: string, sha: string) {
   return { mode: "100644", path, sha, type: "blob" };
@@ -115,5 +141,27 @@ describe("PR managed-image source selection", () => {
         },
       }),
     ).rejects.toThrow("GitHub API path must stay within an allowed repository");
+  });
+});
+
+describe("exact PR managed-image publication selection", () => {
+  it("accepts the unique successful exact-head publication", () => {
+    expect(
+      selectManagedImagePublicationRun(publicationRun(), {
+        headSha: CANDIDATE_SHA,
+        prNumber: PR_NUMBER,
+        workflowId: WORKFLOW_ID,
+      }),
+    ).toEqual({ id: 99, attempt: 1, headSha: CANDIDATE_SHA });
+  });
+
+  it("fails before E2E fanout while exact candidate publication is incomplete", () => {
+    expect(() =>
+      selectManagedImagePublicationRun(publicationRun("in_progress", null), {
+        headSha: CANDIDATE_SHA,
+        prNumber: PR_NUMBER,
+        workflowId: WORKFLOW_ID,
+      }),
+    ).toThrow("must complete successfully before live E2E");
   });
 });
