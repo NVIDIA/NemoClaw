@@ -388,7 +388,9 @@ describe("nemoclaw <name> recover", () => {
 
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain("gateway is running in 'stuck-sandbox'");
-      expect(combined).toContain("primary dashboard/API host forward could not be re-established");
+      expect(combined).toMatch(
+        /primary dashboard\/API host forward for sandbox 'stuck-sandbox' on port \d+ started a listener, but OpenShell did not confirm its ownership/,
+      );
       expect(combined).not.toContain("restored dashboard port forward");
     },
   );
