@@ -749,6 +749,11 @@ describe("created sandbox identity gate", () => {
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
     const deps = createGpuFlowDeps();
+    let nowMs = 0;
+    deps.now = () => nowMs;
+    vi.mocked(deps.sleep).mockImplementation((seconds) => {
+      nowMs += seconds * 1_000;
+    });
     vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
       sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
     );
@@ -814,6 +819,44 @@ describe("created sandbox identity gate", () => {
     expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
   });
 
+  it("rejects malformed owner-scoped publication before post-create effects (#9833)", async () => {
+    let nonce = "";
+    const input = noGpuInput();
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
+      sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
+    );
+    vi.mocked(deps.runOpenshell).mockReturnValue({
+      status: 0,
+      stdout: "Name: alpha\nState: Ready\n",
+      stderr: "",
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "returned no exact durable ID for created sandbox",
+    );
+
+    expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining(
+        `Durable sandbox identity fingerprint: ${fingerprintSandboxRecreateValue("alpha-sandbox-id")}`,
+      ),
+      fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+      nonce,
+    );
+    expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+    expect(patch.ensureApplied).not.toHaveBeenCalled();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
+  });
+
   it("stops when owner-scoped sandbox publication exceeds the deadline (#9833)", async () => {
     let nonce = "";
     const input = noGpuInput();
@@ -827,6 +870,11 @@ describe("created sandbox identity gate", () => {
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
     const deps = createGpuFlowDeps();
+    let nowMs = 0;
+    deps.now = () => nowMs;
+    vi.mocked(deps.sleep).mockImplementation((seconds) => {
+      nowMs += seconds * 1_000;
+    });
     vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
       sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
     );
@@ -852,6 +900,7 @@ describe("created sandbox identity gate", () => {
     expect(patch.exitOnPatchError).not.toHaveBeenCalled();
     expect(patch.ensureApplied).not.toHaveBeenCalled();
     expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
+    expect(deps.sleep).toHaveBeenCalledExactlyOnceWith(0.001);
   });
 
   it("rejects a same-name replacement before post-create effects (#9833)", async () => {

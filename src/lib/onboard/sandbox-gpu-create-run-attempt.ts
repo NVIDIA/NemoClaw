@@ -69,7 +69,7 @@ export type SandboxGpuCreateAttemptState = {
 // to live validation or the GPU proof.
 const REPLACEMENT_STABLE_READY_POLLS = 2;
 const SANDBOX_READY_PROBE_TIMEOUT_MS = 5_000;
-const CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS = 1;
+const CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_MS = 1_000;
 
 async function streamSandboxCreateWithPublicImageCredentialIsolation(
   isolate: boolean,
@@ -399,41 +399,38 @@ function waitForCreatedOpenShellSandboxPublication(
   deps: SandboxGpuCreateFlowDeps,
 ): void {
   const timeoutMs = Math.max(1, Math.round(input.sandboxReadyTimeoutSecs * 1_000));
-  const pollIntervalMs = CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS * 1_000;
-  const deadlineMs = Date.now() + timeoutMs;
-  const maxAttempts = Math.ceil(timeoutMs / Math.max(1, pollIntervalMs)) + 1;
-  let published = false;
-  for (let attempt = 0; attempt < maxAttempts && Date.now() < deadlineMs; attempt += 1) {
-    const getRemainingMs = (): number => Math.max(1, deadlineMs - Date.now());
-    const result = deps.runOpenshell(
-      ["sandbox", "get", "-g", input.gatewayName, input.sandboxName],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: Math.min(SANDBOX_READY_PROBE_TIMEOUT_MS, getRemainingMs()),
-        killSignal: "SIGKILL",
-      },
-    );
-    if (result.status === 0 && !result.error) {
-      const publishedSandboxId = parseOpenShellSandboxId(String(result.stdout ?? ""));
-      if (!publishedSandboxId) {
-        throw new Error(
-          `OpenShell returned no exact durable ID for created sandbox '${input.sandboxName}'.`,
-        );
+  const published = sandboxReadinessTracing.waitForCreatedSandboxPublication({
+    budgetMs: timeoutMs,
+    pollIntervalMs: CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_MS,
+    now: deps.now,
+    sleep: deps.sleep,
+    probe: (getRemainingMs) => {
+      const result = deps.runOpenshell(
+        ["sandbox", "get", "-g", input.gatewayName, input.sandboxName],
+        {
+          ignoreError: true,
+          suppressOutput: true,
+          timeout: Math.min(SANDBOX_READY_PROBE_TIMEOUT_MS, getRemainingMs()),
+          killSignal: "SIGKILL",
+        },
+      );
+      if (result.status === 0 && !result.error) {
+        const publishedSandboxId = parseOpenShellSandboxId(String(result.stdout ?? ""));
+        if (!publishedSandboxId) {
+          throw new Error(
+            `OpenShell returned no exact durable ID for created sandbox '${input.sandboxName}'.`,
+          );
+        }
+        if (publishedSandboxId !== sandboxId) {
+          throw new Error(
+            `Created sandbox '${input.sandboxName}' changed identity before identity verification completed.`,
+          );
+        }
+        return true;
       }
-      if (publishedSandboxId !== sandboxId) {
-        throw new Error(
-          `Created sandbox '${input.sandboxName}' changed identity before identity verification completed.`,
-        );
-      }
-      published = true;
-      break;
-    }
-    const remainingMs = deadlineMs - Date.now();
-    if (attempt + 1 < maxAttempts && remainingMs > 0) {
-      deps.sleep(Math.min(pollIntervalMs, remainingMs) / 1_000);
-    }
-  }
+      return false;
+    },
+  });
   if (!published) {
     throw new Error(
       `Created sandbox '${input.sandboxName}' did not become visible through its owning gateway before identity verification completed.`,
