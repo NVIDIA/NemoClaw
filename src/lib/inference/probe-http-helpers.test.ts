@@ -18,7 +18,10 @@ afterEach(() => {
 describe("validation probe curl timing helpers", () => {
   it("derives a tighter fast-network profile from calibration latency", () => {
     expect(
-      buildValidationProbeTimingProfile({ isWsl: false, calibration: { ok: true, durationMs: 180 } }),
+      buildValidationProbeTimingProfile({
+        isWsl: false,
+        calibration: { ok: true, durationMs: 180 },
+      }),
     ).toEqual({
       connectTimeoutSeconds: 5,
       maxTimeSeconds: 15,
@@ -27,17 +30,15 @@ describe("validation probe curl timing helpers", () => {
     });
     expect(
       getValidationProbeCurlArgs({ isWsl: false, calibration: { ok: true, durationMs: 180 } }),
-    ).toEqual([
-      "--connect-timeout",
-      "5",
-      "--max-time",
-      "15",
-    ]);
+    ).toEqual(["--connect-timeout", "5", "--max-time", "15"]);
   });
 
   it("derives a slower non-WSL profile from calibration latency", () => {
     expect(
-      buildValidationProbeTimingProfile({ isWsl: false, calibration: { ok: true, durationMs: 6_400 } }),
+      buildValidationProbeTimingProfile({
+        isWsl: false,
+        calibration: { ok: true, durationMs: 6_400 },
+      }),
     ).toEqual({
       connectTimeoutSeconds: 28,
       maxTimeSeconds: 42,
@@ -52,7 +53,10 @@ describe("validation probe curl timing helpers", () => {
     // milliseconds while the POST needs tens of seconds, so the calibrated
     // budget must not fall below the floor the uncalibrated branch applies.
     expect(
-      buildValidationProbeTimingProfile({ isWsl: true, calibration: { ok: true, durationMs: 180 } }),
+      buildValidationProbeTimingProfile({
+        isWsl: true,
+        calibration: { ok: true, durationMs: 180 },
+      }),
     ).toEqual({
       connectTimeoutSeconds: 20,
       maxTimeSeconds: 30,

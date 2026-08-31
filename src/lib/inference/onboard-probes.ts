@@ -1079,7 +1079,8 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     const baseMessage = failures
       .map((failure) => `${failure.name}: ${failure.message}`)
       .join(" | ");
-    const wslHint = isWsl({ isWsl: options.isWsl }) && retriedAfterTimeout
+    const wslHint =
+      isWsl({ isWsl: options.isWsl }) && retriedAfterTimeout
         ? " · " + WSL_SLOW_VERIFICATION_ADVISORY
         : "";
     return {

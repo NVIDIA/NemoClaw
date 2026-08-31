@@ -92,11 +92,19 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       message: string;
     };
 
-    function runProbeWithResults(results: ProbeResultFixture[], opts: { isWsl?: boolean } = {}) {
+    function runProbeWithResults(
+      results: ProbeResultFixture[],
+      opts: {
+        isWsl?: boolean;
+        probeStreaming?: boolean;
+        streamingResult?: { ok: boolean; missingEvents: string[]; message: string };
+      } = {},
+    ) {
       const httpProbePath = require.resolve("../../src/lib/adapters/http/probe.js");
       const probesPath = require.resolve("../../src/lib/inference/onboard-probes.js");
       const httpProbe = require(httpProbePath);
       const originalRunCurlProbe = httpProbe.runCurlProbe;
+      const originalRunStreamingEventProbe = httpProbe.runStreamingEventProbe;
       const atomics = globalThis as typeof globalThis & {
         Atomics: { wait: (...args: never[]) => "ok" | "not-equal" | "timed-out" };
       };
@@ -107,6 +115,9 @@ describe("WSL2 inference verification timeouts (#987)", () => {
         calls.push(args);
         return results[index++] ?? results[results.length - 1];
       };
+      if (opts.streamingResult) {
+        httpProbe.runStreamingEventProbe = () => opts.streamingResult;
+      }
       atomics.Atomics.wait = () => "ok";
       delete require.cache[probesPath];
       try {
@@ -116,14 +127,16 @@ describe("WSL2 inference verification timeouts (#987)", () => {
             model: string,
             apiKey: string,
             options?: Record<string, unknown>,
-          ) => { ok: boolean; message?: string };
+          ) => { ok: boolean; advisory?: string; message?: string };
         };
         const result = probeOpenAiLikeEndpoint("http://localhost:8000", "test-model", "key", {
           isWsl: opts.isWsl ?? false,
+          probeStreaming: opts.probeStreaming ?? false,
         });
         return { result, calls };
       } finally {
         httpProbe.runCurlProbe = originalRunCurlProbe;
+        httpProbe.runStreamingEventProbe = originalRunStreamingEventProbe;
         atomics.Atomics.wait = originalWait;
         delete require.cache[probesPath];
       }
@@ -207,6 +220,31 @@ describe("WSL2 inference verification timeouts (#987)", () => {
       expect(result.message).toContain("WSL2 detected");
       // Names the lever onboarding honours; there is no validation bypass flag.
       expect(result.message).toContain("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS");
+    });
+
+    it("omits the standard timeout advice for the fixed streaming deadline (#10413)", () => {
+      const success = {
+        ok: true,
+        curlStatus: 0,
+        httpStatus: 200,
+        body: "{}",
+        stderr: "",
+        message: "ok",
+      };
+      const { result } = runProbeWithResults([success], {
+        isWsl: true,
+        probeStreaming: true,
+        streamingResult: {
+          ok: false,
+          missingEvents: [],
+          message: "streaming validation timed out",
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain("streaming validation timed out");
+      expect(result.advisory).toBeUndefined();
+      expect(result.message).not.toContain("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS");
     });
 
     it("uses calibrated fast-network timing for provider validation", () => {
