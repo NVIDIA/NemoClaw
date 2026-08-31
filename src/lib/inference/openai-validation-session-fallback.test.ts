@@ -13,6 +13,8 @@ import {
   useOpenAiValidationTestServers,
 } from "./openai-validation-session.test-helpers";
 
+const { probeOpenAiLikeEndpointOptimized } = require("./onboard-probes");
+
 const listen = useOpenAiValidationTestServers();
 
 afterEach(() => {
@@ -307,5 +309,60 @@ describe("OpenAI validation curl fallback", () => {
     expect(result).toMatchObject({ ok: true, api: "openai-completions" });
     expect(legacyProbe).toHaveBeenCalledTimes(1);
     expect(harness.sessionOptions!.lookup).not.toHaveBeenCalled();
+  });
+});
+
+describe("WSL2 advisory on native terminal failures (#10413)", () => {
+  async function probeUntilNativeTransportFailure(isWsl: boolean) {
+    let requests = 0;
+    // The reasoning-budget retry runs first, then the connection drops, which is
+    // the native-session path that returns its own terminal failure.
+    const replyPlan = [
+      (response: http.ServerResponse) => {
+        response.setHeader("content-type", "application/json");
+        response.end(
+          '{"choices":[{"finish_reason":"length","message":{"content":"","reasoning_content":"Planning the tool call."}}]}',
+        );
+      },
+    ];
+    const dropConnection = (response: http.ServerResponse) => response.socket?.destroy();
+    const server = http.createServer((request, response) => {
+      request.resume();
+      const reply = replyPlan[requests] ?? dropConnection;
+      requests += 1;
+      reply(response);
+    });
+    const port = await listen(server);
+    return (await probeOpenAiLikeEndpointOptimized(
+      `http://provider.example.test:${port}/v1`,
+      "qwen3-vl:4b",
+      "test-key",
+      {
+        skipResponsesProbe: true,
+        requireChatCompletionsToolCalling: true,
+        isWsl,
+        validationSessionOptions: {
+          env: {},
+          lookup: vi.fn(async () => [{ address: "127.0.0.1", family: 4 }]),
+          allowPrivateAddressesForTesting: true,
+        },
+      },
+    )) as { ok: boolean; message?: string; advisory?: string };
+  }
+
+  it("carries the advisory when the reasoning retry ends in a transport failure", async () => {
+    const result = await probeUntilNativeTransportFailure(true);
+
+    expect(result.ok).toBe(false);
+    expect(result.advisory).toContain("--skip-verify");
+    expect(result.message).toContain("WSL2 detected");
+  });
+
+  it("omits the advisory off WSL2", async () => {
+    const result = await probeUntilNativeTransportFailure(false);
+
+    expect(result.ok).toBe(false);
+    expect(result.advisory).toBeUndefined();
+    expect(result.message).not.toContain("WSL2 detected");
   });
 });

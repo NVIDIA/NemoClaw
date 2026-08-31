@@ -1097,7 +1097,7 @@ export async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKe
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
   const validationTiming = resolveOpenAiLikeValidationTiming(baseUrl, options);
   const sessionProbeOptions = validationTiming ? { ...options, validationTiming } : options;
-  return probeOpenAiLikeEndpointWithValidationSession(
+  const result = await probeOpenAiLikeEndpointWithValidationSession(
     endpointUrl,
     model,
     normalizedKey,
@@ -1121,6 +1121,29 @@ export async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKe
       sessionOptions: sessionProbeOptions.validationSessionOptions,
     },
   );
+  return withWslSlowVerificationAdvisory(result, options);
+}
+
+// The native validation session returns its own terminal failures instead of
+// delegating to the legacy probe, so it never reaches the advisory that the
+// legacy probe attaches. Re-attach it here from the transport status the
+// failure already carries, so both transports give a WSL2 operator the same
+// `--skip-verify` next step (#10413).
+function withWslSlowVerificationAdvisory(result, options) {
+  if (
+    result.ok ||
+    result.advisory ||
+    !isWsl({ isWsl: options.isWsl }) ||
+    !Array.isArray(result.failures) ||
+    !result.failures.some((failure) => isTimeoutOrConnFailureStatus(failure?.curlStatus))
+  ) {
+    return result;
+  }
+  return {
+    ...result,
+    message: `${result.message} · ${WSL_SLOW_VERIFICATION_ADVISORY}`,
+    advisory: WSL_SLOW_VERIFICATION_ADVISORY,
+  };
 }
 
 // ── Anthropic probe ──────────────────────────────────────────────
