@@ -9,8 +9,6 @@ import {
   resetDestroyModuleCache,
 } from "../../../../test/helpers/destroy-flow-test-harness";
 
-const SHIELDS_REFUSAL = "OpenClaw sandbox 'alpha' has shields up or an unreadable shields posture.";
-
 describe("forced OpenClaw MCP destroy", () => {
   let exitSpy: MockInstance;
   let originalGatewayEnv: string | undefined;
@@ -65,7 +63,7 @@ describe("forced OpenClaw MCP destroy", () => {
       agent: "openclaw",
       deleteOutput: "delete failed",
       deleteStatus: 7,
-      mcpAdapterScrubSkipped: SHIELDS_REFUSAL,
+      mcpAdapterScrubSkipped: true,
       mcpServers: ["github"],
       shieldsDown: false,
     });
@@ -76,7 +74,7 @@ describe("forced OpenClaw MCP destroy", () => {
 
     expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).toHaveBeenCalledWith(
       "alpha",
-      expect.objectContaining({ adapterScrubSkipped: SHIELDS_REFUSAL }),
+      expect.objectContaining({ adapterScrubSkipped: true }),
     );
     expect(harness.shieldsDownSpy).not.toHaveBeenCalled();
     expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).not.toHaveBeenCalled();

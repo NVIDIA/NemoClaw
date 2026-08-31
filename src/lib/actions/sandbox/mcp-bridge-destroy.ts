@@ -62,8 +62,8 @@ function canForceSkipAdapterScrub(
 /**
  * Classify whether an in-sandbox adapter mutation preflight blocks destroy.
  *
- * Returns the refusal detail when `--force` may continue without the
- * in-sandbox adapter scrub, and rethrows otherwise. Without `--force` a destroy
+ * Returns true when `--force` may continue without the in-sandbox adapter
+ * scrub, and rethrows otherwise. Without `--force` a destroy
  * that could still complete cleanly is never silently degraded. The warning is
  * emitted here, at the decision, so it is still reported when a later teardown
  * step fails and this preparation never returns.
@@ -72,10 +72,10 @@ function classifyForcedAdapterScrubRefusal(
   sandboxName: string,
   assertAllowed: () => void,
   force: boolean,
-): string {
+): boolean {
   try {
     assertAllowed();
-    return "";
+    return false;
   } catch (error) {
     if (!force) throw error;
     const detail = redactBridgeSecretsForDisplay(
@@ -87,7 +87,7 @@ function classifyForcedAdapterScrubRefusal(
     console.warn(
       "  MCP policy and provider state remain until OpenShell confirms sandbox deletion. The workspace wipe can still remove the retained adapter entry.",
     );
-    return detail;
+    return true;
   }
 }
 
@@ -125,8 +125,8 @@ export async function prepareMcpBridgesForDestroy(
   // discardSafeIncompleteMcpAdds, which may remove the generated live policy key for a
   // providerless preflighted add. That cleanup has no adapter/provider to
   // probe; complete entries get the teardown runtime probe after retry markers.
-  let adapterScrubRefusal = adapterScrubAlreadySettled
-    ? ""
+  let adapterScrubSkipped = adapterScrubAlreadySettled
+    ? false
     : classifyForcedAdapterScrubRefusal(
         sandboxName,
         () =>
@@ -188,19 +188,19 @@ export async function prepareMcpBridgesForDestroy(
   }
 
   await ensureSandboxGatewaySelected(sandboxName);
-  adapterScrubRefusal ||= classifyForcedAdapterScrubRefusal(
+  adapterScrubSkipped ||= classifyForcedAdapterScrubRefusal(
     sandboxName,
     () => assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries),
     force && canForceSkipAdapterScrub(sandbox, entries),
   );
-  if (adapterScrubRefusal) {
+  if (adapterScrubSkipped) {
     return {
       entries,
       detachedProviderEntries: [],
       scrubbedAdapterEntries: [],
       destroyAlreadyPrepared: false,
       destroyAlreadyPending: false,
-      adapterScrubSkipped: adapterScrubRefusal,
+      adapterScrubSkipped: true,
     };
   }
   const detached: McpBridgeEntry[] = [];

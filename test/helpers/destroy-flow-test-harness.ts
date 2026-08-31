@@ -105,7 +105,7 @@ type DestroyHarnessOptions = {
   onPrepareManagedLlamaCppRuntimeCleanup?: () => void;
   preparedManagedLlamaCppRuntimeCleanup?: PreparedManagedLlamaCppRuntimeCleanup | null;
   mcpAddState?: "prepared";
-  mcpAdapterScrubSkipped?: string;
+  mcpAdapterScrubSkipped?: true;
   mcpServers?: string[];
   openshellDriver?: string;
   portableCommandError?: string;
@@ -616,9 +616,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     scrubbedAdapterEntries: preparedServers.map((server) => ({ server })),
     destroyAlreadyPrepared: false,
     destroyAlreadyPending: false,
-    ...(options.mcpAdapterScrubSkipped
-      ? { adapterScrubSkipped: options.mcpAdapterScrubSkipped }
-      : {}),
+    ...(options.mcpAdapterScrubSkipped ? { adapterScrubSkipped: true as const } : {}),
   };
   const gatewayPinsAtMcpPrepare: Array<string | undefined> = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

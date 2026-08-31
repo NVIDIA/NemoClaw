@@ -138,7 +138,7 @@ describe("prepareMcpBridgesForDestroy adapter-scrub refusal", () => {
       throw new Error(SHIELDS_REFUSAL);
     });
     const preparation = await prepareMcpBridgesForDestroy("alpha", { force: true });
-    expect(preparation.adapterScrubSkipped).toContain(SHIELDS_REFUSAL);
+    expect(preparation.adapterScrubSkipped).toBe(true);
     expect(preparation.scrubbedAdapterEntries).toEqual([]);
     expect(preparation.detachedProviderEntries).toEqual([]);
     expect(mocks.scrubManagedMcpAdapterOrThrow).not.toHaveBeenCalled();
@@ -153,7 +153,7 @@ describe("prepareMcpBridgesForDestroy adapter-scrub refusal", () => {
       throw new Error(SHIELDS_REFUSAL);
     });
     const preparation = await prepareMcpBridgesForDestroy("alpha", { force: true });
-    expect(preparation.adapterScrubSkipped).toContain(SHIELDS_REFUSAL);
+    expect(preparation.adapterScrubSkipped).toBe(true);
     expect(preparation.scrubbedAdapterEntries).toEqual([]);
     expect(preparation.detachedProviderEntries).toEqual([]);
     expect(mocks.scrubManagedMcpAdapterOrThrow).not.toHaveBeenCalled();
