@@ -92,6 +92,21 @@ function runGuard(
   return { ...result, lines };
 }
 
+function observeFixtureFile(filePath: string): {
+  ino: number;
+  mode: number;
+  content: string;
+} {
+  const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
+  try {
+    const observed = fs.fstatSync(fd);
+    return { ino: observed.ino, mode: observed.mode, content: fs.readFileSync(fd, "utf8") };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 afterEach(() => {
   fixtureRoot && fs.rmSync(fixtureRoot, { recursive: true, force: true });
   fixtureRoot = null;
@@ -131,16 +146,16 @@ describe("read-only recursive mutable posture observation", () => {
         ),
       ),
     );
-    expect(fs.lstatSync(skillState)).toMatchObject({
+    expect(observeFixtureFile(skillState)).toMatchObject({
       ino: skillBefore.ino,
       mode: skillBefore.mode,
+      content: "state\n",
     });
-    expect(fs.lstatSync(pairingState)).toMatchObject({
+    expect(observeFixtureFile(pairingState)).toMatchObject({
       ino: pairingBefore.ino,
       mode: pairingBefore.mode,
+      content: "state\n",
     });
-    expect(fs.readFileSync(skillState, "utf8")).toBe("state\n");
-    expect(fs.readFileSync(pairingState, "utf8")).toBe("state\n");
     expect(fs.existsSync(path.join(root, ".openclaw-config-mutation.lock"))).toBe(false);
   });
 
@@ -295,11 +310,11 @@ describe("read-only recursive mutable posture observation", () => {
         detail: "entry is a regular file, expected directory",
       }),
     );
-    expect(fs.lstatSync(dashboardPath)).toMatchObject({
+    expect(observeFixtureFile(dashboardPath)).toMatchObject({
       ino: dashboardBefore.ino,
       mode: dashboardBefore.mode,
+      content: "dashboard\n",
     });
-    expect(fs.readFileSync(dashboardPath, "utf8")).toBe("dashboard\n");
     expect(fs.existsSync(path.join(root, ".openclaw-config-mutation.lock"))).toBe(false);
   });
 
