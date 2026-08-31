@@ -121,10 +121,48 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("created sandbox identity gate", () => {
+  it("keeps fresh-create readiness probes on the owning gateway (#9803)", async () => {
+    const gatewayName = "nemoclaw-18080";
+    const input = createGpuFlowInput();
+    input.gatewayName = gatewayName;
+    const deps = createGpuFlowDeps(gatewayName, true);
+    mocks.streamSandboxCreate.mockImplementationOnce(async (...args) => {
+      expect(args[3].readyCheck()).toBe(true);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce(async (options) => {
+      expect(options.target).toEqual({ kind: "named", gatewayName });
+      await expect(
+        options.observer.listSandboxes({ target: options.target }),
+      ).resolves.toMatchObject({ ok: true });
+      expect(options.checkReadyIdentity?.()).toBe("ready");
+      return { ready: true, reason: "ready", failurePhase: null };
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list", "-g", gatewayName], {
+      ignoreError: true,
+      timeout: 5_000,
+    });
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", gatewayName, "alpha"],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "exec", "-g", gatewayName, "--name", "alpha", "--", "true"],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+  });
+
   it("resumes the exact verified sandbox without issuing another create (#9833)", async () => {
     const events: string[] = [];
     const sandboxId = "alpha-sandbox-id";
+    const gatewayName = "nemoclaw-18080";
     const input = noGpuInput();
+    input.gatewayName = gatewayName;
     input.resumeVerifiedCreate = {
       route: "none",
       liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
@@ -154,7 +192,7 @@ describe("created sandbox identity gate", () => {
     });
     const deps = createGpuFlowDeps();
     vi.mocked(deps.runOpenshell).mockImplementation((args) =>
-      args.join(" ") === "sandbox get alpha"
+      args.join(" ") === `sandbox get -g ${gatewayName} alpha`
         ? { status: 0, stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`, stderr: "" }
         : { status: 0, stdout: "", stderr: "" },
     );
@@ -169,6 +207,10 @@ describe("created sandbox identity gate", () => {
     });
 
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", gatewayName, "alpha"],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
     expect(events).toEqual([
       "verify-created",
       "revalidate:activate managed sandbox network for 'alpha'",
@@ -199,7 +241,7 @@ describe("created sandbox identity gate", () => {
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     const deps = createGpuFlowDeps();
     vi.mocked(deps.runOpenshell).mockImplementation((args) =>
-      args.join(" ") === "sandbox get alpha"
+      args.join(" ") === "sandbox get -g nemoclaw alpha"
         ? { status: 0, stdout: "Name: alpha\nId: replacement-id\nState: Ready\n", stderr: "" }
         : { status: 0, stdout: "", stderr: "" },
     );
@@ -389,7 +431,7 @@ describe("created sandbox identity gate", () => {
     expect(firstIdentityTimeout as number).toBeGreaterThan(0);
     expect(firstIdentityTimeout as number).toBeLessThanOrEqual(30_000);
     expect(deps.runCaptureOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "get", "alpha"],
+      ["sandbox", "get", "-g", "nemoclaw", "alpha"],
       expect.anything(),
     );
     expect(deps.sleep).not.toHaveBeenCalled();
