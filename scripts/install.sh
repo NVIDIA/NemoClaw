@@ -3499,8 +3499,9 @@ stop_nemoclaw_openshell_gateway_user_service() {
 
   fragment_path="$(systemctl --user show "$service_name" --property=FragmentPath --value 2>/dev/null)" \
     || return 1
-  [ -n "$fragment_path" ] && [ "$fragment_path" -ef "$service_path" ] \
-    || error "Refusing to retire the OpenShell gateway because the active user service does not match ${service_path}."
+  if [ -z "$fragment_path" ] || ! [ "$fragment_path" -ef "$service_path" ]; then
+    error "Refusing to retire the OpenShell gateway because the active user service does not match ${service_path}."
+  fi
   gateway_bin="$(resolve_openshell_gateway_bin_for_user_service "$service_name")" \
     || return 1
   trusted_openshell_gateway_bin_for_service "$gateway_bin" \

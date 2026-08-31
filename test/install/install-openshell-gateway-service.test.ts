@@ -189,7 +189,7 @@ describe("install.sh OpenShell gateway service", () => {
 
   it("stages a user-local binary whose resolved path has duplicate slashes (#10541)", () => {
     const home = makeTempRoot();
-    const gatewayBin = userGatewayBin(home);
+    userGatewayBin(home);
     const doubled = `${home}//.local/bin/openshell-gateway`;
 
     const result = stageService(home, doubled);
