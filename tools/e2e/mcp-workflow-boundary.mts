@@ -172,13 +172,13 @@ function validateJobIdentity(
   requireEqual(
     errors,
     env.E2E_MANAGED_IMAGE_REVISION,
-    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
+    "${{ needs.base-image-publication.outputs.managed_image_revision }}",
     `${jobName} must receive the selected managed-image cohort revision`,
   );
   requireEqual(
     errors,
     env.E2E_MANAGED_IMAGE_COHORT_RECEIPT,
-    "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}",
+    "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
     `${jobName} must receive the complete selected managed-image cohort receipt`,
   );
   requireEqual(
@@ -879,9 +879,10 @@ function validateCredentialWindowJob(
   const env = asRecord(job.env);
   const expectedEnv = {
     E2E_MANAGED_IMAGE_REVISION:
-      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
+      "${{ needs.base-image-publication.outputs.managed_image_revision }}",
     E2E_MANAGED_IMAGE_COHORT_RECEIPT:
-      "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}",
+      "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
+    E2E_WORKLOAD_SOURCE: "${{ needs.generate-matrix.outputs.workload_source }}",
     E2E_JOB: "1",
     E2E_TARGET_ID: CREDENTIAL_WINDOW_JOB,
     E2E_AGENT_RUNTIME: "openclaw",
