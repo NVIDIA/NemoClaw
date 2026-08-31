@@ -275,6 +275,9 @@ function streamSandboxFollowLogs(
         markSourceDone(source, 1, error.message);
       });
       source.child.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
+        if (signal === "SIGPIPE") {
+          requestExitAfterSignal("SIGTERM", LOG_RELAY_BROKEN_PIPE_EXIT_CODE);
+        }
         markSourceDone(
           source,
           spawnExitCode({ status: code, signal }),

@@ -524,6 +524,19 @@ describe("follow-mode log source attribution (#10340)", () => {
     await expect(run.exited).resolves.toBe(141);
   });
 
+  it("terminates the gateway source after the raw source receives SIGPIPE (#10340)", async () => {
+    const run = startFollowRun({ keepOpenshellRunning: true });
+    const openshell = run.openshell as StreamingChild;
+
+    Object.assign(openshell.child, { signalCode: "SIGPIPE" });
+    openshell.child.emit("exit", null, "SIGPIPE");
+
+    expect(run.gateway.child.kill).toHaveBeenCalledWith("SIGTERM");
+    run.gateway.stdout.end();
+    run.gateway.child.emit("exit", null, "SIGTERM");
+    await expect(run.exited).resolves.toBe(141);
+  });
+
   it("reports a non-pipe output error and stops the gateway source (#10340)", async () => {
     const output = new PassThrough();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

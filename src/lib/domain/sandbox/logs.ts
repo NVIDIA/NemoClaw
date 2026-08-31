@@ -128,10 +128,10 @@ export function parseLineTimestamp(line: string): number | null {
 }
 
 /**
- * Source tag written in front of OpenClaw gateway-log lines that do not
- * already name a subsystem. `[gateway]` is the token the gateway log already
- * uses for its own structured lines, and the NemoClaw plugin writes the same
- * token in front of its registration banner (#7322).
+ * Source tag written in front of OpenClaw gateway-log lines unless the text
+ * after a recognised leading timestamp already starts with `[gateway]`.
+ * The gateway log uses this token for its own structured lines, and the
+ * NemoClaw plugin writes it in front of its registration banner (#7322).
  */
 export const GATEWAY_LOG_SOURCE_TAG = "[gateway]";
 
