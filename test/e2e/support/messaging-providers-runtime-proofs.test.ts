@@ -12,7 +12,7 @@ import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
-  fakeDockerApiPublishArgs,
+  fakeDockerApiNetworkPlan,
   isNvidiaEndpointRateLimitFailure,
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
@@ -40,14 +40,21 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
 
 describe("messaging provider installed-runtime proofs", () => {
   it.each([
-    ["discord-gateway", ["-p", "127.0.0.1::8080"]],
-    ["slack", ["-p", "127.0.0.1::8080", "-p", "127.0.0.1::8081"]],
-  ] as const)("publishes the fake %s API on loopback ephemeral ports", (kind, expected) => {
-    const args = fakeDockerApiPublishArgs(kind);
+    ["discord-gateway", ["-p", "8080"]],
+    ["slack", ["-p", "8080", "-p", "8081"]],
+  ] as const)("proxies the isolated fake %s API through ephemeral host ports", (kind, expected) => {
+    const plan = fakeDockerApiNetworkPlan(kind, "internal-fixture", "fixture-proxy");
 
-    expect(args).toEqual(expected);
-    expect(args).not.toContain("0:8080");
-    expect(args).not.toContain("0:8081");
+    expect(plan).toEqual({
+      apiRunNetworkArgs: ["--network", "internal-fixture"],
+      proxyRunNetworkArgs: ["--network", "bridge"],
+      proxyPublishArgs: expected,
+      proxyConnectArgs: ["network", "connect", "internal-fixture", "fixture-proxy"],
+    });
+    expect(plan.apiRunNetworkArgs).not.toContain("bridge");
+    expect(plan.apiRunNetworkArgs).not.toContain("-p");
+    expect(plan.proxyPublishArgs).not.toContain("0:8080");
+    expect(plan.proxyPublishArgs).not.toContain("0:8081");
   });
 
   it("uses a synthetic WeChat token even when the host exports one", () => {
