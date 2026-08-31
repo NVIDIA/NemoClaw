@@ -415,4 +415,39 @@ network_policies:
     expect(handoff.credentialBindingProviders).toEqual([]);
     expect(handoff.cleanup?.()).toBe(true);
   });
+
+  it("removes the Teams-owned Outlook login binding when Teams is disabled", () => {
+    const merged = mergeReplacementPolicyAccess(
+      `version: 1
+network_policies:
+  teams:
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+        credential_binding: {provider: alpha-teams-bridge}
+  outlook_graph:
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+        credential_binding: {provider: alpha-teams-bridge}
+`,
+      `version: 1
+network_policies:
+  outlook_graph:
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+`,
+      [],
+      ["teams"],
+      [],
+      "alpha",
+    );
+
+    expect(YAML.parse(merged.source).network_policies).toEqual({
+      outlook_graph: {
+        endpoints: [{ host: "login.microsoftonline.com", port: 443 }],
+      },
+    });
+  });
 });

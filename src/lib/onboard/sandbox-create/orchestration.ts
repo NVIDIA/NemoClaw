@@ -220,6 +220,7 @@ function selectRebuildCreatePolicy(
     return source;
   });
   return materializeRebuildPolicyHandoff({
+    sandboxName,
     livePolicyPath: policySourcePath,
     replacementPolicy: generatedPolicy,
     requiredNetworkPolicyKeys,

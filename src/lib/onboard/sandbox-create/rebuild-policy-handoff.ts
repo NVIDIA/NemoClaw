@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
+import * as policies from "../../policy";
 import { parseOpenShellPolicy, stripProviderComposedPolicies } from "../../policy/merge";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
@@ -231,8 +232,16 @@ export function mergeReplacementPolicyAccess(
   requiredNetworkPolicyKeys: readonly string[] = [],
   removedNetworkPolicyKeys: readonly string[] = [],
   requiredNetworkPolicySources: readonly string[] = [],
+  sandboxName?: string,
 ): { readonly changed: boolean; readonly source: string } {
-  const normalizedLivePolicySource = stripProviderComposedPolicies(livePolicySource);
+  const providerNormalizedLivePolicySource = stripProviderComposedPolicies(livePolicySource);
+  const normalizedLivePolicySource = removedNetworkPolicyKeys.includes("teams")
+    ? policies.reconcileTeamsOutlookLoginCredentialBinding(
+        providerNormalizedLivePolicySource,
+        sandboxName,
+        false,
+      )
+    : providerNormalizedLivePolicySource;
   const live = structuredClone(
     parseOpenShellPolicy(normalizedLivePolicySource).policy,
   ) as PolicyMapping;
@@ -258,6 +267,7 @@ export function mergeReplacementPolicyAccess(
 
 /** Materialize the single ephemeral policy input consumed by an explicit rebuild. */
 export function materializeRebuildPolicyHandoff(input: {
+  readonly sandboxName?: string;
   readonly livePolicyPath: string;
   readonly replacementPolicy: InitialSandboxPolicy;
   readonly requiredNetworkPolicyKeys?: readonly string[];
@@ -275,6 +285,7 @@ export function materializeRebuildPolicyHandoff(input: {
     input.requiredNetworkPolicyKeys,
     input.removedNetworkPolicyKeys,
     input.requiredNetworkPolicySources,
+    input.sandboxName,
   );
   if (!merged.changed) {
     return {
