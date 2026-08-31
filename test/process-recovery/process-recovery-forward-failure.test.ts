@@ -10,12 +10,58 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as forwardHealth from "../../src/lib/actions/sandbox/forward-health.js";
 import { ensureSandboxPortForwardForPort } from "../../src/lib/actions/sandbox/forward-recovery.js";
 import * as openshellRuntime from "../../src/lib/adapters/openshell/runtime.js";
-import {
-  LISTENER_DIAGNOSTIC,
-  SANDBOX_NOT_READY_DIAGNOSTIC,
-  stubForwardStartFailures,
-  stubForwardStartLostToAnotherSandbox,
-} from "./forward-readiness-retry-fixtures.js";
+
+const SANDBOX_NOT_READY_DIAGNOSTIC = `Error:   × code: 'The system is not in a state required for the operation's
+   │ execution', message: "sandbox is not ready"
+`;
+const LISTENER_DIAGNOSTIC = "ssh exited before local forward listener opened";
+const FORWARD_LIST_HEADER = "SANDBOX  BIND  PORT  PID  STATUS";
+
+type ForwardStartStubState = {
+  attempts: number;
+  started: boolean;
+};
+
+function forwardListOutput(owner: string | null, port: number): string {
+  return owner === null
+    ? FORWARD_LIST_HEADER
+    : `${FORWARD_LIST_HEADER}\n${owner}  127.0.0.1  ${port}  12345  running`;
+}
+
+function stubForwardStart(options: {
+  diagnostic: string;
+  failures: number;
+  owner?: () => string | null;
+  port?: number;
+  sandboxName?: string;
+}): ForwardStartStubState {
+  const sandboxName = options.sandboxName ?? "beta";
+  const port = options.port ?? 18791;
+  const state: ForwardStartStubState = { attempts: 0, started: false };
+
+  vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => state.started);
+  vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
+    status: 0,
+    output: forwardListOutput(options.owner?.() ?? (state.started ? sandboxName : null), port),
+  }));
+  vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation(
+    (rawArgs: unknown, rawOpts: unknown) => {
+      const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+      const isForwardStart = args[0] === "forward" && args[1] === "start";
+      state.attempts += Number(isForwardStart);
+      const succeeded = isForwardStart && state.attempts > options.failures;
+      state.started ||= succeeded;
+      const stdio = (rawOpts as { stdio?: unknown })?.stdio;
+      const handle = Array.isArray(stdio) ? stdio[1] : undefined;
+      isForwardStart &&
+        !succeeded &&
+        typeof handle === "number" &&
+        fs.writeSync(handle, options.diagnostic);
+      return { status: Number(isForwardStart && !succeeded) } as never;
+    },
+  );
+  return state;
+}
 
 const requireSource = createRequire(import.meta.url);
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
@@ -227,7 +273,7 @@ beta  127.0.0.1  18789  12345  dead`,
       forwardRecovered: false,
       forwardRecoveryFailed: true,
       forwardRecoveryFailureDetail:
-        "the primary dashboard/API host forward could not be re-established",
+        "the primary dashboard/API host forward for sandbox 'beta' on port 18789 did not recover because OpenShell rejected the start",
     });
     expect(teamsForwardStarted).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
@@ -427,7 +473,7 @@ gamma  127.0.0.1  18791  12345  running`
 describe("ensureSandboxPortForwardForPort readiness-handoff retries after stop (#10640)", () => {
   it("recovers the dashboard forward when OpenShell rejects the first starts as not ready", () => {
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "25");
-    const state = stubForwardStartFailures({
+    const state = stubForwardStart({
       diagnostic: SANDBOX_NOT_READY_DIAGNOSTIC,
       failures: 2,
     });
@@ -445,7 +491,7 @@ describe("ensureSandboxPortForwardForPort readiness-handoff retries after stop (
 
   it("recovers the dashboard forward when ssh exits before its listener opens", () => {
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "25");
-    const state = stubForwardStartFailures({ diagnostic: LISTENER_DIAGNOSTIC, failures: 1 });
+    const state = stubForwardStart({ diagnostic: LISTENER_DIAGNOSTIC, failures: 1 });
 
     expect(
       withFakeOpenshellBinary(() =>
@@ -460,7 +506,7 @@ describe("ensureSandboxPortForwardForPort readiness-handoff retries after stop (
 
   it("fails without retrying when OpenShell reports an unrelated forward failure", () => {
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    const state = stubForwardStartFailures({
+    const state = stubForwardStart({
       diagnostic: "Error: gateway authentication failed",
       failures: 99,
     });
@@ -476,9 +522,28 @@ describe("ensureSandboxPortForwardForPort readiness-handoff retries after stop (
     expect(state.attempts).toBe(1);
   });
 
-  it("stops retrying when another sandbox takes the port during the readiness settle", () => {
+  it("stops retrying when OpenShell forward state becomes unavailable", () => {
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    const state = stubForwardStartLostToAnotherSandbox({});
+    let attempts = 0;
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(false);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() =>
+      attempts === 0
+        ? { status: 0, output: FORWARD_LIST_HEADER }
+        : { status: 1, output: "OpenShell forward state unavailable" },
+    );
+    vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation(
+      (rawArgs: unknown, rawOpts: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        const isForwardStart = args[0] === "forward" && args[1] === "start";
+        attempts += Number(isForwardStart);
+        const stdio = (rawOpts as { stdio?: unknown })?.stdio;
+        const handle = Array.isArray(stdio) ? stdio[1] : undefined;
+        isForwardStart &&
+          typeof handle === "number" &&
+          fs.writeSync(handle, SANDBOX_NOT_READY_DIAGNOSTIC);
+        return { status: Number(isForwardStart) } as never;
+      },
+    );
 
     expect(
       withFakeOpenshellBinary(() =>
@@ -488,6 +553,88 @@ describe("ensureSandboxPortForwardForPort readiness-handoff retries after stop (
         }),
       ),
     ).toBe(false);
+    expect(attempts).toBe(1);
+  });
+
+  it("stops retrying when another sandbox takes the port during the readiness settle", () => {
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    let owner: string | null = null;
+    const state = stubForwardStart({
+      diagnostic: SANDBOX_NOT_READY_DIAGNOSTIC,
+      failures: 99,
+      owner: () => owner,
+    });
+
+    expect(
+      withFakeOpenshellBinary(() =>
+        ensureSandboxPortForwardForPort("beta", 18791, {
+          expectedBind: "127.0.0.1",
+          sleepMs: () => {
+            owner = "gamma";
+          },
+        }),
+      ),
+    ).toBe(false);
     expect(state.attempts).toBe(1);
+  });
+
+  it("reports when the OpenShell readiness retry limit is reached", () => {
+    const sourceForwardHealth = requireSource("../../src/lib/actions/sandbox/forward-health.ts");
+    const sourceOpenshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
+    const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
+    const registry = requireSource("../../src/lib/state/registry.ts");
+    const childProcess = requireSource("node:child_process");
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    let attempts = 0;
+    vi.spyOn(sourceForwardHealth, "isLocalForwardReachable").mockReturnValue(false);
+    vi.spyOn(sourceOpenshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output: FORWARD_LIST_HEADER,
+    });
+    vi.spyOn(sourceOpenshellRuntime, "runOpenshell").mockImplementation(
+      (rawArgs: unknown, rawOpts: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        const isForwardStart = args[0] === "forward" && args[1] === "start";
+        attempts += Number(isForwardStart);
+        const stdio = (rawOpts as { stdio?: unknown })?.stdio;
+        const handle = Array.isArray(stdio) ? stdio[1] : undefined;
+        isForwardStart &&
+          typeof handle === "number" &&
+          fs.writeSync(handle, SANDBOX_NOT_READY_DIAGNOSTIC);
+        return { status: Number(isForwardStart) } as never;
+      },
+    );
+    vi.spyOn(childProcess, "spawnSync").mockImplementation(
+      (_command: unknown, rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        const isLocalPortProbe = args[0] === "-e" && args[1]?.includes("net.createConnection");
+        return {
+          status: isLocalPortProbe ? 1 : 0,
+          stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+          stderr: "",
+        } as never;
+      },
+    );
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "beta",
+      agent: "openclaw",
+      dashboardPort: 18789,
+    });
+
+    const result = withFakeOpenshellBinary(() =>
+      checkAndRecoverSandboxProcesses("beta", { quiet: true }),
+    );
+
+    expect(attempts).toBe(13);
+    expect(result).toEqual({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      forwardRecovered: false,
+      forwardRecoveryFailed: true,
+      forwardRecoveryFailureDetail:
+        "the primary dashboard/API host forward for sandbox 'beta' on port 18789 reached the OpenShell readiness retry limit",
+    });
   });
 });

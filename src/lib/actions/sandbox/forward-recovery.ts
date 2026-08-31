@@ -68,10 +68,25 @@ type SandboxPortDeps = {
   getSessionAgent?: (sandboxName?: string) => SandboxPortAgent;
 };
 
+export type SandboxForwardRecoveryFailureReason =
+  | "forward-listener-retry-limit"
+  | "forward-ownership-unverified"
+  | "forward-readiness-retry-limit"
+  | "forward-start-failure"
+  | "forward-state-unavailable"
+  | "port-ownership-conflict";
+
+export type SandboxForwardRecoveryFailure = {
+  readonly port: number;
+  readonly reason: SandboxForwardRecoveryFailureReason;
+  readonly sandboxName: string;
+};
+
 type SandboxForwardRecoveryOptions = {
   afterSuccess?: () => boolean;
   beforeStart?: () => boolean;
   isWsl?: boolean;
+  onFailure?: (failure: SandboxForwardRecoveryFailure) => void;
 };
 
 type DashboardForwardStopRunner = (
@@ -210,6 +225,7 @@ export function ensureSandboxPortForward(
     forceRestart: remoteBindRequested,
     expectedBind: allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
     afterSuccess: options.afterSuccess,
+    onFailure: options.onFailure,
     beforeStart: () =>
       (!remoteBindRequested ||
         registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared === true) &&
@@ -274,6 +290,7 @@ export function ensureSandboxPortForwardForPort(
     forceRestart?: boolean;
     expectedBind?: string;
     beforeStart?: () => boolean;
+    onFailure?: (failure: SandboxForwardRecoveryFailure) => void;
     sleepMs?: (milliseconds: number) => void;
   } = {},
 ): boolean {
@@ -352,17 +369,11 @@ export function ensureSandboxPortForwardForPort(
   }
 
   if (!beforeStart()) return false;
-  // A sandbox that has just restarted can still be inside OpenShell's
-  // readiness handoff, so the first `forward start` can be rejected for a
-  // reason that clears on its own. Until #7227 this path was accidentally
-  // tolerant of that: a stopped sandbox left its host listener behind, so the
-  // reachability check below was usually true and absorbed the rejection. Now
-  // that `stop` genuinely releases the port, a single rejection is terminal
-  // unless recovery retries, which is what makes `start` after `stop` exit
-  // non-zero intermittently (#10640). Onboarding already absorbs the same
-  // OpenShell diagnostics, so recovery shares that one bounded policy rather
-  // than declaring a second one. An authoritative `occupied` verdict still
-  // fails closed immediately so a sibling sandbox's forward is never contended.
+  // After a sandbox restart, OpenShell can reject `forward start` during its
+  // readiness handoff. Before #7227, the retained host listener hid this
+  // rejection. Recovery retries the recognized transient diagnostic and fails
+  // closed when another sandbox owns the port.
+  let retryHealth: SandboxForwardHealth = forwardHealth;
   const startResult = runBackgroundForwardStartWithReadinessRetry({
     runForwardStart: (stdio) =>
       runOpenshell(["forward", "start", "--background", forwardTarget, sandboxName], {
@@ -370,10 +381,31 @@ export function ensureSandboxPortForwardForPort(
         stdio,
       }),
     isListenerReachable: () => isLocalForwardReachable(port),
-    isRetryAllowed: () =>
-      isSandboxPortForwardHealthy(sandboxName, port, expectedBind) !== "occupied",
+    isRetryAllowed: () => {
+      retryHealth = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+      return retryHealth === false;
+    },
     ...(options.sleepMs ? { sleepMs: options.sleepMs } : {}),
   });
+
+  const reportStartFailure = (health: SandboxForwardHealth): false => {
+    let reason: SandboxForwardRecoveryFailureReason;
+    if (health === "occupied") {
+      reason = "port-ownership-conflict";
+    } else if (health === null) {
+      reason = "forward-state-unavailable";
+    } else if (startResult.failureReason === "readiness-retry-limit") {
+      reason = "forward-readiness-retry-limit";
+    } else if (startResult.failureReason === "listener-retry-limit") {
+      reason = "forward-listener-retry-limit";
+    } else if (startResult.status === 0 || startResult.failureReason === "listener-reachable") {
+      reason = "forward-ownership-unverified";
+    } else {
+      reason = "forward-start-failure";
+    }
+    options.onFailure?.({ port, reason, sandboxName });
+    return false;
+  };
 
   // OpenShell 0.0.85 returns an error when start preflight finds a validated
   // live forward for the requested port. Recovery cannot change that upstream
@@ -381,7 +413,9 @@ export function ensureSandboxPortForwardForPort(
   // forward list below; an absent listener still fails fast. Remove this
   // tolerance once every supported OpenShell release makes `forward start`
   // idempotent for an already-tracked live forward.
-  if (startResult.status !== 0 && !isLocalForwardReachable(port)) return false;
+  if (startResult.status !== 0 && !isLocalForwardReachable(port)) {
+    return reportStartFailure(retryHealth);
+  }
 
   // `forward start --background` can return before its authoritative list
   // entry becomes visible. Poll for the exact live sandbox+port owner instead
@@ -389,8 +423,8 @@ export function ensureSandboxPortForwardForPort(
   // metadata refresh.
   let health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
   if (health === true) return acceptSuccessfulForward();
-  if (health === "occupied") return false;
-  if (waitMs === 0) return false;
+  if (health === "occupied") return reportStartFailure(health);
+  if (waitMs === 0) return reportStartFailure(health);
 
   let occupied = false;
   const settled = waitForForwardRecoveryState(() => {
@@ -401,7 +435,7 @@ export function ensureSandboxPortForwardForPort(
     }
     return health === true;
   }, waitMs);
-  return settled && !occupied && acceptSuccessfulForward();
+  return settled && !occupied ? acceptSuccessfulForward() : reportStartFailure(health);
 }
 
 export function ensureHermesDashboardPortForwardIfEnabled(sandboxName: string): boolean | null {

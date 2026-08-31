@@ -46,6 +46,7 @@ import {
   resolveSandboxDashboardPort,
   resolveSandboxLaunchForwardPorts,
   resolveSandboxHealthProbeUrl,
+  type SandboxForwardRecoveryFailure,
   verifyHermesPortableLaunchForwards,
   type HermesPortableForwardRecoveryFailure,
   type HermesPortableForwardRecoveryInput,
@@ -161,6 +162,24 @@ function auxiliaryRecoveryFailureDetail(results: AuxiliaryRecoveryResult[]): str
 
 function anyAuxiliaryRecovered(results: AuxiliaryRecoveryResult[]): boolean {
   return results.some((result) => result.recovered === true);
+}
+
+function primaryForwardRecoveryFailureDetail(failure: SandboxForwardRecoveryFailure): string {
+  const target = `the primary dashboard/API host forward for sandbox '${failure.sandboxName}' on port ${failure.port}`;
+  switch (failure.reason) {
+    case "forward-readiness-retry-limit":
+      return `${target} reached the OpenShell readiness retry limit`;
+    case "forward-listener-retry-limit":
+      return `${target} did not recover because the listener did not open within the retry limit`;
+    case "port-ownership-conflict":
+      return `${target} did not recover because another sandbox owns the port`;
+    case "forward-state-unavailable":
+      return `${target} could not be verified because OpenShell forward state became unavailable`;
+    case "forward-ownership-unverified":
+      return `${target} started a listener, but OpenShell did not confirm its ownership`;
+    case "forward-start-failure":
+      return `${target} did not recover because OpenShell rejected the start`;
+  }
 }
 
 function getSandboxHealthProbeUrl(sandboxName: string): string {
@@ -1453,8 +1472,14 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         console.log(`  Dashboard port forward to '${sandboxName}' is missing or dead.`);
         console.log("  Re-establishing...");
       }
+      let primaryForwardFailureDetail: string | undefined;
       const forwardRecovered = measure("forward", () =>
-        ensureSandboxPortForward(sandboxName, { isWsl: isWslOverride }),
+        ensureSandboxPortForward(sandboxName, {
+          isWsl: isWslOverride,
+          onFailure: (failure) => {
+            primaryForwardFailureDetail = primaryForwardRecoveryFailureDetail(failure);
+          },
+        }),
       );
       const dashboardForwardRecovered = measure("forward", () =>
         ensureHermesDashboardPortForwardIfEnabled(sandboxName),
@@ -1495,6 +1520,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           forwardRecovered: false,
           forwardRecoveryFailed: true,
           forwardRecoveryFailureDetail:
+            primaryForwardFailureDetail ??
             "the primary dashboard/API host forward could not be re-established",
         };
       }
@@ -1784,11 +1810,15 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     }
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;
+    let primaryForwardFailureDetail: string | undefined;
     const forwardRecovered = measure("forward", () =>
       ensureSandboxPortForward(sandboxName, {
         afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,
         beforeStart: confirmRelaunchedManagedHealthForForward ?? undefined,
         isWsl: isWslOverride,
+        onFailure: (failure) => {
+          primaryForwardFailureDetail = primaryForwardRecoveryFailureDetail(failure);
+        },
       }),
     );
     if (!forwardRecovered && relaunchedManagedHealth.failure) {
@@ -1839,6 +1869,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail:
+          primaryForwardFailureDetail ??
           "the primary dashboard/API host forward could not be re-established",
       });
     }

@@ -193,6 +193,7 @@ function blockingSleepMs(ms: number): void {
 // exposes an atomic recovery operation.
 const DEAD_FORWARD_GRACE_MS = 2_000;
 const SANDBOX_READY_RETRY_SETTLE_MS = 5_000;
+const FORWARD_START_MAX_RETRIES = 3;
 // A sandbox can remain between OpenShell's create-ready and forward-ready
 // states longer than the ordinary listener retry budget. Keep this
 // exact-diagnostic path bounded to one additional minute without widening
@@ -542,7 +543,7 @@ export function runDetachedForwardStartWithRetries(
   beforeRetryCleanup: () => void,
   options: DetachedForwardStartOptions = {},
 ): DetachedForwardStartOutcome {
-  const maxRetries = options.maxRetries ?? 3;
+  const maxRetries = options.maxRetries ?? FORWARD_START_MAX_RETRIES;
   const maxSandboxReadyRetries = options.maxRetries ?? SANDBOX_READY_MAX_RETRIES;
   const sleepImpl = options.sleepMs ?? blockingSleepMs;
   let deadForwardRecoveryAvailable = true;
@@ -590,10 +591,14 @@ export function runDetachedForwardStartWithRetries(
   return attempt;
 }
 
-export interface BackgroundForwardStartAttempt {
+export interface BackgroundForwardStartResult {
   readonly status: number | null | undefined;
-  readonly diagnostic: string;
-  readonly attempts: number;
+  readonly failureReason?:
+    | "forward-start-failure"
+    | "listener-reachable"
+    | "listener-retry-limit"
+    | "readiness-retry-limit"
+    | "retry-not-allowed";
 }
 
 export interface BackgroundForwardStartRetryOptions {
@@ -636,12 +641,10 @@ export interface BackgroundForwardStartRetryOptions {
  */
 export function runBackgroundForwardStartWithReadinessRetry(
   options: BackgroundForwardStartRetryOptions,
-): BackgroundForwardStartAttempt {
+): BackgroundForwardStartResult {
   const sleepImpl = options.sleepMs ?? blockingSleepMs;
-  let attempts = 0;
 
   const runOnce = (): { status: number | null | undefined; diagnostic: string } => {
-    attempts += 1;
     // Capturing the diagnostic is an optimisation over the previous
     // discard-everything call, never a new way to fail: if the temporary file
     // cannot be created the start still runs, just without a diagnostic, which
@@ -681,17 +684,41 @@ export function runBackgroundForwardStartWithReadinessRetry(
   };
 
   let attempt = runOnce();
-  let retries = 0;
-  while (
-    attempt.status !== 0 &&
-    !options.isListenerReachable() &&
-    retries < SANDBOX_READY_MAX_RETRIES &&
-    looksLikeForwardListenerStartFailure(attempt.diagnostic)
-  ) {
-    if (!options.isRetryAllowed()) break;
+  let listenerRetries = 0;
+  let readinessRetries = 0;
+  while (attempt.status !== 0) {
+    if (options.isListenerReachable()) {
+      return { status: attempt.status, failureReason: "listener-reachable" };
+    }
+    if (!looksLikeForwardListenerStartFailure(attempt.diagnostic)) {
+      return { status: attempt.status, failureReason: "forward-start-failure" };
+    }
+    const readinessHandoff = looksLikeSandboxNotReadyForwardStart(attempt.diagnostic);
+    if (readinessHandoff && readinessRetries >= SANDBOX_READY_MAX_RETRIES) {
+      return { status: attempt.status, failureReason: "readiness-retry-limit" };
+    }
+    if (!readinessHandoff && listenerRetries >= FORWARD_START_MAX_RETRIES) {
+      return { status: attempt.status, failureReason: "listener-retry-limit" };
+    }
+    if (!options.isRetryAllowed()) {
+      return { status: attempt.status, failureReason: "retry-not-allowed" };
+    }
     sleepImpl(SANDBOX_READY_RETRY_SETTLE_MS);
-    retries += 1;
+    // The rejected OpenShell process can finish opening its listener while
+    // the gateway settles. Ownership can also change during that wait. Check
+    // both again before starting another process.
+    if (options.isListenerReachable()) {
+      return { status: attempt.status, failureReason: "listener-reachable" };
+    }
+    if (!options.isRetryAllowed()) {
+      return { status: attempt.status, failureReason: "retry-not-allowed" };
+    }
+    if (readinessHandoff) {
+      readinessRetries += 1;
+    } else {
+      listenerRetries += 1;
+    }
     attempt = runOnce();
   }
-  return { ...attempt, attempts };
+  return { status: attempt.status };
 }
