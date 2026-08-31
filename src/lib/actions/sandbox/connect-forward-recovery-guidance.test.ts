@@ -117,4 +117,28 @@ describe("connect forward recovery guidance", () => {
       "openshell forward start --background 18789 'alpha' --gateway 'nemoclaw-18080'",
     );
   });
+
+  it("uses inspection guidance for an auxiliary forward failure (#10640)", async () => {
+    const harness = createConnectHarness({
+      processCheck: {
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+        forwardRecoveryFailed: true,
+        forwardRecoveryFailureDetail: "the messaging webhook host forward failed",
+        forwardRecoveryFailureScope: "auxiliary",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("the messaging webhook host forward failed");
+    expect(errorOutput).toContain("openshell forward list --gateway 'nemoclaw'");
+    expect(errorOutput).not.toContain("openshell forward start");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
 });

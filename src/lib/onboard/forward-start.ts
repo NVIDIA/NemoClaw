@@ -671,9 +671,9 @@ export function runBackgroundForwardStartWithReadinessRetry(
 
   const runOnce = (): { status: number | null | undefined; diagnostic: string } => {
     // Capturing the diagnostic is an optimisation over the previous
-    // discard-everything call, never a new way to fail: if the temporary file
-    // cannot be created the start still runs, just without a diagnostic, which
-    // simply cannot match the retry signature below.
+    // discard-everything call, never a new way to fail. If the temporary file
+    // cannot be created, start the forward without a diagnostic. Diagnostic-free
+    // output cannot match the retry signature below.
     let diagnosticPath: string | undefined;
     let handle: number | undefined;
     try {

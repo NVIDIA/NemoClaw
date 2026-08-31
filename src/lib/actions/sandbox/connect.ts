@@ -110,6 +110,7 @@ import {
 } from "./launch-readiness";
 import type { HermesPortableLifecycleRecoveryTimingEvidence } from "../../onboard/experimental/hermes-portable-lifecycle";
 import {
+  auxiliaryForwardRecoveryGuidance,
   checkAndRecoverSandboxProcesses,
   executeSandboxExecCommand,
   type GatewayRestartFailureLayer,
@@ -280,12 +281,19 @@ function exitOnForwardRecoveryFailure(
   port: number,
   detail?: string,
   reason?: SandboxForwardRecoveryFailureReason,
+  scope?: "auxiliary",
 ): never {
   console.error("");
   console.error(
     `  Probe failed: ${agentName} gateway is running in '${sandboxName}', but ${detail ?? "the dashboard/API host forward could not be restored"}.`,
   );
-  console.error(`  ${primaryForwardRecoveryGuidance(sandboxName, port, reason)}`);
+  console.error(
+    `  ${
+      scope === "auxiliary"
+        ? auxiliaryForwardRecoveryGuidance(sandboxName)
+        : primaryForwardRecoveryGuidance(sandboxName, port, reason)
+    }`,
+  );
   process.exit(1);
 }
 
@@ -427,12 +435,18 @@ async function runSandboxConnectProbe(
       "forwardRecoveryFailureDetail" in processCheck
         ? String(processCheck.forwardRecoveryFailureDetail)
         : undefined;
+    const scope =
+      "forwardRecoveryFailureScope" in processCheck &&
+      processCheck.forwardRecoveryFailureScope === "auxiliary"
+        ? processCheck.forwardRecoveryFailureScope
+        : undefined;
     exitOnForwardRecoveryFailure(
       sandboxName,
       agentName,
       resolveSandboxDashboardPort(sandboxName),
       detail,
       forwardRecoveryFailureReason,
+      scope,
     );
   }
   if ("recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail) {

@@ -435,6 +435,7 @@ beta  127.0.0.1  18789  12345  running`;
       forwardRecoveryFailed: true,
       forwardRecoveryFailureDetail:
         "the messaging webhook host forward could not be re-established",
+      forwardRecoveryFailureScope: "auxiliary",
     });
     expect(runOpenshell).toHaveBeenCalledWith(
       scoped("forward", "start", "--background", "3978", "beta"),
@@ -444,7 +445,6 @@ beta  127.0.0.1  18789  12345  running`;
     expect(timingLines[0]).toContain("forwardAction=failed");
     expect(timingLines[0]).toContain("result=failed failedStage=forward");
   });
-
   it("waits for stopped Hermes recovery after managed OpenShell control succeeds", () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");
@@ -993,9 +993,9 @@ hermes-box  127.0.0.1  8642  12346  running`;
     expect(result.forwardRecovered).toBe(false);
     expect(result.forwardRecoveryFailed).toBe(true);
     expect(result.forwardRecoveryFailureDetail).toContain("agent-declared host forwards");
+    expect(result).toHaveProperty("forwardRecoveryFailureScope", "auxiliary");
     expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
   });
-
   it("refuses recovery of a running Hermes gateway when /sandbox/.hermes/.env contains raw secret-shaped values", () => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.js");

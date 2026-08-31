@@ -213,6 +213,13 @@ export function primaryForwardRecoveryGuidance(
   }
 }
 
+export function auxiliaryForwardRecoveryGuidance(sandboxName: string): string {
+  const gatewayName = shellQuote(resolveSandboxForwardGatewayName(sandboxName));
+  const forwardListCommand = `\`openshell forward list --gateway ${gatewayName}\``;
+  const recoverCommand = `\`nemoclaw ${shellQuote(sandboxName)} recover\``;
+  return `Run ${forwardListCommand}. Inspect the failed host forward and correct its error, then rerun ${recoverCommand}.`;
+}
+
 function getSandboxHealthProbeUrl(sandboxName: string): string {
   return resolveSandboxHealthProbeUrl(sandboxName);
 }
@@ -1422,7 +1429,7 @@ function isHermesAgent(
  * whose OpenClaw processes are not running. Also re-establishes the
  * host-side dashboard port-forward when it has gone dead independently
  * of the gateway. Returns an object describing the outcome:
- * `{ checked, wasRunning, recovered, forwardRecovered, forwardRecoveryFailed?, recoveryFailureDetail?, secretBoundaryRefused?, secretBoundaryReason? }`.
+ * `{ checked, wasRunning, recovered, forwardRecovered, forwardRecoveryFailed?, forwardRecoveryFailureScope?, recoveryFailureDetail?, secretBoundaryRefused?, secretBoundaryReason? }`.
  * `onRecoveryFailureLayer` reports the classified managed-restart failure so a
  * quiet caller (`recover`, `connect --probe-only`) can still explain why
  * recovery is not retryable instead of printing a generic "check the gateway
@@ -1569,6 +1576,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           forwardRecovered: false,
           forwardRecoveryFailed: true,
           forwardRecoveryFailureDetail: auxiliaryFailureDetail,
+          forwardRecoveryFailureScope: "auxiliary" as const,
         };
       }
       probeTiming?.setForwardAction("restored");
@@ -1643,6 +1651,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail: auxiliaryFailureDetail,
+        forwardRecoveryFailureScope: "auxiliary" as const,
       };
     }
     probeTiming?.setForwardAction(
@@ -1930,6 +1939,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail: auxiliaryFailureDetail,
+        forwardRecoveryFailureScope: "auxiliary" as const,
       });
     }
     probeTiming?.setForwardAction("restored");
