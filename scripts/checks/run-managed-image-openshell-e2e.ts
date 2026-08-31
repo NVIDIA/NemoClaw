@@ -210,7 +210,7 @@ type OnboardModule = {
     managedStartupWorkspaceRoot(input: {
       readonly agent: ShippedManagedImageAgent;
       readonly agentIdentity: { readonly uid: number; readonly gid: number };
-    }): { readonly uid: number; readonly gid: number; readonly mode: number };
+    }): { readonly uid: number; readonly gid: number; readonly mode: 0o755 | 0o1775 };
     prepareManagedStateVolumes(
       input: { readonly roots: readonly ProtectedManagedStateRoot[] },
       deps: { readonly runtimeProvider: RuntimeProviderBundle },
