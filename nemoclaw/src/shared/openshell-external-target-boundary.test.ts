@@ -155,7 +155,9 @@ describe("external OpenShell target boundary", () => {
     expect(Object.isFrozen(plan)).toBe(true);
   });
 
-  it("passes validated CA bytes without reading authentication contents (#9872)", async () => {
+  it("passes public-health CA bytes when the authentication file is absent (#9872)", async () => {
+    fileContents.delete(AUTHENTICATION_FILE);
+
     const result = await withExternalOpenShellTargetCa(
       externalTarget(),
       COMPATIBILITY,
@@ -166,6 +168,7 @@ describe("external OpenShell target boundary", () => {
     expect(result.caContents.toString("utf8")).toBe(CA_PEM);
     expect(readFilePaths).toContain(CA_FILE);
     expect(readFilePaths).not.toContain(AUTHENTICATION_FILE);
+    expect(fsMocks.openSync).not.toHaveBeenCalledWith(AUTHENTICATION_FILE, expect.any(Number));
   });
 
   it.each([

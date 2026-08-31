@@ -123,10 +123,12 @@ It does not manage the gateway or establish support for another OpenShell releas
 
 Create a blueprint directory with a `blueprint.yaml` file that contains one external target.
 The target must use a bare HTTPS origin, the exact OpenShell release, an absolute CA bundle path, and an absolute authentication file path.
-The CA bundle and authentication file must be nonempty regular files, must not be symbolic links, and must be no larger than 1 MiB.
+The CA bundle must be a nonempty regular file, must not be a symbolic link, and must be no larger than 1 MiB.
 The CA bundle must contain only PEM CA certificates.
-Both operations read the CA bundle, inspect only authentication file metadata, and never read the authentication file contents.
-They do not create or remove either administrator-owned file.
+Both operations read the CA bundle.
+The plan requires a nonempty regular authentication file no larger than 1 MiB and inspects only its metadata.
+The status command does not access the authentication file.
+Neither operation creates or removes either administrator-owned file.
 
 ```yaml
 version: 1.0.0
@@ -163,7 +165,7 @@ NEMOCLAW_BLUEPRINT_PATH=/absolute/path/to/blueprint nemoclaw-blueprint-runner st
 ```
 
 A successful status result reports `healthy`, release `0.0.106`, and `compatible` in JSON.
-The command validates authentication file metadata but does not read its contents or authenticate.
+The command does not access the authentication file or authenticate.
 The command supplies the validated CA bundle to the SDK and uses normal TLS hostname verification.
 
 <Warning>

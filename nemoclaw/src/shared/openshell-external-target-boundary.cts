@@ -322,6 +322,7 @@ function validateCaBundle(contents: Buffer): readonly Buffer[] {
 function validateExternalOpenShellTarget(
   value: unknown,
   compatibility: OpenShellCompatibilityRange,
+  validateAuthenticationFile: boolean,
 ): ValidatedExternalOpenShellTarget {
   const target = parseTarget(value);
   assertCompatibleRelease(target.expected_release, compatibility);
@@ -329,11 +330,13 @@ function validateExternalOpenShellTarget(
   const caContents = readBoundedFile(target.trust.ca_file, "CA file", MAX_TRUST_FILE_BYTES);
   const caCertificates = validateCaBundle(caContents);
 
-  validateFileReference(
-    target.authentication.credential_file,
-    "authentication file",
-    MAX_AUTHENTICATION_FILE_BYTES,
-  );
+  if (validateAuthenticationFile) {
+    validateFileReference(
+      target.authentication.credential_file,
+      "authentication file",
+      MAX_AUTHENTICATION_FILE_BYTES,
+    );
+  }
 
   const caFingerprint = createHash("sha256");
   for (const certificate of caCertificates) {
@@ -356,18 +359,18 @@ export function buildSanitizedExternalOpenShellTargetPlan(
   value: unknown,
   compatibility: OpenShellCompatibilityRange,
 ): SanitizedExternalOpenShellTargetPlan {
-  return validateExternalOpenShellTarget(value, compatibility).plan;
+  return validateExternalOpenShellTarget(value, compatibility, true).plan;
 }
 
 /**
  * Give one caller the validated CA bytes without exposing either input path.
- * Authentication contents remain unread because this boundary inspects only their file metadata.
+ * The public health path does not access the authentication file.
  */
 export async function withExternalOpenShellTargetCa<T>(
   value: unknown,
   compatibility: OpenShellCompatibilityRange,
   useTarget: (plan: SanitizedExternalOpenShellTargetPlan, caContents: Buffer) => Promise<T>,
 ): Promise<T> {
-  const validated = validateExternalOpenShellTarget(value, compatibility);
+  const validated = validateExternalOpenShellTarget(value, compatibility, false);
   return useTarget(validated.plan, Buffer.from(validated.caContents));
 }
