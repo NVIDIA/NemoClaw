@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -317,13 +322,36 @@ describe("sandbox inference invocation probe", () => {
     expect(command).not.toContain('"max_completion_tokens"');
   });
 
-  it("sends the Gemini reply budget through the sandbox invocation boundary (#10260)", () => {
+  it("executes the Gemini sandbox request with the configured reply budget (#10260)", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gemini-probe-"));
+    const fakeBin = path.join(tempDir, "bin");
+    const capturedPayload = path.join(tempDir, "payload.json");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --data-binary) printf '%s' "$2" > "$CAPTURED_PAYLOAD"; shift 2 ;;
+    -o) response_file="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' '{"choices":[{"message":{"content":"OK"}}]}' > "$response_file"
+printf '200'
+`,
+      { mode: 0o755 },
+    );
     const execute = vi.fn((_sandboxName, command) => {
-      const payload = JSON.parse(command.match(/--data-binary '([^']+)'/)?.[1] ?? "{}");
-
-      expect(payload).toMatchObject({ model: "gemini-2.5-flash", max_tokens: 256 });
-      expect(payload).not.toHaveProperty("max_completion_tokens");
-      return { status: 0, stdout: '200\n{"choices":[{"message":{"content":"OK"}}]}', stderr: "" };
+      const result = spawnSync("/bin/sh", ["-c", command], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          CAPTURED_PAYLOAD: capturedPayload,
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        },
+      });
+      return { status: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
     });
 
     expect(
@@ -333,6 +361,9 @@ describe("sandbox inference invocation probe", () => {
       ),
     ).toEqual({ ok: true });
     expect(execute).toHaveBeenCalledOnce();
+    const payload = JSON.parse(fs.readFileSync(capturedPayload, "utf-8"));
+    expect(payload).toMatchObject({ model: "gemini-2.5-flash", max_tokens: 256 });
+    expect(payload).not.toHaveProperty("max_completion_tokens");
   });
 
   it("still rejects a structurally empty Gemini response (#10260)", () => {
