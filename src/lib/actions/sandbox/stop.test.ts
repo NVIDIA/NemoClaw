@@ -355,7 +355,7 @@ describe("stopSandbox", () => {
 
     expect(stopSandbox("my-sandbox", h.deps).exitCode).toBe(0);
     expect(h.warn).toHaveBeenCalledWith(
-      "  Warning: ForwardTcp cleanup is incomplete; retained exact process authority.",
+      "  Warning: ForwardTcp cleanup for 'my-sandbox' is incomplete; retained exact process authority. Retry 'nemoclaw my-sandbox stop'.",
     );
   });
 

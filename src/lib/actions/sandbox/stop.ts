@@ -32,7 +32,9 @@ function teardownDashboardForwardBestEffort(
 ): void {
   try {
     if (teardown(sandboxName) === false) {
-      warn("  Warning: ForwardTcp cleanup is incomplete; retained exact process authority.");
+      warn(
+        `  Warning: ForwardTcp cleanup for '${sandboxName}' is incomplete; retained exact process authority. Retry '${CLI_NAME} ${sandboxName} stop'.`,
+      );
     }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
