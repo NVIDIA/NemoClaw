@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import type {
+  OpenShellProviderAdapter,
+  OpenShellProviderResult,
+  OpenShellProviderInventory,
+} from "../adapters/openshell/provider-adapter";
 import { classifyGatewayProviderNames, isBridgeProviderName } from "../credentials/provider-list";
 import { queryRegisteredGatewayProviders } from "./inference-set-provider-diagnostics";
 
@@ -9,21 +14,30 @@ const STATIC_WARNING =
   "  ⚠ Could not query registered OpenShell providers while formatting the failure.";
 
 describe("inference set provider diagnostics", () => {
-  it("returns sorted gateway credentials and excludes messaging providers (#5924)", () => {
-    const captureOpenshell = vi.fn(() => ({
-      status: 0,
-      output: "nvidia-prod\nalpha-telegram-bridge\nanthropic-prod\n",
-    }));
+  function adapterWithList(
+    result: OpenShellProviderResult<OpenShellProviderInventory>,
+  ): OpenShellProviderAdapter {
+    return {
+      listProviders: vi.fn(async () => result),
+    } as unknown as OpenShellProviderAdapter;
+  }
+
+  it("returns sorted gateway credentials and excludes messaging providers (#5924)", async () => {
+    const providerAdapter = adapterWithList({
+      ok: true,
+      value: {
+        names: ["nvidia-prod", "alpha-telegram-bridge", "anthropic-prod"],
+      },
+    });
     const log = vi.fn();
 
-    expect(queryRegisteredGatewayProviders({ captureOpenshell, log })).toEqual([
+    await expect(queryRegisteredGatewayProviders({ providerAdapter, log })).resolves.toEqual([
       "anthropic-prod",
       "nvidia-prod",
     ]);
-    expect(captureOpenshell).toHaveBeenCalledWith(["provider", "list", "--names"], {
-      ignoreError: true,
-      maxBuffer: 64 * 1024,
-      timeout: 5_000,
+    expect(providerAdapter.listProviders).toHaveBeenCalledWith({
+      target: { kind: "selected" },
+      timeoutMs: 5_000,
     });
     expect(log).not.toHaveBeenCalled();
   });
@@ -33,9 +47,10 @@ describe("inference set provider diagnostics", () => {
       bridgeNames: [],
       credentialNames: [],
     });
-    expect(
-      classifyGatewayProviderNames(["alpha-telegram-bridge", "alpha-slack-app"]),
-    ).toEqual({ bridgeNames: ["alpha-telegram-bridge", "alpha-slack-app"], credentialNames: [] });
+    expect(classifyGatewayProviderNames(["alpha-telegram-bridge", "alpha-slack-app"])).toEqual({
+      bridgeNames: ["alpha-telegram-bridge", "alpha-slack-app"],
+      credentialNames: [],
+    });
     expect(isBridgeProviderName("alpha-discord-bridge")).toBe(true);
     expect(isBridgeProviderName("nvidia-prod")).toBe(false);
   });
@@ -43,35 +58,33 @@ describe("inference set provider diagnostics", () => {
   it.each([
     {
       name: "thrown capture error",
-      capture: () => {
+      list: async () => {
         throw new Error("query-secret");
       },
     },
     {
       name: "timeout",
-      capture: () => ({
-        status: null,
-        output: "partial-timeout-provider",
-        error: Object.assign(new Error("query-secret"), { code: "ETIMEDOUT" }),
+      list: async () => ({
+        ok: false as const,
+        error: { kind: "timeout" as const, message: "safe timeout" },
       }),
     },
     {
-      name: "buffer overflow",
-      capture: () => ({
-        status: null,
-        output: "partial-overflow-provider",
-        error: Object.assign(new Error("query-secret"), { code: "ENOBUFS" }),
+      name: "command failure",
+      list: async () => ({
+        ok: false as const,
+        error: { kind: "command" as const, reason: "failed" as const, message: "safe failure" },
       }),
     },
-    {
-      name: "nonzero status",
-      capture: () => ({ status: 17, output: "query-secret" }),
-    },
-  ])("uses the static fallback for $name", ({ capture }) => {
-    const captureOpenshell = vi.fn(capture);
+  ])("uses the static fallback for $name", async ({ list }) => {
+    const providerAdapter = {
+      listProviders: vi.fn(list),
+    } as unknown as OpenShellProviderAdapter;
     const log = vi.fn();
 
-    expect(queryRegisteredGatewayProviders({ captureOpenshell, log })).toBeUndefined();
+    await expect(
+      queryRegisteredGatewayProviders({ providerAdapter, log }),
+    ).resolves.toBeUndefined();
     expect(log).toHaveBeenCalledWith(STATIC_WARNING);
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining("query-secret"));
   });

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
 import {
@@ -172,6 +173,38 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
     expect(deps.calls.probeSandboxRoute).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
+  it("refuses incomplete typed provider identity before route mutation (#9806)", async () => {
+    const captureOpenshell = noAuthProviderCapture();
+    const providerAdapter = {
+      getProvider: vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          name: "compatible-endpoint",
+          type: "openai",
+          credentialKeys: [NO_AUTH_CREDENTIAL_ENV],
+          configKeys: ["OPENAI_BASE_URL"],
+          revision: null,
+        },
+      })),
+    } as unknown as OpenShellProviderAdapter;
+    const deps = createDeps({
+      config: CONFIG,
+      entry: noAuthEntry(),
+      session: noAuthSession(),
+      captureOpenshell,
+      providerAdapter,
+    });
+
+    await expect(
+      runInferenceSet({ provider: "compatible-endpoint", model: "model-b" }, deps),
+    ).rejects.toThrow(/without a revision/);
+
+    expect(inferenceSetArgs(captureOpenshell)).toEqual([]);
+    expect(providerMutationArgs(captureOpenshell)).toEqual([]);
+    expect(deps.calls.probeSandboxRoute).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
   it("refuses an absent provider before selecting the route with no endpoint options", async () => {

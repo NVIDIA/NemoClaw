@@ -188,7 +188,7 @@ describe("runInferenceSet failure handling", () => {
     expect(deps.calls.captureOpenshell).toHaveBeenNthCalledWith(
       2,
       ["provider", "list", "--names"],
-      { ignoreError: true, maxBuffer: 64 * 1024, timeout: 5_000 },
+      { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024, timeout: 5_000 },
     );
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();

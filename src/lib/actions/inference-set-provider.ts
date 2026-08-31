@@ -1,16 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type CaptureOpenshellResult, stripAnsi } from "../adapters/openshell/client";
 import {
-  checkOpenAiInferenceProviderProfile,
+  endpointlessProviderProfileFailureMessages,
+  endpointlessProviderProfilePath,
   OPENAI_GATEWAY_PROVIDER_TYPE,
 } from "../adapters/openshell/provider-profile";
+import type {
+  OpenShellProviderAdapter,
+  OpenShellProviderError,
+  OpenShellProviderMetadata,
+} from "../adapters/openshell/provider-adapter";
+import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
+import { namedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
+import { REPOSITORY_ROOT } from "../core/repository-root";
 import { retryUntilAsync } from "../core/retry";
-import {
-  matchesGatewayProviderBinding,
-  parseGatewayProviderMetadata,
-} from "../onboard/gateway-provider-metadata";
+import { matchesGatewayProviderBinding } from "../onboard/gateway-provider-metadata";
 import { assertHermesPortableCommandUnavailable } from "../onboard/experimental/portable-agent-lifecycle";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
@@ -20,11 +25,7 @@ import {
   requireRuntimeProviderMutationAuthority,
 } from "../onboard/runtime-provider/access";
 import type { SandboxEntry } from "../state/registry";
-import {
-  InferenceSetError,
-  OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-  openshellReportsProviderNotFound,
-} from "./inference-set-error";
+import { InferenceSetError } from "./inference-set-error";
 import type { InferenceSetProviderBinding } from "./inference-set-route-containment";
 import type {
   SandboxInferenceInvocationInput,
@@ -33,6 +34,11 @@ import type {
 
 export type { RuntimeProviderBundleRegistry };
 export { RuntimeProviderSelectionError };
+export type InferenceSetProviderAdapter = OpenShellProviderAdapter;
+
+export function createDefaultInferenceSetProviderAdapter(): OpenShellProviderAdapter {
+  return createCliOpenShellProviderAdapter();
+}
 
 export type InferenceSetSandboxRouteProbe = (
   input: SandboxInferenceInvocationInput,
@@ -115,17 +121,6 @@ export function assertInferenceSetCommandAvailable(sandboxName: string): void {
   assertHermesPortableCommandUnavailable(sandboxName, "inference:set");
 }
 
-type CaptureProviderCommand = (
-  args: string[],
-  options: {
-    ignoreError: true;
-    includeStreams: true;
-    maxBuffer: number;
-    timeout?: number;
-    env?: NodeJS.ProcessEnv;
-  },
-) => CaptureOpenshellResult;
-
 type ProviderSurface = {
   type: "openai" | "anthropic";
   configKey: "OPENAI_BASE_URL" | "ANTHROPIC_BASE_URL";
@@ -135,77 +130,33 @@ type ProviderObservation =
   | { kind: "absent" }
   | {
       kind: "present";
-      id: string;
-      resourceVersion: number;
-      metadata: NonNullable<ReturnType<typeof parseGatewayProviderMetadata>>;
+      metadata: OpenShellProviderMetadata;
     }
-  | { kind: "error"; status: number | null };
+  | { kind: "error"; error: OpenShellProviderError };
 
-function providerSurface(providerType: InferenceSetProviderBinding["providerType"]): ProviderSurface {
+function providerSurface(
+  providerType: InferenceSetProviderBinding["providerType"],
+): ProviderSurface {
   return providerType === "anthropic"
     ? { type: "anthropic", configKey: "ANTHROPIC_BASE_URL" }
     : { type: "openai", configKey: "OPENAI_BASE_URL" };
 }
 
-function resultText(result: CaptureOpenshellResult): string {
-  // includeStreams=true normally makes `output` a duplicate aggregate of
-  // stdout/stderr. Parse the split streams when present and use `output` only
-  // as the compatibility fallback so strict duplicate-field checks keep
-  // working on normal OpenShell results.
-  const hasStreams = result.stdout !== undefined || result.stderr !== undefined;
-  const combined = hasStreams
-    ? `${result.stdout ?? ""}\n${result.stderr ?? ""}`
-    : String(result.output ?? "");
-  return Buffer.from(combined, "utf8")
-    .subarray(0, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER)
-    .toString("utf8");
-}
-
-function parseProviderVersion(output: string): { id: string; resourceVersion: number } | null {
-  const clean = stripAnsi(output);
-  const ids = Array.from(clean.matchAll(/^\s*Id:\s*([A-Za-z0-9._:-]{1,128})\s*$/gimu));
-  const versions = Array.from(clean.matchAll(/^\s*Resource version:\s*([0-9]+)\s*$/gimu));
-  if (ids.length !== 1 || versions.length !== 1) return null;
-  const resourceVersion = Number(versions[0][1]);
-  if (!Number.isSafeInteger(resourceVersion) || resourceVersion < 1) return null;
-  return { id: ids[0][1], resourceVersion };
-}
-
-function inspectProvider(
-  captureOpenshell: CaptureProviderCommand,
+async function inspectProvider(
+  providerAdapter: OpenShellProviderAdapter,
   gatewayName: string,
   providerName: string,
-): ProviderObservation {
-  const result = captureOpenshell(["provider", "get", "-g", gatewayName, providerName], {
-    ignoreError: true,
-    includeStreams: true,
-    maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+): Promise<ProviderObservation> {
+  const result = await providerAdapter.getProvider({
+    target: namedOpenShellGateway(gatewayName),
+    providerName,
   });
-  const output = resultText(result);
-  if (result.status !== 0) {
-    return providerLookupReportsNotFound(output, providerName)
+  if (!result.ok) {
+    return result.error.kind === "command" && result.error.reason === "not_found"
       ? { kind: "absent" }
-      : { kind: "error", status: result.status };
+      : { kind: "error", error: result.error };
   }
-  const metadata = parseGatewayProviderMetadata(output);
-  const version = parseProviderVersion(output);
-  if (!metadata || !version) return { kind: "error", status: result.status };
-  return { kind: "present", ...version, metadata };
-}
-
-function providerLookupReportsNotFound(output: string, providerName: string): boolean {
-  if (openshellReportsProviderNotFound(output, providerName)) return true;
-  // OpenShell 0.0.99 omits the name only from this exact-name `provider get`
-  // command. Keep the route-update parser strict because its output can name
-  // a different missing provider.
-  return stripAnsi(output)
-    .toLowerCase()
-    .split("\n")
-    .some(
-      (line) =>
-        /code:\s*['"]some requested entity was not found['"]/u.test(line) &&
-        /message:\s*['"]provider not found['"]/u.test(line),
-    );
+  return { kind: "present", metadata: result.value };
 }
 
 function expectedShape(providerName: string, surface: ProviderSurface, credentialEnv: string) {
@@ -243,7 +194,7 @@ function assertProviderOwnership(options: {
   }
   if (observation.kind === "error") {
     throw new InferenceSetError(
-      `Could not inspect provider '${providerName}' (status ${observation.status ?? "unknown"}); no provider mutation was attempted.`,
+      `Could not inspect provider '${providerName}'; no provider mutation was attempted. ${observation.error.message}`,
       1,
     );
   }
@@ -261,34 +212,19 @@ function assertProviderOwnership(options: {
   return "update";
 }
 
-function mutationArgs(options: {
-  action: "create" | "update";
-  gatewayName: string;
-  providerName: string;
-  surface: ProviderSurface;
-  credentialEnv: string;
-  baseUrl: string;
-}): string[] {
-  const args =
-    options.action === "create"
-      ? [
-          "provider",
-          "create",
-          "-g",
-          options.gatewayName,
-          "--name",
-          options.providerName,
-          "--type",
-          options.surface.type,
-        ]
-      : ["provider", "update", "-g", options.gatewayName, options.providerName];
-  args.push(
-    "--credential",
-    options.credentialEnv,
-    "--config",
-    `${options.surface.configKey}=${options.baseUrl}`,
-  );
-  return args;
+function profileFailureMessage(error: OpenShellProviderError): string {
+  if (error.kind !== "command") return error.message;
+  const reason =
+    error.reason === "profile_import_failed"
+      ? "import-failed"
+      : error.reason === "profile_export_failed"
+        ? "export-failed"
+        : error.reason === "profile_incompatible"
+          ? "incompatible"
+          : null;
+  return reason
+    ? endpointlessProviderProfileFailureMessages(reason).join("\n").trim()
+    : error.message;
 }
 
 /**
@@ -298,19 +234,26 @@ function mutationArgs(options: {
  * that name, so a same-name foreign or malformed binding has to be rejected
  * before the selection, not only when a provider mutation is prepared.
  */
-export function assertInferenceSetProviderOwnership(options: {
+export async function assertInferenceSetProviderOwnership(options: {
   gatewayName: string;
   providerName: string;
   providerType: InferenceSetProviderBinding["providerType"];
   credentialEnv: string;
-  captureOpenshell: CaptureProviderCommand;
-}): void {
+  providerAdapter: OpenShellProviderAdapter;
+}): Promise<void> {
+  const observation = await inspectProvider(
+    options.providerAdapter,
+    options.gatewayName,
+    options.providerName,
+  );
+  if (observation.kind === "present" && observation.metadata.revision == null) {
+    throw new InferenceSetError(
+      `Could not inspect provider '${options.providerName}'; no inference route mutation was attempted. OpenShell returned provider metadata without a revision.`,
+      1,
+    );
+  }
   assertProviderOwnership({
-    observation: inspectProvider(
-      options.captureOpenshell,
-      options.gatewayName,
-      options.providerName,
-    ),
+    observation,
     providerName: options.providerName,
     surface: providerSurface(options.providerType),
     credentialEnv: options.credentialEnv,
@@ -318,17 +261,24 @@ export function assertInferenceSetProviderOwnership(options: {
   });
 }
 
-export function prepareInferenceSetProviderBinding(options: {
+export type PreparedInferenceSetProviderBinding = Readonly<{
+  action: "create" | "update";
+  commit: () => Promise<void>;
+  rollback: () => Promise<void>;
+}>;
+
+export async function prepareInferenceSetProviderBinding(options: {
   gatewayName: string;
   providerName: string;
   binding: InferenceSetProviderBinding;
-  captureOpenshell: CaptureProviderCommand;
+  providerAdapter: OpenShellProviderAdapter;
   /** False when only onboarding can rebuild this provider's binding. */
   allowCreate?: boolean;
-}): { action: "create" | "update"; commit: () => void; rollback: () => void } {
-  const { gatewayName, providerName, binding, captureOpenshell } = options;
+}): Promise<PreparedInferenceSetProviderBinding> {
+  const { gatewayName, providerName, binding, providerAdapter } = options;
+  const target = namedOpenShellGateway(gatewayName);
   const surface = providerSurface(binding.providerType);
-  const before = inspectProvider(captureOpenshell, gatewayName, providerName);
+  const before = await inspectProvider(providerAdapter, gatewayName, providerName);
   const action = assertProviderOwnership({
     observation: before,
     providerName,
@@ -336,57 +286,59 @@ export function prepareInferenceSetProviderBinding(options: {
     credentialEnv: binding.credentialEnv,
     allowCreate: options.allowCreate !== false,
   });
+  if (action === "update" && (before.kind !== "present" || before.metadata.revision == null)) {
+    throw new InferenceSetError(
+      `Could not inspect provider '${providerName}'; no provider mutation was attempted. OpenShell returned provider metadata without a revision.`,
+      1,
+    );
+  }
 
-  const apply = (): void => {
+  const apply = async (): Promise<void> => {
     if (surface.type === OPENAI_GATEWAY_PROVIDER_TYPE) {
-      const profile = checkOpenAiInferenceProviderProfile({
-        runOpenshell: (args, runnerOptions) =>
-          captureOpenshell(
-            args[0] === "provider" && args[1] === "profile"
-              ? [args[0], args[1], "-g", gatewayName, ...args.slice(2)]
-              : args,
-            {
-              ignoreError: true,
-              includeStreams: true,
-              maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-              timeout: runnerOptions?.timeout,
-            },
-          ),
+      const profile = await providerAdapter.ensureEndpointlessProviderProfile({
+        target,
+        profileType: OPENAI_GATEWAY_PROVIDER_TYPE,
+        inferenceCapable: true,
+        profilePath: endpointlessProviderProfilePath(REPOSITORY_ROOT, OPENAI_GATEWAY_PROVIDER_TYPE),
       });
       if (!profile.ok) {
-        throw new InferenceSetError(profile.messages.join("\n").trim(), 1);
+        throw new InferenceSetError(profileFailureMessage(profile.error), 1);
       }
     }
-    const result = captureOpenshell(
-      mutationArgs({
-        action,
-        gatewayName,
-        providerName,
-        surface,
-        credentialEnv: binding.credentialEnv,
-        baseUrl: binding.baseUrl,
-      }),
-      {
-        ignoreError: true,
-        includeStreams: true,
-        maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
-        env: { [binding.credentialEnv]: binding.token },
-      },
-    );
-    const after = inspectProvider(captureOpenshell, gatewayName, providerName);
-    if (result.status !== 0) {
+    const credentials = [{ name: binding.credentialEnv, value: binding.token }];
+    const config = [{ key: surface.configKey, value: binding.baseUrl }];
+    const result =
+      action === "create"
+        ? await providerAdapter.createProvider({
+            target,
+            name: providerName,
+            type: surface.type,
+            credentials,
+            config,
+            fromExisting: false,
+          })
+        : await providerAdapter.updateProvider({
+            target,
+            providerName,
+            credentials,
+            config,
+          });
+    const after = await inspectProvider(providerAdapter, gatewayName, providerName);
+    if (!result.ok) {
       throw new InferenceSetError(
-        `Failed to ${action} provider '${providerName}' on gateway '${gatewayName}' (status ${result.status ?? "unknown"}). ` +
+        `Failed to ${action} provider '${providerName}' on gateway '${gatewayName}'. ` +
           `The provider command may have partially applied; retry this command or re-run onboarding to converge the requested binding.`,
         1,
       );
     }
     if (
       after.kind !== "present" ||
+      after.metadata.revision == null ||
       (action === "update" &&
         (before.kind !== "present" ||
-          after.id !== before.id ||
-          after.resourceVersion <= before.resourceVersion)) ||
+          before.metadata.revision == null ||
+          after.metadata.revision.id !== before.metadata.revision.id ||
+          after.metadata.revision.resourceVersion <= before.metadata.revision.resourceVersion)) ||
       !matchesGatewayProviderBinding(
         after.metadata,
         expectedShape(providerName, surface, binding.credentialEnv),
@@ -404,22 +356,21 @@ export function prepareInferenceSetProviderBinding(options: {
     return {
       action,
       commit: apply,
-      rollback: () => {},
+      rollback: async () => {},
     };
   }
 
-  apply();
+  await apply();
   return {
     action,
-    commit: () => {},
-    rollback: () => {
-      const result = captureOpenshell(["provider", "delete", "-g", gatewayName, providerName], {
-        ignoreError: true,
-        includeStreams: true,
-        maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+    commit: async () => {},
+    rollback: async () => {
+      const result = await providerAdapter.deleteProvider({
+        target,
+        providerName,
       });
-      const restored = inspectProvider(captureOpenshell, gatewayName, providerName);
-      if (result.status !== 0 || restored.kind !== "absent") {
+      const restored = await inspectProvider(providerAdapter, gatewayName, providerName);
+      if (!result.ok || restored.kind !== "absent") {
         throw new InferenceSetError(
           `Failed to remove newly created provider '${providerName}' after inference selection failed.`,
           1,
@@ -431,8 +382,5 @@ export function prepareInferenceSetProviderBinding(options: {
 
 export const __test = {
   inspectProvider,
-  parseProviderVersion,
   providerSurface,
-  providerLookupReportsNotFound,
-  mutationArgs,
 };

@@ -233,7 +233,14 @@ export function createCliOpenShellProviderAdapter(
     });
 
   const listProviders: OpenShellProviderAdapter["listProviders"] = async (request) => {
-    const result = invoke(["provider", "list", "--names"], request);
+    const result = invoke(
+      ["provider", "list", "--names"],
+      request,
+      undefined,
+      2,
+      false,
+      PROVIDER_GET_DIAGNOSTIC_LIMIT,
+    );
     const error = commandError(result);
     if (error) return failure(error);
     return success({
@@ -362,7 +369,14 @@ export function createCliOpenShellProviderAdapter(
         inferenceCapable: request.inferenceCapable,
         profilePath: request.profilePath,
         runOpenshell: (args, options) =>
-          invoke(args, request, undefined, 2, options?.suppressOutput === true),
+          invoke(
+            args,
+            request,
+            undefined,
+            2,
+            options?.suppressOutput === true,
+            PROVIDER_GET_DIAGNOSTIC_LIMIT,
+          ),
       });
       if (result.ok) return success({ state: "ready" });
       const reason =

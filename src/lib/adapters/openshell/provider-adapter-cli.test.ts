@@ -23,6 +23,7 @@ describe("CLI OpenShell provider adapter", () => {
     ).resolves.toEqual({ ok: true, value: { names: ["zeta", "alpha"] } });
     expect(run).toHaveBeenCalledWith(["provider", "list", "-g", "nemoclaw-18080", "--names"], {
       ignoreError: true,
+      maxBuffer: 64 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 4_321,
     });
@@ -34,7 +35,9 @@ describe("CLI OpenShell provider adapter", () => {
         0,
         [
           "Name: search-prod",
+          "Id: 11111111-2222-4333-8444-555555555555",
           "Type: tavily",
+          "Resource version: 7",
           "Credential keys: TAVILY_API_KEY",
           "Config keys: <none>",
         ].join("\n"),
@@ -55,6 +58,10 @@ describe("CLI OpenShell provider adapter", () => {
         type: "tavily",
         credentialKeys: ["TAVILY_API_KEY"],
         configKeys: [],
+        revision: {
+          id: "11111111-2222-4333-8444-555555555555",
+          resourceVersion: 7,
+        },
       },
     });
     expect(run).toHaveBeenCalledWith(["provider", "get", "-g", "nemoclaw-18080", "search-prod"], {
@@ -63,6 +70,72 @@ describe("CLI OpenShell provider adapter", () => {
       stdio: ["ignore", "pipe", "pipe"],
       suppressOutput: true,
       timeout: 4_321,
+    });
+  });
+
+  it("rejects provider metadata with incomplete revision evidence (#9806)", async () => {
+    const run = vi.fn(() =>
+      captured(
+        0,
+        [
+          "Name: search-prod",
+          "Id: 11111111-2222-4333-8444-555555555555",
+          "Type: tavily",
+          "Credential keys: TAVILY_API_KEY",
+          "Config keys: <none>",
+        ].join("\n"),
+      ),
+    );
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
+    await expect(
+      adapter.getProvider({
+        target: namedOpenShellGateway("nemoclaw"),
+        providerName: "search-prod",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: { kind: "schema", message: "OpenShell returned invalid provider metadata." },
+    });
+  });
+
+  it.each([
+    [
+      "duplicate identity",
+      [
+        "Name: search-prod",
+        "Id: first-id",
+        "Id: second-id",
+        "Type: tavily",
+        "Resource version: 7",
+        "Credential keys: TAVILY_API_KEY",
+        "Config keys: <none>",
+      ].join("\n"),
+    ],
+    [
+      "invalid resource version",
+      [
+        "Name: search-prod",
+        "Id: provider-id",
+        "Type: tavily",
+        "Resource version: 0",
+        "Credential keys: TAVILY_API_KEY",
+        "Config keys: <none>",
+      ].join("\n"),
+    ],
+  ])("rejects provider metadata with %s (#9806)", async (_case, output) => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: vi.fn(() => captured(0, output)),
+    });
+
+    await expect(
+      adapter.getProvider({
+        target: selectedOpenShellGateway(),
+        providerName: "search-prod",
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: { kind: "schema", message: "OpenShell returned invalid provider metadata." },
     });
   });
 

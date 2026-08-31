@@ -6,7 +6,7 @@
       "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 25,
       "src/lib/actions/sandbox/process-recovery.ts": 27,
       "src/lib/adapters/docker/index.ts": 43,
-      "src/lib/adapters/openshell/client.ts": 20,
+      "src/lib/adapters/openshell/client.ts": 19,
       "src/lib/adapters/openshell/resolve.ts": 27,
       "src/lib/adapters/openshell/runtime.ts": 55,
       "src/lib/adapters/openshell/timeouts.ts": 39,
