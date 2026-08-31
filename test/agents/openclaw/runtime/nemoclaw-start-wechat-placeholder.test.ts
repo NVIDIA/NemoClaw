@@ -281,6 +281,23 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     expect(run.result.stderr).not.toContain(rawToken);
   });
 
+  it("rejects a symlinked OpenClaw configuration before changing the account", () => {
+    const run = runWechatRefresh(
+      CANONICAL,
+      { WECHAT_BOT_TOKEN: "openshell:resolve:env:v42_WECHAT_BOT_TOKEN" },
+      true,
+      ({ configPath, tmpDir }) => {
+        const targetPath = path.join(tmpDir, "outside-openclaw.json");
+        fs.renameSync(configPath, targetPath);
+        fs.symlinkSync(targetPath, configPath);
+      },
+    );
+
+    expect(run.result.status).toBe(1);
+    expect(run.account.token).toBe(CANONICAL);
+    expect(run.result.stderr).toContain("openclaw.json is unreadable or unsafe");
+  });
+
   it("rejects an invalid WeChat placeholder without updating another provider", () => {
     const telegramCanonical = "openshell:resolve:env:TELEGRAM_BOT_TOKEN";
     const run = runWechatRefresh(

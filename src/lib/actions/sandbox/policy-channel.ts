@@ -1754,6 +1754,28 @@ const STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE = {
   "lifecycle-authority-unavailable": "Finish the active lifecycle transition or repair its lock.",
 } as const;
 
+type StoppedWechatCleanupFailure = Exclude<
+  ReturnType<(typeof policyChannelDependencies)["clearStoppedDockerSandboxChannelState"]>,
+  { readonly cleared: true }
+>;
+
+function stoppedWechatCleanupFailureGuidance(
+  sandboxName: string,
+  cleanup: StoppedWechatCleanupFailure,
+): string {
+  if (
+    cleanup.cleanupHelperName &&
+    (cleanup.failure === "cleanup-helper-ownership-invalid" ||
+      cleanup.failure === "cleanup-helper-reconciliation-failed")
+  ) {
+    return (
+      `Inspect or remove cleanup helper '${cleanup.cleanupHelperName}' ` +
+      `for sandbox '${sandboxName}'.`
+    );
+  }
+  return STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE[cleanup.failure];
+}
+
 /**
  * Wipe durable channel state before rebuild can preserve an obsolete auth blob.
  * OpenShell exec runs first, followed by SSH and the stopped WeChat Docker fallback.
@@ -1802,7 +1824,7 @@ function clearSandboxChannelDurableState(
     }
     console.error(
       `  ${YW}⚠${R} Stopped-Docker cleanup failed (${stoppedCleanup.failure}). ` +
-        `${STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE[stoppedCleanup.failure]} Then retry removal.`,
+        `${stoppedWechatCleanupFailureGuidance(sandboxName, stoppedCleanup)} Then retry removal.`,
     );
   }
   if (!sentinelSeen(result)) {

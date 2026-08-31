@@ -32,10 +32,6 @@ export function refreshWechatAccountPlaceholder(
   if (!dependencies.existsSync(REFRESH_HELPER)) {
     throw new Error("[SECURITY] WeChat account placeholder refresher is missing.");
   }
-  const configMetadata = dependencies.lstatSync(OPENCLAW_CONFIG);
-  if (configMetadata.isSymbolicLink() || !configMetadata.isFile()) {
-    throw new Error("[SECURITY] WeChat configuration is not a regular file.");
-  }
   const helperMetadata = dependencies.lstatSync(REFRESH_HELPER);
   if (helperMetadata.isSymbolicLink() || !helperMetadata.isFile()) {
     throw new Error("[SECURITY] WeChat account placeholder refresher is not a regular file.");

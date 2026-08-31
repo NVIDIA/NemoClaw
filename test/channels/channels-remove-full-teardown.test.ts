@@ -74,14 +74,16 @@ function buildPreamble({
   stoppedDockerCleanupResult = {
     cleared: false,
     failure: "sandbox-volume-unavailable",
-  } as { cleared: true } | { cleared: false; failure: string },
+  } as { cleared: true } | { cleared: false; failure: string; cleanupHelperName?: string },
 }: {
   presetNamesApplied?: string[];
   sandboxAgent?: MessagingAgentId;
   channelInRegistry?: string;
   sandboxExecResult?: { status: number; stdout: string; stderr: string } | null;
   sshFallbackResult?: { status: number; stdout: string; stderr: string } | null;
-  stoppedDockerCleanupResult?: { cleared: true } | { cleared: false; failure: string };
+  stoppedDockerCleanupResult?:
+    | { cleared: true }
+    | { cleared: false; failure: string; cleanupHelperName?: string };
 } = {}): string {
   const j = (p: string) =>
     JSON.stringify(path.join(repoRoot, "src", "lib", p.replace(/\.js$/, ".ts")));
@@ -350,27 +352,50 @@ const ctx = module.exports;
   it.each([
     {
       failure: "cleanup-state-tree-unsafe",
+      cleanup: { cleared: false, failure: "cleanup-state-tree-unsafe" },
       guidance:
         "Inspect the stopped sandbox volume; recreate the sandbox if its state tree is untrusted.",
     },
     {
       failure: "cleanup-deletion-unconfirmed",
+      cleanup: { cleared: false, failure: "cleanup-deletion-unconfirmed" },
       guidance: "Restore writable access to the stopped sandbox volume.",
     },
     {
       failure: "cleanup-helper-failed",
+      cleanup: { cleared: false, failure: "cleanup-helper-failed" },
       guidance: "Inspect the stopped sandbox and Docker daemon.",
+    },
+    {
+      failure: "cleanup-helper-ownership-invalid",
+      cleanup: {
+        cleared: false,
+        failure: "cleanup-helper-ownership-invalid",
+        cleanupHelperName: "nemoclaw-channel-cleanup-owned-helper",
+      },
+      guidance:
+        "Inspect or remove cleanup helper 'nemoclaw-channel-cleanup-owned-helper' for sandbox 'test-sb'.",
+    },
+    {
+      failure: "cleanup-helper-reconciliation-failed",
+      cleanup: {
+        cleared: false,
+        failure: "cleanup-helper-reconciliation-failed",
+        cleanupHelperName: "nemoclaw-channel-cleanup-reconcile-helper",
+      },
+      guidance:
+        "Inspect or remove cleanup helper 'nemoclaw-channel-cleanup-reconcile-helper' for sandbox 'test-sb'.",
     },
   ] as const)(
     "retains WeChat state and reports recovery guidance for $failure",
-    ({ failure, guidance }) => {
+    ({ cleanup, failure, guidance }) => {
       const script = `${buildPreamble({
         presetNamesApplied: ["npm", "pypi", "wechat"],
         sandboxAgent: "openclaw",
         channelInRegistry: "wechat",
         sandboxExecResult: { status: 1, stdout: "", stderr: "sandbox stopped" },
         sshFallbackResult: { status: 255, stdout: "", stderr: "sandbox stopped" },
-        stoppedDockerCleanupResult: { cleared: false, failure },
+        stoppedDockerCleanupResult: cleanup,
       })}
 const ctx = module.exports;
 (async () => {

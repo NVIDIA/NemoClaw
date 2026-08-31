@@ -49,7 +49,11 @@ export type StoppedDockerSandboxChannelStateCleanupFailure =
 
 export type StoppedDockerSandboxChannelStateCleanupResult =
   | { readonly cleared: true }
-  | { readonly cleared: false; readonly failure: StoppedDockerSandboxChannelStateCleanupFailure };
+  | {
+      readonly cleared: false;
+      readonly failure: StoppedDockerSandboxChannelStateCleanupFailure;
+      readonly cleanupHelperName?: string;
+    };
 
 const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
@@ -365,8 +369,11 @@ function inspectStoppedContainer(containerId: string): StoppedContainerInspectio
 
 function stoppedDockerCleanupFailure(
   failure: StoppedDockerSandboxChannelStateCleanupFailure,
+  cleanupHelperName?: string,
 ): StoppedDockerSandboxChannelStateCleanupResult {
-  return { cleared: false, failure };
+  return cleanupHelperName
+    ? { cleared: false, failure, cleanupHelperName }
+    : { cleared: false, failure };
 }
 
 function stoppedDockerCleanupPaths(paths: readonly string[]): readonly string[] | null {
@@ -523,10 +530,10 @@ function clearStoppedDockerSandboxChannelState(
       const volumeIdentity = cleanupIdentity(inspected.sandboxVolumeName);
       const existingHelper = inspectCleanupHelper(helperName, ownerIdentity, volumeIdentity);
       if (existingHelper.state === "invalid") {
-        return stoppedDockerCleanupFailure("cleanup-helper-ownership-invalid");
+        return stoppedDockerCleanupFailure("cleanup-helper-ownership-invalid", helperName);
       }
       if (existingHelper.state === "owned" && !removeAndConfirmCleanupHelper(existingHelper.id)) {
-        return stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed");
+        return stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed", helperName);
       }
       let created: ReturnType<typeof dockerRun>;
       try {
@@ -571,13 +578,13 @@ function clearStoppedDockerSandboxChannelState(
       } catch {
         return reconcileCleanupHelperAfterCreate(helperName, ownerIdentity, volumeIdentity)
           ? stoppedDockerCleanupFailure("cleanup-helper-failed")
-          : stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed");
+          : stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed", helperName);
       }
       const helperId = String(created.stdout ?? "").trim();
       if (created.status !== 0 || !FULL_CONTAINER_ID_RE.test(helperId)) {
         return reconcileCleanupHelperAfterCreate(helperName, ownerIdentity, volumeIdentity)
           ? stoppedDockerCleanupFailure("cleanup-helper-failed")
-          : stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed");
+          : stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed", helperName);
       }
       let cleared: ReturnType<typeof dockerRun> | null = null;
       try {
@@ -586,7 +593,7 @@ function clearStoppedDockerSandboxChannelState(
         cleared = null;
       }
       if (!removeAndConfirmCleanupHelper(helperId)) {
-        return stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed");
+        return stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed", helperName);
       }
       if (!cleared || cleared.status !== 0 || cleared.error) {
         return stoppedDockerCleanupFailure(classifyCleanupHelperFailure(cleared));

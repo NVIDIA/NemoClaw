@@ -33,19 +33,16 @@ describe("OpenClaw WeChat account placeholder preload", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["configuration", "/sandbox/.openclaw/openclaw.json"],
-    ["refresher", "/usr/local/lib/nemoclaw/refresh-openclaw-wechat-placeholder.py"],
-  ] as const)("refuses a symlinked %s", (_label, symlinkPath) => {
+  it("refuses a symlinked refresher", () => {
     const spawn = vi.fn();
 
     expect(() =>
       refreshWechatAccountPlaceholder({
         existsSync: () => true,
-        lstatSync: (candidate) => metadata(candidate === symlinkPath ? "symlink" : "file"),
+        lstatSync: () => metadata("symlink"),
         spawnSync: spawn,
       }),
-    ).toThrow(/\[SECURITY\].*(?:configuration|refresher)/);
+    ).toThrow(/\[SECURITY\].*refresher/);
     expect(spawn).not.toHaveBeenCalled();
   });
 
