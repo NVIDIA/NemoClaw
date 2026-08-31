@@ -75,9 +75,17 @@ describe("created Hermes credential environment reconciliation", () => {
     const registered = {
       name: "alpha",
       gatewayName: "nemoclaw",
+      gatewayPort: 18789,
       lifecycleGeneration: "generation-1",
       lifecycleLiveIdentityFingerprint: "a".repeat(64),
     } as SandboxEntry;
+    const boundary = {
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 18789,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    };
     let current: SandboxEntry | null = structuredClone(registered);
     const readRegistry = vi.fn(() => current);
     const revalidateLiveIdentity = vi.fn((expectedIdentity: string, operation: string) => {
@@ -86,23 +94,40 @@ describe("created Hermes credential environment reconciliation", () => {
     });
 
     expect(
-      revalidateRegisteredSandboxCreateIdentity(registered, "reconciling Hermes credentials", {
-        readRegistry,
-        revalidateLiveIdentity,
-      }),
+      revalidateRegisteredSandboxCreateIdentity(
+        registered,
+        boundary,
+        "reconciling Hermes credentials",
+        {
+          readRegistry,
+          revalidateLiveIdentity,
+        },
+      ),
     ).toEqual(registered);
     expect(readRegistry).toHaveBeenCalledTimes(2);
     expect(revalidateLiveIdentity).toHaveBeenCalledOnce();
-
     current = structuredClone(registered);
     expect(() =>
-      revalidateRegisteredSandboxCreateIdentity(registered, "restarting Hermes", {
+      revalidateRegisteredSandboxCreateIdentity(registered, boundary, "restarting Hermes", {
         readRegistry: () => current,
         revalidateLiveIdentity: () => {
           current = { ...registered, gatewayPort: 18790 };
         },
       }),
     ).toThrow(/registered identity changed/u);
+    const revalidateReplacement = vi.fn();
+    expect(() =>
+      revalidateRegisteredSandboxCreateIdentity(
+        { ...registered, lifecycleLiveIdentityFingerprint: "b".repeat(64) },
+        boundary,
+        "capturing registered identity",
+        {
+          readRegistry: () => current,
+          revalidateLiveIdentity: revalidateReplacement,
+        },
+      ),
+    ).toThrow(/does not match the verified create/u);
+    expect(revalidateReplacement).not.toHaveBeenCalled();
   });
 
   it("fails onboarding when a successful rebuild cannot retire its handoff policy", async () => {

@@ -729,16 +729,29 @@ export function reconcileCreatedHermesCredentialEnvironment(
 /** Keep post-registration effects bound to the exact published sandbox entry. */
 export function revalidateRegisteredSandboxCreateIdentity(
   expected: SandboxEntry,
+  boundary: Pick<
+    VerifiedSandboxCreateBoundary,
+    | "sandboxName"
+    | "gatewayName"
+    | "gatewayPort"
+    | "lifecycleGeneration"
+    | "lifecycleLiveIdentityFingerprint"
+  >,
   operation: string,
   deps: {
     readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
     readonly revalidateLiveIdentity: (expectedIdentity: string, operation: string) => void;
   },
 ): SandboxEntry {
-  const expectedIdentity = expected.lifecycleLiveIdentityFingerprint;
-  if (!expected.lifecycleGeneration || !expectedIdentity) {
+  if (
+    expected.name !== boundary.sandboxName ||
+    expected.gatewayName !== boundary.gatewayName ||
+    expected.gatewayPort !== boundary.gatewayPort ||
+    expected.lifecycleGeneration !== boundary.lifecycleGeneration ||
+    expected.lifecycleLiveIdentityFingerprint !== boundary.lifecycleLiveIdentityFingerprint
+  ) {
     throw new Error(
-      `Cannot continue sandbox '${expected.name}' creation without its registered identity.`,
+      `Cannot continue sandbox '${boundary.sandboxName}' creation because its registered identity does not match the verified create.`,
     );
   }
   const requireCurrentRegistration = (): SandboxEntry => {
@@ -752,7 +765,7 @@ export function revalidateRegisteredSandboxCreateIdentity(
   };
 
   requireCurrentRegistration();
-  deps.revalidateLiveIdentity(expectedIdentity, operation);
+  deps.revalidateLiveIdentity(boundary.lifecycleLiveIdentityFingerprint, operation);
   return requireCurrentRegistration();
 }
 
@@ -1628,10 +1641,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     const revalidateSandboxIdentity = (sandboxIsLive: boolean, operation: string): void => {
       if (sandboxIsLive && !createEffectsFinalized && verifiedCreateBoundary) {
         if (publishedCreateRegistration) {
-          revalidateRegisteredSandboxCreateIdentity(publishedCreateRegistration, operation, {
-            readRegistry: registry.getSandbox,
-            revalidateLiveIdentity: revalidateCreatedSandboxIdentity,
-          });
+          revalidateRegisteredSandboxCreateIdentity(
+            publishedCreateRegistration,
+            requireVerifiedCreateBoundary(),
+            operation,
+            {
+              readRegistry: registry.getSandbox,
+              revalidateLiveIdentity: revalidateCreatedSandboxIdentity,
+            },
+          );
           return;
         }
         revalidateVerifiedCreateIdentity(requireVerifiedCreateBoundary(), operation);
@@ -2922,6 +2940,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
                   if (!published) {
                     throw new Error("Sandbox registration returned no published authority.");
                   }
+                  revalidateRegisteredSandboxCreateIdentity(
+                    published,
+                    requireVerifiedCreateBoundary(),
+                    `capturing registered identity for sandbox '${sandboxName}'`,
+                    {
+                      readRegistry: registry.getSandbox,
+                      revalidateLiveIdentity: revalidateCreatedSandboxIdentity,
+                    },
+                  );
                   publishedCreateRegistration = published;
                   return result;
                 },
