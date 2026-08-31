@@ -262,6 +262,50 @@ print(port)
 PYPORT
 }
 
+_chat_ui_external_host() {
+  [ -n "${CHAT_UI_URL:-}" ] || return 1
+  python3 - "$CHAT_UI_URL" <<'PYHOST'
+import ipaddress
+import sys
+from urllib.parse import urlparse
+
+try:
+    parsed = urlparse(sys.argv[1])
+    host = parsed.hostname
+    parsed.port
+except ValueError:
+    sys.exit(1)
+
+if (
+    parsed.scheme.lower() != "https"
+    or not parsed.netloc
+    or not host
+    or parsed.username is not None
+    or parsed.password is not None
+):
+    sys.exit(1)
+
+host = host.lower()
+if host.rstrip(".") == "localhost":
+    sys.exit(1)
+try:
+    address = ipaddress.ip_address(host.rstrip("."))
+except ValueError:
+    pass
+else:
+    if address.is_loopback or address.is_unspecified:
+        sys.exit(1)
+
+print(host)
+PYHOST
+}
+
+HERMES_DASHBOARD_EXTERNAL_HOST=""
+if _dashboard_external_host="$(_chat_ui_external_host)"; then
+  HERMES_DASHBOARD_EXTERNAL_HOST="$_dashboard_external_host"
+fi
+unset _dashboard_external_host
+
 _dashboard_port_raw="${NEMOCLAW_DASHBOARD_PORT:-}"
 if [ -z "$_dashboard_port_raw" ]; then
   if _chat_ui_port="$(_chat_ui_url_port)"; then
@@ -1739,6 +1783,7 @@ start_hermes_dashboard_current_user() {
   HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
     GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
     NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env" \
+    _NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST="${HERMES_DASHBOARD_EXTERNAL_HOST}" \
     nohup "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" >/tmp/dashboard.log 2>&1 &
   DASHBOARD_PID=$!
   echo "[gateway] hermes dashboard launched (pid $DASHBOARD_PID)" >&2
@@ -1758,6 +1803,7 @@ start_hermes_dashboard_sandbox_user() {
   HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
     GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
     NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env" \
+    _NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST="${HERMES_DASHBOARD_EXTERNAL_HOST}" \
     nohup "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c 'umask 0077; exec "$@" >/tmp/dashboard.log 2>&1' sh "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" &
   DASHBOARD_PID=$!
   echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2

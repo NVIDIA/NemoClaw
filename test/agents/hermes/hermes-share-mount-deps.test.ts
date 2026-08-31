@@ -115,6 +115,7 @@ function runHermesArchiveLayer(
   const checksumFile = `${downloadedTarball}.sha256`;
   const securityPatch = path.join(tmp, "hermes-security-dependencies.patch");
   const whatsappProxyPatch = path.join(tmp, "hermes-whatsapp-proxy.patch");
+  const dashboardExternalHostPatch = path.join(tmp, "hermes-dashboard-external-host.patch");
   const helperCopy = path.join(tmp, "download-hermes-source-archive.sh");
   const fakeBin = path.join(tmp, "bin");
   const responseFile = path.join(tmp, "responses");
@@ -128,6 +129,7 @@ function runHermesArchiveLayer(
   fs.mkdirSync(fakeBin);
   fs.writeFileSync(securityPatch, "test patch fixture\n");
   fs.writeFileSync(whatsappProxyPatch, "test patch fixture\n");
+  fs.writeFileSync(dashboardExternalHostPatch, "test patch fixture\n");
   fs.writeFileSync(path.join(archiveRoot, "pyproject.toml"), 'version = "test"\n');
   fs.writeFileSync(
     path.join(archiveRoot, "tests", "security-fixture.txt"),
@@ -194,6 +196,7 @@ function runHermesArchiveLayer(
   const command = extractHermesArchiveCommand(fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8"))
     .replaceAll("/tmp/hermes-security-dependencies.patch", securityPatch)
     .replaceAll("/tmp/hermes-whatsapp-proxy.patch", whatsappProxyPatch)
+    .replaceAll("/tmp/hermes-dashboard-external-host.patch", dashboardExternalHostPatch)
     .replaceAll("/tmp/hermes.tar.gz.sha256", checksumFile)
     .replaceAll("/tmp/hermes.tar.gz", downloadedTarball)
     .replaceAll("/opt/hermes", targetRoot)
@@ -206,14 +209,15 @@ function runHermesArchiveLayer(
       `target_root=${JSON.stringify(targetRoot)}`,
       `security_patch=${JSON.stringify(securityPatch)}`,
       `whatsapp_proxy_patch=${JSON.stringify(whatsappProxyPatch)}`,
+      `dashboard_external_host_patch=${JSON.stringify(dashboardExternalHostPatch)}`,
       "git() {",
       '  [ "$1" = "-C" ]',
       '  [ "$2" = "$target_root" ]',
       '  [ "$3" = "apply" ]',
       '  if [ "$4" = "--check" ]; then',
-      '    [ "$5" = "$security_patch" ] || [ "$5" = "$whatsapp_proxy_patch" ]',
+      '    [ "$5" = "$security_patch" ] || [ "$5" = "$whatsapp_proxy_patch" ] || [ "$5" = "$dashboard_external_host_patch" ]',
       "  else",
-      '    [ "$4" = "$security_patch" ] || [ "$4" = "$whatsapp_proxy_patch" ]',
+      '    [ "$4" = "$security_patch" ] || [ "$4" = "$whatsapp_proxy_patch" ] || [ "$4" = "$dashboard_external_host_patch" ]',
       "  fi",
       "}",
       `export HERMES_VERSION=${JSON.stringify(input.version ?? "v2026.7.20")}`,

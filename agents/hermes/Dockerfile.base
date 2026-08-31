@@ -444,6 +444,7 @@ RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
 # RUN so their bytes never enter a published image layer.
 COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
 COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
+COPY agents/hermes/dashboard-external-host.patch /tmp/hermes-dashboard-external-host.patch
 COPY scripts/checks/download-hermes-source-archive.sh /tmp/nemoclaw-download-hermes-source-archive.sh
 RUN mkdir -p /opt/hermes \
     && bash /tmp/nemoclaw-download-hermes-source-archive.sh "${HERMES_VERSION}" /tmp/hermes.tar.gz \
@@ -455,8 +456,11 @@ RUN mkdir -p /opt/hermes \
     && git -C /opt/hermes apply /tmp/hermes-security-dependencies.patch \
     && git -C /opt/hermes apply --check /tmp/hermes-whatsapp-proxy.patch \
     && git -C /opt/hermes apply /tmp/hermes-whatsapp-proxy.patch \
+    && git -C /opt/hermes apply --check /tmp/hermes-dashboard-external-host.patch \
+    && git -C /opt/hermes apply /tmp/hermes-dashboard-external-host.patch \
     && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256 \
         /tmp/hermes-security-dependencies.patch /tmp/hermes-whatsapp-proxy.patch \
+        /tmp/hermes-dashboard-external-host.patch \
         /tmp/nemoclaw-download-hermes-source-archive.sh
 
 # Cross-check the pinned release against two independent sources before
