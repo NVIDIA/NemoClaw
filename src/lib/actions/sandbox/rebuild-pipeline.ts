@@ -34,7 +34,6 @@ import {
 } from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import {
-  getMcpPreparationRuntimeSelection,
   type HermesCronRestoreIdentity,
   HermesCronRestoreIncompleteError,
   printHermesCronRestoreRecoveryCommand,
@@ -374,6 +373,12 @@ async function rebuildSandboxUnlocked(
         return;
       }
       const mcpEntries = Object.values(sandboxEntry.mcp?.bridges ?? {});
+      const mcpRuntimeSelection =
+        mcpEntries.length > 0 ? recreateOptions.runtimeSelection : undefined;
+      if (mcpEntries.length > 0 && !mcpRuntimeSelection) {
+        bail("MCP rebuild preflight did not retain its recorded OpenShell runtime target.");
+        return;
+      }
       const recreateJournal = openRebuildRecreateJournal({
         target: {
           sandboxName,
@@ -383,11 +388,8 @@ async function rebuildSandboxUnlocked(
         expectedGatewayAuthority,
         agentName: rebuildAgent || "openclaw",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
-        ...(mcpEntries.length > 0
-          ? {
-              resolveRuntimeSelection: () =>
-                getMcpPreparationRuntimeSelection(sandboxEntry),
-            }
+        ...(mcpRuntimeSelection
+          ? { resolveRuntimeSelection: () => mcpRuntimeSelection }
           : {}),
         log,
         onAuthorityRefusal: (lines) => bail(lines.join("\n")),

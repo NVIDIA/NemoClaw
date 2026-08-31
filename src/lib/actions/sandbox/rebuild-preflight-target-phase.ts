@@ -40,6 +40,7 @@ import {
   type RebuildSandboxEntry,
 } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import { getMcpPreparationRuntimeSelection } from "./rebuild-mcp-phase";
 import { preflightRebuildMessagingConflicts } from "./rebuild-messaging-conflict-preflight";
 import { stageRebuildMessagingPlanOrBail } from "./rebuild-messaging-phase";
 import {
@@ -198,6 +199,16 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   );
   if (!recreateOptions) return null;
+  if (Object.keys(sandboxEntry.mcp?.bridges ?? {}).length > 0) {
+    try {
+      recreateOptions.runtimeSelection = getMcpPreparationRuntimeSelection(sandboxEntry);
+    } catch (error) {
+      bail(
+        `Could not bind MCP rebuild preflight to the recorded OpenShell target: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+  }
   let managedWorkloadRebuildCatalog: Awaited<
     ReturnType<typeof prepareManagedWorkloadRebuildHandoff>
   > = null;

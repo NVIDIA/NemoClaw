@@ -8,7 +8,6 @@ const phaseMocks = vi.hoisted(() => ({
   clearRecoveryBackup: vi.fn(),
   cleanupPolicySource: vi.fn(),
   findRecoveryBackup: vi.fn(),
-  getMcpRuntimeSelection: vi.fn(),
   openRecreateJournal: vi.fn(),
   recoverCronRestore: vi.fn(),
   runBackup: vi.fn(),
@@ -75,7 +74,6 @@ vi.mock("./rebuild-restore-phase", () => ({
 vi.mock("./rebuild-post-restore-phase", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-post-restore-phase")>()),
   recoverHermesCronRestore: phaseMocks.recoverCronRestore,
-  getMcpPreparationRuntimeSelection: phaseMocks.getMcpRuntimeSelection,
   runHermesCronRestoreTransaction: phaseMocks.runCronRestoreTransaction,
   runRebuildPostRestorePhase: phaseMocks.runPostRestore,
 }));
@@ -106,11 +104,6 @@ describe("Hermes accepted replacement recovery", () => {
     phaseMocks.findRecoveryBackup.mockReturnValue({
       backupPath: recoveryBackupPath,
       timestamp: "2026-08-28T00-00-00-000Z",
-    });
-    phaseMocks.getMcpRuntimeSelection.mockReturnValue({
-      gatewayName: "nemoclaw",
-      workspace: "default",
-      localTlsDir: "/authority/tls",
     });
     phaseMocks.runRestore.mockReturnValue({ restoreSucceeded: true });
     phaseMocks.runPostRestore.mockResolvedValue(undefined);
@@ -232,12 +225,16 @@ describe("Hermes accepted replacement recovery", () => {
       workspace: "default",
       localTlsDir: "/authority/tls",
     };
-    phaseMocks.getMcpRuntimeSelection.mockReturnValue(runtimeSelection);
+    const preflightResult = await phaseMocks.runPreflight.getMockImplementation()!();
     phaseMocks.runPreflight.mockResolvedValue({
-      ...(await phaseMocks.runPreflight.getMockImplementation()!()),
+      ...preflightResult,
       sandboxEntry: {
         name: "alpha",
         mcp: { bridges: { github: { server: "github" } } },
+      },
+      recreateOptions: {
+        ...preflightResult.recreateOptions,
+        runtimeSelection,
       },
     });
     phaseMocks.openRecreateJournal.mockImplementation((input) => ({
@@ -258,7 +255,6 @@ describe("Hermes accepted replacement recovery", () => {
       rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(phaseMocks.getMcpRuntimeSelection).toHaveBeenCalledOnce();
     expect(phaseMocks.runPostRestore).toHaveBeenCalledWith(
       expect.objectContaining({
         mcpRuntimeSelection: runtimeSelection,
@@ -278,6 +274,10 @@ describe("Hermes accepted replacement recovery", () => {
       sandboxEntry: {
         name: "alpha",
         mcp: { bridges: { github: { server: "github" } } },
+      },
+      recreateOptions: {
+        ...preflightResult.recreateOptions,
+        runtimeSelection,
       },
     });
     phaseMocks.openRecreateJournal.mockReturnValue({

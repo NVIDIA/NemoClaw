@@ -323,11 +323,6 @@ describe("getSshConfig frozen target", () => {
     vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
     vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
-    const runtimeSelection = {
-      gatewayName: "recorded-gateway",
-      workspace: "default",
-      localTlsDir: "/authority/tls",
-    };
     vi.spyOn(loadOpenShellResolve(), "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
     const capture = vi
       .spyOn(loadOpenShellClient(), "captureSandboxSshConfigCommand")
