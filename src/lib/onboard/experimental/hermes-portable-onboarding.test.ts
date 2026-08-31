@@ -1359,6 +1359,27 @@ network_policies:
     );
   });
 
+  it("accepts readiness commands already scoped to the receipt gateway", () => {
+    const capture = vi.fn(() => ({
+      status: 0,
+      stdout: Buffer.from("ready"),
+      stderr: Buffer.alloc(0),
+    }));
+    const run = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
+
+    expect(run(["sandbox", "list", "-g", "nemoclaw"]).status).toBe(0);
+    expect(
+      run(["sandbox", "exec", "-g", "nemoclaw", "--name", "alpha", "--", "true"]).status,
+    ).toBe(0);
+    expect(capture.mock.calls).toEqual([
+      [["sandbox", "list", "-g", "nemoclaw"]],
+      [["sandbox", "exec", "-g", "nemoclaw", "--name", "alpha", "--", "true"]],
+    ]);
+    expect(() => run(["sandbox", "list", "-g", "other-gateway"])).toThrow(
+      "unsupported OpenShell command",
+    );
+  });
+
   it("rejects exact-gateway identity that has not reached Ready (#9203)", () => {
     const capture = vi
       .fn()
