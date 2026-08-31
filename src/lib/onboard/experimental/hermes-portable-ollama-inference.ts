@@ -336,6 +336,9 @@ function writeHermesPortablePublishedResumeTiming(
   );
 }
 
+const DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING: PodmanPublishedResumeTiming =
+  Object.freeze({ onComplete: writeHermesPortablePublishedResumeTiming });
+
 interface PreparedHermesPortableOllamaRecoveryEntry {
   readonly registryRecovery: PreparedPortableRegistryRecovery;
   readonly createRuntimeAuthority: (options: {
@@ -429,7 +432,7 @@ function prepareHermesPortableOllamaRecoveryEntry(options: {
         },
         publishedResumeTiming:
           runtimeOptions.publishedResumeTiming ??
-          Object.freeze({ onComplete: writeHermesPortablePublishedResumeTiming }),
+          DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
         onFailureEvidence: (evidence) => {
           const message = redactOnboardDiagnosticText(evidence.message);
           if (message) console.error(`  Podman inference ${evidence.phase}: ${message}`);
@@ -457,7 +460,7 @@ function prepareHermesPortableOllamaRecoveryEntry(options: {
           },
           publishedResumeTiming:
             runtimeOptions.publishedResumeTiming ??
-            Object.freeze({ onComplete: writeHermesPortablePublishedResumeTiming }),
+            DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
           onFailureEvidence: (evidence) => {
             const message = redactOnboardDiagnosticText(evidence.message);
             if (message) console.error(`  Podman inference ${evidence.phase}: ${message}`);
@@ -573,7 +576,7 @@ export function createHermesPortableOllamaRuntimeAuthority(options: {
             },
             publishedResumeTiming:
               options.publishedResumeTiming ??
-              Object.freeze({ onComplete: writeHermesPortablePublishedResumeTiming }),
+              DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
           }
         : {}),
       authorityStore: openFilePersistedEngineAuthorityStore(inferenceStateDir),
