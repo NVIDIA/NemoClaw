@@ -2050,13 +2050,6 @@ On a fresh onboard the OpenShell gateway can (re)start its supervisor session an
 
 NemoClaw polls immediately, starts retrying after 250ms, and backs off to a 2-second cap. It tolerates 30 consecutive `Error` observations by default so this transient recovers on its own. Only `Error` that persists through the debounce count is terminal, unless the overall `NEMOCLAW_SANDBOX_READY_TIMEOUT` deadline expires first. `Failed` and `CrashLoopBackOff` are always terminal and fail immediately.
 
-If your host needs more observations for slower re-registration, raise the debounce. Raise `NEMOCLAW_SANDBOX_READY_TIMEOUT` too if the overall deadline is too short. To fail fast on the first `Error` poll, set the debounce to `1`:
-
-```bash
-export NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE=1
-$$nemoclaw onboard
-```
-
 If the failure persists after the debounce, the sandbox is stuck. Inspect the retained diagnostics and gateway state:
 
 ```bash
