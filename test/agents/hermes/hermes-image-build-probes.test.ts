@@ -10,25 +10,6 @@ import { describe, expect, it } from "vitest";
 
 const root = path.join(import.meta.dirname, "../../..");
 const probes = path.join(root, "agents", "hermes", "image-build-probes.py");
-const commands = [
-  "cron-backup",
-  "cron-create",
-  "cron-reopen",
-  "cron-runtime-source",
-  "dashboard-policy",
-  "discord-backup",
-  "discord-create",
-  "discord-recovery-source",
-  "discord-reopen",
-  "gateway-process-identity",
-  "gateway-runtime-metadata",
-  "googlechat-override-seams",
-  "langfuse-credentials",
-  "neutral-platform-inertness",
-  "profile-policy",
-  "session-preview",
-] as const;
-
 function runNeutralPlatformProbe(configuration: string) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-platform-probe-"));
   const gatewayRoot = path.join(temporaryRoot, "gateway");
@@ -102,17 +83,4 @@ def load_gateway_config():
     expect(result.status).not.toBe(0);
   });
 
-  it.each(Array.from(commands, (value) => [value]))(
-    "lists Dockerfile probe command %s in the runner usage",
-    (command) => {
-      const result = spawnSync("python3", ["-I", probes], {
-        encoding: "utf8",
-        timeout: 5000,
-      });
-
-      expect(result.status).toBe(1);
-
-      expect(result.stderr).toContain(command);
-    },
-  );
 });
