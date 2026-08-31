@@ -41,3 +41,6 @@ It also removes the deprecated Brev deploy wrapper and adds contributor and main
 - Development qualification now contains a provider-owned record and dormant executor for the OpenShell v0.0.24 and MXC v0.7.0-rc1 checkpoint on physical Windows.
   NemoClaw does not register or select MXC, expose Windows onboarding, activate this executor, or treat the checkpoint as an accepted stable distribution.
   Related changes: [PR #10591](https://github.com/NVIDIA/NemoClaw/pull/10591) and [PR #10596](https://github.com/NVIDIA/NemoClaw/pull/10596).
+- Routine Hermes Portable `connect --probe-only` recovery now reuses a verified receipt-owned Ollama runtime and healthy forwards without repeating onboarding's full inference qualification.
+  When that runtime or its forwards need recovery, NemoClaw keeps the existing ownership, readiness, route, and rollback checks.
+  Related change: [PR #10614](https://github.com/NVIDIA/NemoClaw/pull/10614).
