@@ -12,6 +12,7 @@ import {
   NEMOCLAW_CREATE_ATTEMPT_LABEL,
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
   parseOpenShellSandboxId,
+  observeCreatedOpenShellSandboxId,
   resolveCreatedOpenShellSandboxId,
   resolveOpenShellSandboxId,
   settleCreatedOpenShellSandboxId,
@@ -633,6 +634,29 @@ export function createSandboxGpuCreateAttemptRunner(
     if (!deferPostCreateEffects) await managedLifecycle?.prepareNetwork();
     const [createExecutable, ...createExecutableArgs] = managedLifecycle?.launchArgv ?? attemptArgv;
     if (!createExecutable) throw new Error("Sandbox create executable is missing.");
+    let readyCheckCreatedSandboxId: string | null = null;
+    let readyCheckCreatedIdentityFailure: unknown = null;
+    const failReadyCheckCreatedIdentity = (diagnostic: string): true => {
+      readyCheckCreatedIdentityFailure = new Error(
+        `OpenShell did not return the exact created identity for sandbox '${input.sandboxName}'. Diagnostic class: ${diagnostic}.`,
+      );
+      return true;
+    };
+    const settleCreatedIdentity = (): string => {
+      if (readyCheckCreatedIdentityFailure !== null) throw readyCheckCreatedIdentityFailure;
+      const sandboxId = settleCreatedOpenShellSandboxId({
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        createAttemptNonce: createAttemptNonce!,
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+        priorSandboxId: readyCheckCreatedSandboxId,
+        sleep: (milliseconds) => deps.sleep(milliseconds / 1000),
+      });
+      if (readyCheckCreatedSandboxId && sandboxId !== readyCheckCreatedSandboxId) {
+        throw new Error("OpenShell create-attempt identity changed after the Ready handoff.");
+      }
+      return sandboxId;
+    };
     const streamCreate = () =>
       streamSandboxCreateWithPublicImageCredentialIsolation(
         managedBootstrap != null,
@@ -643,7 +667,33 @@ export function createSandboxGpuCreateAttemptRunner(
             ...(input.createWorkingDirectory ? { cwd: input.createWorkingDirectory } : {}),
             readyCheck: () => {
               const list = captureSandboxReadiness(["sandbox", "list"], { ignoreError: true });
-              return sandboxGpuCreateAttempt.isSandboxReady(list, input.sandboxName);
+              const ready = sandboxGpuCreateAttempt.isSandboxReady(list, input.sandboxName);
+              if (!ready || !createAttemptNonce) return ready;
+              const observation = observeCreatedOpenShellSandboxId(
+                {
+                  sandboxName: input.sandboxName,
+                  gatewayName: input.gatewayName,
+                  createAttemptNonce,
+                  runCaptureOpenshell: captureSandboxReadiness,
+                },
+                SANDBOX_READY_PROBE_TIMEOUT_MS,
+              );
+              if (observation.state === "invalid") {
+                return failReadyCheckCreatedIdentity(observation.diagnostic);
+              }
+              if (observation.sandboxId === null) {
+                return readyCheckCreatedSandboxId
+                  ? failReadyCheckCreatedIdentity("selector-identity-disappeared")
+                  : false;
+              }
+              if (
+                readyCheckCreatedSandboxId &&
+                observation.sandboxId !== readyCheckCreatedSandboxId
+              ) {
+                return failReadyCheckCreatedIdentity("selector-identity-changed");
+              }
+              readyCheckCreatedSandboxId = observation.sandboxId;
+              return observation.state === "matched";
             },
             ...(deferPostCreateEffects
               ? {}
@@ -757,13 +807,7 @@ export function createSandboxGpuCreateAttemptRunner(
             let sandboxId: string;
             try {
               sandboxId = createAttemptNonce
-                ? settleCreatedOpenShellSandboxId({
-                    sandboxName: input.sandboxName,
-                    gatewayName: input.gatewayName,
-                    createAttemptNonce,
-                    runCaptureOpenshell: deps.runCaptureOpenshell,
-                    sleep: (milliseconds) => deps.sleep(milliseconds / 1000),
-                  })
+                ? settleCreatedIdentity()
                 : resolveOpenShellSandboxId(input.sandboxName, deps.runCaptureOpenshell);
             } catch (error) {
               if (createAttemptNonce) persistIdentitySettlementRecovery();
@@ -901,13 +945,7 @@ export function createSandboxGpuCreateAttemptRunner(
       }
       let sandboxId: string;
       try {
-        sandboxId = settleCreatedOpenShellSandboxId({
-          sandboxName: input.sandboxName,
-          gatewayName: input.gatewayName,
-          createAttemptNonce,
-          runCaptureOpenshell: deps.runCaptureOpenshell,
-          sleep: (milliseconds) => deps.sleep(milliseconds / 1000),
-        });
+        sandboxId = settleCreatedIdentity();
       } catch (error) {
         persistIdentitySettlementRecovery();
         throw new Error(

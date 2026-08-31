@@ -227,7 +227,7 @@ describe("connectSandbox probe-only observe mode", () => {
   it("fails before recovery when the initial Error persists after Docker starts (#10466)", async () => {
     const harness = createConnectHarness({
       dockerRuntime: { containerName: "openshell-alpha", running: false, paused: false },
-      listOutputs: Array.from({ length: 11 }, () => "alpha Error"),
+      listOutputs: Array.from({ length: 21 }, () => "alpha Error"),
     });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
@@ -235,7 +235,7 @@ describe("connectSandbox probe-only observe mode", () => {
     );
 
     expect(harness.dockerStartSpy).toHaveBeenCalledOnce();
-    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(11);
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledTimes(21);
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
