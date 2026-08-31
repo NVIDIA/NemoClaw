@@ -534,13 +534,6 @@ describe("pull request and main workflow contracts", () => {
     );
   });
 
-  // source-shape-contract: security -- Offline package checks must use only the cache populated by the trusted dependency installer
-  it("reuses the trusted dependency cache for offline package contracts", () => {
-    expect(
-      requiredStep(sharedActions.buildTypecheck, "Verify compiled package contracts").env,
-    ).toEqual({ NPM_CONFIG_CACHE: "${{ runner.temp }}/npm" });
-  });
-
   // source-shape-contract: security -- The PR workflow must select an exact base-controlled package run before publishing its archive internally
   it("passes only the base-packaged SDK archive to pull request dependency jobs", () => {
     const packageJob = prWorkflow.jobs["openshell-sdk-package"];

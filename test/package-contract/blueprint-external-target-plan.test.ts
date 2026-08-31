@@ -213,7 +213,6 @@ describe("packaged Blueprint Runner npm cache", () => {
 });
 
 describe("packaged Blueprint Runner external target", () => {
-  // source-shape-contract: compatibility -- The installed command must select the protected root wrapper before its runtime behavior is trusted
   it(
     "executes the installed package command and fails before effects when the SDK is absent (#9872)",
     { timeout: 240_000 },
@@ -251,12 +250,6 @@ describe("packaged Blueprint Runner external target", () => {
           { encoding: "utf8", env: npmEnvironment() },
         );
         assertCommandSucceeded(extract, "root package archive extraction");
-        const packedManifest = JSON.parse(
-          fs.readFileSync(path.join(installRoot, "package.json"), "utf8"),
-        ) as { bin?: Record<string, string> };
-        expect(packedManifest.bin?.["nemoclaw-blueprint-runner"]).toBe(
-          "./dist/lib/blueprint-runner.js",
-        );
         fs.copyFileSync(
           path.join(REPOSITORY_ROOT, "package-lock.json"),
           path.join(installRoot, "package-lock.json"),

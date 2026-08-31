@@ -42,36 +42,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
-      "test": "accepts the checked-in trusted package and live-test contract",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
-      "test": "rejects a helper that bypasses the exact Runner or weakens its live boundary",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
-      "test": "rejects a different module-relative Runner artifact",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
-      "test": "rejects a Runner invocation that bypasses the redacted shell fixture",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
-      "test": "rejects package credentials or untrusted candidate execution in the package job",
-      "category": "security"
-    },
-    {
-      "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
-      "test": "rejects credential exposure and candidate or artifact substitution in the live job",
-      "category": "security"
-    },
-    {
       "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
       "test": "keeps every candidate on standard runners when $name (#7145)",
       "category": "security"
@@ -147,11 +117,6 @@
       "category": "security"
     },
     {
-      "file": "test/package-contract/blueprint-external-target-plan.test.ts",
-      "test": "executes the installed package command and fails before effects when the SDK is absent (#9872)",
-      "category": "compatibility"
-    },
-    {
       "file": "test/agents/openclaw/openclaw-2026-6-npm-remediation.test.ts",
       "test": "rebuilds a guarded core archive with the patched fs-safe package bundled",
       "category": "security"
@@ -224,11 +189,6 @@
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "provides the package token only to trusted main dependency installation",
-      "category": "security"
-    },
-    {
-      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
-      "test": "reuses the trusted dependency cache for offline package contracts",
       "category": "security"
     },
     {
