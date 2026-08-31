@@ -69,7 +69,10 @@
     },
     {
       "live": "test/e2e/live/pi-agent-qualification.test.ts",
-      "liveSources": ["test/e2e/live/onboard-interactive-pty.ts"],
+      "liveSources": [
+        "test/e2e/live/onboard-interactive-pty.ts",
+        "test/e2e/live/pi-agent-qualification-events.ts"
+      ],
       "fast": [
         "src/lib/agent/candidate.test.ts",
         "src/lib/agent/pi-lifecycle.test.ts",
