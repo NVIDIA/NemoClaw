@@ -45,8 +45,8 @@ export interface DockerHostProbeResult {
    * The probe never reached a verdict: no process result was returned, the
    * result contained an error, or the process had no exit status.
    * Unreachability was not observed, so this must not license a redirect.
-   * The timeout therefore biases toward holding the host default — raising
-   * it buys patience for a slow daemon, not more fallback coverage.
+   * A timeout keeps the host default because the probe has no verdict.
+   * A longer timeout can produce a verdict and permit fallback selection.
    */
   inconclusive?: boolean;
 }
