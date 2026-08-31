@@ -179,7 +179,6 @@ describe("prepared rebuild recovery", () => {
         name: "alpha",
         provider: "compatible-endpoint",
         model: "new-model",
-        policies: ["npm", "github"],
         agent: null,
         agentVersion: "0.1.0",
         nemoclawVersion: "0.0.71",

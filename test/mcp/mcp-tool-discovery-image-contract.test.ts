@@ -160,8 +160,7 @@ describe("MCP tool discovery image contract", () => {
         .map((seedName) => fs.statSync(path.join(seedDirectory, seedName)).size)
         .every((size) => size <= 2_000_000),
     ).toBe(true);
-    manifest.archives.forEach(
-      (archive: { archive: string; integrity: string; size: number }) => {
+    manifest.archives.forEach((archive: { archive: string; integrity: string; size: number }) => {
       const archiveParts = seedNames.filter(
         (seedName) =>
           seedName === archive.archive || seedName.startsWith(`${archive.archive}.part-`),
@@ -189,8 +188,7 @@ describe("MCP tool discovery image contract", () => {
       expect(seed).toHaveLength(archive.size);
       expect(integrity).toBe(archive.integrity);
       expect(matches.length).toBeGreaterThan(0);
-      },
-    );
+    });
   });
 
   it("does not commit MCP runtime registry archives", () => {
@@ -203,30 +201,41 @@ describe("MCP tool discovery image contract", () => {
     expect(trackedSeedFiles).toEqual([]);
   });
 
-  it("pins the reviewed image runtime artifacts exactly", () => {
+  // source-shape-contract: security -- Exact reviewed runtime digests reject substituted executable and license artifacts before managed image construction.
+  it.each([
+    {
+      expectedHash: "d77b6d5465f651bf60eed9d978de14e72ebb0db35bb5a691c3eab84d554e3f9a",
+      relativePath: "managed-startup-image-runtime.bundle",
+    },
+    {
+      expectedHash: "df5dc8f167101085a8e73c444aa56854b2a4716a0bb7de9886fec4e50f402601",
+      relativePath: "mcp-tool-discovery/BUNDLED_PACKAGES.json",
+    },
+    {
+      expectedHash: "ae0820debd0e33a10baa3a9c6c7ea831e8ad32a43f8500d52c7dc961ba5513a5",
+      relativePath: "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt",
+    },
+    {
+      expectedHash: "5622323afbace37445582fa889da4cfbae31bf8ecb2a5bab571026f9cc479fdb",
+      relativePath: "mcp-tool-discovery/mcp-tool-discovery.bundle",
+    },
+  ])("pins the reviewed image runtime artifacts exactly", ({ expectedHash, relativePath }) => {
     const bundleRoot = path.join(
       repoRoot,
       "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle",
     );
-    const expectedHashes = {
-      "managed-startup-image-runtime.bundle":
-        "64dca3ede783a76f2bfb000647acc8665c2f3366d326ca2a41c96bcafc2490e4",
-      "mcp-tool-discovery/BUNDLED_PACKAGES.json":
-        "df5dc8f167101085a8e73c444aa56854b2a4716a0bb7de9886fec4e50f402601",
-      "mcp-tool-discovery/THIRD_PARTY_LICENSES.txt":
-        "ae0820debd0e33a10baa3a9c6c7ea831e8ad32a43f8500d52c7dc961ba5513a5",
-      "mcp-tool-discovery/mcp-tool-discovery.bundle":
-        "5622323afbace37445582fa889da4cfbae31bf8ecb2a5bab571026f9cc479fdb",
-    } as const;
+    const actualHash = crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(path.join(bundleRoot, relativePath)))
+      .digest("hex");
+    expect(actualHash, relativePath).toBe(expectedHash);
+  });
 
-    Object.entries(expectedHashes).forEach(([relativePath, expectedHash]) => {
-      const actualHash = crypto
-        .createHash("sha256")
-        .update(fs.readFileSync(path.join(bundleRoot, relativePath)))
-        .digest("hex");
-      expect(actualHash, relativePath).toBe(expectedHash);
-    });
-
+  it("executes the reviewed MCP discovery runtime artifact", () => {
+    const bundleRoot = path.join(
+      repoRoot,
+      "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle",
+    );
     const executableFixture = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-reviewed-mcp-runtime-"),
     );
@@ -248,6 +257,123 @@ describe("MCP tool discovery image contract", () => {
       });
     } finally {
       fs.rmSync(executableFixture, { force: true, recursive: true });
+    }
+  });
+
+  it("accepts Pi only in the refreshed reviewed managed startup runtime", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-startup-runtime-"));
+    const bundlePath = path.join(
+      repoRoot,
+      "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
+    );
+    const staleBundlePath = path.join(fixture, "stale-managed-startup-image-runtime.cjs");
+    const completionFile = path.join(fixture, "managed-bootstrap-completion.json");
+    const startupCompletionFile = path.join(fixture, "managed-startup-complete.json");
+    const runtimeEnvironmentFile = path.join(fixture, "managed-startup-runtime.env");
+    const bootstrapIdentity = "a".repeat(64);
+    const profileFingerprint = "b".repeat(64);
+    const runtimeEnvironment = "export NEMOCLAW_MODEL='nvidia/test'\n";
+    const runtimeEnvironmentSha256 = crypto
+      .createHash("sha256")
+      .update(runtimeEnvironment, "utf8")
+      .digest("hex");
+    const verificationScript = `
+      const fs = require("node:fs");
+      const originalFstatSync = fs.fstatSync;
+      fs.fstatSync = (descriptor, options) => {
+        const stat = originalFstatSync(descriptor, options);
+        return new Proxy(stat, {
+          get(target, property) {
+            if (property === "uid" || property === "gid") return 0n;
+            const value = Reflect.get(target, property, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      };
+      const [bundle, completion, startupCompletion, runtimeEnvironment, expected] =
+        process.argv.slice(1);
+      try {
+        const runtime = require(bundle);
+        const receipt = runtime.verifyManagedBootstrapImageCompletion(
+          JSON.parse(expected),
+          completion,
+          startupCompletion,
+          runtimeEnvironment,
+        );
+        process.stdout.write(JSON.stringify(receipt));
+      } catch (error) {
+        process.stderr.write((error instanceof Error ? error.message : String(error)) + "\\n");
+        process.exitCode = 1;
+      }
+    `;
+
+    try {
+      fs.writeFileSync(
+        completionFile,
+        `${JSON.stringify({
+          agent: "pi",
+          bootstrapIdentity,
+          profileFingerprint,
+          schemaVersion: 1,
+          transactionPending: false,
+        })}\n`,
+        { mode: 0o444 },
+      );
+      fs.writeFileSync(
+        startupCompletionFile,
+        `${JSON.stringify({
+          agent: "pi",
+          corporateCaMerged: false,
+          profileFingerprint,
+          runtimeEnvironmentSha256,
+          schemaVersion: 1,
+        })}\n`,
+        { mode: 0o444 },
+      );
+      fs.writeFileSync(runtimeEnvironmentFile, runtimeEnvironment, { mode: 0o444 });
+      const reviewedAgentRegistry = '["openclaw","hermes","langchain-deepagents-code","pi"]';
+      const staleAgentRegistry = '["openclaw","hermes","langchain-deepagents-code"]';
+      const reviewedBundle = fs.readFileSync(bundlePath, "utf8");
+      fs.writeFileSync(
+        staleBundlePath,
+        reviewedBundle.replace(reviewedAgentRegistry, staleAgentRegistry),
+      );
+      const expectedReceipt = JSON.stringify({
+        agent: "pi",
+        bootstrapIdentity,
+        profileFingerprint,
+      });
+      const verifyBundle = (candidateBundlePath: string) =>
+        spawnSync(
+          process.execPath,
+          [
+            "-e",
+            verificationScript,
+            candidateBundlePath,
+            completionFile,
+            startupCompletionFile,
+            runtimeEnvironmentFile,
+            expectedReceipt,
+          ],
+          { encoding: "utf8" },
+        );
+      const result = verifyBundle(bundlePath);
+
+      expect(result).toMatchObject({ status: 0, stderr: "" });
+      expect(JSON.parse(result.stdout)).toEqual({
+        schemaVersion: 1,
+        bootstrapIdentity,
+        agent: "pi",
+        profileFingerprint,
+        transactionPending: false,
+      });
+      expect(verifyBundle(staleBundlePath)).toMatchObject({
+        status: 1,
+        stdout: "",
+        stderr: "Managed bootstrap envelope is invalid: image completion schema is invalid\n",
+      });
+    } finally {
+      fs.rmSync(fixture, { force: true, recursive: true });
     }
   });
 
@@ -275,25 +401,26 @@ describe("MCP tool discovery image contract", () => {
     },
   );
 
-  it.each(
-    dockerfiles,
-  )("%s copies and probes the bundled runtime at its canonical path (#6901)", (relativePath) => {
-    const dockerfile = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
+  it.each(dockerfiles)(
+    "%s copies and probes the bundled runtime at its canonical path (#6901)",
+    (relativePath) => {
+      const dockerfile = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
 
-    expect(dockerfile).toContain(
-      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs",
-    );
-    expect(dockerfile).toContain(
-      "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
-    );
-    expect(dockerfile).toContain(
-      `COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ ${runtimeRoot}/`,
-    );
-    expect(dockerfile).not.toContain("mcp-runtime-npm-cache-seed/");
-    expect(dockerfile).not.toContain("install-reviewed-runtime.sh");
-    expect(dockerfile).toContain(`node ${runtimeRoot}/mcp-tool-discovery.mjs`);
-    expect(dockerfile).not.toContain(`${runtimeRoot}/mcp-tool-discovery.ts`);
-  });
+      expect(dockerfile).toContain(
+        "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/mcp-tool-discovery/mcp-tool-discovery.bundle /opt/mcp-tool-discovery-runtime/dist/mcp-tool-discovery.mjs",
+      );
+      expect(dockerfile).toContain(
+        "COPY tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle /out/managed-startup-image-runtime.cjs",
+      );
+      expect(dockerfile).toContain(
+        `COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ ${runtimeRoot}/`,
+      );
+      expect(dockerfile).not.toContain("mcp-runtime-npm-cache-seed/");
+      expect(dockerfile).not.toContain("install-reviewed-runtime.sh");
+      expect(dockerfile).toContain(`node ${runtimeRoot}/mcp-tool-discovery.mjs`);
+      expect(dockerfile).not.toContain(`${runtimeRoot}/mcp-tool-discovery.ts`);
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "accepts a complete locked tree after npm's exact internal exit-handler failure",

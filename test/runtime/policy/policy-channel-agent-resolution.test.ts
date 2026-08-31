@@ -30,7 +30,6 @@ registry.registerSandbox({ name: "egress-only", agent: "openclaw", policies: [] 
 registry.registerSandbox({
   name: "slack-configured",
   agent: "openclaw",
-  policies: [],
   messaging: {
     schemaVersion: 1,
     plan: makeMessagingPlan({ sandboxName: "slack-configured", channels: ["slack"] }),
@@ -80,7 +79,6 @@ const policies = require(${POLICIES_PATH});
 registry.registerSandbox({
   name: "deepagents-sandbox",
   agent: "langchain-deepagents-code",
-  policies: [],
 });
 const channelPreset = policies.loadPresetForSandbox("deepagents-sandbox", "telegram");
 const centralPreset = policies.loadPresetForSandbox("deepagents-sandbox", "npm");
@@ -128,7 +126,6 @@ const policies = require(${POLICIES_PATH});
 registry.registerSandbox({
   name: "deepagents-sandbox",
   agent: "langchain-deepagents-code",
-  policies: [],
 });
 const gatewayPresets = policies.getGatewayPresets("deepagents-sandbox");
 process.stdout.write("__RESULT__" + JSON.stringify({ gatewayPresets }));
@@ -153,7 +150,6 @@ const policies = require(${POLICIES_PATH});
 registry.registerSandbox({
   name: "deepagents-sandbox",
   agent: "langchain-deepagents-code",
-  policies: [],
 });
 const names = policies.listSetupPolicyPresets("deepagents-sandbox").map((preset) => preset.name);
 process.stdout.write("__RESULT__" + JSON.stringify({ names }));
@@ -189,7 +185,6 @@ process.exit = (code) => { throw new Error("EXIT:" + String(code)); };
 registry.registerSandbox({
   name: "deepagents-sandbox",
   agent: "langchain-deepagents-code",
-  policies: [],
 });
 (async () => {
   let exitCode = null;

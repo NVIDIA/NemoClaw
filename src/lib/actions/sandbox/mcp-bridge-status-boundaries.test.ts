@@ -78,11 +78,6 @@ registry.registerSandbox({
     addedAt: "2026-06-01T00:00:00.000Z",
   } } },
 });
-registry.addCustomPolicy("alpha", {
-  name: "mcp-bridge-fake",
-  content: "network_policies: {}\n",
-  sourcePath: "generated:nemoclaw-mcp-bridge",
-});
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 (async () => {
   const [status] = await bridge.statusMcpBridge("alpha", "fake");

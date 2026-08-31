@@ -71,12 +71,6 @@ registry.registerSandbox({
     updatedAt: "2026-06-01T00:00:00.000Z",
   } } },
 });
-registry.addCustomPolicy("legacy-sandbox", {
-  name: "mcp-bridge-github",
-  content: "network_policies:\\n  mcp_bridge_github:\\n    endpoints: []\\n",
-  sourcePath: "generated:nemoclaw-mcp-bridge",
-  appliedAt: "2026-06-01T00:00:00.000Z",
-});
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.removeMcpBridge("legacy-sandbox", "github").then(
   () => {
@@ -149,12 +143,6 @@ registry.registerSandbox({
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
   } } },
-});
-registry.addCustomPolicy("legacy-sandbox", {
-  name: "mcp-bridge-github",
-  content: "network_policies:\\n  mcp_bridge_github:\\n    name: managed\\n    endpoints: []\\n",
-  sourcePath: "generated:nemoclaw-mcp-bridge",
-  appliedAt: "2026-06-01T00:00:00.000Z",
 });
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.removeMcpBridge("legacy-sandbox", "github", { force: true }).then(

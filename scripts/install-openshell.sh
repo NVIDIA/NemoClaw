@@ -168,6 +168,21 @@ fi
 
 HOMEBREW_TAP="nvidia/openshell"
 HOMEBREW_FORMULA_NAME="openshell"
+MACOS_INSTALL_METHOD="${_NEMOCLAW_OPENSHELL_INSTALL_METHOD:-auto}"
+case "$MACOS_INSTALL_METHOD" in
+  auto) ;;
+  homebrew)
+    [ "$OS" = "Darwin" ] || fail "The Homebrew OpenShell installation method is valid only on macOS."
+    command -v brew >/dev/null 2>&1 \
+      || fail "The selected Homebrew OpenShell installation method became unavailable before installation."
+    ;;
+  standalone)
+    [ "$OS" = "Darwin" ] || fail "The standalone macOS OpenShell installation method is valid only on macOS."
+    ! command -v brew >/dev/null 2>&1 \
+      || fail "Homebrew appeared after standalone OpenShell installation was selected; refusing an ambiguous installation method."
+    ;;
+  *) fail "The internal macOS OpenShell installation method is invalid." ;;
+esac
 
 # Honour the TS installer's blueprint-derived env overrides only on the stable
 # channel — the dev channel installs from the `dev` tag and uses DEV_MIN_VERSION
@@ -967,14 +982,18 @@ case "$OS" in
     esac
     ;;
   Linux)
+    SANDBOX_LIBC="gnu"
+    if [ "$RESOLVED_CHANNEL" = "dev" ]; then
+      SANDBOX_LIBC="musl"
+    fi
     case "$ARCH_LABEL" in
       x86_64)
         ASSETS+=("openshell-gateway-x86_64-unknown-linux-gnu.tar.gz")
-        ASSETS+=("openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz")
+        ASSETS+=("openshell-sandbox-x86_64-unknown-linux-${SANDBOX_LIBC}.tar.gz")
         ;;
       aarch64)
         ASSETS+=("openshell-gateway-aarch64-unknown-linux-gnu.tar.gz")
-        ASSETS+=("openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz")
+        ASSETS+=("openshell-sandbox-aarch64-unknown-linux-${SANDBOX_LIBC}.tar.gz")
         ;;
     esac
     CHECKSUM_FILES+=("openshell-gateway-checksums-sha256.txt")

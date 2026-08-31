@@ -37,10 +37,16 @@ function supportProgress() {
 
 describe("fixture redaction entry point", () => {
   it("recognizes pass env names only at exact or underscore-delimited boundaries", () => {
-    expect(["PASS", "PASSWD", "CUSTOM_PASS", "CUSTOM_PASSWD"].every((key) =>
-        Object.is(isValidSecretEnvKey(key), true))).toBe(true);
-    expect(["COMPASS", "BYPASS", "PASSENGER_COUNT", "PASSED"].every((key) =>
-        Object.is(isValidSecretEnvKey(key), false))).toBe(true);
+    expect(
+      ["PASS", "PASSWD", "CUSTOM_PASS", "CUSTOM_PASSWD"].every((key) =>
+        Object.is(isValidSecretEnvKey(key), true),
+      ),
+    ).toBe(true);
+    expect(
+      ["COMPASS", "BYPASS", "PASSENGER_COUNT", "PASSED"].every((key) =>
+        Object.is(isValidSecretEnvKey(key), false),
+      ),
+    ).toBe(true);
 
     expect(
       buildChildEnv(
@@ -109,6 +115,45 @@ describe("fixture redaction entry point", () => {
     expect(out).toContain("<REDACTED>");
     expect(out).not.toContain(explicit);
     expect(out).not.toContain(canonical);
+  });
+
+  it("returns redacted MCP tunnel URLs exactly as ShellProbe exposes them", async () => {
+    const hostSecret = "fake-compatible-mcp-bridge-key";
+    const secretUrl = `https://${hostSecret}.trycloudflare.com/mcp`;
+    const canonicalLookingUrl = "https://task-butterfly-respected-eminem.trycloudflare.com/mcp";
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-mcp-url-redaction-"));
+    try {
+      const artifacts = new ArtifactSink(path.join(rootDir, "e2e-artifacts/live/mcp-redaction"));
+      await artifacts.ensureRoot();
+      const probe = new ShellProbe({
+        artifacts,
+        progress: supportProgress(),
+        redact: (text, extra) => redactString(text, extra),
+        signal: new AbortController().signal,
+      });
+      const result = await probe.run(
+        trustedShellCommand({
+          command: "bash",
+          args: ["-lc", 'printf "%s\\n%s\\n" "$SECRET_URL" "$CANONICAL_LOOKING_URL"'],
+          reason: "exercise MCP tunnel URL redaction at the ShellProbe boundary",
+        }),
+        {
+          artifactName: "mcp-tunnel-url-redaction",
+          env: { CANONICAL_LOOKING_URL: canonicalLookingUrl, SECRET_URL: secretUrl },
+          redactionValues: [hostSecret],
+        },
+      );
+
+      expect(result.stdout.trim().split("\n")).toEqual([
+        "https://[REDACTED].trycloudflare.com/mcp",
+        "https://ta<REDACTED>.trycloudflare.com/mcp",
+      ]);
+      await expect(fs.readFile(result.artifacts.stdout, "utf8")).resolves.toBe(result.stdout);
+      expect(result.stdout).not.toContain(hostSecret);
+      expect(result.stdout).not.toContain("sk-butterfly-respected-eminem");
+    } finally {
+      await fs.rm(rootDir, { recursive: true, force: true });
+    }
   });
 
   it("keeps explicit sentinels stable without masking adjacent credential text", () => {

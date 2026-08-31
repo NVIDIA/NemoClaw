@@ -17,6 +17,8 @@
  * "Health Offline" in the dashboard.
  */
 
+import os from "node:os";
+
 import { parseVersionFromText } from "./adapters/openshell/client";
 import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
 import type { DashboardDeliveryChain } from "./dashboard/contract";
@@ -28,6 +30,7 @@ import {
   classifyOpenClawRuntimeFailure,
   type SandboxCommandExecutor,
 } from "./onboard/custom-openclaw-runtime-diagnosis";
+import { GATEWAY_PORT, resolveGatewayLogPathForPort } from "./onboard/gateway/state-dir";
 import { getMessagingProviderNamesForChannel } from "./onboard/messaging-reuse";
 
 export { shouldDiagnoseCustomOpenClawRuntime } from "./onboard/custom-openclaw-runtime-diagnosis";
@@ -163,13 +166,22 @@ const CREDENTIALLESS_MESSAGING_CHANNELS = new Set(listMessagingChannelsWithoutCr
 // sandbox log is the first thing to check. If the sandbox itself never
 // came up, the host-side OpenShell gateway log is the right place to
 // look — see gatewayLogCandidates() in onboard/sandbox-create-failure.ts.
-function buildGatewayLogHint(sandboxName: string, customRuntimeHint: string | null): string {
+export function buildGatewayLogHint(
+  sandboxName: string,
+  customRuntimeHint: string | null,
+  gatewayState: { configured?: string; home: string; port: number } = {
+    configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    home: os.homedir(),
+    port: GATEWAY_PORT,
+  },
+): string {
   if (customRuntimeHint) return customRuntimeHint;
+  const hostGatewayLog = resolveGatewayLogPathForPort(gatewayState);
   return (
     `The gateway probe failed after retrying. Inspect the in-sandbox gateway log with ` +
     `\`nemoclaw ${sandboxName} logs\` (the gateway writes to /tmp/gateway.log inside the sandbox when it starts). ` +
     `If the sandbox itself never came up, also check the host-side OpenShell gateway log at ` +
-    `~/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.log ` +
+    `\`${hostGatewayLog}\` ` +
     `(or ~/.local/state/openshell/openshell-gateway.log on older installs).`
   );
 }
