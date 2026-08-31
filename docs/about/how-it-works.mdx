@@ -115,6 +115,54 @@ NemoClaw separates host orchestration, agent-specific behavior, and sandbox defi
 
 This separation keeps host orchestration, agent-specific assets, and the sandbox definition at explicit lifecycle boundaries.
 
+## Inspect an External OpenShell Gateway
+
+NemoClaw packages the experimental `nemoclaw-blueprint-runner` command for infrastructure that already owns an external OpenShell gateway.
+This path supports target planning and one credential-free public health request for OpenShell `0.0.106`.
+It does not manage the gateway or establish support for another OpenShell release.
+
+Create a blueprint directory with a `blueprint.yaml` file that contains one external target.
+The target must use a bare HTTPS origin, the exact OpenShell release, an absolute CA bundle path, and an absolute authentication file path.
+
+```yaml
+version: 1.0.0
+min_openshell_version: 0.0.106
+max_openshell_version: 0.0.106
+openshell_target:
+  endpoint: https://openshell.example.test:8443
+  workspace: default
+  expected_release: 0.0.106
+  lifecycle: external
+  trust:
+    ca_file: /var/run/openshell-target/ca.pem
+  authentication:
+    credential_file: /var/run/openshell-target/authentication
+```
+
+Run the target-only plan before the health request.
+The plan validates local input, fingerprints the CA bundle, and prints a sanitized JSON plan without connecting.
+
+```bash
+NEMOCLAW_BLUEPRINT_PATH=/absolute/path/to/blueprint nemoclaw-blueprint-runner plan
+```
+
+Run the external status command to make one public health request through the official OpenShell SDK.
+
+```bash
+NEMOCLAW_BLUEPRINT_PATH=/absolute/path/to/blueprint nemoclaw-blueprint-runner status --external-target
+```
+
+A successful status result reports `healthy`, release `0.0.106`, and `compatible` in JSON.
+The command validates authentication file metadata but does not read its contents or authenticate.
+The command supplies the validated CA bundle to the SDK and uses normal TLS hostname verification.
+
+<Warning>
+  This experimental path does not create, update, delete, or list gateways, workspaces, sandboxes, credentials, or policies.
+  It does not verify workspace readiness, machine authentication, or Kubernetes.
+  The infrastructure administrator must control the target hostname and its DNS resolution.
+  A failed status request makes no remote change, so correct the endpoint, CA bundle, file metadata, gateway health, or release mismatch before you retry.
+</Warning>
+
 ## Readiness and Sandbox Creation
 
 Run `$$nemoclaw host probe` when you need a read-only system readiness report before onboarding. The report combines host and gateway observations, capabilities, qualifications, findings, evidence, and CLI provenance without changing system state. Onboarding consumes the same stable host and gateway entities and applies its explicit admission policy. It revalidates live facts after permitted preparation and when a saved onboarding session resumes.
