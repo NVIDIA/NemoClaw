@@ -1,0 +1,43 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.117
+
+NemoClaw v0.0.117 makes OpenShell the sole durable network-policy authority.
+It improves fail-closed recovery for sandboxes, Shields, the installer, Portable runtimes, and messaging channels.
+It also removes the deprecated Brev deploy wrapper and adds contributor and maintainer analysis tools.
+
+- OpenShell is now the sole durable source of sandbox policy state.
+  NemoClaw policy commands and Shields operate on the live OpenShell policy without storing a second desired-policy copy, while rebuild carries the current policy through one private, temporary handoff.
+  Legacy policy fields are removed from NemoClaw state without changing the live policy.
+  Related change: [PR #10515](https://github.com/NVIDIA/NemoClaw/pull/10515).
+- Failed onboarding cleanup now retains immutable sandbox, gateway, policy, and create-attempt evidence.
+  While OpenShell still reports the sandbox live, `destroy` preserves recovery instead of deleting by mutable name.
+  After OpenShell confirms absence, NemoClaw removes only containers that match the retained immutable identity and verifies their absence before clearing recovery state.
+  Related change: [PR #10571](https://github.com/NVIDIA/NemoClaw/pull/10571).
+- Hermes activation and Shields recovery now bind release acknowledgement, writer rescans, root-broker cleanup, and completed auto-restore lock retirement to exact process and transaction identities.
+  Transient replaced writers are reconsidered under fresh identity, while live, foreign, durable, or ambiguous identity remains denied.
+  Related changes: [PR #10272](https://github.com/NVIDIA/NemoClaw/pull/10272), [PR #10597](https://github.com/NVIDIA/NemoClaw/pull/10597), and [PR #10603](https://github.com/NVIDIA/NemoClaw/pull/10603).
+- macOS upgrades can retire an identity-verified legacy OpenShell gateway or Homebrew service before selecting the checksum-verified replacement binaries.
+  Managed startup also transfers protected receipts through read-only Docker volumes, so VM-backed Docker daemons such as Colima do not need access to a client-only temporary path.
+  Failed verification retains the recovery receipts, and successful finalization reports any exact volume that cleanup cannot remove.
+  Related changes: [PR #10484](https://github.com/NVIDIA/NemoClaw/pull/10484) and [PR #10534](https://github.com/NVIDIA/NemoClaw/pull/10534).
+- Hermes Portable `connect --probe-only` now recovers published Ollama only for the `ollama-local` provider.
+  Descriptor-backed compatible endpoints keep verification-only routing without requiring an Ollama receipt.
+  OpenClaw Portable recovery uses one bounded in-sandbox gateway observer and a shorter OpenShell registration poll while preserving the existing readiness statuses and outer lifecycle deadline.
+  Related changes: [PR #10556](https://github.com/NVIDIA/NemoClaw/pull/10556) and [PR #10612](https://github.com/NVIDIA/NemoClaw/pull/10612).
+- Experimental OpenClaw WeChat setup now writes the exact revision-scoped OpenShell placeholder to the Tencent plugin account file and binds both authorized iLink endpoints to the channel provider.
+  Channel removal clears durable account state before provider, policy, or registry teardown, and raw bot tokens remain outside sandbox files, process arguments, and diagnostics.
+  Related change: [PR #10601](https://github.com/NVIDIA/NemoClaw/pull/10601).
+- The deprecated `nemoclaw deploy` Brev compatibility command has been removed.
+  Remote hosts use their provisioning workflow, the hosted installer, and `nemoclaw onboard`; `deploy` is now available as a sandbox name.
+  Related change: [PR #10576](https://github.com/NVIDIA/NemoClaw/pull/10576).
+- Contributors with a prepared checkout can run the checked-in PR Review Advisor specialists on committed and working-tree changes with `npm run review:local` before PR publication.
+  The [local-run prerequisites](https://github.com/NVIDIA/NemoClaw/blob/main/tools/pr-review-advisor/README.md#local-run) name the required host tools, the `origin/main` trust base, and the credential boundary.
+  Maintainer analysis now emits bounded slow-test evidence and Perfetto-compatible PR lifetime traces with revision, readiness, review-request, workflow, job, and step timelines.
+  Related changes: [PR #10581](https://github.com/NVIDIA/NemoClaw/pull/10581), [PR #10604](https://github.com/NVIDIA/NemoClaw/pull/10604), [PR #10608](https://github.com/NVIDIA/NemoClaw/pull/10608), [PR #10611](https://github.com/NVIDIA/NemoClaw/pull/10611), [PR #10616](https://github.com/NVIDIA/NemoClaw/pull/10616), and [PR #10617](https://github.com/NVIDIA/NemoClaw/pull/10617).
+- Development qualification now contains a provider-owned record and dormant executor for the OpenShell v0.0.24 and MXC v0.7.0-rc1 checkpoint on physical Windows.
+  NemoClaw does not register or select MXC, expose Windows onboarding, activate this executor, or treat the checkpoint as an accepted stable distribution.
+  Related changes: [PR #10591](https://github.com/NVIDIA/NemoClaw/pull/10591) and [PR #10596](https://github.com/NVIDIA/NemoClaw/pull/10596).
