@@ -173,12 +173,15 @@ describe("stock E2E managed-image receipt assertion", () => {
     ).toMatchObject({ agent: "openclaw", sourceRevision: REVISION });
   });
 
-  it("uses the trusted candidate catalog for full E2E workload evidence", () => {
+  it("records local Dockerfile evidence without a managed-image receipt", () => {
     const home = writeRegistry(managedReceipt());
 
     expect(
-      readFullE2eColdWorkloadEvidence(SANDBOX_NAME, false, candidateCatalogEnvironment(home)),
-    ).toMatchObject({ kind: "managed-image", sourceRevision: REVISION });
+      readFullE2eColdWorkloadEvidence(SANDBOX_NAME, false, {
+        ...candidateCatalogEnvironment(home),
+        E2E_WORKLOAD_SOURCE: "local-dockerfile",
+      }),
+    ).toMatchObject({ kind: "legacy-dockerfile" });
   });
 
   it("rejects a candidate catalog whose source revision differs from the exact candidate revision", () => {
