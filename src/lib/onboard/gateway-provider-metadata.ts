@@ -117,6 +117,10 @@ function providerCommandOutput(result: GatewayProviderCommandResult): string {
 }
 
 /**
+ * Compatibility parser for consumers that still inspect CLI output synchronously.
+ * New consumers must use `OpenShellProviderAdapter`. Remove this wrapper under
+ * #9813 after no production consumer calls `parseGatewayProviderMetadata`.
+ *
  * Parse the non-secret identity and binding keys emitted by `openshell provider get`.
  * Provider display output is untrusted: it must stay bounded, contain each required
  * field exactly once, and use only the syntax accepted by recovery decisions.
