@@ -24,8 +24,8 @@ describe("connect forward recovery guidance", () => {
     [
       "readiness retry exhaustion",
       "forward-readiness-retry-limit",
-      "openshell sandbox get alpha` reports Ready",
-      false,
+      "openshell sandbox get alpha` can report Ready or Running before forwarding is ready. Run `openshell forward list`. If port 18789 has no owner, run `openshell forward start --background 18789 alpha` to read the current OpenShell error",
+      true,
     ],
     [
       "port ownership conflict",
