@@ -2374,6 +2374,7 @@ export function validateOllamaModel(
   const probeCmd = getOllamaProbeCommand(model);
   const probeResult = captureEx(probeCmd);
   let output = probeResult.stdout;
+  let timedOut = probeResult.timedOut;
   // Cold-loading a large model from disk can routinely exceed the default 120 s
   // probe window — on DGX Spark unified-memory hosts (#3251) and also on
   // tight-VRAM dGPU hosts (e.g. NVIDIA L4 23 GB) where the runner spills GPU→CPU
@@ -2383,13 +2384,18 @@ export function validateOllamaModel(
   if (probeResult.timedOut) {
     const retryResult = captureEx(getOllamaProbeCommand(model, 300));
     output = retryResult.stdout;
+    timedOut = retryResult.timedOut;
   }
   if (!output) {
     return {
       ok: false,
       message:
         `Selected Ollama model '${model}' did not answer the local probe in time. ` +
-        "It may still be loading, too large for the host, or otherwise unhealthy.",
+        "It may still be loading, too large for the host, or otherwise unhealthy." +
+        (timedOut
+          ? " Stale runner processes from a previous model may be holding GPU memory. " +
+            "Run 'sudo systemctl restart ollama' and rerun onboarding."
+          : ""),
     };
   }
 

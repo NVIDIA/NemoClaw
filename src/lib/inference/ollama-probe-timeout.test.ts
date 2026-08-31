@@ -27,4 +27,17 @@ describe("Ollama probe timeout retry", () => {
     expect(captureExCallCount).toBe(2);
     expect(commands[1]).toMatch(/--max-time.*300|300.*--max-time/);
   });
+
+  it("prints stale-runner recovery when both bounded probes time out", () => {
+    const result = validateOllamaModel(
+      "nemotron-3-nano:30b",
+      () => "",
+      () => false,
+      () => ({ stdout: "", exitCode: 28, timedOut: true }),
+    );
+
+    expect(result).toMatchObject({ ok: false });
+    expect(result.message).toContain("Stale runner processes from a previous model");
+    expect(result.message).toContain("sudo systemctl restart ollama");
+  });
 });
