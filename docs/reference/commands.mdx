@@ -2665,7 +2665,7 @@ $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclo
 | Flag | Description |
 | --- | --- |
 | `--yes`, `-y` | Skip the confirmation prompt. |
-| `--force` | Skip the confirmation prompt and continue when no state directory was preserved or a manifest-declared state file failed. NemoClaw restores any captured entries; after a total failure, it recreates from registry metadata only. If a pre-mutation no-op cannot execute in a sandbox with managed MCP servers, it may preserve the registered MCP intent through host-side recovery. |
+| `--force` | Skip the confirmation prompt. If a sandbox with managed MCP servers cannot run the pre-mutation no-op, NemoClaw can use bounded host-side recovery to preserve registered MCP intent. The flag does not allow rebuild to continue when a manifest-declared state directory or state file cannot be fully backed up. |
 | `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
 | `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation. |
@@ -2673,7 +2673,51 @@ $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclo
 
 If another terminal has an active SSH session to the sandbox, `rebuild` prints an active-session warning and requires confirmation before destroying the sandbox. Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 
-The sandbox normally must be reachable for the backup step to succeed. If an archive command preserves at least one state directory, `rebuild` keeps the captured backup entries and reports the manifest-defined paths that could not be archived. If a manifest-declared state file fails, `rebuild` exits before destroying the original sandbox even when it preserved state directories, unless you explicitly pass `--force`. If every state directory fails, `rebuild` exits before destroying the original sandbox even when it captured loose files, unless you explicitly pass `--force`. With `--force`, NemoClaw preserves any captured loose files in the partial manifest and restores them after recreation. If the backup produced nothing usable, it continues from recorded registry metadata without restoring prior sandbox state. Use this recovery path only when losing the state that could not be backed up is acceptable. For a sandbox with managed MCP servers, `--force` probes sandbox execution before MCP teardown. If that no-op cannot run, NemoClaw requires complete bridge entries plus exact provider and target identities, without trying an in-sandbox adapter scrub or changing MCP lifecycle state. Each bridge must record the adapter for the sandbox.s recorded agent. It rechecks the registry, recorded gateway, resolved targets, and provider identities immediately before deletion; incomplete adds, drift, or ambiguous bridge state stop before deletion. Policy is not part of that ownership proof; rebuild independently captures the complete current OpenShell policy and hands it to replacement creation. NemoClaw sends the delete request and every deletion-confirmation lookup to the sandbox's exact recorded gateway. Across every rebuild path, NemoClaw does not attempt to stop local NIM until sandbox deletion is positively confirmed, then attempts NIM cleanup on a best-effort basis. When `openshell sandbox delete` exits nonzero, an exact recorded-gateway lookup distinguishes explicit absence from a confirmed `Ready` or `Running` sandbox. Any other phase or probe failure is ambiguous. Explicit absence continues the rebuild. Confirmed intact state triggers an attempt to restore prepared MCP state and any shields lockdown that rebuild temporarily opened. NemoClaw reports any MCP or shields restoration failure and does not present the operation as a successful rollback. Ambiguous state preserves MCP ownership and recovery metadata without attempting to stop NIM or claiming the original sandbox remains intact, and the rebuild process skips its immediate shields relock. Failures after a successful exec probe do not switch to the host-side path. Before backup or deletion, `rebuild` also refuses an incomplete MCP destroy transaction. For a prepared-only transaction, the redacted diagnostic points to `$$nemoclaw <name> mcp remove <server> --force` when the sandbox is still live. For a pending or both-marker transaction, it points to `$$nemoclaw <name> destroy` because the registry records that OpenShell deletion was already confirmed. Before backup or deletion, rebuild checks the staged messaging configuration against other sandboxes in the selected OpenShell gateway's sandbox registry. A rebuild cannot detect messaging conflicts in an independent OpenShell gateway's registry. A conflict aborts with the original sandbox registered and intact so you can resolve the conflict before retrying. After OpenShell accepts the sandbox deletion, `rebuild` waits until OpenShell explicitly reports that the old sandbox is absent. Only then can NemoClaw perform any required local registry removal and begin creating the replacement. If OpenShell does not confirm absence within the bounded wait, including when gateway transport errors block the probes, `rebuild` exits nonzero before registry removal or replacement creation and preserves both the local registry entry and the state backup. Restore OpenShell connectivity and confirm the sandbox's live state before you retry, and keep the printed backup path for recovery. Before deletion, rebuild records a replacement journal that binds the operation to the recorded gateway, source identity, and target settings. Rerunning the same rebuild continues from the recorded boundary or accepts the proven replacement instead of deleting it again. A mount-free journal written before host-mount identity binding remains resumable. An older journal that used host mounts fails closed because it cannot prove the original host source identity, even when the visible mount settings are unchanged. Preserve the sandbox, onboarding session, printed backup, exact error, and `Journaled replacement` diagnostic, then follow the legacy journal guidance in [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement). Use `--verbose` to print the replacement identifier, gateway, and journal phase. Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement) for the recovery procedure and fail-closed conditions. When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation. A detached auto-lock timer remains active until NemoClaw commits a successful shields-up state, so it can attempt to restore lockdown if the host rebuild process exits unexpectedly.
+The sandbox normally must be reachable for the backup step to succeed.
+If any manifest-declared state directory or state file cannot be archived, `rebuild` reports each failed path and stops before deleting the original sandbox.
+This fail-closed behavior also applies to `--force`, even when the backup contains other usable entries.
+An incomplete snapshot remains excluded from `snapshot list` and snapshot restore selection.
+Follow [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement) for the retained-snapshot recovery procedure.
+For a sandbox with managed MCP servers, `--force` probes sandbox execution before MCP teardown.
+If that no-op cannot run, NemoClaw requires complete bridge entries plus exact provider and target identities.
+It does not try an in-sandbox adapter scrub or change MCP lifecycle state.
+Each bridge must record the adapter for the sandbox's recorded agent.
+NemoClaw rechecks the registry, recorded gateway, resolved targets, and provider identities immediately before deletion.
+Incomplete adds, drift, or ambiguous bridge state stop before deletion.
+Policy is not part of that ownership proof.
+Rebuild independently captures the complete current OpenShell policy and hands it to replacement creation.
+NemoClaw sends the delete request and every deletion-confirmation lookup to the sandbox's exact recorded gateway.
+Across every rebuild path, NemoClaw does not attempt to stop local NIM until sandbox deletion is positively confirmed.
+It then attempts NIM cleanup on a best-effort basis.
+When `openshell sandbox delete` exits nonzero, an exact recorded-gateway lookup distinguishes explicit absence from a confirmed `Ready` or `Running` sandbox.
+Any other phase or probe failure is ambiguous.
+Explicit absence continues the rebuild.
+Confirmed intact state triggers an attempt to restore prepared MCP state and any lockdown that rebuild temporarily relaxed.
+NemoClaw reports any MCP or lockdown restoration failure and does not present the operation as a successful rollback.
+Ambiguous state preserves MCP ownership and recovery metadata without attempting to stop NIM or claiming the original sandbox remains intact.
+The rebuild process also skips its immediate lockdown restoration.
+Failures after a successful exec probe do not switch to the host-side path.
+Before backup or deletion, `rebuild` also refuses an incomplete MCP destroy transaction.
+For a prepared-only transaction, the redacted diagnostic points to `$$nemoclaw <name> mcp remove <server> --force` when the sandbox is still live.
+For a pending or both-marker transaction, it points to `$$nemoclaw <name> destroy` because the registry records that OpenShell deletion was already confirmed.
+Before backup or deletion, rebuild checks the staged messaging configuration against other sandboxes in the selected OpenShell gateway's sandbox registry.
+A rebuild cannot detect messaging conflicts in an independent OpenShell gateway's registry.
+A conflict aborts with the original sandbox registered and intact so you can resolve the conflict before retrying.
+After OpenShell accepts the sandbox deletion, `rebuild` waits until OpenShell explicitly reports that the old sandbox is absent.
+Only then can NemoClaw perform any required local registry removal and begin creating the replacement.
+If OpenShell does not confirm absence within the bounded wait, including when gateway transport errors block the probes, `rebuild` exits nonzero before registry removal or replacement creation and preserves both the local registry entry and the state backup.
+Restore OpenShell connectivity and confirm the sandbox's live state before you retry.
+Keep the printed backup path for recovery.
+Before deletion, rebuild records a replacement journal that binds the operation to the recorded gateway, source identity, and target settings.
+Rerunning the same rebuild continues from the recorded boundary or accepts the proven replacement instead of deleting it again.
+A mount-free journal written before host-mount identity binding remains resumable.
+An older journal that used host mounts fails closed because it cannot prove the original host source identity, even when the visible mount settings are unchanged.
+Preserve the sandbox, onboarding session, printed backup, exact error, and `Journaled replacement` diagnostic.
+Then follow the legacy journal guidance in [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement).
+Use `--verbose` to print the replacement identifier, gateway, and journal phase.
+Refer to [Continue an Interrupted Replacement](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes#continue-an-interrupted-replacement) for the recovery procedure and fail-closed conditions.
+When rebuild starts with Shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.
+A detached auto-lock timer remains active until NemoClaw commits a successful Shields up state, so it can attempt to restore lockdown if the host rebuild process exits unexpectedly.
 
 <AgentOnly variant="openclaw">
 
@@ -2768,7 +2812,13 @@ Names must be 1 to 63 characters from `[A-Za-z0-9._-]`, start with an alphanumer
 $$nemoclaw my-assistant snapshot create --name before-upgrade
 ```
 
-When a directory or state file cannot be captured, the command reports the failed items, removes the incomplete snapshot, and exits nonzero. A removed snapshot does not appear in `snapshot list` and cannot be restored, so a later restore cannot select a capture that never completed. When removal fails, the command reports the listed snapshot path and exits nonzero. Remove that directory manually before you run `snapshot restore` because the incomplete capture remains selectable.
+When a directory or state file cannot be captured, the command reports the failed items, attempts to remove the incomplete snapshot, and exits nonzero.
+When cleanup succeeds, the command removes the incomplete snapshot.
+When cleanup fails, the command reports the retained snapshot path.
+The retained incomplete snapshot remains excluded from `snapshot list` and restore selection.
+The retained incomplete snapshot may contain unsanitized credentials.
+Do not restore, copy, share, or edit it.
+Follow [Create and List Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots#create-and-list-snapshots) for the recovery and safe removal procedure.
 
 ### `$$nemoclaw <name> snapshot list`
 

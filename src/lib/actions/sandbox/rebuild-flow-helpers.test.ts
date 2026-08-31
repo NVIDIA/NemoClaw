@@ -628,7 +628,7 @@ describe("rebuild agent base image preflight", () => {
   });
 });
 
-describe("backupSandboxStateForRebuild with --force", () => {
+describe("backupSandboxStateForRebuild failure safety", () => {
   let warnSpy: MockInstance;
   let errorSpy: MockInstance;
   let backupSpy: MockInstance;
@@ -645,31 +645,7 @@ describe("backupSandboxStateForRebuild with --force", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns null (skip) when backup fails completely and force is set", () => {
-    backupSpy.mockReturnValue({
-      success: false,
-      backedUpDirs: [],
-      backedUpFiles: [],
-      failedDirs: [".state"],
-      failedFiles: ["config.toml"],
-      manifest: null,
-    });
-    const result = backupSandboxStateForRebuild(
-      "alpha",
-      makeSandboxEntry(),
-      false,
-      () => undefined,
-      () => true,
-      makeBail(),
-      { force: true },
-    );
-
-    expect(result).toBeNull();
-    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(warnLines.some((line: string) => line.includes("--force was specified"))).toBe(true);
-  });
-
-  it("aborts with hint when backup fails completely without force", () => {
+  it("aborts when backup fails completely", () => {
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: [],
@@ -690,30 +666,7 @@ describe("backupSandboxStateForRebuild with --force", () => {
     ).toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(errorLines.some((line: string) => line.includes("rebuild --force"))).toBe(true);
-    expect(errorLines.some((line: string) => line.includes("accept losing state"))).toBe(true);
-  });
-
-  it("aborts without force even when force option is explicitly false", () => {
-    backupSpy.mockReturnValue({
-      success: false,
-      backedUpDirs: [],
-      backedUpFiles: [],
-      failedDirs: [".state"],
-      failedFiles: [],
-      manifest: null,
-    });
-    expect(() =>
-      backupSandboxStateForRebuild(
-        "alpha",
-        makeSandboxEntry(),
-        false,
-        () => undefined,
-        () => true,
-        makeBail(),
-        { force: false },
-      ),
-    ).toThrow("bail: Failed to back up sandbox state.");
+    expect(errorLines.some((line: string) => line.includes("Aborting rebuild"))).toBe(true);
   });
 
   it("aborts with an ownership hint when every state directory hit permission denied (#6972)", () => {
@@ -732,7 +685,7 @@ describe("backupSandboxStateForRebuild with --force", () => {
         plans: "permission denied",
       },
       failedFiles: [],
-      // Non-force abort bails before the manifest is read; keep the fixture
+      // The abort happens before the manifest is read; keep the fixture
       // internally consistent (no backed-up dirs) rather than reusing a manifest
       // that claims otherwise.
       manifest: null,
@@ -765,8 +718,7 @@ describe("backupSandboxStateForRebuild with --force", () => {
     expect(errorLines.some((line: string) => line.includes("memories (permission denied)"))).toBe(
       true,
     );
-    expect(errorLines.some((line: string) => line.includes("rebuild --force"))).toBe(true);
-    // Must not fall through to the lenient "Rebuild will continue" warning.
+    // Must not fall through to a partial-backup continuation.
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(warnLines.some((line: string) => line.includes("Rebuild will continue"))).toBe(false);
   });
@@ -782,7 +734,7 @@ describe("backupSandboxStateForRebuild with --force", () => {
         sessions: "absent after extraction",
       },
       failedFiles: [],
-      // Non-force abort bails before the manifest is read; null keeps the fixture
+      // The abort happens before the manifest is read; null keeps the fixture
       // consistent with backedUpDirs: [].
       manifest: null,
     });
@@ -834,67 +786,8 @@ describe("backupSandboxStateForRebuild with --force", () => {
     expect(warnLines.some((line: string) => line.includes("Rebuild will continue"))).toBe(false);
   });
 
-  it("allows a required state file backup failure only with --force (#7144)", () => {
-    const manifest = makeBackupResult().manifest!;
-    backupSpy.mockReturnValue({
-      success: false,
-      backedUpDirs: ["memories", "sessions"],
-      backedUpFiles: ["SOUL.md"],
-      failedDirs: [],
-      failedFiles: ["kanban.db"],
-      manifest,
-    });
-
-    const result = backupSandboxStateForRebuild(
-      "alpha",
-      makeSandboxEntry(),
-      false,
-      () => undefined,
-      () => true,
-      makeBail(),
-      { force: true },
-    );
-
-    expect(result).toBe(manifest);
-    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(warnLines.some((line: string) => line.includes("--force was specified"))).toBe(true);
-  });
-
-  it("keeps the salvageable partial manifest when all dirs failed but --force is set (#6972)", () => {
-    const manifest = makeBackupResult().manifest!;
-    manifest.stateDirs = ["memories", "sessions"];
-    manifest.backedUpDirs = [];
-    manifest.stateFiles = [{ path: "SOUL.md", strategy: "copy" }];
-    backupSpy.mockReturnValue({
-      success: false,
-      backedUpDirs: [],
-      backedUpFiles: ["SOUL.md"],
-      failedDirs: ["memories", "sessions"],
-      failedFiles: [],
-      manifest,
-    });
-
-    const result = backupSandboxStateForRebuild(
-      "alpha",
-      makeSandboxEntry(),
-      false,
-      () => undefined,
-      () => true,
-      makeBail(),
-      { force: true },
-    );
-
-    expect(result).toBe(manifest);
-    expect(result?.backedUpDirs).toEqual([]);
-    expect(result?.stateFiles).toEqual([{ path: "SOUL.md", strategy: "copy" }]);
-    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(warnLines.some((line: string) => line.includes("--force was specified"))).toBe(true);
-  });
-
-  it("still proceeds on a partial backup that preserved at least one state directory", () => {
-    // Benign case: the base image bakes a root-owned nested subdir that always
-    // perm-fails, marking one top-level dir failed while others succeed. This
-    // must NOT abort — only a total directory-state loss does.
+  it("aborts when one state directory fails after other state was preserved", () => {
+    const relockShieldsIfNeeded = vi.fn(() => true);
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: ["memories", "sessions"],
@@ -904,19 +797,53 @@ describe("backupSandboxStateForRebuild with --force", () => {
       manifest: makeBackupResult().manifest,
     });
 
-    const result = backupSandboxStateForRebuild(
-      "alpha",
-      makeSandboxEntry(),
-      false,
-      () => undefined,
-      () => true,
-      makeBail(),
-    );
+    expect(() =>
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        relockShieldsIfNeeded,
+        makeBail(),
+      ),
+    ).toThrow("bail: Failed to back up sandbox state.");
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+  });
 
-    expect(result).toBeTruthy();
-    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(warnLines.some((line: string) => line.includes("Partial backup"))).toBe(true);
-    expect(warnLines.some((line: string) => line.includes("Rebuild will continue"))).toBe(true);
+  it("aborts before rebuild when the workspace backup fails (#10639)", () => {
+    const relockShieldsIfNeeded = vi.fn(() => true);
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: ["extensions"],
+      backedUpFiles: ["openclaw.json"],
+      failedDirs: ["workspace"],
+      failedFiles: [],
+      manifest: makeBackupResult().manifest,
+    });
+
+    expect(() =>
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        relockShieldsIfNeeded,
+        makeBail(),
+      ),
+    ).toThrow("bail: Failed to back up sandbox state.");
+
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+    const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(errorLines.some((line: string) => line.includes("workspace"))).toBe(true);
+    expect(
+      errorLines.some((line: string) =>
+        line.includes("Incomplete snapshot retained for manual recovery"),
+      ),
+    ).toBe(true);
+    expect(
+      errorLines.some((line: string) => line.includes("excluded from snapshot restore selection")),
+    ).toBe(true);
+    expect(errorLines.some((line: string) => line.includes("Aborting rebuild"))).toBe(true);
   });
 });
 
