@@ -428,7 +428,7 @@ function mapHermesProfile(
   const configurationEnvironment: MutableEnvironment = {
     ...commonConfigurationEnvironment(profile),
     ...messagingEnvironment(profile, "hermes"),
-    CHAT_UI_URL: profile.dashboard.url,
+    CHAT_UI_URL: profile.dashboard.browserUrl ?? profile.dashboard.url,
     NEMOCLAW_CONTEXT_WINDOW:
       profile.tuning.contextWindow === null ? "" : String(profile.tuning.contextWindow),
     NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: booleanFlag(profile.tools.enabledGateways.length > 0),

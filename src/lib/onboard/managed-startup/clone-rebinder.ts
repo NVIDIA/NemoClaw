@@ -251,7 +251,7 @@ function currentSourceDashboard(
   if (profile.dashboard.agent === "hermes") {
     if (current.hermesDashboardEnabled !== true) {
       return {
-        agent: "hermes",
+        ...profile.dashboard,
         mode: "disabled",
         url: profile.dashboard.url,
         publicPort: null,
@@ -268,9 +268,12 @@ function currentSourceDashboard(
       profile.agent,
     );
     return {
-      agent: "hermes",
+      ...profile.dashboard,
       mode: "loopback-forwarded",
       url: urlAtPort(profile.dashboard.url, publicPort),
+      ...(profile.dashboard.browserUrl === undefined
+        ? {}
+        : { browserUrl: urlAtPort(profile.dashboard.browserUrl, publicPort) }),
       publicPort,
       internalPort,
       tuiEnabled: current.hermesDashboardTui === true,
@@ -378,12 +381,18 @@ function destinationDashboard(
       return {
         ...dashboard,
         url: urlAtPort(dashboard.url, destinationDashboardPort),
+        ...(dashboard.browserUrl === undefined
+          ? {}
+          : { browserUrl: urlAtPort(dashboard.browserUrl, destinationDashboardPort) }),
       };
     }
     const port = requireDestinationPort(destinationDashboardPort, profile.agent);
     return {
       ...dashboard,
       url: urlAtPort(dashboard.url, port),
+      ...(dashboard.browserUrl === undefined
+        ? {}
+        : { browserUrl: urlAtPort(dashboard.browserUrl, port) }),
       publicPort: port,
     };
   }
