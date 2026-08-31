@@ -3419,6 +3419,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106"
+      NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

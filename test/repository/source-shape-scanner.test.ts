@@ -547,6 +547,20 @@ describe("source-shape scanner", () => {
     expect(cases).toEqual(["asserts the protected Runner boundary"]);
   });
 
+  it("detects an explicit assertion on the shipped external gateway workflow", () => {
+    const cases = detectedCaseNames(`
+      import { expect, it } from "vitest";
+      import { readExternalGatewayHealthWorkflow } from "../tools/e2e/external-gateway-health-workflow-boundary.mts";
+
+      it("asserts the protected package job", () => {
+        const workflow = readExternalGatewayHealthWorkflow();
+        expect(workflow.jobs).toHaveProperty("package-openshell-sdk");
+      });
+    `);
+
+    expect(cases).toEqual(["asserts the protected package job"]);
+  });
+
   it("does not taint spawn results when raw config feeds the command", () => {
     const cases = detectedCaseNames(`
       import { spawnSync } from "node:child_process";

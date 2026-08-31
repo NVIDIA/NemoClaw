@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
+
+import { describe, expect, it, vi } from "vitest";
+
+import { stopExternalGatewayHealthGateway } from "../fixtures/external-gateway-health-process.ts";
 
 import {
   readExternalGatewayHealthHelper,
@@ -12,7 +17,12 @@ import {
 } from "../../../tools/e2e/external-gateway-health-workflow-boundary.mts";
 
 describe("external gateway health workflow boundary", () => {
+  // source-shape-contract: security -- The checked-in workflow and helper must retain the trusted package and Runner execution boundaries.
   it("accepts the checked-in trusted package and live-test contract", () => {
+    const workflow = readExternalGatewayHealthWorkflow();
+    const helperSource = readExternalGatewayHealthHelper();
+    expect(workflow.jobs).toHaveProperty("package-openshell-sdk");
+    expect(helperSource).toContain("const BLUEPRINT_RUNNER = path.join(");
     expect(validateExternalGatewayHealthWorkflowBoundary()).toEqual([]);
   });
 
@@ -45,10 +55,7 @@ describe("external gateway health workflow boundary", () => {
   it("rejects a different module-relative Runner artifact", () => {
     const helperSource = readExternalGatewayHealthHelper();
     expect(helperSource).toContain('  "blueprint-runner.js",');
-    const source = helperSource.replace(
-      '  "blueprint-runner.js",',
-      '  "other-runner.js",',
-    );
+    const source = helperSource.replace('  "blueprint-runner.js",', '  "other-runner.js",');
 
     expect(validateExternalGatewayHealthHelper(source)).toContain(
       "external gateway health helper must run exact Blueprint Runner external status",
@@ -69,8 +76,10 @@ describe("external gateway health workflow boundary", () => {
     );
   });
 
+  // source-shape-contract: security -- The trusted package job must not give package credentials or candidate code control of the SDK archive.
   it("rejects package credentials or untrusted candidate execution in the package job", () => {
     const workflow = readExternalGatewayHealthWorkflow();
+    expect(workflow.jobs).toHaveProperty("package-openshell-sdk");
     const job = workflow.jobs["package-openshell-sdk"];
     job.if = "${{ always() }}";
     job.permissions = { contents: "write", packages: "write" };
@@ -91,10 +100,13 @@ describe("external gateway health workflow boundary", () => {
     );
   });
 
+  // source-shape-contract: security -- The live job must run the exact candidate with the reviewed SDK archive and no package credential.
   it("rejects credential exposure and candidate or artifact substitution in the live job", () => {
     const workflow = readExternalGatewayHealthWorkflow();
+    expect(workflow.jobs).toHaveProperty("external-gateway-health");
     const job = workflow.jobs["external-gateway-health"];
     job.needs = "generate-matrix";
+    delete job.env!.NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST;
     job.env = { ...job.env, GITHUB_TOKEN: "${{ github.token }}" };
     const checkout = job.steps!.find((step) => step.uses?.startsWith("actions/checkout@"))!;
     checkout.with!.ref = "main";
@@ -112,6 +124,7 @@ describe("external gateway health workflow boundary", () => {
     expect(validateExternalGatewayHealthWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "external-gateway-health must wait for the candidate CLI and reviewed SDK archive",
+        "external-gateway-health must retain NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1",
         "external-gateway-health must not expose GITHUB_TOKEN at job scope",
         "external-gateway-health must use the exact candidate checkout without persisted credentials",
         "external-gateway-health must download only this run's reviewed SDK archive",
@@ -120,5 +133,70 @@ describe("external gateway health workflow boundary", () => {
         "external-gateway-health must run only the credential-free external health test",
       ]),
     );
+  });
+
+  type FakeGateway = EventEmitter & {
+    exitCode: number | null;
+    signalCode: NodeJS.Signals | null;
+    kill: ChildProcess["kill"];
+  };
+
+  function gatewayWithForcedKill(onForcedKill: (gateway: FakeGateway) => void): {
+    gateway: ChildProcess;
+    kill: ReturnType<typeof vi.fn<ChildProcess["kill"]>>;
+  } {
+    const gateway = new EventEmitter() as FakeGateway;
+    gateway.exitCode = null;
+    gateway.signalCode = null;
+    const kill = vi.fn<ChildProcess["kill"]>();
+    kill.mockReturnValueOnce(true);
+    kill.mockImplementationOnce(() => {
+      onForcedKill(gateway);
+      return true;
+    });
+    gateway.kill = kill;
+    return { gateway: gateway as ChildProcess, kill };
+  }
+
+  it("waits for forced gateway exit before cleanup completes (#9872)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { gateway, kill } = gatewayWithForcedKill((fakeGateway) => {
+        setTimeout(() => {
+          fakeGateway.signalCode = "SIGKILL";
+          fakeGateway.emit("exit", null, "SIGKILL");
+        }, 50);
+      });
+      let completed = false;
+      const cleanup = stopExternalGatewayHealthGateway(gateway).then(() => {
+        completed = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(kill).toHaveBeenNthCalledWith(1, "SIGTERM");
+      expect(kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+      expect(completed).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(50);
+      await cleanup;
+      expect(completed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a gateway that remains active after forced cleanup (#9872)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { gateway } = gatewayWithForcedKill(() => undefined);
+      const cleanup = expect(stopExternalGatewayHealthGateway(gateway)).rejects.toThrow(
+        "external gateway health gateway did not stop after SIGKILL",
+      );
+
+      await vi.advanceTimersByTimeAsync(4_000);
+      await cleanup;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

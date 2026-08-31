@@ -197,6 +197,7 @@ function validateHealthJob(errors: string[], job: WorkflowJob): void {
     E2E_OBSERVABLE_OUTCOME:
       "The exact Blueprint Runner observes public gateway health over explicit HTTPS and CA",
     E2E_TARGET_ID: HEALTH_JOB,
+    NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106",
     NEMOCLAW_RUN_LIVE_E2E: "1",

@@ -43,6 +43,11 @@
     },
     {
       "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
+      "test": "accepts the checked-in trusted package and live-test contract",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
       "test": "rejects a helper that bypasses the exact Runner or weakens its live boundary",
       "category": "security"
     },
@@ -54,6 +59,16 @@
     {
       "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
       "test": "rejects a Runner invocation that bypasses the redacted shell fixture",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
+      "test": "rejects package credentials or untrusted candidate execution in the package job",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
+      "test": "rejects credential exposure and candidate or artifact substitution in the live job",
       "category": "security"
     },
     {

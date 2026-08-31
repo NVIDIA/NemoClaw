@@ -12,6 +12,10 @@ import { getDockerDriverGatewayLocalTlsBundle } from "../../../dist/lib/onboard/
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import {
+  externalGatewayHealthProcessStopped,
+  stopExternalGatewayHealthGateway,
+} from "../fixtures/external-gateway-health-process.ts";
 import { OPENSHELL_V0106_QUALIFICATION } from "../fixtures/openshell-v0106-qualification.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -74,10 +78,6 @@ function pickPort(host: string): Promise<number> {
   });
 }
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
 function externalHostAddress(): string {
   for (const addresses of Object.values(os.networkInterfaces())) {
     for (const address of addresses ?? []) {
@@ -85,16 +85,6 @@ function externalHostAddress(): string {
     }
   }
   throw new Error("a non-loopback IPv4 address is required for external gateway health");
-}
-
-async function stopGateway(gateway: ChildProcess): Promise<void> {
-  if (gateway.exitCode !== null) return;
-  gateway.kill("SIGTERM");
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (gateway.exitCode !== null) return;
-    await delay(100);
-  }
-  gateway.kill("SIGKILL");
 }
 
 function parseRunnerStatus(output: string): Record<string, unknown> {
@@ -144,7 +134,7 @@ async function waitForGatewayPort(options: {
       await options.artifacts.writeJson("external-gateway-readiness-retry.json", evidence);
     },
     run: () =>
-      options.gateway.exitCode === null
+      !externalGatewayHealthProcessStopped(options.gateway)
         ? observeGatewayPort(options.address, options.port)
         : Promise.resolve({ errorCode: "gateway-exited", ready: false }),
     classify: (value, error) => {
@@ -286,7 +276,9 @@ export async function runExternalGatewayHealthScenario({
   gateway.stderr?.on("data", (chunk: Buffer) => {
     gatewayOutput += chunk.toString("utf8");
   });
-  cleanup.add("stop external gateway health gateway", () => stopGateway(gateway));
+  cleanup.add("stop external gateway health gateway", () =>
+    stopExternalGatewayHealthGateway(gateway),
+  );
 
   try {
     const blueprintRoot = path.join(stateDir, "blueprint");
