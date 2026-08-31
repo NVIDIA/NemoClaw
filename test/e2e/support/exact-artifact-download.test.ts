@@ -13,7 +13,9 @@ import {
   bindNamedExactArtifact,
   downloadBoundArtifact,
   exactArtifactName,
+  exactManagedImageCohortArtifactName,
   materializeContractArchive,
+  materializeExactJsonArchive,
   type BoundArtifactIdentity,
   type ExactArtifactExpectation,
 } from "../../../tools/e2e/exact-artifact-download.mts";
@@ -91,6 +93,19 @@ describe("exact artifact download (#9340)", () => {
       id: 9001,
       name,
     });
+  });
+
+  it("derives and materializes the bound managed-image cohort artifact", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cohort-artifact-"));
+    const bytes = artifactZip([{ name: "cohort.json", contents: '{"contractVersion":2}\n' }]);
+    try {
+      expect(exactManagedImageCohortArtifactName(EXPECTED)).toBe("managed-image-cohort-7001-2");
+      const cohortPath = materializeExactJsonArchive(bytes, directory, "cohort.json");
+      expect(JSON.parse(fs.readFileSync(cohortPath, "utf8"))).toEqual({ contractVersion: 2 });
+      expect(fs.statSync(cohortPath).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it.each([

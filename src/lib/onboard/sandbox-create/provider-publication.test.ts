@@ -117,56 +117,24 @@ function prepareProviders(
 }
 
 describe("sandbox provider preparation", () => {
-  it("identity-fences every deferred provider attachment (#9833)", () => {
-    const events: string[] = [];
-    const runOpenshell = vi.fn((args: string[]) => {
-      events.push(args.join(" "));
-      return { status: 0 };
-    });
-
-    attachProvidersAfterSandboxCreation(
-      {
+  it("refuses name-addressed deferred provider attachment before mutation (#9833)", () => {
+    expect(() =>
+      attachProvidersAfterSandboxCreation({
         sandboxName: "alpha",
         gatewayName: "nemoclaw",
         providerNames: ["inference", "alpha-telegram"],
-      },
-      {
-        runOpenshell: runOpenshell as never,
-        revalidateSandboxIdentity: (operation) => events.push(operation),
-      },
-    );
-
-    expect(events).toEqual([
-      "attaching provider 'inference' to sandbox 'alpha'",
-      "sandbox provider attach -g nemoclaw alpha inference",
-      "confirming provider 'inference' on sandbox 'alpha'",
-      "attaching provider 'alpha-telegram' to sandbox 'alpha'",
-      "sandbox provider attach -g nemoclaw alpha alpha-telegram",
-      "confirming provider 'alpha-telegram' on sandbox 'alpha'",
-    ]);
+      }),
+    ).toThrow("OpenShell cannot attach providers to the immutable identity of sandbox 'alpha'");
   });
 
-  it("redacts deferred attachment command output on failure (#9833)", () => {
-    const revalidateSandboxIdentity = vi.fn();
-
+  it("allows an empty deferred attachment set without a mutable-name operation (#9833)", () => {
     expect(() =>
-      attachProvidersAfterSandboxCreation(
-        {
-          sandboxName: "alpha",
-          gatewayName: "nemoclaw",
-          providerNames: ["alpha-telegram"],
-        },
-        {
-          runOpenshell: vi.fn(() => ({
-            status: 1,
-            stdout: "secret-stdout",
-            stderr: "secret-stderr",
-          })) as never,
-          revalidateSandboxIdentity,
-        },
-      ),
-    ).toThrow("OpenShell did not attach provider 'alpha-telegram' to the verified sandbox.");
-    expect(revalidateSandboxIdentity).toHaveBeenCalledOnce();
+      attachProvidersAfterSandboxCreation({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        providerNames: [],
+      }),
+    ).not.toThrow();
   });
 
   it("confirms an exact messaging binding before and after publication (#9875)", () => {

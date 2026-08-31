@@ -4,6 +4,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const phaseMocks = vi.hoisted(() => ({
+  clearPolicyHandoff: vi.fn(),
+  clearRecoveryBackup: vi.fn(),
+  cleanupPolicySource: vi.fn(),
+  findRecoveryBackup: vi.fn(),
   openRecreateJournal: vi.fn(),
   recoverCronRestore: vi.fn(),
   runBackup: vi.fn(),
@@ -11,7 +15,18 @@ const phaseMocks = vi.hoisted(() => ({
   runDestroy: vi.fn(),
   runPostRestore: vi.fn(),
   runPreflight: vi.fn(),
+  runRestore: vi.fn(),
   runShields: vi.fn(),
+}));
+
+vi.mock("../../onboard/temp-files", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/temp-files")>()),
+  cleanupTempDir: phaseMocks.cleanupPolicySource,
+}));
+
+vi.mock("../../state/sandbox", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/sandbox")>()),
+  clearRebuildPolicyHandoff: phaseMocks.clearPolicyHandoff,
 }));
 
 const gatewayAuthority = {
@@ -26,11 +41,15 @@ const gatewayAuthority = {
 } as const;
 
 vi.mock("./rebuild-recreate-journal", () => ({
+  clearRebuildRecoveryBackup: phaseMocks.clearRecoveryBackup,
+  findRebuildRecoveryBackup: phaseMocks.findRecoveryBackup,
   fingerprintRebuildRecreateTargetIntent: () => "intent-1",
   openRebuildRecreateJournal: phaseMocks.openRecreateJournal,
+  recordRebuildRecoveryBackup: vi.fn(),
 }));
 
-vi.mock("./rebuild-backup-phase", () => ({
+vi.mock("./rebuild-backup-phase", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-backup-phase")>()),
   runRebuildBackupPhase: phaseMocks.runBackup,
 }));
 
@@ -48,6 +67,10 @@ vi.mock("./rebuild-shields-phase", () => ({
   runRebuildShieldsPhase: phaseMocks.runShields,
 }));
 
+vi.mock("./rebuild-restore-phase", () => ({
+  runRebuildRestorePhase: phaseMocks.runRestore,
+}));
+
 vi.mock("./rebuild-post-restore-phase", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-post-restore-phase")>()),
   recoverHermesCronRestore: phaseMocks.recoverCronRestore,
@@ -59,6 +82,8 @@ import { rebuildSandbox } from "./rebuild";
 
 describe("Hermes accepted replacement recovery", () => {
   const backupPath = "/tmp/nemoclaw-rebuild-backup";
+  const recoveryBackupPath = "/tmp/nemoclaw-rebuild-backup-original";
+  const policySourcePath = "/tmp/nemoclaw-rebuild-policy-test/policy.yaml";
   const bail = vi.fn();
   const cleanupDcodePreflight = vi.fn();
   const completeAcceptedTarget = vi.fn();
@@ -70,9 +95,20 @@ describe("Hermes accepted replacement recovery", () => {
     vi.clearAllMocks();
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
+    phaseMocks.clearPolicyHandoff.mockImplementation((manifest) => {
+      delete manifest.rebuildPolicyHandoff;
+      return true;
+    });
+    phaseMocks.clearRecoveryBackup.mockImplementation(() => undefined);
     phaseMocks.recoverCronRestore.mockReturnValue("dispatch-reactivated");
+    phaseMocks.findRecoveryBackup.mockReturnValue({
+      backupPath: recoveryBackupPath,
+      timestamp: "2026-08-28T00-00-00-000Z",
+    });
+    phaseMocks.runRestore.mockReturnValue({ restoreSucceeded: true });
+    phaseMocks.runPostRestore.mockResolvedValue(undefined);
     phaseMocks.runPreflight.mockResolvedValue({
-      sandboxEntry: { name: "alpha", customPolicies: [] },
+      sandboxEntry: { name: "alpha" },
       rebuildAgent: "hermes",
       versionCheck: {},
       targetConfig: {
@@ -119,10 +155,10 @@ describe("Hermes accepted replacement recovery", () => {
         backupPath,
         backedUpDirs: ["cron"],
         preservedEnv: [],
+        rebuildPolicyHandoff: { file: "current.yaml", sha256: "a".repeat(64) },
       },
       backupWasForceSkipped: false,
-      policyPresets: [],
-      sessionPolicyPresets: [],
+      policySourcePath,
     });
     phaseMocks.openRecreateJournal.mockReturnValue({
       id: "journal-1",
@@ -149,17 +185,67 @@ describe("Hermes accepted replacement recovery", () => {
       return "dispatch-reactivated";
     });
     completeAcceptedTarget.mockImplementation(() => events.push("complete"));
+    phaseMocks.runRestore.mockImplementation(() => {
+      events.push("restore");
+      return { restoreSucceeded: true };
+    });
+    phaseMocks.runPostRestore.mockImplementation(async () => {
+      events.push("post-restore");
+    });
+    phaseMocks.clearRecoveryBackup.mockImplementation(() => events.push("clear-recovery"));
 
     await expect(
       rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(events).toEqual(["recover", "complete"]);
+    expect(events).toEqual(["recover", "restore", "post-restore", "clear-recovery", "complete"]);
     expect(log).toHaveBeenCalledWith(
       "Hermes cron restore recovery for accepted replacement: dispatch-reactivated",
     );
     expect(phaseMocks.runDestroy).not.toHaveBeenCalled();
     expect(phaseMocks.runCronRestoreTransaction).not.toHaveBeenCalled();
+    expect(phaseMocks.runPostRestore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        backupManifest: expect.objectContaining({ backupPath: recoveryBackupPath }),
+        preparedBackupRecovery: true,
+        recoveryRecreate: true,
+      }),
+    );
+    expect(phaseMocks.clearPolicyHandoff).toHaveBeenCalledOnce();
+    expect(phaseMocks.cleanupPolicySource).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith("  Recovered the accepted replacement for 'alpha'.");
+    expect(console.log).toHaveBeenCalledWith(
+      `  Backup is preserved at: ${recoveryBackupPath}`,
+    );
+  });
+
+  it("retires both the unused current policy handoff and the recovered transaction handoff", async () => {
+    const currentManifest = {
+      backupPath,
+      backedUpDirs: ["cron"],
+      preservedEnv: [],
+      rebuildPolicyHandoff: { file: "current.yaml", sha256: "a".repeat(64) },
+    };
+    const recoveryManifest = {
+      backupPath: recoveryBackupPath,
+      timestamp: "2026-08-28T00-00-00-000Z",
+      rebuildPolicyHandoff: { file: "recovery.yaml", sha256: "b".repeat(64) },
+    };
+    phaseMocks.runBackup.mockReturnValue({
+      backupManifest: currentManifest,
+      backupWasForceSkipped: false,
+      policySourcePath,
+    });
+    phaseMocks.findRecoveryBackup.mockReturnValue(recoveryManifest);
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.clearPolicyHandoff.mock.calls.map(([manifest]) => manifest)).toEqual([
+      currentManifest,
+      recoveryManifest,
+    ]);
   });
 
   it("reports an operator drain that remains after accepted replacement recovery (#7806)", async () => {
@@ -193,6 +279,7 @@ describe("Hermes accepted replacement recovery", () => {
       "  Correct the reported restore problem, then run `nemoclaw alpha recover`.",
     );
     expect(phaseMocks.runDestroy).not.toHaveBeenCalled();
+    expect(phaseMocks.clearRecoveryBackup).not.toHaveBeenCalled();
   });
 
   it("retains the replacement journal when the accepted target lacks recovery control (#7806)", async () => {
@@ -213,5 +300,20 @@ describe("Hermes accepted replacement recovery", () => {
       expect.stringContaining("then run `nemoclaw alpha recover`"),
     );
     expect(phaseMocks.runDestroy).not.toHaveBeenCalled();
+    expect(phaseMocks.clearRecoveryBackup).not.toHaveBeenCalled();
+  });
+
+  it("retains the replacement journal when its recovery backup is unavailable", async () => {
+    phaseMocks.findRecoveryBackup.mockReturnValue(null);
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(bail).toHaveBeenCalledWith(
+      "Replacement state restoration is incomplete; the replacement journal was retained.",
+    );
+    expect(completeAcceptedTarget).not.toHaveBeenCalled();
+    expect(phaseMocks.runRestore).not.toHaveBeenCalled();
   });
 });

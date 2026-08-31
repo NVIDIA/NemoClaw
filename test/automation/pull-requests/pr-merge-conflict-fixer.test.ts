@@ -83,6 +83,7 @@ function resolverEnvironment(): NodeJS.ProcessEnv {
 function resolverTools(outputs: string[] = []): ResolverTools {
   return {
     run: vi.fn(() => outputs.shift() ?? ""),
+    runAsync: vi.fn(() => ({ cancel: vi.fn(), completion: Promise.resolve() })),
     start: vi.fn(),
     wait: vi.fn(async () => undefined),
   };
@@ -504,6 +505,8 @@ describe("PR merge conflict fixer", () => {
   it("configures approved inference through a loopback gateway (#7542)", async () => {
     const env = resolverEnvironment();
     const tools = resolverTools(["/trusted/bin/openshell-sandbox"]);
+    const stopGateway = vi.fn(async () => undefined);
+    vi.mocked(tools.start).mockReturnValue(stopGateway);
 
     await configureOpenShellInference(env, tools);
 
@@ -562,6 +565,7 @@ describe("PR merge conflict fixer", () => {
       }),
     );
     expect(run.mock.calls.filter(([, , options]) => options.env.OPENAI_API_KEY)).toHaveLength(1);
+    expect(stopGateway).not.toHaveBeenCalled();
     const gatewayInfoCalls = run.mock.calls.filter(
       ([, args]) => args[0] === "gateway" && args[1] === "info",
     );
@@ -658,14 +662,32 @@ describe("PR merge conflict fixer", () => {
     expect(fs.existsSync(required(env.ARTIFACT_DIR, "ARTIFACT_DIR"))).toBe(true);
   });
 
-  it("skips sandbox cleanup when OpenShell is unavailable (#7542)", () => {
+  it("deletes the named sandbox when listing is unavailable", () => {
     const tools = resolverTools();
-    vi.mocked(tools.run).mockImplementation(() => {
-      throw new Error("openshell unavailable");
-    });
+    vi.mocked(tools.run)
+      .mockImplementationOnce(() => {
+        throw new Error("sandbox listing unavailable");
+      })
+      .mockImplementationOnce(() => "");
 
     expect(() => deleteResolutionSandbox(resolverEnvironment(), tools)).not.toThrow();
-    expect(tools.run).toHaveBeenCalledOnce();
+    expect(vi.mocked(tools.run).mock.calls[1]?.[1]).toEqual(["sandbox", "delete", "sandbox-test"]);
+  });
+
+  it("reports the named sandbox when listing and deletion both fail", () => {
+    const tools = resolverTools();
+    vi.mocked(tools.run)
+      .mockImplementationOnce(() => {
+        throw new Error("sandbox listing unavailable");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("sandbox deletion unavailable");
+      });
+
+    expect(() => deleteResolutionSandbox(resolverEnvironment(), tools)).toThrow(
+      "Failed to delete OpenShell sandbox sandbox-test: sandbox deletion unavailable; sandbox listing also failed: sandbox listing unavailable",
+    );
+    expect(tools.run).toHaveBeenCalledTimes(2);
   });
 
   it("configures Pi for credential-free OpenShell inference (#7542)", () => {

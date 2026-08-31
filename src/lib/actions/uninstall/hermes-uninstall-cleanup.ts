@@ -6,6 +6,7 @@ import { normalizeRuntimeProviderIdentity } from "../../onboard/runtime-provider
 import { removeManagedHermesStateVolume } from "../../onboard/sandbox-provider-cleanup";
 
 export { stopHermesForwardWatchers } from "./hermes-forward-watcher-cleanup";
+export { requiresManagedHermesStateVolume } from "../../onboard/managed-workload/hermes-state-volume";
 export type { ManagedHermesStateVolumeContext };
 
 interface ManagedHermesStateVolumeRuntime {

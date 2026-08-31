@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const ADAPTER = path.join(path.dirname(fileURLToPath(import.meta.url)), "hermes-adapter.py");
-const PLACEHOLDER = "openshell:resolve:env:GOOGLE_CHAT_ACCESS_TOKEN";
+// What OpenShell 0.0.106 injects; the adapter must forward it verbatim.
+const PLACEHOLDER = "openshell:resolve:env:v7_GOOGLE_CHAT_ACCESS_TOKEN";
 const SUBSCRIPTION = "projects/nemoclaw-test/subscriptions/hermes-chat";
 
 // Stand-ins for the two imports the override reaches for at runtime. The bundled
@@ -171,7 +172,12 @@ const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-googlechat-pul
 function runScenario(scenario: string): { requests: RecordedRequest[]; handled: string[] } {
   const result = spawnSync("python3", [path.join(workspace, "driver.py"), ADAPTER, scenario], {
     encoding: "utf8",
-    env: { ...process.env, PYTHONPATH: workspace, PYTHONDONTWRITEBYTECODE: "1" },
+    env: {
+      ...process.env,
+      GOOGLE_CHAT_ACCESS_TOKEN: PLACEHOLDER,
+      PYTHONPATH: workspace,
+      PYTHONDONTWRITEBYTECODE: "1",
+    },
     timeout: 30_000,
   });
   expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
@@ -257,5 +263,22 @@ describe("Hermes Google Chat keyless REST pull", () => {
 
     expect(handled).toEqual(["hello"]);
     expect(requests.filter((request) => request.url.endsWith(":acknowledge"))).toEqual([]);
+  });
+
+  // Fail closed: with no injected credential there is no bearer to forward, and
+  // a silent request would surface as an opaque egress denial instead.
+  it("refuses to build a bearer when the injected credential is absent", () => {
+    const result = spawnSync("python3", [path.join(workspace, "driver.py"), ADAPTER, "acknowledged"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GOOGLE_CHAT_ACCESS_TOKEN: "",
+        PYTHONPATH: workspace,
+        PYTHONDONTWRITEBYTECODE: "1",
+      },
+      timeout: 30_000,
+    });
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("GOOGLE_CHAT_ACCESS_TOKEN is not set");
   });
 });

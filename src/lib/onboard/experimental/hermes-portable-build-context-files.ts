@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/** Exact shipped files admitted by the schema-5 Hermes Dockerfile COPY contract. */
+/** Exact shipped files admitted by the schema-7 Hermes Dockerfile COPY contract. */
 export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/build-mcp-digest.py", mode: "100644" },
   { path: "agents/hermes/config/build-env.ts", mode: "100644" },
@@ -143,6 +143,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/patch-bundled-npm-tar.mts", mode: "100755" },
   { path: "scripts/runtime_state_mutation_hermes_publisher.py", mode: "100755" },
   { path: "scripts/runtime-state-mutation-control.py", mode: "100755" },
+  { path: "scripts/runtime-state-mutation-transport-broker.py", mode: "100755" },
   { path: "scripts/runtime-state-mutation-startup-gate.py", mode: "100755" },
   { path: "scripts/state-dir-guard.py", mode: "100755" },
   {
@@ -151,6 +152,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   },
   { path: "src/lib/hermes-managed-route.ts", mode: "100644" },
   { path: "src/lib/messaging/AGENTS.md", mode: "100644" },
+  { path: "src/lib/messaging/applier/agent-config-remove.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/agent-config.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/build/messaging-build-applier.mts", mode: "100755" },
   { path: "src/lib/messaging/applier/conflict-detection-entry.test.ts", mode: "100644" },
@@ -165,6 +167,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/applier/conflict-detection/registry.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/conflict-detection/slack-socket-mode.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/conflict-detection/types.ts", mode: "100644" },
+  { path: "src/lib/messaging/applier/credential-env-cleanup.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/hook-phases.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/hook-phases.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/host-state-applier.test.ts", mode: "100644" },
@@ -175,6 +178,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/applier/openshell-provider.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/plan-filter.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/policy.ts", mode: "100644" },
+  { path: "src/lib/messaging/applier/setup-applier-credential-env.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/setup-applier.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/setup-applier.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/types.ts", mode: "100644" },
@@ -331,6 +335,14 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/channels/wechat/qr.test.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/wechat/qr.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/wechat/rendered-config-parser.ts", mode: "100644" },
+  {
+    path: "src/lib/messaging/channels/wechat/runtime/wechat-account-placeholder.test.ts",
+    mode: "100644",
+  },
+  {
+    path: "src/lib/messaging/channels/wechat/runtime/wechat-account-placeholder.ts",
+    mode: "100644",
+  },
   { path: "src/lib/messaging/channels/wechat/runtime/wechat-diagnostics.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/wechat/template-resolver.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/whatsapp/hooks/index.ts", mode: "100644" },
@@ -368,6 +380,10 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/compiler/manifest-compiler.ts", mode: "100644" },
   { path: "src/lib/messaging/compiler/types.ts", mode: "100644" },
   { path: "src/lib/messaging/compiler/workflow-planner-hermes-slack.test.ts", mode: "100644" },
+  {
+    path: "src/lib/messaging/compiler/workflow-planner-removal-tombstone.test.ts",
+    mode: "100644",
+  },
   { path: "src/lib/messaging/compiler/workflow-planner.test.ts", mode: "100644" },
   { path: "src/lib/messaging/compiler/workflow-planner.ts", mode: "100644" },
   { path: "src/lib/messaging/diagnostics.test.ts", mode: "100644" },
