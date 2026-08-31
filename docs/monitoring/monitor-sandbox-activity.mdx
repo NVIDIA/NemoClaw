@@ -57,6 +57,11 @@ $$nemoclaw <name> logs --follow
 The `logs` command shows lifecycle and gateway output.
 It does not export the structured per-session agent state that OpenClaw stores under `.openclaw/agents/`.
 
+<AgentOnly variant="openclaw">
+OpenClaw gateway log lines use the `[gateway]` prefix unless the gateway already supplied that prefix.
+OpenShell log lines keep their existing source tags.
+</AgentOnly>
+
 ## Inspect Agent Session State
 
 OpenClaw stores structured session state inside the sandbox.
