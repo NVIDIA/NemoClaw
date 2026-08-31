@@ -22,7 +22,9 @@ import {
 } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
+import { getSandboxOrThrow } from "./mcp-bridge-state";
 import { executeGatewaySupervisorAction } from "./process-recovery";
 
 const HERMES_MCP_EXEC_TIMEOUT_SECONDS = 620;
@@ -121,6 +123,7 @@ export function assertHermesMcpConfigMutationAllowed(sandboxName: string): void 
  */
 export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): void {
   assertHermesMcpConfigMutationAllowed(sandboxName);
+  const runtimeSelection = getMcpProviderInspectionRuntimeSelection(getSandboxOrThrow(sandboxName));
   let lastDetail = "";
   const probe = (): boolean => {
     let result: ReturnType<typeof runOpenshellProviderCommand>;
@@ -133,6 +136,7 @@ export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): v
         ),
         {
           ignoreError: true,
+          runtimeSelection,
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 45_000,
         },
@@ -232,8 +236,12 @@ function runHermesAdapterCommand(
   // placeholder and endpoint metadata.
   let result: ReturnType<typeof runOpenshellProviderCommand>;
   try {
+    const runtimeSelection = getMcpProviderInspectionRuntimeSelection(
+      getSandboxOrThrow(sandboxName),
+    );
     result = runOpenshellProviderCommand(buildHermesMcpExecArgs(sandboxName, command), {
       ignoreError: true,
+      runtimeSelection,
       stdio: ["ignore", "pipe", "pipe"],
       // The remote supervisor enforces 620s; keep a small transport margin so
       // remote termination is observed before this local subprocess is killed.

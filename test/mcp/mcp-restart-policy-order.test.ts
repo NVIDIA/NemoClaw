@@ -78,7 +78,9 @@ providerCommands.runOpenshellProviderCommand = (args) => {
       };
     }
     const entry = Object.values(entries).find((candidate) => candidate.providerName === args[2]);
-    if (!entry) return { status: 1, stdout: "", stderr: "NotFound: provider" };
+    if (!entry) {
+      return { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
+    }
     return {
       status: 0,
       stdout: "Id: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + (updatedProviders.has(entry.providerName) ? "2" : "1") + "\nCredential keys: " + entry.env[0] + "\n",

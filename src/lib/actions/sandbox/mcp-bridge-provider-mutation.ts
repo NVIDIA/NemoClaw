@@ -22,6 +22,7 @@ import {
   ensureEndpointlessProviderProfile,
 } from "../../adapters/openshell/provider-profile";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
+import { reportsExactProviderNotFound } from "../../onboard/extra-provider-diagnostic-parser";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError, type ParsedEnvReference } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
@@ -376,7 +377,13 @@ export function deleteProvider(
   } as Record<string, unknown>) as OpenShellCommandResult;
   if (result.status !== 0) {
     const output = commandOutput(result);
-    if (options.allowMissing && /not\s+found|NotFound/i.test(output)) return;
+    if (
+      options.allowMissing &&
+      result.status === 1 &&
+      reportsExactProviderNotFound(output, entry.providerName, output.length)
+    ) {
+      return;
+    }
     if (options.bestEffort) return;
     throw new McpBridgeError(output || `Failed to delete MCP provider '${entry.providerName}'.`);
   }

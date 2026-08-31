@@ -18,7 +18,10 @@ let liveId = expectedId;
 let detachCalls = 0;
 const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
 providerCommands.runOpenshellProviderCommand = (args, options) => {
-  if (options.runtimeSelection !== runtimeSelection) {
+  if (
+    options?.runtimeSelection?.gatewayName !== runtimeSelection.gatewayName ||
+    options?.runtimeSelection?.workspace !== runtimeSelection.workspace
+  ) {
     throw new Error("provider command did not retain the recorded runtime selection");
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {

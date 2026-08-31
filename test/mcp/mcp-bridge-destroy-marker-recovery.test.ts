@@ -241,7 +241,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
           stdout: "Id: " + expectedId + "\nType: nemoclaw-mcp-v1\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
           stderr: "",
         }
-      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+      : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     events.push(attached ? "provider:list:attached" : "provider:list:detached");

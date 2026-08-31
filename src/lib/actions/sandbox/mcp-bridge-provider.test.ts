@@ -325,6 +325,97 @@ Provider:
     );
   });
 
+  it.each([
+    "NotFound: provider",
+    "provider 'other-mcp-github' not found",
+    'status: NotFound, message: "gateway nemoclaw-8091 not found"',
+  ])(
+    "rejects ambiguous provider-delete output %s while cleanup is retryable (#10514)",
+    (diagnostic) => {
+      const id = "11111111-2222-4333-8444-555555555555";
+      const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
+      const run = vi
+        .spyOn(providerCommand, "runOpenshellProviderCommand")
+        .mockReturnValueOnce({
+          pid: 1234,
+          status: 0,
+          signal: null,
+          output: [
+            null,
+            `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
+            "",
+          ],
+          stdout: `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
+          stderr: "",
+        })
+        .mockReturnValueOnce({
+          pid: 1234,
+          status: 1,
+          signal: null,
+          output: [null, "", diagnostic],
+          stdout: "",
+          stderr: diagnostic,
+        });
+      const entry: McpBridgeEntry = {
+        server: "github",
+        agent: "openclaw",
+        adapter: "mcporter",
+        url: "https://api.githubcopilot.com/mcp",
+        env: ["GITHUB_TOKEN"],
+        providerName: "alpha-mcp-github",
+        providerId: id,
+        policyName: "mcp-bridge-github",
+        addedAt: "2026-08-19T00:00:00.000Z",
+      };
+
+      expect(() => deleteProvider(entry, { allowMissing: true, runtimeSelection })).toThrow(
+        diagnostic,
+      );
+      expect(run).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("accepts an exact provider-delete absence while cleanup is retryable (#10514)", () => {
+    const id = "11111111-2222-4333-8444-555555555555";
+    const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
+    const run = vi
+      .spyOn(providerCommand, "runOpenshellProviderCommand")
+      .mockReturnValueOnce({
+        pid: 1234,
+        status: 0,
+        signal: null,
+        output: [
+          null,
+          `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
+          "",
+        ],
+        stdout: `Id: ${id}\nType: nemoclaw-mcp-v1\nResource version: 7\nCredential keys: GITHUB_TOKEN\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({
+        pid: 1234,
+        status: 1,
+        signal: null,
+        output: [null, "", "provider 'alpha-mcp-github' not found"],
+        stdout: "",
+        stderr: "provider 'alpha-mcp-github' not found",
+      });
+    const entry: McpBridgeEntry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://api.githubcopilot.com/mcp",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github",
+      providerId: id,
+      policyName: "mcp-bridge-github",
+      addedAt: "2026-08-19T00:00:00.000Z",
+    };
+
+    expect(() => deleteProvider(entry, { allowMissing: true, runtimeSelection })).not.toThrow();
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
   it("distinguishes a real detach from OpenShell's idempotent success", () => {
     expect(
       providerDetachChangedState(0, "✓ Detached provider alpha-mcp-github from sandbox alpha"),
@@ -452,7 +543,11 @@ alpha-mcp-slack   generic  1                 0
     ).toThrow("Credential key 'GITHUB_TOKEN' is already supplied by attached provider");
     expect(run).toHaveBeenCalledTimes(2);
     expect(
-      run.mock.calls.every(([, options]) => options?.runtimeSelection === runtimeSelection),
+      run.mock.calls.every(
+        ([, options]) =>
+          options?.runtimeSelection?.gatewayName === runtimeSelection.gatewayName &&
+          options.runtimeSelection.workspace === runtimeSelection.workspace,
+      ),
     ).toBe(true);
   });
 

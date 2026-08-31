@@ -134,7 +134,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     if (crashAfter === "late-race" && providerGetCount === 3) mark("provider");
     return marked("provider")
       ? { status: 0, stdout: "Id: " + (marked("foreign-provider") ? foreignProviderId : providerId) + "\nType: nemoclaw-mcp-v1\nResource version: " + providerVersion() + "\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
-      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+      : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "provider" && (args[1] === "create" || args[1] === "update")) {
     if (credentialProjectionScenario) {
@@ -551,7 +551,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
     observedProviderName = args[2];
     return marked("provider")
       ? { status: 0, stdout: "Id: " + providerId + "\nType: nemoclaw-mcp-v1\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
-      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+      : { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
     observedProviderName = args[4];
@@ -581,7 +581,7 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   }
   if (args[0] === "provider" && args[1] === "delete") {
     if (!marked("provider")) {
-      return { status: 1, stdout: "", stderr: "NotFound: provider" };
+      return { status: 1, stdout: "", stderr: "provider '" + args[2] + "' not found" };
     }
     fs.rmSync(marker("provider"), { force: true });
     if (crashAfterProviderDelete) process.exit(87);

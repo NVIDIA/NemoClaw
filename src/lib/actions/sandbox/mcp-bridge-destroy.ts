@@ -90,6 +90,8 @@ export async function prepareMcpBridgesForDestroy(
     };
   }
 
+  await ensureSandboxGatewaySelected(sandboxName);
+
   // A pending marker is written only after OpenShell confirmed deletion. On
   // retry, a provider may therefore already be absent due to partial cleanup;
   // the retained entries are the durable, idempotent cleanup manifest.
@@ -121,7 +123,6 @@ export async function prepareMcpBridgesForDestroy(
     };
   }
 
-  await ensureSandboxGatewaySelected(sandboxName);
   assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];

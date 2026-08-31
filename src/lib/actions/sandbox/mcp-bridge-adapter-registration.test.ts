@@ -70,6 +70,7 @@ const lifecycleSuccess = {
 const commandSuccess = { status: 0, stdout: "", stderr: "" };
 const registered = { status: 0, stdout: "registered\n", stderr: "" };
 const mismatch = { status: 0, stdout: "mismatch\n", stderr: "" };
+const sandbox = { name: "alpha", agent: "hermes", gatewayName: "nemoclaw-8091" };
 
 interface AdapterCase {
   name: string;
@@ -164,6 +165,7 @@ describe.each(adapterCases)("$name MCP adapter registration", (adapterCase) => {
     mocks.executeGatewaySupervisorAction.mockReset();
     mocks.runOpenshellProviderCommand.mockReset();
     mocks.getSandbox.mockReset();
+    mocks.getSandbox.mockReturnValue(sandbox);
   });
 
   it("re-reads the persisted definition before registration succeeds", () => {
@@ -269,6 +271,7 @@ describe("Hermes MCP adapter credential revision", () => {
     mocks.executeSandboxCommand.mockReset();
     mocks.runOpenshellProviderCommand.mockReset();
     mocks.getSandbox.mockReset();
+    mocks.getSandbox.mockReturnValue(sandbox);
   });
 
   it("writes and verifies the readiness-proven revision", () => {
@@ -302,6 +305,7 @@ describe.each(reconciliationCases)("$name MCP credential revision reconciliation
     mocks.executeSandboxCommand.mockReset();
     mocks.runOpenshellProviderCommand.mockReset();
     mocks.getSandbox.mockReset();
+    mocks.getSandbox.mockReturnValue(sandbox);
     mocks.observeMcpCredentialRevision.mockReset();
     mocks.observeMcpCredentialRevision.mockReturnValue("v12");
   });
