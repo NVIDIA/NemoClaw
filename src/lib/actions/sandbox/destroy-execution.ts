@@ -76,6 +76,8 @@ type SandboxDestroyExecutionInput = {
   expectedContainerIdentities?: readonly SandboxNameLabeledContainer[];
   expectedContainerIdentityFingerprint?: string;
   portableContainerAuthority?: PreparedPortableDemoSandboxDestroyAuthority;
+  retireForwardServices: () => boolean;
+  restoreForwardServices: () => boolean;
   stopInferenceResources: () => void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
   deps?: {
@@ -308,6 +310,8 @@ export async function executeSandboxDestroy({
   expectedContainerIdentities,
   expectedContainerIdentityFingerprint,
   portableContainerAuthority,
+  retireForwardServices,
+  restoreForwardServices,
   stopInferenceResources,
   runtimeProviders = CURRENT_RUNTIME_PROVIDER_BUNDLES,
   deps = {},
@@ -613,6 +617,49 @@ export async function executeSandboxDestroy({
         mcpRecoveryFailure,
         ` Managed inference cleanup and workspace wipe or hardening may already have run; inspect those resources before retrying.${detachedDetail}`,
       );
+    }
+    if (!sandboxConfirmedAbsent) {
+      let retired = false;
+      try {
+        retired = retireForwardServices();
+      } catch {
+        retired = false;
+      }
+      if (!retired) {
+        let forwardRecoveryFailure: string | undefined;
+        try {
+          if (!restoreForwardServices()) {
+            forwardRecoveryFailure = "host forwards could not be re-established";
+          }
+        } catch (error) {
+          forwardRecoveryFailure = redactDestroyError(error);
+        }
+        const mcpRecoveryFailure = await restoreMcpForAbort(hardened);
+        return {
+          ok: false,
+          deleteOutput:
+            "Could not retire the sandbox's exact host-forward authority before deletion. No sandbox delete was attempted." +
+            (forwardRecoveryFailure
+              ? ` Host-forward rollback also failed: ${forwardRecoveryFailure}.`
+              : ""),
+          exitCode: 1,
+          gatewayUnreachable: false,
+          hostLocalInferenceOwnershipRequiresGateway: false,
+          mcpOwnershipRequiresGateway: false,
+          mcpRecoveryFailure,
+          shieldsRelockRequiresGateway: false,
+        };
+      }
+      const postForwardContinuity = inspectIdentityContinuity();
+      if (postForwardContinuity.status !== "match") {
+        const mcpRecoveryFailure = await restoreMcpForAbort(hardened);
+        return identityRefusalResult(
+          "after host-forward retirement",
+          postForwardContinuity,
+          mcpRecoveryFailure,
+          " Host forwards were stopped and were not rebound because the sandbox identity could no longer be proven.",
+        );
+      }
     }
     const deleteArgs = pendingCreateIdentity
       ? ["sandbox", "delete", "-g", pendingCreateIdentity.gatewayName, sandboxName]

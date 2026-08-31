@@ -170,6 +170,13 @@ describe("onboard dashboard helpers", () => {
       }),
     ).toBe(18_789);
     expect(helpers.ensureAgentFixedForward("alpha", 8_642, "Hermes API")).toBe(true);
+    controller.inspect.mockReturnValue({
+      disposition: "owned",
+      ownsListener: true,
+      reachable: true,
+      receipt: {} as never,
+    } as never);
+    expect(helpers.isForwardServiceHealthy("alpha", 18_789)).toBe(true);
     registryEntry = {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,

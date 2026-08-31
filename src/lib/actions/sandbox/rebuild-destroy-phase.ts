@@ -26,6 +26,10 @@ import type {
   RebuildRecreateJournal,
   RebuildRecreateSourcePresence,
 } from "./rebuild-recreate-journal";
+import {
+  restoreSandboxLaunchForwards,
+  teardownSandboxDashboardForward,
+} from "./forward-recovery";
 
 export type RebuildDeleteValidationResult =
   | { ok: true }
@@ -401,10 +405,20 @@ export async function runRebuildDestroyPhase(
   // MCP adapter entries are already detached and scrubbed here. A journal write
   // that fails must reattach them before the rebuild gives up, or the still
   // running sandbox is left without its MCP wiring.
+  const restoreRetiredHostForwards = (): string | null => {
+    try {
+      return restoreSandboxLaunchForwards(sandboxName)
+        ? null
+        : "the sandbox host forwards could not be re-established";
+    } catch (error) {
+      return `the sandbox host forwards could not be re-established: ${redactFull(
+        error instanceof Error ? error.message : String(error),
+      )}`;
+    }
+  };
   let sourcePresence: RebuildRecreateSourcePresence;
   try {
     sourcePresence = recreateJournal.observeSourceForDelete();
-    recreateJournal.markDeleting();
   } catch (error) {
     const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
       sandboxName,
@@ -414,9 +428,46 @@ export async function runRebuildDestroyPhase(
     relockShieldsIfNeeded(true);
     const detail = error instanceof Error ? error.message : String(error);
     bail(
-      mcpRecoveryFailure
-        ? `Sandbox deletion could not be journaled: ${redactFull(detail)} MCP provider recovery also failed: ${mcpRecoveryFailure}`
-        : `Sandbox deletion could not be journaled: ${redactFull(detail)}`,
+      `Sandbox deletion could not be journaled: ${redactFull(detail)}${
+        mcpRecoveryFailure ? ` MCP provider recovery also failed: ${mcpRecoveryFailure}` : ""
+      }`,
+    );
+    return null;
+  }
+  if (!teardownSandboxDashboardForward(sandboxName)) {
+    const forwardRecoveryFailure = restoreRetiredHostForwards();
+    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+      sandboxName,
+      rebuildDetachedMcpProviderEntries,
+      rebuildScrubbedMcpAdapterEntries,
+    );
+    relockShieldsIfNeeded(true);
+    const recoveryFailures = [mcpRecoveryFailure, forwardRecoveryFailure].filter(Boolean);
+    bail(
+      `Could not retire the sandbox's exact host-forward authority before rebuild deletion.${
+        recoveryFailures.length > 0 ? ` Recovery also failed: ${recoveryFailures.join("; ")}` : ""
+      }`,
+    );
+    return null;
+  }
+  try {
+    recreateJournal.markDeleting();
+  } catch (error) {
+    const forwardRecoveryFailure = restoreRetiredHostForwards();
+    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+      sandboxName,
+      rebuildDetachedMcpProviderEntries,
+      rebuildScrubbedMcpAdapterEntries,
+    );
+    relockShieldsIfNeeded(true);
+    const detail = error instanceof Error ? error.message : String(error);
+    const recoveryFailures = [mcpRecoveryFailure, forwardRecoveryFailure].filter(Boolean);
+    bail(
+      `Sandbox deletion could not be journaled: ${redactFull(detail)}${
+        recoveryFailures.length > 0
+          ? ` Recovery also failed: ${recoveryFailures.join("; ")}`
+          : ""
+      }`,
     );
     return null;
   }
@@ -450,18 +501,27 @@ export async function runRebuildDestroyPhase(
         rebuildDetachedMcpProviderEntries,
         rebuildScrubbedMcpAdapterEntries,
       );
+      const forwardRecoveryFailure = restoreRetiredHostForwards();
       if (mcpRecoveryFailure) {
         console.error(
           `  Failed to reattach MCP providers to the existing sandbox: ${mcpRecoveryFailure}`,
         );
+      }
+      if (forwardRecoveryFailure) {
+        console.error(`  Failed to restore host forwards: ${forwardRecoveryFailure}`);
       }
       if (backupManifest) {
         console.error("  State backup is preserved at: " + backupManifest.backupPath);
       }
       relockShieldsIfNeeded(true);
       bail(
-        mcpRecoveryFailure
-          ? `Failed to delete sandbox; MCP provider recovery also failed: ${mcpRecoveryFailure}`
+        mcpRecoveryFailure || forwardRecoveryFailure
+          ? `Failed to delete sandbox; recovery also failed: ${[
+              mcpRecoveryFailure,
+              forwardRecoveryFailure,
+            ]
+              .filter(Boolean)
+              .join("; ")}`
           : "Failed to delete sandbox.",
         deleteResult.status || 1,
       );

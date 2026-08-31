@@ -786,6 +786,28 @@ export function resolveSandboxLaunchForwardPorts(sandboxName: string): number[] 
   );
 }
 
+/**
+ * Re-establish the complete host-forward set for one still-live sandbox.
+ *
+ * Destructive lifecycle operations use this only as rollback after they have
+ * retired the exact receipt-owned ForwardTcp processes but then refuse the
+ * sandbox deletion. Each helper is idempotent and derives ports from the same
+ * immutable registry identity, so rollback never selects a forward by mutable
+ * sandbox name alone.
+ */
+export function restoreSandboxLaunchForwards(sandboxName: string): boolean {
+  const sandbox = registry.getSandbox(sandboxName);
+  if (!sandbox) return false;
+  const primaryPort = resolveSandboxDashboardPort(sandboxName, { getSandbox: () => sandbox });
+  const outcomes = [
+    ensureSandboxPortForward(sandboxName),
+    ensureHermesDashboardPortForwardIfEnabled(sandboxName),
+    ensureMessagingHostForwardHealthy(sandboxName),
+    ensureDeclaredAgentForwardPortsHealthy(sandboxName, primaryPort),
+  ];
+  return outcomes.every((outcome) => outcome !== false);
+}
+
 export function recoverDeclaredAgentForwardPorts(
   sandboxName: string,
   recoveryPort: number,

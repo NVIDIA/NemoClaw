@@ -2570,6 +2570,7 @@ const {
   ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
+  isForwardServiceHealthy,
   printDashboard,
   stopAllDashboardForwards,
 } = onboardDashboard.createOnboardDashboardHelpers({
@@ -2669,6 +2670,7 @@ async function preflightAuthoritativeRebuildTarget(
         assertGatewayReadiness: onboardPreflightGatewayAuthority.collectGatewayReadiness,
         inferenceRouteState: (p, m) => readInferenceRouteState(authoritativeGateway.name, p, m),
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+        isOwnedForwardService: (port) => isForwardServiceHealthy(opts.sandboxName, port),
         checkPort: (port) => checkPortAvailable(port),
       },
     );

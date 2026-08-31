@@ -62,6 +62,7 @@ import {
 } from "./destroy-presence";
 import {
   prepareSandboxDestroy,
+  restoreSandboxLaunchForwards,
   stopModelRouterForDestroyedSandbox,
   stopSandboxInferenceResources,
   teardownSandboxDashboardForward,
@@ -741,6 +742,8 @@ async function destroySandboxUnlocked(
         ? { expectedContainerIdentityFingerprint: retainedSandboxIdentityFingerprint }
         : {}),
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
+      retireForwardServices: () => teardownSandboxDashboardForward(sandboxName),
+      restoreForwardServices: () => restoreSandboxLaunchForwards(sandboxName),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
     });
   } catch (error) {

@@ -211,6 +211,22 @@ describe("ForwardTcp runtime integration", () => {
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
+  it("restores the complete declared ForwardTcp set after an intact delete rollback", async () => {
+    mocks.controller.inspect.mockReturnValue({
+      disposition: "absent",
+      ownsListener: false,
+      reachable: false,
+      receipt: null,
+    });
+    const { restoreSandboxLaunchForwards } = await import("./forward-recovery");
+
+    expect(restoreSandboxLaunchForwards("alpha")).toBe(true);
+    expect(mocks.controller.ensure.mock.calls.map(([, restored]) => restored)).toEqual([
+      { localHost: "127.0.0.1", localPort: 18_789, targetPort: 18_789 },
+      { localHost: "127.0.0.1", localPort: 8_642, targetPort: 8_642 },
+    ]);
+  });
+
   it("reports a mixed legacy listener without using mutable-name cleanup", async () => {
     mocks.controller.stopAll.mockReturnValue(2);
     const runOpenshell = vi.fn(() => ({ status: 0 }));

@@ -88,6 +88,7 @@ function deps(overrides: Partial<AuthoritativeRebuildTargetDeps> = {}) {
     assertGatewayReadiness: vi.fn(),
     inferenceRouteState: vi.fn((): InferenceRouteState => "matched"),
     captureForwardList: vi.fn(() => "alpha 127.0.0.1 18789 42 active"),
+    isOwnedForwardService: vi.fn(() => false),
     checkPort: vi.fn(async () => ({ ok: true })),
     ...overrides,
   } satisfies AuthoritativeRebuildTargetDeps;
@@ -370,6 +371,25 @@ describe("authoritative rebuild target preflight", () => {
         }),
       ),
     ).rejects.toThrow("occupied by node (PID 99)");
+  });
+
+  it("accepts an exact receipt-owned ForwardTcp listener absent from the legacy list", async () => {
+    const checkPort = vi.fn();
+    const isOwnedForwardService = vi.fn(() => true);
+
+    await expect(
+      preflightAuthoritativeRebuildTarget(
+        target,
+        deps({
+          captureForwardList: vi.fn(() => ""),
+          isOwnedForwardService,
+          checkPort,
+        }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(isOwnedForwardService).toHaveBeenCalledWith(18_789);
+    expect(checkPort).not.toHaveBeenCalled();
   });
 
   it("restores gateway scope when a fatal runtime check throws", async () => {

@@ -1061,6 +1061,8 @@ describe("socket-free MXC action contract", () => {
           sandbox: entry,
           sandboxConfirmedAbsent: false,
           sandboxName,
+          retireForwardServices: vi.fn(() => true),
+          restoreForwardServices: vi.fn(() => true),
           stopInferenceResources: vi.fn(),
           runtimeProviders: providers,
           deps: {

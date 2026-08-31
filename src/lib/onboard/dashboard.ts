@@ -189,6 +189,7 @@ export interface OnboardDashboardHelpers {
   getWslHostAddress(
     options?: Parameters<typeof dashboardAccess.getWslHostAddress>[0],
   ): string | null;
+  isForwardServiceHealthy(sandboxName: string, port: number): boolean;
   printDashboard(
     sandboxName: string,
     model: string,
@@ -331,6 +332,27 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     if (!authority || !forwardServiceController) return false;
     forwardServiceController.stopPort(authority, port);
     return true;
+  }
+
+  function isForwardServiceHealthy(sandboxName: string, port: number): boolean {
+    const authority = resolveForwardServiceAuthority(sandboxName);
+    if (!authority || !forwardServiceController) return false;
+    try {
+      return (["127.0.0.1", "0.0.0.0"] as const).some((localHost) => {
+        const inspection = forwardServiceController.inspect(authority, {
+          localHost,
+          localPort: port,
+          targetPort: port,
+        });
+        return (
+          inspection.disposition === "owned" &&
+          inspection.ownsListener === true &&
+          inspection.reachable
+        );
+      });
+    } catch {
+      return false;
+    }
   }
 
   function getDashboardForwardPort(
@@ -1030,6 +1052,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     getDashboardForwardPort,
     getDashboardForwardTarget,
     getWslHostAddress,
+    isForwardServiceHealthy,
     printDashboard,
     stopAllDashboardForwards,
   };

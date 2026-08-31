@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => ({
   ),
   stopNimContainer: vi.fn(),
   stopNimContainerByName: vi.fn(),
+  teardownSandboxDashboardForward: vi.fn(() => true),
+  restoreSandboxLaunchForwards: vi.fn(() => true),
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
@@ -64,6 +66,11 @@ vi.mock("./destroy", () => ({
 
 vi.mock("./rebuild-flow-helpers", () => ({
   warnUnpreservedUserManagedFiles: mocks.warnUnpreservedUserManagedFiles,
+}));
+
+vi.mock("./forward-recovery", () => ({
+  teardownSandboxDashboardForward: mocks.teardownSandboxDashboardForward,
+  restoreSandboxLaunchForwards: mocks.restoreSandboxLaunchForwards,
 }));
 
 vi.mock("./rebuild-mcp-phase", () => ({
@@ -129,6 +136,8 @@ describe("rebuild destroy phase", () => {
     mocks.waitUntil.mockImplementation(
       (condition: () => boolean) => condition() || condition() || condition(),
     );
+    mocks.teardownSandboxDashboardForward.mockReturnValue(true);
+    mocks.restoreSandboxLaunchForwards.mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -464,6 +473,8 @@ describe("rebuild destroy phase", () => {
       mocks.runOpenshell.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
     expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledWith("alpha", [], []);
+    expect(mocks.teardownSandboxDashboardForward).toHaveBeenCalledWith("alpha");
+    expect(mocks.restoreSandboxLaunchForwards).toHaveBeenCalledWith("alpha");
     expect(mocks.removeSandboxRegistryEntryWithReceipt).not.toHaveBeenCalled();
     expect(onDeleted).not.toHaveBeenCalled();
     expect(mocks.stopNimContainer).not.toHaveBeenCalled();
@@ -988,6 +999,31 @@ describe("rebuild destroy phase", () => {
     });
 
     expect(order).toEqual(["journal:deleting", "openshell:delete"]);
+  });
+
+  it("blocks rebuild deletion when exact ForwardTcp retirement is incomplete", async () => {
+    const recreateJournal = stubRecreateJournal();
+    mocks.teardownSandboxDashboardForward.mockReturnValue(false);
+
+    await expect(
+      runRebuildDestroyPhase({
+        sandboxName: "alpha",
+        sandboxEntry: { name: "alpha", agent: "openclaw", gatewayName: "nemoclaw" },
+        staleRecovery: false,
+        recreateJournal,
+        backupManifest: null,
+        log: vi.fn(),
+        bail: vi.fn((message: string): never => {
+          throw new Error(message);
+        }),
+        relockShieldsIfNeeded: vi.fn(() => true),
+        onDeleted: vi.fn(),
+      }),
+    ).rejects.toThrow("Could not retire the sandbox's exact host-forward authority");
+
+    expect(mocks.restoreSandboxLaunchForwards).toHaveBeenCalledWith("alpha");
+    expect(recreateJournal.markDeleting).not.toHaveBeenCalled();
+    expectNoSandboxDelete(mocks.runOpenshell);
   });
 
   it("reattaches MCP providers when the delete boundary cannot be journaled (#7734)", async () => {

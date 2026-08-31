@@ -186,6 +186,7 @@ async function runDestroy(
     force?: boolean;
     includeRegistryReaders?: boolean;
     inspectSandboxIdentityFingerprint?: () => string;
+    retireForwardServices?: () => boolean;
     lifecycleOptions?: NonNullable<
       NonNullable<
         Parameters<typeof executeSandboxDestroy>[0]["deps"]
@@ -218,6 +219,14 @@ async function runDestroy(
       }
     );
   });
+  const retireForwardServices = vi.fn(() => {
+    runtimeProvider.events.push("forward retire");
+    return options.retireForwardServices?.() ?? true;
+  });
+  const restoreForwardServices = vi.fn(() => {
+    runtimeProvider.events.push("forward restore");
+    return true;
+  });
   const result = await executeSandboxDestroy({
     cleanupShieldsArtifacts: () => runtimeProvider.events.push("cleanup"),
     force: options.force ?? false,
@@ -226,6 +235,8 @@ async function runDestroy(
     sandbox: entry,
     sandboxConfirmedAbsent: options.sandboxConfirmedAbsent ?? false,
     sandboxName: "alpha",
+    retireForwardServices,
+    restoreForwardServices,
     stopInferenceResources,
     runtimeProviders: { mxc: runtimeProvider.bundle },
     deps: {
@@ -245,6 +256,8 @@ async function runDestroy(
     getSandbox,
     listSandboxes,
     result,
+    retireForwardServices,
+    restoreForwardServices,
     runOpenshell,
     stopInferenceResources,
   };
@@ -335,6 +348,8 @@ describe("sandbox destroy host-local inference transaction", () => {
       sandbox: entry,
       sandboxConfirmedAbsent: false,
       sandboxName: "alpha",
+      retireForwardServices: vi.fn(() => true),
+      restoreForwardServices: vi.fn(() => true),
       stopInferenceResources,
       runtimeProviders: { mxc: runtimeProvider.bundle },
       deps: {
@@ -450,6 +465,8 @@ describe("sandbox destroy host-local inference transaction", () => {
       sandbox: entry,
       sandboxConfirmedAbsent: false,
       sandboxName: "alpha",
+      retireForwardServices: vi.fn(() => true),
+      restoreForwardServices: vi.fn(() => true),
       stopInferenceResources,
       runtimeProviders: { docker: runtimeProvider.bundle },
       deps: {
@@ -483,6 +500,8 @@ describe("sandbox destroy host-local inference transaction", () => {
       sandbox: entry,
       sandboxConfirmedAbsent: false,
       sandboxName: "alpha",
+      retireForwardServices: vi.fn(() => true),
+      restoreForwardServices: vi.fn(() => true),
       stopInferenceResources,
       runtimeProviders: { docker: runtimeProvider.bundle },
       deps: {
@@ -515,6 +534,36 @@ describe("sandbox destroy host-local inference transaction", () => {
     expect(runtimeProvider.prepareDestroy).toHaveBeenCalledTimes(2);
     expect(runtimeProvider.destroy).toHaveBeenCalledOnce();
     expect(stopInferenceResources).not.toHaveBeenCalled();
+  });
+
+  it("retires exact ForwardTcp authority immediately before sandbox deletion", async () => {
+    const runtimeProvider = provider();
+    const { retireForwardServices, restoreForwardServices, result } =
+      await runDestroy(runtimeProvider);
+
+    expect(result).toMatchObject({ ok: true });
+    expect(retireForwardServices).toHaveBeenCalledOnce();
+    expect(restoreForwardServices).not.toHaveBeenCalled();
+    expect(runtimeProvider.events.indexOf("forward retire")).toBeLessThan(
+      runtimeProvider.events.indexOf("sandbox delete alpha"),
+    );
+  });
+
+  it("refuses sandbox deletion when exact ForwardTcp retirement is incomplete", async () => {
+    const runtimeProvider = provider();
+    const { restoreForwardServices, result, runOpenshell } = await runDestroy(runtimeProvider, {
+      retireForwardServices: () => false,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      deleteOutput: expect.stringContaining("exact host-forward authority"),
+    });
+    expect(restoreForwardServices).toHaveBeenCalledOnce();
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
   });
 
   it("keeps an exact runtime referenced by another sandbox", async () => {

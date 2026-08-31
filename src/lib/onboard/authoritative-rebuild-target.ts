@@ -213,6 +213,7 @@ export type AuthoritativeRebuildTargetDeps = {
   assertGatewayReadiness(): unknown | Promise<unknown>;
   inferenceRouteState(provider: string, model: string): InferenceRouteState;
   captureForwardList(): string | null;
+  isOwnedForwardService(port: number): boolean;
   checkPort(port: number): Promise<PortProbeResult>;
   env?: NodeJS.ProcessEnv;
 };
@@ -260,6 +261,10 @@ export async function preflightAuthoritativeRebuildTarget(
       fail(`Dashboard port ${target.controlUiPort} belongs to sandbox '${owner}'.`);
     }
     if (owner) return;
+    // `openshell forward service` has no row in the legacy `forward list`.
+    // Accept the occupied port only after the receipt proves the exact sandbox
+    // identity, process generation, listener, and reachability.
+    if (deps.isOwnedForwardService(target.controlUiPort)) return;
     const portCheck = await deps.checkPort(target.controlUiPort);
     if (!portCheck.ok) {
       const blocker = portCheck.process
