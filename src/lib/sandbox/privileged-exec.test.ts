@@ -210,7 +210,7 @@ describe("privileged sandbox exec routing", () => {
     const results = [
       {
         status: 0,
-        stdout: `${containerId}\tfalse\t${mounts}\n`,
+        stdout: `${containerId}\tfalse\t\t\t${mounts}\n`,
         stderr: "",
         error: null,
       },
@@ -242,7 +242,7 @@ describe("privileged sandbox exec routing", () => {
       },
       {
         status: 0,
-        stdout: `${containerId}\tfalse\t${mounts}\n`,
+        stdout: `${containerId}\tfalse\t\t\t${mounts}\n`,
         stderr: "",
         error: null,
       },
@@ -290,6 +290,116 @@ describe("privileged sandbox exec routing", () => {
     expect(helperArgv?.at(-1)).toBe(JSON.stringify(EXPECTED_WECHAT_STATE_PATHS));
     expect(runDocker.mock.calls[4]?.[0]).toEqual(["start", "--attach", helperId]);
     expect(runDocker.mock.calls[5]?.[0]).toEqual(["rm", "-f", helperId]);
+  });
+
+  it("clears stopped state through the overlay2 upper layer when /sandbox is not a separate mount", () => {
+    const containerId = "a".repeat(64);
+    const helperId = "b".repeat(64);
+    const upperDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-overlay-upper-"));
+    fs.mkdirSync(path.join(upperDir, "sandbox"), { recursive: true });
+    try {
+      const results = [
+        {
+          status: 0,
+          stdout: `${containerId}\tfalse\toverlay2\t${upperDir}\t[]\n`,
+          stderr: "",
+          error: null,
+        },
+        {
+          status: 0,
+          stdout: `sha256:${"c".repeat(64)}\n`,
+          stderr: "",
+          error: null,
+        },
+        {
+          status: 1,
+          stdout: "",
+          stderr: "Error: No such object: cleanup-helper",
+          error: null,
+        },
+        { status: 0, stdout: `${helperId}\n`, stderr: "", error: null },
+        { status: 0, stdout: "", stderr: "", error: null },
+        { status: 0, stdout: helperId, stderr: "", error: null },
+        {
+          status: 1,
+          stdout: "",
+          stderr: `Error: No such container: ${helperId}`,
+          error: null,
+        },
+        {
+          status: 0,
+          stdout: `${containerId}\tfalse\toverlay2\t${upperDir}\t[]\n`,
+          stderr: "",
+          error: null,
+        },
+      ];
+      const runDocker = vi.fn(
+        (_args: readonly string[]) => results.shift() as (typeof results)[number],
+      );
+
+      withPrivilegedExecMocks(
+        {
+          dockerCapture: () => `${containerId}\topenshell-alpha\n`,
+          dockerRun: runDocker,
+          getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+          listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        },
+        ({ clearStoppedDockerSandboxChannelState }) => {
+          expect(
+            clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS),
+          ).toEqual({ cleared: true });
+        },
+      );
+
+      const helperArgv = runDocker.mock.calls[3]?.[0];
+      expect(helperArgv).toEqual(
+        expect.arrayContaining([
+          "--mount",
+          `type=bind,src=${path.join(upperDir, "sandbox")},dst=/sandbox`,
+        ]),
+      );
+    } finally {
+      fs.rmSync(upperDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["a non-overlay2 storage driver", "overlayfs", (dir: string) => dir],
+    ["a missing upper directory", "overlay2", (dir: string) => path.join(dir, "absent")],
+  ])("fails closed on %s", (_label, graphDriverName, resolveUpperDir) => {
+    const containerId = "a".repeat(64);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-overlay-fail-closed-"));
+    try {
+      const upperDir = resolveUpperDir(root);
+      const runDocker = vi.fn((args: readonly string[]) =>
+        args[0] === "inspect"
+          ? ({
+              status: 0,
+              stdout: `${containerId}\tfalse\t${graphDriverName}\t${upperDir}\t[]\n`,
+              stderr: "",
+              error: null,
+            } as const)
+          : (() => {
+              throw new Error(`unexpected Docker argv: ${args.join(" ")}`);
+            })(),
+      );
+
+      withPrivilegedExecMocks(
+        {
+          dockerCapture: () => `${containerId}\topenshell-alpha\n`,
+          dockerRun: runDocker,
+          getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+          listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        },
+        ({ clearStoppedDockerSandboxChannelState }) => {
+          expect(
+            clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS),
+          ).toEqual({ cleared: false, failure: "sandbox-volume-unavailable" });
+        },
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("deletes only the exact stopped-channel directories", () => {
@@ -393,7 +503,7 @@ describe("privileged sandbox exec routing", () => {
     const runDocker = vi.fn((_args: readonly string[]) => {
       return {
         status: 0,
-        stdout: `${containerId}\tfalse\t[]\n`,
+        stdout: `${containerId}\tfalse\t\t\t[]\n`,
         stderr: "",
         error: null,
       } as const;
@@ -483,7 +593,7 @@ describe("privileged sandbox exec routing", () => {
     const results = [
       {
         status: 0,
-        stdout: `${containerId}\tfalse\t${mounts}\n`,
+        stdout: `${containerId}\tfalse\t\t\t${mounts}\n`,
         stderr: "",
         error: null,
       },
@@ -512,7 +622,7 @@ describe("privileged sandbox exec routing", () => {
     const helperId = "d".repeat(64);
     const sandboxVolume = "nemoclaw-alpha-state";
     const ownerIdentity = createHash("sha256").update("alpha").digest("hex");
-    const volumeIdentity = createHash("sha256").update(sandboxVolume).digest("hex");
+    const volumeIdentity = createHash("sha256").update(`volume:${sandboxVolume}`).digest("hex");
     const helperName = `nemoclaw-channel-cleanup-${ownerIdentity.slice(0, 24)}`;
     const mounts = JSON.stringify([
       { Type: "volume", Name: sandboxVolume, Destination: "/sandbox", RW: true },
@@ -541,7 +651,7 @@ describe("privileged sandbox exec routing", () => {
             case containerId:
               return {
                 status: 0,
-                stdout: `${containerId}\tfalse\t${mounts}\n`,
+                stdout: `${containerId}\tfalse\t\t\t${mounts}\n`,
                 stderr: "",
                 error: null,
               } as const;
@@ -610,7 +720,7 @@ describe("privileged sandbox exec routing", () => {
       const results = [
         {
           status: 0,
-          stdout: `${containerId}\tfalse\t${mounts}\n`,
+          stdout: `${containerId}\tfalse\t\t\t${mounts}\n`,
           stderr: "",
           error: null,
         },

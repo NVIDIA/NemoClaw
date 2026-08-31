@@ -310,19 +310,66 @@ function findStoppedDirectSandboxContainer(sandboxName: string): string | null {
 type InspectedStoppedContainer = {
   readonly id: string;
   readonly running: boolean;
-  readonly sandboxVolumeName: string;
+  readonly sandboxMountType: "volume" | "bind";
+  readonly sandboxMountSource: string;
 };
 
 type StoppedContainerInspection =
   | { readonly inspected: InspectedStoppedContainer }
   | { readonly failure: StoppedDockerSandboxChannelStateCleanupFailure };
 
+function isSafeAbsoluteOverlayPath(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    !value.includes(" ") &&
+    path.posix.isAbsolute(value) &&
+    path.posix.normalize(value) === value
+  );
+}
+
+/**
+ * A standard OpenShell Docker sandbox does not mount /sandbox as a separate
+ * volume or bind; it lives directly in the container's own overlay2
+ * writable layer. Any channel state cleared here was written after the
+ * container started, so it is present in that upper (copy-up) layer even
+ * though the base image content is not. Restrict this fallback to the
+ * overlay2 driver and require the exact upper directory Docker reports for
+ * this already ownership-validated container id.
+ */
+function resolveStoppedContainerOverlaySandboxRoot(
+  graphDriverName: string,
+  upperDir: string,
+): string | null {
+  if (graphDriverName !== "overlay2" || !isSafeAbsoluteOverlayPath(upperDir)) return null;
+  let upperDirStat: fs.Stats;
+  try {
+    upperDirStat = fs.lstatSync(upperDir);
+  } catch {
+    return null;
+  }
+  if (!upperDirStat.isDirectory()) return null;
+  const overlaySandboxRoot = path.posix.join(upperDir, "sandbox");
+  let sandboxRootStat: fs.Stats;
+  try {
+    sandboxRootStat = fs.lstatSync(overlaySandboxRoot);
+  } catch {
+    return null;
+  }
+  return sandboxRootStat.isDirectory() ? overlaySandboxRoot : null;
+}
+
 /** Read immutable lifecycle and shared-state mount data for one container ID. */
 function inspectStoppedContainer(containerId: string): StoppedContainerInspection {
   let result: ReturnType<typeof dockerRun>;
   try {
     result = dockerRun(
-      ["inspect", "--format", "{{.Id}}\t{{.State.Running}}\t{{json .Mounts}}", containerId],
+      [
+        "inspect",
+        "--format",
+        "{{.Id}}\t{{.State.Running}}\t{{.GraphDriver.Name}}\t{{.GraphDriver.Data.UpperDir}}\t{{json .Mounts}}",
+        containerId,
+      ],
       OFFLINE_DOCKER_OPERATION_OPTIONS,
     );
   } catch {
@@ -331,7 +378,9 @@ function inspectStoppedContainer(containerId: string): StoppedContainerInspectio
   if (result.status !== 0 || typeof result.stdout !== "string") {
     return { failure: "container-inspection-failed" };
   }
-  const [id, running, mountsJson, ...unexpected] = result.stdout.trim().split("\t");
+  const [id, running, graphDriverName, upperDir, mountsJson, ...unexpected] = result.stdout
+    .trim()
+    .split("\t");
   if (
     unexpected.length > 0 ||
     !id ||
@@ -362,8 +411,29 @@ function inspectStoppedContainer(containerId: string): StoppedContainerInspectio
     DOCKER_VOLUME_NAME_RE.test(sandboxMount.Name)
       ? sandboxMount.Name
       : null;
-  return sandboxVolumeName
-    ? { inspected: { id, running: running === "true", sandboxVolumeName } }
+  if (sandboxVolumeName) {
+    return {
+      inspected: {
+        id,
+        running: running === "true",
+        sandboxMountType: "volume",
+        sandboxMountSource: sandboxVolumeName,
+      },
+    };
+  }
+  const overlaySandboxRoot =
+    sandboxMounts.length === 0
+      ? resolveStoppedContainerOverlaySandboxRoot(graphDriverName ?? "", upperDir ?? "")
+      : null;
+  return overlaySandboxRoot
+    ? {
+        inspected: {
+          id,
+          running: running === "true",
+          sandboxMountType: "bind",
+          sandboxMountSource: overlaySandboxRoot,
+        },
+      }
     : { failure: "sandbox-volume-unavailable" };
 }
 
@@ -527,7 +597,9 @@ function clearStoppedDockerSandboxChannelState(
       }
       const helperName = cleanupHelperName(sandboxName);
       const ownerIdentity = cleanupIdentity(sandboxName);
-      const volumeIdentity = cleanupIdentity(inspected.sandboxVolumeName);
+      const volumeIdentity = cleanupIdentity(
+        `${inspected.sandboxMountType}:${inspected.sandboxMountSource}`,
+      );
       const existingHelper = inspectCleanupHelper(helperName, ownerIdentity, volumeIdentity);
       if (existingHelper.state === "invalid") {
         return stoppedDockerCleanupFailure("cleanup-helper-ownership-invalid", helperName);
@@ -565,7 +637,9 @@ function clearStoppedDockerSandboxChannelState(
             "--label",
             `${STOPPED_CHANNEL_CLEANUP_VOLUME_LABEL}=${volumeIdentity}`,
             "--mount",
-            `type=volume,src=${inspected.sandboxVolumeName},dst=/sandbox,volume-nocopy`,
+            inspected.sandboxMountType === "volume"
+              ? `type=volume,src=${inspected.sandboxMountSource},dst=/sandbox,volume-nocopy`
+              : `type=bind,src=${inspected.sandboxMountSource},dst=/sandbox`,
             "--entrypoint",
             "/usr/local/bin/node",
             STOPPED_CHANNEL_CLEANUP_IMAGE,
@@ -604,7 +678,8 @@ function clearStoppedDockerSandboxChannelState(
       }
       const { inspected: confirmed } = confirmation;
       return confirmed.id === inspected.id &&
-        confirmed.sandboxVolumeName === inspected.sandboxVolumeName &&
+        confirmed.sandboxMountType === inspected.sandboxMountType &&
+        confirmed.sandboxMountSource === inspected.sandboxMountSource &&
         !confirmed.running
         ? { cleared: true }
         : stoppedDockerCleanupFailure("container-revalidation-failed");
