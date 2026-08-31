@@ -666,14 +666,20 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     with open(env_path, "r", encoding="utf-8") as handle:
         print(handle.read(), end="")
+    print("SOURCE_WECHAT_BOT_TOKEN=" + os.environ["WECHAT_BOT_TOKEN"])
+    print("SOURCE_MSTEAMS_APP_PASSWORD=" + os.environ["MSTEAMS_APP_PASSWORD"])
 `);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain(
-      "WEIXIN_TOKEN=openshell:resolve:env:v222_WECHAT_BOT_TOKEN\n",
-    );
+    expect(result.stdout).toContain("WEIXIN_TOKEN=openshell:resolve:env:v222_WECHAT_BOT_TOKEN\n");
     expect(result.stdout).toContain(
       "TEAMS_CLIENT_SECRET=openshell:resolve:env:v333_MSTEAMS_APP_PASSWORD\n",
+    );
+    expect(result.stdout).toContain(
+      "SOURCE_WECHAT_BOT_TOKEN=openshell:resolve:env:v222_WECHAT_BOT_TOKEN\n",
+    );
+    expect(result.stdout).toContain(
+      "SOURCE_MSTEAMS_APP_PASSWORD=openshell:resolve:env:v333_MSTEAMS_APP_PASSWORD\n",
     );
     expect(result.stderr).toContain(
       "[config] Refreshed Hermes provider placeholder for WEIXIN_TOKEN",
