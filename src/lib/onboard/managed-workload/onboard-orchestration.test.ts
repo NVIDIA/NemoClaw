@@ -184,23 +184,15 @@ describe("managed workload onboard orchestration", () => {
     ).toBe(false);
   });
 
-  it("keeps stock managed images required during providerless interceptor creation (#9833)", () => {
-    expect(
-      shouldActivateStockManagedRuntime({
-        portableLifecycle: false,
-        hermesPortableLifecycle: false,
-        agentName: "openclaw",
-      }),
-    ).toBe(true);
-  });
-
-  it("rejects an unavailable catalog for stock managed-image onboarding", async () => {
+  it("uses the Dockerfile when the stock managed-image catalog is unavailable", async () => {
     const { runtime } = createFreshOnboardingRuntime(
       {},
       { stockManagedRuntime: true, unavailableCatalog: true },
     );
 
-    await expect(runtime.ensurePreparedWorkload()).rejects.toThrow("registry offline");
+    await expect(runtime.ensurePreparedWorkload()).resolves.toMatchObject({
+      source: { kind: "legacy-dockerfile" },
+    });
   });
 
   it("rejects an unavailable catalog for explicit temporary managed-image onboarding", async () => {

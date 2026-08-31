@@ -390,7 +390,32 @@ describe("Hermes accepted launch-readiness probe", () => {
       snapshot: {},
       assertCurrent: assertRequalifiedReceiptCurrent,
     } as never);
-    harness.recoverPortableDemoLifecycleSpy.mockReturnValue({ kind: "recovered" });
+    harness.recoverPortableDemoLifecycleSpy.mockImplementation((...args) => {
+      args[4]?.onComplete({
+        entryQualificationMs: 101,
+        containerStartMs: 102,
+        postStartCurrentnessMs: 103,
+        execReadyMs: 104,
+        preHealthCurrentnessMs: 105,
+        authenticatedHealthMs: 106,
+        startupLaunchMs: 107,
+        healthPollCurrentnessMs: 108,
+        finalQualificationMs: 109,
+        rollbackMs: 0,
+        qualificationCount: 2,
+        transactionCurrentnessCount: 20,
+        containerInspectionCount: 8,
+        containerStartCount: 1,
+        execReadyAttempts: 1,
+        authenticatedHealthCount: 1,
+        startupLaunchCount: 0,
+        rollbackCount: 0,
+        totalMs: 938,
+        containerAction: "started",
+        result: "recovered",
+      });
+      return { kind: "recovered" };
+    });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
@@ -406,6 +431,83 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledOnce();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
     expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(/result=ready/);
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
+      "Hermes Portable lifecycle recovery timing: entryQualification=101ms containerStart=102ms postStartCurrentness=103ms execReady=104ms preHealthCurrentness=105ms authenticatedHealth=106ms startupLaunch=107ms healthPollCurrentness=108ms finalQualification=109ms rollback=0ms qualificationCount=2 transactionCurrentnessCount=20 containerInspectionCount=8 containerStartCount=1 execReadyAttempts=1 authenticatedHealthCount=1 startupLaunchCount=0 rollbackCount=0 total=938ms containerAction=started result=recovered",
+    );
+  });
+
+  it("reuses one recovered lifecycle when missing readiness routes to stopped inference", async () => {
+    const harness = missingHermesHarness("stopped");
+    harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy
+      .mockImplementationOnce(() => {
+        throw new Error("stopped container has no current operating authority");
+      })
+      .mockReturnValue({
+        kind: "current",
+        commandAuthority: {
+          assertCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+          assertTransactionCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+          receipt: {} as never,
+          env: {},
+          executablePath: "/usr/bin/openshell",
+        },
+      });
+    const assertRequalifiedReceiptCurrent = vi.fn();
+    harness.requalifyPortableAgentAuthoritySpy.mockReturnValue({
+      kind: "already-current",
+      snapshot: {},
+      assertCurrent: assertRequalifiedReceiptCurrent,
+    } as never);
+    harness.recoverPortableDemoLifecycleSpy.mockReturnValue({ kind: "recovered" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.inspectHermesPortableOllamaReadinessRuntimeSpy).toHaveBeenCalledOnce();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).toHaveBeenCalledOnce();
+    expect(harness.publishLaunchReadinessSpy).toHaveBeenCalledOnce();
+    expect(assertRequalifiedReceiptCurrent.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(
+      /lifecycleAction=recovered forwardAction=verified result=ready/,
+    );
+  });
+
+  it("rejects recovered lifecycle drift before stopped inference recovery", async () => {
+    const harness = missingHermesHarness("stopped");
+    harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy
+      .mockImplementationOnce(() => {
+        throw new Error("stopped container has no current operating authority");
+      })
+      .mockReturnValue({
+        kind: "current",
+        commandAuthority: {
+          assertCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+          assertTransactionCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+          receipt: {} as never,
+          env: {},
+          executablePath: "/usr/bin/openshell",
+        },
+      });
+    const assertRequalifiedReceiptCurrent = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementation(() => {
+        throw new Error("recovered receipt authority changed");
+      });
+    harness.requalifyPortableAgentAuthoritySpy.mockReturnValue({
+      kind: "already-current",
+      snapshot: {},
+      assertCurrent: assertRequalifiedReceiptCurrent,
+    } as never);
+    harness.recoverPortableDemoLifecycleSpy.mockReturnValue({ kind: "recovered" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.recoverHermesPortableOllamaInferenceSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
   });
 
   it("does not recover when stopped schema-6 requalification fails", async () => {

@@ -176,8 +176,8 @@ It then reads the configuration and applies the same runtime check.
 The express selection does not waive system readiness.
 With native Docker Engine inside WSL, or when the Docker runtime is unavailable or cannot be probed, the installer skips onboarding until Docker Desktop WSL integration is available.
 After you fix the runtime, rerun the installer or run `$$nemoclaw onboard`.
-An installed Windows-host Ollama that Docker Desktop cannot reach leaves the WSL-local install available, in both the onboarding menu and a requested `install-ollama` provider.
-When containers cannot reach host loopback, onboarding fronts that WSL-local daemon with the sandbox auth proxy.
+An installed Windows-host Ollama that Docker Desktop cannot reach leaves the WSL-local install available, in both the onboarding menu and a requested `install-ollama` provider, after Docker Desktop WSL integration is available.
+Qualified WSL routes reach the applicable host route directly and do not use the Ollama auth proxy.
 You can still decline the express prompt (or set `NEMOCLAW_NO_EXPRESS=1`) to choose a provider manually; the onboarding menu labels the Windows-host actions as requiring Docker Desktop integration.
 When Ollama runs on the Windows host, NemoClaw checks it from Docker Desktop through `host.docker.internal` and pulls missing models through the Ollama HTTP API.
 A direct request from WSL can fail because Docker Desktop defines this hostname in its container network context.

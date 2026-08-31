@@ -99,20 +99,17 @@ Agents Code on `linux/amd64` and `linux/arm64` before it emits `managed_image_re
 `generate-matrix` and every stock-onboarding job depend on this job, so a missing, failed,
 incomplete, or mixed publication starts no onboarding consumer.
 
-For a same-repository PR that changes a managed-image workflow path, the trusted planner also
-requires one successful `Images / Build, Test, and Publish Managed Images` run for the candidate
-commit. Before candidate checkout, the planner downloads the three nonexpired contract artifacts by
-immutable artifact ID.
-It verifies each artifact digest, producer run, attempt, and candidate commit. The planner rejects a
-missing, incomplete, or mixed all-agent publication before E2E jobs start.
+For a manual same-repository PR run, the trusted planner compares the immutable base and candidate
+commit trees with the reviewed base-image and managed-image input paths. When those inputs are
+unchanged, the run uses the applicable trusted managed-image publication from the PR base history.
+When any input changed, the run selects `local-dockerfile` and builds the candidate Dockerfiles
+locally instead of waiting for a candidate publication.
 
-The planner adds the all-agent catalog to `dist/` after the candidate CLI build completes.
-Each live E2E consumer verifies that the catalog source revision matches `checkout_sha`. A PR that
-does not change a managed-image workflow path receives the selected base publication through
-`E2E_MANAGED_IMAGE_REVISION` and the complete cohort receipt. Every stock-onboarding test asserts
-its durable `managed-image` receipt against either the exact candidate catalog or the selected base
-cohort before later probes. The GitHub token is available only to the trusted planner job and is not
-included in the candidate CLI artifact.
+The selected source is passed to every stock-onboarding consumer. Managed-image runs receive the
+selected base revision and complete cohort receipt. Local-Dockerfile runs resolve the shipped agent
+Dockerfile at the final process boundary and require the resulting durable receipt to identify that
+source. The GitHub token remains available only to the trusted planner and is not included in the
+candidate CLI artifact.
 
 The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the
 OpenClaw managed-image MCP discovery and lifecycle scope in two independent matrix jobs. Each job
