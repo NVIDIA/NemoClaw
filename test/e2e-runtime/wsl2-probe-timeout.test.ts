@@ -4,31 +4,9 @@
 import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 
+import { getValidationProbeCurlArgs } from "../../src/lib/inference/probe-http-helpers";
+
 const require = createRequire(import.meta.url);
-
-type OnboardValidationInternals = {
-  getValidationProbeCurlArgs: (opts?: { isWsl?: boolean }) => string[];
-};
-
-type OnboardValidationCandidate = {
-  getValidationProbeCurlArgs?: unknown;
-  default?: unknown;
-} | null;
-
-function isOnboardValidationInternals(
-  value: OnboardValidationCandidate,
-): value is OnboardValidationInternals {
-  return value !== null && typeof value.getValidationProbeCurlArgs === "function";
-}
-
-const loadedOnboardValidationModule = await import("../../src/lib/onboard.js");
-const onboardValidationInternals = isOnboardValidationInternals(loadedOnboardValidationModule)
-  ? loadedOnboardValidationModule
-  : null;
-if (!isOnboardValidationInternals(onboardValidationInternals)) {
-  throw new Error("Expected onboard validation internals to expose getValidationProbeCurlArgs");
-}
-const { getValidationProbeCurlArgs } = onboardValidationInternals;
 
 describe("WSL2 inference verification timeouts (#987)", () => {
   describe("getValidationProbeCurlArgs", () => {

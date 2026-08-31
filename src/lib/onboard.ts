@@ -963,7 +963,6 @@ const {
   shouldRequireResponsesToolCalling,
   verifyOnboardInferenceSmoke,
   getProbeAuthMode,
-  getValidationProbeCurlArgs,
 } = require("./inference/onboard-probes");
 
 const {
@@ -3630,6 +3629,5 @@ module.exports = {
   ensureOllamaAuthProxy,
   fetchGatewayAuthTokenFromSandbox,
   getProbeAuthMode,
-  getValidationProbeCurlArgs,
   verifyCompatibleEndpointSandboxSmoke,
 };

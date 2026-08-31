@@ -31,9 +31,10 @@ const { isWsl } = require("../platform");
  * Guidance for a WSL2 host whose endpoint verification keeps timing out.
  *
  * Names the one lever onboarding actually honours for this failure:
- * `withValidationMaxTimeOverride` applies NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS
- * to every validation probe. Onboarding has no flag that bypasses validation,
- * so this must not imply one.
+ * `withValidationMaxTimeOverride` raises the maximum time for the standard
+ * validation probes, including the chat-completions call that times out here.
+ * Streaming event probes stay capped at five seconds regardless. Onboarding
+ * has no flag that bypasses validation, so this must not imply one.
  *
  * Exported so the onboarding failure path can print the same wording it is
  * appended to `message` with. That path prints failure summaries rather than
@@ -41,8 +42,8 @@ const { isWsl } = require("../platform");
  */
 export const WSL_SLOW_VERIFICATION_ADVISORY =
   "WSL2 detected \u2014 network verification may be slower than expected. " +
-  "Check proxy and VPN health, then run onboarding again with a longer budget, for example " +
-  "`NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS=120`.";
+  "Check proxy and VPN health, then run onboarding again with a longer budget: " +
+  "`NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS=120 nemoclaw onboard`.";
 const httpProbe = require("../adapters/http/probe");
 const authConfigModule = require("../adapters/http/auth-config");
 const openrouter = require("./openrouter");
