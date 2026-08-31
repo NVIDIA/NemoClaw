@@ -110,4 +110,28 @@ process.stdout.write(JSON.stringify({ result, calls, timeoutMs }));
     expect(payload.timeoutMs[0]).toBeGreaterThan(0);
     expect(payload.timeoutMs[1]).toBeGreaterThan(payload.timeoutMs[0]);
   });
+
+  it("exposes the WSL advisory through the compiled probe interface (#10413)", () => {
+    // `onboard-probes` replaces its module namespace with an explicit
+    // `module.exports` object, so a TypeScript `export const` alone is dropped
+    // from the compiled artifact. Source-mode tests cannot see that: they
+    // resolve the ESM export and pass either way.
+    const script = [
+      "const probes = require('./dist/lib/inference/onboard-probes.js');",
+      "process.stdout.write(JSON.stringify({",
+      "  type: typeof probes.WSL_SLOW_VERIFICATION_ADVISORY,",
+      "  value: probes.WSL_SLOW_VERIFICATION_ADVISORY || '',",
+      "}));",
+    ].join("");
+
+    const run = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+
+    expect(run.status).toBe(0);
+    const payload = JSON.parse(run.stdout) as { type: string; value: string };
+    expect(payload.type).toBe("string");
+    expect(payload.value).toContain("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS");
+  });
 });

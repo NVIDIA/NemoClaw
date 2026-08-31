@@ -1156,6 +1156,7 @@ function withWslSlowVerificationAdvisory(result, options) {
 // ── Anthropic probe ──────────────────────────────────────────────
 
 module.exports = {
+  WSL_SLOW_VERIFICATION_ADVISORY,
   isSandboxInternalUrl,
   isHijackedDockerInternalUrl,
   parseJsonObject,
