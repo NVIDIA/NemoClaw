@@ -114,7 +114,12 @@ describe("onboard dashboard helpers", () => {
   it("starts primary and fixed host forwards through the direct ForwardTcp owner", () => {
     const fingerprint = "b".repeat(64);
     const controller = {
-      inspect: vi.fn(() => ({ disposition: "absent" as const, reachable: false, receipt: null })),
+      inspect: vi.fn(() => ({
+        disposition: "absent" as const,
+        ownsListener: false,
+        reachable: false,
+        receipt: null,
+      })),
       ensure: vi.fn(() => ({ action: "started" as const, receipt: {} as never })),
       stop: vi.fn(() => "absent" as const),
       stopPort: vi.fn(() => "absent" as const),

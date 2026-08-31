@@ -28,6 +28,7 @@ import {
   writeForwardServiceReceipt,
   type ForwardServiceStateOptions,
 } from "./forward-service-state";
+import { probeLocalForwardListener } from "./local-forward-listener";
 
 const DEFAULT_START_TIMEOUT_MS = 30_000;
 const DEFAULT_STOP_TIMEOUT_MS = 5_000;
@@ -44,6 +45,7 @@ export interface ForwardServiceProcessDeps {
   readonly pidNamespaceIdentity: string | null;
   readonly isReachable: (port: number) => boolean;
   readonly processIsAlive: (pid: number) => boolean;
+  readonly processOwnsListener: (pid: number, target: ForwardServiceTarget) => boolean | null;
   readonly readProcessArgv: (pid: number) => readonly string[] | null;
   readonly readProcessIdentity: (pid: number, fresh?: boolean) => string | null;
   readonly readProcessUid: (pid: number) => number | null;
@@ -79,6 +81,7 @@ function hasErrorCode(error: unknown, code: string): boolean {
 
 export interface ForwardServiceInspection {
   readonly disposition: ForwardServiceReceiptDisposition | "absent";
+  readonly ownsListener: boolean | null;
   readonly reachable: boolean;
   readonly receipt: ForwardServiceReceipt | null;
 }
@@ -116,27 +119,82 @@ function readProcessUid(pid: number): number | null {
   return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-function probeLocalPort(port: number): boolean {
-  const script =
-    "const net=require('node:net');" +
-    `const s=net.createConnection({host:'127.0.0.1',port:${String(port)}});` +
-    "s.setTimeout(1000);" +
-    "s.on('connect',()=>{s.destroy();process.exit(0)});" +
-    "s.on('error',()=>process.exit(1));" +
-    "s.on('timeout',()=>{s.destroy();process.exit(1)});";
-  const result = spawnSync(process.execPath, ["-e", script], {
-    env: buildOpenShellSubprocessEnv(),
-    stdio: "ignore",
-    timeout: 2_000,
-  });
-  return result.status === 0;
+function linuxProcessOwnsListener(pid: number, target: ForwardServiceTarget): boolean | null {
+  try {
+    const socketInodes = new Set(
+      fs
+        .readdirSync(`/proc/${String(pid)}/fd`)
+        .map((entry) => {
+          try {
+            return /^socket:\[([0-9]+)\]$/u.exec(
+              fs.readlinkSync(`/proc/${String(pid)}/fd/${entry}`),
+            )?.[1];
+          } catch {
+            return undefined;
+          }
+        })
+        .filter((entry): entry is string => entry !== undefined),
+    );
+    if (socketInodes.size === 0) return false;
+    const expectedAddress = target.localHost === "0.0.0.0" ? "00000000" : "0100007F";
+    const expectedPort = target.localPort.toString(16).toUpperCase().padStart(4, "0");
+    for (const line of fs
+      .readFileSync(`/proc/${String(pid)}/net/tcp`, "utf8")
+      .split("\n")
+      .slice(1)) {
+      const columns = line.trim().split(/\s+/u);
+      const [address, port] = (columns[1] ?? "").split(":");
+      if (
+        address === expectedAddress &&
+        port === expectedPort &&
+        columns[3] === "0A" &&
+        socketInodes.has(columns[9] ?? "")
+      ) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return null;
+  }
+}
+
+function darwinProcessOwnsListener(pid: number, target: ForwardServiceTarget): boolean | null {
+  const result = spawnSync(
+    "lsof",
+    ["-nP", "-a", "-p", String(pid), `-iTCP:${String(target.localPort)}`, "-sTCP:LISTEN", "-Fn"],
+    {
+      encoding: "utf8",
+      env: buildOpenShellSubprocessEnv(),
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1_000,
+    },
+  );
+  if (result.error) return null;
+  if (result.status === 1) return false;
+  if (result.status !== 0) return null;
+  const expected =
+    target.localHost === "0.0.0.0"
+      ? new Set([`n*:${String(target.localPort)}`, `n0.0.0.0:${String(target.localPort)}`])
+      : new Set([`n127.0.0.1:${String(target.localPort)}`]);
+  return result.stdout.split("\n").some((line) => expected.has(line.trim()));
+}
+
+export function processOwnsForwardServiceListener(
+  pid: number,
+  target: ForwardServiceTarget,
+): boolean | null {
+  if (process.platform === "linux") return linuxProcessOwnsListener(pid, target);
+  if (process.platform === "darwin") return darwinProcessOwnsListener(pid, target);
+  return null;
 }
 
 const DEFAULT_DEPS: ForwardServiceProcessDeps = {
   hostIdentity: readMcpLockHostIdentity(),
   pidNamespaceIdentity: readMcpLockPidNamespaceIdentity(),
-  isReachable: probeLocalPort,
+  isReachable: probeLocalForwardListener,
   processIsAlive,
+  processOwnsListener: processOwnsForwardServiceListener,
   readProcessArgv,
   readProcessIdentity: readMcpLockProcessIdentity,
   readProcessUid,
@@ -181,10 +239,15 @@ export function inspectForwardServiceProcess(
   options: ForwardServiceProcessOptions,
 ): ForwardServiceInspection {
   const receipt = readForwardServiceReceipt(target, stateOptions(options));
-  if (!receipt) return { disposition: "absent", reachable: false, receipt: null };
+  if (!receipt) {
+    return { disposition: "absent", ownsListener: false, reachable: false, receipt: null };
+  }
   const deps = options.deps ?? DEFAULT_DEPS;
+  const observation = processObservation(receipt, deps);
+  const disposition = classifyForwardServiceReceipt(receipt, target, observation);
   return {
-    disposition: classifyForwardServiceReceipt(receipt, target, processObservation(receipt, deps)),
+    disposition,
+    ownsListener: disposition === "owned" ? deps.processOwnsListener(receipt.pid, target) : false,
     reachable: deps.isReachable(target.localPort),
     receipt,
   };
@@ -242,9 +305,6 @@ function stopForwardServiceProcessUnlocked(
   ) {
     throw new Error("OpenShell forward service process did not stop after SIGTERM");
   }
-  if (deps.isReachable(target.localPort)) {
-    throw new Error("OpenShell forward service listener remained reachable after process exit");
-  }
   const removed = removeForwardServiceReceipt(inspection.receipt, stateOptions(options));
   if (removed === "changed") {
     throw new Error("OpenShell forward service receipt changed during process cleanup");
@@ -298,7 +358,12 @@ export function ensureForwardServiceProcess(
   return options.runExclusive(() => {
     const deps = options.deps ?? DEFAULT_DEPS;
     const current = inspectForwardServiceProcess(target, options);
-    if (current.disposition === "owned" && current.reachable && current.receipt) {
+    if (
+      current.disposition === "owned" &&
+      current.ownsListener === true &&
+      current.reachable &&
+      current.receipt
+    ) {
       return { action: "reused", receipt: current.receipt };
     }
     if (current.disposition === "owned") {
@@ -340,7 +405,11 @@ export function ensureForwardServiceProcess(
     while (Date.now() < deadline) {
       if (!deps.processIsAlive(Number(pid))) break;
       observedReceipt = startedReceipt(target, Number(pid), deps, Number(uid));
-      if (observedReceipt && deps.isReachable(target.localPort)) {
+      if (
+        observedReceipt &&
+        deps.processOwnsListener(Number(pid), target) === true &&
+        deps.isReachable(target.localPort)
+      ) {
         receipt = observedReceipt;
         break;
       }
@@ -362,7 +431,11 @@ export function ensureForwardServiceProcess(
     try {
       writeForwardServiceReceipt(receipt, stateOptions(options));
       const verified = inspectForwardServiceProcess(target, options);
-      if (verified.disposition !== "owned" || !verified.reachable) {
+      if (
+        verified.disposition !== "owned" ||
+        verified.ownsListener !== true ||
+        !verified.reachable
+      ) {
         throw new Error("OpenShell forward service process changed during publication");
       }
     } catch (error) {

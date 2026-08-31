@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { type AddressInfo, createServer } from "node:net";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +12,7 @@ import type { ForwardServiceProcessDeps } from "./forward-service-process";
 import {
   ensureForwardServiceProcess,
   inspectForwardServiceProcess,
+  processOwnsForwardServiceListener,
   stopForwardServiceProcess,
 } from "./forward-service-process";
 
@@ -33,11 +35,14 @@ function createProcessHarness(
   deps: ForwardServiceProcessDeps;
   calls: { args: readonly string[]; environment: NodeJS.ProcessEnv }[];
   setReachable(value: boolean): void;
+  replaceListenerWithForeign(): void;
   replaceIdentity(): void;
 } {
   const pid = 4242;
   let alive = false;
   let reachable = false;
+  let ownsListener = false;
+  let foreignListener = false;
   let processIdentity = "linux:test-boot:100";
   let argv: readonly string[] | null = null;
   const calls: { args: readonly string[]; environment: NodeJS.ProcessEnv }[] = [];
@@ -45,24 +50,28 @@ function createProcessHarness(
     ? () => {}
     : () => {
         alive = false;
-        reachable = false;
+        ownsListener = false;
+        reachable = foreignListener;
       };
   const deps: ForwardServiceProcessDeps = {
     hostIdentity: "linux:test-host",
     pidNamespaceIdentity: "pid:[100]",
     isReachable: () => reachable,
     processIsAlive: () => alive,
+    processOwnsListener: () => ownsListener,
     readProcessArgv: () => argv,
     readProcessIdentity: () => processIdentity,
     readProcessUid: () => uid,
     signalProcess: () => {
       alive = false;
-      reachable = false;
+      ownsListener = false;
+      reachable = foreignListener;
     },
     sleep: () => {},
     spawnDetached: (executable, args, environment) => {
       alive = options.neverReady !== true;
       reachable = options.neverReady !== true && options.unreachable !== true;
+      ownsListener = reachable;
       argv = options.neverReady === true ? null : [executable, ...args];
       calls.push({ args, environment });
       return {
@@ -81,6 +90,11 @@ function createProcessHarness(
     calls,
     setReachable: (value) => {
       reachable = value;
+    },
+    replaceListenerWithForeign: () => {
+      ownsListener = false;
+      foreignListener = true;
+      reachable = true;
     },
     replaceIdentity: () => {
       processIdentity = "linux:test-boot:200";
@@ -105,6 +119,36 @@ describe("OpenShell ForwardTcp process lifecycle (#10691)", () => {
     fs.rmSync(stateDirectory, { force: true, recursive: true });
   });
 
+  it("binds listener evidence to the process that owns the socket", async () => {
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const address = server.address() as AddressInfo;
+      expect(
+        processOwnsForwardServiceListener(process.pid, {
+          ...target,
+          localPort: address.port,
+          targetPort: address.port,
+        }),
+      ).toBe(true);
+      const unusedPort = address.port === 65_535 ? address.port - 1 : address.port + 1;
+      expect(
+        processOwnsForwardServiceListener(process.pid, {
+          ...target,
+          localPort: unusedPort,
+          targetPort: unusedPort,
+        }),
+      ).toBe(false);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("starts one detached direct ForwardTcp process with an allowlisted environment", () => {
     const harness = createProcessHarness();
     const result = ensureForwardServiceProcess(target, {
@@ -125,6 +169,7 @@ describe("OpenShell ForwardTcp process lifecycle (#10691)", () => {
     expect(harness.calls[0]?.environment).not.toHaveProperty("GITHUB_TOKEN");
     expect(inspectForwardServiceProcess(target, lifecycleOptions(harness))).toMatchObject({
       disposition: "owned",
+      ownsListener: true,
       reachable: true,
     });
   });
@@ -142,6 +187,7 @@ describe("OpenShell ForwardTcp process lifecycle (#10691)", () => {
     expect(stopForwardServiceProcess(target, lifecycleOptions(harness))).toBe("stopped");
     expect(inspectForwardServiceProcess(target, lifecycleOptions(harness))).toEqual({
       disposition: "absent",
+      ownsListener: false,
       reachable: false,
       receipt: null,
     });
@@ -165,6 +211,22 @@ describe("OpenShell ForwardTcp process lifecycle (#10691)", () => {
     expect(harness.calls).toHaveLength(0);
   });
 
+  it("does not reuse a live receipt process when another process owns the reachable listener", () => {
+    const harness = createProcessHarness();
+    ensureForwardServiceProcess(target, lifecycleOptions(harness));
+    harness.replaceListenerWithForeign();
+
+    expect(inspectForwardServiceProcess(target, lifecycleOptions(harness))).toMatchObject({
+      disposition: "owned",
+      ownsListener: false,
+      reachable: true,
+    });
+    expect(() => ensureForwardServiceProcess(target, lifecycleOptions(harness))).toThrow(
+      /another listener/u,
+    );
+    expect(harness.calls).toHaveLength(1);
+  });
+
   it("fails without a receipt when the child never becomes ready", () => {
     const harness = createProcessHarness({ neverReady: true });
     expect(() =>
@@ -175,6 +237,7 @@ describe("OpenShell ForwardTcp process lifecycle (#10691)", () => {
     ).toThrow(/did not become ready/u);
     expect(inspectForwardServiceProcess(target, lifecycleOptions(harness))).toEqual({
       disposition: "absent",
+      ownsListener: false,
       reachable: false,
       receipt: null,
     });
@@ -190,6 +253,7 @@ describe("OpenShell ForwardTcp process lifecycle (#10691)", () => {
     ).toThrow(/did not become ready/u);
     expect(inspectForwardServiceProcess(target, lifecycleOptions(harness))).toEqual({
       disposition: "absent",
+      ownsListener: false,
       reachable: false,
       receipt: null,
     });

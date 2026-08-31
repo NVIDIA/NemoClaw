@@ -350,6 +350,15 @@ describe("stopSandbox", () => {
     );
   });
 
+  it("reports retained ForwardTcp authority after an ambiguous cleanup", () => {
+    const h = harness({ teardownSandboxDashboardForward: vi.fn(() => false) });
+
+    expect(stopSandbox("my-sandbox", h.deps).exitCode).toBe(0);
+    expect(h.warn).toHaveBeenCalledWith(
+      "  Warning: ForwardTcp cleanup is incomplete; retained exact process authority.",
+    );
+  });
+
   it("does not release the dashboard forward when the container failed to stop (#7227)", () => {
     const h = harness({ dockerStop: vi.fn(() => ({ status: 1 })) });
 

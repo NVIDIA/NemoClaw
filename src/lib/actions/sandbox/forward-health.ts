@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { probeLocalForwardListener } from "../../adapters/openshell/local-forward-listener";
 
 export type SandboxForwardListEntry = {
   sandboxName: string;
@@ -68,18 +68,5 @@ export function classifyForwardHealthWithReachability(
  * metadata and must not treat an arbitrary local listener as an owned forward.
  */
 export function isLocalForwardReachable(port: number): boolean {
-  const script =
-    "const net=require('node:net');" +
-    `const s=net.createConnection({host:'127.0.0.1',port:${port}});` +
-    "s.setTimeout(1000);" +
-    "s.on('connect',()=>{s.destroy();process.exit(0)});" +
-    "s.on('error',()=>process.exit(1));" +
-    "s.on('timeout',()=>{s.destroy();process.exit(1)});";
-  const result = spawnSync(process.execPath, ["-e", script], {
-    encoding: "utf-8",
-    stdio: ["ignore", "ignore", "ignore"],
-    timeout: 2000,
-  });
-  if (result.error) return false;
-  return result.status === 0;
+  return probeLocalForwardListener(port);
 }

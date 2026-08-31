@@ -84,6 +84,7 @@ describe("ForwardTcp runtime integration", () => {
   it("checks every launch forward from receipt-owned processes without the legacy list", async () => {
     mocks.controller.inspect.mockReturnValue({
       disposition: "owned",
+      ownsListener: true,
       reachable: true,
       receipt: {},
     });
@@ -93,13 +94,17 @@ describe("ForwardTcp runtime integration", () => {
     const { areSandboxLaunchForwardsHealthy } = await import("./forward-recovery");
 
     expect(areSandboxLaunchForwardsHealthy("alpha", "nemoclaw", capture as never)).toBe(true);
-    expect(mocks.controller.inspect).toHaveBeenCalledTimes(2);
+    expect(mocks.controller.inspect.mock.calls.map(([, inspected]) => inspected)).toEqual([
+      { localHost: "127.0.0.1", localPort: 18_789, targetPort: 18_789 },
+      { localHost: "127.0.0.1", localPort: 8_642, targetPort: 8_642 },
+    ]);
     expect(capture).not.toHaveBeenCalled();
   });
 
   it("uses the receipt-owned process as forward health authority", async () => {
     mocks.controller.inspect.mockReturnValue({
       disposition: "owned",
+      ownsListener: true,
       reachable: true,
       receipt: {},
     });
@@ -117,9 +122,23 @@ describe("ForwardTcp runtime integration", () => {
     );
   });
 
+  it("rejects a reachable port that the receipt-owned process does not listen on", async () => {
+    mocks.controller.inspect.mockReturnValue({
+      disposition: "owned",
+      ownsListener: false,
+      reachable: true,
+      receipt: {},
+    });
+    const { isSandboxPortForwardHealthy } = await import("./forward-recovery");
+
+    expect(isSandboxPortForwardHealthy("alpha", 18_789)).toBe(false);
+    expect(mocks.captureOpenshell).not.toHaveBeenCalled();
+  });
+
   it("migrates a healthy legacy SSH forward to ForwardTcp", async () => {
     mocks.controller.inspect.mockReturnValue({
       disposition: "absent",
+      ownsListener: false,
       reachable: false,
       receipt: null,
     });
@@ -145,11 +164,13 @@ describe("ForwardTcp runtime integration", () => {
     const runOpenshell = vi.fn(() => ({ status: 0 }));
     const { teardownSandboxDashboardForward } = await import("./forward-recovery");
 
-    teardownSandboxDashboardForward("alpha", {
-      getSandbox: () => SANDBOX,
-      isLocalForwardReachable: () => false,
-      runOpenshell,
-    });
+    expect(
+      teardownSandboxDashboardForward("alpha", {
+        getSandbox: () => SANDBOX,
+        isLocalForwardReachable: () => false,
+        runOpenshell,
+      }),
+    ).toBe(true);
 
     expect(mocks.controller.stopAll).toHaveBeenCalledWith({
       gatewayName: "nemoclaw",
@@ -157,5 +178,20 @@ describe("ForwardTcp runtime integration", () => {
       sandboxName: "alpha",
     });
     expect(runOpenshell).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports incomplete teardown when exact ForwardTcp authority is ambiguous", async () => {
+    mocks.controller.stopAll.mockImplementation(() => {
+      throw new Error("receipt changed");
+    });
+    const { teardownSandboxDashboardForward } = await import("./forward-recovery");
+
+    expect(
+      teardownSandboxDashboardForward("alpha", {
+        getSandbox: () => SANDBOX,
+        isLocalForwardReachable: () => false,
+        runOpenshell: () => ({ status: 0 }),
+      }),
+    ).toBe(false);
   });
 });

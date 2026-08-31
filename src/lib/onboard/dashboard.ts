@@ -500,7 +500,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         sandboxName,
         preferredPort,
         existingForwards,
-        managedPreferred?.disposition === "owned" && managedPreferred.reachable
+        managedPreferred?.disposition === "owned" &&
+          managedPreferred.ownsListener === true &&
+          managedPreferred.reachable
           ? (port) =>
               port === preferredPort ? false : (deps.isPortBoundOnHost ?? isPortBoundOnHost)(port)
           : (deps.isPortBoundOnHost ?? isPortBoundOnHost),

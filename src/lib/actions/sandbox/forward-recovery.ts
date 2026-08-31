@@ -196,6 +196,8 @@ export function resolveSandboxHealthProbeUrl(sandboxName: string): string {
  * — mirroring the sandbox- and gateway-scoped forward cleanup used elsewhere.
  * OpenShell may return before its SSH listener exits, so successful commands
  * also receive a bounded host-port release wait.
+ * Returns false only when receipt-owned ForwardTcp cleanup could not be
+ * completed, so destructive callers can preserve immutable retry authority.
  */
 export function teardownSandboxDashboardForward(
   sandboxName: string,
@@ -206,11 +208,11 @@ export function teardownSandboxDashboardForward(
     resolveSandboxGatewayName?: typeof resolveSandboxGatewayName;
     runOpenshell?: DashboardForwardStopRunner;
   } = {},
-): void {
+): boolean {
   try {
     const getSandbox = deps.getSandbox ?? registry.getSandbox;
     const sandbox = getSandbox(sandboxName);
-    if (!sandbox) return;
+    if (!sandbox) return true;
     const gatewayName = (deps.resolveSandboxGatewayName ?? resolveSandboxGatewayName)(sandbox);
     const resolvePort = deps.resolveSandboxDashboardPort ?? resolveSandboxDashboardPort;
     const primaryPort = resolvePort(sandboxName, { getSandbox: () => sandbox });
@@ -237,31 +239,32 @@ export function teardownSandboxDashboardForward(
     const run = deps.runOpenshell ?? runDashboardForwardStopBestEffort;
     const authority = exactForwardServiceAuthority(sandboxName, sandbox);
     const controller = authority ? runtimeForwardServiceController() : null;
+    let managedCleanupCompleted = true;
     if (authority && controller) {
       try {
         controller.stopAll(authority);
       } catch {
         // Teardown is best-effort; retain ambiguous receipts for a later
         // identity-bound recovery instead of signaling an unproven PID.
+        managedCleanupCompleted = false;
       }
     }
     for (const port of ports) {
-      const result = run(
-        ["forward", "stop", String(port), sandboxName, "--gateway", gatewayName],
-        {
-          ignoreError: true,
-          stdio: "ignore",
-          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-        },
-      );
+      const result = run(["forward", "stop", String(port), sandboxName, "--gateway", gatewayName], {
+        ignoreError: true,
+        stdio: "ignore",
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      });
       if (result.status !== 0) continue;
       waitForStoppedForwardPortRelease(
         port,
         deps.isLocalForwardReachable ?? isLocalForwardReachable,
       );
     }
+    return managedCleanupCompleted;
   } catch {
     // Defense in depth for injected or future runners: teardown is best-effort.
+    return false;
   }
 }
 
@@ -341,7 +344,10 @@ export function isSandboxPortForwardHealthy(
         authority,
         endpoint(port, expectedBind),
       );
-      if (inspection.disposition === "owned") return inspection.reachable;
+      if (inspection.disposition === "owned") {
+        if (inspection.ownsListener === null) return null;
+        return inspection.ownsListener && inspection.reachable;
+      }
       if (inspection.disposition !== "absent") return inspection.reachable ? "occupied" : false;
       // An absent receipt may still have a same-sandbox legacy SSH forward.
       // Classify that row below, but report it unhealthy so the next recovery
@@ -662,13 +668,18 @@ export function areSandboxLaunchForwardsHealthy(
     try {
       for (const port of requiredPorts) {
         const allInterface =
-          port === primaryPort &&
-          (sandbox.dashboardRemoteBindPrepared === true || isWsl({}));
+          port === primaryPort && (sandbox.dashboardRemoteBindPrepared === true || isWsl({}));
         const inspection = controller.inspect(
           authority,
           endpoint(port, allInterface ? "0.0.0.0" : "127.0.0.1"),
         );
-        if (inspection.disposition !== "owned" || !inspection.reachable) return false;
+        if (
+          inspection.disposition !== "owned" ||
+          inspection.ownsListener !== true ||
+          !inspection.reachable
+        ) {
+          return false;
+        }
       }
       return true;
     } catch {

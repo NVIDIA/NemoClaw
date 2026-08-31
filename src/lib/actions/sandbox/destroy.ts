@@ -70,6 +70,20 @@ import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 export { assertUnambiguousDestroyContainerIdentity, classifyDestroySandboxPresence };
 
+export function retireDestroyedSandboxForwardAuthority(
+  sandboxName: string,
+  deps: {
+    teardown?: typeof teardownSandboxDashboardForward;
+    error?: (message: string) => void;
+  } = {},
+): boolean {
+  if ((deps.teardown ?? teardownSandboxDashboardForward)(sandboxName)) return true;
+  (deps.error ?? console.error)(
+    `  Sandbox '${sandboxName}' is gone, but its ForwardTcp process authority could not be retired. The sandbox registry entry was preserved so exact cleanup can be retried.`,
+  );
+  return false;
+}
+
 type RemoveSandboxImageDeps = {
   getSandbox?: typeof registry.getSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
@@ -857,8 +871,9 @@ async function destroySandboxUnlocked(
   if (!deleteSucceededOrAlreadyGone) {
     preparedManagedLlamaCppCleanup?.abort();
   }
-  if (deleteSucceededOrAlreadyGone) {
-    teardownSandboxDashboardForward(sandboxName);
+  if (deleteSucceededOrAlreadyGone && !retireDestroyedSandboxForwardAuthority(sandboxName)) {
+    preparedManagedLlamaCppCleanup?.abort();
+    requestSandboxDestroyExit(1);
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
     const stateVolumeCleanup = abortPreparedCleanupOnError(() =>

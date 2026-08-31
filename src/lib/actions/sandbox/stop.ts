@@ -31,7 +31,9 @@ function teardownDashboardForwardBestEffort(
   warn: (message: string) => void,
 ): void {
   try {
-    teardown(sandboxName);
+    if (teardown(sandboxName) === false) {
+      warn("  Warning: ForwardTcp cleanup is incomplete; retained exact process authority.");
+    }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     warn(`  Warning: could not release the dashboard port-forward: ${detail}`);
