@@ -289,9 +289,6 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     (step) => step.name === "Authenticate manual PR dispatch",
   );
   const checkoutIndex = steps.findIndex((step) => step.name === "Check out E2E candidate");
-  const managedCatalogResolverIndex = steps.findIndex(
-    (step) => step.id === "resolve_pr_managed_image_catalog",
-  );
   const validationIndex = steps.findIndex((step) => step.name === "Validate manual PR checkout");
   const credentialAuthorizationIndex = steps.findIndex(
     (step) => step.name === "Authorize E2E credentials",
@@ -312,51 +309,28 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
     errors.push("Manual PR authorization and validation must surround checkout before preparation");
   }
 
-  const managedCatalogResolver =
-    managedCatalogResolverIndex >= 0 ? steps[managedCatalogResolverIndex] : {};
   if (
-    matrixJob.outputs?.managed_image_catalog !==
-      "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}" ||
-    managedCatalogResolverIndex <= authenticationIndex ||
-    managedCatalogResolverIndex >= checkoutIndex ||
-    managedCatalogResolver.if !==
-      "${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}" ||
-    managedCatalogResolver.shell !== "bash" ||
-    !isDeepStrictEqual(managedCatalogResolver.env, {
-      BASE_SHA: "${{ inputs.base_sha }}",
-      CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository }}",
-      CANDIDATE_SHA: "${{ inputs.checkout_sha }}",
-      GITHUB_TOKEN: "${{ github.token }}",
-      PR_NUMBER: "${{ inputs.pr_number }}",
-    })
+    matrixJob.outputs?.managed_image_catalog !== undefined ||
+    steps.some((step) => step.id === "resolve_pr_managed_image_catalog")
   ) {
-    errors.push("Manual PR managed-image catalog must be authenticated before candidate checkout");
-  }
-  const managedCatalogResolverSource = String(managedCatalogResolver.run ?? "");
-  for (const fragment of [
-    "tools/e2e/pr-managed-image-publication.mts",
-    "catalog=",
-    "catalog_sha256=",
-  ]) {
-    if (!managedCatalogResolverSource.includes(fragment)) {
-      errors.push(`Manual PR managed-image catalog resolver must retain ${fragment}`);
-    }
+    errors.push("Manual PR E2E must not resolve an exact candidate managed-image catalog");
   }
 
   const packageCli = packageIndex >= 0 ? steps[packageIndex] : {};
   const packageSource = String(packageCli.run ?? "");
   if (
     packageIndex <= prepareIndex ||
-    packageCli.env?.MANAGED_IMAGE_CATALOG !==
-      "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}" ||
-    packageCli.env?.MANAGED_IMAGE_CATALOG_SHA256 !==
-      "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog_sha256 }}" ||
-    !packageSource.includes("# BEGIN exact managed-image catalog staging") ||
-    !packageSource.includes("# END exact managed-image catalog staging") ||
-    !packageSource.includes("trusted PR managed-image catalog changed after authentication") ||
-    !packageSource.includes("packaged PR managed-image catalog does not match trusted output")
+    workflow.env?.MANAGED_IMAGE_CATALOG !== undefined ||
+    workflow.env?.MANAGED_IMAGE_CATALOG_SHA256 !== undefined ||
+    matrixJob.env?.MANAGED_IMAGE_CATALOG !== undefined ||
+    matrixJob.env?.MANAGED_IMAGE_CATALOG_SHA256 !== undefined ||
+    packageCli.env?.MANAGED_IMAGE_CATALOG !== undefined ||
+    packageCli.env?.MANAGED_IMAGE_CATALOG_SHA256 !== undefined ||
+    packageSource.includes("pr-managed-image-catalog.json")
   ) {
-    errors.push("Manual PR managed-image catalog must be sealed into the CLI artifact");
+    errors.push(
+      "Manual PR CLI packaging must not accept obsolete managed-image catalog authority",
+    );
   }
 
   const authentication = authenticationIndex >= 0 ? steps[authenticationIndex] : {};

@@ -190,10 +190,7 @@ describe("fresh sandbox executable readiness", () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
-        [
-          "sandbox get -g nemoclaw alpha",
-          [timedOutOpenShellResult(SANDBOX_NOT_READY_OUTPUT)],
-        ],
+        ["sandbox get -g nemoclaw alpha", [timedOutOpenShellResult(SANDBOX_NOT_READY_OUTPUT)]],
       ]),
     );
     mockExit();

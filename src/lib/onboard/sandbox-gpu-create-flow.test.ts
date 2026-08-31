@@ -401,15 +401,13 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       mocks.waitForCreatedSandboxReadyWithTrace.mock.calls.map(
         ([options]) => options.stableReadyPolls,
       ),
-    ).toEqual([2, 2, 2]);
-
+    ).toEqual([2, 2]);
     vi.mocked(deps.runCaptureOpenshell).mockClear();
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
     expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
       ["sandbox", "list", "-g", "nemoclaw"],
       READY_CHECK_OPTIONS,
     );
-
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
     );
@@ -420,7 +418,6 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     prepareNetwork.mockClear();
     mocks.streamSandboxCreate.mockClear();
     mockExit();
-
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
     expect(prepareNetwork).not.toHaveBeenCalled();
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
@@ -435,6 +432,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
 
   it("reports the terminal phase when an incomplete managed create cannot become ready (#9819)", async () => {
     const input = createInput();
+    input.gatewayName = "nemoclaw-18080";
     const bootstrapIdentity = "e".repeat(64);
     input.managedBootstrap = {
       bootstrapIdentity,
@@ -475,11 +473,14 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       reason: "terminal_failure_phase",
       failurePhase: "Failed",
     });
-
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
       "Sandbox 'alpha' entered Failed phase before it became ready (waited up to 60s).",
     );
-    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledOnce();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: input.gatewayName },
+      }),
+    );
   });
 });
 describe("runSandboxGpuCreateFlow proof authorization", () => {
@@ -620,7 +621,6 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       expect(args[3].readyCheck()).toBe(true);
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
-
     const result = await runSandboxGpuCreateFlow(createInput(), deps);
     expect(result).toMatchObject({ route: "native" });
     expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
