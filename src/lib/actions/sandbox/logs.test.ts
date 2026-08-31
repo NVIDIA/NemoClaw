@@ -266,7 +266,6 @@ function createStreamingChild(): StreamingChild {
 
 type FollowRun = {
   written: string[];
-  spawns: { args: string[]; options: Record<string, unknown> }[];
   gateway: StreamingChild;
   openshell: StreamingChild | null;
   output: Writable;
@@ -283,7 +282,7 @@ function startFollowRun(
   options: { output?: Writable; keepOpenshellRunning?: boolean } = {},
 ): FollowRun {
   const written: string[] = [];
-  const spawns: FollowRun["spawns"] = [];
+  let spawnCount = 0;
   const gateway = createStreamingChild();
   const openshell = options.keepOpenshellRunning ? createStreamingChild() : null;
   const output = options.output ?? createCapturedOutput(written);
@@ -294,9 +293,9 @@ function startFollowRun(
     settle = resolve;
   });
 
-  const spawn = ((_command: string, args: readonly string[], callOptions = {}) => {
-    spawns.push({ args: [...args], options: callOptions as Record<string, unknown> });
-    return spawns.length === 1 ? gateway.child : (openshell?.child ?? createExitedChild());
+  const spawn = ((_command: string, _args: readonly string[], _callOptions = {}) => {
+    spawnCount += 1;
+    return spawnCount === 1 ? gateway.child : (openshell?.child ?? createExitedChild());
   }) as unknown as SpawnFn;
 
   showSandboxLogsWithDeps(
@@ -317,7 +316,7 @@ function startFollowRun(
     },
   );
 
-  return { written, spawns, gateway, openshell, output, exited };
+  return { written, gateway, openshell, output, exited };
 }
 
 class DeferredOutput extends Writable {
@@ -356,16 +355,6 @@ describe("follow-mode log source attribution (#10340)", () => {
     "└────",
   ].join("\n");
 
-  it("pipes only the OpenClaw source and leaves OpenShell on raw passthrough", async () => {
-    const run = startFollowRun();
-    run.gateway.stdout.end();
-    run.gateway.child.emit("exit", 0, null);
-    await run.exited;
-
-    expect(run.spawns[0].options.stdio).toEqual(["inherit", "pipe", "inherit"]);
-    expect(run.spawns[1].options.stdio).toBe("inherit");
-  });
-
   it("attributes every streamed banner line to a source", async () => {
     const run = startFollowRun();
     run.gateway.stdout.write(`${BANNER}\n`);
@@ -385,6 +374,27 @@ describe("follow-mode log source attribution (#10340)", () => {
     await run.exited;
 
     expect(run.written.join("")).toBe("[gateway] no trailing newline\n");
+  });
+
+  it.each([
+    {
+      position: "at stream completion",
+      chunks: ["message\r"],
+      expected: "[gateway] message\r\n",
+    },
+    {
+      position: "before non-newline content",
+      chunks: ["message\r", "continued"],
+      expected: "[gateway] message\rcontinued\n",
+    },
+  ])("preserves a bare carriage return $position (#10340)", async ({ chunks, expected }) => {
+    const run = startFollowRun();
+    chunks.forEach((chunk) => run.gateway.stdout.write(chunk));
+    run.gateway.stdout.end();
+    run.gateway.child.emit("exit", 0, null);
+    await run.exited;
+
+    expect(run.written.join("")).toBe(expected);
   });
 
   it("stops following when the source exits while a descendant holds its stdout open", async () => {

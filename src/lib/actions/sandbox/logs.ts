@@ -87,16 +87,15 @@ function createGatewayLogChunkTagger(): GatewayLogChunkTagger {
       return output.join("");
     },
     finish(): string {
-      const hadPendingCarriageReturn = pendingCarriageReturn;
+      const finalSuffix = pendingCarriageReturn ? "\r" : "";
       pendingCarriageReturn = false;
       if (linePrefixRelayed) {
         linePrefixRelayed = false;
-        return "\n";
+        return `${finalSuffix}\n`;
       }
-      if (!pendingPrefix) return hadPendingCarriageReturn ? "\n" : "";
-      const finalLine = `${tagGatewayLogLine(pendingPrefix)}\n`;
+      const finalLine = `${pendingPrefix}${finalSuffix}`;
       pendingPrefix = "";
-      return finalLine;
+      return finalLine ? `${tagGatewayLogLine(finalLine)}\n` : "";
     },
   };
 }
