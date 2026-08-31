@@ -1746,7 +1746,10 @@ const STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE = {
   "cleanup-helper-image-unavailable": "Restore the pinned NemoClaw cleanup image locally.",
   "cleanup-helper-ownership-invalid": "Remove the conflicting cleanup helper container.",
   "cleanup-helper-reconciliation-failed": "Reconcile the named cleanup helper container.",
-  "cleanup-command-failed": "Repair the stopped sandbox volume permissions.",
+  "cleanup-state-tree-unsafe":
+    "Inspect the stopped sandbox volume; recreate the sandbox if its state tree is untrusted.",
+  "cleanup-deletion-unconfirmed": "Restore writable access to the stopped sandbox volume.",
+  "cleanup-helper-failed": "Inspect the stopped sandbox and Docker daemon.",
   "container-revalidation-failed": "Reconcile the stopped container identity and state.",
   "lifecycle-authority-unavailable": "Finish the active lifecycle transition or repair its lock.",
 } as const;

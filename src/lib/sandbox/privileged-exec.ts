@@ -41,7 +41,9 @@ export type StoppedDockerSandboxChannelStateCleanupFailure =
   | "cleanup-helper-image-unavailable"
   | "cleanup-helper-ownership-invalid"
   | "cleanup-helper-reconciliation-failed"
-  | "cleanup-command-failed"
+  | "cleanup-state-tree-unsafe"
+  | "cleanup-deletion-unconfirmed"
+  | "cleanup-helper-failed"
   | "container-revalidation-failed"
   | "lifecycle-authority-unavailable";
 
@@ -470,6 +472,16 @@ function reconcileCleanupHelperAfterCreate(
   );
 }
 
+function classifyCleanupHelperFailure(
+  result: ReturnType<typeof dockerRun> | null,
+): StoppedDockerSandboxChannelStateCleanupFailure {
+  if (result?.status === 45) return "cleanup-deletion-unconfirmed";
+  if (typeof result?.status === "number" && result.status >= 40 && result.status <= 44) {
+    return "cleanup-state-tree-unsafe";
+  }
+  return "cleanup-helper-failed";
+}
+
 /** Clear validated channel state without starting a failed Docker sandbox. */
 function clearStoppedDockerSandboxChannelState(
   sandboxName: string,
@@ -558,13 +570,13 @@ function clearStoppedDockerSandboxChannelState(
         );
       } catch {
         return reconcileCleanupHelperAfterCreate(helperName, ownerIdentity, volumeIdentity)
-          ? stoppedDockerCleanupFailure("cleanup-command-failed")
+          ? stoppedDockerCleanupFailure("cleanup-helper-failed")
           : stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed");
       }
       const helperId = String(created.stdout ?? "").trim();
       if (created.status !== 0 || !FULL_CONTAINER_ID_RE.test(helperId)) {
         return reconcileCleanupHelperAfterCreate(helperName, ownerIdentity, volumeIdentity)
-          ? stoppedDockerCleanupFailure("cleanup-command-failed")
+          ? stoppedDockerCleanupFailure("cleanup-helper-failed")
           : stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed");
       }
       let cleared: ReturnType<typeof dockerRun> | null = null;
@@ -577,7 +589,7 @@ function clearStoppedDockerSandboxChannelState(
         return stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed");
       }
       if (!cleared || cleared.status !== 0 || cleared.error) {
-        return stoppedDockerCleanupFailure("cleanup-command-failed");
+        return stoppedDockerCleanupFailure(classifyCleanupHelperFailure(cleared));
       }
       const confirmation = inspectStoppedContainer(containerId);
       if ("failure" in confirmation) {

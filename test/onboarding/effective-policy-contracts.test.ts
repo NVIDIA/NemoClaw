@@ -498,6 +498,7 @@ describe("effective built-in policy contracts", () => {
     expect(telegram).not.toHaveProperty("tls");
 
     const wechat = requireNetworkPolicy(effective, "wechat_bridge");
+    expect(binaries(wechat)).toEqual(["/usr/bin/node", "/usr/local/bin/node"]);
     for (const host of ["ilinkai.weixin.qq.com", "ilinkai.wechat.com"]) {
       const endpoint = requireEndpoint(wechat, host);
       expect(endpoint).toMatchObject({

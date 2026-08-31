@@ -347,6 +347,66 @@ const ctx = module.exports;
     assert.equal(payload.stoppedDockerCleanupCalls.length, 1);
   });
 
+  it.each([
+    {
+      failure: "cleanup-state-tree-unsafe",
+      guidance:
+        "Inspect the stopped sandbox volume; recreate the sandbox if its state tree is untrusted.",
+    },
+    {
+      failure: "cleanup-deletion-unconfirmed",
+      guidance: "Restore writable access to the stopped sandbox volume.",
+    },
+    {
+      failure: "cleanup-helper-failed",
+      guidance: "Inspect the stopped sandbox and Docker daemon.",
+    },
+  ] as const)(
+    "retains WeChat state and reports recovery guidance for $failure",
+    ({ failure, guidance }) => {
+      const script = `${buildPreamble({
+        presetNamesApplied: ["npm", "pypi", "wechat"],
+        sandboxAgent: "openclaw",
+        channelInRegistry: "wechat",
+        sandboxExecResult: { status: 1, stdout: "", stderr: "sandbox stopped" },
+        sshFallbackResult: { status: 255, stdout: "", stderr: "sandbox stopped" },
+        stoppedDockerCleanupResult: { cleared: false, failure },
+      })}
+const ctx = module.exports;
+(async () => {
+  const dumpState = (caught) => ({
+    caught,
+    stoppedDockerCleanupCalls: ctx.stoppedDockerCleanupCalls,
+    removedPresets: ctx.removedPresets,
+    registryUpdates: ctx.registryUpdates,
+    callOrder: ctx.callOrder,
+    exitCode: ctx.getExitCode(),
+  });
+  try {
+    await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "wechat" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify(dumpState(null)) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify(dumpState(err.message)) + "\\n");
+  }
+})();
+`;
+      const result = runScript(script);
+      assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+      const marker = result.stdout.lastIndexOf("__RESULT__");
+      assert.ok(marker >= 0, `no __RESULT__ marker:\n${result.stdout}`);
+      const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+
+      assert.match(payload.caught, /^__PROCESS_EXIT__:1$/);
+      assert.equal(payload.exitCode, 1);
+      assert.equal(payload.stoppedDockerCleanupCalls.length, 1);
+      assert.deepEqual(payload.removedPresets, []);
+      assert.deepEqual(payload.registryUpdates, []);
+      assert.ok(!payload.callOrder.includes("promptAndRebuild"));
+      assert.ok(result.stderr.includes(`Stopped-Docker cleanup failed (${failure}).`));
+      assert.ok(result.stderr.includes(guidance));
+    },
+  );
+
   it.each(["openclaw", "hermes"] as const)(
     "removes the live '%s' channel policy and clears the in-sandbox whatsapp state dir",
     (sandboxAgent) => {

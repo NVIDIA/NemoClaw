@@ -591,7 +591,7 @@ describe("privileged sandbox exec routing", () => {
       },
       ({ clearStoppedDockerSandboxChannelState }) => {
         expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
-          { cleared: false, failure: "cleanup-command-failed" },
+          { cleared: false, failure: "cleanup-helper-failed" },
         );
       },
     );
@@ -603,63 +603,70 @@ describe("privileged sandbox exec routing", () => {
     expect(helperInspections).toBe(2);
   });
 
-  it("removes and confirms the named helper before reporting a start failure", () => {
-    const containerId = "a".repeat(64);
-    const helperId = "e".repeat(64);
-    const mounts = JSON.stringify([
-      { Type: "volume", Name: "nemoclaw-alpha-state", Destination: "/sandbox", RW: true },
-    ]);
-    const results = [
-      {
-        status: 0,
-        stdout: `${containerId}\tfalse\t${mounts}\n`,
-        stderr: "",
-        error: null,
-      },
-      {
-        status: 0,
-        stdout: `sha256:${"c".repeat(64)}\n`,
-        stderr: "",
-        error: null,
-      },
-      {
-        status: 1,
-        stdout: "",
-        stderr: "Error: No such object: cleanup-helper",
-        error: null,
-      },
-      { status: 0, stdout: `${helperId}\n`, stderr: "", error: null },
-      { status: 1, stdout: "", stderr: "start timed out", error: null },
-      { status: 0, stdout: helperId, stderr: "", error: null },
-      {
-        status: 1,
-        stdout: "",
-        stderr: `Error: No such container: ${helperId}`,
-        error: null,
-      },
-    ];
-    const runDocker = vi.fn(
-      (_args: readonly string[]) => results.shift() as (typeof results)[number],
-    );
+  it.each([
+    [43, "cleanup-state-tree-unsafe"],
+    [45, "cleanup-deletion-unconfirmed"],
+    [125, "cleanup-helper-failed"],
+  ] as const)(
+    "removes and confirms the named helper before classifying start exit %i as %s",
+    (startStatus, expectedFailure) => {
+      const containerId = "a".repeat(64);
+      const helperId = "e".repeat(64);
+      const mounts = JSON.stringify([
+        { Type: "volume", Name: "nemoclaw-alpha-state", Destination: "/sandbox", RW: true },
+      ]);
+      const results = [
+        {
+          status: 0,
+          stdout: `${containerId}\tfalse\t${mounts}\n`,
+          stderr: "",
+          error: null,
+        },
+        {
+          status: 0,
+          stdout: `sha256:${"c".repeat(64)}\n`,
+          stderr: "",
+          error: null,
+        },
+        {
+          status: 1,
+          stdout: "",
+          stderr: "Error: No such object: cleanup-helper",
+          error: null,
+        },
+        { status: 0, stdout: `${helperId}\n`, stderr: "", error: null },
+        { status: startStatus, stdout: "", stderr: "private helper detail", error: null },
+        { status: 0, stdout: helperId, stderr: "", error: null },
+        {
+          status: 1,
+          stdout: "",
+          stderr: `Error: No such container: ${helperId}`,
+          error: null,
+        },
+      ];
+      const runDocker = vi.fn(
+        (_args: readonly string[]) => results.shift() as (typeof results)[number],
+      );
 
-    withPrivilegedExecMocks(
-      {
-        dockerCapture: () => `${containerId}\topenshell-alpha\n`,
-        dockerRun: runDocker,
-        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
-        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
-      },
-      ({ clearStoppedDockerSandboxChannelState }) => {
-        expect(clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS)).toEqual(
-          { cleared: false, failure: "cleanup-command-failed" },
-        );
-      },
-    );
+      withPrivilegedExecMocks(
+        {
+          dockerCapture: () => `${containerId}\topenshell-alpha\n`,
+          dockerRun: runDocker,
+          getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+          listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        },
+        ({ clearStoppedDockerSandboxChannelState }) => {
+          expect(
+            clearStoppedDockerSandboxChannelState("alpha", EXPECTED_WECHAT_STATE_PATHS),
+          ).toEqual({ cleared: false, failure: expectedFailure });
+        },
+      );
 
-    expect(runDocker.mock.calls[4]?.[0]).toEqual(["start", "--attach", helperId]);
-    expect(runDocker.mock.calls[5]?.[0]).toEqual(["rm", "-f", helperId]);
-    expect(runDocker).toHaveBeenCalledTimes(7);
-  });
+      expect(runDocker.mock.calls[4]?.[0]).toEqual(["start", "--attach", helperId]);
+      expect(runDocker.mock.calls[5]?.[0]).toEqual(["rm", "-f", helperId]);
+      expect(runDocker).toHaveBeenCalledTimes(7);
+    },
+  );
 
   it("rejects ambiguous labeled running containers", () => {
     expect(() =>
