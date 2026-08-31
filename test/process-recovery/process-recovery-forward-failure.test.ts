@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as forwardHealth from "../../src/lib/actions/sandbox/forward-health.js";
 import { ensureSandboxPortForwardForPort } from "../../src/lib/actions/sandbox/forward-recovery.js";
 import * as openshellRuntime from "../../src/lib/adapters/openshell/runtime.js";
+import * as registry from "../../src/lib/state/registry.js";
 
 const SANDBOX_NOT_READY_DIAGNOSTIC = `Error:   × code: 'The system is not in a state required for the operation's
    │ execution', message: "sandbox is not ready"
@@ -285,7 +286,7 @@ beta  127.0.0.1  18789  12345  dead`,
     });
     expect(teamsForwardStarted).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "3978", "beta"],
+      ["forward", "start", "--background", "3978", "beta", "--gateway", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -321,7 +322,7 @@ beta  127.0.0.1  18791  12345  running`
       ),
     ).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "18791", "beta"],
+      ["forward", "start", "--background", "18791", "beta", "--gateway", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -358,7 +359,7 @@ beta  127.0.0.1  18791  12345  running`
       ),
     ).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "18791", "beta"],
+      ["forward", "start", "--background", "18791", "beta", "--gateway", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -408,7 +409,7 @@ beta  127.0.0.1  18791  12345  running`
     ).toBe(false);
     expect(captureOpenshell.mock.calls.length).toBeGreaterThanOrEqual(3);
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "18791", "beta"],
+      ["forward", "start", "--background", "18791", "beta", "--gateway", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -479,6 +480,50 @@ gamma  127.0.0.1  18791  12345  running`
 });
 
 describe("ensureSandboxPortForwardForPort readiness-handoff retries after stop (#10640)", () => {
+  it("scopes every recovery operation to the sandbox gateway", () => {
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "25");
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      gatewayPort: 18080,
+      name: "beta",
+    } as NonNullable<ReturnType<typeof registry.getSandbox>>);
+    const state = stubForwardStart({
+      diagnostic: SANDBOX_NOT_READY_DIAGNOSTIC,
+      failures: 2,
+    });
+
+    expect(
+      withFakeOpenshellBinary(() =>
+        ensureSandboxPortForwardForPort("beta", 18791, {
+          expectedBind: "127.0.0.1",
+          sleepMs: () => {},
+        }),
+      ),
+    ).toBe(true);
+
+    const listCalls = vi.mocked(openshellRuntime.captureOpenshell).mock.calls;
+    expect(listCalls.length).toBeGreaterThan(0);
+    expect(
+      listCalls.every(([args]) => args.join(" ") === "forward list --gateway nemoclaw-18080"),
+    ).toBe(true);
+    const recoveryCalls = vi
+      .mocked(openshellRuntime.runOpenshell)
+      .mock.calls.map(([args]) => args.map(String));
+    expect(recoveryCalls).toContainEqual([
+      "forward",
+      "stop",
+      "18791",
+      "beta",
+      "--gateway",
+      "nemoclaw-18080",
+    ]);
+    expect(recoveryCalls.filter((args) => args[0] === "forward" && args[1] === "start")).toEqual([
+      ["forward", "start", "--background", "18791", "beta", "--gateway", "nemoclaw-18080"],
+      ["forward", "start", "--background", "18791", "beta", "--gateway", "nemoclaw-18080"],
+      ["forward", "start", "--background", "18791", "beta", "--gateway", "nemoclaw-18080"],
+    ]);
+    expect(state.attempts).toBe(3);
+  });
+
   it("recovers the dashboard forward when OpenShell rejects the first starts as not ready", () => {
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "25");
     const state = stubForwardStart({

@@ -147,6 +147,65 @@ describe("runBackgroundForwardStartWithReadinessRetry", () => {
     expect(runForwardStart).toHaveBeenCalledWith("ignore");
   });
 
+  it("does not follow a pre-existing diagnostic link", () => {
+    const secureTempFile = tempFiles.secureTempFile;
+    const targetPath = secureTempFile("nemoclaw-forward-target", ".log");
+    fs.writeFileSync(targetPath, "sentinel", { mode: 0o600 });
+    vi.spyOn(tempFiles, "secureTempFile").mockImplementation((prefix, extension) => {
+      const diagnosticPath = secureTempFile(prefix, extension);
+      fs.symlinkSync(targetPath, diagnosticPath, "file");
+      return diagnosticPath;
+    });
+    const runForwardStart = vi.fn(() => ({ status: 0 }));
+
+    try {
+      const outcome = runBackgroundForwardStartWithReadinessRetry({
+        runForwardStart,
+        isListenerReachable: () => false,
+        isRetryAllowed: () => true,
+        sleepMs: () => {},
+      });
+
+      expect(outcome).toEqual({ status: 0 });
+      expect(runForwardStart).toHaveBeenCalledWith("ignore");
+      expect(fs.readFileSync(targetPath, "utf8")).toBe("sentinel");
+    } finally {
+      tempFiles.cleanupTempDir(targetPath, "nemoclaw-forward-target");
+    }
+  });
+
+  it("classifies the opened diagnostic after its path is replaced", () => {
+    const secureTempFile = tempFiles.secureTempFile;
+    const targetPath = secureTempFile("nemoclaw-forward-target", ".log");
+    fs.writeFileSync(targetPath, SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC, { mode: 0o600 });
+    let diagnosticPath: string | undefined;
+    vi.spyOn(tempFiles, "secureTempFile").mockImplementation((prefix, extension) => {
+      diagnosticPath = secureTempFile(prefix, extension);
+      return diagnosticPath;
+    });
+    const runForwardStart = vi.fn((stdio: "ignore" | ["ignore", number, number]) => {
+      const handle = (stdio as ["ignore", number, number])[1];
+      fs.writeSync(handle, "Error: gateway authentication failed");
+      fs.unlinkSync(String(diagnosticPath));
+      fs.symlinkSync(targetPath, String(diagnosticPath), "file");
+      return { status: 1 };
+    });
+
+    try {
+      const outcome = runBackgroundForwardStartWithReadinessRetry({
+        runForwardStart,
+        isListenerReachable: () => false,
+        isRetryAllowed: () => true,
+        sleepMs: () => {},
+      });
+
+      expect(outcome).toEqual({ status: 1, failureReason: "forward-start-failure" });
+      expect(runForwardStart).toHaveBeenCalledOnce();
+    } finally {
+      tempFiles.cleanupTempDir(targetPath, "nemoclaw-forward-target");
+    }
+  });
+
   it("preserves a successful start when diagnostic cleanup fails", () => {
     const cleanupTempDir = tempFiles.cleanupTempDir;
     const cleanupSpy = vi

@@ -270,8 +270,9 @@ export function isSandboxPortForwardHealthy(
   sandboxName: string,
   port: number,
   expectedBind?: string,
+  gatewayName = resolveSandboxForwardGatewayName(sandboxName),
 ): SandboxForwardHealth {
-  const result = captureOpenshell(["forward", "list"], {
+  const result = captureOpenshell(["forward", "list", "--gateway", gatewayName], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
@@ -306,6 +307,9 @@ export function ensureSandboxPortForwardForPort(
     expectedBind,
     beforeStart = () => true,
   } = options;
+  const gatewayName = resolveSandboxForwardGatewayName(sandboxName);
+  const getForwardHealth = () =>
+    isSandboxPortForwardHealthy(sandboxName, port, expectedBind, gatewayName);
   const acceptSuccessfulForward = () => {
     let accepted = false;
     try {
@@ -314,22 +318,25 @@ export function ensureSandboxPortForwardForPort(
       accepted = false;
     }
     if (accepted) return true;
-    runOpenshell(["forward", "stop", String(port), sandboxName], {
+    runOpenshell(["forward", "stop", String(port), sandboxName, "--gateway", gatewayName], {
       ignoreError: true,
       stdio: "ignore",
     });
     return false;
   };
-  let forwardHealth = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+  let forwardHealth = getForwardHealth();
   if (forwardHealth === true && !forceRestart) return acceptSuccessfulForward();
   if (forwardHealth === "occupied") return false;
   const configuredWaitMs = Number(process.env.NEMOCLAW_FORWARD_RECOVERY_WAIT_MS ?? "3000");
   const waitMs = Number.isFinite(configuredWaitMs) ? Math.max(0, configuredWaitMs) : 3000;
 
-  const stopResult = runOpenshell(["forward", "stop", String(port), sandboxName], {
-    ignoreError: true,
-    stdio: "ignore",
-  });
+  const stopResult = runOpenshell(
+    ["forward", "stop", String(port), sandboxName, "--gateway", gatewayName],
+    {
+      ignoreError: true,
+      stdio: "ignore",
+    },
+  );
   if (stopResult.status !== 0) {
     console.error(
       `  Warning: openshell forward stop ${port} ${sandboxName} exited ${stopResult.status}; attempting restart anyway.`,
@@ -358,7 +365,7 @@ export function ensureSandboxPortForwardForPort(
       portReleased: false,
     };
     waitForForwardRecoveryState(() => {
-      stopState.health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+      stopState.health = getForwardHealth();
       stopState.portReleased = !isLocalForwardReachable(port);
       return (
         (!forceRestart && stopState.health === true) ||
@@ -381,13 +388,16 @@ export function ensureSandboxPortForwardForPort(
   let retryHealth: SandboxForwardHealth = forwardHealth;
   const startResult = runBackgroundForwardStartWithReadinessRetry({
     runForwardStart: (stdio) =>
-      runOpenshell(["forward", "start", "--background", forwardTarget, sandboxName], {
-        ignoreError: true,
-        stdio,
-      }),
+      runOpenshell(
+        ["forward", "start", "--background", forwardTarget, sandboxName, "--gateway", gatewayName],
+        {
+          ignoreError: true,
+          stdio,
+        },
+      ),
     isListenerReachable: () => isLocalForwardReachable(port),
     isRetryAllowed: () => {
-      retryHealth = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+      retryHealth = getForwardHealth();
       return retryHealth === false;
     },
     ...(options.sleepMs ? { sleepMs: options.sleepMs } : {}),
@@ -426,14 +436,14 @@ export function ensureSandboxPortForwardForPort(
   // entry becomes visible. Poll for the exact live sandbox+port owner instead
   // of accepting an arbitrary reachable listener or failing on the first
   // metadata refresh.
-  let health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+  let health = getForwardHealth();
   if (health === true) return acceptSuccessfulForward();
   if (health === "occupied") return reportStartFailure(health);
   if (waitMs === 0) return reportStartFailure(health);
 
   let occupied = false;
   const settled = waitForForwardRecoveryState(() => {
-    health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+    health = getForwardHealth();
     if (health === "occupied") {
       occupied = true;
       return true;

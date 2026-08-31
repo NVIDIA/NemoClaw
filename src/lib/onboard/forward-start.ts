@@ -11,6 +11,8 @@ import { parseForwardList } from "../state/sandbox-session";
 import { getOccupiedPorts } from "./dashboard-port";
 import { cleanupTempDir, secureTempFile } from "./temp-files";
 
+const FORWARD_DIAGNOSTIC_READ_MAX_BYTES = 64 * 1024;
+
 // `openshell forward start --background` daemonises the actual forward
 // process, but the parent CLI's stdio is inherited by the daemon child on
 // some platforms (notably the Docker compatibility gateway used when the
@@ -82,6 +84,19 @@ function readDiagnosticFile(filePath: string): string {
     }
     throw error;
   }
+}
+
+function readDiagnosticHandle(handle: number): string {
+  const size = Math.min(fs.fstatSync(handle).size, FORWARD_DIAGNOSTIC_READ_MAX_BYTES);
+  if (size === 0) return "";
+  const buffer = Buffer.alloc(size);
+  let bytesRead = 0;
+  while (bytesRead < size) {
+    const count = fs.readSync(handle, buffer, bytesRead, size - bytesRead, bytesRead);
+    if (count === 0) break;
+    bytesRead += count;
+  }
+  return buffer.subarray(0, bytesRead).toString("utf8");
 }
 
 export function looksLikeForwardPortConflict(diagnostic: string): boolean {
@@ -663,7 +678,11 @@ export function runBackgroundForwardStartWithReadinessRetry(
     let handle: number | undefined;
     try {
       diagnosticPath = secureTempFile("nemoclaw-forward-recovery", ".log");
-      handle = fs.openSync(diagnosticPath, "a");
+      handle = fs.openSync(
+        diagnosticPath,
+        fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW | fs.constants.O_RDWR,
+        0o600,
+      );
     } catch {
       handle = undefined;
     }
@@ -677,7 +696,7 @@ export function runBackgroundForwardStartWithReadinessRetry(
       const result = options.runForwardStart(["ignore", openHandle, openHandle]);
       let diagnostic = "";
       try {
-        diagnostic = readDiagnosticFile(openPath);
+        diagnostic = readDiagnosticHandle(openHandle);
       } catch {
         // An unreadable diagnostic must not turn a working recovery into a
         // hard failure; an empty one only forgoes the retry.

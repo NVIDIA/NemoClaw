@@ -19,7 +19,7 @@ const { ensureSandboxPortForwardForPort } = requireSource(
 const { createProbeTimingRecorder } = requireSource(
   "../../src/lib/actions/sandbox/probe/timing.ts",
 ) as typeof import("../../src/lib/actions/sandbox/probe/timing.js");
-
+const scoped = (...args: string[]) => [...args, "--gateway", "nemoclaw"];
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
   options: Parameters<typeof checkAndRecoverSandboxProcessesImpl>[1] = {},
@@ -155,7 +155,7 @@ beta  127.0.0.1  18789  12345  running`;
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => forwardStarted);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation((rawArgs: unknown) => {
       const args = Array.isArray(rawArgs) ? rawArgs : [];
-      expect(args).toEqual(["forward", "list"]);
+      expect(args).toEqual(scoped("forward", "list"));
       postStartListCalls += Number(forwardStarted);
       return {
         status: 0,
@@ -180,7 +180,7 @@ beta  127.0.0.1  18789  12345  running`;
       recovered: false,
       forwardRecovered: true,
     });
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "beta"], {
+    expect(runOpenshell).toHaveBeenCalledWith(scoped("forward", "stop", "18789", "beta"), {
       ignoreError: true,
       stdio: "ignore",
     });
@@ -248,7 +248,7 @@ beta  127.0.0.1  18789  12345  running`;
         forwardRecovered: true,
       });
       expect(runOpenshell).toHaveBeenCalledWith(
-        ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
+        scoped("forward", "start", "--background", "0.0.0.0:18789", "beta"),
         expect.objectContaining({ ignoreError: true }),
       );
     },
@@ -287,7 +287,7 @@ beta  127.0.0.1  18789  12345  running`;
     expect(ensureSandboxPortForwardForPort("beta", 8642)).toBe(true);
     expect(events).toEqual(["stale-listener", "stale-listener", "released", "start"]);
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "8642", "beta"],
+      scoped("forward", "start", "--background", "8642", "beta"),
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -308,7 +308,7 @@ beta  127.0.0.1  18789  12345  running`;
 
     expect(ensureSandboxPortForwardForPort("beta", 8642)).toBe(false);
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "8642", "beta"],
+      scoped("forward", "start", "--background", "8642", "beta"),
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -371,12 +371,12 @@ beta  127.0.0.1  3978  12346  running`;
       forwardRecovered: true,
     });
     expect(teamsForwardStarted).toBe(true);
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "3978", "beta"], {
+    expect(runOpenshell).toHaveBeenCalledWith(scoped("forward", "stop", "3978", "beta"), {
       ignoreError: true,
       stdio: "ignore",
     });
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "3978", "beta"],
+      scoped("forward", "start", "--background", "3978", "beta"),
       expect.objectContaining({ ignoreError: true }),
     );
     probeTiming.finish("ready");
@@ -437,7 +437,7 @@ beta  127.0.0.1  18789  12345  running`;
         "the messaging webhook host forward could not be re-established",
     });
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "3978", "beta"],
+      scoped("forward", "start", "--background", "3978", "beta"),
       expect.objectContaining({ ignoreError: true }),
     );
     probeTiming.finish("failed", "forward");
@@ -1256,7 +1256,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
     expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "18789", "hermes-box"],
+      scoped("forward", "start", "--background", "18789", "hermes-box"),
       expect.objectContaining({ ignoreError: true }),
     );
   });
