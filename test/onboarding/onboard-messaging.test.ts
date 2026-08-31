@@ -1657,9 +1657,6 @@ runner.run = (command) => {
   return { status: 0 };
 };
 runner.runCapture = () => "";
-
-// Stub the manifest-driven Telegram reachability hook so this test does not
-// make a real network call.
 global.fetch = async () => ({
   ok: true,
   status: 200,
@@ -1670,7 +1667,6 @@ global.fetch = async () => ({
 const { setupMessagingChannels } = require(${onboardPath});
 
 (async () => {
-  // The Discord documentation placeholder must not select or configure Discord.
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
   process.env.DISCORD_BOT_TOKEN = "<your-discord-bot-token>";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token";
@@ -1698,13 +1694,7 @@ const { setupMessagingChannels } = require(${onboardPath});
 
       assert.equal(result.status, 0, result.stderr);
       const payload = parseStdoutJson<{ channels: string[]; commands: string[] }>(result.stdout);
-      const { channels } = payload;
-
-      // Should return only the channels that have tokens set
-      assert.ok(Array.isArray(channels), "expected an array return value");
-      assert.ok(channels.includes("telegram"), "expected telegram in returned channels");
-      assert.ok(channels.includes("slack"), "expected slack in returned channels");
-      assert.ok(!channels.includes("discord"), "discord should not be in returned channels");
+      assert.deepEqual(payload.channels, ["telegram", "slack"]);
       assert.ok(
         !payload.commands.some((command) => command.includes("discord")),
         "Discord placeholder must not trigger channel, policy, or gateway setup commands",
