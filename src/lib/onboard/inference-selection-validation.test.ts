@@ -215,6 +215,55 @@ describe("inference selection validation", () => {
     log.mockRestore();
   });
 
+  it("applies Gemini's reply budget through the native model-selection probe", async () => {
+    let payload: Record<string, unknown> | null = null;
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += String(chunk);
+      });
+      request.on("end", () => {
+        payload = JSON.parse(body) as Record<string, unknown>;
+        response.end('{"choices":[{"message":{"content":"OK"}}]}');
+      });
+    });
+    const port = await listen(server);
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const probeOptions = {
+      apiKey: "test-key",
+      provider: "gemini-api",
+      skipResponsesProbe: true,
+      validationTiming: { connectTimeoutSeconds: 1, maxTimeSeconds: 1, source: "standard" },
+      validationSessionOptions: {
+        env: {},
+        lookup: async () => [{ address: "127.0.0.1", family: 4 }],
+        allowPrivateAddressesForTesting: true,
+      },
+    };
+
+    try {
+      await expect(
+        helpers.validateOpenAiLikeSelection(
+          "Gemini",
+          `http://provider.example.com:${port}/v1`,
+          "gemini-2.5-flash",
+          null,
+          undefined,
+          undefined,
+          probeOptions,
+        ),
+      ).resolves.toEqual({ ok: true, api: "openai-completions" });
+      expect(payload).toMatchObject({ max_tokens: 256 });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("records a completed Chat Completions selection for the matching smoke check", async () => {
     const capabilityCache = new OnboardInferenceCapabilityCache();
     const helpers = createInferenceSelectionValidationHelpers({
@@ -328,6 +377,58 @@ describe("inference selection validation", () => {
       expect(log.mock.calls.flat().join("\n")).not.toContain("available");
     } finally {
       log.mockRestore();
+    }
+  });
+
+  it("distinguishes a Gemini runtime 404 from native model catalog validation (#9298)", async () => {
+    const apiKey = "gemini-test-secret";
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+      ok: false,
+      failures: [{ name: "Chat Completions API", httpStatus: 404, curlStatus: 0 }],
+    }));
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => apiKey,
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery,
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(
+        helpers.validateOpenAiLikeSelection(
+          "Google Gemini",
+          "https://generativelanguage.googleapis.com/v1beta/openai",
+          "gemini-2.5-flash",
+          "GEMINI_API_KEY",
+          undefined,
+          undefined,
+          { provider: "gemini-api", skipResponsesProbe: true },
+        ),
+      ).resolves.toEqual({ ok: false, retry: "selection" });
+      expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        "gemini-2.5-flash",
+        apiKey,
+        {
+          skipResponsesProbe: true,
+          calibrateTimeouts: true,
+          provider: "gemini-api",
+          replyBudget: 256,
+        },
+      );
+      const errorOutput = error.mock.calls.map((args) => args.join(" ")).join("\n");
+      expect(errorOutput).toContain(
+        "This 404 came from Google's OpenAI-compatible Chat Completions runtime route, not the native /v1beta/models catalog.",
+      );
+      expect(errorOutput).toContain("the sandbox uses that Chat Completions route at runtime");
+      expect(errorOutput).not.toContain(apiKey);
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
     }
   });
 
