@@ -19,6 +19,7 @@ import json
 import os
 import re
 import secrets
+import signal
 import stat
 import sys
 from typing import NoReturn
@@ -35,11 +36,13 @@ RETRY_NAME = "activation-retry.json"
 HANDOFF_ROOT = "/run/nemoclaw/runtime-state-mutation-startup"
 CANDIDATE_NAME = "startup-complete.json"
 RETRY_ACK_NAME = "retry-ack.json"
+RELEASE_ACK_NAME = "release-ack.json"
 PERMIT_PROTOCOL = "nemoclaw-runtime-state-mutation-activation-permit-v1"
 RELEASE_PROTOCOL = "nemoclaw-runtime-state-mutation-activation-release-v1"
 RETRY_PROTOCOL = "nemoclaw-runtime-state-mutation-activation-retry-v1"
 CANDIDATE_PROTOCOL = "nemoclaw-runtime-state-mutation-startup-complete-v1"
 RETRY_ACK_PROTOCOL = "nemoclaw-runtime-state-mutation-retry-ack-v1"
+RELEASE_ACK_PROTOCOL = "nemoclaw-runtime-state-mutation-release-ack-v1"
 MAX_FILE_BYTES = 32 * 1024
 HEX_64 = re.compile(r"[0-9a-f]{64}\Z")
 DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)\Z")
@@ -51,6 +54,8 @@ PROCESS_REFERENCE_KEYS = (
     "commandSha256",
     "procDevice",
     "procInode",
+    "executableDevice",
+    "executableInode",
 )
 PERMIT_KEYS = (
     "schemaVersion",
@@ -84,6 +89,16 @@ RETRY_KEYS = (
 
 class GateError(RuntimeError):
     """A fixed, non-sensitive startup-gate refusal."""
+
+    def __init__(self, code: str, transaction_id: str | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.transaction_id = transaction_id
+
+    def with_transaction(self, transaction_id: str) -> GateError:
+        if self.transaction_id is not None:
+            return self
+        return GateError(self.code, transaction_id)
 
 
 def _fail(code: str) -> NoReturn:
@@ -167,6 +182,10 @@ def _stable_stat(value: os.stat_result) -> tuple[object, ...]:
         value.st_mtime_ns,
         value.st_ctime_ns,
     )
+
+
+def _same_filesystem_object(first: os.stat_result, second: os.stat_result) -> bool:
+    return first.st_dev == second.st_dev and first.st_ino == second.st_ino
 
 
 def _read_at(
@@ -315,12 +334,15 @@ def _parse_uids(raw: bytes) -> tuple[int, int, int, int]:
 def _capture_parent() -> dict[str, object]:
     pid = os.getppid()
     process_path = f"/proc/{pid}"
+    executable_path = f"{process_path}/exe"
     try:
         before = os.stat(process_path, follow_symlinks=False)
+        executable_before = os.stat(executable_path)
         first = _read_proc_file(f"{process_path}/stat")
         status = _read_proc_file(f"{process_path}/status")
         command_raw = _read_proc_file(f"{process_path}/cmdline")
         second = _read_proc_file(f"{process_path}/stat")
+        executable_after = os.stat(executable_path)
         after = os.stat(process_path, follow_symlinks=False)
     except OSError:
         _fail("start-process-unavailable")
@@ -329,6 +351,7 @@ def _capture_parent() -> dict[str, object]:
     if (
         not stat.S_ISDIR(before.st_mode)
         or _stable_stat(before) != _stable_stat(after)
+        or not _same_filesystem_object(executable_before, executable_after)
         or (first_parent, first_start) != (second_parent, second_start)
     ):
         _fail("start-process-unavailable")
@@ -341,6 +364,8 @@ def _capture_parent() -> dict[str, object]:
         "commandSha256": _command_sha256(command),
         "procDevice": str(before.st_dev),
         "procInode": str(before.st_ino),
+        "executableDevice": str(executable_after.st_dev),
+        "executableInode": str(executable_after.st_ino),
     }
 
 
@@ -365,6 +390,8 @@ def _process_reference(value: object, code: str) -> dict[str, object]:
         "commandSha256": _hex(value["commandSha256"], code),
         "procDevice": _decimal(value["procDevice"], code),
         "procInode": _decimal(value["procInode"], code),
+        "executableDevice": _decimal(value["executableDevice"], code),
+        "executableInode": _decimal(value["executableInode"], code),
     }
 
 
@@ -375,41 +402,46 @@ def _binding(raw: bytes, protocol: str, keys: tuple[str, ...]) -> dict[str, obje
     if value["schemaVersion"] != SCHEMA_VERSION or value["protocol"] != protocol:
         _fail("gate-receipt-invalid")
     transaction_id = _hex(value["transactionId"], "gate-receipt-invalid")
-    nonce = _hex(value["nonce"], "gate-receipt-invalid")
-    expected_directory = f"{HANDOFF_ROOT}/{nonce}"
-    if value["candidateDirectory"] != expected_directory:
-        _fail("gate-receipt-invalid")
-    start = _process_reference(value["start"], "gate-receipt-invalid")
-    if _canonical(start) != _canonical(_capture_parent()):
-        _fail("gate-start-mismatch")
-    if protocol == PERMIT_PROTOCOL:
-        protocol_binding: dict[str, object] = {
-            "markerSha256": _hex(value["markerSha256"], "gate-receipt-invalid")
+    try:
+        nonce = _hex(value["nonce"], "gate-receipt-invalid")
+        expected_directory = f"{HANDOFF_ROOT}/{nonce}"
+        if value["candidateDirectory"] != expected_directory:
+            _fail("gate-receipt-invalid")
+        start = _process_reference(value["start"], "gate-receipt-invalid")
+        if _canonical(start) != _canonical(_capture_parent()):
+            _fail("gate-start-mismatch")
+        if protocol == PERMIT_PROTOCOL:
+            protocol_binding: dict[str, object] = {
+                "markerSha256": _hex(value["markerSha256"], "gate-receipt-invalid")
+            }
+        elif protocol == RELEASE_PROTOCOL:
+            protocol_binding = {
+                "checkpointSha256": _hex(value["checkpointSha256"], "gate-receipt-invalid")
+            }
+        else:
+            checkpoint = value["checkpointSha256"]
+            protocol_binding = {
+                "permitSha256": _hex(value["permitSha256"], "gate-receipt-invalid"),
+                "checkpointSha256": (
+                    None
+                    if checkpoint is None
+                    else _hex(checkpoint, "gate-receipt-invalid")
+                ),
+            }
+        normalized = {
+            "schemaVersion": SCHEMA_VERSION,
+            "protocol": protocol,
+            "transactionId": transaction_id,
+            "nonce": nonce,
+            **protocol_binding,
+            "start": start,
+            "candidateDirectory": expected_directory,
         }
-    elif protocol == RELEASE_PROTOCOL:
-        protocol_binding = {
-            "checkpointSha256": _hex(value["checkpointSha256"], "gate-receipt-invalid")
-        }
-    else:
-        checkpoint = value["checkpointSha256"]
-        protocol_binding = {
-            "permitSha256": _hex(value["permitSha256"], "gate-receipt-invalid"),
-            "checkpointSha256": (
-                None if checkpoint is None else _hex(checkpoint, "gate-receipt-invalid")
-            ),
-        }
-    normalized = {
-        "schemaVersion": SCHEMA_VERSION,
-        "protocol": protocol,
-        "transactionId": transaction_id,
-        "nonce": nonce,
-        **protocol_binding,
-        "start": start,
-        "candidateDirectory": expected_directory,
-    }
-    if raw != _canonical(normalized) + b"\n":
-        _fail("gate-receipt-invalid")
-    return normalized
+        if raw != _canonical(normalized) + b"\n":
+            _fail("gate-receipt-invalid")
+        return normalized
+    except GateError as error:
+        raise error.with_transaction(transaction_id) from None
 
 
 def _read_binding(
@@ -613,6 +645,73 @@ def _publish_retry_ack(binding: dict[str, object], retry_payload: bytes) -> None
         _fail("retry-ack-write-failed")
     finally:
         os.close(directory_fd)
+    return
+
+
+def _prepare_release_ack(binding: dict[str, object]) -> str:
+    directory_fd = _open_absolute_directory(
+        str(binding["candidateDirectory"]), readable_final=True
+    )
+    try:
+        metadata = os.fstat(directory_fd)
+        if (
+            metadata.st_uid != os.geteuid()
+            or metadata.st_gid != os.getegid()
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+        ):
+            _fail("candidate-directory-invalid")
+        release_payload = _canonical(binding) + b"\n"
+        ack = {
+            "schemaVersion": SCHEMA_VERSION,
+            "protocol": RELEASE_ACK_PROTOCOL,
+            "transactionId": binding["transactionId"],
+            "nonce": binding["nonce"],
+            "releaseSha256": hashlib.sha256(release_payload).hexdigest(),
+            "start": binding["start"],
+        }
+        payload = _canonical(ack) + b"\n"
+        existing = _read_at(
+            directory_fd,
+            RELEASE_ACK_NAME,
+            uid=os.geteuid(),
+            gid=os.getegid(),
+            mode=0o600,
+            missing=True,
+        )
+        if existing is not None:
+            if existing != payload:
+                _fail("release-ack-conflict")
+            return str(binding["nonce"])
+        temporary = f".{RELEASE_ACK_NAME}.{os.getpid()}.{secrets.token_hex(8)}"
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=directory_fd,
+        )
+        try:
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    _fail("release-ack-write-failed")
+                view = view[written:]
+            os.fchmod(fd, 0o600)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(
+            temporary,
+            RELEASE_ACK_NAME,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        os.fsync(directory_fd)
+        return str(binding["nonce"])
+    except OSError:
+        return _fail("release-ack-write-failed")
+    finally:
+        os.close(directory_fd)
 
 
 def _run(action: str) -> str:
@@ -620,17 +719,24 @@ def _run(action: str) -> str:
     if not _active_exists(directory_fd):
         if directory_fd is not None:
             os.close(directory_fd)
+        if action == "acknowledge":
+            _fail("activation-release-missing")
         return "inactive"
     assert directory_fd is not None
+    transaction_id: str | None = None
     try:
         released = _read_binding(
             directory_fd, RELEASE_NAME, RELEASE_PROTOCOL, RELEASE_KEYS
         )
         if released is not None:
+            transaction_id = str(released["transactionId"])
             _verify_release_candidate(released)
+            if action == "acknowledge":
+                return _prepare_release_ack(released)
             return "released"
         retry = _read_binding(directory_fd, RETRY_NAME, RETRY_PROTOCOL, RETRY_KEYS)
         if retry is not None:
+            transaction_id = str(retry["transactionId"])
             retry_payload = _verify_retry_binding(directory_fd, retry)
             if action == "admit":
                 _publish_retry_ack(retry, retry_payload)
@@ -641,24 +747,41 @@ def _run(action: str) -> str:
         permit = _read_binding(directory_fd, PERMIT_NAME, PERMIT_PROTOCOL, PERMIT_KEYS)
         if permit is None:
             _fail("activation-not-permitted")
+        transaction_id = str(permit["transactionId"])
         if action == "checkpoint":
             _publish_candidate(permit)
             return "activation-ready"
         if action in ("restart", "resume"):
             _fail("activation-not-released")
         return "permitted"
+    except GateError as error:
+        if transaction_id is None:
+            raise
+        raise error.with_transaction(transaction_id) from None
     finally:
         os.close(directory_fd)
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
-    if arguments not in (["admit"], ["checkpoint"], ["restart"], ["resume"]):
+    if arguments not in (
+        ["admit"],
+        ["checkpoint"],
+        ["restart"],
+        ["resume"],
+        ["acknowledge"],
+    ):
         print("runtime-state-mutation-startup-gate: invalid action", file=sys.stderr)
         return 64
     try:
         state = _run(arguments[0])
         print(state)
+        if arguments[0] == "acknowledge":
+            # Keep the exact publisher inspectable until the root controller
+            # resumes it. Its parent cannot report success before this process
+            # exits and is reaped.
+            os.kill(os.getpid(), signal.SIGSTOP)
+            return 0
         return {
             "inactive": 0,
             "released": 0,
@@ -667,9 +790,21 @@ def main(argv: list[str] | None = None) -> int:
             "retry": 12,
             "retry-wait": 75,
         }[state]
-    except (GateError, OSError):
-        print("runtime-state-mutation-startup-gate: held", file=sys.stderr)
-        return 75
+    except GateError as error:
+        transaction_id = error.transaction_id or "unknown"
+        print(
+            "runtime-state-mutation-startup-gate: invalid-state "
+            f"code={error.code} transaction={transaction_id}",
+            file=sys.stderr,
+        )
+        return 76
+    except OSError:
+        print(
+            "runtime-state-mutation-startup-gate: invalid-state "
+            "code=gate-io-error transaction=unknown",
+            file=sys.stderr,
+        )
+        return 76
 
 
 if __name__ == "__main__":

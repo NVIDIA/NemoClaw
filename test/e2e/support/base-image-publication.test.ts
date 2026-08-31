@@ -183,6 +183,7 @@ describe("base-image publication evidence", () => {
     expect(parseBaseImagePushPaths(source)).toEqual(
       expect.arrayContaining([
         ".github/actions/ci-reviewed-npm-audit/**",
+        ".github/actions/publish-managed-image-digest/**",
         ".github/workflows/base-image.yaml",
         "Dockerfile",
         "Dockerfile.base",

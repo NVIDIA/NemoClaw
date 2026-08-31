@@ -100,7 +100,7 @@ runs:
         anonymous_config="$(mktemp -d "$RUNNER_TEMP/anonymous-docker-XXXXXX")"
         chmod 0700 "$anonymous_config"
         if ! DOCKER_CONFIG="$anonymous_config" docker pull --platform "$PLATFORM" "$reference"; then
-          echo "::error::Anonymous exact-digest pull failed for ${reference}. Set the GHCR package ${IMAGE} to public visibility, then rerun this workflow."
+          echo "::error::Anonymous pull of ${reference} failed. Confirm that the GHCR package is public and that the exact digest is available to anonymous clients. Then rerun this workflow."
           exit 1
         fi
         image_id="$(docker image inspect --format '{{.Id}}' "$reference")"

@@ -79,6 +79,7 @@ Before the action restores root `dist/` and `nemoclaw/dist/shared/` into the wor
 - The upload digest is present and well formed.
 - The candidate SHA matches the expected commit.
 - The manifest matches the source, workflow run, toolchain contract, and payload.
+- The restore action uses a Node.js 22 process to stream each file as binary data when it verifies SHA-256 digests.
 - The archive contains no path traversal, links, special files, or files outside root `dist/` and `nemoclaw/dist/shared/`.
 - Neither root `dist/` nor `nemoclaw/dist/` already exists, including as a dangling symbolic link.
 - The candidate checkout's `nemoclaw/` path is a directory and is not a symbolic link.
@@ -98,20 +99,17 @@ Agents Code on `linux/amd64` and `linux/arm64` before it emits `managed_image_re
 `generate-matrix` and every stock-onboarding job depend on this job, so a missing, failed,
 incomplete, or mixed publication starts no onboarding consumer.
 
-For a same-repository PR that changes a managed-image workflow path, the trusted planner also
-requires one successful `Images / Build, Test, and Publish Managed Images` run for the candidate
-commit. Before candidate checkout, the planner downloads the three nonexpired contract artifacts by
-immutable artifact ID.
-It verifies each artifact digest, producer run, attempt, and candidate commit. The planner rejects a
-missing, incomplete, or mixed all-agent publication before E2E jobs start.
+For a manual same-repository PR run, the trusted planner compares the immutable base and candidate
+commit trees with the reviewed base-image and managed-image input paths. When those inputs are
+unchanged, the run uses the applicable trusted managed-image publication from the PR base history.
+When any input changed, the run selects `local-dockerfile` and builds the candidate Dockerfiles
+locally instead of waiting for a candidate publication.
 
-The planner adds the all-agent catalog to `dist/` after the candidate CLI build completes.
-Each live E2E consumer verifies that the catalog source revision matches `checkout_sha`. A PR that
-does not change a managed-image workflow path receives the selected base publication through
-`E2E_MANAGED_IMAGE_REVISION` and the complete cohort receipt. Every stock-onboarding test asserts
-its durable `managed-image` receipt against either the exact candidate catalog or the selected base
-cohort before later probes. The GitHub token is available only to the trusted planner job and is not
-included in the candidate CLI artifact.
+The selected source is passed to every stock-onboarding consumer. Managed-image runs receive the
+selected base revision and complete cohort receipt. Local-Dockerfile runs resolve the shipped agent
+Dockerfile at the final process boundary and require the resulting durable receipt to identify that
+source. The GitHub token remains available only to the trusted planner and is not included in the
+candidate CLI artifact.
 
 The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the
 OpenClaw managed-image MCP discovery and lifecycle scope in two independent matrix jobs. Each job
@@ -122,6 +120,13 @@ These are two required acceptance executions, not retries; either failure remain
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
+
+The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
+local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
+`managed-candidate-contract-*` artifact bound to the pull-request head. Pi remains outside the
+`managed-pr-contract-*` all-agent catalog pattern and every release alias. The checked-in Pi
+qualification receipts may consume these candidate contracts only when the recorded image-source
+paths are unchanged through the receipt commit.
 
 #### Timing Baseline
 

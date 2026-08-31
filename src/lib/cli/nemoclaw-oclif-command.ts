@@ -13,6 +13,8 @@ import { hasHermesPortableReceiptCandidate } from "../onboard/experimental/herme
 import { defaultPortableDemoStateDir } from "../onboard/experimental/portable-runtime-receipt-readiness";
 import { redactForLog } from "../security/redact";
 import { isDeferredShieldsExit } from "../shields/deferred-exit";
+import { resolveShieldsStateDir } from "../shields/transition-lock";
+import { hasShieldsTimerRecoveryArtifact } from "../state/mcp-lifecycle-lock/shields-timer-authority";
 import {
   assertNoHermesPortableHostAuthority,
   withCurrentPortableHostFence,
@@ -105,19 +107,30 @@ export abstract class NemoClawCommand extends Command {
     if (portablePolicy?.ownsLifecycleFence) return await super._run<T>();
     const sandboxName = await this.resolveLifecycleSandboxName(portablePolicy);
     if (!sandboxName) return await super._run<T>();
-    if (this.isInteractiveConnect(commandId)) return await super._run<T>();
+    const recoverCompletedAutoRestore = async () => {
+      if (hasShieldsTimerRecoveryArtifact(sandboxName, resolveShieldsStateDir())) {
+        const { recoverCompletedAutoRestoreBeforeCommand } = await import("../shields");
+        recoverCompletedAutoRestoreBeforeCommand(sandboxName);
+      }
+    };
+    if (this.isInteractiveConnect(commandId)) {
+      await recoverCompletedAutoRestore();
+      return await super._run<T>();
+    }
     const runLocked = () => {
       if (typeof commandId === "string" && portablePolicy?.rawSandboxName) {
         assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
       }
       return super._run<T>();
     };
-    const runWithLifecycleFence = () =>
-      commandId === "sandbox:destroy"
+    const runWithLifecycleFence = async () => {
+      await recoverCompletedAutoRestore();
+      return await (commandId === "sandbox:destroy"
         ? withMcpLifecycleLock(sandboxName, runLocked, {
             recoverAbandonedExpiredTimer: true,
           })
-        : withMcpLifecycleLock(sandboxName, runLocked);
+        : withMcpLifecycleLock(sandboxName, runLocked));
+    };
     if (
       this.isProbeOnlyConnect(commandId) &&
       hasHermesPortableReceiptCandidate(sandboxName, defaultPortableDemoStateDir(process.env))

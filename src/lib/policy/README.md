@@ -3,43 +3,22 @@
 
 # Policy
 
-Policy modules own sandbox network-policy preset loading, tier resolution, and
-policy application helpers. They may orchestrate OpenShell policy commands while
-legacy flows are being migrated, but pure selection/planning helpers should move
-under `src/lib/domain/**` when they can be isolated.
+OpenShell is the sole durable source of truth for sandbox policy. NemoClaw
+provides convenience commands that read the current OpenShell policy, compose a
+requested delta, submit it to OpenShell, and verify the resulting live state.
 
-## Policy authority
+NemoClaw does not persist policy ownership, policy receipts, desired tiers,
+applied preset lists, custom policy copies, baseline exclusion ledgers, or
+policy hashes and versions. Registry and onboarding-session normalization
+discard legacy copies of those fields without replaying them.
 
-The policy module reads the effective OpenShell policy through the sandbox's recorded gateway.
-NemoClaw records the first qualified authority before another policy read or set.
-NemoClaw refuses the operation when it cannot write that record.
+Policy mutations preserve unrelated live entries. Custom preset identity is
+encoded in namespaced OpenShell policy keys so list and remove commands can
+derive it from live state. Generated MCP policy is derived from durable MCP
+target and credential-domain state, not from a second policy registry.
 
-Immediately before each policy set, NemoClaw reads authority again and compares it with the record.
-NemoClaw refuses the policy set when:
-
-- NemoClaw cannot determine authority.
-- Recorded and observed authority differ.
-- An external authority owns the policy.
-
-For external authority, preset requests only verify the effective policy.
-NemoClaw requires the effective policy to contain exactly the requested preset entries before it reports success.
-NemoClaw does not set policy or record preset or custom-policy attribution.
-The external authority must supply a missing or changed entry.
-
-If policy authority becomes external while Shields is down, NemoClaw keeps the
-saved restrictive policy snapshot and refuses to set policy. The external
-policy authority must make the effective policy for the named sandbox match the
-saved restrictive snapshot and current managed MCP entries without changing
-policy authority. `shields status` identifies that required policy by its
-canonical JSON SHA-256 digest and network policy keys. The first status can
-report no artifact. Run `nemoclaw <sandbox> shields up` once to create and
-report the complete recovery artifact. The artifact contains no credential
-values. It contains the saved restrictive policy and current managed MCP policy
-entries, which may include credential bindings. Apply the artifact as the complete policy through the external authority; do not reconstruct it from the digest
-or key list. Then rerun `nemoclaw <sandbox> shields up`. NemoClaw verifies that the
-effective policy equals the artifact and locks configuration. If policy changes during the
-lock, NemoClaw records the verified config lock and keeps Shields down until
-policy recovery succeeds.
-
-A legacy sandbox record retains the first qualified `policyAuthority` after a later operation fails.
-An inspection that cannot determine authority does not change the record.
+Shields retains only its bounded transition snapshot and timer state. On
+restore, it reverts entries that still match the Shields-down values and keeps
+host-side changes made while Shields was down. Rebuild and clone operations use
+a private temporary copy of the current OpenShell base policy for the active
+transaction and remove that copy after completion.

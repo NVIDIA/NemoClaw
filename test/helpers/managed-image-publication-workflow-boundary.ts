@@ -64,7 +64,7 @@ export function publicationBoundaryErrors(
   const actionValidationMarkers = [
     'mktemp -d "$RUNNER_TEMP/anonymous-docker-XXXXXX"',
     'DOCKER_CONFIG="$anonymous_config" docker pull --platform "$PLATFORM" "$reference"',
-    "Set the GHCR package",
+    "Confirm that the GHCR package is public",
     'imagetools inspect "$reference" --raw',
     'sha256sum "$raw"',
   ];

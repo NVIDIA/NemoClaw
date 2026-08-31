@@ -171,7 +171,6 @@ export function postRestoreCompleted(status: {
   mcpBridgeRestoreUnverified: boolean;
   mutableConfigHashRefreshUnverified: boolean;
   mutablePermsRepairUnverified: boolean;
-  policyPresetRestoreIncomplete: boolean;
   restoreSucceeded: boolean;
 }): boolean {
   return (
@@ -180,8 +179,7 @@ export function postRestoreCompleted(status: {
     !status.mutablePermsRepairUnverified &&
     !status.mutableConfigHashRefreshUnverified &&
     !status.messagingHostForwardUnverified &&
-    !status.mcpBridgeRestoreUnverified &&
-    !status.policyPresetRestoreIncomplete
+    !status.mcpBridgeRestoreUnverified
   );
 }
 

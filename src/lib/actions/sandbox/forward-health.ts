@@ -12,11 +12,16 @@ export type SandboxForwardListEntry = {
 
 export type SandboxForwardHealth = boolean | "occupied" | null;
 
+/** Whether OpenShell reports a forward as live in either supported CLI vocabulary. */
+export function isLiveSandboxForwardStatus(status: string): boolean {
+  return status === "running" || status === "active";
+}
+
 function liveEntriesForPort(
   entries: SandboxForwardListEntry[],
   port: string,
 ): SandboxForwardListEntry[] {
-  return entries.filter((entry) => entry.port === port && entry.status === "running");
+  return entries.filter((entry) => entry.port === port && isLiveSandboxForwardStatus(entry.status));
 }
 
 export function classifySandboxForwardHealth(

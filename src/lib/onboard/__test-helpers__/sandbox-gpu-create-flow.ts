@@ -57,13 +57,13 @@ export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
   };
 }
 
-export function createGpuFlowDeps(): SandboxGpuCreateFlowDeps {
+export function createGpuFlowDeps(sandboxId = "alpha-sandbox-id"): SandboxGpuCreateFlowDeps {
   return {
     runOpenshell: vi.fn((args: string[]) =>
       args[0] === "sandbox" && args[1] === "get"
         ? {
             status: 0,
-            stdout: "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
+            stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`,
             stderr: "",
           }
         : { status: 0, stdout: "", stderr: "" },

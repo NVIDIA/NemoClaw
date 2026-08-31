@@ -1,22 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SandboxPolicyAuthority } from "../../adapters/openshell/policy-authority";
 import type { InferenceSelection } from "../../inference/selection";
 import type { ServingProfileProvenance } from "../../inference/serving/types";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import type { NativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
-import type { NemoClawPolicyCreationReceipt } from "../../policy/merge";
-import type { TrustedPrivatePolicyPinReceipt } from "../../policy/trusted-private-endpoints";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import type { OpenClawImagePluginInstall } from "../openclaw-plugin-restore";
 import type { SandboxMcpState } from "../registry-mcp";
 import type { SandboxMessagingState } from "../registry-messaging";
 
-export type RecordedSandboxPolicyAuthority = Exclude<SandboxPolicyAuthority, "owner-unknown">;
-
-interface PendingSandboxPolicyVerificationBoundary {
+/** Bounded identity checkpoint for one incomplete sandbox create. */
+export interface PendingSandboxCreateIdentity {
   readonly schemaVersion: 1;
   readonly state: "verified-create";
   readonly gatewayName: string;
@@ -26,64 +22,6 @@ interface PendingSandboxPolicyVerificationBoundary {
   readonly sandboxIdentityFingerprint: string;
   readonly createAttemptNonce?: string;
   readonly route: "none" | "native" | "compatibility";
-  readonly policyHash: string;
-  readonly policyVersion: number;
-}
-
-/** Durable, incomplete create boundary recorded before post-create effects. */
-export type PendingSandboxPolicyVerification = PendingSandboxPolicyVerificationBoundary &
-  (
-    | {
-        readonly policyAuthority: "nemoclaw-managed";
-        readonly observedPolicyAuthority: "owner-unknown";
-        readonly policyCreationReceipt: NemoClawPolicyCreationReceipt;
-      }
-    | {
-        readonly policyAuthority: "externally-managed";
-        readonly observedPolicyAuthority: "externally-managed" | "owner-unknown";
-        readonly policyCreationReceipt?: never;
-      }
-  );
-export interface CustomPolicyEntry {
-  name: string;
-  content: string;
-  /** Desired content reserved before a crash-safe generated-policy transition. */
-  pendingContent?: string;
-  sourcePath?: string;
-  appliedAt?: string;
-  /** Content-bound authority for generated exact destination pins. */
-  trustedPrivatePins?: TrustedPrivatePolicyPinReceipt;
-}
-
-export interface BaselineExclusionEntry {
-  /** Persistence schema version for this reviewed exclusion intent. */
-  version: 1;
-  /** Agent baseline that supplied the reviewed entry. */
-  agent: string;
-  /** Exact baseline network policy key excluded, e.g. "nous_research". */
-  key: string;
-  /** Digest of the reviewed baseline entry content the approval was bound to. */
-  digest: string;
-  /** When the exclusion was acknowledged. */
-  acknowledgedAt?: string;
-  /** Agent build/version recorded when the exclusion was last applied. */
-  appliedAgentVersion?: string | null;
-}
-
-export type BaselineExclusionTransitionOperation = "exclude" | "restore";
-
-/**
- * Durable journal for the one cross-system baseline mutation that is in flight.
- * `baselineExclusions` remains the last committed operator intent until this
- * transaction is published after the live OpenShell mutation succeeds.
- */
-export interface BaselineExclusionTransition {
-  id: string;
-  operation: BaselineExclusionTransitionOperation;
-  exclusion: BaselineExclusionEntry;
-  /** Exact live-entry digest that completes the transition; null means absent. */
-  targetLiveDigest: string | null;
-  startedAt: string;
 }
 
 // Outcome of the last live sandbox GPU proof run during onboarding/recovery.
@@ -151,25 +89,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hostMounts?: SandboxHostMount[];
   openshellDriver?: string | null;
   openshellVersion?: string | null;
-  /** Policy authority for a completed sandbox; absence means unknown. */
-  policyAuthority?: RecordedSandboxPolicyAuthority;
-  /** Exact, secret-free proof that NemoClaw created this sandbox policy. */
-  policyCreationReceipt?: NemoClawPolicyCreationReceipt;
   /** Verified create boundary retained until final registration publishes atomically. */
-  pendingPolicyVerification?: PendingSandboxPolicyVerification;
-  policies?: string[];
-  customPolicies?: CustomPolicyEntry[];
-  /** Operator exclusions from the agent baseline policy, replayed on rebuild. */
-  baselineExclusions?: BaselineExclusionEntry[];
-  /** Crash-recoverable journal for an exclusion/restore live-policy mutation. */
-  baselineExclusionTransition?: BaselineExclusionTransition;
-  policyTier?: string | null;
-  // True once the onboard policy step has fully completed and reconciled the
-  // effective preset selection (set by the post-policy registry write). Absent
-  // on a sandbox whose registration recorded only boot-time presets but whose
-  // policy step never finished — so re-onboard knows whether `policies`
-  // represents a final selection it can carry forward. See #4621.
-  policyPresetsFinalized?: boolean;
+  pendingCreateIdentity?: PendingSandboxCreateIdentity;
   webSearchEnabled?: boolean;
   /** Selected disclosure preference; model compatibility safeguards may downgrade runtime behavior. */
   toolDisclosure?: ToolDisclosure;

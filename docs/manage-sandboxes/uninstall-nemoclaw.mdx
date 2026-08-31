@@ -142,6 +142,35 @@ The report includes lines like these:
   Remove every gateway port: $$nemoclaw uninstall --all-gateway-ports
 ```
 
+If onboarding used `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR`, pass its original resolved absolute directory when uninstalling that gateway.
+
+<Warning>
+Use the dedicated gateway state directory created for that port, not a shared or parent directory.
+Onboarding rejects relative overrides, the shared NemoClaw state root or its parents, and existing nonempty directories without valid NemoClaw-managed gateway configuration.
+Let onboarding create the directory when possible. Every existing ancestor, from its containing directory to the filesystem root, must be a real directory owned by the current user or root and must not be group- or world-writable. If the state directory already exists, it must be an owner-controlled, non-symbolic-link directory with mode `0700`.
+If onboarding stops immediately after reserving that directory, uninstall removes the marker-only reservation only while the selected gateway port is free. Gateway configuration, a runtime marker, or a PID file moves cleanup to the managed-gateway checks instead. A port-bound marked gateway with valid generated configuration can be retired after the port is free and a complete process scan proves that no live process claims its state; a listener or unproven process preserves the directory. Inspect and stop the listener or matching gateway process, then rerun uninstall after the port is free.
+Onboarding holds an exclusive lifecycle lock from reservation through gateway initialization. If uninstall reports that onboarding owns the state directory, wait for onboarding to finish and rerun uninstall; the reservation is preserved.
+After successful managed cleanup, uninstall recursively removes that directory and all contents.
+Portable cleanup and `--keep-openshell` preserve it.
+</Warning>
+
+```bash
+NEMOCLAW_GATEWAY_PORT=<port> \
+NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" \
+  $$nemoclaw uninstall
+```
+
+Onboarding records port-bound state-root ownership; uninstall validates that ownership plus generated configuration, sandbox namespace, PID file, runtime marker, and live process identity before cleanup.
+Valid gateways created before the state-root marker existed retain the same recovery path through their owner-private generated configuration and live process proof; stopped-gateway recovery requires the port-bound marker.
+The whole-host sweep applies an ambient state-directory override only to the port selected by `NEMOCLAW_GATEWAY_PORT`; other port passes use their default per-port directories.
+If another port with a custom directory fails during the sweep, rerun:
+
+```bash
+NEMOCLAW_GATEWAY_PORT=<failed-port> \
+NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="<original-absolute-path>" \
+  $$nemoclaw uninstall
+```
+
 <Warning>
 The sweep applies the uninstall plan to every discovered gateway port.
 When it finds more than one port, review the port list before you confirm because `--yes` skips this confirmation.
@@ -208,10 +237,31 @@ Fresh state roots and already scoped configurations continue to use the state-ro
 The legacy `default` namespace is not isolated across gateways, so it cannot satisfy the scoped-uninstall proof while sibling gateways remain.
 Scoped uninstall stops before it deletes a sandbox, registry row, or gateway registration and preserves the selected gateway's runtime evidence and local state.
 Because the supported OpenShell Podman schema does not expose `sandbox_namespace`, scoped Podman uninstall fails closed before signaling and preserves the gateway runtime evidence and local state.
-A full uninstall for the portable experimental profile detects ownership only from durable lifecycle state.
-When no Portable lifecycle receipt or retirement record exists, uninstall runs ordinary cleanup and removes any abandoned Portable configuration directory.
-This path covers an incomplete or absent onboarding session and an absent state directory.
-Uninstall still stops before cleanup for an unknown Portable uninstall artifact or a completed Portable onboarding session whose lifecycle receipt is missing.
+Full uninstall detects Portable ownership only from durable lifecycle state.
+When no Portable lifecycle receipt, retirement record, or contradictory Portable lifecycle state exists, full uninstall preserves `~/.config/nemoclaw/portable/` unchanged and completes ordinary cleanup.
+This preservation also applies with `--destroy-user-data`.
+This path covers incomplete or absent onboarding and an absent state directory.
+It also covers completed ordinary onboarding after an earlier Portable attempt.
+Ambient content at that path does not establish Portable lifecycle authority or block ordinary uninstall.
+Before a later Portable onboarding attempt, inspect the preserved path at `~/.config/nemoclaw/portable/`.
+Preservation alone does not establish that this path is abandoned or authorize its deletion.
+<AgentOnly variant="openclaw,deepagents">
+Verify that `~/.nemoclaw/portable-demo-lifecycle/` is absent or empty.
+Also verify that `~/.nemoclaw/` contains neither `portable-uninstall-retirement.json` nor an entry whose name starts with `.portable-uninstall-retirement`.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Verify that `~/.nemoclaw/hermes-portable-lifecycle/` and `~/.nemoclaw/portable-demo-lifecycle/` are absent or empty.
+Also verify that `~/.nemoclaw/` contains no `hermes-portable-uninstall-transaction.json`, `portable-uninstall-retirement.json`, or entry whose name starts with `.portable-uninstall-retirement`.
+</AgentOnly>
+Confirm that the file checks find no lifecycle evidence.
+Only a standard unscoped full uninstall can confirm that Portable lifecycle state is absent.
+It must not use `--keep-openshell`, switch to gateway-scoped cleanup, or operate with an externally supervised OpenShell gateway.
+Confirm that it completes without a Portable lifecycle error.
+An uninstall in any of those excluded modes does not authorize repair or deletion.
+Only then may you repair or remove a path that you know an earlier Portable attempt abandoned before rerunning Portable onboarding.
+If lifecycle state is unreadable, ambiguous, or contradictory, keep the preserved path unchanged and resolve the reported lifecycle error before onboarding.
+Portable onboarding validates the path's ownership, type, and permissions and stops when it finds unsafe state.
+Uninstall still stops before cleanup for an unknown Portable uninstall artifact in lifecycle state or a completed Portable onboarding session whose lifecycle receipt is missing.
 It records the initial lifecycle receipts and sandbox registry state for comparison.
 NemoClaw first acquires the process-bound portable host lock at `~/.nemoclaw-portable-host.lock`.
 This host-wide fence coordinates portable onboarding, rebuild, and uninstall.

@@ -16,7 +16,7 @@ function baseInput(overrides: Partial<TelegramProbeInput> = {}): TelegramProbeIn
     gatewayProcessAlive: true,
     breadcrumbs: null,
     probedAt: "2026-07-14T00:00:00.000Z",
-    presetInRegistry: true,
+    presetApplied: true,
     presetOnGateway: true,
     channelEnabledInRegistry: true,
     ...overrides,
@@ -121,7 +121,7 @@ describe("evaluateTelegramDiagnostics verdict", () => {
     expect(
       evaluateTelegramDiagnostics(baseInput({ channelEnabledInRegistry: false })).verdict,
     ).toBe("config_gap");
-    expect(evaluateTelegramDiagnostics(baseInput({ presetInRegistry: false })).verdict).toBe(
+    expect(evaluateTelegramDiagnostics(baseInput({ presetApplied: false })).verdict).toBe(
       "policy_gap",
     );
   });
