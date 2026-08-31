@@ -32,7 +32,11 @@ function createHarness() {
     step: vi.fn(),
     note: vi.fn(),
     isNonInteractive: vi.fn(() => true),
-    waitForSandboxReady: vi.fn(() => true),
+    waitForSandboxReady: vi.fn(async () => ({
+      ready: true as const,
+      reason: "ready" as const,
+      error: null,
+    })),
     waitForSandboxControlPlaneReady: vi.fn(() => true),
     syncPresetSelection,
     selectPolicyTier: vi.fn(async () => "balanced"),
