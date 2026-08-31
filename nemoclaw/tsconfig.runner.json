@@ -7,9 +7,6 @@
     "rootDir": "src",
     "sourceMap": false
   },
-  "include": [
-    "src/blueprint/runner.ts",
-    "src/shared/openshell-gateway-health-sdk.ts"
-  ],
+  "include": ["src/blueprint/runner.ts"],
   "exclude": ["node_modules", "dist", "runner-dist", "src/**/*.test.ts"]
 }

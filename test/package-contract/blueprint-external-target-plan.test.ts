@@ -318,7 +318,14 @@ describe("packaged Blueprint Runner external target", () => {
           "openshell",
           "sandbox-observer.js",
         );
-        const installedSdkObserver = path.join(
+        const installedSharedSdkObserver = path.join(
+          installedPackage,
+          "nemoclaw",
+          "dist",
+          "shared",
+          "openshell-gateway-health-sdk.js",
+        );
+        const installedRuntimeSdkObserver = path.join(
           installedPackage,
           "dist",
           "nemoclaw",
@@ -333,7 +340,8 @@ describe("packaged Blueprint Runner external target", () => {
         );
         expect(fs.existsSync(installedRunner)).toBe(true);
         expect(fs.existsSync(installedRootObserver)).toBe(true);
-        expect(fs.existsSync(installedSdkObserver)).toBe(true);
+        expect(fs.existsSync(installedSharedSdkObserver)).toBe(true);
+        expect(fs.existsSync(installedRuntimeSdkObserver)).toBe(false);
         expect(fs.existsSync(path.join(installedPackage, "nemoclaw", "src"))).toBe(false);
         expect(fs.existsSync(installedRuntimeRunner)).toBe(true);
         expect(

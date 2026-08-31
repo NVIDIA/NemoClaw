@@ -58,7 +58,8 @@ vi.mock("./ssrf.js", async (importOriginal) => {
 
 const { validateEndpointUrl } = await import("./ssrf.js");
 const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
-const { actionExternalOpenShellTargetPlan, main } = await import("./runner.js");
+const { actionExternalOpenShellTargetPlan, actionExternalOpenShellTargetStatus, main } =
+  await import("./runner.js");
 
 const EXTERNAL_CA_FILE = "/var/run/openshell-target/private-ca.pem";
 const EXTERNAL_AUTHENTICATION_FILE = "/var/run/openshell-target/private-authentication";
@@ -120,13 +121,25 @@ describe("Blueprint Runner external OpenShell target", () => {
     vi.restoreAllMocks();
   });
 
-  it("requires an external target and a complete OpenShell version range", () => {
+  it("requires an external target and a complete OpenShell version range", async () => {
     expect(() => actionExternalOpenShellTargetPlan({})).toThrow(
       /does not declare an external OpenShell target/,
     );
-    expect(() =>
-      actionExternalOpenShellTargetPlan({ openshell_target: {} }),
-    ).toThrow(/requires blueprint min_openshell_version and max_openshell_version/);
+    expect(() => actionExternalOpenShellTargetPlan({ openshell_target: {} })).toThrow(
+      /requires blueprint min_openshell_version and max_openshell_version/,
+    );
+    await expect(actionExternalOpenShellTargetStatus({}, gatewayHealthObserver)).rejects.toThrow(
+      /does not declare an external OpenShell target/,
+    );
+    await expect(
+      actionExternalOpenShellTargetStatus({ openshell_target: {} }, gatewayHealthObserver),
+    ).rejects.toThrow(/requires blueprint min_openshell_version and max_openshell_version/);
+
+    expect(
+      externalTargetBoundaryMocks.buildSanitizedExternalOpenShellTargetPlan,
+    ).not.toHaveBeenCalled();
+    expect(externalTargetBoundaryMocks.withExternalOpenShellTargetCa).not.toHaveBeenCalled();
+    expect(observeHealth).not.toHaveBeenCalled();
   });
 
   it("emits only the sanitized plan without subprocess or network calls (#9872)", async () => {
@@ -272,24 +285,39 @@ describe("Blueprint Runner external OpenShell target", () => {
   });
 
   it.each([
-    ["components", { components: { sandbox: { name: "managed" } } }],
-    ["profiles", { profiles: ["default"] }],
-    ["min_openclaw_version", { min_openclaw_version: "2026.8.0" }],
+    ["components", "planning", ["plan"], { components: { sandbox: { name: "managed" } } }],
+    [
+      "components",
+      "status",
+      ["status", "--external-target"],
+      { components: { sandbox: { name: "managed" } } },
+    ],
+    ["profiles", "planning", ["plan"], { profiles: ["default"] }],
+    ["profiles", "status", ["status", "--external-target"], { profiles: ["default"] }],
+    ["min_openclaw_version", "planning", ["plan"], { min_openclaw_version: "2026.8.0" }],
+    [
+      "min_openclaw_version",
+      "status",
+      ["status", "--external-target"],
+      { min_openclaw_version: "2026.8.0" },
+    ],
   ])(
-    "rejects the managed-only blueprint field %s before any effect (#9872)",
-    async (field, value) => {
+    "rejects the managed-only blueprint field %s from external target %s before any effect (#9872)",
+    async (field, action, argv, value) => {
       addFile("blueprint.yaml", YAML.stringify({ ...externalTargetBlueprint(), ...value }));
 
-      await expect(runMain(["plan"])).rejects.toThrow(
-        `External OpenShell target planning does not accept '${field}'.`,
+      await expect(runMain(argv)).rejects.toThrow(
+        `External OpenShell target ${action} does not accept '${field}'.`,
       );
 
       expect(mockExeca).not.toHaveBeenCalled();
       expect(mockedValidateEndpoint).not.toHaveBeenCalled();
+      expect(observeHealth).not.toHaveBeenCalled();
       expect(stdoutCapture.text()).not.toContain("RUN_ID:");
       expect(
         externalTargetBoundaryMocks.buildSanitizedExternalOpenShellTargetPlan,
       ).not.toHaveBeenCalled();
+      expect(externalTargetBoundaryMocks.withExternalOpenShellTargetCa).not.toHaveBeenCalled();
     },
   );
 

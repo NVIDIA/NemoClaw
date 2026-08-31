@@ -40,7 +40,10 @@ import * as importedOpenShellExternalTargetBoundary from "../shared/openshell-ex
 import * as importedOpenShellObservationBoundary from "../shared/openshell-observation-boundary.cjs";
 import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
 import * as importedSandboxName from "../shared/sandbox-name.cjs";
-import type { SanitizedExternalOpenShellTargetPlan } from "../shared/openshell-external-target-boundary.cjs";
+import type {
+  OpenShellCompatibilityRange,
+  SanitizedExternalOpenShellTargetPlan,
+} from "../shared/openshell-external-target-boundary.cjs";
 import type {
   ExternalOpenShellGatewayStatus,
   OpenShellGatewayHealthObserver,
@@ -606,10 +609,7 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
 }
 
 function blueprintBasePoliciesMatch(left: string, right: string): boolean {
-  return isDeepStrictEqual(
-    parseOpenShellPolicy(left).policy,
-    parseOpenShellPolicy(right).policy,
-  );
+  return isDeepStrictEqual(parseOpenShellPolicy(left).policy, parseOpenShellPolicy(right).policy);
 }
 
 function assertNoConflictingBlueprintPolicyChange(
@@ -1377,29 +1377,11 @@ export function actionExternalOpenShellTargetPlan(
   blueprint: Blueprint,
   options?: { dryRun?: boolean },
 ): ExternalOpenShellTargetRunPlan {
-  if (blueprint.openshell_target === undefined) {
-    throw new Error("blueprint does not declare an external OpenShell target");
-  }
-  if (
-    blueprint.min_openshell_version === undefined ||
-    blueprint.max_openshell_version === undefined
-  ) {
-    throw new Error(
-      "External OpenShell target planning requires blueprint min_openshell_version and max_openshell_version.",
-    );
-  }
-  for (const field of ["components", "profiles", "min_openclaw_version"] as const) {
-    if (blueprint[field] !== undefined) {
-      throw new Error(`External OpenShell target planning does not accept '${field}'.`);
-    }
-  }
+  const { target, compatibility } = validateExternalOpenShellTargetBlueprint(blueprint, "planning");
 
   const rid = emitRunId();
   progress(10, "Validating external OpenShell target");
-  const targetPlan = buildSanitizedExternalOpenShellTargetPlan(blueprint.openshell_target, {
-    minVersion: blueprint.min_openshell_version,
-    maxVersion: blueprint.max_openshell_version,
-  });
+  const targetPlan = buildSanitizedExternalOpenShellTargetPlan(target, compatibility);
   const plan: ExternalOpenShellTargetRunPlan = {
     run_id: rid,
     openshell_target: targetPlan,
@@ -1410,10 +1392,10 @@ export function actionExternalOpenShellTargetPlan(
   return plan;
 }
 
-export async function actionExternalOpenShellTargetStatus(
+function validateExternalOpenShellTargetBlueprint(
   blueprint: Blueprint,
-  observer: OpenShellGatewayHealthObserver,
-): Promise<ExternalOpenShellTargetStatus> {
+  action: "planning" | "status",
+): Readonly<{ target: unknown; compatibility: OpenShellCompatibilityRange }> {
   if (blueprint.openshell_target === undefined) {
     throw new Error("blueprint does not declare an external OpenShell target");
   }
@@ -1422,23 +1404,34 @@ export async function actionExternalOpenShellTargetStatus(
     blueprint.max_openshell_version === undefined
   ) {
     throw new Error(
-      "External OpenShell target status requires blueprint min_openshell_version and max_openshell_version.",
+      `External OpenShell target ${action} requires blueprint min_openshell_version and max_openshell_version.`,
     );
   }
   for (const field of ["components", "profiles", "min_openclaw_version"] as const) {
     if (blueprint[field] !== undefined) {
-      throw new Error(`External OpenShell target status does not accept '${field}'.`);
+      throw new Error(`External OpenShell target ${action} does not accept '${field}'.`);
     }
   }
+  return {
+    target: blueprint.openshell_target,
+    compatibility: {
+      minVersion: blueprint.min_openshell_version,
+      maxVersion: blueprint.max_openshell_version,
+    },
+  };
+}
+
+export async function actionExternalOpenShellTargetStatus(
+  blueprint: Blueprint,
+  observer: OpenShellGatewayHealthObserver,
+): Promise<ExternalOpenShellTargetStatus> {
+  const { target, compatibility } = validateExternalOpenShellTargetBlueprint(blueprint, "status");
 
   const rid = emitRunId();
   progress(10, "Validating external OpenShell target");
   const observation = await withExternalOpenShellTargetCa(
-    blueprint.openshell_target,
-    {
-      minVersion: blueprint.min_openshell_version,
-      maxVersion: blueprint.max_openshell_version,
-    },
+    target,
+    compatibility,
     async (target, caContents) => {
       const observed = await observeExternalOpenShellGatewayHealth(observer, {
         target,
