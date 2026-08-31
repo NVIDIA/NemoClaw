@@ -55,42 +55,104 @@ const HERMES_BROKEN_PIPE = `  Effective egress that would be opened:
   \u251c\u2500\u25b6 error reading a body from connection
   \u2570\u2500\u25b6 stream closed because of a broken pipe`;
 
+const HERMES_RESTART_SETTLING_PAYLOAD = {
+  server: "concurrent",
+  agent: "hermes",
+  url: "https://fixture.trycloudflare.com/mcp",
+  addedAt: "2026-08-31T00:00:00.000Z",
+  warnings: [],
+  support: { supported: true, mode: "bridge", adapter: "hermes-config" },
+  env: { names: ["FAKE_MCP_SECRET"], missing: [], ready: true },
+  provider: {
+    name: "e2e-mcp-hermes-mcp-concurrent-0123456789abcdef",
+    registryPresent: true,
+    gatewayPresent: true,
+    attached: true,
+    credentialReady: true,
+    credentialResolution: {
+      ok: null,
+      detail: "probe skipped: the current OpenShell credential revision could not be observed",
+    },
+  },
+  policy: {
+    name: "mcp-bridge-concurrent",
+    registryPresent: true,
+    gatewayPresent: true,
+  },
+  adapter: {
+    registered: null,
+    detail:
+      "Adapter inspection was skipped because the current OpenShell credential revision could not be observed.",
+  },
+};
+
 const HERMES_RESTART_SETTLING_STATUS = {
   exitCode: 0,
   signal: null,
   timedOut: false,
-  stdout: JSON.stringify({
-    server: "concurrent",
-    agent: "hermes",
-    url: "https://fixture.trycloudflare.com/mcp",
-    addedAt: "2026-08-31T00:00:00.000Z",
-    warnings: [],
-    support: { supported: true, mode: "bridge", adapter: "hermes-config" },
-    env: { names: ["FAKE_MCP_SECRET"], missing: [], ready: true },
-    provider: {
-      name: "e2e-mcp-hermes-mcp-concurrent-0123456789abcdef",
-      registryPresent: true,
-      gatewayPresent: true,
-      attached: true,
-      credentialReady: true,
-      credentialResolution: {
-        ok: null,
-        detail: "probe skipped: the current OpenShell credential revision could not be observed",
-      },
-    },
-    policy: {
-      name: "mcp-bridge-concurrent",
-      registryPresent: true,
-      gatewayPresent: true,
-    },
-    adapter: {
-      registered: null,
-      detail:
-        "Adapter inspection was skipped because the current OpenShell credential revision could not be observed.",
-    },
-  }),
+  stdout: JSON.stringify(HERMES_RESTART_SETTLING_PAYLOAD),
   stderr: "",
 };
+
+const HERMES_RESTART_SETTLEMENT_FIELD_MISMATCHES: Array<
+  [string, (payload: typeof HERMES_RESTART_SETTLING_PAYLOAD) => void]
+> = [
+  ["agent differs", (payload) => Object.assign(payload, { agent: "openclaw" })],
+  ["warnings are present", (payload) => Object.assign(payload, { warnings: ["warning"] })],
+  ["warnings are not an array", (payload) => Object.assign(payload, { warnings: "warning" })],
+  ["support is unavailable", (payload) => Object.assign(payload.support, { supported: false })],
+  ["support mode differs", (payload) => Object.assign(payload.support, { mode: "direct" })],
+  ["support adapter differs", (payload) => Object.assign(payload.support, { adapter: "mcporter" })],
+  ["environment names are empty", (payload) => Object.assign(payload.env, { names: [] })],
+  ["environment name is not text", (payload) => Object.assign(payload.env, { names: [42] })],
+  [
+    "environment reports a missing credential",
+    (payload) => Object.assign(payload.env, { missing: ["FAKE_MCP_SECRET"] }),
+  ],
+  ["environment is not ready", (payload) => Object.assign(payload.env, { ready: false })],
+  ["provider name is empty", (payload) => Object.assign(payload.provider, { name: "" })],
+  [
+    "provider registry is incomplete",
+    (payload) => Object.assign(payload.provider, { registryPresent: false }),
+  ],
+  [
+    "provider gateway is incomplete",
+    (payload) => Object.assign(payload.provider, { gatewayPresent: false }),
+  ],
+  ["provider is detached", (payload) => Object.assign(payload.provider, { attached: false })],
+  [
+    "provider credential is not ready",
+    (payload) => Object.assign(payload.provider, { credentialReady: false }),
+  ],
+  [
+    "credential resolution result differs",
+    (payload) => Object.assign(payload.provider.credentialResolution, { ok: false }),
+  ],
+  [
+    "credential resolution detail differs",
+    (payload) =>
+      Object.assign(payload.provider.credentialResolution, {
+        detail: "credential revision mismatch",
+      }),
+  ],
+  ["policy name is empty", (payload) => Object.assign(payload.policy, { name: "" })],
+  [
+    "policy registry is incomplete",
+    (payload) => Object.assign(payload.policy, { registryPresent: false }),
+  ],
+  [
+    "policy gateway is incomplete",
+    (payload) => Object.assign(payload.policy, { gatewayPresent: false }),
+  ],
+  [
+    "adapter registration is resolved",
+    (payload) => Object.assign(payload.adapter, { registered: false }),
+  ],
+  [
+    "adapter detail differs",
+    (payload) => Object.assign(payload.adapter, { detail: "adapter inspection failed" }),
+  ],
+];
 
 const HERMES_ADD_POST_PROBE_NOT_READY = {
   ...HERMES_RESTART_SETTLING_STATUS,
@@ -164,22 +226,32 @@ describe("MCP bridge transient classification", () => {
         ...HERMES_RESTART_SETTLING_STATUS,
       }),
     ).toBe(false);
+  });
+
+  it.each(HERMES_RESTART_SETTLEMENT_FIELD_MISMATCHES)(
+    "rejects Hermes restart settlement when %s (#9485)",
+    (_label, mutatePayload) => {
+      const payload = structuredClone(HERMES_RESTART_SETTLING_PAYLOAD);
+      mutatePayload(payload);
+      expect(
+        isHermesMcpStatusAwaitingRestartSettlement("hermes-config", "concurrent", {
+          ...HERMES_RESTART_SETTLING_STATUS,
+          stdout: JSON.stringify(payload),
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    ["the command exits nonzero", { exitCode: 1 }],
+    ["the command receives a signal", { signal: "SIGTERM" as const }],
+    ["the command times out", { timedOut: true }],
+    ["stderr is nonempty", { stderr: "sandbox diagnostic" }],
+  ])("rejects Hermes restart settlement when %s (#9485)", (_label, resultOverride) => {
     expect(
       isHermesMcpStatusAwaitingRestartSettlement("hermes-config", "concurrent", {
         ...HERMES_RESTART_SETTLING_STATUS,
-        stdout: HERMES_RESTART_SETTLING_STATUS.stdout.replace(
-          '"registered":null',
-          '"registered":false',
-        ),
-      }),
-    ).toBe(false);
-    expect(
-      isHermesMcpStatusAwaitingRestartSettlement("hermes-config", "concurrent", {
-        ...HERMES_RESTART_SETTLING_STATUS,
-        stdout: HERMES_RESTART_SETTLING_STATUS.stdout.replace(
-          '"gatewayPresent":true',
-          '"gatewayPresent":false',
-        ),
+        ...resultOverride,
       }),
     ).toBe(false);
   });
