@@ -416,11 +416,13 @@ afterEach(() => {
 });
 
 describe("Hermes portable lifecycle", () => {
-  it("uses one entry and one final qualification around retained stopped recovery (#10423)", () => {
+  it("uses one entry and final qualification when the timing callback fails (#10423)", () => {
     const receipt = activeReceipt();
     publishSuccessor();
     const fixture = lifecycleDeps(receipt, false);
-    const evidence = vi.fn();
+    const evidence = vi.fn(() => {
+      throw new Error("timing sink unavailable");
+    });
     let timingNow = 0;
 
     const result = withMcpLifecycleLockSync(
@@ -462,26 +464,36 @@ describe("Hermes portable lifecycle", () => {
     expect(fixture.capturePodmanExecutableFileAuthority).toHaveBeenCalled();
   });
 
-  it("keeps successful stopped recovery independent from timing callback failure (#10423)", () => {
+  it("emits failed timing when entry qualification rejects socket authority (#10423)", () => {
     const receipt = activeReceipt();
     publishSuccessor();
     const fixture = lifecycleDeps(receipt, false);
+    const entryError = new Error("socket authority changed during entry qualification");
+    const evidence = vi.fn();
+    fixture.captureSocketAuthority.mockImplementation(() => {
+      throw entryError;
+    });
 
-    expect(
+    expect(() =>
       withMcpLifecycleLockSync(
         SANDBOX,
         () =>
           recoverHermesPortableSandboxLifecycle(SANDBOX, lifecycleContext(), {
             ...fixture.deps,
-            recoveryTiming: {
-              onComplete: () => {
-                throw new Error("timing sink unavailable");
-              },
-            },
+            recoveryTiming: { onComplete: evidence },
           }),
         { stateDir: path.join(stateDir, "state") },
       ),
-    ).toEqual({ kind: "recovered" });
+    ).toThrow(entryError);
+    expect(fixture.podman.mock.calls.some(([args]) => args[1] === "start")).toBe(false);
+    expect(evidence).toHaveBeenCalledOnce();
+    expect(evidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        qualificationCount: 1,
+        containerStartCount: 0,
+        result: "failed",
+      }),
+    );
   });
 
   it("fails before post-start work when retained socket authority drifts (#10423)", () => {

@@ -158,7 +158,14 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
     return { prepared, receipt };
   });
   const assertOperating = vi.fn(() => events.push("operating"));
-  const assertRuntime = vi.fn(() => events.push("runtime"));
+  const assertRuntimeRetainedCurrent = vi.fn(() => events.push("runtime-retained-current"));
+  const assertRuntimeTransactionCurrent = vi.fn(() =>
+    events.push("runtime-transaction-current"),
+  );
+  const assertRuntimeCurrent = vi.fn(() => {
+    events.push("runtime-current");
+    expect(running).toBe(true);
+  });
   const assertPublished = vi.fn(() => {
     events.push("publication");
   });
@@ -195,9 +202,9 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
     bundle: { identity: { id: "podman" } },
     inferenceStateDir: "/state/portable-inference/alpha",
     operation: managedOperation,
-    assertRetainedCurrent: assertRuntime,
-    assertTransactionCurrent: assertRuntime,
-    assertCurrent: assertRuntime,
+    assertRetainedCurrent: assertRuntimeRetainedCurrent,
+    assertTransactionCurrent: assertRuntimeTransactionCurrent,
+    assertCurrent: assertRuntimeCurrent,
   }));
   const prepareRegistryRecovery = vi.fn(() => {
     const started = !registryRunning;
@@ -267,6 +274,9 @@ function createHarness(initiallyRunning = false, registryInitiallyRunning = fals
     }),
   };
   return {
+    assertRuntimeCurrent,
+    assertRuntimeRetainedCurrent,
+    assertRuntimeTransactionCurrent,
     events,
     input,
     managedOperation,
@@ -467,6 +477,9 @@ describe("Hermes Portable Ollama inference recovery", () => {
 
     expect(retained).toHaveBeenCalledTimes(4);
     expect(full).toHaveBeenCalledOnce();
+    expect(harness.assertRuntimeRetainedCurrent).toHaveBeenCalled();
+    expect(harness.assertRuntimeTransactionCurrent).toHaveBeenCalledOnce();
+    expect(harness.assertRuntimeCurrent).toHaveBeenCalledOnce();
     expect(harness.overrides.prepareInferenceAuthority).toHaveBeenCalledOnce();
     expect(harness.writeExact).not.toHaveBeenCalled();
   });
@@ -1056,6 +1069,8 @@ describe("Hermes Portable Ollama inference recovery", () => {
     (owner, phase, registryRollbackCount) => {
       const harness = createHarness();
       const canary = "nested recovery diagnostic canary";
+      const onComplete = vi.fn();
+      Object.assign(harness.overrides, { recoveryTiming: { onComplete } });
       switch (owner) {
         case "registry":
           harness.overrides.prepareRegistryRecovery.mockImplementation(() => {
@@ -1107,6 +1122,10 @@ describe("Hermes Portable Ollama inference recovery", () => {
         registryRollbackCount,
       );
       expect(harness.prepareStartup).not.toHaveBeenCalled();
+      expect(onComplete).toHaveBeenCalledOnce();
+      expect(onComplete).toHaveBeenCalledWith(
+        expect.objectContaining({ result: "failed", runtimeAction: "unknown" }),
+      );
     },
   );
 

@@ -955,64 +955,6 @@ export function recoverHermesPortableOllamaInference(
   const recoveryTiming = createHermesPortableOllamaRecoveryTimingRecorder(deps.recoveryTiming);
   const env = input.env ?? process.env;
   const stateDir = input.stateDir ?? defaultPortableDemoStateDir(env);
-  input.assertCallerCurrent?.();
-  const snapshot = deps.readReceipt(input.sandboxName, stateDir);
-  if (!snapshot || snapshot.receipt.phase !== "active" || !snapshot.successor) {
-    failRecovery("active schema-6 lifecycle authority is missing");
-  }
-  const operating = recoveryTiming.measureEntry("operatingAuthority", () =>
-    deps.qualifyOperatingAuthority(
-      snapshot as typeof snapshot & { readonly receipt: HermesPortableConfiguredReceipt },
-    ),
-  );
-  operating.assertTransactionCurrent();
-  if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
-    failRecovery("sandbox registry authority changed before recovery");
-  }
-  const serializedRegistryReceipt = input.entry.hostLocalInferenceReceipt;
-  if (typeof serializedRegistryReceipt !== "string") {
-    failRecovery("sandbox registry host-local inference receipt is missing");
-  }
-  const receipt = parseHostLocalInferenceReceipt(serializedRegistryReceipt);
-  requirePublishedOllamaRecoveryReceipt(receipt);
-  const providerEntry = inferenceLifecycleRow(input.entry, receipt.providerId);
-  const assertCallerCurrent = (): void => {
-    input.assertCallerCurrent?.();
-    try {
-      operating.assertCurrent();
-    } catch {
-      failRecovery("schema-6 operating authority changed during recovery");
-    }
-    if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
-      failRecovery("sandbox registry authority changed during recovery");
-    }
-    input.assertCallerCurrent?.();
-  };
-  const assertCallerTransactionCurrent = (): void => {
-    input.assertCallerTransactionCurrent?.();
-    try {
-      operating.assertTransactionCurrent();
-    } catch {
-      failRecovery("schema-6 operating authority changed during recovery");
-    }
-    if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
-      failRecovery("sandbox registry authority changed during recovery");
-    }
-    input.assertCallerTransactionCurrent?.();
-  };
-  const recoveryEntry = recoveryTiming.measureEntry("registryPreparation", () =>
-    atOllamaRecoveryPhase("REGISTRY_PREPARATION_POSTCONDITION", () =>
-      deps.prepareRecoveryEntry({
-        receipt: operating.receipt,
-        inferenceReceipt: receipt,
-        stateDir,
-        env,
-        assertCallerTransactionCurrent,
-      }),
-    ),
-  );
-  const { registryRecovery } = recoveryEntry;
-  let ollamaStateRestored = true;
   let runtimeAction: HermesPortableOllamaRecoveryTimingEvidence["runtimeAction"] = "unknown";
   let retainedCurrentnessCount = 0;
   let fullCurrentnessCount = 0;
@@ -1023,6 +965,90 @@ export function recoverHermesPortableOllamaInference(
       fullCurrentnessCount,
       preparedAuthorityInspectionCount,
     });
+  const entry = (() => {
+    try {
+      input.assertCallerCurrent?.();
+      const snapshot = deps.readReceipt(input.sandboxName, stateDir);
+      if (!snapshot || snapshot.receipt.phase !== "active" || !snapshot.successor) {
+        failRecovery("active schema-6 lifecycle authority is missing");
+      }
+      const operating = recoveryTiming.measureEntry("operatingAuthority", () =>
+        deps.qualifyOperatingAuthority(
+          snapshot as typeof snapshot & { readonly receipt: HermesPortableConfiguredReceipt },
+        ),
+      );
+      operating.assertTransactionCurrent();
+      if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
+        failRecovery("sandbox registry authority changed before recovery");
+      }
+      const serializedRegistryReceipt = input.entry.hostLocalInferenceReceipt;
+      if (typeof serializedRegistryReceipt !== "string") {
+        failRecovery("sandbox registry host-local inference receipt is missing");
+      }
+      const receipt = parseHostLocalInferenceReceipt(serializedRegistryReceipt);
+      requirePublishedOllamaRecoveryReceipt(receipt);
+      const providerEntry = inferenceLifecycleRow(input.entry, receipt.providerId);
+      const assertCallerCurrent = (): void => {
+        input.assertCallerCurrent?.();
+        try {
+          operating.assertCurrent();
+        } catch {
+          failRecovery("schema-6 operating authority changed during recovery");
+        }
+        if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
+          failRecovery("sandbox registry authority changed during recovery");
+        }
+        input.assertCallerCurrent?.();
+      };
+      const assertCallerTransactionCurrent = (): void => {
+        input.assertCallerTransactionCurrent?.();
+        try {
+          operating.assertTransactionCurrent();
+        } catch {
+          failRecovery("schema-6 operating authority changed during recovery");
+        }
+        if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
+          failRecovery("sandbox registry authority changed during recovery");
+        }
+        input.assertCallerTransactionCurrent?.();
+      };
+      const recoveryEntry = recoveryTiming.measureEntry("registryPreparation", () =>
+        atOllamaRecoveryPhase("REGISTRY_PREPARATION_POSTCONDITION", () =>
+          deps.prepareRecoveryEntry({
+            receipt: operating.receipt,
+            inferenceReceipt: receipt,
+            stateDir,
+            env,
+            assertCallerTransactionCurrent,
+          }),
+        ),
+      );
+      return {
+        assertCallerCurrent,
+        assertCallerTransactionCurrent,
+        operating,
+        providerEntry,
+        receipt,
+        recoveryEntry,
+        serializedRegistryReceipt,
+      };
+    } catch (error) {
+      recoveryTiming.finishEntryAuthority();
+      recoveryTiming.finish(runtimeAction, timingCounts(), "failed");
+      throw error;
+    }
+  })();
+  const {
+    assertCallerCurrent,
+    assertCallerTransactionCurrent,
+    operating,
+    providerEntry,
+    receipt,
+    recoveryEntry,
+    serializedRegistryReceipt,
+  } = entry;
+  const { registryRecovery } = recoveryEntry;
+  let ollamaStateRestored = true;
   try {
     const published = recoveryTiming.measureEntry("privatePublication", () =>
       atOllamaRecoveryPhase("PRIVATE_PUBLICATION_AUTHORITY", () => {

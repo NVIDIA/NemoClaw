@@ -812,9 +812,15 @@ export function recoverHermesPortableSandboxLifecycle(
 ): PortableDemoLifecycleRecoveryResult {
   const timing = createHermesPortableLifecycleTimingRecorder(deps.recoveryTiming);
   timing.increment("qualification");
-  let qualified = timing.measure("entryQualification", () =>
-    qualify(sandboxName, context, deps, undefined, ["Ready", "Error", "Stopped"]),
-  );
+  let qualified: QualifiedHermesPortableLifecycle;
+  try {
+    qualified = timing.measure("entryQualification", () =>
+      qualify(sandboxName, context, deps, undefined, ["Ready", "Error", "Stopped"]),
+    );
+  } catch (error) {
+    timing.finish("failed");
+    throw error;
+  }
   const wasRunning = qualified.container.authority.running;
   timing.setContainerAction(wasRunning ? "reused" : "started");
   const rollbackAuthority = qualified;
