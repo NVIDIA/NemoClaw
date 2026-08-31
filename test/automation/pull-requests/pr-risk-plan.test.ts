@@ -384,6 +384,16 @@ describe("deterministic PR risk plan", () => {
     );
   });
 
+  it("selects both fake Slack API consumers", () => {
+    const changedFile = "test/e2e/lib/fake-slack-api.cjs";
+    expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual(
+      ["messaging-providers", "openclaw-slack-pairing"].map((id) => ({
+        id,
+        matchedFiles: [changedFile],
+      })),
+    );
+  });
+
   it("maps a shared gateway live test to every catalogue fixture (#7921)", () => {
     const changedFiles = ["test/e2e/live/openshell-gateway-upgrade.test.ts"];
     const focusedE2eJobs = catalogueTargetsForChangedFiles(changedFiles).map((target) => ({

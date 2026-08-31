@@ -58,6 +58,87 @@ function successfulShellResult(command: string[], stdout = ""): ShellProbeResult
   };
 }
 
+type FakeSlackPortFixture = {
+  restPort: number;
+  websocketPort: number;
+  captureFile: string;
+  stop: () => Promise<void>;
+};
+
+function readFakeSlackCapture(captureFile: string): Array<Record<string, unknown>> {
+  return fs
+    .readFileSync(captureFile, "utf8")
+    .trim()
+    .split(/\r?\n/u)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+async function startFakeSlackPortFixture(options?: {
+  suppressPortTrafficReply?: boolean;
+}): Promise<FakeSlackPortFixture> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-slack-ports-"));
+  const portFile = path.join(dir, "port");
+  const captureFile = path.join(dir, "capture.jsonl");
+  const child = spawn(process.execPath, [FAKE_SLACK_API], {
+    env: {
+      ...process.env,
+      FAKE_SLACK_API_HOST: "127.0.0.1",
+      FAKE_SLACK_API_PORT: "0",
+      FAKE_SLACK_API_WEBSOCKET_PORT: "0",
+      FAKE_SLACK_API_PORT_FILE: portFile,
+      FAKE_SLACK_API_CAPTURE_FILE: captureFile,
+      FAKE_SLACK_API_EXPECTED_BOT_TOKEN: "xoxb-fake-slack-port-test",
+      FAKE_SLACK_API_EXPECTED_APP_TOKEN: "xapp-fake-slack-port-test",
+      ...(options?.suppressPortTrafficReply
+        ? { FAKE_SLACK_API_SUPPRESS_PORT_TRAFFIC_REPLY: "1" }
+        : {}),
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  const stop = async () => {
+    child.kill("SIGTERM");
+    await new Promise<void>((resolve) =>
+      child.exitCode !== null ? resolve() : child.once("exit", () => resolve()),
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
+  };
+
+  try {
+    await waitFor(() => fs.existsSync(portFile), `fake Slack listeners did not start: ${stderr}`);
+    const listening = readFakeSlackCapture(captureFile).filter(
+      (entry) => entry.event === "listening",
+    );
+    const restPort = Number(fs.readFileSync(portFile, "utf8").trim());
+    const websocketPort = Number(
+      listening.find((entry) => entry.kind === "websocket")?.port ?? 0,
+    );
+    return { restPort, websocketPort, captureFile, stop };
+  } catch (error) {
+    await stop();
+    throw error;
+  }
+}
+
+function runFakeSlackPortTrafficCheck(fixture: FakeSlackPortFixture) {
+  return spawnSync(
+    process.execPath,
+    [
+      "--experimental-strip-types",
+      FAKE_API_PORT_TRAFFIC,
+      "127.0.0.1",
+      String(fixture.restPort),
+      String(fixture.websocketPort),
+    ],
+    { encoding: "utf8", timeout: 15_000 },
+  );
+}
+
 describe("messaging provider installed-runtime proofs", () => {
   it("collects diagnostics when published fake API proxy ports do not carry traffic", async () => {
     const artifactNames: string[] = [];
@@ -151,62 +232,18 @@ describe("messaging provider installed-runtime proofs", () => {
   });
 
   it("publishes independent fake Slack REST and websocket ports", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-slack-ports-"));
-    const portFile = path.join(dir, "port");
-    const captureFile = path.join(dir, "capture.jsonl");
-    const child = spawn(process.execPath, [FAKE_SLACK_API], {
-      env: {
-        ...process.env,
-        FAKE_SLACK_API_HOST: "127.0.0.1",
-        FAKE_SLACK_API_PORT: "0",
-        FAKE_SLACK_API_WEBSOCKET_PORT: "0",
-        FAKE_SLACK_API_PORT_FILE: portFile,
-        FAKE_SLACK_API_CAPTURE_FILE: captureFile,
-        FAKE_SLACK_API_EXPECTED_BOT_TOKEN: "xoxb-fake-slack-port-test",
-        FAKE_SLACK_API_EXPECTED_APP_TOKEN: "xapp-fake-slack-port-test",
-      },
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    let stderr = "";
-    child.stderr?.setEncoding("utf8");
-    child.stderr?.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
+    const fixture = await startFakeSlackPortFixture();
 
     try {
-      await waitFor(() => fs.existsSync(portFile), `fake Slack listeners did not start: ${stderr}`);
-      const listening = fs
-        .readFileSync(captureFile, "utf8")
-        .trim()
-        .split(/\r?\n/u)
-        .filter(Boolean)
-        .map((line) => JSON.parse(line))
-        .filter((entry) => entry.event === "listening");
+      const listening = readFakeSlackCapture(fixture.captureFile).filter(
+        (entry) => entry.event === "listening",
+      );
       expect(listening).toHaveLength(2);
       expect(listening.map((entry) => entry.kind).sort()).toEqual(["rest", "websocket"]);
       expect(new Set(listening.map((entry) => entry.port)).size).toBe(2);
-      const restPort = Number(fs.readFileSync(portFile, "utf8").trim());
-      const websocketPort = Number(
-        listening.find((entry) => entry.kind === "websocket")?.port ?? 0,
-      );
-      const trafficCheck = spawnSync(
-        process.execPath,
-        [
-          "--experimental-strip-types",
-          FAKE_API_PORT_TRAFFIC,
-          "127.0.0.1",
-          String(restPort),
-          String(websocketPort),
-        ],
-        { encoding: "utf8", timeout: 15_000 },
-      );
+      const trafficCheck = runFakeSlackPortTrafficCheck(fixture);
       expect(trafficCheck.status, trafficCheck.stderr).toBe(0);
-      const traffic = fs
-        .readFileSync(captureFile, "utf8")
-        .trim()
-        .split(/\r?\n/u)
-        .filter(Boolean)
-        .map((line) => JSON.parse(line));
+      const traffic = readFakeSlackCapture(fixture.captureFile);
       expect(traffic).toContainEqual(
         expect.objectContaining({ event: "request", path: "/__nemoclaw_e2e_port_traffic" }),
       );
@@ -224,74 +261,23 @@ describe("messaging provider installed-runtime proofs", () => {
         expect.objectContaining({ event: "websocket-port-traffic-reply", path: "/socket-mode" }),
       );
     } finally {
-      child.kill("SIGTERM");
-      await new Promise<void>((resolve) =>
-        child.exitCode !== null ? resolve() : child.once("exit", () => resolve()),
-      );
-      fs.rmSync(dir, { recursive: true, force: true });
+      await fixture.stop();
     }
   }, 15_000);
 
   it("rejects a fake Slack websocket that upgrades without a port traffic reply", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-slack-no-reply-"));
-    const portFile = path.join(dir, "port");
-    const captureFile = path.join(dir, "capture.jsonl");
-    const child = spawn(process.execPath, [FAKE_SLACK_API], {
-      env: {
-        ...process.env,
-        FAKE_SLACK_API_HOST: "127.0.0.1",
-        FAKE_SLACK_API_PORT: "0",
-        FAKE_SLACK_API_WEBSOCKET_PORT: "0",
-        FAKE_SLACK_API_PORT_FILE: portFile,
-        FAKE_SLACK_API_CAPTURE_FILE: captureFile,
-        FAKE_SLACK_API_EXPECTED_BOT_TOKEN: "xoxb-fake-slack-no-reply-test",
-        FAKE_SLACK_API_EXPECTED_APP_TOKEN: "xapp-fake-slack-no-reply-test",
-        FAKE_SLACK_API_SUPPRESS_PORT_TRAFFIC_REPLY: "1",
-      },
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    let stderr = "";
-    child.stderr?.setEncoding("utf8");
-    child.stderr?.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
+    const fixture = await startFakeSlackPortFixture({ suppressPortTrafficReply: true });
 
     try {
-      await waitFor(() => fs.existsSync(portFile), `fake Slack listeners did not start: ${stderr}`);
-      const listening = fs
-        .readFileSync(captureFile, "utf8")
-        .trim()
-        .split(/\r?\n/u)
-        .filter(Boolean)
-        .map((line) => JSON.parse(line))
-        .filter((entry) => entry.event === "listening");
-      const restPort = Number(fs.readFileSync(portFile, "utf8").trim());
-      const websocketPort = Number(
-        listening.find((entry) => entry.kind === "websocket")?.port ?? 0,
-      );
-      const trafficCheck = spawnSync(
-        process.execPath,
-        [
-          "--experimental-strip-types",
-          FAKE_API_PORT_TRAFFIC,
-          "127.0.0.1",
-          String(restPort),
-          String(websocketPort),
-        ],
-        { encoding: "utf8", timeout: 15_000 },
-      );
+      const trafficCheck = runFakeSlackPortTrafficCheck(fixture);
       expect(trafficCheck.status).toBe(1);
       expect(trafficCheck.stderr).toContain("WebSocket port traffic timed out");
-      const traffic = fs.readFileSync(captureFile, "utf8");
+      const traffic = fs.readFileSync(fixture.captureFile, "utf8");
       expect(traffic).toContain('"event":"websocket-upgrade"');
       expect(traffic).toContain('"messageType":"nemoclaw_port_traffic_probe"');
       expect(traffic).not.toContain('"event":"websocket-port-traffic-reply"');
     } finally {
-      child.kill("SIGTERM");
-      await new Promise<void>((resolve) =>
-        child.exitCode !== null ? resolve() : child.once("exit", () => resolve()),
-      );
-      fs.rmSync(dir, { recursive: true, force: true });
+      await fixture.stop();
     }
   }, 20_000);
 
