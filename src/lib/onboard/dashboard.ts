@@ -39,7 +39,6 @@ import {
   type ListSandboxesFn,
 } from "./dashboard-port";
 import {
-  bestEffortForwardStop,
   bestEffortForwardStopForSandbox,
   waitForStoppedForwardPortRelease,
 } from "./forward-cleanup";
@@ -218,22 +217,6 @@ function findForwardEntry(
   return null;
 }
 
-function getRunningForwardPorts(forwardListOutput: string | null | undefined): string[] {
-  const ports = new Set<string>();
-  if (!forwardListOutput) return [];
-  for (const rawLine of forwardListOutput.split("\n")) {
-    const line = rawLine.replace(ANSI_RE, "");
-    if (/^\s*SANDBOX\s/i.test(line)) continue;
-    const parts = line.trim().split(/\s+/);
-    if (parts.length < 5 || !/^\d+$/.test(parts[2])) continue;
-    const status = (parts[4] || "").toLowerCase();
-    if (isLiveForwardStatus(status)) {
-      ports.add(parts[2]);
-    }
-  }
-  return [...ports];
-}
-
 function findOpenclawJsonPath(dir: string): string | null {
   if (!fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -390,15 +373,27 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   }
 
   function stopAllDashboardForwards(): void {
-    if (forwardServiceController && listSandboxes) {
-      for (const sandbox of listSandboxes().sandboxes) {
+    const registered = listSandboxes?.().sandboxes ?? [];
+    const legacySandboxNames = new Set<string>();
+    for (const sandbox of registered) {
+      if (forwardServiceController) {
         const authority = resolveForwardServiceAuthority(sandbox.name);
-        if (authority) forwardServiceController.stopAll(authority);
+        if (authority) {
+          forwardServiceController.stopAll(authority);
+          continue;
+        }
       }
+      legacySandboxNames.add(sandbox.name);
     }
     const forwardList = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
-    for (const port of getRunningForwardPorts(forwardList)) {
-      bestEffortForwardStop(deps.runOpenshell, port);
+    for (const [port, owner] of getOccupiedPorts(forwardList).entries()) {
+      if (!legacySandboxNames.has(owner)) continue;
+      bestEffortForwardStopForSandbox(
+        deps.runOpenshell,
+        (args, options) => deps.runCaptureOpenshell(args, options),
+        port,
+        owner,
+      );
     }
   }
 

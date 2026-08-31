@@ -189,9 +189,10 @@ export function resolveSandboxHealthProbeUrl(sandboxName: string): string {
  * Tear down the host-side dashboard port-forward this sandbox created.
  *
  * `stop` stops the container but must also release every receipt-owned
- * ForwardTcp child. Once that exact cleanup succeeds, the remaining scoped
- * list-and-stop operations retire installed-base SSH forwards that predate the
- * receipt lifecycle. Those legacy commands receive a bounded host-port release
+ * ForwardTcp child. When no receipt-owned process exists, scoped list-and-stop
+ * operations retire installed-base SSH forwards that predate the receipt
+ * lifecycle. A mixed listener remains incomplete instead of falling through
+ * to mutable-name cleanup. Legacy commands receive a bounded host-port release
  * wait because OpenShell may return before their SSH listener exits.
  * Returns false only when receipt-owned ForwardTcp cleanup could not be
  * completed, so destructive callers can preserve immutable retry authority.
@@ -238,7 +239,11 @@ export function teardownSandboxDashboardForward(
     const controller = authority ? runtimeForwardServiceController() : null;
     if (authority && controller) {
       try {
-        if (controller.stopAll(authority) > 0) return true;
+        if (controller.stopAll(authority) > 0) {
+          return [...ports].every(
+            (port) => !(deps.isLocalForwardReachable ?? isLocalForwardReachable)(port),
+          );
+        }
       } catch {
         // Teardown is best-effort; retain ambiguous receipts for a later
         // identity-bound recovery instead of signaling an unproven PID.

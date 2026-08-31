@@ -189,6 +189,47 @@ describe("onboard dashboard helpers", () => {
     });
   });
 
+  it("preserves foreign forwards during gateway cleanup", () => {
+    const listing = [
+      "SANDBOX BIND PORT PID STATUS",
+      "alpha 127.0.0.1 18789 101 running",
+      "foreign 127.0.0.1 19000 102 running",
+    ].join("\n");
+    const runOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => ({
+      status: 0,
+    }));
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => listing),
+      openshellArgv: (args) => ["/usr/local/bin/openshell", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: String,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: String,
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [{ name: "alpha" }] }),
+    });
+
+    helpers.stopAllDashboardForwards();
+
+    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "alpha"], {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["forward", "stop", "19000", "foreign"],
+      expect.anything(),
+    );
+    expect(
+      runOpenshell.mock.calls.some(
+        ([args]) => args[0] === "forward" && args[1] === "stop" && args.length === 3,
+      ),
+    ).toBe(false);
+  });
+
   it("builds a Hermes verification chain with the sandbox's allocated API port (#9290)", () => {
     const getSandbox = vi.fn(() => ({ hermesApiPort: 8643 }));
     const helpers = createOnboardDashboardHelpers({

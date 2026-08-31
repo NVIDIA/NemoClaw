@@ -1110,14 +1110,16 @@ Host-side validation runs before the sandbox dispatch:
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-The `agent` wrapper rejects Hermes sandboxes with guidance for the Hermes HTTP API. Each Hermes sandbox exposes an OpenAI-compatible API inside the sandbox on its own port, which defaults to `8642`, so non-interactive use does not need a wrapper command. When another sandbox or a host listener already holds `8642`, the sandbox receives the next free port from `8642` through `8652`. The rejection message names that port and the NemoClaw recovery command for its managed forward.
+The `agent` wrapper rejects Hermes sandboxes with guidance for the Hermes HTTP API. Each Hermes sandbox exposes an OpenAI-compatible API inside the sandbox on its own port, which defaults to `8642`, so non-interactive use does not need a wrapper command. When another sandbox or a host listener already holds `8642`, the sandbox receives the next free port from `8642` through `8652`. The rejection message names that port and the NemoClaw recovery command for its managed forward. Use the allocated API port shown by `nemohermes <name> status` below.
 
 Recover the managed forward, then POST chat completions directly:
 
 ```bash
-nemoclaw my-hermes recover
-curl -sN http://127.0.0.1:8642/v1/chat/completions \
+nemohermes my-hermes recover
+API_TOKEN=$(nemohermes my-hermes gateway-token --quiet)
+curl -sN http://127.0.0.1:<api-port>/v1/chat/completions \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $API_TOKEN" \
   -d '{"model":"<onboarded-model>","messages":[{"role":"user","content":"What is 2+2?"}],"stream":true}'
 ```
 

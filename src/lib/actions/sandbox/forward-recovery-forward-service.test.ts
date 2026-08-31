@@ -193,6 +193,21 @@ describe("ForwardTcp runtime integration", () => {
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
+  it("reports a mixed legacy listener without using mutable-name cleanup", async () => {
+    mocks.controller.stopAll.mockReturnValue(2);
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const { teardownSandboxDashboardForward } = await import("./forward-recovery");
+
+    expect(
+      teardownSandboxDashboardForward("alpha", {
+        getSandbox: () => SANDBOX,
+        isLocalForwardReachable: () => true,
+        runOpenshell,
+      }),
+    ).toBe(false);
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("uses gateway-scoped legacy cleanup only when no ForwardTcp receipt exists", async () => {
     const runOpenshell = vi.fn(() => ({ status: 0 }));
     const { teardownSandboxDashboardForward } = await import("./forward-recovery");
