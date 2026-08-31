@@ -34,6 +34,7 @@ type LegacyOnboardProvidersModule = {
 };
 
 type RebuildModule = typeof import("./rebuild");
+type PrivilegedExecModule = typeof import("../../sandbox/privileged-exec");
 type SetupInferenceModule = typeof import("../../onboard/setup-inference");
 type SandboxProviderCleanupModule = typeof import("../../onboard/sandbox-provider-cleanup");
 type PolicyModule = typeof import("../../policy");
@@ -76,6 +77,14 @@ export const policyChannelDependencies = {
         return result.status === 0 ? result.output : null;
       },
     });
+  },
+  /** Use stopped Docker cleanup only after both in-sandbox cleanup attempts fail. */
+  clearStoppedDockerSandboxChannelState(
+    sandboxName: string,
+    paths: readonly string[],
+  ): ReturnType<PrivilegedExecModule["clearStoppedDockerSandboxChannelState"]> {
+    const cleanup = require("../../sandbox/privileged-exec") as PrivilegedExecModule;
+    return cleanup.clearStoppedDockerSandboxChannelState(sandboxName, paths);
   },
   deleteMessagingProviderWithRecovery(
     providerName: string,
