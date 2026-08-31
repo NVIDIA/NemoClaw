@@ -564,6 +564,10 @@
     },
     {
       "live": "test/e2e/live/messaging-providers.test.ts",
+      "liveSources": [
+        "test/e2e/live/messaging-providers-helpers.ts",
+        "test/e2e/live/messaging-providers-wechat-runtime-proof.ts"
+      ],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/credential-provider-registration.test.ts",
@@ -574,7 +578,9 @@
         "test/onboarding/onboard-messaging.test.ts",
         "test/runtime/messaging/messaging-build-applier.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/agents/openclaw/runtime/nemoclaw-start-wechat-placeholder.test.ts",
+        "test/onboarding/effective-policy-contracts.test.ts"
       ]
     },
     {
@@ -753,6 +759,7 @@
     {
       "live": "test/e2e/live/channels-stop-start.test.ts",
       "liveSources": [
+        "test/e2e/live/channels-stop-start-config-state.ts",
         "test/e2e/live/channels-stop-start-googlechat-proof.ts",
         "test/e2e/live/channels-stop-start-helpers.ts",
         "test/e2e/live/channels-stop-start-plan-state.ts"
