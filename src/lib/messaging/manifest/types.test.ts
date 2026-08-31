@@ -65,7 +65,6 @@ const telegramManifest = {
       placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     },
   ],
-  policyPresets: ["telegram"],
   render: [
     {
       id: "telegram-openclaw",
@@ -127,7 +126,6 @@ const wechatHookManifest = {
       placeholder: "openshell:resolve:env:WECHAT_BOT_TOKEN",
     },
   ],
-  policyPresets: ["wechat"],
   render: [],
   hooks: [
     {

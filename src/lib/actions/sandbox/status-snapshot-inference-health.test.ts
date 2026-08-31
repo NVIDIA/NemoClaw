@@ -23,7 +23,6 @@ function snapshotDeps(
   const sandbox: SandboxEntry = {
     name: "alpha",
     agent: "openclaw",
-    policies: [],
     provider: "nvidia",
     model: "nvidia/nemotron",
     ...sandboxOverride,

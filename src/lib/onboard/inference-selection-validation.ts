@@ -74,7 +74,7 @@ export interface OpenAiSelectionValidationOptions {
   retryChatCompletionsToolReadiness?: boolean;
   /** Provider identity used only for safe, provider-specific diagnostics. */
   provider?: string;
-  revalidatePolicyRequirements?: (operation: string) => void;
+  revalidateSandboxIdentity?: (operation: string) => void;
 
   skipResponsesProbe?: boolean;
   probeStreaming?: boolean;
@@ -103,7 +103,7 @@ export interface InferenceSelectionValidationDeps {
     recovery: ReturnType<typeof getProbeRecovery>,
     credentialEnv?: string | null,
     helpUrl?: string | null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<"credential" | "selection" | "retry" | "model">;
 }
 
@@ -124,7 +124,7 @@ export interface InferenceSelectionValidationHelpers {
     credentialEnv: string,
     retryMessage?: string,
     helpUrl?: string | null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<EndpointValidationResult>;
   validateCustomOpenAiLikeSelection(
     label: string,
@@ -133,7 +133,7 @@ export interface InferenceSelectionValidationHelpers {
     credentialEnv: string,
     helpUrl?: string | null,
     capabilityCache?: OnboardInferenceCapabilityCache,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<EndpointValidationResult>;
   validateCustomAnthropicSelection(
     label: string,
@@ -143,7 +143,7 @@ export interface InferenceSelectionValidationHelpers {
     helpUrl?: string | null,
     options?: {
       intendedApi?: "anthropic-messages" | "openai-completions";
-      revalidatePolicyRequirements?: (operation: string) => void;
+      revalidateSandboxIdentity?: (operation: string) => void;
     },
   ): Promise<EndpointValidationResult>;
 }
@@ -248,7 +248,7 @@ export function createInferenceSelectionValidationHelpers(
     endpointUrl: string,
     credentialEnv: string | null,
     helpUrl: string | null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<
     | { blocked: EndpointValidationResult }
     | {
@@ -313,7 +313,7 @@ export function createInferenceSelectionValidationHelpers(
       getProbeRecovery(syntheticProbe),
       credentialEnv,
       helpUrl,
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     );
     if (retry === "selection") {
       console.log("  Please choose a provider/model again.");
@@ -354,7 +354,7 @@ export function createInferenceSelectionValidationHelpers(
         getProbeRecovery(probe),
         credentialEnv,
         helpUrl,
-        options.revalidatePolicyRequirements,
+        options.revalidateSandboxIdentity,
       );
       if (retry === "selection") {
         console.log(`  ${retryMessage}`);
@@ -362,7 +362,7 @@ export function createInferenceSelectionValidationHelpers(
       }
       return { ok: false, retry };
     }
-    options.revalidatePolicyRequirements?.("report validated inference endpoint");
+    options.revalidateSandboxIdentity?.("report validated inference endpoint");
     if (probe.note) {
       console.log(`  ℹ ${probe.note}`);
     } else {
@@ -390,7 +390,7 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string,
     retryMessage = "Please choose a provider/model again.",
     helpUrl: string | null = null,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<EndpointValidationResult> {
     const apiKey = resolveCredential(credentialEnv);
     const probe = runAnthropicProbe(endpointUrl, model, apiKey);
@@ -404,7 +404,7 @@ export function createInferenceSelectionValidationHelpers(
         getProbeRecovery(probe),
         credentialEnv,
         helpUrl,
-        revalidatePolicyRequirements,
+        revalidateSandboxIdentity,
       );
       if (retry === "selection") {
         console.log(`  ${retryMessage}`);
@@ -412,7 +412,7 @@ export function createInferenceSelectionValidationHelpers(
       }
       return { ok: false, retry };
     }
-    revalidatePolicyRequirements?.("report validated inference endpoint");
+    revalidateSandboxIdentity?.("report validated inference endpoint");
     console.log(`  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`);
     return { ok: true, api: probe.api };
   }
@@ -424,14 +424,14 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string,
     helpUrl: string | null = null,
     capabilityCache?: OnboardInferenceCapabilityCache,
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): Promise<EndpointValidationResult> {
     const preflight = await preflightCustomEndpointOrFail(
       label,
       endpointUrl,
       credentialEnv,
       helpUrl,
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     );
     if ("blocked" in preflight) return preflight.blocked;
     const { pinnedAddresses, trustedPrivateCapability } = preflight;
@@ -448,7 +448,7 @@ export function createInferenceSelectionValidationHelpers(
       trustedPrivateCapability,
     });
     if (probe.ok) {
-      revalidatePolicyRequirements?.("report validated inference endpoint");
+      revalidateSandboxIdentity?.("report validated inference endpoint");
       if (probe.note) {
         console.log(`  ℹ ${probe.note}`);
       } else {
@@ -481,7 +481,7 @@ export function createInferenceSelectionValidationHelpers(
       getProbeRecovery(probe, { allowModelRetry: true }),
       credentialEnv,
       helpUrl,
-      revalidatePolicyRequirements,
+      revalidateSandboxIdentity,
     );
     if (retry === "selection") {
       console.log("  Please choose a provider/model again.");
@@ -498,7 +498,7 @@ export function createInferenceSelectionValidationHelpers(
     helpUrl: string | null = null,
     options: {
       intendedApi?: "anthropic-messages" | "openai-completions";
-      revalidatePolicyRequirements?: (operation: string) => void;
+      revalidateSandboxIdentity?: (operation: string) => void;
     } = {},
   ): Promise<EndpointValidationResult> {
     const preflight = await preflightCustomEndpointOrFail(
@@ -506,7 +506,7 @@ export function createInferenceSelectionValidationHelpers(
       endpointUrl,
       credentialEnv,
       helpUrl,
-      options.revalidatePolicyRequirements,
+      options.revalidateSandboxIdentity,
     );
     if ("blocked" in preflight) return preflight.blocked;
     const { pinnedAddresses, trustedPrivateCapability } = preflight;
@@ -540,7 +540,7 @@ export function createInferenceSelectionValidationHelpers(
             trustedPrivateCapability,
           });
     if (probe.ok) {
-      options.revalidatePolicyRequirements?.("report validated inference endpoint");
+      options.revalidateSandboxIdentity?.("report validated inference endpoint");
       if (probe.note) {
         console.log(`  ℹ ${probe.note}`);
       } else {
@@ -568,7 +568,7 @@ export function createInferenceSelectionValidationHelpers(
       recovery,
       credentialEnv,
       helpUrl,
-      options.revalidatePolicyRequirements,
+      options.revalidateSandboxIdentity,
     );
     if (retry === "selection") {
       console.log("  Please choose a provider/model again.");

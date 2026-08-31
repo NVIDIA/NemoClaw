@@ -35,8 +35,6 @@ function makeManifest(sandboxName: string, agentType: ManifestAgentType = "openc
     dir: MANIFEST_DIR_BY_AGENT[agentType],
     backupPath: `/tmp/rebuild-backups/${sandboxName}/${timestamp}`,
     blueprintDigest: null,
-    policyPresets: [],
-    customPolicies: [],
     snapshotVersion: 1,
   };
 }
