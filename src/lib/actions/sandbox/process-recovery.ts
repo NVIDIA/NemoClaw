@@ -47,6 +47,7 @@ import {
   resolveSandboxLaunchForwardPorts,
   resolveSandboxHealthProbeUrl,
   type SandboxForwardRecoveryFailure,
+  type SandboxForwardRecoveryFailureReason,
   verifyHermesPortableLaunchForwards,
   type HermesPortableForwardRecoveryFailure,
   type HermesPortableForwardRecoveryInput,
@@ -179,6 +180,30 @@ function primaryForwardRecoveryFailureDetail(failure: SandboxForwardRecoveryFail
       return `${target} started a listener, but OpenShell did not confirm its ownership`;
     case "forward-start-failure":
       return `${target} did not recover because OpenShell rejected the start`;
+  }
+}
+
+export function primaryForwardRecoveryGuidance(
+  sandboxName: string,
+  port: number,
+  reason?: SandboxForwardRecoveryFailureReason,
+): string {
+  const recoverCommand = `\`nemoclaw ${sandboxName} recover\``;
+  switch (reason) {
+    case "forward-readiness-retry-limit":
+      return `Wait until \`openshell sandbox status ${sandboxName}\` reports Ready, then re-run ${recoverCommand}.`;
+    case "port-ownership-conflict":
+      return `Run \`openshell forward list\` and identify the current owner of port ${port} before you change either sandbox. Then re-run ${recoverCommand}.`;
+    case "forward-state-unavailable":
+      return `Run \`openshell forward list\`. After OpenShell reports forward state, re-run ${recoverCommand}.`;
+    case "forward-ownership-unverified":
+      return `Run \`openshell forward list\` and confirm that '${sandboxName}' owns port ${port}, then re-run ${recoverCommand}.`;
+    case "forward-listener-retry-limit":
+      return `Run \`openshell forward list\`. If port ${port} has no owner, run \`openshell forward start --background ${port} ${sandboxName}\`, then re-run ${recoverCommand}.`;
+    case "forward-start-failure":
+      return `Run \`openshell forward list\`. If port ${port} has no owner, run \`openshell forward start --background ${port} ${sandboxName}\` to read the OpenShell error. Correct the error, then re-run ${recoverCommand}.`;
+    default:
+      return `Run \`openshell forward start --background ${port} ${sandboxName}\` manually and re-run ${recoverCommand}.`;
   }
 }
 
@@ -1408,6 +1433,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isSandboxGatewayRunningImpl = isSandboxGatewayRunning,
     waitForRecreatedSandboxOpenShellReadyImpl = waitForRecreatedSandboxOpenShellReady,
     isWsl: isWslOverride,
+    onForwardRecoveryFailure,
     onRecoveryFailureLayer,
     probeTiming,
   }: {
@@ -1418,6 +1444,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
+    onForwardRecoveryFailure?: (failure: SandboxForwardRecoveryFailure) => void;
     onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null, detail?: string) => void;
     probeTiming?: ProcessRecoveryProbeTiming;
   } = {},
@@ -1472,12 +1499,13 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         console.log(`  Dashboard port forward to '${sandboxName}' is missing or dead.`);
         console.log("  Re-establishing...");
       }
-      let primaryForwardFailureDetail: string | undefined;
+      const primaryForwardFailure: { value?: SandboxForwardRecoveryFailure } = {};
       const forwardRecovered = measure("forward", () =>
         ensureSandboxPortForward(sandboxName, {
           isWsl: isWslOverride,
           onFailure: (failure) => {
-            primaryForwardFailureDetail = primaryForwardRecoveryFailureDetail(failure);
+            primaryForwardFailure.value = failure;
+            onForwardRecoveryFailure?.(failure);
           },
         }),
       );
@@ -1507,7 +1535,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         } else {
           console.error("  Failed to re-establish the dashboard port forward.");
           console.error(
-            `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
+            `  ${primaryForwardRecoveryGuidance(sandboxName, recoveryPort, primaryForwardFailure.value?.reason)}`,
           );
         }
       }
@@ -1520,7 +1548,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           forwardRecovered: false,
           forwardRecoveryFailed: true,
           forwardRecoveryFailureDetail:
-            primaryForwardFailureDetail ??
+            (primaryForwardFailure.value &&
+              primaryForwardRecoveryFailureDetail(primaryForwardFailure.value)) ??
             "the primary dashboard/API host forward could not be re-established",
         };
       }
@@ -1810,14 +1839,15 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     }
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;
-    let primaryForwardFailureDetail: string | undefined;
+    const primaryForwardFailure: { value?: SandboxForwardRecoveryFailure } = {};
     const forwardRecovered = measure("forward", () =>
       ensureSandboxPortForward(sandboxName, {
         afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,
         beforeStart: confirmRelaunchedManagedHealthForForward ?? undefined,
         isWsl: isWslOverride,
         onFailure: (failure) => {
-          primaryForwardFailureDetail = primaryForwardRecoveryFailureDetail(failure);
+          primaryForwardFailure.value = failure;
+          onForwardRecoveryFailure?.(failure);
         },
       }),
     );
@@ -1856,7 +1886,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       } else {
         console.error("  Failed to re-establish the dashboard port forward.");
         console.error(
-          `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
+          `  ${primaryForwardRecoveryGuidance(sandboxName, recoveryPort, primaryForwardFailure.value?.reason)}`,
         );
       }
     }
@@ -1869,7 +1899,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail:
-          primaryForwardFailureDetail ??
+          (primaryForwardFailure.value &&
+            primaryForwardRecoveryFailureDetail(primaryForwardFailure.value)) ??
           "the primary dashboard/API host forward could not be re-established",
       });
     }
@@ -1912,6 +1943,7 @@ export function checkAndRecoverSandboxProcesses(
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
     isWsl?: boolean;
+    onForwardRecoveryFailure?: (failure: SandboxForwardRecoveryFailure) => void;
     onRecoveryFailureLayer?: (layer: GatewayRestartFailureLayer | null, detail?: string) => void;
     probeTiming?: ProcessRecoveryProbeTiming;
   } = {},

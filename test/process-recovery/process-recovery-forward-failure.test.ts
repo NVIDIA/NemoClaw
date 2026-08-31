@@ -263,9 +263,12 @@ beta  127.0.0.1  18789  12345  dead`,
         teamsForwardStarted = teamsForwardStarted || startsTeamsForward;
         return { status: isForwardStart && args.includes("18789") ? 1 : 0 } as never;
       });
+    const onForwardRecoveryFailure = vi.fn();
 
     expect(
-      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+      withFakeOpenshellBinary(() =>
+        checkAndRecoverSandboxProcesses("beta", { quiet: true, onForwardRecoveryFailure }),
+      ),
     ).toEqual({
       checked: true,
       wasRunning: true,
@@ -274,6 +277,11 @@ beta  127.0.0.1  18789  12345  dead`,
       forwardRecoveryFailed: true,
       forwardRecoveryFailureDetail:
         "the primary dashboard/API host forward for sandbox 'beta' on port 18789 did not recover because OpenShell rejected the start",
+    });
+    expect(onForwardRecoveryFailure).toHaveBeenCalledWith({
+      port: 18789,
+      reason: "forward-start-failure",
+      sandboxName: "beta",
     });
     expect(teamsForwardStarted).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(

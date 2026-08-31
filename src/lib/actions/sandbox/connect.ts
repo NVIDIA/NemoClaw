@@ -116,6 +116,7 @@ import {
   type HermesPortableForwardRecoveryFailure,
   type HermesPortableForwardRecoveryTimingEvidence,
   type ManagedGatewayControlCompletion,
+  primaryForwardRecoveryGuidance,
   prepareHermesPortableLaunchForwards,
   verifyHermesPortableLaunchForwards,
   type PreparedHermesPortableForwardRecovery,
@@ -123,6 +124,7 @@ import {
   resolveSandboxLaunchForwardPorts,
   waitForManagedGatewaySupervisor,
 } from "./process-recovery";
+import type { SandboxForwardRecoveryFailureReason } from "./forward-recovery";
 import {
   classifyHermesPortableInferenceConnectRecoveryFailure,
   inspectHermesPortableInferenceReadinessRuntimeForConnectProbe,
@@ -276,14 +278,13 @@ function exitOnForwardRecoveryFailure(
   agentName: string,
   port: number,
   detail?: string,
+  reason?: SandboxForwardRecoveryFailureReason,
 ): never {
   console.error("");
   console.error(
     `  Probe failed: ${agentName} gateway is running in '${sandboxName}', but ${detail ?? "the dashboard/API host forward could not be restored"}.`,
   );
-  console.error(
-    `  Run \`openshell forward start --background ${port} ${sandboxName}\` manually and re-run \`nemoclaw ${sandboxName} recover\`.`,
-  );
+  console.error(`  ${primaryForwardRecoveryGuidance(sandboxName, port, reason)}`);
   process.exit(1);
 }
 
@@ -392,10 +393,14 @@ async function runSandboxConnectProbe(
   // Managed recovery runs quiet here, so its classified failure layer is the
   // only way this path can tell a retryable wedge apart from a deterministic
   // integrity refusal that no restart, recover, or connect can clear (#7801).
+  let forwardRecoveryFailureReason: SandboxForwardRecoveryFailureReason | undefined;
   let recoveryFailureLayer: GatewayRestartFailureLayer | null = null;
   const processCheck = checkAndRecoverSandboxProcesses(sandboxName, {
     quiet: true,
     probeTiming,
+    onForwardRecoveryFailure: (failure) => {
+      forwardRecoveryFailureReason = failure.reason;
+    },
     onRecoveryFailureLayer: (layer) => {
       recoveryFailureLayer = layer;
     },
@@ -426,6 +431,7 @@ async function runSandboxConnectProbe(
       agentName,
       resolveSandboxDashboardPort(sandboxName),
       detail,
+      forwardRecoveryFailureReason,
     );
   }
   if ("recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail) {
@@ -2238,10 +2244,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
     let initialPortableAuthority: ReturnType<typeof qualifyPortableAgentLifecycleAuthority>;
     try {
       initialPortableAuthority = probeTiming!.measure("authority", () =>
-        qualifyPortableAgentLifecycleAuthority(
-          sandboxName,
-          portableAgentLifecycleAuthorityDeps(),
-        ),
+        qualifyPortableAgentLifecycleAuthority(sandboxName, portableAgentLifecycleAuthorityDeps()),
       );
     } catch {
       probeTiming!.markFailureStage("authority");
