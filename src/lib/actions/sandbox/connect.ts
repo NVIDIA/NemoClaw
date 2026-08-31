@@ -570,6 +570,17 @@ type HermesPortableReadinessCommandAuthority = ReturnType<
   typeof qualifyHermesPortableOperatingCommandAuthority
 >;
 
+function probeTimingLaunchReadinessDeps(
+  probeTiming?: ProbeTimingRecorder,
+): NonNullable<Parameters<typeof inspectLaunchReadiness>[1]> {
+  return probeTiming
+    ? {
+        recordObservationTiming: probeTiming.recordReadinessObservation,
+        recordObservationFailure: probeTiming.recordReadinessObservationFailure,
+      }
+    : {};
+}
+
 function captureHermesPortableReadinessObservation(
   authority: HermesPortableReadinessCommandAuthority,
   args: string[],
@@ -600,12 +611,7 @@ function hermesPortableLaunchReadinessDeps(
   ) => captureHermesPortableReadinessObservation(authority, args, options, assertCurrent);
   return {
     ...createBoundLaunchReadinessDeps(capture),
-    ...(probeTiming
-      ? {
-          recordObservationTiming: probeTiming.recordReadinessObservation,
-          recordObservationFailure: probeTiming.recordReadinessObservationFailure,
-        }
-      : {}),
+    ...probeTimingLaunchReadinessDeps(probeTiming),
   };
 }
 
@@ -2429,7 +2435,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
           sandboxName,
           hermesReadinessAuthority
             ? hermesPortableLaunchReadinessDeps(hermesReadinessAuthority.command, probeTiming)
-            : {},
+            : probeTimingLaunchReadinessDeps(probeTiming),
         ),
       );
       probeTiming!.recordReadinessDecision(readiness.category);
@@ -2683,7 +2689,9 @@ async function prepareConnectSandboxWithinLifecycleFence(
         const published = await probeTiming!.measureAsync("publication", () =>
           publishLaunchReadiness(
             publicationRequest,
-            retainedCommand ? hermesPortableLaunchReadinessDeps(retainedCommand, probeTiming) : {},
+            retainedCommand
+              ? hermesPortableLaunchReadinessDeps(retainedCommand, probeTiming)
+              : probeTimingLaunchReadinessDeps(probeTiming),
           ),
         );
         if (retainedCommand) {
@@ -2729,7 +2737,7 @@ async function prepareConnectSandboxWithinLifecycleFence(
           }
         } else {
           readiness = await probeTiming!.measureAsync("readiness", () =>
-            inspectLaunchReadiness(sandboxName),
+            inspectLaunchReadiness(sandboxName, probeTimingLaunchReadinessDeps(probeTiming)),
           );
         }
         probeTiming!.recordReadinessDecision(readiness.category);
