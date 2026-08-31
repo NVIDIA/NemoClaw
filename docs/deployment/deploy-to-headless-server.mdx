@@ -217,9 +217,10 @@ During an SSH session, `status` points to `$$nemoclaw headless-agent dashboard-u
 `connect --probe-only` waits up to 300 seconds by default for a cold sandbox to become ready. It then verifies or repairs the in-sandbox agent process and host forwards without opening a shell. It does not restart or replace the shared host OpenShell gateway.
 
 The command prints one `Probe timing:` line with elapsed milliseconds for `readiness`, `authority`, `lifecycle`, `gateway`, `processes`, `forward`, `inference`, `pairing`, and `publication` stages.
-It also reports cumulative duration and attempt count for each launch-readiness observation, including sandbox identity, policy, inference, gateway health, forward health, and inference route checks.
-Use the stage and observation values to identify where a slow or failed deployment spent its time.
-The line reports lifecycle and forward actions, the first failed observation, readiness decisions, and the failed stage when available.
+It also reports cumulative durations and attempt counts for sandbox identity, policy, inference, gateway health, forward health, and inference-route readiness observations.
+`readiness.firstFailedObservation` identifies the first failed observation, or reports `none`.
+Use these fields to identify where a slow or failed deployment spent its time.
+The line also reports lifecycle and forward actions and names the failed stage when available.
 Timing collection is diagnostic and fail-open.
 The command exit status remains the readiness decision: status `0` means the complete probe passed, and any nonzero status means the host is not ready for launch.
 

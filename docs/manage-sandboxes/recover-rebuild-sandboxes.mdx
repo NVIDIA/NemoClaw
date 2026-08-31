@@ -187,15 +187,7 @@ Lease acceptance and publication are currently Linux-only and require a secure, 
 
 On macOS, `launch` runs the complete preflight every time and does not publish a launch-readiness lease. `connect --probe-only` also runs the complete preflight, including recovery and probes. After a successful probe and recovery, it prints a note that launch-readiness evidence is unavailable on this platform and exits zero. On Linux, the publication-failure diagnostic is redacted and does not print filesystem paths or environment values.
 
-Infrastructure must run `connect --probe-only` as the same final numeric user that later runs `launch`.
-Run it after the final durable home and state volume is mounted and after policy and network provisioning is complete.
-On completion, `connect --probe-only` writes one credential-free `Probe timing:` line with elapsed milliseconds for readiness, authority, lifecycle, gateway, processes, forward, inference, pairing, and publication stages.
-The line also reports cumulative duration and attempt count for sandbox identity, policy, inference, gateway health, forward health, and inference route observations.
-It identifies the first failed observation and the first readiness and fallback decisions when available.
-It also reports the lifecycle and forward actions, the result, and the failed stage when the probe fails.
-Timing output is diagnostic only and does not change probe success or failure.
-NemoClaw rejects evidence after a bound sandbox, configuration, policy, or network identity changes.
-Deployment ordering remains responsible for external changes that OpenShell and NemoClaw cannot observe.
+Infrastructure must run `connect --probe-only` as the same final numeric user that later runs `launch`. Run it after the final durable home and state volume is mounted and after policy and network provisioning is complete. On completion, `connect --probe-only` writes one credential-free `Probe timing:` line with elapsed milliseconds for readiness, authority, lifecycle, gateway, processes, forward, inference, pairing, and publication stages. The line also reports cumulative durations, attempt counts, and the first failure for sandbox identity, policy, inference, gateway health, forward health, and inference-route readiness observations. It reports the lifecycle and forward actions, the result, and the failed stage when the probe fails. Timing output is diagnostic only and does not change probe success or failure. NemoClaw rejects evidence after a bound sandbox, configuration, policy, or network identity changes. Deployment ordering remains responsible for external changes that OpenShell and NemoClaw cannot observe.
 
 <AgentOnly variant="openclaw,hermes">
 ### Host OpenShell Gateway Versus In-Sandbox Agent Recovery

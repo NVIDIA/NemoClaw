@@ -988,9 +988,9 @@ Every `connect --probe-only` completion prints at most one credential-free `Prob
 - `pairing` settles OpenClaw operator pairing when applicable.
 - `publication` publishes launch-readiness evidence on Linux.
 
-The line also reports cumulative duration and attempt count for each launch-readiness observation: `readiness.sandbox-identity`, `readiness.policy-get`, `readiness.inference-get`, `readiness.gateway-health`, `readiness.forward-health`, and `readiness.inference-route`.
-It reports the first failed observation, the first readiness decision, and the first fallback decision when available.
-The line also reports `total`, `lifecycleAction=skipped|reused|recovered|failed`, `forwardAction=skipped|verified|restored|failed`, and `result=ready|failed`.
+The line also reports cumulative durations and attempt counts for `readiness.sandbox-identity`, `readiness.policy-get`, `readiness.inference-get`, `readiness.gateway-health`, `readiness.forward-health`, and `readiness.inference-route`.
+`readiness.firstFailedObservation` identifies the first failed observation, or reports `none`.
+The line reports `total`, `lifecycleAction=skipped|reused|recovered|failed`, `forwardAction=skipped|verified|restored|failed`, and `result=ready|failed`.
 A failed probe adds `failedStage=<stage>` or `failedStage=unknown`.
 Stages and observations that do not apply or do not run report `0ms` and zero attempts.
 Timing collection and output are fail-open: clock or writer failures do not change the readiness work, command diagnostics, or exit status.
