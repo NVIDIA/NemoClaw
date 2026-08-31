@@ -13,6 +13,11 @@ import {
   DirectSandboxFallbackUnavailableError,
   PinnedSandboxResourceIdentityChangedError,
 } from "./privileged-sandbox-control-errors";
+import {
+  clearStoppedSandboxStateWithEngine,
+  sandboxVolumeNameFromMounts,
+  type StoppedSandboxStateObservation,
+} from "./stopped-sandbox-state-cleanup";
 
 const SANITIZED_PRIVILEGED_ENV = [
   "BASH_ENV=",
@@ -90,11 +95,43 @@ function execute(
   });
 }
 
+function observeStoppedTarget(
+  engine: PodmanContainerEngine,
+  input: Parameters<
+    NonNullable<RuntimeProviderPrivilegedSandboxControl["clearStoppedStateRoots"]>
+  >[0],
+): StoppedSandboxStateObservation {
+  let container: ReturnType<typeof observePodmanManagedContainer>;
+  try {
+    container = observePodmanManagedContainer(engine, input.sandboxName);
+  } catch {
+    return { failure: "runtime-discovery-failed" };
+  }
+  if (!container) return { failure: "no-eligible-stopped-runtime" };
+  const sandboxVolumeName = sandboxVolumeNameFromMounts(container.inspect.Mounts);
+  return sandboxVolumeName
+    ? {
+        target: {
+          resourceHandle: container.containerId,
+          running: container.running,
+          sandboxVolumeName,
+        },
+      }
+    : { failure: "state-resource-unavailable" };
+}
+
 export function createPodmanPrivilegedSandboxControl(
   engine: PodmanContainerEngine,
+  cleanupEngine?: PodmanContainerEngine,
 ): RuntimeProviderPrivilegedSandboxControl {
   if (engine.operation !== "sandbox-lifecycle" || engine.engineId !== "podman") {
     throw new Error("Podman privileged control requires its sandbox-lifecycle engine.");
+  }
+  if (
+    cleanupEngine &&
+    (cleanupEngine.operation !== "workload-cleanup" || cleanupEngine.engineId !== "podman")
+  ) {
+    throw new Error("Podman stopped-state cleanup requires its workload-cleanup engine.");
   }
   return Object.freeze({
     resolveTarget: (
@@ -104,5 +141,18 @@ export function createPodmanPrivilegedSandboxControl(
       >,
     ) => resolveTarget(engine, input),
     execute: (input: RuntimeProviderPrivilegedSandboxCommandInput) => execute(engine, input),
+    ...(cleanupEngine
+      ? {
+          clearStoppedStateRoots: (
+            input: Parameters<
+              NonNullable<RuntimeProviderPrivilegedSandboxControl["clearStoppedStateRoots"]>
+            >[0],
+          ) =>
+            clearStoppedSandboxStateWithEngine(input.sandboxName, input.paths, {
+              capture: (args, timeoutMs = 30_000) => cleanupEngine.capture(args, timeoutMs),
+              observe: () => observeStoppedTarget(engine, input),
+            }),
+        }
+      : {}),
   });
 }

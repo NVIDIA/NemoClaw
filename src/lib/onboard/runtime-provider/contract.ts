@@ -362,6 +362,40 @@ export interface RuntimeProviderPrivilegedSandboxCommandResult {
   readonly error?: Error;
 }
 
+export type RuntimeProviderStoppedSandboxStateCleanupFailure =
+  | "sandbox-registry-unavailable"
+  | "provider-cleanup-unavailable"
+  | "state-paths-invalid"
+  | "runtime-discovery-failed"
+  | "no-eligible-stopped-runtime"
+  | "runtime-ownership-invalid"
+  | "runtime-inspection-failed"
+  | "runtime-not-stopped"
+  | "state-resource-unavailable"
+  | "cleanup-helper-image-unavailable"
+  | "cleanup-helper-ownership-invalid"
+  | "cleanup-helper-reconciliation-failed"
+  | "cleanup-state-tree-unsafe"
+  | "cleanup-deletion-unconfirmed"
+  | "cleanup-helper-failed"
+  | "runtime-revalidation-failed"
+  | "lifecycle-authority-unavailable";
+
+export type RuntimeProviderStoppedSandboxStateCleanupResult =
+  | { readonly cleared: true }
+  | {
+      readonly cleared: false;
+      readonly failure: RuntimeProviderStoppedSandboxStateCleanupFailure;
+      readonly cleanupHelperName?: string;
+    };
+
+export interface RuntimeProviderStoppedSandboxStateCleanupInput {
+  readonly sandbox: SandboxEntry;
+  readonly sandboxName: string;
+  readonly registeredSandboxNames: readonly string[];
+  readonly paths: readonly string[];
+}
+
 export interface RuntimeProviderPrivilegedSandboxControl {
   resolveTarget(
     input: Pick<
@@ -372,6 +406,9 @@ export interface RuntimeProviderPrivilegedSandboxControl {
   execute(
     input: RuntimeProviderPrivilegedSandboxCommandInput,
   ): RuntimeProviderPrivilegedSandboxCommandResult;
+  clearStoppedStateRoots?(
+    input: RuntimeProviderStoppedSandboxStateCleanupInput,
+  ): RuntimeProviderStoppedSandboxStateCleanupResult;
   /** Docker-only compatibility for E2E probes that invoke the Docker CLI directly. */
   buildLegacyDockerArgv?(
     input: Omit<RuntimeProviderPrivilegedSandboxCommandInput, "timeoutMs">,

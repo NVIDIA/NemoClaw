@@ -340,7 +340,10 @@ export function createPodmanRuntimeProviderBundle(
       supported: true,
       channelStopTransport: "openshell",
       containerMutationTimeoutMs: PODMAN_LIFECYCLE_MUTATION_TIMEOUT_MS,
-      privilegedSandboxControl: createPodmanPrivilegedSandboxControl(sandboxLifecycle),
+      privilegedSandboxControl: createPodmanPrivilegedSandboxControl(
+        sandboxLifecycle,
+        workloadCleanup,
+      ),
       start: (input) => startPodmanSandbox(input, sandboxLifecycle),
       verifyStarted: (input, verifyGateway) => verifyGateway(input.sandboxName),
       stop: (input, hooks) => stopPodmanSandbox(input, hooks, sandboxLifecycle),

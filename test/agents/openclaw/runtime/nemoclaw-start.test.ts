@@ -2673,7 +2673,7 @@ describe("provider placeholder refresh (#4251)", () => {
       scriptPath,
       [
         "#!/usr/bin/env bash",
-        "set -euo pipefail",
+        "set -euo pipefail\nrefresh_openclaw_wechat_account_placeholder() { :; }",
         "prepare_openclaw_config_for_write() { :; }",
         "restore_openclaw_config_after_write() { :; }",
         fn,

@@ -178,6 +178,14 @@ function lifecycleEngine(sandboxName: string, authorityId = AUTHORITY_ID): Podma
               [PODMAN_SANDBOX_WORKSPACE_LABEL]: PODMAN_SANDBOX_WORKSPACE,
             },
           },
+          Mounts: [
+            {
+              Type: "volume",
+              Name: `nemoclaw-${sandboxName}-state`,
+              Destination: "/sandbox",
+              RW: true,
+            },
+          ],
           State: {
             Running: running,
             Paused: false,
@@ -341,6 +349,54 @@ describe("managed Podman runtime provider", () => {
     expect(
       JSON.stringify((runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls),
     ).not.toContain("docker");
+  });
+
+  it("routes stopped state cleanup through the Podman workload-cleanup engine", () => {
+    const sandboxName = "podman-cleanup";
+    const lifecycle = lifecycleEngine(sandboxName);
+    const cleanupCapture = vi.fn((args: readonly string[]) => ({
+      status: args[0] === "image" ? 1 : 125,
+      stdout: "",
+      stderr: "expected unavailable cleanup image",
+    }));
+    const cleanup: PodmanBoundContainerEngine = {
+      operation: "workload-cleanup",
+      engineId: "podman",
+      displayName: "Podman",
+      authorityId: AUTHORITY_ID,
+      endpointAuthorityId: AUTHORITY_ID,
+      capture: cleanupCapture,
+      captureHost: vi.fn(),
+      assertAuthority: vi.fn(),
+    };
+    const bundle = createPodmanRuntimeProviderBundle({
+      engines: {
+        hostDoctor: hostDoctorEngine(),
+        sandboxLifecycle: lifecycle,
+        workloadCleanup: cleanup,
+      },
+      preflight: { platform: "linux", architecture: "x64" },
+    });
+    const entry: SandboxEntry = {
+      agent: "openclaw",
+      name: sandboxName,
+      openshellDriver: "podman",
+    };
+    const control = (bundle.lifecycle as Extract<typeof bundle.lifecycle, { supported: true }>)
+      .privilegedSandboxControl;
+
+    expect(
+      control.clearStoppedStateRoots?.({
+        registeredSandboxNames: [sandboxName],
+        sandbox: entry,
+        sandboxName,
+        paths: ["/sandbox/.openclaw/openclaw-weixin"],
+      }),
+    ).toEqual({ cleared: false, failure: "cleanup-helper-image-unavailable" });
+    expect(cleanupCapture).toHaveBeenCalledExactlyOnceWith(
+      ["image", "inspect", "--format", "{{.Id}}", expect.stringContaining("node:22-trixie-slim")],
+      30_000,
+    );
   });
 
   it("is available through the production-selectable registry", () => {

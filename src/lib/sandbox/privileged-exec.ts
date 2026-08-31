@@ -8,6 +8,7 @@ import type {
   RuntimeProviderPrivilegedSandboxCommandResult,
   RuntimeProviderPrivilegedSandboxControl,
   RuntimeProviderPrivilegedSandboxTarget,
+  RuntimeProviderStoppedSandboxStateCleanupResult,
 } from "../onboard/runtime-provider/contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../onboard/runtime-provider/current";
 import {
@@ -20,6 +21,10 @@ import {
   PERSISTED_ENGINE_LIFECYCLE_DIRECTORY,
 } from "../onboard/runtime-provider/persisted-engine-lifecycle";
 import { requireRuntimeProviderBundleForSandbox } from "../onboard/runtime-provider/selection";
+import {
+  buildStoppedSandboxChannelCleanupScript,
+  validateStoppedSandboxStatePaths,
+} from "../onboard/runtime-provider/stopped-sandbox-state-cleanup";
 import { resolveShieldsStateDir, withShieldsTransitionLock } from "../shields/transition-lock";
 import * as registry from "../state/registry";
 
@@ -91,10 +96,7 @@ function assertNoActiveStateMutationTarget(sandboxName: string): void {
   }
 }
 
-/**
- * Serialize one ordinary privileged sandbox execution against provider fence
- * acquisition. The callback must cover target resolution and execution.
- */
+/** Serialize one ordinary privileged operation against provider fence acquisition. */
 export function withPrivilegedSandboxExecutionLease<T>(
   sandboxName: string,
   operation: string,
@@ -155,10 +157,7 @@ export function executePrivilegedSandboxCommand(
   });
 }
 
-/**
- * Docker CLI compatibility for retained portable and Docker-specific E2E probes.
- * Managed orchestration must use executePrivilegedSandboxCommand instead.
- */
+/** Retained Docker CLI compatibility for portable and Docker-specific probes. */
 export function privilegedSandboxExecArgv(
   sandboxName: string,
   command: string[],
@@ -199,6 +198,37 @@ export function capturePrivilegedSandboxCommand(
   }
   return result.stdout;
 }
+
+export function clearStoppedSandboxStateRoots(
+  sandboxName: string,
+  paths: readonly string[],
+): RuntimeProviderStoppedSandboxStateCleanupResult {
+  if (!validateStoppedSandboxStatePaths(paths)) {
+    return { cleared: false, failure: "state-paths-invalid" };
+  }
+  const sandbox = registry.getSandbox?.(sandboxName) ?? null;
+  if (!sandbox) return { cleared: false, failure: "sandbox-registry-unavailable" };
+  try {
+    return withPrivilegedSandboxExecutionLease(sandboxName, "offline channel state cleanup", () => {
+      const { control } = privilegedSandboxControl(sandboxName);
+      if (!control.clearStoppedStateRoots)
+        return { cleared: false, failure: "provider-cleanup-unavailable" };
+      return control.clearStoppedStateRoots({
+        registeredSandboxNames: registeredSandboxNames(sandboxName),
+        sandbox,
+        sandboxName,
+        paths,
+      });
+    });
+  } catch {
+    return { cleared: false, failure: "lifecycle-authority-unavailable" };
+  }
+}
+
+export {
+  buildStoppedSandboxChannelCleanupScript,
+  buildStoppedSandboxChannelCleanupScript as buildStoppedDockerSandboxChannelCleanupScript,
+};
 
 export function isDirectSandboxFallbackUnavailableError(
   error: unknown,

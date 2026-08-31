@@ -41,6 +41,8 @@ export const REBUILD_TIMEOUT_MS = 25 * 60_000;
 export const PROBE_TIMEOUT_MS = 120_000;
 export const LIVE_TIMEOUT_MS = 90 * 60_000;
 export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
+const FAKE_API_IMAGE =
+  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
 
 // Leave ample headroom beneath OpenShell's strict per-argument ceiling.
 const SANDBOX_SOURCE_CHUNK_BYTES = 16_384;
@@ -221,7 +223,7 @@ export function messagingEnv(): MessagingEnv {
     nonEmpty(process.env.SLACK_APP_TOKEN_REAL) ??
     nonEmpty(process.env.SLACK_APP_TOKEN) ??
     "xapp-fake-slack-app-token-e2e";
-  const wechat = nonEmpty(process.env.WECHAT_BOT_TOKEN) ?? "test-fake-wechat-token-e2e";
+  const wechat = "test-fake-wechat-token-e2e";
   const wechatAccount = nonEmpty(process.env.WECHAT_ACCOUNT_ID) ?? "e2e-fake-account-12345";
   const slackIds = nonEmpty(process.env.SLACK_ALLOWED_USERS) ?? "U0AR85ATALW,U09E2ESLACK";
 
@@ -620,9 +622,11 @@ export async function startFakeDockerApi(
       | "slack-rest"
       | "slack-websocket"
       | "telegram"
+      | "wechat"
       | "discord-gateway"
       | "discord-message";
     imageScript: string;
+    nodeArgs?: readonly string[];
     containerPrefix: string;
     portEnv: string;
     portFileEnv: string;
@@ -640,7 +644,35 @@ export async function startFakeDockerApi(
   const portFile = path.join(dir, "port");
   const captureFile = path.join(dir, "capture.jsonl");
   const container = uniqueContainerName(options.containerPrefix);
+  const network = uniqueContainerName("nemoclaw-fake-api-network");
   fs.writeFileSync(captureFile, "");
+
+  const networkCreate = await runtimeProvider.command(
+    ["network", "create", "--internal", network],
+    {
+      artifactName: `create-fake-${options.kind}-api-network`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  try {
+    expectExitZero(networkCreate, `create fake ${options.kind} API network`);
+  } catch (error) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
+  cleanup(`remove ${network}`, async () => {
+    const remove = await runtimeProvider.command(["network", "rm", network], {
+      artifactName: `cleanup-${network}`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 60_000,
+    });
+    if (remove.exitCode !== 0 && !/No such network:/iu.test(resultText(remove))) {
+      expectExitZero(remove, `remove fake ${options.kind} API network ${network}`);
+    }
+  });
 
   const runtimeArgs = [
     "run",
@@ -648,6 +680,8 @@ export async function startFakeDockerApi(
     "--rm",
     "--name",
     container,
+    "--network",
+    network,
     "-p",
     "0.0.0.0::8080",
     "-e",
@@ -658,7 +692,7 @@ export async function startFakeDockerApi(
     `${options.captureFileEnv}=/tmp/fake/capture.jsonl`,
   ];
   if (options.kind === "slack") {
-    runtimeArgs.splice(7, 0, "-p", "0:8081", "-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
+    runtimeArgs.push("-p", "0:8081", "-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
   }
   for (const [key, value] of Object.entries(options.expectedEnv)) {
     runtimeArgs.push("-e", `${key}=${value}`);
@@ -668,8 +702,9 @@ export async function startFakeDockerApi(
     `${dir}:/tmp/fake`,
     "-v",
     `${FAKE_LIB_DIR}:/opt/nemoclaw-e2e:ro`,
-    "node:22-bookworm-slim",
+    FAKE_API_IMAGE,
     "node",
+    ...(options.nodeArgs ?? []),
     `/opt/nemoclaw-e2e/${options.imageScript}`,
   );
 
