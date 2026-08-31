@@ -80,7 +80,7 @@ function fakeDockerHost(publishedAddress = "127.0.0.1"): {
 }
 
 async function runCleanup(actions: CleanupAction[]): Promise<void> {
-  for (const action of actions.toReversed()) await action.run();
+  for (let index = actions.length - 1; index >= 0; index -= 1) await actions[index]!.run();
 }
 
 describe("messaging provider installed-runtime proofs", () => {
@@ -109,15 +109,16 @@ describe("messaging provider installed-runtime proofs", () => {
         const runCalls = calls.filter((args) => args[0] === "run");
         expect(networkCreate).toBeDefined();
         expect(runCalls).toHaveLength(2);
+        const createdNetwork = networkCreate!;
         const [apiRun, proxyRun] = runCalls as [string[], string[]];
-        const network = networkCreate!.at(-1);
+        const network = createdNetwork.at(-1);
         const apiContainer = apiRun[apiRun.indexOf("--name") + 1];
         const proxyContainer = proxyRun[proxyRun.indexOf("--name") + 1];
         const publications = proxyRun.flatMap((argument, index) =>
           argument === "-p" ? [proxyRun[index + 1]] : [],
         );
 
-        expect(networkCreate.slice(0, -1)).toEqual(["network", "create", "--internal"]);
+        expect(createdNetwork.slice(0, -1)).toEqual(["network", "create", "--internal"]);
         expect(apiRun).toEqual(expect.arrayContaining(["--network", network]));
         expect(apiRun).not.toContain("-p");
         expect(apiRun).not.toContain("bridge");
