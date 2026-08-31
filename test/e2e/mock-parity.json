@@ -226,6 +226,7 @@
         "src/lib/actions/sandbox/policy-channel-add-drift.test.ts",
         "test/channels/channels-add-preset.test.ts",
         "test/runtime/policy/policy-channel-agent-resolution.test.ts",
+        "test/onboarding/effective-policy-contracts.test.ts",
         "test/onboarding/validate-blueprint.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
