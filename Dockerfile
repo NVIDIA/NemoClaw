@@ -763,6 +763,7 @@ ENV NPM_CONFIG_AUDIT=false \
 RUN --network=default \
     --mount=type=bind,source=tools/mcp-tool-discovery-runtime/npm-ci-locked.sh,target=/usr/local/lib/nemoclaw-build-tools/npm-ci-locked.sh \
     --mount=type=bind,source=tools/mcp-tool-discovery-runtime/npm-cache-seed,target=/usr/local/lib/nemoclaw-build-tools/npm-cache-seed \
+    --mount=type=tmpfs,target=/root/.npm \
     if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
       export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
       export NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem; \
