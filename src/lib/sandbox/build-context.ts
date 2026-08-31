@@ -358,6 +358,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "lib", "normalize_mutable_config_perms.py"),
     path.join(stagedScriptsDir, "lib", "normalize_mutable_config_perms.py"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "refresh-openclaw-wechat-placeholder.py"),
+    path.join(stagedScriptsDir, "lib", "refresh-openclaw-wechat-placeholder.py"),
+  );
   // Build-time messaging applier used by OpenClaw and Hermes Dockerfiles.
   fs.cpSync(
     path.join(rootDir, "src", "lib", "messaging"),
