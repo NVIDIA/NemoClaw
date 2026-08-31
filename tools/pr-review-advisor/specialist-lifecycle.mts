@@ -143,6 +143,7 @@ export async function runAdvisorSpecialist(input: {
           if (settled.error) throw settled.error;
         }
       }
+      if (input.cancelled?.()) result = "cancelled";
       if (result === "complete") {
         stage = "download";
         lifecycle.download(input.env);

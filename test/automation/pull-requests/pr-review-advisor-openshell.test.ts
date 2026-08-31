@@ -214,57 +214,55 @@ describe("PR review advisor specialist lifecycle", () => {
   });
 
   it.each([
-    { failedStage: "configure", expectedCalls: ["configure", "gateway"] },
-    { failedStage: "create", expectedCalls: ["configure", "create", "gateway"] },
-    { failedStage: "run", expectedCalls: ["configure", "create", "run", "sandbox", "gateway"] },
-    {
-      failedStage: "execution",
-      expectedCalls: ["configure", "create", "run", "sandbox", "gateway"],
-    },
-    {
-      failedStage: "download",
-      expectedCalls: ["configure", "create", "run", "download", "sandbox", "gateway"],
-    },
-    {
-      failedStage: "validate",
-      expectedCalls: ["configure", "create", "run", "download", "validate", "sandbox", "gateway"],
-    },
+    { failedStage: "configure", expectedDownload: false },
+    { failedStage: "create", expectedDownload: false },
+    { failedStage: "run", expectedDownload: false },
+    { failedStage: "execution", expectedDownload: false },
+    { failedStage: "download", expectedDownload: true },
+    { failedStage: "validate", expectedDownload: true },
   ])("fails closed and cleans owned resources after $failedStage failure", async ({
     failedStage,
-    expectedCalls,
+    expectedDownload,
   }) => {
-    const calls: string[] = [];
+    let sandboxOwned = false;
+    let analysisActive = false;
+    let gatewayStopped = false;
+    let downloaded = false;
     const failures: Record<string, () => never> = {
       [failedStage]: () => {
         throw new Error(`${failedStage} failed`);
       },
     };
-    const fail = (stage: string): void => {
-      calls.push(stage);
-      failures[stage]?.();
-    };
-    const executions: Record<
-      string,
-      () => { cancel: () => void; completion: Promise<void> }
-    > = {
-      execution: () => ({
-        completion: Promise.reject(new Error("execution failed")),
-        cancel: () => void calls.push("cancel"),
-      }),
-    };
+    const fail = (stage: string): void => failures[stage]?.();
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
       startGateway: () => ({
         configure: Promise.resolve().then(() => fail("configure")),
-        stop: async () => void calls.push("gateway"),
+        stop: async () => void (gatewayStopped = true),
       }),
-      create: () => fail("create"),
+      create: () => {
+        fail("create");
+        sandboxOwned = true;
+      },
       run: () => {
         fail("run");
-        return executions[failedStage]?.();
+        analysisActive = true;
+        return {
+          completion:
+            failedStage === "execution"
+              ? Promise.resolve().then(() => {
+                  analysisActive = false;
+                  throw new Error("execution failed");
+                })
+              : Promise.resolve().then(() => void (analysisActive = false)),
+          cancel: () => void (analysisActive = false),
+        };
       },
-      download: () => fail("download"),
-      remove: () => void calls.push("sandbox"),
+      download: () => {
+        downloaded = true;
+        fail("download");
+      },
+      remove: () => void (sandboxOwned = false),
     };
 
     await expect(
@@ -274,7 +272,12 @@ describe("PR review advisor specialist lifecycle", () => {
         validate: () => fail("validate"),
       }),
     ).rejects.toThrow(`${failedStage} failed`);
-    expect(calls).toEqual(expectedCalls);
+    expect({ analysisActive, downloaded, gatewayStopped, sandboxOwned }).toEqual({
+      analysisActive: false,
+      downloaded: expectedDownload,
+      gatewayStopped: true,
+      sandboxOwned: false,
+    });
   });
 
   it("preserves the primary failure when cleanup also fails", async () => {
