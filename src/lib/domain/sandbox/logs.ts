@@ -186,7 +186,7 @@ export const LOG_RELAY_BROKEN_PIPE_EXIT_CODE = 141;
  *
  * EPIPE is the reader hanging up, which is a normal way to stop reading a
  * follow stream and must end the CLI cleanly. Any other write failure is a real
- * fault and stays unhandled so it is not silently reported as a clean stop.
+ * fault. The action reports it, stops both sources, and exits with status 1.
  *
  * Node delivers EPIPE on `process.stdout` asynchronously, as an `error` event
  * rather than a throw from `write()`, so callers must route the stream's
