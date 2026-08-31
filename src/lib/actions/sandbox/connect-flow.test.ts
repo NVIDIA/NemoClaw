@@ -649,20 +649,32 @@ describe("connectSandbox flow", () => {
     const sb = { name: "alpha", agent: "openclaw", provider: null, model: null, policies: [] };
     const harness = createConnectHarness();
     harness.inspectLaunchReadinessSpy
-      .mockResolvedValueOnce({
-        kind: "fallback",
-        category: "config",
-        fence: { epochId: "a".repeat(64) },
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        fenceFailed: false,
-        recoveryBlocked: false,
+      .mockImplementationOnce(async (...args: unknown[]) => {
+        const deps = args[1] as {
+          recordObservationTiming: (stage: string, elapsedMs: number) => void;
+        };
+        deps.recordObservationTiming("sandbox-identity", 3);
+        return {
+          kind: "fallback",
+          category: "config",
+          fence: { epochId: "a".repeat(64) },
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          fenceFailed: false,
+          recoveryBlocked: false,
+        };
       })
-      .mockResolvedValueOnce({
-        kind: "accepted",
-        category: "accepted",
-        agent: { name: "openclaw" },
-        sb,
+      .mockImplementationOnce(async (...args: unknown[]) => {
+        const deps = args[1] as {
+          recordObservationTiming: (stage: string, elapsedMs: number) => void;
+        };
+        deps.recordObservationTiming("sandbox-identity", 5);
+        return {
+          kind: "accepted",
+          category: "accepted",
+          agent: { name: "openclaw" },
+          sb,
+        };
       });
     harness.launchReadinessMutationGateSpy.mockResolvedValueOnce({ kind: "changed" });
 
@@ -672,9 +684,10 @@ describe("connectSandbox flow", () => {
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
     expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
-    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
-      "Probe complete: launch readiness is healthy for 'alpha'.",
-    );
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Probe complete: launch readiness is healthy for 'alpha'.");
+    expect(output).toContain("readiness.sandbox-identity=8ms");
+    expect(output).toContain("readiness.sandbox-identity.attempts=2");
   });
 
   it("probe-only refuses runtime recovery when prior evidence cannot be fenced (#8942)", async () => {
