@@ -68,15 +68,25 @@ exec ${JSON.stringify(systemTar)} "\${args[@]}"
   }).trim();
 
   const dist = path.join(workspace, "dist");
+  const packagedRunner = path.join(dist, "nemoclaw");
   const shared = path.join(workspace, "nemoclaw", "dist", "shared");
-  fs.mkdirSync(dist);
+  fs.mkdirSync(path.join(dist, "lib"), { recursive: true });
+  fs.mkdirSync(path.join(packagedRunner, "blueprint"), { recursive: true });
   fs.mkdirSync(shared, { recursive: true });
   fs.writeFileSync(path.join(dist, "nemoclaw.js"), 'console.log("fixture");\n');
+  fs.writeFileSync(path.join(dist, "lib", "blueprint-runner.js"), 'console.log("fixture");\n');
+  fs.writeFileSync(path.join(packagedRunner, "package.json"), '{"type":"module"}\n');
+  fs.writeFileSync(
+    path.join(packagedRunner, "blueprint", "runner.js"),
+    'console.log("fixture");\n',
+  );
   fs.writeFileSync(
     path.join(dist, "build-identity.json"),
     `${JSON.stringify({ nemoclawVersion: "0.0.0", sourceRevision: candidateSha })}\n`,
   );
   for (const boundary of [
+    "openshell-gateway-health-sdk.js",
+    "openshell-observation-boundary.cjs",
     "openshell-policy-boundary.cjs",
     "sandbox-name.cjs",
     "snapshot-sanitizer-boundary.cjs",
