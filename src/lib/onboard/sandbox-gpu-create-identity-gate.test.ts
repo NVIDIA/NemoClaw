@@ -214,6 +214,7 @@ describe("created sandbox identity gate", () => {
     const sandboxId = "alpha-sandbox-id";
     const sandboxIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
     const input = noGpuInput();
+    input.cliName = "nemohermes";
     input.resumeVerifiedCreate = {
       route: "none",
       liveIdentityFingerprint: sandboxIdentityFingerprint,
@@ -245,9 +246,9 @@ describe("created sandbox identity gate", () => {
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
     });
-    expect(error.mock.calls.flat().join("\n")).toContain(
-      "Run `nemoclaw <sandbox-name> destroy` to attempt identity-bound recovery.",
-    );
+    const recoveryOutput = error.mock.calls.flat().join("\n");
+    expect(recoveryOutput).toContain("Run `nemohermes alpha destroy` to recover");
+    expect(recoveryOutput).toContain("Stop if the command cannot verify its retained identity.");
   });
 
   it("resumes the exact verified sandbox without issuing another create (#9833)", async () => {

@@ -28,6 +28,7 @@ export const GPU_IMAGE_ID = `sha256:${"a".repeat(64)}`;
 export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
   return {
     sandboxName: "alpha",
+    cliName: "nemoclaw",
     provider: "nim",
     sandboxGpuConfig: {
       mode: "1",

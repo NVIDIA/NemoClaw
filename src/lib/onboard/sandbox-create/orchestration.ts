@@ -2518,6 +2518,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           const created = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
             {
               sandboxName,
+              cliName: cliName(),
               ...(resumeVerifiedCreateInput
                 ? { resumeVerifiedCreate: resumeVerifiedCreateInput }
                 : {}),

@@ -210,6 +210,8 @@ type LifecycleRegistrationFields = Pick<SandboxEntry, "lifecycleGeneration">;
 
 export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
+  /** Active CLI spelling used in identity-bound recovery guidance. */
+  cliName: string;
   /** Resume the exact sandbox retained after its verified-create checkpoint was persisted. */
   resumeVerifiedCreate?: {
     readonly route: SelectedDockerGpuRoute;

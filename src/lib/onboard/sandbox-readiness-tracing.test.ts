@@ -93,6 +93,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     expect(
       waitForCreatedSandboxReadyWithTrace({
         sandboxName: NAME,
+        gatewayName: "owner-gateway",
         timeoutSecs: 30,
         runCaptureOpenshell,
         isSandboxReady,
@@ -112,6 +113,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     expect(
       waitForCreatedSandboxReadyWithTrace({
         sandboxName: NAME,
+        gatewayName: "owner-gateway",
         timeoutSecs: 30,
         runCaptureOpenshell,
         isSandboxReady,
@@ -128,6 +130,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 
     const readiness = waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
+      gatewayName: "owner-gateway",
       timeoutSecs: 30,
       runCaptureOpenshell,
       isSandboxReady,
@@ -152,6 +155,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     expect(
       waitForCreatedSandboxReadyWithTrace({
         sandboxName: NAME,
+        gatewayName: "owner-gateway",
         timeoutSecs: 0,
         runCaptureOpenshell,
         isSandboxReady,
@@ -169,6 +173,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 
     const ready = waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
+      gatewayName: "owner-gateway",
       // 600 / 2 = 300 readyAttempts. With the K=1 (no-debounce) opt-out we bail
       // out after the 2nd poll, preserving the original fast-fail intent.
       timeoutSecs: 600,
@@ -202,6 +207,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 
     const ready = waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
+      gatewayName: "owner-gateway",
       timeoutSecs: 600,
       runCaptureOpenshell,
       isSandboxReady,
@@ -224,6 +230,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 
     const ready = waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
+      gatewayName: "owner-gateway",
       timeoutSecs: 600,
       runCaptureOpenshell,
       isSandboxReady,
@@ -241,6 +248,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 
     const ready = waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
+      gatewayName: "owner-gateway",
       timeoutSecs: 600,
       runCaptureOpenshell,
       isSandboxReady,
@@ -268,6 +276,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 
     const ready = waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
+      gatewayName: "owner-gateway",
       timeoutSecs: 2, // -> readyAttempts = 1, far below the default 30-poll debounce
       runCaptureOpenshell,
       isSandboxReady,
@@ -293,6 +302,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 
     const ready = waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
+      gatewayName: "owner-gateway",
       timeoutSecs: 600,
       runCaptureOpenshell,
       isSandboxReady,
@@ -313,6 +323,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 
     const ready = waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
+      gatewayName: "owner-gateway",
       timeoutSecs: 600,
       runCaptureOpenshell,
       isSandboxReady,
@@ -344,6 +355,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 
     const ready = waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
+      gatewayName: "owner-gateway",
       timeoutSecs: 600,
       runCaptureOpenshell,
       isSandboxReady,
@@ -507,6 +519,7 @@ describe("DGX Spark fresh-onboard readiness replay (#6043)", () => {
     const { runCaptureOpenshell, sleep } = replay(reporterSequence);
     const ready = waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
+      gatewayName: "owner-gateway",
       timeoutSecs: 1500,
       runCaptureOpenshell,
       isSandboxReady,
@@ -535,6 +548,7 @@ describe("DGX Spark fresh-onboard readiness replay (#6043)", () => {
     const { runCaptureOpenshell, sleep } = replay(reporterSequence);
     const ready = waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
+      gatewayName: "owner-gateway",
       timeoutSecs: 1500,
       runCaptureOpenshell,
       isSandboxReady,

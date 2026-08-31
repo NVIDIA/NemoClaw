@@ -15,11 +15,39 @@ function replay(outputs: readonly string[]) {
 }
 
 describe("created sandbox Ready stability", () => {
+  it("reads same-name readiness only from the owning gateway", () => {
+    let nowMs = 0;
+    const runCaptureOpenshell = vi.fn((args: string[]) =>
+      args.join(" ") === "sandbox list -g owner-gateway" ? `${NAME}   Pending` : `${NAME}   Ready`,
+    );
+    const sleep = vi.fn((seconds: number) => {
+      nowMs += seconds * 1_000;
+    });
+
+    const ready = waitForCreatedSandboxReadyWithTrace({
+      sandboxName: NAME,
+      gatewayName: "owner-gateway",
+      timeoutSecs: 1,
+      runCaptureOpenshell,
+      isSandboxReady,
+      getSandboxFailurePhase,
+      sleep,
+      now: () => nowMs,
+    });
+
+    expect(ready).toEqual({ ready: false, reason: "timeout", failurePhase: null });
+    expect(runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list", "-g", "owner-gateway"], {
+      ignoreError: true,
+    });
+    expect(runCaptureOpenshell).not.toHaveBeenCalledWith(["sandbox", "list"], expect.anything());
+  });
+
   it("preserves single-poll Ready acceptance by default", () => {
     const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready   1s ago`]);
 
     const ready = waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
+      gatewayName: "owner-gateway",
       timeoutSecs: 600,
       runCaptureOpenshell,
       isSandboxReady,
@@ -45,6 +73,7 @@ describe("created sandbox Ready stability", () => {
 
     const ready = waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
+      gatewayName: "owner-gateway",
       timeoutSecs: 600,
       runCaptureOpenshell,
       isSandboxReady,

@@ -317,6 +317,7 @@ function confirmManagedRuntimeCommitReadiness(options: {
   );
   const committedReadiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
     sandboxName: input.sandboxName,
+    gatewayName: input.gatewayName,
     timeoutSecs: input.sandboxReadyTimeoutSecs,
     runCaptureOpenshell: deps.runCaptureOpenshell,
     isSandboxReady,
@@ -354,7 +355,9 @@ function confirmManagedRuntimeCommitReadiness(options: {
   console.error(
     "  NemoClaw did not start dashboard forwarding. NemoClaw left the sandbox in place for identity-bound recovery.",
   );
-  console.error("  Run `nemoclaw <sandbox-name> destroy` to attempt identity-bound recovery.");
+  console.error(
+    `  Run \`${input.cliName} ${input.sandboxName} destroy\` to recover the retained sandbox. Stop if the command cannot verify its retained identity.`,
+  );
   throw new Error(
     `Sandbox '${input.sandboxName}' did not return to Ready after its managed runtime commit.`,
   );
@@ -715,7 +718,7 @@ export function createSandboxGpuCreateAttemptRunner(
           streamSandboxCreate(createExecutable, createExecutableArgs, createEnv, {
             ...(input.createWorkingDirectory ? { cwd: input.createWorkingDirectory } : {}),
             readyCheck: () => {
-              const list = deps.runCaptureOpenshell(["sandbox", "list"], {
+              const list = deps.runCaptureOpenshell(["sandbox", "list", "-g", input.gatewayName], {
                 ignoreError: true,
                 timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
               });
@@ -826,6 +829,7 @@ export function createSandboxGpuCreateAttemptRunner(
             if (createFailure?.kind === "sandbox_create_incomplete") {
               const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
                 sandboxName: input.sandboxName,
+                gatewayName: input.gatewayName,
                 timeoutSecs: input.sandboxReadyTimeoutSecs,
                 runCaptureOpenshell: deps.runCaptureOpenshell,
                 isSandboxReady,
@@ -846,7 +850,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 );
               }
             } else {
-              const list = deps.runCaptureOpenshell(["sandbox", "list"], {
+              const list = deps.runCaptureOpenshell(["sandbox", "list", "-g", input.gatewayName], {
                 ignoreError: true,
                 timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
               });
@@ -1041,6 +1045,7 @@ export function createSandboxGpuCreateAttemptRunner(
     console.log("  Waiting for sandbox to become ready...");
     const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
       sandboxName: input.sandboxName,
+      gatewayName: input.gatewayName,
       timeoutSecs: input.sandboxReadyTimeoutSecs,
       runCaptureOpenshell: deps.runCaptureOpenshell,
       isSandboxReady,

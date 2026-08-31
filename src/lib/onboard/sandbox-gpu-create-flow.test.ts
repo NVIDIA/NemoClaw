@@ -405,7 +405,10 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
 
     vi.mocked(deps.runCaptureOpenshell).mockClear();
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], READY_CHECK_OPTIONS);
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw"],
+      READY_CHECK_OPTIONS,
+    );
 
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
@@ -620,7 +623,10 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
 
     const result = await runSandboxGpuCreateFlow(createInput(), deps);
     expect(result).toMatchObject({ route: "native" });
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], READY_CHECK_OPTIONS);
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw"],
+      READY_CHECK_OPTIONS,
+    );
   });
 
   it("defers restart-safe no-GPU recreation until the create process exits (#8720)", async () => {

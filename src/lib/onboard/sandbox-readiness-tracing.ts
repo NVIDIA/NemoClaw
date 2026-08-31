@@ -213,6 +213,7 @@ export function createSandboxReadyWaiter(
 
 export function waitForCreatedSandboxReadyWithTrace(options: {
   sandboxName: string;
+  gatewayName: string;
   timeoutSecs: number;
   runCaptureOpenshell: RunCaptureOpenshell;
   isSandboxReady: (output: string, sandboxName: string) => boolean;
@@ -265,6 +266,7 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
 }): CreatedSandboxReadinessResult {
   const {
     sandboxName,
+    gatewayName,
     timeoutSecs,
     runCaptureOpenshell,
     isSandboxReady,
@@ -307,7 +309,9 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
     let result: CreatedSandboxReadinessResult | null = null;
     waitUntil(() => {
       attempt += 1;
-      const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+      const list = runCaptureOpenshell(["sandbox", "list", "-g", gatewayName], {
+        ignoreError: true,
+      });
       if (isSandboxReady(list, sandboxName)) {
         const identity = options.checkReadyIdentity?.(getRemainingMs) ?? "ready";
         if (identity === "identity_changed") {
