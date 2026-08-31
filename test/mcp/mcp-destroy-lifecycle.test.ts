@@ -49,6 +49,7 @@ const testState = vi.hoisted(() => {
     removePreset: vi.fn(),
     runOpenshell: vi.fn(),
     runOpenshellProviderCommand: vi.fn(),
+    runtimeSelection: { gatewayName: "nemoclaw", workspace: "default" } as const,
     stopNimContainer: vi.fn(),
     stopNimContainerByName: vi.fn(),
     warnUnpreservedUserManagedFiles: vi.fn(),
@@ -85,6 +86,11 @@ vi.mock("../../src/lib/actions/sandbox/process-recovery", () => ({
   executeGatewaySupervisorAction: testState.executeGatewaySupervisorAction,
   executeSandboxCommand: testState.executeSandboxCommand,
   executeSandboxExecCommand: testState.executeSandboxExecCommand,
+}));
+
+vi.mock("../../src/lib/actions/sandbox/mcp-bridge-provider", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/lib/actions/sandbox/mcp-bridge-provider")>()),
+  getMcpProviderInspectionRuntimeSelection: vi.fn(() => testState.runtimeSelection),
 }));
 
 vi.mock("../../src/lib/actions/sandbox/policy-get", () => ({
@@ -647,6 +653,25 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.removePreset).not.toHaveBeenCalled();
   });
 
+  it("rejects changed gateway authority before exec-unavailable provider inspection (#10514)", async () => {
+    registerAlphaGithubBridge();
+    const before = registry.getSandbox("alpha");
+
+    const message = await captureMessage(() =>
+      bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha", {
+        gatewayName: "nemoclaw-19080",
+        workspace: "default",
+      }),
+    );
+
+    expect(message).toMatch(/changed its MCP gateway authority.*different target/i);
+    expect(registry.getSandbox("alpha")).toEqual(before);
+    expect(testState.calls).toEqual([]);
+    expect(testState.adapterCalls).toEqual([]);
+    expect(testState.applyPresetContent).not.toHaveBeenCalled();
+    expect(testState.removePreset).not.toHaveBeenCalled();
+  });
+
   it("rejects a credential-key collision during host-side rebuild recovery (#9388)", async () => {
     registerAlphaGithubBridge();
     testState.providers.set("example-api", {
@@ -990,8 +1015,11 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(testState.executeSandboxExecCommand).toHaveBeenCalledOnce();
     expect(testState.executeSandboxExecCommand).toHaveBeenCalledWith("alpha", ":", undefined, {
       allowLocalDockerFallback: false,
+      runtimeSelection: testState.runtimeSelection,
     });
-    expect(testState.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":");
+    expect(testState.executeSandboxCommand).toHaveBeenCalledWith("alpha", ":", {
+      runtimeSelection: testState.runtimeSelection,
+    });
     expect(testState.runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "delete", "-g", "nemoclaw", "alpha"],
       expect.any(Object),

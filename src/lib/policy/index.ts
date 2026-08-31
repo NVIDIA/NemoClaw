@@ -17,7 +17,9 @@ import {
   inspectSandboxPolicy,
   PolicyObservationError,
   type SandboxPolicyInspection,
+  submitSandboxPolicyFile,
 } from "../adapters/openshell/policy-state";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 import * as openshellResolveModule from "../adapters/openshell/resolve";
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
@@ -651,18 +653,47 @@ export interface PolicyMutationContext {
   readonly gatewayName: string;
   readonly inspection: SandboxPolicyInspection;
   readonly basePolicyDocument?: string;
+  readonly runtimeSelection?: OpenShellRuntimeSelection;
 }
 
 interface LivePolicyBoundary {
   readonly gatewayName: string;
   readonly inspection: SandboxPolicyInspection;
   readonly basePolicyDocument: string;
+  readonly runtimeSelection?: OpenShellRuntimeSelection;
+}
+
+function captureSelectedSandboxBasePolicy(
+  sandboxName: string,
+  gatewayName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): string {
+  return runtimeSelection
+    ? captureSandboxBasePolicy(sandboxName, gatewayName, runtimeSelection)
+    : captureSandboxBasePolicy(sandboxName, gatewayName);
+}
+
+function captureSelectedSandboxBasePolicyRevision(
+  sandboxName: string,
+  gatewayName: string,
+  revision: number,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): string {
+  return runtimeSelection
+    ? captureSandboxBasePolicyRevision(
+        sandboxName,
+        gatewayName,
+        revision,
+        runtimeSelection,
+      )
+    : captureSandboxBasePolicyRevision(sandboxName, gatewayName, revision);
 }
 
 function inspectLivePolicyBoundary(
   sandboxName: string,
   operation: string,
   requestedGatewayName?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): LivePolicyBoundary {
   let sandbox: ReturnType<typeof registry.getSandbox>;
   try {
@@ -699,12 +730,27 @@ function inspectLivePolicyBoundary(
       `Refusing to ${operation}: the sandbox gateway is unavailable or invalid.`,
     );
   }
+  if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
+    throw new PolicyObservationError(
+      `Refusing to ${operation}: the selected OpenShell target does not match the recorded sandbox gateway.`,
+    );
+  }
   const inspection = inspectSandboxPolicy({
     sandboxName,
     gatewayName,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
   });
-  const basePolicyDocument = captureSandboxBasePolicy(sandboxName, gatewayName);
-  return { gatewayName, inspection, basePolicyDocument };
+  const basePolicyDocument = captureSelectedSandboxBasePolicy(
+    sandboxName,
+    gatewayName,
+    runtimeSelection,
+  );
+  return {
+    gatewayName,
+    inspection,
+    basePolicyDocument,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
+  };
 }
 
 /** Read the current live policy through the sandbox's recorded gateway binding. */
@@ -712,8 +758,14 @@ export function inspectPolicyMutationContext(
   sandboxName: string,
   operation: string,
   requestedGatewayName?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): PolicyMutationContext {
-  return inspectLivePolicyBoundary(sandboxName, operation, requestedGatewayName);
+  return inspectLivePolicyBoundary(
+    sandboxName,
+    operation,
+    requestedGatewayName,
+    runtimeSelection,
+  );
 }
 
 /**
@@ -723,16 +775,28 @@ export function inspectPolicyMutationContext(
 export function captureRecordedSandboxBasePolicy(
   sandboxName: string,
   operation: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): string {
-  return inspectLivePolicyBoundary(sandboxName, operation).basePolicyDocument;
+  return inspectLivePolicyBoundary(
+    sandboxName,
+    operation,
+    runtimeSelection?.gatewayName,
+    runtimeSelection,
+  ).basePolicyDocument;
 }
 
 function preparePolicyMutationContext(
   sandboxName: string,
   operation: string,
   requestedGatewayName?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): PolicyMutationContext {
-  return inspectLivePolicyBoundary(sandboxName, operation, requestedGatewayName);
+  return inspectLivePolicyBoundary(
+    sandboxName,
+    operation,
+    requestedGatewayName,
+    runtimeSelection,
+  );
 }
 
 /** Re-read live state immediately before a policy mutation. */
@@ -741,7 +805,12 @@ export function recheckPolicyMutationContext(
   operation: string,
   previous: PolicyMutationContext,
 ): PolicyMutationContext {
-  const current = inspectPolicyMutationContext(sandboxName, operation, previous.gatewayName);
+  const current = inspectPolicyMutationContext(
+    sandboxName,
+    operation,
+    previous.gatewayName,
+    previous.runtimeSelection,
+  );
   if (
     !isDeepStrictEqual(current.inspection.effectivePolicy, previous.inspection.effectivePolicy) ||
     (previous.basePolicyDocument !== undefined &&
@@ -786,9 +855,10 @@ function inspectLivePolicyForMutation(
   sandboxName: string,
   operation: string,
   gatewayName?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): PolicyMutationContext | null {
   try {
-    return preparePolicyMutationContext(sandboxName, operation, gatewayName);
+    return preparePolicyMutationContext(sandboxName, operation, gatewayName, runtimeSelection);
   } catch (error) {
     reportPolicyObservationFailure(error);
     return null;
@@ -822,6 +892,7 @@ function submitComposedPolicy(
   sandboxName: string,
   policyDocument: string,
   gatewayName?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): PolicySetSubmission {
   // `mkdtempSync` creates nothing when it throws, so only the write and the
   // submission need the cleanup boundary. Writing inside it keeps a failed or
@@ -834,10 +905,12 @@ function submitComposedPolicy(
   try {
     const tmpFile = path.join(tmpDir, "policy.yaml");
     fs.writeFileSync(tmpFile, policyDocument, { encoding: "utf-8", mode: 0o600 });
-    const result = run(buildPolicySetCommand(tmpFile, sandboxName), {
-      ignoreError: true,
-      ...(gatewayName ? { env: { OPENSHELL_GATEWAY: gatewayName } } : {}),
-    });
+    const result = runtimeSelection
+      ? submitSandboxPolicyFile(sandboxName, tmpFile, runtimeSelection)
+      : run(buildPolicySetCommand(tmpFile, sandboxName), {
+          ignoreError: true,
+          ...(gatewayName ? { env: { OPENSHELL_GATEWAY: gatewayName } } : {}),
+        });
     return {
       outcome: classifyPolicySetResult({
         status: result.status,
@@ -896,7 +969,11 @@ function inspectPolicyDocumentReadback(
 ): "matched" | "different" | "unavailable" {
   try {
     return policyDocumentsMatch(
-      captureSandboxBasePolicy(sandboxName, previous.gatewayName),
+      captureSelectedSandboxBasePolicy(
+        sandboxName,
+        previous.gatewayName,
+        previous.runtimeSelection,
+      ),
       desiredPolicyDocument,
     )
       ? "matched"
@@ -1006,6 +1083,7 @@ export function setPolicyDocument(
     gatewayName?: string;
     operation?: string;
     context?: PolicyMutationContext;
+    runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ): boolean {
   const operation = options.operation ?? "set the sandbox policy";
@@ -1013,7 +1091,12 @@ export function setPolicyDocument(
   try {
     context = options.context
       ? recheckPolicyMutationContext(sandboxName, operation, options.context)
-      : preparePolicyMutationContext(sandboxName, operation, options.gatewayName);
+      : preparePolicyMutationContext(
+          sandboxName,
+          operation,
+          options.gatewayName,
+          options.runtimeSelection,
+        );
   } catch (error) {
     console.error(`  ${policyObservationError(error)}`);
     if (options.nonFatal) return false;
@@ -1035,12 +1118,18 @@ export function setPolicyDocument(
     }
 
     const originalDocument =
-      context.basePolicyDocument ?? captureSandboxBasePolicy(sandboxName, context.gatewayName);
+      context.basePolicyDocument ??
+      captureSelectedSandboxBasePolicy(
+        sandboxName,
+        context.gatewayName,
+        context.runtimeSelection,
+      );
     const originalVersion = context.inspection.policyIdentity.activeVersion;
     const { outcome, status } = submitComposedPolicy(
       sandboxName,
       requestedDocument,
       context.gatewayName,
+      context.runtimeSelection,
     );
     if (outcome.kind === "rejected") {
       console.error(`  ${policySetFailure(sandboxName, outcome).message}`);
@@ -1050,7 +1139,12 @@ export function setPolicyDocument(
 
     let observed: PolicyMutationContext;
     try {
-      observed = preparePolicyMutationContext(sandboxName, operation, context.gatewayName);
+      observed = preparePolicyMutationContext(
+        sandboxName,
+        operation,
+        context.gatewayName,
+        context.runtimeSelection,
+      );
     } catch (error) {
       if (outcome.kind === "ambiguous") {
         console.error(
@@ -1064,7 +1158,12 @@ export function setPolicyDocument(
       process.exit(1);
     }
     const observedDocument =
-      observed.basePolicyDocument ?? captureSandboxBasePolicy(sandboxName, observed.gatewayName);
+      observed.basePolicyDocument ??
+      captureSelectedSandboxBasePolicy(
+        sandboxName,
+        observed.gatewayName,
+        observed.runtimeSelection,
+      );
     const observedVersion = observed.inspection.policyIdentity.activeVersion;
     const requestedIsCurrent = policyDocumentsMatch(observedDocument, requestedDocument);
     const concurrentRevision = observedVersion > originalVersion + 1;
@@ -1088,11 +1187,12 @@ export function setPolicyDocument(
     let externalDocument: string;
     try {
       externalDocument = requestedIsCurrent
-        ? captureSandboxBasePolicyRevision(
+        ? captureSelectedSandboxBasePolicyRevision(
             sandboxName,
-            context.gatewayName,
-            observedVersion - 1,
-          )
+              context.gatewayName,
+              observedVersion - 1,
+              context.runtimeSelection,
+            )
         : observedDocument;
       const rebased = rebasePolicyDocumentOntoConcurrentEdit(
         originalDocument,
@@ -1832,7 +1932,11 @@ function removePresetFromPolicy(
 function removePreset(
   sandboxName: string,
   presetName: string,
-  options: { nonFatal?: boolean; presetContent?: string } = {},
+  options: {
+    nonFatal?: boolean;
+    presetContent?: string;
+    runtimeSelection?: OpenShellRuntimeSelection;
+  } = {},
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
@@ -1864,10 +1968,19 @@ function removePreset(
   }
 
   const operation = `remove policy preset '${presetName}'`;
-  const context = inspectLivePolicyForMutation(sandboxName, operation);
+  const context = inspectLivePolicyForMutation(
+    sandboxName,
+    operation,
+    options.runtimeSelection?.gatewayName,
+    options.runtimeSelection,
+  );
   if (!context) return false;
 
-  const currentPolicy = readCurrentSandboxPolicy(sandboxName, context.gatewayName);
+  const currentPolicy = readCurrentSandboxPolicy(
+    sandboxName,
+    context.gatewayName,
+    context.runtimeSelection,
+  );
   if (!currentPolicy) {
     console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
     return false;
@@ -1943,6 +2056,7 @@ function removePreset(
     !setPolicyDocument(sandboxName, updated, {
       nonFatal: options.nonFatal,
       context,
+      runtimeSelection: options.runtimeSelection,
     })
   ) {
     return false;
@@ -1952,12 +2066,18 @@ function removePreset(
 }
 
 /** Round-trippable live policy body from `--base`, or null when unreadable. */
-function readCurrentSandboxPolicy(sandboxName: string, gatewayName?: string): string | null {
+function readCurrentSandboxPolicy(
+  sandboxName: string,
+  gatewayName?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): string | null {
   try {
     const selectedGateway =
       gatewayName ?? resolveSandboxGatewayName(registry.getSandbox(sandboxName));
     return (
-      parseCurrentPolicyOrEmpty(captureSandboxBasePolicy(sandboxName, selectedGateway)) || null
+      parseCurrentPolicyOrEmpty(
+        captureSelectedSandboxBasePolicy(sandboxName, selectedGateway, runtimeSelection),
+      ) || null
     );
   } catch {
     return null;
@@ -2247,6 +2367,7 @@ function applyPresetContent(
     suppressDisclosure?: boolean;
     disclosedPresetState?: PresetPolicyState | null;
     includeMessagingCredentialBindings?: boolean;
+    runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
@@ -2322,12 +2443,21 @@ function applyPresetContent(
   const operation = `apply policy preset '${presetName}'`;
   let context: PolicyMutationContext;
   try {
-    context = preparePolicyMutationContext(sandboxName, operation);
+    context = preparePolicyMutationContext(
+      sandboxName,
+      operation,
+      options.runtimeSelection?.gatewayName,
+      options.runtimeSelection,
+    );
   } catch (error) {
     return reportPolicyObservationFailure(error);
   }
 
-  const currentPolicy = readCurrentSandboxPolicy(sandboxName, context.gatewayName);
+  const currentPolicy = readCurrentSandboxPolicy(
+    sandboxName,
+    context.gatewayName,
+    context.runtimeSelection,
+  );
   // A live mutation requires a usable policy; empty is an invalid read, not a
   // fresh sandbox whose unknown policy may be replaced with a scaffold.
   if (!currentPolicy) {
@@ -2433,6 +2563,7 @@ function applyPresetContent(
       !setPolicyDocument(sandboxName, merged, {
         nonFatal: options.nonFatal,
         context,
+        runtimeSelection: options.runtimeSelection,
       })
     ) {
       return false;
@@ -2833,9 +2964,11 @@ function getPresetContentGatewayState(
   sandboxName: string,
   presetContent: string,
   policyKey?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): "match" | "absent" | "drift" | null {
   return inspectPresetContentGatewayState({
-    readPolicy: () => readCurrentSandboxPolicy(sandboxName) ?? "",
+    readPolicy: () =>
+      readCurrentSandboxPolicy(sandboxName, runtimeSelection?.gatewayName, runtimeSelection) ?? "",
     parseCurrentPolicy: parseCurrentPolicyOrEmpty,
     extractPresetEntries,
     presetContent,

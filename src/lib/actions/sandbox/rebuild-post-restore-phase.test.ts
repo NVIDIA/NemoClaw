@@ -102,6 +102,7 @@ describe("rebuild post-restore phase", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   function input() {
@@ -148,6 +149,47 @@ describe("rebuild post-restore phase", () => {
       300_000,
       { allowLocalDockerFallback: false },
     );
+  });
+
+  it("reuses the MCP rebuild target for every post-restore sandbox command (#10514)", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "hostile-gateway");
+    vi.stubEnv("OPENSHELL_WORKSPACE", "hostile-workspace");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/hostile/tls");
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://hostile.invalid");
+    const runtimeSelection = {
+      gatewayName: "recorded-gateway",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const args = { ...input(), mcpRuntimeSelection: runtimeSelection };
+
+    await runRebuildPostRestorePhase(args);
+
+    expect(processRecovery.executeSandboxExecCommand).toHaveBeenCalledWith(
+      "alpha",
+      "openclaw doctor --fix",
+      300_000,
+      { allowLocalDockerFallback: false, runtimeSelection },
+    );
+    expect(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).toHaveBeenCalledWith(
+      "alpha",
+      null,
+      args.log,
+      runtimeSelection,
+    );
+    expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).toHaveBeenCalledWith(
+      "alpha",
+      args.log,
+      runtimeSelection,
+    );
+    expect(
+      rebuildConfigHash.refreshMutableOpenClawConfigHashAfterPostRestoreWrites,
+    ).toHaveBeenCalledExactlyOnceWith("alpha", args.log, runtimeSelection);
+    expect(vi.mocked(rebuildConfigHash.verifyFinalMutableOpenClawConfigHash).mock.calls).toEqual([
+      ["alpha", args.log, runtimeSelection],
+      ["alpha", args.log, runtimeSelection],
+    ]);
+    expect(process.env.OPENSHELL_GATEWAY).toBe("hostile-gateway");
   });
 
   it("does not record a final hash without trusted doctor completion (#9946)", async () => {
@@ -217,9 +259,9 @@ describe("rebuild post-restore phase", () => {
   });
 
   it("stops rebuild when OpenClaw messaging config reapply fails", async () => {
-    vi.mocked(
-      rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor,
-    ).mockRejectedValue(new Error("config write failed"));
+    vi.mocked(rebuildMessaging.reapplyMessagingManifestAfterOpenClawDoctor).mockRejectedValue(
+      new Error("config write failed"),
+    );
     const args = input();
 
     await runRebuildPostRestorePhase(args);
@@ -230,9 +272,7 @@ describe("rebuild post-restore phase", () => {
     expect(args.bail).toHaveBeenCalledWith(
       "OpenClaw messaging manifest config reapply failed during rebuild.",
     );
-    expect(args.log).toHaveBeenCalledWith(
-      "Messaging manifest reapply failed: config write failed",
-    );
+    expect(args.log).toHaveBeenCalledWith("Messaging manifest reapply failed: config write failed");
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain("Messaging manifest config reapply failed after doctor");
   });

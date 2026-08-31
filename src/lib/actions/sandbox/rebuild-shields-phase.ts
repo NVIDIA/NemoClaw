@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { CLI_NAME } from "../../cli/branding";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import { openRebuildShieldsWindowForState } from "./rebuild-flow-helpers";
 import { type RebuildShieldsWindow, relockRebuildShieldsWindow } from "./rebuild-shields";
@@ -10,6 +11,7 @@ export interface RebuildShieldsPhaseResult {
   window: RebuildShieldsWindow;
   staleSandboxWasLocked: boolean;
   relock: (sandboxStillExists: boolean) => boolean;
+  bindRuntimeSelection: (runtimeSelection?: OpenShellRuntimeSelection) => void;
 }
 
 /**
@@ -40,10 +42,20 @@ export function runRebuildShieldsPhase(
     bail("Failed to auto-unlock shields.");
     return null;
   }
+  let runtimeSelection: OpenShellRuntimeSelection | undefined;
   return {
     window,
     staleSandboxWasLocked,
+    bindRuntimeSelection: (selection) => {
+      runtimeSelection = selection;
+    },
     relock: (sandboxStillExists: boolean) =>
-      relockRebuildShieldsWindow(sandboxName, window, sandboxStillExists, CLI_NAME),
+      relockRebuildShieldsWindow(
+        sandboxName,
+        window,
+        sandboxStillExists,
+        CLI_NAME,
+        runtimeSelection,
+      ),
   };
 }

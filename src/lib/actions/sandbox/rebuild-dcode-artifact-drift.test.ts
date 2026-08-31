@@ -34,7 +34,13 @@ describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
-    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    expect(harness.relockSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+      true,
+      "nemoclaw",
+      undefined,
+    );
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       harness.preparedDcodeBuildContext,
     );
@@ -61,7 +67,13 @@ describe("rebuildSandbox DCode flow: prepared artifact drift", () => {
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
-    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    expect(harness.relockSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+      true,
+      "nemoclaw",
+      undefined,
+    );
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       harness.preparedDcodeBuildContext,
     );

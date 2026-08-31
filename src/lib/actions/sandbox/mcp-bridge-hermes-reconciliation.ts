@@ -11,7 +11,10 @@ import {
 } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
-import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
+import {
+  getMcpProviderInspectionRuntimeSelection,
+  type McpProviderInspectionRuntimeSelection,
+} from "./mcp-bridge-provider-inspection";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
 import { sleepMcpBridgeRetry } from "./mcp-bridge/timing";
 
@@ -34,6 +37,7 @@ export interface HermesMcpReconciliationOptions {
   entries?: readonly McpBridgeEntry[];
   managedServerNames?: readonly string[];
   credentialRevisions?: ReadonlyMap<string, McpAttachedCredentialRevision>;
+  runtimeSelection?: McpProviderInspectionRuntimeSelection;
 }
 
 export function hermesMcpReconciliationRemediationLines(sandboxName: string): readonly string[] {
@@ -162,7 +166,8 @@ export function inspectHermesMcpRuntimeIntent(
     managedServerNames,
     options.credentialRevisions,
   );
-  const runtimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+  const runtimeSelection =
+    options.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
   let result: ReturnType<typeof runOpenshellProviderCommand>;
   try {
     result = runOpenshellProviderCommand(buildInspectArgs(sandboxName, JSON.stringify(payload)), {

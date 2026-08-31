@@ -35,6 +35,12 @@ import {
 } from "./mcp-bridge-provider";
 import * as processRecovery from "./process-recovery";
 
+const runtimeSelection = {
+  gatewayName: "nemoclaw-8091",
+  localTlsDir: "/recorded/gateway/tls",
+  workspace: "default",
+} as const;
+
 describe("OpenShell MCP provider state", () => {
   afterEach(() => {
     providerCommand.setProviderCommandRuntimeHooksForTest({});
@@ -139,12 +145,9 @@ Provider:
       addedAt: "2026-08-19T00:00:00.000Z",
     };
 
-    expect(() =>
-      assertMcpProviderRecoverable(entry, {
-        gatewayName: "nemoclaw-8080",
-        workspace: "default",
-      }),
-    ).toThrow(/legacy generic profile.*cannot bind to an MCP endpoint/);
+    expect(() => assertMcpProviderRecoverable(entry, runtimeSelection)).toThrow(
+      /legacy generic profile.*cannot bind to an MCP endpoint/,
+    );
   });
 
   it("republishes an exact provider only after policy binding without reading its credential", () => {
@@ -456,10 +459,7 @@ alpha-mcp-slack   generic  1                 0
     };
 
     expect(() =>
-      assertNoAttachedProviderCredentialCollisions("alpha", [entry], {
-        gatewayName: "nemoclaw-8080",
-        workspace: "default",
-      }),
+      assertNoAttachedProviderCredentialCollisions("alpha", [entry], runtimeSelection),
     ).toThrow("MCP server 'example' has no complete authenticated credential binding");
     expect(() =>
       assertNoRegisteredProviderCredentialCollisions([entry], {
@@ -646,7 +646,7 @@ alpha-mcp-slack   generic  1                 0
         providerId: "11111111-2222-4333-8444-555555555555",
         policyName: "mcp-bridge-github",
         addedAt: "2026-06-01T00:00:00.000Z",
-      }),
+      }, runtimeSelection),
     ).toBe("v11");
     const proofCommand = exec.mock.calls[0]?.[1] ?? "";
     expect(proofCommand).toContain("\n");
@@ -655,6 +655,7 @@ alpha-mcp-slack   generic  1                 0
     expect(proofCommand).not.toContain("base64 -d");
     expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
       allowLocalDockerFallback: false,
+      runtimeSelection,
     });
 
     exec.mockReturnValue({ status: 0, stdout: "raw-secret", stderr: "" });
@@ -669,7 +670,7 @@ alpha-mcp-slack   generic  1                 0
         providerId: "11111111-2222-4333-8444-555555555555",
         policyName: "mcp-bridge-github",
         addedAt: "2026-06-01T00:00:00.000Z",
-      }),
+      }, runtimeSelection),
     ).toThrow(/Could not observe the current OpenShell credential revision/);
   });
 
@@ -693,6 +694,7 @@ alpha-mcp-slack   generic  1                 0
         policyName: "mcp-bridge-github",
         addedAt: "2026-06-01T00:00:00.000Z",
       },
+      runtimeSelection,
       { refreshAfterObservedAbsence },
     );
 
@@ -723,7 +725,7 @@ alpha-mcp-slack   generic  1                 0
       .mockReturnValueOnce({ status: 0, stdout: "v11", stderr: "" })
       .mockReturnValue({ status: 0, stdout: "v12", stderr: "" });
 
-    expect(waitForAttachedMcpCredential("alpha", entry)).toBe("v12");
+    expect(waitForAttachedMcpCredential("alpha", entry, runtimeSelection)).toBe("v12");
     expect(exec).toHaveBeenCalledTimes(3);
   });
 
@@ -747,7 +749,7 @@ alpha-mcp-slack   generic  1                 0
       .mockReturnValue({ status: 0, stdout: "v7480654703696766813", stderr: "" });
 
     expect(
-      waitForAttachedMcpCredential("alpha", entry, {
+      waitForAttachedMcpCredential("alpha", entry, runtimeSelection, {
         previousRevision: "v15566468742889590075",
       }),
     ).toBe("v7480654703696766813");
@@ -774,7 +776,7 @@ alpha-mcp-slack   generic  1                 0
         providerId: "11111111-2222-4333-8444-555555555555",
         policyName: "mcp-bridge-github",
         addedAt: "2026-06-01T00:00:00.000Z",
-      }),
+      }, runtimeSelection),
     ).toThrow(/last bounded observation: canonical/);
   });
 
@@ -798,7 +800,7 @@ alpha-mcp-slack   generic  1                 0
         providerId: "11111111-2222-4333-8444-555555555555",
         policyName: "mcp-bridge-github",
         addedAt: "2026-06-01T00:00:00.000Z",
-      }),
+      }, runtimeSelection),
     ).toThrow(/last bounded observation: absent/);
     expect(exec).toHaveBeenCalledOnce();
   });
@@ -821,9 +823,11 @@ alpha-mcp-slack   generic  1                 0
       .mockReturnValue({ status: 0, stdout: "v12", stderr: "" });
     const refreshAfterObservedAbsence = vi.fn();
 
-    expect(waitForAttachedMcpCredential("alpha", entry, { refreshAfterObservedAbsence })).toBe(
-      "v12",
-    );
+    expect(
+      waitForAttachedMcpCredential("alpha", entry, runtimeSelection, {
+        refreshAfterObservedAbsence,
+      }),
+    ).toBe("v12");
     expect(refreshAfterObservedAbsence).toHaveBeenCalledOnce();
     expect(exec).toHaveBeenCalledTimes(3);
   });
@@ -852,6 +856,7 @@ alpha-mcp-slack   generic  1                 0
           policyName: "mcp-bridge-github",
           addedAt: "2026-06-01T00:00:00.000Z",
         },
+        runtimeSelection,
         { refreshAfterObservedAbsence },
       ),
     ).toThrow(/post-absence provider refresh attempted: yes/u);
@@ -884,6 +889,7 @@ alpha-mcp-slack   generic  1                 0
           policyName: "mcp-bridge-github",
           addedAt: "2026-06-01T00:00:00.000Z",
         },
+        runtimeSelection,
         { refreshAfterObservedAbsence },
       );
     } catch (error) {
@@ -919,6 +925,7 @@ alpha-mcp-slack   generic  1                 0
           policyName: "mcp-bridge-github",
           addedAt: "2026-06-01T00:00:00.000Z",
         },
+        runtimeSelection,
         { refreshAfterObservedAbsence },
       ),
     ).toThrow("provider refresh failed");
@@ -948,6 +955,7 @@ alpha-mcp-slack   generic  1                 0
           policyName: "mcp-bridge-github",
           addedAt: "2026-06-01T00:00:00.000Z",
         },
+        runtimeSelection,
         { previousRevision: "v11", refreshAfterObservedAbsence },
       ),
     ).toThrow(/last bounded observation: v11; post-absence provider refresh attempted: yes/u);
@@ -971,7 +979,7 @@ alpha-mcp-slack   generic  1                 0
         providerId: "11111111-2222-4333-8444-555555555555",
         policyName: "mcp-bridge-github",
         addedAt: "2026-06-01T00:00:00.000Z",
-      }),
+      }, runtimeSelection),
     ).toThrow(/did not confirm credential 'GITHUB_TOKEN' was revoked/);
 
     const proofCommand = exec.mock.calls[0]?.[1] ?? "";
@@ -979,6 +987,7 @@ alpha-mcp-slack   generic  1                 0
     expect(proofCommand).not.toContain("base64 -d");
     expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
       allowLocalDockerFallback: false,
+      runtimeSelection,
     });
   });
 
@@ -1000,16 +1009,22 @@ alpha-mcp-slack   generic  1                 0
       stderr: "",
     });
 
-    expect(waitForAttachedMcpCredential("alpha", entry, { previousRevision: "v11" })).toBe("v12");
+    expect(
+      waitForAttachedMcpCredential("alpha", entry, runtimeSelection, {
+        previousRevision: "v11",
+      }),
+    ).toBe("v12");
     expect(exec).toHaveBeenCalledTimes(2);
 
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
     exec.mockClear();
     exec.mockReturnValue({ status: 0, stdout: "v11", stderr: "" });
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
-    expect(() => waitForAttachedMcpCredential("alpha", entry, { previousRevision: "v11" })).toThrow(
-      /did not synchronize the expected credential revision/,
-    );
+    expect(() =>
+      waitForAttachedMcpCredential("alpha", entry, runtimeSelection, {
+        previousRevision: "v11",
+      }),
+    ).toThrow(/did not synchronize the expected credential revision/);
     expect(exec).toHaveBeenCalledTimes(1);
   });
 });

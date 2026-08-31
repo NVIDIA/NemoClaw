@@ -6,7 +6,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { stripAnsi } from "../../adapters/openshell/client";
-import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
+import {
+  type OpenShellRuntimeSelection,
+  runOpenshellProviderCommand,
+} from "../../adapters/openshell/provider-command";
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
 import { getDockerDriverGatewayLocalTlsDir } from "../../onboard/docker-driver-gateway-local-tls";
 import { reportsExactProviderNotFound } from "../../onboard/extra-provider-diagnostic-parser";
@@ -51,11 +54,7 @@ export type McpProviderAttachmentInspection = {
   error?: string;
 };
 
-export type McpProviderInspectionRuntimeSelection = {
-  gatewayName: string;
-  localTlsDir?: string;
-  workspace: string;
-};
+export type McpProviderInspectionRuntimeSelection = OpenShellRuntimeSelection;
 
 const GATEWAY_CLIENT_TLS_FILES = ["ca.crt", "client/tls.crt", "client/tls.key"] as const;
 

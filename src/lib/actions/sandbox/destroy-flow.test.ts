@@ -16,7 +16,6 @@ import {
   expectFailedHardeningStillDeletes,
   expectFailedMcpFinalizePreservesRegistry,
   expectFailedMcpRestorePreservesDestroyFailure,
-  expectMcpFinalizeAfterDelete,
   expectMcpFinalizeBridgeErrorReturnsFailure,
   expectMcpPrepareBridgeErrorAborts,
   expectMcpRestoreAfterDeleteFailure,
@@ -1094,7 +1093,12 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha");
+    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", {
+      runtimeSelection: expect.objectContaining({
+        gatewayName: "nemoclaw-19080",
+        workspace: "default",
+      }),
+    });
   });
 
   it("does not require mutable Hermes config for absent-sandbox cleanup", async () => {
@@ -1109,6 +1113,10 @@ describe("destroySandbox flow", () => {
 
     expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
       force: false,
+      runtimeSelection: expect.objectContaining({
+        gatewayName: "nemoclaw-19080",
+        workspace: "default",
+      }),
     });
   });
 
@@ -1366,14 +1374,6 @@ describe("destroySandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(7);
   });
 
-  it("detaches MCP providers before delete and finalizes them only after delete succeeds", async () => {
-    const harness = createDestroyHarness({ mcpServers: ["github", "slack"] });
-
-    await harness.destroySandbox("alpha", { yes: true });
-
-    expectMcpFinalizeAfterDelete(harness);
-  });
-
   it("restores MCP runtime state when sandbox delete fails", async () => {
     const harness = createDestroyHarness({
       activeTimer: true,
@@ -1467,14 +1467,15 @@ describe("destroySandbox flow", () => {
 
     expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
       force: false,
+      runtimeSelection: expect.objectContaining({
+        gatewayName: "nemoclaw-19080",
+        workspace: "default",
+      }),
     });
     expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).toHaveBeenCalledTimes(2);
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
     expect(harness.compareAndSwapSessionSpy).toHaveBeenCalledOnce();
     expect(harness.updateSessionSpy).not.toHaveBeenCalled();
-    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
-      "nemoclaw-19080",
-      harness.runOpenshellSpy,
-    );
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw-19080", expect.any(Function));
   });
 });

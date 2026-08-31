@@ -62,6 +62,7 @@ import {
 } from "./destroy-presence";
 import {
   prepareSandboxDestroy,
+  resolveSandboxDestroyRuntimeSelection,
   stopModelRouterForDestroyedSandbox,
   stopSandboxInferenceResources,
 } from "./destroy-preflight";
@@ -563,9 +564,10 @@ async function destroySandboxUnlocked(
   options: string[] | DestroySandboxOptions = {},
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
-  if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
-  const destroySession = onboardSession.loadSession();
   const registeredSandbox = registry.getSandbox(sandboxName);
+  const operationRuntimeSelection = resolveSandboxDestroyRuntimeSelection(registeredSandbox);
+  if (!(await confirmSandboxDestroy(sandboxName, normalized, operationRuntimeSelection))) return;
+  const destroySession = onboardSession.loadSession();
   const retainedRecoveryRecords = onboardSession.listRetainedSandboxRecoveryRecords();
   const retainedRecoveryAuthority = selectRetainedSandboxRecoveryAuthority(
     sandboxName,
@@ -671,9 +673,21 @@ async function destroySandboxUnlocked(
   };
   let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
   destroyPreflight = abortPreparedCleanupOnError(() =>
-    prepareSandboxDestroy(sandboxName, retainedRecoveryAuthority?.gatewayName),
+    prepareSandboxDestroy(
+      sandboxName,
+      retainedRecoveryAuthority?.gatewayName,
+      operationRuntimeSelection,
+    ),
   );
-  const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } = destroyPreflight;
+  const {
+    cleanupGatewayName,
+    runOpenshell,
+    runtimeSelection: mcpRuntimeSelection,
+    selectedCaptureOpenshell: cleanupCaptureOpenshell,
+    selectedRunOpenshell: cleanupRunOpenshell,
+    sandbox,
+    sandboxConfirmedAbsent,
+  } = destroyPreflight;
   if (retainedRecoveryAuthority && !sandboxConfirmedAbsent) {
     console.error(
       `  Refusing to automatically delete retained sandbox '${sandboxName}': OpenShell still reports it present, but its delete command accepts only the mutable sandbox name. NemoClaw cannot bind that deletion to the retained immutable identity. No sandbox resources were removed. Ask an OpenShell administrator to resolve create-attempt label '${retainedRecoveryAuthority.createAttemptNonce}' to the exact sandbox and use an identity-bound removal procedure. After OpenShell confirms the retained sandbox is absent, rerun '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile its verified Docker containers and recovery record.`,
@@ -719,6 +733,7 @@ async function destroySandboxUnlocked(
       getSandbox: registry.getSandbox,
       listSandboxes: registry.listSandboxes,
       runOpenshell,
+      ...(mcpRuntimeSelection ? { mcpRuntimeSelection } : {}),
       sandbox,
       sandboxConfirmedAbsent,
       sandboxName,
@@ -818,8 +833,20 @@ async function destroySandboxUnlocked(
     forcedLocalCleanup,
     deleteOutput,
     commonLlamaCppAuthorityRetired,
+    runtimeSelection: destroyRuntimeSelection,
   } = destructiveResult;
 
+  if (
+    destroyRuntimeSelection &&
+    cleanupGatewayName !== destroyRuntimeSelection.gatewayName
+  ) {
+    console.error(
+      `  Sandbox '${sandboxName}' was deleted, but its cleanup target changed from '${destroyRuntimeSelection.gatewayName}' to '${cleanupGatewayName}'.`,
+    );
+    console.error("  Local ownership state was preserved. Restore the recorded gateway binding and retry destroy.");
+    preparedManagedLlamaCppCleanup?.abort();
+    requestSandboxDestroyExit(1);
+  }
   /**
    * SOURCE_OF_TRUTH
    * Invalid state: the OpenShell gateway is unreachable while a local sandbox
@@ -890,6 +917,8 @@ async function destroySandboxUnlocked(
     });
     cleanupSandboxServices(sandboxName, {
       stopHostServices: shouldStopHostServices,
+    }, {
+      runOpenshell: cleanupRunOpenshell,
     });
   });
   if (deleteSucceededOrAlreadyGone && commonLlamaCppAuthorityRetired === true) {
@@ -1047,11 +1076,11 @@ async function destroySandboxUnlocked(
     shouldCleanupGatewayAfterConfirmedFinalDestroy({
       deleteSucceededOrAlreadyGone,
       removedRegistryEntry: removed,
-    })
+    }, cleanupCaptureOpenshell ? { captureOpenshell: cleanupCaptureOpenshell } : {})
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
     if (shouldCleanupGateway) {
-      cleanupGatewayAfterLastSandbox(cleanupGatewayName, runOpenshell);
+      cleanupGatewayAfterLastSandbox(cleanupGatewayName, cleanupRunOpenshell);
     } else {
       // `gateway remove <name>` is the modern OpenShell subcommand on every
       // platform; the old `gateway destroy -g` was pre-0.0.44 only and current

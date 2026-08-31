@@ -97,6 +97,11 @@ export type RebuildFlowOverrides = {
     detachedProviderEntries: Array<Record<string, unknown>>;
     scrubbedAdapterEntries?: Array<Record<string, unknown>>;
     policyHandoff?: string;
+    runtimeSelection?: {
+      gatewayName: string;
+      localTlsDir?: string;
+      workspace: string;
+    };
     revalidateBeforeDelete?: () => Promise<void>;
     assertDeleteEdgeUnchanged?: () => void;
   };

@@ -117,9 +117,16 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
       "alpha",
       [detached],
       [scrubbed],
+      undefined,
     );
     expectNoSandboxDelete(harness.runOpenshellSpy);
     expect(harness.onboardSpy).not.toHaveBeenCalled();
-    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    expect(harness.relockSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+      true,
+      "nemoclaw",
+      undefined,
+    );
   });
 });

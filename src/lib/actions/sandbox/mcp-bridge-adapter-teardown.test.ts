@@ -99,6 +99,7 @@ import { prepareMcpBridgesForRebuild } from "./mcp-bridge-rebuild";
 import { scrubManagedMcpAdapterOrThrow } from "./mcp-bridge-adapter-teardown";
 
 const sandbox = { agent: "hermes" } as SandboxEntry;
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" } as const;
 const entry: McpBridgeEntry = {
   server: "github",
   agent: "hermes",
@@ -160,6 +161,7 @@ describe("MCP adapter teardown rollback", () => {
         "alpha",
         "hermes-config",
         expect.objectContaining({ ...entry, credentialRevision: "v12" }),
+        runtimeSelection,
         {},
         "v13",
         {
@@ -181,7 +183,9 @@ describe("MCP adapter teardown rollback", () => {
       type: "nemoclaw-mcp-v1",
     });
 
-    expect(() => scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry)).toThrow(
+    expect(() =>
+      scrubManagedMcpAdapterOrThrow("alpha", sandbox, entry, runtimeSelection),
+    ).toThrow(
       "Could not prove a revision-scoped credential before removing the managed adapter entry for MCP server 'github'.",
     );
     expect(mocks.inspectMcpProvider).not.toHaveBeenCalled();

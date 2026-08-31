@@ -3,6 +3,7 @@
 
 import type { McpBridgeEntry } from "../../state/registry";
 import type { McpScrubbedAdapterEntry } from "./mcp-bridge-adapter-teardown";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider";
 import { addMcpBridge as addMcpBridgeLifecycle } from "./mcp-bridge-add-restart";
 import {
   type McpBridgeAddOptions,
@@ -92,12 +93,14 @@ export interface McpDestroyPreparation {
   destroyAlreadyPrepared: boolean;
   /** True when a previous destroy already confirmed the sandbox was absent. */
   destroyAlreadyPending: boolean;
+  /** One authority-derived OpenShell target frozen for this destroy attempt. */
+  runtimeSelection?: McpProviderInspectionRuntimeSelection;
 }
 
 export async function addMcpBridge(
   sandboxName: string,
   options: McpBridgeAddOptions,
-): Promise<void> {
+): Promise<McpProviderInspectionRuntimeSelection> {
   return addMcpBridgeLifecycle(sandboxName, options);
 }
 
@@ -115,15 +118,19 @@ export async function removeMcpBridge(
 
 export async function prepareMcpBridgesForAbsentSandboxDestroy(
   sandboxName: string,
-  options: { force?: boolean } = {},
+  options: {
+    force?: boolean;
+    runtimeSelection?: McpProviderInspectionRuntimeSelection;
+  } = {},
 ): Promise<McpDestroyPreparation> {
   return prepareMcpBridgesForAbsentSandboxDestroyLifecycle(sandboxName, options);
 }
 
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
+  options: { runtimeSelection?: McpProviderInspectionRuntimeSelection } = {},
 ): Promise<McpDestroyPreparation> {
-  return prepareMcpBridgesForDestroyLifecycle(sandboxName);
+  return prepareMcpBridgesForDestroyLifecycle(sandboxName, options);
 }
 
 export async function restoreMcpBridgesAfterDestroyAbort(
@@ -143,33 +150,38 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
 
 export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation> {
-  return prepareMcpBridgesForAbsentSandboxRebuildLifecycle(sandboxName);
+  return prepareMcpBridgesForAbsentSandboxRebuildLifecycle(sandboxName, runtimeSelection);
 }
 
 export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<McpRebuildPreparation> {
-  return prepareMcpBridgesForRebuildLifecycle(sandboxName);
+  return prepareMcpBridgesForRebuildLifecycle(sandboxName, runtimeSelection);
 }
 
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
   scrubbedAdapterEntries: readonly McpScrubbedAdapterEntry[] = [],
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
   return reattachMcpProvidersAfterRebuildAbortLifecycle(
     sandboxName,
     entries,
     scrubbedAdapterEntries,
+    runtimeSelection,
   );
 }
 
 export async function restoreMcpBridgesAfterRebuild(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
+  runtimeSelection?: McpProviderInspectionRuntimeSelection,
 ): Promise<void> {
-  return restoreMcpBridgesAfterRebuildLifecycle(sandboxName, entries);
+  return restoreMcpBridgesAfterRebuildLifecycle(sandboxName, entries, runtimeSelection);
 }
 
 function parseJsonFlag(args: string[]): { json: boolean; rest: string[] } {
@@ -200,12 +212,17 @@ function parseToolsFlag(args: string[]): { tools: boolean; rest: string[] } {
  * nonzero exit here would break scripted adds mid-remediation; `mcp status
  * <server>` remains the authoritative recheck.
  */
-async function reportAddCredentialResolution(sandboxName: string, server: string): Promise<void> {
+async function reportAddCredentialResolution(
+  sandboxName: string,
+  server: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): Promise<void> {
   let probe: McpBridgeStatus["provider"]["credentialResolution"];
   let credentialEnvName: string | undefined;
   try {
     const [status] = await statusMcpBridge(sandboxName, server, {
       probeCredentialResolution: true,
+      runtimeSelection,
     });
     probe = status?.provider.credentialResolution;
     credentialEnvName = status?.env.names[0];
@@ -321,9 +338,11 @@ export async function dispatchMcpBridgeCommand(
             2,
           );
         const options = parseMcpAddArgs(addRest);
-        await addMcpBridge(sandboxName, options);
+        const runtimeSelection = await addMcpBridge(sandboxName, options);
         console.log(`  MCP server '${options.server}' added to sandbox '${sandboxName}'.`);
-        if (probe !== false) await reportAddCredentialResolution(sandboxName, options.server);
+        if (probe !== false) {
+          await reportAddCredentialResolution(sandboxName, options.server, runtimeSelection);
+        }
         return;
       }
       case "list": {

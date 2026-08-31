@@ -46,6 +46,10 @@ function runHermesProbe(
   shieldsDown = true,
   supervisorResults: SupervisorResult[] = [],
 ) {
+  const runtimeSelection = {
+    gatewayName: "nemoclaw-8091",
+    workspace: "default",
+  } as const;
   let calls = 0;
   let recoveryCalls = 0;
   const recoveryActions: Array<{ action: string; timeout: number }> = [];
@@ -82,7 +86,7 @@ function runHermesProbe(
 
   let message = "";
   try {
-    assertAgentMcpMutationRuntimeCapability("hermes-box", "hermes-config");
+    assertAgentMcpMutationRuntimeCapability("hermes-box", "hermes-config", runtimeSelection);
   } catch (error) {
     message = error instanceof Error ? error.message : String(error);
   }

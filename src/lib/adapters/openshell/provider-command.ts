@@ -3,19 +3,23 @@
 
 import type { StdioOptions } from "node:child_process";
 
-import { buildSubprocessEnv } from "../../subprocess-env";
-import { OPENSHELL_OPERATION_TIMEOUT_MS, runOpenshell } from "./runtime";
+import {
+  buildOpenShellCommandEnv,
+  type OpenShellRuntimeSelection,
+} from "./runtime-selection";
+import {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  runOpenshell,
+} from "./runtime";
+
+export type { OpenShellRuntimeSelection } from "./runtime";
 
 export { OPENSHELL_OPERATION_TIMEOUT_MS };
 
 export type ProviderCommandOptions = {
   env?: Record<string, string | undefined>;
   ignoreError?: boolean;
-  runtimeSelection?: {
-    gatewayName: string;
-    localTlsDir?: string;
-    workspace: string;
-  };
+  runtimeSelection?: OpenShellRuntimeSelection;
   stdio?: StdioOptions;
   timeout?: number;
 };
@@ -37,17 +41,7 @@ export function runOpenshellProviderCommand(args: string[], opts?: ProviderComma
       (entry): entry is [string, string] => entry[1] !== undefined,
     ),
   );
-  const env = buildSubprocessEnv(explicitEnv);
-  if (runtimeSelection) {
-    for (const name of Object.keys(env)) {
-      if (name.startsWith("OPENSHELL_")) delete env[name];
-    }
-    env.OPENSHELL_GATEWAY = runtimeSelection.gatewayName;
-    env.OPENSHELL_WORKSPACE = runtimeSelection.workspace;
-    if (runtimeSelection.localTlsDir) {
-      env.OPENSHELL_LOCAL_TLS_DIR = runtimeSelection.localTlsDir;
-    }
-  }
+  const env = buildOpenShellCommandEnv(runtimeSelection, explicitEnv);
   const providerOpts = {
     ...runtimeOptions,
     env,

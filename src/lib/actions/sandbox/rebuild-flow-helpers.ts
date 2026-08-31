@@ -39,6 +39,7 @@ import type { SandboxEntry } from "../../state/registry";
 import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import {
   getReconciledSandboxGatewayState,
   printSandboxGatewayStateHint,
@@ -580,10 +581,11 @@ export function backupSandboxStateForRebuild(
 export function warnUnpreservedUserManagedFiles(
   sandboxName: string,
   log: (msg: string) => void,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): void {
   let probe: userManagedFilesProbe.UserManagedFilesProbe;
   try {
-    probe = userManagedFilesProbe.probeUserManagedFiles(sandboxName);
+    probe = userManagedFilesProbe.probeUserManagedFiles(sandboxName, runtimeSelection);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log(`User-managed file probe errored: ${message}`);

@@ -209,6 +209,7 @@ const SANDBOX_READY_MAX_RETRIES = 12;
  */
 export function buildDetachedForwardStartSpawn(
   argv: readonly string[],
+  env?: NodeJS.ProcessEnv,
 ): DetachedForwardSpawnRunner {
   return ({ stdout, stderr }) => {
     // Preflight: the helper polls synchronously, so a Node `error` event
@@ -225,6 +226,7 @@ export function buildDetachedForwardStartSpawn(
       const child = spawnChild(argv[0], argv.slice(1), {
         stdio: ["ignore", stdout, stderr],
         detached: true,
+        ...(env ? { env } : {}),
       });
       // Swallow any belated `error` event so a race between accessSync and
       // execve does not crash the process via an unhandled emitter.

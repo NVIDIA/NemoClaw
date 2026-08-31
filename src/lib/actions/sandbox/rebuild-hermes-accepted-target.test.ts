@@ -8,6 +8,7 @@ const phaseMocks = vi.hoisted(() => ({
   clearRecoveryBackup: vi.fn(),
   cleanupPolicySource: vi.fn(),
   findRecoveryBackup: vi.fn(),
+  getMcpRuntimeSelection: vi.fn(),
   openRecreateJournal: vi.fn(),
   recoverCronRestore: vi.fn(),
   runBackup: vi.fn(),
@@ -74,6 +75,7 @@ vi.mock("./rebuild-restore-phase", () => ({
 vi.mock("./rebuild-post-restore-phase", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-post-restore-phase")>()),
   recoverHermesCronRestore: phaseMocks.recoverCronRestore,
+  getMcpPreparationRuntimeSelection: phaseMocks.getMcpRuntimeSelection,
   runHermesCronRestoreTransaction: phaseMocks.runCronRestoreTransaction,
   runRebuildPostRestorePhase: phaseMocks.runPostRestore,
 }));
@@ -104,6 +106,11 @@ describe("Hermes accepted replacement recovery", () => {
     phaseMocks.findRecoveryBackup.mockReturnValue({
       backupPath: recoveryBackupPath,
       timestamp: "2026-08-28T00-00-00-000Z",
+    });
+    phaseMocks.getMcpRuntimeSelection.mockReturnValue({
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
     });
     phaseMocks.runRestore.mockReturnValue({ restoreSucceeded: true });
     phaseMocks.runPostRestore.mockResolvedValue(undefined);
@@ -149,6 +156,7 @@ describe("Hermes accepted replacement recovery", () => {
       window: { relocked: false, wasLocked: false },
       staleSandboxWasLocked: false,
       relock: relockShields,
+      bindRuntimeSelection: vi.fn(),
     });
     phaseMocks.runBackup.mockReturnValue({
       backupManifest: {
@@ -216,6 +224,84 @@ describe("Hermes accepted replacement recovery", () => {
     expect(console.log).toHaveBeenCalledWith("  Recovered the accepted replacement for 'alpha'.");
     expect(console.log).toHaveBeenCalledWith(
       `  Backup is preserved at: ${recoveryBackupPath}`,
+    );
+  });
+
+  it("reuses one recorded MCP target while accepting and restoring a replacement (#10514)", async () => {
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    phaseMocks.getMcpRuntimeSelection.mockReturnValue(runtimeSelection);
+    phaseMocks.runPreflight.mockResolvedValue({
+      ...(await phaseMocks.runPreflight.getMockImplementation()!()),
+      sandboxEntry: {
+        name: "alpha",
+        mcp: { bridges: { github: { server: "github" } } },
+      },
+    });
+    phaseMocks.openRecreateJournal.mockImplementation((input) => ({
+      id: "journal-1",
+      acceptedTarget: true,
+      sourceConfirmedAbsent: true,
+      gatewayAuthority,
+      targetGeneration: "generation-1",
+      targetIntentFingerprint: "intent-1",
+      runtimeSelection: input.resolveRuntimeSelection(),
+      completeAcceptedTarget,
+      markDeleting: vi.fn(),
+      observeSourceForDelete: vi.fn(),
+      confirmDeleted: vi.fn(),
+    }));
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(phaseMocks.getMcpRuntimeSelection).toHaveBeenCalledOnce();
+    expect(phaseMocks.runPostRestore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mcpRuntimeSelection: runtimeSelection,
+      }),
+    );
+  });
+
+  it("carries an interrupted MCP journal target into continued deletion (#10514)", async () => {
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
+    const preflightResult = await phaseMocks.runPreflight.getMockImplementation()!();
+    phaseMocks.runPreflight.mockResolvedValue({
+      ...preflightResult,
+      sandboxEntry: {
+        name: "alpha",
+        mcp: { bridges: { github: { server: "github" } } },
+      },
+    });
+    phaseMocks.openRecreateJournal.mockReturnValue({
+      id: "journal-1",
+      acceptedTarget: false,
+      sourceConfirmedAbsent: false,
+      gatewayAuthority,
+      targetGeneration: "generation-1",
+      targetIntentFingerprint: "intent-1",
+      runtimeSelection,
+      completeAcceptedTarget,
+      markDeleting: vi.fn(),
+      observeSourceForDelete: vi.fn(),
+      confirmDeleted: vi.fn(),
+    });
+    phaseMocks.runDestroy.mockRejectedValue(new Error("stop after selected destroy input"));
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("stop after selected destroy input");
+
+    expect(phaseMocks.runDestroy).toHaveBeenCalledWith(
+      expect.objectContaining({ runtimeSelection }),
     );
   });
 

@@ -21,6 +21,7 @@ import {
   listHarnessRebuildBackups,
   loadRebuildSandbox,
   mcpBridge,
+  mcpBridgeProvider,
   messaging,
   messagingHostForwardLifecycle,
   nim,
@@ -666,10 +667,20 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const ensureMessagingHostForwardAfterRebuildSpy = vi
     .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
     .mockReturnValue(true);
+  const mcpRuntimeSelection = overrides.mcpPreparation?.runtimeSelection ?? {
+    gatewayName: "nemoclaw",
+    workspace: "default",
+  };
+  vi.spyOn(mcpBridgeProvider, "getMcpProviderInspectionRuntimeSelection").mockReturnValue(
+    mcpRuntimeSelection,
+  );
+  const mcpPreparation = overrides.mcpPreparation
+    ? { ...overrides.mcpPreparation, runtimeSelection: mcpRuntimeSelection }
+    : undefined;
   const prepareMcpBridgesForRebuildSpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForRebuild")
     .mockResolvedValue(
-      overrides.mcpPreparation ?? {
+      mcpPreparation ?? {
         entries: [],
         detachedProviderEntries: [],
       },
@@ -677,7 +688,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const prepareMcpBridgesForAbsentSandboxRebuildSpy = vi
     .spyOn(mcpBridge, "prepareMcpBridgesForAbsentSandboxRebuild")
     .mockResolvedValue(
-      overrides.mcpPreparation ?? {
+      mcpPreparation ?? {
         entries: [],
         detachedProviderEntries: [],
         scrubbedAdapterEntries: [],

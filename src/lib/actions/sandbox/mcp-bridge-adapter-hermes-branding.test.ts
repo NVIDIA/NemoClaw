@@ -40,6 +40,8 @@ const entry: McpBridgeEntry = {
   addedAt: new Date(0).toISOString(),
 };
 
+const runtimeSelection = { gatewayName: "nemoclaw-8091", workspace: "default" };
+
 describe("Hermes MCP recovery guidance", () => {
   beforeEach(() => {
     vi.stubEnv("NEMOCLAW_INVOKED_AS", "nemohermes");
@@ -61,7 +63,7 @@ describe("Hermes MCP recovery guidance", () => {
   });
 
   it("uses the invoked CLI name when the managed lifecycle is unavailable", () => {
-    expect(() => assertHermesMcpMutationRuntimeCapability("alpha")).toThrow(
+    expect(() => assertHermesMcpMutationRuntimeCapability("alpha", runtimeSelection)).toThrow(
       "Run `nemohermes alpha recover` and retry.",
     );
   });
@@ -83,8 +85,10 @@ describe("Hermes MCP recovery guidance", () => {
       };
     });
 
-    expect(() => assertHermesMcpMutationRuntimeCapability("alpha")).not.toThrow();
-    expect(() => unregisterHermesAdapter("alpha", entry)).not.toThrow();
+    expect(() =>
+      assertHermesMcpMutationRuntimeCapability("alpha", runtimeSelection),
+    ).not.toThrow();
+    expect(() => unregisterHermesAdapter("alpha", entry, runtimeSelection)).not.toThrow();
     expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(2);
   });
 });

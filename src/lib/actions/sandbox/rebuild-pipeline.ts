@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import { normalizeRebuildSandboxOptions } from "../../domain/lifecycle/options";
 import { BRAVE_API_KEY_ENV, TAVILY_API_KEY_ENV } from "../../inference/web-search";
@@ -33,6 +34,7 @@ import {
 } from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import {
+  getMcpPreparationRuntimeSelection,
   type HermesCronRestoreIdentity,
   HermesCronRestoreIncompleteError,
   printHermesCronRestoreRecoveryCommand,
@@ -280,8 +282,12 @@ async function rebuildSandboxUnlocked(
           return false;
         }
       };
-      const capturePolicyHandoff = (): boolean => {
-        const capturedPath = captureRebuildPolicySource(sandboxName);
+      const capturePolicyHandoff = (runtimeSelection?: OpenShellRuntimeSelection): boolean => {
+        const capturedPath = captureRebuildPolicySource(
+          sandboxName,
+          undefined,
+          runtimeSelection,
+        );
         if (!capturedPath) return false;
         try {
           return publishPolicyHandoff(fs.readFileSync(capturedPath, "utf8"));
@@ -368,6 +374,7 @@ async function rebuildSandboxUnlocked(
         bail("Authoritative rebuild gateway readiness did not produce an authority handoff.");
         return;
       }
+      const mcpEntries = Object.values(sandboxEntry.mcp?.bridges ?? {});
       const recreateJournal = openRebuildRecreateJournal({
         target: {
           sandboxName,
@@ -377,9 +384,16 @@ async function rebuildSandboxUnlocked(
         expectedGatewayAuthority,
         agentName: rebuildAgent || "openclaw",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
+        ...(mcpEntries.length > 0
+          ? {
+              resolveRuntimeSelection: () =>
+                getMcpPreparationRuntimeSelection(sandboxEntry),
+            }
+          : {}),
         log,
         onAuthorityRefusal: (lines) => bail(lines.join("\n")),
       });
+      shieldsPhase.bindRuntimeSelection(recreateJournal.runtimeSelection);
       recreateOptions.rebuildGatewayAuthority = recreateJournal.gatewayAuthority;
       const rebuildRecoveryIdentity = {
         sandboxName,
@@ -397,6 +411,12 @@ async function rebuildSandboxUnlocked(
       // replacement. Retire its journal and stop before the destroy phase so a
       // restart converges to that sandbox instead of deleting it.
       if (recreateJournal.acceptedTarget) {
+        if (mcpEntries.length > 0 && !recreateJournal.runtimeSelection) {
+          bail(
+            "The accepted MCP replacement is missing its recorded OpenShell runtime target.",
+          );
+          return;
+        }
         const recoveryBackup = findRebuildRecoveryBackup(rebuildRecoveryIdentity);
         if (!recoveryBackup) {
           console.error("");
@@ -457,6 +477,9 @@ async function rebuildSandboxUnlocked(
           targetAgentType: rebuildAgent || "openclaw",
           targetImageIsCustom: Boolean(fromDockerfile),
           backupManifest: recoveryBackup,
+          ...(recreateJournal.runtimeSelection
+            ? { runtimeSelection: recreateJournal.runtimeSelection }
+            : {}),
           log,
         });
         await runRebuildPostRestorePhase({
@@ -465,7 +488,10 @@ async function rebuildSandboxUnlocked(
           targetAgentName: rebuildAgent || "openclaw",
           messagingPlan,
           backupManifest: recoveryBackup,
-          mcpEntries: Object.values(sandboxEntry.mcp?.bridges ?? {}),
+          mcpEntries,
+          ...(recreateJournal.runtimeSelection
+            ? { mcpRuntimeSelection: recreateJournal.runtimeSelection }
+            : {}),
           restoreSucceeded: restored.restoreSucceeded,
           backupWasForceSkipped: false,
           staleRecovery: false,
@@ -502,6 +528,9 @@ async function rebuildSandboxUnlocked(
         recreateJournal,
         backupManifest: backup.backupManifest,
         force: normalized.force,
+        ...(recreateJournal.runtimeSelection
+          ? { runtimeSelection: recreateJournal.runtimeSelection }
+          : {}),
         log,
         bail,
         relockShieldsIfNeeded,
@@ -532,6 +561,7 @@ async function rebuildSandboxUnlocked(
                 providerReconfigure.provider,
                 log,
                 "Delete-edge",
+                preparation.runtimeSelection,
               )
             : "missing";
           if (providerReconfigure && providerRegistration !== "missing") {
@@ -549,9 +579,10 @@ async function rebuildSandboxUnlocked(
             durableConfig.dcodeAutoApprovalMode,
             recoveryRecreate,
             recreateOptions.targetGatewayPort,
+            preparation.runtimeSelection,
           );
         },
-        validateAtDeleteEdge: () => {
+        validateAtDeleteEdge: (runtimeSelection) => {
           const validation =
             revalidateManagedWorkloadRebuildBeforeDelete(
               sandboxName,
@@ -568,7 +599,7 @@ async function rebuildSandboxUnlocked(
           // path only after digest-verifying the policy handoff bound to the
           // prepared recovery manifest, so there is no live policy to recapture.
           if (staleRecovery) return validation;
-          return capturePolicyHandoff()
+          return capturePolicyHandoff(runtimeSelection)
             ? validation
             : {
                 ok: false,
@@ -637,6 +668,9 @@ async function rebuildSandboxUnlocked(
           targetAgentType: rebuildAgent || "openclaw",
           targetImageIsCustom: Boolean(fromDockerfile),
           backupManifest: backup.backupManifest,
+          ...(mcpPreparation.runtimeSelection
+            ? { runtimeSelection: mcpPreparation.runtimeSelection }
+            : {}),
           log,
         });
       let hermesCronRestoreIdentity: HermesCronRestoreIdentity | undefined;
@@ -674,6 +708,7 @@ async function rebuildSandboxUnlocked(
         messagingPlan,
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
+        mcpRuntimeSelection: mcpPreparation.runtimeSelection,
         restoreSucceeded: restored.restoreSucceeded,
         hermesCronRestoreIdentity,
         backupWasForceSkipped: backup.backupWasForceSkipped,

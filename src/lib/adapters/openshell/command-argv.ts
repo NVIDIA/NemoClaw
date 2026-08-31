@@ -4,6 +4,8 @@
 // Namespace access keeps the resolver replaceable in focused command tests.
 import * as openshellResolveModule from "./resolve";
 
+export { buildSelectedOpenShellSubprocessEnv } from "./runtime-selection";
+
 export function resolveOpenshellBinary(): string {
   return openshellResolveModule.resolveOpenshell() ?? "openshell";
 }

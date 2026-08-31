@@ -13,6 +13,7 @@ import {
   buildPolicyGetArgs,
   buildPolicyGetFullJsonArgs,
   buildPolicyGetRevisionArgs,
+  buildPolicySetArgs,
 } from "../../policy/commands";
 import {
   assertPolicyRequirementContainment,
@@ -56,10 +57,16 @@ export function isPolicyObservationError(error: unknown): boolean {
 interface SandboxPolicyInspectionOptions {
   readonly sandboxName: string;
   readonly gatewayName?: string;
+  readonly runtimeSelection?: openshellRuntime.OpenShellRuntimeSelection;
 }
 
 interface ActiveGlobalPolicyInspectionOptions {
   readonly gatewayName?: string;
+}
+
+interface PolicyCommandRuntimeSelection {
+  readonly gatewayName?: string;
+  readonly runtimeSelection?: openshellRuntime.OpenShellRuntimeSelection;
 }
 
 function validatePolicyName(name: string, label: string): string {
@@ -92,16 +99,24 @@ function failInspection(subject: "sandbox" | "global" | "gateway", reason: strin
 function captureBoundedOpenShell(
   args: string[],
   subject: "sandbox" | "global" | "gateway",
-  runtimeSelection?: { readonly gatewayName?: string },
+  selection?: PolicyCommandRuntimeSelection,
 ): ReturnType<typeof openshellRuntime.captureResolvedOpenshell> {
-  const env = openshellRuntime.buildOpenShellSubprocessEnv();
-  if (runtimeSelection !== undefined) {
-    for (const name of ["XDG_CONFIG_HOME", "OPENSHELL_WORKSPACE"] as const) {
-      const value = process.env[name];
-      if (value !== undefined) env[name] = value;
-    }
-    if (runtimeSelection.gatewayName !== undefined) {
-      env.OPENSHELL_GATEWAY = runtimeSelection.gatewayName;
+  let env = Object.fromEntries(
+    Object.entries(openshellRuntime.buildOpenShellSubprocessEnv()).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  if (selection !== undefined) {
+    const configHome = process.env.XDG_CONFIG_HOME;
+    if (configHome !== undefined) env.XDG_CONFIG_HOME = configHome;
+    if (selection.runtimeSelection) {
+      env = openshellRuntime.buildOpenShellRuntimeSelectionEnv(env, selection.runtimeSelection);
+    } else {
+      const workspace = process.env.OPENSHELL_WORKSPACE;
+      if (workspace !== undefined) env.OPENSHELL_WORKSPACE = workspace;
+      if (selection.gatewayName !== undefined) {
+        env.OPENSHELL_GATEWAY = selection.gatewayName;
+      }
     }
   }
   try {
@@ -121,9 +136,9 @@ function captureBoundedOpenShell(
 function capturePolicyCommand(
   args: string[],
   subject: "sandbox" | "global" | "gateway",
-  runtimeSelection?: { readonly gatewayName?: string },
+  selection?: PolicyCommandRuntimeSelection,
 ): { readonly output: string; readonly stdout: string; readonly stderr: string } {
-  const result = captureBoundedOpenShell(args, subject, runtimeSelection);
+  const result = captureBoundedOpenShell(args, subject, selection);
   if (
     !isObject(result) ||
     typeof result.output !== "string" ||
@@ -151,23 +166,27 @@ function capturePolicyCommand(
 function capturePolicyRead(
   args: string[],
   subject: "sandbox" | "global",
-  runtimeSelection?: { readonly gatewayName?: string },
+  selection?: PolicyCommandRuntimeSelection,
 ): string {
-  return capturePolicyCommand(args, subject, runtimeSelection).stdout;
+  return capturePolicyCommand(args, subject, selection).stdout;
 }
 
 /** Inspect the effective policy source for one live sandbox. */
 export function inspectSandboxPolicy({
   sandboxName,
   gatewayName,
+  runtimeSelection,
 }: SandboxPolicyInspectionOptions): SandboxPolicyInspection {
   const validatedSandboxName = validatePolicyName(sandboxName, "sandbox name");
   const validatedGatewayName =
     gatewayName === undefined ? undefined : validatePolicyName(gatewayName, "gateway name");
+  if (runtimeSelection && runtimeSelection.gatewayName !== validatedGatewayName) {
+    failInspection("sandbox", "the runtime selection does not match the requested gateway");
+  }
   const raw = capturePolicyRead(
     buildPolicyGetFullJsonArgs(validatedSandboxName, validatedGatewayName),
     "sandbox",
-    { gatewayName: validatedGatewayName },
+    { gatewayName: validatedGatewayName, runtimeSelection },
   );
   try {
     return parseSandboxPolicyMetadata(raw, validatedSandboxName);
@@ -209,12 +228,19 @@ export function inspectActiveGlobalPolicy({
 }
 
 /** Read one sandbox base policy through the same bounded OpenShell adapter. */
-export function captureSandboxBasePolicy(sandboxName: string, gatewayName: string): string {
+export function captureSandboxBasePolicy(
+  sandboxName: string,
+  gatewayName: string,
+  runtimeSelection?: openshellRuntime.OpenShellRuntimeSelection,
+): string {
   const validatedGatewayName = validatePolicyName(gatewayName, "gateway name");
+  if (runtimeSelection && runtimeSelection.gatewayName !== validatedGatewayName) {
+    failInspection("sandbox", "the runtime selection does not match the requested gateway");
+  }
   const raw = capturePolicyRead(
     buildPolicyGetArgs(validatePolicyName(sandboxName, "sandbox name"), validatedGatewayName),
     "sandbox",
-    { gatewayName: validatedGatewayName },
+    { gatewayName: validatedGatewayName, runtimeSelection },
   );
   try {
     return parseOpenShellPolicy(raw).yamlBody;
@@ -231,11 +257,15 @@ export function captureSandboxBasePolicyRevision(
   sandboxName: string,
   gatewayName: string,
   revision: number,
+  runtimeSelection?: openshellRuntime.OpenShellRuntimeSelection,
 ): string {
   if (!Number.isSafeInteger(revision) || revision < 1) {
     failInspection("sandbox", "the requested policy revision is invalid");
   }
   const validatedGatewayName = validatePolicyName(gatewayName, "gateway name");
+  if (runtimeSelection && runtimeSelection.gatewayName !== validatedGatewayName) {
+    failInspection("sandbox", "the runtime selection does not match the requested gateway");
+  }
   const raw = capturePolicyRead(
     buildPolicyGetRevisionArgs(
       validatePolicyName(sandboxName, "sandbox name"),
@@ -243,7 +273,7 @@ export function captureSandboxBasePolicyRevision(
       revision,
     ),
     "sandbox",
-    { gatewayName: validatedGatewayName },
+    { gatewayName: validatedGatewayName, runtimeSelection },
   );
   try {
     return parseOpenShellPolicy(raw).yamlBody;
@@ -255,19 +285,42 @@ export function captureSandboxBasePolicyRevision(
   }
 }
 
+/** Submit one sandbox policy file through an authority-selected OpenShell runtime. */
+export function submitSandboxPolicyFile(
+  sandboxName: string,
+  policyFile: string,
+  runtimeSelection: openshellRuntime.OpenShellRuntimeSelection,
+): ReturnType<typeof openshellRuntime.runOpenshell> {
+  const validatedSandboxName = validatePolicyName(sandboxName, "sandbox name");
+  const gatewayName = validatePolicyName(runtimeSelection.gatewayName, "gateway name");
+  return openshellRuntime.runOpenshell(
+    buildPolicySetArgs(policyFile, validatedSandboxName, gatewayName),
+    {
+      env: openshellRuntime.buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+      ignoreError: true,
+      replaceEnv: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+}
+
 /** Read and fingerprint one sandbox ID without exposing the ID in diagnostics. */
 export function inspectOpenShellSandboxIdentityFingerprint(options: {
   readonly sandboxName: string;
   readonly gatewayName: string;
+  readonly runtimeSelection?: openshellRuntime.OpenShellRuntimeSelection;
 }): string {
   const gatewayName = validatePolicyName(options.gatewayName, "gateway name");
   const sandboxName = validatePolicyName(options.sandboxName, "sandbox name");
+  if (options.runtimeSelection && options.runtimeSelection.gatewayName !== gatewayName) {
+    throw new Error("OpenShell sandbox identity target does not match the runtime selection");
+  }
   let result: ReturnType<typeof openshellRuntime.captureResolvedOpenshell>;
   try {
     result = captureBoundedOpenShell(
       ["sandbox", "get", "-g", gatewayName, sandboxName],
       "sandbox",
-      { gatewayName },
+      { gatewayName, runtimeSelection: options.runtimeSelection },
     );
   } catch {
     throw new Error("OpenShell sandbox identity inspection could not run");

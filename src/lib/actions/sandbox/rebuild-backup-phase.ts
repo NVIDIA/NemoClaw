@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { cleanupTempDir, secureTempFile } from "../../onboard/temp-files";
@@ -58,9 +59,11 @@ function bailForUnsafeOpenClawPluginProvenance(input: RebuildBackupPhaseInput): 
 export function captureRebuildPolicySource(
   sandboxName: string,
   policySourcePath?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): string | null {
   const policy = policyGet.getSandboxPolicy(sandboxName, {
     recordedGatewayOperation: "capture the live policy before sandbox replacement",
+    ...(runtimeSelection ? { runtimeSelection } : {}),
   }).yaml;
   if (!policy) return null;
   const resolvedPolicySourcePath =

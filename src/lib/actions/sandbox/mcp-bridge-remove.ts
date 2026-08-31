@@ -215,8 +215,8 @@ async function removeMcpBridgeUnlocked(
   // entry on an image that predates the managed launcher marker. Hermes still
   // performs its host-side shields preflight here, before any provider, policy,
   // attachment, or adapter side effect.
-  assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
-  await ensureSandboxGatewaySelected(sandboxName);
+  assertAgentMcpConfigMutationAllowed(sandboxName, adapter, providerRuntimeSelection);
+  await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const failures: string[] = [];
   let providerOwnershipProved = !entry.providerName;
@@ -320,11 +320,16 @@ async function removeMcpBridgeUnlocked(
       // this probe precedes every provider/policy/adapter side effect. Hermes
       // retains its helper/lifecycle validation; Deep Agents intentionally
       // skips only the marker that an older image cannot expose.
-      assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter);
+      assertAgentMcpTeardownRuntimeCapability(
+        sandboxName,
+        adapter,
+        providerRuntimeSelection,
+      );
       const adapterRemoval = unregisterAgentAdapter(
         sandboxName,
         (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
         entry,
+        providerRuntimeSelection,
         {
           force: options.force === true,
           envValues: adapterEnvValues,
@@ -343,6 +348,7 @@ async function removeMcpBridgeUnlocked(
             (candidate) => candidate.server !== server,
           ),
           managedServerNames: sandbox.mcp?.managedServerNames,
+          runtimeSelection: providerRuntimeSelection,
         });
       }
     } catch (error) {
@@ -355,7 +361,9 @@ async function removeMcpBridgeUnlocked(
   let policyCleanupProved = false;
   if (adapterCleanupProved) {
     try {
-      removeGeneratedPolicy(sandboxName, entry);
+      removeGeneratedPolicy(sandboxName, entry, {
+        runtimeSelection: providerRuntimeSelection,
+      });
       policyCleanupProved = true;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -393,7 +401,7 @@ async function removeMcpBridgeUnlocked(
         // skipping a fresh-exec probe lets cleanup proceed even if another
         // unrelated provider reference is also dangling.
         if (!providerWasMissing && !providerDetachedBeforeAdapterCleanup) {
-          waitForDetachedMcpCredential(sandboxName, entry);
+          waitForDetachedMcpCredential(sandboxName, entry, providerRuntimeSelection);
         }
         reservationCleanupProved = true;
       }

@@ -8,7 +8,16 @@ export function buildPolicySetCommand(
   sandboxName: string,
   gatewayName?: string,
 ): string[] {
-  return buildOpenshellCommand([
+  return buildOpenshellCommand(buildPolicySetArgs(policyFile, sandboxName, gatewayName));
+}
+
+/** Set one sandbox policy through an already-selected OpenShell runtime. */
+export function buildPolicySetArgs(
+  policyFile: string,
+  sandboxName: string,
+  gatewayName?: string,
+): string[] {
+  return [
     "policy",
     "set",
     ...policyGatewayArgs(gatewayName),
@@ -16,7 +25,7 @@ export function buildPolicySetCommand(
     policyFile,
     "--wait",
     sandboxName,
-  ]);
+  ];
 }
 
 /** Read the round-trippable base policy before a mutation. */

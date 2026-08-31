@@ -231,8 +231,13 @@ export async function runRebuildPreflightPhase(
     log,
     bail,
     deps: {
-      checkGatewaySchema: (name, scopedBail) =>
-        checkRebuildGatewaySchemaPreflight(name, expectedSandboxEntry, scopedBail),
+      checkGatewaySchema: (name, scopedBail, runtimeSelection) =>
+        checkRebuildGatewaySchemaPreflight(
+          name,
+          expectedSandboxEntry,
+          scopedBail,
+          runtimeSelection,
+        ),
       preflightCredentials: (_name, entry, scopedLog, scopedBail) =>
         preflightRebuildCredentials(entry, scopedLog, scopedBail),
       // Non-DCode rebuilds stay on the existing typed base-image preflight.

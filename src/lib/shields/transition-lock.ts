@@ -12,12 +12,20 @@ import {
   NAME_MAX_LENGTH,
   NAME_VALID_PATTERN,
 } from "../name-validation";
-import { resolveNemoclawStateDir } from "../state/paths";
+import {
+  resolveNemoclawStateDir,
+  resolveNemoclawStateGatewayPort,
+} from "../state/paths";
 import { isProcessAlive, readProcessStartIdentity } from "./timer-control";
 
 /** Shared state-root authority for callers already serialized by this facade. */
 export function resolveShieldsStateDir(homeDir?: string): string {
   return resolveNemoclawStateDir(homeDir);
+}
+
+/** Validated gateway port paired with the Shields state directory. */
+export function resolveShieldsStateGatewayPort(): number {
+  return resolveNemoclawStateGatewayPort();
 }
 
 const LOCK_VERSION = 1;

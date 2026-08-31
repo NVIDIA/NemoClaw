@@ -20,6 +20,7 @@ import {
   type SandboxRecreateObserver,
   type SandboxRecreateTarget,
 } from "../../onboard/sandbox-recreate-probe";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import {
   advanceSandboxRecreateTransaction,
   beginSandboxRecreateTransaction,
@@ -258,9 +259,10 @@ export interface RebuildRecreateJournal {
   readonly gatewayAuthority: CheckpointGatewayAuthority;
   readonly targetGeneration: string;
   readonly targetIntentFingerprint: string;
+  readonly runtimeSelection?: OpenShellRuntimeSelection;
   markDeleting(): void;
-  observeSourceForDelete(): RebuildRecreateSourcePresence;
-  confirmDeleted(): void;
+  observeSourceForDelete(runtimeSelection?: OpenShellRuntimeSelection): RebuildRecreateSourcePresence;
+  confirmDeleted(runtimeSelection?: OpenShellRuntimeSelection): void;
   completeAcceptedTarget(): void;
 }
 
@@ -326,6 +328,8 @@ export interface OpenRebuildRecreateJournalInput {
   readonly targetIntentFingerprint: string;
   readonly log: (message: string) => void;
   readonly observe?: RebuildSandboxObserver;
+  readonly runtimeSelection?: OpenShellRuntimeSelection;
+  readonly resolveRuntimeSelection?: () => OpenShellRuntimeSelection;
   /**
    * Invoked with ready-to-print lines when gateway authority cannot be
    * revalidated, so the command layer can fail cleanly (#8103).
@@ -337,7 +341,12 @@ export function openRebuildRecreateJournal(
   input: OpenRebuildRecreateJournalInput,
 ): RebuildRecreateJournal {
   const { target, agentName, targetIntentFingerprint, log } = input;
-  const observe = input.observe ?? observeRebuildSandbox;
+  const observeTarget = (
+    runtimeSelection = input.runtimeSelection,
+  ): ReturnType<RebuildSandboxObserver> =>
+    input.observe
+      ? input.observe(target)
+      : observeRebuildSandbox(target, undefined, runtimeSelection);
   // Authority revalidation runs before the destroy phase. Handing the refusal
   // to the caller lets rebuild report the migration and its remedy instead of
   // crashing with a Node stack trace (#8103). The dedicated rebuild resolver
@@ -366,8 +375,11 @@ export function openRebuildRecreateJournal(
   }
   const gatewayAuthority = checkpointGatewayAuthority(authority);
   const sourceEntry = registry.getSandbox(target.sandboxName);
-  const observation = observe(target);
   const active = onboardSession.loadSession()?.checkpoint?.sandboxRecreate ?? null;
+  const runtimeSelection = input.resolveRuntimeSelection
+    ? input.resolveRuntimeSelection()
+    : input.runtimeSelection;
+  const observation = observeTarget(runtimeSelection);
   const recovery = active
     ? planSandboxRecreateRecovery(active, observation, sourceEntry)
     : { action: "continue_delete" as const };
@@ -426,12 +438,13 @@ export function openRebuildRecreateJournal(
     gatewayAuthority,
     targetGeneration: transaction.targetGeneration,
     targetIntentFingerprint: transaction.targetIntentFingerprint,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
     markDeleting: () => {
       if (sandboxRecreatePhaseReached(phase, "deleted")) return;
       advance("deleting");
     },
-    observeSourceForDelete: () => {
-      const current = observe(target);
+    observeSourceForDelete: (runtimeSelection) => {
+      const current = observeTarget(runtimeSelection);
       if (current.state === "missing") return "missing";
       if (
         !transaction.sourceLiveIdentityFingerprint ||
@@ -443,8 +456,8 @@ export function openRebuildRecreateJournal(
       }
       return "source";
     },
-    confirmDeleted: () => {
-      if (observe(target).state !== "missing") {
+    confirmDeleted: (runtimeSelection) => {
+      if (observeTarget(runtimeSelection).state !== "missing") {
         throw new Error(
           `Cannot continue sandbox '${target.sandboxName}' replacement: OpenShell still reports the journaled source after delete.`,
         );

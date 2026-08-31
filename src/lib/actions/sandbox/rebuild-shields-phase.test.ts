@@ -45,8 +45,20 @@ describe("rebuild Shields phase", () => {
 
     expect(phaseMocks.openWindow).toHaveBeenCalledWith("alpha", false);
     expect(phase).toMatchObject({ window, staleSandboxWasLocked: false });
+    const runtimeSelection = {
+      gatewayName: "recorded-gateway",
+      localTlsDir: "/authority/tls",
+      workspace: "default",
+    };
+    phase?.bindRuntimeSelection(runtimeSelection);
     expect(phase?.relock(true)).toBe(true);
-    expect(phaseMocks.relockWindow).toHaveBeenCalledWith("alpha", window, true, "nemoclaw");
+    expect(phaseMocks.relockWindow).toHaveBeenCalledWith(
+      "alpha",
+      window,
+      true,
+      "nemoclaw",
+      runtimeSelection,
+    );
     expect(releaseOnboardLock).not.toHaveBeenCalled();
     expect(bail).not.toHaveBeenCalled();
   });

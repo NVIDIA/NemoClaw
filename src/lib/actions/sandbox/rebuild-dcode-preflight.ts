@@ -4,6 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { dockerImageInspectFormat, dockerRmi } from "../../adapters/docker";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import type { TrustedRemoteBaseImageOverride } from "../../agent/base-image";
 import { loadAgent } from "../../agent/defs";
 import {
@@ -78,7 +79,8 @@ export type DcodeReplacementPreflightInput = {
   gatewayPort?: number;
   log(message: string): void;
   bail: DcodeRebuildPreflightBail;
-  checkGatewaySchema(): boolean;
+  checkGatewaySchema(runtimeSelection?: OpenShellRuntimeSelection): boolean;
+  runtimeSelection?: OpenShellRuntimeSelection;
 };
 
 export type DcodeReplacementPreparationInput = DcodeReplacementPreflightInput & {
@@ -172,6 +174,7 @@ export async function ensureDcodeRebuildTargetGatewaySelected(
   entry: RebuildSandboxEntry,
   log: (message: string) => void,
   bail: DcodeRebuildPreflightBail,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): Promise<boolean> {
   let gatewayName: string;
   try {
@@ -183,6 +186,7 @@ export async function ensureDcodeRebuildTargetGatewaySelected(
   const recovery = await recoverNamedGatewayRuntime({
     gatewayName,
     recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"],
+    ...(runtimeSelection ? { runtimeSelection } : {}),
   });
   const beforeState = recovery.before?.state ?? "unknown";
   const afterState = recovery.after?.state ?? "unknown";
@@ -218,11 +222,13 @@ function requireInferenceRoute(
   sandboxName: string,
   target: ResolvedDcodeRebuildTarget,
   bail: DcodeRebuildPreflightBail,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): void {
   const result = probeSandboxInferenceInvocation({
     sandboxName,
     agentName: target.agent,
     ...target,
+    ...(runtimeSelection ? { runtimeSelection } : {}),
   });
   if (!result.ok) {
     fail(
@@ -583,8 +589,17 @@ export async function prepareDcodeReplacementBeforeMutation(
 export async function revalidateDcodeReplacementAtMutationEdge(
   input: DcodeReplacementPreflightInput & { replacement: PreparedDcodeReplacement },
 ): Promise<boolean> {
-  const { sandboxName, entry, resumeConfig, skipLiveRoute, gatewayPort, log, bail, replacement } =
-    input;
+  const {
+    sandboxName,
+    entry,
+    resumeConfig,
+    skipLiveRoute,
+    gatewayPort,
+    log,
+    bail,
+    replacement,
+    runtimeSelection,
+  } = input;
   const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
   if (replacement.gatewayName !== target.gatewayName) {
     fail("the prepared DCode gateway changed before deletion", bail);
@@ -595,11 +610,19 @@ export async function revalidateDcodeReplacementAtMutationEdge(
   if (replacement.dcodeAutoApprovalMode !== input.dcodeAutoApprovalMode) {
     fail("the prepared DCode auto-approval mode changed before deletion", bail);
   }
-  if (!(await ensureDcodeRebuildTargetGatewaySelected(sandboxName, entry, log, bail))) {
+  if (
+    !(await ensureDcodeRebuildTargetGatewaySelected(
+      sandboxName,
+      entry,
+      log,
+      bail,
+      runtimeSelection,
+    ))
+  ) {
     return false;
   }
-  if (!input.checkGatewaySchema()) return false;
-  if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail);
+  if (!input.checkGatewaySchema(runtimeSelection)) return false;
+  if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
   requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
   if (!replacement.verify()) {
     fail("the prepared DCode replacement inputs changed before deletion", bail);
@@ -615,13 +638,30 @@ export async function revalidateDcodeReplacementAtMutationEdge(
 export async function revalidateManagedDcodeWorkloadAtMutationEdge(
   input: DcodeReplacementPreflightInput,
 ): Promise<boolean> {
-  const { sandboxName, entry, resumeConfig, skipLiveRoute, gatewayPort, log, bail } = input;
+  const {
+    sandboxName,
+    entry,
+    resumeConfig,
+    skipLiveRoute,
+    gatewayPort,
+    log,
+    bail,
+    runtimeSelection,
+  } = input;
   const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
-  if (!(await ensureDcodeRebuildTargetGatewaySelected(sandboxName, entry, log, bail))) {
+  if (
+    !(await ensureDcodeRebuildTargetGatewaySelected(
+      sandboxName,
+      entry,
+      log,
+      bail,
+      runtimeSelection,
+    ))
+  ) {
     return false;
   }
-  if (!input.checkGatewaySchema()) return false;
-  if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail);
+  if (!input.checkGatewaySchema(runtimeSelection)) return false;
+  if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
   requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
   return true;
 }

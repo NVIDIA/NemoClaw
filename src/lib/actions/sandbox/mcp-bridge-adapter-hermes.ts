@@ -22,9 +22,8 @@ import {
 } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
-import { getMcpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type { McpAttachedCredentialRevision } from "./mcp-bridge-provider-readiness";
-import { getSandboxOrThrow } from "./mcp-bridge-state";
 import { executeGatewaySupervisorAction } from "./process-recovery";
 
 const HERMES_MCP_EXEC_TIMEOUT_SECONDS = 620;
@@ -85,12 +84,14 @@ export function buildHermesMcpProbeCommand(): string[] {
 export function inspectHermesAdapterRegistration(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
 ): AdapterRegistrationInspection {
   return inspectAdapterRegistrationCommand(
     sandboxName,
     entry,
     buildHermesMcpStatusCommand(entry, credentialRevision),
+    runtimeSelection,
   );
 }
 
@@ -109,8 +110,11 @@ function parseLastJsonObject(output: string): Record<string, unknown> | null {
 }
 
 /** Refuse an in-sandbox Hermes config mutation while config is locked. */
-export function assertHermesMcpConfigMutationAllowed(sandboxName: string): void {
-  if (isShieldsDown(sandboxName, false)) return;
+export function assertHermesMcpConfigMutationAllowed(
+  sandboxName: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): void {
+  if (isShieldsDown(sandboxName, false, runtimeSelection)) return;
   throw new McpBridgeError(
     `Hermes sandbox '${sandboxName}' has shields up or an unreadable shields posture. Run \`nemohermes ${sandboxName} shields down --timeout 15m --reason "MCP maintenance"\` before changing MCP configuration.`,
   );
@@ -121,9 +125,11 @@ export function assertHermesMcpConfigMutationAllowed(sandboxName: string): void 
  * and can invoke it through OpenShell current main's ordinary exec path before
  * changing a global provider, policy, attachment, or adapter.
  */
-export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): void {
-  assertHermesMcpConfigMutationAllowed(sandboxName);
-  const runtimeSelection = getMcpProviderInspectionRuntimeSelection(getSandboxOrThrow(sandboxName));
+export function assertHermesMcpMutationRuntimeCapability(
+  sandboxName: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
+): void {
+  assertHermesMcpConfigMutationAllowed(sandboxName, runtimeSelection);
   let lastDetail = "";
   const probe = (): boolean => {
     let result: ReturnType<typeof runOpenshellProviderCommand>;
@@ -228,6 +234,7 @@ function runHermesAdapterCommand(
   entry: McpBridgeEntry,
   command: readonly string[],
   failureMessage: string,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions & { requireReload?: boolean } = {},
 ): void {
   // OpenShell current main executes this fixed helper argv with ordinary
@@ -236,9 +243,6 @@ function runHermesAdapterCommand(
   // placeholder and endpoint metadata.
   let result: ReturnType<typeof runOpenshellProviderCommand>;
   try {
-    const runtimeSelection = getMcpProviderInspectionRuntimeSelection(
-      getSandboxOrThrow(sandboxName),
-    );
     result = runOpenshellProviderCommand(buildHermesMcpExecArgs(sandboxName, command), {
       ignoreError: true,
       runtimeSelection,
@@ -289,9 +293,15 @@ function runHermesAdapterCommand(
 function verifyHermesAdapterRegistration(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   credentialRevision?: McpAttachedCredentialRevision,
 ): void {
-  const inspection = inspectHermesAdapterRegistration(sandboxName, entry, credentialRevision);
+  const inspection = inspectHermesAdapterRegistration(
+    sandboxName,
+    entry,
+    runtimeSelection,
+    credentialRevision,
+  );
   if (inspection.state === "registered") return;
   const detail = inspection.state === "error" ? inspection.detail : inspection.state;
   throw new McpBridgeError(
@@ -302,6 +312,7 @@ function verifyHermesAdapterRegistration(
 export function registerHermesAdapter(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   envValues: Record<string, string> = {},
   replaceExisting = false,
   credentialRevision?: McpAttachedCredentialRevision,
@@ -311,14 +322,16 @@ export function registerHermesAdapter(
     entry,
     buildHermesMcpRegisterCommand(entry, replaceExisting, credentialRevision),
     `Hermes MCP config registration failed for '${entry.server}'.`,
+    runtimeSelection,
     { envValues, requireReload: true },
   );
-  verifyHermesAdapterRegistration(sandboxName, entry, credentialRevision);
+  verifyHermesAdapterRegistration(sandboxName, entry, runtimeSelection, credentialRevision);
 }
 
 export function unregisterHermesAdapter(
   sandboxName: string,
   entry: McpBridgeEntry,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   options: AdapterMutationOptions = {},
 ): void {
   runHermesAdapterCommand(
@@ -326,6 +339,7 @@ export function unregisterHermesAdapter(
     entry,
     buildHermesMcpRemoveCommand(entry, options.force === true),
     `Hermes MCP config removal failed for '${entry.server}'.`,
+    runtimeSelection,
     options,
   );
 }

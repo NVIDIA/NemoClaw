@@ -511,6 +511,7 @@ describe("rebuildSandbox flow: recovery", () => {
       "alpha",
       [attached],
       undefined,
+      { gatewayName: "nemoclaw", workspace: "default" },
     );
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
@@ -554,7 +555,11 @@ describe("rebuildSandbox flow: recovery", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(harness.ensureMessagingHostForwardAfterRebuildSpy).toHaveBeenCalledWith("alpha", plan);
+    expect(harness.ensureMessagingHostForwardAfterRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      plan,
+      undefined,
+    );
     expect(
       harness.ensureMessagingHostForwardAfterRebuildSpy.mock.invocationCallOrder[0],
     ).toBeGreaterThan(harness.onboardSpy.mock.invocationCallOrder[0]);
@@ -587,7 +592,13 @@ describe("rebuildSandbox flow: recovery", () => {
     expect(output).toContain("State restore was incomplete");
     expect(output).toContain("Mutable config permissions were not verified");
     expect(output).toContain("Mutable OpenClaw config hash was not refreshed");
-    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    expect(harness.relockSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+      true,
+      "nemoclaw",
+      undefined,
+    );
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
     });

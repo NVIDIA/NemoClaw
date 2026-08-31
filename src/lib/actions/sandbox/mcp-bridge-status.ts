@@ -25,6 +25,7 @@ import {
   providerMatchesCredential,
   providerShapeDetail,
 } from "./mcp-bridge-provider";
+import type { McpProviderInspectionRuntimeSelection } from "./mcp-bridge-provider-inspection";
 import type {
   McpAttachedCredentialRevision,
   McpCredentialRevisionObservation,
@@ -91,6 +92,7 @@ function getAdapterRegistration(
   sandboxName: string,
   adapter: AgentMcpAdapter | undefined,
   entry: McpBridgeEntry | undefined,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
   hermesReconciliation?: HermesMcpReconciliationResult,
   credentialRevision?: McpAttachedCredentialRevision,
   credentialObservationDetail?: string,
@@ -119,7 +121,7 @@ function getAdapterRegistration(
       : adapter === "hermes-config"
         ? buildHermesMcpStatusCommand(entry, credentialRevision)
         : buildDeepAgentsMcpStatusCommand(entry, credentialRevision);
-  const result = executeSandboxCommand(sandboxName, command);
+  const result = executeSandboxCommand(sandboxName, command, { runtimeSelection });
   if (!result) return { registered: null, detail: "sandbox unreachable" };
   if (result.status === 0) {
     const output = result.stdout.trim();
@@ -149,6 +151,8 @@ export interface McpBridgeStatusOptions {
    * layer restricts this live operation to an explicitly named server.
    */
   discoverTools?: boolean;
+  /** Reuse the operation-scoped OpenShell target when status closes another lifecycle action. */
+  runtimeSelection?: McpProviderInspectionRuntimeSelection;
 }
 
 function attachedCredentialRevision(
@@ -184,11 +188,12 @@ export async function statusMcpBridge(
   validateSandboxName(sandboxName);
   if (server !== undefined) validateMcpServerName(server);
   const sandbox = getSandboxOrThrow(sandboxName);
-  const providerRuntimeSelection = getMcpProviderInspectionRuntimeSelection(sandbox);
+  const providerRuntimeSelection =
+    options.runtimeSelection ?? getMcpProviderInspectionRuntimeSelection(sandbox);
   const agent = getSandboxAgent(sandbox);
   const bridges = bridgeState(sandbox);
   if (Object.keys(bridges).length > 0) {
-    await ensureSandboxGatewaySelected(sandboxName);
+    await ensureSandboxGatewaySelected(sandboxName, providerRuntimeSelection);
   }
   const selectedEntry =
     server !== undefined && Object.hasOwn(bridges, server) ? bridges[server] : undefined;
@@ -234,7 +239,10 @@ export async function statusMcpBridge(
   for (const [name, entry] of entries) {
     if (!entry || storedCredentialWarning(entry) !== undefined) continue;
     try {
-      credentialObservations.set(name, observeMcpCredentialRevision(sandboxName, entry));
+      credentialObservations.set(
+        name,
+        observeMcpCredentialRevision(sandboxName, entry, providerRuntimeSelection),
+      );
     } catch {
       credentialObservations.set(name, null);
     }
@@ -262,7 +270,10 @@ export async function statusMcpBridge(
             state: "error" as const,
             detail: hermesCredentialObservationDetail,
           }
-        : inspectHermesMcpRuntimeIntent(sandboxName, { credentialRevisions })
+        : inspectHermesMcpRuntimeIntent(sandboxName, {
+            credentialRevisions,
+            runtimeSelection: providerRuntimeSelection,
+          })
       : undefined;
   if (entries.length === 0 && hermesReconciliation && !hermesReconciliation.ok) {
     throw new McpBridgeError(
@@ -288,7 +299,7 @@ export async function statusMcpBridge(
   return entries.map(([name, entry]) => {
     const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
     const registeredPolicy = getRegisteredGeneratedPolicy(sandboxName, entry);
-    const policyPresence = getPolicyPresence(sandboxName, entry);
+    const policyPresence = getPolicyPresence(sandboxName, entry, providerRuntimeSelection);
     const hasCredentialBinding =
       !!entry &&
       Array.isArray(entry.env) &&
@@ -351,6 +362,7 @@ export async function statusMcpBridge(
           sandboxName,
           support.adapter,
           entry,
+          providerRuntimeSelection,
           hermesReconciliation,
           credentialRevision,
           observationDetail,
@@ -376,6 +388,7 @@ export async function statusMcpBridge(
                   entry,
                   support.adapter,
                   readiness,
+                  providerRuntimeSelection,
                   credentialRevision,
                 )
         : undefined;
@@ -394,7 +407,13 @@ export async function statusMcpBridge(
               detail:
                 "tool discovery skipped: the unsupported legacy credential may still be attached to fresh sandbox children",
             }
-          : discoverMcpTools(sandboxName, entry, support.adapter, readiness)
+          : discoverMcpTools(
+              sandboxName,
+              entry,
+              support.adapter,
+              readiness,
+              providerRuntimeSelection,
+            )
         : undefined;
     return {
       server: name,

@@ -75,6 +75,11 @@ describe("rebuildSandbox flow: lifecycle", () => {
       createdAt: "2026-06-01T00:00:00.000Z",
       updatedAt: "2026-06-01T00:00:00.000Z",
     };
+    const mcpRuntimeSelection = {
+      gatewayName: "nemoclaw",
+      localTlsDir: "/tmp/nemoclaw-tls",
+      workspace: "default",
+    };
     const completePolicy = [
       "version: 1",
       "network_policies:",
@@ -87,11 +92,12 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ].join("\n");
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
-      sandboxEntry: {},
+      sandboxEntry: { mcp: { bridges: { github: mcpEntry } } },
       mcpPreparation: {
         entries: [mcpEntry],
         detachedProviderEntries: [mcpEntry],
         policyHandoff: completePolicy,
+        runtimeSelection: mcpRuntimeSelection,
       },
       onboard: (_session, options) => {
         innerBackupMarker = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
@@ -110,7 +116,10 @@ describe("rebuildSandbox flow: lifecycle", () => {
       "alpha",
       expect.objectContaining({ captureStateFile: expect.any(Function) }),
     );
-    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      mcpRuntimeSelection,
+    );
     expect(harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0]).toBeLessThan(
       harness.warnUnpreservedUserManagedFilesSpy.mock.invocationCallOrder[0],
     );
@@ -125,6 +134,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
         recreateSandbox: true,
         authoritativeResumeConfig: true,
         autoYes: true,
+        runtimeSelection: mcpRuntimeSelection,
       }),
     );
     expect(innerBackupMarker).toBe("1");
@@ -157,8 +167,13 @@ describe("rebuildSandbox flow: lifecycle", () => {
     expect(harness.session.steps.sandbox.status).toBe("pending");
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith("alpha", harness.backupPath, {
       targetAgentType: "openclaw",
+      runtimeSelection: mcpRuntimeSelection,
     });
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      [mcpEntry],
+      mcpRuntimeSelection,
+    );
     expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "Preserving journaled source registry entry across sandbox recreation",
@@ -174,16 +189,22 @@ describe("rebuildSandbox flow: lifecycle", () => {
       "alpha",
       "openclaw doctor --fix",
       300_000,
-      { allowLocalDockerFallback: false },
+      { allowLocalDockerFallback: false, runtimeSelection: mcpRuntimeSelection },
     );
-    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    expect(harness.relockSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+      true,
+      "nemoclaw",
+      mcpRuntimeSelection,
+    );
     expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe(originalSandboxName);
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "rebuild completed",
     );
   });
 
-  it("keeps the original sandbox when the post-MCP OpenShell policy is unavailable", async () => {
+  it("pins delete-edge policy recapture to the frozen MCP target (#10514)", async () => {
     const policyDirectory = createHarnessTempDir("nemoclaw-rebuild-policy-cleanup-");
     vi.spyOn(tempFiles, "secureTempFile").mockReturnValue(
       path.join(policyDirectory, "policy.yaml"),
@@ -192,10 +213,16 @@ describe("rebuildSandbox flow: lifecycle", () => {
       server: "github",
       providerName: "nemoclaw-mcp-alpha-github",
     };
+    const runtimeSelection = {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+      localTlsDir: "/authority/tls",
+    };
     const harness = createRebuildFlowHarness({
       mcpPreparation: {
         entries: [mcpEntry],
         detachedProviderEntries: [mcpEntry],
+        runtimeSelection,
       },
     });
     vi.mocked(policyGet.getSandboxPolicy)
@@ -208,6 +235,10 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ).rejects.toThrow("OpenShell policy became unavailable before sandbox deletion");
 
     expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledOnce();
+    expect(policyGet.getSandboxPolicy).toHaveBeenLastCalledWith("alpha", {
+      recordedGatewayOperation: "capture the live policy before sandbox replacement",
+      runtimeSelection,
+    });
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledOnce();
     expect(harness.onboardSpy).not.toHaveBeenCalled();
     expectNoSandboxDelete(harness.runOpenshellSpy);
@@ -370,7 +401,11 @@ describe("rebuildSandbox flow: lifecycle", () => {
       expect.objectContaining({ toolDisclosure: "direct" }),
     );
     expect(harness.session.toolDisclosure).toBe("direct");
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
+      "alpha",
+      [mcpEntry],
+      { gatewayName: "nemoclaw", workspace: "default" },
+    );
     harness.registryUpdateSpy.mock.calls.forEach(([, update]) => {
       expect(update).not.toHaveProperty("toolDisclosure");
     });
@@ -393,6 +428,7 @@ describe("rebuildSandbox flow: lifecycle", () => {
       expect.any(Object),
       false,
       "nemoclaw",
+      undefined,
     );
   });
 
@@ -476,7 +512,11 @@ describe("rebuildSandbox flow: lifecycle", () => {
       expect(harness.session.compatibleEndpointReasoningEffort).toBe("high");
       expect(process.env.NEMOCLAW_REASONING).toBe("false");
       expect(process.env.NEMOCLAW_REASONING_EFFORT).toBe("low");
-      expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+      expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
+        "alpha",
+        [mcpEntry],
+        { gatewayName: "nemoclaw", workspace: "default" },
+      );
     } finally {
       restoreEnv();
     }

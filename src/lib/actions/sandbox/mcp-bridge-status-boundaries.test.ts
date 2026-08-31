@@ -28,18 +28,31 @@ afterEach(() => {
 });
 
 describe("cross-agent MCP status boundaries", testTimeoutOptions(15_000), () => {
-  it("pins provider diagnostics to the recorded gateway and workspace (#10514)", () => {
+  it("pins provider and policy reads to the recorded runtime (#10514)", () => {
     const home = createTempHome("nemoclaw-mcp-status-provider-target-");
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 process.env.OPENSHELL_GATEWAY = "ambient-gateway";
 process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://other.example.test";
+process.env.OPENSHELL_GATEWAY_INSECURE = "true";
+process.env.OPENSHELL_LOCAL_TLS_DIR = "/tmp/ambient-client-tls";
+process.env.OPENSHELL_TOKEN = "ambient-token";
 process.env.OPENSHELL_WORKSPACE = "ambient-workspace";
 const registry = require("./src/lib/state/registry.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
+const openshellRuntime = require("./src/lib/adapters/openshell/runtime.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const providerEnvironments = [];
+const policyEnvironments = [];
+openshellRuntime.captureResolvedOpenshell = (args, options) => {
+  if (args[0] !== "policy" || args[1] !== "get") {
+    throw new Error("Unexpected OpenShell capture: " + args.join(" "));
+  }
+  policyEnvironments.push(options.env);
+  const output = "Version: 1\nHash: sha256:current\n---\nversion: 1\nnetwork_policies: {}\n";
+  return { status: 0, output, stdout: output, stderr: "" };
+};
 providerCommands.setProviderCommandRuntimeHooksForTest({ runOpenshell: (args, options) => {
   providerEnvironments.push(options.env);
   if (args[0] === "provider" && args[1] === "get") {
@@ -77,6 +90,7 @@ registry.registerSandbox({
     adapter: "mcporter",
     url: "https://api.githubcopilot.com/mcp/",
     env: ["GITHUB_TOKEN"],
+    allowedIps: ["8.8.8.8"],
     providerName: "alpha-mcp-github",
     providerId: "11111111-2222-4333-8444-555555555555",
     policyName: "mcp-bridge-github",
@@ -84,7 +98,7 @@ registry.registerSandbox({
   } } },
 });
 require("./src/lib/actions/sandbox/mcp-bridge-status.js").statusMcpBridge("alpha", "github").then(
-  () => process.stdout.write(JSON.stringify(providerEnvironments)),
+  () => process.stdout.write(JSON.stringify({ providerEnvironments, policyEnvironments })),
   (error) => process.stderr.write(error.stack || error.message, () => process.exit(1)),
 );
 `;
@@ -95,15 +109,31 @@ require("./src/lib/actions/sandbox/mcp-bridge-status.js").statusMcpBridge("alpha
     });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    const environments = JSON.parse(result.stdout) as Array<Record<string, string>>;
-    expect(environments.length).toBeGreaterThan(0);
+    const payload = JSON.parse(result.stdout) as {
+      policyEnvironments: Array<Record<string, string>>;
+      providerEnvironments: Array<Record<string, string>>;
+    };
+    expect(payload.providerEnvironments.length).toBeGreaterThan(0);
     expect(
-      environments.every(
+      payload.providerEnvironments.every(
         (environment) =>
           environment.OPENSHELL_GATEWAY === "nemoclaw-9090" &&
           environment.OPENSHELL_WORKSPACE === "default" &&
           !Object.hasOwn(environment, "OPENSHELL_GATEWAY_ENDPOINT"),
       ),
+    ).toBe(true);
+    expect(payload.policyEnvironments).toHaveLength(1);
+    expect(payload.policyEnvironments[0]).toMatchObject({
+      OPENSHELL_GATEWAY: "nemoclaw-9090",
+      OPENSHELL_WORKSPACE: "default",
+    });
+    expect(
+      [
+        "OPENSHELL_GATEWAY_ENDPOINT",
+        "OPENSHELL_GATEWAY_INSECURE",
+        "OPENSHELL_LOCAL_TLS_DIR",
+        "OPENSHELL_TOKEN",
+      ].every((name) => !Object.hasOwn(payload.policyEnvironments[0] ?? {}, name)),
     ).toBe(true);
   });
 
@@ -147,6 +177,8 @@ processRecovery.executeSandboxCommand = () => {
 registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
   mcp: { bridges: { fake: {
     server: "fake",
     agent: "openclaw",
@@ -214,7 +246,12 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
-registry.registerSandbox({ name: "hermes-sandbox", agent: "hermes" });
+registry.registerSandbox({
+  name: "hermes-sandbox",
+  agent: "hermes",
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
+});
 bridge.dispatchMcpBridgeCommand("hermes-sandbox", ["status", "--json"]).then(
   () => process.exit(0),
   (error) => {

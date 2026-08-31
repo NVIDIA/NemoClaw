@@ -954,7 +954,7 @@ describe("warnUnpreservedUserManagedFiles", () => {
     warnUnpreservedUserManagedFiles("alpha", () => undefined);
 
     expect(probeSpy).toHaveBeenCalledOnce();
-    expect(probeSpy).toHaveBeenCalledWith("alpha");
+    expect(probeSpy).toHaveBeenCalledWith("alpha", undefined);
 
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(

@@ -4,7 +4,13 @@
 import { spawnSync } from "node:child_process";
 
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { captureOpenshell, isCommandTimeout, runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  buildSelectedOpenShellSubprocessEnv,
+  captureOpenshell,
+  isCommandTimeout,
+  type OpenShellRuntimeSelection,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
@@ -67,7 +73,23 @@ type SandboxForwardRecoveryOptions = {
   afterSuccess?: () => boolean;
   beforeStart?: () => boolean;
   isWsl?: boolean;
+  runtimeSelection?: OpenShellRuntimeSelection;
 };
+
+type OpenShellRunnerOptions = NonNullable<Parameters<typeof runOpenshell>[1]>;
+
+function withSelectedOpenShellOptions(
+  options: OpenShellRunnerOptions,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): OpenShellRunnerOptions {
+  return runtimeSelection
+    ? {
+        ...options,
+        env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+        replaceEnv: true,
+      }
+    : options;
+}
 
 type DashboardForwardStopRunner = (
   args: string[],
@@ -209,6 +231,7 @@ export function ensureSandboxPortForward(
       (!remoteBindRequested ||
         registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared === true) &&
       (options.beforeStart?.() ?? true),
+    runtimeSelection: options.runtimeSelection,
   });
 }
 
@@ -228,7 +251,7 @@ export function ensureSandboxPortForward(
  */
 export function isSandboxForwardHealthy(
   sandboxName: string,
-  options: { isWsl?: boolean } = {},
+  options: { isWsl?: boolean; runtimeSelection?: OpenShellRuntimeSelection } = {},
 ): SandboxForwardHealth {
   const allInterfaceBindRequired =
     isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND) ||
@@ -237,6 +260,7 @@ export function isSandboxForwardHealthy(
     sandboxName,
     resolveSandboxDashboardPort(sandboxName),
     allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
+    options.runtimeSelection,
   );
 }
 
@@ -244,11 +268,18 @@ export function isSandboxPortForwardHealthy(
   sandboxName: string,
   port: number,
   expectedBind?: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): SandboxForwardHealth {
-  const result = captureOpenshell(["forward", "list"], {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
+  const result = captureOpenshell(
+    ["forward", "list"],
+    withSelectedOpenShellOptions(
+      {
+        ignoreError: true,
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      },
+      runtimeSelection,
+    ),
+  );
   if (!result || isCommandTimeout(result) || result.status !== 0) return null;
   const entries = parseForwardList(result.output) as SandboxForwardListEntry[];
   return classifyForwardHealthWithReachability(
@@ -269,6 +300,7 @@ export function ensureSandboxPortForwardForPort(
     forceRestart?: boolean;
     expectedBind?: string;
     beforeStart?: () => boolean;
+    runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ): boolean {
   const {
@@ -277,6 +309,7 @@ export function ensureSandboxPortForwardForPort(
     forceRestart = false,
     expectedBind,
     beforeStart = () => true,
+    runtimeSelection,
   } = options;
   const acceptSuccessfulForward = () => {
     let accepted = false;
@@ -286,22 +319,27 @@ export function ensureSandboxPortForwardForPort(
       accepted = false;
     }
     if (accepted) return true;
-    runOpenshell(["forward", "stop", String(port), sandboxName], {
-      ignoreError: true,
-      stdio: "ignore",
-    });
+    runOpenshell(
+      ["forward", "stop", String(port), sandboxName],
+      withSelectedOpenShellOptions({ ignoreError: true, stdio: "ignore" }, runtimeSelection),
+    );
     return false;
   };
-  let forwardHealth = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+  let forwardHealth = isSandboxPortForwardHealthy(
+    sandboxName,
+    port,
+    expectedBind,
+    runtimeSelection,
+  );
   if (forwardHealth === true && !forceRestart) return acceptSuccessfulForward();
   if (forwardHealth === "occupied") return false;
   const configuredWaitMs = Number(process.env.NEMOCLAW_FORWARD_RECOVERY_WAIT_MS ?? "3000");
   const waitMs = Number.isFinite(configuredWaitMs) ? Math.max(0, configuredWaitMs) : 3000;
 
-  const stopResult = runOpenshell(["forward", "stop", String(port), sandboxName], {
-    ignoreError: true,
-    stdio: "ignore",
-  });
+  const stopResult = runOpenshell(
+    ["forward", "stop", String(port), sandboxName],
+    withSelectedOpenShellOptions({ ignoreError: true, stdio: "ignore" }, runtimeSelection),
+  );
   if (stopResult.status !== 0) {
     console.error(
       `  Warning: openshell forward stop ${port} ${sandboxName} exited ${stopResult.status}; attempting restart anyway.`,
@@ -330,7 +368,12 @@ export function ensureSandboxPortForwardForPort(
       portReleased: false,
     };
     waitForForwardRecoveryState(() => {
-      stopState.health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+      stopState.health = isSandboxPortForwardHealthy(
+        sandboxName,
+        port,
+        expectedBind,
+        runtimeSelection,
+      );
       stopState.portReleased = !isLocalForwardReachable(port);
       return (
         (!forceRestart && stopState.health === true) ||
@@ -348,14 +391,17 @@ export function ensureSandboxPortForwardForPort(
   if (!beforeStart()) return false;
   const startResult = runOpenshell(
     ["forward", "start", "--background", forwardTarget, sandboxName],
-    {
-      ignoreError: true,
+    withSelectedOpenShellOptions(
+      {
+        ignoreError: true,
       // OpenShell 0.0.85 leaves the background SSH forward attached to the
       // caller's inherited descriptors. Detach them so a scripted `recover`
       // can finish after the foreground OpenShell command exits. Keep this
       // until every supported OpenShell release redirects those descriptors.
-      stdio: "ignore",
-    },
+        stdio: "ignore",
+      },
+      runtimeSelection,
+    ),
   );
   // OpenShell 0.0.85 returns an error when start preflight finds a validated
   // live forward for the requested port. Recovery cannot change that upstream
@@ -369,14 +415,14 @@ export function ensureSandboxPortForwardForPort(
   // entry becomes visible. Poll for the exact live sandbox+port owner instead
   // of accepting an arbitrary reachable listener or failing on the first
   // metadata refresh.
-  let health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+  let health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind, runtimeSelection);
   if (health === true) return acceptSuccessfulForward();
   if (health === "occupied") return false;
   if (waitMs === 0) return false;
 
   let occupied = false;
   const settled = waitForForwardRecoveryState(() => {
-    health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+    health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind, runtimeSelection);
     if (health === "occupied") {
       occupied = true;
       return true;
@@ -386,10 +432,15 @@ export function ensureSandboxPortForwardForPort(
   return settled && !occupied && acceptSuccessfulForward();
 }
 
-export function ensureHermesDashboardPortForwardIfEnabled(sandboxName: string): boolean | null {
+export function ensureHermesDashboardPortForwardIfEnabled(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): boolean | null {
   return ensureHermesDashboardPortForward(sandboxName, {
-    isPortForwardHealthy: isSandboxPortForwardHealthy,
-    ensurePortForward: ensureSandboxPortForwardForPort,
+    isPortForwardHealthy: (name, port) =>
+      isSandboxPortForwardHealthy(name, port, undefined, runtimeSelection),
+    ensurePortForward: (name, port) =>
+      ensureSandboxPortForwardForPort(name, port, { runtimeSelection }),
   });
 }
 
@@ -402,20 +453,26 @@ function getSandboxMessagingHostForward(
   return getActiveMessagingHostForward(plan);
 }
 
-export function ensureMessagingHostForwardHealthy(sandboxName: string): boolean | null {
+export function ensureMessagingHostForwardHealthy(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): boolean | null {
   const forward = getSandboxMessagingHostForward(sandboxName);
   if (!forward) return null;
-  const health = isSandboxPortForwardHealthy(sandboxName, forward.port);
+  const health = isSandboxPortForwardHealthy(sandboxName, forward.port, undefined, runtimeSelection);
   if (health === true) return true;
   if (health === "occupied") return false;
-  return ensureSandboxPortForwardForPort(sandboxName, forward.port);
+  return ensureSandboxPortForwardForPort(sandboxName, forward.port, { runtimeSelection });
 }
 
 export function recoverMessagingHostForward(
   sandboxName: string,
-  { quiet }: { quiet: boolean },
+  {
+    quiet,
+    runtimeSelection,
+  }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
 ): boolean | null {
-  const recovered = ensureMessagingHostForwardHealthy(sandboxName);
+  const recovered = ensureMessagingHostForwardHealthy(sandboxName, runtimeSelection);
   if (!quiet && recovered === false) {
     console.error("  Messaging webhook port forward could not be re-established.");
   }
@@ -465,6 +522,7 @@ function resolveDeclaredAgentForwardPorts(
 export function ensureDeclaredAgentForwardPortsHealthy(
   sandboxName: string,
   primaryPort: number,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): boolean | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   if (!agent) return null;
@@ -479,13 +537,13 @@ export function ensureDeclaredAgentForwardPortsHealthy(
   if (ports.length === 0) return null;
   let allHealthy = true;
   for (const port of ports) {
-    const health = isSandboxPortForwardHealthy(sandboxName, port);
+    const health = isSandboxPortForwardHealthy(sandboxName, port, undefined, runtimeSelection);
     if (health === true) continue;
     if (health === "occupied") {
       allHealthy = false;
       continue;
     }
-    if (!ensureSandboxPortForwardForPort(sandboxName, port)) {
+    if (!ensureSandboxPortForwardForPort(sandboxName, port, { runtimeSelection })) {
       allHealthy = false;
     }
   }
@@ -564,9 +622,16 @@ export function resolveSandboxLaunchForwardPorts(sandboxName: string): number[] 
 export function recoverDeclaredAgentForwardPorts(
   sandboxName: string,
   recoveryPort: number,
-  { quiet }: { quiet: boolean },
+  {
+    quiet,
+    runtimeSelection,
+  }: { quiet: boolean; runtimeSelection?: OpenShellRuntimeSelection },
 ): boolean | null {
-  const recovered = ensureDeclaredAgentForwardPortsHealthy(sandboxName, recoveryPort);
+  const recovered = ensureDeclaredAgentForwardPortsHealthy(
+    sandboxName,
+    recoveryPort,
+    runtimeSelection,
+  );
   if (!quiet && recovered === false) {
     console.error("  One or more agent-declared port forwards could not be re-established.");
   }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../../inference/web-search";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import type { Session } from "../../state/onboard-session";
 import type { ToolDisclosure } from "../../tool-disclosure";
@@ -19,7 +20,11 @@ import type { RebuildAgentBaseImageOptions, RebuildSandboxEntry } from "./rebuil
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
 type DcodeRebuildOrchestratorDeps = {
-  checkGatewaySchema(sandboxName: string, bail: DcodeRebuildPreflightBail): boolean;
+  checkGatewaySchema(
+    sandboxName: string,
+    bail: DcodeRebuildPreflightBail,
+    runtimeSelection?: OpenShellRuntimeSelection,
+  ): boolean;
   preflightCredentials(
     sandboxName: string,
     entry: RebuildSandboxEntry,
@@ -71,6 +76,7 @@ export type DcodeRebuildOrchestrator = {
     dcodeAutoApprovalMode: DcodeAutoApprovalMode,
     skipLiveRoute: boolean,
     gatewayPort: number,
+    runtimeSelection?: OpenShellRuntimeSelection,
   ): Promise<{ ok: true } | { ok: false; message: string; code?: number }>;
   clearManagedCustomDockerfile(session: Session): void;
   storedDockerfile(sessionMatchesSandbox: boolean, session: Session | null): string | null;
@@ -240,6 +246,7 @@ export function createDcodeRebuildOrchestrator(
       dcodeAutoApprovalMode,
       skipLiveRoute,
       gatewayPort,
+      runtimeSelection,
     ) => {
       if (!scope.enabled) return { ok: true };
       const replacement = scope.preparedReplacement;
@@ -261,7 +268,9 @@ export function createDcodeRebuildOrchestrator(
               gatewayPort,
               log,
               bail: capturedBail,
-              checkGatewaySchema: () => deps.checkGatewaySchema(sandboxName, capturedBail),
+              checkGatewaySchema: (selection) =>
+                deps.checkGatewaySchema(sandboxName, capturedBail, selection),
+              runtimeSelection,
             })
           : revalidateDcodeReplacementAtMutationEdge({
               sandboxName,
@@ -273,7 +282,9 @@ export function createDcodeRebuildOrchestrator(
               gatewayPort,
               log,
               bail: capturedBail,
-              checkGatewaySchema: () => deps.checkGatewaySchema(sandboxName, capturedBail),
+              checkGatewaySchema: (selection) =>
+                deps.checkGatewaySchema(sandboxName, capturedBail, selection),
+              runtimeSelection,
               replacement: replacement!,
             }));
         if (!valid) {

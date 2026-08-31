@@ -76,6 +76,7 @@ describe("rebuild shields relock guard", () => {
     rebuildWindow.relocked = true;
     return true;
   });
+  const bindRuntimeSelection = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -107,6 +108,7 @@ describe("rebuild shields relock guard", () => {
       window: rebuildWindow,
       staleSandboxWasLocked: false,
       relock: relockShields,
+      bindRuntimeSelection,
     });
     phaseMocks.runBackup.mockImplementation(() => {
       throw new Error("unexpected backup exception");

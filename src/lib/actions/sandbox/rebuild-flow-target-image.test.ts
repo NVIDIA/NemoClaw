@@ -508,6 +508,7 @@ describe("rebuildSandbox flow: target image", () => {
         expect.any(Object),
         false,
         "nemoclaw",
+        undefined,
       );
       expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe(originalSandboxName);
 

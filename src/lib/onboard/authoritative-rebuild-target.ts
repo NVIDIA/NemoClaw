@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { findDashboardForwardOwner } from "./dashboard-port";
+import {
+  buildOpenShellRuntimeSelectionEnv,
+  type OpenShellRuntimeSelection,
+} from "../adapters/openshell/runtime-selection";
 import { resolveGatewayName } from "./gateway-binding";
 import type { InferenceRouteState } from "./inference-route";
 import type { PortProbeResult } from "./preflight";
@@ -34,6 +38,62 @@ export type AuthoritativeGatewayOptions = Pick<
   OnboardOptions,
   "authoritativeResumeConfig" | "targetGatewayName" | "targetGatewayPort" | "onboardLockAlreadyHeld"
 >;
+
+type AuthoritativeRuntimeSelectionOptions = AuthoritativeGatewayOptions &
+  Pick<OnboardOptions, "recreateSandbox" | "resume" | "runtimeSelection">;
+
+/** Keep every OpenShell child in an inner rebuild onboard on its frozen target. */
+export function beginAuthoritativeRebuildRuntimeSelectionScope(
+  opts: AuthoritativeRuntimeSelectionOptions,
+  env: NodeJS.ProcessEnv = process.env,
+): () => void {
+  const runtimeSelection = opts.runtimeSelection;
+  if (!runtimeSelection) return () => undefined;
+  const gateway = resolveAuthoritativeOnboardGatewayBinding(opts);
+  if (
+    opts.authoritativeResumeConfig !== true ||
+    opts.resume !== true ||
+    opts.recreateSandbox !== true ||
+    opts.onboardLockAlreadyHeld !== true ||
+    !gateway
+  ) {
+    throw new Error(
+      "An OpenShell runtime selection may be supplied only for a locked authoritative rebuild resume.",
+    );
+  }
+  if (runtimeSelection.gatewayName !== gateway.name) {
+    throw new Error(
+      `OpenShell runtime selection '${runtimeSelection.gatewayName}' does not match authoritative gateway '${gateway.name}'.`,
+    );
+  }
+
+  const previous = Object.fromEntries(
+    Object.entries(env).filter(
+      (entry): entry is [string, string] =>
+        entry[0].startsWith("OPENSHELL_") && entry[1] !== undefined,
+    ),
+  );
+  const baseEnv = Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+  const selected = buildOpenShellRuntimeSelectionEnv(baseEnv, runtimeSelection);
+  for (const name of Object.keys(env)) {
+    if (name.startsWith("OPENSHELL_")) delete env[name];
+  }
+  for (const [name, value] of Object.entries(selected)) {
+    if (name.startsWith("OPENSHELL_")) env[name] = value;
+  }
+
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
+    for (const name of Object.keys(env)) {
+      if (name.startsWith("OPENSHELL_")) delete env[name];
+    }
+    Object.assign(env, previous);
+  };
+}
 
 export type AuthoritativeRebuildPreflightOptions = Pick<
   OnboardOptions,

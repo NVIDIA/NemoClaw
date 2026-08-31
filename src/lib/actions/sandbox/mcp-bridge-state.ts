@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../agent/defs";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
@@ -234,10 +235,14 @@ export function removeBridgeEntry(sandboxName: string, server: string): void {
   setBridgeState(sandboxName, bridges);
 }
 
-export async function ensureSandboxGatewaySelected(sandboxName: string): Promise<void> {
+export async function ensureSandboxGatewaySelected(
+  sandboxName: string,
+  runtimeSelection: OpenShellRuntimeSelection,
+): Promise<void> {
   const gatewayName = getSandboxTargetGatewayName(sandboxName);
   const recovery = await recoverNamedGatewayRuntime({
     gatewayName,
+    runtimeSelection,
   });
   if (!recovery.recovered || recovery.after.state !== "healthy_named") {
     throw new McpBridgeError(

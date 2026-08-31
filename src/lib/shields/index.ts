@@ -20,6 +20,7 @@
 // timer-bound lock tests before this facade can shrink safely.
 
 import { run, runCapture, validateName } from "../runner";
+import type { OpenShellRuntimeSelection } from "../adapters/openshell/runtime-selection";
 
 const fs = require("fs");
 const path = require("path");
@@ -52,6 +53,7 @@ const {
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
 const {
   buildOpenshellCommand,
+  buildSelectedOpenShellSubprocessEnv,
 }: typeof import("../adapters/openshell/command-argv") = require("../adapters/openshell/command-argv");
 const {
   parseLiveSandboxEntries,
@@ -94,6 +96,7 @@ const {
   inspectAnyShieldsTransitionLockOwner,
   isShieldsTransitionLockUnavailable,
   resolveShieldsStateDir,
+  resolveShieldsStateGatewayPort,
   withShieldsTransitionLock,
 }: typeof import("./transition-lock") = require("./transition-lock");
 const {
@@ -149,14 +152,34 @@ type AgentStateLockPlan = import("../agent/definition-types").AgentStateLockPlan
 type TimerMarker = import("./timer-control").TimerMarker;
 type PolicyMutationContext = ReturnType<typeof inspectPolicyMutationContext>;
 
+function withSelectedOpenShellEnv<T extends object>(
+  options: T,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): T & { env?: Record<string, string>; replaceEnv?: true } {
+  return runtimeSelection
+    ? {
+        ...options,
+        env: buildSelectedOpenShellSubprocessEnv(runtimeSelection),
+        replaceEnv: true,
+      }
+    : options;
+}
+
 /** Re-read current OpenShell state before a Shields-owned policy mutation. */
 function assertShieldsPolicyMutationContext(
   sandboxName: string,
   operation: string,
   recorded?: PolicyMutationContext,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): PolicyMutationContext {
-  return recorded
-    ? recheckPolicyMutationContext(sandboxName, operation, recorded)
+  if (recorded) return recheckPolicyMutationContext(sandboxName, operation, recorded);
+  return runtimeSelection
+    ? inspectPolicyMutationContext(
+        sandboxName,
+        operation,
+        runtimeSelection.gatewayName,
+        runtimeSelection,
+      )
     : inspectPolicyMutationContext(sandboxName, operation);
 }
 
@@ -1087,10 +1110,13 @@ function resolveActiveHermesRuntimeProviderMutationTarget(
   return target;
 }
 
-function recoverActiveHermesRuntimeProviderMutation(sandboxName: string): AgentConfigTarget | null {
+function recoverActiveHermesRuntimeProviderMutation(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): AgentConfigTarget | null {
   const target = resolveActiveHermesRuntimeProviderMutationTarget(sandboxName);
   if (!target) return null;
-  runHermesProviderProtectionTransition(sandboxName, target, "locked", "locked");
+  runHermesProviderProtectionTransition(sandboxName, target, "locked", "locked", runtimeSelection);
   return target;
 }
 
@@ -1358,12 +1384,21 @@ function requireHermesRuntimeProviderSandbox(sandboxName: string) {
 // #10104: best-effort, fail-open Phase probe. Any resolution failure, ENOENT,
 // non-zero exit, or timeout collapses to null (proceed as before); only a
 // positive, non-Ready/Running phase trips the fast-fail path below.
-function probeHermesRuntimeProviderSandboxPhase(sandboxName: string): string | null {
+function probeHermesRuntimeProviderSandboxPhase(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): string | null {
   try {
-    const output = runCapture(buildOpenshellCommand(["sandbox", "list"]), {
-      ignoreError: true,
-      timeout: HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS,
-    });
+    const output = runCapture(
+      buildOpenshellCommand(["sandbox", "list"]),
+      withSelectedOpenShellEnv(
+        {
+          ignoreError: true,
+          timeout: HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS,
+        },
+        runtimeSelection,
+      ),
+    );
     return (
       parseLiveSandboxEntries(output).find((entry) => entry.name === sandboxName)?.phase ?? null
     );
@@ -1372,8 +1407,11 @@ function probeHermesRuntimeProviderSandboxPhase(sandboxName: string): string | n
   }
 }
 
-function waitForHermesRuntimeProviderReleaseReady(sandboxName: string): void {
-  let phase = probeHermesRuntimeProviderSandboxPhase(sandboxName);
+function waitForHermesRuntimeProviderReleaseReady(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): void {
+  let phase = probeHermesRuntimeProviderSandboxPhase(sandboxName, runtimeSelection);
   if (phase === null || phase === "Ready" || phase === "Running") return;
 
   const deadline = Date.now() + HERMES_RUNTIME_PROVIDER_RELEASE_READY_TIMEOUT_MS;
@@ -1385,13 +1423,22 @@ function waitForHermesRuntimeProviderReleaseReady(sandboxName: string): void {
       0,
       Math.min(HERMES_RUNTIME_PROVIDER_RELEASE_READY_POLL_MS, deadline - Date.now()),
     );
-    phase = probeHermesRuntimeProviderSandboxPhase(sandboxName);
+    phase = probeHermesRuntimeProviderSandboxPhase(sandboxName, runtimeSelection);
     if (phase === "Ready" || phase === "Running") return;
     if (phase !== null) lastObservedPhase = phase;
   }
   throw new Error(
     `Hermes runtime-provider state mutation released its process fence, but sandbox '${sandboxName}' did not return to Ready or Running (last observed phase '${lastObservedPhase}').`,
   );
+}
+
+function waitForSelectedHermesInferenceRouteConvergence(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+) {
+  return waitForHermesInferenceRouteConvergence(sandboxName, {
+    run: (command, options) => run(command, withSelectedOpenShellEnv(options, runtimeSelection)),
+  });
 }
 
 function restartHermesManagedMcpAfterProviderRelease(
@@ -1426,9 +1473,10 @@ function runHermesProviderProtectionTransition(
   configTarget: AgentConfigTarget,
   targetPosture: "locked" | "mutable",
   rollback: "locked" | "mutable",
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): void {
   const sandbox = requireHermesRuntimeProviderSandbox(sandboxName);
-  const phase = probeHermesRuntimeProviderSandboxPhase(sandboxName);
+  const phase = probeHermesRuntimeProviderSandboxPhase(sandboxName, runtimeSelection);
   if (
     hermesRuntimeProviderPhaseBlocksMutation(
       phase,
@@ -1440,7 +1488,9 @@ function runHermesProviderProtectionTransition(
     );
   }
   runHermesRuntimeProviderStateMutation({
-    environment: process.env,
+    environment: runtimeSelection
+      ? buildSelectedOpenShellSubprocessEnv(runtimeSelection)
+      : process.env,
     sandbox,
     sandboxName,
     configTarget,
@@ -1450,7 +1500,7 @@ function runHermesProviderProtectionTransition(
   // Releasing the exact process fence resumes OpenShell PID 1 last. OpenShell
   // then asynchronously republishes the sandbox lifecycle phase; callers must
   // not issue route or mutation commands during that Provisioning interval.
-  waitForHermesRuntimeProviderReleaseReady(sandboxName);
+  waitForHermesRuntimeProviderReleaseReady(sandboxName, runtimeSelection);
   // The fenced gateway can prove local health while OpenShell PID 1 is held,
   // but Hermes performs network MCP discovery before exposing that health.
   // Restart once after release so configured managed bridges are discovered
@@ -1908,8 +1958,13 @@ function consumeShieldsPolicySnapshotRecovery(
 function getShieldsPostureWithoutHostLock(
   sandboxName: string,
   allowInlineRecovery = false,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): ShieldsPosture {
-  const state = recoverExpiredAutoRestoreGate(sandboxName, allowInlineRecovery);
+  const state = recoverExpiredAutoRestoreGate(
+    sandboxName,
+    allowInlineRecovery,
+    runtimeSelection,
+  );
   const timerBoundTransition =
     !state._isCorrupt && state.shieldsDown === true
       ? readTimerBoundShieldsDownTransition(sandboxName)
@@ -2179,11 +2234,12 @@ function isDurableContainmentFailure(error: unknown): boolean {
 function retryInlineAutoRestore(
   sandboxName: string,
   marker: TimerMarker & { processToken: string },
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): void {
   let notifiedError: string | null = null;
   for (let attempt = 0; attempt < INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS; attempt += 1) {
     try {
-      const recoveredState = recoverExpiredAutoRestoreGate(sandboxName, true);
+      const recoveredState = recoverExpiredAutoRestoreGate(sandboxName, true, runtimeSelection);
       if (!recoveredState._isCorrupt && recoveredState.shieldsDown !== true) {
         return;
       }
@@ -2235,6 +2291,7 @@ function withExpiredAutoRestoreDeadlineFence<T>(
   operation: (allowInlineRecovery: boolean) => T,
   fallbackTakeoverToken?: string,
   assertCommandAvailable?: () => void,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): T {
   const completedMarker = inspectCompletedAbandonedAutoRestoreMarker(sandboxName);
   if (completedMarker) {
@@ -2281,7 +2338,7 @@ function withExpiredAutoRestoreDeadlineFence<T>(
   };
   const recoverThenRun = () => {
     withTimerBoundAutoRestoreLock(sandboxName, command, () => {
-      if (takeover) retryInlineAutoRestore(sandboxName, takeover.marker);
+      if (takeover) retryInlineAutoRestore(sandboxName, takeover.marker, runtimeSelection);
     });
     return runWithHostLock(() => operation(false));
   };
@@ -2299,7 +2356,7 @@ function withExpiredAutoRestoreDeadlineFence<T>(
       () => assertTimerMarkerGeneration(sandboxName, marker),
     );
     if (fallbackTakeoverToken) {
-      retryInlineAutoRestore(sandboxName, marker);
+      retryInlineAutoRestore(sandboxName, marker, runtimeSelection);
     }
     // This lifecycle owner is what the live timer is waiting on. Run the
     // nested operation without re-entering recovery against that timer.
@@ -2395,13 +2452,23 @@ function withExpiredAutoRestoreDeadlineFence<T>(
   );
 }
 
-function getShieldsPosture(sandboxName: string, allowInlineRecovery = false): ShieldsPosture {
-  if (!allowInlineRecovery) return getShieldsPostureWithoutHostLock(sandboxName, false);
+function getShieldsPosture(
+  sandboxName: string,
+  allowInlineRecovery = false,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): ShieldsPosture {
+  if (!allowInlineRecovery) {
+    return getShieldsPostureWithoutHostLock(sandboxName, false, runtimeSelection);
+  }
   validateName(sandboxName, "sandbox name");
   return withExpiredAutoRestoreDeadlineFence(
     sandboxName,
     "recover expired shields posture",
-    (allowInlineRecovery) => getShieldsPostureWithoutHostLock(sandboxName, allowInlineRecovery),
+    (allowInlineRecovery) =>
+      getShieldsPostureWithoutHostLock(sandboxName, allowInlineRecovery, runtimeSelection),
+    undefined,
+    undefined,
+    runtimeSelection,
   );
 }
 
@@ -3371,11 +3438,18 @@ function unlockAgentConfigUnderMutationLock(
   rawTarget: AgentConfigTarget,
   rollbackLocked: boolean,
   protocol: HermesShieldsProtocol,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): void {
   const target = ensureConfigHashSensitiveFile(rawTarget);
   if (target.agentName === "hermes" && protocol === "provider-state-mutation-v2") {
     if (!rollbackLocked) {
-      runHermesProviderProtectionTransition(sandboxName, target, "mutable", "mutable");
+      runHermesProviderProtectionTransition(
+        sandboxName,
+        target,
+        "mutable",
+        "mutable",
+        runtimeSelection,
+      );
       try {
         verifyHermesProviderMutablePosture(sandboxName, target);
         return;
@@ -3385,7 +3459,13 @@ function unlockAgentConfigUnderMutationLock(
         // an invalid same-posture provider plan.
       }
     }
-    runHermesProviderProtectionTransition(sandboxName, target, "mutable", "locked");
+    runHermesProviderProtectionTransition(
+      sandboxName,
+      target,
+      "mutable",
+      "locked",
+      runtimeSelection,
+    );
     verifyHermesProviderMutablePosture(sandboxName, target);
     return;
   }
@@ -3663,6 +3743,7 @@ function unlockAgentConfigWithoutHostLock(
   rollbackLocked = getShieldsPosture(sandboxName, false).locked,
   allowLegacyHermesProtocol = false,
   cachedProtocol?: HermesShieldsProtocol,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): void {
   const target = ensureConfigHashSensitiveFile(rawTarget);
   const protocol = resolveHermesShieldsProtocol(
@@ -3671,7 +3752,13 @@ function unlockAgentConfigWithoutHostLock(
     allowLegacyHermesProtocol,
     cachedProtocol,
   );
-  return unlockAgentConfigUnderMutationLock(sandboxName, target, rollbackLocked, protocol);
+  return unlockAgentConfigUnderMutationLock(
+    sandboxName,
+    target,
+    rollbackLocked,
+    protocol,
+    runtimeSelection,
+  );
 }
 
 function unlockAgentConfig(
@@ -3680,6 +3767,7 @@ function unlockAgentConfig(
   rollbackLocked?: boolean,
   allowLegacyHermesProtocol = false,
   cachedProtocol?: HermesShieldsProtocol,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): void {
   return withShieldsTransitionLock(sandboxName, "unlock agent config", () => {
     const effectiveRollbackLocked = rollbackLocked ?? getShieldsPosture(sandboxName, false).locked;
@@ -3689,6 +3777,7 @@ function unlockAgentConfig(
       effectiveRollbackLocked,
       allowLegacyHermesProtocol,
       cachedProtocol,
+      runtimeSelection,
     );
   });
 }
@@ -3726,7 +3815,10 @@ function inspectMutableConfigPerms(sandboxName: string): MutableConfigPermsInspe
   );
 }
 
-function repairMutableConfigPerms(sandboxName: string): MutableConfigRepairResult {
+function repairMutableConfigPerms(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): MutableConfigRepairResult {
   validateName(sandboxName, "sandbox name");
   return withExpiredAutoRestoreDeadlineFence(
     sandboxName,
@@ -3736,11 +3828,14 @@ function repairMutableConfigPerms(sandboxName: string): MutableConfigRepairResul
       return repairMutableConfigPermsCore(
         target,
         mutableConfigPostureMode(
-          getShieldsPostureWithoutHostLock(sandboxName, allowInlineRecovery).mode,
+          getShieldsPostureWithoutHostLock(sandboxName, allowInlineRecovery, runtimeSelection).mode,
         ),
         () => normalizeMutableOpenClawConfig(sandboxName, target.configDir),
       );
     },
+    undefined,
+    undefined,
+    runtimeSelection,
   );
 }
 
@@ -3839,11 +3934,18 @@ function lockAgentConfigUnderMutationLock(
   rawTarget: AgentConfigTarget,
   rollbackLocked: boolean,
   protocol: HermesShieldsProtocol,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): { chattrApplied: boolean; fileHashes: { [path: string]: string } } {
   const target = ensureConfigHashSensitiveFile(rawTarget);
   if (target.agentName === "hermes" && protocol === "provider-state-mutation-v2") {
     if (rollbackLocked) {
-      runHermesProviderProtectionTransition(sandboxName, target, "locked", "locked");
+      runHermesProviderProtectionTransition(
+        sandboxName,
+        target,
+        "locked",
+        "locked",
+        runtimeSelection,
+      );
       try {
         return verifyHermesProviderLockedPosture(sandboxName, target);
       } catch {
@@ -3851,7 +3953,13 @@ function lockAgentConfigUnderMutationLock(
         // failures retain the provider fence, so this remains fail-closed.
       }
     }
-    runHermesProviderProtectionTransition(sandboxName, target, "locked", "mutable");
+    runHermesProviderProtectionTransition(
+      sandboxName,
+      target,
+      "locked",
+      "mutable",
+      runtimeSelection,
+    );
     return verifyHermesProviderLockedPosture(sandboxName, target);
   }
   const compatibilityIssues = stateLockPlanCompatibilityIssues(
@@ -4158,6 +4266,7 @@ function synchronizeAutoRestoreTransition(
     expiredTimerRecovery?: boolean;
     retainTransition?: boolean;
     assertTakeoverAuthority?: () => void;
+    runtimeSelection?: OpenShellRuntimeSelection;
   } = {},
 ): void {
   const transition = waitForShieldsDownForwardCommit(
@@ -4186,6 +4295,7 @@ function synchronizeAutoRestoreTransition(
     transitionProcessToken: processToken,
     ...(deadlineAuthoritative ? { deadlineAuthoritative: true } : {}),
     ...(options.expiredTimerRecovery ? { expiredTimerRecovery: true } : {}),
+    runtimeSelection: options.runtimeSelection,
   });
   const status = typeof restoreResult.status === "number" ? restoreResult.status : 1;
   if (status !== 0) {
@@ -4248,7 +4358,10 @@ function prepareAutoRestoreTransitionTakeover(
   );
 }
 
-function synchronizeAutoRestoreWithShieldsDown(sandboxName: string): void {
+function synchronizeAutoRestoreWithShieldsDown(
+  sandboxName: string,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): void {
   const timerMarker = readTimerMarker(sandboxName);
   if (
     !timerMarker ||
@@ -4265,6 +4378,7 @@ function synchronizeAutoRestoreWithShieldsDown(sandboxName: string): void {
     {
       retainTransition: true,
       assertTakeoverAuthority: () => assertTimerMarkerGeneration(sandboxName, timerMarker),
+      runtimeSelection,
     },
   );
 }
@@ -4296,6 +4410,7 @@ function lockAgentConfigWithoutHostLock(
   rollbackLocked = getShieldsPosture(sandboxName, false).locked,
   allowLegacyHermesProtocol = false,
   cachedProtocol?: HermesShieldsProtocol,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): { chattrApplied: boolean; fileHashes: { [path: string]: string } } {
   const target = ensureConfigHashSensitiveFile(rawTarget);
   const protocol = resolveHermesShieldsProtocol(
@@ -4304,8 +4419,14 @@ function lockAgentConfigWithoutHostLock(
     allowLegacyHermesProtocol,
     cachedProtocol,
   );
-  synchronizeAutoRestoreWithShieldsDown(sandboxName);
-  return lockAgentConfigUnderMutationLock(sandboxName, target, rollbackLocked, protocol);
+  synchronizeAutoRestoreWithShieldsDown(sandboxName, runtimeSelection);
+  return lockAgentConfigUnderMutationLock(
+    sandboxName,
+    target,
+    rollbackLocked,
+    protocol,
+    runtimeSelection,
+  );
 }
 
 function lockAgentConfig(
@@ -4314,6 +4435,7 @@ function lockAgentConfig(
   rollbackLocked?: boolean,
   allowLegacyHermesProtocol = false,
   cachedProtocol?: HermesShieldsProtocol,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): { chattrApplied: boolean; fileHashes: { [path: string]: string } } {
   return withShieldsTransitionLock(sandboxName, "lock agent config", () => {
     const effectiveRollbackLocked = rollbackLocked ?? getShieldsPosture(sandboxName, false).locked;
@@ -4323,6 +4445,7 @@ function lockAgentConfig(
       effectiveRollbackLocked,
       allowLegacyHermesProtocol,
       cachedProtocol,
+      runtimeSelection,
     );
   });
 }
@@ -4352,6 +4475,7 @@ interface ShieldsPolicySnapshotRestoreOptions {
   expiredTimerRecovery?: boolean;
   buildPolicySet?: typeof buildPolicySetCommand;
   runPolicySet?: typeof run;
+  runtimeSelection?: OpenShellRuntimeSelection;
 }
 
 type ShieldsPolicySnapshotRestoreResult = ReturnType<typeof run>;
@@ -4426,8 +4550,25 @@ function applyShieldsPolicySnapshot(
     }
   }
 
-  const context = inspectPolicyMutationContext(sandboxName, "restore the Shields policy snapshot");
-  const rawLive = runCapture(buildPolicyGetCommand(sandboxName, context.gatewayName));
+  const context = options.runtimeSelection
+    ? inspectPolicyMutationContext(
+        sandboxName,
+        "restore the Shields policy snapshot",
+        options.runtimeSelection.gatewayName,
+        options.runtimeSelection,
+      )
+    : inspectPolicyMutationContext(sandboxName, "restore the Shields policy snapshot");
+  const rawLive = runCapture(
+    buildPolicyGetCommand(sandboxName, context.gatewayName),
+    {
+      ...(options.runtimeSelection
+        ? {
+            env: buildSelectedOpenShellSubprocessEnv(options.runtimeSelection),
+            replaceEnv: true as const,
+          }
+        : {}),
+    },
+  );
   const livePolicy = parseCurrentPolicy(rawLive);
   if (!livePolicy) throw new Error("Cannot read the current OpenShell policy for Shields restore");
   const snapshotBinding = transition?.snapshotPolicy ?? state.shieldsPolicySnapshot;
@@ -4459,7 +4600,7 @@ function applyShieldsPolicySnapshot(
         sandboxName,
         context.gatewayName,
       ),
-      { ignoreError: true },
+      withSelectedOpenShellEnv({ ignoreError: true }, options.runtimeSelection),
     );
     rejectFinalShieldsPolicySetResult(result, "restore the Shields policy snapshot");
     if (result.status === 0) verifyAppliedPolicyDocument(sandboxName, restoredPolicy, context);
@@ -4477,11 +4618,14 @@ function rollbackShieldsDown(
   initialState: LoadedShieldsState,
   allowLegacyHermesProtocol = false,
   cachedProtocol?: HermesShieldsProtocol,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): ShieldsDownRollbackResult {
   console.error("  Rolling back — restoring policy from snapshot...");
   let rollbackResult: ReturnType<typeof run> | null = null;
   try {
-    rollbackResult = applyShieldsPolicySnapshot(sandboxName, snapshotPath);
+    rollbackResult = applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
+      runtimeSelection,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`  Warning: Policy restore preparation failed during rollback: ${message}`);
@@ -4498,7 +4642,7 @@ function rollbackShieldsDown(
   if (rollbackResult?.status === 0) {
     if (initialMode === "mutable_default" && target.agentName === "openclaw") {
       try {
-        unlockAgentConfigUnderMutationLock(sandboxName, target, false, protocol);
+        unlockAgentConfigUnderMutationLock(sandboxName, target, false, protocol, runtimeSelection);
         const timerCancellation = killTimer(sandboxName);
         timerAuthorityRevoked = timerCancellation.authorityRevoked;
         if (!timerCancellation.authorityRevoked) {
@@ -4521,7 +4665,7 @@ function rollbackShieldsDown(
     // auto-restore path. Leaves the hashes null (→ "manual intervention"
     // below) when the lock will not re-confirm.
     const relock = relockAndReconfirm(
-      () => lockAgentConfigUnderMutationLock(sandboxName, target, true, protocol),
+      () => lockAgentConfigUnderMutationLock(sandboxName, target, true, protocol, runtimeSelection),
       { confirm: hermesProviderLockConfirmation(sandboxName, target, protocol) },
     );
     if (relock.ok && relock.lastResult) {
@@ -4629,7 +4773,15 @@ function activateLockdownFromSnapshot(
   // otherwise leave the same DRIFTED state #4663 is about. relockAndReconfirm
   // fails closed (ok:false) when the lock will not hold past the settle window.
   const relock = relockAndReconfirm(
-    () => lockAgentConfig(sandboxName, target, false, allowLegacyHermesProtocol, protocol),
+    () =>
+      lockAgentConfig(
+        sandboxName,
+        target,
+        false,
+        allowLegacyHermesProtocol,
+        protocol,
+        restoreOptions.runtimeSelection,
+      ),
     { confirm: hermesProviderLockConfirmation(sandboxName, target, protocol) },
   );
   if (!relock.ok || !relock.lastResult) {
@@ -4648,6 +4800,7 @@ function activateLockdownFromSnapshot(
 function recoverExpiredAutoRestoreInline(
   sandboxName: string,
   state: ShieldsState & { _isCorrupt?: boolean; _corruptError?: string },
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): { attempted: boolean; restored: boolean } {
   if (state._isCorrupt) return { attempted: false, restored: false };
   if (state.shieldsDown !== true) return { attempted: false, restored: false };
@@ -4685,6 +4838,7 @@ function recoverExpiredAutoRestoreInline(
         expiredTimerRecovery: true,
         retainTransition: true,
         assertTakeoverAuthority: () => assertTimerMarkerGeneration(sandboxName, marker),
+        runtimeSelection,
       });
     } catch (error) {
       if (isDurableContainmentFailure(error)) throw error;
@@ -4713,8 +4867,9 @@ function recoverExpiredAutoRestoreInline(
       ? {
           transitionProcessToken: recoveryProcessToken,
           ...(marker ? { deadlineAuthoritative: true, expiredTimerRecovery: true } : {}),
+          runtimeSelection,
         }
-      : {},
+      : { runtimeSelection },
   );
   const nowIso = new Date().toISOString();
   if (!activation.ok) {
@@ -4778,6 +4933,7 @@ function recoverExpiredAutoRestoreInline(
 function recoverExpiredAutoRestoreGate(
   sandboxName: string,
   allowInlineRecovery = true,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): LoadedShieldsState {
   const state = loadShieldsState(sandboxName);
   if (!allowInlineRecovery) return state;
@@ -4785,7 +4941,7 @@ function recoverExpiredAutoRestoreGate(
     return state;
   }
 
-  const recovery = recoverExpiredAutoRestoreInline(sandboxName, state);
+  const recovery = recoverExpiredAutoRestoreInline(sandboxName, state, runtimeSelection);
   if (!recovery.restored) return state;
   return loadShieldsState(sandboxName);
 }
@@ -4811,6 +4967,7 @@ interface ShieldsDownOpts {
   /** Return a one-shot receipt bound to this exact transition for host backup relock. */
   issuePolicySnapshotRecovery?: boolean;
   processToken?: string;
+  runtimeSelection?: OpenShellRuntimeSelection;
 }
 
 type RecoveredShieldsDownCompletion = {
@@ -4887,11 +5044,14 @@ function prepareRecoveredShieldsDownCompletion(
 function applyRecoveredShieldsDownForwardPolicy(
   sandboxName: string,
   completion: RecoveredShieldsDownCompletion,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): void {
   if (!completion.authority) return;
   const policyContext = assertShieldsPolicyMutationContext(
     sandboxName,
     "reapply the interrupted Shields down policy",
+    undefined,
+    runtimeSelection,
   );
   assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
   const policyPath = requireShieldsDownForwardPolicy(completion.authority);
@@ -4900,9 +5060,10 @@ function applyRecoveredShieldsDownForwardPolicy(
     "reapply the interrupted Shields down policy",
     policyContext,
   );
-  const result = run(buildPolicySetCommand(policyPath, sandboxName, policyContext.gatewayName), {
-    ignoreError: true,
-  });
+  const result = run(
+    buildPolicySetCommand(policyPath, sandboxName, policyContext.gatewayName),
+    withSelectedOpenShellEnv({ ignoreError: true }, runtimeSelection),
+  );
   rejectFinalShieldsPolicySetResult(result, "reapply the interrupted Shields down policy");
   if (result.status !== 0) {
     throw new Error("Interrupted Shields down forward policy could not be reapplied");
@@ -4963,11 +5124,12 @@ function resolveReleasedProviderShieldsDownTarget(
 function finishRecoveredHermesShieldsDown(
   sandboxName: string,
   completion: RecoveredShieldsDownCompletion,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): void {
   if (completion.authority) {
     assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
   }
-  const convergence = waitForHermesInferenceRouteConvergence(sandboxName, { run });
+  const convergence = waitForSelectedHermesInferenceRouteConvergence(sandboxName, runtimeSelection);
   if (!convergence.ok) {
     const status = convergence.httpStatus > 0 ? `HTTP ${convergence.httpStatus}` : "unavailable";
     throw new Error(
@@ -4993,6 +5155,7 @@ function failRecoveredHermesShieldsDown(
   allowLegacyHermesProtocol: boolean,
   error: unknown,
   throwOnError: boolean | undefined,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): never {
   const message = error instanceof Error ? error.message : String(error);
   const rollback = rollbackShieldsDown(
@@ -5003,6 +5166,7 @@ function failRecoveredHermesShieldsDown(
     state,
     allowLegacyHermesProtocol,
     "provider-state-mutation-v2",
+    runtimeSelection,
   );
   if (completion.transition && rollback.timerAuthorityRevoked) {
     clearShieldsDownTransition(sandboxName, completion.transition.processToken);
@@ -5038,6 +5202,7 @@ function startFreshShieldsDownTimer(input: {
   allowLegacyHermesProtocol: boolean;
   deferAutoRestoreWhileOwnerAlive: boolean;
   policyFile: string;
+  runtimeSelection?: OpenShellRuntimeSelection;
 }): FreshShieldsDownTimerStart {
   const {
     sandboxName,
@@ -5049,6 +5214,7 @@ function startFreshShieldsDownTimer(input: {
     allowLegacyHermesProtocol,
     deferAutoRestoreWhileOwnerAlive,
     policyFile,
+    runtimeSelection,
   } = input;
   const restoreAt = new Date(Date.now() + timeoutSeconds * 1000);
   const timerScript = path.join(__dirname, "timer.ts");
@@ -5099,6 +5265,13 @@ function startFreshShieldsDownTimer(input: {
       {
         detached: true,
         stdio: ["ignore", "ignore", "ignore", "ipc"],
+        ...(runtimeSelection
+          ? {
+              env: buildSelectedOpenShellSubprocessEnv(runtimeSelection, {
+                NEMOCLAW_GATEWAY_PORT: String(resolveShieldsStateGatewayPort()),
+              }),
+            }
+          : {}),
       },
     );
     if (!timerChild.pid) throw new Error("auto-restore timer did not report a process id");
@@ -5179,13 +5352,14 @@ function completeInterruptedShieldsDown(
   // restrictive rollback. Reconcile the recorded mutable posture and verify
   // it before treating this retry as complete.
   try {
-    applyRecoveredShieldsDownForwardPolicy(sandboxName, completion);
+    applyRecoveredShieldsDownForwardPolicy(sandboxName, completion, opts.runtimeSelection);
     if (retainedProviderTarget) {
       runHermesProviderProtectionTransition(
         sandboxName,
         retainedProviderTarget,
         "locked",
         "locked",
+        opts.runtimeSelection,
       );
     }
     if (completion.authority) {
@@ -5196,11 +5370,12 @@ function completeInterruptedShieldsDown(
       completionTarget,
       false,
       "provider-state-mutation-v2",
+      opts.runtimeSelection,
     );
     if (completion.authority) {
       assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
     }
-    finishRecoveredHermesShieldsDown(sandboxName, completion);
+    finishRecoveredHermesShieldsDown(sandboxName, completion, opts.runtimeSelection);
   } catch (error) {
     return failRecoveredHermesShieldsDown(
       sandboxName,
@@ -5210,6 +5385,7 @@ function completeInterruptedShieldsDown(
       opts.allowLegacyHermesProtocol === true,
       error,
       opts.throwOnError,
+      opts.runtimeSelection,
     );
   }
   if (!completion.alreadyCommitted) {
@@ -5262,6 +5438,7 @@ function shieldsDownWithoutHostLock(
         retainedProviderTarget,
         "locked",
         "locked",
+        opts.runtimeSelection,
       );
     }
     console.error("  Shields state is corrupt; refusing to unlock.");
@@ -5272,7 +5449,13 @@ function shieldsDownWithoutHostLock(
   }
   let recoveredProviderTarget: AgentConfigTarget | null = null;
   if (retainedProviderTarget && state.shieldsDown !== true) {
-    runHermesProviderProtectionTransition(sandboxName, retainedProviderTarget, "locked", "locked");
+    runHermesProviderProtectionTransition(
+      sandboxName,
+      retainedProviderTarget,
+      "locked",
+      "locked",
+      opts.runtimeSelection,
+    );
     recoveredProviderTarget = retainedProviderTarget;
   }
   const initialMode = deriveShieldsMode(state, state._hasStateFile);
@@ -5292,7 +5475,7 @@ function shieldsDownWithoutHostLock(
     }
     if (isEquivalentShieldsDownRequest(state, timeoutSeconds, reason, policyName)) {
       if (!hasEquivalentShieldsDownTimerAuthority(sandboxName, state)) {
-        recoverExpiredAutoRestoreInline(sandboxName, state);
+        recoverExpiredAutoRestoreInline(sandboxName, state, opts.runtimeSelection);
         console.error(
           "  Cannot accept equivalent shields down request without live auto-restore timer authority.",
         );
@@ -5311,7 +5494,12 @@ function shieldsDownWithoutHostLock(
     return failShieldsCommand(`Config is already unlocked for ${sandboxName}`, opts.throwOnError);
   }
 
-  const policyContext = assertShieldsPolicyMutationContext(sandboxName, "lower Shields");
+  const policyContext = assertShieldsPolicyMutationContext(
+    sandboxName,
+    "lower Shields",
+    undefined,
+    opts.runtimeSelection,
+  );
 
   // Resolve the old-image compatibility contract before touching timers,
   // host state, policy, or sandbox files. A transport failure or an
@@ -5357,7 +5545,18 @@ function shieldsDownWithoutHostLock(
   console.log("  Capturing current policy snapshot...");
   let rawPolicy: string;
   try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName, policyContext.gatewayName));
+    rawPolicy = runCapture(
+      buildPolicyGetCommand(sandboxName, policyContext.gatewayName),
+      {
+        ignoreError: true,
+        ...(opts.runtimeSelection
+          ? {
+              env: buildSelectedOpenShellSubprocessEnv(opts.runtimeSelection),
+              replaceEnv: true as const,
+            }
+          : {}),
+      },
+    );
   } catch {
     rawPolicy = "";
   }
@@ -5461,6 +5660,7 @@ function shieldsDownWithoutHostLock(
       allowLegacyHermesProtocol: opts.allowLegacyHermesProtocol === true,
       deferAutoRestoreWhileOwnerAlive: opts.deferAutoRestoreWhileOwnerAlive === true,
       policyFile,
+      runtimeSelection: opts.runtimeSelection,
     });
   } catch (error) {
     cleanupRuntimePolicyFile();
@@ -5513,6 +5713,7 @@ function shieldsDownWithoutHostLock(
         state,
         opts.allowLegacyHermesProtocol === true,
         protocol,
+        opts.runtimeSelection,
       );
       if (rollback.timerAuthorityRevoked) {
         clearShieldsDownTransition(sandboxName, transition.processToken);
@@ -5539,9 +5740,7 @@ function shieldsDownWithoutHostLock(
     assertShieldsPolicyMutationContext(sandboxName, "apply the Shields down policy", policyContext);
     policySetResult = run(
       buildPolicySetCommand(policyPathForApply, sandboxName, policyContext.gatewayName),
-      {
-        ignoreError: true,
-      },
+      withSelectedOpenShellEnv({ ignoreError: true }, opts.runtimeSelection),
     );
   } finally {
     cleanupRuntimePolicyFile();
@@ -5636,11 +5835,15 @@ function shieldsDownWithoutHostLock(
         initialMode === "locked",
         opts.allowLegacyHermesProtocol === true,
         protocol,
+        opts.runtimeSelection,
       );
     }
     if (target.agentName === "hermes") {
       console.log("  Confirming Hermes inference route after policy transition...");
-      const convergence = waitForHermesInferenceRouteConvergence(sandboxName, { run });
+      const convergence = waitForSelectedHermesInferenceRouteConvergence(
+        sandboxName,
+        opts.runtimeSelection,
+      );
       if (!convergence.ok) {
         inferenceRouteConvergenceFailed = true;
         const status =
@@ -5660,6 +5863,7 @@ function shieldsDownWithoutHostLock(
       state,
       opts.allowLegacyHermesProtocol === true,
       protocol,
+      opts.runtimeSelection,
     );
     transition = persistIncompleteShieldsDownPosture(
       sandboxName,
@@ -5719,6 +5923,7 @@ function shieldsDownWithoutHostLock(
         state,
         opts.allowLegacyHermesProtocol === true,
         protocol,
+        opts.runtimeSelection,
       );
       if (rollback.timerAuthorityRevoked) {
         clearShieldsDownTransition(sandboxName, transition.processToken);
@@ -5779,6 +5984,7 @@ function shieldsDown(
       () => shieldsDownWithoutHostLock(sandboxName, effectiveOpts),
       processToken,
       opts.assertCommandAvailable,
+      opts.runtimeSelection,
     );
   } catch (error) {
     return completeDeferredShieldsExit(error, opts.throwOnError === true);
@@ -5797,13 +6003,17 @@ type ShieldsUpOpts = {
   allowLegacyHermesProtocol?: boolean;
   policySnapshotRecovery?: ShieldsPolicySnapshotRecovery;
   assertCommandAvailable?: () => void;
+  runtimeSelection?: OpenShellRuntimeSelection;
 };
 
 function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {}): void {
   validateName(sandboxName, "sandbox name");
 
   const state = loadShieldsState(sandboxName);
-  const recoveredProviderTarget = recoverActiveHermesRuntimeProviderMutation(sandboxName);
+  const recoveredProviderTarget = recoverActiveHermesRuntimeProviderMutation(
+    sandboxName,
+    opts.runtimeSelection,
+  );
   if (state._isCorrupt) {
     console.error("  Shields state is corrupt; refusing to raise shields.");
     console.error(
@@ -5847,7 +6057,13 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
       target.agentName === "hermes" &&
       inspectHermesShieldsProtocol(sandboxName, target) === "provider-state-mutation-v2"
     ) {
-      runHermesProviderProtectionTransition(sandboxName, target, "locked", "locked");
+      runHermesProviderProtectionTransition(
+        sandboxName,
+        target,
+        "locked",
+        "locked",
+        opts.runtimeSelection,
+      );
     }
     const { issues } = verifyShieldsLockState(sandboxName, target, {
       verifyChattr: state.chattrApplied === true,
@@ -5955,6 +6171,7 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
           true,
           opts.allowLegacyHermesProtocol === true,
           protocol,
+          opts.runtimeSelection,
         ),
       { confirm: hermesProviderLockConfirmation(sandboxName, target, protocol) },
     );
@@ -6021,6 +6238,7 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
       opts.allowLegacyHermesProtocol === true,
       target,
       protocol,
+      { runtimeSelection: opts.runtimeSelection },
     );
     if (!activation.ok) {
       const configLocked =
@@ -6063,6 +6281,7 @@ function shieldsUpWithoutHostLock(sandboxName: string, opts: ShieldsUpOpts = {})
           false,
           opts.allowLegacyHermesProtocol === true,
           protocol,
+          opts.runtimeSelection,
         ),
       { confirm: hermesProviderLockConfirmation(sandboxName, target, protocol) },
     );
@@ -6138,6 +6357,7 @@ function shieldsUp(sandboxName: string, opts: ShieldsUpOpts = {}): void {
       () => shieldsUpWithoutHostLock(sandboxName, opts),
       undefined,
       opts.assertCommandAvailable,
+      opts.runtimeSelection,
     );
   } catch (error) {
     return completeDeferredShieldsExit(error, opts.throwOnError === true);
@@ -6425,8 +6645,12 @@ function shieldsStatus(
  * pending. User-facing callers should use getShieldsPosture() so fresh state
  * is labeled as "not configured" instead of "down".
  */
-function isShieldsDown(sandboxName: string, allowInlineRecovery = false): boolean {
-  const posture = getShieldsPosture(sandboxName, allowInlineRecovery);
+function isShieldsDown(
+  sandboxName: string,
+  allowInlineRecovery = false,
+  runtimeSelection?: OpenShellRuntimeSelection,
+): boolean {
+  const posture = getShieldsPosture(sandboxName, allowInlineRecovery, runtimeSelection);
   return posture.mode === "mutable_default" || posture.mode === "temporarily_unlocked";
 }
 

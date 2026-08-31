@@ -40,6 +40,8 @@ const registry = require("./src/lib/state/registry.js");
 registry.registerSandbox({
   name: "openclaw-sandbox",
   agent: "openclaw",
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
   mcp: { bridges: { first: {
     server: "first",
     url: "https://8.8.8.8/mcp",
@@ -86,6 +88,8 @@ for (const [index, marker] of markers.entries()) {
   registry.registerSandbox({
     name,
     agent: "openclaw",
+    gatewayName: "nemoclaw-9090",
+    gatewayPort: 9090,
     mcp: {
       bridges: { github: {
         server: "github",
@@ -149,6 +153,8 @@ providerCommands.runOpenshellProviderCommand = (args) => {
 registry.registerSandbox({
   name: "hermes-sandbox",
   agent: "hermes",
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
   mcp: { bridges: {}, managedServerNames: ["retired"] },
 });
 const status = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
@@ -194,7 +200,12 @@ const status = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
 process.env.HOME = ${JSON.stringify(home)};
 const registry = require("./src/lib/state/registry.js");
 const status = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
-registry.registerSandbox({ name: "openclaw-sandbox", agent: "openclaw" });
+registry.registerSandbox({
+  name: "openclaw-sandbox",
+  agent: "openclaw",
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
+});
 (async () => {
   let invalid;
   try {
@@ -262,6 +273,8 @@ processRecovery.executeSandboxCommand = (_sandboxName, command) => {
 registry.registerSandbox({
   name: "custom-root-status",
   agent: "openclaw",
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
   mcp: { bridges: { github: {
     server: "github",
     agent: "openclaw",
@@ -334,6 +347,8 @@ processRecovery.executeSandboxCommand = () => ({ status: 0, stdout: "registered"
 registry.registerSandbox({
   name: "persisted-status",
   agent: "current-disabled",
+  gatewayName: "nemoclaw-9090",
+  gatewayPort: 9090,
   mcp: { bridges: {
     direct: {
       server: "direct",

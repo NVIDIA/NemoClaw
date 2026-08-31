@@ -8,11 +8,13 @@ const mocks = vi.hoisted(() => ({
   runOpenshell: vi.fn(),
 }));
 
-vi.mock("../../subprocess-env", () => ({
+vi.mock("../../subprocess-env", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../subprocess-env")>()),
   buildSubprocessEnv: mocks.buildSubprocessEnv,
 }));
 
-vi.mock("./runtime", () => ({
+vi.mock("./runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./runtime")>()),
   runOpenshell: mocks.runOpenshell,
 }));
 
