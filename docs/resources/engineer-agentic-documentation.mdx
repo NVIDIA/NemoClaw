@@ -42,14 +42,15 @@ A polished site with weak retrieval or verification is not agent-ready.
 ## Move Documentation Into the Engineering Loop
 
 A push to `main` that changes a path outside the allowed documentation paths starts `Docs / Author Post-Merge Catch-Up` on a GitHub-hosted runner.
-The workflow examines implementation, tests, and documentation from the latest reachable semver tag through the exact pushed commit.
+The workflow examines implementation, tests, and documentation after the latest reachable release tag through the pushed commit.
 It proceeds only while no managed documentation PR exists or the existing managed PR remains a draft.
 Marking that PR ready for review transfers ownership to maintainers and stops later runs before model work begins.
 
 1. **Author.** GitHub Actions launches the Pi coding agent in a pinned OpenShell sandbox.
    The author prompt directs the agent to read the committed range and repository guidance, verify behavior in source and tests, and edit only `docs/**`, `fern/docs.yml`, and `fern/assets/**`.
-2. **Validate.** The runner applies the candidate patch to a trusted checkout, runs `npm run docs`, and confirms that validation did not mutate the patch.
-3. **Review.** GitHub Actions launches a separate Pi agent in an offline OpenShell sandbox.
+2. **Validate.** The runner runs `npm run docs` in `author/repo`, the candidate checkout prepared from the trusted source repository, and confirms that validation did not mutate the patch.
+3. **Review.** The runner applies the exact candidate patch to a separate `review/repo` checkout.
+   GitHub Actions then launches a separate Pi agent in an offline OpenShell sandbox.
    The repository is mounted read-only and the agent has no editing tools.
    The reviewer evaluates whether the cumulative patch is complete, accurate, and non-speculative; a rejection uploads the review report.
 4. **Publish.** An approval record binds the exact patch hash, repository, reviewed `main` commit, range-start tag, and target release tag.
