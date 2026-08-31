@@ -169,36 +169,36 @@ describe("lifecycle lock decisions", () => {
   });
 
   it.each([
-    ["open containment gate", { phase: "committed-containment", present: false }, "proceed"],
-    ["committed containment", { phase: "committed-containment", present: true }, "refuse"],
+    ["proceed", "an open containment gate", { phase: "committed-containment", present: false }],
+    ["refuse", "committed containment", { phase: "committed-containment", present: true }],
     [
+      "publish",
       "unchanged publication authority",
       {
         phase: "publication",
         authorityCurrent: true,
         existingSelfToken: null,
       },
-      "publish",
     ],
     [
+      "resume",
       "recovered self publication",
       {
         phase: "publication",
         authorityCurrent: true,
         existingSelfToken: "owner-a",
       },
-      "resume",
     ],
     [
+      "refuse",
       "changed publication authority",
       {
         phase: "publication",
         authorityCurrent: false,
         existingSelfToken: "owner-a",
       },
-      "refuse",
     ],
-  ] as const)("maps %s to %s", (_name, input, kind) => {
+  ] as const)("deadline recovery returns %s for %s", (kind, _name, input) => {
     expect(decideMcpLifecycleDeadlineRecovery(input).kind).toBe(kind);
   });
 
@@ -293,7 +293,7 @@ describe("lifecycle lock decisions", () => {
       },
       { kind: "wait", verifiedLive: false },
     ],
-  ] as const)("maps %s", (_name, input, expected) => {
+  ] as const)("deadline recovery returns the expected action for %s", (_name, input, expected) => {
     expect(decideMcpLifecycleDeadlineRecovery(input)).toMatchObject(expected);
   });
 
