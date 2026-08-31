@@ -450,4 +450,51 @@ network_policies:
       },
     });
   });
+
+  it("restores the Teams-owned Outlook login binding when Teams is re-enabled", () => {
+    const merged = mergeReplacementPolicyAccess(
+      `version: 1
+network_policies:
+  outlook_graph:
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+`,
+      "version: 1\nnetwork_policies: {}\n",
+      ["teams"],
+      [],
+      [
+        `version: 1
+network_policies:
+  teams:
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+        credential_binding: {provider: alpha-teams-bridge}
+`,
+      ],
+      "alpha",
+    );
+
+    expect(YAML.parse(merged.source).network_policies).toEqual({
+      outlook_graph: {
+        endpoints: [
+          {
+            host: "login.microsoftonline.com",
+            port: 443,
+            credential_binding: { provider: "alpha-teams-bridge" },
+          },
+        ],
+      },
+      teams: {
+        endpoints: [
+          {
+            host: "login.microsoftonline.com",
+            port: 443,
+            credential_binding: { provider: "alpha-teams-bridge" },
+          },
+        ],
+      },
+    });
+  });
 });

@@ -235,13 +235,19 @@ export function mergeReplacementPolicyAccess(
   sandboxName?: string,
 ): { readonly changed: boolean; readonly source: string } {
   const providerNormalizedLivePolicySource = stripProviderComposedPolicies(livePolicySource);
-  const normalizedLivePolicySource = removedNetworkPolicyKeys.includes("teams")
-    ? policies.reconcileTeamsOutlookLoginCredentialBinding(
-        providerNormalizedLivePolicySource,
-        sandboxName,
-        false,
-      )
-    : providerNormalizedLivePolicySource;
+  const teamsActive = requiredNetworkPolicyKeys.includes("teams")
+    ? true
+    : removedNetworkPolicyKeys.includes("teams")
+      ? false
+      : null;
+  const normalizedLivePolicySource =
+    teamsActive !== null
+      ? policies.reconcileTeamsOutlookLoginCredentialBinding(
+          providerNormalizedLivePolicySource,
+          sandboxName,
+          teamsActive,
+        )
+      : providerNormalizedLivePolicySource;
   const live = structuredClone(
     parseOpenShellPolicy(normalizedLivePolicySource).policy,
   ) as PolicyMapping;
