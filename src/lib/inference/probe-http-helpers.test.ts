@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const {
   buildValidationProbeTimingProfile,
+  getExtendedNvidiaEndpointValidationProbeCurlArgs,
   getKimiK26ValidationProbeCurlArgs,
   getValidationProbeCurlArgs,
   getStreamingEventProbeCurlArgs,
@@ -94,17 +95,37 @@ describe("validation probe curl timing helpers", () => {
     ]);
   });
 
-  it("allows onboard validation max-time to be raised from the environment", () => {
+  it("raises onboard validation connection and maximum times from the environment", () => {
     vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", "300");
     expect(getValidationProbeCurlArgs({ isWsl: false })).toEqual([
       "--connect-timeout",
-      "10",
+      "300",
       "--max-time",
       "300",
     ]);
     expect(getKimiK26ValidationProbeCurlArgs({ isWsl: false })).toEqual([
       "--connect-timeout",
-      "10",
+      "300",
+      "--max-time",
+      "300",
+    ]);
+  });
+
+  it("raises the WSL extended-profile connection deadline with the recovery override", () => {
+    vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", "360");
+    expect(getExtendedNvidiaEndpointValidationProbeCurlArgs({ isWsl: true })).toEqual([
+      "--connect-timeout",
+      "360",
+      "--max-time",
+      "360",
+    ]);
+  });
+
+  it("does not lower the WSL extended-profile total deadline", () => {
+    vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", "60");
+    expect(getExtendedNvidiaEndpointValidationProbeCurlArgs({ isWsl: true })).toEqual([
+      "--connect-timeout",
+      "60",
       "--max-time",
       "300",
     ]);

@@ -31,8 +31,9 @@ const { isWsl } = require("../platform");
  * Guidance for a WSL2 host whose endpoint verification keeps timing out.
  *
  * Names the one lever onboarding actually honours for this failure:
- * `withValidationMaxTimeOverride` raises the maximum time for the standard
- * validation probes, including the chat-completions call that times out here.
+ * `withValidationTimeoutOverride` raises the connection and maximum times for
+ * standard validation probes, including the chat-completions call that times
+ * out here.
  * Streaming event probes stay capped at five seconds regardless. The override
  * only ever raises a probe's budget, so the suggested value has to clear every
  * default it might meet, including the 300-second extended NVIDIA profile.
