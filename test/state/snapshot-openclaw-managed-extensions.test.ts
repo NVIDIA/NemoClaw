@@ -131,10 +131,7 @@ describe("OpenClaw managed extension snapshot restore", () => {
         const freshRegistryPath = path.join(fixture, "fresh-installs.json");
         const sshLog = path.join(fixture, "ssh-log.jsonl");
         const extensionsDir = path.join(openclawDir, "extensions");
-        const builtInManagedExtensions =
-          "nemoclaw,diagnostics-otel,brave,discord,openclaw-weixin,slack,whatsapp,msteams".split(
-            ",",
-          );
+        const builtInManagedExtensions = "nemoclaw,diagnostics-otel,brave".split(",");
         const freshImagePlugins = freshPlugin ? [freshPlugin] : [];
         const managedExtensions = [...builtInManagedExtensions, ...freshImagePlugins];
         fs.mkdirSync(binDir, { recursive: true });

@@ -16,17 +16,7 @@ import {
   shouldPreserveOpenClawManagedExtensions,
 } from "./openclaw-managed-extensions";
 
-const EXPECTED_MANAGED_EXTENSIONS = [
-  "nemoclaw",
-  "diagnostics-otel",
-  "brave",
-  "discord",
-  "openclaw-weixin",
-  "slack",
-  "whatsapp",
-  "msteams",
-  "googlechat",
-] as const;
+const EXPECTED_MANAGED_EXTENSIONS = ["nemoclaw", "diagnostics-otel", "brave"] as const;
 
 describe("OpenClaw managed extension policy", () => {
   it("tracks every image-managed extension with a unique safe directory name", () => {

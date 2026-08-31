@@ -122,7 +122,7 @@ process.exit(0);
     );
     expect(cleanupCommand).toBeDefined();
     expect(cleanupCommand).toContain("! -name 'nemoclaw'");
-    expect(cleanupCommand).toContain("! -name 'openclaw-weixin'");
+    expect(cleanupCommand).toContain("! -name 'brave'");
     expect(cleanupCommand).not.toContain("rm -rf -- '/sandbox/.openclaw/extensions'");
     expect(cleanupCommand).not.toContain("d='/sandbox/.openclaw/extensions'");
     expect(loggedCommands).not.toEqual(

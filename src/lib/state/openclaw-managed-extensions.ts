@@ -4,7 +4,6 @@
 import path from "node:path";
 
 import { shellQuote } from "../core/shell-quote.js";
-import { listOpenClawPluginExtensionIds } from "../messaging/channels/metadata.js";
 
 // Exact symlinks baked into OpenClaw messaging images at build time. Source
 // paths are relative to the agent state-dir root (e.g. /sandbox/.openclaw);
@@ -29,14 +28,17 @@ const OPENCLAW_IMAGE_PACKAGE_PATHS: ReadonlySet<string> = new Set([
   "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw",
 ]);
 
-// Preserve extensions baked into the freshly rebuilt image instead of
-// replacing them with archived copies. Messaging IDs come from the reviewed
-// channel manifests; the remaining entries are installed by Dockerfile.base.
+// Preserve extensions baked unconditionally into every OpenClaw image build
+// instead of replacing them with archived copies. Messaging channel plugins
+// (e.g. openclaw-weixin) are not in this list: standard images only cache
+// their offline npm archive and install them on demand when a channel is
+// enabled, so a rebuild's fresh sandbox does not actually have them yet.
+// Dynamic discovery (freshExtensionDirs) is what correctly preserves those
+// across a rebuild when they are genuinely already installed.
 export const OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS = [
   "nemoclaw",
   "diagnostics-otel",
   "brave",
-  ...listOpenClawPluginExtensionIds(),
 ] as const;
 
 interface OpenClawRestoreManifest {

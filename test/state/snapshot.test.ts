@@ -789,7 +789,7 @@ process.exit(0);
       expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
       expect(cleanupCommand).toContain("/sandbox/.openclaw/extensions");
       expect(cleanupCommand).toContain("! -name 'nemoclaw'");
-      expect(cleanupCommand).toContain("! -name 'openclaw-weixin'");
+      expect(cleanupCommand).toContain("! -name 'brave'");
       expect(cleanupCommand).not.toContain("/sandbox/.openclaw/agents");
     } finally {
       if (oldOpenshell === undefined) {
