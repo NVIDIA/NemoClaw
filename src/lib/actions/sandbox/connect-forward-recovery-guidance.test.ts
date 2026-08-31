@@ -58,7 +58,7 @@ describe("connect forward recovery guidance", () => {
       true,
     ],
   ] as const)(
-    "gives safe guidance for %s (#10640)",
+    "prints recovery guidance for %s (#10640)",
     async (_caseName, reason, expectedGuidance, includesManualStart) => {
       const processCheck = {
         checked: true,
