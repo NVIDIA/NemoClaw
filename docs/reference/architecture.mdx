@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Architecture Details"
 sidebar-title: "Architecture Details"
-description: "Learn how NemoClaw combines a host CLI, sandbox integration layer, and versioned blueprint to run compatible agents in controlled OpenShell sandboxes."
-description-agent: "Describes the NemoClaw integration layer and blueprint architecture and how they orchestrate compatible agent sandboxes. Use when looking up architecture, agent integration, plugin structure, or blueprint design."
+description: "Learn how NemoClaw combines a host CLI, sandbox integration layer, and versioned blueprint to run supported agent runtimes in controlled OpenShell sandboxes."
+description-agent: "Describes the NemoClaw integration layer and blueprint architecture and how they orchestrate supported agent runtimes in sandboxes. Use when looking up architecture, agent integration, plugin structure, or blueprint design."
 keywords: ["nemoclaw architecture", "nemoclaw agent architecture", "nemoclaw plugin blueprint structure"]
 content:
   type: "reference"
@@ -13,7 +13,7 @@ NemoClaw combines a host CLI, an in-sandbox integration layer, and a versioned Y
 
 ## System Overview
 
-NVIDIA OpenShell is a general-purpose agent runtime.
+NVIDIA OpenShell is a general-purpose sandbox runtime and policy platform.
 It provides sandbox containers, a credential-storing gateway, inference proxying, and policy enforcement, but it has no opinions about what runs inside.
 NemoClaw is an opinionated reference stack built on OpenShell that handles what goes in the sandbox, prepares agent-specific integration, and makes the setup accessible.
 
@@ -38,7 +38,7 @@ graph LR
 
         subgraph NEMOCLAW["NemoClaw"]
             direction TB
-            NCLI["CLI + Onboarding<br/><small>Guided setup · provider selection<br/>credential validation · deploy</small>"]:::nemoclaw
+            NCLI["CLI + Onboarding<br/><small>Guided setup · provider selection<br/>credential validation · sandbox setup</small>"]:::nemoclaw
             BP["Blueprint<br/><small>Hardened Dockerfile<br/>Network policies · Presets<br/>Security configuration</small>"]:::nemoclaw
             MIGRATE["State Management<br/><small>Migration snapshots<br/>Credential stripping<br/>Integrity verification</small>"]:::nemoclaw
         end
@@ -51,7 +51,7 @@ graph LR
 
             subgraph SANDBOX["Sandbox Container 🔒"]
                 direction TB
-                AGENT["Compatible Agent<br/><small>Selected managed runtime</small>"]:::agent
+                AGENT["Supported Agent Runtime<br/><small>Selected managed runtime</small>"]:::agent
                 PLUG["NemoClaw Integration<br/><small>Managed configuration<br/>and runtime context</small>"]:::sandbox
             end
         end
@@ -158,7 +158,7 @@ graph TB
 
         subgraph DOCKER["Docker daemon"]
             direction TB
-            SANDBOX["Sandbox container 🔒<br/><small>Landlock + seccomp + netns<br/>Compatible agent + NemoClaw integration</small>"]:::sandbox
+            SANDBOX["Sandbox container 🔒<br/><small>Landlock + seccomp + netns<br/>Supported agent runtime + NemoClaw integration</small>"]:::sandbox
         end
     end
 
@@ -182,7 +182,7 @@ Layering from top to bottom:
 | Host CLI | Host process (`$$nemoclaw` on Node.js) | Orchestrates OpenShell via `openshell` CLI calls. |
 | OpenShell gateway | Host process by default; optional Linux compatibility container when the gateway binary needs a newer host ABI | Hosts the credential store, owns sandbox lifecycle coordination, and provides the L7 proxy. |
 | Docker daemon | Host service | Runs the Docker-driver sandbox container and, on affected Linux hosts, the optional gateway compatibility container. |
-| Sandbox container | Docker container | Runs the selected compatible agent and NemoClaw integration under Landlock + seccomp + netns. |
+| Sandbox container | Docker container | Runs the selected supported agent runtime and NemoClaw integration under Landlock + seccomp + netns. |
 | OpenShell L7 proxy | Gateway process | Intercepts agent egress and rewrites `Authorization` headers (Bearer/Bot) and URL-path segments to inject the real credential at the network boundary. |
 
 NemoClaw never gives the sandbox a raw provider key.
@@ -321,7 +321,7 @@ The direct blueprint runner still carries a pinned OpenShell Community OpenClaw 
 </AgentOnly>
 Inside the sandbox:
 
-- The selected compatible agent runs with the NemoClaw integration layer installed or generated for that agent.
+- The selected supported agent runtime runs with the NemoClaw integration layer installed or generated for that runtime.
 - Inference calls are routed through OpenShell to the configured provider.
 - Network egress is restricted by the baseline policy for the selected agent profile.
 - Filesystem access is confined to `/sandbox` and `/tmp` for read-write access, with system paths read-only.
@@ -347,7 +347,7 @@ Inference requests from the agent never leave the sandbox directly.
 OpenShell intercepts them and routes them to the configured provider:
 
 ```text
-Compatible agent (sandbox)  ──▶  OpenShell gateway  ──▶  Provider endpoint
+Supported agent runtime (sandbox)  ──▶  OpenShell gateway  ──▶  Provider endpoint
 ```
 
 When you select the Model Router provider, the OpenShell gateway routes to a host-side router process instead of a single upstream model.
