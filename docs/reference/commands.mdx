@@ -1609,7 +1609,7 @@ The `Registered gateway binding` result depends on the sandbox registry:
 
 - For a registered sandbox with a valid binding, `doctor` reports a successful check with the resolved gateway name.
 - For a registered sandbox with an invalid binding, the check fails, and `doctor` does not select, probe, or recover a gateway from that binding.
-- For an unregistered sandbox name, `doctor` uses the ambient default gateway for its other gateway checks and omits the `Registered gateway binding` check.
+- For an unregistered sandbox name, `doctor` uses the gateway selected by `NEMOCLAW_GATEWAY_PORT` for its other gateway checks and omits the `Registered gateway binding` check.
 
 <AgentOnly variant="hermes">
 
