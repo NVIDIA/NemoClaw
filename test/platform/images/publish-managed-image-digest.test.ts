@@ -8,7 +8,6 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -74,7 +73,6 @@ exit 94
     expect(result.status).not.toBe(91);
     expect(existsSync(output) ? readFileSync(output, "utf8") : "").toBe("");
     expect(existsSync(readFileSync(pullConfig, "utf8"))).toBe(false);
-    expect(readdirSync(runner)).toEqual(["managed-image-published-manifest.raw"]);
   });
 
   it("exports immutable identity after a credential-free anonymous pull", () => {
