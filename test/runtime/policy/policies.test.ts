@@ -129,12 +129,13 @@ describe("policies", () => {
       expect(policies.getPresetValidationWarning("wechat")).toContain("WeChat");
     });
 
-    it("adds Discord validation guidance for Node probes instead of curl or DNS-only checks", () => {
+    it("adds Discord validation guidance for agent runtime probes instead of curl or DNS-only checks", () => {
       const warning = policies.getPresetValidationWarning("discord");
 
       expect(warning).toContain("curl");
       expect(warning).toContain("preset binary allowlist");
-      expect(warning).toContain("Node HTTPS");
+      expect(warning).toContain("configured agent runtime");
+      expect(warning).not.toContain("Node HTTPS");
       expect(warning).toContain("https://discord.com/api/v10/gateway");
       expect(warning).toContain('dns.resolve("gateway.discord.gg")');
     });
