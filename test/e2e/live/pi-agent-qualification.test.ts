@@ -35,7 +35,7 @@ import {
 } from "./pi-agent-qualification-events.ts";
 
 const GATEWAY = "nemoclaw";
-const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
+const MODEL = "nvidia/nemotron-3-super-120b-a12b";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-pi-qual";
 const TASK_VERSION = "pi-read-v1";
 const LIVE_TIMEOUT_MS = 90 * 60_000;

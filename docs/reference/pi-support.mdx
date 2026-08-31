@@ -32,7 +32,7 @@ The Pi runtime remains a release candidate until final activation adds it to the
 | Compute runtime | Docker |
 | Managed API | OpenAI Chat Completions |
 | Sandbox route | `https://inference.local/v1` |
-| Qualification model | `nvidia/nemotron-3-ultra-550b-a55b` |
+| Qualification model | `nvidia/nemotron-3-super-120b-a12b` |
 | Interactive command | `pi` |
 | Headless command | `pi --no-approve --print` |
 
@@ -58,7 +58,7 @@ Pi reads a generated `/sandbox/.pi/agent/models.json` file. The file contains th
 
 The upstream credential remains in OpenShell provider state. It survives rebuild and sandbox destruction until an operator runs `nemoclaw credentials reset <provider> --yes` after all dependent sandboxes are gone. Pi reaches the provider through `inference.local`; direct provider access is denied. NemoClaw rejects an unsupported API family, empty model, credential-bearing base URL, or malformed model tuning before Pi starts.
 
-The initial qualification requires streaming, a structured `read` tool call, a successful tool result, and an independently checked final response with `nvidia/nemotron-3-ultra-550b-a55b`.
+The initial qualification requires streaming, a structured `read` tool call, a successful tool result, and an independently checked final response with `nvidia/nemotron-3-super-120b-a12b`.
 
 ## Network and Filesystem Policy
 
