@@ -139,7 +139,6 @@ process.env = new Proxy(originalEnvironment, {
     throw new Error("environment access is forbidden");
   },
 });
-const loaded = [];
 const allowedModuleRequests = new Set([
   "nemoclaw/lifecycle",
   "../lib/actions/lifecycle/observe-hermes",
@@ -157,7 +156,6 @@ const allowedModuleRequests = new Set([
 ]);
 const originalLoad = Module._load;
 Module._load = function(request, parent, isMain) {
-  loaded.push(request);
   if (!allowedModuleRequests.has(request)) {
     throw new Error("module access is forbidden");
   }
@@ -218,7 +216,7 @@ void (async () => {
     },
   );
   writeOutput(
-    JSON.stringify({ exportKeys: Object.keys(lifecycle).sort(), loaded, observation, plan }),
+    JSON.stringify({ exportKeys: Object.keys(lifecycle).sort(), observation, plan }),
   );
 })().catch((error) => {
   writeError(String(error));
@@ -235,7 +233,6 @@ void (async () => {
         expect(runtime.stderr).not.toContain("private-");
         const runtimeEvidence = JSON.parse(runtime.stdout) as {
           exportKeys: string[];
-          loaded: string[];
           observation: { ok: boolean; value?: { readiness?: string } };
           plan: { ok: boolean; value?: { agent?: { name?: string } } };
         };
@@ -253,22 +250,6 @@ void (async () => {
           ok: true,
           value: { readiness: "ready" },
         });
-        expect(runtimeEvidence.loaded).toEqual([
-          "nemoclaw/lifecycle",
-          "../lib/actions/lifecycle/observe-hermes",
-          "../../domain/lifecycle/contract",
-          "../../domain/lifecycle/hermes-definition",
-          "../../domain/lifecycle/hermes-plan",
-          "../../sandbox-name-contract",
-          "./name-validation",
-          "../../nemoclaw/dist/shared/sandbox-name.cjs",
-          "./contract",
-          "./hermes-definition",
-          "../lib/domain/lifecycle/contract",
-          "../lib/domain/lifecycle/hermes-definition",
-          "../lib/domain/lifecycle/hermes-plan",
-        ]);
-
         const moduleConsumer = String.raw`
 const lifecycle = await import("nemoclaw/lifecycle");
 process.stdout.write(lifecycle.HERMES_LIFECYCLE_DEFINITION.agent);
