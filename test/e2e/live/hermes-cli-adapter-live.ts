@@ -72,6 +72,7 @@ export async function assertHermesFollowUpReplies({
     before: Set<string>,
     beforeActivityArtifact: string,
     expectedSessionId: string,
+    expectedReply: string,
     args: string[],
     runArtifact: string,
     afterArtifact: string,
@@ -83,7 +84,7 @@ export async function assertHermesFollowUpReplies({
       beforeActivityArtifact,
     );
     const result = await runHermesCli(args, runArtifact);
-    expect(containsAnswer(stripAnsi(result.stdout), "56"), resultText(result)).toBe(true);
+    expect(containsAnswer(stripAnsi(result.stdout), expectedReply), resultText(result)).toBe(true);
     const afterText = await listDefaultSessionsText(afterArtifact);
     const after = hermesSessionIds(afterText);
     expect([...after].filter((id) => !before.has(id))).toEqual([]);
@@ -93,31 +94,30 @@ export async function assertHermesFollowUpReplies({
     ).toBeGreaterThan(beforeActivity);
   };
 
-  const issue5254Marker = `NEMOCLAW_5254_${Date.now()}`;
   const beforeSeedSessions = await listDefaultSessions("phase-4-issue-5254-sessions-before-seed");
-  const seedPrompt = `Remember this exact token: ${issue5254Marker}. Reply with acknowledged.`;
+  const seedPrompt = "Start a session. Reply with exactly one word: PONG";
   const seedResult = await runHermesCli(["-z", seedPrompt], "phase-4-issue-5254-seed-oneshot");
-  expect(containsAnswer(stripAnsi(seedResult.stdout), "acknowledged"), resultText(seedResult)).toBe(
-    true,
-  );
+  expect(containsAnswer(stripAnsi(seedResult.stdout), "PONG"), resultText(seedResult)).toBe(true);
   const seedSessionId = onlyNewHermesSessionId(
     beforeSeedSessions,
     await listDefaultSessions("phase-4-issue-5254-sessions-after-seed"),
   );
-  const resumePrompt = "What is seven multiplied by eight? Reply with only the integer.";
+  const resumePrompt = "Resume this session. Reply with exactly one word: PONG";
   await expectNoNewDefaultSessions(
     await listDefaultSessions("phase-4-issue-5254-sessions-before-resume"),
     "phase-4-issue-5254-session-before-resume-metadata",
     seedSessionId,
+    "PONG",
     ["--resume", seedSessionId, "-z", resumePrompt, "--pass-session-id", "--ignore-rules"],
     "phase-4-issue-5254-resume-oneshot",
     "phase-4-issue-5254-sessions-after-resume",
   );
-  const continuePrompt = "Multiply seven by eight. Reply with only the integer.";
+  const continuePrompt = "Continue this session. Reply with exactly one word: PONG";
   await expectNoNewDefaultSessions(
     await listDefaultSessions("phase-4-issue-5254-sessions-before-continue"),
     "phase-4-issue-5254-session-before-continue-metadata",
     seedSessionId,
+    "PONG",
     ["-c", seedSessionId, "-z", continuePrompt],
     "phase-4-issue-5254-continue-oneshot",
     "phase-4-issue-5254-sessions-after-continue",

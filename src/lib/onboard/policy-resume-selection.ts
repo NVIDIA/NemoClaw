@@ -23,7 +23,6 @@ import {
   ensureRequiredTierPolicyPresets,
   suppressedAgentRequiredPresets,
 } from "./policy-tier-suppression";
-import { getTier } from "../policy/tiers";
 
 type Preset = { name: string; access?: string };
 
@@ -39,7 +38,6 @@ type PoliciesApi = {
   listCustomPresets(sandboxName: string): Preset[];
   getAppliedPresets(sandboxName: string): string[];
   customPresetOwnsNetworkPolicyKey?(sandboxName: string, policyKey: string): boolean;
-  removeBuiltinPresetAttribution?(sandboxName: string, presetName: string): void;
   clampSetupPolicyPresetNames(
     names: string[],
     selectablePresets: Preset[],
@@ -50,7 +48,7 @@ type PoliciesApi = {
 
 export type PreparedPolicyResumeSelection = {
   policyPresets: string[];
-  recordedPolicyPresetsNeedReconcile: boolean;
+  livePolicyPresetsNeedUpdate: boolean;
   disabledMessagingPolicyPresetApplied: boolean;
   suppressedAgentRequiredPresetsLive: boolean;
 };
@@ -59,7 +57,6 @@ export function preparePolicyPresetResumeSelection(
   deps: { policies: PoliciesApi },
   sandboxName: string,
   options: {
-    recordedPolicyPresets: string[] | null;
     disabledChannels?: string[] | null;
     enabledChannels?: string[] | null;
     hermesToolGateways?: string[] | null;
@@ -81,12 +78,6 @@ export function preparePolicyPresetResumeSelection(
       sandboxName,
       OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
     ) === true;
-  if (customOwnsObservability) {
-    deps.policies.removeBuiltinPresetAttribution?.(
-      sandboxName,
-      OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
-    );
-  }
   const rawAppliedPolicyPresets = deps.policies.getAppliedPresets(sandboxName);
   const appliedPolicyPresets = customOwnsObservability
     ? [...new Set(rawAppliedPolicyPresets)].filter(
@@ -104,23 +95,22 @@ export function preparePolicyPresetResumeSelection(
       name,
     })),
   ];
-  const clampedRecordedPolicyPresets = deps.policies.clampSetupPolicyPresetNames(
-    options.recordedPolicyPresets || [],
+  const clampedLivePolicyPresets = deps.policies.clampSetupPolicyPresetNames(
+    appliedPolicyPresets,
     selectablePolicyPresets,
     supportOptions,
     customPolicyPresetNames,
   );
-  // Defaults of the recorded/active tier (e.g. `brave` on Balanced) are tier
-  // egress presets, not stale web-search leftovers. Pass the recorded tier so
-  // reconciliation checks the canonical tier definition. (#6844)
-  const normalizedTierName = options.tierName?.trim().toLowerCase();
-  const tier = normalizedTierName ? getTier(normalizedTierName) : null;
+  // Defaults of the requested tier (e.g. `brave` on Balanced) are tier
+  // egress presets, not stale web-search leftovers — pass the requested tier +
+  // agent so the shared predicate exempts them via provenance and re-onboard
+  // reuse preserves them. (#6844)
   const isStaleBuiltinWebSearch = (name: string) =>
     isStaleBuiltinWebSearchPolicyPreset(name, {
       webSearchConfig: options.webSearchConfig,
       customPresetNames: customPolicyPresetNames,
-      tier,
-      agent: options.agent,
+      tierName: options.tierName,
+      agentName: options.agent,
     });
   const isInactiveObservability = (name: string) =>
     isInactiveObservabilityPolicyPreset(name, {
@@ -129,11 +119,11 @@ export function preparePolicyPresetResumeSelection(
       customPresetNames: customPolicyPresetNames,
       customOwnsObservability,
     });
-  const recordedBuiltinWebSearchProviderChanged = clampedRecordedPolicyPresets.some(
+  const liveBuiltinWebSearchProviderChanged = clampedLivePolicyPresets.some(
     (name) => (name === "brave" || name === "tavily") && isStaleBuiltinWebSearch(name),
   );
   let policyPresets = pruneDisabledMessagingPolicyPresets(
-    clampedRecordedPolicyPresets.filter(
+    clampedLivePolicyPresets.filter(
       (name) => !isStaleBuiltinWebSearch(name) && !isInactiveObservability(name),
     ),
     options.disabledChannels,
@@ -155,45 +145,40 @@ export function preparePolicyPresetResumeSelection(
     appliedPolicyPresetsForSupport,
     options.disabledChannels,
   );
-  if (Array.isArray(options.recordedPolicyPresets)) {
-    policyPresets = mergeRequiredSetupPolicyPresets(policyPresets, {
-      enabledChannels: options.enabledChannels,
-      hermesToolGateways: options.hermesToolGateways,
-      agent: options.agent,
-      observabilityEnabled: options.observabilityEnabled,
-      knownPresetNames: selectablePolicyPresets.map((preset) => preset.name),
-      env: options.env,
-      tierName: options.tierName,
-      webSearchConfig: options.webSearchConfig,
-      customPresetNames: customPolicyPresetNames,
-      customOwnsObservability,
-    });
+  policyPresets = mergeRequiredSetupPolicyPresets(policyPresets, {
+    enabledChannels: options.enabledChannels,
+    hermesToolGateways: options.hermesToolGateways,
+    agent: options.agent,
+    observabilityEnabled: options.observabilityEnabled,
+    knownPresetNames: selectablePolicyPresets.map((preset) => preset.name),
+    env: options.env,
+    tierName: options.tierName,
+    webSearchConfig: options.webSearchConfig,
+    customPresetNames: customPolicyPresetNames,
+    customOwnsObservability,
+  });
 
-    // Provider switches are build-time changes, but their matching egress
-    // preset is runtime state. Resume must add the newly active provider after
-    // pruning the stale one or the replacement sandbox cannot reach search.
-    const activeWebSearchPreset = options.webSearchConfig
-      ? webSearchProviderForConfig(options.webSearchConfig)
-      : null;
-    const selectablePolicyPresetNames = new Set(
-      selectablePolicyPresets.map((preset) => preset.name),
-    );
-    if (
-      activeWebSearchPreset &&
-      options.webSearchSupported !== false &&
-      (options.webSearchConfigChanged === true || recordedBuiltinWebSearchProviderChanged) &&
-      selectablePolicyPresetNames.has(activeWebSearchPreset) &&
-      !policyPresets.includes(activeWebSearchPreset)
-    ) {
-      policyPresets.push(activeWebSearchPreset);
-    }
+  // Provider switches are build-time changes, but their matching egress
+  // preset is runtime state. Resume must add the newly active provider after
+  // pruning the stale one or the replacement sandbox cannot reach search.
+  const activeWebSearchPreset = options.webSearchConfig
+    ? webSearchProviderForConfig(options.webSearchConfig)
+    : null;
+  const selectablePolicyPresetNames = new Set(selectablePolicyPresets.map((preset) => preset.name));
+  if (
+    activeWebSearchPreset &&
+    options.webSearchSupported !== false &&
+    (options.webSearchConfigChanged === true || liveBuiltinWebSearchProviderChanged) &&
+    selectablePolicyPresetNames.has(activeWebSearchPreset) &&
+    !policyPresets.includes(activeWebSearchPreset)
+  ) {
+    policyPresets.push(activeWebSearchPreset);
   }
   policyPresets = ensureRequiredTierPolicyPresets(options.tierName, policyPresets);
-  const recordedPolicyPresetsNeedReconcile =
-    Array.isArray(options.recordedPolicyPresets) &&
-    (policyPresets.length !== options.recordedPolicyPresets.length ||
-      policyPresets.some((name) => !options.recordedPolicyPresets?.includes(name)) ||
-      options.recordedPolicyPresets.some((name) => !policyPresets.includes(name)));
+  const livePolicyPresetsNeedUpdate =
+    policyPresets.length !== appliedPolicyPresets.length ||
+    policyPresets.some((name) => !appliedPolicyPresets.includes(name)) ||
+    appliedPolicyPresets.some((name) => !policyPresets.includes(name));
   const suppressedForTier = options.tierName
     ? new Set(suppressedAgentRequiredPresets(options.tierName, options.agent))
     : null;
@@ -204,7 +189,7 @@ export function preparePolicyPresetResumeSelection(
 
   return {
     policyPresets,
-    recordedPolicyPresetsNeedReconcile,
+    livePolicyPresetsNeedUpdate,
     disabledMessagingPolicyPresetApplied,
     suppressedAgentRequiredPresetsLive,
   };

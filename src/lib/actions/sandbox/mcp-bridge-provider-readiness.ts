@@ -123,9 +123,7 @@ function tryObserveMcpCredentialRevision(
   if (!result) return { kind: "transport-unavailable" };
   if (result.status !== 0) return { kind: "command-failed", status: result.status };
   const observation = parseMcpCredentialRevisionObservation(result.stdout);
-  return observation === null
-    ? { kind: "invalid-output" }
-    : { kind: "observation", observation };
+  return observation === null ? { kind: "invalid-output" } : { kind: "observation", observation };
 }
 
 function describeMcpCredentialRevisionAttempt(attempt: McpCredentialRevisionAttempt): string {
@@ -227,7 +225,7 @@ export function waitForAttachedMcpCredential(
   );
   if (!ready) {
     throw new McpBridgeError(
-      `OpenShell did not synchronize the expected credential revision for placeholder '${envName}' into sandbox '${sandboxName}' after provider attachment or update (last bounded observation: ${describeMcpCredentialRevisionAttempt(lastAttempt)}; post-policy refresh attempted: ${refreshedAfterObservedAbsence ? "yes" : "no"}).`,
+      `OpenShell did not synchronize the expected credential revision for placeholder '${envName}' into sandbox '${sandboxName}' after provider attachment or update (last bounded observation: ${describeMcpCredentialRevisionAttempt(lastAttempt)}; post-absence provider refresh attempted: ${refreshedAfterObservedAbsence ? "yes" : "no"}).`,
     );
   }
   if (attachedRevision === undefined) {
@@ -267,7 +265,7 @@ export function waitForDetachedMcpCredential(sandboxName: string, entry: McpBrid
   );
   if (!revoked) {
     throw new McpBridgeError(
-      `OpenShell did not confirm credential '${envName}' was revoked from fresh execs in sandbox '${sandboxName}' after detach. Preserving MCP policy and ownership state.`,
+      `OpenShell did not confirm credential '${envName}' was revoked from fresh execs in sandbox '${sandboxName}' after detach. Preserving the MCP bridge lifecycle record.`,
     );
   }
 }

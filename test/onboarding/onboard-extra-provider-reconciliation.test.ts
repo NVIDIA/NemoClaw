@@ -59,9 +59,6 @@ const createFixture = fixtureMocks.installVerifiedSandboxCreateFixture(registry,
 });
 const runner = require(${runnerPath});
 const preflight = require(${preflightPath});
-const policyAuthorityPreflight = require(${JSON.stringify(
-          path.join(repoRoot, "src", "lib", "onboard", "policy-authority", "preflight.ts"),
-        )});
 const credentials = require(${credentialsPath});
 const sandboxBaseImage = require(${sandboxBaseImagePath});
 const childProcess = require("node:child_process");
@@ -108,9 +105,6 @@ runner.runCapture = (command) => {
 };
 require(${onboardScriptMocksPath}).mockDockerSandboxLifecycleReleaseFromRunner();
 preflight.checkPortAvailable = async () => ({ ok: true });
-policyAuthorityPreflight.qualifySandboxPolicyAuthority = () => ({
-  authority: "nemoclaw-managed",
-});
 credentials.prompt = async () => "";
 sandboxBaseImage.resolveSandboxBaseImage = () => ({
   ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

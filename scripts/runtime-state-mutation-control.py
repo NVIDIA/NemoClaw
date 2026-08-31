@@ -2788,7 +2788,7 @@ def _discover_fence(expected_mount_namespace: str) -> FenceProof:
         _fail("start-process-identity-drift")
     if len(second_support) != len(support_references) or any(
         not _process_matches_reference(process, reference)
-        for process, reference in zip(second_support, support_references)
+        for process, reference in zip(second_support, support_references, strict=True)
     ):
         _fail("startup-support-identity-drift")
     return FenceProof(
@@ -2919,7 +2919,7 @@ def _exclude_writers(
     term_deadline = time.monotonic() + TERM_SECONDS
     kill_deadline = term_deadline + KILL_SECONDS
     stable = 0
-    signalled: set[tuple[int, str, int]] = set()
+    signalled: set[tuple[object, ...]] = set()
     allowed_by_pid = _allowed_writer_map(allowed)
     while True:
         writers = _capture_writer_processes(writer_uids)
@@ -2945,16 +2945,18 @@ def _exclude_writers(
             _fail("writer-exclusion-timeout")
         requested = signal.SIGTERM if now < term_deadline else signal.SIGKILL
         for writer in unexpected:
-            identity = (writer.pid, writer.start_identity, requested)
+            identity = (*writer.identity_key(), requested)
             if identity not in signalled:
                 try:
                     _signal_exact_process(writer, requested)
                 except ControlError as error:
+                    # Unexpected writers are census observations, not durable
+                    # fence identities. The pidfd check proved that this captured
+                    # writer no longer owns the PID, so never signal its
+                    # replacement through a stale observation; the next scan
+                    # binds the replacement's full identity.
                     if error.code != "writer-pid-reused":
                         raise
-                    # The pidfd check proved that this captured writer no longer
-                    # owns the PID. Do not signal its replacement; the next scan
-                    # authenticates the replacement as a separate writer.
                     continue
                 signalled.add(identity)
         time.sleep(POLL_SECONDS)
@@ -3400,7 +3402,11 @@ class ActivationGuard:
 
 
 def _start_activation_guard(
-    fence: FenceProof, mount_namespace: str, lock_fd: int | None = None
+    fence: FenceProof,
+    mount_namespace: str,
+    lock_fd: int | None = None,
+    *,
+    transport_broker_required: bool = False,
 ) -> ActivationGuard:
     # The last-resort child may broadcast SIGSTOP through the whole namespace,
     # so establish this safety property before forking it.
@@ -3414,6 +3420,8 @@ def _start_activation_guard(
         controller_pidfd = _open_activation_guard_current_pidfd()
         descriptors.append(controller_pidfd)
         broker = _transport_broker_reference()
+        if transport_broker_required and broker is None:
+            _fail("activation-transport-broker-unavailable")
         broker_pidfd = (
             None if broker is None else _open_activation_guard_pidfd(broker)
         )
@@ -3431,13 +3439,18 @@ def _start_activation_guard(
         ):
             os.set_inheritable(fd, False)
         pid = os.fork()
-    except (OSError, ControlError):
+    except (OSError, ControlError) as error:
         for fd in descriptors:
             try:
                 os.close(fd)
             except OSError:
                 pass
         _hold_exact_processes(fence, mount_namespace, None)
+        if (
+            isinstance(error, ControlError)
+            and error.code == "activation-transport-broker-unavailable"
+        ):
+            raise
         _fail("activation-guard-unavailable")
     if pid == 0:
         os.close(command_write)
@@ -4064,10 +4077,20 @@ def _activate_exact(
 ) -> ActivationProof:
     mount_namespace = str(marker["mountNamespace"])
     pending = _activation_attempt_pending(durable_fd, marker, fence)
+    transport_broker_required = marker["providerId"] == "docker"
     if lock_fd is None:
-        guard = _start_activation_guard(fence, mount_namespace)
+        guard = _start_activation_guard(
+            fence,
+            mount_namespace,
+            transport_broker_required=transport_broker_required,
+        )
     else:
-        guard = _start_activation_guard(fence, mount_namespace, lock_fd)
+        guard = _start_activation_guard(
+            fence,
+            mount_namespace,
+            lock_fd,
+            transport_broker_required=transport_broker_required,
+        )
     try:
         if pending:
             _hold_exact_processes(fence, mount_namespace, None)

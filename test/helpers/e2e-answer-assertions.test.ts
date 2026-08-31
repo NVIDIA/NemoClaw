@@ -61,9 +61,9 @@ describe("E2E answer assertions", () => {
   });
 
   it.each([
-    ["initial", "Acknowledged.", "acknowledged"],
-    ["resumed", "56", "56"],
-    ["continued", "The integer is 56.", "56"],
+    ["initial", "PONG", "PONG"],
+    ["resumed", "PONG", "PONG"],
+    ["continued", "PONG", "PONG"],
   ])("accepts the semantic %s reply used by the Hermes follow-up sequence", (_turn, output, answer) => {
     expect(containsAnswer(output, answer)).toBe(true);
   });

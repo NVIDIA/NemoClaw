@@ -15,6 +15,7 @@ import {
 } from "./prepare-e2e-workflow-boundary.mts";
 import {
   contentSha256,
+  MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256,
   MCP_DEV_POST_INSTALL_TRANSITION_CONTENT_SHA256,
   MCP_DEV_TRUSTED_NODE_SETUP_CONTENT_SHA256,
   MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256,
@@ -200,7 +201,7 @@ export function validateCliArtifactRestoreAction(
     "node --input-type=module --eval",
     'import { createHash } from "node:crypto"',
     'import { createReadStream } from "node:fs"',
-    'for await (const chunk of createReadStream(process.argv[1])) hash.update(chunk)',
+    "for await (const chunk of createReadStream(process.argv[1])) hash.update(chunk)",
     'process.stdout.write(hash.digest("hex"))',
     'lockfile_sha256="$(sha256_file package-lock.json)"',
     ".candidate.sha == $candidateSha",
@@ -292,6 +293,9 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
     !isDeepStrictEqual(record(packageStep.env), {
       CANDIDATE_REPOSITORY: "${{ inputs.checkout_repository || github.repository }}",
       CANDIDATE_SHA: "${{ inputs.checkout_sha || github.sha }}",
+      MANAGED_IMAGE_CATALOG: "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}",
+      MANAGED_IMAGE_CATALOG_SHA256:
+        "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog_sha256 }}",
       RUN_ATTEMPT: "${{ github.run_attempt }}",
       RUN_ID: "${{ github.run_id }}",
       WORKFLOW_SHA: "${{ github.workflow_sha }}",
@@ -387,6 +391,14 @@ function validateConsumer(
   job: WorkflowRecord,
   jobSteps: WorkflowStep[],
 ): void {
+  if (jobName === "mcp-bridge-dev") {
+    const { steps: _jobSteps, ...jobExecutionContext } = job;
+    if (contentSha256(jobExecutionContext) !== MCP_DEV_JOB_EXECUTION_CONTEXT_SHA256) {
+      errors.push(
+        "mcp-bridge-dev must preserve its reviewed job execution context before candidate activation",
+      );
+    }
+  }
   let expectedNeeds: string | string[] = CLI_ARTIFACT_PRODUCER_JOB;
   if (jobName === "external-gateway-health") {
     expectedNeeds = [CLI_ARTIFACT_PRODUCER_JOB, "package-openshell-sdk"];
@@ -444,10 +456,7 @@ function validateConsumer(
         ? trustedInstallIndex
         : jobSteps.length - 1
       : restoreIndex;
-  const stepsThroughSecurityBoundary = jobSteps.slice(
-    0,
-    securityBoundaryIndex + 1,
-  );
+  const stepsThroughSecurityBoundary = jobSteps.slice(0, securityBoundaryIndex + 1);
   const jobEnv = record(job.env);
   const defaultShell = record(record(job.defaults).run).shell;
   const unsafePreRestoreStep = stepsThroughSecurityBoundary.some(
@@ -493,9 +502,7 @@ function validateConsumer(
       contentSha256(jobSteps.slice(0, trustedInstallIndex + 1)) !==
         MCP_DEV_TRUSTED_PREFIX_CONTENT_SHA256)
   ) {
-    errors.push(
-      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
-    );
+    errors.push("mcp-bridge-dev must preserve every reviewed step through trusted installation");
   }
   if (
     jobName === "mcp-bridge-dev" &&
@@ -527,13 +534,8 @@ function validateConsumer(
   const stepsBeforeRestore = jobSteps
     .slice(reviewedStepsStart, restoreIndex)
     .map((step) => step.name);
-  if (
-    prepareIndex >= 0 &&
-    !isDeepStrictEqual(stepsBeforeRestore, reviewedStepsBeforeRestore)
-  ) {
-    errors.push(
-      `${jobName} must preserve its reviewed steps through CLI artifact restore`,
-    );
+  if (prepareIndex >= 0 && !isDeepStrictEqual(stepsBeforeRestore, reviewedStepsBeforeRestore)) {
+    errors.push(`${jobName} must preserve its reviewed steps through CLI artifact restore`);
   }
 }
 

@@ -24,6 +24,7 @@
     "dev:setup": "bash scripts/dev-setup.sh",
     "dev:doctor": "bash scripts/dev-setup.sh --doctor",
     "agent": "pi",
+    "review:local": "node --experimental-strip-types --no-warnings tools/pr-review-advisor/local-review.mts",
     "test": "npm run clean:cli && npm --prefix nemoclaw run clean && npm run build:cli && npm --prefix nemoclaw run build && vitest run --project cli --project integration --project installer-integration --project package-contract --project plugin --project e2e-support",
     "test:spec": "npm test -- --reporter=tree",
     "test:fast": "npm run clean:cli && npm run catalog:compile && vitest run --project cli --project plugin --project e2e-support",
