@@ -116,6 +116,7 @@ jobs:
           sparse-checkout: |
             .github/actions/ci-static-checks
             .github/actions/ci-build-typecheck
+            .github/actions/ci-compile-artifacts
             .github/actions/ci-cli-coverage-shard
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
@@ -346,6 +347,7 @@ jobs:
           sparse-checkout: |
             .github/actions/ci-static-checks
             .github/actions/ci-build-typecheck
+            .github/actions/ci-compile-artifacts
             .github/actions/ci-cli-coverage-shard
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
@@ -508,6 +510,7 @@ jobs:
           sparse-checkout: |
             .github/actions/ci-static-checks
             .github/actions/ci-build-typecheck
+            .github/actions/ci-compile-artifacts
             .github/actions/ci-cli-coverage-shard
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
@@ -618,6 +621,7 @@ jobs:
           sparse-checkout: |
             .github/actions/ci-static-checks
             .github/actions/ci-build-typecheck
+            .github/actions/ci-compile-artifacts
             .github/actions/ci-cli-coverage-shard
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
@@ -667,6 +671,7 @@ jobs:
           sparse-checkout: |
             .github/actions/ci-static-checks
             .github/actions/ci-build-typecheck
+            .github/actions/ci-compile-artifacts
             .github/actions/ci-cli-coverage-shard
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage

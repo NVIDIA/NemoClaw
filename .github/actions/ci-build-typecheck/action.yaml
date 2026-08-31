@@ -22,13 +22,9 @@ runs:
         NODE_AUTH_TOKEN: ${{ github.event_name == 'push' && github.token || '' }}
       run: bash "$GITHUB_ACTION_PATH/../ci-install-dependencies.sh"
 
-    - name: Build TypeScript plugin
+    - name: Compile and verify reusable outputs
       shell: bash
-      run: cd nemoclaw && npm run build
-
-    - name: Build CLI TypeScript modules
-      shell: bash
-      run: npm run build:cli
+      run: bash "$GITHUB_ACTION_PATH/../ci-compile-artifacts/compile.sh"
 
     - name: Verify compiled package contracts
       shell: bash
