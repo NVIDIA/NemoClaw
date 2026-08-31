@@ -79,14 +79,16 @@ Inspect the session directory from the host by running a sandbox command.
 $$nemoclaw <name> exec -- ls -lh /sandbox/.openclaw/agents/main/sessions
 ```
 
-Copy a session log for offline review with the OpenShell sandbox download command.
+List the stored session keys, then export the session you need for offline review.
 
 ```bash
-openshell sandbox download <name> /sandbox/.openclaw/agents/main/sessions/<session-id>.jsonl .
+$$nemoclaw <name> sessions list
+$$nemoclaw <name> sessions export <key>
 ```
 
 Handle exported session logs as sensitive data.
 They can contain prompts, tool inputs, tool outputs, file paths, and cost metadata from the agent run.
+The export command copies only the selected session files and writes them owner-only (`0600`).
 
 ## Monitor Network Activity in the TUI
 
@@ -128,7 +130,9 @@ If the request fails, check these items.
 1. Run `$$nemoclaw <name> status` to confirm the active provider and endpoint.
    Check the main `Inference` line first.
    If it shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled upstream, local-backend, and auth-proxy diagnostics to identify the failing hop.
+   Refresh the provider credential when the main result is `unauthorized`.
    Restart a local backend only when its own diagnostic fails.
+   If the auth-proxy diagnostic fails, re-run onboarding so NemoClaw can recreate the proxy token, restart the proxy, and refresh the route.
 2. Run `$$nemoclaw <name> logs --follow` to view error messages from the blueprint runner.
 3. Verify that the host can reach the inference endpoint.
 4. If the agent reports a context-overflow or token-limit error, clear the conversation with `/reset` (or start a fresh one with `/new`) in the TUI before retrying.
