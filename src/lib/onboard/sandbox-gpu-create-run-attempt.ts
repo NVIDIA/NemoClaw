@@ -324,7 +324,7 @@ function confirmManagedRuntimeCommitReadiness(options: {
     getSandboxFailurePhase,
     stableReadyPolls: REPLACEMENT_STABLE_READY_POLLS,
     checkReadyIdentity: (getRemainingMs = () => SANDBOX_RECREATE_PROBE_TIMEOUT_MS) =>
-      checkRecreatedSandboxReadyIdentity(
+      checkCreatedSandboxReadyIdentity(
         input.sandboxName,
         input.gatewayName,
         sandboxId,
@@ -391,20 +391,22 @@ function waitForCreatedOpenShellSandboxPublication(
   deps: SandboxGpuCreateFlowDeps,
 ): void {
   const timeoutMs = Math.max(1, Math.round(input.sandboxReadyTimeoutSecs * 1_000));
-  const published = sandboxReadinessTracing.waitForCreatedSandboxPublication({
-    timeoutMs,
-    pollIntervalMs: CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS * 1_000,
-    probe: (getRemainingMs) => {
-      const result = deps.runOpenshell(
-        ["sandbox", "get", "-g", input.gatewayName, input.sandboxName],
-        {
-          ignoreError: true,
-          suppressOutput: true,
-          timeout: Math.min(SANDBOX_READY_PROBE_TIMEOUT_MS, getRemainingMs()),
-          killSignal: "SIGKILL",
-        },
-      );
-      if (result.status !== 0 || result.error) return false;
+  const pollIntervalMs = CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS * 1_000;
+  const deadlineMs = Date.now() + timeoutMs;
+  const maxAttempts = Math.ceil(timeoutMs / Math.max(1, pollIntervalMs)) + 1;
+  let published = false;
+  for (let attempt = 0; attempt < maxAttempts && Date.now() < deadlineMs; attempt += 1) {
+    const getRemainingMs = (): number => Math.max(1, deadlineMs - Date.now());
+    const result = deps.runOpenshell(
+      ["sandbox", "get", "-g", input.gatewayName, input.sandboxName],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: Math.min(SANDBOX_READY_PROBE_TIMEOUT_MS, getRemainingMs()),
+        killSignal: "SIGKILL",
+      },
+    );
+    if (result.status === 0 && !result.error) {
       const publishedSandboxId = parseOpenShellSandboxId(String(result.stdout ?? ""));
       if (!publishedSandboxId) {
         throw new Error(
@@ -416,10 +418,14 @@ function waitForCreatedOpenShellSandboxPublication(
           `Created sandbox '${input.sandboxName}' changed identity before identity verification completed.`,
         );
       }
-      return true;
-    },
-    sleep: deps.sleep,
-  });
+      published = true;
+      break;
+    }
+    const remainingMs = deadlineMs - Date.now();
+    if (attempt + 1 < maxAttempts && remainingMs > 0) {
+      deps.sleep(Math.min(pollIntervalMs, remainingMs) / 1_000);
+    }
+  }
   if (!published) {
     throw new Error(
       `Created sandbox '${input.sandboxName}' did not become visible through its owning gateway before identity verification completed.`,
@@ -427,29 +433,17 @@ function waitForCreatedOpenShellSandboxPublication(
   }
 }
 
-function checkRecreatedSandboxReadyIdentity(
-  sandboxName: string,
-  gatewayName: string,
-  expectedSandboxId: string,
-  deps: SandboxGpuCreateFlowDeps,
-  getRemainingMs: () => number,
-): ReturnType<CreatedSandboxReadyIdentityCheck> {
-  const identity = probeExactOpenShellSandboxId(sandboxName, gatewayName, deps, getRemainingMs);
-  if (identity.state === "not_ready") return "not_ready";
-  if (identity.state === "failed") return "probe_failed";
-  if (identity.sandboxId !== expectedSandboxId) return "identity_changed";
-  return checkSandboxExecutableReadiness(sandboxName, gatewayName, deps, getRemainingMs);
-}
-
 function checkCreatedSandboxReadyIdentity(
   sandboxName: string,
   gatewayName: string,
+  expectedSandboxId: string | null,
   deps: SandboxGpuCreateFlowDeps,
   getRemainingMs: () => number,
 ): ReturnType<CreatedSandboxReadyIdentityCheck> {
   const identity = probeExactOpenShellSandboxId(sandboxName, gatewayName, deps, getRemainingMs);
   if (identity.state === "not_ready") return "not_ready";
   if (identity.state === "failed") return "probe_failed";
+  if (expectedSandboxId && identity.sandboxId !== expectedSandboxId) return "identity_changed";
   return checkSandboxExecutableReadiness(sandboxName, gatewayName, deps, getRemainingMs);
 }
 
@@ -1056,7 +1050,7 @@ export function createSandboxGpuCreateAttemptRunner(
           : 1,
       checkReadyIdentity: expectedRecreatedSandboxId
         ? (getRemainingMs = () => SANDBOX_RECREATE_PROBE_TIMEOUT_MS) =>
-            checkRecreatedSandboxReadyIdentity(
+            checkCreatedSandboxReadyIdentity(
               input.sandboxName,
               input.gatewayName,
               expectedRecreatedSandboxId,
@@ -1069,6 +1063,7 @@ export function createSandboxGpuCreateAttemptRunner(
               checkCreatedSandboxReadyIdentity(
                 input.sandboxName,
                 input.gatewayName,
+                null,
                 deps,
                 getRemainingMs,
               ),

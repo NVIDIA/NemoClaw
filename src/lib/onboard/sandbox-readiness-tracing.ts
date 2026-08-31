@@ -59,28 +59,6 @@ export interface SandboxReadyWaitOptions extends SandboxReadyWaitDeps {
   delaySeconds: number;
 }
 
-/** Wait for one owner-scoped created-sandbox publication within a fixed deadline. */
-export function waitForCreatedSandboxPublication(options: {
-  readonly timeoutMs: number;
-  readonly pollIntervalMs: number;
-  readonly probe: (getRemainingMs: () => number) => boolean;
-  readonly sleep: (seconds: number) => void;
-  readonly now?: () => number;
-}): boolean {
-  const now = options.now ?? Date.now;
-  const timeoutMs = Math.max(1, Math.round(options.timeoutMs));
-  const pollIntervalMs = Math.max(0, options.pollIntervalMs);
-  const deadlineMs = now() + timeoutMs;
-  return waitUntil(() => options.probe(() => Math.max(1, deadlineMs - now())), {
-    deadlineMs,
-    initialIntervalMs: pollIntervalMs,
-    maxIntervalMs: pollIntervalMs,
-    maxAttempts: Math.ceil(timeoutMs / Math.max(1, pollIntervalMs)) + 1,
-    now,
-    sleep: (ms) => options.sleep(ms / 1_000),
-  });
-}
-
 function pollSandboxReady(
   options: SandboxReadyWaitOptions & {
     trace?: (event: string, attributes: Record<string, unknown>) => void;
