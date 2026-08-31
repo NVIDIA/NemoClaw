@@ -35,6 +35,8 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        credential_binding:
+          provider: "{sandboxName}-wechat-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -42,14 +44,13 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        credential_binding:
+          provider: "{sandboxName}-wechat-bridge"
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
-    # Each bridge runs under its agent's interpreter — Node for OpenClaw,
-    # Python for Hermes. Listing both keeps the preset apply idempotent
-    # across agents; unused entries never match anything in the sandbox.
+    # This agent-specific policy grants credentials only to OpenClaw's Node
+    # runtime. Hermes owns its Python grants in policy/hermes.yaml.
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
-      - { path: /usr/bin/python3* }
-      - { path: /opt/hermes/.venv/bin/python }
