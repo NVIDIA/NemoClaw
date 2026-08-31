@@ -25,6 +25,7 @@ import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-ru
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
+const FAKE_API_PORT_PROXY = path.resolve(import.meta.dirname, "../lib/fake-api-port-proxy.mts");
 const FAKE_WECHAT_API = path.resolve(import.meta.dirname, "../lib/fake-wechat-api.mts");
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
@@ -98,6 +99,28 @@ describe("messaging provider installed-runtime proofs", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   }, 10_000);
+
+  it.each([
+    { target: "", ports: "8080", reason: "empty target" },
+    { target: "container; rm -rf /", ports: "8080", reason: "shell metacharacters in target" },
+    { target: "fake-slack-container", ports: "9090", reason: "unlisted port" },
+    { target: "fake-slack-container", ports: "", reason: "empty port list" },
+  ])("fails closed on $reason", ({ target, ports }) => {
+    const result = spawnSync(
+      process.execPath,
+      ["--experimental-strip-types", FAKE_API_PORT_PROXY],
+      {
+        env: {
+          ...process.env,
+          NEMOCLAW_FAKE_API_PROXY_TARGET: target,
+          NEMOCLAW_FAKE_API_PROXY_PORTS: ports,
+        },
+        encoding: "utf8",
+      },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/NEMOCLAW_FAKE_API_PROXY_(TARGET|PORTS)/u);
+  });
 
   it("keeps raw process-probe tokens out of argv and fails closed", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-process-token-probe-"));
