@@ -7,10 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
-import {
-  buildRuntimePermissivePolicy,
-  type ExactManagedMcpPolicy,
-} from "../../../src/lib/shields/permissive-runtime.js";
+import { buildRuntimePermissivePolicy } from "../../../src/lib/shields/permissive-runtime.js";
 
 const BASE_PERMISSIVE = YAML.stringify({
   filesystem_policy: {
@@ -21,14 +18,12 @@ const BASE_PERMISSIVE = YAML.stringify({
   landlock: { compatibility: "best_effort" },
 });
 
-const MANAGED_POLICY: ExactManagedMcpPolicy = {
+const LIVE_MCP_POLICY = {
   key: "mcp_bridge_alpha",
   networkPolicy: {
     endpoints: [{ host: "alpha.example.com", port: 443, protocol: "mcp" }],
     binaries: [{ path: "/opt/hermes/.venv/bin/python*" }],
   },
-  policyName: "mcp-bridge-alpha",
-  server: "alpha",
 };
 
 const HERMES_DISCORD_PERMISSIVE = YAML.stringify({
@@ -77,8 +72,9 @@ function expectExactHermesSlackCredentialRoutes(endpoints: SlackEndpoint[]): voi
       path: endpoint.path,
       provider: endpoint.credential_binding?.provider,
       routes:
-        endpoint.rules?.map((rule) => `${String(rule.allow?.method)} ${String(rule.allow?.path)}`) ??
-        [],
+        endpoint.rules?.map(
+          (rule) => `${String(rule.allow?.method)} ${String(rule.allow?.path)}`,
+        ) ?? [],
     })),
   ).toEqual([
     {
@@ -296,7 +292,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     ["bot only", ["hermes-box-slack-bridge"]],
     ["app only", ["hermes-box-slack-app"]],
     ["conflicting", ["hermes-box-slack-app", "hermes-box-slack-bridge", "other-slack-provider"]],
-  ])("omits Hermes Slack egress when the live provider pair is %s", (_name, providers) => {
+  ])("preserves the live Hermes Slack entry when the provider pair is %s", (_name, providers) => {
     let stagedPolicy = "";
     buildRuntimePermissivePolicy("/unused-hermes-permissive.yaml", {
       livePolicyYaml: YAML.stringify({
@@ -314,7 +310,9 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       },
     });
 
-    expect(YAML.parse(stagedPolicy).network_policies.slack).toBeUndefined();
+    expect(YAML.parse(stagedPolicy).network_policies.slack).toEqual({
+      endpoints: providers.map((provider) => ({ credential_binding: { provider } })),
+    });
     expect(stagedPolicy).not.toContain("{sandboxName}");
   });
 
@@ -370,11 +368,11 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(writeTempPolicy).not.toHaveBeenCalled();
   });
 
-  it("preserves exact managed MCP entries without copying unrelated live egress (#7952)", () => {
+  it("preserves all live OpenShell egress alongside the permissive baseline", () => {
     const liveYaml = YAML.stringify({
       filesystem_policy: { read_write: ["/proc"] },
       network_policies: {
-        mcp_bridge_alpha: MANAGED_POLICY.networkPolicy,
+        mcp_bridge_alpha: LIVE_MCP_POLICY.networkPolicy,
         unrelated_live_entry: {
           endpoints: [{ host: "unrelated.example.com", port: 443 }],
         },
@@ -383,7 +381,6 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
 
     const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
       livePolicyYaml: liveYaml,
-      managedMcpPolicies: [MANAGED_POLICY],
       readBasePolicy: () =>
         YAML.stringify({
           ...YAML.parse(BASE_PERMISSIVE),
@@ -398,12 +395,14 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
 
     const result = YAML.parse(fs.readFileSync(out, "utf-8"));
     expect(result.network_policies).toMatchObject({
-      mcp_bridge_alpha: MANAGED_POLICY.networkPolicy,
+      mcp_bridge_alpha: LIVE_MCP_POLICY.networkPolicy,
       permissive_baseline: {
         endpoints: [{ host: "*", port: 443 }],
       },
     });
-    expect(result.network_policies).not.toHaveProperty("unrelated_live_entry");
+    expect(result.network_policies).toHaveProperty("unrelated_live_entry", {
+      endpoints: [{ host: "unrelated.example.com", port: 443 }],
+    });
   });
 
   it("preserves /proc when the live GPU sandbox has it in read_write", () => {
@@ -579,11 +578,13 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     expect(out).toBe(basePath);
   });
 
-  it("fails closed when the base cannot be read with managed MCP policies active (#7952)", () => {
+  it("fails closed when the base cannot be read with live MCP policies active (#7952)", () => {
     expect(() =>
       buildRuntimePermissivePolicy("/path/to/static.yaml", {
-        livePolicyYaml: "version: 1\nnetwork_policies: {}\n",
-        managedMcpPolicies: [MANAGED_POLICY],
+        livePolicyYaml: YAML.stringify({
+          version: 1,
+          network_policies: { mcp_bridge_alpha: LIVE_MCP_POLICY.networkPolicy },
+        }),
         readBasePolicy: () => {
           throw new Error("ENOENT");
         },
@@ -591,21 +592,25 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     ).toThrow(/Cannot read the Shields-down policy/);
   });
 
-  it("fails closed when the base is not a mapping with managed MCP policies active (#7952)", () => {
+  it("fails closed when the base is not a mapping with live MCP policies active (#7952)", () => {
     expect(() =>
       buildRuntimePermissivePolicy("/path/to/static.yaml", {
-        livePolicyYaml: "version: 1\nnetwork_policies: {}\n",
-        managedMcpPolicies: [MANAGED_POLICY],
+        livePolicyYaml: YAML.stringify({
+          version: 1,
+          network_policies: { mcp_bridge_alpha: LIVE_MCP_POLICY.networkPolicy },
+        }),
         readBasePolicy: () => "[]",
       }),
     ).toThrow(/Cannot parse the Shields-down policy/);
   });
 
-  it("fails closed when staging fails with managed MCP policies active (#7952)", () => {
+  it("fails closed when staging fails with live MCP policies active (#7952)", () => {
     expect(() =>
       buildRuntimePermissivePolicy("/path/to/static.yaml", {
-        livePolicyYaml: "version: 1\nnetwork_policies: {}\n",
-        managedMcpPolicies: [MANAGED_POLICY],
+        livePolicyYaml: YAML.stringify({
+          version: 1,
+          network_policies: { mcp_bridge_alpha: LIVE_MCP_POLICY.networkPolicy },
+        }),
         readBasePolicy: () => BASE_PERMISSIVE,
         writeTempPolicy: () => {
           throw new Error("ENOSPC: simulated /tmp full");

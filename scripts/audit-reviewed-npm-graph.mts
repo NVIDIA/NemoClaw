@@ -29,6 +29,12 @@ type ReviewedPackage = Readonly<{
   packageSpec: string;
   tarballUrl: string;
 }>;
+type SourceRegistryPackage = ReviewedPackage & Readonly<{ artifactName: string }>;
+type PackageWithoutIntegrity = Readonly<{
+  label: string;
+  packageSpec: string;
+  tarballUrl: string;
+}>;
 type LockedGraph = ReviewedPackage &
   Readonly<{
     directory: string;
@@ -47,6 +53,9 @@ type AuditConfig = Readonly<{
   registryOrigin: string;
   schemaVersion: 2;
   severityThreshold: Severity;
+  sourceNestedShrinkwrapPackages: readonly string[];
+  sourceRegistryPackage: SourceRegistryPackage;
+  sourceRegistryPackagesWithoutIntegrity: readonly PackageWithoutIntegrity[];
 }>;
 type ReviewedAuditReport = Readonly<{ label: string; result: AuditPolicyResult }>;
 
@@ -56,6 +65,11 @@ const TARGET_REPO_ROOT = fs.realpathSync(
 );
 const CONFIG_PATH = resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT);
 const SEVERITIES: readonly Severity[] = ["info", "low", "moderate", "high", "critical"];
+const SEMVER_NUMERIC_IDENTIFIER = String.raw`(?:0|[1-9][0-9]*)`;
+const SEMVER_PRERELEASE_IDENTIFIER = String.raw`(?:${SEMVER_NUMERIC_IDENTIFIER}|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)`;
+const EXACT_NPM_PACKAGE_SPEC = new RegExp(
+  String.raw`^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)@${SEMVER_NUMERIC_IDENTIFIER}\.${SEMVER_NUMERIC_IDENTIFIER}\.${SEMVER_NUMERIC_IDENTIFIER}(?:-${SEMVER_PRERELEASE_IDENTIFIER}(?:\.${SEMVER_PRERELEASE_IDENTIFIER})*)?$`,
+);
 const SOURCE_GRAPH = {
   id: "nemoclaw-cli",
   label: "NemoClaw CLI locked production graph",
@@ -143,6 +157,39 @@ export function parseAuditConfig(contents: string): AuditConfig {
     !parsed.registryOrigin ||
     !Array.isArray(parsed.archivePackages) ||
     !Array.isArray(parsed.lockedGraphs) ||
+    !Array.isArray(parsed.sourceNestedShrinkwrapPackages) ||
+    parsed.sourceNestedShrinkwrapPackages.some(
+      (packageSpec) =>
+        typeof packageSpec !== "string" ||
+        !EXACT_NPM_PACKAGE_SPEC.test(packageSpec),
+    ) ||
+    new Set(parsed.sourceNestedShrinkwrapPackages).size !==
+      parsed.sourceNestedShrinkwrapPackages.length ||
+    !Array.isArray(parsed.sourceRegistryPackagesWithoutIntegrity) ||
+    parsed.sourceRegistryPackagesWithoutIntegrity.some(
+      (reviewed) =>
+        typeof reviewed.label !== "string" ||
+        !reviewed.label ||
+        typeof reviewed.packageSpec !== "string" ||
+        !EXACT_NPM_PACKAGE_SPEC.test(reviewed.packageSpec) ||
+        typeof reviewed.tarballUrl !== "string" ||
+        !reviewed.tarballUrl,
+    ) ||
+    new Set(parsed.sourceRegistryPackagesWithoutIntegrity.map(({ packageSpec }) => packageSpec))
+      .size !== parsed.sourceRegistryPackagesWithoutIntegrity.length ||
+    typeof parsed.sourceRegistryPackage !== "object" ||
+    parsed.sourceRegistryPackage === null ||
+    Array.isArray(parsed.sourceRegistryPackage) ||
+    typeof parsed.sourceRegistryPackage.artifactName !== "string" ||
+    !/^[a-z0-9][a-z0-9._-]*\.tgz$/.test(parsed.sourceRegistryPackage.artifactName) ||
+    typeof parsed.sourceRegistryPackage.label !== "string" ||
+    !parsed.sourceRegistryPackage.label ||
+    typeof parsed.sourceRegistryPackage.packageSpec !== "string" ||
+    !EXACT_NPM_PACKAGE_SPEC.test(parsed.sourceRegistryPackage.packageSpec) ||
+    typeof parsed.sourceRegistryPackage.integrity !== "string" ||
+    !parsed.sourceRegistryPackage.integrity ||
+    typeof parsed.sourceRegistryPackage.tarballUrl !== "string" ||
+    !parsed.sourceRegistryPackage.tarballUrl ||
     parsed.lockedGraphs.some(
       (graph) =>
         typeof graph.id !== "string" ||
@@ -306,17 +353,39 @@ function assertRegularFile(file: string, label: string): void {
   }
 }
 
+function installProductionSourceDependencies(directory: string): void {
+  run("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"], directory);
+}
+
 export function materializeSourceGraph(
   sourcePackage: string,
   sourceLock: string,
   destination: string,
   registryOrigin: string,
-  installProductionDependencies: (directory: string) => void = (directory) =>
-    void run("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"], directory),
+  installProductionDependencies: (directory: string) => void = installProductionSourceDependencies,
+  sourceRegistryPackage?: ReviewedPackage,
+  sourceNestedShrinkwrapPackages: readonly string[] = [],
+  sourceRegistryPackagesWithoutIntegrity: readonly PackageWithoutIntegrity[] = [],
 ): string {
   assertRegularFile(sourcePackage, "NemoClaw CLI package manifest");
   assertRegularFile(sourceLock, "NemoClaw CLI lockfile");
-  verifyReviewedNpmLockPackages({ lockfilePath: sourceLock, omitDev: true, registryOrigin });
+  verifyReviewedNpmLockPackages({
+    allowedNestedShrinkwrapPackages: sourceNestedShrinkwrapPackages,
+    lockfilePath: sourceLock,
+    omitDev: true,
+    registryOrigin,
+    reviewedRegistryPackages: sourceRegistryPackage
+      ? [
+          {
+            expectedIntegrity: sourceRegistryPackage.integrity,
+            label: sourceRegistryPackage.label,
+            packageSpec: sourceRegistryPackage.packageSpec,
+            tarballUrl: sourceRegistryPackage.tarballUrl,
+          },
+        ]
+      : [],
+    reviewedPackagesWithoutIntegrity: sourceRegistryPackagesWithoutIntegrity,
+  });
   const lockSha256 = createHash("sha256").update(fs.readFileSync(sourceLock)).digest("hex");
   fs.mkdirSync(destination);
   fs.copyFileSync(sourcePackage, path.join(destination, "package.json"));
@@ -453,6 +522,10 @@ function auditSourceGraph(
     sourceLock,
     path.join(tempRoot, "source-graph"),
     config.registryOrigin,
+    installProductionSourceDependencies,
+    config.sourceRegistryPackage,
+    config.sourceNestedShrinkwrapPackages,
+    config.sourceRegistryPackagesWithoutIntegrity,
   );
   return auditMaterializedSourceGraph({
     directory,

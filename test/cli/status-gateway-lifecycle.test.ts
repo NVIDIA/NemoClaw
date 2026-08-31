@@ -32,7 +32,6 @@ describe("CLI status gateway lifecycle process contracts", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
             },
           },
           defaultSandbox: "alpha",
@@ -80,7 +79,6 @@ describe("CLI status gateway lifecycle process contracts", () => {
       model: "configured-model",
       provider: "nvidia-prod",
       gpuEnabled: true,
-      policies: ["pypi"],
     });
     fs.writeFileSync(
       path.join(localBin, "openshell"),

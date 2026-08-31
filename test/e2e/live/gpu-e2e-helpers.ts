@@ -21,37 +21,6 @@ const DEFAULT_GPU_E2E_MODEL = "qwen3.5:9b";
 validateSandboxName(SANDBOX_NAME);
 export const PROXY_PORT = tcpPort(process.env.NEMOCLAW_OLLAMA_PROXY_PORT, "11435");
 
-export function shouldBootstrapLlamaCppGenericGpuTarget(
-  environment: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return (
-    environment.NEMOCLAW_RUN_LIVE_E2E === "1" &&
-    /^[a-f0-9]{40}$/u.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "") &&
-    environment.E2E_LLAMA_CPP_DEDICATED_LANE !== "1"
-  );
-}
-
-export function buildLlamaCppCompatibilityTargetEnv(
-  base: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv {
-  const forwarded = [
-    "NEMOCLAW_E2E_CORRELATION_ID",
-    "NEMOCLAW_E2E_EXPECTED_SHA",
-    "NEMOCLAW_E2E_SHARD",
-  ].reduce<NodeJS.ProcessEnv>(
-    (selected, key) => ({
-      ...selected,
-      ...(base[key] === undefined ? {} : { [key]: base[key] }),
-    }),
-    {},
-  );
-  return {
-    ...buildAvailabilityProbeEnv(base),
-    ...forwarded,
-    NEMOCLAW_RUN_LIVE_E2E: "1",
-  };
-}
-
 function tcpPort(value: string | undefined, fallback: string): string {
   const raw = value ?? fallback;
   if (!/^[1-9][0-9]*$/u.test(raw)) throw new Error(`invalid TCP port: ${raw}`);

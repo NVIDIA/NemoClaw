@@ -24,7 +24,7 @@ export function ensureAgentFixedForward(
   sandboxName: string,
   port: number,
   label: string,
-  revalidatePolicyAuthority?: (operation: string) => void,
+  revalidateSandboxIdentity?: (operation: string) => void,
 ): boolean {
   const forwardTarget = String(port);
   const stopForwardForSandbox = (portToStop: string | number) =>
@@ -34,7 +34,7 @@ export function ensureAgentFixedForward(
       portToStop,
       sandboxName,
       () =>
-        revalidatePolicyAuthority?.(
+        revalidateSandboxIdentity?.(
           `stop ${label} forward ${String(portToStop)} for sandbox '${sandboxName}'`,
         ),
     );
@@ -45,7 +45,7 @@ export function ensureAgentFixedForward(
   );
   const { ok, diagnostic } = runDetachedForwardStartWithRetries(
     (stdio) => {
-      revalidatePolicyAuthority?.(
+      revalidateSandboxIdentity?.(
         `start ${label} forward ${String(port)} for sandbox '${sandboxName}'`,
       );
       return startForward(stdio);

@@ -115,42 +115,6 @@ async function runFinalizationHandlers(
 }
 
 describe("finalization handlers", () => {
-  it("refuses finalization before its first mutation when policy authority drifts (#9833)", async () => {
-    const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("policy authority changed");
-    });
-    const { deps, calls } = createDeps({ revalidatePolicyRequirements });
-
-    await expect(handleFinalizationPhase(baseOptions(deps))).rejects.toThrow(
-      "policy authority changed",
-    );
-
-    expect(calls.setDefaultSandbox).not.toHaveBeenCalled();
-    expect(calls.removeLegacy).not.toHaveBeenCalled();
-    expect(calls.cleanupHost).not.toHaveBeenCalled();
-    expect(calls.recoverProcesses).not.toHaveBeenCalled();
-  });
-
-  it("refuses post-verification before pairing or success publication after drift (#9833)", async () => {
-    const revalidatePolicyRequirements = vi.fn(() => {
-      throw new Error("policy authority changed");
-    });
-    const { deps, calls } = createDeps({ revalidatePolicyRequirements });
-
-    await expect(
-      handlePostVerifyState({
-        ...baseOptions(deps),
-        agent: { name: "openclaw" },
-        portableProfileSelected: true,
-      }),
-    ).rejects.toThrow("policy authority changed");
-
-    expect(calls.settlePortablePairing).not.toHaveBeenCalled();
-    expect(calls.verify).not.toHaveBeenCalled();
-    expect(calls.dashboard).not.toHaveBeenCalled();
-    expect(calls.reportReadiness).not.toHaveBeenCalled();
-  });
-
   it("advances to post verification before deployment verification runs", async () => {
     const { deps, calls } = createDeps();
 
@@ -238,30 +202,6 @@ describe("finalization handlers", () => {
     expect(calls.settlePortablePairing).toHaveBeenCalledExactlyOnceWith("my-assistant", {
       portableRequired: true,
     });
-  });
-
-  it("passes the bound policy check through pairing settlement (#9833)", async () => {
-    const revalidatePolicyRequirements = vi.fn();
-    const portable = createDeps({ revalidatePolicyRequirements });
-
-    await runFinalizationHandlers({
-      ...baseOptions(portable.deps),
-      agent: { name: "openclaw" },
-      portableProfileSelected: true,
-    });
-
-    expect(portable.calls.settlePortablePairing).toHaveBeenCalledExactlyOnceWith("my-assistant", {
-      portableRequired: true,
-      revalidatePolicyRequirements,
-    });
-
-    const ordinary = createDeps({ revalidatePolicyRequirements });
-    await runFinalizationHandlers(baseOptions(ordinary.deps));
-
-    expect(ordinary.calls.settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith(
-      "my-assistant",
-      revalidatePolicyRequirements,
-    );
   });
 
   it("fails selected Portable OpenClaw closed before ordinary writers when registry identity is invalid (#9207)", async () => {
@@ -407,44 +347,6 @@ describe("finalization handlers", () => {
     expect(persistDashboardPort).toHaveBeenCalledWith("my-assistant", 18792);
   });
 
-  it("withholds dashboard-port persistence when authority drifts after forwarding (#9833)", async () => {
-    const persistDashboardPort = vi.fn();
-    const refuseDashboardPersistence = () => {
-      throw new Error("policy authority changed");
-    };
-    const policyChecks = new Map([
-      ["persist the dashboard port for sandbox 'my-assistant'", refuseDashboardPersistence],
-    ]);
-    const revalidatePolicyRequirements = vi.fn<(operation: string) => void>((operation) =>
-      policyChecks.get(operation)?.(),
-    );
-    const ensureAgentDashboardForward = vi.fn(
-      (_sandboxName, _agent, revalidate?: (operation: string) => void) => {
-        revalidate?.("start dashboard forward");
-        return 18792;
-      },
-    );
-    const { deps } = createDeps({
-      ensureAgentDashboardForward,
-      persistDashboardPort,
-      revalidatePolicyRequirements,
-    });
-
-    await expect(
-      handleFinalizationPhase({
-        ...baseOptions(deps),
-        agent: { name: "hermes" },
-      }),
-    ).rejects.toThrow("policy authority changed");
-
-    expect(ensureAgentDashboardForward).toHaveBeenCalledWith(
-      "my-assistant",
-      { name: "hermes" },
-      revalidatePolicyRequirements,
-    );
-    expect(persistDashboardPort).not.toHaveBeenCalled();
-  });
-
   it("does not persist a zero dashboard port after final recovery (#8214)", async () => {
     const persistDashboardPort = vi.fn();
     const { deps } = createDeps({
@@ -556,33 +458,8 @@ describe("finalization handlers", () => {
 
     expect(calls.dashboard).not.toHaveBeenCalled();
     // The sandbox reached finalization (policies confirmed), so it stays the default
-    // even when post-policy verification flakes — only a pre-policy cancel rolls back.
+    // even when post-identity verification flakes — only a pre-policy cancel rolls back.
     expect(calls.setDefaultSandbox).toHaveBeenCalledWith("my-assistant");
-  });
-
-  it("withholds verified deployment output when authority drifts during the probe (#9833)", async () => {
-    const refuseStatusPublication = () => {
-      throw new Error("policy authority changed");
-    };
-    const policyChecks = new Map([
-      ["publish deployment status for sandbox 'my-assistant'", refuseStatusPublication],
-    ]);
-    const revalidatePolicyRequirements = vi.fn<(operation: string) => void>((operation) =>
-      policyChecks.get(operation)?.(),
-    );
-    const { deps, calls } = createDeps({ revalidatePolicyRequirements });
-
-    await expect(runFinalizationHandlers(baseOptions(deps))).rejects.toThrow(
-      "policy authority changed",
-    );
-
-    expect(calls.verify).toHaveBeenCalledOnce();
-    expect(calls.log).not.toHaveBeenCalled();
-    expect(calls.dashboard).not.toHaveBeenCalled();
-    expect(calls.reportReadiness).not.toHaveBeenCalled();
-    expect(revalidatePolicyRequirements).not.toHaveBeenCalledWith(
-      "complete onboarding for sandbox 'my-assistant'",
-    );
   });
 
   it("removes legacy credentials only when all staged values migrated", async () => {
@@ -664,21 +541,44 @@ describe("finalization handlers", () => {
     expect(calls.reportReadiness).toHaveBeenCalledWith(false);
   });
 
-  it("settles ordinary OpenClaw pairing after recovery and before verification (#9844, #10479)", async () => {
-    const { deps, calls } = createDeps();
+  it("settles ordinary OpenClaw pairing after recovery and before verification (#10479)", async () => {
+    let releasePairing!: () => void;
+    const pairingPending = new Promise<void>((resolve) => {
+      releasePairing = resolve;
+    });
+    const events: string[] = [];
+    const settleOrdinaryPairing = vi.fn(async () => {
+      events.push("pairing-started");
+      await pairingPending;
+      events.push("pairing-settled");
+      return { kind: "settled" as const };
+    });
+    const verifyDeployment = vi.fn(async () => {
+      events.push("verify");
+      return { ok: true };
+    });
+    const { deps, calls } = createDeps({
+      settleOrdinaryOpenClawPairing: settleOrdinaryPairing,
+      verifyDeployment,
+    });
 
-    await runFinalizationHandlers(baseOptions(deps));
+    const finalization = runFinalizationHandlers(baseOptions(deps));
+    await vi.waitFor(() => expect(events).toContain("pairing-started"));
+    expect(events).not.toContain("verify");
+    releasePairing();
+    await finalization;
 
-    expect(calls.settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith("my-assistant");
-    expect(calls.settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeGreaterThan(
+    expect(settleOrdinaryPairing).toHaveBeenCalledExactlyOnceWith("my-assistant");
+    expect(settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeGreaterThan(
       calls.recoverProcesses.mock.invocationCallOrder[0],
     );
-    expect(calls.settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(settleOrdinaryPairing.mock.invocationCallOrder[0]).toBeLessThan(
       calls.recoverProcesses.mock.invocationCallOrder[1],
     );
     expect(calls.recoverProcesses.mock.invocationCallOrder[1]).toBeLessThan(
-      calls.verify.mock.invocationCallOrder[0],
+      verifyDeployment.mock.invocationCallOrder[0],
     );
+    expect(events).toEqual(["pairing-started", "pairing-settled", "verify"]);
   });
 
   it("does not run OpenClaw pairing settlement for Hermes (#9844)", async () => {

@@ -44,6 +44,7 @@ const GOOGLECHAT_ENV = {
   GOOGLECHAT_AUDIENCE: "https://bot.example.com/googlechat",
   GOOGLECHAT_APP_PRINCIPAL: "123456789012345678901",
 };
+const LIVE_IDENTITY_FINGERPRINT = "a".repeat(64);
 
 // Why this mock exists: the real googlechat tunnel/audience gate needs a human
 // operator (Google Cloud Console steps), so on a non-interactive test run it
@@ -90,8 +91,13 @@ function printedText(): string {
     .join("\n");
 }
 
+function withoutGateway(args: readonly string[]): string[] {
+  const index = args[2] === "-g" ? 2 : args[3] === "-g" ? 3 : -1;
+  return index < 0 ? [...args] : [...args.slice(0, index), ...args.slice(index + 2)];
+}
+
 function openshellCalls(): string[][] {
-  return runOpenshellSpy.mock.calls.map((call) => call[0] as string[]);
+  return runOpenshellSpy.mock.calls.map((call) => withoutGateway(call[0] as string[]));
 }
 
 beforeEach(() => {
@@ -108,7 +114,13 @@ beforeEach(() => {
     throw new ExitError(code);
   }) as never);
 
-  registryEntry = { name: "test-sb", agent: "openclaw", policies: [] } as SandboxEntry;
+  registryEntry = {
+    name: "test-sb",
+    agent: "openclaw",
+    gatewayName: "nemoclaw",
+    lifecycleGeneration: "generation-1",
+    lifecycleLiveIdentityFingerprint: LIVE_IDENTITY_FINGERPRINT,
+  } as SandboxEntry;
   vi.spyOn(registry, "getSandbox").mockImplementation(() => registryEntry);
   vi.spyOn(registry, "listSandboxes").mockImplementation(() => ({
     sandboxes: [registryEntry],
@@ -142,7 +154,6 @@ beforeEach(() => {
 
   session = {
     sandboxName: "test-sb",
-    policyPresets: [],
   } as unknown as onboardSession.Session;
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
   vi.spyOn(onboardSession, "updateSession").mockImplementation((update) => {
@@ -154,6 +165,12 @@ beforeEach(() => {
   // crosses the direct channel action, generic provider upsert, and OpenShell
   // refresh boundary. Individual failure tests override the spy below.
   providerSpy = vi.spyOn(policyChannelDependencies, "upsertMessagingProviders");
+  vi.spyOn(policyChannelDependencies, "revalidateChannelProviderPolicy").mockImplementation(
+    () => undefined,
+  );
+  vi.spyOn(policyChannelDependencies, "inspectMessagingProviderAttachmentTarget").mockReturnValue(
+    LIVE_IDENTITY_FINGERPRINT,
+  );
   vi.spyOn(policyChannelDependencies, "rebuildSandbox").mockImplementation(async () => undefined);
   stopGooglechatWebhookTunnelSpy = vi
     .spyOn(policyChannelDependencies, "stopGooglechatWebhookTunnel")
@@ -163,17 +180,23 @@ beforeEach(() => {
   // Status-table columns: PROVIDER, CREDENTIAL_KEY, STRATEGY, STATUS.
   const refreshStatusTable = (args: readonly string[]): string =>
     `${args[3] ?? ""}  ${args[5] ?? ""}  google-service-account-jwt  refreshed\n`;
-  const isRefreshStatus = (args: readonly string[]): boolean =>
-    args[0] === "provider" && args[1] === "refresh" && args[2] === "status";
+  const isRefreshStatus = (args: readonly string[]): boolean => {
+    const command = withoutGateway(args);
+    return command[0] === "provider" && command[1] === "refresh" && command[2] === "status";
+  };
 
-  runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args) => ({
-    pid: 0,
-    output: [null, "", ""],
-    stdout: isRefreshStatus(args) ? refreshStatusTable(args) : "",
-    stderr: "",
-    status: args[0] === "provider" && args[1] === "get" ? 1 : 0,
-    signal: null,
-  }));
+  runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args) => {
+    const command = withoutGateway(args);
+    const providerMissing = command[0] === "provider" && command[1] === "get";
+    return {
+      pid: 0,
+      output: [null, "", ""],
+      stdout: isRefreshStatus(args) ? refreshStatusTable(command) : "",
+      stderr: providerMissing ? `provider '${args[args.length - 1]}' not found` : "",
+      status: providerMissing ? 1 : 0,
+      signal: null,
+    };
+  });
 
   const healthyGatewayState = {
     state: "healthy_named",
@@ -219,13 +242,14 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
           providerType: "google-chat-bridge",
         },
       ],
+      "nemoclaw",
       { bestEffort: true, requireExactBindings: true },
     );
     const refreshCall = runOpenshellSpy.mock.calls.find(
       (call) =>
-        (call[0] as string[])[0] === "provider" &&
-        (call[0] as string[])[1] === "refresh" &&
-        (call[0] as string[])[2] === "configure",
+        withoutGateway(call[0] as string[])
+          .slice(0, 3)
+          .join(" ") === "provider refresh configure",
     );
     expect(refreshCall).toBeDefined();
     const refreshArgs = refreshCall?.[0] as string[];
@@ -301,7 +325,6 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
       "googlechat",
     );
     expect(appliedPresets).not.toContain("googlechat");
-    expect(session.policyPresets).not.toContain("googlechat");
     expect(stopGooglechatWebhookTunnelSpy).toHaveBeenCalledWith("test-sb");
   });
 
@@ -329,7 +352,6 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(process.env.GOOGLECHAT_SERVICE_ACCOUNT).toBe(SA_JSON);
     expect(registry.getConfiguredMessagingChannelsFromEntry(registryEntry)).toContain("googlechat");
     expect(appliedPresets).toContain("googlechat");
-    expect(session.policyPresets).toContain("googlechat");
     expect(providerSpy).not.toHaveBeenCalled();
     expect(openshellCalls()).toEqual([]);
     expect(policies.removePreset).not.toHaveBeenCalled();
@@ -371,7 +393,6 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
     expect(startedPlan?.networkPolicy.presets).toContain("googlechat");
     expect(policies.applyPreset).not.toHaveBeenCalled();
     expect(appliedPresets).toContain("googlechat");
-    expect(session.policyPresets).toContain("googlechat");
     expect(providerSpy).not.toHaveBeenCalled();
     expect(openshellCalls()).toEqual([]);
     expect(stopGooglechatWebhookTunnelSpy).not.toHaveBeenCalled();
