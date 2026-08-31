@@ -2816,7 +2816,9 @@ When a directory or state file cannot be captured, the command reports the faile
 When cleanup succeeds, the command removes the incomplete snapshot.
 When cleanup fails, the command reports the retained snapshot path.
 In either case, the incomplete snapshot remains excluded from `snapshot list` and restore selection.
-Remove the retained directory only after you verify that the original sandbox or a complete snapshot contains every required state item.
+The retained incomplete snapshot may contain unsanitized credentials.
+Do not restore, copy, share, or edit it.
+Follow [Create and List Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots#create-and-list-snapshots) for the recovery and safe removal procedure.
 
 ### `$$nemoclaw <name> snapshot list`
 

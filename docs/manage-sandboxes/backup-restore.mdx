@@ -126,6 +126,9 @@ When a directory or state file cannot be captured, `snapshot create` reports the
 When cleanup succeeds, the command removes the incomplete snapshot.
 When cleanup fails, the command reports the retained snapshot path.
 In either case, the incomplete snapshot remains excluded from `snapshot list` and restore selection.
+The retained incomplete snapshot may contain unsanitized credentials.
+Do not restore, copy, share, or edit it.
+Repair access to the original sandbox state, then rerun `snapshot create`.
 Remove the retained directory only after you verify that the original sandbox or a complete snapshot contains every required state item.
 
 ## Restore a Snapshot
