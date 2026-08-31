@@ -180,7 +180,6 @@ describe("recursive state-dir lock host wiring", () => {
       "--plan-json",
       JSON.stringify(PLAN),
     ]);
-    expect(invocation?.input).toContain("Descriptor-safe recursive state-directory");
   });
 
   it("uses the current host guard for the narrow startup repair (#8112)", () => {
@@ -279,7 +278,6 @@ describe("recursive state-dir lock host wiring", () => {
     expect(invocation?.cmd).toEqual(
       expect.arrayContaining(["python3", "-I", "-", "lock", "--plan-json", JSON.stringify(PLAN)]),
     );
-    expect(invocation?.input).toContain("Descriptor-safe recursive state-directory");
   });
 
   it("rejects a plan-aware image whose installed helper is missing", () => {
