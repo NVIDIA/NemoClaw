@@ -35,7 +35,7 @@ export function ensureMessagingHostForwardAfterRebuild(
   if (!forward) return true;
   const health = getMessagingForwardHealth(sandboxName, forward.port);
   if (health === true) return true;
-  if (health === null) return true;
+  if (health === null) return false;
   if (health === "occupied") return false;
   return ensureMessagingHostForwardIfConfigured({
     sandboxName,

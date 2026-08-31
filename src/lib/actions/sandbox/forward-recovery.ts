@@ -238,7 +238,7 @@ export function teardownSandboxDashboardForward(
     const controller = authority ? runtimeForwardServiceController() : null;
     if (authority && controller) {
       try {
-        controller.stopAll(authority);
+        if (controller.stopAll(authority) > 0) return true;
       } catch {
         // Teardown is best-effort; retain ambiguous receipts for a later
         // identity-bound recovery instead of signaling an unproven PID.

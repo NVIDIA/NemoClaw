@@ -140,7 +140,7 @@ export function forwardServiceReceiptPath(
   return path.join(
     stateDirectory,
     "forwards",
-    `${target.sandboxName}-${String(target.localPort)}.json`,
+    `${target.gatewayName}-${target.sandboxName}-${target.sandboxIdentityFingerprint}-${String(target.localPort)}.json`,
   );
 }
 

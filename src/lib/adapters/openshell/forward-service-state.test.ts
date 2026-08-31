@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   buildForwardServiceArgs,
+  forwardServiceReceiptPath,
   type ForwardServicePendingReceipt,
   type ForwardServiceReceipt,
 } from "./forward-service";
@@ -71,7 +72,7 @@ describe("OpenShell ForwardTcp receipt storage (#10691)", () => {
   it("writes and reads one owner-only process generation", () => {
     writeForwardServiceReceipt(receipt, { stateDirectory, uid });
     expect(readForwardServiceReceipt(target, { stateDirectory, uid })).toEqual(receipt);
-    const filePath = path.join(stateDirectory, "forwards", "alpha-18789.json");
+    const filePath = forwardServiceReceiptPath(stateDirectory, target);
     expect(fs.lstatSync(path.dirname(filePath)).mode & 0o777).toBe(0o700);
     expect(fs.lstatSync(filePath).mode & 0o777).toBe(0o600);
   });
@@ -113,10 +114,29 @@ describe("OpenShell ForwardTcp receipt storage (#10691)", () => {
     ).toEqual([8_642, 18_789]);
   });
 
+  it("stores same-name, same-port authorities independently across gateways", () => {
+    const siblingTarget = {
+      ...target,
+      gatewayName: "nemoclaw-18080",
+      sandboxIdentityFingerprint: "b".repeat(64),
+    };
+    const sibling = {
+      ...receipt,
+      ...siblingTarget,
+      argv: [siblingTarget.executable, ...buildForwardServiceArgs(siblingTarget)],
+    };
+    writeForwardServiceReceipt(receipt, { stateDirectory, uid });
+    writeForwardServiceReceipt(sibling, { stateDirectory, uid });
+
+    expect(listForwardServiceReceipts({ stateDirectory, uid })).toHaveLength(2);
+    expect(readForwardServiceReceipt(target, { stateDirectory, uid })).toEqual(receipt);
+    expect(readForwardServiceReceipt(siblingTarget, { stateDirectory, uid })).toEqual(sibling);
+  });
+
   it("fails closed when an enumerated receipt filename disagrees with its target", () => {
     writeForwardServiceReceipt(receipt, { stateDirectory, uid });
     fs.renameSync(
-      path.join(stateDirectory, "forwards", "alpha-18789.json"),
+      forwardServiceReceiptPath(stateDirectory, target),
       path.join(stateDirectory, "forwards", "alpha-18790.json"),
     );
 
@@ -130,7 +150,7 @@ describe("OpenShell ForwardTcp receipt storage (#10691)", () => {
     fs.mkdirSync(forwardDirectory, { mode: 0o700 });
     const outside = path.join(stateDirectory, "outside.json");
     fs.writeFileSync(outside, JSON.stringify(receipt), { mode: 0o600 });
-    fs.symlinkSync(outside, path.join(forwardDirectory, "alpha-18789.json"));
+    fs.symlinkSync(outside, forwardServiceReceiptPath(stateDirectory, target));
 
     expect(() => readForwardServiceReceipt(target, { stateDirectory, uid })).toThrow();
     expect(fs.readFileSync(outside, "utf8")).toContain(receipt.processIdentity);
@@ -151,7 +171,7 @@ describe("OpenShell ForwardTcp receipt storage (#10691)", () => {
 
   it("rejects a receipt that grants group or world access", () => {
     writeForwardServiceReceipt(receipt, { stateDirectory, uid });
-    const filePath = path.join(stateDirectory, "forwards", "alpha-18789.json");
+    const filePath = forwardServiceReceiptPath(stateDirectory, target);
     fs.chmodSync(filePath, 0o644);
     expect(() => readForwardServiceReceipt(target, { stateDirectory, uid })).toThrow(
       /not owner-only/u,
@@ -160,7 +180,7 @@ describe("OpenShell ForwardTcp receipt storage (#10691)", () => {
 
   it("rejects malformed and credential-bearing receipt content", () => {
     writeForwardServiceReceipt(receipt, { stateDirectory, uid });
-    const filePath = path.join(stateDirectory, "forwards", "alpha-18789.json");
+    const filePath = forwardServiceReceiptPath(stateDirectory, target);
     fs.writeFileSync(filePath, JSON.stringify({ ...receipt, token: "secret" }), { mode: 0o600 });
     expect(() => readForwardServiceReceipt(target, { stateDirectory, uid })).toThrow(/invalid/u);
   });

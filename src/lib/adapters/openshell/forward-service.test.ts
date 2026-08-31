@@ -103,12 +103,22 @@ describe("OpenShell ForwardTcp service contract (#10691)", () => {
 
   it("derives the receipt path from validated sandbox and port values", () => {
     expect(forwardServiceReceiptPath("/private/state", target)).toBe(
-      path.join("/private/state", "forwards", "alpha-18789.json"),
+      path.join("/private/state", "forwards", `nemoclaw-alpha-${fingerprint}-18789.json`),
     );
     expect(() => forwardServiceReceiptPath("relative", target)).toThrow(/must be absolute/u);
     expect(forwardServicePendingReceiptPath("/private/state", target)).toBe(
-      path.join("/private/state", "forwards", "alpha-18789.pending.json"),
+      path.join("/private/state", "forwards", `nemoclaw-alpha-${fingerprint}-18789.pending.json`),
     );
+  });
+
+  it("isolates same-name receipt state by gateway and immutable sandbox identity", () => {
+    expect(
+      forwardServiceReceiptPath("/private/state", {
+        ...target,
+        gatewayName: "nemoclaw-18080",
+        sandboxIdentityFingerprint: "b".repeat(64),
+      }),
+    ).not.toBe(forwardServiceReceiptPath("/private/state", target));
   });
 
   it("accepts only the exact credential-free receipt schema", () => {

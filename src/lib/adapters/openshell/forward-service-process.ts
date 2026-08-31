@@ -20,6 +20,7 @@ import {
 import {
   buildForwardServiceArgs,
   classifyForwardServiceReceipt,
+  forwardServicePendingReceiptPath,
   type ForwardServiceProcessObservation,
   type ForwardServicePendingReceipt,
   type ForwardServiceReceipt,
@@ -344,6 +345,18 @@ function pendingMatchesCompleted(
   );
 }
 
+function pendingProcessError(
+  pending: ForwardServicePendingReceipt,
+  target: ForwardServiceTarget,
+  options: ForwardServiceProcessOptions,
+  disposition: ForwardServiceReceiptDisposition,
+): Error {
+  const receiptPath = forwardServicePendingReceiptPath(options.stateDirectory, target);
+  return new Error(
+    `OpenShell forward service pending process is ${disposition} for sandbox '${target.sandboxName}' on ${target.localHost}:${String(target.localPort)}; recorded PID ${String(pending.pid)}, receipt '${receiptPath}'. Refusing process control. If the PID exits, retry recovery; otherwise inspect that PID and its expected OpenShell arguments before manual intervention.`,
+  );
+}
+
 export function inspectForwardServiceProcess(
   target: ForwardServiceTarget,
   options: ForwardServiceProcessOptions,
@@ -401,9 +414,7 @@ function stopForwardServiceProcessUnlocked(
         throw new Error("OpenShell forward service pending receipt changed during reconciliation");
       }
     } else if (disposition !== "stale") {
-      throw new Error(
-        `OpenShell forward service pending process is ${disposition}; refusing signal`,
-      );
+      throw pendingProcessError(pending, target, options, disposition);
     } else if (removeForwardServicePendingReceipt(pending, stateOptions(options)) !== "removed") {
       throw new Error("OpenShell forward service pending receipt changed during cleanup");
     }
@@ -536,7 +547,7 @@ export function ensureForwardServiceProcess(
           );
         }
       } else if (disposition !== "stale") {
-        throw new Error(`OpenShell forward service pending process is ${disposition}`);
+        throw pendingProcessError(existingPending, target, options, disposition);
       } else if (
         removeForwardServicePendingReceipt(existingPending, stateOptions(options)) !== "removed"
       ) {

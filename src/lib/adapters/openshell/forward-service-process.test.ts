@@ -324,7 +324,7 @@ describe("OpenShell ForwardTcp process lifecycle (#10691)", () => {
       receipt: null,
     });
     expect(() => ensureForwardServiceProcess(target, lifecycleOptions(harness))).toThrow(
-      /pending process is unknown/u,
+      /pending process is unknown.*recorded PID 4242.*nemoclaw-alpha-[a-f0-9]{64}-18789\.pending\.json/u,
     );
     expect(harness.calls).toHaveLength(1);
   });

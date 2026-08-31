@@ -99,7 +99,9 @@ describe("Hermes installer forward restore", () => {
     const healthFailure = fixture();
     try {
       expect(restore({ ...recoveryFailure.env, CLI_STATUS: "1" }).status).toBe(1);
-      expect(restore({ ...healthFailure.env, CURL_STATUS: "1" }).status).toBe(1);
+      const unhealthy = restore({ ...healthFailure.env, CURL_STATUS: "1" });
+      expect(unhealthy.status).toBe(1);
+      expect(`${unhealthy.stdout}\n${unhealthy.stderr}`).toContain("created-by-onboard status");
     } finally {
       fs.rmSync(recoveryFailure.root, { recursive: true, force: true });
       fs.rmSync(healthFailure.root, { recursive: true, force: true });

@@ -64,7 +64,7 @@ describe("ensureMessagingHostForwardAfterRebuild", () => {
 
     const ok = ensureMessagingHostForwardAfterRebuild("demo", makePlan());
 
-    expect(ok).toBe(true);
+    expect(ok).toBe(false);
     expect(captureOpenshell).toHaveBeenCalledOnce();
     expect(captureOpenshell).toHaveBeenCalledWith(
       ["forward", "list"],

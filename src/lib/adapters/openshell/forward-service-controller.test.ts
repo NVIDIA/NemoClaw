@@ -31,15 +31,15 @@ const target = {
   targetPort: 18_789,
 };
 
-function pending(pid: number): ForwardServicePendingReceipt {
+function pending(pid: number, receiptTarget: typeof target = target): ForwardServicePendingReceipt {
   return {
     pendingSchemaVersion: 1,
-    ...target,
+    ...receiptTarget,
     pid,
     launcherUid: uid,
     hostIdentity: readMcpLockHostIdentity(),
     pidNamespaceIdentity: readMcpLockPidNamespaceIdentity(),
-    expectedArgv: [target.executable, ...buildForwardServiceArgs(target)],
+    expectedArgv: [receiptTarget.executable, ...buildForwardServiceArgs(receiptTarget)],
     startedAt: "2026-08-31T16:00:00.000Z",
   };
 }
@@ -82,5 +82,41 @@ describe("OpenShell ForwardTcp controller pending cleanup", () => {
 
     expect(() => controller().stopAll(authority)).toThrow(/pending process is unknown/u);
     expect(readForwardServicePendingReceipt(target, { stateDirectory, uid })).toEqual(receipt);
+  });
+
+  it("cleans same-name authorities independently across gateways", () => {
+    const siblingTarget = {
+      ...target,
+      gatewayName: "nemoclaw-18080",
+      sandboxIdentityFingerprint: "b".repeat(64),
+    };
+    const siblingAuthority = {
+      gatewayName: siblingTarget.gatewayName,
+      sandboxIdentityFingerprint: siblingTarget.sandboxIdentityFingerprint,
+      sandboxName: siblingTarget.sandboxName,
+    };
+    writeForwardServicePendingReceipt(pending(2_147_483_647), { stateDirectory, uid });
+    writeForwardServicePendingReceipt(pending(2_147_483_646, siblingTarget), {
+      stateDirectory,
+      uid,
+    });
+
+    expect(controller().stopAll(authority)).toBe(1);
+    expect(readForwardServicePendingReceipt(target, { stateDirectory, uid })).toBeNull();
+    expect(readForwardServicePendingReceipt(siblingTarget, { stateDirectory, uid })).not.toBeNull();
+    expect(controller().stopAll(siblingAuthority)).toBe(1);
+    expect(readForwardServicePendingReceipt(siblingTarget, { stateDirectory, uid })).toBeNull();
+  });
+
+  it("refuses mutable-name cleanup across same-gateway sandbox generations", () => {
+    const priorTarget = {
+      ...target,
+      sandboxIdentityFingerprint: "c".repeat(64),
+    };
+    const receipt = pending(2_147_483_647, priorTarget);
+    writeForwardServicePendingReceipt(receipt, { stateDirectory, uid });
+
+    expect(() => controller().stopAll(authority)).toThrow(/disagrees with sandbox authority/u);
+    expect(readForwardServicePendingReceipt(priorTarget, { stateDirectory, uid })).toEqual(receipt);
   });
 });

@@ -113,22 +113,29 @@ export function createForwardServiceController(
     },
     stopPort: (authority, localPort) =>
       deps.runExclusive(authority.sandboxName, () => {
-        const receipts = listForwardServiceReceipts({ stateDirectory: deps.stateDirectory }).filter(
-          (receipt) =>
-            receipt.sandboxName === authority.sandboxName && receipt.localPort === localPort,
-        );
-        const pending = listForwardServicePendingReceipts({
+        const allReceipts = listForwardServiceReceipts({ stateDirectory: deps.stateDirectory });
+        const allPending = listForwardServicePendingReceipts({
           stateDirectory: deps.stateDirectory,
-        }).filter(
-          (receipt) =>
-            receipt.sandboxName === authority.sandboxName && receipt.localPort === localPort,
+        });
+        if (
+          [...allReceipts, ...allPending].some(
+            (receipt) =>
+              receipt.sandboxName === authority.sandboxName &&
+              receipt.gatewayName === authority.gatewayName &&
+              receipt.localPort === localPort &&
+              !matchesAuthority(receipt, authority),
+          )
+        ) {
+          throw new Error("OpenShell forward service state disagrees with sandbox authority");
+        }
+        const receipts = allReceipts.filter(
+          (receipt) => receipt.localPort === localPort && matchesAuthority(receipt, authority),
+        );
+        const pending = allPending.filter(
+          (receipt) => receipt.localPort === localPort && matchesAuthority(receipt, authority),
         );
         if (receipts.length === 0 && pending.length === 0) return "absent";
-        if (
-          receipts.length > 1 ||
-          pending.length > 1 ||
-          [...receipts, ...pending].some((receipt) => !matchesAuthority(receipt, authority))
-        ) {
+        if (receipts.length > 1 || pending.length > 1) {
           throw new Error("OpenShell forward service state disagrees with sandbox authority");
         }
         for (const receipt of pending.length > 0 ? pending : receipts) {
@@ -141,15 +148,22 @@ export function createForwardServiceController(
       }),
     stopAll: (authority) =>
       deps.runExclusive(authority.sandboxName, () => {
-        const receipts = listForwardServiceReceipts({ stateDirectory: deps.stateDirectory }).filter(
-          (receipt) => receipt.sandboxName === authority.sandboxName,
-        );
-        const pending = listForwardServicePendingReceipts({
+        const allReceipts = listForwardServiceReceipts({ stateDirectory: deps.stateDirectory });
+        const allPending = listForwardServicePendingReceipts({
           stateDirectory: deps.stateDirectory,
-        }).filter((receipt) => receipt.sandboxName === authority.sandboxName);
-        if ([...receipts, ...pending].some((receipt) => !matchesAuthority(receipt, authority))) {
+        });
+        if (
+          [...allReceipts, ...allPending].some(
+            (receipt) =>
+              receipt.sandboxName === authority.sandboxName &&
+              receipt.gatewayName === authority.gatewayName &&
+              !matchesAuthority(receipt, authority),
+          )
+        ) {
           throw new Error("OpenShell forward service state disagrees with sandbox authority");
         }
+        const receipts = allReceipts.filter((receipt) => matchesAuthority(receipt, authority));
+        const pending = allPending.filter((receipt) => matchesAuthority(receipt, authority));
         const lifecycleTargets = [
           ...pending,
           ...receipts.filter(

@@ -567,6 +567,7 @@ restore_onboard_forward_after_post_checks() {
   if command_exists curl \
     && ! curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
     warn "${agent_display} recovery completed, but its host forward on port ${port} is unhealthy."
+    warn "Run: ${_CLI_BIN} ${sandbox_name} status"
     return 1
   fi
   return 0

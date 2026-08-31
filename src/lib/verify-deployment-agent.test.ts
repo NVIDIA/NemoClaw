@@ -99,7 +99,7 @@ describe("verifyDeployment agent OpenAI-compatible API host forward (#9290)", ()
     expect(result.verification.dashboardReachable).toBe(true);
     const api = result.diagnostics.find((d) => d.link === "api");
     expect(api?.status).toBe("fail");
-    expect(api?.hint).toContain("openshell forward start --background 8642 my-sandbox");
+    expect(api?.hint).toContain("nemoclaw my-sandbox recover");
   });
 
   it("fails verification when the API host forward answers with a server error", async () => {

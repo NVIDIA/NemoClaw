@@ -173,6 +173,7 @@ describe("ForwardTcp runtime integration", () => {
   });
 
   it("retires every registered ForwardTcp port during sandbox teardown", async () => {
+    mocks.controller.stopAll.mockReturnValue(2);
     const runOpenshell = vi.fn(() => ({ status: 0 }));
     const { teardownSandboxDashboardForward } = await import("./forward-recovery");
 
@@ -189,7 +190,25 @@ describe("ForwardTcp runtime integration", () => {
       sandboxIdentityFingerprint: FINGERPRINT,
       sandboxName: "alpha",
     });
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("uses gateway-scoped legacy cleanup only when no ForwardTcp receipt exists", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const { teardownSandboxDashboardForward } = await import("./forward-recovery");
+
+    expect(
+      teardownSandboxDashboardForward("alpha", {
+        getSandbox: () => SANDBOX,
+        isLocalForwardReachable: () => false,
+        runOpenshell,
+      }),
+    ).toBe(true);
     expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "stop", "18789", "alpha", "--gateway", "nemoclaw"],
+      expect.anything(),
+    );
   });
 
   it("reports incomplete teardown when exact ForwardTcp authority is ambiguous", async () => {
