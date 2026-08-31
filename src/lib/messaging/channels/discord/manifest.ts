@@ -82,7 +82,7 @@ export const discordManifest = {
       validationWarningLines: [
         "For Discord preset validation, do not use curl as the success signal:",
         "curl is not in the preset binary allowlist, so curl probes can fail even",
-        "when the policy is working. Use Node HTTPS against",
+        "when the policy is working. Use the configured agent runtime against",
         "https://discord.com/api/v10/gateway or validate the configured",
         'messaging bridge/gateway path. DNS-only checks such as dns.resolve("gateway.discord.gg")',
         "can also be inconclusive behind a proxy.",

@@ -58,6 +58,5 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
-      - { path: /usr/local/bin/node }
       - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }

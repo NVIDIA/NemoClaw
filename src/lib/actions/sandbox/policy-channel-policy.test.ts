@@ -336,7 +336,7 @@ describe("addSandboxPolicy", () => {
     await addSandboxPolicy("test-sandbox", { preset: "discord", yes: true });
 
     expect(printedText()).toContain("curl is not in the preset binary allowlist");
-    expect(printedText()).toContain("Node HTTPS");
+    expect(printedText()).toContain("configured agent runtime");
     expect(promptMock).not.toHaveBeenCalled();
     expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "discord", {
       suppressDisclosure: true,

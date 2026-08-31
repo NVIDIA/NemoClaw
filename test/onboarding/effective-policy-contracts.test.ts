@@ -525,6 +525,16 @@ describe("effective built-in policy contracts", () => {
     });
   });
 
+  it("denies Node.js egress in the Hermes Discord preset (#10655)", () => {
+    const effective = composePresets(["discord"], "hermes");
+    const discord = requireNetworkPolicy(effective, "discord");
+
+    expect(binaries(discord)).toEqual([
+      "/opt/hermes/.venv/bin/python",
+      "/usr/bin/python3*",
+    ]);
+  });
+
   it("composes Hermes-specific messaging mutation and runtime identity rules", () => {
     const effective = composePresets(["discord", "slack", "wechat"], "hermes");
     const discord = requireNetworkPolicy(effective, "discord");
