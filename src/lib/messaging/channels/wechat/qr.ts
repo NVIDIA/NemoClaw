@@ -122,17 +122,36 @@ function makeAbortError(): Error {
   return error;
 }
 
-function rejectBodyReadOnAbort<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(makeAbortError());
+async function rejectBodyReadOnAbort<T>(
+  pending: Promise<T>,
+  signal: AbortSignal,
+  cancel?: () => Promise<void>,
+): Promise<T> {
+  const abortAfterCleanup = async (): Promise<never> => {
+    try {
+      await cancel?.();
+    } catch {
+      // Preserve the request cancellation result.
+    }
+    throw makeAbortError();
+  };
+  if (signal.aborted) return await abortAfterCleanup();
   return new Promise((resolve, reject) => {
-    const onAbort = () => reject(makeAbortError());
+    let aborted = false;
+    const onAbort = () => {
+      aborted = true;
+      signal.removeEventListener("abort", onAbort);
+      void abortAfterCleanup().catch(reject);
+    };
     signal.addEventListener("abort", onAbort, { once: true });
     void pending.then(
       (value) => {
+        if (aborted) return;
         signal.removeEventListener("abort", onAbort);
         resolve(value);
       },
       (err: unknown) => {
+        if (aborted) return;
         signal.removeEventListener("abort", onAbort);
         reject(err);
       },
@@ -147,7 +166,7 @@ async function readBoundedResponseText(
 ): Promise<string> {
   const read = async (): Promise<string> => {
     if (!response.body) {
-      const text = await response.text();
+      const text = await rejectBodyReadOnAbort(response.text(), signal);
       if (new TextEncoder().encode(text).byteLength > WECHAT_ILINK_MAX_RESPONSE_BYTES) {
         throw new WechatQrError("parse", `WeChat QR ${label} response exceeded the size limit`);
       }
@@ -159,7 +178,9 @@ async function readBoundedResponseText(
     let bytes = 0;
     try {
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await rejectBodyReadOnAbort(reader.read(), signal, async () => {
+          await reader.cancel();
+        });
         if (done) break;
         bytes += value.byteLength;
         if (bytes > WECHAT_ILINK_MAX_RESPONSE_BYTES) {
@@ -184,7 +205,7 @@ async function readBoundedResponseText(
     return new TextDecoder().decode(joined);
   };
 
-  return await rejectBodyReadOnAbort(read(), signal);
+  return await read();
 }
 
 /** Encode a SemVer string the way iLink expects: `(major<<16)|(minor<<8)|patch`. */
