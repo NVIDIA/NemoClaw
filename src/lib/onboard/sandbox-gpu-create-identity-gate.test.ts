@@ -241,7 +241,7 @@ describe("created sandbox identity gate", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
   });
 
-  it("settles the exact created sandbox before post-create effects (#9211)", async () => {
+  it("settles the exact created sandbox before ending the Ready handoff and post-create effects (#9211)", async () => {
     const events: string[] = [];
     let nonce = "";
     const input = noGpuInput();
@@ -275,6 +275,7 @@ describe("created sandbox identity gate", () => {
       expect(nonce).toMatch(/^[0-9a-f]{62}$/u);
       expect(nonce).toHaveLength(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
       expect(nonce.length).toBeLessThanOrEqual(63);
+      expect(options.readyCheck?.()).toBe(false);
       expect(options.readyCheck?.()).toBe(true);
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
@@ -316,8 +317,22 @@ describe("created sandbox identity gate", () => {
         );
       })
       .mockImplementationOnce((args) => {
+        expect(args).not.toContain("--selector");
+        events.push("ready-visible-again");
+        return "alpha Ready";
+      })
+      .mockImplementationOnce((args) => {
         expect(args).toContain("--selector");
         events.push("identity-matched");
+        expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+        expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+        return sandboxListJson("alpha-sandbox-id", {
+          [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+        });
+      })
+      .mockImplementationOnce((args) => {
+        expect(args).toContain("--selector");
+        events.push("identity-revalidated");
         expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
         expect(patch.exitOnPatchError).not.toHaveBeenCalled();
         return sandboxListJson("alpha-sandbox-id", {
@@ -331,8 +346,9 @@ describe("created sandbox identity gate", () => {
       "create",
       "ready-visible",
       "identity-metadata-pending",
-      "identity-settle",
+      "ready-visible-again",
       "identity-matched",
+      "identity-revalidated",
       "verify-created",
       "revalidate:validate runtime patch for sandbox 'alpha'",
       "runtime-check",
@@ -376,6 +392,7 @@ describe("created sandbox identity gate", () => {
       ["sandbox", "get", "alpha"],
       expect.anything(),
     );
+    expect(deps.sleep).not.toHaveBeenCalled();
   });
 
   it("carries Hermes receipt authority from selector settlement through publication lookup (#10423)", async () => {
@@ -450,9 +467,10 @@ describe("created sandbox identity gate", () => {
 
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
 
-    expect(events.slice(0, 5)).toEqual([
+    expect(events.slice(0, 6)).toEqual([
       "create",
       "ready-visible",
+      "selector-settled",
       "selector-settled",
       "publication-get",
       "verify-policy",
@@ -511,7 +529,8 @@ describe("created sandbox identity gate", () => {
       mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
       mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
         nonce = createAttemptNonce(args);
-        expect(options.readyCheck?.()).toBe(true);
+        expect(options.readyCheck).toEqual(expect.any(Function));
+        options.readyCheck?.();
         return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
       });
       const deps = createGpuFlowDeps();

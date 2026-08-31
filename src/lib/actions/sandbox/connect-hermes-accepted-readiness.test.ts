@@ -148,6 +148,87 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.runSandboxExecChildSpy).not.toHaveBeenCalled();
   });
 
+  it("recovers a stopped schema-6 lifecycle before retrying accepted authority", async () => {
+    const harness = acceptedHermesHarness("compatible-endpoint", "model-alpha");
+    configureHealthyForward(harness);
+    const assertRequalifiedReceiptCurrent = vi.fn();
+    harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy
+      .mockImplementationOnce(() => {
+        throw new Error("stopped container has no current operating authority");
+      })
+      .mockReturnValueOnce({
+        kind: "current",
+        commandAuthority: {
+          assertCurrent: harness.assertHermesPortableOperatingCommandCurrentSpy,
+          env: {},
+          executablePath: "/usr/bin/openshell",
+        },
+      });
+    harness.requalifyPortableAgentAuthoritySpy.mockReturnValue({
+      kind: "already-current",
+      snapshot: {},
+      assertCurrent: assertRequalifiedReceiptCurrent,
+    } as never);
+    harness.recoverPortableDemoLifecycleSpy.mockReturnValue({ kind: "recovered" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalledOnce();
+    expect(harness.recoverPortableDemoLifecycleSpy).toHaveBeenCalledOnce();
+    expect(harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy.mock.calls[1]?.[1]).toEqual({
+      priorReceiptAuthority: {
+        kind: "already-current",
+        snapshot: {},
+        assertCurrent: assertRequalifiedReceiptCurrent,
+      },
+    });
+    expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledOnce();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(/result=ready/);
+  });
+
+  it("does not recover when stopped schema-6 requalification fails", async () => {
+    const harness = acceptedHermesHarness("compatible-endpoint", "model-alpha");
+    harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy.mockImplementationOnce(() => {
+      throw new Error("operating authority is not ready");
+    });
+    harness.requalifyPortableAgentAuthoritySpy.mockImplementationOnce(() => {
+      throw new Error("receipt, executable, or policy authority changed");
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalledOnce();
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
+    expect(harness.inspectLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not recover when stopped schema-6 receipt authority drifts", async () => {
+    const harness = acceptedHermesHarness("compatible-endpoint", "model-alpha");
+    harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy.mockImplementationOnce(() => {
+      throw new Error("operating authority is not ready");
+    });
+    harness.requalifyPortableAgentAuthoritySpy.mockReturnValue({
+      kind: "already-current",
+      snapshot: {},
+      assertCurrent: () => {
+        throw new Error("requalified receipt authority changed");
+      },
+    } as never);
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.requalifyPortableAgentAuthoritySpy).toHaveBeenCalledOnce();
+    expect(harness.recoverPortableDemoLifecycleSpy).not.toHaveBeenCalled();
+    expect(harness.inspectLaunchReadinessSpy).not.toHaveBeenCalled();
+    expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects schema-5 authority that disappears during requalification", async () => {
     const harness = acceptedHermesHarness("compatible-endpoint", "model-alpha");
     harness.qualifyHermesPortableAcceptedReadinessAuthoritySpy.mockReturnValue({
