@@ -12,6 +12,7 @@ import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
+  fakeDockerApiPublishArgs,
   isNvidiaEndpointRateLimitFailure,
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
@@ -38,6 +39,17 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it.each([
+    ["discord-gateway", ["-p", "127.0.0.1::8080"]],
+    ["slack", ["-p", "127.0.0.1::8080", "-p", "127.0.0.1::8081"]],
+  ] as const)("publishes the fake %s API on loopback ephemeral ports", (kind, expected) => {
+    const args = fakeDockerApiPublishArgs(kind);
+
+    expect(args).toEqual(expected);
+    expect(args).not.toContain("0:8080");
+    expect(args).not.toContain("0:8081");
+  });
+
   it("uses a synthetic WeChat token even when the host exports one", () => {
     const previousToken = process.env.WECHAT_BOT_TOKEN;
     process.env.WECHAT_BOT_TOKEN = "host-wechat-token-must-not-reach-the-fake-api";

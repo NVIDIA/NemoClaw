@@ -112,14 +112,26 @@ export function assertDiscordGatewayCapture(captureFile: string, expectedToken: 
   expect(identify?.tokenLooksPlaceholder, "Discord placeholder leaked").toBe(false);
 }
 
+export type FakeDockerApiKind =
+  | "slack"
+  | "telegram"
+  | "wechat"
+  | "discord-gateway"
+  | "discord-message";
+
 export type FakeDockerApi = {
-  kind: string;
+  kind: FakeDockerApiKind;
   port: string;
   alternatePort?: string;
   dir: string;
   captureFile: string;
   container: string;
 };
+
+export function fakeDockerApiPublishArgs(kind: FakeDockerApiKind): string[] {
+  const containerPorts = kind === "slack" ? [8080, 8081] : [8080];
+  return containerPorts.flatMap((port) => ["-p", `127.0.0.1::${port}`]);
+}
 
 export function outputText(result: CommandOutput): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
@@ -600,7 +612,7 @@ export async function startFakeDockerApi(
   host: HostCliClient,
   cleanup: (name: string, run: () => Promise<void>) => void,
   options: {
-    kind: "slack" | "telegram" | "wechat" | "discord-gateway" | "discord-message";
+    kind: FakeDockerApiKind;
     imageScript: string;
     nodeArgs?: readonly string[];
     containerPrefix: string;
@@ -657,8 +669,7 @@ export async function startFakeDockerApi(
     container,
     "--network",
     network,
-    "-p",
-    "0:8080",
+    ...fakeDockerApiPublishArgs(options.kind),
     "-e",
     `${options.portEnv}=8080`,
     "-e",
@@ -666,9 +677,7 @@ export async function startFakeDockerApi(
     "-e",
     `${options.captureFileEnv}=/tmp/fake/capture.jsonl`,
   ];
-  if (options.kind === "slack") {
-    dockerArgs.push("-p", "0:8081", "-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
-  }
+  if (options.kind === "slack") dockerArgs.push("-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
   for (const [key, value] of Object.entries(options.expectedEnv)) {
     dockerArgs.push("-e", `${key}=${value}`);
   }
