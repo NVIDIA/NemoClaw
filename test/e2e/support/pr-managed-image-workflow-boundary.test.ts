@@ -9,6 +9,24 @@ import {
 } from "../../../tools/e2e/operations-workflow-boundary.mts";
 
 describe("manual PR managed-image workflow boundary", () => {
+  it.each([
+    ["workflow", (workflow: ReturnType<typeof readE2eOperationsWorkflow>) => workflow],
+    [
+      "generate-matrix job",
+      (workflow: ReturnType<typeof readE2eOperationsWorkflow>) => workflow.jobs["generate-matrix"],
+    ],
+  ])("rejects obsolete catalog inputs inherited from the %s environment", (_scope, target) => {
+    const workflow = readE2eOperationsWorkflow();
+    target(workflow).env = {
+      MANAGED_IMAGE_CATALOG: "candidate catalog",
+      MANAGED_IMAGE_CATALOG_SHA256: "candidate digest",
+    };
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "Manual PR CLI packaging must not accept obsolete managed-image catalog authority",
+    );
+  });
+
   it("rejects restoration of the obsolete manual PR catalog resolver", () => {
     const workflow = readE2eOperationsWorkflow();
     const matrixJob = workflow.jobs["generate-matrix"];

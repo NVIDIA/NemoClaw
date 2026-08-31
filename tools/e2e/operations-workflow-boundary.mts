@@ -320,6 +320,10 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
   const packageSource = String(packageCli.run ?? "");
   if (
     packageIndex <= prepareIndex ||
+    workflow.env?.MANAGED_IMAGE_CATALOG !== undefined ||
+    workflow.env?.MANAGED_IMAGE_CATALOG_SHA256 !== undefined ||
+    matrixJob.env?.MANAGED_IMAGE_CATALOG !== undefined ||
+    matrixJob.env?.MANAGED_IMAGE_CATALOG_SHA256 !== undefined ||
     packageCli.env?.MANAGED_IMAGE_CATALOG !== undefined ||
     packageCli.env?.MANAGED_IMAGE_CATALOG_SHA256 !== undefined ||
     packageSource.includes("pr-managed-image-catalog.json")
