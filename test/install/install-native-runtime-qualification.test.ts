@@ -237,7 +237,7 @@ preinstall_backup_and_retire_legacy_gateway() { record preinstall-backup; }
 install_nemoclaw() { record install-nemoclaw; }
 verify_nemoclaw() { record verify-nemoclaw; }
 require_reportable_openshell_version() { record require-reportable-openshell-version; }
-command_exists() { [[ "$1" == node ]]; }
+command_exists() { return 1; }
 finalize_install() { record finalize-install; }
 clear_station_resume_after_completed_onboarding() { :; }
 main --non-interactive --yes-i-accept-third-party-software

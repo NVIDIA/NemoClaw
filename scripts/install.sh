@@ -6258,25 +6258,27 @@ install_nemoclaw_before_onboarding() {
   # `nemoclaw onboard` (the install-ollama / install-vllm branches).
   # install.sh stays focused on dependency setup.
   fix_npm_permissions
-  local docker_host_contract="${NEMOCLAW_SOURCE_ROOT}/src/lib/domain/docker-host.ts"
-  if ! command_exists node || [[ ! -f "$docker_host_contract" ]]; then
-    error "Could not validate DOCKER_HOST before sandbox recovery. Rerun the installer from a complete NemoClaw source checkout. Sandbox recovery did not start."
-  fi
-  local docker_host_status=0
-  node --experimental-strip-types --no-warnings -e '
-    const validator = require(process.argv[1]).isSupportedGatewayDockerHost;
-    if (typeof validator !== "function") process.exit(11);
-    process.exit(validator(process.argv[2]) ? 0 : 10);
-  ' "$docker_host_contract" "${DOCKER_HOST-}" >/dev/null 2>&1 || docker_host_status=$?
-  case "$docker_host_status" in
-    0) ;;
-    10)
-      error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer. Sandbox recovery did not start."
-      ;;
-    *)
+  if [[ -n "${DOCKER_HOST-}" ]]; then
+    local docker_host_contract="${NEMOCLAW_SOURCE_ROOT}/src/lib/domain/docker-host.ts"
+    if ! command_exists node || [[ ! -f "$docker_host_contract" ]]; then
       error "Could not validate DOCKER_HOST before sandbox recovery. Rerun the installer from a complete NemoClaw source checkout. Sandbox recovery did not start."
-      ;;
-  esac
+    fi
+    local docker_host_status=0
+    node --experimental-strip-types --no-warnings -e '
+      const validator = require(process.argv[1]).isSupportedGatewayDockerHost;
+      if (typeof validator !== "function") process.exit(11);
+      process.exit(validator(process.argv[2]) ? 0 : 10);
+    ' "$docker_host_contract" "$DOCKER_HOST" >/dev/null 2>&1 || docker_host_status=$?
+    case "$docker_host_status" in
+      0) ;;
+      10)
+        error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer. Sandbox recovery did not start."
+        ;;
+      *)
+        error "Could not validate DOCKER_HOST before sandbox recovery. Rerun the installer from a complete NemoClaw source checkout. Sandbox recovery did not start."
+        ;;
+    esac
+  fi
   preinstall_backup_and_retire_legacy_gateway
   install_nemoclaw
   verify_nemoclaw

@@ -209,6 +209,7 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
 
   it("stops before pre-install recovery when the DOCKER_HOST contract is unavailable", () => {
     const result = runRecoveryBeforeOnboard(2, 0, {
+      dockerHost: "unix:///var/run/docker.sock",
       recordPreinstall: true,
       sourceRoot: "/nonexistent/nemoclaw-source",
     });
