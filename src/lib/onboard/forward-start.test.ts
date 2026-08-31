@@ -34,10 +34,7 @@ const SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC = `Error:   × code: 'The system is n
 `;
 
 function readinessHandoffSpawn(rejections: number) {
-  const diagnostics = [
-    ...Array<string>(rejections).fill(SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC),
-    "",
-  ];
+  const diagnostics = [...Array<string>(rejections).fill(SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC), ""];
   return vi.fn(({ stderr }: { stderr: number }) => {
     fs.writeSync(stderr, diagnostics.shift() ?? "");
     return {};
@@ -1391,10 +1388,7 @@ describe("looksLikeUntrackedForward", () => {
 
 describe("runBackgroundForwardStartWithReadinessRetry", () => {
   it("retries the readiness handoff until OpenShell accepts the forward", () => {
-    const rejections = [
-      SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC,
-      SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC,
-    ];
+    const rejections = [SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC, SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC];
     const runForwardStart = vi.fn((stdio: "ignore" | ["ignore", number, number]) => {
       const diagnostic = rejections.shift() ?? "";
       fs.writeSync((stdio as ["ignore", number, number])[1], diagnostic);

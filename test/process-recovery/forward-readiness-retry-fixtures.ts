@@ -17,8 +17,7 @@ import * as openshellRuntime from "../../src/lib/adapters/openshell/runtime.js";
  * The rejection OpenShell 0.0.106 emits during its readiness handoff, in the
  * wrapped box-drawing layout the CLI actually writes.
  */
-export const SANDBOX_NOT_READY_DIAGNOSTIC =
-  `Error:   \u00d7 code: 'The system is not in a state required for the operation's
+export const SANDBOX_NOT_READY_DIAGNOSTIC = `Error:   \u00d7 code: 'The system is not in a state required for the operation's
    \u2502 execution', message: "sandbox is not ready"
 `;
 
