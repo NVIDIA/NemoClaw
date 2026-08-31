@@ -36,13 +36,7 @@ describe("policy and channel sandbox mutation locking", () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "alpha",
       agent: "hermes",
-      policies: ["pypi"],
     });
-    vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
-    vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([
-      { version: 1, agent: "hermes", key: "nous_research", digest: "reviewed-digest" },
-    ]);
-    vi.spyOn(registry, "getBaselineExclusionTransition").mockReturnValue(null);
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue(["telegram"]);
 

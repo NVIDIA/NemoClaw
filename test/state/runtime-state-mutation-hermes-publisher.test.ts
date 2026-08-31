@@ -1,24 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const ROOT = path.join(import.meta.dirname, "../..");
 const PUBLISHER = path.join(ROOT, "scripts", "runtime_state_mutation_hermes_publisher.py");
-const CAPABILITY = path.join(ROOT, "agents", "hermes", "runtime-state-mutation-publisher-v1.json");
-const STATE_PLAN = path.join(ROOT, "agents", "hermes", "state-lock-plan.json");
 const START = path.join(ROOT, "agents", "hermes", "start.sh");
-const STARTUP_GATE = path.join(ROOT, "scripts", "runtime-state-mutation-startup-gate.py");
 
 const HARNESS = String.raw`
 import hashlib
 import importlib.util
 import json
 import os
-import shutil
 import sys
 import tempfile
 
@@ -29,21 +26,26 @@ spec.loader.exec_module(publisher)
 publisher.ROOT_UID = os.getuid()
 publisher.ROOT_GID = os.getgid()
 
-with open(sys.argv[2], "r", encoding="utf-8") as stream:
-    installed_value = json.load(stream)
-installed_plan = {key: value for key, value in installed_value.items() if key != "$comment"}
+installed_plan = {
+    "version": 1,
+    "readOnlyRoots": ["plugins", "workspace"],
+    "confidentialRoots": ["pairing"],
+    "readOnlyPrefixes": ["profile-"],
+    "confidentialPrefixes": ["secret-"],
+    "writableSubpaths": ["workspace/cache"],
+}
 
 def canonical(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
+def write_installed_plan(path):
+    with open(path, "w", encoding="utf-8") as stream:
+        stream.write(canonical(installed_plan))
+    os.chmod(path, 0o444)
+
 def marker(nonce="d" * 64, selectors=None, provider_id="docker"):
-    expected = [
-        *["path:" + value for value in (".config-hash", ".env", "config.yaml")],
-        *["path:" + value for value in installed_plan["readOnlyRoots"]],
-        *["path:" + value for value in installed_plan["confidentialRoots"]],
-        *["prefix:" + value for value in installed_plan["readOnlyPrefixes"]],
-        *["prefix:" + value for value in installed_plan["confidentialPrefixes"]],
-    ]
+    expected = ["path:.config-hash", "path:.env", "path:config.yaml", "path:pairing",
+                "path:plugins", "path:workspace", "prefix:profile-", "prefix:secret-"]
     expected.sort(key=lambda value: value.encode())
     selected = selectors or [
         ({"kind": "path", "path": value.removeprefix("path:")}
@@ -90,8 +92,7 @@ with tempfile.TemporaryDirectory() as temporary:
     durable = os.path.join(temporary, "durable")
     os.mkdir(durable, 0o711)
     plan_path = os.path.join(temporary, "state-lock-plan.json")
-    shutil.copyfile(sys.argv[2], plan_path)
-    os.chmod(plan_path, 0o444)
+    write_installed_plan(plan_path)
     publisher.DURABLE_DIRECTORY = durable
     publisher.STATE_LOCK_PLAN_PATH = plan_path
     publisher._verify_final_posture = lambda posture, plan_json: (
@@ -167,8 +168,7 @@ with tempfile.TemporaryDirectory() as temporary:
     durable = os.path.join(temporary, "durable")
     os.mkdir(durable, 0o711)
     plan_path = os.path.join(temporary, "state-lock-plan.json")
-    shutil.copyfile(sys.argv[2], plan_path)
-    os.chmod(plan_path, 0o444)
+    write_installed_plan(plan_path)
     publisher.DURABLE_DIRECTORY = durable
     publisher.STATE_LOCK_PLAN_PATH = plan_path
     publisher._verify_final_posture = lambda posture, plan_json: "4" * 64
@@ -205,8 +205,7 @@ with tempfile.TemporaryDirectory() as temporary:
     durable = os.path.join(temporary, "durable")
     os.mkdir(durable, 0o711)
     plan_path = os.path.join(temporary, "state-lock-plan.json")
-    shutil.copyfile(sys.argv[2], plan_path)
-    os.chmod(plan_path, 0o444)
+    write_installed_plan(plan_path)
     publisher.DURABLE_DIRECTORY = durable
     publisher.STATE_LOCK_PLAN_PATH = plan_path
     events = []
@@ -261,8 +260,7 @@ with tempfile.TemporaryDirectory() as temporary:
     durable = os.path.join(temporary, "durable")
     os.mkdir(durable, 0o711)
     plan_path = os.path.join(temporary, "state-lock-plan.json")
-    shutil.copyfile(sys.argv[2], plan_path)
-    os.chmod(plan_path, 0o444)
+    write_installed_plan(plan_path)
     publisher.DURABLE_DIRECTORY = durable
     publisher.STATE_LOCK_PLAN_PATH = plan_path
     events = []
@@ -320,7 +318,7 @@ print(json.dumps(results, sort_keys=True))
 `;
 
 function runHarness(): Record<string, unknown> {
-  const result = spawnSync("python3", ["-I", "-c", HARNESS, PUBLISHER, STATE_PLAN], {
+  const result = spawnSync("python3", ["-I", "-c", HARNESS, PUBLISHER], {
     encoding: "utf8",
     timeout: 20_000,
   });
@@ -328,9 +326,153 @@ function runHarness(): Record<string, unknown> {
   return JSON.parse(result.stdout) as Record<string, unknown>;
 }
 
+type EntrypointGateFixture = {
+  acknowledgePath: string;
+  gatePath: string;
+  harnessPath: string;
+  releasePath: string;
+  tracePath: string;
+};
+
+function createEntrypointGateFixture(temporary: string): EntrypointGateFixture {
+  const fixture = {
+    acknowledgePath: path.join(temporary, "release-ack.json"),
+    gatePath: path.join(temporary, "gate.sh"),
+    harnessPath: path.join(temporary, "entrypoint-harness.sh"),
+    releasePath: path.join(temporary, "release.json"),
+    tracePath: path.join(temporary, "trace.log"),
+  };
+  fs.writeFileSync(
+    fixture.gatePath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'action=""',
+      'for argument in "$@"; do action="$argument"; done',
+      'case "$action" in',
+      "  admit)",
+      '    printf "admit\\n" >> "$NEMOCLAW_TEST_TRACE"',
+      '    if [ "$NEMOCLAW_TEST_GATE_MODE" = "deny" ]; then exit 1; fi',
+      '    if [ "$NEMOCLAW_TEST_GATE_MODE" = "invalid" ]; then',
+      '      printf "%s\\n" "runtime-state-mutation-startup-gate: invalid-state code=gate-receipt-invalid transaction=${NEMOCLAW_TEST_TRANSACTION}" >&2',
+      "      exit 76",
+      "    fi",
+      "    exit 10",
+      "    ;;",
+      "  checkpoint)",
+      '    printf "checkpoint:%s\\n" "$PPID" >> "$NEMOCLAW_TEST_TRACE"',
+      "    exit 11",
+      "    ;;",
+      "  resume)",
+      '    if [ ! -f "$NEMOCLAW_TEST_RELEASE" ]; then exit 1; fi',
+      '    printf "resume:%s\\n" "$PPID" >> "$NEMOCLAW_TEST_TRACE"',
+      "    ;;",
+      "  acknowledge)",
+      '    temporary_ack="$NEMOCLAW_TEST_ACKNOWLEDGE.$$.tmp"',
+      '    printf \'{"pid":%s}\\n\' "$$" > "$temporary_ack"',
+      '    chmod 600 "$temporary_ack"',
+      '    mv "$temporary_ack" "$NEMOCLAW_TEST_ACKNOWLEDGE"',
+      '    printf "acknowledge:%s\\n" "$$" >> "$NEMOCLAW_TEST_TRACE"',
+      '    kill -STOP "$$"',
+      '    printf "acknowledged:%s\\n" "$$" >> "$NEMOCLAW_TEST_TRACE"',
+      "    ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  fs.writeFileSync(
+    fixture.harnessPath,
+    [
+      "function [ {",
+      '  case "$1:$2:$3" in',
+      '    "!:-x:/opt/hermes/.venv/bin/python3"|"!:-f:/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py"|"!:-x:/usr/bin/setpriv") return 1 ;;',
+      "  esac",
+      '  builtin [ "$@"',
+      "}",
+      "function /opt/hermes/.venv/bin/python3 {",
+      '  "$NEMOCLAW_TEST_GATE" "$@"',
+      "}",
+      "function /usr/bin/setpriv {",
+      '  while [ "$#" -gt 0 ]; do',
+      '    case "$1" in --) shift; break ;; *) shift ;; esac',
+      "  done",
+      '  "$@"',
+      "}",
+      "nemoclaw_test_checkpoint_entry() {",
+      '  case "$BASH_COMMAND" in',
+      "    _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER=*)",
+      "      trap - DEBUG",
+      '      printf "checkpoint-call\\n" >> "$NEMOCLAW_TEST_TRACE"',
+      "      if nemoclaw_runtime_state_mutation_checkpoint; then exit 0; fi",
+      '      status="$?"',
+      '      exit "$status"',
+      "      ;;",
+      "  esac",
+      "}",
+      "set -T",
+      "trap nemoclaw_test_checkpoint_entry DEBUG",
+      'source "$NEMOCLAW_TEST_ENTRYPOINT"',
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  return fixture;
+}
+
+function readEntrypointTrace(tracePath: string): string[] {
+  try {
+    const content = fs.readFileSync(tracePath, "utf8").trim();
+    return content.length === 0 ? [] : content.split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function processState(pid: number): string {
+  const result = spawnSync("ps", ["-o", "state=", "-p", String(pid)], {
+    encoding: "utf8",
+    timeout: 1_000,
+  });
+  return result.status === 0 ? result.stdout.trim() : "";
+}
+
+async function waitForCondition(description: string, predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(predicate(), "Timed out waiting for " + description).toBe(true);
+}
+
+async function waitForStoppedProcess(pid: number, description: string): Promise<void> {
+  await waitForCondition(description, () => processState(pid).startsWith("T"));
+}
+
+function entrypointGateEnvironment(
+  fixture: EntrypointGateFixture,
+  gateMode: "allow" | "deny" | "invalid",
+): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    NEMOCLAW_TEST_ACKNOWLEDGE: fixture.acknowledgePath,
+    NEMOCLAW_TEST_ENTRYPOINT: START,
+    NEMOCLAW_TEST_GATE: fixture.gatePath,
+    NEMOCLAW_TEST_GATE_MODE: gateMode,
+    NEMOCLAW_TEST_RELEASE: fixture.releasePath,
+    NEMOCLAW_TEST_TRACE: fixture.tracePath,
+    NEMOCLAW_TEST_TRANSACTION: "c".repeat(64),
+  };
+}
+
 describe("Hermes runtime state mutation publisher", () => {
+  let harnessResult: Record<string, unknown>;
+
+  beforeAll(() => {
+    harnessResult = runHarness();
+  });
+
   it("publishes and rolls back only the exact installed full plan (#7744)", () => {
-    const result = runHarness();
+    const result = harnessResult;
     expect(result.first).toMatchObject({
       protocol: "nemoclaw-runtime-state-mutation-publisher-v1",
       posture: "locked",
@@ -343,12 +485,20 @@ describe("Hermes runtime state mutation publisher", () => {
     });
     expect(result.retry).toMatchObject({ posture: "locked" });
     expect(result.rollback).toMatchObject({ posture: "mutable" });
-    const expectedStatePlan = JSON.parse(fs.readFileSync(STATE_PLAN, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    delete expectedStatePlan.$comment;
-    expect(result.retry_events).toEqual([["verify", "locked", expectedStatePlan]]);
+    expect(result.retry_events).toEqual([
+      [
+        "verify",
+        "locked",
+        {
+          version: 1,
+          readOnlyRoots: ["plugins", "workspace"],
+          confidentialRoots: ["pairing"],
+          readOnlyPrefixes: ["profile-"],
+          confidentialPrefixes: ["secret-"],
+          writableSubpaths: ["workspace/cache"],
+        },
+      ],
+    ]);
     expect(result.extra_selector).toBe("publisher-plan-selector-mismatch");
     const events = result.events as Array<[string, string[]?]>;
     expect(events.filter(([action]) => action === "begin-shields-transition")).toHaveLength(2);
@@ -367,7 +517,7 @@ describe("Hermes runtime state mutation publisher", () => {
   });
 
   it("recovers nonce-bound begin and finish response loss without replaying them (#7744)", () => {
-    const result = runHarness();
+    const result = harnessResult;
     expect(result).toMatchObject({
       begin_loss: "simulated-begin-response-loss",
       finish_loss: "simulated-finish-response-loss",
@@ -380,7 +530,7 @@ describe("Hermes runtime state mutation publisher", () => {
   });
 
   it("can publish the exact rollback after a target begin response is lost (#7744)", () => {
-    const result = runHarness();
+    const result = harnessResult;
     expect(result).toMatchObject({
       rollback_begin_loss: "simulated-begin-response-loss",
       rollback_after_begin_loss: { posture: "mutable", nonce: "5".repeat(64) },
@@ -394,36 +544,125 @@ describe("Hermes runtime state mutation publisher", () => {
     ]);
   });
 
-  it("publishes one exact image capability and checks the durable root gate before startup code", () => {
-    expect(fs.readFileSync(CAPABILITY, "utf8")).toBe(
-      '{"schemaVersion":1,"protocol":"nemoclaw-runtime-state-mutation-publisher-v1","agent":"hermes","providerId":"docker","stateRoot":"/sandbox/.hermes","planSchemaVersion":2,"entrypoint":"/usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py"}\n',
-    );
-    const start = fs.readFileSync(START, "utf8");
-    const gate = start.indexOf(
-      'NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_HELPER="/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py"',
-    );
-    expect(gate).toBeGreaterThan(0);
-    expect(gate).toBeLessThan(start.indexOf("# managed-entrypoint-env-wrapper begin"));
-    expect(gate).toBeLessThan(start.indexOf('source "$_SANDBOX_INIT"'));
-    expect(gate).toBeLessThan(start.indexOf('migrate_legacy_layout "/sandbox/.hermes"'));
-    expect(start).not.toContain("/sandbox/.nemoclaw/runtime-state-mutation-hold-v1.json");
-    expect(start).toContain(
-      'NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_PYTHON="/opt/hermes/.venv/bin/python3"',
-    );
-    expect(start).toContain('NEMOCLAW_RUNTIME_STATE_MUTATION_GATE_SETPRIV="/usr/bin/setpriv"');
-    expect(start).toContain("--reuid=sandbox --regid=sandbox --init-groups --");
-    expect(start).toContain("nemoclaw_runtime_state_mutation_checkpoint || return 1");
-    expect(start).toContain("trap nemoclaw_runtime_state_mutation_retry_exec USR2");
-    expect(start).toContain("exec /usr/local/bin/nemoclaw-start");
-    expect(start).toContain("nemoclaw_runtime_state_mutation_gate resume");
+  it(
+    "runs the Hermes entrypoint checkpoint, release acknowledgement, and parent resume in order (#10155)",
+    { timeout: 15_000 },
+    async () => {
+      const temporary = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-hermes-entrypoint-checkpoint-"),
+      );
+      const fixture = createEntrypointGateFixture(temporary);
+      const child = spawn("bash", [fixture.harnessPath], {
+        env: entrypointGateEnvironment(fixture, "allow"),
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      expect(child.pid).toBeTypeOf("number");
+      const startPid = Number(child.pid);
+      let stderr = "";
+      child.stderr.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
+      const completion = new Promise<{ signal: NodeJS.Signals | null; status: number | null }>(
+        (resolve) => {
+          child.once("exit", (status, signal) => resolve({ signal, status }));
+        },
+      );
 
-    const startupGate = fs.readFileSync(STARTUP_GATE, "utf8");
-    expect(startupGate).toContain('DURABLE_DIRECTORY = "/var/lib/nemoclaw/runtime-state-mutation"');
-    expect(startupGate).toContain('"permitted": 10');
-    expect(startupGate).toContain('"activation-ready": 11');
-    expect(startupGate).toContain('"retry": 12');
-    expect(fs.readFileSync(PUBLISHER, "utf8")).toContain(
-      'PYTHON_PATH = "/opt/hermes/.venv/bin/python3"',
-    );
+      try {
+        await waitForCondition("Hermes entrypoint checkpoint", () =>
+          readEntrypointTrace(fixture.tracePath).some((line) => line.startsWith("checkpoint:")),
+        );
+        await waitForStoppedProcess(startPid, "Hermes entrypoint candidate stop");
+        fs.writeFileSync(fixture.releasePath, '{"released":true}\n', { mode: 0o600 });
+        expect(child.kill("SIGCONT")).toBe(true);
+
+        await waitForCondition("release acknowledgement publication", () =>
+          readEntrypointTrace(fixture.tracePath).some((line) => line.startsWith("acknowledge:")),
+        );
+        const acknowledgeLine = readEntrypointTrace(fixture.tracePath).find((line) =>
+          line.startsWith("acknowledge:"),
+        );
+        const acknowledgePid = Number(acknowledgeLine?.split(":")[1]);
+        expect(Number.isSafeInteger(acknowledgePid)).toBe(true);
+        expect(acknowledgePid).toBeGreaterThan(1);
+        await waitForStoppedProcess(
+          acknowledgePid,
+          "release acknowledgement child stop after publication",
+        );
+        process.kill(acknowledgePid, "SIGCONT");
+
+        await waitForCondition("release acknowledgement completion", () =>
+          readEntrypointTrace(fixture.tracePath).includes("acknowledged:" + String(acknowledgePid)),
+        );
+        await waitForStoppedProcess(
+          startPid,
+          "Hermes entrypoint parent stop after acknowledged child completion",
+        );
+        expect(child.kill("SIGCONT")).toBe(true);
+
+        const result = await completion;
+        expect(result.status, stderr).toBe(0);
+        expect(result.signal).toBeNull();
+        expect(JSON.parse(fs.readFileSync(fixture.acknowledgePath, "utf8"))).toEqual({
+          pid: acknowledgePid,
+        });
+        expect(readEntrypointTrace(fixture.tracePath)).toEqual([
+          "admit",
+          "checkpoint-call",
+          "checkpoint:" + String(startPid),
+          "resume:" + String(startPid),
+          "acknowledge:" + String(acknowledgePid),
+          "acknowledged:" + String(acknowledgePid),
+        ]);
+      } finally {
+        child.kill("SIGKILL");
+        await completion;
+        fs.rmSync(temporary, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it("stops the actual Hermes entrypoint before startup when the durable gate denies admission (#10155)", () => {
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-entrypoint-denied-"));
+    const fixture = createEntrypointGateFixture(temporary);
+    try {
+      const result = spawnSync("bash", [fixture.harnessPath], {
+        encoding: "utf8",
+        env: entrypointGateEnvironment(fixture, "deny"),
+        timeout: 5_000,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Runtime state mutation startup gate failed");
+      expect(readEntrypointTrace(fixture.tracePath)).toEqual(["admit"]);
+      expect(fs.existsSync(fixture.acknowledgePath)).toBe(false);
+    } finally {
+      fs.rmSync(temporary, { force: true, recursive: true });
+    }
+  });
+
+  it("fails closed with stable host recovery guidance for invalid gate state (#10155)", () => {
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-entrypoint-invalid-"));
+    const fixture = createEntrypointGateFixture(temporary);
+    try {
+      const result = spawnSync("bash", [fixture.harnessPath], {
+        encoding: "utf8",
+        env: entrypointGateEnvironment(fixture, "invalid"),
+        timeout: 5_000,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "invalid-state code=gate-receipt-invalid transaction=" + "c".repeat(64),
+      );
+      expect(result.stderr).toContain(
+        "Run 'nemoclaw <sandbox-name> shields status' on the host",
+      );
+      expect(result.stderr).not.toContain("held by an active runtime state mutation");
+      expect(readEntrypointTrace(fixture.tracePath)).toEqual(["admit"]);
+      expect(fs.existsSync(fixture.acknowledgePath)).toBe(false);
+    } finally {
+      fs.rmSync(temporary, { force: true, recursive: true });
+    }
   });
 });

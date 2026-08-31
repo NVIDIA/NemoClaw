@@ -347,6 +347,20 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
     `#!/usr/bin/env bash\nset -euo pipefail\nif [[ "$#" -eq 1 && "$1" == "--version" ]]; then\n  echo v22.23.1\n  exit 0\nfi\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
     { mode: 0o755 },
   );
+  const lockfileSha256 = sha256File(path.join(workspace, "package-lock.json"));
+  fs.writeFileSync(
+    path.join(toolDirectory, "sha256sum"),
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'case "${1:-}" in',
+      `  package-lock.json|*/nemoclaw-cli.tar) printf '%s  %s\\n' '${"0".repeat(64)}' "$1" ;;`,
+      `  *) printf '%s  %s\\n' '${lockfileSha256}' "$1" ;;`,
+      "esac",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
   PREEXISTING_DIST_WRITERS[options.preexistingDist ?? "none"](workspace);
 
   const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
@@ -738,6 +752,16 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     }
   });
 
+  it("restores a binary payload when the host SHA-256 utility reports a different digest (#10569)", () => {
+    const fixture = runRestoreValidation();
+    try {
+      expect(fixture.result.status, fixture.output).toBe(0);
+      expect(fs.existsSync(path.join(fixture.workspace, "dist", "nemoclaw.js"))).toBe(true);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   it("rejects manifest provenance before artifact extraction (#7915)", () => {
     expectRestoreFailure(
       { manifestCandidateSha: "e".repeat(40) },
@@ -898,6 +922,20 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       const source = readRepoText(".github/actions/restore-e2e-cli-artifact/action.yaml")
         .replace("tar --no-same-owner --no-same-permissions", "tar")
         .replace("sandbox-name.cjs", "missing-boundary.cjs")
+        .replace(
+          'lockfile_sha256="$(sha256_file package-lock.json)"',
+          [
+            '# lockfile_sha256="$(sha256_file package-lock.json)"',
+            'lockfile_sha256="$(openssl dgst -sha256 -r package-lock.json | cut -d " " -f 1)"',
+          ].join("\n        "),
+        )
+        .replace(
+          'actual_payload_sha256="$(sha256_file "$payload")"',
+          [
+            '# actual_payload_sha256="$(sha256_file "$payload")"',
+            'actual_payload_sha256="$(openssl dgst -sha256 -r "$payload" | cut -d " " -f 1)"',
+          ].join("\n        "),
+        )
         .replace('[[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]', '[[ -s "$payload" ]]');
       fs.writeFileSync(actionPath, source);
 
@@ -906,6 +944,8 @@ describe("exact-commit CLI artifact workflow boundary", () => {
           "CLI artifact restore action must match its immutable workflow pin",
           'CLI artifact payload verification must contain tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
           "CLI artifact payload verification must contain sandbox-name.cjs",
+          "CLI artifact payload verification must assign lockfile_sha256 exactly once through the Node.js binary stream",
+          "CLI artifact payload verification must assign actual_payload_sha256 exactly once through the Node.js binary stream",
           'CLI artifact payload verification must contain [[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]',
         ]),
       );

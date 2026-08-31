@@ -20,7 +20,7 @@ import { runHermesPortableOnboardingTransaction } from "../../src/lib/onboard/ex
 import { getHermesPortableSandboxRuntimeRegistryFields } from "../../src/lib/onboard/sandbox-registry-metadata";
 import { resolveSandboxGpuConfig } from "../../src/lib/onboard/sandbox-gpu-mode";
 import { completeHermesPortableSandboxRegistration } from "../../src/lib/onboard/sandbox-create/orchestration";
-import { pendingSandboxPolicyVerificationForBoundary } from "../../src/lib/onboard/sandbox-create/policy-creation-receipt";
+import { pendingSandboxCreateIdentityForBoundary } from "../../src/lib/onboard/sandbox-create/identity-boundary";
 import { materializeHermesPortableCreatePlan } from "../../src/lib/onboard/sandbox-create-plan-materialization";
 import { resolveSandboxCreateIntent } from "../../src/lib/onboard/sandbox-create-intent";
 import { createPortableOnboardEnvironmentScope } from "../../src/lib/onboard/session-bootstrap";
@@ -113,7 +113,7 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
     },
   );
 
-  it("activates one schema-5 receipt from a private checkout and validates both installer sources (#9211)", async () => {
+  it("activates one schema-7 receipt from a private checkout and validates both installer sources (#9211)", async () => {
     const fixtureRoot = createPrivateFixtureRoot();
     const stateDir = path.join(fixtureRoot, "state");
     const homeDir = path.join(fixtureRoot, "home");
@@ -243,12 +243,10 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
         gpuRoutePlan: "none",
         sandboxGpuLogMessage: null,
         agentName: "hermes",
-        policyTier: null,
       });
       const createPlan = materializeHermesPortableCreatePlan({
         intent,
         fromRef: activeBuildContext.sourceDockerfilePath,
-        policyAuthority: "nemoclaw-managed",
       });
       const startupArgv = [
         "env",
@@ -279,23 +277,7 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
         startup: { agent: loadAgent("hermes"), sandboxName, startupArgv },
         inferenceRouteReservation: { sessionId: session.sessionId, selection },
       };
-      const policyCreationReceipt = {
-        schemaVersion: 1 as const,
-        origin: "sandbox-create" as const,
-        gatewayName,
-        gatewayPort: 8080,
-        sandboxName,
-        lifecycleGeneration,
-        sandboxIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
-        policyHash: "sha256:portable-installer-policy",
-        policyVersion: 1,
-      };
-      const checkpoint = pendingSandboxPolicyVerificationForBoundary({
-        registration: {
-          policyAuthority: "nemoclaw-managed" as const,
-          policyCreationReceipt,
-          observedPolicyAuthority: "owner-unknown" as const,
-        },
+      const checkpoint = pendingSandboxCreateIdentityForBoundary({
         sandboxName,
         gatewayName,
         gatewayPort: 8080,
@@ -311,11 +293,11 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
           expect(buildContextPath).toContain(path.join(stateDir, "hermes-portable-build-context"));
           expect(argv[argv.indexOf("--from") + 1]).toBe(path.join(buildContextPath, "Dockerfile"));
           expect(argv[argv.indexOf("--policy") + 1]).not.toBe(basePolicyPath);
-          registry.recordPendingSandboxPolicyVerification(createReservation, checkpoint);
+          registry.recordPendingSandboxCreateIdentity(createReservation, checkpoint);
           return { ready: true };
         },
         revalidatePendingCreateRegistry: () =>
-          registry.requireCurrentPendingSandboxPolicyVerification(createReservation, checkpoint),
+          registry.requireCurrentPendingSandboxCreateIdentity(createReservation, checkpoint),
         registerSandbox: async (
           _created,
           receipt,
@@ -325,7 +307,7 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
         ) => {
           expect(revalidate()).toBe(liveIdentityFingerprint);
           expect(reservation.authority).toEqual(createReservation.authority);
-          registry.requireCurrentPendingSandboxPolicyVerification(createReservation, checkpoint);
+          registry.requireCurrentPendingSandboxCreateIdentity(createReservation, checkpoint);
           return completeHermesPortableSandboxRegistration({
             sandboxName,
             completeRegistration: async () => {
@@ -339,7 +321,6 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
                 agent: loadAgent("hermes"),
                 agentVersionKnown: true,
                 imageTag: null,
-                appliedPolicies: [],
                 plannedMessagingState: undefined,
                 hermesToolGateways: [],
                 hermesDashboardState: { enabled: false, config: null },
@@ -349,8 +330,6 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
                 lifecycleLiveIdentityFingerprint: liveIdentityFingerprint,
                 gatewayName,
                 gatewayPort: 8080,
-                policyAuthority: "nemoclaw-managed",
-                policyCreationReceipt,
                 inferenceRouteReservation: createReservation,
                 verifiedCreate: { reservation: createReservation, checkpoint },
               });
@@ -366,7 +345,7 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
       );
       expect(completed).toMatchObject({
         created: true,
-        active: { receipt: { schemaVersion: 5, phase: "active", sandboxName } },
+        active: { receipt: { schemaVersion: 7, phase: "active", sandboxName } },
       });
       const registered = registry.getSandbox(sandboxName) as SandboxEntry;
       expect(registered).toMatchObject({

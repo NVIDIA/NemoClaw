@@ -9,7 +9,24 @@ import { describe, expect, it } from "vitest";
 import { runWithEnv, testTimeoutOptions } from "./helpers";
 
 const LIVE_DOCKER_IDENTITY = `#!/bin/sh
-case "$*" in *'.Label '*) printf 'aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n' ;; esac
+removed_marker="$0.removed"
+case "$1" in
+  ps)
+    if [ ! -e "$removed_marker" ]; then
+      last_arg=""
+      for arg do last_arg="$arg"; done
+      case "$last_arg" in
+        '{{.ID}}') printf 'aaaaaaaaaaaa\n' ;;
+        *) printf 'aaaaaaaaaaaa\topenshell\tdefault\tsb-alpha\n' ;;
+      esac
+    fi
+    ;;
+  rm)
+    if [ "$2" = "-f" ] && [ "$3" = "aaaaaaaaaaaa" ]; then
+      : > "$removed_marker"
+    fi
+    ;;
+esac
 exit 0
 `;
 
@@ -34,7 +51,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
             },
           },
           defaultSandbox: "alpha",
@@ -71,7 +87,7 @@ describe("CLI dispatch", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(r.code).toBe(0);
+      expect(r.code, r.out).toBe(0);
       const openshellOutput = fs.readFileSync(openshellLog, "utf8");
       const dockerOutput = fs.readFileSync(bashLog, "utf8");
       const shouldCleanupGateway = process.platform === "darwin";
@@ -107,7 +123,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -191,7 +206,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
             },
           },
           defaultSandbox: "alpha",
@@ -283,7 +297,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -354,7 +367,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
             },
           },
           defaultSandbox: "alpha",
@@ -429,7 +441,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
             gatewayName: "nemoclaw-8081",
             gatewayPort: 8081,
           },
@@ -438,7 +449,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
           },
         },
         defaultSandbox: "alpha",
@@ -503,7 +513,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
           },
         },
         defaultSandbox: "alpha",
@@ -570,7 +579,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
             gatewayName: "nemoclaw-8081",
             gatewayPort: 8081,
           },
@@ -664,7 +672,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
               gatewayName: "nemoclaw-8081",
               gatewayPort: 8081,
             },
@@ -729,7 +736,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
           },
         },
         defaultSandbox: "alpha",
@@ -750,6 +756,7 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    fs.writeFileSync(path.join(localBin, "docker"), LIVE_DOCKER_IDENTITY, { mode: 0o755 });
 
     const r = runWithEnv("alpha destroy --yes", {
       HOME: home,
@@ -790,7 +797,6 @@ describe("CLI dispatch", () => {
               model: "test-model",
               provider: "nvidia-prod",
               gpuEnabled: false,
-              policies: [],
             },
           },
           defaultSandbox: "alpha",
@@ -833,7 +839,7 @@ describe("CLI dispatch", () => {
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
 
-      expect(r.code).toBe(0);
+      expect(r.code, r.out).toBe(0);
       expect(r.out).toContain("already absent from the live gateway");
       expect(r.out).toContain("Sandbox 'alpha' destroyed");
 
@@ -871,7 +877,6 @@ describe("CLI dispatch", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
           },
         },
         defaultSandbox: "alpha",
@@ -908,7 +913,7 @@ describe("CLI dispatch", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
-    expect(r.code).toBe(0);
+    expect(r.code, r.out).toBe(0);
     const log = fs.readFileSync(openshellLog, "utf8");
     expect(log).toContain("provider delete alpha-telegram-bridge");
     expect(log).toContain("provider delete alpha-discord-bridge");

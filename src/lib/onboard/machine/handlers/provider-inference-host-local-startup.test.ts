@@ -446,7 +446,7 @@ describe("provider inference host-local startup selection", () => {
           _assertRouteCompatible,
           _canProbeRoute,
           _recoverySessionId,
-          revalidatePolicyRequirements,
+          revalidateSandboxIdentity,
         ) => {
           const selection = {
             ...baseSelection,
@@ -457,25 +457,17 @@ describe("provider inference host-local startup selection", () => {
             credentialEnv: null,
             preferredInferenceApi: "openai-completions",
           };
-          expect(revalidatePolicyRequirements).toBeTypeOf("function");
-          revalidatePolicyRequirements!(selection, "install managed local runtime");
+          expect(revalidateSandboxIdentity).toBeTypeOf("function");
+          revalidateSandboxIdentity!(selection, "install managed local runtime");
           return selection;
         },
       );
       const resolver = vi.fn((input: HostLocalInferenceStartupSelectionInput) =>
         hostLocalStartupSelection(input, service),
       );
-      const preflightPolicyRequirements = vi.fn(
-        (requirements: { provider: string | null; hostLocalInferenceRouteOnly?: boolean }) => {
-          expect(
-            requirements.provider !== provider || requirements.hostLocalInferenceRouteOnly === true,
-          ).toBe(true);
-        },
-      );
       const { deps, calls } = createDeps({
         setupNim,
         resolveHostLocalInferenceStartupSelection: resolver,
-        preflightPolicyRequirements,
       });
       const session = createSession();
       calls.complete.mockResolvedValue(session);
@@ -517,13 +509,6 @@ describe("provider inference host-local startup selection", () => {
           : null,
       );
       expect(calls.prepareLocalProviderForInference).not.toHaveBeenCalled();
-      expect(preflightPolicyRequirements).toHaveBeenCalledWith(
-        expect.objectContaining({
-          provider,
-          hostLocalInferenceRouteOnly: true,
-          operation: "record successful inference configuration",
-        }),
-      );
       expect(result).toMatchObject({
         endpointUrl: "https://inference.local/v1",
         endpointSource: "inference-set",

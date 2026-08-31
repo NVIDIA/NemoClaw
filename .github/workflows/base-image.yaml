@@ -26,6 +26,7 @@ on:
       - "test/e2e/live/managed-image-activation-e2e.test.ts"
       - "test/e2e/live/managed-image-activation-e2e-helpers.ts"
       - ".github/actions/ci-reviewed-npm-audit/**"
+      - ".github/actions/publish-managed-image-digest/**"
       - ".github/actions/build-base-image-platform/**"
       - ".github/actions/publish-base-image-manifest/**"
       - ".dockerignore"

@@ -16,7 +16,7 @@ const COMMIT_PATTERN = /^[a-f0-9]{40}$/;
 export const OPENSHELL_DEV_ASSET_NAMES = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
   "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
-  "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
+  "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
   "openshell-checksums-sha256.txt",
   "openshell-gateway-checksums-sha256.txt",
   "openshell-sandbox-checksums-sha256.txt",

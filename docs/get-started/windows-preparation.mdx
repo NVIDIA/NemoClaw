@@ -176,8 +176,8 @@ It then reads the configuration and applies the same runtime check.
 The express selection does not waive system readiness.
 With native Docker Engine inside WSL, or when the Docker runtime is unavailable or cannot be probed, the installer skips onboarding until Docker Desktop WSL integration is available.
 After you fix the runtime, rerun the installer or run `$$nemoclaw onboard`.
-An installed Windows-host Ollama that Docker Desktop cannot reach leaves the WSL-local install available, in both the onboarding menu and a requested `install-ollama` provider.
-When containers cannot reach host loopback, onboarding fronts that WSL-local daemon with the sandbox auth proxy.
+An installed Windows-host Ollama that Docker Desktop cannot reach leaves the WSL-local install available, in both the onboarding menu and a requested `install-ollama` provider, after Docker Desktop WSL integration is available.
+Qualified WSL routes reach the applicable host route directly and do not use the Ollama auth proxy.
 You can still decline the express prompt (or set `NEMOCLAW_NO_EXPRESS=1`) to choose a provider manually; the onboarding menu labels the Windows-host actions as requiring Docker Desktop integration.
 When Ollama runs on the Windows host, NemoClaw checks it from Docker Desktop through `host.docker.internal` and pulls missing models through the Ollama HTTP API.
 A direct request from WSL can fail because Docker Desktop defines this hostname in its container network context.
@@ -224,7 +224,7 @@ If your AI assistant reports this restriction, use one of these recovery paths:
 
 1. Enable the terminal capability your organization allows, then ask the assistant to retry the approved install command from the starter prompt.
 2. If your organization permits manually created local scripts but not automated terminal execution, ask the assistant to create a local `.bat` or `.ps1` fallback file.
-   The assistant must show you the exact file contents before you run it, and you should inspect and approve those contents first.
+   The assistant must show you the file contents before you run it, and you should inspect and approve those contents first.
 3. Start Docker Desktop and confirm WSL integration before running the fallback file.
 
 Do not paste API keys, bot tokens, or other secrets into chat while using the fallback path.

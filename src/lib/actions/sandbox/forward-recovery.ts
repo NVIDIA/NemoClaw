@@ -42,12 +42,18 @@ import {
 } from "./hermes-dashboard-recovery";
 export {
   HermesPortableForwardRecoveryError,
+  prepareHermesPortableLaunchForwards,
   recoverHermesPortableLaunchForwards,
+  verifyHermesPortableLaunchForwards,
 } from "./probe/hermes-portable-forward-recovery";
 export type {
   HermesPortableForwardRecoveryFailure,
   HermesPortableForwardRecoveryInput,
   HermesPortableForwardRecoveryResult,
+  HermesPortableForwardRecoveryTiming,
+  HermesPortableForwardRecoveryTimingEvidence,
+  HermesPortableForwardVerificationResult,
+  PreparedHermesPortableForwardRecovery,
 } from "./probe/hermes-portable-forward-recovery";
 
 type SandboxPortAgent = {
@@ -497,6 +503,7 @@ export function ensureDeclaredAgentForwardPortsHealthy(
 export function areSandboxLaunchForwardsHealthy(
   sandboxName: string,
   gatewayName?: string,
+  capture: typeof captureOpenshell = captureOpenshell,
 ): boolean | null {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) return false;
@@ -505,7 +512,7 @@ export function areSandboxLaunchForwardsHealthy(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const requiredPorts = resolveSandboxLaunchForwardPortsFromAuthority(sandboxName, sandbox, agent);
   if (requiredPorts.length === 0) return true;
-  const result = captureOpenshell(["forward", "list", "--gateway", owningGatewayName], {
+  const result = capture(["forward", "list", "--gateway", owningGatewayName], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });

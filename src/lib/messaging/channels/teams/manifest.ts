@@ -122,10 +122,8 @@ export const teamsManifest = {
           // MSTEAMS_APP_PASSWORD as a revision-scoped placeholder and rejects
           // the canonical form once the policy binds the credential. The
           // OpenClaw Teams token resolver falls back to
-          // process.env.MSTEAMS_APP_PASSWORD. The Hermes env line below is
-          // deliberately unchanged: Hermes reads TEAMS_CLIENT_SECRET, which is
-          // not the provider env key, so it has no injected value to fall back
-          // to.
+          // process.env.MSTEAMS_APP_PASSWORD. Hermes receives the same runtime
+          // placeholder under TEAMS_CLIENT_SECRET through its runtime alias.
           tenantId: "{{teamsConfig.tenantId}}",
           webhook: {
             port: "{{teamsConfig.webhookPort}}",
@@ -165,7 +163,6 @@ export const teamsManifest = {
       target: "~/.hermes/.env",
       lines: [
         "TEAMS_CLIENT_ID={{teamsConfig.appId}}",
-        "TEAMS_CLIENT_SECRET={{credential.teamsClientSecret.placeholder}}",
         "TEAMS_TENANT_ID={{teamsConfig.tenantId}}",
         "TEAMS_ALLOWED_USERS={{allowedIds.teams.csv}}",
         "TEAMS_PORT={{teamsConfig.webhookPort}}",
@@ -206,6 +203,16 @@ export const teamsManifest = {
         },
       ],
     },
+    hermes: {
+      envAliases: [
+        {
+          envKey: "MSTEAMS_APP_PASSWORD",
+          targetEnvKey: "TEAMS_CLIENT_SECRET",
+          match: "^openshell:resolve:env:v[0-9]+_MSTEAMS_APP_PASSWORD$",
+          value: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+        },
+      ],
+    },
   },
   agentPackages: [
     {
@@ -228,13 +235,6 @@ export const teamsManifest = {
       agent: "hermes",
       manager: "hermes-uv-pip",
       spec: "microsoft-teams-apps==2.0.13.4",
-      required: true,
-    },
-    {
-      id: "hermesAiohttpPackage",
-      agent: "hermes",
-      manager: "hermes-uv-pip",
-      spec: "aiohttp==3.14.3",
       required: true,
     },
   ],

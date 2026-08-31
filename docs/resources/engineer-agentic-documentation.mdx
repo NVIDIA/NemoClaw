@@ -41,22 +41,27 @@ A polished site with weak retrieval or verification is not agent-ready.
 
 ## Move Documentation Into the Engineering Loop
 
-A push to `main` that changes a path outside the allowed documentation paths starts `Docs / Author Post-Merge Catch-Up`. The workflow examines the implementation, tests, and documentation from the latest reachable semver tag through the pushed commit.
+NemoClaw keeps documentation current while separating documentation reasoning, publication authority, and maintainer release ownership.
 
-1. It authors documentation changes in a credential-free OpenShell sandbox.
-2. A separate offline sandbox reviews the exact documentation candidate with a read-only repository checkout.
-3. For an approved nonempty patch, a publisher with no model credential creates or refreshes one cumulative draft PR with a GitHub-verified commit.
+### Author and Independently Review the Candidate
 
-The first nonempty patch creates the managed PR.
-Its title names the next patch tag after the range-start tag.
-Its body names both tags, identifies the reviewed `main` boundary, states the branch owner, and
-links to the canonical development and release-cutoff procedure.
-Later pushes to `main` refresh that same PR only when they change a path outside `docs/**`, `fern/docs.yml`, and `fern/assets/**`.
-Each refresh uses a cumulative patch based on the triggering commit.
-Each refresh creates a merge commit whose tree exactly matches the reviewed patch applied to `main`, then fast-forwards the branch. The publisher never force-pushes or replaces a branch head that a person changed.
-A push that changes only the allowed documentation paths does not start another catch-up run.
-Follow [Post-Merge Documentation Catch-Up](https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#post-merge-documentation-catch-up) for the automation lifecycle and recovery. The maintainer release-train policy linked there owns release cutoff.
-The signed release brief records a proceed decision.
+On qualifying pushes to `main`, `Docs / Author Post-Merge Catch-Up` examines implementation, tests, and documentation after the latest reachable release tag through the pushed commit.
+GitHub Actions launches the Pi coding agent in a pinned OpenShell sandbox, validates its bounded documentation patch in `author/repo`, and confirms that validation did not mutate the patch.
+The runner then applies that exact patch to `review/repo`, where a separate Pi agent reviews it in an offline, read-only sandbox without editing tools.
+
+### Separate Reasoning From Publication
+
+An approval record binds the exact patch hash, repository, reviewed `main` commit, range-start tag, and target release tag.
+A separate publisher revalidates that record and the current GitHub state before creating or refreshing a draft PR.
+The model-assisted author cannot publish, the reviewer is offline and read-only, and the GitHub-authorized publisher cannot invoke the model.
+
+### Maintain One Cumulative Draft Through Release Cutoff
+
+Automation owns one cumulative documentation draft until a maintainer marks it ready for review.
+The cumulative draft is the durable tracking record for approved agent updates until maintainers take ownership for release review.
+
+Follow [Post-Merge Documentation Catch-Up](https://github.com/NVIDIA/NemoClaw/blob/main/docs/AUTOMATION.md#post-merge-documentation-catch-up) for trigger paths, managed-PR lifecycle, recovery, release cutoff, and the signed proceed decision.
+The [post-merge automation guide](https://github.com/NVIDIA/NemoClaw/blob/main/tools/post-merge-docs/README.md) owns the credential and trust boundary.
 
 ## Use a Layered Architecture
 
@@ -185,7 +190,7 @@ Turn repeatable documentation engineering practices into bounded skills or repos
 |---|---|---|---|
 | Update docs | Product behavior reaches `main` or docs fall behind code. | Commit range, changed files, product scope, current pages. | Each user-visible change maps to a reviewed patch or a no-impact decision. |
 | Refactor information architecture | A section is oversized, duplicated, or hard to navigate. | Heading inventory, ownership map, inbound routes, supported variants. | One owner per topic, migrated routes, readable pages, and no content loss. |
-| Review docs | A post-merge candidate changes a public procedure or reference. | Product implementation, tests, candidate patch, and style policy. | Independent review approves the exact candidate. |
+| Review docs | A post-merge candidate changes a public procedure or reference. | Product implementation, tests, candidate patch, and style policy. | Independent review approves the candidate. |
 | Prepare a release | A release candidate needs its dated entry. | Release scope, target version, and planned date. | The dated release entry and documentation PR land before the release tag. |
 | Publish | A docs change merges or a release tag is created. | Validated source, approved environment, immutable revision. | Staging or public output points to the expected revision. |
 
@@ -309,7 +314,7 @@ _build/agent-variants/<source-directory>/<source-name>.<variant>.generated.mdx
 The `<variant>` value is `openclaw`, `hermes`, `deepagents`, or `pi`.
 The directory and base name before the guide variant suffix must match the canonical source path under `docs/`.
 
-When a source appears in fewer guides than the established OpenClaw, Hermes, and Deep Agents shared set, or in some but not all configured guides that include Pi, its frontmatter declares the exact subset:
+When a source appears in fewer guides than the established OpenClaw, Hermes, and Deep Agents shared set, or in some but not all configured guides that include Pi, its frontmatter declares the subset:
 
 ```yaml
 agent-variants: ["openclaw", "hermes"]
@@ -434,7 +439,7 @@ Targeted documentation regression tests preserve credential-rotation commands, a
 Pair these assertions with product behavior tests because the presence of a command in a page does not establish that the command succeeds.
 
 NemoClaw performs the judgment-based layer after changes reach `main`.
-The authoring agent determines documentation impact, and a separate documentation writer reviews the exact candidate.
+The authoring agent determines documentation impact, and a separate documentation writer reviews the candidate.
 The publisher accepts only a reviewed patch bound to the `main` commit and repository.
 
 <Note>
@@ -534,7 +539,8 @@ The current NemoClaw repository provides concrete examples for each layer.
 | Guide variant generation | `scripts/sync-agent-variant-docs.mts`. |
 | Route validation | `scripts/check-docs-published-routes.mts`. |
 | Documentation accuracy tests | Compiled CLI and installer parity, environment-variable coverage, generated platform documentation, and targeted procedure and guide variant regression tests under `test/`. |
-| Post-merge update workflow | `.github/workflows/post-merge-docs.yaml`, `tools/post-merge-docs/`, and `.agents/skills/nemoclaw-contributor-update-docs/SKILL.md`. |
+| Post-merge author and independent review | `.github/workflows/post-merge-docs.yaml`, `tools/post-merge-docs/run.mts`, `tools/post-merge-docs/README.md`, and `.agents/skills/nemoclaw-contributor-update-docs/SKILL.md`. |
+| Managed documentation PR publication and release handoff | `tools/post-merge-docs/publish.mts`, `docs/AUTOMATION.md`, and `.agents/skills/nemoclaw-maintainer-policies/references/release-train.md`. |
 | Information-architecture workflow | `.agents/skills/nemoclaw-maintainer-refactor-docs/SKILL.md`. |
 | Pull-request assurance | Docs link, product parity, and preview workflows under `.github/workflows/`. |
 | Release history | Dated entries under `docs/changelog/` that land before the release tag. |

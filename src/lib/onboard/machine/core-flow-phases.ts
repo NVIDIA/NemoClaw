@@ -75,14 +75,13 @@ export interface SandboxOnboardFlowPhaseOptions<
   hermesPortableLifecycle?: boolean;
   apfInterceptorRequested?: boolean;
   authoritativeResumeConfig?: boolean;
-  authoritativePolicyTier?: string | null;
 
   recreateJournalTargetIntentFingerprint?: string | null;
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   rebuildPreservedEnv?: readonly import("../../state/preserved-env").PreservedEnvFile[];
-  rebuildPolicyPresets?: readonly string[];
+  rebuildPolicySourcePath?: string;
   hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
   endpointProvenance: EndpointProvenanceOptions;
   recreateSandbox: (requested?: boolean) => boolean;
@@ -334,8 +333,7 @@ export function createSandboxOnboardFlowPhase<
       hermesPortableLifecycle: options.hermesPortableLifecycle === true,
       apfInterceptorRequested: options.apfInterceptorRequested === true,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
-      authoritativePolicyTier: options.authoritativePolicyTier,
-      deferSandboxEffectsUntilPolicyVerification: options.apfInterceptorRequested === true,
+      deferSandboxEffectsUntilIdentityVerification: options.apfInterceptorRequested === true,
 
       recreateJournalTargetIntentFingerprint: options.recreateJournalTargetIntentFingerprint,
       endpointSource: endpointProvenance.endpointSource,
@@ -343,7 +341,7 @@ export function createSandboxOnboardFlowPhase<
       requestedObservabilityEnabled: options.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: options.requestedDcodeAutoApprovalMode,
       rebuildPreservedEnv: options.rebuildPreservedEnv,
-      rebuildPolicyPresets: options.rebuildPolicyPresets,
+      rebuildPolicySourcePath: options.rebuildPolicySourcePath,
       hostMounts: options.hostMounts,
       recreateSandbox: options.recreateSandbox,
       session: context.session,

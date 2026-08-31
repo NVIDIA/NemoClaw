@@ -37,15 +37,25 @@ async function stopFixtureProcess(pid: number): Promise<void> {
   expect(processExists(pid)).toBe(false);
 }
 
-test("accepts a normally completed connect when the forward is already healthy", async ({
+test("accepts a normally completed connect with the local Dockerfile workload", async ({
   artifacts,
   progress,
 }) => {
   const result = await runDashboardConnectUntilForwardHandoff({
     artifacts,
-    command: [process.execPath, "-e", "process.exit(0)"],
+    command: [
+      process.execPath,
+      "-e",
+      "process.exit(process.env.NEMOCLAW_FROM_DOCKERFILE === process.argv[1] ? 0 : 1)",
+      path.resolve("Dockerfile"),
+    ],
     dashboardPort: DASHBOARD_PORT,
-    env: process.env,
+    env: {
+      ...process.env,
+      E2E_TARGET_ID: "dashboard-remote-bind",
+      E2E_WORKLOAD_SOURCE: "local-dockerfile",
+      NEMOCLAW_AGENT: "openclaw",
+    },
     progress,
     sandboxName: SANDBOX_NAME,
     timeoutMs: 2_000,

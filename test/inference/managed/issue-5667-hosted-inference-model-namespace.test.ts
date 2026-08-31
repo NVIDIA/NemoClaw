@@ -40,7 +40,6 @@ const { collectSandboxStatusSnapshot } =
             name: string;
             provider: string;
             model: string;
-            policies: string[];
             agent: string;
           };
           reconcile: () => Promise<{ state: string; output: string }>;
@@ -275,7 +274,6 @@ const { setupNim } = require(${onboardPath});
             name: "dcode-test",
             provider: payload.result.provider,
             model: payload.result.model,
-            policies: [],
             agent: "langchain-deepagents-code",
           }),
           reconcile: async () => ({ state: "missing", output: "" }),

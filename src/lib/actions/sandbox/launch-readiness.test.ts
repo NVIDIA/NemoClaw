@@ -18,7 +18,6 @@ import {
   inspectLaunchReadiness,
   type LaunchReadinessDeps,
   launchReadinessDigest,
-  launchReadinessPolicyDigest,
   publicationFromDecision,
   publishLaunchReadiness,
   withLaunchReadinessMutationGate,
@@ -42,17 +41,6 @@ network_policies:
       - path: /usr/bin/curl
 `;
 
-const POLICY_A_REORDERED = `network_policies:
-  public_api:
-    binaries:
-      - path: /usr/bin/curl
-    endpoints:
-      - port: 443
-        host: example.com
-    name: Public API
-version: 1
-`;
-
 const POLICY_B = POLICY_A.replace("example.com", "api.example.com");
 
 function entry(agent = "openclaw"): SandboxEntry {
@@ -68,9 +56,6 @@ function entry(agent = "openclaw"): SandboxEntry {
     agentVersion: "1.0.0",
     nemoclawVersion: "2.0.0",
     imageTag: "example@sha256:immutable",
-    policyPresetsFinalized: true,
-    policies: ["managed_inference"],
-    policyTier: "standard",
     provider: null,
     model: null,
     endpointUrl: null,
@@ -106,7 +91,7 @@ function servingProfile(): NonNullable<SandboxEntry["servingProfileProvenance"]>
 
 function fence(): LaunchReadinessFence {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "fence",
     epochId: EPOCH,
     sandboxName: SANDBOX,
@@ -129,7 +114,7 @@ function fence(): LaunchReadinessFence {
 
 function lease(identity: LaunchReadinessIdentity): LaunchReadinessLease {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: "lease",
     epochId: EPOCH,
     sandboxName: SANDBOX,
@@ -286,7 +271,6 @@ describe("launch readiness validation", () => {
           openclawVersion,
           deviceIdentitySha256: DIGEST,
           pairingStateSha256,
-          policySha256: DIGEST,
           requiredRoles: ["operator"],
           requiredScopes: ["operator.pairing", "operator.read", "operator.write"],
         };
@@ -396,13 +380,6 @@ describe("launch readiness validation", () => {
       change: (qualification: LaunchReadinessOpenClawSessionQualification) => ({
         ...qualification,
         pairingStateSha256: "3".repeat(64),
-      }),
-    },
-    {
-      field: "policy",
-      change: (qualification: LaunchReadinessOpenClawSessionQualification) => ({
-        ...qualification,
-        policySha256: "4".repeat(64),
       }),
     },
   ])("falls back when the OpenClaw $field qualification changes (#9023)", async ({ change }) => {
@@ -661,24 +638,6 @@ describe("launch readiness validation", () => {
 
   it.each([
     {
-      category: "config",
-      mutate: () => {
-        sandbox = { ...sandbox, policyTier: "strict" };
-      },
-      restore: () => {
-        sandbox = { ...sandbox, policyTier: "standard" };
-      },
-    },
-    {
-      category: "config",
-      mutate: () => {
-        policy = POLICY_B;
-      },
-      restore: () => {
-        policy = POLICY_A;
-      },
-    },
-    {
       category: "identity",
       mutate: () => {
         observedFingerprint = DIGEST;
@@ -705,22 +664,28 @@ describe("launch readiness validation", () => {
         forwardsHealthy = true;
       },
     },
-  ])(
-    "fences config, policy, live identity, and health changes before fallback [case %#]",
-    async (testCase) => {
-      const currentDeps = await createAcceptedLease();
+  ])("fences live identity and health changes before fallback [case %#]", async (testCase) => {
+    const currentDeps = await createAcceptedLease();
 
-      testCase.mutate();
-      const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
-      expect(decision).toMatchObject({
-        kind: "fallback",
-        category: testCase.category,
-        fence: { epochId: EPOCH },
-        fenceFailed: false,
-      });
-      testCase.restore();
-    },
-  );
+    testCase.mutate();
+    const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
+    expect(decision).toMatchObject({
+      kind: "fallback",
+      category: testCase.category,
+      fence: { epochId: EPOCH },
+      fenceFailed: false,
+    });
+    testCase.restore();
+  });
+
+  it("accepts an externally changed valid OpenShell policy without shadow identity state", async () => {
+    const currentDeps = await createAcceptedLease();
+    policy = POLICY_B;
+
+    await expect(inspectLaunchReadiness(SANDBOX, currentDeps)).resolves.toMatchObject({
+      kind: "accepted",
+    });
+  });
 
   it("requires exact owning-gateway policy, inference route, and semantic health", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
@@ -915,13 +880,6 @@ describe("launch readiness validation", () => {
     expect(gatewayHealth).not.toHaveBeenCalled();
   });
 
-  it("hashes parsed policy semantics instead of presentation bytes", () => {
-    expect(launchReadinessPolicyDigest(POLICY_A_REORDERED)).toBe(
-      launchReadinessPolicyDigest(POLICY_A),
-    );
-    expect(launchReadinessPolicyDigest(POLICY_B)).not.toBe(launchReadinessPolicyDigest(POLICY_A));
-  });
-
   it("uses an exact versioned allowlist for launch-affecting registry state", () => {
     const agent = loadAgent("openclaw");
     const projection = buildLaunchReadinessRegistryProjection(sandbox, agent) as Record<
@@ -932,8 +890,6 @@ describe("launch readiness validation", () => {
       [
         "agent",
         "agentVersion",
-        "baselineExclusions",
-        "customPolicies",
         "dashboardPort",
         "dashboardRemoteBindPrepared",
         "dcodeAutoApprovalMode",
@@ -963,9 +919,6 @@ describe("launch readiness validation", () => {
         "openclawImagePluginInstalls",
         "openshellDriver",
         "openshellVersion",
-        "policies",
-        "policyPresetsFinalized",
-        "policyTier",
         "sandboxGpuDevice",
         "sandboxGpuEnabled",
         "sandboxGpuMode",
@@ -1005,23 +958,6 @@ describe("launch readiness validation", () => {
       { ...sandbox, sandboxGpuDevice: "0" },
       { ...sandbox, servingProfileProvenance: servingProfile() },
       { ...sandbox, hermesAuthMethod: "oauth" },
-      { ...sandbox, policies: ["managed_inference", "slack"] },
-      {
-        ...sandbox,
-        customPolicies: [{ name: "custom", content: POLICY_A, pendingContent: POLICY_B }],
-      },
-      {
-        ...sandbox,
-        baselineExclusions: [
-          {
-            version: 1,
-            agent: "openclaw",
-            key: "phone_home",
-            digest: DIGEST,
-            appliedAgentVersion: "1.0.0",
-          },
-        ],
-      },
       { ...sandbox, webSearchEnabled: true, webSearchProvider: "brave" },
       { ...sandbox, observabilityEnabled: true },
       { ...sandbox, hermesDashboardEnabled: true, hermesDashboardPort: 3000 },
@@ -1042,11 +978,15 @@ describe("launch readiness validation", () => {
         ],
       },
     ];
-    expect(mutations.every((mutation) =>
+    expect(
+      mutations.every(
+        (mutation) =>
           !Object.is(
             launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
             original,
-          ))).toBe(true);
+          ),
+      ),
+    ).toBe(true);
   });
 
   it("binds current Portable lifecycle state into final readiness publication (#9207)", async () => {
@@ -1166,33 +1106,6 @@ describe("launch readiness validation", () => {
     expect(publishLease).not.toHaveBeenCalled();
   });
 
-  it("publishes no readiness lease for a policy-incomplete Portable receipt (#9207)", async () => {
-    const currentDeps = deps();
-    currentDeps.classifyPortableLifecycleReceipt = () => ({
-      kind: "current",
-      registryGeneration: "generation-1",
-      runtimeAuthority: {
-        schemaVersion: 1,
-        kind: "podman",
-        ownership: "current-user",
-        uid: 1001,
-        homeDir: "/home/operator",
-        configHome: "/home/operator/.config",
-        runtimeDir: "/run/user/1001",
-        socketPath: "/run/user/1001/podman/podman.sock",
-      },
-    });
-    sandbox = { ...sandbox, policyPresetsFinalized: undefined };
-    const publishLease = vi.fn();
-    currentDeps.publishLease = publishLease;
-    const decision = await inspectLaunchReadiness(SANDBOX, currentDeps);
-
-    await expect(
-      publishLaunchReadiness(publicationFromDecision(SANDBOX, decision), currentDeps),
-    ).resolves.toEqual({ kind: "validation-failed", category: "config" });
-    expect(publishLease).not.toHaveBeenCalled();
-  });
-
   it("binds every host mount field without projecting the host source path (#8942)", () => {
     const agent = loadAgent("openclaw");
     const source = "/private/host/customer-project";
@@ -1249,11 +1162,15 @@ describe("launch readiness validation", () => {
         ],
       },
     ];
-    expect(mutations.every((mutation) =>
+    expect(
+      mutations.every(
+        (mutation) =>
           !Object.is(
             launchReadinessDigest(buildLaunchReadinessRegistryProjection(mutation, agent)),
             original,
-          ))).toBe(true);
+          ),
+      ),
+    ).toBe(true);
     expect(() =>
       buildLaunchReadinessRegistryProjection(
         {
@@ -1298,7 +1215,9 @@ describe("launch readiness validation", () => {
       { ...originalProfile, estimatedImageDownloadBytes: 1_001 },
       { ...originalProfile, estimatedModelDownloadBytes: 2_001 },
     ];
-    expect(mutations.every((mutation) =>
+    expect(
+      mutations.every(
+        (mutation) =>
           !Object.is(
             launchReadinessDigest(
               buildLaunchReadinessRegistryProjection(
@@ -1307,7 +1226,9 @@ describe("launch readiness validation", () => {
               ),
             ),
             original,
-          ))).toBe(true);
+          ),
+      ),
+    ).toBe(true);
   });
 
   it("excludes diagnostic timestamps, source paths, and GPU detail from the projection", () => {
@@ -1315,23 +1236,6 @@ describe("launch readiness validation", () => {
     const first: SandboxEntry = {
       ...sandbox,
       createdAt: "2026-01-01T00:00:00.000Z",
-      customPolicies: [
-        {
-          name: "custom",
-          content: POLICY_A,
-          sourcePath: "/first/policy.yaml",
-          appliedAt: "2026-01-01T00:00:00.000Z",
-        },
-      ],
-      baselineExclusions: [
-        {
-          version: 1,
-          agent: "openclaw",
-          key: "phone_home",
-          digest: DIGEST,
-          acknowledgedAt: "2026-01-01T00:00:00.000Z",
-        },
-      ],
       sandboxGpuProof: {
         status: "verified",
         cudaVerified: true,
@@ -1343,25 +1247,6 @@ describe("launch readiness validation", () => {
     const second: SandboxEntry = {
       ...first,
       createdAt: "2026-06-01T00:00:00.000Z",
-      customPolicies: [
-        {
-          ...first.customPolicies?.[0],
-          name: "custom",
-          content: POLICY_A,
-          sourcePath: "/second/policy.yaml",
-          appliedAt: "2026-06-01T00:00:00.000Z",
-        },
-      ],
-      baselineExclusions: [
-        {
-          ...first.baselineExclusions?.[0],
-          version: 1,
-          agent: "openclaw",
-          key: "phone_home",
-          digest: DIGEST,
-          acknowledgedAt: "2026-06-01T00:00:00.000Z",
-        },
-      ],
       sandboxGpuProof: {
         ...first.sandboxGpuProof!,
         detail: "second diagnostic",
@@ -1473,26 +1358,6 @@ describe("launch readiness validation", () => {
     expect(() =>
       buildLaunchReadinessRegistryProjection(
         { ...sandbox, pendingRouteReservation: true, reservationSessionId: "session" },
-        agent,
-      ),
-    ).toThrow();
-    expect(() =>
-      buildLaunchReadinessRegistryProjection(
-        {
-          ...sandbox,
-          baselineExclusionTransition: {
-            id: "transition",
-            operation: "exclude",
-            exclusion: {
-              version: 1,
-              agent: "openclaw",
-              key: "phone_home",
-              digest: DIGEST,
-            },
-            targetLiveDigest: null,
-            startedAt: "2026-01-01T00:00:00.000Z",
-          },
-        },
         agent,
       ),
     ).toThrow();
