@@ -34,6 +34,7 @@ import {
 } from "../../../tools/pr-review-advisor/openshell.mts";
 import { runPrReviewAdvisorAnalysis } from "../../../tools/pr-review-advisor/run-analysis.mts";
 import {
+  publishSpecialistJobSummary,
   runAdvisorSpecialistCommand,
   type AdvisorSpecialistLifecycle,
 } from "../../../tools/pr-review-advisor/specialist-lifecycle.mts";
@@ -110,18 +111,87 @@ afterEach(() => {
 });
 
 describe("PR review advisor specialist lifecycle", () => {
+  it("appends the completed hosted specialist review to the GitHub job summary", () => {
+    const workspace = temporaryDirectory();
+    const artifactDirectory = "pr-review-specialist-behavior";
+    const artifactPath = path.join(workspace, "artifacts", artifactDirectory);
+    const jobSummary = path.join(workspace, "job-summary.md");
+    fs.mkdirSync(artifactPath, { recursive: true });
+    fs.writeFileSync(jobSummary, "Existing summary.\n");
+    fs.writeFileSync(
+      path.join(artifactPath, "pr-review-behavior-summary.md"),
+      "# Behavior specialist\n\nNo behavior finding.\n",
+    );
+
+    publishSpecialistJobSummary({
+      GITHUB_STEP_SUMMARY: jobSummary,
+      GITHUB_WORKSPACE: workspace,
+      PR_REVIEW_ADVISOR_ARTIFACT_DIR: artifactDirectory,
+      PR_REVIEW_ADVISOR_INTEREST: "behavior",
+    });
+
+    expect(fs.readFileSync(jobSummary, "utf8")).toBe(
+      "Existing summary.\n# Behavior specialist\n\nNo behavior finding.\n",
+    );
+  });
+
+  it("rejects a specialist summary symlink without publishing its target", () => {
+    const workspace = temporaryDirectory();
+    const artifactDirectory = "pr-review-specialist-behavior";
+    const artifactPath = path.join(workspace, "artifacts", artifactDirectory);
+    const jobSummary = path.join(workspace, "job-summary.md");
+    const target = path.join(workspace, "untrusted.md");
+    fs.mkdirSync(artifactPath, { recursive: true });
+    fs.writeFileSync(jobSummary, "Existing summary.\n");
+    fs.writeFileSync(target, "Untrusted replacement.\n");
+    fs.symlinkSync(target, path.join(artifactPath, "pr-review-behavior-summary.md"));
+
+    expect(() =>
+      publishSpecialistJobSummary({
+        GITHUB_STEP_SUMMARY: jobSummary,
+        GITHUB_WORKSPACE: workspace,
+        PR_REVIEW_ADVISOR_ARTIFACT_DIR: artifactDirectory,
+        PR_REVIEW_ADVISOR_INTEREST: "behavior",
+      }),
+    ).toThrow();
+    expect(fs.readFileSync(jobSummary, "utf8")).toBe("Existing summary.\n");
+  });
+
+  it("keeps local specialist analysis independent from GitHub job summaries", async () => {
+    const calls: string[] = [];
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => ({ configure: Promise.resolve() }),
+      create: () => void calls.push("create"),
+      run: () => void calls.push("run"),
+      download: () => void calls.push("download"),
+      remove: () => void calls.push("remove"),
+    };
+
+    await runAdvisorSpecialistCommand(
+      "analysis",
+      { PR_REVIEW_ADVISOR_RUN_ANALYSIS: "1" },
+      lifecycle,
+    );
+
+    expect(calls).toEqual(["create", "run", "download", "remove"]);
+  });
+
   it("cancels active analysis, cleans owned resources, and restores termination (#10611)", async () => {
     const calls: string[] = [];
     let receive!: (signal: NodeJS.Signals) => void;
     let interrupt!: () => void;
-    const completion = new Promise<void>((_resolve, reject) =>
-      (interrupt = () => reject(new Error("analysis stopped by SIGTERM"))),
+    const completion = new Promise<void>(
+      (_resolve, reject) => (interrupt = () => reject(new Error("analysis stopped by SIGTERM"))),
     );
     const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const restore = vi.fn();
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
-      startGateway: () => ({ configure: Promise.resolve(), stop: async () => void calls.push("gateway") }),
+      startGateway: () => ({
+        configure: Promise.resolve(),
+        stop: async () => void calls.push("gateway"),
+      }),
       create: () => void calls.push("create"),
       run: () => ({
         completion,
@@ -232,7 +302,11 @@ describe("PR review advisor specialist lifecycle", () => {
         unavailable: () => void calls.push("unavailable"),
       };
 
-      await runAdvisorSpecialistCommand("prepare", { PR_REVIEW_ADVISOR_RUN_ANALYSIS: enabled }, lifecycle);
+      await runAdvisorSpecialistCommand(
+        "prepare",
+        { PR_REVIEW_ADVISOR_RUN_ANALYSIS: enabled },
+        lifecycle,
+      );
       await runAdvisorSpecialistCommand(
         "analysis",
         { PR_REVIEW_ADVISOR_RUN_ANALYSIS: enabled, OPENAI_API_KEY: "analysis-secret" },
