@@ -307,6 +307,8 @@ export interface SandboxGpuCreateFlowDeps {
 
 interface SandboxGpuCreateFlowResultCommon {
   runtimePatch: ManagedBootstrapRuntimePatch;
+  /** Confirm executable Ready state after the managed runtime commit. */
+  confirmManagedRuntimeCommitReadiness(): void;
   route: SelectedDockerGpuRoute;
   /** Mutable tag/reference retained only for registry and image-GC bookkeeping. */
   registryImageRef: string | null;
@@ -626,6 +628,8 @@ export async function runSandboxGpuCreateFlow(
 
   const common = {
     runtimePatch: gpuCreateOutcome.value.runtimePatch,
+    confirmManagedRuntimeCommitReadiness:
+      gpuCreateOutcome.value.confirmManagedRuntimeCommitReadiness,
     route: gpuCreateOutcome.route,
     registryImageRef,
     lifecycleRegistrationFields: {

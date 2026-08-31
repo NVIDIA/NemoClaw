@@ -372,6 +372,7 @@ export function createCreatedSandboxCompletionActions(
           `committing GPU capability for sandbox '${options.finalization.sandboxName}'`,
         ),
     );
+    created.confirmManagedRuntimeCommitReadiness();
   }
   function recordHermesGpuProof(): void {
     options.gpu.config.sandboxGpuProof = options.gpu.verifyDirectSandboxGpu(

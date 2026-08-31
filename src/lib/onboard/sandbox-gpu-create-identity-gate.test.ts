@@ -201,6 +201,7 @@ describe("created sandbox identity gate", () => {
   });
 
   it("retains exact recovery when committed managed readiness does not return", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const sandboxId = "alpha-sandbox-id";
     const sandboxIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
     const input = noGpuInput();
@@ -235,6 +236,9 @@ describe("created sandbox identity gate", () => {
     expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: null,
     });
+    expect(error.mock.calls.flat().join("\n")).toContain(
+      "Run `nemoclaw <sandbox-name> destroy` to attempt identity-bound recovery.",
+    );
   });
 
   it("resumes the exact verified sandbox without issuing another create (#9833)", async () => {

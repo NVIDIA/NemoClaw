@@ -19,6 +19,7 @@ import {
   finalizeCreatedSandbox,
 } from "./created-sandbox-finalization";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
+import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { HermesPortableConfiguredReceipt } from "./experimental/hermes-portable-receipt";
 import { pendingSandboxCreateIdentityForBoundary } from "./sandbox-create/identity-boundary";
 import type { SandboxGpuCreateFlowResult } from "./sandbox-gpu-create-flow";
@@ -984,6 +985,99 @@ describe("created OpenClaw sandbox finalization", () => {
 });
 
 describe("created sandbox completion actions", () => {
+  it("stops GPU dashboard and registry effects when committed readiness does not return", async () => {
+    vi.spyOn(
+      dockerGpuLocalInference,
+      "verifyGpuSandboxLocalInferenceAndCommitAfterReady",
+    ).mockResolvedValue();
+    const ensureForward = vi.fn();
+    const registerCreatedSandbox = vi.fn();
+    const lifecycleRegistration = {
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    };
+    const verifiedCreateBoundary = {
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      ...lifecycleRegistration,
+      route: "native" as const,
+    };
+    const completion = createCreatedSandboxCompletionActions(
+      {
+        finalization: { sandboxName: "alpha" },
+        registration: { gatewayName: "nemoclaw", gatewayPort: 8080 },
+        policy: {
+          initialPolicyPath: "/private/initial-policy.yaml",
+          compatibilityPolicyPath: null,
+          getVerifiedCreateBoundary: () => verifiedCreateBoundary,
+          getVerifiedCreateRegistrationAuthority: vi.fn(),
+        },
+        gpu: {
+          config: {} as SandboxGpuConfig,
+          provider: "nvidia-prod",
+          dockerDriverGateway: true,
+          verifyDirectSandboxGpu: vi.fn(),
+          runCaptureOpenshell: vi.fn(),
+        },
+        dashboard: {
+          chatUiUrl: "http://127.0.0.1:8643",
+          initialHermesState: { config: null, enabled: false },
+          releasePort: vi.fn(),
+          ensureForward,
+          getForwardPort: vi.fn(),
+          resolveHermesState: vi.fn(),
+          ensureHermesForward: vi.fn(),
+        },
+        workload: {},
+      } as never,
+      {
+        revalidateSandboxIdentity: vi.fn(),
+        discoverFreshOpenClawImagePluginInstalls: vi.fn(),
+        restoreRecreatedSandboxState: vi.fn(),
+        getDcodeSelectionDrift: vi.fn(),
+        note: vi.fn(),
+        error: vi.fn(),
+        exitProcess: vi.fn() as never,
+        registerCreatedSandbox,
+      },
+    );
+    const confirmManagedRuntimeCommitReadiness = vi.fn(() => {
+      throw new Error("managed runtime did not return to Ready");
+    });
+    const created = {
+      origin: "created",
+      createResult: { status: 0, output: "", sawProgress: true },
+      route: "native",
+      firstCreateOutput: "",
+      registryImageRef: null,
+      lifecycleRegistrationFields: { lifecycleGeneration: "generation-1" },
+      runtimePatch: {},
+      confirmManagedRuntimeCommitReadiness,
+    } as unknown as SandboxGpuCreateFlowResult;
+    const lifecycle = {
+      generation: "generation-1",
+      recordExactIdentity: vi.fn(),
+      capture: vi.fn(() => lifecycleRegistration),
+      revalidate: vi.fn(() => lifecycleRegistration),
+    };
+
+    await expect(
+      completion.complete(
+        created,
+        null,
+        "created",
+        true,
+        () => ({ lifecycleGeneration: "generation-1" }),
+        lifecycle,
+      ),
+    ).rejects.toThrow("managed runtime did not return to Ready");
+
+    expect(confirmManagedRuntimeCommitReadiness).toHaveBeenCalledOnce();
+    expect(ensureForward).not.toHaveBeenCalled();
+    expect(registerCreatedSandbox).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["ordinary", true, false],
     ["schema-5", false, true],

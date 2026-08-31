@@ -352,16 +352,10 @@ function confirmManagedRuntimeCommitReadiness(options: {
   console.error(
     "  NemoClaw did not start dashboard forwarding. NemoClaw left the sandbox in place for identity-bound recovery.",
   );
+  console.error("  Run `nemoclaw <sandbox-name> destroy` to attempt identity-bound recovery.");
   throw new Error(
     `Sandbox '${input.sandboxName}' did not return to Ready after its managed runtime commit.`,
   );
-}
-
-function selectManagedRuntimeCommitSandboxId(
-  managedBootstrap: SandboxGpuCreateFlowInput["managedBootstrap"],
-  verifiedCreatedSandboxId: string | null,
-): string | null {
-  return managedBootstrap ? verifiedCreatedSandboxId : null;
 }
 
 function resolveCreateAttemptNonce(
@@ -392,21 +386,20 @@ function waitForCreatedOpenShellSandboxPublication(
   deps: SandboxGpuCreateFlowDeps,
 ): void {
   const timeoutMs = Math.max(1, Math.round(input.sandboxReadyTimeoutSecs * 1_000));
-  const deadlineMs = Date.now() + timeoutMs;
-  const maxPolls =
-    Math.ceil(timeoutMs / (CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS * 1_000)) + 1;
-  for (let poll = 0; poll < maxPolls; poll += 1) {
-    const remainingMs = Math.max(1, deadlineMs - Date.now());
-    const result = deps.runOpenshell(
-      ["sandbox", "get", "-g", input.gatewayName, input.sandboxName],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: Math.min(SANDBOX_READY_PROBE_TIMEOUT_MS, remainingMs),
-        killSignal: "SIGKILL",
-      },
-    );
-    if (result.status === 0 && !result.error) {
+  const published = sandboxReadinessTracing.waitForCreatedSandboxPublication({
+    timeoutMs,
+    pollIntervalMs: CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS * 1_000,
+    probe: (getRemainingMs) => {
+      const result = deps.runOpenshell(
+        ["sandbox", "get", "-g", input.gatewayName, input.sandboxName],
+        {
+          ignoreError: true,
+          suppressOutput: true,
+          timeout: Math.min(SANDBOX_READY_PROBE_TIMEOUT_MS, getRemainingMs()),
+          killSignal: "SIGKILL",
+        },
+      );
+      if (result.status !== 0 || result.error) return false;
       const publishedSandboxId = parseOpenShellSandboxId(String(result.stdout ?? ""));
       if (!publishedSandboxId) {
         throw new Error(
@@ -418,19 +411,15 @@ function waitForCreatedOpenShellSandboxPublication(
           `Created sandbox '${input.sandboxName}' changed identity before identity verification completed.`,
         );
       }
-      return;
-    }
-    if (poll + 1 >= maxPolls || Date.now() >= deadlineMs) break;
-    deps.sleep(
-      Math.min(
-        CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_SECONDS,
-        Math.max(0, (deadlineMs - Date.now()) / 1_000),
-      ),
+      return true;
+    },
+    sleep: deps.sleep,
+  });
+  if (!published) {
+    throw new Error(
+      `Created sandbox '${input.sandboxName}' did not become visible through its owning gateway before identity verification completed.`,
     );
   }
-  throw new Error(
-    `Created sandbox '${input.sandboxName}' did not become visible through its owning gateway before identity verification completed.`,
-  );
 }
 
 function checkRecreatedSandboxReadyIdentity(
@@ -1209,20 +1198,26 @@ export function createSandboxGpuCreateAttemptRunner(
     if (!input.sandboxGpuConfig.sandboxGpuEnabled) {
       revalidatePostCreateEffect(`commit runtime readiness for sandbox '${input.sandboxName}'`);
       await runtimePatch.commitAfterReady();
+      confirmCommittedRuntimeReadiness();
+    }
+    function confirmCommittedRuntimeReadiness(): void {
       confirmManagedRuntimeCommitReadiness({
         input,
         deps,
-        sandboxId: selectManagedRuntimeCommitSandboxId(
-          managedBootstrap,
-          verifiedCreatedSandboxId,
-        ),
+        sandboxId: managedBootstrap ? verifiedCreatedSandboxId : null,
         createAttemptNonce,
       });
     }
     return {
       ok: true,
       route,
-      value: createResult ? { createResult, runtimePatch } : { runtimePatch },
+      value: createResult
+        ? {
+            createResult,
+            runtimePatch,
+            confirmManagedRuntimeCommitReadiness: confirmCommittedRuntimeReadiness,
+          }
+        : { runtimePatch, confirmManagedRuntimeCommitReadiness: confirmCommittedRuntimeReadiness },
     } as const;
   };
 
