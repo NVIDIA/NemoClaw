@@ -20,6 +20,7 @@ const RUN_URL_ROOT = `https://github.com/${REPOSITORY}/actions/runs`;
 const WORKFLOW_URL = `https://github.com/${REPOSITORY}/blob/${MAIN_BRANCH}/${WORKFLOW_PATH}`;
 const PAGE_SIZE = 100;
 const MAX_API_PAGES = 10;
+const MAX_CHANGED_PATHS = 6_000;
 const PAGINATION_ATTEMPTS = 3;
 const REQUEST_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -134,6 +135,7 @@ export function writePublicationRunOutputs(path: string, run: PublicationRun): v
 }
 
 export interface GithubRequestOptions {
+  additionalRepository?: string;
   fetchImpl?: (input: string, init: RequestInit) => Promise<Response>;
   sleep?: (milliseconds: number) => Promise<void>;
   now?: () => number;
@@ -204,6 +206,49 @@ function parseQuotedPath(raw: string, lineNumber: number): string {
     throw new Error(`base-image push path on line ${lineNumber} is not a safe literal path`);
   }
   return value;
+}
+
+/** Match one validated base-image workflow path without duplicating its glob semantics. */
+export function matchesBaseImagePushPath(pattern: string, changedPath: string): boolean {
+  if (
+    changedPath.length === 0 ||
+    changedPath.length > 4_096 ||
+    /[\0\r\n]/u.test(changedPath) ||
+    changedPath.startsWith("/") ||
+    changedPath.includes("//") ||
+    changedPath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error("base-image changed path is invalid");
+  }
+  const matcher = REVIEWED_PATH_GLOBS.get(pattern);
+  if (matcher) return matcher.test(changedPath);
+  if (
+    !SAFE_PATH_PATTERN.test(pattern) ||
+    pattern.startsWith("/") ||
+    pattern.startsWith("-") ||
+    pattern.startsWith(":") ||
+    pattern.includes("//") ||
+    pattern.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error("base-image push pattern is not reviewed");
+  }
+  return pattern === changedPath;
+}
+
+/** Determine whether reviewed base-image inputs contain a changed repository path. */
+export function baseImageInputsChanged(
+  changedFiles: readonly string[],
+  reviewedPaths: readonly string[],
+): boolean {
+  if (changedFiles.length > MAX_CHANGED_PATHS) {
+    throw new Error(`PR changed-path count exceeds ${MAX_CHANGED_PATHS}`);
+  }
+  for (const changedFile of changedFiles) {
+    if (reviewedPaths.some((reviewedPath) => matchesBaseImagePushPath(reviewedPath, changedFile))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -737,8 +782,21 @@ export async function githubRequest(
   token: string,
   options: GithubRequestOptions = {},
 ): Promise<unknown> {
-  if (!path.startsWith(`/repos/${REPOSITORY}/`) || path.includes("\r") || path.includes("\n")) {
-    throw new Error("GitHub API path must stay within the canonical NemoClaw repository");
+  const additionalRepository = options.additionalRepository;
+  if (
+    additionalRepository !== undefined &&
+    (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(additionalRepository) ||
+      additionalRepository.split("/").some((segment) => segment === "." || segment === ".."))
+  ) {
+    throw new Error("additional GitHub API repository is invalid");
+  }
+  const allowedRepositories = [REPOSITORY, ...(additionalRepository ? [additionalRepository] : [])];
+  if (
+    path.includes("\r") ||
+    path.includes("\n") ||
+    !allowedRepositories.some((repository) => path.startsWith(`/repos/${repository}/`))
+  ) {
+    throw new Error("GitHub API path must stay within an allowed repository");
   }
   const fetchImpl = options.fetchImpl ?? fetch;
   const sleep =

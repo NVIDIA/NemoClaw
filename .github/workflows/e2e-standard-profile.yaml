@@ -21,13 +21,13 @@ on:
       cli_artifact_provenance:
         required: true
         type: string
-      managed_image_catalog:
-        required: true
-        type: string
       managed_image_revision:
         required: true
         type: string
       managed_image_receipt:
+        required: true
+        type: string
+      workload_source:
         required: true
         type: string
       credential_boundary:
@@ -113,6 +113,7 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_MANAGED_IMAGE_REVISION: ${{ inputs.managed_image_revision }}
+      E2E_WORKLOAD_SOURCE: ${{ inputs.workload_source }}
       E2E_TARGET_ID: ${{ inputs.target_id }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.candidate_sha }}
@@ -399,45 +400,6 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ inputs.cli_artifact_provenance }}
-
-      - name: Materialize temporary managed-image catalog
-        if: ${{ inputs.managed_image_catalog != '' }}
-        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
-        env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-          MANAGED_IMAGE_CATALOG: ${{ inputs.managed_image_catalog }}
-          RESTORE_CLI: ${{ inputs.restore_cli && 'true' || 'false' }}
-        run: |
-          set -euo pipefail
-          catalog_path="${RUNNER_TEMP}/e2e-managed-image-catalog.json"
-          jq -e --arg revision "$CANDIDATE_SHA" '
-            type == "object" and length > 0 and
-            all(.[];
-              .source.revision == $revision and
-              (.source.release | type == "string" and length > 0) and
-              (.source.cohort | type == "string" and length > 0)
-            ) and
-            ([.[].source.release] | unique | length) == 1 and
-            ([.[].source.cohort] | unique | length) == 1
-          ' <<<"$MANAGED_IMAGE_CATALOG" >/dev/null || {
-            echo "::error::managed-image catalog source identity does not match the candidate" >&2
-            exit 1
-          }
-          if [[ "$RESTORE_CLI" == "true" ]]; then
-            candidate_release="v$(jq -r '.nemoclawVersion' dist/build-identity.json)"
-            jq -e --arg release "$candidate_release" '
-              all(.[]; .source.release == $release)
-            ' <<<"$MANAGED_IMAGE_CATALOG" >/dev/null || {
-              echo "::error::managed-image catalog release does not match the restored CLI" >&2
-              exit 1
-            }
-          fi
-          jq -c . <<<"$MANAGED_IMAGE_CATALOG" >"$catalog_path"
-          [[ -s "$catalog_path" && ! -L "$catalog_path" ]] || {
-            echo "::error::temporary managed-image catalog is invalid" >&2
-            exit 1
-          }
-          printf 'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\n' "$catalog_path" >>"$GITHUB_ENV"
 
       - name: Install reviewed cloudflared
         if: ${{ inputs.cloudflared }}
