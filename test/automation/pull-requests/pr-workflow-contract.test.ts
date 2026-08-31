@@ -508,6 +508,7 @@ describe("pull request and main workflow contracts", () => {
       ["build-typecheck", "read"],
       ["cli-test-shards", "read"],
       ["cli-tests", "read"],
+      ["compile-artifacts", "read"],
       ["installer-integration", "read"],
       ["plugin-tests", "read"],
       ["static-checks", "read"],

@@ -36,7 +36,7 @@ jobs:
       - name: Run static checks
         uses: ./.github/actions/ci-static-checks
 
-  build-typecheck:
+  compile-artifacts:
     permissions:
       contents: read
       packages: read
@@ -51,8 +51,15 @@ jobs:
       - name: Compile and verify CLI and plugin outputs
         uses: ./.github/actions/ci-compile-artifacts
 
-      - name: Run package-contract and type checks
-        uses: ./.github/actions/ci-build-typecheck
+      - name: Upload compiled test inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compiled-test-inputs
+          path: |
+            dist
+            nemoclaw/dist
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Upload compiled CLI artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -61,6 +68,43 @@ jobs:
           path: dist
           if-no-files-found: error
           retention-days: 1
+
+  build-typecheck:
+    needs: compile-artifacts
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download compiled test inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: compiled-test-inputs
+          path: .
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            nemoclaw/package-lock.json
+
+      - name: Install dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: bash .github/actions/ci-install-dependencies.sh
+
+      - name: Run package-contract and type checks
+        uses: ./.github/actions/ci-build-typecheck
 
   installer-integration:
     permissions:
@@ -159,7 +203,9 @@ jobs:
         run: npx vitest run --project integration test/agents/openclaw/openclaw-security-audit-suppressions-real.test.ts --silent=false --reporter=default
 
   cli-test-shards:
+    needs: compile-artifacts
     permissions:
+      actions: read
       contents: read
       packages: read
     runs-on: ubuntu-24.04
@@ -176,6 +222,20 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Download compiled test inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: compiled-test-inputs
+          path: .
+
+      - name: Verify compiled test inputs
+        run: |
+          test -s dist/nemoclaw.js
+          test -s dist/managed-inference/catalog.json
+          test -s nemoclaw/dist/index.js
+          test -s nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs
+          test -s nemoclaw/dist/shared/sandbox-name.cjs
 
       - name: Run CLI coverage shard
         uses: ./.github/actions/ci-cli-coverage-shard
