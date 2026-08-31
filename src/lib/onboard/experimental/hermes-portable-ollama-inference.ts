@@ -23,6 +23,7 @@ import {
 } from "../runtime-provider/host-local-inference";
 import {
   assertHermesPortableHostLocalInferencePublishedRecoveryAuthorityCurrent,
+  assertHermesPortableHostLocalInferencePublishedRecoveryTransactionCurrent,
   prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority,
   type HostLocalInferenceLifecycleSandbox,
 } from "../runtime-provider/host-local-inference-lifecycle";
@@ -154,6 +155,7 @@ export interface HermesPortableOllamaRuntimeAuthority {
   readonly bundle: RuntimeProviderBundle;
   readonly inferenceStateDir: string;
   readonly network: ReturnType<typeof capturePortableNetworkAuthority>;
+  readonly assertRetainedCurrent: () => void;
   readonly assertTransactionCurrent: () => void;
   readonly assertCurrent: () => void;
 }
@@ -170,8 +172,12 @@ export interface HermesPortableOllamaRecoveryTimingEvidence {
   readonly routeMs: number;
   readonly dependencyMs: number;
   readonly finalCurrentnessMs: number;
+  readonly retainedCurrentnessCount: number;
+  readonly fullCurrentnessCount: number;
+  readonly preparedAuthorityInspectionCount: number;
   readonly totalMs: number;
-  readonly runtimeAction: "reused" | "recovered";
+  readonly runtimeAction: "unknown" | "reused" | "recovered";
+  readonly result: "proved" | "failed";
 }
 
 export interface HermesPortableOllamaRecoveryTiming {
@@ -197,7 +203,7 @@ function writeHermesPortableOllamaRecoveryTiming(
   evidence: HermesPortableOllamaRecoveryTimingEvidence,
 ): void {
   console.log(
-    `  Hermes Portable Ollama recovery timing: entryAuthority=${String(evidence.entryAuthorityMs)}ms operatingAuthority=${String(evidence.operatingAuthorityMs)}ms registryPreparation=${String(evidence.registryPreparationMs)}ms privatePublication=${String(evidence.privatePublicationMs)}ms runtimeAuthority=${String(evidence.runtimeAuthorityMs)}ms preparedInferenceAuthority=${String(evidence.preparedInferenceAuthorityMs)}ms exactRuntimeInspection=${String(evidence.exactRuntimeInspectionMs)}ms preRouteCurrentness=${String(evidence.preRouteCurrentnessMs)}ms route=${String(evidence.routeMs)}ms dependency=${String(evidence.dependencyMs)}ms finalCurrentness=${String(evidence.finalCurrentnessMs)}ms total=${String(evidence.totalMs)}ms runtimeAction=${evidence.runtimeAction} result=proved`,
+    `  Hermes Portable Ollama recovery timing: entryAuthority=${String(evidence.entryAuthorityMs)}ms operatingAuthority=${String(evidence.operatingAuthorityMs)}ms registryPreparation=${String(evidence.registryPreparationMs)}ms privatePublication=${String(evidence.privatePublicationMs)}ms runtimeAuthority=${String(evidence.runtimeAuthorityMs)}ms preparedInferenceAuthority=${String(evidence.preparedInferenceAuthorityMs)}ms exactRuntimeInspection=${String(evidence.exactRuntimeInspectionMs)}ms preRouteCurrentness=${String(evidence.preRouteCurrentnessMs)}ms route=${String(evidence.routeMs)}ms dependency=${String(evidence.dependencyMs)}ms finalCurrentness=${String(evidence.finalCurrentnessMs)}ms retainedCurrentnessCount=${String(evidence.retainedCurrentnessCount)} fullCurrentnessCount=${String(evidence.fullCurrentnessCount)} preparedAuthorityInspectionCount=${String(evidence.preparedAuthorityInspectionCount)} total=${String(evidence.totalMs)}ms runtimeAction=${evidence.runtimeAction} result=${evidence.result}`,
   );
 }
 
@@ -216,6 +222,11 @@ function createHermesPortableOllamaRecoveryTimingRecorder(
   readonly measure: <T>(stage: HermesPortableOllamaRecoveryTimingStage, operation: () => T) => T;
   readonly finish: (
     runtimeAction: HermesPortableOllamaRecoveryTimingEvidence["runtimeAction"],
+    counts: Pick<
+      HermesPortableOllamaRecoveryTimingEvidence,
+      "retainedCurrentnessCount" | "fullCurrentnessCount" | "preparedAuthorityInspectionCount"
+    >,
+    result?: HermesPortableOllamaRecoveryTimingEvidence["result"],
   ) => void;
 } {
   const now = timing.now ?? (() => performance.now());
@@ -278,7 +289,7 @@ function createHermesPortableOllamaRecoveryTimingRecorder(
         onComplete: (durationMs: number) => recordExternalStage(stage, durationMs),
       }),
     measure: measureStage,
-    finish(runtimeAction): void {
+    finish(runtimeAction, counts, result = "proved"): void {
       if (finished) return;
       finished = true;
       try {
@@ -295,8 +306,10 @@ function createHermesPortableOllamaRecoveryTimingRecorder(
             routeMs: durations.get("route") ?? 0,
             dependencyMs: durations.get("dependency") ?? 0,
             finalCurrentnessMs: durations.get("finalCurrentness") ?? 0,
+            ...counts,
             totalMs: elapsed(startedAt, safeTimingNow(now)),
             runtimeAction,
+            result,
           }),
         );
       } catch {
@@ -322,6 +335,9 @@ function writeHermesPortablePublishedResumeTiming(
     `  Hermes Portable Ollama resume timing: start=${String(evidence.startMs)}ms managedReady=${String(evidence.managedReadyMs)}ms gpuIdentity=${String(evidence.gpuIdentityMs)}ms generatedProof=${String(evidence.generatedProofMs)}ms modelPlacement=${String(evidence.modelPlacementMs)}ms cleanupCurrentness=${String(evidence.cleanupCurrentnessMs)}ms total=${String(evidence.totalMs)}ms runtimeAction=${evidence.runtimeAction} result=proved`,
   );
 }
+
+const DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING: PodmanPublishedResumeTiming =
+  Object.freeze({ onComplete: writeHermesPortablePublishedResumeTiming });
 
 interface PreparedHermesPortableOllamaRecoveryEntry {
   readonly registryRecovery: PreparedPortableRegistryRecovery;
@@ -416,7 +432,7 @@ function prepareHermesPortableOllamaRecoveryEntry(options: {
         },
         publishedResumeTiming:
           runtimeOptions.publishedResumeTiming ??
-          Object.freeze({ onComplete: writeHermesPortablePublishedResumeTiming }),
+          DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
         onFailureEvidence: (evidence) => {
           const message = redactOnboardDiagnosticText(evidence.message);
           if (message) console.error(`  Podman inference ${evidence.phase}: ${message}`);
@@ -444,7 +460,7 @@ function prepareHermesPortableOllamaRecoveryEntry(options: {
           },
           publishedResumeTiming:
             runtimeOptions.publishedResumeTiming ??
-            Object.freeze({ onComplete: writeHermesPortablePublishedResumeTiming }),
+            DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
           onFailureEvidence: (evidence) => {
             const message = redactOnboardDiagnosticText(evidence.message);
             if (message) console.error(`  Podman inference ${evidence.phase}: ${message}`);
@@ -458,6 +474,10 @@ function prepareHermesPortableOllamaRecoveryEntry(options: {
         operationAuthority.assertTransactionCurrent();
         network.assertCurrent();
       };
+      const assertRetainedCurrent = (): void => {
+        runtimeOptions.assertForwardAuthority();
+        operationAuthority.assertTransactionCurrent();
+      };
       const assertCurrent = (): void => {
         runtimeOptions.assertForwardAuthority();
         operationAuthority.assertCurrent();
@@ -469,6 +489,7 @@ function prepareHermesPortableOllamaRecoveryEntry(options: {
         inferenceStateDir,
         network,
         operation,
+        assertRetainedCurrent,
         assertTransactionCurrent,
         assertCurrent,
       });
@@ -521,6 +542,10 @@ export function createHermesPortableOllamaRuntimeAuthority(options: {
     engines.assertTransactionCurrent();
     network.assertCurrent();
   };
+  const assertRetainedCurrent = (): void => {
+    options.publishedRecovery?.assertForwardAuthority();
+    engines.assertTransactionCurrent();
+  };
   const assertCurrent = (): void => {
     options.publishedRecovery?.assertForwardAuthority();
     revalidatePodmanInferenceAuthority(engines.hostLocalInference, authority, qualification);
@@ -551,7 +576,7 @@ export function createHermesPortableOllamaRuntimeAuthority(options: {
             },
             publishedResumeTiming:
               options.publishedResumeTiming ??
-              Object.freeze({ onComplete: writeHermesPortablePublishedResumeTiming }),
+              DEFAULT_HERMES_PORTABLE_PUBLISHED_RESUME_TIMING,
           }
         : {}),
       authorityStore: openFilePersistedEngineAuthorityStore(inferenceStateDir),
@@ -570,6 +595,7 @@ export function createHermesPortableOllamaRuntimeAuthority(options: {
     bundle,
     inferenceStateDir,
     network,
+    assertRetainedCurrent,
     assertTransactionCurrent,
     assertCurrent,
   });
@@ -665,6 +691,7 @@ interface HermesPortableOllamaRecoveryDeps {
   readonly prepareRecoveryEntry: typeof prepareHermesPortableOllamaRecoveryEntry;
   readonly prepareInferenceAuthority: typeof prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority;
   readonly assertPreparedInferenceAuthorityCurrent: typeof assertHermesPortableHostLocalInferencePublishedRecoveryAuthorityCurrent;
+  readonly assertPreparedInferenceAuthorityTransactionCurrent: typeof assertHermesPortableHostLocalInferencePublishedRecoveryTransactionCurrent;
   readonly preparePublishedAuthority: typeof prepareHermesPortableOllamaPublishedInferenceAuthority;
   readonly prepareStartup: typeof prepareHermesPortablePublishedHostLocalInferenceStartup;
   readonly recoveryTiming: HermesPortableOllamaRecoveryTiming;
@@ -677,6 +704,8 @@ const DEFAULT_RECOVERY_DEPS: HermesPortableOllamaRecoveryDeps = Object.freeze({
   prepareInferenceAuthority: prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority,
   assertPreparedInferenceAuthorityCurrent:
     assertHermesPortableHostLocalInferencePublishedRecoveryAuthorityCurrent,
+  assertPreparedInferenceAuthorityTransactionCurrent:
+    assertHermesPortableHostLocalInferencePublishedRecoveryTransactionCurrent,
   preparePublishedAuthority: prepareHermesPortableOllamaPublishedInferenceAuthority,
   prepareStartup: prepareHermesPortablePublishedHostLocalInferenceStartup,
   recoveryTiming: Object.freeze({ onComplete: writeHermesPortableOllamaRecoveryTiming }),
@@ -929,62 +958,98 @@ export function recoverHermesPortableOllamaInference(
   const recoveryTiming = createHermesPortableOllamaRecoveryTimingRecorder(deps.recoveryTiming);
   const env = input.env ?? process.env;
   const stateDir = input.stateDir ?? defaultPortableDemoStateDir(env);
-  input.assertCallerCurrent?.();
-  const snapshot = deps.readReceipt(input.sandboxName, stateDir);
-  if (!snapshot || snapshot.receipt.phase !== "active" || !snapshot.successor) {
-    failRecovery("active schema-6 lifecycle authority is missing");
-  }
-  const operating = recoveryTiming.measureEntry("operatingAuthority", () =>
-    deps.qualifyOperatingAuthority(
-      snapshot as typeof snapshot & { readonly receipt: HermesPortableConfiguredReceipt },
-    ),
-  );
-  operating.assertTransactionCurrent();
-  if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
-    failRecovery("sandbox registry authority changed before recovery");
-  }
-  const serializedRegistryReceipt = input.entry.hostLocalInferenceReceipt;
-  if (typeof serializedRegistryReceipt !== "string") {
-    failRecovery("sandbox registry host-local inference receipt is missing");
-  }
-  const receipt = parseHostLocalInferenceReceipt(serializedRegistryReceipt);
-  requirePublishedOllamaRecoveryReceipt(receipt);
-  const providerEntry = inferenceLifecycleRow(input.entry, receipt.providerId);
-  const assertCallerCurrent = (): void => {
-    input.assertCallerCurrent?.();
+  let runtimeAction: HermesPortableOllamaRecoveryTimingEvidence["runtimeAction"] = "unknown";
+  let retainedCurrentnessCount = 0;
+  let fullCurrentnessCount = 0;
+  let preparedAuthorityInspectionCount = 0;
+  const timingCounts = () =>
+    Object.freeze({
+      retainedCurrentnessCount,
+      fullCurrentnessCount,
+      preparedAuthorityInspectionCount,
+    });
+  const entry = (() => {
     try {
-      operating.assertCurrent();
-    } catch {
-      failRecovery("schema-6 operating authority changed during recovery");
-    }
-    if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
-      failRecovery("sandbox registry authority changed during recovery");
-    }
-    input.assertCallerCurrent?.();
-  };
-  const assertCallerTransactionCurrent = (): void => {
-    input.assertCallerTransactionCurrent?.();
-    try {
+      input.assertCallerCurrent?.();
+      const snapshot = deps.readReceipt(input.sandboxName, stateDir);
+      if (!snapshot || snapshot.receipt.phase !== "active" || !snapshot.successor) {
+        failRecovery("active schema-6 lifecycle authority is missing");
+      }
+      const operating = recoveryTiming.measureEntry("operatingAuthority", () =>
+        deps.qualifyOperatingAuthority(
+          snapshot as typeof snapshot & { readonly receipt: HermesPortableConfiguredReceipt },
+        ),
+      );
       operating.assertTransactionCurrent();
-    } catch {
-      failRecovery("schema-6 operating authority changed during recovery");
-    }
-    if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
-      failRecovery("sandbox registry authority changed during recovery");
-    }
-    input.assertCallerTransactionCurrent?.();
-  };
-  const recoveryEntry = recoveryTiming.measureEntry("registryPreparation", () =>
-    atOllamaRecoveryPhase("REGISTRY_PREPARATION_POSTCONDITION", () =>
-      deps.prepareRecoveryEntry({
-        receipt: operating.receipt,
-        inferenceReceipt: receipt,
-        stateDir,
-        env,
+      if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
+        failRecovery("sandbox registry authority changed before recovery");
+      }
+      const serializedRegistryReceipt = input.entry.hostLocalInferenceReceipt;
+      if (typeof serializedRegistryReceipt !== "string") {
+        failRecovery("sandbox registry host-local inference receipt is missing");
+      }
+      const receipt = parseHostLocalInferenceReceipt(serializedRegistryReceipt);
+      requirePublishedOllamaRecoveryReceipt(receipt);
+      const providerEntry = inferenceLifecycleRow(input.entry, receipt.providerId);
+      const assertCallerCurrent = (): void => {
+        input.assertCallerCurrent?.();
+        try {
+          operating.assertCurrent();
+        } catch {
+          failRecovery("schema-6 operating authority changed during recovery");
+        }
+        if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
+          failRecovery("sandbox registry authority changed during recovery");
+        }
+        input.assertCallerCurrent?.();
+      };
+      const assertCallerTransactionCurrent = (): void => {
+        input.assertCallerTransactionCurrent?.();
+        try {
+          operating.assertTransactionCurrent();
+        } catch {
+          failRecovery("schema-6 operating authority changed during recovery");
+        }
+        if (!isDeepStrictEqual(input.readRegistry(input.sandboxName), input.entry)) {
+          failRecovery("sandbox registry authority changed during recovery");
+        }
+        input.assertCallerTransactionCurrent?.();
+      };
+      const recoveryEntry = recoveryTiming.measureEntry("registryPreparation", () =>
+        atOllamaRecoveryPhase("REGISTRY_PREPARATION_POSTCONDITION", () =>
+          deps.prepareRecoveryEntry({
+            receipt: operating.receipt,
+            inferenceReceipt: receipt,
+            stateDir,
+            env,
+            assertCallerTransactionCurrent,
+          }),
+        ),
+      );
+      return {
+        assertCallerCurrent,
         assertCallerTransactionCurrent,
-      }),
-    ),
-  );
+        operating,
+        providerEntry,
+        receipt,
+        recoveryEntry,
+        serializedRegistryReceipt,
+      };
+    } catch (error) {
+      recoveryTiming.finishEntryAuthority();
+      recoveryTiming.finish(runtimeAction, timingCounts(), "failed");
+      throw error;
+    }
+  })();
+  const {
+    assertCallerCurrent,
+    assertCallerTransactionCurrent,
+    operating,
+    providerEntry,
+    receipt,
+    recoveryEntry,
+    serializedRegistryReceipt,
+  } = entry;
   const { registryRecovery } = recoveryEntry;
   let ollamaStateRestored = true;
   try {
@@ -1053,12 +1118,25 @@ export function recoverHermesPortableOllamaInference(
           });
         }),
     );
+    preparedAuthorityInspectionCount = 1;
+    const assertPreparedAuthorityTransactionCurrent = (): void => {
+      const currentEntry = input.readRegistry(input.sandboxName);
+      if (!currentEntry || !isDeepStrictEqual(currentEntry, input.entry)) {
+        failRecovery("sandbox registry authority changed during recovery");
+      }
+      deps.assertPreparedInferenceAuthorityTransactionCurrent(
+        runtimeAuthority.bundle,
+        inferenceLifecycleRow(currentEntry, runtimeAuthority.bundle.identity.id),
+        preparedAuthority,
+      );
+    };
     const assertPreparedAuthorityCurrent = (expectedRunning: boolean): void => {
       const currentEntry = input.readRegistry(input.sandboxName);
       if (!currentEntry || !isDeepStrictEqual(currentEntry, input.entry)) {
         failRecovery("sandbox registry authority changed during recovery");
       }
       try {
+        preparedAuthorityInspectionCount += 1;
         const current = deps.assertPreparedInferenceAuthorityCurrent(
           runtimeAuthority.bundle,
           inferenceLifecycleRow(currentEntry, runtimeAuthority.bundle.identity.id),
@@ -1071,28 +1149,24 @@ export function recoverHermesPortableOllamaInference(
         failRecovery("host-local inference authority changed during recovery");
       }
     };
-    const requireTransactionCurrent = (expectedRunning: boolean): void => {
+    const requireRetainedCurrent = (): void => {
+      retainedCurrentnessCount += 1;
       assertCallerTransactionCurrent();
-      registryRecovery.assertTransactionCurrent();
-      runtimeAuthority.assertTransactionCurrent();
+      registryRecovery.assertRetainedCurrent();
+      runtimeAuthority.assertRetainedCurrent();
       published.assertTransactionCurrent();
-      assertPreparedAuthorityCurrent(expectedRunning);
+      assertPreparedAuthorityTransactionCurrent();
       assertCallerTransactionCurrent();
     };
     const requireCompletionCurrent = (): void => {
-      assertCallerTransactionCurrent();
-      registryRecovery.assertTransactionCurrent();
-      runtimeAuthority.assertTransactionCurrent();
-      published.assertTransactionCurrent();
-      assertCallerTransactionCurrent();
+      fullCurrentnessCount += 1;
+      requireRetainedCurrent();
       assertCallerCurrent();
+      registryRecovery.assertCurrent();
       runtimeAuthority.assertCurrent();
       published.assertCurrent();
       assertPreparedAuthorityCurrent(true);
-      registryRecovery.assertTransactionCurrent();
-      runtimeAuthority.assertTransactionCurrent();
-      published.assertTransactionCurrent();
-      assertCallerTransactionCurrent();
+      requireRetainedCurrent();
     };
     const verifyFinalRoute = (): void => {
       const verified = input.verifyRoute();
@@ -1113,6 +1187,7 @@ export function recoverHermesPortableOllamaInference(
       );
       return current;
     });
+    runtimeAction = inspected.running ? "reused" : "recovered";
     recoveryTiming.finishEntryAuthority();
     if (inspected.running) {
       let preparedDependency: HermesPortableOllamaPreparedProbeDependency | null = null;
@@ -1127,7 +1202,7 @@ export function recoverHermesPortableOllamaInference(
             validatePublishedResume(receipt),
             "running runtime validation changed receipt",
           );
-          requireTransactionCurrent(true);
+          requireRetainedCurrent();
         });
         recoveryTiming.measure("route", verifyFinalRoute);
         preparedDependency = recoveryTiming.measure(
@@ -1137,7 +1212,7 @@ export function recoverHermesPortableOllamaInference(
         recoveryTiming.measure("finalCurrentness", requireCompletionCurrent);
         registryRecovery.release();
         preparedDependency?.release();
-        recoveryTiming.finish("reused");
+        recoveryTiming.finish("reused", timingCounts());
         return "reused";
       } catch (error) {
         if (preparedDependency) {
@@ -1156,7 +1231,7 @@ export function recoverHermesPortableOllamaInference(
     let preparedDependency: HermesPortableOllamaPreparedProbeDependency | null = null;
     try {
       prepared = recoveryTiming.measure("preRouteCurrentness", () => {
-        requireTransactionCurrent(false);
+        requireRetainedCurrent();
         return deps.prepareStartup(
           operation,
           createPublishedResumeRequest(receipt, published.receiptWriter),
@@ -1197,7 +1272,7 @@ export function recoverHermesPortableOllamaInference(
           prepared.validateBeforeCommit(),
           "pre-commit recovery validation changed receipt",
         );
-        requireTransactionCurrent(true);
+        requireRetainedCurrent();
       });
       recoveryTiming.measure("route", verifyFinalRoute);
       preparedDependency = recoveryTiming.measure(
@@ -1218,7 +1293,7 @@ export function recoverHermesPortableOllamaInference(
       ollamaStateRestored = true;
       registryRecovery.release();
       preparedDependency?.release();
-      recoveryTiming.finish("recovered");
+      recoveryTiming.finish("recovered", timingCounts());
       return "recovered";
     } catch (error) {
       let dependencyRollbackError: unknown = null;
@@ -1242,22 +1317,27 @@ export function recoverHermesPortableOllamaInference(
       throw error;
     }
   } catch (error) {
-    if (!ollamaStateRestored) {
-      failRecovery(
-        "recovery failed before dependent runtime restoration was proved",
-        "runtime-restoration-unproved",
-      );
-    }
     try {
-      registryRecovery.rollback();
-    } catch {
-      failRecovery(
-        "recovery failed and exact stopped-registry restoration was not proved",
-        "registry-restoration-unproved",
-      );
+      if (!ollamaStateRestored) {
+        failRecovery(
+          "recovery failed before dependent runtime restoration was proved",
+          "runtime-restoration-unproved",
+        );
+      }
+      try {
+        registryRecovery.rollback();
+      } catch {
+        failRecovery(
+          "recovery failed and exact stopped-registry restoration was not proved",
+          "registry-restoration-unproved",
+        );
+      }
+      rethrowNestedHermesPortableRecoveryError(error);
+      throw error;
+    } finally {
+      recoveryTiming.finishEntryAuthority();
+      recoveryTiming.finish(runtimeAction, timingCounts(), "failed");
     }
-    rethrowNestedHermesPortableRecoveryError(error);
-    throw error;
   }
 }
 
