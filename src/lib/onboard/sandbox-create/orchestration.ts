@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { createHermesCredentialEnvReconciliationRuntime } from "../../actions/sandbox/runtime/hermes-lifecycle";
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
 import { HERMES_PORTABLE_OPENSHELL_VERSION } from "../../adapters/openshell/resolve-shared";
+import { createCliOpenShellSandboxObserverFromRunner } from "../../adapters/openshell/sandbox-observer-cli";
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-identity";
 import type { AgentDefinition } from "../../agent/defs";
 import type { WebSearchConfig } from "../../inference/web-search";
@@ -2565,6 +2566,9 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             {
               runOpenshell: hermesPortableReadyRunner ?? runOpenshell,
               runCaptureOpenshell: hermesPortableReadyCapture ?? runCaptureOpenshell,
+              sandboxObserver: createCliOpenShellSandboxObserverFromRunner(
+                hermesPortableReadyRunner ?? runOpenshell,
+              ),
               sleep: sleepSeconds,
               openshellArgv,
               verifyDirectSandboxGpu: createGpuVerifier,
