@@ -165,7 +165,6 @@ describe("Hermes accepted replacement recovery", () => {
         preservedEnv: [],
         rebuildPolicyHandoff: { file: "current.yaml", sha256: "a".repeat(64) },
       },
-      backupWasForceSkipped: false,
       policySourcePath,
     });
     phaseMocks.openRecreateJournal.mockReturnValue({
@@ -319,7 +318,6 @@ describe("Hermes accepted replacement recovery", () => {
     };
     phaseMocks.runBackup.mockReturnValue({
       backupManifest: currentManifest,
-      backupWasForceSkipped: false,
       policySourcePath,
     });
     phaseMocks.findRecoveryBackup.mockReturnValue(recoveryManifest);

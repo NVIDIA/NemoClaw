@@ -250,7 +250,6 @@ async function rebuildSandboxUnlocked(
         preparedRecoveryManifest: recoveryManifest,
         messagingPlan,
         webSearchConfig: durableConfig.webSearchConfig,
-        force: normalized.force,
         log,
         bail,
         relockShieldsIfNeeded,
@@ -493,7 +492,6 @@ async function rebuildSandboxUnlocked(
             ? { mcpRuntimeSelection: recreateJournal.runtimeSelection }
             : {}),
           restoreSucceeded: restored.restoreSucceeded,
-          backupWasForceSkipped: false,
           staleRecovery: false,
           recoveryRecreate: true,
           preparedBackupRecovery: true,
@@ -711,7 +709,6 @@ async function rebuildSandboxUnlocked(
         mcpRuntimeSelection: mcpPreparation.runtimeSelection,
         restoreSucceeded: restored.restoreSucceeded,
         hermesCronRestoreIdentity,
-        backupWasForceSkipped: backup.backupWasForceSkipped,
         staleRecovery,
         recoveryRecreate,
         preparedBackupRecovery,

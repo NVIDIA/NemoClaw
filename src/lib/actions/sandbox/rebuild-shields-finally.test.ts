@@ -140,7 +140,6 @@ describe("rebuild shields relock guard", () => {
     };
     phaseMocks.runBackup.mockReturnValue({
       backupManifest,
-      backupWasForceSkipped: false,
       policySourcePath,
     });
     phaseMocks.runDestroy.mockImplementation(
@@ -166,7 +165,6 @@ describe("rebuild shields relock guard", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     phaseMocks.runBackup.mockReturnValue({
       backupManifest: null,
-      backupWasForceSkipped: false,
       policySourcePath,
     });
     phaseMocks.runDestroy.mockResolvedValue(null);
@@ -186,7 +184,6 @@ describe("rebuild shields relock guard", () => {
   it("removes the live-policy handoff when sandbox recreation fails", async () => {
     phaseMocks.runBackup.mockReturnValue({
       backupManifest: null,
-      backupWasForceSkipped: false,
       policySourcePath,
     });
     phaseMocks.runDestroy.mockResolvedValue({ entries: [], removalReceipt: null });

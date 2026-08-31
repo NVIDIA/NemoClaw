@@ -86,7 +86,6 @@ export interface RebuildPostRestorePhaseInput {
   mcpRuntimeSelection?: McpRebuildPreparation["runtimeSelection"];
   restoreSucceeded: boolean;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
-  backupWasForceSkipped: boolean;
   staleRecovery: boolean;
   recoveryRecreate: boolean;
   preparedBackupRecovery: boolean;
@@ -95,15 +94,6 @@ export interface RebuildPostRestorePhaseInput {
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   log: RebuildLog;
   bail: RebuildBail;
-}
-
-interface SuccessfulRebuildSummaryInput {
-  sandboxName: string;
-  backupManifest: RebuildBackupManifest;
-  backupWasForceSkipped: boolean;
-  staleRecovery: boolean;
-  rebuiltAgentName: string;
-  expectedVersion: string | null;
 }
 
 function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: string): void {
@@ -136,7 +126,6 @@ export async function runRebuildPostRestorePhase(
     mcpRuntimeSelection,
     restoreSucceeded,
     hermesCronRestoreIdentity,
-    backupWasForceSkipped,
     staleRecovery,
     recoveryRecreate,
     preparedBackupRecovery,
