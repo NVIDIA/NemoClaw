@@ -308,14 +308,28 @@ describe("pollWechatQrStatus", () => {
     expect(debugEvents.join("\n")).not.toContain("idc-37.weixin.qq.com");
   });
 
-  it("treats 5xx gateway hiccups (e.g. Cloudflare 524) as 'wait'", async () => {
-    const { fetch } = makeFetch(() => ({ ok: false, status: 524, body: "" }));
+  it("cancels 5xx response bodies before treating them as 'wait'", async () => {
+    let cancelRequested = false;
+    const fetch: FetchLike = async () => ({
+      ok: false,
+      status: 524,
+      body: new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelRequested = true;
+          return new Promise<void>(() => {});
+        },
+      }),
+      text: async () => {
+        throw new Error("5xx response body must not be read");
+      },
+    });
     const result = await pollWechatQrStatus({
       baseUrl: "https://ilinkai.weixin.qq.com",
       qrcode: "qrcode-cookie",
       fetch,
     });
     expect(result.status).toBe("wait");
+    expect(cancelRequested).toBe(true);
   });
 
   it("surfaces 4xx responses without forwarding their body", async () => {

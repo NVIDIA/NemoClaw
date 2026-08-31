@@ -133,6 +133,12 @@ function requestBodyReadCancellation(cancel?: () => Promise<void>): void {
   }
 }
 
+function cancelUnreadResponseBody(response: FetchResponseLike): void {
+  const body = response.body;
+  if (!body) return;
+  requestBodyReadCancellation(() => body.cancel());
+}
+
 function rejectBodyReadOnAbort<T>(
   pending: Promise<T>,
   signal: AbortSignal,
@@ -276,6 +282,7 @@ export async function fetchWechatQrSession(
       signal: controller.signal,
     });
     if (!response.ok) {
+      cancelUnreadResponseBody(response);
       throw new WechatQrError(
         "http",
         `WeChat QR init returned ${response.status}`,
@@ -358,6 +365,7 @@ export async function pollWechatQrStatus(params: {
       });
       debug(`poll response ← status=${response.status}`);
       if (!response.ok) {
+        cancelUnreadResponseBody(response);
         // 5xx gateway hiccups also fall through as `wait` — Cloudflare 524s
         // are routine on the iLink long-poll path.
         if (response.status >= 500) {
