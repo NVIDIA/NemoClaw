@@ -569,6 +569,8 @@
       "live": "test/e2e/live/messaging-providers.test.ts",
       "liveSources": [
         "test/e2e/live/messaging-providers-helpers.ts",
+        "test/e2e/live/messaging-providers-managed-npm-project-discovery.ts",
+        "test/e2e/live/messaging-providers-slack-runtime-proof.ts",
         "test/e2e/live/messaging-providers-wechat-runtime-proof.ts"
       ],
       "fast": [
