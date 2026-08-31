@@ -23,6 +23,7 @@ const MISSING_MANAGED_SUPERVISOR = {
   stdout: "",
   stderr: "SUPERVISOR_NOT_RUNNING",
 } as const;
+const DEFAULT_FORWARD_SCOPE = ["--gateway", "nemoclaw"];
 function pinnedIdentityRefusal(sandboxName: string) {
   return {
     status: 1,
@@ -543,7 +544,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     const captureOpenshell = vi.spyOn(openshellRuntime, "captureOpenshell");
     captureOpenshell.mockImplementation((args) => {
       const responses = {
-        "forward list": () => ({
+        "forward list --gateway nemoclaw": () => ({
           status: 0,
           output: forwardStarted
             ? "SANDBOX  BIND  PORT  PID  STATUS\nlegacy-handoff-box  127.0.0.1  18789  12345  running"
@@ -564,7 +565,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       );
     });
     const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
-      forwardStarted ||= args.join(" ") === "forward start --background 18789 legacy-handoff-box";
+      forwardStarted ||= args[0] === "forward" && args[1] === "start";
       return { status: 0 } as never;
     });
     const result = checkAndRecoverSandboxProcesses("legacy-handoff-box", {
@@ -597,7 +598,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       runOpenshell.mock.invocationCallOrder[0],
     );
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "18789", "legacy-handoff-box"],
+      ["forward", "start", "--background", "18789", "legacy-handoff-box", ...DEFAULT_FORWARD_SCOPE],
       expect.objectContaining({ ignoreError: true }),
     );
     expect(runCaptureOpenshell).toHaveBeenCalledWith(
@@ -999,7 +1000,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
             stdout: "",
             stderr: "",
           }),
-          "forward list": () => ({
+          "forward list --gateway nemoclaw": () => ({
             status: 0,
             output: forwardStarted
               ? "SANDBOX  BIND  PORT  PID  STATUS\nbusy-recovered-box  127.0.0.1  18789  12345  running"
@@ -1016,7 +1017,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         );
       });
     const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
-      forwardStarted ||= args.join(" ") === "forward start --background 18789 busy-recovered-box";
+      forwardStarted ||= args[0] === "forward" && args[1] === "start";
       return { status: 0 } as never;
     });
 
@@ -1041,7 +1042,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     );
     expect(finalize).toHaveBeenCalledWith(true);
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "18789", "busy-recovered-box"],
+      ["forward", "start", "--background", "18789", "busy-recovered-box", ...DEFAULT_FORWARD_SCOPE],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -1431,10 +1432,10 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(probeTiming.setForwardAction).toHaveBeenCalledOnce();
     expect(probeTiming.setForwardAction).toHaveBeenCalledWith("failed");
     expect(runOpenshell).toHaveBeenCalledOnce();
-    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "drifted-box"], {
-      ignoreError: true,
-      stdio: "ignore",
-    });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "stop", "18789", "drifted-box", ...DEFAULT_FORWARD_SCOPE],
+      expect.objectContaining({ ignoreError: true, stdio: "ignore" }),
+    );
   });
 
   it("reports GATEWAY_UNSAFE_CONFIG_PATH after a transient identity refusal clears (#9364)", () => {

@@ -366,7 +366,7 @@ describe("nemoclaw <name> recover", () => {
       const startIdx = calls.findIndex((line) => line.startsWith("forward start "));
       const postStartListCalls = calls
         .slice(startIdx + 1)
-        .filter((line) => line === "forward list");
+        .filter((line) => line === "forward list --gateway nemoclaw");
       expect(startIdx).toBeGreaterThanOrEqual(0);
       expect(postStartListCalls.length).toBeGreaterThanOrEqual(3);
     },
