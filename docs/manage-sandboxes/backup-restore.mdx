@@ -125,7 +125,7 @@ $$nemoclaw my-assistant snapshot create --name before-upgrade
 When a directory or state file cannot be captured, `snapshot create` reports the failed items, attempts to remove the incomplete snapshot, and exits nonzero.
 When cleanup succeeds, the command removes the incomplete snapshot.
 When cleanup fails, the command reports the retained snapshot path.
-In either case, the incomplete snapshot remains excluded from `snapshot list` and restore selection.
+The retained incomplete snapshot remains excluded from `snapshot list` and restore selection.
 The retained incomplete snapshot may contain unsanitized credentials.
 Do not restore, copy, share, or edit it.
 Repair access to the original sandbox state, then rerun `snapshot create`.
