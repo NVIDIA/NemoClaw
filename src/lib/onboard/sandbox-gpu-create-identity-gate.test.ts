@@ -111,6 +111,31 @@ function noGpuInput() {
   return input;
 }
 
+function attachManagedBootstrap(
+  input: ReturnType<typeof noGpuInput>,
+  patch: ReturnType<typeof createGpuPatchFixture>,
+): void {
+  input.managedBootstrap = {
+    bootstrapIdentity: "b".repeat(64),
+    stateRoot: "/tmp/nemoclaw-managed-bootstrap",
+    runtimeProvider: {
+      identity: { id: "mxc" },
+      bootstrap: {
+        createOnboardRouting: () => ({ nativeFallbackHasCleanBaseline: false }),
+        createLifecycle: (options: { launchArgv: readonly string[] }) => ({
+          launchArgv: options.launchArgv,
+          patch,
+          recoverUnfinished: async () => null,
+          prepareNetwork: async () => undefined,
+          runCreate: async () => {
+            throw new Error("resumed create must not launch");
+          },
+        }),
+      },
+    },
+  } as never;
+}
+
 function refuseEffectStartingWith(prefix: string): (operation: string) => void {
   return (operation) => {
     expect(operation, "checkpoint changed").not.toMatch(new RegExp(`^${prefix}`, "u"));
@@ -121,6 +146,97 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("created sandbox identity gate", () => {
+  it("reconfirms exact managed sandbox readiness after the runtime commit", async () => {
+    const sandboxId = "alpha-sandbox-id";
+    const input = noGpuInput();
+    input.resumeVerifiedCreate = {
+      route: "none",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+      createAttemptNonce: "a".repeat(62),
+    };
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    attachManagedBootstrap(input, patch);
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runOpenshell)
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr:
+          "Error:   × code: 'The system is not in a state required for the operation's\n" +
+          '  │ execution\', message: "sandbox is not ready"\n',
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`,
+        stderr: "",
+      })
+      .mockReturnValue({ status: 0, stdout: "", stderr: "" });
+    mocks.waitForCreatedSandboxReadyWithTrace
+      .mockReturnValueOnce({ ready: true, reason: "ready", failurePhase: null })
+      .mockImplementationOnce((options) => {
+        expect(patch.commitAfterReady).toHaveBeenCalledOnce();
+        expect(options.checkReadyIdentity?.()).toBe("not_ready");
+        expect(options.checkReadyIdentity?.()).toBe("ready");
+        return { ready: true, reason: "ready", failurePhase: null };
+      });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      origin: "resumed",
+      route: "none",
+    });
+
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledTimes(2);
+    expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
+  it("retains exact recovery when committed managed readiness does not return", async () => {
+    const sandboxId = "alpha-sandbox-id";
+    const sandboxIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
+    const input = noGpuInput();
+    input.resumeVerifiedCreate = {
+      route: "none",
+      liveIdentityFingerprint: sandboxIdentityFingerprint,
+      createAttemptNonce: "a".repeat(62),
+    };
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    attachManagedBootstrap(input, patch);
+    const deps = createGpuFlowDeps(sandboxId);
+    mocks.waitForCreatedSandboxReadyWithTrace
+      .mockReturnValueOnce({ ready: true, reason: "ready", failurePhase: null })
+      .mockReturnValue({ ready: false, reason: "timeout", failurePhase: null });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not return to Ready after its managed runtime commit",
+    );
+
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("did not return to executable Ready state"),
+      sandboxIdentityFingerprint,
+      "a".repeat(62),
+    );
+    expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
+      backupPath: null,
+    });
+  });
+
   it("resumes the exact verified sandbox without issuing another create (#9833)", async () => {
     const events: string[] = [];
     const sandboxId = "alpha-sandbox-id";
