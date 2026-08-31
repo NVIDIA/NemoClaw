@@ -1256,7 +1256,7 @@ case "${NEMOCLAW_AGENT:-openclaw}" in
 esac
 
 RUNTIME_REQUIREMENT_MSG="${_CLI_DISPLAY} requires Node.js >=${MIN_NODE_VERSION} and npm >=${MIN_NPM_MAJOR}."
-NEMOCLAW_SHIM_DIR="${HOME}/.local/bin"
+NEMOCLAW_SHIM_DIR="${HOME%/}/.local/bin"
 NEMOCLAW_READY_NOW=false
 NEMOCLAW_RECOVERY_PROFILE=""
 NEMOCLAW_RECOVERY_EXPORT_DIR=""
@@ -1474,7 +1474,7 @@ observed_macos_openshell_install_method() {
 }
 
 prefer_user_local_openshell() {
-  local local_bin="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  local local_bin="${XDG_BIN_HOME:-${HOME%/}/.local/bin}"
   local openshell_bin="${local_bin}/openshell"
   local gateway_bin="${local_bin}/openshell-gateway"
   if [[ "${1:-}" == "verified-install" ]]; then
@@ -1525,7 +1525,7 @@ resolve_openshell_gateway_bin_for_user_service() {
       | sed 's/^path=//'
   )
   [[ "${#gateway_bins[@]}" -eq 1 ]] || return 1
-  gateway_bin="${gateway_bins[0]}"
+  gateway_bin="$(collapse_duplicate_slashes "${gateway_bins[0]}")"
   [[ "$gateway_bin" == /*/openshell-gateway && -x "$gateway_bin" ]] || return 1
   printf '%s\n' "$gateway_bin"
 }
@@ -1693,25 +1693,37 @@ macos_openshell_homebrew_gateway_service_installed() {
     | grep -Eq '"tap"[[:space:]]*:[[:space:]]*"nvidia/openshell"'
 }
 
+# Collapse redundant slashes in a POSIX path. Kernel path lookup treats
+# /home/user//.local/bin the same as /home/user/.local/bin, but bash string
+# equality and case patterns do not (#10541).
+collapse_duplicate_slashes() {
+  local value="${1:-}"
+  while [[ "$value" == *//* ]]; do
+    value="${value//\/\//\/}"
+  done
+  printf '%s\n' "$value"
+}
+
 resolve_openshell_gateway_bin_for_service() {
   local gateway_bin="${NEMOCLAW_OPENSHELL_GATEWAY_BIN:-}"
   if [[ -n "$gateway_bin" && -x "$gateway_bin" ]]; then
-    printf "%s\n" "$gateway_bin"
+    collapse_duplicate_slashes "$gateway_bin"
     return 0
   fi
 
   gateway_bin="$(command -v openshell-gateway 2>/dev/null || true)"
   [[ -n "$gateway_bin" && -x "$gateway_bin" ]] || return 1
-  printf "%s\n" "$gateway_bin"
+  collapse_duplicate_slashes "$gateway_bin"
 }
 
 trusted_openshell_gateway_bin_for_service() {
-  local gateway_bin="${1:-}"
-  local user_bin_home="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  local gateway_bin user_bin_home
+  gateway_bin="$(collapse_duplicate_slashes "${1:-}")"
+  user_bin_home="${XDG_BIN_HOME:-${HOME%/}/.local/bin}"
   if [[ "$user_bin_home" != /* ]]; then
-    user_bin_home="${HOME}/.local/bin"
+    user_bin_home="${HOME%/}/.local/bin"
   fi
-  user_bin_home="${user_bin_home%/}"
+  user_bin_home="$(collapse_duplicate_slashes "${user_bin_home%/}")"
   case "$gateway_bin" in
     "${user_bin_home}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
       return 0
@@ -1729,11 +1741,15 @@ is_nemoclaw_openshell_gateway_user_service() {
 }
 
 openshell_user_config_home() {
+  local config_home
   if [[ -n "${XDG_CONFIG_HOME:-}" && "$XDG_CONFIG_HOME" == /* ]]; then
-    printf '%s\n' "$XDG_CONFIG_HOME"
+    config_home="$XDG_CONFIG_HOME"
   else
-    printf '%s\n' "${HOME}/.config"
+    config_home="${HOME%/}/.config"
   fi
+  config_home="$(collapse_duplicate_slashes "$config_home")"
+  [[ "$config_home" == "/" ]] || config_home="${config_home%/}"
+  printf '%s\n' "$config_home"
 }
 
 enabled_openshell_gateway_user_service_activation_path() {
@@ -1745,11 +1761,12 @@ enabled_openshell_gateway_user_service_activation_path() {
     return 2
   fi
   user_config_home="$(openshell_user_config_home)"
-  user_data_home="${XDG_DATA_HOME:-${HOME}/.local/share}"
+  user_data_home="${XDG_DATA_HOME:-${HOME%/}/.local/share}"
   if [[ "$user_data_home" != /* ]]; then
     printf '%s\n' "$user_data_home"
     return 2
   fi
+  user_data_home="$(collapse_duplicate_slashes "$user_data_home")"
   unit_roots+=(
     "${user_config_home}/systemd/user"
     "${user_config_home}/systemd/user.control"
@@ -1859,6 +1876,7 @@ install_nemoclaw_openshell_gateway_user_service() {
     warn "OpenShell gateway binary was not found; the default managed user service was not staged."
     return 0
   fi
+  gateway_bin="$(collapse_duplicate_slashes "$gateway_bin")"
 
   case "$gateway_bin" in
     *[[:space:]]*)
@@ -3298,12 +3316,14 @@ trusted_macos_openshell_gateway_process() {
     return 1
   fi
 
-  user_bin_home="${XDG_BIN_HOME:-${HOME}/.local/bin}"
+  user_bin_home="${XDG_BIN_HOME:-${HOME%/}/.local/bin}"
   if [ "${user_bin_home#/}" = "$user_bin_home" ]; then
-    user_bin_home="${HOME}/.local/bin"
+    user_bin_home="${HOME%/}/.local/bin"
   fi
+  user_bin_home="$(collapse_duplicate_slashes "${user_bin_home%/}")"
+  gateway_exe="$(collapse_duplicate_slashes "$gateway_exe")"
   case "$gateway_exe" in
-    "${user_bin_home%/}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
+    "${user_bin_home}/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
       printf '%s\n' "$process_generation_before"
       return 0
       ;;
@@ -3334,10 +3354,11 @@ stop_legacy_openshell_gateway_process() {
   if [ -n "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-}" ]; then
     runtime_dir="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR}"
   elif [ "$gateway_port" -eq 8080 ]; then
-    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway"
+    runtime_dir="${HOME%/}/.local/state/nemoclaw/openshell-docker-gateway"
   else
-    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway-${gateway_port}"
+    runtime_dir="${HOME%/}/.local/state/nemoclaw/openshell-docker-gateway-${gateway_port}"
   fi
+  runtime_dir="$(collapse_duplicate_slashes "$runtime_dir")"
   pid_file="${runtime_dir}/openshell-gateway.pid"
   [ -f "$pid_file" ] || return 1
   if [ -L "$pid_file" ] || ! [ -O "$pid_file" ]; then
@@ -3478,7 +3499,7 @@ stop_nemoclaw_openshell_gateway_user_service() {
 
   fragment_path="$(systemctl --user show "$service_name" --property=FragmentPath --value 2>/dev/null)" \
     || return 1
-  [ "$fragment_path" = "$service_path" ] \
+  [ -n "$fragment_path" ] && [ "$fragment_path" -ef "$service_path" ] \
     || error "Refusing to retire the OpenShell gateway because the active user service does not match ${service_path}."
   gateway_bin="$(resolve_openshell_gateway_bin_for_user_service "$service_name")" \
     || return 1

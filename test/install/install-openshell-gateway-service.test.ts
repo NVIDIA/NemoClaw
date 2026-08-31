@@ -187,6 +187,19 @@ describe("install.sh OpenShell gateway service", () => {
     expect(fs.existsSync(path.join(home, ".config", "systemd", "user"))).toBe(false);
   });
 
+  it("stages a user-local binary whose resolved path has duplicate slashes (#10541)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const doubled = `${home}//.local/bin/openshell-gateway`;
+
+    const result = stageService(home, doubled);
+    const unit = fs.readFileSync(servicePath(home), "utf-8");
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(unit).toContain(`ExecStart=${path.join(home, ".local", "bin", "openshell-gateway")}`);
+    expect(unit).not.toContain(`${home}//`);
+  });
+
   it("stages a user-local binary from an absolute XDG bin home (#6903)", () => {
     const home = makeTempRoot();
     const xdgBinHome = path.join(home, "custom-bin");
@@ -575,6 +588,82 @@ describe("install.sh OpenShell gateway service", () => {
       "--user stop nemoclaw-openshell-gateway.service",
       "--user is-active --quiet nemoclaw-openshell-gateway.service",
     ]);
+  });
+
+  it.each([
+    ["HOME", (home: string) => ({ HOME: `${home}${path.sep}` })],
+    [
+      "XDG_CONFIG_HOME",
+      (home: string) => ({
+        XDG_CONFIG_HOME: `${path.join(home, "xdg-config")}${path.sep}`,
+      }),
+    ],
+  ])(
+    "stops the trusted service when %s has a trailing separator (#10541)",
+    (_variable, resolveEnv) => {
+      const home = makeTempRoot();
+      const gatewayBin = userGatewayBin(home);
+      const env = resolveEnv(home);
+      const configHome = env.XDG_CONFIG_HOME ?? path.join(home, ".config");
+      const unitPath = servicePath(home, configHome);
+      const staged = stageService(home, gatewayBin, env);
+      const systemctl = writeSystemctlStub(home, unitPath, gatewayBin);
+
+      expect(staged.status, staged.stdout + staged.stderr).toBe(0);
+
+      const result = runInstallHelper(home, "stop_nemoclaw_openshell_gateway_user_service", {
+        ...env,
+        PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+      });
+
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(fs.readFileSync(systemctl.log, "utf-8")).toContain(
+        "--user stop nemoclaw-openshell-gateway.service",
+      );
+    },
+  );
+
+  it("stops the trusted service when ExecStart has duplicate slashes (#10541)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const doubled = `${home}//.local/bin/openshell-gateway`;
+    const staged = stageService(home, gatewayBin);
+    const systemctl = writeSystemctlStub(home, servicePath(home), doubled);
+
+    expect(staged.status, staged.stdout + staged.stderr).toBe(0);
+
+    const result = runInstallHelper(home, "stop_nemoclaw_openshell_gateway_user_service", {
+      PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+    });
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(fs.readFileSync(systemctl.log, "utf-8")).toContain(
+      "--user stop nemoclaw-openshell-gateway.service",
+    );
+  });
+
+  it("stops the trusted service when XDG_CONFIG_HOME has duplicate slashes (#10541)", () => {
+    const home = makeTempRoot();
+    const gatewayBin = userGatewayBin(home);
+    const configHome = `${home}//xdg-config`;
+    const collapsed = path.join(home, "xdg-config");
+    const unitPath = servicePath(home, collapsed);
+    const staged = stageService(home, gatewayBin, { XDG_CONFIG_HOME: configHome });
+    const systemctl = writeSystemctlStub(home, unitPath, gatewayBin);
+
+    expect(staged.status, staged.stdout + staged.stderr).toBe(0);
+    expect(fs.existsSync(unitPath)).toBe(true);
+    expect(fs.existsSync(path.join(home, ".config", "systemd", "user"))).toBe(false);
+
+    const result = runInstallHelper(home, "stop_nemoclaw_openshell_gateway_user_service", {
+      XDG_CONFIG_HOME: configHome,
+      PATH: `${systemctl.bin}:${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}`,
+    });
+
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(fs.readFileSync(systemctl.log, "utf-8")).toContain(
+      "--user stop nemoclaw-openshell-gateway.service",
+    );
   });
 
   it.each([
