@@ -198,6 +198,11 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "passes trusted compile outputs to %s CLI coverage shards",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "passes the verified SDK archive to %s",
       "category": "security"
     },

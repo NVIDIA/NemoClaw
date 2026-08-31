@@ -488,6 +488,69 @@ describe("pull request and main workflow contracts", () => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
   });
 
+  const trustedCompileArtifactCases = [
+    ["pull request", prWorkflow, trustedPrActionPaths.compileArtifacts],
+    ["main", mainWorkflow, sharedActionPaths.compileArtifacts],
+  ] as const;
+
+  // source-shape-contract: security -- Base-trusted build outputs must reach each shard without executing candidate workflow code
+  it.each(trustedCompileArtifactCases)(
+    "passes trusted compile outputs to %s CLI coverage shards",
+    (_workflowName, workflow, expectedCompileAction) => {
+      const buildJob = workflow.jobs["build-typecheck"];
+      const shardJob = workflow.jobs["cli-test-shards"];
+      const shardNeeds = Array.isArray(shardJob.needs) ? shardJob.needs : [shardJob.needs];
+
+      expect(shardNeeds).toContain("build-typecheck");
+      expect(
+        requiredWorkflowStep(buildJob, "Compile and verify CLI and plugin outputs").uses,
+      ).toBe(expectedCompileAction);
+
+      const upload = requiredWorkflowStep(buildJob, "Upload compiled CLI and plugin artifact");
+      expect(upload.uses).toBe(
+        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      );
+      expect(String(upload.with?.path).trim().split("\n")).toEqual([
+        "dist",
+        "nemoclaw/dist",
+      ]);
+      expect(upload.with).toMatchObject({
+        name: "cli-build-output",
+        "if-no-files-found": "error",
+        "retention-days": 1,
+      });
+
+      const download = requiredWorkflowStep(
+        shardJob,
+        "Download compiled CLI and plugin artifact",
+      );
+      expect(download.uses).toBe(
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      );
+      expect(download.with).toMatchObject({ name: "cli-build-output", path: "." });
+      expect(
+        requiredWorkflowStepIndex(shardJob, "Download compiled CLI and plugin artifact"),
+      ).toBeLessThan(requiredWorkflowStepIndex(shardJob, "Run CLI coverage shard"));
+
+      const mergeDownload = requiredStep(
+        sharedActions.cliCoverageMerge,
+        "Download compiled CLI and plugin artifact",
+      );
+      expect(mergeDownload.uses).toBe(
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      );
+      expect(mergeDownload.with).toMatchObject({ name: "cli-build-output", path: "." });
+      expect(
+        requiredStepIndex(
+          sharedActions.cliCoverageMerge,
+          "Download compiled CLI and plugin artifact",
+        ),
+      ).toBeLessThan(
+        requiredStepIndex(sharedActions.cliCoverageMerge, "Verify compiled CLI artifact"),
+      );
+    },
+  );
+
   // source-shape-contract: security -- Pull request jobs must never receive the GitHub Packages credential
   it("does not grant package access to pull request jobs", () => {
     expect(prWorkflow.permissions).toEqual({ contents: "read" });
