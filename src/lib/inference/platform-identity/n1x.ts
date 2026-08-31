@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const N1X_FASTOS_RELEASE_MAX_BYTES = 4096;
+export type FastOsReleasePlatform = "n1x" | "spark";
 // Bound discovery so malformed sysfs state cannot create unbounded work.
 const N1X_PCI_SCAN_MAX_DEVICES = 256;
 const N1X_PCI_FIELD_MAX_BYTES = 64;
@@ -12,6 +13,7 @@ const N1X_PCI_FIELD_MAX_BYTES = 64;
 export interface N1xIdentityEvidence {
   candidate: boolean;
   fastOsMarker: boolean | undefined;
+  fastOsPlatform?: FastOsReleasePlatform;
   pciGpu: boolean | undefined;
   qualified: boolean;
 }
@@ -53,21 +55,31 @@ export function isTrustedN1xFastOsMarker(metadata: {
   );
 }
 
-export function isN1xFastOsRelease(contents: string): boolean {
+export function classifyFastOsRelease(contents: string): FastOsReleasePlatform | undefined {
   if (
     Buffer.byteLength(contents, "utf8") > N1X_FASTOS_RELEASE_MAX_BYTES ||
     contents.includes("\0") ||
     contents.includes("\r")
   ) {
-    return false;
+    return undefined;
   }
-  let nameCount = 0;
+  let platform: FastOsReleasePlatform | undefined;
   for (const line of contents.split("\n")) {
     if (!line.startsWith("NAME=")) continue;
-    if (line !== 'NAME="N1x FASTOS"') return false;
-    nameCount += 1;
+    if (platform !== undefined) return undefined;
+    if (line === 'NAME="N1x FASTOS"') {
+      platform = "n1x";
+    } else if (line === 'NAME="DGX SPARK FASTOS"') {
+      platform = "spark";
+    } else {
+      return undefined;
+    }
   }
-  return nameCount === 1;
+  return platform;
+}
+
+export function isN1xFastOsRelease(contents: string): boolean {
+  return classifyFastOsRelease(contents) === "n1x";
 }
 
 export function isN1xPciDisplayDevice(
@@ -138,6 +150,7 @@ export function collectN1xIdentity(options: N1xIdentityOptions = {}): N1xIdentit
 
   let candidate = false;
   let fastOsMarker: boolean | undefined;
+  let fastOsPlatform: FastOsReleasePlatform | undefined;
   try {
     const fileDescriptor = openFile(
       options.fastOsReleasePath ?? "/etc/fastos-release",
@@ -146,9 +159,14 @@ export function collectN1xIdentity(options: N1xIdentityOptions = {}): N1xIdentit
     candidate = true;
     try {
       const metadata = statFileDescriptor(fileDescriptor);
-      fastOsMarker = isTrustedN1xFastOsMarker(metadata)
-        ? isN1xFastOsRelease(readFileDescriptor(fileDescriptor, N1X_FASTOS_RELEASE_MAX_BYTES))
-        : false;
+      if (isTrustedN1xFastOsMarker(metadata)) {
+        fastOsPlatform = classifyFastOsRelease(
+          readFileDescriptor(fileDescriptor, N1X_FASTOS_RELEASE_MAX_BYTES),
+        );
+        fastOsMarker = fastOsPlatform === "n1x";
+      } else {
+        fastOsMarker = false;
+      }
     } finally {
       closeFileDescriptor(fileDescriptor);
     }
@@ -165,6 +183,15 @@ export function collectN1xIdentity(options: N1xIdentityOptions = {}): N1xIdentit
     }
   }
 
+  if (fastOsPlatform === "spark") {
+    return {
+      candidate: false,
+      fastOsMarker: false,
+      fastOsPlatform,
+      pciGpu: undefined,
+      qualified: false,
+    };
+  }
   if (fastOsMarker !== true) {
     return { candidate, fastOsMarker, pciGpu: undefined, qualified: false };
   }
@@ -173,5 +200,5 @@ export function collectN1xIdentity(options: N1xIdentityOptions = {}): N1xIdentit
     readdir,
     options.pciDevicesPath ?? "/sys/bus/pci/devices",
   );
-  return { candidate, fastOsMarker, pciGpu, qualified: pciGpu === true };
+  return { candidate, fastOsMarker, fastOsPlatform, pciGpu, qualified: pciGpu === true };
 }

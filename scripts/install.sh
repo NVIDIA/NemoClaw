@@ -4500,10 +4500,9 @@ is_wsl_host() {
   return 1
 }
 
-# Detect DGX Spark / DGX Station from firmware (DMI first, devicetree fallback),
-# N1x from its protected FastOS and PCI identity, and Windows WSL from the host
-# environment. Used to gate the express install prompt; only platforms with an
-# accepted default are offered.
+# Detect DGX Spark from firmware or trusted FastOS, DGX Station from firmware,
+# N1x from trusted FastOS and PCI identity, and Windows WSL from the host.
+# This gates the express prompt; only platforms with an accepted default appear.
 is_station_gb300_product() {
   local product=${1:-}
   [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
@@ -4539,17 +4538,25 @@ n1x_fastos_release_metadata_is_trusted() {
   [[ "$device" =~ ^[0-9]+$ && "$inode" =~ ^[0-9]+$ ]]
 }
 
-n1x_fastos_release_contents_are_valid() {
+fastos_release_contents_platform() {
   local contents=${1:-}
-  local line="" name_count=0
+  local line="" platform=""
   [[ "$contents" != *$'\r'* ]] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
-      'NAME="N1x FASTOS"') ((name_count += 1)) ;;
+      'NAME="N1x FASTOS"')
+        [ -z "$platform" ] || return 1
+        platform="N1x"
+        ;;
+      'NAME="DGX SPARK FASTOS"')
+        [ -z "$platform" ] || return 1
+        platform="DGX Spark"
+        ;;
       NAME=*) return 1 ;;
     esac
   done <<<"$contents"
-  [ "$name_count" -eq 1 ]
+  [ -n "$platform" ] || return 1
+  printf "%s" "$platform"
 }
 
 n1x_opened_fastos_release_has_nul() {
@@ -4563,7 +4570,7 @@ n1x_opened_fastos_release_has_nul() {
   esac
 }
 
-n1x_fastos_release_is_trusted() {
+trusted_fastos_release_platform() {
   local marker="" before="" opened="" after="" contents=""
   marker="$(n1x_fastos_release_path)"
   [ -e "$marker" ] && [ ! -L "$marker" ] || return 1
@@ -4606,7 +4613,7 @@ n1x_fastos_release_is_trusted() {
   contents="$(head -c $((N1X_FASTOS_RELEASE_MAX_BYTES + 1)) <&9)"
   exec 9<&-
   [ "${#contents}" -le "$N1X_FASTOS_RELEASE_MAX_BYTES" ] || return 1
-  n1x_fastos_release_contents_are_valid "$contents"
+  fastos_release_contents_platform "$contents"
 }
 
 n1x_pci_identity_is_valid() {
@@ -4639,17 +4646,21 @@ n1x_has_pci_gpu() {
   return 1
 }
 
-is_n1x_host() {
+is_linux_arm64_host() {
   [ "$(uname -s 2>/dev/null)" = "Linux" ] || return 1
   case "$(uname -m 2>/dev/null)" in
     arm64 | aarch64) ;;
     *) return 1 ;;
   esac
-  n1x_fastos_release_is_trusted && n1x_has_pci_gpu
+}
+
+fastos_host_platform() {
+  is_linux_arm64_host || return 1
+  trusted_fastos_release_platform
 }
 
 detect_express_platform() {
-  local model="" release_state=""
+  local model="" release_state="" fastos_platform=""
   if is_wsl_host; then
     printf "Windows WSL"
     return
@@ -4682,9 +4693,19 @@ detect_express_platform() {
     esac
     return
   fi
-  if is_n1x_host; then
-    printf "N1x"
-    return
+  if fastos_platform="$(fastos_host_platform)"; then
+    case "$fastos_platform" in
+      "DGX Spark")
+        printf "DGX Spark"
+        return
+        ;;
+      N1x)
+        if n1x_has_pci_gpu; then
+          printf "N1x"
+          return
+        fi
+        ;;
+    esac
   fi
   case "$model" in
     *DGX*Station*) printf "Unsupported DGX Station generation" ;;

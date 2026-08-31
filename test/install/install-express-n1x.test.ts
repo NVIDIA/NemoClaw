@@ -6,6 +6,17 @@ import { runInstallerSourced } from "../helpers/installer-express-prompt-harness
 import { runExpressPromptWithTty } from "../helpers/installer-express-prompt-pty-harness";
 
 describe("installer N1x Express preview", () => {
+  it("classifies only the exact N1x and DGX Spark FastOS names (#10717)", () => {
+    const result = runInstallerSourced(`
+[ "$(fastos_release_contents_platform $'NAME="N1x FASTOS"\\nVERSION="1.25.0"')" = "N1x" ]
+[ "$(fastos_release_contents_platform $'NAME="DGX SPARK FASTOS"\\nVERSION="1.135.16"')" = "DGX Spark" ]
+if fastos_release_contents_platform $'NAME="UNKNOWN FASTOS"'; then exit 9; fi
+if fastos_release_contents_platform $'NAME="DGX SPARK FASTOS"\\nNAME="DGX SPARK FASTOS"'; then exit 10; fi
+`);
+
+    expect(result.result.status, result.output).toBe(0);
+  });
+
   it("offers one single-host managed-vLLM path (#8574)", () => {
     const result = runExpressPromptWithTty("y\n", "pipe", "N1x");
     const output = `${result.stdout}${result.stderr}`;
@@ -84,7 +95,7 @@ cat() {
 }
 is_wsl_host() { return 1; }
 uname() { if [ "$1" = "-s" ]; then printf "Linux"; else printf "aarch64"; fi; }
-n1x_fastos_release_is_trusted() { return ${fastOsQualified ? "0" : "1"}; }
+fastos_host_platform() { ${fastOsQualified ? 'printf "N1x"' : "return 1"}; }
 n1x_has_pci_gpu() { return ${pciQualified ? "0" : "1"}; }
 detect_express_platform
 `);
@@ -126,7 +137,8 @@ stat() {
   esac
   printf '81a4:0:0:644:18:1:2'
 }
-LC_ALL=de_DE.UTF-8 n1x_fastos_release_is_trusted
+platform="$(LC_ALL=de_DE.UTF-8 trusted_fastos_release_platform)"
+[ "$platform" = "N1x" ]
 `);
 
     expect(result.result.status, result.output).toBe(0);
@@ -135,12 +147,12 @@ LC_ALL=de_DE.UTF-8 n1x_fastos_release_is_trusted
   it("parses the FastOS name without executing marker text (#8574)", () => {
     const result = runInstallerSourced(`
 marker=$'NAME="N1x FASTOS"\\nVERSION="1.23.0"\\nPAYLOAD="$(touch $HOME/n1x-marker-payload)"'
-n1x_fastos_release_contents_are_valid "$marker"
+[ "$(fastos_release_contents_platform "$marker")" = "N1x" ]
 [ ! -e "$HOME/n1x-marker-payload" ]
-if n1x_fastos_release_contents_are_valid $'NAME="N1x FASTOS"\\nNAME="N1x FASTOS"'; then exit 9; fi
-if n1x_fastos_release_contents_are_valid $'NAME=N1x FASTOS'; then exit 10; fi
-if n1x_fastos_release_contents_are_valid $'NAME="N1x FASTOS"\\nNAME=N1x FASTOS'; then exit 11; fi
-if n1x_fastos_release_contents_are_valid $'NAME="N1x FASTOS"\\nVERSION="1.23.0"\\r\\n'; then exit 12; fi
+if fastos_release_contents_platform $'NAME="N1x FASTOS"\\nNAME="N1x FASTOS"'; then exit 9; fi
+if fastos_release_contents_platform $'NAME=N1x FASTOS'; then exit 10; fi
+if fastos_release_contents_platform $'NAME="N1x FASTOS"\\nNAME=N1x FASTOS'; then exit 11; fi
+if fastos_release_contents_platform $'NAME="N1x FASTOS"\\nVERSION="1.23.0"\\r\\n'; then exit 12; fi
 `);
 
     expect(result.result.status, result.output).toBe(0);

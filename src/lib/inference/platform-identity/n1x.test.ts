@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
+  classifyFastOsRelease,
   collectN1xIdentity,
   isN1xFastOsRelease,
   isN1xPciDisplayDevice,
@@ -52,10 +53,34 @@ function unexpectedFixturePath(filePath: string): never {
 }
 
 describe("N1x identity", () => {
+  it("distinguishes the trusted N1x and DGX Spark FastOS names (#10717)", () => {
+    expect(classifyFastOsRelease('NAME="N1x FASTOS"\nVERSION="1.25.0"\n')).toBe("n1x");
+    expect(classifyFastOsRelease('NAME="DGX SPARK FASTOS"\nVERSION="1.135.16"\n')).toBe("spark");
+    expect(classifyFastOsRelease('NAME="UNKNOWN FASTOS"\n')).toBeUndefined();
+    expect(
+      classifyFastOsRelease('NAME="DGX SPARK FASTOS"\nNAME="DGX SPARK FASTOS"\n'),
+    ).toBeUndefined();
+  });
+
+  it("excludes the DGX Spark FastOS marker from N1x candidacy (#10717)", () => {
+    expect(
+      n1xFixture({
+        readFileDescriptor: () => 'NAME="DGX SPARK FASTOS"\nVERSION="1.135.16"\n',
+      }),
+    ).toEqual({
+      candidate: false,
+      fastOsMarker: false,
+      fastOsPlatform: "spark",
+      pciGpu: undefined,
+      qualified: false,
+    });
+  });
+
   it("accepts the FastOS marker and NVIDIA display device without pinning FastOS version (#8574)", () => {
     expect(n1xFixture()).toEqual({
       candidate: true,
       fastOsMarker: true,
+      fastOsPlatform: "n1x",
       pciGpu: true,
       qualified: true,
     });
@@ -63,7 +88,13 @@ describe("N1x identity", () => {
       n1xFixture({
         readFileDescriptor: () => 'NAME="N1x FASTOS"\nVERSION="99.1.2"\n',
       }),
-    ).toEqual({ candidate: true, fastOsMarker: true, pciGpu: true, qualified: true });
+    ).toEqual({
+      candidate: true,
+      fastOsMarker: true,
+      fastOsPlatform: "n1x",
+      pciGpu: true,
+      qualified: true,
+    });
   });
 
   it.each([
@@ -155,6 +186,12 @@ describe("N1x identity", () => {
           throw Object.assign(new Error("PCI identity unavailable"), { code: "EIO" });
         },
       }),
-    ).toEqual({ candidate: true, fastOsMarker: true, pciGpu: undefined, qualified: false });
+    ).toEqual({
+      candidate: true,
+      fastOsMarker: true,
+      fastOsPlatform: "n1x",
+      pciGpu: undefined,
+      qualified: false,
+    });
   });
 });

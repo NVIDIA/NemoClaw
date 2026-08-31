@@ -122,6 +122,25 @@ function collectStationIdentity(release: string, markerStat = trustedMarkerStat(
   });
 }
 
+function collectOemGb10Identity(
+  markerStat = trustedMarkerStat({ size: 58 }),
+  readdir: () => readonly string[] = () => [],
+) {
+  return collectPlatformIdentity({
+    productNamePath: "/fixtures/product_name",
+    fastOsReleasePath: "/fixtures/fastos-release",
+    readFile: (filePath) =>
+      filePath.endsWith("product_name")
+        ? "OEM GB10 system\n"
+        : unexpectedFixturePath(filePath),
+    readdir,
+    openFile: () => 19,
+    statFileDescriptor: () => markerStat,
+    readFileDescriptor: () => 'NAME="DGX SPARK FASTOS"\nVERSION="1.135.16"\n',
+    closeFileDescriptor: () => undefined,
+  });
+}
+
 describe("platform readiness qualification (#7410)", () => {
   it.each(["x64", "arm64"])("supports generic Linux %s by capability", (architecture) => {
     const result = projectPlatformQualification(input({ architecture }));
@@ -223,6 +242,42 @@ describe("platform readiness qualification (#7410)", () => {
     expect(capability(result, "host.platform.dgx_spark")).toBe("present");
     expect(qualification(result, "host.platform.dgx_spark")).toBe("qualified");
     expect(result.evidence[0]?.details).toMatchObject({ product: "NVIDIA DGX Spark" });
+  });
+
+  it("classifies an OEM GB10 from its trusted DGX Spark FastOS marker (#10717)", () => {
+    const readdir = vi.fn(() => {
+      throw new Error("DGX Spark classification must not scan N1x PCI identity");
+    });
+    const identity = collectOemGb10Identity(undefined, readdir);
+    const result = projectPlatformQualification(
+      input({ architecture: "arm64", hasNvidiaGpu: true, ...identity }),
+    );
+
+    expect(identity).toEqual({
+      nvidiaPlatform: "spark",
+      productName: "OEM GB10 system",
+    });
+    expect(readdir).not.toHaveBeenCalled();
+    expect(capability(result, "host.platform.dgx_spark")).toBe("present");
+    expect(capability(result, "host.platform.supported")).toBe("present");
+    expect(qualification(result, "host.platform.dgx_spark")).toBe("qualified");
+    expect(qualification(result, "host.platform.n1x")).toBeUndefined();
+    expect(result.findings.some(({ id }) => id.startsWith("host.platform.n1x_"))).toBe(false);
+  });
+
+  it("does not grant DGX Spark identity to an untrusted FastOS marker (#10717)", () => {
+    const identity = collectOemGb10Identity(trustedMarkerStat({ uid: 1000, size: 58 }));
+    const result = projectPlatformQualification(
+      input({ architecture: "arm64", hasNvidiaGpu: true, ...identity }),
+    );
+
+    expect(identity).toMatchObject({
+      nvidiaPlatform: undefined,
+      n1xCandidate: true,
+      n1xFastOsMarker: false,
+    });
+    expect(capability(result, "host.platform.dgx_spark")).toBe("absent");
+    expect(result.findings.map(({ id }) => id)).toContain("host.platform.n1x_unqualified");
   });
 
   it.each([
