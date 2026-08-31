@@ -5,6 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
 import {
+  sandboxCustomCompatibleCredentialEnv,
+  usesLoopbackNoAuthProxyRoute,
+} from "./inference-set-route-containment";
+import {
   baseSession,
   createCompatibleProviderCapture,
   createDeps,
@@ -302,6 +306,105 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
+  it("reuses the recorded no-auth route when --endpoint-url and --inference-api both restate it (#10672)", async () => {
+    // The #10672 reporter's first command adds `--inference-api openai-completions`
+    // to the recorded-endpoint form. On the supported contract (a loopback HTTP
+    // endpoint with endpointSource=onboard and the proxy credential env) this
+    // stays on the onboard-provenance fast path: no HTTPS Pin Runtime adapter,
+    // no credential-value check, and the recorded credential env is preserved.
+    const captureOpenshell = noAuthProviderCapture();
+    const deps = createDeps({
+      config: CONFIG,
+      entry: noAuthEntry(),
+      session: noAuthSession(),
+      captureOpenshell,
+    });
+
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "model-b",
+        endpointUrl: NO_AUTH_ENDPOINT_URL,
+        inferenceApi: "openai-completions",
+      },
+      deps,
+    );
+
+    expect(providerMutationArgs(captureOpenshell)).toEqual([]);
+    expect(deps.calls.ensureHttpsPinRuntimeAdapter).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        model: "model-b",
+        endpointUrl: NO_AUTH_ENDPOINT_URL,
+        endpointSource: "onboard",
+        credentialEnv: NO_AUTH_CREDENTIAL_ENV,
+        preferredInferenceApi: "openai-completions",
+      }),
+    ]);
+  });
+
+  it("rejects --inference-api without --endpoint-url as incomplete endpoint metadata (#10672)", async () => {
+    // `--inference-api` is endpoint metadata: supplying it without `--endpoint-url`
+    // is the same incomplete-identity error as `--credential-env` alone. The
+    // working model-only path is `--provider` + `--model` with no endpoint flags
+    // (covered above), so the reporter's "no working combination" claim does not
+    // hold on the supported contract.
+    const captureOpenshell = noAuthProviderCapture();
+    const deps = createDeps({
+      config: CONFIG,
+      entry: noAuthEntry(),
+      session: noAuthSession(),
+      captureOpenshell,
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "compatible-endpoint", model: "model-b", inferenceApi: "openai-completions" },
+        deps,
+      ),
+    ).rejects.toThrow(/endpoint-url is required for custom-compatible metadata/);
+
+    expect(providerMutationArgs(captureOpenshell)).toEqual([]);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("does not silently repoint the onboarded route to a different endpoint URL (#10672)", async () => {
+    // A different loopback endpoint is not onboard-provenanced, so it leaves the
+    // fast path for the DNS-pinning guard, which blocks a private address. The
+    // recorded route is untouched, and the guidance now lists every endpoint
+    // flag to drop for a model-only switch.
+    const captureOpenshell = noAuthProviderCapture();
+    const deps = createDeps({
+      config: CONFIG,
+      entry: noAuthEntry(),
+      session: noAuthSession(),
+      captureOpenshell,
+      rewriteConfigUrlsWithDnsPinning: async (value) => {
+        throw new Error(
+          `URL points to private/internal address "${new URL(String(value)).hostname}".`,
+        );
+      },
+    });
+
+    const attempt = runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "model-b",
+        endpointUrl: "http://127.0.0.1:11435/v1",
+        inferenceApi: "openai-completions",
+      },
+      deps,
+    );
+
+    await expect(attempt).rejects.toThrow(/endpoint-url is not allowed:/);
+    await expect(attempt).rejects.toThrow(
+      /any of --endpoint-url, --inference-api, or --credential-env makes inference set re-validate the endpoint/,
+    );
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(providerMutationArgs(captureOpenshell)).toEqual([]);
+  });
+
   it("keeps host-side verification and the canonical credential for an authenticated endpoint", async () => {
     const captureOpenshell = createCompatibleProviderCapture({
       name: "compatible-endpoint",
@@ -358,5 +461,35 @@ describe("runInferenceSet on a loopback no-auth compatible endpoint", () => {
       "alpha",
       expect.objectContaining({ credentialEnv: "COMPATIBLE_API_KEY" }),
     ]);
+  });
+});
+
+describe("no-auth contract boundary — DNS-backed HTTPS is not a no-auth route (#10672)", () => {
+  it("recognizes only a loopback bridge-port HTTP endpoint with the proxy credential env", () => {
+    const loopback = {
+      provider: "compatible-endpoint",
+      endpointUrl: NO_AUTH_ENDPOINT_URL,
+      credentialEnv: NO_AUTH_CREDENTIAL_ENV,
+    } as SandboxEntry;
+    expect(usesLoopbackNoAuthProxyRoute(loopback, "compatible-endpoint")).toBe(true);
+    expect(sandboxCustomCompatibleCredentialEnv(loopback, "compatible-endpoint")).toBe(
+      NO_AUTH_CREDENTIAL_ENV,
+    );
+  });
+
+  it("does not treat a DNS-backed HTTPS endpoint as a no-auth route even with the proxy credential env", () => {
+    // Onboarding cannot record this shape: compatibleNoAuth requires a loopback
+    // bridge-port URL. Guard the predicate so a hand-edited or migrated row
+    // still falls back to the canonical API-key binding rather than silently
+    // dropping the credential requirement.
+    const dnsHttps = {
+      provider: "compatible-endpoint",
+      endpointUrl: "https://inference-api.example.com/v1",
+      credentialEnv: NO_AUTH_CREDENTIAL_ENV,
+    } as SandboxEntry;
+    expect(usesLoopbackNoAuthProxyRoute(dnsHttps, "compatible-endpoint")).toBe(false);
+    expect(sandboxCustomCompatibleCredentialEnv(dnsHttps, "compatible-endpoint")).toBe(
+      "COMPATIBLE_API_KEY",
+    );
   });
 });

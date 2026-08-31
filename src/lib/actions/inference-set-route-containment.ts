@@ -579,8 +579,10 @@ export async function finalizeInferenceSetRoute(options: {
     ) {
       throw new InferenceSetError(
         `${error.message} This sandbox is already configured for '${options.provider}'. ` +
-          `To switch only the model, omit --endpoint-url — inference set reuses the endpoint ` +
-          `onboarding already established (the gateway route is not changed by inference set). ` +
+          `To switch only the model, pass just --provider and --model: any of --endpoint-url, ` +
+          `--inference-api, or --credential-env makes inference set re-validate the endpoint, ` +
+          `while --provider and --model alone reuse the endpoint onboarding already established ` +
+          `(the gateway route is not changed by inference set). ` +
           `To point the sandbox at a different endpoint, re-run onboarding with the new endpoint ` +
           `(rebuild reuses the recorded endpoint and cannot change it).`,
         error.exitCode,

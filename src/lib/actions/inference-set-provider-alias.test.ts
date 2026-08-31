@@ -343,7 +343,7 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     );
     // ... but the message now guides toward the working same-provider path.
     await expect(attempt).rejects.toThrow(/already configured for 'compatible-endpoint'/);
-    await expect(attempt).rejects.toThrow(/omit --endpoint-url/);
+    await expect(attempt).rejects.toThrow(/pass just --provider and --model/);
     // PRA-2 regression: the SSRF rejection happens before any persistence, so no
     // sandbox/config mutation or gateway side effect is left half-applied.
     expectNoInferenceMutation(deps.calls);
@@ -470,7 +470,7 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
       deps,
     );
     await expect(attempt).rejects.toThrow(/endpoint-url is not allowed:/);
-    await expect(attempt).rejects.toThrow(/omit --endpoint-url/);
+    await expect(attempt).rejects.toThrow(/pass just --provider and --model/);
     expect(guard).toHaveBeenCalled();
     expectNoInferenceMutation(deps.calls);
   });
@@ -567,15 +567,15 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
     await expect(attempt).rejects.toThrow(
       /endpoint-url is not allowed:.*private\/internal address/,
     );
-    await expect(attempt).rejects.not.toThrow(/omit --endpoint-url/);
+    await expect(attempt).rejects.not.toThrow(/pass just --provider and --model/);
   });
 
   it("does NOT append the switch-model hint to a non-SSRF endpoint error (missing URL is not contradicted)", async () => {
     // Passing --credential-env without --endpoint-url on a same-provider sandbox
     // makes hasExplicitCustomMetadata true, so normalizeCustomEndpointUrl throws
     // "endpoint-url is required ...". The guidance is scoped to the SSRF/blocked
-    // case only, so that message must NOT gain a contradictory "omit
-    // --endpoint-url" tail.
+    // case only, so that message must NOT gain the contradictory
+    // "pass just --provider and --model" tail.
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
       entry: {
@@ -599,7 +599,7 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
       deps,
     );
     await expect(attempt).rejects.toThrow(/endpoint-url is required/);
-    await expect(attempt).rejects.not.toThrow(/omit --endpoint-url/);
+    await expect(attempt).rejects.not.toThrow(/pass just --provider and --model/);
     // The guard is never consulted — the missing-URL check trips first.
     expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
   });
