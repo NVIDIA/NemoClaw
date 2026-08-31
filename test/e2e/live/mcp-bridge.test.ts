@@ -19,6 +19,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { test as e2eTest, expect } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
+import { redactString } from "../fixtures/redaction.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   type McpBridgeShard,
@@ -316,7 +317,7 @@ async function assertConcurrentAddSerialized(
   expectExitZero(status, `${options.artifactPrefix} concurrent add leaves one coherent bridge`);
   expect(JSON.parse(status.stdout)).toMatchObject({
     server: CONCURRENT_SERVER_NAME,
-    url: options.mcpUrl,
+    url: redactString(options.mcpUrl, [HOST_SECRET]),
     support: { adapter: options.expectedAdapter },
     env: { names: ["FAKE_MCP_SECRET"], ready: true, missing: [] },
     provider: {

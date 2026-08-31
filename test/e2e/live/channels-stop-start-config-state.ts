@@ -71,3 +71,18 @@ print(json.dumps({
 }, separators=(',', ':')))
 `.trim();
 }
+
+export function openClawWechatAccountStateProbeScript(
+  accountRoot = "/sandbox/.openclaw/openclaw-weixin",
+): string {
+  return `
+import json
+import os
+root = ${JSON.stringify(accountRoot)}
+print(json.dumps({
+  'accountDirectoryPresent': os.path.lexists(os.path.join(root, 'accounts')),
+  'accountRegistryPresent': os.path.lexists(os.path.join(root, 'accounts.json')),
+  'accountRootPresent': os.path.lexists(root),
+}, separators=(',', ':')))
+`.trim();
+}
