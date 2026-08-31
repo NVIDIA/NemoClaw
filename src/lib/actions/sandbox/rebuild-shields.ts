@@ -34,16 +34,6 @@ export function openRebuildShieldsWindow(
   return openBackupShieldsWindow(sandboxName, rebuildShieldsWindowOptions(sandboxName, cliName));
 }
 
-export function printRebuildShieldsRecovery(
-  sandboxName: string,
-  window: RebuildShieldsWindow,
-  cliName: string,
-): void {
-  if (!window.wasLocked) return;
-  console.error(`    4. Restore shields lockdown:`);
-  console.error(`       ${cliName} ${sandboxName} shields up`);
-}
-
 export function relockRebuildShieldsWindow(
   sandboxName: string,
   window: RebuildShieldsWindow,
