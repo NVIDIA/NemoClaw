@@ -21,7 +21,7 @@ diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
 +        # only the exact host that NemoClaw derived from CHAT_UI_URL.
 +        external_host = os.environ.get(
 +            _NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV, ""
-+        ).strip().lower()
++        ).strip().lower().rstrip(".")
 +        if external_host and host_only == external_host:
 +            return True
          return host_only in _LOOPBACK_HOST_VALUES

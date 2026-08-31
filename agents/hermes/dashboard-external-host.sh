@@ -29,11 +29,13 @@ if (
 ):
     sys.exit(1)
 
-host = host.lower()
-if host.rstrip(".") == "localhost":
+host = host.lower().rstrip(".")
+if not host:
+    sys.exit(1)
+if host == "localhost":
     sys.exit(2)
 try:
-    address = ipaddress.ip_address(host.rstrip("."))
+    address = ipaddress.ip_address(host)
 except ValueError:
     pass
 else:

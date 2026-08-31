@@ -423,7 +423,7 @@ async function main(progress: TestProgress): Promise<void> {
       assert.deepEqual(
         probeHermesDashboardHostGuard(
           hermesImageRef,
-          "https://NEMOCLAW0-ABC123.BREVLAB.COM:443/dashboard",
+          "https://NEMOCLAW0-ABC123.BREVLAB.COM.:443/dashboard",
         ),
         {
           external: true,
