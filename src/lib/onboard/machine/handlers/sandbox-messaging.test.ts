@@ -226,6 +226,27 @@ function whatsappPlan(): SandboxMessagingPlan {
   };
 }
 
+function googlechatPlan(): SandboxMessagingPlan {
+  return {
+    ...telegramPlan(""),
+    channels: [
+      {
+        channelId: "googlechat",
+        displayName: "Google Chat",
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [],
+        hooks: [],
+      },
+    ],
+    // A bridge channel mints its provider from a profile, so it renders no binding.
+    credentialBindings: [],
+  };
+}
+
 function slackPlan(
   botCredentialHash: string,
   appCredentialHash?: string,
@@ -384,7 +405,7 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv, note: vi.fn(), writePlanToEnv: vi.fn() },
+      { clearPlanEnv, note: vi.fn(), providerMatchesGatewayCredential: () => false, writePlanToEnv: vi.fn() },
       plan,
     );
 
@@ -394,7 +415,12 @@ describe("reconcileReusedSandboxMessaging", () => {
 
   it("omits a retired host-backed channel from a reused sandbox selection (#9283)", () => {
     const plan = discordPlan(hashCredential("previous-discord-token") ?? "");
-    const deps = { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() };
+    const deps = {
+      clearPlanEnv: vi.fn(),
+      note: vi.fn(),
+      providerMatchesGatewayCredential: () => false,
+      writePlanToEnv: vi.fn(),
+    };
     vi.stubEnv("DISCORD_BOT_TOKEN", "");
 
     const result = reconcileReusedSandboxMessaging(
@@ -421,11 +447,90 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() },
+      {
+        clearPlanEnv: vi.fn(),
+        note: vi.fn(),
+        providerMatchesGatewayCredential: () => false,
+        writePlanToEnv: vi.fn(),
+      },
       plan,
     );
 
     expect(result.selectedChannels).toEqual(["discord"]);
+  });
+
+  it("keeps a bridge channel whose gateway credential outlived the onboarding process (#10660)", () => {
+    const plan = googlechatPlan();
+    // The pasted secret dies with its process, so a later rebuild sees empty env.
+    vi.stubEnv("GOOGLECHAT_SERVICE_ACCOUNT", "");
+    const providerMatchesGatewayCredential = vi.fn(() => true);
+    const note = vi.fn();
+
+    const result = reconcileReusedSandboxMessaging(
+      structuredClone(plan),
+      { name: "openclaw" },
+      { clearPlanEnv: vi.fn(), note, providerMatchesGatewayCredential, writePlanToEnv: vi.fn() },
+      plan,
+    );
+
+    expect(result).toEqual({ plan, selectedChannels: ["googlechat"], changed: false });
+    expect(note).not.toHaveBeenCalledWith(expect.stringContaining("No host inputs configure"));
+    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "alpha-googlechat-bridge",
+      "google-chat-bridge",
+      "GOOGLE_CHAT_ACCESS_TOKEN",
+    );
+  });
+
+  it("disables a bridge channel the gateway no longer holds a credential for (#10660)", () => {
+    const plan = googlechatPlan();
+    vi.stubEnv("GOOGLECHAT_SERVICE_ACCOUNT", "");
+    const note = vi.fn();
+
+    const result = reconcileReusedSandboxMessaging(
+      structuredClone(plan),
+      { name: "openclaw" },
+      {
+        clearPlanEnv: vi.fn(),
+        note,
+        providerMatchesGatewayCredential: () => false,
+        writePlanToEnv: vi.fn(),
+      },
+      plan,
+    );
+
+    // `channels remove` deletes the provider, so absence is still the removal signal.
+    expect(result).toEqual({
+      plan: withChannelDisabled(plan, "googlechat"),
+      selectedChannels: [],
+      changed: true,
+    });
+    expect(note).toHaveBeenCalledWith(expect.stringContaining("No host inputs configure"));
+  });
+
+  it("keeps a token channel whose provider still matches at the gateway (#10660)", () => {
+    const plan = discordPlan(hashCredential("previous-discord-token") ?? "");
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+    const providerMatchesGatewayCredential = vi.fn(() => true);
+
+    const result = reconcileReusedSandboxMessaging(
+      structuredClone(plan),
+      { name: "openclaw" },
+      {
+        clearPlanEnv: vi.fn(),
+        note: vi.fn(),
+        providerMatchesGatewayCredential,
+        writePlanToEnv: vi.fn(),
+      },
+      plan,
+    );
+
+    expect(result).toEqual({ plan, selectedChannels: ["discord"], changed: false });
+    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "alpha-discord-bridge",
+      expect.any(String),
+      "DISCORD_BOT_TOKEN",
+    );
   });
 
   it("keeps an in-sandbox QR channel in a reused sandbox selection (#9283)", () => {
@@ -436,7 +541,12 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      { clearPlanEnv: vi.fn(), note: vi.fn(), writePlanToEnv: vi.fn() },
+      {
+        clearPlanEnv: vi.fn(),
+        note: vi.fn(),
+        providerMatchesGatewayCredential: () => false,
+        writePlanToEnv: vi.fn(),
+      },
       plan,
     );
 
@@ -450,7 +560,12 @@ describe("reconcileReusedSandboxMessaging", () => {
     const result = reconcileReusedSandboxMessaging(
       mixedChannelPlan(),
       { name: "openclaw" },
-      { clearPlanEnv() {}, note() {}, writePlanToEnv() {} },
+      {
+        clearPlanEnv() {},
+        note() {},
+        providerMatchesGatewayCredential: () => false,
+        writePlanToEnv() {},
+      },
     );
     const filtered = result.plan;
 

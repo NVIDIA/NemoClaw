@@ -24,7 +24,11 @@ import {
   detectMessagingChannelsFromEnv,
   detectUnconfiguredMessagingChannels,
 } from "../../messaging-channel-setup";
-import { staticMessagingProviderTypeForChannel } from "../../messaging-bridge-provider";
+import {
+  bridgeProviderNamesForChannel,
+  messagingBridgeProfilesForAgent,
+  staticMessagingProviderTypeForChannel,
+} from "../../messaging-bridge-provider";
 import { getActiveChannelsFromPlan, getChannelsFromPlan } from "../../messaging-plan-session";
 
 export {
@@ -224,10 +228,49 @@ function selectionFromReusablePlan<Agent>(
   };
 }
 
+/**
+ * Whether the gateway still holds this channel's credential.
+ * - Durable record: `channels remove` deletes the provider, a rebuild does not.
+ * - Same match the create intent uses to reuse a provider without its secret.
+ */
+function channelCredentialLivesAtGateway<Agent>(
+  plan: SandboxMessagingPlan,
+  channelId: string,
+  deps: Pick<SandboxMessagingDeps<Agent>, "providerMatchesGatewayCredential">,
+): boolean {
+  const providerBindings = plan.credentialBindings
+    .filter((binding) => binding.channelId === channelId)
+    .map((binding) => ({
+      name: binding.providerName,
+      type:
+        staticMessagingProviderTypeForChannel(channelId, plan.agent) ??
+        MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+      credentialEnv: binding.providerEnvKey,
+    }));
+  // A bridge channel renders no binding; resolve its provider by name.
+  for (const profile of messagingBridgeProfilesForAgent(plan.agent)) {
+    if (profile.channelId !== channelId) continue;
+    for (const name of bridgeProviderNamesForChannel(plan.sandboxName, channelId, [profile])) {
+      providerBindings.push({
+        name,
+        type: profile.profileId,
+        credentialEnv: profile.credentialKey,
+      });
+    }
+  }
+  if (providerBindings.length === 0) return false;
+  return providerBindings.every(({ name, type, credentialEnv }) =>
+    deps.providerMatchesGatewayCredential(name, type, credentialEnv),
+  );
+}
+
 function filterUnconfiguredHostChannelsFromSelection<Agent>(
   selection: SandboxMessagingSelection,
   agent: Agent,
-  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv" | "note" | "writePlanToEnv">,
+  deps: Pick<
+    SandboxMessagingDeps<Agent>,
+    "clearPlanEnv" | "note" | "providerMatchesGatewayCredential" | "writePlanToEnv"
+  >,
 ): SandboxMessagingSelection {
   // A registry plan records the previous selection, not the current host
   // input. Rebuild the host-backed selection so policy reconciliation can
@@ -240,6 +283,17 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
       agent as Parameters<typeof detectUnconfiguredMessagingChannels>[2],
     ),
   );
+  // Host env is not the only evidence:
+  // - The pasted secret dies with the process that captured it.
+  // - Without this, every later rebuild strips the channel's bindings and egress.
+  const planForGatewayCheck = selection.plan;
+  if (planForGatewayCheck) {
+    for (const channelId of [...unconfiguredChannels]) {
+      if (channelCredentialLivesAtGateway(planForGatewayCheck, channelId, deps)) {
+        unconfiguredChannels.delete(channelId);
+      }
+    }
+  }
   if (unconfiguredChannels.size === 0) return selection;
   deps.note(
     `  No host inputs configure ${[...unconfiguredChannels].join(", ")}; disabling the channel and its network egress.`,
@@ -470,7 +524,10 @@ async function selectionFromRegistryPlan<Agent>(
 export function reconcileReusedSandboxMessaging<Agent>(
   plan: SandboxMessagingPlan | null,
   agent: Agent,
-  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv" | "note" | "writePlanToEnv">,
+  deps: Pick<
+    SandboxMessagingDeps<Agent>,
+    "clearPlanEnv" | "note" | "providerMatchesGatewayCredential" | "writePlanToEnv"
+  >,
   recordedPlan: SandboxMessagingPlan | null = plan,
 ): SandboxMessagingSelection & { readonly changed: boolean } {
   const filtered = plan ? filterMessagingPlanForCurrentAgent(plan, agent) : null;
