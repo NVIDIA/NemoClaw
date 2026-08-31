@@ -241,6 +241,7 @@ beta  127.0.0.1  18789  12345  running`,
       forwardRecoveryFailed: true,
       forwardRecoveryFailureDetail:
         "the messaging webhook host forward could not be re-established",
+      forwardRecoveryFailureScope: "auxiliary",
     });
   });
 
