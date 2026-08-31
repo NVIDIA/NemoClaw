@@ -2676,10 +2676,10 @@ If another terminal has an active SSH session to the sandbox, `rebuild` prints a
 The sandbox normally must be reachable for the backup step to succeed.
 If any manifest-declared state directory or state file cannot be archived, `rebuild` reports each failed path and stops before deleting the original sandbox.
 This fail-closed behavior also applies to `--force`, even when the backup contains other usable entries.
-When an incomplete backup contains captured entries, NemoClaw retains them at the printed path for manual recovery, but excludes that backup from `snapshot list` and snapshot restore selection.
+When an incomplete snapshot contains captured entries, NemoClaw retains them at the printed path for manual recovery, but excludes that snapshot from `snapshot list` and snapshot restore selection.
 Do not edit its manifest or try to make it selectable.
 Repair access to the original sandbox state, then rerun the rebuild.
-Remove the incomplete host backup only after you verify that the original sandbox or a later complete snapshot contains every required file.
+Remove the incomplete host-side snapshot only after you verify that the original sandbox or a later complete snapshot contains every required state item.
 For a sandbox with managed MCP servers, `--force` probes sandbox execution before MCP teardown.
 If that no-op cannot run, NemoClaw requires complete bridge entries plus exact provider and target identities.
 It does not try an in-sandbox adapter scrub or change MCP lifecycle state.

@@ -513,7 +513,9 @@ export function backupSandboxStateForRebuild(
     if (backup.failedFiles.length > 0)
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     if (backup.manifest?.backupPath) {
-      console.error(`  Incomplete backup retained for manual recovery: ${backup.manifest.backupPath}`);
+      console.error(
+        `  Incomplete snapshot retained for manual recovery: ${backup.manifest.backupPath}`,
+      );
       console.error("  It is excluded from snapshot restore selection.");
     }
     console.error("  Aborting rebuild to prevent data loss.");

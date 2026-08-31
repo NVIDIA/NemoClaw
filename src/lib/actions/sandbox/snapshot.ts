@@ -933,7 +933,7 @@ function removeIncompleteSnapshot(sandboxName: string, backupPath: string): void
     `  The incomplete snapshot at '${backupPath}' could not be removed: ${removal.error}`,
   );
   console.error(
-    `  It is excluded from \`${CLI_NAME} ${sandboxName} snapshot list\` and snapshot restore selection. Remove it after verifying any needed files.`,
+    `  It is excluded from \`${CLI_NAME} ${sandboxName} snapshot list\` and snapshot restore selection. Remove it only after the original sandbox or a complete snapshot contains every required state item.`,
   );
 }
 

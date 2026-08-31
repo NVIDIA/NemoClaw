@@ -124,7 +124,9 @@ describe("snapshot create cleanup after a failed capture", () => {
       `The incomplete snapshot at '${INCOMPLETE_PATH}' could not be removed: EACCES: permission denied`,
     );
     expect(errors).toContain("excluded from `nemoclaw alpha snapshot list`");
-    expect(errors).toContain("Remove it after verifying any needed files.");
+    expect(errors).toContain(
+      "Remove it only after the original sandbox or a complete snapshot contains every required state item.",
+    );
   });
 
   it("does not attempt removal when the capture failed before publishing a snapshot", async () => {

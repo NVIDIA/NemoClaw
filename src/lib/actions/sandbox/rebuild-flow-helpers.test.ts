@@ -837,7 +837,7 @@ describe("backupSandboxStateForRebuild failure safety", () => {
     expect(errorLines.some((line: string) => line.includes("workspace"))).toBe(true);
     expect(
       errorLines.some((line: string) =>
-        line.includes("Incomplete backup retained for manual recovery"),
+        line.includes("Incomplete snapshot retained for manual recovery"),
       ),
     ).toBe(true);
     expect(
