@@ -237,6 +237,26 @@ describe("PR review advisor specialist lifecycle", () => {
     expect(fs.readFileSync(jobSummary, "utf8")).toBe("Existing summary.\n");
   });
 
+  it("runs only preparation for the prepare command", async () => {
+    const env = { SANDBOX_NAME: "prepare-test" };
+    const calls: string[] = [];
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async (received) => void calls.push(received === env ? "prepare" : "wrong-env"),
+      startGateway: () => {
+        calls.push("gateway");
+        return undefined;
+      },
+      create: () => void calls.push("create"),
+      run: () => void calls.push("run"),
+      download: () => void calls.push("download"),
+      remove: () => void calls.push("remove"),
+    };
+
+    await runAdvisorSpecialistCommand("prepare", env, lifecycle);
+
+    expect(calls).toEqual(["prepare"]);
+  });
+
   it("keeps local specialist analysis independent from GitHub job summaries", async () => {
     const calls: string[] = [];
     const lifecycle: AdvisorSpecialistLifecycle = {
@@ -445,7 +465,7 @@ describe("PR review advisor specialist lifecycle", () => {
     await command;
 
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("execution cleanup"));
-    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("residual-sandbox"));
+    expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/sandbox pr-adv-[0-9a-f]{12}/u));
     expect(stderr).not.toHaveBeenCalledWith(expect.stringContaining(credential));
     expect(restore).toHaveBeenCalledWith("SIGHUP");
   });

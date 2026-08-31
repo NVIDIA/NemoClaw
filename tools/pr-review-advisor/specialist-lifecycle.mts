@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -66,6 +67,10 @@ export async function runAdvisorSpecialist(input: {
   cancelled?: () => boolean;
 }): Promise<"complete" | "cancelled"> {
   const lifecycle = input.lifecycle ?? defaultAdvisorSpecialistLifecycle;
+  const env = {
+    ...input.env,
+    SANDBOX_NAME: `pr-adv-${randomBytes(6).toString("hex")}`,
+  };
   let gateway: ReturnType<AdvisorSpecialistLifecycle["startGateway"]>;
   let sandbox = false;
   let execution: Exclude<ReturnType<AdvisorSpecialistLifecycle["run"]>, void> | undefined;
@@ -80,7 +85,7 @@ export async function runAdvisorSpecialist(input: {
           try {
             await execution.cancel();
           } catch (error) {
-            errors.push(failure("execution cleanup", input.env, error));
+            errors.push(failure("execution cleanup", env, error));
           } finally {
             settleCancellation?.();
             settleCancellation = undefined;
@@ -89,17 +94,17 @@ export async function runAdvisorSpecialist(input: {
         }
         if (sandbox) {
           try {
-            lifecycle.remove(input.env);
+            lifecycle.remove(env);
             sandbox = false;
           } catch (error) {
-            errors.push(failure("cleanup", input.env, error));
+            errors.push(failure("cleanup", env, error));
           }
         }
         try {
           await gateway?.stop?.();
           gateway = undefined;
         } catch (error) {
-          errors.push(failure("gateway cleanup", input.env, error));
+          errors.push(failure("gateway cleanup", env, error));
         }
         if (errors.length)
           throw new AggregateError(errors, errors.map((error) => error.message).join("; "), {
@@ -114,10 +119,10 @@ export async function runAdvisorSpecialist(input: {
   let cleanupError: unknown;
   let result: "complete" | "cancelled" = "complete";
   try {
-    if (input.prepare !== false) await lifecycle.prepare(input.env);
+    if (input.prepare !== false) await lifecycle.prepare(env);
     if (input.cancelled?.()) result = "cancelled";
     stage = "configure";
-    if (result === "complete") gateway = lifecycle.startGateway(input.env);
+    if (result === "complete") gateway = lifecycle.startGateway(env);
     input.setActiveCleanup?.(cleanup);
     await gateway?.configure;
     if (input.cancelled?.()) result = "cancelled";
@@ -125,9 +130,9 @@ export async function runAdvisorSpecialist(input: {
       stage = "create";
       // SANDBOX_NAME is unique to this lifecycle invocation, including hosted reruns.
       sandbox = true;
-      lifecycle.create(input.env);
+      lifecycle.create(env);
       stage = "run";
-      execution = lifecycle.run(input.env) || undefined;
+      execution = lifecycle.run(env) || undefined;
       if (execution) {
         const cancellation = new Promise<"cancelled">(
           (resolve) => (settleCancellation = () => resolve("cancelled")),
@@ -147,13 +152,13 @@ export async function runAdvisorSpecialist(input: {
       if (input.cancelled?.()) result = "cancelled";
       if (result === "complete") {
         stage = "download";
-        lifecycle.download(input.env);
+        lifecycle.download(env);
         stage = "validate";
         input.validate?.();
       }
     }
   } catch (error) {
-    primary = failure(stage, input.env, error);
+    primary = failure(stage, env, error);
   } finally {
     try {
       await cleanup();
