@@ -236,6 +236,27 @@ describe("platform helpers", () => {
       });
     });
 
+    it("selects a reachable rootless Docker fallback (#10367)", () => {
+      const socketPath = "/run/user/1000/docker.sock";
+
+      expect(
+        detectDockerHost({
+          env: {},
+          platform: "linux",
+          uid: 1000,
+          existsSync: (candidate) => candidate === socketPath,
+          probeDockerHost: (dockerHost) =>
+            dockerHost
+              ? { reachable: true, identity: "docker" }
+              : { reachable: false, identity: "unknown" },
+        }),
+      ).toEqual({
+        dockerHost: `unix://${socketPath}`,
+        source: "socket",
+        socketPath,
+      });
+    });
+
     it("selects a reachable Podman fallback when no other Linux runtime is reachable (#8816)", () => {
       const socketPath = "/run/user/1000/podman/podman.sock";
 
