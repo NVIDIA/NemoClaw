@@ -459,6 +459,49 @@ export function policyTextHasHost(text: string, host: string): boolean {
   return text.split(/\r?\n/).some((line) => accepted.has(line.trim()));
 }
 
+type SlackAllowRule = { readonly method: string; readonly path: string };
+
+function hasExactSlackAllowRules(
+  endpoint: Record<string, unknown> | undefined,
+  expected: readonly SlackAllowRule[],
+): boolean {
+  const rules = endpoint && Array.isArray(endpoint.rules) ? endpoint.rules : [];
+  return (
+    rules.length === expected.length &&
+    expected.every(({ method, path: rulePath }) =>
+      rules.some((rule) => {
+        const allow =
+          rule && typeof rule === "object" && !Array.isArray(rule)
+            ? (rule as { allow?: unknown }).allow
+            : null;
+        return (
+          allow !== null &&
+          typeof allow === "object" &&
+          !Array.isArray(allow) &&
+          (allow as Record<string, unknown>).method === method &&
+          (allow as Record<string, unknown>).path === rulePath
+        );
+      }),
+    )
+  );
+}
+
+function isCredentialBoundSlackRestEndpoint(
+  endpoint: Record<string, unknown> | undefined,
+  providerName: string,
+  rules: readonly SlackAllowRule[],
+): boolean {
+  return (
+    endpoint?.port === 443 &&
+    endpoint.protocol === "rest" &&
+    endpoint.enforcement === "enforce" &&
+    endpoint.request_body_credential_rewrite === true &&
+    (endpoint.credential_binding as { provider?: unknown } | undefined)?.provider ===
+      providerName &&
+    hasExactSlackAllowRules(endpoint, rules)
+  );
+}
+
 export function slackCredentialBindingEvidence(
   policyText: string,
   sandboxName = SANDBOX_NAME,
@@ -476,8 +519,6 @@ export function slackCredentialBindingEvidence(
     slackPolicyRecord && Array.isArray(slackPolicyRecord.endpoints)
       ? (slackPolicyRecord.endpoints as Array<Record<string, unknown>>)
       : [];
-  const bindingProvider = (endpoint: Record<string, unknown> | undefined): unknown =>
-    (endpoint?.credential_binding as { provider?: unknown } | undefined)?.provider;
   const botEndpoint = endpoints.find(
     (endpoint) => endpoint.host === "slack.com" && endpoint.path === undefined,
   );
@@ -485,12 +526,13 @@ export function slackCredentialBindingEvidence(
     (endpoint) => endpoint.host === "slack.com" && endpoint.path === "/api/apps.connections.open",
   );
   return {
-    app:
-      appEndpoint?.request_body_credential_rewrite === true &&
-      bindingProvider(appEndpoint) === `${sandboxName}-slack-app`,
-    bot:
-      botEndpoint?.request_body_credential_rewrite === true &&
-      bindingProvider(botEndpoint) === `${sandboxName}-slack-bridge`,
+    app: isCredentialBoundSlackRestEndpoint(appEndpoint, `${sandboxName}-slack-app`, [
+      { method: "POST", path: "/api/apps.connections.open" },
+    ]),
+    bot: isCredentialBoundSlackRestEndpoint(botEndpoint, `${sandboxName}-slack-bridge`, [
+      { method: "GET", path: "/**" },
+      { method: "POST", path: "/**" },
+    ]),
   };
 }
 

@@ -27,6 +27,30 @@ import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-ru
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
 const FAKE_WECHAT_API = path.resolve(import.meta.dirname, "../lib/fake-wechat-api.mts");
+const SLACK_POLICY_SANDBOX = "e2e-msg-policy-proof";
+const CREDENTIAL_BOUND_SLACK_POLICY = `
+network_policies:
+  slack:
+    endpoints:
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        path: /api/apps.connections.open
+        credential_binding: { provider: ${SLACK_POLICY_SANDBOX}-slack-app }
+        rules:
+          - allow: { method: POST, path: "/api/apps.connections.open" }
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        credential_binding: { provider: ${SLACK_POLICY_SANDBOX}-slack-bridge }
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+`;
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -39,33 +63,7 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
 }
 
 describe("messaging provider installed-runtime proofs", () => {
-  it("recognizes Slack credential bindings and rejects the legacy broad policy", () => {
-    const sandboxName = "e2e-msg-policy-proof";
-    const credentialBoundPolicy = `
-network_policies:
-  slack:
-    name: slack
-    endpoints:
-      - host: slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        request_body_credential_rewrite: true
-        path: /api/apps.connections.open
-        credential_binding:
-          provider: ${sandboxName}-slack-app
-        rules:
-          - allow: { method: POST, path: "/api/apps.connections.open" }
-      - host: slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        request_body_credential_rewrite: true
-        credential_binding:
-          provider: ${sandboxName}-slack-bridge
-        rules:
-          - allow: { method: POST, path: "/**" }
-`;
+  it("accepts Slack bot and app credential bindings and rejects policies without them", () => {
     const legacyPolicy = `
 network_policies:
   slack:
@@ -79,12 +77,44 @@ network_policies:
           - allow: { method: POST, path: "/**" }
 `;
 
-    expect(slackCredentialBindingEvidence(credentialBoundPolicy, sandboxName)).toEqual({
+    expect(
+      slackCredentialBindingEvidence(CREDENTIAL_BOUND_SLACK_POLICY, SLACK_POLICY_SANDBOX),
+    ).toEqual({
       app: true,
       bot: true,
     });
-    expect(slackCredentialBindingEvidence(legacyPolicy, sandboxName)).toEqual({
+    expect(slackCredentialBindingEvidence(legacyPolicy, SLACK_POLICY_SANDBOX)).toEqual({
       app: false,
+      bot: false,
+    });
+  });
+
+  it.each([
+    ["port", "port: 443", "port: 80"],
+    ["protocol", "protocol: rest", "protocol: websocket"],
+    ["enforcement", "enforcement: enforce", "enforcement: audit"],
+    [
+      "app rule",
+      '- allow: { method: POST, path: "/api/apps.connections.open" }',
+      '- allow: { method: GET, path: "/api/apps.connections.open" }',
+    ],
+  ])("rejects an app credential endpoint with the wrong %s", (_field, current, replacement) => {
+    const policy = CREDENTIAL_BOUND_SLACK_POLICY.replace(current, replacement);
+
+    expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
+      app: false,
+      bot: true,
+    });
+  });
+
+  it("rejects a bot credential endpoint without both broad Slack API rules", () => {
+    const policy = CREDENTIAL_BOUND_SLACK_POLICY.replace(
+      '          - allow: { method: GET, path: "/**" }\n',
+      "",
+    );
+
+    expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
+      app: true,
       bot: false,
     });
   });
