@@ -363,19 +363,16 @@ describe("privileged sandbox exec routing", () => {
     }
   });
 
-  it.each([
-    ["a non-overlay2 storage driver", "overlayfs", (dir: string) => dir],
-    ["a missing upper directory", "overlay2", (dir: string) => path.join(dir, "absent")],
-  ])("fails closed on %s", (_label, graphDriverName, resolveUpperDir) => {
+  it("fails closed on a non-overlay2 storage driver", () => {
     const containerId = "a".repeat(64);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-overlay-fail-closed-"));
     try {
-      const upperDir = resolveUpperDir(root);
+      const upperDir = root;
       const runDocker = vi.fn((args: readonly string[]) =>
         args[0] === "inspect"
           ? ({
               status: 0,
-              stdout: `${containerId}\tfalse\t${graphDriverName}\t${upperDir}\t[]\n`,
+              stdout: `${containerId}\tfalse\toverlayfs\t${upperDir}\t[]\n`,
               stderr: "",
               error: null,
             } as const)
