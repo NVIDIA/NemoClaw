@@ -988,13 +988,7 @@ Every `connect --probe-only` completion prints at most one credential-free `Prob
 - `pairing` settles OpenClaw operator pairing when applicable.
 - `publication` publishes launch-readiness evidence on Linux.
 
-The line also reports cumulative durations and attempt counts for `readiness.sandbox-identity`, `readiness.policy-get`, `readiness.inference-get`, `readiness.gateway-health`, `readiness.forward-health`, and `readiness.inference-route`.
-`readiness.firstFailedObservation` identifies the first failed observation, or reports `none`.
-The line reports `total`, `lifecycleAction=skipped|reused|recovered|failed`, `forwardAction=skipped|verified|restored|failed`, and `result=ready|failed`.
-A failed probe adds `failedStage=<stage>` or `failedStage=unknown`.
-Stages and observations that do not apply or do not run report `0ms` and zero attempts.
-Timing collection and output are fail-open: clock or writer failures do not change the readiness work, command diagnostics, or exit status.
-Use the command exit status, not a duration or action field, as the readiness decision.
+The line also reports elapsed times and attempt counts for `readiness.sandbox-identity`, `readiness.policy-get`, `readiness.inference-get`, `readiness.gateway-health`, `readiness.forward-health`, and `readiness.inference-route`. It reports `readiness.firstFailedObservation`, `readiness.firstDecision`, `readiness.firstFallbackDecision`, `total`, `lifecycleAction=skipped|reused|recovered|failed`, `forwardAction=skipped|verified|restored|failed`, and `result=ready|failed`. A failed probe adds `failedStage=<stage>` or `failedStage=unknown`. Stages that do not apply or do not run report `0ms`. Timing collection and output are fail-open: clock or writer failures do not change the readiness work, command diagnostics, or exit status. Use the command exit status, not a duration or action field, as the readiness decision.
 
 <AgentOnly variant="openclaw">
   Portable lifecycle recovery also emits one credential-free `Portable lifecycle timing:` line. It
@@ -2676,6 +2670,8 @@ $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclo
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
 | `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation. |
 | `--observability`, `--no-observability` | Enable or disable managed trace export for a LangChain Deep Agents Code sandbox during the transactional rebuild. This path preserves managed MCP providers and adapter state. |
+
+If replacement onboarding returns a nonzero exit status, `rebuild` treats the recreate as failed. It does not report success or complete post-create state restoration. NemoClaw preserves the backup and registry recovery state for a retry.
 
 If another terminal has an active SSH session to the sandbox, `rebuild` prints an active-session warning and requires confirmation before destroying the sandbox. Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 
