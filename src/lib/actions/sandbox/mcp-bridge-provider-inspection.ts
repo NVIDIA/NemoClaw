@@ -1,13 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { stripAnsi } from "../../adapters/openshell/client";
 import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import { OPENSHELL_DEFAULT_WORKSPACE } from "../../adapters/openshell/sandbox-ssh-host";
+import { getDockerDriverGatewayLocalTlsDir } from "../../onboard/docker-driver-gateway-local-tls";
 import { reportsExactProviderNotFound } from "../../onboard/extra-provider-diagnostic-parser";
+import { resolveGatewayStateDirForPort } from "../../onboard/gateway/state-dir";
+import { resolveGatewayCredentialMutationAuthority } from "../../onboard/gateway-teardown-authority";
+import {
+  evaluateGatewayAttachmentConfiguration,
+  isExternallySupervised,
+  type GatewayOwner,
+} from "../../onboard/gateway-ownership";
 import { replayTrustedPrivateEndpoint } from "../../security/trusted-private-endpoint";
 import { listExtraProviders, type McpBridgeEntry, type SandboxEntry } from "../../state/registry";
-import { getPersistedSandboxTargetGatewayName } from "./gateway-target";
+import { getPersistedSandboxTargetGateway } from "./gateway-target";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";
 import type { McpBridgeTargetValidation } from "./mcp-bridge-url-validation";
@@ -41,14 +53,69 @@ export type McpProviderAttachmentInspection = {
 
 export type McpProviderInspectionRuntimeSelection = {
   gatewayName: string;
+  localTlsDir?: string;
   workspace: string;
 };
+
+const GATEWAY_CLIENT_TLS_FILES = ["ca.crt", "client/tls.crt", "client/tls.key"] as const;
+
+function readableGatewayClientTlsDir(localTlsDir: string, required: boolean): string | undefined {
+  const observations = GATEWAY_CLIENT_TLS_FILES.map((relativePath) => {
+    const filePath = path.join(localTlsDir, relativePath);
+    try {
+      if (!fs.statSync(filePath).isFile()) throw new Error("not a file");
+      fs.accessSync(filePath, fs.constants.R_OK);
+      return { filePath, readable: true };
+    } catch {
+      return { filePath, readable: false };
+    }
+  });
+  if (observations.every(({ readable }) => readable)) return localTlsDir;
+  if (!required && observations.every(({ filePath }) => !fs.existsSync(filePath))) {
+    return undefined;
+  }
+  const unreadable = observations.find(({ readable }) => !readable)?.filePath ?? localTlsDir;
+  throw new McpBridgeError(
+    `OpenShell gateway TLS file is missing or unreadable: ${unreadable}`,
+    1,
+  );
+}
+
+function providerRuntimeLocalTlsDir(
+  owner: GatewayOwner,
+  selectedInProcess: boolean,
+): string | undefined {
+  if (isExternallySupervised(owner)) {
+    const configuration = evaluateGatewayAttachmentConfiguration(owner, owner.gatewayPort);
+    if (!configuration.ok) throw new McpBridgeError(configuration.message, 1);
+    if (!owner.endpoint || new URL(owner.endpoint).protocol !== "https:") return undefined;
+    if (!owner.stateDir) {
+      throw new McpBridgeError("Externally supervised HTTPS gateway requires a state directory.", 1);
+    }
+    return readableGatewayClientTlsDir(path.join(owner.stateDir, "tls"), true);
+  }
+
+  const configuredStateDir = selectedInProcess
+    ? process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR
+    : undefined;
+  const stateDir = resolveGatewayStateDirForPort({
+    configured: configuredStateDir,
+    home: process.env.HOME || os.homedir(),
+    port: owner.gatewayPort,
+  });
+  return readableGatewayClientTlsDir(getDockerDriverGatewayLocalTlsDir(stateDir), false);
+}
 
 export function getMcpProviderInspectionRuntimeSelection(
   sandbox: SandboxEntry,
 ): McpProviderInspectionRuntimeSelection {
+  const providerRuntimeGateway = getPersistedSandboxTargetGateway(sandbox);
+  const { gatewayName, gatewayPort } = providerRuntimeGateway;
+  const owner = resolveGatewayCredentialMutationAuthority({ gatewayName, gatewayPort });
+  const localTlsDir = providerRuntimeLocalTlsDir(owner, providerRuntimeGateway.selectedInProcess);
   return {
-    gatewayName: getPersistedSandboxTargetGatewayName(sandbox),
+    gatewayName,
+    ...(localTlsDir ? { localTlsDir } : {}),
     workspace: OPENSHELL_DEFAULT_WORKSPACE,
   };
 }

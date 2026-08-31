@@ -72,16 +72,46 @@ describe("OpenShell provider command runtime", () => {
       OPENSHELL_GATEWAY: "ambient-gateway",
       OPENSHELL_GATEWAY_ENDPOINT: "https://other.example.test",
       OPENSHELL_GATEWAY_INSECURE: "true",
+      OPENSHELL_LOCAL_TLS_DIR: "/var/lib/openshell/ambient-client-tls",
+      OPENSHELL_TOKEN: "ambient-token",
       OPENSHELL_WORKSPACE: "ambient-workspace",
       PATH: "/usr/bin",
     });
 
     runOpenshellProviderCommand(["provider", "get", "alpha-mcp-fake"], {
-      runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
+      runtimeSelection: {
+        gatewayName: "recorded-gateway",
+        localTlsDir: "/var/lib/openshell/recorded-client-tls",
+        workspace: "default",
+      },
     });
 
     expect(mocks.runOpenshell).toHaveBeenCalledWith(
       ["provider", "get", "alpha-mcp-fake"],
+      expect.objectContaining({
+        env: {
+          OPENSHELL_GATEWAY: "recorded-gateway",
+          OPENSHELL_LOCAL_TLS_DIR: "/var/lib/openshell/recorded-client-tls",
+          OPENSHELL_WORKSPACE: "default",
+          PATH: "/usr/bin",
+        },
+        replaceEnv: true,
+      }),
+    );
+  });
+
+  it("does not invent an mTLS directory for a gateway without one (#10514)", () => {
+    mocks.buildSubprocessEnv.mockReturnValue({
+      OPENSHELL_GATEWAY_ENDPOINT: "https://other.example.test",
+      PATH: "/usr/bin",
+    });
+
+    runOpenshellProviderCommand(["provider", "list"], {
+      runtimeSelection: { gatewayName: "recorded-gateway", workspace: "default" },
+    });
+
+    expect(mocks.runOpenshell).toHaveBeenCalledWith(
+      ["provider", "list"],
       expect.objectContaining({
         env: {
           OPENSHELL_GATEWAY: "recorded-gateway",

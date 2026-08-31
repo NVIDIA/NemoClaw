@@ -50,7 +50,13 @@ function runHermesProbe(
   let recoveryCalls = 0;
   const recoveryActions: Array<{ action: string; timeout: number }> = [];
 
-  mocks.runOpenshellProviderCommand.mockImplementation(() => results[calls++]);
+  mocks.runOpenshellProviderCommand.mockImplementation((_args, options) => {
+    expect(options?.runtimeSelection).toEqual({
+      gatewayName: "nemoclaw-8091",
+      workspace: "default",
+    });
+    return results[calls++];
+  });
   mocks.executeGatewaySupervisorAction.mockImplementation(
     (_sandbox: string, action: string, timeout: number) => {
       recoveryActions.push({ action, timeout });

@@ -13,6 +13,7 @@ export type ProviderCommandOptions = {
   ignoreError?: boolean;
   runtimeSelection?: {
     gatewayName: string;
+    localTlsDir?: string;
     workspace: string;
   };
   stdio?: StdioOptions;
@@ -43,6 +44,9 @@ export function runOpenshellProviderCommand(args: string[], opts?: ProviderComma
     }
     env.OPENSHELL_GATEWAY = runtimeSelection.gatewayName;
     env.OPENSHELL_WORKSPACE = runtimeSelection.workspace;
+    if (runtimeSelection.localTlsDir) {
+      env.OPENSHELL_LOCAL_TLS_DIR = runtimeSelection.localTlsDir;
+    }
   }
   const providerOpts = {
     ...runtimeOptions,
