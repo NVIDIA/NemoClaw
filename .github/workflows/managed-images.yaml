@@ -32,6 +32,7 @@ on:
   pull_request:
     paths:
       - ".github/actions/ci-reviewed-npm-audit/**"
+      - ".github/actions/publish-managed-image-digest/**"
       - ".github/workflows/managed-images.yaml"
       - ".dockerignore"
       - "Dockerfile"
@@ -482,152 +483,7 @@ jobs:
           DISPLAY_NAME: ${{ matrix.display_name }}
           LOCAL_BASE_REFERENCE: nemoclaw-managed-pr/${{ matrix.agent }}-base:${{ github.event.pull_request.head.sha }}
           PLATFORM: linux/amd64
-        run: |
-          set -euo pipefail
-          write_dcode_resolution() {
-            [ "$AGENT" = "langchain-deepagents-code" ] || return 0
-            local identity_ref="$1" inspect_ref="$2" expected_revision="$3"
-            local digest="${identity_ref##*@}"
-            if [ "$identity_ref" != "${BASE_REPOSITORY}@${digest}" ] ||
-               [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "ERROR: DCode base reference is not an exact platform digest." >&2
-              exit 1
-            fi
-            if [ "$identity_ref" = "$inspect_ref" ]; then
-              docker pull --platform "$PLATFORM" "$identity_ref" >/dev/null
-            fi
-            local image_json source_revision image_id os architecture glibc_output glibc metadata key
-            image_json="$(docker image inspect "$inspect_ref")"
-            source_revision="$(jq -er 'if length == 1 then .[0].Config.Labels["org.opencontainers.image.revision"] else error("not one image") end' <<< "$image_json")"
-            image_id="$(jq -er '.[0].Id' <<< "$image_json")"
-            os="$(jq -er '.[0].Os' <<< "$image_json")"
-            architecture="$(jq -er '.[0].Architecture' <<< "$image_json")"
-            if [[ ! "$source_revision" =~ ^[0-9a-f]{40}$ ]] ||
-               { [ -n "$expected_revision" ] && [ "$source_revision" != "$expected_revision" ]; } ||
-               [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] ||
-               [ "${os}/${architecture}" != "$PLATFORM" ]; then
-              echo "ERROR: DCode base image does not match its immutable receipt." >&2
-              exit 1
-            fi
-            glibc_output="$(docker run --rm --platform "$PLATFORM" --entrypoint getconf "$inspect_ref" GNU_LIBC_VERSION)"
-            [[ "$glibc_output" =~ ^glibc\ ([0-9]+[.][0-9]+)$ ]] || {
-              echo "ERROR: DCode base image returned malformed glibc metadata." >&2
-              exit 1
-            }
-            glibc="${BASH_REMATCH[1]}"
-            [ "$(printf '%s\n' 2.39 "$glibc" | sort -V | head -n 1)" = "2.39" ] || {
-              echo "ERROR: DCode base image is below glibc 2.39." >&2
-              exit 1
-            }
-            metadata="$(jq -cn \
-              --arg architecture "$architecture" --arg digest "$digest" \
-              --arg glibc "$glibc" --arg image "$BASE_REPOSITORY" \
-              --arg imageId "$image_id" --arg os "$os" --arg ref "$identity_ref" \
-              --arg revision "$source_revision" \
-              '{schema:1,key:"",imageName:$image,ref:$ref,digest:$digest,source:"override",sourceRevision:$revision,imageId:$imageId,os:$os,architecture:$architecture,glibcVersion:$glibc,requireOpenshellSandboxAbi:true,minGlibcVersion:"2.39"}')"
-            key="$(printf '%s' "$metadata" | sha256sum | awk '{print $1}')"
-            metadata="$(jq -c --arg key "$key" '.key = $key' <<< "$metadata")"
-            printf 'resolution_key=%s\n' "$key" >> "$GITHUB_OUTPUT"
-            printf 'resolution_label=%s\n' "$(printf '%s' "$metadata" | base64 -w0 | tr '+/' '-_' | tr -d '=')" >> "$GITHUB_OUTPUT"
-          }
-          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "ERROR: PR base resolution requires exact base and candidate commit SHAs." >&2
-            exit 1
-          fi
-          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          fi
-          diff_status=0
-          git diff --quiet "$BASE_SHA" "$CANDIDATE_SHA" -- "$BASE_DOCKERFILE" || diff_status=$?
-          if [ "$diff_status" -gt 1 ]; then
-            echo "ERROR: PR base Dockerfile comparison failed." >&2
-            exit "$diff_status"
-          fi
-          if [ "$diff_status" -eq 1 ]; then
-            echo "::notice::${DISPLAY_NAME} base Dockerfile changed; building the exact PR base locally"
-            local_base_archive="$RUNNER_TEMP/pr-base.docker.tar"
-            local_base_oci_archive="$RUNNER_TEMP/pr-base.oci.tar"
-            local_base_oci="$RUNNER_TEMP/pr-base.oci"
-            base_labels=()
-            if [ "$AGENT" = "langchain-deepagents-code" ]; then
-              base_labels+=(--label "org.opencontainers.image.revision=${CANDIDATE_SHA}")
-            fi
-            docker buildx build \
-              --platform linux/amd64 \
-              --provenance=false \
-              --sbom=false \
-              --file "$BASE_DOCKERFILE" \
-              --tag "$LOCAL_BASE_REFERENCE" \
-              "${base_labels[@]}" \
-              --output "type=docker,dest=${local_base_archive}" \
-              --output "type=oci,dest=${local_base_oci_archive}" \
-              .
-            docker load --input "$local_base_archive"
-            mkdir -p "$local_base_oci"
-            tar -C "$local_base_oci" -xf "$local_base_oci_archive"
-            local_base_oci_digest="$(
-              jq -er '
-                .manifests
-                | if length == 1 then .[0].digest else error("not one image") end
-              ' "$local_base_oci/index.json"
-            )"
-            if [[ ! "$local_base_oci_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "ERROR: local PR base OCI layout returned an invalid digest." >&2
-              exit 1
-            fi
-            printf 'ref=%s\n' "$LOCAL_BASE_REFERENCE" >> "$GITHUB_OUTPUT"
-            printf 'local=true\n' >> "$GITHUB_OUTPUT"
-            printf 'oci=%s@%s\n' "$local_base_oci" "$local_base_oci_digest" >> "$GITHUB_OUTPUT"
-            write_dcode_resolution \
-              "${BASE_REPOSITORY}@${local_base_oci_digest}" \
-              "$LOCAL_BASE_REFERENCE" \
-              "$CANDIDATE_SHA"
-            printf '### %s PR base\n\nLocally built from `%s` at `%s`.\n' \
-              "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" \
-              >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          alias_raw="$RUNNER_TEMP/pr-base-alias.raw"
-          exact_raw="$RUNNER_TEMP/pr-base-exact.raw"
-          docker buildx imagetools inspect "$BASE_ALIAS" --raw > "$alias_raw"
-          if ! digest="$(
-            jq -er '
-              if (
-                .mediaType == "application/vnd.oci.image.index.v1+json" or
-                .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
-              ) then
-                [
-                  .manifests[]
-                  | select(
-                      .platform.os == "linux" and
-                      .platform.architecture == "amd64"
-                    )
-                ]
-                | if length == 1 then .[0].digest else error("not one linux/amd64 image") end
-              else
-                error("base alias is not a platform index")
-              end
-            ' "$alias_raw"
-          )"; then
-            echo "ERROR: PR base alias does not contain exactly one linux/amd64 image." >&2
-            exit 1
-          fi
-          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: PR base alias returned an invalid linux/amd64 digest." >&2
-            exit 1
-          fi
-          reference="${BASE_REPOSITORY}@${digest}"
-          docker buildx imagetools inspect "$reference" --raw > "$exact_raw"
-          actual="sha256:$(sha256sum "$exact_raw" | awk '{print $1}')"
-          if [ "$actual" != "$digest" ]; then
-            echo "ERROR: exact PR base bytes do not match the selected descriptor digest." >&2
-            exit 1
-          fi
-          printf 'ref=%s\n' "$reference" >> "$GITHUB_OUTPUT"
-          printf 'local=false\n' >> "$GITHUB_OUTPUT"
-          write_dcode_resolution "$reference" "$reference" ""
-          printf '### %s PR base\n\n`%s`\n' "$DISPLAY_NAME" "$reference" \
-            >> "$GITHUB_STEP_SUMMARY"
+        run: scripts/checks/resolve-managed-pr-base.sh
 
       - name: Validate PR managed-image build args
         shell: bash
@@ -1361,16 +1217,15 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       # Publish only the canonical digest. The candidate repository has no
       # consumer alias, so a published candidate stays reachable by digest alone.
-      - name: Publish the Pi candidate image by digest
+      - name: Publish and validate the Pi candidate image by digest
         id: publish
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: ./.github/actions/publish-managed-image-digest
         with:
           builder: ${{ steps.buildx.outputs.name }}
-          context: .
           file: agents/pi/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platform: ${{ matrix.platform }}
+          image: ghcr.io/nvidia/nemoclaw/pi-sandbox
           build-contexts: nemoclaw-pi-base=oci-layout://${{ steps.base.outputs.oci }}
-          outputs: type=image,name=ghcr.io/nvidia/nemoclaw/pi-sandbox,push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ env.SOURCE_REVISION }}
@@ -1396,24 +1251,10 @@ jobs:
       - name: Validate the published Pi candidate digest
         shell: bash
         env:
-          DIGEST: ${{ steps.publish.outputs.digest }}
+          REFERENCE: ${{ steps.publish.outputs.reference }}
         run: |
           set -euo pipefail
-          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: the Pi candidate publication did not return an immutable digest." >&2
-            exit 1
-          fi
-          reference="${REPOSITORY}@${DIGEST}"
-          raw="$RUNNER_TEMP/pi-candidate-published-manifest.raw"
-          docker buildx imagetools inspect "$reference" --raw > "$raw"
-          if [ "sha256:$(sha256sum "$raw" | awk '{print $1}')" != "$DIGEST" ]; then
-            echo "ERROR: published Pi candidate manifest bytes do not match the build digest." >&2
-            exit 1
-          fi
-          anonymous_config="$(mktemp -d "$RUNNER_TEMP/pi-candidate-anonymous.XXXXXX")"
-          trap 'rm -rf -- "$anonymous_config"' EXIT
-          DOCKER_CONFIG="$anonymous_config" docker pull --platform "$PLATFORM" "$reference"
-          image_json="$(docker image inspect "$reference")"
+          image_json="$(docker image inspect "$REFERENCE")"
           if ! jq -e \
             --arg platform "$PLATFORM" \
             '
@@ -1428,16 +1269,23 @@ jobs:
             echo "ERROR: the published Pi candidate digest does not carry the managed-image runtime contract." >&2
             exit 1
           fi
-          version="$(docker run --rm --entrypoint /usr/local/bin/pi "$reference" --version)"
+          version="$(docker run --rm --entrypoint /usr/local/bin/pi "$REFERENCE" --version)"
           expected_version="$(node -p 'require("./agents/pi/pi-runtime/package.json").dependencies["@earendil-works/pi-coding-agent"]')"
           grep -Fq "$expected_version" <<< "$version"
-          docker run --rm --entrypoint /bin/bash "$reference" -c '
+          docker run --rm --entrypoint /bin/bash "$REFERENCE" -c '
             set -eu
             test "$(stat -c %a /sandbox/.pi/agent/models.json)" = 600
             test "$(stat -c %U /sandbox/.pi/agent/models.json)" = sandbox
             node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
             test -x /usr/local/bin/nemoclaw-managed-bootstrap
           '
+      - name: Remove Pi anonymous Docker configuration
+        if: always() && steps.publish.outputs.docker-config != ''
+        shell: bash
+        env:
+          ANONYMOUS_CONFIG: ${{ steps.publish.outputs.docker-config }}
+        run: rm -rf -- "$ANONYMOUS_CONFIG"
+
       # The checks above bypass /usr/local/bin/nemoclaw-start with a direct
       # --entrypoint override, so they never prove the entrypoint itself runs
       # correctly. Start the published digest through its declared entrypoint
@@ -1903,14 +1751,13 @@ jobs:
 
       # Push only the canonical digest. Consumer aliases do not exist until the
       # exact image has passed anonymous-pull and runtime-contract validation.
-      - name: Build and push managed image by digest
+      - name: Publish and validate managed image by digest
         id: build
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        uses: ./.github/actions/publish-managed-image-digest
         with:
-          context: .
           file: ${{ matrix.dockerfile }}
-          platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          platform: ${{ matrix.platform }}
+          image: ${{ env.REGISTRY }}/${{ matrix.image }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -1951,28 +1798,14 @@ jobs:
           REQUIRED_BINARY: ${{ matrix.required_binary }}
           RESOLUTION_KEY: ${{ steps.base.outputs.resolution_key }}
           RESOLUTION_LABEL: ${{ steps.base.outputs.resolution_label }}
+          REFERENCE: ${{ steps.build.outputs.reference }}
+          ANONYMOUS_CONFIG: ${{ steps.build.outputs.docker-config }}
+          IMAGE_ID: ${{ steps.build.outputs.local-id }}
         run: |
           set -euo pipefail
-          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: managed image build did not return a valid digest: $DIGEST" >&2
-            exit 1
-          fi
-          reference="${IMAGE}@${DIGEST}"
-          docker buildx imagetools inspect "$reference" >/dev/null
-
-          anonymous_config="$(mktemp -d "$RUNNER_TEMP/anonymous-docker-XXXXXX")"
-          chmod 0700 "$anonymous_config"
-          if ! DOCKER_CONFIG="$anonymous_config" docker pull --platform "$PLATFORM" "$reference"; then
-            echo "::error::Anonymous exact-digest pull failed for ${reference}. Before aliases can be promoted, bootstrap the GHCR package ${IMAGE} with public visibility, then rerun this workflow."
-            exit 1
-          fi
-
-          image_id="$(docker image inspect --format '{{.Id}}' "$reference")"
-          if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] ||
-             [ "$(docker image inspect --format '{{.Id}}' "$image_id")" != "$image_id" ]; then
-            echo "ERROR: exact managed image did not resolve to one immutable local image ID." >&2
-            exit 1
-          fi
+          reference="$REFERENCE"
+          anonymous_config="$ANONYMOUS_CONFIG"
+          image_id="$IMAGE_ID"
           image_user="$(docker image inspect --format '{{.Config.User}}' "$reference")"
           if [ -n "$image_user" ] && [ "$image_user" != "root" ] && [ "$image_user" != "0" ]; then
             echo "ERROR: managed image OCI user must be uid 0 for OpenShell supervisor initialization: $image_user" >&2
@@ -2179,6 +2012,13 @@ jobs:
               --platform "$PLATFORM"
           printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+
+      - name: Remove anonymous Docker configuration
+        if: always() && steps.build.outputs.docker-config != ''
+        shell: bash
+        env:
+          ANONYMOUS_CONFIG: ${{ steps.build.outputs.docker-config }}
+        run: rm -rf -- "$ANONYMOUS_CONFIG"
 
       - name: Capture exact managed image publication evidence
         id: evidence
