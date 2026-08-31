@@ -142,6 +142,42 @@ function refuseEffectStartingWith(prefix: string): (operation: string) => void {
   };
 }
 
+async function expectCommittedReadinessPersistenceFailure(
+  persist: NonNullable<ReturnType<typeof noGpuInput>["persistRetainedSandboxRecovery"]>,
+): Promise<void> {
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const input = noGpuInput();
+  input.resumeVerifiedCreate = {
+    route: "none",
+    liveIdentityFingerprint: fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+    createAttemptNonce: "a".repeat(62),
+  };
+  input.verifyCreatedSandboxBeforeEffects = vi.fn();
+  input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+  input.persistRetainedSandboxRecovery = persist;
+  const patch = createGpuPatchFixture();
+  attachManagedBootstrap(input, patch);
+  const deps = createGpuFlowDeps("alpha-sandbox-id");
+  mocks.waitForCreatedSandboxReadyWithTrace
+    .mockReturnValueOnce({ ready: true, reason: "ready", failurePhase: null })
+    .mockReturnValue({ ready: false, reason: "timeout", failurePhase: null });
+
+  await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+    "the recovery-only session remains blocked",
+  );
+
+  expect(persist).toHaveBeenCalledOnce();
+  expect(error.mock.calls.flat().join("\n")).toContain(
+    "The recovery-only session remains blocked until its durable recovery record can be saved.",
+  );
+  expect(error.mock.calls.flat().join("\n")).not.toContain("Preserve the terminal output");
+  expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+  expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+    ["sandbox", "delete", "alpha"],
+    expect.anything(),
+  );
+}
+
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
@@ -253,6 +289,18 @@ describe("created sandbox identity gate", () => {
     );
     expect(recoveryOutput).not.toContain("destroy --yes");
     expect(recoveryOutput).not.toContain("After OpenShell confirms the sandbox is absent");
+  });
+
+  it("blocks committed-readiness recovery when durable persistence returns false", async () => {
+    await expectCommittedReadinessPersistenceFailure(vi.fn(() => false));
+  });
+
+  it("blocks committed-readiness recovery when durable persistence throws", async () => {
+    await expectCommittedReadinessPersistenceFailure(
+      vi.fn(() => {
+        throw new Error("durable writer failed");
+      }),
+    );
   });
 
   it("resumes the exact verified sandbox without issuing another create (#9833)", async () => {

@@ -271,16 +271,24 @@ function persistCreateAttemptRecovery(options: {
       ? `Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}. `
       : "") +
     detail;
-  let persisted = false;
+  let persistenceFailure: unknown = null;
   try {
-    persisted = persist(message, sandboxIdentityFingerprint, createAttemptNonce);
-  } catch {
-    persisted = false;
+    if (!persist(message, sandboxIdentityFingerprint, createAttemptNonce)) {
+      persistenceFailure = new Error(
+        "The retained sandbox recovery writer did not confirm durable persistence.",
+      );
+    }
+  } catch (error) {
+    persistenceFailure = error;
   }
   console.error(`  ${message}`);
-  if (!persisted) {
+  if (persistenceFailure) {
     console.error(
-      "  NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
+      "  NemoClaw could not save this create-attempt evidence. The recovery-only session remains blocked until its durable recovery record can be saved.",
+    );
+    throw new Error(
+      "NemoClaw could not save the retained sandbox recovery record; the recovery-only session remains blocked.",
+      { cause: persistenceFailure },
     );
   }
 }
