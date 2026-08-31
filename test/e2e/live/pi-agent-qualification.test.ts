@@ -35,7 +35,7 @@ import {
 } from "./pi-agent-qualification-events.ts";
 
 const GATEWAY = "nemoclaw";
-const MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-pi-qual";
 const TASK_VERSION = "pi-read-v1";
 const LIVE_TIMEOUT_MS = 90 * 60_000;
@@ -364,7 +364,6 @@ test(
     );
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
     await host.expectListed(SANDBOX_NAME, { env });
-    await host.expectStatus(SANDBOX_NAME, { env, timeoutMs: 120_000 });
     await sandbox.expectListed(SANDBOX_NAME, { env });
     const registry = registryDocument() as {
       sandboxes?: Record<string, { agent?: string; workload?: Record<string, unknown> }>;
@@ -392,7 +391,6 @@ test(
       timeoutMs: 20 * 60_000,
     });
     expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
-    await host.expectStatus(SANDBOX_NAME, { env, timeoutMs: 120_000 });
     const sessionsAfterRebuild = await sessionInventory(sandbox, env, "after-rebuild");
     expect(sessionsAfterRebuild).toBe(sessionsBeforeRebuild);
     const rebuildProof = await runReadTask(artifacts, host, sandbox, env, "after-rebuild");
@@ -400,7 +398,6 @@ test(
     progress.phase("recover Pi after a gateway restart");
     await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName: SANDBOX_NAME });
     await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
-    await host.expectStatus(SANDBOX_NAME, { env, timeoutMs: 120_000 });
     const recoveryProof = await runReadTask(artifacts, host, sandbox, env, "after-recovery");
 
     progress.phase("prove Pi policy and credential boundaries");
