@@ -531,12 +531,6 @@ export default async function triage_nemoclaw_ci_failure(input: {
       "ShellCheck reported a shell diagnostic.",
       "Run the targeted ShellCheck and shfmt checks and fix the diagnostic.",
     );
-  if (/PR review advisor/i.test(job.name) && /Nemotron 3 Ultra|second-opinion/i.test(text))
-    add(
-      "advisor-second-opinion",
-      "The Nemotron second-opinion check reported a failure.",
-      "Treat it as advisory unless the primary advisor or a maintainer identifies a concrete blocker.",
-    );
   const boundedFindings = findings.slice(0, 20);
   return {
     jobId,
