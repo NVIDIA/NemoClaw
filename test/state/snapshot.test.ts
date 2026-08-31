@@ -229,39 +229,39 @@ describe("listBackups computes virtual versions", () => {
     expect(sandboxState.findBackup("test-sandbox", "failtest").match).toBeNull();
     expect(fs.existsSync(String(incomplete.backupPath))).toBe(false);
   });
-  it("keeps retained incomplete snapshots out of snapshot selection (#10639)", () => {
-    const incomplete = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
-      backupComplete: false,
-      stateDirs: ["workspace", "extensions"],
-      backedUpDirs: ["extensions"],
-      failedBackupDirs: ["workspace"],
-    });
+  it.each([
+    {
+      scenario: "an explicit directory failure",
+      overrides: {
+        backupComplete: false,
+        stateDirs: ["workspace", "extensions"],
+        backedUpDirs: ["extensions"],
+        failedBackupDirs: ["workspace"],
+      },
+    },
+    {
+      scenario: "a state-file-only failure",
+      overrides: {
+        backupComplete: false,
+        stateDirs: ["workspace"],
+        backedUpDirs: ["workspace"],
+        failedBackupDirs: [],
+        stateFiles: [{ path: "openclaw.json", strategy: "copy" }],
+      },
+    },
+    {
+      scenario: "a legacy partial-directory manifest",
+      overrides: {
+        stateDirs: ["workspace", "extensions"],
+        backedUpDirs: ["extensions"],
+        failedBackupDirs: ["workspace"],
+      },
+    },
+  ])("keeps snapshots with $scenario out of snapshot selection (#10639)", ({ overrides }) => {
+    const incomplete = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", overrides);
 
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
     expect(sandboxState.findBackup("test-sandbox", "v1").match).toBeNull();
-    expect(fs.existsSync(String(incomplete.backupPath))).toBe(true);
-  });
-  it("keeps state-file-only incomplete snapshots out of snapshot selection (#10639)", () => {
-    const incomplete = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
-      backupComplete: false,
-      stateDirs: ["workspace"],
-      backedUpDirs: ["workspace"],
-      failedBackupDirs: [],
-      stateFiles: [{ path: "openclaw.json", strategy: "copy" }],
-    });
-
-    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
-    expect(sandboxState.findBackup("test-sandbox", "v1").match).toBeNull();
-    expect(fs.existsSync(String(incomplete.backupPath))).toBe(true);
-  });
-  it("keeps legacy partial-directory snapshots out of snapshot selection (#10639)", () => {
-    const incomplete = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
-      stateDirs: ["workspace", "extensions"],
-      backedUpDirs: ["extensions"],
-      failedBackupDirs: ["workspace"],
-    });
-
-    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
     expect(fs.existsSync(String(incomplete.backupPath))).toBe(true);
   });
   it("restores the versions of surviving snapshots once an incomplete one is removed (#8201)", () => {
