@@ -53,6 +53,7 @@ function runRecoveryBeforeOnboard(
     dockerContext?: string;
     dockerHost?: string;
     hostPreflightExitCode?: number;
+    includeNodeOnPath?: boolean;
     interactive?: boolean;
     orphanedRecovery?: boolean;
     persistedDockerContext?: string;
@@ -180,7 +181,10 @@ exit 0
     }
     sleep() { printf 'sleep=%s\n' "$*" >> "${callLog}"; }
     step() { :; }
-    install_nodejs() { record_install_phase node-install-started; }
+    install_nodejs() {
+      record_install_phase node-install-started
+      export PATH="$NODE_BIN_DIR:$PATH"
+    }
     ensure_supported_runtime() { record_install_phase runtime-check-started; }
     fix_npm_permissions() { record_install_phase npm-permissions-started; }
     preinstall_backup_and_retire_legacy_gateway() {
@@ -214,6 +218,7 @@ exit 0
       ...(dockerConfig === undefined ? {} : { DOCKER_CONFIG: dockerConfig }),
       ...(options.dockerHost !== undefined ? { DOCKER_HOST: options.dockerHost } : {}),
       NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
+      NODE_BIN_DIR: path.dirname(process.execPath),
       ...(options.singleSession ? { NEMOCLAW_SINGLE_SESSION: "1" } : {}),
       RECORD_INSTALL_PHASES: options.recordInstallPhases ? "1" : "",
       RECORD_PREINSTALL: options.recordPreinstall ? "1" : "",
@@ -221,7 +226,7 @@ exit 0
       RECOVERY_LOG_WRITE_FAILS: options.recoveryLogWriteFails ? "1" : "",
     },
     home: tmp,
-    includeNodeOnPath: true,
+    includeNodeOnPath: options.includeNodeOnPath ?? true,
   });
   const calls = fs.existsSync(callLog)
     ? fs.readFileSync(callLog, "utf-8").trim().split(/\r?\n/).filter(Boolean)
@@ -277,6 +282,41 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
     ]);
     expect(result.output).toContain("Existing sandboxes recovered; skipping generic onboarding");
+  });
+
+  it("defers a persisted default Docker context until Node.js is installed", () => {
+    const result = runRecoveryBeforeOnboard(0, 0, {
+      includeNodeOnPath: false,
+      persistedDockerContext: "default",
+      recordInstallPhases: true,
+      recordPreinstall: true,
+    });
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls).toContain("ensure-docker-started");
+    expect(result.calls).toContain("node-install-started");
+    expect(result.calls).toContain("preinstall-backup-retirement");
+    expect(result.calls).toContain("host-preflight");
+    expect(result.output).not.toContain("Docker context does not select the local default target");
+  });
+
+  it("rejects a deferred remote Docker context before recovery", () => {
+    const result = runRecoveryBeforeOnboard(2, 0, {
+      includeNodeOnPath: false,
+      persistedDockerContext: "remote-context",
+      recordInstallPhases: true,
+      recordPreinstall: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.calls).toContain("ensure-docker-started");
+    expect(result.calls).toContain("node-install-started");
+    expect(result.calls).not.toContain("preinstall-backup-retirement");
+    expect(result.calls).not.toContain(
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+    );
+    expect(result.output).toContain("Docker context does not select the local default target");
+    expect(result.output).toContain("Sandbox recovery did not start");
   });
 
   it.each([

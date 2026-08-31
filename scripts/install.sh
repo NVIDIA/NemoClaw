@@ -19,6 +19,7 @@ _PORTABLE_INSTALLER_DOCKER_HOST=""
 _PORTABLE_CALLER_DOCKER_CONTEXT=""
 _PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED=""
 _PORTABLE_CALLER_DOCKER_CONTEXT_SET=""
+_INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED=""
 # #4414: When re-launched as a staged copy via `curl | bash`, queue the
 # staged tmpfile for removal on EXIT. NEMOCLAW_INSTALLER_STAGED carries
 # the staged path forward so both the loop guard and cleanup use one var.
@@ -1270,11 +1271,36 @@ installer_docker_context_has_supported_target() {
   [[ "$active_context" == default ]]
 }
 
+installer_docker_context_validation_requires_node() {
+  [[ -z "${DOCKER_CONTEXT-}" ]] || return 1
+  local raw="${DOCKER_HOST-}" candidate config
+  candidate="${raw#"${raw%%[![:space:]]*}"}"
+  candidate="${candidate%"${candidate##*[![:space:]]}"}"
+  [[ -z "$candidate" ]] || return 1
+  command_exists docker && return 1
+  command_exists node && return 1
+  config="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
+  [[ -e "$config" ]]
+}
+
 validate_installer_docker_target_before_host_changes() {
   installer_docker_host_has_supported_shape \
     || error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer. Sandbox recovery did not start."
+  if installer_docker_context_validation_requires_node; then
+    _INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED=1
+    export DOCKER_CONTEXT=default
+    return 0
+  fi
   installer_docker_context_has_supported_target \
     || error "The Docker context does not select the local default target. Unset DOCKER_CONTEXT or set it to default, and run 'docker context use default' if a non-default context is persisted. Then rerun the installer. Sandbox recovery did not start."
+}
+
+complete_deferred_installer_docker_context_validation() {
+  [[ "${_INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED:-}" == "1" ]] || return 0
+  _INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED=""
+  unset DOCKER_CONTEXT
+  validate_installer_docker_target_before_host_changes
+  export DOCKER_CONTEXT=default
 }
 
 MIN_NODE_VERSION="22.19.0"
@@ -6310,6 +6336,7 @@ install_nemoclaw_before_onboarding() {
   step 1 "Node.js"
   install_nodejs
   ensure_supported_runtime
+  complete_deferred_installer_docker_context_validation
   resolve_pending_express_wsl_provider
   ensure_station_express_pair
 
