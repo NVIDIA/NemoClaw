@@ -32,7 +32,13 @@ import {
   withLegacyMessagingPlanEnvDirect,
 } from "../messaging-plan-test-helper";
 
-const SCRIPT_PATH = path.join(import.meta.dirname, "../..", "agents", "hermes", "generate-config.ts");
+const SCRIPT_PATH = path.join(
+  import.meta.dirname,
+  "../..",
+  "agents",
+  "hermes",
+  "generate-config.ts",
+);
 const SCRIPT_DIR = path.dirname(SCRIPT_PATH);
 const CONFIG_MODULE_DIR = path.join(import.meta.dirname, "../..", "agents", "hermes", "config");
 
@@ -747,9 +753,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.api_key).toBe(HERMES_PROXY_REWRITE_SENTINEL);
   });
 
-  it.each(
-    ["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"],
-  )(
+  it.each(["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"])(
     "preserves Hermes remote platform toolsets while keeping CLI defaults unpinned [%s]",
     async (platform) => {
       const { config } = await runConfigScriptWithMessaging({
@@ -1079,11 +1083,10 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.platforms.weixin).toEqual({ enabled: true });
     expectRemotePlatformToolsets(config.platform_toolsets.weixin);
 
-    // The bot token placeholder references the OpenShell credential slot
-    // (WECHAT_BOT_TOKEN), NOT a fresh WEIXIN_TOKEN slot — that's the L7
-    // resolution contract shared with OpenClaw's bridge.
-    expect(envFile).toContain("WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN\n");
-    expect(envFile).not.toContain("WEIXIN_TOKEN=openshell:resolve:env:WEIXIN_TOKEN\n");
+    // Startup copies OpenShell's revision-scoped WECHAT_BOT_TOKEN placeholder
+    // to Hermes' WEIXIN_TOKEN name. Persisting the canonical placeholder here
+    // would shadow the runtime value and fail credential resolution.
+    expect(envFile).not.toContain("WEIXIN_TOKEN=");
 
     expect(envFile).toContain("WEIXIN_ACCOUNT_ID=test_account_42\n");
     expect(envFile).toContain("WEIXIN_BASE_URL=https://ilinkai.wechat.com\n");

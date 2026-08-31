@@ -1,13 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 
 import YAML from "yaml";
 
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { setPolicyDocument } from "../../../src/lib/policy";
 import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -750,35 +749,17 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
   });
   expectExitZero(base, "capture exact-main base policy");
   const basePolicyYaml = parseOpenShellPolicy(base.stdout).yamlBody;
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-exact-main-policy-"));
-  await fs.chmod(tempDir, 0o700);
-  const basePolicyPath = path.join(tempDir, "base.yaml");
-  const identityPolicyPath = path.join(tempDir, "identity.yaml");
-  await fs.writeFile(basePolicyPath, basePolicyYaml, { encoding: "utf8", mode: 0o600 });
-  await fs.writeFile(identityPolicyPath, buildIdentityPolicy(basePolicyYaml, options.mcpUrl), {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  let removeTemp = true;
-  const cleanupTemp = async () => {
-    if (!removeTemp) return;
-    await fs.rm(tempDir, { force: true, recursive: true });
-    removeTemp = false;
-  };
-  options.cleanup.add("remove exact-main policy proof temp files", cleanupTemp);
 
   let restoreRequired = false;
   const restorePolicy = async () => {
     if (!restoreRequired) return;
-    const restored = await options.sandbox.openshell(
-      ["policy", "set", "--policy", basePolicyPath, "--wait", options.sandboxName],
-      {
-        artifactName: "exact-main-policy-restore",
-        env: sandboxAccessEnv(),
-        timeoutMs: POLICY_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(restored, "restore exact-main base policy");
+    expect(
+      setPolicyDocument(options.sandboxName, basePolicyYaml, {
+        nonFatal: true,
+        operation: "restore the exact-main policy proof",
+      }),
+      "exact-main-policy-restore",
+    ).toBe(true);
     const verify = await options.sandbox.openshell(
       ["policy", "get", "--base", options.sandboxName],
       {
@@ -801,15 +782,17 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
       "exact-main-policy-effective-before-mutation",
     );
     restoreRequired = true;
-    const apply = await options.sandbox.openshell(
-      ["policy", "set", "--policy", identityPolicyPath, "--wait", options.sandboxName],
-      {
-        artifactName: "exact-main-policy-hot-update",
-        env: sandboxAccessEnv(),
-        timeoutMs: POLICY_TIMEOUT_MS,
-      },
-    );
-    expectExitZero(apply, "apply exact-main live-exe identity policy");
+    expect(
+      setPolicyDocument(
+        options.sandboxName,
+        buildIdentityPolicy(basePolicyYaml, options.mcpUrl),
+        {
+          nonFatal: true,
+          operation: "apply the exact-main live-exe identity policy",
+        },
+      ),
+      "exact-main-policy-hot-update",
+    ).toBe(true);
     const effective = await readPolicyStatus(
       options.sandbox,
       options.sandboxName,
@@ -904,11 +887,7 @@ export async function assertExactMainPolicyNftAndIdentityContracts(options: {
       policyHotUpdate: { effective, revision },
     });
   } finally {
-    try {
-      await restorePolicy();
-    } finally {
-      await cleanupTemp();
-    }
+    await restorePolicy();
   }
 }
 

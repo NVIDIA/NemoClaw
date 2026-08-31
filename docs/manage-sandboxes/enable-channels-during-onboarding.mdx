@@ -83,7 +83,9 @@ $$nemoclaw onboard
 ```
 
 Complete the wizard so the blueprint can create OpenShell providers where needed, such as `<sandbox>-telegram-bridge`, `<sandbox>-teams-bridge`, or `<sandbox>-wechat-bridge`.
-The wizard writes channel configuration into the image through `NEMOCLAW_MESSAGING_CHANNELS_B64` and starts the sandbox.
+NemoClaw compiles the selected channel configuration into `NEMOCLAW_MESSAGING_PLAN_B64` for the sandbox image build.
+The build applies the selected agent configuration, writes reduced runtime metadata to `/usr/local/share/nemoclaw/messaging-runtime-plan.json`, and removes the full build plan from the runtime environment.
+Credential bindings remain OpenShell credential placeholders, so raw messaging credentials do not enter the sandbox image or agent configuration.
 
 ## Stop Configuring a Channel
 

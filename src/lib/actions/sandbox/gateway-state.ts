@@ -10,6 +10,7 @@ import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
+export { getNamedGatewayLifecycleState };
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES } from "../../state/gateway";
@@ -51,6 +52,7 @@ import {
 import {
   captureOpenshell,
   captureOpenshellForStatus,
+  captureResolvedOpenshell,
   getOpenshellBinary,
   getStatusProbeTimeoutMs,
   isCommandTimeout,
@@ -70,7 +72,9 @@ import {
   buildHermesPortableCommandEnvironment,
   buildHermesPortableCommandAuthority,
   inspectPortableAgentReceiptDisposition,
+  qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
+  qualifyHermesPortableOperatingCommandAuthority,
   requalifyPortableAgentSandboxAuthority,
   recoverPortableAgentSandboxLifecycle,
   requireHermesPortableActiveLifecycleAuthority,
@@ -116,13 +120,54 @@ export {
   buildHermesPortableCommandAuthority,
   buildHermesPortableCommandEnvironment,
   inspectPortableAgentReceiptDisposition,
+  qualifyHermesPortableAcceptedReadinessAuthority,
   qualifyPortableAgentLifecycleAuthority,
+  qualifyHermesPortableOperatingCommandAuthority,
   requalifyPortableAgentSandboxAuthority,
   requireHermesPortableActiveLifecycleAuthority,
 };
 export const withSandboxLifecycleLock = withMcpLifecycleLock;
 export const withSandboxLifecycleLockSync = withMcpLifecycleLockSync;
 export const withConnectSandboxLifecycleLock = withMcpLifecycleLock;
+
+/** Capture one accepted-readiness observation through retained Hermes command authority. */
+export function captureHermesPortableAcceptedReadinessObservation(
+  authority: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>,
+  args: string[],
+  options: NonNullable<Parameters<typeof captureResolvedOpenshell>[1]> = {},
+) {
+  authority.assertCurrent();
+  try {
+    return captureResolvedOpenshell(args, {
+      ...options,
+      env: authority.env,
+      openshellBinary: authority.executablePath,
+      replaceEnv: true,
+    });
+  } finally {
+    authority.assertCurrent();
+  }
+}
+
+/** Capture one recovery-only gateway command under receipt-owned authority. */
+export function captureHermesPortableInferenceRecoveryGateway(
+  sandboxName: string,
+  args: string[],
+  options: { readonly env?: NodeJS.ProcessEnv; readonly timeout: number },
+) {
+  if (options.env && Object.keys(options.env).length > 0) {
+    throw new Error("Hermes Portable inference recovery rejected command environment drift.");
+  }
+  const command = buildHermesPortableCommandAuthority(sandboxName);
+  return captureResolvedOpenshell(args, {
+    env: command.env,
+    openshellBinary: command.executablePath,
+    replaceEnv: true,
+    ignoreError: true,
+    includeStreams: true,
+    timeout: options.timeout,
+  });
+}
 
 type SandboxGatewayStateLookup = (
   sandboxName: string,
@@ -159,40 +204,70 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
   sandboxName: string,
   sandbox: SandboxEntry | null,
   gatewayName: string,
+  commandAuthority?: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>,
 ): PortableDemoLifecycleRecoveryResult {
-  return recoverPortableAgentSandboxLifecycle(
-    sandboxName,
-    {
-      agent: sandbox?.agent,
-      gatewayName,
-      lifecycleGeneration: sandbox?.lifecycleGeneration,
-      openshellDriver: sandbox?.openshellDriver,
-      provider: sandbox?.provider,
-    },
-    {
-      ...(sandbox
-        ? {
-            backfillRegistryGeneration: (generation: string) =>
-              compareAndSetLegacySandboxLifecycleGeneration(sandbox, generation),
-          }
-        : {}),
-      openshellBinary: getOpenshellBinary(),
-      captureOpenshell: (args, timeoutMs) => {
-        const result = captureOpenshell([...args], {
-          ignoreError: true,
-          includeStreams: true,
-          timeout: timeoutMs,
-        });
-        return {
-          status: result.status,
-          stdout: result.stdout ?? result.output,
-          stderr: result.stderr,
-          error: result.error,
-        };
+  const capture = (args: readonly string[], timeoutMs: number) => {
+    commandAuthority?.assertCurrent();
+    try {
+      const result = commandAuthority
+        ? captureResolvedOpenshell([...args], {
+            env: commandAuthority.env,
+            openshellBinary: commandAuthority.executablePath,
+            replaceEnv: true,
+            ignoreError: true,
+            includeStreams: true,
+            timeout: timeoutMs,
+          })
+        : captureOpenshell([...args], {
+            ignoreError: true,
+            includeStreams: true,
+            timeout: timeoutMs,
+          });
+      return {
+        status: result.status,
+        stdout: result.stdout ?? result.output,
+        stderr: result.stderr,
+        error: result.error,
+      };
+    } finally {
+      commandAuthority?.assertCurrent();
+    }
+  };
+  commandAuthority?.assertCurrent();
+  try {
+    return recoverPortableAgentSandboxLifecycle(
+      sandboxName,
+      {
+        agent: sandbox?.agent,
+        gatewayName,
+        lifecycleGeneration: sandbox?.lifecycleGeneration,
+        openshellDriver: sandbox?.openshellDriver,
+        provider: sandbox?.provider,
       },
-      readRegistry: (name) => (sandbox?.name === name ? sandbox : null),
-    },
-  );
+      {
+        ...(sandbox
+          ? {
+              backfillRegistryGeneration: (generation: string) =>
+                compareAndSetLegacySandboxLifecycleGeneration(sandbox, generation),
+            }
+          : {}),
+        openshellBinary: commandAuthority?.executablePath ?? getOpenshellBinary(),
+        ...(commandAuthority
+          ? {
+              env: commandAuthority.env,
+              assertOpenShellExecutableAuthority: () => {
+                commandAuthority.assertCurrent();
+                return commandAuthority.executablePath;
+              },
+            }
+          : {}),
+        captureOpenshell: capture,
+        readRegistry: (name) => (sandbox?.name === name ? sandbox : null),
+      },
+    );
+  } finally {
+    commandAuthority?.assertCurrent();
+  }
 }
 
 /** Requalify Hermes receipt authority without starting or mutating its sandbox. */

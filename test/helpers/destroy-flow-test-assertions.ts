@@ -4,7 +4,11 @@
 import { expect, type MockInstance } from "vitest";
 
 import { classifyDestroySandboxPresence } from "../../src/lib/actions/sandbox/destroy-presence";
-import { type DestroyHarness, sandboxListJson } from "./destroy-flow-test-harness";
+import {
+  createDestroyHarness,
+  type DestroyHarness,
+  sandboxListJson,
+} from "./destroy-flow-test-harness";
 
 export function expectStrictSandboxPresenceClassification(): void {
   expect(
@@ -108,7 +112,10 @@ export function expectActiveTimerDestroyOrder(harness: DestroyHarness): void {
   expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
 }
 
-export function expectFailedHardeningStillDeletes(harness: DestroyHarness): void {
+export function expectFailedHardeningStillDeletes(
+  harness: DestroyHarness,
+  cliName = "nemoclaw",
+): void {
   expect(harness.events).toEqual(
     expect.arrayContaining(["wipe", "harden", "delete", "timer-cleanup"]),
   );
@@ -128,7 +135,7 @@ export function expectFailedHardeningStillDeletes(harness: DestroyHarness): void
     "Waiting for a verified live sandbox mutation owner does not consume that budget",
   );
   expect(warnOutput).toContain("durable containment blocks sandbox mutations");
-  expect(warnOutput).toContain("nemoclaw alpha shields status");
+  expect(warnOutput).toContain(`${cliName} alpha shields status`);
   expect(warnOutput).toContain("exact-generation recovery guidance");
 }
 
@@ -146,12 +153,12 @@ export function expectFailedHardeningRefusesForcedCleanup(harness: DestroyHarnes
   expect(errorOutput).not.toContain("re-run with --force to remove the local sandbox record");
   expect(errorOutput).toContain("seven-attempt auto-restore recovery can continue");
   expect(errorOutput).toContain("durable containment blocks sandbox mutations");
-  expectShieldsRecoveryOrder(errorOutput);
+  expectShieldsRecoveryOrder(errorOutput, process.env.NEMOCLAW_INVOKED_AS ?? "nemoclaw");
 }
 
-export function expectShieldsRecoveryOrder(errorOutput: string): void {
-  const gatewayStatusIndex = errorOutput.indexOf("nemoclaw alpha status");
-  const shieldsStatusIndex = errorOutput.indexOf("nemoclaw alpha shields status");
+export function expectShieldsRecoveryOrder(errorOutput: string, cliName = "nemoclaw"): void {
+  const gatewayStatusIndex = errorOutput.indexOf(`${cliName} alpha status`);
+  const shieldsStatusIndex = errorOutput.indexOf(`${cliName} alpha shields status`);
   const retryDestroyIndex = errorOutput.indexOf("Retry destroy only after recovery permits it");
   expect(gatewayStatusIndex).toBeGreaterThanOrEqual(0);
   expect(shieldsStatusIndex).toBeGreaterThan(gatewayStatusIndex);

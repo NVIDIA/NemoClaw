@@ -84,6 +84,7 @@ function managedPrActivation(workflow: Workflow): Job {
 function managedPrOpenClawMcpDiscovery(workflow: Workflow): Job {
   return required(workflow.jobs?.["pr-openclaw-mcp-discovery"], "missing exact PR MCP gate");
 }
+
 describe("complete managed-image publication workflow", () => {
   it("rejects managed package paths redirected outside node_modules", () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-plugin-"));
@@ -416,9 +417,7 @@ describe("complete managed-image publication workflow", () => {
     expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
     expect(step(prBuilder, "Checkout").with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
     expect(releaseIdentity.id).toBe("release");
-    expect(releaseIdentity.run).toContain(
-      "git describe --tags --match 'v*' \"$CANDIDATE_SHA\"",
-    );
+    expect(releaseIdentity.run).toContain("git describe --tags --match 'v*' \"$CANDIDATE_SHA\"");
     expect(releaseIdentity.run).toContain("value=%s");
     expect(step(prBuilder, "Set up Docker Buildx").id).toBe("buildx");
     const matrixByAgent = new Map(matrix.map((entry) => [entry.agent, entry]));
@@ -444,7 +443,7 @@ describe("complete managed-image publication workflow", () => {
     }
 
     const resolveBase = required(
-      step(prBuilder, "Resolve exact linux/amd64 PR base").run,
+      step(prBuilder, "Resolve digest-pinned linux/amd64 PR base").run,
       "PR base resolution is missing",
     );
     expect(resolveBase).toContain('.platform.architecture == "amd64"');
@@ -758,7 +757,7 @@ describe("complete managed-image publication workflow", () => {
   it("pins a single linux/amd64 PR base descriptor and fails closed on torn index evidence", () => {
     const workflow = readWorkflow("managed-images.yaml");
     const resolver = required(
-      step(managedPrBuilder(workflow), "Resolve exact linux/amd64 PR base").run,
+      step(managedPrBuilder(workflow), "Resolve digest-pinned linux/amd64 PR base").run,
       "PR base resolver script is missing",
     );
     const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-base-"));

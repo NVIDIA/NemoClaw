@@ -4,15 +4,15 @@
 title: "Apply Policy Presets"
 sidebar-title: "Apply Policy Presets"
 description: "Add, reapply, list, or remove policy presets for a running NemoClaw sandbox."
-description-agent: "Applies and manages policy presets for a running sandbox. Use when adding maintained integration access, previewing preset scope, reapplying an edited preset, removing access, or removing a preset the gateway enforces without a local record."
-keywords: ["nemoclaw policy presets", "policy add", "policy remove", "active on gateway missing from local state"]
+description-agent: "Applies and manages policy presets in the current OpenShell policy for a running sandbox."
+keywords: ["nemoclaw policy presets", "policy add", "policy remove", "openshell policy"]
 content:
   type: "how_to"
 skill:
   priority: 10
 ---
-Use policy presets to add reviewed network access to one running sandbox without replacing its current policy.
-NemoClaw records applied presets so rebuild and restore operations can replay them.
+
+Use policy presets to add reviewed network access to one running sandbox without replacing its current policy. NemoClaw provides the convenient merge and removal commands; OpenShell remains the only durable policy state.
 
 <Warning>
 Use `$$nemoclaw <name> policy add` to merge a preset into the running policy.
@@ -22,9 +22,7 @@ Follow [Replace the Live Network Policy](replace-live-network-policy) only when 
 
 ## Choose a Maintained Preset
 
-During onboarding, the selected [policy tier](../../reference/network-policies#policy-tiers) determines which maintained presets are enabled by default.
-The interactive preset screen lets you add or remove individual presets.
-Messaging channel choices are scoped to the active agent, so unsupported channel presets do not appear.
+During onboarding, the selected [policy tier](../../reference/network-policies#policy-tiers) determines which maintained presets are enabled by default. The interactive preset screen lets you add or remove individual presets. Messaging channel choices are scoped to the active agent, so unsupported channel presets do not appear.
 
 List the presets available to the sandbox:
 
@@ -33,10 +31,12 @@ $$nemoclaw <name> policy list
 ```
 
 <AgentOnly variant="openclaw,hermes">
-For the maintained preset catalog and guided service workflows, refer to [Common Integration Policy Examples](../integration-policy-examples).
+  For the maintained preset catalog and guided service workflows, refer to [Common Integration
+  Policy Examples](../integration-policy-examples).
 </AgentOnly>
 <AgentOnly variant="deepagents">
-For Deep Agents baseline, tier, Tavily, and observability preset behavior, refer to [Network Policies](../../reference/network-policies#policy-tiers).
+  For Deep Agents baseline, tier, Tavily, and observability preset behavior, refer to [Network
+  Policies](../../reference/network-policies#policy-tiers).
 </AgentOnly>
 
 ## Preview and Apply a Preset
@@ -66,27 +66,19 @@ Omit the preset name to use the interactive picker:
 $$nemoclaw my-assistant policy add
 ```
 
-The picker requires a terminal on stdin.
-A run without a terminal, such as an SSH command without `-t`, a service unit, or a CI job, exits non-zero and reports that no input is available on stdin.
+The picker requires a terminal on stdin. A run without a terminal, such as an SSH command without `-t`, a service unit, or a CI job, exits non-zero and reports that no input is available on stdin.
 
-Pass a preset name with `--yes` for scripted workflows.
-Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` to use the same non-interactive flow through an environment variable.
-With that variable set, a missing preset name instead reports that non-interactive mode requires a preset name.
+Pass a preset name with `--yes` for scripted workflows. Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` to use the same non-interactive flow through an environment variable. With that variable set, a missing preset name instead reports that non-interactive mode requires a preset name.
 
 ## Reapply an Edited Preset
 
-Run the same `policy add` command after you edit a maintained or recorded custom preset.
-NemoClaw compares the preset with the live policy.
-If the content differs, it applies the changed content.
-You do not need to remove the preset first.
+Run the same `policy add` command after you edit a maintained preset or a custom source file. NemoClaw compares the preset with the live policy. If the content differs, it applies the changed content. You do not need to remove the preset first.
 
-The merge starts from the round-trippable base policy returned by `openshell policy get --base`.
-It excludes provider-composed `_provider_*` entries because OpenShell reserves that namespace and rejects it in `policy set`.
-Existing presets and baseline entries remain in place.
+The merge starts from the round-trippable base policy returned by `openshell policy get --base`. It excludes provider-composed `_provider_*` entries because OpenShell reserves that namespace and rejects it in `policy set`. Existing presets and baseline entries remain in place.
 
 ## List and Remove Presets
 
-List every preset recorded for the sandbox:
+List available presets and identify which ones match the current OpenShell policy:
 
 ```bash
 $$nemoclaw <name> policy list
@@ -111,46 +103,27 @@ $$nemoclaw my-assistant policy remove weather --yes
 
 `policy remove` accepts maintained and custom preset names.
 
-## Remove a Preset the Gateway Enforces Without a Local Record
+## OpenShell Is the Source of Truth
 
-`policy list` marks a preset that the OpenShell gateway enforces while no local record explains it:
+`policy list` derives applied state by comparing preset content with the current OpenShell policy:
 
 ```bash
 $$nemoclaw my-assistant policy list
 ```
 
-Expected output:
-
-```text
-    ● github [source unverified] — GitHub.com and GitHub API access (git) (active on gateway, missing from local state)
-```
-
-`policy remove` accepts that preset:
+`policy remove` reads the live policy, removes the keys defined by the selected preset, writes the complete result, and verifies it:
 
 ```bash
 $$nemoclaw my-assistant policy remove github --yes
 ```
 
-It narrows the live policy and clears whatever local record remains.
-
-When NemoClaw cannot reach the gateway, `policy remove <preset>` has only the local record to check.
-It refuses an unrecorded preset and reports that it could not query the gateway, rather than treating an unanswered query as absence.
-The interactive picker lists the recorded presets only in that case.
+When NemoClaw cannot read the OpenShell policy, it refuses the mutation rather than falling back to local policy state.
 
 ## Understand Persistence
 
-Dynamic changes apply to the current live policy.
-NemoClaw also records maintained presets and custom presets applied through `--from-file` or `--from-dir`.
-The custom preset record includes the full YAML content.
-Snapshot restore and rebuild replay the recorded presets, even when the original custom file no longer exists.
+Dynamic changes exist only in the current live OpenShell policy. Maintained preset names are inferred by comparing their current content. Custom presets applied through `--from-file` or `--from-dir` use namespaced keys in that same live document so `policy list` and `policy remove` can discover them without a second registry.
 
-A sandbox that is absent from the local registry has nothing to record a preset against.
-For a maintained preset, `policy add` still applies it to the gateway and warns that `policy list` reports it as active on gateway, missing from local state.
-For a custom preset applied with `--from-file` or `--from-dir`, `policy add` reaches the gateway but exits non-zero, because a custom preset is discoverable only through the registry and would appear in neither `policy list` nor `status`.
-Recover or re-onboard the sandbox to restore the record, then re-apply any custom preset that failed this way.
-
-`$$nemoclaw <name> rebuild` reapplies every recorded policy preset to the recreated sandbox.
-For baseline changes that apply to every future sandbox, follow [Change the Baseline Network Policy](change-baseline-network-policy).
+`$$nemoclaw <name> rebuild` and snapshot clone hand the complete current OpenShell policy to sandbox creation. They do not reconstruct it from preset records, so trusted changes made through the OpenShell TUI or another host process are preserved too. For baseline changes that apply to every future sandbox, follow [Change the Baseline Network Policy](change-baseline-network-policy).
 
 ## Approve One Request
 
@@ -160,8 +133,7 @@ For one-off access, approve a blocked request in the OpenShell TUI:
 openshell term
 ```
 
-Use the TUI to test a destination before deciding whether it belongs in a maintained or custom preset.
-For the complete approval workflow, refer to [Approve or Deny Network Requests](../approve-network-requests).
+Use the TUI to test a destination before deciding whether it belongs in a maintained or custom preset. For the complete approval workflow, refer to [Approve or Deny Network Requests](../approve-network-requests).
 
 ## Related Topics
 

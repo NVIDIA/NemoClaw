@@ -104,7 +104,7 @@ export interface HermesPortableContainerDeps {
 export type HermesPortableContainerStartResult = "already-running" | "started";
 export type HermesPortableContainerStopResult = "already-stopped" | "stopped";
 
-/** Bind schema-5 Podman to the receipt-owned current-user namespace. */
+/** Bind schema-7 Podman to the receipt-owned current-user namespace. */
 export function buildHermesPortablePodmanEnvironment(
   runtimeAuthority: CheckpointPortableRuntimeAuthority,
   sourceEnv: NodeJS.ProcessEnv = process.env,

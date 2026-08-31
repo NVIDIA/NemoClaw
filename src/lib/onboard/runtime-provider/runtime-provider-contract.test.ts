@@ -3,7 +3,10 @@
 
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
@@ -953,6 +956,17 @@ describe("sandbox workload ownership receipt", () => {
 
 describe("socket-free MXC action contract", () => {
   const agents = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
+  let testHome: string;
+
+  beforeEach(() => {
+    testHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-provider-contract-"));
+    vi.stubEnv("HOME", testHome);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(testHome, { recursive: true, force: true });
+  });
 
   it.each(agents)(
     "routes %s registration, lifecycle, inference authority, destroy, and cleanup through one injected bundle",
@@ -1005,7 +1019,6 @@ describe("socket-free MXC action contract", () => {
           reference: imageTag,
           shared: false,
         },
-        appliedPolicies: [],
         plannedMessagingState: undefined,
         hermesToolGateways: [],
         hermesDashboardState: { enabled: false, config: null },

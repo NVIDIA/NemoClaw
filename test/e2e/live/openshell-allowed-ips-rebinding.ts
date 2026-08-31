@@ -8,6 +8,7 @@ import YAML from "yaml";
 import { isPrivateIp } from "../../../nemoclaw/src/blueprint/private-networks.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
+import { setPolicyDocument } from "../../../src/lib/policy";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -239,15 +240,13 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
     );
 
     policyMutationAttempted = true;
-    const applyPolicy = await options.sandbox.openshell(
-      ["policy", "set", "--policy", policyPath, "--wait", options.sandboxName],
-      {
-        artifactName: "raw-openshell-rebinding-policy-set",
-        env,
-        timeoutMs: options.timeoutMs,
-      },
-    );
-    expect(applyPolicy.exitCode, resultText(applyPolicy)).toBe(0);
+    expect(
+      setPolicyDocument(options.sandboxName, fs.readFileSync(policyPath, "utf8"), {
+        nonFatal: true,
+        operation: "run the raw OpenShell allowed_ips rebinding proof",
+      }),
+      "raw-openshell-rebinding-policy-set",
+    ).toBe(true);
     await new Promise((resolve) => setTimeout(resolve, options.policySettleMs));
 
     const effectivePolicy = await options.sandbox.openshell(
@@ -294,15 +293,17 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
   } finally {
     try {
       if (policyMutationAttempted && basePolicyPath) {
-        const restorePolicy = await options.sandbox.openshell(
-          ["policy", "set", "--policy", basePolicyPath, "--wait", options.sandboxName],
-          {
-            artifactName: "raw-openshell-rebinding-policy-restore",
-            env,
-            timeoutMs: options.timeoutMs,
-          },
-        );
-        expect(restorePolicy.exitCode, resultText(restorePolicy)).toBe(0);
+        expect(
+          setPolicyDocument(
+            options.sandboxName,
+            fs.readFileSync(basePolicyPath, "utf8"),
+            {
+              nonFatal: true,
+              operation: "restore the raw OpenShell allowed_ips rebinding proof policy",
+            },
+          ),
+          "raw-openshell-rebinding-policy-restore",
+        ).toBe(true);
         await new Promise((resolve) => setTimeout(resolve, options.policySettleMs));
         const restoredPolicy = await options.sandbox.openshell(
           ["policy", "get", "--base", options.sandboxName],
