@@ -18,7 +18,7 @@ import {
   WechatQrError,
   WECHAT_ILINK_BOOTSTRAP_BASE_URL,
 } from "./qr";
-import { normalizeWechatIlinkBaseUrl } from "./ilink-base-url";
+import { normalizeWechatIlinkBaseUrl, redactWechatIlinkDiagnostic } from "./ilink-base-url";
 
 /** Total deadline for a single login attempt. 8 minutes is long enough to
  *  cover a slow human + IDC redirects and short enough that a forgotten
@@ -167,7 +167,7 @@ export async function runWechatHostQrLogin(
     process.env.NEMOCLAW_WECHAT_QUIET === "1"
       ? (_msg: string) => {}
       : (msg: string) => opts.log(`  [wechat] ${msg}`);
-  debug(`polling ${currentBaseUrl}`);
+  debug("polling bootstrap iLink origin");
 
   while (opts.now() < deadline) {
     if (opts.signal?.aborted) return { kind: "aborted" };
@@ -185,8 +185,9 @@ export async function runWechatHostQrLogin(
       // pollWechatQrStatus already swallows abort + gateway timeouts; any
       // error escaping here is a real protocol/HTTP failure we can't recover
       // from without restarting the login.
-      debug(`poll fatal: ${errorMessage(err)}`);
-      return { kind: "error", message: errorMessage(err) };
+      const message = redactWechatLoginError(err);
+      debug(`poll fatal: ${message}`);
+      return { kind: "error", message };
     }
     if (status.status !== lastStatus) {
       debug(`status=${status.status}${status.redirect_host ? " redirect_host=present" : ""}`);
@@ -217,7 +218,7 @@ export async function runWechatHostQrLogin(
             };
           }
           opts.log("  → IDC redirect — continuing on the validated WeChat host");
-          debug(`polling ${currentBaseUrl}`);
+          debug("polling validated IDC origin");
         }
         await opts.sleep(opts.pollIntervalMs);
         continue;
@@ -306,4 +307,8 @@ function errorMessage(err: unknown): string {
   if (err instanceof WechatQrError) return `${err.kind}: ${err.message}`;
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+function redactWechatLoginError(err: unknown): string {
+  return redactWechatIlinkDiagnostic(errorMessage(err));
 }

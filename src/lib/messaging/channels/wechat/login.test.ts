@@ -93,6 +93,7 @@ describe("runWechatHostQrLogin", () => {
 
   it("follows scaned_but_redirect by switching the polling base URL", async () => {
     const calls: string[] = [];
+    const logs: string[] = [];
     const { fetch } = scriptedFetch([
       {
         match: isInit,
@@ -121,7 +122,7 @@ describe("runWechatHostQrLogin", () => {
     const result = await runWechatHostQrLogin({
       fetch: tracingFetch,
       renderQr: noopRender,
-      log: noopLog,
+      log: (message) => logs.push(message),
       sleep: fastSleep,
     });
 
@@ -131,6 +132,40 @@ describe("runWechatHostQrLogin", () => {
     const statusCalls = calls.filter((u) => u.includes("get_qrcode_status"));
     expect(statusCalls[0]).toContain("ilinkai.weixin.qq.com");
     expect(statusCalls[1]).toContain("idc-3.weixin.qq.com");
+    expect(logs.join("\n")).toContain("polling validated IDC origin");
+    expect(logs.join("\n")).not.toContain("idc-3.weixin.qq.com");
+  });
+
+  it("redacts a URL-bearing fatal polling response from logs and the returned error", async () => {
+    const logs: string[] = [];
+    const fetch: FetchLike = async (url) =>
+      isInit(url)
+        ? {
+            ok: true,
+            status: 200,
+            text: async () =>
+              JSON.stringify({
+                qrcode: "qr-cookie-redaction",
+                qrcode_img_content: "https://example.com/qr/redaction",
+              }),
+          }
+        : {
+            ok: false,
+            status: 400,
+            text: async () =>
+              "rejected by https://idc-37.weixin.qq.com/ilink/bot/get_qrcode_status",
+          };
+
+    const result = await runWechatHostQrLogin({
+      fetch,
+      renderQr: noopRender,
+      log: (message) => logs.push(message),
+      sleep: fastSleep,
+    });
+
+    expect(result).toMatchObject({ kind: "error", message: expect.stringContaining("[redacted URL]") });
+    expect(JSON.stringify(result)).not.toContain("idc-37.weixin.qq.com");
+    expect(logs.join("\n")).not.toContain("idc-37.weixin.qq.com");
   });
 
   it.each([

@@ -2,13 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import {
+  compactSandboxMessagingPlanForPersistence,
+  createBuiltInChannelManifestRegistry,
+  createBuiltInMessagingHookRegistry,
+  createBuiltInRenderTemplateResolver,
+  MessagingWorkflowPlanner,
+  type SandboxMessagingPlan,
+} from "../../messaging";
 
 import {
   bindRebuildPolicyProvidersToCreateArgs,
@@ -79,56 +87,75 @@ describe("rebuild policy provider handoff", () => {
   });
 
   it.each(["openclaw", "hermes"] as const)(
-    "materializes the persisted exact WeChat IDC endpoint during %s rebuild (#10606)",
-    (agent) => {
+    "preserves the QR-captured exact WeChat IDC endpoint through %s persistence and rebuild (#10606)",
+    async (agent) => {
       const sandboxName = `rebuild-${agent}`;
       const livePolicyPath = tempPolicy("version: 1\nnetwork_policies: {}\n");
-      const messagingPlan = {
-        schemaVersion: 1,
+      const planner = new MessagingWorkflowPlanner(
+        createBuiltInChannelManifestRegistry(),
+        createBuiltInMessagingHookRegistry({
+          common: {
+            env: {},
+            getCredential: () => null,
+            saveCredential: () => {},
+            prompt: async () => "unused",
+            log: () => {},
+          },
+          wechat: {
+            ilinkLogin: {
+              env: {},
+              saveCredential: () => {},
+              log: () => {},
+              runLogin: async () => ({
+                kind: "ok",
+                credentials: {
+                  token: "test-wechat-token",
+                  accountId: "test-wechat-account",
+                  baseUrl: "https://idc-37.weixin.qq.com",
+                  userId: "test-wechat-user",
+                },
+              }),
+            },
+            seedOpenClawAccount: { now: () => "2026-08-31T00:00:00.000Z" },
+          },
+        }),
+        createBuiltInRenderTemplateResolver(),
+      );
+      const enrolled = await planner.buildPlan({
         sandboxName,
         agent,
-        workflow: "rebuild",
-        channels: [
-          {
-            channelId: "wechat",
-            displayName: "WeChat",
-            authMode: "host-qr",
-            active: true,
-            selected: true,
-            configured: true,
-            disabled: false,
-            inputs: [
-              {
-                channelId: "wechat",
-                inputId: "baseUrl",
-                kind: "config",
-                required: false,
-                sourceEnv: "WECHAT_BASE_URL",
-                value: "https://idc-37.weixin.qq.com",
-              },
-            ],
-            hooks: [],
+        workflow: "onboard",
+        isInteractive: true,
+        configuredChannels: ["wechat"],
+      });
+      const persisted = compactSandboxMessagingPlanForPersistence(enrolled);
+      const persistedBaseUrl = persisted.channels[0]?.inputs?.find(
+        ({ inputId }) => inputId === "baseUrl",
+      );
+
+      expect(persistedBaseUrl?.value).toBe("https://idc-37.weixin.qq.com");
+      expect(persisted).not.toHaveProperty("networkPolicy");
+
+      const messagingPlan = await planner.buildRebuildPlanFromSandboxEntry({
+        sandboxName,
+        agent,
+        sandboxEntry: {
+          name: sandboxName,
+          agent,
+          messaging: {
+            schemaVersion: 1,
+            plan: persisted as unknown as SandboxMessagingPlan,
           },
-        ],
-        disabledChannels: [],
-        credentialBindings: [],
-        networkPolicy: {
-          presets: ["wechat"],
-          entries: [
-            {
-              channelId: "wechat",
-              presetName: "wechat",
-              policyKeys: ["wechat_bridge"],
-              source: "manifest",
-            },
-          ],
         },
-        agentRender: [],
-        buildSteps: [],
-        stateUpdates: [],
-        healthChecks: [],
-      } satisfies SandboxMessagingPlan;
-      const providerName = `${sandboxName}-wechat-bridge`;
+      });
+      expect(messagingPlan).not.toBeNull();
+      const providerName = messagingPlan?.credentialBindings.find(
+        ({ channelId }) => channelId === "wechat",
+      )?.providerName;
+      expect(providerName).toBe(`${sandboxName}-wechat-bridge`);
+      assert(providerName);
+
+      const deltas = resolveRebuildMessagingPolicyDeltas(messagingPlan!);
       const rebuilt = selectRebuildCreatePolicy(
         livePolicyPath,
         {
@@ -137,10 +164,10 @@ describe("rebuild policy provider handoff", () => {
           credentialBindingProviders: [providerName],
           sourceBytes: Buffer.from("version: 1\nnetwork_policies: {}\n"),
         },
-        ["wechat_bridge"],
-        [],
-        ["wechat"],
-        messagingPlan,
+        deltas.requiredNetworkPolicyKeys,
+        deltas.removedNetworkPolicyKeys,
+        deltas.requiredNetworkPolicyPresetNames,
+        messagingPlan!,
         sandboxName,
         [providerName],
       );
@@ -160,7 +187,18 @@ describe("rebuild policy provider handoff", () => {
         const endpoints = policy.network_policies.wechat_bridge.endpoints;
         const configured = endpoints.find(({ host }) => host === "idc-37.weixin.qq.com");
 
-        expect(configured?.credential_binding.provider).toBe(providerName);
+        expect(configured).toMatchObject({
+          host: "idc-37.weixin.qq.com",
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+          credential_binding: { provider: providerName },
+          rules: [
+            { allow: { method: "GET", path: "/**" } },
+            { allow: { method: "POST", path: "/**" } },
+          ],
+        });
+        expect(endpoints.filter(({ host }) => host.startsWith("idc-"))).toHaveLength(1);
         expect(endpoints.map(({ host }) => host)).not.toContain("*.weixin.qq.com");
         expect(policy.network_policies.wechat_bridge.binaries.map(({ path }) => path)).toContain(
           agent === "hermes" ? "/usr/local/bin/hermes" : "/usr/local/bin/node",

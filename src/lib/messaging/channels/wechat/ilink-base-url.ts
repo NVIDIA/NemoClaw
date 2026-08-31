@@ -47,3 +47,12 @@ export function isWechatIlinkHost(hostname: string): boolean {
 export function isWechatIlinkIdcHost(hostname: string): boolean {
   return WECHAT_ILINK_IDC_HOST_PATTERN.test(hostname.toLowerCase());
 }
+
+export function redactWechatIlinkDiagnostic(message: string): string {
+  return message
+    .replace(/\bhttps?:\/\/[^\s"'<>]+/giu, "[redacted URL]")
+    .replace(
+      /\b(?:ilinkai\.weixin\.qq\.com|ilinkai\.wechat\.com|idc-[0-9]+\.weixin\.qq\.com)\b/giu,
+      "[redacted iLink host]",
+    );
+}

@@ -113,7 +113,7 @@ describe("pollWechatQrStatus", () => {
     expect(result.ilink_user_id).toBe("user-abc");
   });
 
-  it("does not leak the secret-ish qrcode token or query parameter if debug logging is enabled", async () => {
+  it("does not leak the polling origin or secret-ish qrcode token in debug logging", async () => {
     const qrToken = "secret-qr-cookie";
     const debugEvents: string[] = [];
     const { fetch, calls } = makeFetch(() => ({
@@ -132,8 +132,9 @@ describe("pollWechatQrStatus", () => {
     expect(calls[0]?.url).toContain(`qrcode=${qrToken}`);
     const debugText = debugEvents.join("\n");
     expect(debugText).toContain(
-      "poll request → https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status",
+      "poll request → validated iLink endpoint /ilink/bot/get_qrcode_status",
     );
+    expect(debugText).not.toContain("ilinkai.weixin.qq.com");
     expect(debugText).not.toContain(qrToken);
     expect(debugText).not.toContain("qrcode=");
   });
@@ -148,6 +149,27 @@ describe("pollWechatQrStatus", () => {
       fetch: failing,
     });
     expect(result.status).toBe("wait");
+  });
+
+  it("redacts URL-like transport failures before forwarding debug events", async () => {
+    const debugEvents: string[] = [];
+    const failing: FetchLike = async () => {
+      throw new Error(
+        "ECONNRESET while polling https://idc-37.weixin.qq.com/ilink/bot/get_qrcode_status",
+      );
+    };
+
+    await expect(
+      pollWechatQrStatus({
+        baseUrl: "https://idc-37.weixin.qq.com",
+        qrcode: "qrcode-cookie",
+        fetch: failing,
+        onDebug: (event) => debugEvents.push(event),
+      }),
+    ).resolves.toEqual({ status: "wait" });
+
+    expect(debugEvents.join("\n")).toContain("[redacted URL]");
+    expect(debugEvents.join("\n")).not.toContain("idc-37.weixin.qq.com");
   });
 
   it("treats 5xx gateway hiccups (e.g. Cloudflare 524) as 'wait'", async () => {

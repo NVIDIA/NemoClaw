@@ -22,6 +22,8 @@
 //     → { status, bot_token?, ilink_bot_id?, baseurl?, ilink_user_id?,
 //         redirect_host? }   (long-poll, server holds up to ~30s)
 
+import { redactWechatIlinkDiagnostic } from "./ilink-base-url";
+
 /** Fixed iLink gateway used to mint a fresh QR. Per-account base URLs are
  *  served back via the `scaned_but_redirect` status; pin only the bootstrap
  *  host here. */
@@ -124,10 +126,6 @@ function ensureTrailingSlash(url: string): string {
   return url.endsWith("/") ? url : `${url}/`;
 }
 
-function statusPollUrlForDebug(url: URL): string {
-  return `${url.origin}${url.pathname}`;
-}
-
 /** Bootstrap a new QR session against the fixed iLink host. The returned
  *  `qrcode` is the cookie used for subsequent polling; `qrcodeUrl` is what
  *  the operator scans in WeChat. */
@@ -212,6 +210,9 @@ export async function pollWechatQrStatus(params: {
   const localController = new AbortController();
   const timer = setTimeout(() => localController.abort(), timeoutMs);
   const externalAbort = () => localController.abort();
+  const debug = (event: string): void => {
+    params.onDebug?.(redactWechatIlinkDiagnostic(event));
+  };
   if (params.signal) {
     if (params.signal.aborted) localController.abort();
     else params.signal.addEventListener("abort", externalAbort, { once: true });
@@ -219,7 +220,7 @@ export async function pollWechatQrStatus(params: {
 
   try {
     let response: Awaited<ReturnType<FetchLike>>;
-    params.onDebug?.(`poll request → ${statusPollUrlForDebug(url)}`);
+    debug(`poll request → validated iLink endpoint ${url.pathname}`);
     try {
       response = await transport(url.toString(), {
         method: "GET",
@@ -230,18 +231,18 @@ export async function pollWechatQrStatus(params: {
       // Abort and gateway-timeout-shaped errors fall through as `wait`.
       // Only the orchestrator's overall deadline ends the loop.
       if (isAbortError(err)) {
-        params.onDebug?.(`poll abort (treated as wait)`);
+        debug(`poll abort (treated as wait)`);
         return { status: "wait" };
       }
-      params.onDebug?.(`poll transport error: ${stringify(err)} (treated as wait)`);
+      debug(`poll transport error: ${stringify(err)} (treated as wait)`);
       return { status: "wait" };
     }
-    params.onDebug?.(`poll response ← status=${response.status}`);
+    debug(`poll response ← status=${response.status}`);
     if (!response.ok) {
       // 5xx gateway hiccups also fall through as `wait` — Cloudflare 524s
       // are routine on the iLink long-poll path.
       if (response.status >= 500) {
-        params.onDebug?.(`poll http ${response.status} (treated as wait)`);
+        debug(`poll http ${response.status} (treated as wait)`);
         return { status: "wait" };
       }
       const body = await safeText(response);
