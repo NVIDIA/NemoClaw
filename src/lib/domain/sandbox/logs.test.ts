@@ -303,7 +303,7 @@ describe("relay write failures (#10340)", () => {
     expect(isBrokenPipeRelayError(undefined)).toBe(false);
   });
 
-  it("reports the exit code raw passthrough produced for a broken pipe", () => {
+  it("returns 141 when a downstream reader closes the pipe (#10340)", () => {
     expect(LOG_RELAY_BROKEN_PIPE_EXIT_CODE).toBe(141);
   });
 });
