@@ -128,9 +128,8 @@ export async function runAdvisorSpecialist(input: {
     if (input.cancelled?.()) result = "cancelled";
     if (result === "complete") {
       stage = "create";
-      // SANDBOX_NAME is unique to this lifecycle invocation, including hosted reruns.
-      sandbox = true;
       lifecycle.create(env);
+      sandbox = true;
       stage = "run";
       execution = lifecycle.run(env) || undefined;
       if (execution) {

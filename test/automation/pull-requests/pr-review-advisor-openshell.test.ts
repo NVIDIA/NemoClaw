@@ -305,8 +305,8 @@ describe("PR review advisor specialist lifecycle", () => {
         stop: async () => void (gatewayStopped = true),
       }),
       create: () => {
-        sandboxOwned = true;
         fail("create");
+        sandboxOwned = true;
       },
       run: () => {
         fail("run");
