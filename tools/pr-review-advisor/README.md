@@ -182,10 +182,12 @@ executables, the advisor credential, or the `origin/main` ref.
 
 Running the npm script trusts the contributor checkout's `package.json` entry and built-in-only bootstrap.
 After that narrow entry boundary, the executable advisor checkout is detached at the resolved
-`origin/main` commit. Other branch changes, including advisor implementation, policy, specialist
-prompts, and `node_modules`, exist only in the read-only review snapshot. Before it reads the advisor
-credential or starts the implementation, the built-in-only bootstrap runs `npm ci --ignore-scripts
---no-audit --no-fund` in the trusted checkout. npm uses the committed `origin/main` lockfile, normal
+`origin/main` commit. Other branch changes to tracked files, including advisor implementation,
+policy, and specialist prompts, exist only in the read-only review snapshot. Ignored files, including
+the contributor checkout's `node_modules`, are excluded. Before it reads the advisor credential or
+starts the implementation, the built-in-only bootstrap runs `npm ci --ignore-scripts --no-audit
+--no-fund` in the trusted checkout. Those separately installed dependencies are the only
+`node_modules` used for execution. npm uses the committed `origin/main` lockfile, normal
 cache behavior, and a credential-free environment with user and global npm configuration disabled.
 Failure stops the run before the credential-bearing advisor lifecycle starts.
 
