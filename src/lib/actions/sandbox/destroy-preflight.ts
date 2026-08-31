@@ -23,7 +23,10 @@ import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { type DestroyRunOpenshell, selectGatewayForSandboxDestroy } from "./destroy-gateway";
 import { classifyDestroySandboxPresence } from "./destroy-presence";
-import { getSandboxTargetGatewayName } from "./gateway-target";
+import {
+  getPersistedSandboxTargetGatewayName,
+  getSandboxTargetGatewayName,
+} from "./gateway-target";
 import { assertMcpAdapterConfigMutationsAllowed } from "./mcp-bridge-runtime-capabilities";
 
 export type SandboxDestroyPreflight = {
@@ -260,7 +263,13 @@ export async function stopModelRouterForDestroyedSandbox(
   return true;
 }
 
-export function prepareSandboxDestroy(sandboxName: string): SandboxDestroyPreflight {
+export function prepareSandboxDestroy(
+  sandboxName: string,
+  {
+    force = false,
+    retainedRecoveryGatewayName,
+  }: { force?: boolean; retainedRecoveryGatewayName?: string } = {},
+): SandboxDestroyPreflight {
   const sandbox = registry.getSandbox(sandboxName);
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const { runOpenshell } = require("../../adapters/openshell/runtime") as {
@@ -268,8 +277,21 @@ export function prepareSandboxDestroy(sandboxName: string): SandboxDestroyPrefli
   };
 
   // Capture the sandbox gateway before destructive work, then pin every
-  // following OpenShell subprocess against that same registry-owned gateway.
-  const cleanupGatewayName = getSandboxTargetGatewayName(sandboxName);
+  // following OpenShell subprocess against that same durable authority. A
+  // retained recovery record remains authoritative after a partial destroy
+  // has already retired the registry row.
+  const registeredGatewayName = sandbox ? getPersistedSandboxTargetGatewayName(sandbox) : null;
+  if (
+    retainedRecoveryGatewayName &&
+    registeredGatewayName &&
+    retainedRecoveryGatewayName !== registeredGatewayName
+  ) {
+    throw new Error(
+      `Refusing to destroy sandbox '${sandboxName}': retained recovery gateway '${retainedRecoveryGatewayName}' does not match registered gateway '${registeredGatewayName}'.`,
+    );
+  }
+  const cleanupGatewayName =
+    retainedRecoveryGatewayName ?? registeredGatewayName ?? getSandboxTargetGatewayName();
   selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, runOpenshell);
   process.env.OPENSHELL_GATEWAY = cleanupGatewayName;
 
@@ -290,7 +312,11 @@ export function prepareSandboxDestroy(sandboxName: string): SandboxDestroyPrefli
     sandbox &&
     !sandbox.mcp?.destroyPreparedAt &&
     !sandbox.mcp?.destroyPendingAt &&
-    mcpEntriesRequiringConfigMutation.length > 0
+    mcpEntriesRequiringConfigMutation.length > 0 &&
+    // `--force` accepts leaving the retained-volume adapter entry in place, so
+    // this early refusal must not block it before any teardown starts. The
+    // preparation phase reclassifies the same refusal and reports what it kept.
+    !force
   ) {
     // Fail before stopping local services or mutating any MCP resource when
     // the live adapter config cannot be changed safely.

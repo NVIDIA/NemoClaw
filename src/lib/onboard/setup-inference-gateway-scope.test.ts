@@ -287,7 +287,6 @@ describe("gateway-scoped inference route readers", () => {
           provider: "openai-api",
           model: "gpt-test",
           gpuEnabled: false,
-          policies: [],
         },
       ],
     }));

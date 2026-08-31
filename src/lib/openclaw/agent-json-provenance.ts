@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
-import { redactFull } from "../security/redact";
+import { redactFullWithUrls } from "../security/redact";
 
 const FAILURE_STATUS_VALUES = new Set(["error", "errored", "failed", "failure"]);
 const UNTRUSTED_CHILD_BEGIN = "BEGIN_UNTRUSTED_CHILD_RESULT";
@@ -35,10 +35,9 @@ function snippet(value: string, limit = 300): string {
 }
 
 function redactProvenanceDetail(value: string): string {
-  return redactFull(value.replace(PEM_PRIVATE_KEY_PATTERN, "<REDACTED_PRIVATE_KEY>")).replace(
-    SECRET_KV_PATTERN,
-    "$1=<REDACTED>",
-  );
+  return redactFullWithUrls(
+    value.replace(PEM_PRIVATE_KEY_PATTERN, "<REDACTED_PRIVATE_KEY>"),
+  ).replace(SECRET_KV_PATTERN, "$1=<REDACTED>");
 }
 
 function strings(value: unknown): string[] {
@@ -146,7 +145,7 @@ function toolLabel(record: Record<string, unknown>): string {
   const tool = record.toolName ?? record.tool_name ?? record.name ?? record.tool;
   const callId = record.toolCallId ?? record.tool_call_id ?? record.id;
   const parts = [tool, callId].map((part) => String(part || "").trim()).filter(Boolean);
-  return parts.length > 0 ? parts.join(" ") : "unknown tool";
+  return parts.length > 0 ? snippet(parts.join(" ")) : "unknown tool";
 }
 
 function toolFailureLine(record: Record<string, unknown>): string | null {
@@ -221,8 +220,44 @@ function collectUntrustedChildProvenance(raw: string, docs: unknown[]): string[]
   return lines;
 }
 
-function parseLogPrefixedJsonDocs(raw: string): unknown[] {
-  const docs: unknown[] = [];
+type JsonFrame = {
+  docs: unknown[];
+  end: number;
+  start: number;
+};
+
+function jsonFrame(raw: string, start: number, end: number): JsonFrame | null {
+  try {
+    const parsed = JSON.parse(raw.slice(start, end)) as unknown;
+    return { start, end, docs: Array.isArray(parsed) ? parsed : [parsed] };
+  } catch {
+    return null;
+  }
+}
+
+function parseCompleteJsonLines(raw: string, incompleteStart: number): JsonFrame[] {
+  const firstNewline = raw.indexOf("\n", incompleteStart);
+  if (firstNewline < 0) return [];
+  const frames: JsonFrame[] = [];
+  let lineStart = firstNewline + 1;
+  while (lineStart <= raw.length) {
+    const newline = raw.indexOf("\n", lineStart);
+    const lineEnd = newline < 0 ? raw.length : newline;
+    const line = raw.slice(lineStart, lineEnd);
+    const candidate = line.trim();
+    if (candidate.startsWith("{") || candidate.startsWith("[")) {
+      const candidateStart = lineStart + line.indexOf(candidate);
+      const frame = jsonFrame(raw, candidateStart, candidateStart + candidate.length);
+      if (frame) frames.push(frame);
+    }
+    if (newline < 0) break;
+    lineStart = newline + 1;
+  }
+  return frames;
+}
+
+function parseLogPrefixedJsonFrames(raw: string): JsonFrame[] {
+  const frames: JsonFrame[] = [];
   let start: number | null = null;
   let depth = 0;
   let inString = false;
@@ -237,40 +272,42 @@ function parseLogPrefixedJsonDocs(raw: string): unknown[] {
       continue;
     }
     if (depth > 0 && char === '"') inString = true;
-    else if (char === "{") {
+    else if (char === "{" || char === "[") {
       if (depth === 0) start = index;
       depth += 1;
-    } else if (depth > 0 && char === "}") {
+    } else if (depth > 0 && (char === "}" || char === "]")) {
       depth -= 1;
       if (depth === 0 && start !== null) {
-        try {
-          const parsed = JSON.parse(raw.slice(start, index + 1)) as unknown;
-          docs.push(...(Array.isArray(parsed) ? parsed : [parsed]));
-        } catch {
-          // Continue scanning for the next balanced candidate object.
-        }
+        const frame = jsonFrame(raw, start, index + 1);
+        if (frame) frames.push(frame);
         start = null;
       }
     }
   }
-  return docs;
+  if (start !== null) frames.push(...parseCompleteJsonLines(raw, start));
+  return frames;
 }
 
-function parseOpenClawJsonDocs(raw: string): unknown[] {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? parsed : [parsed];
-  } catch {
-    // Invalid state: upstream OpenClaw has emitted log-prefixed/non-clean JSON
-    // framing for `openclaw agent --json`. Source boundary: OpenClaw owns the
-    // emitter/framing; NemoClaw only consumes the stream to keep provenance
-    // visible. Source-fix constraint: do not patch or fork OpenClaw from this
-    // host-wrapper PR. Regression tests cover log-prefixed balanced candidates
-    // and provenance extraction. Removal condition: supported OpenClaw versions
-    // guarantee stable clean JSON framing on stdout.
-  }
+function parseOpenClawJsonFrames(raw: string): JsonFrame[] {
+  const clean = jsonFrame(raw, 0, raw.length);
+  return clean ? [clean] : parseLogPrefixedJsonFrames(raw);
+}
 
-  return parseLogPrefixedJsonDocs(raw);
+/** Parse clean or log-prefixed OpenClaw JSON without retrying every candidate suffix. */
+export function parseOpenClawJsonDocuments(raw: string): unknown[] {
+  return parseOpenClawJsonFrames(raw).flatMap(({ docs }) => docs);
+}
+
+/** Return log or malformed text outside complete OpenClaw JSON documents. */
+export function openClawUnframedJsonText(raw: string): string {
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const frame of parseOpenClawJsonFrames(raw)) {
+    if (frame.start >= cursor) parts.push(raw.slice(cursor, frame.start));
+    cursor = Math.max(cursor, frame.end);
+  }
+  parts.push(raw.slice(cursor));
+  return parts.join("\n");
 }
 
 function dedupe(lines: string[]): string[] {
@@ -278,7 +315,7 @@ function dedupe(lines: string[]): string[] {
 }
 
 export function openClawAgentJsonProvenanceLines(raw: string): string[] {
-  const docs = parseOpenClawJsonDocs(raw);
+  const docs = parseOpenClawJsonDocuments(raw);
   if (docs.length === 0) return [];
   return dedupe([
     ...collectUntrustedChildProvenance(raw, docs),
@@ -286,38 +323,12 @@ export function openClawAgentJsonProvenanceLines(raw: string): string[] {
   ]);
 }
 
-// Turn-level completion markers (#8796).
+// Read completion markers only from the response envelope's `meta` record.
+// Tool results and tool-call arguments are untrusted and can contain the same
+// fields. Reading them could retry a completed turn and repeat its side effects.
 //
-// Read ONLY from the run-metadata record the envelope declares, never from
-// arbitrary descendants. Tool results and tool-call arguments are untrusted
-// data: a successful turn whose tool output merely CONTAINS
-// {"replayInvalid": true} must not be reported as a failure, because callers
-// would then retry a turn that already completed and repeat its side effects.
-//
-// Accepted paths, from the OpenClaw 2026.7.1 type declarations
-// (dist/types-*.d.ts, dist/agent-runtime-*.d.ts):
-//   EmbeddedAgentRunResult = { payloads?, meta: EmbeddedAgentRunMeta, ... }
-//   agentCommandInternal() -> { payloads, meta: EmbeddedAgentRunMeta & ... }
-// so run metadata is a sibling of `payloads`, reachable only in a local
-// `{ payloads, meta }` response or a gateway
-// `{ status, result: { payloads, meta } }` response. Tool results live under
-// `result.messages[].content` and are therefore never consulted.
-//
-// The markers themselves, all declared on EmbeddedAgentRunMeta:
-//   replayInvalid?: boolean
-//   livenessState?: "working" | "paused" | "blocked" | "abandoned"
-//   timeoutPhase?: "queue" | "preflight" | "provider" | "post_turn" | "gateway_draining"
-//   error?: { kind: ... | "incomplete_turn" | ... }
-//
-// `timeoutPhase` marks a run whose deadline fired (#8723). It is optional and
-// absent from a turn that answered, so its presence is the marker and any phase
-// value counts; the declared phases are recorded above as documentation, not as
-// an allowlist, so a phase added upstream is still classified as a timeout
-// instead of being reported as a success.
-//
-// `livenessState` is deliberately not a timeout marker. Two identical timed-out
-// runs reported `blocked` and `working`, so only `abandoned` stays tied to the
-// abandonment case it was added for.
+// Treat any nonempty `timeoutPhase` as incomplete so new phases fail closed.
+// Treat only `livenessState: "abandoned"` as incomplete.
 const ABANDONED_LIVENESS_VALUE = "abandoned";
 // Compared after `normalized()`, which lowercases and maps `_` to `-`.
 const INCOMPLETE_TURN_ERROR_KIND = "incomplete-turn";
@@ -329,18 +340,19 @@ export type OpenClawIncompleteTurnSignal = {
   timeoutPhase?: string;
 };
 
-/** The declared run-metadata record from an agent response envelope. */
-function agentResponseMetaRecord(doc: unknown): UnknownRecord | null {
+/** Select a documented local or gateway OpenClaw agent-response record. */
+export function openClawAgentResponseRecord(doc: unknown): UnknownRecord | null {
   if (!isObjectRecord(doc)) return null;
 
   const result = doc.result;
   if (
+    !Object.hasOwn(doc, "event") &&
     typeof doc.status === "string" &&
     isObjectRecord(result) &&
     (!Object.hasOwn(result, "payloads") || Array.isArray(result.payloads)) &&
     isObjectRecord(result.meta)
   ) {
-    return result.meta;
+    return result;
   }
 
   if (
@@ -348,9 +360,15 @@ function agentResponseMetaRecord(doc: unknown): UnknownRecord | null {
     (!Object.hasOwn(doc, "payloads") || Array.isArray(doc.payloads)) &&
     isObjectRecord(doc.meta)
   ) {
-    return doc.meta;
+    return doc;
   }
   return null;
+}
+
+/** The declared run-metadata record from an agent response envelope. */
+function agentResponseMetaRecord(doc: unknown): UnknownRecord | null {
+  const response = openClawAgentResponseRecord(doc);
+  return response && isObjectRecord(response.meta) ? response.meta : null;
 }
 
 /** Select the final agent response without treating JSON log records as responses. */
@@ -394,7 +412,7 @@ function turnMetaMarkers(meta: UnknownRecord): string[] {
 export function openClawAgentIncompleteTurnSignal(
   raw: string,
 ): OpenClawIncompleteTurnSignal | null {
-  const docs = parseOpenClawJsonDocs(raw);
+  const docs = parseOpenClawJsonDocuments(raw);
   if (docs.length === 0) return null;
   const meta = finalAgentResponseMetaRecord(docs);
   if (!meta) return null;

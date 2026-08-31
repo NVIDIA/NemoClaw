@@ -36,7 +36,6 @@ function setupFixture(sandboxName: string, phase: string) {
           model: "nvidia/test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,
-          policies: [],
         },
       },
     }),

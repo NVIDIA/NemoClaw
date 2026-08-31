@@ -5,20 +5,23 @@ title: "NemoClaw Architecture Overview"
 sidebar-title: "Architecture Overview"
 description: "Learn how NemoClaw combines a host CLI, agent integration layer, versioned blueprint, and OpenShell gateway to operate supported agents."
 description-agent: "Describes how NemoClaw works internally: host CLI, agent integration layer, blueprint runner, OpenShell orchestration, lifecycle state, managed integrations, inference routing, and protection layers. Use for sandbox lifecycle and architecture mechanics; not for product definition (Overview) or multi-project placement (Ecosystem)."
-keywords: ["how nemoclaw works", "nemoclaw sandbox lifecycle blueprint", "nemoclaw managed mcp architecture"]
+keywords:
+  [
+    "how nemoclaw works",
+    "nemoclaw sandbox lifecycle blueprint",
+    "nemoclaw managed mcp architecture",
+  ]
 content:
   type: "concept"
 ---
-This page explains how NemoClaw runs supported agent runtimes inside OpenShell sandboxes.
-It covers the host CLI, OpenShell gateway, agent integration layer, lifecycle state, managed Model Context Protocol (MCP) servers and other integrations, and protection layers.
 
-NemoClaw does not replace OpenShell or the selected agent runtime.
-It packages them as a repeatable setup with a versioned blueprint, agent-specific configuration, managed inference, network policy, and lifecycle operations.
+This page explains how NemoClaw runs supported agent runtimes inside OpenShell sandboxes. It covers the host CLI, OpenShell gateway, agent integration layer, lifecycle state, managed Model Context Protocol (MCP) servers and other integrations, and protection layers.
+
+NemoClaw does not replace OpenShell or the selected agent runtime. It packages them as a repeatable setup with a versioned blueprint, agent-specific configuration, managed inference, network policy, and lifecycle operations.
 
 ## High-Level Flow
 
-NemoClaw keeps operator control on the host while OpenShell enforces the sandbox boundary.
-The OpenShell gateway coordinates sandbox lifecycle, credentials, network policy, inference routes, and approved integration traffic.
+NemoClaw keeps operator control on the host while OpenShell enforces the sandbox boundary. The OpenShell gateway coordinates sandbox lifecycle, credentials, network policy, inference routes, and approved integration traffic.
 
 ```mermaid
 flowchart LR
@@ -27,7 +30,7 @@ flowchart LR
     GATEWAY["OpenShell gateway<br/><small>lifecycle, credentials, policy, routing</small>"]:::gateway
     SANDBOX["OpenShell sandbox<br/><small>agent runtime and integration layer</small>"]:::sandbox
     INTERFACE["Agent interface<br/><small>runtime-specific interaction path</small>"]:::users
-    STATE["Managed state and artifacts<br/><small>registry, workspace, policy records, snapshots</small>"]:::state
+    STATE["Managed state and artifacts<br/><small>registry, workspace, logs, snapshots</small>"]:::state
     INFERENCE["Inference providers<br/><small>supported hosted or local inference</small>"]:::inference
     INTEGRATIONS["Approved integrations<br/><small>MCP servers and package services</small>"]:::integrations
 
@@ -54,7 +57,7 @@ flowchart LR
 The diagram has the following components:
 
 | Component | Role in the flow |
-|-------|------------------|
+| --- | --- |
 | Users and operators | Install and operate NemoClaw from the host, then interact through the selected agent interface. |
 | NemoClaw host CLI | Collects configuration, runs readiness checks and onboarding, resolves the blueprint, and operates managed resources. |
 | OpenShell gateway | Coordinates sandbox lifecycle, credentials, networking, policy enforcement, inference routing, and approved integration egress. |
@@ -62,7 +65,7 @@ The diagram has the following components:
 | Agent interface | Provides the interaction path exposed by the selected agent runtime. |
 | Inference providers | Receive managed inference requests through the OpenShell gateway. |
 | Approved integrations | Receive policy-approved requests to MCP servers, package indexes, and other configured services. |
-| Managed state and artifacts | Preserve registry records, workspace files, policy records, logs, and manifest-declared snapshot content across supported lifecycle operations. |
+| Managed state and artifacts | Preserve non-policy registry records, workspace files, logs, and manifest-declared snapshot content; OpenShell alone stores sandbox policy. |
 
 For repository layout, file paths, and deeper diagrams, refer to [Architecture](../reference/architecture).
 
@@ -70,26 +73,19 @@ For repository layout, file paths, and deeper diagrams, refer to [Architecture](
 
 NemoClaw follows these architecture principles.
 
-Versioned blueprint
-: The blueprint runner resolves a versioned blueprint and verifies its digest before it changes managed resources.
+Versioned blueprint : The blueprint runner resolves a versioned blueprint and verifies its digest before it changes managed resources.
 
-Host credential custody
-: OpenShell stores inference provider credentials and managed MCP bearer values outside the sandbox and replaces placeholders at approved request boundaries.
+Host credential custody : OpenShell stores inference provider credentials and managed MCP bearer values outside the sandbox and replaces placeholders at approved request boundaries.
 
-Agent-specific integration
-: Each supported agent runtime receives the configuration, wrappers, plugin, or adapter required for its documented workflow.
+Agent-specific integration : Each supported agent runtime receives the configuration, wrappers, plugin, or adapter required for its documented workflow.
 
-Resumable lifecycle
-: NemoClaw records lifecycle progress and reconciles managed resources after supported interruptions or partial operations.
+Resumable lifecycle : NemoClaw records lifecycle progress and reconciles managed resources after supported interruptions or partial operations.
 
-Manifest-declared state
-: Rebuild, snapshot, and restore operations preserve only the state declared for the selected agent runtime.
-  Each agent manifest and operation defines which credential-bearing files to exclude.
+Manifest-declared state : Rebuild, snapshot, and restore operations preserve only the state declared for the selected agent runtime. Each agent manifest and operation defines which credential-bearing files to exclude.
 
 <AgentOnly variant="openclaw,hermes">
 
-Host-configured messaging credentials also use OpenShell credential delivery.
-Some messaging integrations, such as QR-paired WhatsApp, retain explicitly declared session credentials inside the sandbox so supported lifecycle operations can preserve them.
+Host-configured messaging credentials also use OpenShell credential delivery. Some messaging integrations, such as QR-paired WhatsApp, retain explicitly declared session credentials inside the sandbox so supported lifecycle operations can preserve them.
 
 </AgentOnly>
 
@@ -98,11 +94,10 @@ Some messaging integrations, such as QR-paired WhatsApp, retain explicitly decla
 NemoClaw separates host orchestration, agent-specific behavior, and sandbox definition.
 
 - The _host CLI_ runs readiness checks and onboarding, validates provider choices, records lifecycle state, and operates OpenShell resources.
+
 <AgentOnly variant="openclaw">
 
-- The _OpenClaw integration layer_ includes a TypeScript plugin that runs inside the sandbox.
-  It registers the managed inference provider metadata, the `/nemoclaw` slash command, and runtime context hooks.
-  Runtime context is prepended as system guidance, so sandbox and policy instructions stay active without appearing in the visible chat transcript.
+- The _OpenClaw integration layer_ includes a TypeScript plugin that runs inside the sandbox. It registers the managed inference provider metadata, the `/nemoclaw` slash command, and runtime context hooks. Runtime context is prepended as system guidance, so sandbox and policy instructions stay active without appearing in the visible chat transcript.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -112,8 +107,7 @@ NemoClaw separates host orchestration, agent-specific behavior, and sandbox defi
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-- The _Deep Agents integration layer_ writes managed runtime configuration under `/sandbox/.deepagents`.
-  It includes `config.toml`, managed MCP projection state, and the inference route used by `dcode`.
+- The _Deep Agents integration layer_ writes managed runtime configuration under `/sandbox/.deepagents`. It includes `config.toml`, managed MCP projection state, and the inference route used by `dcode`.
 
 </AgentOnly>
 - The _blueprint_ is a versioned YAML package with the sandbox image, agent manifest, network policy, inference profile, and supporting assets.
@@ -123,15 +117,11 @@ This separation keeps host orchestration, agent-specific assets, and the sandbox
 
 ## Readiness and Sandbox Creation
 
-Run `$$nemoclaw host probe` when you need a read-only system readiness report before onboarding.
-The report combines host and gateway observations, capabilities, qualifications, findings, evidence, and CLI provenance without changing system state.
-Onboarding consumes the same stable host and gateway entities and applies its explicit admission policy.
-It revalidates live facts after permitted preparation and when a saved onboarding session resumes.
+Run `$$nemoclaw host probe` when you need a read-only system readiness report before onboarding. The report combines host and gateway observations, capabilities, qualifications, findings, evidence, and CLI provenance without changing system state. Onboarding consumes the same stable host and gateway entities and applies its explicit admission policy. It revalidates live facts after permitted preparation and when a saved onboarding session resumes.
 
 When you run `$$nemoclaw onboard`, the host CLI and blueprint runner complete these operations:
 
-1. NemoClaw resolves gateway lifecycle authority and rejects blocking system readiness results before managed resource effects.
-   A container-backed WSL GPU proof can run only after this admission check; explicit CPU-only intent skips it.
+1. NemoClaw resolves gateway lifecycle authority and rejects blocking system readiness results before managed resource effects. A container-backed WSL GPU proof can run only after this admission check; explicit CPU-only intent skips it.
 2. NemoClaw resolves the blueprint, checks version compatibility, and verifies the digest.
 3. Onboarding validates the selected inference provider, credentials, agent settings, and platform requirements.
 4. The runner determines which gateway, provider, policy, sandbox, and integration resources to create or update.
@@ -144,7 +134,7 @@ After the sandbox starts, the selected agent uses its managed configuration and 
 NemoClaw operates the sandbox and its manifest-declared state through host-side commands.
 
 | Operation | Result |
-|---|---|
+| --- | --- |
 | Inspect | `host probe`, `status`, and `logs` report system, sandbox, agent-runtime, inference, and recovery information without replacing the sandbox. |
 | Configure | Inference, policy, managed MCP, and supported agent-runtime integration commands update the applicable managed resources. |
 | Rebuild | Recreates the sandbox from the recorded configuration and restores supported agent state through a recorded transaction. |
@@ -156,37 +146,31 @@ Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/r
 
 ## Inference Routing
 
-Managed agent runtimes send model requests to `inference.local` instead of an upstream endpoint.
-During onboarding, NemoClaw validates the selected provider and model, configures the OpenShell inference route, and writes the matching model reference into the managed agent configuration.
-OpenShell keeps the provider credential outside the sandbox and sends approved requests to the upstream endpoint.
-When you select the Model Router provider, `inference.local` routes to a host-side router that chooses from the configured NVIDIA model pool for each request.
+Managed agent runtimes send model requests to `inference.local` instead of an upstream endpoint. During onboarding, NemoClaw validates the selected provider and model, configures the OpenShell inference route, and writes the matching model reference into the managed agent configuration. OpenShell keeps the provider credential outside the sandbox and sends approved requests to the upstream endpoint. When you select the Model Router provider, `inference.local` routes to a host-side router that chooses from the configured NVIDIA model pool for each request.
+
 <AgentOnly variant="hermes">
-For Hermes, `$$nemoclaw inference set` updates `/sandbox/.hermes/config.yaml` at runtime without rebuilding the sandbox.
+  For Hermes, `$$nemoclaw inference set` updates `/sandbox/.hermes/config.yaml` at runtime without
+  rebuilding the sandbox.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-For Deep Agents, the managed `dcode` runtime reads the OpenAI-compatible route that NemoClaw writes into `/sandbox/.deepagents/config.toml`.
+  For Deep Agents, the managed `dcode` runtime reads the OpenAI-compatible route that NemoClaw
+  writes into `/sandbox/.deepagents/config.toml`.
 </AgentOnly>
 
 ## Managed Integrations
 
 NemoClaw connects supported external services through OpenShell providers, network policy, and agent-specific adapters.
 
-Managed MCP supports authenticated HTTPS Streamable HTTP MCP servers for OpenClaw, Hermes, and Deep Agents Code.
-NemoClaw stores the credential name and ownership metadata, while OpenShell stores the raw value outside the sandbox.
-The agent adapter receives a credential placeholder that OpenShell replaces only at the approved egress boundary.
+Managed MCP supports authenticated HTTPS Streamable HTTP MCP servers for OpenClaw, Hermes, and Deep Agents Code. NemoClaw stores the credential name and ownership metadata, while OpenShell stores the raw value outside the sandbox. The agent adapter receives a credential placeholder that OpenShell replaces only at the approved egress boundary.
 
 <AgentOnly variant="openclaw,hermes">
 
-Messaging channels use agent-specific channel manifests, credential delivery, network policy, and lifecycle commands.
-Some experimental webhook channels also require a route-restricted host-side public endpoint.
-Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) for agent and channel status.
+Messaging channels use agent-specific channel manifests, credential delivery, network policy, and lifecycle commands. Some experimental webhook channels also require a route-restricted host-side public endpoint. Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) for agent and channel status.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-Deep Agents Code can also opt into bounded trace export to an operator-managed host collector.
-Native LangSmith tracing and ambient OpenTelemetry exporter configuration remain disabled inside the sandbox.
-Refer to [Understand Deep Agents Trace Export](../monitoring/understand-deepagents-trace-export) for the data and receiver trust boundaries.
+Deep Agents Code can also opt into bounded trace export to an operator-managed host collector. Native LangSmith tracing and ambient OpenTelemetry exporter configuration remain disabled inside the sandbox. Refer to [Understand Deep Agents Trace Export](../monitoring/understand-deepagents-trace-export) for the data and receiver trust boundaries.
 
 </AgentOnly>
 
@@ -197,18 +181,15 @@ Refer to [About Managed MCP Servers](../manage-sandboxes/mcp-servers/about-manag
 The sandbox starts with a baseline policy that controls network egress, filesystem access, process privileges, and inference routing.
 
 | Layer | What it protects | When it applies |
-|---|---|---|
+| --- | --- | --- |
 | Network | Blocks unauthorized outbound connections. | Hot-reloadable at runtime. |
 | Filesystem | Restricts system paths to read-only; `/sandbox` and `/tmp` are writable. | Locked at sandbox creation. |
 | Process | Blocks privilege escalation and dangerous syscalls. | Locked at sandbox creation. |
 | Inference | Reroutes model API calls to controlled backends. | Hot-reloadable at runtime. |
 
-When the agent tries to reach an unapproved host, OpenShell blocks the request and surfaces it in the terminal user interface (TUI) for operator approval.
-Approved endpoints persist within the current sandbox instance but are not saved to the baseline policy file.
-NemoClaw's runtime context tells supported agents to try allowed network and filesystem actions first, then report whether policy denial, DNS, timeout, TLS, or filesystem access caused a failure.
+When the agent tries to reach an unapproved host, OpenShell blocks the request and surfaces it in the terminal user interface (TUI) for operator approval. Approved endpoints persist within the current sandbox instance but are not saved to the baseline policy file. NemoClaw's runtime context tells supported agents to try allowed network and filesystem actions first, then report whether policy denial, DNS, timeout, TLS, or filesystem access caused a failure.
 
-Host and platform limitations can change how individual controls apply.
-Refer to [Platform Support](../reference/platform-support) and [Security Best Practices](../security/best-practices) before you treat a control as an environment-wide guarantee.
+Host and platform limitations can change how individual controls apply. Refer to [Platform Support](../reference/platform-support) and [Security Best Practices](../security/best-practices) before you treat a control as an environment-wide guarantee.
 
 ## Next Steps
 

@@ -12,6 +12,7 @@ import type {
   HostLocalInferenceOperationInput,
   HostLocalInferenceReceipt,
   HostLocalInferenceRuntime,
+  HostLocalManagedInferenceInspection,
 } from "./host-local-inference";
 import { serializeHostLocalInferenceReceipt } from "./host-local-inference";
 import {
@@ -19,6 +20,7 @@ import {
   confirmHostLocalInferenceAuthority,
   type ManagedHostLocalInferenceService,
   type PreparedHostLocalInferenceAuthority,
+  prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority,
   prepareSandboxHostLocalInferenceAuthority,
   prepareSandboxHostLocalInferenceDestroyAuthority,
   retirePreparedHostLocalInferenceAuthority,
@@ -173,6 +175,9 @@ function provider(
     readonly engineId?: string;
     readonly preserveForRebuild?: (value: HostLocalInferenceReceipt) => HostLocalInferenceReceipt;
     readonly prepareDestroy?: (value: HostLocalInferenceReceipt) => HostLocalInferenceReceipt;
+    readonly preparePublishedRecoveryEntry?: (
+      value: HostLocalInferenceReceipt,
+    ) => HostLocalManagedInferenceInspection;
     readonly destroy?: (value: HostLocalInferenceReceipt) => HostLocalInferenceDestroyResult;
   } = {},
 ) {
@@ -183,6 +188,9 @@ function provider(
   const prepareDestroy = vi.fn(
     (value: HostLocalInferenceReceipt) => options.prepareDestroy?.(value) ?? value,
   );
+  const preparePublishedRecoveryEntry = options.preparePublishedRecoveryEntry
+    ? vi.fn(options.preparePublishedRecoveryEntry)
+    : undefined;
   let present = true;
   const destroyContainer = (value: HostLocalInferenceReceipt): HostLocalInferenceDestroyResult => {
     const status = present ? "removed" : "already-absent";
@@ -204,10 +212,12 @@ function provider(
     inspectManaged: vi.fn((value) => ({ running: true, receipt: value })),
     stopManaged: vi.fn((value) => ({ running: false, receipt: value })),
     preserveForRebuild,
+    ...(preparePublishedRecoveryEntry ? { preparePublishedRecoveryEntry } : {}),
     prepareDestroy,
     destroy,
   };
   const assertAuthority = vi.fn();
+  const assertTransactionCurrent = vi.fn();
   const operation: HostLocalInferenceOperation = {
     providerId: "mxc",
     engine: {
@@ -218,6 +228,7 @@ function provider(
     } as HostLocalInferenceOperation["engine"],
     bindingSha256: options.bindingSha256 ?? BINDING_SHA256,
     assertAuthority,
+    assertTransactionCurrent,
     spawn: vi.fn() as HostLocalInferenceOperation["spawn"],
     createLlamaCppLifecycle: vi.fn() as HostLocalInferenceOperation["createLlamaCppLifecycle"],
     managedRuntime: runtime,
@@ -238,12 +249,14 @@ function provider(
   });
   return {
     assertAuthority,
+    assertTransactionCurrent,
     bundle,
     createOperation,
     destroy,
     operation,
     operationInputs,
     prepareDestroy,
+    preparePublishedRecoveryEntry,
     preserveForRebuild,
     runtime,
   };
@@ -687,6 +700,51 @@ describe("host-local inference lifecycle authority", () => {
       prepareSandboxHostLocalInferenceAuthority(runtimeProvider.bundle, sandbox()),
     ).toThrow();
     expect(runtimeProvider.preserveForRebuild).not.toHaveBeenCalled();
+  });
+
+  it("uses only the dedicated published-recovery entry proof for Hermes Ollama", () => {
+    const value = receipt("ollama");
+    const entry = sandbox("alpha", value, { agent: "hermes" });
+    let now = 0;
+    const onTimingComplete = vi.fn(() => {
+      throw new Error("timing sink unavailable");
+    });
+    const runtimeProvider = provider({
+      preparePublishedRecoveryEntry: (current) => ({ running: true, receipt: current }),
+    });
+
+    const prepared = requiredPrepared(
+      prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority(
+        runtimeProvider.bundle,
+        entry,
+        {},
+        { now: () => (now += 4), onComplete: onTimingComplete },
+        runtimeProvider.operation,
+      ),
+    );
+
+    expect(prepared.managedInspection).toEqual({ running: true, receipt: value });
+    expect(runtimeProvider.preparePublishedRecoveryEntry).toHaveBeenCalledOnce();
+    expect(runtimeProvider.preparePublishedRecoveryEntry).toHaveBeenCalledWith(value);
+    expect(runtimeProvider.prepareDestroy).not.toHaveBeenCalled();
+    expect(runtimeProvider.assertAuthority).not.toHaveBeenCalled();
+    expect(runtimeProvider.assertTransactionCurrent).not.toHaveBeenCalled();
+    expect(onTimingComplete).toHaveBeenCalledWith(4);
+  });
+
+  it("fails closed when published recovery has no dedicated entry proof", () => {
+    const runtimeProvider = provider();
+
+    expect(() =>
+      prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority(
+        runtimeProvider.bundle,
+        sandbox("alpha", receipt("ollama"), { agent: "hermes" }),
+        {},
+        undefined,
+        runtimeProvider.operation,
+      ),
+    ).toThrow("published recovery runtime entry authority is missing");
+    expect(runtimeProvider.prepareDestroy).not.toHaveBeenCalled();
   });
 
   it.each(SERVICES)("retires exact unshared %s authority", (service) => {

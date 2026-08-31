@@ -111,13 +111,12 @@ describe("resolveGatewayTeardownAuthority", () => {
     ).toBe("externally-supervised");
   });
 
-  it("uses persisted gateway authority even when the unrelated policy authority is malformed (#9833)", () => {
+  it("uses persisted gateway authority even when the unrelated sandbox identity is malformed (#9833)", () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-teardown-authority-"));
     const currentDeclaration = declaration();
     const recordedOwner = owner(currentDeclaration);
     const session = {
       ...checkpointSession(recordedOwner),
-      policyAuthority: "global",
     };
     writeTargetSession(homeDir, JSON.stringify(session));
 
@@ -138,12 +137,11 @@ describe("resolveGatewayTeardownAuthority", () => {
     }
   });
 
-  it("does not adopt a different current owner when policy authority is malformed (#9833)", () => {
+  it("does not adopt a different current owner when sandbox identity is malformed (#9833)", () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-teardown-authority-"));
     const recordedOwner = owner(declaration("systemd-system"));
     const session = {
       ...checkpointSession(recordedOwner),
-      policyAuthority: "global",
     };
     writeTargetSession(homeDir, JSON.stringify(session));
 

@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-evening
-description: Runs the end-of-day NemoClaw release handoff and optionally cuts an exact release tag. Use for evening, handoff, wrap-up, or ship requests.
+description: Runs the end-of-day NemoClaw release handoff and optionally cuts a release tag. Use for evening, handoff, wrap-up, or ship requests.
 user_invocable: true
 ---
 
@@ -18,7 +18,7 @@ for release rules.
 
 ## 1. Select the Target Version
 
-Use the maintainer's exact `vX.Y.Z` when supplied. Otherwise, read the current target and show its
+Use the maintainer's `vX.Y.Z` when supplied. Otherwise, read the current target and show its
 merged and open work:
 
 ```bash
@@ -52,7 +52,7 @@ release. When it does, update the cumulative documentation change first. When it
 skill may keep an earlier planned candidate that remains on `main`; later managed documentation work
 does not invalidate that candidate.
 
-When an included merge changes the candidate after planning, generate a new exact-version plan after
+When an included merge changes the candidate after planning, generate a new version plan after
 its documentation merges.
 
 ## 3. Show the Release Handoff
@@ -71,9 +71,9 @@ move to the next target, but do not perform label writes here.
 
 ## 4. Cut the Tag When Requested
 
-Load `nemoclaw-maintainer-cut-release-tag` and pass the exact version. That skill owns:
+Load `nemoclaw-maintainer-cut-release-tag` and pass the version. That skill owns:
 
-- the exact-version plan and candidate;
+- the version plan and candidate;
 - the required release entry, documentation coverage decision, and image evidence;
 - the maintainer's focused, full, or proceed E2E choice;
 - `../nemoclaw-release-vX.Y.Z/release-brief.md`;

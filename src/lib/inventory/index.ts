@@ -30,7 +30,6 @@ export interface SandboxEntry {
   sandboxGpuDevice?: string | null;
   openshellDriver?: string | null;
   openshellVersion?: string | null;
-  policies?: string[] | null;
   messaging?: SandboxMessagingState | null;
   agent?: string | null;
   dashboardPort?: number | null;
@@ -91,6 +90,8 @@ export interface ListSandboxesCommandDeps {
   loadLastSession: () => OnboardingSessionSummary | null;
   /** Detect active SSH sessions for a sandbox. Returns session count or null if unavailable. */
   getActiveSessionCount?: (sandboxName: string) => number | null;
+  /** Derive applied preset names from the current OpenShell policy. */
+  getPolicyPresets?: (sandboxName: string) => string[];
   log?: (message?: string) => void;
 }
 
@@ -156,6 +157,8 @@ export interface ShowStatusCommandDeps {
    * that case. #2604.
    */
   getActiveSessionCount?: (sandboxName: string) => number | null;
+  /** Derive applied preset names from the current OpenShell policy. */
+  getPolicyPresets?: (sandboxName: string) => string[];
   /**
    * Report whether the named NemoClaw gateway is reachable. When omitted,
    * `showStatusCommand` keeps its legacy 0-exit behaviour; when provided and
@@ -177,9 +180,7 @@ export interface ShowStatusCommandDeps {
   findMessagingOverlaps?: () => MessagingOverlap[];
   readGatewayLog?: (sandboxName: string) => string | null;
   /** Receipt-only schema-5 phase lookup held by the global portable host fence. */
-  getHermesPortablePhase?: (
-    sandboxName: string,
-  ) => "pending" | "configuring" | "active" | null;
+  getHermesPortablePhase?: (sandboxName: string) => "pending" | "configuring" | "active" | null;
   /** Count receipt-root authority so an unregistered phase cannot permit ambient probes. */
   getHermesPortableHostAuthorityCount?: () => number;
   log?: (message?: string) => void;
@@ -322,6 +323,7 @@ function buildSandboxInventoryRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,
   getActiveSessionCount?: (sandboxName: string) => number | null,
+  getPolicyPresets?: (sandboxName: string) => string[],
 ): SandboxInventoryRow {
   const activeSessionCount = getActiveSessionCount ? getActiveSessionCount(sandbox.name) : null;
   const sandboxGpuEnabled =
@@ -341,7 +343,7 @@ function buildSandboxInventoryRow(
     sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
     openshellDriver: safeStatusString(sandbox.openshellDriver || null),
     openshellVersion: safeStatusString(sandbox.openshellVersion || null),
-    policies: Array.isArray(sandbox.policies) ? sandbox.policies : [],
+    policies: getPolicyPresets?.(sandbox.name) ?? [],
     agent: resolveDisplayAgent(sandbox),
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
     isDefault: sandbox.name === defaultSandbox,
@@ -381,7 +383,12 @@ export async function getSandboxInventory(
     sandboxes: recovery.sandboxes
       .filter(isPublishedSandboxRegistration)
       .map((sandbox) =>
-        buildSandboxInventoryRow(sandbox, resolvedDefault, deps.getActiveSessionCount),
+        buildSandboxInventoryRow(
+          sandbox,
+          resolvedDefault,
+          deps.getActiveSessionCount,
+          deps.getPolicyPresets,
+        ),
       ),
   };
 }
@@ -498,6 +505,7 @@ function buildStatusSandboxRow(
   defaultSandbox: string | null,
   liveInference: GatewayInference | null,
   portablePhase: "pending" | "configuring" | "active" | null,
+  getPolicyPresets?: (sandboxName: string) => string[],
 ): StatusSandboxRow {
   const isDefault = sandbox.name === defaultSandbox;
   const liveModel = isDefault ? liveInference?.model : null;
@@ -522,11 +530,9 @@ function buildStatusSandboxRow(
     sandboxGpuDevice: safeStatusString(sandbox.sandboxGpuDevice || null),
     openshellDriver: safeStatusString(sandbox.openshellDriver || null),
     openshellVersion: safeStatusString(sandbox.openshellVersion || null),
-    policies: Array.isArray(sandbox.policies)
-      ? sandbox.policies
-          .filter((policy): policy is string => typeof policy === "string")
-          .map((policy) => safeStatusString(policy) || policy)
-      : [],
+    policies: (getPolicyPresets?.(sandbox.name) ?? []).map(
+      (policy) => safeStatusString(policy) || policy,
+    ),
     agent: redactFull(resolveDisplayAgent(sandbox)),
     ...(portablePhase ? { phase: portablePhase } : {}),
     ...(dashboardPort != null ? { dashboardPort } : {}),
@@ -604,18 +610,16 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
     sandboxList.sandboxes,
     deps.loadLastSession?.(),
   );
-  const liveInference =
-    sandboxes.length > 0 && !hasHermesPortable ? deps.getLiveInference() : null;
+  const liveInference = sandboxes.length > 0 && !hasHermesPortable ? deps.getLiveInference() : null;
   const gatewayHealth =
     deps.getGatewayHealth && sandboxes.length > 0 && !hasHermesPortable
       ? deps.getGatewayHealth()
       : null;
-  const services =
-    !hasHermesPortable
-      ? (deps
-      .getServiceStatuses?.({ sandboxName: resolvedDefault || undefined })
-          .map(normalizeServiceStatus) ?? [])
-      : [];
+  const services = !hasHermesPortable
+    ? (deps
+        .getServiceStatuses?.({ sandboxName: resolvedDefault || undefined })
+        .map(normalizeServiceStatus) ?? [])
+    : [];
 
   return {
     schemaVersion: 1,
@@ -637,6 +641,7 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
         resolvedDefault,
         liveInference,
         portablePhases.get(sandbox.name) ?? null,
+        deps.getPolicyPresets,
       ),
     ),
     services,
