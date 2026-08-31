@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { isSupportedGatewayDockerHost } from "../../src/lib/domain/docker-host";
+
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "../..", "scripts", "install.sh");
 
 function writePendingStationReceiptRetirement(tmp: string): void {
@@ -23,140 +25,28 @@ function writePendingStationReceiptRetirement(tmp: string): void {
   );
 }
 
-function runPayloadOnlyRecoveryBootstrap(dockerHost: string): {
-  output: string;
-  status: number | null;
-} {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-payload-bootstrap-"));
-  const payloadRoot = path.join(tmp, "payload-only");
-  const payloadSupportDir = path.join(tmp, "payload-support");
-  const fakeBin = path.join(tmp, "bin");
-  const standalonePayload = path.join(payloadRoot, "install.sh");
-  const childPayload = path.join(tmp, "child-install.sh");
-  const cli = path.join(tmp, "nemoclaw");
-  const callLog = path.join(tmp, "calls.log");
-  const dockerHostContract = path.join(
-    path.dirname(INSTALLER_PAYLOAD),
-    "..",
-    "src",
-    "lib",
-    "domain",
-    "docker-host.ts",
-  );
-  fs.mkdirSync(path.join(payloadSupportDir, "lib"), { recursive: true });
-  fs.mkdirSync(fakeBin);
-  fs.mkdirSync(payloadRoot);
-  fs.mkdirSync(path.join(tmp, ".nemoclaw"));
-  fs.chmodSync(path.join(tmp, ".nemoclaw"), 0o700);
-  fs.writeFileSync(path.join(tmp, ".nemoclaw", "sandboxes.json"), '{"sandboxes":{}}');
-  fs.copyFileSync(INSTALLER_PAYLOAD, standalonePayload);
-  fs.chmodSync(standalonePayload, 0o755);
-  fs.copyFileSync(
-    path.join(path.dirname(INSTALLER_PAYLOAD), "lib", "station-vllm-conflict.sh"),
-    path.join(payloadSupportDir, "lib", "station-vllm-conflict.sh"),
-  );
-  fs.writeFileSync(
-    path.join(payloadSupportDir, "setup-jetson.sh"),
-    "#!/usr/bin/env bash\nprintf 'setup-jetson-started\\n' >> \"$BOOTSTRAP_CALL_LOG\"\n",
-    { mode: 0o755 },
-  );
-  fs.writeFileSync(
-    cli,
-    `#!/usr/bin/env bash
-if [ "\${1:-}" = "upgrade-sandboxes" ]; then
-  printf 'recovery-started\n' >> "$BOOTSTRAP_CALL_LOG"
-fi
-exit 0
-`,
-    { mode: 0o755 },
-  );
-  fs.writeFileSync(
-    childPayload,
-    `#!/usr/bin/env bash
-set -euo pipefail
-NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1
-source "$PRODUCTION_INSTALLER_PAYLOAD" >/dev/null
-NEMOCLAW_SOURCE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-_CLI_BIN=nemoclaw
-_UPGRADE_SANDBOXES_FAILED=false
-_STATION_EXPRESS_RESUME_LOADED=""
-SCRIPT_DIR="$PAYLOAD_SUPPORT_DIR"
-printf 'ref=%s tag=%s bootstrap=%s host=%s\n' "$NEMOCLAW_INSTALL_REF" "$NEMOCLAW_INSTALL_TAG" "$NEMOCLAW_BOOTSTRAP_PAYLOAD" "$DOCKER_HOST" >> "$BOOTSTRAP_CALL_LOG"
-info() { :; }
-warn() { :; }
-print_banner() { :; }
-preflight_usage_notice_prompt() { :; }
-ensure_docker() { printf 'ensure-docker-started\n' >> "$BOOTSTRAP_CALL_LOG"; }
-ensure_openshell_build_deps() { :; }
-maybe_offer_express_install() { :; }
-sleep() { :; }
-step() { :; }
-install_nodejs() { printf 'node-install-started\n' >> "$BOOTSTRAP_CALL_LOG"; }
-ensure_supported_runtime() { :; }
-fix_npm_permissions() { printf 'npm-permissions-started\n' >> "$BOOTSTRAP_CALL_LOG"; }
-preinstall_backup_and_retire_legacy_gateway() {
-  printf 'preinstall-started\n' >> "$BOOTSTRAP_CALL_LOG"
-  _PREEXISTING_SANDBOX_COUNT=1
-  _LEGACY_MANAGED_RECOVERY_NAMES_JSON='["legacy-box"]'
-}
-install_nemoclaw() { :; }
-verify_nemoclaw() { _CLI_PATH="$FAKE_CLI"; }
-run_installer_host_preflight() {
-  printf 'host-preflight-started\n' >> "$BOOTSTRAP_CALL_LOG"
-  return 0
-}
-ensure_station_express_host() { :; }
-ensure_station_express_pair() { :; }
-run_onboard() { "$FAKE_CLI" onboard; }
-restore_onboard_forward_after_post_checks() { return 0; }
-print_done() { :; }
-main "$@"
-`,
-    { mode: 0o755 },
-  );
-  fs.writeFileSync(
-    path.join(fakeBin, "git"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "init" ]; then
-  destination="\${@: -1}"
-  mkdir -p "$destination/scripts" "$destination/src/lib/domain"
-  cp "$CLONED_INSTALLER_PAYLOAD" "$destination/scripts/install.sh"
-  chmod +x "$destination/scripts/install.sh"
-  cp "$DOCKER_HOST_CONTRACT" "$destination/src/lib/domain/docker-host.ts"
-  exit 0
-fi
-if [ "\${1:-}" = "-C" ]; then
-  exit 0
-fi
-exit 99
-`,
-    { mode: 0o755 },
-  );
+function installerSupportsDockerHost(value: string | undefined): boolean {
+  const childEnv = { ...process.env };
+  delete childEnv.DOCKER_HOST;
   const result = spawnSync(
     "bash",
-    [standalonePayload, "--non-interactive", "--yes-i-accept-third-party-software"],
+    [
+      "-c",
+      `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+installer_docker_host_has_supported_shape`,
+    ],
     {
       encoding: "utf-8",
       env: {
-        BOOTSTRAP_CALL_LOG: callLog,
-        CLONED_INSTALLER_PAYLOAD: childPayload,
-        DOCKER_HOST: dockerHost,
-        DOCKER_HOST_CONTRACT: dockerHostContract,
-        FAKE_CLI: cli,
-        HOME: tmp,
-        NEMOCLAW_BOOTSTRAP_PAYLOAD: "",
-        NEMOCLAW_INSTALL_TAG: "refs/tags/payload-test",
-        NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
-        PATH: `${fakeBin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
-        PAYLOAD_SUPPORT_DIR: payloadSupportDir,
-        PRODUCTION_INSTALLER_PAYLOAD: INSTALLER_PAYLOAD,
+        ...childEnv,
+        BASH_ENV: "",
+        ...(value !== undefined ? { DOCKER_HOST: value } : {}),
+        ENV: "",
       },
     },
   );
-  const output = `${result.stdout}${result.stderr}${fs.existsSync(callLog) ? fs.readFileSync(callLog, "utf-8") : ""}`;
-  fs.rmSync(tmp, { force: true, recursive: true });
-  return { output, status: result.status };
+  expect([0, 1], result.stderr).toContain(result.status);
+  return result.status === 0;
 }
 
 function runRecoveryBeforeOnboard(
@@ -173,7 +63,6 @@ function runRecoveryBeforeOnboard(
     recordPreinstall?: boolean;
     recoveryLogWriteFails?: boolean;
     singleSession?: boolean;
-    sourceRoot?: string;
     stationExpressSelected?: boolean;
     stationResumeLoaded?: boolean;
     prepareState?: (tmp: string) => void;
@@ -241,7 +130,6 @@ exit 0
   const snippet = `
     set -e
     source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
-    ${options.sourceRoot === undefined ? "" : `NEMOCLAW_SOURCE_ROOT="${options.sourceRoot}"`}
     _CLI_BIN=nemoclaw
     _UPGRADE_SANDBOXES_FAILED=false
     _STATION_EXPRESS_RESUME_LOADED=${options.stationResumeLoaded ? "1" : ""}
@@ -318,37 +206,42 @@ exit 0
 }
 
 describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
-  it("bootstraps a payload-only installer before recovery through a supported Docker socket", () => {
-    const result = runPayloadOnlyRecoveryBootstrap("unix:///var/run/docker.sock");
-
-    expect(result.status, result.output).toBe(0);
-    expect(result.output).toContain(
-      "ref=refs/tags/payload-test tag=refs/tags/payload-test bootstrap=1 host=unix:///var/run/docker.sock",
-    );
-    expect(result.output).toContain("preinstall-started");
-    expect(result.output.match(/recovery-started/g)).toHaveLength(2);
-    expect(result.output).not.toContain("host-preflight-started");
-  });
-
-  it("rejects an unsupported Docker host after payload-only bootstrap before recovery", () => {
-    const result = runPayloadOnlyRecoveryBootstrap("tcp://203.0.113.10:2375");
-
-    expect(result.status).toBe(1);
-    expect(result.output).toContain(
-      "DOCKER_HOST is not a supported absolute local Unix socket endpoint",
-    );
-    expect(result.output).not.toContain("preinstall-started");
-    expect(result.output).not.toContain("recovery-started");
-    expect(result.output).not.toContain("host-preflight-started");
-    expect(result.output).not.toContain("ensure-docker-started");
-    expect(result.output).not.toContain("node-install-started");
-    expect(result.output).not.toContain("npm-permissions-started");
-    expect(result.output).not.toContain("setup-jetson-started");
+  it.each([
+    ["an unset value", undefined],
+    ["an empty value", ""],
+    ["a whitespace-only value", " \t "],
+    ["an absolute Unix socket", "unix:///var/run/docker.sock"],
+    ["a padded absolute Unix socket", "  unix:///var/run/docker.sock\t"],
+    ["a TCP endpoint", "tcp://203.0.113.10:2375"],
+    ["an SSH endpoint", "ssh://user@example.test"],
+    ["a relative Unix socket", "unix://relative/docker.sock"],
+    ["an empty Unix socket path", "unix://"],
+    ["a newline-bearing Unix socket", "unix:///var/run/docker.sock\n"],
+    ["a carriage-return-bearing Unix socket", "unix:///var/run/docker.sock\r"],
+    ["a quote-bearing Unix socket", "unix:///tmp/bad'sock"],
+  ] as const)("keeps the early Docker host gate aligned for %s", (_name, value) => {
+    expect(installerSupportsDockerHost(value)).toBe(isSupportedGatewayDockerHost(value));
   });
 
   it("recovers through a supported Docker socket without generic onboarding", () => {
     const result = runRecoveryBeforeOnboard(2, 0, {
       dockerHost: "unix:///var/run/docker.sock",
+      recordPreinstall: true,
+    });
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls).toEqual([
+      "preinstall-backup-retirement",
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+      "sleep=10",
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+    ]);
+    expect(result.output).toContain("Existing sandboxes recovered; skipping generic onboarding");
+  });
+
+  it("treats a whitespace-only Docker host as unset", () => {
+    const result = runRecoveryBeforeOnboard(2, 0, {
+      dockerHost: " \t ",
       recordPreinstall: true,
     });
 
@@ -383,19 +276,6 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.output).toContain(
       "Unset DOCKER_HOST or set it to an absolute local Unix socket URL",
     );
-    expect(result.output).toContain("Sandbox recovery did not start");
-  });
-
-  it("stops before pre-install recovery when the DOCKER_HOST contract is unavailable", () => {
-    const result = runRecoveryBeforeOnboard(2, 0, {
-      dockerHost: "unix:///var/run/docker.sock",
-      recordPreinstall: true,
-      sourceRoot: "/nonexistent/nemoclaw-source",
-    });
-
-    expect(result.status).toBe(1);
-    expect(result.calls).toEqual([]);
-    expect(result.output).toContain("Rerun the installer from a complete NemoClaw source checkout");
     expect(result.output).toContain("Sandbox recovery did not start");
   });
 
