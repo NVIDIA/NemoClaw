@@ -185,8 +185,8 @@ type HermesRegistrationObservation =
 /**
  * Retry one read-only adapter observation after the exact managed-reload readiness gap.
  * Attempt one consumes the already-captured status result. It must not invoke `mcp status`
- * again because that command can recover gateway state. Attempt two runs only direct sandbox
- * reads: bounded credential-revision classification, then Hermes config inspection.
+ * again because that command can recover gateway state. Attempt two reads and validates the
+ * credential revision. It inspects Hermes config only when the revision and bridge entry are valid.
  */
 export async function confirmHermesMcpRegistrationAfterRestartSettlement(options: {
   adapter: string;

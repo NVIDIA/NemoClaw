@@ -206,6 +206,18 @@ describe("MCP bridge transient classification", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["receives a signal", { signal: "SIGTERM" as const }],
+    ["times out", { timedOut: true }],
+  ])("rejects a Hermes add post-probe result when the command %s (#9485)", (_label, override) => {
+    expect(
+      isHermesMcpAddPostProbeNotReady("hermes-config", {
+        ...HERMES_ADD_POST_PROBE_NOT_READY,
+        ...override,
+      }),
+    ).toBe(false);
+  });
+
   it("recognizes only the complete Hermes restart-settlement status (#9485)", () => {
     expect(
       isHermesMcpStatusAwaitingRestartSettlement(
