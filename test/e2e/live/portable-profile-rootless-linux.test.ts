@@ -97,6 +97,7 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "prepare the rootless container runtime",
   "verify immutable non-force network removal",
   "build and publish the sandbox image",
+  "prepare the already-patched Hermes base",
   "build and publish the staged Hermes image",
   "verify Hermes accepts the configured external Host",
   "start the pinned Podman gateway",
@@ -152,12 +153,8 @@ function probeHermesDashboardHttp(containerName: string, host: string) {
 }
 
 async function waitForHermesDashboard(containerName: string, attempt = 0): Promise<void> {
-  const timeoutDetail =
-    attempt < 60 ? "" : `\n${run("podman", ["logs", containerName])}`;
-  assert.ok(
-    attempt < 60,
-    `Hermes dashboard did not become ready:${timeoutDetail}`,
-  );
+  const timeoutDetail = attempt < 60 ? "" : `\n${run("podman", ["logs", containerName])}`;
+  assert.ok(attempt < 60, `Hermes dashboard did not become ready:${timeoutDetail}`);
   const response = probeHermesDashboardHttp(containerName, "nemoclaw0-abc123.brevlab.com");
   const ready = response.status === 0 && response.stdout.trim() === "200";
   const running = ready
@@ -301,9 +298,9 @@ function selectInstallerPodmanRuntime(repoRoot: string): string {
 async function main(progress: TestProgress): Promise<void> {
   assert.equal(process.platform, "linux", "portable profile E2E requires Linux");
   assert.notEqual(process.getuid?.(), 0, "portable profile E2E must run without root privileges");
-  const sourceRevision = process.env.E2E_SOURCE_REVISION;
+  const sourceRevision = process.env.E2E_SOURCE_REVISION ?? "";
   assert.match(
-    sourceRevision ?? "",
+    sourceRevision,
     /^[a-f0-9]{40}$/u,
     "E2E_SOURCE_REVISION must identify the exact candidate commit",
   );
@@ -321,6 +318,8 @@ async function main(progress: TestProgress): Promise<void> {
   let disposableNetworkSubnet: string | null = null;
   let disposableNetworkInterface: string | null = null;
   let hermesImageId: string | null = null;
+  let hermesPatchedBaseRef: string | null = null;
+  let hermesPatchedBaseImageId: string | null = null;
   let hermesContextRetired = false;
   const gatewayAliasPresentBefore = run("ip", ["-o", "-4", "address", "show", "dev", "lo"])
     .split("\n")
@@ -455,7 +454,7 @@ async function main(progress: TestProgress): Promise<void> {
       /^(?:sha256:)?[a-f0-9]{64}$/,
     );
 
-    progress.phase("build and publish the staged Hermes image");
+    progress.phase("prepare the already-patched Hermes base");
     const hermesContextStateDir = path.join(root, "hermes-build-state");
     fs.mkdirSync(hermesContextStateDir, { mode: 0o700 });
     const hermesContextInput = {
@@ -483,6 +482,75 @@ async function main(progress: TestProgress): Promise<void> {
         log: console.log,
       });
       cleanupHermesTemporaryBuildContext = hermesTemporaryBuildContext.cleanupBuildCtx;
+      const stagedDockerfileSource = fs.readFileSync(
+        hermesTemporaryBuildContext.stagedDockerfile,
+        "utf-8",
+      );
+      const baseImageArgument = stagedDockerfileSource.match(/^ARG BASE_IMAGE=(.+)$/mu);
+      assert.ok(baseImageArgument?.[1], "The staged Hermes Dockerfile must declare BASE_IMAGE.");
+      const patchedBaseContext = fs.mkdtempSync(
+        path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX),
+      );
+      fs.chmodSync(patchedBaseContext, 0o700);
+      try {
+        const patchedBaseInputDir = path.join(patchedBaseContext, "agents", "hermes");
+        fs.mkdirSync(patchedBaseInputDir, { recursive: true, mode: 0o700 });
+        fs.copyFileSync(
+          path.join(
+            hermesTemporaryBuildContext.buildCtx,
+            "agents",
+            "hermes",
+            "dashboard-external-host.patch",
+          ),
+          path.join(patchedBaseInputDir, "dashboard-external-host.patch"),
+        );
+        const patchedBaseDockerfile = path.join(patchedBaseContext, "Dockerfile");
+        fs.writeFileSync(
+          patchedBaseDockerfile,
+          [
+            `ARG BASE_IMAGE=${baseImageArgument[1]}`,
+            "FROM ${BASE_IMAGE}",
+            "COPY agents/hermes/dashboard-external-host.patch /tmp/hermes-dashboard-external-host.patch",
+            "RUN if ! grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py; then \\",
+            "      git -C /opt/hermes apply --check --include=hermes_cli/web_server.py /tmp/hermes-dashboard-external-host.patch; \\",
+            "      git -C /opt/hermes apply --include=hermes_cli/web_server.py /tmp/hermes-dashboard-external-host.patch; \\",
+            "    fi \\",
+            "    && grep -Fqx '_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = \"_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST\"' /opt/hermes/hermes_cli/web_server.py \\",
+            "    && grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py \\",
+            "    && rm /tmp/hermes-dashboard-external-host.patch",
+            "",
+          ].join("\n"),
+          { encoding: "utf-8", mode: 0o600 },
+        );
+        const patchedBasePrebuild = await prebuildSandboxImageIfEligible({
+          buildCtx: patchedBaseContext,
+          buildId: `patched-base-${sourceRevision.slice(0, 12)}`,
+          createArgs: ["--from", patchedBaseDockerfile, "--name", "hermes-patched-base"],
+          sandboxName: "hermes-patched-base",
+          dockerDriverGateway: true,
+          env: process.env,
+          origin: "generated",
+          log: console.log,
+        });
+        assert.ok(patchedBasePrebuild.imageRef, "The patched Hermes base was not built.");
+        assert.ok(patchedBasePrebuild.imageId, "The patched Hermes base identity was not proven.");
+        hermesPatchedBaseRef = patchedBasePrebuild.imageRef;
+        hermesPatchedBaseImageId = patchedBasePrebuild.imageId;
+      } finally {
+        fs.rmSync(patchedBaseContext, { recursive: true, force: true });
+      }
+      const stagedDockerfileWithPatchedBase = stagedDockerfileSource.replace(
+        /^ARG BASE_IMAGE=.+$/mu,
+        `ARG BASE_IMAGE=${hermesPatchedBaseRef}`,
+      );
+      assert.notEqual(stagedDockerfileWithPatchedBase, stagedDockerfileSource);
+      fs.writeFileSync(
+        hermesTemporaryBuildContext.stagedDockerfile,
+        stagedDockerfileWithPatchedBase,
+        { encoding: "utf-8", mode: 0o600 },
+      );
+
+      progress.phase("build and publish the staged Hermes image");
       const hermesPrebuild = await prebuildSandboxImageIfEligible({
         buildCtx: hermesTemporaryBuildContext.buildCtx,
         buildId: "hermes-rootless-e2e",
@@ -515,6 +583,19 @@ async function main(progress: TestProgress): Promise<void> {
         hermesPrebuild.imageId.replace(/^sha256:/u, ""),
       );
       hermesImageId = inspectedHermesImageId;
+      run("podman", [
+        "run",
+        "--rm",
+        "--entrypoint",
+        "/bin/sh",
+        hermesImageRef,
+        "-c",
+        [
+          "test ! -e /scripts/hermes-dashboard-external-host.patch",
+          "grep -Fqx '_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = \"_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST\"' /opt/hermes/hermes_cli/web_server.py",
+          "grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py",
+        ].join(" && "),
+      ]);
 
       progress.phase("verify Hermes accepts the configured external Host");
       assert.deepEqual(await probeHermesDashboardProxyRoute(hermesImageRef), {
@@ -525,29 +606,27 @@ async function main(progress: TestProgress): Promise<void> {
         other: 400,
       });
 
-      assertHermesDashboardStartupRefusal(
-        hermesImageRef,
-        "http://dashboard.example.test:29443",
-      );
+      assertHermesDashboardStartupRefusal(hermesImageRef, "http://dashboard.example.test:29443");
       assertHermesDashboardStartupRefusal(hermesImageRef, "https://0.0.0.0:29443");
       assertHermesDashboardStartupRefusal(
         hermesImageRef,
         "https://user@dashboard.example.test:29443",
       );
-      assertHermesDashboardStartupRefusal(
-        hermesImageRef,
-        "https://dashboard.example.test:invalid",
-      );
+      assertHermesDashboardStartupRefusal(hermesImageRef, "https://dashboard.example.test:invalid");
       assertHermesDashboardStartupRefusal(hermesImageRef, "https://./");
     } finally {
       try {
         hermesImageRef && run("podman", ["image", "rm", "--force", hermesImageRef]);
       } finally {
         try {
-          assert.equal(cleanupHermesTemporaryBuildContext(), true);
+          hermesPatchedBaseRef && run("podman", ["image", "rm", "--force", hermesPatchedBaseRef]);
         } finally {
-          hermesContextRetired = hermesContextPlan.retire(hermesContextInput);
-          assert.equal(hermesContextRetired, true);
+          try {
+            assert.equal(cleanupHermesTemporaryBuildContext(), true);
+          } finally {
+            hermesContextRetired = hermesContextPlan.retire(hermesContextInput);
+            assert.equal(hermesContextRetired, true);
+          }
         }
       }
     }
@@ -705,6 +784,7 @@ async function main(progress: TestProgress): Promise<void> {
           registry: { id: currentRegistry.Id, ip: PORTABLE_REGISTRY_IP },
           hermesPortableImage: {
             imageId: hermesImageId,
+            patchedBaseImageId: hermesPatchedBaseImageId,
             stagedContextRetired: hermesContextRetired,
           },
           authenticatedGatewayRoute: true,

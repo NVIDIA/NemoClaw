@@ -203,50 +203,6 @@ function runFinalLayout({
   return { hermesDir, legacyTarget, openclawTarget, result, sandboxRoot, tmp };
 }
 
-function runAlreadyPatchedBaseContract() {
-  const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-patch-contract-"));
-  const hermesRoot = path.join(tmp, "hermes");
-  const scriptsRoot = path.join(tmp, "scripts");
-  fs.mkdirSync(path.join(hermesRoot, "hermes_cli"), { recursive: true });
-  fs.mkdirSync(path.join(hermesRoot, "plugins", "memory", "hindsight"), { recursive: true });
-  fs.mkdirSync(scriptsRoot, { recursive: true });
-  fs.writeFileSync(
-    path.join(hermesRoot, "hermes_cli", "memory_setup.py"),
-    'ensure("memory.hindsight", prompt=False)\n',
-  );
-  fs.writeFileSync(
-    path.join(hermesRoot, "plugins", "memory", "hindsight", "plugin.yaml"),
-    '  - "hindsight-client==0.6.1"\n',
-  );
-  fs.writeFileSync(
-    path.join(hermesRoot, "hermes_cli", "web_server.py"),
-    [
-      '_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = "_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST"',
-      "if external_host and host_only == external_host:",
-      "",
-    ].join("\n"),
-  );
-  fs.writeFileSync(
-    path.join(scriptsRoot, "hermes-security-dependencies.patch"),
-    "already applied\n",
-  );
-  fs.writeFileSync(
-    path.join(scriptsRoot, "hermes-dashboard-external-host.patch"),
-    "already applied\n",
-  );
-
-  const command = dockerRunCommandBetween(
-    dockerfile,
-    "# A published base can lag the source patches in Dockerfile.base",
-    "# The final Hermes image owns the shipped dependency boundary",
-  )
-    .replaceAll("/opt/hermes", hermesRoot)
-    .replaceAll("/scripts", scriptsRoot);
-  const { result } = runDockerShell(command, tmp);
-  return { result, scriptsRoot, tmp };
-}
-
 describe("Hermes final image layout", () => {
   // source-shape-contract: security -- Every security-critical Hermes source must match the reviewed Dockerfile digest before image construction proceeds.
   it.each(HERMES_INTEGRITY_FILES)(
@@ -270,21 +226,6 @@ describe("Hermes final image layout", () => {
       expect(declarations[0]?.slice(declarationPrefix.length), source).toBe(digest);
     },
   );
-
-  it("accepts a Hermes base that already contains the required source patches", () => {
-    const run = runAlreadyPatchedBaseContract();
-    try {
-      expect(run.result.status, run.result.stderr).toBe(0);
-      expect(fs.existsSync(path.join(run.scriptsRoot, "hermes-security-dependencies.patch"))).toBe(
-        false,
-      );
-      expect(
-        fs.existsSync(path.join(run.scriptsRoot, "hermes-dashboard-external-host.patch")),
-      ).toBe(false);
-    } finally {
-      fs.rmSync(run.tmp, { recursive: true, force: true });
-    }
-  });
 
   it("rejects retired OpenClaw state represented as a directory", () => {
     const run = runFinalLayout({ openclaw: "directory" });
