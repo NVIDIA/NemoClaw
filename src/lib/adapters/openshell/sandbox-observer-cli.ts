@@ -10,6 +10,7 @@ import {
   type OpenShellSandboxLookup,
   type OpenShellSandboxObservation,
   type OpenShellSandboxObserver,
+  type OpenShellSandboxReadinessProbe,
   type OpenShellSandboxResult,
 } from "./sandbox-observer";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
@@ -66,6 +67,16 @@ export type CaptureSandboxCommand = (
 export type CliOpenShellSandboxObserverDeps = Readonly<{
   capture: CaptureSandboxCommand;
   defaultTimeoutMs?: number;
+}>;
+
+export type RunSandboxCommand = (
+  args: string[],
+  options: { ignoreError: true; suppressOutput: true; timeout: number },
+) => Readonly<{
+  status?: number | null;
+  stdout?: string | Buffer | null;
+  stderr?: string | Buffer | null;
+  error?: Error | null;
 }>;
 
 export type CliOpenShellSandboxLookupResult = Readonly<{
@@ -207,6 +218,71 @@ function success<T>(value: T): OpenShellSandboxResult<T> {
 
 function failure<T>(error: OpenShellSandboxError): OpenShellSandboxResult<T> {
   return { ok: false, error };
+}
+
+function streamText(value: string | Buffer | null | undefined): string {
+  return value == null ? "" : String(value);
+}
+
+/** Normalize structured runner results inside the CLI implementation. */
+export function createCliOpenShellSandboxObserverFromRunner(
+  run: RunSandboxCommand,
+  defaultTimeoutMs?: number,
+): OpenShellSandboxObserver {
+  return createCliOpenShellSandboxObserver({
+    capture: (args, options) => {
+      const result = run(args, {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: options.timeout,
+      });
+      const stdout = streamText(result.stdout);
+      const stderr = streamText(result.stderr);
+      return {
+        status: result.status ?? null,
+        output: `${stdout}${stderr}`.trim(),
+        stdout,
+        stderr,
+        ...(result.error ? { error: result.error } : {}),
+      };
+    },
+    ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
+  });
+}
+
+/** CLI-only fallback for legacy gateways that publish readiness through Kubernetes pod phase. */
+export function createCliOpenShellLegacyPodReadinessProbe(
+  deps: CliOpenShellSandboxObserverDeps,
+): OpenShellSandboxReadinessProbe {
+  return async (request) => {
+    const gatewayArgs =
+      request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
+    const result = await deps.capture(
+      [
+        "doctor",
+        "exec",
+        ...gatewayArgs,
+        "--",
+        "kubectl",
+        "-n",
+        "openshell",
+        "get",
+        "pod",
+        request.sandboxName,
+        "-o",
+        "jsonpath={.status.phase}",
+      ],
+      {
+        ignoreError: true,
+        includeStderr: true,
+        includeStreams: true,
+        timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS,
+      },
+    );
+    const error = classifyCliOpenShellCommandError(result);
+    if (error) return failure(error);
+    return success(successfulCommandOutput(result).trim() === "Running" ? "ready" : "not_ready");
+  };
 }
 
 /**

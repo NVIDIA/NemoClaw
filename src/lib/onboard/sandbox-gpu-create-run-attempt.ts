@@ -20,7 +20,7 @@ import {
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import { streamSandboxCreate, type StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
-import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
+import { isSandboxReady } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import { reportSandboxCreateFailure } from "./created-sandbox-failure";
@@ -212,12 +212,13 @@ function remainingReadinessProbeTimeout(getRemainingMs: () => number): number | 
 
 function probeExactOpenShellSandboxId(
   sandboxName: string,
+  gatewayName: string,
   deps: SandboxGpuCreateFlowDeps,
   getRemainingMs: () => number = () => SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
 ): OpenShellSandboxIdentityProbe {
   const timeout = remainingReadinessProbeTimeout(getRemainingMs);
   if (timeout === null) return { state: "not_ready" };
-  const result = deps.runOpenshell(["sandbox", "get", sandboxName], {
+  const result = deps.runOpenshell(["sandbox", "get", "-g", gatewayName, sandboxName], {
     ignoreError: true,
     suppressOutput: true,
     timeout,
@@ -321,41 +322,47 @@ function waitForCreatedOpenShellSandboxPublication(
 
 function checkRecreatedSandboxReadyIdentity(
   sandboxName: string,
+  gatewayName: string,
   expectedSandboxId: string,
   deps: SandboxGpuCreateFlowDeps,
   getRemainingMs: () => number,
 ): ReturnType<CreatedSandboxReadyIdentityCheck> {
-  const identity = probeExactOpenShellSandboxId(sandboxName, deps, getRemainingMs);
+  const identity = probeExactOpenShellSandboxId(sandboxName, gatewayName, deps, getRemainingMs);
   if (identity.state === "not_ready") return "not_ready";
   if (identity.state === "failed") return "probe_failed";
   if (identity.sandboxId !== expectedSandboxId) return "identity_changed";
-  return checkSandboxExecutableReadiness(sandboxName, deps, getRemainingMs);
+  return checkSandboxExecutableReadiness(sandboxName, gatewayName, deps, getRemainingMs);
 }
 
 function checkCreatedSandboxReadyIdentity(
   sandboxName: string,
+  gatewayName: string,
   deps: SandboxGpuCreateFlowDeps,
   getRemainingMs: () => number,
 ): ReturnType<CreatedSandboxReadyIdentityCheck> {
-  const identity = probeExactOpenShellSandboxId(sandboxName, deps, getRemainingMs);
+  const identity = probeExactOpenShellSandboxId(sandboxName, gatewayName, deps, getRemainingMs);
   if (identity.state === "not_ready") return "not_ready";
   if (identity.state === "failed") return "probe_failed";
-  return checkSandboxExecutableReadiness(sandboxName, deps, getRemainingMs);
+  return checkSandboxExecutableReadiness(sandboxName, gatewayName, deps, getRemainingMs);
 }
 
 function checkSandboxExecutableReadiness(
   sandboxName: string,
+  gatewayName: string,
   deps: SandboxGpuCreateFlowDeps,
   getRemainingMs: () => number,
 ): ReturnType<CreatedSandboxReadyIdentityCheck> {
   const timeout = remainingReadinessProbeTimeout(getRemainingMs);
   if (timeout === null) return "not_ready";
-  const result = deps.runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "true"], {
-    ignoreError: true,
-    suppressOutput: true,
-    timeout,
-    killSignal: "SIGKILL",
-  });
+  const result = deps.runOpenshell(
+    ["sandbox", "exec", "-g", gatewayName, "--name", sandboxName, "--", "true"],
+    {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout,
+      killSignal: "SIGKILL",
+    },
+  );
   if (result.status === 0 && !result.error) return "ready";
   if (result.error || result.status === null || ("signal" in result && result.signal)) {
     return "probe_failed";
@@ -627,7 +634,7 @@ export function createSandboxGpuCreateAttemptRunner(
           streamSandboxCreate(createExecutable, createExecutableArgs, createEnv, {
             ...(input.createWorkingDirectory ? { cwd: input.createWorkingDirectory } : {}),
             readyCheck: () => {
-              const list = deps.runCaptureOpenshell(["sandbox", "list"], {
+              const list = deps.runCaptureOpenshell(["sandbox", "list", "-g", input.gatewayName], {
                 ignoreError: true,
                 timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
               });
@@ -692,7 +699,7 @@ export function createSandboxGpuCreateAttemptRunner(
       if (route !== input.resumeVerifiedCreate.route) {
         throw new Error("Verified sandbox recovery route changed before continuation.");
       }
-      const identity = probeExactOpenShellSandboxId(input.sandboxName, deps);
+      const identity = probeExactOpenShellSandboxId(input.sandboxName, input.gatewayName, deps);
       if (identity.state !== "identified") {
         throw new Error(
           `Cannot resume sandbox '${input.sandboxName}': its exact live identity is unavailable.`,
@@ -736,12 +743,11 @@ export function createSandboxGpuCreateAttemptRunner(
               throw new ManagedBootstrapCreateStreamFailure(result);
             }
             if (createFailure?.kind === "sandbox_create_incomplete") {
-              const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
+              const readiness = await sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
                 sandboxName: input.sandboxName,
                 timeoutSecs: input.sandboxReadyTimeoutSecs,
-                runCaptureOpenshell: deps.runCaptureOpenshell,
-                isSandboxReady,
-                getSandboxFailurePhase,
+                observer: deps.sandboxObserver,
+                target: { kind: "named", gatewayName: input.gatewayName },
                 stableReadyPolls: REPLACEMENT_STABLE_READY_POLLS,
                 sleep: deps.sleep,
               });
@@ -758,11 +764,22 @@ export function createSandboxGpuCreateAttemptRunner(
                 );
               }
             } else {
-              const list = deps.runCaptureOpenshell(["sandbox", "list"], {
-                ignoreError: true,
-                timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
-              });
-              if (!isSandboxReady(list, input.sandboxName)) {
+              const observation = await sandboxReadinessTracing.observeOpenShellSandbox(
+                deps.sandboxObserver,
+                { kind: "named", gatewayName: input.gatewayName },
+                input.sandboxName,
+                SANDBOX_READY_PROBE_TIMEOUT_MS,
+              );
+              if (!observation.ok) {
+                if (createAttemptNonce) persistIdentitySettlementRecovery();
+                throw new Error(
+                  `Managed bootstrap create completed, but NemoClaw could not observe the sandbox. ${observation.error.message}`,
+                );
+              }
+              if (
+                observation.value.state !== "present" ||
+                observation.value.sandbox.readiness !== "ready"
+              ) {
                 if (createAttemptNonce) persistIdentitySettlementRecovery();
                 throw new Error(
                   "Managed bootstrap create completed without an authoritative Ready sandbox.",
@@ -773,7 +790,11 @@ export function createSandboxGpuCreateAttemptRunner(
             try {
               sandboxId = createAttemptNonce
                 ? settleCreatedIdentity()
-                : resolveOpenShellSandboxId(input.sandboxName, deps.runCaptureOpenshell);
+                : resolveOpenShellSandboxId(
+                    input.sandboxName,
+                    deps.runCaptureOpenshell,
+                    input.gatewayName,
+                  );
             } catch (error) {
               if (createAttemptNonce) persistIdentitySettlementRecovery();
               const diagnostic =
@@ -928,7 +949,7 @@ export function createSandboxGpuCreateAttemptRunner(
     }
     const preRecreateIdentity =
       deferRestartSafeCutover && !resumedSandboxId
-        ? probeExactOpenShellSandboxId(input.sandboxName, deps)
+        ? probeExactOpenShellSandboxId(input.sandboxName, input.gatewayName, deps)
         : null;
     const expectedRecreatedSandboxId =
       resumedSandboxId ??
@@ -953,12 +974,11 @@ export function createSandboxGpuCreateAttemptRunner(
     await runtimePatch.waitForSupervisorReconnectIfNeeded();
     revalidatePostCreateEffect(`reconnect sandbox supervisor for '${input.sandboxName}'`);
     console.log("  Waiting for sandbox to become ready...");
-    const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
+    const readiness = await sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
       sandboxName: input.sandboxName,
       timeoutSecs: input.sandboxReadyTimeoutSecs,
-      runCaptureOpenshell: deps.runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
+      observer: deps.sandboxObserver,
+      target: { kind: "named", gatewayName: input.gatewayName },
       stableReadyPolls:
         compatibility || managedBootstrap || expectedRecreatedSandboxId
           ? REPLACEMENT_STABLE_READY_POLLS
@@ -967,6 +987,7 @@ export function createSandboxGpuCreateAttemptRunner(
         ? (getRemainingMs = () => SANDBOX_RECREATE_PROBE_TIMEOUT_MS) =>
             checkRecreatedSandboxReadyIdentity(
               input.sandboxName,
+              input.gatewayName,
               expectedRecreatedSandboxId,
               deps,
               getRemainingMs,
@@ -974,7 +995,12 @@ export function createSandboxGpuCreateAttemptRunner(
         : input.terminalAgent
           ? undefined
           : (getRemainingMs = () => SANDBOX_RECREATE_PROBE_TIMEOUT_MS) =>
-              checkCreatedSandboxReadyIdentity(input.sandboxName, deps, getRemainingMs),
+              checkCreatedSandboxReadyIdentity(
+                input.sandboxName,
+                input.gatewayName,
+                deps,
+                getRemainingMs,
+              ),
       sleep: deps.sleep,
     });
     if (!readiness.ready) {

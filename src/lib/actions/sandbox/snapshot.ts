@@ -924,16 +924,13 @@ function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean 
 }
 
 function removeIncompleteSnapshot(sandboxName: string, backupPath: string): void {
-  const removal = sandboxState.removeIncompleteSnapshot(backupPath);
-  if (removal.removed) {
+  if (sandboxState.removeSandboxStateBackup(sandboxName, backupPath)) {
     console.error("  Removed the incomplete snapshot.");
     return;
   }
+  console.error(`  The incomplete snapshot at '${backupPath}' could not be removed.`);
   console.error(
-    `  The incomplete snapshot at '${backupPath}' could not be removed: ${removal.error}`,
-  );
-  console.error(
-    `  It is listed by \`${CLI_NAME} ${sandboxName} snapshot list\`. Remove it before the next restore.`,
+    `  It is excluded from \`${CLI_NAME} ${sandboxName} snapshot list\` and snapshot restore selection. Remove it only after the original sandbox or a complete snapshot contains every required state item.`,
   );
 }
 
