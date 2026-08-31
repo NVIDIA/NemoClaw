@@ -132,7 +132,9 @@ If the request fails, check these items.
    If it shows `unauthorized`, `unhealthy`, `unreachable`, or `not probed`, inspect the labeled upstream, local-backend, and auth-proxy diagnostics to identify the failing hop.
    Refresh the provider credential when the main result is `unauthorized`.
    Restart a local backend only when its own diagnostic fails.
-   If the auth-proxy diagnostic fails, re-run onboarding so NemoClaw can recreate the proxy token, restart the proxy, and refresh the route.
+   If the auth-proxy result is `unreachable`, run `$$nemoclaw <name> connect` to restart the proxy with its persisted token.
+   If it is `unauthorized`, rerun onboarding to rotate the rejected proxy token and refresh the route.
+   For any other auth-proxy failure, follow the diagnostic detail.
 2. Run `$$nemoclaw <name> logs --follow` to view error messages from the blueprint runner.
 3. Verify that the host can reach the inference endpoint.
 4. If the agent reports a context-overflow or token-limit error, clear the conversation with `/reset` (or start a fresh one with `/new`) in the TUI before retrying.
