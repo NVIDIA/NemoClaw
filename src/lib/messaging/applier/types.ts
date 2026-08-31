@@ -16,6 +16,7 @@ import type {
   MessagingHookOutputMap,
   MessagingHookRunResult,
 } from "../hooks";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
 
 export const MESSAGING_SETUP_APPLIER_ENV_KEY = "NEMOCLAW_MESSAGING_PLAN_B64";
 
@@ -69,9 +70,17 @@ export type MessagingOpenShellRunner = (
   options?: MessagingOpenShellRunOptions,
 ) => MessagingOpenShellRunResult;
 
-export interface MessagingCredentialApplyOptions extends MessagingSetupEnvOptions {
-  readonly runOpenshell: MessagingOpenShellRunner;
-}
+export type MessagingCredentialApplyOptions = MessagingSetupEnvOptions &
+  (
+    | Readonly<{
+        providerAdapter: OpenShellProviderAdapter;
+        runOpenshell?: never;
+      }>
+    | Readonly<{
+        providerAdapter?: never;
+        runOpenshell: MessagingOpenShellRunner;
+      }>
+  );
 
 export interface MessagingCredentialApplyResult {
   readonly upserted: readonly {

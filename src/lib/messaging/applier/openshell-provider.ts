@@ -1,12 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { inspectGatewayCredentialFamilyProviderBinding } from "../../onboard/gateway-provider-metadata";
+import type {
+  OpenShellProviderAdapter,
+  OpenShellProviderError,
+  OpenShellProviderMetadata,
+} from "../../adapters/openshell/provider-adapter";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
+import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
+import { matchesGatewayCredentialFamilyProviderBinding } from "../../onboard/gateway-provider-metadata";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
-import { redact } from "../../security/redact";
 import type { SandboxMessagingCredentialBindingPlan, SandboxMessagingPlan } from "../manifest";
 import {
-  ensureMessagingCredentialProviderProfile,
+  messagingCredentialProviderProfilePath,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } from "../provider-profile";
 import type { MessagingCredentialApplyOptions, MessagingCredentialApplyResult } from "./types";
@@ -20,44 +26,45 @@ type MessagingCredentialBindingLike = Pick<
   "channelId" | "credentialId" | "providerName" | "providerEnvKey"
 >;
 
-export function applyCredentialsAtOpenShell(
+export async function applyCredentialsAtOpenShell(
   plan: SandboxMessagingPlan,
   options: MessagingCredentialApplyOptions,
-): MessagingCredentialApplyResult {
+): Promise<MessagingCredentialApplyResult> {
   const env = options.env ?? process.env;
-  const runOpenshell = options.runOpenshell;
+  const adapter = providerAdapter(options);
+  const target = selectedOpenShellGateway();
   const upserted: MessagingCredentialApplyEntry[] = [];
   const reused: MessagingCredentialReuseEntry[] = [];
   const missing: MessagingMissingCredentialEntry[] = [];
   const activeBindings = filterEnabledPlanEntries(plan, plan.credentialBindings);
 
   if (activeBindings.length > 0) {
-    ensureMessagingCredentialProviderProfile({
-      root: REPOSITORY_ROOT,
-      runOpenshell: (args, runOptions) => runOpenshell(args, runOptions),
+    const profile = await adapter.ensureEndpointlessProviderProfile({
+      target,
+      profilePath: messagingCredentialProviderProfilePath(REPOSITORY_ROOT),
+      profileType: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+      inferenceCapable: false,
     });
+    if (!profile.ok) throw profileFailure(profile.error);
   }
 
   for (const binding of activeBindings) {
     const credential = readCredentialEnv(env, binding.providerEnvKey);
-    const providerState = inspectGatewayCredentialFamilyProviderBinding(
-      {
-        name: binding.providerName,
-        type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-        credentialKey: binding.providerEnvKey,
-      },
-      runOpenshell,
-    );
-    if (providerState.kind === "indeterminate") {
+    const observed = await adapter.getProvider({
+      target,
+      providerName: binding.providerName,
+    });
+    const providerState = classifyProviderBinding(observed, binding);
+    if (providerState === "indeterminate") {
       throw new Error(`Could not inspect messaging provider '${binding.providerName}'.`);
     }
-    if (providerState.kind === "collision") {
+    if (providerState === "collision") {
       throw new Error(
         `Messaging provider '${binding.providerName}' does not match the required endpointless credential binding.`,
       );
     }
     if (!credential) {
-      if (providerState.kind === "exact") {
+      if (providerState === "exact") {
         reused.push(toReuseEntry(binding));
       } else {
         missing.push(toMissingEntry(binding));
@@ -65,29 +72,35 @@ export function applyCredentialsAtOpenShell(
       continue;
     }
 
-    const action = providerState.kind === "exact" ? "update" : "create";
-    const result = runOpenshell(
-      buildProviderArgs(action, binding.providerName, binding.providerEnvKey),
-      {
-        ignoreError: true,
-        env: { [binding.providerEnvKey]: credential },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    if (result.status !== 0) {
+    const action = providerState === "exact" ? "update" : "create";
+    const credentials = [{ name: binding.providerEnvKey, value: credential }];
+    const result =
+      action === "create"
+        ? await adapter.createProvider({
+            target,
+            name: binding.providerName,
+            type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+            credentials,
+            config: [],
+            fromExisting: false,
+          })
+        : await adapter.updateProvider({
+            target,
+            providerName: binding.providerName,
+            credentials,
+            config: [],
+          });
+    if (!result.ok) {
       throw new Error(
-        `Failed to ${action} messaging provider '${binding.providerName}': ${compactOutput(result)}`,
+        `Failed to ${action} messaging provider '${binding.providerName}': ${result.error.message}`,
       );
     }
-    const verified = inspectGatewayCredentialFamilyProviderBinding(
-      {
-        name: binding.providerName,
-        type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-        credentialKey: binding.providerEnvKey,
-      },
-      runOpenshell,
-    );
-    if (verified.kind !== "exact") {
+    const verification = await adapter.getProvider({
+      target,
+      providerName: binding.providerName,
+    });
+    const verified = classifyProviderBinding(verification, binding);
+    if (verified !== "exact") {
       throw new Error(
         `OpenShell did not confirm messaging provider '${binding.providerName}' after ${action}.`,
       );
@@ -125,25 +138,6 @@ function readCredentialEnv(env: NodeJS.ProcessEnv, envKey: string): string | nul
   return normalized || null;
 }
 
-function buildProviderArgs(
-  action: "create" | "update",
-  providerName: string,
-  credentialEnv: string,
-): string[] {
-  return action === "create"
-    ? [
-        "provider",
-        "create",
-        "--name",
-        providerName,
-        "--type",
-        MESSAGING_CREDENTIAL_PROVIDER_TYPE,
-        "--credential",
-        credentialEnv,
-      ]
-    : ["provider", "update", providerName, "--credential", credentialEnv];
-}
-
 function toReuseEntry(binding: MessagingCredentialBindingLike): MessagingCredentialReuseEntry {
   return {
     channelId: binding.channelId,
@@ -162,13 +156,100 @@ function toMissingEntry(binding: MessagingCredentialBindingLike): MessagingMissi
   };
 }
 
-function compactOutput(result: { readonly stdout?: unknown; readonly stderr?: unknown }): string {
-  const output = redact(`${String(result.stderr ?? "")}${String(result.stdout ?? "")}`)
-    .replace(/\r/g, "")
-    .trim();
-  return output || "OpenShell command failed.";
-}
-
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+function legacyOutputText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Buffer.isBuffer(value)) return value.toString("utf8");
+  return "";
+}
+
+function legacyOutputStreams(result: {
+  readonly output?: unknown;
+  readonly stdout?: unknown;
+  readonly stderr?: unknown;
+}): { readonly stdout?: string; readonly stderr?: string } {
+  const outputStdout = Array.isArray(result.output)
+    ? legacyOutputText(result.output[1])
+    : legacyOutputText(result.output);
+  const outputStderr = Array.isArray(result.output) ? legacyOutputText(result.output[2]) : "";
+  const stdout = legacyOutputText(result.stdout) || outputStdout;
+  const stderr = legacyOutputText(result.stderr) || outputStderr;
+  return {
+    ...(stdout ? { stdout } : {}),
+    ...(stderr ? { stderr } : {}),
+  };
+}
+
+function providerAdapter(options: MessagingCredentialApplyOptions): OpenShellProviderAdapter {
+  if (options.providerAdapter) return options.providerAdapter;
+  return createCliOpenShellProviderAdapter({
+    run: (args, runOptions) => {
+      const { env: rawEnv, ...safeRunOptions } = runOptions;
+      const env = rawEnv
+        ? Object.fromEntries(
+            Object.entries(rawEnv).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined,
+            ),
+          )
+        : undefined;
+      let result;
+      try {
+        result = options.runOpenshell(args, {
+          ...safeRunOptions,
+          ...(env ? { env } : {}),
+        });
+      } catch {
+        return {
+          status: null,
+          error: new Error("The OpenShell provider runner failed."),
+        };
+      }
+      const streams = legacyOutputStreams(result);
+      return {
+        status: result.status ?? null,
+        ...streams,
+        ...(result.error instanceof Error ? { error: result.error } : {}),
+      };
+    },
+  });
+}
+
+function profileFailure(error: OpenShellProviderError): Error {
+  if (error.kind === "command" && error.reason === "profile_import_failed") {
+    return new Error("Could not import the OpenShell messaging credential profile.");
+  }
+  if (error.kind === "command" && error.reason === "profile_export_failed") {
+    return new Error(
+      `OpenShell provider profile '${MESSAGING_CREDENTIAL_PROVIDER_TYPE}' could not be exported for validation.`,
+    );
+  }
+  if (error.kind === "command" && error.reason === "profile_incompatible") {
+    return new Error(
+      `OpenShell provider profile '${MESSAGING_CREDENTIAL_PROVIDER_TYPE}' already exists but does not match NemoClaw's endpointless messaging credential contract.`,
+    );
+  }
+  return new Error(`Could not prepare the OpenShell messaging credential profile: ${error.message}`);
+}
+
+function classifyProviderBinding(
+  result:
+    | Readonly<{ ok: true; value: OpenShellProviderMetadata }>
+    | Readonly<{ ok: false; error: OpenShellProviderError }>,
+  binding: MessagingCredentialBindingLike,
+): "collision" | "exact" | "indeterminate" | "missing" {
+  if (!result.ok) {
+    return result.error.kind === "command" && result.error.reason === "not_found"
+      ? "missing"
+      : "indeterminate";
+  }
+  return matchesGatewayCredentialFamilyProviderBinding(result.value, {
+    name: binding.providerName,
+    type: MESSAGING_CREDENTIAL_PROVIDER_TYPE,
+    credentialKey: binding.providerEnvKey,
+  })
+    ? "exact"
+    : "collision";
 }

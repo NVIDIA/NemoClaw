@@ -171,7 +171,7 @@ export class MessagingSetupApplier {
   static applyCredentialsAtOpenShell(
     plan: SandboxMessagingPlan,
     options: MessagingCredentialApplyOptions,
-  ): MessagingCredentialApplyResult {
+  ): Promise<MessagingCredentialApplyResult> {
     return applyCredentialsPlanAtOpenShell(plan, options);
   }
 
