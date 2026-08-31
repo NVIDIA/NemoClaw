@@ -28,57 +28,6 @@ export function extractShellFunction(source: string, name: string): string {
   return `${name}() {${match[1]}\n}`;
 }
 
-function extractDashboardPortBootstrap(source: string): string {
-  const start = source.indexOf('NEMOCLAW_CMD=("$@")');
-  const end = source.indexOf('\nHERMES="$(command -v hermes)"', start);
-  assert(start >= 0 && end > start, "Expected Hermes dashboard port bootstrap block");
-  return source.slice(start, end).trimEnd();
-}
-
-export function runHermesDashboardPortBootstrap(
-  startScript: string,
-  env: Record<string, string | undefined> = {},
-) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-port-bootstrap-"));
-  const scriptPath = path.join(tmpDir, "run.sh");
-  const externalHostHelper = path.join(
-    import.meta.dirname,
-    "../../agents/hermes/dashboard-external-host.sh",
-  );
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      // macOS Bash 3.2 treats an empty array expansion as unbound under nounset.
-      // This fixture deliberately starts with no command arguments.
-      "set -eo pipefail",
-      "set --",
-      `source ${shellQuote(externalHostHelper)}`,
-      extractDashboardPortBootstrap(fs.readFileSync(startScript, "utf-8")),
-      'printf "CHAT_UI_URL=%s\\n" "${CHAT_UI_URL:-}"',
-      'printf "DASHBOARD_PUBLIC_PORT=%s\\n" "$DASHBOARD_PUBLIC_PORT"',
-      'printf "DASHBOARD_INTERNAL_PORT=%s\\n" "$DASHBOARD_INTERNAL_PORT"',
-      'printf "PUBLIC_PORT=%s\\n" "$PUBLIC_PORT"',
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  try {
-    const childEnv = { ...process.env };
-    for (const [key, value] of Object.entries(env)) {
-      if (value === undefined) delete childEnv[key];
-      else childEnv[key] = value;
-    }
-    return spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      timeout: 5000,
-      env: childEnv,
-    });
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-}
-
 export function runHermesBashHarness(
   lines: string[],
   configure?: (tmpDir: string) => Record<string, string>,

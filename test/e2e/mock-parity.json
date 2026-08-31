@@ -17,7 +17,8 @@
         "src/lib/onboard/docker-driver-gateway-env.test.ts",
         "src/lib/onboard/experimental/portable-host-preparation.test.ts",
         "src/lib/onboard/sandbox-prebuild.test.ts",
-        "test/agents/hermes/hermes-dashboard-external-host.test.ts"
+        "test/agents/hermes/hermes-dashboard-external-host.test.ts",
+        "test/agents/hermes/hermes-dashboard-start.test.ts"
       ]
     },
     {

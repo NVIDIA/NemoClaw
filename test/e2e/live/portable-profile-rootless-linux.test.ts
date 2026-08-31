@@ -98,7 +98,7 @@ const PORTABLE_PROFILE_E2E_PHASES = [
   "verify immutable non-force network removal",
   "build and publish the sandbox image",
   "build and publish the staged Hermes image",
-  "verify the staged Hermes dashboard host guard",
+  "verify the staged Hermes dashboard proxy route",
   "start the pinned Podman gateway",
   "verify distinct same-network routes",
   "record portable environment completion",
@@ -120,45 +120,112 @@ function run(command: string, args: readonly string[]): string {
   return String(result.stdout).trim();
 }
 
-function probeHermesDashboardHostGuard(imageRef: string, chatUiUrl: string): Record<string, boolean> {
-  const pythonProbe = `
-import json
-from hermes_cli.web_server import _is_accepted_host
+function probeHermesDashboardHttp(containerName: string, host: string) {
+  return spawnSync(
+    "podman",
+    [
+      "exec",
+      containerName,
+      "curl",
+      "--silent",
+      "--show-error",
+      "--output",
+      "/dev/null",
+      "--write-out",
+      "%{http_code}",
+      "--max-time",
+      "2",
+      "--noproxy",
+      "*",
+      "--header",
+      `Host: ${host}`,
+      "http://127.0.0.1:29443/",
+    ],
+    {
+      encoding: "utf-8",
+      env: process.env,
+      killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15_000,
+    },
+  );
+}
 
-accepted = _is_accepted_host
-print(json.dumps({
-    "external": accepted("nemoclaw0-abc123.brevlab.com", "127.0.0.1"),
-    "external_port": accepted("nemoclaw0-abc123.brevlab.com:443", "127.0.0.1"),
-    "external_upper": accepted("NEMOCLAW0-ABC123.BREVLAB.COM", "127.0.0.1"),
-    "loopback": accepted("localhost:18789", "127.0.0.1"),
-    "lookalike": accepted("nemoclaw0-abc123.brevlab.com.attacker.test", "127.0.0.1"),
-    "other": accepted("attacker.test", "127.0.0.1"),
-}))
-`;
-  const shellProbe = [
-    "set -euo pipefail",
-    "source /usr/local/lib/nemoclaw/hermes-dashboard-external-host.sh",
-    'external_host=""',
-    'if candidate="$(nemoclaw_hermes_dashboard_external_host "$CHAT_UI_URL")"; then',
-    '  external_host="$candidate"',
-    "fi",
-    '_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST="$external_host" exec /opt/hermes/.venv/bin/python3 -c "$1"',
-  ].join("\n");
-  return JSON.parse(
-    run("podman", [
-      "run",
-      "--rm",
-      "--entrypoint",
-      "/bin/bash",
-      "--env",
-      `CHAT_UI_URL=${chatUiUrl}`,
-      imageRef,
-      "-c",
-      shellProbe,
-      "bash",
-      pythonProbe,
-    ]),
-  ) as Record<string, boolean>;
+async function waitForHermesDashboard(containerName: string, attempt = 0): Promise<void> {
+  const timeoutDetail =
+    attempt < 60 ? "" : `\n${run("podman", ["logs", containerName])}`;
+  assert.ok(
+    attempt < 60,
+    `Hermes dashboard did not become ready:${timeoutDetail}`,
+  );
+  const response = probeHermesDashboardHttp(containerName, "nemoclaw0-abc123.brevlab.com");
+  const ready = response.status === 0 && response.stdout.trim() === "200";
+  const running = ready
+    ? undefined
+    : spawnSync(
+        "podman",
+        ["container", "inspect", "--format", "{{.State.Running}}", containerName],
+        {
+          encoding: "utf-8",
+          env: process.env,
+          killSignal: "SIGKILL",
+          timeout: 15_000,
+        },
+      );
+  const runningOrReady = ready || (running?.status === 0 && running.stdout.trim() === "true");
+  const exitDetail = runningOrReady ? "" : `\n${run("podman", ["logs", containerName])}`;
+  assert.equal(
+    runningOrReady,
+    true,
+    `Hermes dashboard container exited before readiness:${exitDetail}`,
+  );
+  return ready
+    ? undefined
+    : new Promise<void>((resolve) => setTimeout(resolve, 500)).then(() =>
+        waitForHermesDashboard(containerName, attempt + 1),
+      );
+}
+
+async function probeHermesDashboardProxyRoute(imageRef: string): Promise<Record<string, number>> {
+  const containerName = `hermes-dashboard-host-${String(process.pid)}-${String(Date.now())}`;
+  const containerId = run("podman", [
+    "run",
+    "--detach",
+    "--name",
+    containerName,
+    "--network",
+    "none",
+    "--user",
+    "sandbox",
+    "--env",
+    "CHAT_UI_URL=https://NEMOCLAW0-ABC123.BREVLAB.COM.:29443/dashboard",
+    "--entrypoint",
+    "/bin/sh",
+    imageRef,
+    "-c",
+    "exec /usr/local/bin/nemoclaw-start",
+  ]);
+  assert.match(containerId, /^[a-f0-9]{64}$/u);
+  try {
+    await waitForHermesDashboard(containerName);
+
+    const hosts = {
+      external: "nemoclaw0-abc123.brevlab.com",
+      externalPort: "nemoclaw0-abc123.brevlab.com:443",
+      loopback: "localhost:29443",
+      lookalike: "nemoclaw0-abc123.brevlab.com.attacker.test",
+      other: "attacker.test",
+    } as const;
+    return Object.fromEntries(
+      Object.entries(hosts).map(([name, host]) => {
+        const response = probeHermesDashboardHttp(containerName, host);
+        assert.equal(response.status, 0, response.stderr || response.stdout);
+        return [name, Number(response.stdout.trim())];
+      }),
+    );
+  } finally {
+    run("podman", ["container", "rm", "--force", containerName]);
+  }
 }
 
 function parseOnePodmanRecord(raw: string, label: string): Record<string, unknown> {
@@ -419,28 +486,13 @@ async function main(progress: TestProgress): Promise<void> {
       );
       hermesImageId = inspectedHermesImageId;
 
-      progress.phase("verify the staged Hermes dashboard host guard");
-      assert.deepEqual(
-        probeHermesDashboardHostGuard(
-          hermesImageRef,
-          "https://NEMOCLAW0-ABC123.BREVLAB.COM.:443/dashboard",
-        ),
-        {
-          external: true,
-          external_port: true,
-          external_upper: true,
-          loopback: true,
-          lookalike: false,
-          other: false,
-        },
-      );
-      assert.deepEqual(probeHermesDashboardHostGuard(hermesImageRef, "http://127.0.0.1:18789"), {
-        external: false,
-        external_port: false,
-        external_upper: false,
-        loopback: true,
-        lookalike: false,
-        other: false,
+      progress.phase("verify the staged Hermes dashboard proxy route");
+      assert.deepEqual(await probeHermesDashboardProxyRoute(hermesImageRef), {
+        external: 200,
+        externalPort: 200,
+        loopback: 200,
+        lookalike: 400,
+        other: 400,
       });
     } finally {
       try {

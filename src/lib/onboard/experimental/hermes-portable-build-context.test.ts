@@ -123,12 +123,6 @@ describe("Hermes portable staged build context", testTimeoutOptions(30_000), () 
         ),
       ),
     ).toBe(true);
-    const stagedDashboardPatch = path.join(
-      inferredContext,
-      "agents/hermes/dashboard-external-host.patch",
-    );
-    expect(fs.statSync(stagedDashboardPatch).isFile()).toBe(true);
-    expect(() => fs.accessSync(stagedDashboardPatch, fs.constants.R_OK)).not.toThrow();
     expect(fs.existsSync(path.join(inferredContext, "agents/hermes/Dockerfile"))).toBe(false);
     expect(plan.authority.sourceRevision).toMatch(/^[a-f0-9]{40,64}$/u);
     expect(plan.authority.contextManifestSha256).toMatch(/^[a-f0-9]{64}$/u);

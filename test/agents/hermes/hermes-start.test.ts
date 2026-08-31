@@ -11,7 +11,6 @@ import { shellQuote } from "../../../src/lib/core/shell-quote";
 import {
   bashPrintfQ,
   extractShellFunction as extractShellFunctionFromSource,
-  runHermesDashboardPortBootstrap as runHermesDashboardPortBootstrapFromSource,
   runHermesSandboxInitPreludeWithFakePath,
 } from "../../support/hermes-shell-harness";
 
@@ -58,79 +57,6 @@ function runHermesLazyInstallTargetBootstrap(childEnv: NodeJS.ProcessEnv) {
     ["-c", `${src.slice(start, end)}\nprintf '%s\\n' "$HERMES_LAZY_INSTALL_TARGET"`],
     { encoding: "utf-8", env: childEnv, timeout: 5000 },
   );
-}
-
-function runHermesDashboardPortBootstrap(env: Record<string, string | undefined> = {}) {
-  return runHermesDashboardPortBootstrapFromSource(START_SCRIPT, env);
-}
-
-function runHermesDashboardArgs(tuiValue?: string) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-args-"));
-  const scriptPath = path.join(tmpDir, "run.sh");
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      extractShellFunctionFromSource(src, "truthy_env"),
-      extractShellFunctionFromSource(src, "hermes_dashboard_tui_enabled"),
-      extractShellFunctionFromSource(src, "build_hermes_dashboard_args"),
-      "DASHBOARD_INTERNAL_PORT=19119",
-      tuiValue === undefined
-        ? 'HERMES_DASHBOARD_TUI="${HERMES_DASHBOARD_TUI:-0}"'
-        : `HERMES_DASHBOARD_TUI=${shellQuote(tuiValue)}`,
-      "build_hermes_dashboard_args",
-      'printf "%s\\n" "${HERMES_DASHBOARD_ARGS[@]}"',
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  try {
-    return spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      timeout: 5000,
-      env: process.env,
-    });
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-}
-
-function runHermesPortValidation(opts: {
-  publicPort?: number;
-  internalPort?: number;
-  dashboardPublicPort?: number;
-  dashboardInternalPort?: number;
-}) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-port-validation-"));
-  const scriptPath = path.join(tmpDir, "run.sh");
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      extractShellFunctionFromSource(src, "validate_tcp_port"),
-      extractShellFunctionFromSource(src, "validate_port_configuration"),
-      `PUBLIC_PORT=${opts.publicPort ?? 8642}`,
-      `INTERNAL_PORT=${opts.internalPort ?? 18642}`,
-      `DASHBOARD_PUBLIC_PORT=${opts.dashboardPublicPort ?? 18789}`,
-      `DASHBOARD_INTERNAL_PORT=${opts.dashboardInternalPort ?? 19119}`,
-      "validate_port_configuration",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  try {
-    return spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      timeout: 5000,
-      env: process.env,
-    });
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
 }
 
 function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: boolean }) {
@@ -764,75 +690,6 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.guardResult.status).toBe(1);
     expect(run.guardResult.stderr).toContain(
       "Error: 'hermes setup' cannot modify config inside the sandbox.",
-    );
-  });
-});
-
-describe("agents/hermes/start.sh port validation", () => {
-  it("derives the dashboard port from CHAT_UI_URL while preserving API port 8642", () => {
-    const run = runHermesDashboardPortBootstrap({
-      CHAT_UI_URL: "https://hermes.example.test:29443",
-      NEMOCLAW_DASHBOARD_PORT: undefined,
-    });
-
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain("CHAT_UI_URL=https://hermes.example.test:29443");
-    expect(run.stdout).toContain("DASHBOARD_PUBLIC_PORT=29443");
-    expect(run.stdout).toContain("PUBLIC_PORT=8642");
-  });
-
-  it("rejects dashboard ports that collide with the API port during bootstrap", () => {
-    const fromChatUrl = runHermesDashboardPortBootstrap({
-      CHAT_UI_URL: "http://127.0.0.1:8642",
-      NEMOCLAW_DASHBOARD_PORT: undefined,
-    });
-    expect(fromChatUrl.status).toBe(1);
-    expect(fromChatUrl.stderr).toContain("reserved for the Hermes OpenAI-compatible API");
-
-    const invalidOverride = runHermesDashboardPortBootstrap({
-      CHAT_UI_URL: undefined,
-      NEMOCLAW_DASHBOARD_PORT: "not-a-port",
-    });
-    expect(invalidOverride.status).toBe(1);
-    expect(invalidOverride.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT");
-  });
-
-  it("rejects an external dashboard URL that cannot supply the Host allowlist", () => {
-    const run = runHermesDashboardPortBootstrap({
-      CHAT_UI_URL: "http://dashboard.example.test:29443",
-      NEMOCLAW_DASHBOARD_PORT: undefined,
-    });
-
-    expect(run.status).toBe(1);
-    expect(run.stderr).toContain("Invalid CHAT_UI_URL for the Hermes dashboard");
-    expect(run.stderr).not.toContain("dashboard.example.test");
-  });
-
-  it("keeps the managed dashboard isolated and its in-browser Hermes TUI opt-in", () => {
-    const defaultArgs = runHermesDashboardArgs();
-    expect(defaultArgs.status).toBe(0);
-    expect(defaultArgs.stdout.split("\n")).not.toContain("--tui");
-
-    const optInArgs = runHermesDashboardArgs("1");
-    expect(optInArgs.status).toBe(0);
-    expect(optInArgs.stdout.split("\n")).toEqual(expect.arrayContaining(["--isolated", "--tui"]));
-  });
-
-  it("rejects cross-collisions between API and dashboard ports", () => {
-    const dashboardPublicOnApiInternal = runHermesPortValidation({
-      dashboardPublicPort: 18642,
-    });
-    expect(dashboardPublicOnApiInternal.status).toBe(1);
-    expect(dashboardPublicOnApiInternal.stderr).toContain(
-      "DASHBOARD_PUBLIC_PORT must not equal INTERNAL_PORT",
-    );
-
-    const dashboardInternalOnApiPublic = runHermesPortValidation({
-      dashboardInternalPort: 8642,
-    });
-    expect(dashboardInternalOnApiPublic.status).toBe(1);
-    expect(dashboardInternalOnApiPublic.stderr).toContain(
-      "DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT",
     );
   });
 });

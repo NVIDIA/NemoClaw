@@ -1765,16 +1765,37 @@ seed_hermes_dashboard_config() {
   fi
 }
 
+launch_hermes_dashboard_process() {
+  local service_user="${1:-current}"
+  local HERMES_HOME="${HERMES_DASHBOARD_HOME}"
+  local GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}"
+  local NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env"
+  local _NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST="${HERMES_DASHBOARD_EXTERNAL_HOST}"
+  export HERMES_HOME GATEWAY_HEALTH_URL NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV \
+    _NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST
+
+  case "$service_user" in
+    current)
+      nohup "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" >/tmp/dashboard.log 2>&1 &
+      ;;
+    sandbox)
+      nohup "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c \
+        'umask 0077; exec "$@" >/tmp/dashboard.log 2>&1' \
+        sh "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" &
+      ;;
+    *)
+      echo "[dashboard] ERROR: invalid dashboard service user" >&2
+      return 1
+      ;;
+  esac
+  DASHBOARD_PID=$!
+}
+
 start_hermes_dashboard_current_user() {
   build_hermes_dashboard_args || return 1
   prepare_hermes_dashboard_home "" || return 1
   prepare_restricted_log /tmp/dashboard.log "" 600 || return 1
-  HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
-    GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
-    NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env" \
-    _NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST="${HERMES_DASHBOARD_EXTERNAL_HOST}" \
-    nohup "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" >/tmp/dashboard.log 2>&1 &
-  DASHBOARD_PID=$!
+  launch_hermes_dashboard_process current || return 1
   echo "[gateway] hermes dashboard launched (pid $DASHBOARD_PID)" >&2
   if ! hermes_capture_tracked_role dashboard "$DASHBOARD_PID" current "$DASHBOARD_INTERNAL_PORT"; then
     hermes_fatal_unproven_child dashboard "$DASHBOARD_PID"
@@ -1789,12 +1810,7 @@ start_hermes_dashboard_sandbox_user() {
   build_hermes_dashboard_args || return 1
   prepare_hermes_dashboard_home sandbox:sandbox || return 1
   prepare_restricted_log /tmp/dashboard.log sandbox:sandbox 600 || return 1
-  HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
-    GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
-    NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env" \
-    _NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST="${HERMES_DASHBOARD_EXTERNAL_HOST}" \
-    nohup "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c 'umask 0077; exec "$@" >/tmp/dashboard.log 2>&1' sh "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" &
-  DASHBOARD_PID=$!
+  launch_hermes_dashboard_process sandbox || return 1
   echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
   if ! hermes_capture_tracked_role dashboard "$DASHBOARD_PID" sandbox "$DASHBOARD_INTERNAL_PORT"; then
     hermes_fatal_unproven_child dashboard "$DASHBOARD_PID"
