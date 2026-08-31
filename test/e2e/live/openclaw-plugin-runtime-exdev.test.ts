@@ -32,7 +32,6 @@ import {
 } from "./openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
 import {
   type OpenShellComponents,
-  type OpenShellDriverConfigTestWrapper,
   resolveOpenShellSiblingComponents,
   withOpenShellDriverConfigWrapperEnv,
 } from "./openshell-driver-config-test-wrapper.ts";
@@ -94,21 +93,10 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-type OpenShellTmpfsWrapper = OpenShellDriverConfigTestWrapper;
-type ResolvedOpenShellComponents = OpenShellComponents;
-
-function withOpenShellWrapperEnv(
-  env: NodeJS.ProcessEnv,
-  wrapper: OpenShellTmpfsWrapper,
-  components: ResolvedOpenShellComponents,
-): NodeJS.ProcessEnv {
-  return withOpenShellDriverConfigWrapperEnv(env, wrapper, components);
-}
-
 async function installAndResolveOpenShell(
   host: HostCliClient,
   installScriptPath: string,
-): Promise<ResolvedOpenShellComponents> {
+): Promise<OpenShellComponents> {
   const install = await host.command("bash", [installScriptPath], {
     artifactName: "install-openshell-for-exdev-wrapper",
     env: liveEnv(),
@@ -472,7 +460,11 @@ test(
       realOpenshellPath: openshell.cli,
     });
     cleanup.add("remove current EXDEV OpenShell PATH wrapper", openshellWrapper.remove);
-    const sandboxEnv = withOpenShellWrapperEnv(deploymentEnv, openshellWrapper, openshell);
+    const sandboxEnv = withOpenShellDriverConfigWrapperEnv(
+      deploymentEnv,
+      openshellWrapper,
+      openshell,
+    );
 
     progress.phase("build and onboard plugin v1");
     const baseImageResolution = withEnabledLocalBaseImageBuild(() =>
