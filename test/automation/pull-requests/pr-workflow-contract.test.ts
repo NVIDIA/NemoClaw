@@ -105,6 +105,20 @@ const dependencyInstallJobs = [
   "static-checks",
 ] as const;
 
+function workflowJobDependencies(workflow: CiWorkflow, jobName: string): Set<string> {
+  const pending = [jobName];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const current = pending.pop() ?? jobName;
+    const unseen = !visited.has(current);
+    visited.add(current);
+    const needs = unseen ? workflow.jobs[current]?.needs : undefined;
+    pending.push(...(Array.isArray(needs) ? needs : needs ? [needs] : []));
+  }
+  visited.delete(jobName);
+  return visited;
+}
+
 function stepRuns(jobOrAction: WorkflowJob | CompositeAction): string[] {
   const steps = "runs" in jobOrAction ? jobOrAction.runs.steps : (jobOrAction.steps ?? []);
   return steps.flatMap((step) => (step.run ? [step.run] : []));
@@ -496,8 +510,9 @@ describe("pull request and main workflow contracts", () => {
   ] as const)(
     "keeps the %s source-based CLI coverage shards parallel with independent compiled-contract checks",
     (_workflowName, workflow) => {
-      const shardNeeds = workflow.jobs["cli-test-shards"].needs;
-      expect(Array.isArray(shardNeeds) ? shardNeeds : [shardNeeds]).not.toContain("build-typecheck");
+      expect(workflowJobDependencies(workflow, "cli-test-shards")).not.toContain(
+        "build-typecheck",
+      );
 
       const buildRuns = stepRuns(sharedActions.buildTypecheck).join("\n");
       const shardRuns = stepRuns(sharedActions.cliCoverageShard).join("\n");
