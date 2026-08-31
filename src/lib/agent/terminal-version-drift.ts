@@ -17,7 +17,6 @@ import { parseVersionFromText } from "../adapters/openshell/client";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { evaluateStaleness } from "../sandbox/version-scheme";
 import type { AgentDefinition } from "./defs";
-import { terminalProbeShell } from "./terminal-probe-shell";
 
 export type RunCaptureOpenshell = (
   args: string[],
@@ -90,9 +89,11 @@ export function checkTerminalAgentVersion(
     // manifests. Keep this boundary aligned with terminal-smoke.ts; convert it
     // to an argv-form allowlist before accepting custom/user manifests here.
     // The timeout prevents a hung command from wedging onboarding.
-    const probeShell = terminalProbeShell(agent);
+    // Pi's exact resource-limit login profile requires Bash because Ubuntu
+    // /bin/sh cannot inspect nproc.
+    const shellPath = agent.name === "pi" ? "/bin/bash" : "sh";
     result = runCaptureOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, ...probeShell.execArgs, agent.versionCommand],
+      ["sandbox", "exec", "-n", sandboxName, "--", shellPath, "-lc", agent.versionCommand],
       { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
     );
   } catch {

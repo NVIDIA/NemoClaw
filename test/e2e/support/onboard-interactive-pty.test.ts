@@ -76,11 +76,7 @@ describe("interactive PTY driver", () => {
     try {
       const result = await driveInteractiveCommand({
         activityLabel: "command: onboard-interactive-pty-argv-secret",
-        cmd: [
-          "python3",
-          "-c",
-          "import sys; esc=chr(27); print(''.join(f'{esc}[31m{c}{esc}[0m' for c in 'prompt:'), flush=True); print(input())",
-        ],
+        cmd: ["python3", "-c", "import sys; print('prompt:'); sys.stdout.flush(); print(input())"],
         env: process.env,
         progress,
         rules: [{ trigger: "prompt:", response: `${secret}\n` }],

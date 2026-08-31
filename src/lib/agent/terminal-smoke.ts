@@ -3,7 +3,6 @@
 
 import { DCODE_MANAGED_EXEC_LAUNCHER } from "../actions/sandbox/connect-inference-route-probe";
 import type { AgentDefinition } from "./defs";
-import { terminalProbeShell } from "./terminal-probe-shell";
 
 type RunCaptureOpenshell = (
   args: string[],
@@ -83,16 +82,21 @@ export function buildAgentSmokeArgs(
       command,
     ];
   }
-  const probeShell = terminalProbeShell(agent);
+  // Pi's login profile enforces an exact nproc limit, which Ubuntu /bin/sh
+  // cannot inspect. Keep the profile active, but run it with the Bash shell
+  // the Pi image provisions for this contract.
+  const shellPath = agent.name === "pi" ? "/bin/bash" : "/bin/sh";
+  const commandShell = agent.name === "pi" ? "/bin/bash -lc" : "sh -lc";
   return [
     "sandbox",
     "exec",
     "-n",
     sandboxName,
     ...(gatewayName ? ["-g", gatewayName] : []),
-    "--no-tty",
-    ...probeShell.execArgs,
-    smokeRunner(probeShell.nestedCommandUsesLoginShell ? "sh -lc" : "sh -c"),
+    "--",
+    shellPath,
+    "-lc",
+    smokeRunner(commandShell),
     "nemoclaw-agent-smoke",
     command,
   ];

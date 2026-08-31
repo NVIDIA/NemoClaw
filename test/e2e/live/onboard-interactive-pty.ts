@@ -51,7 +51,7 @@ export interface DriveInteractiveCommandOptions {
 // node-pty. The child's own deadline is generous; the Node-side timer
 // below is the enforced hard bound and SIGKILLs the whole process tree.
 const PTY_DRIVER_SCRIPT = `
-import json, os, pty, re, select, signal, sys, time
+import json, os, pty, select, signal, sys, time
 
 # Read from stdin, not argv: the payload embeds every scripted response,
 # including any credential a rule supplies (e.g. an onboard API key), and a
