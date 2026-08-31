@@ -290,14 +290,12 @@ describe("platform readiness qualification (#7410)", () => {
   });
 
   it("classifies a trusted OEM DGX Spark FastOS marker as Spark rather than failed N1x (#10717)", () => {
+    const identityFiles = new Map([["/fixtures/product_name", "Dell Pro Max\n"]]);
     const identity = collectPlatformIdentity({
       productNamePath: "/fixtures/product_name",
       fastOsReleasePath: "/fixtures/fastos-release",
       pciDevicesPath: "/fixtures/pci",
-      readFile: (filePath) => {
-        if (filePath === "/fixtures/product_name") return "Dell Pro Max\n";
-        return unexpectedFixturePath(filePath);
-      },
+      readFile: (filePath) => identityFiles.get(filePath) ?? unexpectedFixturePath(filePath),
       readdir: () => [],
       openFile: () => 19,
       statFileDescriptor: () => trustedMarkerStat({ size: 116 }),

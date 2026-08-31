@@ -94,8 +94,25 @@ detect_express_platform
     expect(detectN1x(false, true).result.stdout).toBe("");
   });
 
-  it("detects an OEM DGX Spark from the trusted FastOS marker (#10717)", () => {
+  it.each([
+    ["exact marker", 'NAME="DGX SPARK FASTOS"\nVERSION="1.23.0"\n', "81a4:0:0:644:64:1:2", "file", "DGX Spark"],
+    ["unquoted marker", "NAME=DGX SPARK FASTOS\n", "81a4:0:0:644:64:1:2", "file", ""],
+    ["duplicate marker", 'NAME="DGX SPARK FASTOS"\nNAME="DGX SPARK FASTOS"\n', "81a4:0:0:644:64:1:2", "file", ""],
+    ["unknown marker", 'NAME="OTHER FASTOS"\n', "81a4:0:0:644:64:1:2", "file", ""],
+    ["non-root-owned marker", 'NAME="DGX SPARK FASTOS"\n', "81a4:1000:0:644:64:1:2", "file", ""],
+    ["writable marker", 'NAME="DGX SPARK FASTOS"\n', "81a4:0:0:666:64:1:2", "file", ""],
+    ["oversized marker", 'NAME="DGX SPARK FASTOS"\n'.padEnd(4097, "x"), "81a4:0:0:644:4097:1:2", "file", ""],
+    ["linked marker", 'NAME="DGX SPARK FASTOS"\n', "81a4:0:0:644:64:1:2", "link", ""],
+  ] as const)("routes an OEM FastOS marker only when trusted: %s (#10717)", (_scenario, contents, metadata, markerKind, expected) => {
     const result = runInstallerSourced(`
+test_marker="$HOME/fastos-release"
+test_target="$HOME/fastos-release-target"
+printf '%s' "$MARKER_CONTENT" >"$test_target"
+if [ "$MARKER_KIND" = "link" ]; then
+  ln -s "$test_target" "$test_marker"
+else
+  cp "$test_target" "$test_marker"
+fi
 function [ {
   if [[ "$#" -eq 3 && "$1" = "-r" && "$2" = "/sys/class/dmi/id/product_name" && "$3" = "]" ]]; then
     return 0
@@ -109,12 +126,13 @@ cat() {
   fi
   command cat "$@"
 }
+stat() { printf '%s' "$MARKER_METADATA"; }
 is_wsl_host() { return 1; }
-spark_fastos_release_is_trusted() { return 0; }
+n1x_fastos_release_path() { printf '%s' "$test_marker"; }
 detect_express_platform
-`);
+`, { MARKER_CONTENT: contents, MARKER_KIND: markerKind, MARKER_METADATA: metadata });
 
-    expect(result.result.stdout).toBe("DGX Spark");
+    expect(result.result.stdout).toBe(expected);
   });
 
   it.each([

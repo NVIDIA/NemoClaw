@@ -95,8 +95,7 @@ describe("nim", () => {
   describe("listModels", () => {
     it("returns 5 models", () => {
       expect(nim.listModels().length).toBe(5);
-    });
-
+      });
     it.each(nim.listModels())("model $name has an image and positive GPU memory", (model) => {
       expect(model.name).toBeTruthy();
       expect(model.image).toBeTruthy();
@@ -427,23 +426,6 @@ describe("nim", () => {
       });
     });
 
-    it("classifies a trusted DGX Spark FastOS marker on an OEM ARM64 host (#10717)", () => {
-      withFirmwareModel("Dell Pro Max", () => {
-        expect(
-          nim.detectNvidiaPlatform({
-            hostPlatform: "linux",
-            architecture: "arm64",
-            collectN1xIdentityImpl: () => ({
-              candidate: true,
-              fastOsMarker: false,
-              fastOsPlatform: "spark",
-              pciGpu: undefined,
-              qualified: false,
-            }),
-          }),
-        ).toBe("spark");
-      });
-    });
   });
 
   describe("detectGpu", () => {
