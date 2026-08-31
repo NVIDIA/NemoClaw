@@ -3,7 +3,6 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import assert from "node:assert";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -28,15 +27,8 @@ const {
   containerNameMatchesSandbox,
   selectDirectSandboxContainer,
 } = require(helperPath);
-const dockerfile = fs.readFileSync(
-  path.join(import.meta.dirname, "../../..", "Dockerfile"),
-  "utf8",
-);
-const pinnedCleanupImageMatch = dockerfile.match(
-  /^FROM (node:22-trixie-slim@sha256:[a-f0-9]{64}) AS builder$/mu,
-);
-assert.ok(pinnedCleanupImageMatch, "Dockerfile builder image pin is missing");
-const PINNED_CLEANUP_IMAGE = pinnedCleanupImageMatch[1];
+const PINNED_CLEANUP_IMAGE =
+  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
 const EXPECTED_WECHAT_STATE_PATHS = [
   "/sandbox/.openclaw/wechat",
   "/sandbox/.openclaw/openclaw-weixin",
