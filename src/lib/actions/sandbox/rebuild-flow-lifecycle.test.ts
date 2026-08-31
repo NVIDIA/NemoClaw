@@ -183,6 +183,32 @@ describe("rebuildSandbox flow: lifecycle", () => {
     );
   });
 
+  it("does not report rebuild success when inner onboarding returns a failure code (#10394)", async ({
+    onTestFinished,
+  }) => {
+    const previousExitCode = process.exitCode;
+    onTestFinished(() => {
+      process.exitCode = previousExitCode;
+    });
+    process.exitCode = undefined;
+    const harness = createRebuildFlowHarness({
+      onboard: () => {
+        process.exitCode = 1;
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recreate failed");
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).not.toContain("rebuilt successfully");
+    expect(errors).toContain("Inner onboarding completed with exit code 1");
+    expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
+  });
+
   it("keeps the original sandbox when the post-MCP OpenShell policy is unavailable", async () => {
     const policyDirectory = createHarnessTempDir("nemoclaw-rebuild-policy-cleanup-");
     vi.spyOn(tempFiles, "secureTempFile").mockReturnValue(
