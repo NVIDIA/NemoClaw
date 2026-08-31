@@ -18,13 +18,9 @@ import {
   type SandboxSourceKind,
 } from "./sessions/download-verify";
 
-// A directory source is archived whole, so every member travels with it. The
-// walk is part of the same probe as the root check: `find` does not follow
-// symbolic links, so any entry that is neither a regular file nor a directory
-// marks the tree unsafe. Relative paths are prefixed with `./` so names that
-// look like `find` expressions remain paths, and the walk stops at the first
-// unsafe entry. A `find` failure leaves the probe unable to determine a kind,
-// which fails closed.
+// Directory downloads archive every member. Scan without following links,
+// normalize relative roots for `find`, and stop at the first unsupported entry.
+// Probe failures fail closed.
 const SANDBOX_SOURCE_PROBE_SCRIPT = [
   "p=$1",
   'if [ -L "$p" ]; then printf unsupported; exit 0; fi',
@@ -42,10 +38,10 @@ const SANDBOX_SOURCE_PROBE_SCRIPT = [
   "printf missing",
 ].join("\n");
 
-// Probe whether the sandbox source path is a file, a directory, or missing.
+// Classify the source root and reject unsupported directory members.
 // The path is passed as a positional argument ($1), never interpolated into
 // the script, so a crafted path cannot inject shell. Returns `undefined` when
-// the probe could not determine the kind (e.g. the exec itself failed).
+// the probe cannot determine a kind.
 function probeSandboxSourceKind(
   sandboxName: string,
   sandboxPath: string,

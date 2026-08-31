@@ -491,13 +491,9 @@ function publishEntry(source: string, destination: string): void {
 }
 
 /**
- * Reject an unpublishable staged tree before any destination path is created.
- *
- * `publishEntry` rejects the same entries, but it creates each destination
- * directory before recursing into that directory's members, so a symbolic link
- * nested in a directory artifact was only caught after the host destination
- * existed (#10636). Walking the staged tree up front keeps the rejection
- * atomic: nothing is created at the destination.
+ * Reject existing symlinks and special files before publication starts, so a
+ * fresh destination is not created before rejection (#10636). `publishEntry`
+ * repeats the checks to catch later changes.
  */
 function assertStagedTreeIsPublishable(source: string): void {
   const sourceStat = fs.lstatSync(source);
