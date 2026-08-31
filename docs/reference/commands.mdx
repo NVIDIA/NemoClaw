@@ -1847,6 +1847,20 @@ Resolve a conflict through the workflow that created the conflicting container. 
 If the Hermes sandbox has managed MCP entries, shields must be down before destroy can scrub their adapter configuration. Use `$$nemoclaw <name> shields down --timeout 15m --reason "MCP maintenance"`, allowing at least 15 minutes per configured server. If sandbox deletion is refused after destroy has restored lockdown, NemoClaw opens an owner-bound timed rollback window, restores the preserved MCP state, and re-locks shields; the timer retains auto-restore authority if the host process exits.
 
 </AgentOnly>
+<AgentOnly variant="openclaw">
+
+If the OpenClaw sandbox has managed MCP entries, shields must be down before destroy can scrub their adapter configuration.
+The managed Mcporter config is locked with the rest of the `workspace` state root, so lockdown makes it unwritable from inside the sandbox and destroy refuses before it stops any local service.
+Use `$$nemoclaw <name> shields down --timeout 15m --reason "MCP maintenance"`, then rerun destroy.
+`$$nemoclaw <name> destroy --force` can continue only when every retained MCP adapter entry is an OpenClaw Mcporter entry.
+It reports the refusal, then continues to the workspace wipe and sandbox deletion.
+NemoClaw keeps the managed MCP policy and provider until OpenShell confirms deletion.
+If deletion fails, run `$$nemoclaw <name> destroy --force` again, or lower Shields and rerun ordinary destroy.
+Do not onboard a same-name replacement.
+A successful workspace wipe removes the adapter entry.
+If the wipe does not complete successfully, use a different sandbox name to avoid the retained config.
+
+</AgentOnly>
 
 If a shields auto-restore timer is active, `destroy` holds the same per-sandbox transition through state wipe and deletion. It restores and verifies lockdown and revokes the active timer before deletion. It clears the remaining local shields state only after deletion succeeds. If the pre-delete re-lock fails, the command warns and attempts to destroy the sandbox. If the destroy operation succeeds, it destroys the sandbox and deletes its unguarded configuration. If the destroy operation fails, NemoClaw keeps the local shields state and the auto-restore timer. Detached auto-restore uses one 7-attempt recovery budget to restore lockdown. Waiting for a verified live sandbox mutation owner does not consume an attempt. The deadline gate remains closed during that wait. If the recovery budget is exhausted, durable containment blocks new sandbox mutations. Run `$$nemoclaw <name> shields status` and follow its exact-generation recovery guidance. If deletion fails after hardening, the command keeps the surviving sandbox's locked shields state instead of cleaning it up as though deletion succeeded. By default, unattended final-sandbox destroys (`--yes`, `--force`, or `NEMOCLAW_NON_INTERACTIVE=1`) remove the shared NemoClaw gateway on macOS so the host listener is released, while Linux preserves it for reuse. Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force preservation. These flags always override both `NEMOCLAW_CLEANUP_GATEWAY` and the platform default. If the pre-delete workspace wipe completes with a nonzero status, `destroy` continues, but the retained volume may still contain old files. Use a different sandbox name to avoid reusing that retained volume. If workspace cleanup reaches its 60-second timeout, NemoClaw cannot confirm the remote result. NemoClaw stops before provider cleanup and sandbox deletion, attempts to restore any prepared MCP state, and preserves the local registry entry. Run `$$nemoclaw <name> status` to check or start the recorded OpenShell gateway. If a shields auto-restore timer remains active, run `$$nemoclaw <name> shields status` to verify bounded recovery or follow its durable-containment guidance, then retry `destroy` only after shields recovery permits it. If no timer remains active, retry after the recorded gateway is available. Cleaning up the gateway after the last sandbox also purges the shared cluster volume that retains the per-name persistent volume. If NemoClaw detects active SSH sessions before destroy, it warns that destroy terminates them with a Broken pipe error and lists their process IDs. This warning prints before the confirmation prompt and when `--yes` or `--force` skips that prompt. If final gateway cleanup finds a live PID-file process whose command line does not prove it owns the target gateway, `destroy` exits non-zero after sandbox and registry deletion and skips gateway and volume removal. NemoClaw preserves the per-gateway PID file and runtime marker so you can inspect the process. Stop only the listener that matches the target gateway, then rerun `destroy` to converge cleanup. When the default-port gateway runs under the packaged OpenShell gateway service, gateway cleanup stops that service before it reaps host processes, so the gateway port is released instead of being rebound by the service manager. The service is stopped, not disabled or removed, and the next onboarding run starts it again. On headless Linux, the packaged service can exist while its `systemd` user manager is unavailable and the gateway runs through the standalone fallback. For this recognized manager-unavailable failure only, `destroy` uses the per-gateway PID file when the service is not enabled for automatic activation. If the recorded PID is live, its command line must match the exact gateway name and port before `destroy` stops it. If the recorded process has exited, `destroy` continues only after it verifies that the gateway port is free. If a live PID does not prove gateway ownership or the port remains occupied, `destroy` exits non-zero and preserves the runtime evidence for inspection. For any other service stop failure, `destroy` exits non-zero after sandbox and registry deletion, prints the status command for the service, and skips gateway and volume removal. If the OpenShell command completes with a gateway transport error and the sandbox has no managed MCP ownership state, `--force` removes only NemoClaw's local registry entry and local artifacts. Gateway-side deletion remains unconfirmed, shared host-service and gateway teardown are skipped, and the sandbox and retained volume may still exist if the gateway returns. Start the gateway with `$$nemoclaw <name> status` and retry destroy when you need a confirmed deletion. If the OpenShell sandbox deletion command reaches its 60-second timeout, NemoClaw cannot confirm whether OpenShell deleted the sandbox. NemoClaw preserves the local registry entry under both `--yes` and `--force`. Run `$$nemoclaw <name> status` to check or start the recorded OpenShell gateway. If the preceding output also reports a failed pre-delete re-lock, run `$$nemoclaw <name> shields status` to verify recovery or follow its durable-containment guidance, then retry `destroy` only after shields recovery permits it. Otherwise, retry after the recorded gateway is available. Managed MCP ownership disables the local-only fallback because exact provider cleanup requires the retained ownership state, and other delete failures remain fatal. A failed pre-delete re-lock also disables the local-only fallback, because the auto-restore timer is then the only authority that can lock the configuration again after the gateway returns.
 
@@ -2223,6 +2237,13 @@ Add an MCP Streamable HTTP server to a sandbox. Pass `--url` for the MCP endpoin
 Hermes MCP add, restart, and remove mutate managed config and are refused while shields are up. Hermes includes the credential revision from the readiness check in the resolver placeholder and preserves it through inspection, rollback, and lifecycle reconciliation while OpenShell still reports it. Run `$$nemoclaw <name> shields down --timeout 15m --reason "MCP maintenance"` before the mutation, then run `$$nemoclaw <name> shields up` after it; list and status remain read-only. Allow at least 15 minutes per configured server for an all-server restart or destroy; rebuild opens its own crash-recoverable maintenance window. Keep shields down until the command returns; a concurrent relock refuses the config commit and can leave an earlier policy/provider stage for the next retry to converge.
 
 </AgentOnly>
+<AgentOnly variant="openclaw">
+
+OpenClaw MCP add, restart, and remove mutate the managed Mcporter config and are refused while shields are up.
+That config lives under the `workspace` state root, which lockdown re-owns to `root` and makes unwritable from inside the sandbox.
+Run `$$nemoclaw <name> shields down --timeout 15m --reason "MCP maintenance"` before the mutation, then run `$$nemoclaw <name> shields up` after it; list and status remain read-only.
+
+</AgentOnly>
 <AgentOnly variant="deepagents">
 
 Deep Agents MCP add and restart require the managed MCP v2 capability in the sandbox image. If `mcp add` or `mcp restart` reports an older v1 runtime, run `nemo-deepagents <name> rebuild` before retrying. NemoClaw writes managed server definitions to `/sandbox/.deepagents/.nemoclaw-mcp.json`; user-owned `.mcp.json` files are not auto-loaded by the managed harness.
@@ -2278,6 +2299,11 @@ Refresh one MCP server registration, or every server on the sandbox when no serv
 Hermes shields must be down for this config mutation. Keep them down until the command returns; a concurrent relock refuses the config commit and can leave an earlier policy/provider stage for the next retry to converge.
 
 </AgentOnly>
+<AgentOnly variant="openclaw">
+
+OpenClaw shields must be down for this config mutation; the managed Mcporter config is locked with the rest of the `workspace` state root.
+
+</AgentOnly>
 <AgentOnly variant="deepagents">
 
 Deep Agents restart refreshes the NemoClaw-managed `/sandbox/.deepagents/.nemoclaw-mcp.json` projection and validates the HTTPS-only server definitions before `dcode` sees them. If the sandbox still uses the older v1 MCP projection, rebuild first so restart can use the v2 capability.
@@ -2295,6 +2321,12 @@ Remove an MCP server from a sandbox.
 <AgentOnly variant="hermes">
 
 Hermes shields must be down for this config mutation. Keep them down until the command returns; a concurrent relock refuses the config commit and can leave an earlier policy/provider stage for the next retry to converge.
+
+</AgentOnly>
+<AgentOnly variant="openclaw">
+
+OpenClaw shields must be down for this config mutation; the managed Mcporter config is locked with the rest of the `workspace` state root.
+`--force` does not bypass this refusal: the posture is checked before any provider, policy, or adapter side effect, so the ownership state is preserved for a retry once shields are down.
 
 </AgentOnly>
 
