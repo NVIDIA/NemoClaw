@@ -161,7 +161,7 @@ describe("maintainer merge-gate contributor compliance", () => {
     },
   );
 
-  it("keeps an authenticated pending PR Review Advisor lane advisory", () => {
+  it("treats a pending PR Review Advisor job with matching workflow evidence as advisory", () => {
     const name = DEFAULT_ADVISOR_JOB;
     const runId = 9_020;
     const jobId = runId + 100;
