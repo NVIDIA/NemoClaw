@@ -344,7 +344,7 @@ test(
       ],
     },
   },
-  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  async ({ artifacts, cleanup, host, progress, runtimeProvider, sandbox, skip }) => {
     await artifacts.target.declare({
       id: "gpu-e2e",
       boundary: "Hermes sandbox + GPU Ollama + initial, resumed, and continued CLI replies",
@@ -377,12 +377,10 @@ test(
     progress.phase("prepare clean GPU Ollama runtime for Hermes");
     await cleanupGpu(host, sandbox);
 
-    const docker = await host.command("docker", ["info"], {
-      artifactName: "docker-info-hermes-response",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
+    await runtimeProvider.requireAvailable({
+      artifactName: "runtime-info-hermes-response",
+      scenarioLabel: "Hermes GPU response validation",
     });
-    expect(docker.exitCode, resultText(docker)).toBe(0);
     const nvidia = await host.command("nvidia-smi", [], {
       artifactName: "nvidia-smi-hermes-response",
       env: buildAvailabilityProbeEnv(),

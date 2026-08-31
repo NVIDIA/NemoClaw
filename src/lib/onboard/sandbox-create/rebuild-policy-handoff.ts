@@ -155,6 +155,7 @@ function mergeRequestedReplacementNetworkPolicies(
           policyMapping(replacement.network_policies, "replacement network_policies"),
         );
   if (required.size > 0) {
+    const requiredPolicies: PolicyMapping = {};
     for (const source of requiredPolicySources) {
       let parsed: unknown;
       try {
@@ -171,15 +172,16 @@ function mergeRequestedReplacementNetworkPolicies(
       );
       for (const [key, value] of Object.entries(policies)) {
         if (!required.has(key)) continue;
-        const existing = replacementPolicies[key];
+        const existing = requiredPolicies[key];
         if (existing !== undefined && !isDeepStrictEqual(existing, value)) {
           throw new Error(
             `Cannot prepare rebuild policy handoff: required network policy '${key}' has conflicting replacement sources.`,
           );
         }
-        replacementPolicies[key] = structuredClone(value);
+        requiredPolicies[key] = structuredClone(value);
       }
     }
+    Object.assign(replacementPolicies, requiredPolicies);
   }
   const livePolicies =
     live.network_policies === undefined

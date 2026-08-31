@@ -267,8 +267,8 @@ network_policies:
 
   it("uses active channel preset sources without copying unrequested keys", () => {
     const merged = mergeReplacementPolicyAccess(
-      "version: 1\nnetwork_policies:\n  host_edit: {}\n",
-      "version: 1\nnetwork_policies: {}\n",
+      "version: 1\nnetwork_policies:\n  host_edit: {}\n  googlechat_hermes: {name: googlechat_hermes}\n",
+      "version: 1\nnetwork_policies:\n  googlechat_hermes: {name: generic_googlechat}\n",
       ["googlechat_hermes"],
       [],
       [
@@ -284,6 +284,21 @@ network_policies:
       host_edit: {},
       googlechat_hermes: { name: "googlechat_hermes" },
     });
+  });
+
+  it("rejects conflicting active channel sources for one required policy key", () => {
+    expect(() =>
+      mergeReplacementPolicyAccess(
+        "version: 1\nnetwork_policies: {}\n",
+        "version: 1\nnetwork_policies: {}\n",
+        ["slack"],
+        [],
+        [
+          "version: 1\nnetwork_policies:\n  slack: {name: slack_a}\n",
+          "version: 1\nnetwork_policies:\n  slack: {name: slack_b}\n",
+        ],
+      ),
+    ).toThrow("required network policy 'slack' has conflicting replacement sources");
   });
 
   it("materializes one private handoff and cleans it with the generated replacement source", () => {
