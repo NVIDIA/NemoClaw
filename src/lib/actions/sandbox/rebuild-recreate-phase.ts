@@ -9,6 +9,7 @@ import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { gatewayOwnerFromCheckpoint } from "../../onboard/gateway-authority-checkpoint";
 import { sameGatewayOwner } from "../../onboard/gateway-ownership";
 import { applyReasoningEffortEnv } from "../../onboard/reasoning-mode";
+import { isOnboardDeferredExitError } from "../../onboard/session-bootstrap";
 import * as shields from "../../shields";
 import { decisionSelected, isDecisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
@@ -243,19 +244,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`,
   );
 
-  // Intercept process.exit so a failed inner onboard can preserve the backup
-  // and durable retry state instead of terminating the outer transaction.
   let onboardFailed = false;
   let onboardExitCode = 1;
-  const savedExit = process.exit;
-  process.exit = ((code) => {
-    onboardFailed = true;
-    onboardExitCode = normalizeProcessExitCode(code, 1);
-    const error = new Error(`onboard exited with code ${onboardExitCode}`);
-    error.name = "RebuildOnboardExit";
-    throw error;
-  }) as typeof process.exit;
-
   const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
@@ -306,8 +296,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   } catch (error) {
     onboardFailed = true;
     const message = describeRebuildOnboardFailure(error);
-    const name = error instanceof Error ? error.name : "";
-    if (name === "RebuildOnboardExit") {
+    if (isOnboardDeferredExitError(error)) {
+      onboardExitCode = error.code;
       log(`onboard() exited with code ${onboardExitCode}`);
       console.error(
         `  ${_RD}Sandbox recreate error:${R} Inner onboarding exited with code ${onboardExitCode}.`,
@@ -319,7 +309,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       );
     }
   } finally {
-    process.exit = savedExit;
     process.exitCode = savedExitCode;
     restoreRebuildBaseImageOverride();
     restoreAmbientRecreateEnv();

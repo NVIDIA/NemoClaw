@@ -98,6 +98,7 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   targetGatewayName: "nemoclaw",
   targetGatewayPort: 8080,
   onboardLockAlreadyHeld: true,
+  deferProcessExit: true,
   autoYes: true,
   toolDisclosure: "progressive",
   dcodeAutoApprovalMode: "disabled",
@@ -493,8 +494,9 @@ describe("runRebuildRecreatePhase handoff", () => {
     const nestedOnboard = wrapOnboardDeferredExit(async () => {
       process.exit("7");
     });
-    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
-      await nestedOnboard();
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
+      expect(options.deferProcessExit).toBe(true);
+      await nestedOnboard(options);
     });
 
     await expect(runRebuildRecreatePhase(input)).rejects.toThrow(
