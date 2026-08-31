@@ -51,28 +51,6 @@ function assistantText(message: unknown): string | null {
   return text.length === 0 ? null : text.join("").trim();
 }
 
-export function derivePiImageSourcePaths(dockerfiles: readonly string[]): string[] {
-  const paths = new Set<string>([".dockerignore"]);
-  for (const dockerfile of dockerfiles) {
-    const logicalLines = dockerfile.replace(/\\\r?\n\s*/gu, " ").split(/\r?\n/u);
-    for (const rawLine of logicalLines) {
-      const line = rawLine.trim();
-      if (!line.startsWith("COPY ")) continue;
-      const tokens = line.split(/\s+/u).slice(1);
-      if (tokens.some((token) => token.startsWith("--from="))) continue;
-      const operands = tokens.filter((token) => !token.startsWith("--"));
-      if (operands.length < 2 || operands.some((token) => /[\[\]",]/u.test(token))) {
-        throw new Error("Pi Dockerfile COPY instruction must use plain path operands");
-      }
-      for (const source of operands.slice(0, -1)) {
-        const normalized = source.replace(/\/$/u, "");
-        paths.add(normalized.startsWith("agents/pi/") ? "agents/pi" : normalized);
-      }
-    }
-  }
-  return [...paths].sort();
-}
-
 export function parsePiInferenceEvidence(
   contents: string,
   expectedModel: string,
