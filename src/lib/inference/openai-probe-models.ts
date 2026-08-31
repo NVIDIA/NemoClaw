@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "./max-tokens-field";
+import {
+  MIN_PROBE_REPLY_TOKENS,
+  resolveMaxTokensField,
+} from "./max-tokens-field";
+import { getOpenRouterCurlHeaders, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
 
 export const STANDARD_NVIDIA_ENDPOINT_PROBE_POLICY =
@@ -13,6 +17,10 @@ const NVIDIA_ENDPOINT_PROVIDERS = new Set(["nvidia-prod", "nvidia-nim"]);
 
 export function usesNvidiaEndpointProbePayload(provider: unknown): boolean {
   return typeof provider === "string" && NVIDIA_ENDPOINT_PROVIDERS.has(provider);
+}
+
+export function getOpenRouterProbeHeaders(provider: string): string[] {
+  return provider === OPENROUTER_PROVIDER_NAME ? getOpenRouterCurlHeaders() : [];
 }
 
 export function vllmProbePolicyForModel(model: string): string {

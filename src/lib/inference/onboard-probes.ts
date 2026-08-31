@@ -49,7 +49,6 @@ const WSL_SLOW_VERIFICATION_ADVISORY =
   "`NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS=360 nemoclaw onboard`.";
 const httpProbe = require("../adapters/http/probe");
 const authConfigModule = require("../adapters/http/auth-config");
-const openrouter = require("./openrouter");
 const trace = require("../trace");
 const {
   createContainerCurlProbeSpawn,
@@ -62,7 +61,6 @@ const {
   shouldSkipResponsesProbe,
 } = require("../validation");
 const { isPrivateHostname, isPrivateIp, isLoopbackHostname } = require("../private-networks");
-const { buildResolvePinArgs, isOperatorTrustablePrivateIp } = require("./endpoint-ssrf-preflight");
 const {
   executeProbeWithHttpRetry,
   isProbeTimeout,
@@ -72,9 +70,11 @@ const {
 } = require("./probe-retry");
 const { probeAnthropicEndpoint } = require("./probe-anthropic");
 const { probeOpenAiLikeEndpointWithValidationSession } = require("./openai-validation-session");
+const { resolveProbeReplyTokens } = require("./max-tokens-field");
 const {
   getChatCompletionsProbePayload,
   getChatCompletionsToolProbePayload,
+  getOpenRouterProbeHeaders,
   EXTENDED_NVIDIA_ENDPOINT_PROBE_POLICY,
   isDeepSeekV4ProModel,
   isKimiK26Model,
@@ -95,6 +95,8 @@ const {
   getCurlMaxTimeSeconds,
   getProbeProcessTimeoutMs,
   MAX_ONBOARD_VALIDATION_TIMEOUT_SECONDS,
+  buildResolvePinArgs,
+  isOperatorTrustablePrivateIp,
 } = require("./probe-http-helpers");
 const {
   getCurlTimingArgs,
@@ -299,10 +301,7 @@ function getOpenAiSelectionProbeOptions(provider) {
 }
 
 export function getProbeExtraHeaders(provider) {
-  if (provider === openrouter.OPENROUTER_PROVIDER_NAME) {
-    return openrouter.getOpenRouterCurlHeaders();
-  }
-  return [];
+  return getOpenRouterProbeHeaders(provider);
 }
 
 function getProbeTimingOptions(options = {}) {
@@ -619,6 +618,7 @@ function runChatCompletionsProbe({
   trustedPrivateCapability,
   validationTiming,
   useNvidiaEndpointProbePayload,
+  replyBudget,
   spawnSyncImpl,
 }) {
   const args = getChatCompletionsProbeCurlArgs({
@@ -629,6 +629,7 @@ function runChatCompletionsProbe({
     pinnedAddresses,
     validationTiming,
     useNvidiaEndpointProbePayload,
+    replyBudget,
   });
   const probeOpts = {
     timeoutMs: getProbeProcessTimeoutMs(args),
@@ -675,6 +676,7 @@ function runDoubledTimeoutChatCompletionsRetry({
     JSON.stringify(
       getChatCompletionsProbePayload(model, {
         useNvidiaEndpointProbePayload: options.useNvidiaEndpointProbePayload,
+        replyBudget: options.replyBudget,
       }),
     ),
     `${baseUrl}/chat/completions`,
@@ -703,6 +705,9 @@ function runDoubledTimeoutChatCompletionsRetry({
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
+  const replyBudget =
+    options.replyBudget ??
+    (options.provider === "gemini-api" ? resolveProbeReplyTokens(options.provider) : undefined);
   if (isHijackedDockerInternalUrl(endpointUrl) && options.allowHostDockerInternal !== true) {
     return getHostDockerInternalProbeFailure();
   }
@@ -935,6 +940,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               trustedPrivateCapability: options.trustedPrivateCapability,
               validationTiming,
               useNvidiaEndpointProbePayload: options.useNvidiaEndpointProbePayload,
+              replyBudget,
               spawnSyncImpl: options.spawnSyncImpl,
             }),
     };
@@ -1146,7 +1152,8 @@ export async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKe
       hasResponsesToolCall,
       hasChatCompletionsToolCall,
       hasChatCompletionsToolCallLeak,
-      getChatPayload: getChatCompletionsProbePayload,
+      getChatPayload: (probeModel) =>
+        getChatCompletionsProbePayload(probeModel, sessionProbeOptions.replyBudget),
       getResponsesTimeoutMs: (probeOptions) =>
         getCurlMaxTimeSeconds(getValidationProbeCurlArgs(getProbeTimingOptions(probeOptions))) *
         1000,
@@ -1274,6 +1281,9 @@ export async function verifyOnboardInferenceSmoke(options: any, dependencies: an
     useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(options.provider),
     pinnedAddresses: options.pinnedAddresses,
     trustedPrivateCapability: options.trustedPrivateCapability,
+    ...(options.provider === "gemini-api"
+      ? { provider: options.provider, replyBudget: resolveProbeReplyTokens(options.provider) }
+      : {}),
   });
 
   if (probe.ok) {
