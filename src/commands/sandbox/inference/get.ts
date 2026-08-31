@@ -13,7 +13,7 @@ export default class SandboxInferenceGetCommand extends NemoClawCommand {
   static enableJsonFlag = true;
   static summary = "Show the active NemoClaw inference route";
   static description =
-    "Read the live OpenShell inference route through the NemoClaw CLI. The selected sandbox determines the gateway that supplies the route.";
+    "Read the live OpenShell inference route. NEMOCLAW_GATEWAY_PORT selects the sandbox registry and fallback gateway; a registered sandbox's binding selects its recorded gateway.";
   static usage = ["<name> inference get [--json]"];
   static examples = [
     "<%= config.bin %> my-assistant inference get",

@@ -118,7 +118,7 @@ describe("runInferenceGet", () => {
     expect(deps.log).not.toHaveBeenCalled();
   });
 
-  it("reports a safe timeout classification for the selected gateway (#10671)", async () => {
+  it("reports the gateway and timeout without command output (#10671)", async () => {
     const deps = createDeps("", null);
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
     deps.captureOpenshell.mockReturnValue({
@@ -133,7 +133,7 @@ describe("runInferenceGet", () => {
     );
   });
 
-  it("reports a safe exit classification for the selected gateway (#10671)", async () => {
+  it("reports the gateway and exit status without command output (#10671)", async () => {
     const deps = createDeps("secret stderr must not be rendered", 7);
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
 

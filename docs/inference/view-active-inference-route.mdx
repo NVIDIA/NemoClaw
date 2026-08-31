@@ -45,8 +45,8 @@ Expected output:
 ```
 
 The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no registered inference route.
-If the lookup fails, the error names the selected gateway and reports a timeout, a nonzero exit status, or the absence of an exit status.
 Run `$$nemoclaw onboard` to configure one.
+For other lookup failures, the error names the selected gateway and reports a timeout, a nonzero exit status, or the absence of an exit status without rendering command output.
 
 ## Use the Sandbox-First Form
 
@@ -56,7 +56,9 @@ Use the sandbox-first form when you are already working with a named sandbox.
 $$nemoclaw <name> inference get
 ```
 
-The command resolves the gateway recorded for that sandbox and reads its gateway-wide route.
+`NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
+When that registry contains the named sandbox, the command resolves its recorded gateway and reads that gateway-wide route.
+The command does not search registries for other gateway ports.
 OpenShell exposes one inference route to every sandbox registered on the same gateway.
 
 ## Include Sandbox Health
