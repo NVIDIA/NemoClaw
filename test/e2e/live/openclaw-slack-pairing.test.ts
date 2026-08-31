@@ -160,7 +160,7 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
   });
 
   progress.phase("route Slack API and websocket traffic through managed policies");
-  const fakeSlackRest = await startFakeSlackApi(
+  const fakeSlack = await startFakeSlackApi(
     host,
     cleanup,
     env,
@@ -168,18 +168,18 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     SLACK_APP_TOKEN,
     redactions,
   );
-  const fakeSlackWebSocket = await startFakeSlackApi(
-    host,
-    cleanup,
-    env,
-    SLACK_BOT_TOKEN,
-    SLACK_APP_TOKEN,
-    redactions,
-  );
+  expect(
+    fakeSlack.alternatePort,
+    "fake Slack API must publish an independent app-token port",
+  ).toMatch(/^[1-9][0-9]*$/u);
+  const fakeSlackWebSocket = {
+    ...fakeSlack,
+    port: fakeSlack.alternatePort!,
+  };
   await applyFakePolicy({
     host,
     sandboxName: SANDBOX_NAME,
-    api: fakeSlackRest,
+    api: fakeSlack,
     protocol: "rest",
     rewrite: "request-body-credential-rewrite",
     providerName: `${SANDBOX_NAME}-slack-bridge`,
@@ -205,16 +205,12 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     sandboxName: SANDBOX_NAME,
     channel: "slack",
     redactions,
-    fakeSlackPort: fakeSlackRest.port,
+    fakeSlackPort: fakeSlack.port,
     fakeSlackWebSocketPort: fakeSlackWebSocket.port,
   });
   expectExitZero(issue, "Slack pairing request creation");
   const code = extractPairingCode(resultText(issue), "PAIRING_E2E_RESULT");
-  assertSlackCapture(
-    [fakeSlackRest.captureFile, fakeSlackWebSocket.captureFile],
-    code,
-    PAIRING_USER.slack,
-  );
+  assertSlackCapture([fakeSlack.captureFile], code, PAIRING_USER.slack);
   await writePairingArtifacts(artifacts, "slack", { code, user: PAIRING_USER.slack });
 
   progress.phase("approve the Slack code through connect-shell");
