@@ -4,7 +4,7 @@
 title: "Architecture Details"
 sidebar-title: "Architecture Details"
 description: "Learn how NemoClaw combines a host CLI, sandbox integration layer, and versioned blueprint to run supported agent runtimes in controlled OpenShell sandboxes."
-description-agent: "Describes the NemoClaw integration layer and blueprint architecture and how they orchestrate compatible agent sandboxes. Use when looking up architecture, agent integration, plugin structure, or blueprint design."
+description-agent: "Describes the NemoClaw integration layer and blueprint architecture and how they orchestrate supported agent runtimes in sandboxes. Use when looking up architecture, agent integration, plugin structure, or blueprint design."
 keywords: ["nemoclaw architecture", "nemoclaw agent architecture", "nemoclaw plugin blueprint structure"]
 content:
   type: "reference"
@@ -51,7 +51,7 @@ graph LR
 
             subgraph SANDBOX["Sandbox Container 🔒"]
                 direction TB
-                AGENT["Compatible Agent<br/><small>Selected managed runtime</small>"]:::agent
+                AGENT["Supported Agent Runtime<br/><small>Selected managed runtime</small>"]:::agent
                 PLUG["NemoClaw Integration<br/><small>Managed configuration<br/>and runtime context</small>"]:::sandbox
             end
         end
@@ -182,7 +182,7 @@ Layering from top to bottom:
 | Host CLI | Host process (`$$nemoclaw` on Node.js) | Orchestrates OpenShell via `openshell` CLI calls. |
 | OpenShell gateway | Host process by default; optional Linux compatibility container when the gateway binary needs a newer host ABI | Hosts the credential store, owns sandbox lifecycle coordination, and provides the L7 proxy. |
 | Docker daemon | Host service | Runs the Docker-driver sandbox container and, on affected Linux hosts, the optional gateway compatibility container. |
-| Sandbox container | Docker container | Runs the selected compatible agent and NemoClaw integration under Landlock + seccomp + netns. |
+| Sandbox container | Docker container | Runs the selected supported agent runtime and NemoClaw integration under Landlock + seccomp + netns. |
 | OpenShell L7 proxy | Gateway process | Intercepts agent egress and rewrites `Authorization` headers (Bearer/Bot) and URL-path segments to inject the real credential at the network boundary. |
 
 NemoClaw never gives the sandbox a raw provider key.
@@ -321,7 +321,7 @@ The direct blueprint runner still carries a pinned OpenShell Community OpenClaw 
 </AgentOnly>
 Inside the sandbox:
 
-- The selected compatible agent runs with the NemoClaw integration layer installed or generated for that agent.
+- The selected supported agent runtime runs with the NemoClaw integration layer installed or generated for that runtime.
 - Inference calls are routed through OpenShell to the configured provider.
 - Network egress is restricted by the baseline policy for the selected agent profile.
 - Filesystem access is confined to `/sandbox` and `/tmp` for read-write access, with system paths read-only.
