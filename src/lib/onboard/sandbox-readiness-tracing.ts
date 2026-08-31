@@ -172,10 +172,9 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
   runCaptureOpenshell: RunCaptureOpenshell;
   isSandboxReady: (output: string, sandboxName: string) => boolean;
   /**
-   * Optional terminal-failure-phase classifier. When provided, the waiter
-   * short-circuits as soon as the sandbox enters a terminal failure phase
-   * (e.g. Error / Failed / CrashLoopBackOff) rather than burning the full
-   * timeout window before reporting "did not become ready" (#4316).
+   * Optional terminal-failure-phase classifier. Failed and CrashLoopBackOff
+   * stop the wait immediately. Error stops it after the configured number of
+   * consecutive Error observations (#4316).
    */
   getSandboxFailurePhase?: (output: string, sandboxName: string) => string | null;
   /**
