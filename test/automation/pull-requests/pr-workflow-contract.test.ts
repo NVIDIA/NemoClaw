@@ -60,6 +60,7 @@ type TypeScriptConfig = {
 
 const sharedActionPaths = {
   staticChecks: "./.github/actions/ci-static-checks",
+  compileArtifacts: "./.github/actions/ci-compile-artifacts",
   buildTypecheck: "./.github/actions/ci-build-typecheck",
   cliCoverageShard: "./.github/actions/ci-cli-coverage-shard",
   cliCoverageMerge: "./.github/actions/ci-cli-coverage-merge",
@@ -69,6 +70,7 @@ const sharedActionPaths = {
 
 const trustedPrActionPaths = {
   staticChecks: "./.trusted-ci-actions/.github/actions/ci-static-checks",
+  compileArtifacts: "./.trusted-ci-actions/.github/actions/ci-compile-artifacts",
   buildTypecheck: "./.trusted-ci-actions/.github/actions/ci-build-typecheck",
   cliCoverageShard: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard",
   cliCoverageMerge: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge",
@@ -81,6 +83,7 @@ const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc
 const trustedActionDirs = [
   ".github/actions/ci-static-checks",
   ".github/actions/ci-build-typecheck",
+  ".github/actions/ci-compile-artifacts",
   ".github/actions/ci-cli-coverage-shard",
   ".github/actions/ci-cli-coverage-merge",
   ".github/actions/ci-plugin-coverage",
@@ -462,6 +465,9 @@ describe("pull request and main workflow contracts", () => {
   ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
+    compileArtifacts: readYaml<CompositeAction>(
+      ".github/actions/ci-compile-artifacts/action.yaml",
+    ),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
     cliCoverageShard: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
@@ -512,7 +518,7 @@ describe("pull request and main workflow contracts", () => {
   it("provides the package token only to trusted main dependency installation", () => {
     const actions = [
       sharedActions.staticChecks,
-      sharedActions.buildTypecheck,
+      sharedActions.compileArtifacts,
       sharedActions.cliCoverageMerge,
       sharedActions.installerIntegration,
       sharedActions.cliCoverageShard,
@@ -1004,7 +1010,6 @@ describe("pull request and main workflow contracts", () => {
       });
 
       expect(validShard.status).toBe(0);
-      expect(readFileSync(output, "utf8")).toContain("upload_build_artifact=false");
       expect(invalidShard.status).not.toBe(0);
       expect(invalidShard.stdout).toContain("Invalid CLI shard");
       expect(invalidRange.status).not.toBe(0);
@@ -1018,11 +1023,6 @@ describe("pull request and main workflow contracts", () => {
   });
 
   const coverageEntrypointCases = [
-    {
-      action: sharedActions.cliCoverageShard,
-      step: "Build CLI for coverage shard",
-      stem: "scripts/check-dist-sourcemaps",
-    },
     {
       action: sharedActions.cliCoverageMerge,
       step: "Verify compiled CLI artifact",
