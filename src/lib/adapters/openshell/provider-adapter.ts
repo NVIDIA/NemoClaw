@@ -48,6 +48,13 @@ export type OpenShellProviderInventory = Readonly<{
   names: readonly string[];
 }>;
 
+export type OpenShellProviderMetadata = Readonly<{
+  name: string;
+  type: string;
+  credentialKeys: readonly string[];
+  configKeys: readonly string[];
+}>;
+
 export type OpenShellProviderProfileInspection = Readonly<{
   credentialKeys: readonly string[];
 }>;
@@ -59,6 +66,17 @@ export type CreateOpenShellProviderRequest = OpenShellProviderRequest &
     credentials: readonly Readonly<{ name: string; value: string }>[];
     config: readonly Readonly<{ key: string; value: string }>[];
     fromExisting: boolean;
+  }>;
+
+export type GetOpenShellProviderRequest = OpenShellProviderRequest &
+  Readonly<{
+    providerName: string;
+  }>;
+
+export type UpdateOpenShellProviderRequest = GetOpenShellProviderRequest &
+  Readonly<{
+    credentials: readonly Readonly<{ name: string; value: string }>[];
+    config: readonly Readonly<{ key: string; value: string }>[];
   }>;
 
 export type ImportOpenShellProviderProfileRequest = OpenShellProviderRequest &
@@ -100,6 +118,10 @@ export type OpenShellProviderCreate = Readonly<{
   state: "created";
 }>;
 
+export type OpenShellProviderUpdate = Readonly<{
+  state: "updated";
+}>;
+
 export type OpenShellProviderDelete = Readonly<{
   state: "deleted";
 }>;
@@ -108,7 +130,7 @@ export type OpenShellProviderDetach = Readonly<{
   state: "absent" | "detached";
 }>;
 
-/** Transport-neutral provider capabilities used by NemoClaw credential actions. */
+/** Transport-neutral provider operations used by NemoClaw consumers. */
 export interface OpenShellProviderAdapter {
   listProviders(
     request: OpenShellProviderRequest,
@@ -117,6 +139,14 @@ export interface OpenShellProviderAdapter {
   createProvider(
     request: CreateOpenShellProviderRequest,
   ): Promise<OpenShellProviderResult<OpenShellProviderCreate>>;
+
+  getProvider(
+    request: GetOpenShellProviderRequest,
+  ): Promise<OpenShellProviderResult<OpenShellProviderMetadata>>;
+
+  updateProvider(
+    request: UpdateOpenShellProviderRequest,
+  ): Promise<OpenShellProviderResult<OpenShellProviderUpdate>>;
 
   importProviderProfile(
     request: ImportOpenShellProviderProfileRequest,

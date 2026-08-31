@@ -935,8 +935,8 @@ type ProviderPreparationDeps = Parameters<
 >[1];
 
 type ProviderEffectBoundary = {
-  readonly validateBeforeCreate: () => void;
-  readonly publishBeforeCreate: () => void;
+  readonly validateBeforeCreate: () => Promise<void>;
+  readonly publishBeforeCreate: () => Promise<void>;
   readonly runAfterVerifiedCreate:
     | ((context: VerifiedSandboxCreateEffectsContext) => Promise<void>)
     | undefined;
@@ -954,12 +954,12 @@ export function createProviderEffectBoundary(input: {
     | null;
   readonly revalidateSandboxIdentityBeforeCreate: () => void;
 }): ProviderEffectBoundary {
-  const validate = () =>
+  const validate = async () =>
     validateAttachedMessagingProvidersBeforeSandboxCreation(
       input.preparationInput,
       input.preparationDeps,
     );
-  const publish = () =>
+  const publish = async () =>
     publishAttachedProvidersBeforeDockerSandboxCreation(
       input.preparationInput,
       input.preparationDeps,
@@ -967,16 +967,16 @@ export function createProviderEffectBoundary(input: {
   if (!input.deferred) {
     return {
       validateBeforeCreate: validate,
-      publishBeforeCreate: () => {
+      publishBeforeCreate: async () => {
         input.revalidateSandboxIdentityBeforeCreate();
-        publish();
+        await publish();
       },
       runAfterVerifiedCreate: undefined,
     };
   }
   return {
-    validateBeforeCreate: () => undefined,
-    publishBeforeCreate: () => undefined,
+    validateBeforeCreate: async () => undefined,
+    publishBeforeCreate: async () => undefined,
     runAfterVerifiedCreate: async (context) => {
       context.revalidateSandboxIdentity(
         `starting deferred provider effects for sandbox '${input.sandboxName}'`,
@@ -987,11 +987,11 @@ export function createProviderEffectBoundary(input: {
       );
       const providerNames =
         input.activateDeferredProviderEffects?.(context.revalidateSandboxIdentity) ?? [];
-      validate();
+      await validate();
       context.revalidateSandboxIdentity(
         `publishing deferred providers for sandbox '${input.sandboxName}'`,
       );
-      publish();
+      await publish();
       context.revalidateSandboxIdentity(
         `attaching deferred providers to sandbox '${input.sandboxName}'`,
       );
@@ -1117,6 +1117,13 @@ function readAcceptedPendingVerifiedCreate(input: {
 
 function runForNewSandboxCreate(resuming: boolean, operation: () => void): void {
   if (!resuming) operation();
+}
+
+async function runForNewSandboxCreateAsync(
+  resuming: boolean,
+  operation: () => Promise<void>,
+): Promise<void> {
+  if (!resuming) await operation();
 }
 
 function assertCreateLifecycleJournal(input: {
@@ -2691,7 +2698,6 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       gatewayName: GATEWAY_NAME,
     };
     const providerPreparationDeps = {
-      providerExistsInGateway,
       runOpenshell,
       cleanupCreateSources: () => {
         cleanupInitialCreateSource();
@@ -2712,7 +2718,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           `publishing providers before creating sandbox gateway '${GATEWAY_NAME}'`,
         ),
     });
-    providerEffectBoundary.validateBeforeCreate();
+    await providerEffectBoundary.validateBeforeCreate();
 
     if (hermesPortableAuthority) {
       if (!portableRuntimeContext?.environmentScope) {
@@ -2802,7 +2808,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       });
       cleanupBuildContext();
     } else {
-      runForNewSandboxCreate(Boolean(resumeVerifiedCreateInput), () =>
+      await runForNewSandboxCreateAsync(Boolean(resumeVerifiedCreateInput), () =>
         providerEffectBoundary.publishBeforeCreate(),
       );
       const created = await runCreateFlow(

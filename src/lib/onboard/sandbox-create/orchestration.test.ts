@@ -519,7 +519,6 @@ describe("deferred provider effect authority", () => {
         gatewayName: "nemoclaw",
       },
       preparationDeps: {
-        providerExistsInGateway: vi.fn(() => true),
         runOpenshell: runOpenshell as never,
         cleanupCreateSources: vi.fn(),
       },
@@ -1020,7 +1019,6 @@ describe("sandbox create identity checks", () => {
         gatewayName: "nemoclaw",
       },
       preparationDeps: {
-        providerExistsInGateway: vi.fn(() => true),
         runOpenshell: runOpenshell as never,
         cleanupCreateSources: vi.fn(),
       },

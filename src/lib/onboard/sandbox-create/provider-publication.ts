@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxCreateOrchestrationRuntime } from "../../onboard";
+import { createCliOpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter-cli";
+import type { OpenShellProviderAdapter } from "../../adapters/openshell/provider-adapter";
+import { namedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { REPOSITORY_ROOT } from "../../core/repository-root";
 import {
   ensureMessagingCredentialProviderProfile,
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
 } from "../../messaging/provider-profile";
 import type { SandboxEntry } from "../../state/registry";
-import { inspectGatewayCredentialFamilyProviderBinding } from "../gateway-provider-metadata";
+import { matchesGatewayCredentialFamilyProviderBinding } from "../gateway-provider-metadata";
 import type { SandboxCreateIntent } from "../sandbox-create-intent-types";
 
 type ProviderPreparationInput = {
@@ -20,11 +23,9 @@ type ProviderPreparationInput = {
   readonly gatewayName: string;
 };
 
-type ProviderPreparationDeps = Pick<
-  SandboxCreateOrchestrationRuntime,
-  "providerExistsInGateway" | "runOpenshell"
-> & {
+type ProviderPreparationDeps = Pick<SandboxCreateOrchestrationRuntime, "runOpenshell"> & {
   readonly cleanupCreateSources: () => void;
+  readonly providerAdapter?: OpenShellProviderAdapter;
 };
 
 type DeferredProviderAttachmentInput = {
@@ -48,29 +49,34 @@ function expectedMessagingBindings(input: ProviderPreparationInput) {
   );
 }
 
-function inspectExpectedMessagingBinding(
+function providerAdapter(deps: ProviderPreparationDeps): OpenShellProviderAdapter {
+  return (
+    deps.providerAdapter ??
+    createCliOpenShellProviderAdapter({
+      run: (args, options) => deps.runOpenshell(args, options),
+    })
+  );
+}
+
+async function inspectExpectedMessagingBinding(
   input: ProviderPreparationInput,
   deps: ProviderPreparationDeps,
   providerName: string,
   expectedBindings: ReturnType<typeof expectedMessagingBindings>,
-): boolean {
+): Promise<boolean> {
   const expected = expectedBindings.get(providerName);
   if (!expected) return true;
-  const inspection = inspectGatewayCredentialFamilyProviderBinding(
-    expected,
-    (args, options) =>
-      deps.runOpenshell(
-        [...args.slice(0, 2), "-g", input.gatewayName, ...args.slice(2)],
-        options,
-      ),
-  );
-  return inspection.kind === "exact";
+  const result = await providerAdapter(deps).getProvider({
+    target: namedOpenShellGateway(input.gatewayName),
+    providerName,
+  });
+  return result.ok && matchesGatewayCredentialFamilyProviderBinding(result.value, expected);
 }
 
-export function validateAttachedMessagingProvidersBeforeSandboxCreation(
+export async function validateAttachedMessagingProvidersBeforeSandboxCreation(
   input: ProviderPreparationInput,
   deps: ProviderPreparationDeps,
-): void {
+): Promise<void> {
   const expectedBindings = expectedMessagingBindings(input);
   const attachedMessagingProviders = [
     ...new Set(
@@ -96,7 +102,8 @@ export function validateAttachedMessagingProvidersBeforeSandboxCreation(
   }
 
   for (const providerName of attachedMessagingProviders) {
-    if (inspectExpectedMessagingBinding(input, deps, providerName, expectedBindings)) continue;
+    if (await inspectExpectedMessagingBinding(input, deps, providerName, expectedBindings))
+      continue;
     deps.cleanupCreateSources();
     throw new Error(
       `OpenShell did not confirm messaging provider '${providerName}' before sandbox creation.`,
@@ -104,10 +111,10 @@ export function validateAttachedMessagingProvidersBeforeSandboxCreation(
   }
 }
 
-export function publishAttachedProvidersBeforeDockerSandboxCreation(
+export async function publishAttachedProvidersBeforeDockerSandboxCreation(
   input: ProviderPreparationInput,
   deps: ProviderPreparationDeps,
-): void {
+): Promise<void> {
   if (input.openshellDriver !== "docker") return;
 
   const expectedBindings = expectedMessagingBindings(input);
@@ -122,26 +129,31 @@ export function publishAttachedProvidersBeforeDockerSandboxCreation(
     ...input.messagingProviders,
     ...input.extraProviders,
   ]);
+  const adapter = providerAdapter(deps);
+  const target = namedOpenShellGateway(input.gatewayName);
   for (const attachedProvider of attachedProviders) {
-    if (
-      providersRequiringExistenceProbe.has(attachedProvider) &&
-      !deps.providerExistsInGateway(attachedProvider)
-    )
-      continue;
-    const refreshed = deps.runOpenshell(
-      ["provider", "update", "-g", input.gatewayName, attachedProvider],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-      },
-    );
-    if (refreshed.status !== 0) {
+    if (providersRequiringExistenceProbe.has(attachedProvider)) {
+      const observed = await adapter.getProvider({ target, providerName: attachedProvider });
+      // Preserve the existing pre-create behavior: this publication refresh is
+      // optional when the provider cannot be confirmed. The later create owns
+      // the authoritative attachment result.
+      if (!observed.ok) continue;
+    }
+    const refreshed = await adapter.updateProvider({
+      target,
+      providerName: attachedProvider,
+      credentials: [],
+      config: [],
+    });
+    if (!refreshed.ok) {
       deps.cleanupCreateSources();
       throw new Error(
         `OpenShell did not publish attached provider '${attachedProvider}' before Docker sandbox creation.`,
       );
     }
-    if (inspectExpectedMessagingBinding(input, deps, attachedProvider, expectedBindings)) continue;
+    if (await inspectExpectedMessagingBinding(input, deps, attachedProvider, expectedBindings)) {
+      continue;
+    }
     deps.cleanupCreateSources();
     throw new Error(
       `OpenShell did not confirm messaging provider '${attachedProvider}' after publication.`,
