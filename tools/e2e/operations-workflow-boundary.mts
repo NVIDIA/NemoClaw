@@ -1456,7 +1456,7 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
   if (
     contextUpload?.with?.name !== contextArtifactName ||
     contextDownload?.with?.name !== contextArtifactName ||
-    contextUpload.with.overwrite !== true
+    contextUpload?.with?.overwrite !== true
   ) {
     errors.push("Unified advisor context artifact must survive failed-job and full reruns");
   }
