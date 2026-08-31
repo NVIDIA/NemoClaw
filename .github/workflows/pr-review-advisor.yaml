@@ -121,7 +121,7 @@ jobs:
       PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor
       PR_REVIEW_ADVISOR_COMMENT_LABEL: PR review advisor
       PR_REVIEW_ADVISOR_WORKFLOW_NAME: "Automation / PR Review Advisor"
-      SANDBOX_NAME: ${{ matrix.advisor.sandbox_name }}-${{ github.run_id }}
+      SANDBOX_NAME: ${{ matrix.advisor.sandbox_name }}-${{ github.run_id }}-${{ github.run_attempt }}
       # Only executable code from this checkout may run in the analysis job.
       ADVISOR_DIR: ${{ github.workspace }}/advisor
       TARGET_REPO: ${{ github.event_name == 'pull_request_target' && github.repository || inputs.target_repo || github.repository }}

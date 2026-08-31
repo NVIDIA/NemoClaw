@@ -142,16 +142,16 @@ describe("PR review advisor specialist lifecycle", () => {
     const jobSummary = path.join(workspace, "job-summary.md");
     fs.mkdirSync(artifactPath, { recursive: true });
     fs.writeFileSync(jobSummary, "Existing summary.\n");
-    fs.writeFileSync(
-      path.join(artifactPath, "pr-review-behavior-summary.md"),
-      "# Behavior specialist\n\nNo behavior finding.\n",
-    );
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
       startGateway: () => ({ configure: Promise.resolve() }),
       create: () => undefined,
       run: () => undefined,
-      download: () => undefined,
+      download: () =>
+        void fs.writeFileSync(
+          path.join(artifactPath, "pr-review-behavior-summary.md"),
+          "# Behavior specialist\n\nNo behavior finding.\n",
+        ),
       remove: () => undefined,
     };
 
