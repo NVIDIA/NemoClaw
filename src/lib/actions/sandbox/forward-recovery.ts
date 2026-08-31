@@ -39,6 +39,7 @@ import { parseForwardList } from "../../state/sandbox-session";
 import { buildSubprocessEnv } from "../../subprocess-env";
 import {
   classifyForwardHealthWithReachability,
+  classifySandboxForwardHealth,
   isLocalForwardReachable,
   type SandboxForwardHealth,
   type SandboxForwardListEntry,
@@ -440,6 +441,26 @@ export function ensureSandboxPortForwardForPort(
           if (forwardHealth === null) {
             throw new Error("legacy forward ownership is unavailable");
           }
+          const listed = captureOpenshell(
+            ["forward", "list", "--gateway", authority.gatewayName],
+            { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+          );
+          if (!listed || isCommandTimeout(listed) || listed.status !== 0) {
+            throw new Error("legacy forward ownership is unavailable");
+          }
+          const legacyOwnership = classifySandboxForwardHealth(
+            parseForwardList(listed.output) as SandboxForwardListEntry[],
+            sandboxName,
+            String(port),
+            expectedBind,
+          );
+          if (legacyOwnership === "occupied") {
+            throw new Error("legacy forward belongs to another sandbox");
+          }
+          if (legacyOwnership !== true) return;
+          if (!sandbox || !isDeclaredNemoClawForwardPort(sandboxName, sandbox, port)) {
+            throw new Error("legacy forward lacks a NemoClaw-owned port declaration");
+          }
           const stopResult = runOpenshell(
             legacyArgs(["forward", "stop", String(port), sandboxName]),
             { ignoreError: true, stdio: "ignore" },
@@ -740,6 +761,18 @@ function resolveSandboxLaunchForwardPortsFromAuthority(
     requiredPorts.add(port);
   }
   return [...requiredPorts];
+}
+
+function isDeclaredNemoClawForwardPort(
+  sandboxName: string,
+  sandbox: NonNullable<ReturnType<typeof registry.getSandbox>>,
+  port: number,
+): boolean {
+  return resolveSandboxLaunchForwardPortsFromAuthority(
+    sandboxName,
+    sandbox,
+    agentRuntime.getSessionAgent(sandboxName),
+  ).includes(port);
 }
 
 /** Resolve the complete forward set used by launch-readiness health. */

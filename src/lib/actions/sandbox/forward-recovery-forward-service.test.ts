@@ -172,6 +172,24 @@ describe("ForwardTcp runtime integration", () => {
     ).toBe(false);
   });
 
+  it("does not migrate an undeclared user-managed legacy forward", async () => {
+    mocks.controller.inspect.mockReturnValue({
+      disposition: "absent",
+      ownsListener: false,
+      reachable: false,
+      receipt: null,
+    });
+    mocks.captureOpenshell.mockReturnValue({
+      status: 0,
+      output: "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 19000 42 running",
+    });
+    const { ensureSandboxPortForwardForPort } = await import("./forward-recovery");
+
+    expect(ensureSandboxPortForwardForPort("alpha", 19_000)).toBe(false);
+    expect(mocks.controller.stop).not.toHaveBeenCalled();
+    expect(mocks.runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("retires every registered ForwardTcp port during sandbox teardown", async () => {
     mocks.controller.stopAll.mockReturnValue(2);
     const runOpenshell = vi.fn(() => ({ status: 0 }));

@@ -113,6 +113,17 @@ function createListenerFailureRecoveryHarness(targetPort: number) {
 describe("onboard dashboard helpers", () => {
   it("starts primary and fixed host forwards through the direct ForwardTcp owner", () => {
     const fingerprint = "b".repeat(64);
+    let registryEntry: {
+      gatewayName: string;
+      gatewayPort: number;
+      lifecycleLiveIdentityFingerprint: string;
+      pendingRouteReservation?: true;
+    } = {
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleLiveIdentityFingerprint: "d".repeat(64),
+      pendingRouteReservation: true as const,
+    };
     const controller = {
       inspect: vi.fn(() => ({
         disposition: "absent" as const,
@@ -142,11 +153,7 @@ describe("onboard dashboard helpers", () => {
       isPortBoundOnHost: () => false,
       printAgentDashboardUi: vi.fn(),
       listSandboxes: () => ({ sandboxes: [{ name: "alpha" }] }),
-      getSandbox: () => ({
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        lifecycleLiveIdentityFingerprint: "d".repeat(64),
-      }),
+      getSandbox: () => registryEntry,
       forwardService: {
         controller,
         executable: () => "/usr/local/bin/openshell",
@@ -163,6 +170,12 @@ describe("onboard dashboard helpers", () => {
       }),
     ).toBe(18_789);
     expect(helpers.ensureAgentFixedForward("alpha", 8_642, "Hermes API")).toBe(true);
+    registryEntry = {
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      lifecycleLiveIdentityFingerprint: "e".repeat(64),
+    };
+    expect(helpers.ensureAgentFixedForward("alpha", 8_643, "Hermes API")).toBe(true);
     helpers.stopAllDashboardForwards();
 
     expect(controller.ensure).toHaveBeenNthCalledWith(
@@ -182,9 +195,15 @@ describe("onboard dashboard helpers", () => {
       { retireLegacy: expect.any(Function) },
     );
     expect(openshellArgv).not.toHaveBeenCalled();
+    expect(controller.ensure).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ sandboxIdentityFingerprint: "e".repeat(64) }),
+      { localHost: "127.0.0.1", localPort: 8_643, targetPort: 8_643 },
+      { retireLegacy: expect.any(Function) },
+    );
     expect(controller.stopAll).toHaveBeenCalledWith({
       gatewayName: "nemoclaw",
-      sandboxIdentityFingerprint: fingerprint,
+      sandboxIdentityFingerprint: "e".repeat(64),
       sandboxName: "alpha",
     });
   });
@@ -228,6 +247,97 @@ describe("onboard dashboard helpers", () => {
         ([args]) => args[0] === "forward" && args[1] === "stop" && args.length === 3,
       ),
     ).toBe(false);
+  });
+
+  it("retires registered legacy forwards when direct authority has no receipt", () => {
+    const listing = "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 101 running";
+    const runOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => ({
+      status: 0,
+    }));
+    const controller = {
+      inspect: vi.fn(),
+      ensure: vi.fn(),
+      stop: vi.fn(),
+      stopPort: vi.fn(),
+      stopAll: vi.fn(() => 0),
+    };
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => listing),
+      openshellArgv: (args) => ["/usr/local/bin/openshell", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: String,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: String,
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [{ name: "alpha" }] }),
+      getSandbox: () => ({
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      }),
+      forwardService: {
+        controller,
+        executable: () => "/usr/local/bin/openshell",
+        stateDirectory: "/private/state",
+        runExclusive: (_sandboxName, operation) => operation(),
+        resolveGatewayName: () => "nemoclaw",
+      },
+    });
+
+    helpers.stopAllDashboardForwards();
+
+    expect(controller.stopAll).toHaveBeenCalledOnce();
+    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "alpha"], {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+  });
+
+  it("blocks gateway cleanup for mixed receipt-owned and legacy state", () => {
+    const listing = "SANDBOX BIND PORT PID STATUS\nalpha 127.0.0.1 18789 101 running";
+    const runOpenshell = vi.fn((_args: string[], _options?: Record<string, unknown>) => ({
+      status: 0,
+    }));
+    const controller = {
+      inspect: vi.fn(),
+      ensure: vi.fn(),
+      stop: vi.fn(),
+      stopPort: vi.fn(),
+      stopAll: vi.fn(() => 1),
+    };
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => listing),
+      openshellArgv: (args) => ["/usr/local/bin/openshell", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: String,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: String,
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [{ name: "alpha" }] }),
+      getSandbox: () => ({
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleLiveIdentityFingerprint: "a".repeat(64),
+      }),
+      forwardService: {
+        controller,
+        executable: () => "/usr/local/bin/openshell",
+        stateDirectory: "/private/state",
+        runExclusive: (_sandboxName, operation) => operation(),
+        resolveGatewayName: () => "nemoclaw",
+      },
+    });
+
+    expect(() => helpers.stopAllDashboardForwards()).toThrow(/remaining legacy forward/u);
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 
   it("builds a Hermes verification chain with the sandbox's allocated API port (#9290)", () => {

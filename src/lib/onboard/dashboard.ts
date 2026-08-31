@@ -92,6 +92,7 @@ export interface OnboardDashboardDeps {
         gatewayPort?: number | null;
         hermesApiPort?: number | null;
         lifecycleLiveIdentityFingerprint?: string;
+        pendingRouteReservation?: true;
       }
     | null
     | undefined;
@@ -283,15 +284,31 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     if (!forwardService) return null;
     const cached = forwardAuthorities.get(sandboxName);
     const sandbox = getSandbox?.(sandboxName);
+    const publishedRegistryIdentity =
+      sandbox?.pendingRouteReservation !== true &&
+      /^[0-9a-f]{64}$/u.test(sandbox?.lifecycleLiveIdentityFingerprint ?? "");
+    if (
+      options.sandboxIdentityFingerprint === undefined &&
+      sandbox &&
+      sandbox.pendingRouteReservation !== true &&
+      !publishedRegistryIdentity
+    ) {
+      forwardAuthorities.delete(sandboxName);
+      return null;
+    }
     const sandboxIdentityFingerprint =
       options.sandboxIdentityFingerprint ??
-      cached?.sandboxIdentityFingerprint ??
-      sandbox?.lifecycleLiveIdentityFingerprint;
+      (publishedRegistryIdentity
+        ? sandbox?.lifecycleLiveIdentityFingerprint
+        : (cached?.sandboxIdentityFingerprint ?? sandbox?.lifecycleLiveIdentityFingerprint));
     if (!sandboxIdentityFingerprint || !/^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint)) {
       return null;
     }
     const gatewayName =
-      options.gatewayName ?? cached?.gatewayName ?? forwardService.resolveGatewayName(sandbox);
+      options.gatewayName ??
+      (publishedRegistryIdentity
+        ? forwardService.resolveGatewayName(sandbox)
+        : (cached?.gatewayName ?? forwardService.resolveGatewayName(sandbox)));
     const authority = { gatewayName, sandboxIdentityFingerprint, sandboxName };
     forwardAuthorities.set(sandboxName, authority);
     return authority;
@@ -375,18 +392,26 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   function stopAllDashboardForwards(): void {
     const registered = listSandboxes?.().sandboxes ?? [];
     const legacySandboxNames = new Set<string>();
+    const receiptOwnedSandboxNames = new Set<string>();
     for (const sandbox of registered) {
       if (forwardServiceController) {
         const authority = resolveForwardServiceAuthority(sandbox.name);
         if (authority) {
-          forwardServiceController.stopAll(authority);
-          continue;
+          if (forwardServiceController.stopAll(authority) > 0) {
+            receiptOwnedSandboxNames.add(sandbox.name);
+            continue;
+          }
         }
       }
       legacySandboxNames.add(sandbox.name);
     }
     const forwardList = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     for (const [port, owner] of getOccupiedPorts(forwardList).entries()) {
+      if (receiptOwnedSandboxNames.has(owner)) {
+        throw new Error(
+          `ForwardTcp cleanup for '${owner}' found a remaining legacy forward on port ${port}; refusing gateway cleanup without immutable legacy ownership.`,
+        );
+      }
       if (!legacySandboxNames.has(owner)) continue;
       bestEffortForwardStopForSandbox(
         deps.runOpenshell,
