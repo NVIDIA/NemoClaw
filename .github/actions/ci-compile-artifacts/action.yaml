@@ -2,20 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: ci-compile-artifacts
-description: Compile and publish verified reusable CLI and plugin outputs.
+description: Compile and verify fixed CLI and plugin outputs from the caller workspace.
 
-# One producer invocation per workflow run owns this fixed artifact name.
+inputs: {}
 
 outputs:
-  artifact-id:
-    description: GitHub artifact identifier for the compiled outputs.
-    value: \${{ steps.upload.outputs.artifact-id }}
-  artifact-digest:
-    description: SHA-256 digest reported for the compiled outputs artifact.
-    value: \${{ steps.upload.outputs.artifact-digest }}
-  artifact-url:
-    description: GitHub URL for the compiled outputs artifact.
-    value: \${{ steps.upload.outputs.artifact-url }}
+  cli-dist:
+    description: Fixed caller-workspace path containing verified CLI outputs.
+    value: dist
+  plugin-dist:
+    description: Fixed caller-workspace path containing verified plugin outputs.
+    value: nemoclaw/dist
 
 runs:
   using: composite
@@ -23,14 +20,3 @@ runs:
     - name: Compile and verify outputs
       shell: bash
       run: bash "$GITHUB_ACTION_PATH/compile.sh"
-
-    - name: Upload compiled CLI and plugin artifact
-      id: upload
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        name: cli-build-output
-        path: |
-          dist
-          nemoclaw/dist
-        if-no-files-found: error
-        retention-days: 1
