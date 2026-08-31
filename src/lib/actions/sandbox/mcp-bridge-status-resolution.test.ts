@@ -147,16 +147,12 @@ registry.registerSandbox({
     adapter: "mcporter",
     url: "https://api.githubcopilot.com/mcp/",
     env: ["GITHUB_TOKEN"],
+    allowedIps: ["8.8.8.8"],
     providerName: "alpha-mcp-github",
     providerId: "11111111-2222-4333-8444-555555555555",
     policyName: "mcp-bridge-github",
     addedAt: "2026-06-01T00:00:00.000Z",
   } } },
-});
-registry.addCustomPolicy("alpha", {
-  name: "mcp-bridge-github",
-  content: "network_policies: {}\n",
-  sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 const logLines = [];
@@ -401,7 +397,7 @@ describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 
     expect(outcomes).toHaveLength(6);
     expect(outcomes.map((outcome) => outcome.gatewayPresent).slice(0, 3)).toEqual([
       false,
-      false,
+      null,
       null,
     ]);
     outcomes.forEach((outcome) => {

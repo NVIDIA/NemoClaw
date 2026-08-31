@@ -7,56 +7,29 @@ import path from "node:path";
 import { expect, type MockInstance, vi } from "vitest";
 import YAML from "yaml";
 import { buildMcpBridgePolicyYaml } from "../../src/lib/actions/sandbox/mcp-bridge-policy-render";
-import type { SandboxPolicyAuthorityInspection } from "../../src/lib/adapters/openshell/policy-authority";
+import type { SandboxPolicyInspection } from "../../src/lib/adapters/openshell/policy-state";
 import type { AgentConfigTarget } from "../../src/lib/sandbox/agent-config";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
 const shieldsModulePath = "./index.js";
 
-export const externalPolicyAuthorityInspection = {
-  authority: "externally-managed" as const,
-  effectivePolicy: { version: 1, network_policies: {} },
-  policyIdentity: { hash: "external-policy-hash", activeVersion: 1 },
-};
-
-const managedPolicyCreationReceipt = {
-  schemaVersion: 1 as const,
-  origin: "sandbox-create" as const,
-  gatewayName: "nemoclaw",
-  gatewayPort: 50_065,
-  sandboxName: "openclaw",
-  lifecycleGeneration: "11111111-1111-4111-8111-111111111111",
-  sandboxIdentityFingerprint: "a".repeat(64),
-  policyHash: "managed-policy-hash",
-  policyVersion: 1,
-};
-
-export const managedPolicyMutationAuthority = {
-  authority: "nemoclaw-managed" as const,
-  authorityRecordedNow: false,
+export const livePolicyMutationContext = {
   gatewayName: "nemoclaw",
   inspection: {
-    authority: "nemoclaw-managed" as const,
+    policySource: "sandbox" as const,
     effectivePolicy: { version: 1, network_policies: {} },
     policyIdentity: { hash: "managed-policy-hash", activeVersion: 1 },
   },
-  policyCreationReceipt: managedPolicyCreationReceipt,
 };
 
-export function bindManagedPolicyMutationAuthority(
+export function bindLivePolicyMutationContext(
   policy: typeof import("../../src/lib/policy"),
 ): MockInstance[] {
   return [
-    vi
-      .spyOn(policy, "inspectPolicyMutationAuthority")
-      .mockReturnValue(managedPolicyMutationAuthority),
-    vi
-      .spyOn(policy, "inspectPolicyRecoveryAuthority")
-      .mockReturnValue(managedPolicyMutationAuthority),
-    vi
-      .spyOn(policy, "recheckPolicyMutationAuthority")
-      .mockReturnValue(managedPolicyMutationAuthority),
-    vi.spyOn(policy, "finalizePolicyMutationReceipt").mockImplementation(() => undefined),
+    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
+    vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
+    vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
+    vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined),
   ];
 }
 
@@ -70,8 +43,8 @@ export type ShieldsFlowHarness = {
   getShieldsPosture: typeof import("../../src/lib/shields/index.js").getShieldsPosture;
   getOpenClawPosture: () => "locked" | "mutable";
   logSpy: MockInstance;
-  policyAuthoritySpy: MockInstance;
-  policyReceiptFinalizeSpy: MockInstance;
+  policyStateSpy: MockInstance;
+  policyVerificationSpy: MockInstance;
   policyRecoveryAuthoritySpy: MockInstance;
   policySetBodies: string[];
   runCaptureSpy: MockInstance;
@@ -106,7 +79,7 @@ export type ShieldsFlowHarnessOptions = {
     detail: string;
   }>;
   processStartIdentity?: string;
-  policyAuthorityInspection?: SandboxPolicyAuthorityInspection;
+  policyInspection?: SandboxPolicyInspection;
   timerAuthorizationOutcome?: "authorized" | "dies-before-proof";
   timerDiesAfterUnlock?: boolean;
   fork?: (...args: unknown[]) => {
@@ -135,7 +108,7 @@ export function managedMcpPolicy(server: string, address = "8.8.8.8") {
   const entries = Object.entries(YAML.parse(content).network_policies as Record<string, unknown>);
   expect(entries, `rendered MCP policies for ${server}`).toHaveLength(1);
   const [key, networkPolicy] = entries[0]!;
-  return { content, key, networkPolicy, providerName, server };
+  return { address, content, key, networkPolicy, providerName, server };
 }
 
 export function managedMcpSandbox(
@@ -144,14 +117,9 @@ export function managedMcpSandbox(
   return {
     name: "openclaw",
     openshellDriver: "docker",
-    customPolicies: policies.map(({ content, server }) => ({
-      name: `mcp-bridge-${server}`,
-      content,
-      sourcePath: "generated:nemoclaw-mcp-bridge",
-    })),
     mcp: {
       bridges: Object.fromEntries(
-        policies.map(({ providerName, server }) => [
+        policies.map(({ address, providerName, server }) => [
           server,
           {
             server,
@@ -159,6 +127,7 @@ export function managedMcpSandbox(
             adapter: "hermes-config",
             url: `https://${server}.example.com/mcp`,
             env: ["MCP_SECRET"],
+            allowedIps: [address],
             providerName,
             policyName: `mcp-bridge-${server}`,
             addedAt: "2026-07-30T00:00:00.000Z",
@@ -213,7 +182,7 @@ export function createShieldsFlowHarness(
   delete require.cache[requireDist.resolve("./transition-lock.js")];
   delete require.cache[requireDist.resolve("./permissive-runtime.js")];
   delete require.cache[requireDist.resolve("../actions/sandbox/mcp-bridge-policy.js")];
-  delete require.cache[requireDist.resolve("../adapters/openshell/policy-authority.js")];
+  delete require.cache[requireDist.resolve("../adapters/openshell/policy-state.js")];
   delete require.cache[requireDist.resolve("../sandbox/privileged-exec.js")];
   delete require.cache[requireDist.resolve("../cli/branding.js")];
   const timerControl = requireDist(
@@ -275,9 +244,9 @@ export function createShieldsFlowHarness(
   const policy = requireDist("../policy/index.js");
   const agentConfig = requireDist("../sandbox/agent-config.js");
   const registry = requireDist("../state/registry.js");
-  const policyAuthority = requireDist(
-    "../adapters/openshell/policy-authority.js",
-  ) as typeof import("../../src/lib/adapters/openshell/policy-authority.js");
+  const policyState = requireDist(
+    "../adapters/openshell/policy-state.js",
+  ) as typeof import("../../src/lib/adapters/openshell/policy-state.js");
   const privilegedExec = requireDist("../sandbox/privileged-exec.js");
   const dockerExec = requireDist("../adapters/docker/exec.js");
   const audit = requireDist("./audit.js");
@@ -377,44 +346,35 @@ export function createShieldsFlowHarness(
   vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue(resolvedAgentConfig);
   vi.spyOn(registry, "getSandbox").mockReturnValue(
     options.sandboxEntry
-      ? { policyAuthority: "nemoclaw-managed", ...options.sandboxEntry }
+      ? { ...options.sandboxEntry }
       : {
           name: options.sandboxName ?? "openclaw",
           agent: resolvedAgentConfig.agentName,
           openshellDriver: "docker",
-          policyAuthority: "nemoclaw-managed",
         },
   );
   vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
-  const policyAuthorityInspection = options.policyAuthorityInspection ?? {
-    authority: "nemoclaw-managed" as const,
+  const policyInspection = options.policyInspection ?? {
+    policySource: "sandbox" as const,
     effectivePolicy: YAML.parse(
       options.livePolicyYaml ?? "version: 1\nnetwork_policies:\n  test: {}\n",
     ) as Record<string, unknown>,
     policyIdentity: { hash: "managed-policy-hash", activeVersion: 1 },
   };
-  vi.spyOn(policyAuthority, "inspectSandboxPolicyAuthority").mockReturnValue(
-    policyAuthorityInspection,
-  );
+  vi.spyOn(policyState, "inspectSandboxPolicy").mockReturnValue(policyInspection);
   const policyMutationAuthority = {
-    authority: policyAuthorityInspection.authority,
-    authorityRecordedNow: false,
     gatewayName: options.sandboxEntry?.gatewayName ?? "nemoclaw",
-    inspection: policyAuthorityInspection,
-    policyCreationReceipt:
-      policyAuthorityInspection.authority === "nemoclaw-managed"
-        ? managedPolicyCreationReceipt
-        : null,
+    inspection: policyInspection,
   };
-  const policyAuthoritySpy = vi
-    .spyOn(policy, "inspectPolicyMutationAuthority")
+  const policyStateSpy = vi
+    .spyOn(policy, "inspectPolicyMutationContext")
     .mockReturnValue(policyMutationAuthority);
   const policyRecoveryAuthoritySpy = vi
-    .spyOn(policy, "inspectPolicyRecoveryAuthority")
+    .spyOn(policy, "inspectPolicyMutationContext")
     .mockReturnValue(policyMutationAuthority);
-  vi.spyOn(policy, "recheckPolicyMutationAuthority").mockReturnValue(policyMutationAuthority);
-  const policyReceiptFinalizeSpy = vi
-    .spyOn(policy, "finalizePolicyMutationReceipt")
+  vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(policyMutationAuthority);
+  const policyVerificationSpy = vi
+    .spyOn(policy, "verifyAppliedPolicyDocument")
     .mockImplementation(() => undefined);
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: [{ name: options.sandboxName ?? "openclaw", agent: resolvedAgentConfig.agentName }],
@@ -686,8 +646,8 @@ export function createShieldsFlowHarness(
     getShieldsPosture: shields.getShieldsPosture,
     getOpenClawPosture: () => openClawPosture,
     logSpy,
-    policyAuthoritySpy,
-    policyReceiptFinalizeSpy,
+    policyStateSpy,
+    policyVerificationSpy,
     policyRecoveryAuthoritySpy,
     policySetBodies,
     runCaptureSpy,

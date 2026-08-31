@@ -76,6 +76,10 @@
     "reason": "Internal E2E-only sentinel that tells CI to route the repository NVIDIA_INFERENCE_API_KEY secret through the hosted inference-api.nvidia.com OpenAI-compatible endpoint. Not user-facing."
   },
   {
+    "name": "NEMOCLAW_RUN_LIVE_E2E",
+    "reason": "Internal Vitest/live-E2E sentinel that permits the exact sandbox-scoped Google Chat fake-mint provider override used by the destructive channel lifecycle fixture. Production users must not set it."
+  },
+  {
     "name": "NEMOCLAW_COMPAT_MODEL",
     "reason": "Internal E2E/test override for the model used by OpenAI-compatible endpoint scenarios. User-facing custom endpoint model selection is collected through onboard prompts or NEMOCLAW_MODEL."
   },

@@ -4,11 +4,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const phaseMocks = vi.hoisted(() => ({
+  clearPolicyHandoff: vi.fn(),
+  cleanupPolicySource: vi.fn(),
   runBackup: vi.fn(),
   runDestroy: vi.fn(),
   runPreflight: vi.fn(),
+  runRecreate: vi.fn(),
   runShields: vi.fn(),
   openRecreateJournal: vi.fn(),
+  recordRecoveryBackup: vi.fn(),
+}));
+
+vi.mock("../../onboard/temp-files", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../onboard/temp-files")>()),
+  cleanupTempDir: phaseMocks.cleanupPolicySource,
+}));
+
+vi.mock("../../state/sandbox", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/sandbox")>()),
+  clearRebuildPolicyHandoff: phaseMocks.clearPolicyHandoff,
 }));
 
 const gatewayAuthority = {
@@ -25,9 +39,11 @@ const gatewayAuthority = {
 vi.mock("./rebuild-recreate-journal", () => ({
   fingerprintRebuildRecreateTargetIntent: () => "intent-1",
   openRebuildRecreateJournal: phaseMocks.openRecreateJournal,
+  recordRebuildRecoveryBackup: phaseMocks.recordRecoveryBackup,
 }));
 
-vi.mock("./rebuild-backup-phase", () => ({
+vi.mock("./rebuild-backup-phase", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./rebuild-backup-phase")>()),
   runRebuildBackupPhase: phaseMocks.runBackup,
 }));
 
@@ -40,6 +56,10 @@ vi.mock("./rebuild-destroy-phase", () => ({
   runRebuildDestroyPhase: phaseMocks.runDestroy,
 }));
 
+vi.mock("./rebuild-recreate-phase", () => ({
+  runRebuildRecreatePhase: phaseMocks.runRecreate,
+}));
+
 vi.mock("./rebuild-shields-phase", () => ({
   runRebuildShieldsPhase: phaseMocks.runShields,
 }));
@@ -47,6 +67,7 @@ vi.mock("./rebuild-shields-phase", () => ({
 import { rebuildSandbox } from "./rebuild";
 
 describe("rebuild shields relock guard", () => {
+  const policySourcePath = "/tmp/nemoclaw-rebuild-policy-test/policy.yaml";
   const rebuildWindow = { relocked: false, wasLocked: true };
   const cleanupDcodePreflight = vi.fn();
   const releaseOnboardLock = vi.fn();
@@ -58,9 +79,10 @@ describe("rebuild shields relock guard", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    phaseMocks.clearPolicyHandoff.mockReturnValue(true);
     rebuildWindow.relocked = false;
     phaseMocks.runPreflight.mockResolvedValue({
-      sandboxEntry: { name: "alpha", customPolicies: [] },
+      sandboxEntry: { name: "alpha" },
       targetConfig: { durableConfig: { webSearchConfig: null } },
       recreateOptions: {
         observabilityEnabled: false,
@@ -71,6 +93,8 @@ describe("rebuild shields relock guard", () => {
       liveState: { staleRecovery: false, staleRegistrySnapshot: null },
       recoveryManifest: null,
       dcodePreflight: {
+        applyDockerGpuPatchNetwork: () => vi.fn(),
+        checkAtDeleteEdge: vi.fn(async () => ({ ok: true })),
         cleanup: cleanupDcodePreflight,
         revalidateBeforeDelete: revalidateDcodeBeforeDelete,
       },
@@ -108,7 +132,15 @@ describe("rebuild shields relock guard", () => {
   });
 
   it("does not relock shields when sandbox deletion remains ambiguous (#7062)", async () => {
-    phaseMocks.runBackup.mockReturnValue({ backupManifest: null });
+    const backupManifest = {
+      backupPath: "/tmp/nemoclaw-rebuild-backup",
+      rebuildPolicyHandoff: { file: "policy.yaml", sha256: "a".repeat(64) },
+    };
+    phaseMocks.runBackup.mockReturnValue({
+      backupManifest,
+      backupWasForceSkipped: false,
+      policySourcePath,
+    });
     phaseMocks.runDestroy.mockImplementation(
       ({ onDeleteStateAmbiguous }: { onDeleteStateAmbiguous?: () => void }) => {
         onDeleteStateAmbiguous?.();
@@ -121,55 +153,51 @@ describe("rebuild shields relock guard", () => {
     );
 
     expect(phaseMocks.runDestroy).toHaveBeenCalledOnce();
+    expect(phaseMocks.recordRecoveryBackup).toHaveBeenCalledOnce();
+    expect(phaseMocks.clearPolicyHandoff).not.toHaveBeenCalled();
+    expect(phaseMocks.cleanupPolicySource).not.toHaveBeenCalled();
     expect(relockShields).not.toHaveBeenCalled();
     expect(rebuildWindow.relocked).toBe(false);
   });
 
-  it("blocks a pending baseline transition before shields, backup, or destroy phases begin (#7194)", async () => {
-    const bail = vi.fn();
-    phaseMocks.runPreflight.mockResolvedValue({
-      sandboxEntry: {
-        name: "alpha",
-        customPolicies: [],
-        baselineExclusionTransition: {
-          id: "0b2f3297-a9ab-4c2f-80da-bf1760a1afbf",
-          operation: "restore",
-          exclusion: {
-            version: 1,
-            agent: "openclaw",
-            key: "agents.openclaw.default",
-            digest: "a".repeat(64),
-          },
-          startedAt: "2026-07-19T00:00:00.000Z",
-          targetLiveDigest: "b".repeat(64),
-        },
-      },
-      targetConfig: { durableConfig: { webSearchConfig: null } },
-      recreateOptions: {
-        observabilityEnabled: false,
-        targetGatewayName: "nemoclaw",
-        targetGatewayPort: 8080,
-      },
-      liveState: { staleRecovery: false, staleRegistrySnapshot: null },
-      recoveryManifest: null,
-      dcodePreflight: { cleanup: cleanupDcodePreflight },
-      preparedImage: null,
-      releaseOnboardLock,
-      log: vi.fn(),
-      bail,
+  it("reports the retained handoff path when cleanup fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    phaseMocks.runBackup.mockReturnValue({
+      backupManifest: null,
+      backupWasForceSkipped: false,
+      policySourcePath,
     });
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    phaseMocks.runDestroy.mockResolvedValue(null);
+    phaseMocks.cleanupPolicySource.mockImplementationOnce(() => {
+      throw new Error("cleanup failed");
+    });
 
-    await rebuildSandbox("alpha", ["--yes"], { throwOnError: true });
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
 
-    expect(bail).toHaveBeenCalledWith(
-      "Pending baseline policy restore for 'agents.openclaw.default' blocks rebuild.",
-      1,
+    expect(warn).toHaveBeenCalledWith(
+      `  Warning: temporary rebuild policy handoff could not be removed. Remove ${policySourcePath} before retrying.`,
     );
-    expect(phaseMocks.runShields).not.toHaveBeenCalled();
-    expect(phaseMocks.runBackup).not.toHaveBeenCalled();
-    expect(phaseMocks.runDestroy).not.toHaveBeenCalled();
-    expect(cleanupDcodePreflight).toHaveBeenCalledOnce();
-    expect(releaseOnboardLock).toHaveBeenCalledOnce();
+  });
+
+  it("removes the live-policy handoff when sandbox recreation fails", async () => {
+    phaseMocks.runBackup.mockReturnValue({
+      backupManifest: null,
+      backupWasForceSkipped: false,
+      policySourcePath,
+    });
+    phaseMocks.runDestroy.mockResolvedValue({ entries: [], removalReceipt: null });
+    phaseMocks.runRecreate.mockRejectedValue(new Error("replacement creation failed"));
+
+    await expect(
+      rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("replacement creation failed");
+
+    expect(phaseMocks.runRecreate).toHaveBeenCalledOnce();
+    expect(phaseMocks.cleanupPolicySource).toHaveBeenCalledExactlyOnceWith(
+      policySourcePath,
+      "nemoclaw-rebuild-policy",
+    );
   });
 });

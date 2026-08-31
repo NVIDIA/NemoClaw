@@ -30,7 +30,6 @@ describe("Docker daemon outage classification (#4428)", () => {
     // sandboxes (#4428); record the driver so the gate matches.
     writeSandboxRegistry(home, "v053-baseline", {
       ...launchReadinessRegistryFixture(),
-      policies: ["npm"],
       openshellDriver: driver,
     } as unknown as Partial<SandboxEntry>);
     fs.writeFileSync(
