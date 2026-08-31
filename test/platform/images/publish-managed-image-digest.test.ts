@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -32,6 +33,7 @@ describe("managed-image digest publication validation", () => {
     const bin = join(root, "bin");
     const runner = join(root, "runner");
     const output = join(root, "output");
+    const pullConfig = join(root, "pull-config");
     mkdirSync(bin);
     mkdirSync(runner);
     const manifest = "published-manifest";
@@ -43,8 +45,13 @@ describe("managed-image digest publication validation", () => {
 set -euo pipefail
 if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then printf %s '${manifest}'; exit 0; fi
 [ -z "\${DOCKER_AUTH_CONFIG+x}" ] || exit 91
-[ "$1" = pull ] && exit 1
-exit 92
+if [ "$1" = pull ]; then
+  case "$DOCKER_CONFIG" in "$RUNNER_TEMP"/anonymous-docker-*) ;; *) exit 92 ;; esac
+  [ -z "$(find "$DOCKER_CONFIG" -mindepth 1 -print -quit)" ] || exit 93
+  printf %s "$DOCKER_CONFIG" > "$PULL_CONFIG_OUTPUT"
+  exit 1
+fi
+exit 94
 `,
     );
     chmodSync(docker, 0o755);
@@ -54,15 +61,73 @@ exit 92
         ...process.env,
         DIGEST: digest,
         DOCKER_AUTH_CONFIG: "must-not-reach-docker",
+        DOCKER_CONFIG: join(root, "ambient-docker"),
         GITHUB_OUTPUT: output,
         IMAGE: "ghcr.io/nvidia/nemoclaw/test",
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         PLATFORM: "linux/amd64",
+        PULL_CONFIG_OUTPUT: pullConfig,
         RUNNER_TEMP: runner,
       },
     });
     expect(result.status).not.toBe(0);
     expect(result.status).not.toBe(91);
     expect(existsSync(output) ? readFileSync(output, "utf8") : "").toBe("");
+    expect(existsSync(readFileSync(pullConfig, "utf8"))).toBe(false);
+    expect(readdirSync(runner)).toEqual(["managed-image-published-manifest.raw"]);
+  });
+
+  it("exports immutable identity after a credential-free anonymous pull", () => {
+    const root = mkdtempSync(join(tmpdir(), "managed-image-digest-success-"));
+    roots.push(root);
+    const bin = join(root, "bin");
+    const runner = join(root, "runner");
+    const output = join(root, "output");
+    const pullConfig = join(root, "pull-config");
+    mkdirSync(bin);
+    mkdirSync(runner);
+    const manifest = "published-manifest";
+    const digest = `sha256:${createHash("sha256").update(manifest).digest("hex")}`;
+    const imageId = "sha256:" + "b".repeat(64);
+    const docker = join(bin, "docker");
+    writeFileSync(
+      docker,
+      "#!/usr/bin/env bash\nset -euo pipefail\n" +
+        'if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then printf %s \'' +
+        manifest +
+        "'; exit 0; fi\n" +
+        'if [ "$1" = pull ]; then [ -z "${DOCKER_AUTH_CONFIG+x}" ] || exit 91; case "$DOCKER_CONFIG" in "$RUNNER_TEMP"/anonymous-docker-*) ;; *) exit 92 ;; esac; [ -z "$(find "$DOCKER_CONFIG" -mindepth 1 -print -quit)" ] || exit 93; printf %s "$DOCKER_CONFIG" > "$PULL_CONFIG_OUTPUT"; exit 0; fi\n' +
+        'if [ "$1 $2" = "image inspect" ]; then printf \'%s\\n\' \'' +
+        imageId +
+        "'; exit 0; fi\nexit 94\n",
+    );
+    chmodSync(docker, 0o755);
+    const result = spawnSync("bash", [helper], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DIGEST: digest,
+        DOCKER_AUTH_CONFIG: "must-not-reach-docker",
+        DOCKER_CONFIG: join(root, "ambient-docker"),
+        GITHUB_OUTPUT: output,
+        IMAGE: "ghcr.io/nvidia/nemoclaw/test",
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        PLATFORM: "linux/amd64",
+        PULL_CONFIG_OUTPUT: pullConfig,
+        RUNNER_TEMP: runner,
+      },
+    });
+    expect(result.status).toBe(0);
+    const anonymousConfig = readFileSync(pullConfig, "utf8");
+    expect(existsSync(anonymousConfig)).toBe(true);
+    expect(readFileSync(output, "utf8")).toBe(
+      "docker-config=" +
+        anonymousConfig +
+        "\nlocal-id=" +
+        imageId +
+        "\nreference=ghcr.io/nvidia/nemoclaw/test@" +
+        digest +
+        "\n",
+    );
   });
 });

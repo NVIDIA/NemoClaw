@@ -17,7 +17,7 @@ if [ "sha256:$(sha256sum "$raw" | awk '{print $1}')" != "$DIGEST" ]; then
 fi
 anonymous_config="$(mktemp -d "$RUNNER_TEMP/anonymous-docker-XXXXXX")"
 cleanup_on_failure() { rm -rf -- "$anonymous_config"; }
-trap cleanup_on_failure ERR
+trap cleanup_on_failure EXIT
 chmod 0700 "$anonymous_config"
 if ! env -u DOCKER_AUTH_CONFIG DOCKER_CONFIG="$anonymous_config" docker pull --platform "$PLATFORM" "$reference"; then
   echo "::error::Anonymous pull of ${reference} failed. Confirm that the GHCR package is public and that the exact digest is available to anonymous clients. Then rerun this workflow."
@@ -28,7 +28,9 @@ if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || [ "$(docker image inspect --f
   echo "ERROR: exact managed image did not resolve to one immutable local image ID." >&2
   exit 1
 fi
-printf 'docker-config=%s\n' "$anonymous_config" >>"$GITHUB_OUTPUT"
-printf 'local-id=%s\n' "$image_id" >>"$GITHUB_OUTPUT"
-trap - ERR
-printf 'reference=%s\n' "$reference" >>"$GITHUB_OUTPUT"
+{
+  printf 'docker-config=%s\n' "$anonymous_config"
+  printf 'local-id=%s\n' "$image_id"
+  printf 'reference=%s\n' "$reference"
+} >>"$GITHUB_OUTPUT"
+trap - EXIT
