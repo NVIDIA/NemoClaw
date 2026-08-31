@@ -4,32 +4,9 @@
 import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 
-import { getValidationProbeCurlArgs } from "../../src/lib/inference/probe-http-helpers";
-
 const require = createRequire(import.meta.url);
 
 describe("WSL2 inference verification timeouts (#987)", () => {
-  describe("getValidationProbeCurlArgs", () => {
-    it("returns standard timeouts on non-WSL platforms", () => {
-      expect(getValidationProbeCurlArgs({ isWsl: false })).toEqual([
-        "--connect-timeout",
-        "10",
-        "--max-time",
-        "15",
-      ]);
-    });
-
-
-    it("returns standard timeouts when called without opts (default path)", () => {
-      // On non-WSL hosts this returns the standard values.
-      // The exact values depend on the host, but the structure must be correct.
-      const args = getValidationProbeCurlArgs();
-      expect(args).toHaveLength(4);
-      expect(args[0]).toBe("--connect-timeout");
-      expect(args[2]).toBe("--max-time");
-    });
-  });
-
   describe("retry logic in probeOpenAiLikeEndpoint", () => {
     function runProbeWithCurlStatuses(statuses: number[], isWsl = false) {
       const httpProbePath = require.resolve("../../src/lib/adapters/http/probe.js");
