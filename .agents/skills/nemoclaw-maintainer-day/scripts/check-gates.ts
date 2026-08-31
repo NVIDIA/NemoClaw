@@ -2131,7 +2131,7 @@ function currentCheckRollup(
               .map(({ runId }) => runId)
               .sort((left, right) => Number(left) - Number(right));
             ambiguousRunEvidence.add(
-              `${groupName}: workflow runs ${runIds.join(", ")} share created_at ${new Date(latestTimestamp).toISOString()}; start a new workflow run`,
+              `${groupName}: workflow runs ${runIds.join(", ")} share created_at ${new Date(latestTimestamp).toISOString()}; rerunning either listed run preserves the tie, so publish a new PR revision and use its distinct ${groupName} run`,
             );
           }
           for (const latest of latestRuns) {

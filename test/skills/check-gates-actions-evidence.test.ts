@@ -543,7 +543,7 @@ describe("maintainer merge-gate contributor compliance", () => {
     });
   });
 
-  it("accepts a later successful duplicate workflow run", () => {
+  it("selects the duplicate workflow run with the later created_at timestamp", () => {
     const result = runGate(
       e2eRunFixture(
         [
@@ -566,7 +566,7 @@ describe("maintainer merge-gate contributor compliance", () => {
     const output = JSON.parse(result.stdout);
     expect(output.gates.ci).toMatchObject({ pass: true });
   });
-  it("uses jobs from the workflow run's reported latest attempt", () => {
+  it("uses jobs from the workflow run's reported run_attempt", () => {
     const result = runGate(
       e2eRunFixture(e2eChecks([102, 2, "SUCCESS"]), {
         "102": {
@@ -642,12 +642,12 @@ describe("maintainer merge-gate contributor compliance", () => {
       expect(JSON.parse(result.stdout).gates.ci).toMatchObject({
         pass: false,
         failingChecks: [
-          "matrix-check: workflow runs 199, 200 share created_at 2026-01-01T00:01:00.000Z; start a new workflow run",
+          "matrix-check: workflow runs 199, 200 share created_at 2026-01-01T00:01:00.000Z; rerunning either listed run preserves the tie, so publish a new PR revision and use its distinct matrix-check run",
         ],
       });
     },
   );
-  it("keeps every duplicate job from the latest workflow run", () => {
+  it("keeps every duplicate job from the run with the latest created_at timestamp", () => {
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",
       verified: true,
