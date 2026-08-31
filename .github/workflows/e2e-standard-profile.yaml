@@ -424,6 +424,32 @@ jobs:
         with:
           enabled: ${{ inputs.runtime_provider == 'podman' && 'true' || 'false' }}
 
+      - name: Stage immutable stopped-state cleanup helper
+        if: ${{ inputs.target_id == 'channels-stop-start' && (inputs.runtime_provider == 'docker' || inputs.runtime_provider == 'podman') }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          CLEANUP_IMAGE: node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c
+          RUNTIME_PROVIDER: ${{ inputs.runtime_provider }}
+        run: |
+          set -euo pipefail
+          case "$RUNTIME_PROVIDER" in
+            docker)
+              docker image inspect "$CLEANUP_IMAGE" >/dev/null 2>&1 || docker pull "$CLEANUP_IMAGE"
+              ;;
+            podman)
+              [[ -S "${OPENSHELL_PODMAN_SOCKET:?}" ]]
+              [[ -f "${DOCKER_CONFIG:?}/config.json" ]]
+              podman --url "unix://$OPENSHELL_PODMAN_SOCKET" image inspect "$CLEANUP_IMAGE" \
+                >/dev/null 2>&1 || \
+                podman --url "unix://$OPENSHELL_PODMAN_SOCKET" pull \
+                  --authfile "$DOCKER_CONFIG/config.json" "$CLEANUP_IMAGE"
+              ;;
+            *)
+              echo "::error::Unsupported managed runtime provider '$RUNTIME_PROVIDER'" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Materialize temporary managed-image catalog
         if: ${{ inputs.managed_image_catalog != '' }}
         shell: /bin/bash --noprofile --norc -e -o pipefail {0}

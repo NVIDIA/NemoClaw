@@ -19,7 +19,7 @@ import { selectDockerPrivilegedSandboxTarget } from "./docker-privileged-sandbox
 import { createDockerOperationAuthority } from "./docker-operation-authority";
 import {
   clearStoppedSandboxStateWithEngine,
-  sandboxVolumeNameFromMounts,
+  sandboxStateResourceFromMounts,
   type StoppedSandboxStateObservation,
 } from "./stopped-sandbox-state-cleanup";
 
@@ -226,9 +226,9 @@ function observeStoppedDockerTarget(
   } catch {
     return { failure: "state-resource-unavailable" };
   }
-  const sandboxVolumeName = sandboxVolumeNameFromMounts(mounts);
-  return sandboxVolumeName
-    ? { target: { resourceHandle, running: running === "true", sandboxVolumeName } }
+  const stateResource = sandboxStateResourceFromMounts(mounts);
+  return stateResource
+    ? { target: { resourceHandle, running: running === "true", stateResource } }
     : { failure: "state-resource-unavailable" };
 }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import path from "node:path";
 
 import type { ContainerEngineCommandResult } from "../../adapters/container-engine";
 import type {
@@ -33,7 +34,10 @@ const NEUTRAL_ENV = [
 export interface StoppedSandboxStateTarget {
   readonly resourceHandle: string;
   readonly running: boolean;
-  readonly sandboxVolumeName: string;
+  readonly stateResource: {
+    readonly type: "bind" | "volume";
+    readonly source: string;
+  };
 }
 
 export type StoppedSandboxStateObservation =
@@ -101,7 +105,9 @@ export function validateStoppedSandboxStatePaths(paths: readonly string[]): bool
   );
 }
 
-export function sandboxVolumeNameFromMounts(value: unknown): string | null {
+export function sandboxStateResourceFromMounts(
+  value: unknown,
+): StoppedSandboxStateTarget["stateResource"] | null {
   if (!Array.isArray(value)) return null;
   const mounts = value.filter(
     (entry) =>
@@ -110,12 +116,39 @@ export function sandboxVolumeNameFromMounts(value: unknown): string | null {
       (entry as Record<string, unknown>).Destination === "/sandbox",
   ) as Array<Record<string, unknown>>;
   const mount = mounts.length === 1 ? mounts[0] : undefined;
-  return mount?.Type === "volume" &&
-    mount.RW === true &&
+  if (mount?.RW !== true) return null;
+  if (
+    mount.Type === "volume" &&
     typeof mount.Name === "string" &&
     VOLUME_NAME_RE.test(mount.Name)
-    ? mount.Name
-    : null;
+  ) {
+    return { type: "volume", source: mount.Name };
+  }
+  if (
+    mount.Type === "bind" &&
+    typeof mount.Source === "string" &&
+    path.isAbsolute(mount.Source) &&
+    path.normalize(mount.Source) === mount.Source &&
+    mount.Source !== path.parse(mount.Source).root &&
+    mount.Source.length <= 4096 &&
+    !/[\u0000-\u001f\u007f]/u.test(mount.Source)
+  ) {
+    return { type: "bind", source: mount.Source };
+  }
+  return null;
+}
+
+function sameStateResource(
+  left: StoppedSandboxStateTarget["stateResource"],
+  right: StoppedSandboxStateTarget["stateResource"],
+): boolean {
+  return left.type === right.type && left.source === right.source;
+}
+
+function stateResourceMount(resource: StoppedSandboxStateTarget["stateResource"]): string {
+  return resource.type === "volume"
+    ? `type=volume,src=${resource.source},dst=/sandbox,volume-nocopy`
+    : `type=bind,src=${resource.source},dst=/sandbox`;
 }
 
 function identity(value: string): string {
@@ -206,11 +239,20 @@ export function clearStoppedSandboxStateWithEngine(
   }
   const name = helperName(sandboxName);
   const owner = identity(sandboxName);
-  const volume = identity(target.sandboxVolumeName);
-  const existing = inspectHelper(engine, name, owner, volume);
+  const stateResourceIdentity = identity(JSON.stringify(target.stateResource));
+  const existing = inspectHelper(engine, name, owner, stateResourceIdentity);
   if (existing.state === "invalid") return failure("cleanup-helper-ownership-invalid", name);
   if (existing.state === "owned" && !removeHelper(engine, existing.id)) {
     return failure("cleanup-helper-reconciliation-failed", name);
+  }
+  const revalidated = engine.observe();
+  if (
+    "failure" in revalidated ||
+    revalidated.target.resourceHandle !== target.resourceHandle ||
+    revalidated.target.running ||
+    !sameStateResource(revalidated.target.stateResource, target.stateResource)
+  ) {
+    return failure("runtime-revalidation-failed");
   }
   const created = engine.capture([
     "create",
@@ -237,9 +279,9 @@ export function clearStoppedSandboxStateWithEngine(
     "--label",
     `${CLEANUP_OWNER_LABEL}=${owner}`,
     "--label",
-    `${CLEANUP_VOLUME_LABEL}=${volume}`,
+    `${CLEANUP_VOLUME_LABEL}=${stateResourceIdentity}`,
     "--mount",
-    `type=volume,src=${target.sandboxVolumeName},dst=/sandbox,volume-nocopy`,
+    stateResourceMount(target.stateResource),
     "--entrypoint",
     "/usr/local/bin/node",
     CLEANUP_IMAGE,
@@ -249,7 +291,7 @@ export function clearStoppedSandboxStateWithEngine(
   ]);
   const helperId = created.stdout.trim();
   if (created.status !== 0 || created.error || !FULL_CONTAINER_ID_RE.test(helperId)) {
-    return reconcileHelper(engine, name, owner, volume)
+    return reconcileHelper(engine, name, owner, stateResourceIdentity)
       ? failure("cleanup-helper-failed")
       : failure("cleanup-helper-reconciliation-failed", name);
   }
@@ -260,7 +302,7 @@ export function clearStoppedSandboxStateWithEngine(
   if (
     "failure" in confirmed ||
     confirmed.target.resourceHandle !== target.resourceHandle ||
-    confirmed.target.sandboxVolumeName !== target.sandboxVolumeName ||
+    !sameStateResource(confirmed.target.stateResource, target.stateResource) ||
     confirmed.target.running
   ) {
     return failure("runtime-revalidation-failed");

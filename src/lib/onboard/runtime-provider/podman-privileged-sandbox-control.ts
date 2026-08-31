@@ -15,7 +15,7 @@ import {
 } from "./privileged-sandbox-control-errors";
 import {
   clearStoppedSandboxStateWithEngine,
-  sandboxVolumeNameFromMounts,
+  sandboxStateResourceFromMounts,
   type StoppedSandboxStateObservation,
 } from "./stopped-sandbox-state-cleanup";
 
@@ -108,13 +108,13 @@ function observeStoppedTarget(
     return { failure: "runtime-discovery-failed" };
   }
   if (!container) return { failure: "no-eligible-stopped-runtime" };
-  const sandboxVolumeName = sandboxVolumeNameFromMounts(container.inspect.Mounts);
-  return sandboxVolumeName
+  const stateResource = sandboxStateResourceFromMounts(container.inspect.Mounts);
+  return stateResource
     ? {
         target: {
           resourceHandle: container.containerId,
           running: container.running,
-          sandboxVolumeName,
+          stateResource,
         },
       }
     : { failure: "state-resource-unavailable" };

@@ -313,6 +313,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Prepare E2E workspace",
     "Restore exact-commit CLI artifact",
     "Prepare native Podman E2E runtime",
+    "Stage immutable stopped-state cleanup helper",
     "Materialize temporary managed-image catalog",
     "Install reviewed cloudflared",
     "Add swap for Hermes image rebuild",
@@ -485,6 +486,33 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must prepare the selected native Podman runtime");
   }
+  const stoppedStateHelper = requireStep(
+    errors,
+    workflowSteps,
+    "Stage immutable stopped-state cleanup helper",
+  );
+  const stoppedStateHelperRun = String(stoppedStateHelper?.run ?? "");
+  if (
+    stoppedStateHelper?.if !==
+      "${{ inputs.target_id == 'channels-stop-start' && (inputs.runtime_provider == 'docker' || inputs.runtime_provider == 'podman') }}" ||
+    stoppedStateHelper.shell !== EXECUTION_PLAN_SHELL ||
+    !isDeepStrictEqual(record(stoppedStateHelper.env), {
+      CLEANUP_IMAGE:
+        "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
+      RUNTIME_PROVIDER: "${{ inputs.runtime_provider }}",
+    }) ||
+    !stoppedStateHelperRun.includes('docker pull "$CLEANUP_IMAGE"') ||
+    !stoppedStateHelperRun.includes(
+      'podman --url "unix://$OPENSHELL_PODMAN_SOCKET" pull',
+    ) ||
+    !stoppedStateHelperRun.includes(
+      '--authfile "$DOCKER_CONFIG/config.json" "$CLEANUP_IMAGE"',
+    ) ||
+    workflowSteps.indexOf(stoppedStateHelper ?? {}) !==
+      workflowSteps.indexOf(nativePodmanRuntime ?? {}) + 1
+  ) {
+    errors.push("standard E2E profile must stage the immutable stopped-state helper once");
+  }
   const managedCatalog = requireStep(
     errors,
     workflowSteps,
@@ -508,7 +536,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     managedCatalogRun.includes("NEMOCLAW_E2E_EXACT_RELEASE") ||
     managedCatalogRun.includes(".source.release = $release") ||
     workflowSteps.indexOf(managedCatalog ?? {}) !==
-      workflowSteps.indexOf(nativePodmanRuntime ?? {}) + 1
+      workflowSteps.indexOf(stoppedStateHelper ?? {}) + 1
   ) {
     errors.push(
       "standard E2E profile must materialize only the exact-candidate managed-image catalog",

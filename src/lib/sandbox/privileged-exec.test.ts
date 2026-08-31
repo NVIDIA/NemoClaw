@@ -281,8 +281,8 @@ describe("privileged sandbox exec routing", () => {
     const helperId = "b".repeat(64);
     const mounts = JSON.stringify([
       {
-        Type: "volume",
-        Name: "nemoclaw-alpha-state",
+        Type: "bind",
+        Source: "/var/lib/openshell/sandboxes/alpha",
         Destination: "/sandbox",
         RW: true,
       },
@@ -310,6 +310,12 @@ describe("privileged sandbox exec routing", () => {
         status: 1,
         stdout: "",
         stderr: "Error: No such object: cleanup-helper",
+        error: null,
+      },
+      {
+        status: 0,
+        stdout: `${containerId}\tfalse\t${mounts}\n`,
+        stderr: "",
         error: null,
       },
       {
@@ -351,8 +357,8 @@ describe("privileged sandbox exec routing", () => {
       },
     );
 
-    const helperArgv = runDocker.mock.calls[3]?.[0];
-    expect(runDocker).toHaveBeenCalledTimes(8);
+    const helperArgv = runDocker.mock.calls[4]?.[0];
+    expect(runDocker).toHaveBeenCalledTimes(9);
     expect(helperArgv).toEqual(
       expect.arrayContaining([
         "create",
@@ -364,7 +370,7 @@ describe("privileged sandbox exec routing", () => {
         "--cap-add",
         "DAC_OVERRIDE",
         "--mount",
-        "type=volume,src=nemoclaw-alpha-state,dst=/sandbox,volume-nocopy",
+        "type=bind,src=/var/lib/openshell/sandboxes/alpha,dst=/sandbox",
         PINNED_CLEANUP_IMAGE,
       ]),
     );
@@ -374,8 +380,8 @@ describe("privileged sandbox exec routing", () => {
     expect(helperArgv).not.toContain("/bin/sh");
     expect(helperArgv?.join("\0")).not.toContain("rm -rf");
     expect(helperArgv?.at(-1)).toBe(JSON.stringify(EXPECTED_WECHAT_STATE_PATHS));
-    expect(runDocker.mock.calls[4]?.[0]).toEqual(["start", "--attach", helperId]);
-    expect(runDocker.mock.calls[5]?.[0]).toEqual(["rm", "-f", helperId]);
+    expect(runDocker.mock.calls[5]?.[0]).toEqual(["start", "--attach", helperId]);
+    expect(runDocker.mock.calls[6]?.[0]).toEqual(["rm", "-f", helperId]);
   });
 
   it("deletes only the exact stopped-channel directories", () => {
@@ -587,7 +593,9 @@ describe("privileged sandbox exec routing", () => {
     const helperId = "d".repeat(64);
     const sandboxVolume = "nemoclaw-alpha-state";
     const ownerIdentity = createHash("sha256").update("alpha").digest("hex");
-    const volumeIdentity = createHash("sha256").update(sandboxVolume).digest("hex");
+    const volumeIdentity = createHash("sha256")
+      .update(JSON.stringify({ type: "volume", source: sandboxVolume }))
+      .digest("hex");
     const helperName = `nemoclaw-channel-cleanup-${ownerIdentity.slice(0, 24)}`;
     const mounts = JSON.stringify([
       { Type: "volume", Name: sandboxVolume, Destination: "/sandbox", RW: true },
@@ -702,6 +710,12 @@ describe("privileged sandbox exec routing", () => {
           stderr: "Error: No such object: cleanup-helper",
           error: null,
         },
+        {
+          status: 0,
+          stdout: `${containerId}\tfalse\t${mounts}\n`,
+          stderr: "",
+          error: null,
+        },
         { status: 0, stdout: `${helperId}\n`, stderr: "", error: null },
         { status: startStatus, stdout: "", stderr: "private helper detail", error: null },
         { status: 0, stdout: helperId, stderr: "", error: null },
@@ -731,9 +745,9 @@ describe("privileged sandbox exec routing", () => {
         },
       );
 
-      expect(runDocker.mock.calls[4]?.[0]).toEqual(["start", "--attach", helperId]);
-      expect(runDocker.mock.calls[5]?.[0]).toEqual(["rm", "-f", helperId]);
-      expect(runDocker).toHaveBeenCalledTimes(7);
+      expect(runDocker.mock.calls[5]?.[0]).toEqual(["start", "--attach", helperId]);
+      expect(runDocker.mock.calls[6]?.[0]).toEqual(["rm", "-f", helperId]);
+      expect(runDocker).toHaveBeenCalledTimes(8);
     },
   );
 
