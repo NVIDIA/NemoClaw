@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   executeGatewaySupervisorAction: vi.fn(),
+  getSandbox: vi.fn(),
   isShieldsDown: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
   sleepMs: vi.fn(),
@@ -24,6 +25,11 @@ vi.mock("../../../src/lib/actions/sandbox/process-recovery", () => ({
 vi.mock("../../../src/lib/core/wait", () => ({
   sleepMs: mocks.sleepMs,
   waitUntil: mocks.waitUntil,
+}));
+
+vi.mock("../../../src/lib/state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/state/registry")>()),
+  getSandbox: mocks.getSandbox,
 }));
 
 vi.mock("../../../src/lib/shields", () => ({
@@ -80,6 +86,11 @@ function runHermesProbe(
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.getSandbox.mockReturnValue({
+    agent: "hermes",
+    gatewayName: "nemoclaw-8091",
+    name: "hermes-box",
+  });
 });
 
 const starting: ProbeResult = {
@@ -158,16 +169,19 @@ describe("Hermes managed MCP startup probe", () => {
     "GATEWAY_HEALTH_TIMEOUT",
     "SUPERVISOR_TIMEOUT",
     "SUPERVISOR_BUSY",
-  ])("fails typed managed-recovery integrity refusal %s without another sandbox probe", (marker) => {
-    const result = runHermesProbe([starting, starting, starting, ready], true, [
-      { status: 1, stdout: "", stderr: marker },
-    ]);
+  ])(
+    "fails typed managed-recovery integrity refusal %s without another sandbox probe",
+    (marker) => {
+      const result = runHermesProbe([starting, starting, starting, ready], true, [
+        { status: 1, stdout: "", stderr: marker },
+      ]);
 
-    expect(result.calls).toBe(3);
-    expect(result.recoveryActions).toEqual([{ action: "recover", timeout: 210_000 }]);
-    expect(result.message).toContain("managed gateway recovery failed before MCP mutation");
-    expect(result.message).toContain(marker);
-  });
+      expect(result.calls).toBe(3);
+      expect(result.recoveryActions).toEqual([{ action: "recover", timeout: 210_000 }]);
+      expect(result.message).toContain("managed gateway recovery failed before MCP mutation");
+      expect(result.message).toContain(marker);
+    },
+  );
 
   it.each([
     {
