@@ -251,7 +251,8 @@ describe("created sandbox identity gate", () => {
     expect(recoveryOutput).toContain(
       "Give the create-attempt label above to an OpenShell administrator",
     );
-    expect(recoveryOutput).toContain("run `nemohermes alpha destroy --yes`");
+    expect(recoveryOutput).not.toContain("destroy --yes");
+    expect(recoveryOutput).not.toContain("After OpenShell confirms the sandbox is absent");
   });
 
   it("resumes the exact verified sandbox without issuing another create (#9833)", async () => {

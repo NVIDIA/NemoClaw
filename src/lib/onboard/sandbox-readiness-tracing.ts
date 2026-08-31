@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { waitUntil } from "../core/wait";
-import { envInt } from "./env";
 import {
   createReadinessWaitOptions,
   formatReadinessDeadline,
@@ -11,8 +10,6 @@ import {
 import { addTraceEvent, withDashboardReadinessTrace, withSandboxReadinessTrace } from "./tracing";
 
 type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string;
-
-export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE";
 
 /*
  * OpenShell can briefly report Error while it registers a new sandbox.
@@ -24,15 +21,6 @@ export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DE
  * (#6043).
  */
 const SANDBOX_READY_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS = 30;
-
-export function getSandboxReadyErrorDebouncePolls(
-  env: Record<string, string | undefined> = process.env,
-): number {
-  return Math.max(
-    1,
-    envInt(SANDBOX_READY_ERROR_DEBOUNCE_ENV, SANDBOX_READY_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS, env),
-  );
-}
 
 export type CreatedSandboxReadinessResult =
   | { ready: true; reason: "ready"; failurePhase: null }
@@ -153,8 +141,8 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
   isSandboxReady: (output: string, sandboxName: string) => boolean;
   /**
    * Optional terminal-failure-phase classifier. Failed and CrashLoopBackOff
-   * stop the wait immediately. Error stops it after the configured number of
-   * consecutive Error observations (#4316).
+   * stop the wait immediately. Error stops it after the fixed bounded number
+   * of consecutive Error observations (#4316).
    */
   getSandboxFailurePhase?: (output: string, sandboxName: string) => string | null;
   /**
@@ -174,26 +162,6 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
    * terminal.
    */
   checkReadyIdentity?: CreatedSandboxReadyIdentityCheck;
-  /**
-   * Consecutive Error-phase polls required before the wait treats the phase as
-   * terminal. Defaults to {@link getSandboxReadyErrorDebouncePolls} (30 polls).
-   *
-   * Trade-off: on a fresh create — the path this waiter guards — a healthy
-   * sandbox that briefly transits Error costs nothing (it flips to Ready and
-   * the wait returns on that poll), while a genuinely stuck Error is reported
-   * after the configured number of observations. The default is deliberately
-   * conservative rather than tuned to the shortest observed transient: the
-   * re-registration window scales with host/gateway speed (slower on
-   * ARM64/DGX-class hosts), so a too-low default risks re-introducing #6043.
-   * The readiness deadline still bounds the wait; operators who want fewer
-   * observations set NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE.
-   *
-   * Fractional values are rounded (Math.round), matching the env-var path's
-   * envInt rounding for one consistent rule across both entry points. Pass 1 to
-   * restore the original fast-fail-on-first-Error behavior (used by callers
-   * that have already ruled out the transient supervisor-reconnect race).
-   */
-  errorPhaseDebouncePolls?: number;
   sleep: (seconds: number) => void;
   now?: () => number;
 }): CreatedSandboxReadinessResult {
@@ -206,12 +174,6 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
     getSandboxFailurePhase,
     sleep,
   } = options;
-  const errorPhaseDebouncePolls =
-    options.errorPhaseDebouncePolls == null || !Number.isFinite(options.errorPhaseDebouncePolls)
-      ? getSandboxReadyErrorDebouncePolls()
-      : // Round (not truncate) so a fractional override matches the env-var
-        // path's envInt rounding — one consistent rule for both entry points.
-        Math.max(1, Math.round(options.errorPhaseDebouncePolls));
   const stableReadyPolls =
     options.stableReadyPolls == null || !Number.isFinite(options.stableReadyPolls)
       ? 1
@@ -306,7 +268,7 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
         lastFailurePhase = failurePhase;
         // Sustained Error is terminal; a transient Error while the gateway
         // re-registers the sandbox recovers on a later poll (#6043).
-        if (consecutiveFailurePolls >= errorPhaseDebouncePolls) {
+        if (consecutiveFailurePolls >= SANDBOX_READY_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS) {
           addTraceEvent("terminal_failure_phase", {
             attempt,
             failure_phase: failurePhase,
@@ -319,7 +281,7 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
           attempt,
           failure_phase: failurePhase,
           consecutive_polls: consecutiveFailurePolls,
-          debounce_polls: errorPhaseDebouncePolls,
+          debounce_polls: SANDBOX_READY_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS,
         });
       } else {
         consecutiveFailurePolls = 0;
@@ -328,8 +290,8 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
     }, waitOptions);
     if (result) return result;
     // If the sandbox is still in Error on the final poll, surface the terminal
-    // phase instead of a generic timeout. This happens when the configured
-    // debounce window is larger than the readiness timeout allows (e.g. a low
+    // phase instead of a generic timeout. This happens when the fixed debounce
+    // window is larger than the readiness timeout allows (e.g. a low
     // NEMOCLAW_SANDBOX_READY_TIMEOUT with the default 30-poll debounce), so a
     // genuinely stuck Error would otherwise be misreported as "did not become
     // ready" and drop the phase (#6043 review).
@@ -338,7 +300,7 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
         attempts: attempt,
         failure_phase: lastFailurePhase,
         consecutive_polls: consecutiveFailurePolls,
-        debounce_polls: errorPhaseDebouncePolls,
+        debounce_polls: SANDBOX_READY_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS,
         note: "debounce_window_exceeded_timeout",
       });
       return { ready: false, reason: "terminal_failure_phase", failurePhase: lastFailurePhase };
