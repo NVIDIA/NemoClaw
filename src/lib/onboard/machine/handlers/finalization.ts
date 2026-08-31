@@ -147,6 +147,18 @@ function selectedAgentName(agent: unknown): string | null {
   return typeof name === "string" && name.trim() === name && name ? name : null;
 }
 
+function requiresOrdinaryOpenClawPairing(
+  portableAgent: PortableAgentDisposition,
+  agent: unknown,
+): boolean {
+  // Rebuild recreates the container from the image, which wipes the
+  // machine-local pairing state (`identity` and `devices` are declared
+  // `backup: false` and removed on destroy). Both finalization phases must
+  // therefore apply the same pairing gate to rebuild and fresh onboarding
+  // (#10479).
+  return portableAgent === "ordinary" && selectedAgentName(agent) === "openclaw";
+}
+
 function logTerminalReadyBlock(
   sandboxName: string,
   agent: unknown,
@@ -192,12 +204,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     portableProfileSelected,
     deps.readRegistryAgent,
   );
-  // Rebuild recreates the container from the image, which wipes the
-  // machine-local pairing state (`identity` and `devices` are declared
-  // `backup: false` and removed on destroy), so the pairing gate must run on
-  // rebuild handoff exactly as on fresh onboarding (#10479).
-  const ordinaryOpenClawPairingRequired =
-    portableAgent === "ordinary" && selectedAgentName(agent) === "openclaw";
+  const ordinaryOpenClawPairingRequired = requiresOrdinaryOpenClawPairing(portableAgent, agent);
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).
   deps.setDefaultSandbox(sandboxName);
@@ -264,12 +271,7 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     portableProfileSelected,
     deps.readRegistryAgent,
   );
-  // Rebuild recreates the container from the image, which wipes the
-  // machine-local pairing state (`identity` and `devices` are declared
-  // `backup: false` and removed on destroy), so the pairing gate must run on
-  // rebuild handoff exactly as on fresh onboarding (#10479).
-  const ordinaryOpenClawPairingRequired =
-    portableAgent === "ordinary" && selectedAgentName(agent) === "openclaw";
+  const ordinaryOpenClawPairingRequired = requiresOrdinaryOpenClawPairing(portableAgent, agent);
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
   if (portableAgent !== "ordinary") {
