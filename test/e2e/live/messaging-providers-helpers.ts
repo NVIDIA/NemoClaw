@@ -525,14 +525,25 @@ export function slackCredentialBindingEvidence(
   const appEndpoint = endpoints.find(
     (endpoint) => endpoint.host === "slack.com" && endpoint.path === "/api/apps.connections.open",
   );
+  const hasUnexpectedSlackRestEndpoint = endpoints.some(
+    (endpoint) =>
+      endpoint.host === "slack.com" &&
+      endpoint.protocol === "rest" &&
+      endpoint !== botEndpoint &&
+      endpoint !== appEndpoint,
+  );
   return {
-    app: isCredentialBoundSlackRestEndpoint(appEndpoint, `${sandboxName}-slack-app`, [
-      { method: "POST", path: "/api/apps.connections.open" },
-    ]),
-    bot: isCredentialBoundSlackRestEndpoint(botEndpoint, `${sandboxName}-slack-bridge`, [
-      { method: "GET", path: "/**" },
-      { method: "POST", path: "/**" },
-    ]),
+    app:
+      !hasUnexpectedSlackRestEndpoint &&
+      isCredentialBoundSlackRestEndpoint(appEndpoint, `${sandboxName}-slack-app`, [
+        { method: "POST", path: "/api/apps.connections.open" },
+      ]),
+    bot:
+      !hasUnexpectedSlackRestEndpoint &&
+      isCredentialBoundSlackRestEndpoint(botEndpoint, `${sandboxName}-slack-bridge`, [
+        { method: "GET", path: "/**" },
+        { method: "POST", path: "/**" },
+      ]),
   };
 }
 

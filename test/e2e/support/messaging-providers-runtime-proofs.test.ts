@@ -119,6 +119,22 @@ network_policies:
     });
   });
 
+  it("rejects an extra unbound broad Slack REST endpoint", () => {
+    const policy = `${CREDENTIAL_BOUND_SLACK_POLICY}      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+`;
+
+    expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
+      app: false,
+      bot: false,
+    });
+  });
+
   it("uses a synthetic WeChat token even when the host exports one", () => {
     const previousToken = process.env.WECHAT_BOT_TOKEN;
     process.env.WECHAT_BOT_TOKEN = "host-wechat-token-must-not-reach-the-fake-api";
