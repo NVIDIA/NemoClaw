@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -412,38 +414,169 @@ describe("managed vLLM GPU memory preflight", () => {
     );
   });
 
-  it.each([
-    ["N1x", "n1x"],
-    ["DGX Spark", "spark"],
-  ] as const)(
-    "continues on qualified %s unified memory when both fields are [N/A] (#10082)",
-    async (_platformName, platform) => {
-      const profile = detectVllmProfile({ platform })!;
-      mockHostCommands({
-        computeCap: "12.1\n",
-        gpuMemory: "0, GPU-69adb14e-820e-bfb4-0993-171e73f68504, [N/A], [N/A]\n",
-      });
-      mockDockerDaemon(profile.containerName);
+  it("continues on qualified DGX Spark unified memory when both fields are [N/A]", async () => {
+    const profile = detectVllmProfile({ platform: "spark" })!;
+    mockHostCommands({
+      computeCap: "12.1\n",
+      gpuMemory: "0, GPU-69adb14e-820e-bfb4-0993-171e73f68504, [N/A], [N/A]\n",
+    });
+    mockDockerDaemon(profile.containerName);
 
-      const result = await installVllm(profile, {
-        hasImage: false,
-        nonInteractive: true,
-        promptFn: vi.fn(),
-      });
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
 
-      expect(result).toEqual({ ok: true });
-      expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledOnce();
-      expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
-      const warnings = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
-      expect(warnings).toContain("reports [N/A] for both total and free memory");
-      expect(warnings).toContain("without inferring available memory");
+    expect(result).toEqual({ ok: true });
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledOnce();
+    expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
+    const warnings = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    expect(warnings).toContain("reports [N/A] for both total and free memory");
+    expect(warnings).toContain("without inferring available memory");
+    expect(
+      errSpy.mock.calls.filter((call: unknown[]) =>
+        String(call[0]).includes("reports [N/A] for both total and free memory"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("continues on N1x when host-available memory meets the recipe minimum", async () => {
+    const profile = detectVllmProfile({ platform: "n1x" })!;
+    const readHostAvailableMemoryBytes = vi.fn(() => 100_000_000_000n);
+    mockHostCommands({
+      computeCap: "12.1\n",
+      gpuMemory: "0, GPU-69adb14e-820e-bfb4-0993-171e73f68504, [N/A], [N/A]\n",
+    });
+    mockDockerDaemon(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      readHostAvailableMemoryBytes,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(readHostAvailableMemoryBytes).toHaveBeenCalledTimes(2);
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledOnce();
+    expect(mocks.dockerRunDetached).toHaveBeenCalledOnce();
+    const warnings = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    expect(warnings).toContain("host-available shared memory");
+    expect(warnings).toContain("recipe minimum");
+    expect(
+      errSpy.mock.calls.filter((call: unknown[]) =>
+        String(call[0]).includes("reports [N/A] for both total and free memory"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("reads Linux MemAvailable for the N1x fallback", () => {
+    const detected = detectVllmProfile({ platform: "n1x" })!;
+    const resolved = resolveVllmModelRuntime(detected, detected.defaultModel, "arm64");
+    const readFileSync = vi
+      .spyOn(fs, "readFileSync")
+      .mockReturnValue("MemTotal: 97656250 kB\nMemAvailable: 78125000 kB\n");
+
+    try {
       expect(
-        errSpy.mock.calls.filter((call: unknown[]) =>
-          String(call[0]).includes("reports [N/A] for both total and free memory"),
-        ),
-      ).toHaveLength(1);
-    },
-  );
+        gpuMemoryPreflight(resolved.model, resolved.profile, [
+          {
+            index: 0,
+            uuid: "GPU-69adb14e-820e-bfb4-0993-171e73f68504",
+            totalBytes: null,
+            freeBytes: null,
+          },
+        ]),
+      ).toEqual({
+        ok: true,
+        warning: expect.stringContaining("74.5 GiB of host-available shared memory"),
+      });
+      expect(readFileSync).toHaveBeenCalledWith("/proc/meminfo", "utf8");
+    } finally {
+      readFileSync.mockRestore();
+    }
+  });
+
+  it("stops before downloads when N1x host-available memory is insufficient", async () => {
+    const profile = detectVllmProfile({ platform: "n1x" })!;
+    const readHostAvailableMemoryBytes = vi.fn(() => 40_000_000_000n);
+    mockHostCommands({
+      computeCap: "12.1\n",
+      gpuMemory: "0, GPU-69adb14e-820e-bfb4-0993-171e73f68504, [N/A], [N/A]\n",
+    });
+    mockDockerDaemon(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      readHostAvailableMemoryBytes,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(readHostAvailableMemoryBytes).toHaveBeenCalledOnce();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    expect(errors).toContain("requires at least 59.6 GiB available");
+    expect(errors).toContain("only 37.3 GiB is available");
+    expect(errors).toContain("current N1x recipe cannot start safely");
+  });
+
+  it("stops before downloads when N1x host-available memory is unknown", async () => {
+    const profile = detectVllmProfile({ platform: "n1x" })!;
+    const readHostAvailableMemoryBytes = vi.fn(() => null);
+    mockHostCommands({
+      computeCap: "12.1\n",
+      gpuMemory: "0, GPU-69adb14e-820e-bfb4-0993-171e73f68504, [N/A], [N/A]\n",
+    });
+    mockDockerDaemon(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      readHostAvailableMemoryBytes,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(readHostAvailableMemoryBytes).toHaveBeenCalledOnce();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("could not read MemAvailable from /proc/meminfo"),
+    );
+  });
+
+  it("rechecks N1x host-available memory immediately before launch", async () => {
+    const profile = detectVllmProfile({ platform: "n1x" })!;
+    const readHostAvailableMemoryBytes = vi
+      .fn<() => bigint | null>()
+      .mockReturnValueOnce(100_000_000_000n)
+      .mockReturnValueOnce(40_000_000_000n);
+    mockHostCommands({
+      computeCap: "12.1\n",
+      gpuMemory: "0, GPU-69adb14e-820e-bfb4-0993-171e73f68504, [N/A], [N/A]\n",
+    });
+    mockDockerDaemon(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      readHostAvailableMemoryBytes,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(readHostAvailableMemoryBytes).toHaveBeenCalledTimes(2);
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledOnce();
+    expect(mocks.dockerSpawn).toHaveBeenCalledOnce();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("only 37.3 GiB is available"));
+  });
 
   it("checks the first GPU selected by Docker instead of aggregating every device", () => {
     const detected = detectVllmProfile({ type: "nvidia" })!;

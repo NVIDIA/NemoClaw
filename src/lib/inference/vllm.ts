@@ -549,6 +549,15 @@ export function readGpuMemoryDevices(): GpuMemoryDevice[] {
   return devices;
 }
 
+function readHostAvailableMemoryBytes(): bigint | null {
+  try {
+    const match = /^MemAvailable:\s+(\d+)\s+kB$/mu.exec(fs.readFileSync("/proc/meminfo", "utf8"));
+    return match ? BigInt(match[1]!) * 1024n : null;
+  } catch {
+    return null;
+  }
+}
+
 function profileGpuRequest(profile: VllmProfile): string | null {
   let flags: readonly string[];
   try {
@@ -586,6 +595,7 @@ export function gpuMemoryPreflight(
   model: VllmModelDef,
   profile: VllmProfile,
   devices: readonly GpuMemoryDevice[] = readGpuMemoryDevices(),
+  readHostAvailableMemoryBytesImpl: () => bigint | null = readHostAvailableMemoryBytes,
 ): GpuMemoryPreflightResult {
   const utilization = profile.gpuMemoryUtilization;
   if (utilization === undefined) return { ok: true };
@@ -616,11 +626,44 @@ export function gpuMemoryPreflight(
     };
   }
   if (device.totalBytes === null || device.freeBytes === null) {
-    if (
-      device.totalBytes === null &&
-      device.freeBytes === null &&
-      (profile.platform === "n1x" || profile.platform === "spark")
-    ) {
+    if (device.totalBytes === null && device.freeBytes === null && profile.platform === "n1x") {
+      const minimumBytes = profile.minGpuMemoryBytes;
+      if (minimumBytes === undefined) {
+        return {
+          ok: false,
+          reason: `${model.label} has no minimum unified-memory capacity for N1x. Select a validated inference configuration, then resume onboarding.`,
+        };
+      }
+      const availableBytes = readHostAvailableMemoryBytesImpl();
+      if (availableBytes === null) {
+        return {
+          ok: false,
+          reason:
+            `${profile.name} GPU ${String(device.index)} (${device.uuid}) reports [N/A] for both total and free memory, ` +
+            "and NemoClaw could not read MemAvailable from /proc/meminfo. Verify host memory telemetry, then resume onboarding.",
+        };
+      }
+      const requiredBytes = BigInt(minimumBytes);
+      if (availableBytes < requiredBytes) {
+        const missingBytes = requiredBytes - availableBytes;
+        return {
+          ok: false,
+          reason:
+            `${model.label} requires at least ${formatStorageBytes(requiredBytes)} available in the N1x shared CPU/GPU memory pool, ` +
+            `but only ${formatStorageBytes(availableBytes)} is available. Stop other workloads to free at least ` +
+            `${formatStorageBytes(missingBytes)}, then resume onboarding. If this host cannot expose the required available memory, ` +
+            "the current N1x recipe cannot start safely.",
+        };
+      }
+      return {
+        ok: true,
+        warning:
+          `${profile.name} GPU ${String(device.index)} (${device.uuid}) reports [N/A] for both total and free memory. ` +
+          `NemoClaw verified ${formatStorageBytes(availableBytes)} of host-available shared memory against the ` +
+          `${formatStorageBytes(requiredBytes)} recipe minimum.`,
+      };
+    }
+    if (device.totalBytes === null && device.freeBytes === null && profile.platform === "spark") {
       return {
         ok: true,
         warning:
@@ -653,8 +696,16 @@ function installGpuMemoryPreflight(
   model: VllmModelDef,
   profile: VllmProfile,
   dualStationPlan: DualStationVllmPlan | null,
+  readHostAvailableMemoryBytesImpl: () => bigint | null = readHostAvailableMemoryBytes,
 ): GpuMemoryPreflightResult {
-  if (!dualStationPlan) return gpuMemoryPreflight(model, profile);
+  if (!dualStationPlan) {
+    return gpuMemoryPreflight(
+      model,
+      profile,
+      readGpuMemoryDevices(),
+      readHostAvailableMemoryBytesImpl,
+    );
+  }
   const utilization = profile.gpuMemoryUtilization;
   if (utilization === undefined) return { ok: true };
   for (const node of [dualStationPlan.local, dualStationPlan.peer]) {
@@ -1832,6 +1883,7 @@ export interface InstallVllmOptions {
   resolveManagedBridgeHost?: (dockerEnv: Record<string, string>) => string;
   /** Reuse an already-collected readiness snapshot instead of probing the host again. */
   readinessReports?: readonly ManagedInferenceReadinessSource[];
+  readHostAvailableMemoryBytes?: () => bigint | null;
   /**
    * Injected rather than imported so this module does not take a dependency on
    * the onboard preflight layer. onboard.ts supplies the same probe the gateway
@@ -2371,7 +2423,12 @@ async function runVllmInstall(
     return { ok: false };
   }
 
-  const memory = installGpuMemoryPreflight(model, runtimeProfile, dualStationPlan);
+  const memory = installGpuMemoryPreflight(
+    model,
+    runtimeProfile,
+    dualStationPlan,
+    opts.readHostAvailableMemoryBytes,
+  );
   reportGpuMemoryWarning(memory);
   if (!memory.ok) {
     console.error(`  vLLM install failed: ${memory.reason}`);
@@ -2497,7 +2554,12 @@ async function runVllmInstall(
             reason: "peer pinned model snapshot was not verified after staging.",
           };
         }
-        const memory = installGpuMemoryPreflight(model, runtimeProfile, refreshedCapability.plan);
+        const memory = installGpuMemoryPreflight(
+          model,
+          runtimeProfile,
+          refreshedCapability.plan,
+          opts.readHostAvailableMemoryBytes,
+        );
         if (!memory.ok) return { ok: false as const, reason: memory.reason };
         return { ok: true as const, plan: refreshedCapability.plan };
       });
@@ -2540,7 +2602,12 @@ async function runVllmInstall(
           return { ok: false };
         }
         const launchPlan = launchCapability.plan;
-        const launchMemory = installGpuMemoryPreflight(model, runtimeProfile, launchPlan);
+        const launchMemory = installGpuMemoryPreflight(
+          model,
+          runtimeProfile,
+          launchPlan,
+          opts.readHostAvailableMemoryBytes,
+        );
         if (!launchMemory.ok) {
           console.error(`  vLLM install failed: ${launchMemory.reason}`);
           return { ok: false };
@@ -2658,7 +2725,12 @@ async function runVllmInstall(
     }
   }
 
-  const launchMemory = installGpuMemoryPreflight(model, runtimeProfile, null);
+  const launchMemory = installGpuMemoryPreflight(
+    model,
+    runtimeProfile,
+    null,
+    opts.readHostAvailableMemoryBytes,
+  );
   reportGpuMemoryWarning(launchMemory);
   if (!launchMemory.ok) {
     console.error(`  vLLM install failed: ${launchMemory.reason}`);
