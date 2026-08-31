@@ -55,6 +55,24 @@ const PROTECTED_CREDENTIAL_FIXTURE = JSON.stringify({
   apiKey: INFERENCE_API_KEY,
 });
 
+function expectedCloneRestoreResult(): "managed-clone-rebind-required" | "restored" {
+  const snapshotDirectories = fs
+    .readdirSync(BACKUP_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory());
+  if (snapshotDirectories.length !== 1) {
+    throw new Error(`expected one created snapshot, found ${String(snapshotDirectories.length)}`);
+  }
+  const manifest = JSON.parse(
+    fs.readFileSync(
+      path.join(BACKUP_DIR, snapshotDirectories[0].name, "rebuild-manifest.json"),
+      "utf8",
+    ),
+  ) as { workload?: { kind?: unknown } };
+  return manifest.workload?.kind === "managed-image"
+    ? "managed-clone-rebind-required"
+    : "restored";
+}
+
 function commandEnv(
   inference?: SnapshotInferenceFixture,
   sandboxName = SANDBOX_NAME,
@@ -370,6 +388,7 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
       leakedFiles: credentialLeaks,
     });
     expect(credentialLeaks).toEqual([]);
+    const requiredCloneRestoreResult = expectedCloneRestoreResult();
 
     progress.phase("destroy, freshly onboard, and restore workspace state");
     const destroySource = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
@@ -457,7 +476,7 @@ printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}`,
       },
     );
     const cloneRestoreResult = classifySnapshotRestoreResult(cloneRestore);
-    expect(["restored", "managed-clone-rebind-required"]).toContain(cloneRestoreResult);
+    expect(cloneRestoreResult).toBe(requiredCloneRestoreResult);
     progress.phase("verify the restored clone state and gateway pairing");
     switch (cloneRestoreResult) {
       case "managed-clone-rebind-required": {
