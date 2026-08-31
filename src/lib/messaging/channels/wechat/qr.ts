@@ -94,7 +94,7 @@ export interface WechatQrClientOptions {
   timeoutMs?: number;
 }
 
-const WECHAT_QR_BOOTSTRAP_TIMEOUT_MS = 10_000;
+export const WECHAT_QR_BOOTSTRAP_TIMEOUT_MS = 10_000;
 export const WECHAT_ILINK_MAX_RESPONSE_BYTES = 64 * 1024;
 
 const KNOWN_WECHAT_QR_STATUSES: ReadonlySet<WechatQrStatus> = new Set([

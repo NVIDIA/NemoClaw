@@ -50,6 +50,29 @@ const noopRender = (): void => {};
 const noopLog = (): void => {};
 const fastSleep = async (): Promise<void> => {};
 
+function pendingBodyResponse(
+  markBodyStarted: () => void,
+): (init?: Parameters<FetchLike>[1]) => ReturnType<FetchLike> {
+  return async (init) => ({
+    ok: true,
+    status: 200,
+    text: async () => {
+      markBodyStarted();
+      return await new Promise<string>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => {
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          },
+          { once: true },
+        );
+      });
+    },
+  });
+}
+
 afterEach(() => vi.useRealTimers());
 
 describe("runWechatHostQrLogin", () => {
@@ -297,24 +320,7 @@ describe("runWechatHostQrLogin", () => {
         status: 200,
         text: async () => JSON.stringify({ qrcode: "q", qrcode_img_content: "u" }),
       }),
-      async (init) => ({
-        ok: true,
-        status: 200,
-        text: async () => {
-          markBodyStarted();
-          return await new Promise<string>((_resolve, reject) => {
-            init?.signal?.addEventListener(
-              "abort",
-              () => {
-                const error = new Error("aborted");
-                error.name = "AbortError";
-                reject(error);
-              },
-              { once: true },
-            );
-          });
-        },
-      }),
+      pendingBodyResponse(markBodyStarted),
       async () => ({
         ok: true,
         status: 200,
@@ -345,6 +351,56 @@ describe("runWechatHostQrLogin", () => {
 
     await expect(login).resolves.toMatchObject({ kind: "ok" });
     expect(calls.filter(isStatus)).toHaveLength(2);
+  });
+
+  it("bounds a pending bootstrap body by the total login deadline (#10606)", async () => {
+    vi.useFakeTimers();
+    let markBodyStarted = () => {};
+    const bodyStarted = new Promise<void>((resolve) => {
+      markBodyStarted = resolve;
+    });
+    const fetch: FetchLike = async (_url, init) => await pendingBodyResponse(markBodyStarted)(init);
+
+    const login = runWechatHostQrLogin({
+      fetch,
+      renderQr: noopRender,
+      log: noopLog,
+      sleep: fastSleep,
+      totalTimeoutMs: 1_000,
+    });
+    await bodyStarted;
+    const resolved = expect(login).resolves.toEqual({ kind: "timeout" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await resolved;
+  });
+
+  it("bounds a pending poll body by the remaining login deadline (#10606)", async () => {
+    vi.useFakeTimers();
+    let markBodyStarted = () => {};
+    const bodyStarted = new Promise<void>((resolve) => {
+      markBodyStarted = resolve;
+    });
+    const responses: Array<(init?: Parameters<FetchLike>[1]) => ReturnType<FetchLike>> = [
+      async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ qrcode: "q", qrcode_img_content: "u" }),
+      }),
+      pendingBodyResponse(markBodyStarted),
+    ];
+    const fetch: FetchLike = async (_url, init) => await responses.shift()!(init);
+
+    const login = runWechatHostQrLogin({
+      fetch,
+      renderQr: noopRender,
+      log: noopLog,
+      sleep: fastSleep,
+      totalTimeoutMs: 1_000,
+    });
+    await bodyStarted;
+    const resolved = expect(login).resolves.toEqual({ kind: "timeout" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await resolved;
   });
 
   it("returns kind=aborted when an external signal fires before the first poll", async () => {
