@@ -14,6 +14,7 @@ import {
   createBuiltInChannelManifestRegistry,
   createBuiltInMessagingHookRegistry,
   createBuiltInRenderTemplateResolver,
+  loadMessagingChannelPolicyPreset,
   MessagingWorkflowPlanner,
   type SandboxMessagingPlan,
 } from "../../messaging";
@@ -90,7 +91,12 @@ describe("rebuild policy provider handoff", () => {
     "preserves the QR-captured exact WeChat IDC endpoint through %s persistence and rebuild (#10606)",
     async (agent) => {
       const sandboxName = `rebuild-${agent}`;
-      const livePolicyPath = tempPolicy("version: 1\nnetwork_policies: {}\n");
+      const legacyWechatPolicy = loadMessagingChannelPolicyPreset("wechat", {
+        agent,
+        sandboxName,
+      });
+      assert(legacyWechatPolicy);
+      const livePolicyPath = tempPolicy(legacyWechatPolicy);
       const planner = new MessagingWorkflowPlanner(
         createBuiltInChannelManifestRegistry(),
         createBuiltInMessagingHookRegistry({

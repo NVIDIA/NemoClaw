@@ -6,7 +6,8 @@
 # OpenClaw and Hermes use separate policy files for their agent-specific
 # binaries. Both files authorize the same iLink host and request contract.
 #
-# OpenShell's SSRF engine matches `host:` as a literal string. NemoClaw clones
+# OpenShell's server-side request forgery (SSRF) engine matches `host:` as a
+# literal string. NemoClaw clones
 # the reviewed ilinkai.wechat.com endpoint for the exact validated IDC origin
 # returned during QR login; no wildcard or arbitrary operator host is allowed.
 #
