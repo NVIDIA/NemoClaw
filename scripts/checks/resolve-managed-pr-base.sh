@@ -103,7 +103,8 @@ if [ "$diff_status" -eq 1 ]; then
     "${BASE_REPOSITORY}@${local_base_oci_digest}" \
     "$LOCAL_BASE_REFERENCE" \
     "$CANDIDATE_SHA"
-  printf "### %s PR base\n\nLocally built from $(%s) at $(%s).\n" \
+  # shellcheck disable=SC2016 # backticks are literal Markdown delimiters.
+  printf '### %s PR base\n\nLocally built from `%s` at `%s`.\n' \
     "$DISPLAY_NAME" "$BASE_DOCKERFILE" "$CANDIDATE_SHA" \
     >>"$GITHUB_STEP_SUMMARY"
   exit 0
@@ -149,5 +150,6 @@ fi
   printf 'local=false\n'
 } >>"$GITHUB_OUTPUT"
 write_dcode_resolution "$reference" "$reference" ""
-printf "### %s PR base\n\n$(%s)\n" "$DISPLAY_NAME" "$reference" \
+# shellcheck disable=SC2016 # backticks are literal Markdown delimiters.
+printf '### %s PR base\n\n`%s`\n' "$DISPLAY_NAME" "$reference" \
   >>"$GITHUB_STEP_SUMMARY"

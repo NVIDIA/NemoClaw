@@ -100,6 +100,9 @@ exit 90
     );
     expect(dockerCommands).toContain(`load --input ${temporaryRoot}/pr-base.docker.tar`);
     expect(dockerCommands).not.toContain("imagetools inspect");
+    expect(fs.readFileSync(summary, "utf8")).toContain(
+      `Locally built from \`Dockerfile.base\` at \`${candidateSha}\`.`,
+    );
 
     const invalidRevision = spawnSync(resolver, [], {
       cwd: temporaryRoot,
