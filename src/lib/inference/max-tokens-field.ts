@@ -3,8 +3,8 @@
 
 /**
  * Resolves how an inference probe states its reply budget: the OpenAI-compatible
- * Chat Completions field name for a given model, and the smallest reply budget
- * every probe may request.
+ * Chat Completions field name for a given model, and the reply budget for a
+ * provider.
  *
  * OpenAI's GPT-5 family and the reasoning-model series (o1/o3/o4) reject the
  * legacy `max_tokens` parameter on `/chat/completions` and require
