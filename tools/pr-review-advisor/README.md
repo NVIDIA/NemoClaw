@@ -174,7 +174,8 @@ Prerequisites:
 - `git`, `openshell`, `openshell-gateway`, `openshell-sandbox`, `rg`, and `fdfind` available on `PATH`;
 - `PR_REVIEW_ADVISOR_API_KEY` exported in the host environment for the existing advisor provider.
   The local gateway receives this credential. The sandbox does not receive it. The variable remains
-  in the caller environment until you clear it. The command removes the local gateway after the run.
+  in the caller environment until you clear it. The command attempts to remove the local gateway after
+  the run. If cleanup fails, it reports the remaining resource; remove that resource before retrying.
 
 `npm run dev:doctor` checks general contributor readiness. It does not check these local-review
 executables, the advisor credential, or the `origin/main` ref.

@@ -60,12 +60,11 @@ function failure(stage: string, env: NodeJS.ProcessEnv, cause: unknown): Error {
 export async function runAdvisorSpecialist(input: {
   env: NodeJS.ProcessEnv;
   lifecycle?: AdvisorSpecialistLifecycle;
-  unavailableIsSuccess?: boolean;
   prepare?: boolean;
   validate?: () => void;
   setActiveCleanup?: (cleanup: (() => Promise<void>) | undefined) => void;
   cancelled?: () => boolean;
-}): Promise<"complete" | "unavailable" | "cancelled"> {
+}): Promise<"complete" | "cancelled"> {
   const lifecycle = input.lifecycle ?? defaultAdvisorSpecialistLifecycle;
   let gateway: ReturnType<AdvisorSpecialistLifecycle["startGateway"]>;
   let sandbox = false;
@@ -113,20 +112,15 @@ export async function runAdvisorSpecialist(input: {
       }));
   let primary: Error | undefined;
   let cleanupError: unknown;
-  let result: "complete" | "unavailable" | "cancelled" = "complete";
+  let result: "complete" | "cancelled" = "complete";
   try {
     if (input.prepare !== false) await lifecycle.prepare(input.env);
     if (input.cancelled?.()) result = "cancelled";
     stage = "configure";
     if (result === "complete") gateway = lifecycle.startGateway(input.env);
     input.setActiveCleanup?.(cleanup);
-    try {
-      await gateway?.configure;
-      if (input.cancelled?.()) result = "cancelled";
-    } catch (error) {
-      if (input.unavailableIsSuccess) result = "unavailable";
-      else throw error;
-    }
+    await gateway?.configure;
+    if (input.cancelled?.()) result = "cancelled";
     if (result === "complete") {
       stage = "create";
       sandbox = true;

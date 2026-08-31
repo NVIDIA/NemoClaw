@@ -33,6 +33,7 @@ import {
 } from "../../../tools/pr-review-advisor/openshell.mts";
 import {
   publishSpecialistJobSummary,
+  runAdvisorSpecialist,
   runAdvisorSpecialistCommand,
   type AdvisorSpecialistLifecycle,
 } from "../../../tools/pr-review-advisor/specialist-lifecycle.mts";
@@ -173,6 +174,104 @@ describe("PR review advisor specialist lifecycle", () => {
     );
 
     expect(calls).toEqual(["create", "run", "download", "remove"]);
+  });
+
+  it.each([
+    { failedStage: "configure", expectedCalls: ["configure", "gateway"] },
+    { failedStage: "create", expectedCalls: ["configure", "create", "sandbox", "gateway"] },
+    { failedStage: "run", expectedCalls: ["configure", "create", "run", "sandbox", "gateway"] },
+    {
+      failedStage: "execution",
+      expectedCalls: ["configure", "create", "run", "sandbox", "gateway"],
+    },
+    {
+      failedStage: "download",
+      expectedCalls: ["configure", "create", "run", "download", "sandbox", "gateway"],
+    },
+    {
+      failedStage: "validate",
+      expectedCalls: ["configure", "create", "run", "download", "validate", "sandbox", "gateway"],
+    },
+  ])("fails closed and cleans owned resources after $failedStage failure", async ({
+    failedStage,
+    expectedCalls,
+  }) => {
+    const calls: string[] = [];
+    const failures: Record<string, () => never> = {
+      [failedStage]: () => {
+        throw new Error(`${failedStage} failed`);
+      },
+    };
+    const fail = (stage: string): void => {
+      calls.push(stage);
+      failures[stage]?.();
+    };
+    const executions: Record<
+      string,
+      () => { cancel: () => void; completion: Promise<void> }
+    > = {
+      execution: () => ({
+        completion: Promise.reject(new Error("execution failed")),
+        cancel: () => void calls.push("cancel"),
+      }),
+    };
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => ({
+        configure: Promise.resolve().then(() => fail("configure")),
+        stop: async () => void calls.push("gateway"),
+      }),
+      create: () => fail("create"),
+      run: () => {
+        fail("run");
+        return executions[failedStage]?.();
+      },
+      download: () => fail("download"),
+      remove: () => void calls.push("sandbox"),
+    };
+
+    await expect(
+      runAdvisorSpecialist({
+        env: { PR_REVIEW_ADVISOR_INTEREST: "behavior", SANDBOX_NAME: "failure-test" },
+        lifecycle,
+        validate: () => fail("validate"),
+      }),
+    ).rejects.toThrow(`${failedStage} failed`);
+    expect(calls).toEqual(expectedCalls);
+  });
+
+  it("preserves the primary failure when cleanup also fails", async () => {
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => ({
+        configure: Promise.resolve(),
+        stop: async () => {
+          throw new Error("gateway cleanup failed");
+        },
+      }),
+      create: () => undefined,
+      run: () => {
+        throw new Error("execution setup failed");
+      },
+      download: () => undefined,
+      remove: () => {
+        throw new Error("sandbox cleanup failed");
+      },
+    };
+
+    await expect(
+      runAdvisorSpecialist({
+        env: { PR_REVIEW_ADVISOR_INTEREST: "behavior", SANDBOX_NAME: "failure-test" },
+        lifecycle,
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("execution setup failed"),
+      cause: expect.objectContaining({ message: expect.stringContaining("execution setup failed") }),
+      errors: [
+        expect.objectContaining({ message: expect.stringContaining("execution setup failed") }),
+        expect.objectContaining({ message: expect.stringContaining("sandbox cleanup failed") }),
+      ],
+    });
   });
 
   it("cancels active analysis, cleans owned resources, and restores termination (#10611)", async () => {
