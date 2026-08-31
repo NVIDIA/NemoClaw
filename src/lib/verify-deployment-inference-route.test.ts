@@ -77,6 +77,36 @@ describe("verifyDeployment inference route model-catalog validation", () => {
     expect(result.verification.inferenceRouteWorking).toBe(true);
   });
 
+  it.each(["200junk", "20", "0200"])(
+    "fails the deployment when the models route answers with the malformed token %j (#10609)",
+    async (stdout) => {
+      const result = await verifyDeployment(
+        "my-sandbox",
+        buildChain(),
+        makeModelsRouteDeps(stdout),
+        NO_RETRY,
+      );
+
+      expect(result.verification.inferenceRouteWorking).toBe(false);
+    },
+  );
+
+  it("fails the deployment when the models-route command exits nonzero (#10609)", async () => {
+    const result = await verifyDeployment(
+      "my-sandbox",
+      buildChain(),
+      makeModelsRouteDeps("200", {
+        executeSandboxCommand: (_name: string, script: string) =>
+          script.includes("inference.local")
+            ? { status: 1, stdout: "200", stderr: "curl: (6) could not resolve host" }
+            : { status: 0, stdout: "200", stderr: "" },
+      }),
+      NO_RETRY,
+    );
+
+    expect(result.verification.inferenceRouteWorking).toBe(false);
+  });
+
   it("accepts the Deep Agents Code OpenRouter 404 when an inference request succeeds (#9834)", async () => {
     const result = await verifyDeployment(
       "my-sandbox",

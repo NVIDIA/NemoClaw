@@ -292,7 +292,12 @@ function probeInferenceRouteOnce(
   if (!result) {
     return { status: "unreachable", detail: "sandbox unreachable", httpCode: 0 };
   }
-  const code = parseInt(result.stdout.trim(), 10) || 0;
+  // curl writes exactly three digits and the script echoes `000` when it fails,
+  // so any other token means the probe carries no status worth trusting.
+  // `parseInt` read `200junk` as 200 and a nonzero command result was ignored
+  // outright, either of which could report an unanswered route as healthy.
+  const output = result.stdout.trim();
+  const code = result.status === 0 && /^\d{3}$/u.test(output) ? Number(output) : 0;
   if (code === 0) {
     return {
       status: "unreachable",
