@@ -7,10 +7,14 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { WSL_SLOW_VERIFICATION_ADVISORY } from "../inference/onboard-probes";
 import { useOpenAiValidationTestServers } from "../inference/openai-validation-session.test-helpers";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { createInferenceSelectionValidationHelpers } from "./inference-selection-validation";
+
+const EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY =
+  "WSL2 detected — network verification may be slower than expected. " +
+  "Check proxy and VPN health, then run onboarding again with a longer budget: " +
+  "`NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS=360 nemoclaw onboard`.";
 
 const listen = useOpenAiValidationTestServers();
 const resumableValidationExit = {
@@ -352,7 +356,7 @@ describe("inference selection validation", () => {
       getCredential: () => "nvapi-test-key-12345",
       probeOpenAiLikeEndpoint: () => ({
         ok: false,
-        advisory: WSL_SLOW_VERIFICATION_ADVISORY,
+        advisory: EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY,
         failures: [
           {
             name: "Chat Completions API",
@@ -380,7 +384,7 @@ describe("inference selection validation", () => {
         "  Validation probe summary: Chat Completions API: curl exit 28.",
         "  Validation details were omitted to avoid exposing credentials.",
         "  Validation timed out before the provider replied. Retry, or check network/proxy health.",
-        `  ${WSL_SLOW_VERIFICATION_ADVISORY}`,
+        `  ${EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY}`,
       ]);
     } finally {
       process.exitCode = originalExitCode;
@@ -397,7 +401,7 @@ describe("inference selection validation", () => {
       getCredential: () => "nvapi-test-key-12345",
       probeOpenAiLikeEndpoint: () => ({
         ok: false,
-        advisory: WSL_SLOW_VERIFICATION_ADVISORY,
+        advisory: EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY,
         failures: [{ name: "Chat Completions API", curlStatus: 28 }],
       }),
       promptValidationRecovery,
@@ -415,7 +419,7 @@ describe("inference selection validation", () => {
         "  NVIDIA Endpoints endpoint validation failed.",
         "  Validation probe summary: Chat Completions API: curl exit 28.",
         "  Validation details were omitted to avoid exposing credentials.",
-        `  ${WSL_SLOW_VERIFICATION_ADVISORY}`,
+        `  ${EXPECTED_WSL_SLOW_VERIFICATION_ADVISORY}`,
       ]);
       expect(promptValidationRecovery).toHaveBeenCalledOnce();
     } finally {

@@ -38,11 +38,11 @@ const { isWsl } = require("../platform");
  * default it might meet, including the 300-second extended NVIDIA profile.
  * Onboarding has no flag that bypasses validation, so this must not imply one.
  *
- * Exported so the onboarding failure path can print the same wording it is
- * appended to `message` with. That path prints failure summaries rather than
- * the raw probe message, which can carry provider response bodies (#10413).
+ * The onboarding failure path receives this text through the probe result. It
+ * prints failure summaries rather than the raw probe message, which can carry
+ * provider response bodies (#10413).
  */
-export const WSL_SLOW_VERIFICATION_ADVISORY =
+const WSL_SLOW_VERIFICATION_ADVISORY =
   "WSL2 detected \u2014 network verification may be slower than expected. " +
   "Check proxy and VPN health, then run onboarding again with a longer budget: " +
   "`NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS=360 nemoclaw onboard`.";
@@ -1159,7 +1159,6 @@ function withWslSlowVerificationAdvisory(result, options) {
 // ── Anthropic probe ──────────────────────────────────────────────
 
 module.exports = {
-  WSL_SLOW_VERIFICATION_ADVISORY,
   isSandboxInternalUrl,
   isHijackedDockerInternalUrl,
   parseJsonObject,
@@ -1169,7 +1168,6 @@ module.exports = {
   shouldRequireResponsesToolCalling,
   getProbeAuthMode,
   getProbeExtraHeaders,
-  getValidationProbeCurlArgs,
   getDeepSeekV4ProValidationProbeCurlArgs,
   getKimiK26ValidationProbeCurlArgs,
   getChatCompletionsProbePayload,
