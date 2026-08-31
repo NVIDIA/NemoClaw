@@ -2,32 +2,35 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: ci-compile-artifacts
-description: Compile and verify reusable CLI and plugin outputs from the checked-out source.
+description: Compile and publish verified reusable CLI and plugin outputs.
+
+# One producer invocation per workflow run owns this fixed artifact name.
+
+outputs:
+  artifact-id:
+    description: GitHub artifact identifier for the compiled outputs.
+    value: \${{ steps.upload.outputs.artifact-id }}
+  artifact-digest:
+    description: SHA-256 digest reported for the compiled outputs artifact.
+    value: \${{ steps.upload.outputs.artifact-digest }}
+  artifact-url:
+    description: GitHub URL for the compiled outputs artifact.
+    value: \${{ steps.upload.outputs.artifact-url }}
 
 runs:
   using: composite
   steps:
-    - name: Clean compiled outputs
+    - name: Compile and verify outputs
       shell: bash
-      run: |
-        npm run clean:cli
-        npm --prefix nemoclaw run clean
+      run: bash "$GITHUB_ACTION_PATH/compile.sh"
 
-    - name: Build TypeScript plugin
-      shell: bash
-      run: npm --prefix nemoclaw run build
-
-    - name: Build CLI TypeScript modules
-      shell: bash
-      run: npm run build:cli
-
-    - name: Verify CLI sourcemaps
-      shell: bash
-      run: npx tsx scripts/check-dist-sourcemaps.mts dist
-
-    - name: Verify compiled outputs
-      shell: bash
-      run: |
-        test -s dist/nemoclaw.js
-        test -s nemoclaw/dist/index.js
-        test -s nemoclaw/dist/shared/sandbox-name.cjs
+    - name: Upload compiled CLI and plugin artifact
+      id: upload
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: cli-build-output
+        path: |
+          dist
+          nemoclaw/dist
+        if-no-files-found: error
+        retention-days: 1
