@@ -109,15 +109,32 @@ describe("cleanup resources", () => {
     expect(calls).toBe(1);
   });
 
-  it.each(["full-e2e.test.ts", "hermes-e2e.test.ts"])(
-    "registers sandbox cleanup before installer side effects [case %#] (#7146)",
-    (fileName) => {
+  it.each([
+    {
+      fileName: "full-e2e.test.ts",
+      gatewayMinimum: -1,
+      installerNeedle: 'host.command("bash", ["install.sh"',
+    },
+    {
+      fileName: "hermes-e2e.test.ts",
+      gatewayMinimum: -1,
+      installerNeedle: 'host.command("bash", ["install.sh"',
+    },
+    {
+      fileName: "messaging-providers.test.ts",
+      gatewayMinimum: 0,
+      installerNeedle: 'runHost(host, "bash", ["install.sh"',
+    },
+  ])(
+    "registers owned cleanup before installer side effects [case %#] (#7146)",
+    ({ fileName, gatewayMinimum, installerNeedle }) => {
       const source = fs.readFileSync(
         path.resolve(import.meta.dirname, "..", "live", fileName),
         "utf8",
       );
       const cleanupRegistration = source.indexOf(".trackSandbox(host, SANDBOX_NAME");
-      const installerStart = source.indexOf('host.command("bash", ["install.sh"');
+      const gatewayRegistration = source.indexOf('.trackGateway(host, "nemoclaw"');
+      const installerStart = source.indexOf(installerNeedle);
 
       expect(
         cleanupRegistration,
@@ -126,6 +143,11 @@ describe("cleanup resources", () => {
       expect(installerStart, `${fileName} must invoke install.sh`).toBeGreaterThan(
         cleanupRegistration,
       );
+      expect(
+        gatewayRegistration,
+        `${fileName} must satisfy its gateway cleanup requirement`,
+      ).toBeGreaterThanOrEqual(gatewayMinimum);
+      expect(installerStart).toBeGreaterThan(gatewayRegistration);
     },
   );
 

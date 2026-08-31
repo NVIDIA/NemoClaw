@@ -36,9 +36,9 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
 }
 
 describe("messaging provider installed-runtime proofs", () => {
-  it("distinguishes canonical Slack credential bindings from the legacy broad policy", () => {
+  it("recognizes Slack credential bindings and rejects the legacy broad policy", () => {
     const sandboxName = "e2e-msg-policy-proof";
-    const canonicalPolicy = `
+    const credentialBoundPolicy = `
 network_policies:
   slack:
     name: slack
@@ -76,7 +76,7 @@ network_policies:
           - allow: { method: POST, path: "/**" }
 `;
 
-    expect(slackCredentialBindingEvidence(canonicalPolicy, sandboxName)).toEqual({
+    expect(slackCredentialBindingEvidence(credentialBoundPolicy, sandboxName)).toEqual({
       app: true,
       bot: true,
     });

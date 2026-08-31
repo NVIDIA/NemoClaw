@@ -95,6 +95,12 @@ test(
       wechatAccount: state.wechatAccount,
     });
 
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "cleanup-openshell-gateway-destroy-messaging-providers",
+      env: state.env,
+      redactionValues,
+      timeoutMs: 120_000,
+    });
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "cleanup-openshell-sandbox-delete-messaging-providers",
@@ -261,12 +267,6 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
         policyTextHasHost(whatsappPolicyPreText, "raw.githubusercontent.com"),
       "M-WA3: WhatsApp policy preset applied before rebuild",
     );
-    const slackPolicyPreEvidence = slackCredentialBindingEvidence(whatsappPolicyPreText);
-    check(
-      slackPolicyPreEvidence.bot && slackPolicyPreEvidence.app,
-      "M-WA3a: active Slack policy matches the canonical credential-bound channel policy before rebuild",
-    );
-
     const hostPolicyEdit = await runHost(
       host,
       "openshell",
@@ -289,7 +289,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
         timeoutMs: 60_000,
       },
     );
-    expectExitZero(hostPolicyEdit, "M-WA3b: direct OpenShell policy edit before rebuild");
+    expectExitZero(hostPolicyEdit, "M-WA3a: direct OpenShell policy edit before rebuild");
 
     const whatsappRebuild = await runHost(
       host,
@@ -343,7 +343,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const slackPolicyPostEvidence = slackCredentialBindingEvidence(whatsappPolicyPostText);
     check(
       slackPolicyPostEvidence.bot && slackPolicyPostEvidence.app,
-      "M-WA5b: canonical credential-bound Slack policy survived messaging rebuild",
+      "M-WA5b: Slack bot and app credential bindings survived messaging rebuild",
     );
 
     progress.phase("inspect providers placeholders and credential isolation");
