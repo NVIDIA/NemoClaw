@@ -18,7 +18,6 @@ import {
   REQUIRED_CHECK_NAMES,
   runGate,
   successfulRequiredChecks,
-  successfulRequiredChecksWithoutE2e,
 } from "./check-gates-test-fixtures.ts";
 
 const ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
@@ -596,7 +595,7 @@ describe("maintainer merge-gate contributor compliance", () => {
         body: "Signed-off-by: Example User <user@example.com>",
         verified: true,
         statusChecks: [
-          ...successfulRequiredChecksWithoutE2e(),
+          ...successfulRequiredChecks(),
           {
             __typename: "CheckRun",
             name: "matrix-check",

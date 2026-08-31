@@ -176,10 +176,6 @@ function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-function successfulRequiredChecksWithoutE2e() {
-  return successfulRequiredChecks();
-}
-
 function successfulRequiredChecks() {
   return REQUIRED_CHECK_NAMES.map((name) => requiredCheck(name));
 }
@@ -369,7 +365,7 @@ function e2eRunFixture(
   return {
     body: "Signed-off-by: Example User <user@example.com>",
     verified: true,
-    statusChecks: [...successfulRequiredChecksWithoutE2e(), ...checks.map(e2eGateCheck)],
+    statusChecks: [...successfulRequiredChecks(), ...checks.map(e2eGateCheck)],
     actionRunAttempts,
   };
 }
@@ -929,5 +925,4 @@ export {
   runComparatorGate,
   runGate,
   successfulRequiredChecks,
-  successfulRequiredChecksWithoutE2e,
 };
