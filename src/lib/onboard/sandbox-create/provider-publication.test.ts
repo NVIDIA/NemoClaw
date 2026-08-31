@@ -299,6 +299,37 @@ describe("sandbox provider preparation", () => {
     expect(cleanupCreateSources).not.toHaveBeenCalled();
   });
 
+  it("cleans up when the typed provider update fails (#9806)", async () => {
+    const updateProvider: OpenShellProviderAdapter["updateProvider"] = vi.fn(async () => ({
+      ok: false as const,
+      error: {
+        kind: "command" as const,
+        reason: "failed" as const,
+        message: "OpenShell could not update the selected provider.",
+      },
+    }));
+    const adapter = typedProviderAdapter({ updateProvider });
+    const cleanupCreateSources = vi.fn();
+
+    await expect(
+      publishAttachedProvidersBeforeDockerSandboxCreation(
+        publicationInput({
+          inferenceProvider: "inference",
+          messagingProviders: [],
+          messagingProviderRequests: [],
+        }),
+        {
+          cleanupCreateSources,
+          providerAdapter: adapter,
+          runOpenshell: vi.fn() as never,
+        },
+      ),
+    ).rejects.toThrowError(
+      "OpenShell did not publish attached provider 'inference' before Docker sandbox creation.",
+    );
+    expect(cleanupCreateSources).toHaveBeenCalledOnce();
+  });
+
   it("skips publication when the typed lookup reports absence (#9806)", async () => {
     const getProvider: OpenShellProviderAdapter["getProvider"] = vi.fn(async () => ({
       ok: false as const,
