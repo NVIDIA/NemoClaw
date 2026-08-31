@@ -90,6 +90,14 @@ describe("trusted CI artifact compiler", () => {
     expect(readFileSync(fixture.trace, "utf8")).not.toContain("check-dist-sourcemaps");
   });
 
+  it("propagates CLI sourcemap validation failure", () => {
+    const fixture = makeFixture();
+    const result = runCompiler(fixture, {
+      FAIL_COMMAND: "npx tsx scripts/check-dist-sourcemaps.mts dist",
+    });
+    expect(result.status).toBe(19);
+  });
+
   it("rejects an unset caller workspace before candidate commands run", () => {
     const fixture = makeFixture();
     const result = spawnSync("bash", [compiler], {
