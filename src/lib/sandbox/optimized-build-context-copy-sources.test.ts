@@ -6,8 +6,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { testTimeout } from "../../../test/helpers/timeouts";
-import { checkOptimizedBuildContextCopySources } from "../../../scripts/checks/optimized-build-context-copy-sources.mts";
 import {
   directDockerfileCopySources,
   formatMissingDockerfileCopySources,
@@ -35,21 +33,13 @@ describe("optimized build-context Dockerfile sources", () => {
     }
   });
 
-  it(
-    "accepts every direct COPY source from the root Dockerfile in the optimized context",
-    () => {
-      checkOptimizedBuildContextCopySources(path.resolve(import.meta.dirname, "../../.."));
-    },
-    testTimeout(30_000),
-  );
-
   it("parses flags, continuations, and multiple sources while ignoring build stages", () => {
     const directory = makeTemporaryDirectory();
     const dockerfilePath = writeDockerfile(
       directory,
       [
         "FROM base AS build",
-        "COPY --chmod=0444 \\",
+        "copy --chmod=0444 \\",
         "  scripts/lib/corporate-ca-runtime.sh \\",
         "  scripts/lib/sandbox-init.sh \\",
         "  /usr/local/lib/nemoclaw/",

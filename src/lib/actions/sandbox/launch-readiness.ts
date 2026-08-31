@@ -123,6 +123,7 @@ export interface LaunchReadinessDeps extends LaunchReadinessHealthDeps {
   readLease?: typeof readLaunchReadinessLease;
   fenceLease?: typeof fenceLaunchReadinessLease;
   publishLease?: typeof publishLaunchReadinessLease;
+  assertPublicationCurrent?: () => void;
   observeOpenClawPairingQualification?: typeof observeOpenClawPairingQualification;
   observeOpenClawPairingRepairSettlement?: typeof observeOpenClawPairingRepairSettlement;
   observeOpenClawPairingSettlement?: typeof observeOpenClawPairingSettlement;
@@ -1382,9 +1383,21 @@ export async function publishLaunchReadiness(
       }
       return withGatewayLock(gatewayName, async () => {
         const validationStartedAt = performance.now();
-        let captured: Awaited<ReturnType<typeof captureLaunchIdentity>>;
+        let captured: Awaited<ReturnType<typeof captureLaunchIdentity>> | undefined;
+        let captureFailure: unknown;
         try {
-          captured = await captureLaunchIdentity(sandboxName, gatewayName, gatewayPort, deps);
+          deps.assertPublicationCurrent?.();
+          try {
+            captured = await captureLaunchIdentity(sandboxName, gatewayName, gatewayPort, deps);
+          } catch (error) {
+            captureFailure = error;
+          }
+          try {
+            deps.assertPublicationCurrent?.();
+          } catch (error) {
+            captureFailure = error;
+          }
+          if (captureFailure !== undefined) throw captureFailure;
         } catch (error) {
           const validation = publicationValidationCategory(error);
           return validation
@@ -1394,20 +1407,24 @@ export async function publishLaunchReadiness(
           recordPerformanceStage("publication-validation", validationStartedAt);
         }
         const publicationStartedAt = performance.now();
+        let publicationFailed = false;
         try {
+          deps.assertPublicationCurrent?.();
           (deps.publishLease ?? publishLaunchReadinessLease)(
             sandboxName,
             gatewayName,
             gatewayPort,
             epochId,
-            captured.identity,
+            captured!.identity,
             deps.storeOptions,
+            deps.assertPublicationCurrent,
           );
         } catch {
-          return { kind: "evidence-failed" } as const;
+          publicationFailed = true;
         } finally {
           recordPerformanceStage("publication-store", publicationStartedAt);
         }
+        if (publicationFailed) return { kind: "evidence-failed" } as const;
         return { kind: "published" } as const;
       });
     });
