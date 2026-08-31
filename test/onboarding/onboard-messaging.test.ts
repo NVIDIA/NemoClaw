@@ -1630,7 +1630,7 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it(
-    "non-interactive setupMessagingChannels returns channels with tokens",
+    "non-interactive setupMessagingChannels excludes the Discord placeholder before channel setup (#10668)",
     {
       timeout: 60_000,
     },
@@ -1651,7 +1651,11 @@ const { createSandbox } = require(${onboardPath});
       const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-runner.run = () => ({ status: 0 });
+const commands = [];
+runner.run = (command) => {
+  commands.push(_n(command));
+  return { status: 0 };
+};
 runner.runCapture = () => "";
 
 // Stub the manifest-driven Telegram reachability hook so this test does not
@@ -1666,13 +1670,14 @@ global.fetch = async () => ({
 const { setupMessagingChannels } = require(${onboardPath});
 
 (async () => {
-  // Only set telegram and slack tokens — discord should be absent
+  // The Discord documentation placeholder must not select or configure Discord.
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
+  process.env.DISCORD_BOT_TOKEN = "<your-discord-bot-token>";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token";
   process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token";
   process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
   const result = await setupMessagingChannels();
-  console.log(JSON.stringify(result));
+  console.log(JSON.stringify({ channels: result, commands }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -1692,13 +1697,18 @@ const { setupMessagingChannels } = require(${onboardPath});
       });
 
       assert.equal(result.status, 0, result.stderr);
-      const channels = parseStdoutJson<string[]>(result.stdout);
+      const payload = parseStdoutJson<{ channels: string[]; commands: string[] }>(result.stdout);
+      const { channels } = payload;
 
       // Should return only the channels that have tokens set
       assert.ok(Array.isArray(channels), "expected an array return value");
       assert.ok(channels.includes("telegram"), "expected telegram in returned channels");
       assert.ok(channels.includes("slack"), "expected slack in returned channels");
       assert.ok(!channels.includes("discord"), "discord should not be in returned channels");
+      assert.ok(
+        !payload.commands.some((command) => command.includes("discord")),
+        "Discord placeholder must not trigger channel, policy, or gateway setup commands",
+      );
     },
   );
 
