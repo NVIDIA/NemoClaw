@@ -73,17 +73,19 @@ function cancelRecoveryIdentity(
   };
 }
 
+function providerNamesFromCreateArgs(createArgs: readonly string[]): string[] {
+  return createArgs.flatMap((value, index) =>
+    index > 0 && createArgs[index - 1] === "--provider" ? [value] : [],
+  );
+}
+
 /** Finalize provider arguments from the exact policy that creation consumes. */
 export function bindRebuildPolicyProvidersToCreateArgs(
   createArgs: readonly string[],
   policy: Pick<import("../initial-policy").InitialSandboxPolicy, "credentialBindingProviders">,
 ): string[] {
   const result = [...createArgs];
-  const attached = new Set(
-    result.flatMap((value, index) =>
-      index > 0 && result[index - 1] === "--provider" ? [value] : [],
-    ),
-  );
+  const attached = new Set(providerNamesFromCreateArgs(result));
   for (const provider of policy.credentialBindingProviders ?? []) {
     if (attached.has(provider)) continue;
     const startupCommandSeparator = result.indexOf("--");
@@ -110,11 +112,7 @@ export function resolveRebuildPolicyProviderAuthority(input: {
   readonly preservedMcpState: SandboxMcpState | undefined;
   readonly managedMcpRebuildHandoff: boolean;
 }): string[] {
-  const providers = new Set(
-    input.createArgs.flatMap((value, index, args) =>
-      index > 0 && args[index - 1] === "--provider" ? [value] : [],
-    ),
-  );
+  const providers = new Set(providerNamesFromCreateArgs(input.createArgs));
   if (input.messagingPlan) {
     for (const binding of filterEnabledPlanEntries(
       input.messagingPlan,
