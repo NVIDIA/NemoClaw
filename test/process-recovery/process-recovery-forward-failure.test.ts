@@ -142,7 +142,23 @@ function compactTeamsMessagingPlan(port = "3978") {
 }
 
 describe("checkAndRecoverSandboxProcesses primary forward failure", () => {
-  it("fails closed when OpenShell forward state is unavailable", () => {
+  it.each([
+    [
+      "OpenShell forward state is unavailable",
+      { status: 1, output: "OpenShell forward state unavailable" },
+      "the primary dashboard/API host forward could not be verified because OpenShell forward state was unavailable",
+      "forward-state-unavailable",
+    ],
+    [
+      "another sandbox owns the port",
+      {
+        status: 0,
+        output: "SANDBOX  BIND  PORT  PID  STATUS\ngamma  127.0.0.1  18789  12345  running",
+      },
+      "the primary dashboard/API host forward is owned by another sandbox",
+      "port-ownership-conflict",
+    ],
+  ] as const)("fails closed when %s", (_label, forwardList, detail, reason) => {
     const openshellRuntime = requireSource("../../src/lib/adapters/openshell/runtime.ts");
     const agentRuntime = requireSource("../../src/lib/agent/runtime.ts");
     const registry = requireSource("../../src/lib/state/registry.ts");
@@ -159,22 +175,26 @@ describe("checkAndRecoverSandboxProcesses primary forward failure", () => {
       agent: "openclaw",
       dashboardPort: 18789,
     });
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-      status: 1,
-      output: "OpenShell forward state unavailable",
-    });
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue(forwardList);
     const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
+    const onForwardRecoveryFailure = vi.fn();
 
     expect(
-      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+      withFakeOpenshellBinary(() =>
+        checkAndRecoverSandboxProcesses("beta", { quiet: true, onForwardRecoveryFailure }),
+      ),
     ).toEqual({
       checked: true,
       wasRunning: true,
       recovered: false,
       forwardRecovered: false,
       forwardRecoveryFailed: true,
-      forwardRecoveryFailureDetail:
-        "the primary dashboard/API host forward could not be verified because OpenShell forward state was unavailable",
+      forwardRecoveryFailureDetail: detail,
+    });
+    expect(onForwardRecoveryFailure).toHaveBeenCalledWith({
+      port: 18789,
+      reason,
+      sandboxName: "beta",
     });
     expect(runOpenshell).not.toHaveBeenCalled();
   });
@@ -293,6 +313,31 @@ beta  127.0.0.1  18789  12345  dead`,
 });
 
 describe("ensureSandboxPortForwardForPort already-forwarded idempotency (#7085)", () => {
+  it("reports another sandbox that owns the port before recovery", () => {
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(false);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output: "SANDBOX  BIND  PORT  PID  STATUS\ngamma  127.0.0.1  18791  12345  running",
+    });
+    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
+    const onFailure = vi.fn();
+
+    expect(
+      withFakeOpenshellBinary(() =>
+        ensureSandboxPortForwardForPort("beta", 18791, {
+          expectedBind: "127.0.0.1",
+          onFailure,
+        }),
+      ),
+    ).toBe(false);
+    expect(onFailure).toHaveBeenCalledWith({
+      port: 18791,
+      reason: "port-ownership-conflict",
+      sandboxName: "beta",
+    });
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("reconciles a reachable ownerless listener with a nonzero recovery wait", () => {
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "25");
     let started = false;

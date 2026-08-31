@@ -1580,6 +1580,11 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       };
     }
     if (forwardHealthy === "occupied") {
+      onForwardRecoveryFailure?.({
+        port: recoveryPort,
+        reason: "port-ownership-conflict",
+        sandboxName,
+      });
       probeTiming?.setForwardAction("failed");
       if (!quiet) {
         console.log("");
@@ -1597,6 +1602,11 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       };
     }
     if (forwardHealthy === null) {
+      onForwardRecoveryFailure?.({
+        port: recoveryPort,
+        reason: "forward-state-unavailable",
+        sandboxName,
+      });
       probeTiming?.setForwardAction("failed");
       return {
         checked: true,

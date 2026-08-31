@@ -310,6 +310,10 @@ export function ensureSandboxPortForwardForPort(
   const gatewayName = resolveSandboxForwardGatewayName(sandboxName);
   const getForwardHealth = () =>
     isSandboxPortForwardHealthy(sandboxName, port, expectedBind, gatewayName);
+  const reportFailure = (reason: SandboxForwardRecoveryFailureReason): false => {
+    options.onFailure?.({ port, reason, sandboxName });
+    return false;
+  };
   const acceptSuccessfulForward = () => {
     let accepted = false;
     try {
@@ -326,7 +330,7 @@ export function ensureSandboxPortForwardForPort(
   };
   let forwardHealth = getForwardHealth();
   if (forwardHealth === true && !forceRestart) return acceptSuccessfulForward();
-  if (forwardHealth === "occupied") return false;
+  if (forwardHealth === "occupied") return reportFailure("port-ownership-conflict");
   const configuredWaitMs = Number(process.env.NEMOCLAW_FORWARD_RECOVERY_WAIT_MS ?? "3000");
   const waitMs = Number.isFinite(configuredWaitMs) ? Math.max(0, configuredWaitMs) : 3000;
 
@@ -374,9 +378,11 @@ export function ensureSandboxPortForwardForPort(
       );
     }, waitMs);
     if (stopState.health === true && !forceRestart) return acceptSuccessfulForward();
-    if (stopState.health === "occupied") return false;
+    if (stopState.health === "occupied") return reportFailure("port-ownership-conflict");
     if (!stopState.portReleased && (forceRestart || stopState.health === null)) {
-      return false;
+      return reportFailure(
+        stopState.health === null ? "forward-state-unavailable" : "forward-listener-retry-limit",
+      );
     }
   }
 
@@ -418,8 +424,7 @@ export function ensureSandboxPortForwardForPort(
     } else {
       reason = "forward-start-failure";
     }
-    options.onFailure?.({ port, reason, sandboxName });
-    return false;
+    return reportFailure(reason);
   };
 
   // OpenShell 0.0.85 returns an error when start preflight finds a validated
