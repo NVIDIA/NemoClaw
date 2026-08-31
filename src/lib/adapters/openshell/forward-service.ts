@@ -6,6 +6,7 @@ import path from "node:path";
 import { isValidName } from "../../name-validation";
 
 export const FORWARD_SERVICE_RECEIPT_SCHEMA_VERSION = 1 as const;
+export const FORWARD_SERVICE_PENDING_SCHEMA_VERSION = 1 as const;
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 
@@ -29,6 +30,17 @@ export interface ForwardServiceReceipt extends ForwardServiceTarget {
   readonly hostIdentity: string;
   readonly pidNamespaceIdentity: string | null;
   readonly argv: readonly string[];
+  readonly startedAt: string;
+}
+
+/** Blocks a second spawn when a failed child survived before identity could be observed. */
+export interface ForwardServicePendingReceipt extends ForwardServiceTarget {
+  readonly pendingSchemaVersion: typeof FORWARD_SERVICE_PENDING_SCHEMA_VERSION;
+  readonly pid: number;
+  readonly launcherUid: number;
+  readonly hostIdentity: string;
+  readonly pidNamespaceIdentity: string | null;
+  readonly expectedArgv: readonly string[];
   readonly startedAt: string;
 }
 
@@ -132,6 +144,14 @@ export function forwardServiceReceiptPath(
   );
 }
 
+export function forwardServicePendingReceiptPath(
+  stateDirectory: string,
+  target: ForwardServiceTarget,
+): string {
+  const receipt = forwardServiceReceiptPath(stateDirectory, target);
+  return receipt.replace(/\.json$/u, ".pending.json");
+}
+
 export function isForwardServiceReceipt(value: unknown): value is ForwardServiceReceipt {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
@@ -189,6 +209,56 @@ export function isForwardServiceReceipt(value: unknown): value is ForwardService
   return sameArgv(candidate.argv as string[], [
     candidate.executable as string,
     ...buildForwardServiceArgs(candidate as unknown as ForwardServiceReceipt),
+  ]);
+}
+
+export function isForwardServicePendingReceipt(
+  value: unknown,
+): value is ForwardServicePendingReceipt {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  const expectedKeys = new Set([
+    "pendingSchemaVersion",
+    "executable",
+    "gatewayName",
+    "workspace",
+    "sandboxName",
+    "sandboxIdentityFingerprint",
+    "localHost",
+    "localPort",
+    "targetHost",
+    "targetPort",
+    "pid",
+    "launcherUid",
+    "hostIdentity",
+    "pidNamespaceIdentity",
+    "expectedArgv",
+    "startedAt",
+  ]);
+  if (Object.keys(candidate).some((key) => !expectedKeys.has(key))) return false;
+  if (
+    candidate.pendingSchemaVersion !== FORWARD_SERVICE_PENDING_SCHEMA_VERSION ||
+    !Number.isSafeInteger(candidate.pid) ||
+    Number(candidate.pid) <= 0 ||
+    !Number.isSafeInteger(candidate.launcherUid) ||
+    Number(candidate.launcherUid) < 0 ||
+    !isNonEmptyString(candidate.hostIdentity) ||
+    (candidate.pidNamespaceIdentity !== null &&
+      !isNonEmptyString(candidate.pidNamespaceIdentity)) ||
+    !Array.isArray(candidate.expectedArgv) ||
+    candidate.expectedArgv.some((entry) => typeof entry !== "string" || entry.includes("\0")) ||
+    !isNonEmptyString(candidate.startedAt)
+  ) {
+    return false;
+  }
+  try {
+    validateForwardServiceTarget(candidate as unknown as ForwardServicePendingReceipt);
+  } catch {
+    return false;
+  }
+  return sameArgv(candidate.expectedArgv as string[], [
+    candidate.executable as string,
+    ...buildForwardServiceArgs(candidate as unknown as ForwardServicePendingReceipt),
   ]);
 }
 

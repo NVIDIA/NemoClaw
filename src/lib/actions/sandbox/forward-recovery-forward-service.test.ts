@@ -186,12 +186,14 @@ describe("ForwardTcp runtime integration", () => {
     });
     const { teardownSandboxDashboardForward } = await import("./forward-recovery");
 
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
     expect(
       teardownSandboxDashboardForward("alpha", {
         getSandbox: () => SANDBOX,
         isLocalForwardReachable: () => false,
-        runOpenshell: () => ({ status: 0 }),
+        runOpenshell,
       }),
     ).toBe(false);
+    expect(runOpenshell).not.toHaveBeenCalled();
   });
 });

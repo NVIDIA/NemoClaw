@@ -4,12 +4,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import { openRegularFileNoFollow } from "../fs/regular-file";
 import { ensureConfigDir, writeConfigFile } from "../../state/config-io";
 import {
   forwardServiceReceiptPath,
+  forwardServicePendingReceiptPath,
   isForwardServiceReceipt,
+  isForwardServicePendingReceipt,
+  type ForwardServicePendingReceipt,
   type ForwardServiceReceipt,
   type ForwardServiceTarget,
 } from "./forward-service";
@@ -138,6 +142,12 @@ export function listForwardServiceReceipts(
 ): ForwardServiceReceipt[] {
   const directory = path.join(options.stateDirectory, "forwards");
   try {
+    fs.lstatSync(directory);
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return [];
+    throw error;
+  }
+  try {
     assertOwnerOnlyDirectory(options.stateDirectory, options);
     assertOwnerOnlyDirectory(directory, options);
   } catch (error) {
@@ -176,6 +186,95 @@ export function writeForwardServiceReceipt(
   const readBack = readForwardServiceReceipt(receipt, options);
   if (!readBack || !sameReceiptGeneration(readBack, receipt)) {
     throw new Error("OpenShell forward service receipt did not persist its process generation");
+  }
+}
+
+export function readForwardServicePendingReceipt(
+  target: ForwardServiceTarget,
+  options: ForwardServiceStateOptions,
+): ForwardServicePendingReceipt | null {
+  const filePath = forwardServicePendingReceiptPath(options.stateDirectory, target);
+  try {
+    assertOwnerOnlyDirectory(options.stateDirectory, options);
+    assertOwnerOnlyDirectory(path.dirname(filePath), options);
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return null;
+    throw error;
+  }
+  let opened: ReturnType<typeof openRegularFileNoFollow>;
+  try {
+    opened = openRegularFileNoFollow(filePath);
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return null;
+    throw error;
+  }
+  try {
+    const stat = opened.stat();
+    if (stat.uid !== requiredUid(options) || (stat.mode & 0o077) !== 0) {
+      throw new Error("OpenShell forward service pending receipt is not owner-only");
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(opened.readBytes(MAX_RECEIPT_BYTES).toString("utf8"));
+    } catch {
+      throw new Error("OpenShell forward service pending receipt is invalid");
+    }
+    if (
+      !isForwardServicePendingReceipt(parsed) ||
+      forwardServicePendingReceiptPath(options.stateDirectory, parsed) !== filePath
+    ) {
+      throw new Error("OpenShell forward service pending receipt is invalid");
+    }
+    return parsed;
+  } finally {
+    opened.close();
+  }
+}
+
+export function writeForwardServicePendingReceipt(
+  receipt: ForwardServicePendingReceipt,
+  options: ForwardServiceStateOptions,
+): void {
+  if (!isForwardServicePendingReceipt(receipt)) {
+    throw new Error("OpenShell forward service pending receipt is invalid");
+  }
+  ensureForwardStateDirectory(receipt, options);
+  const filePath = forwardServicePendingReceiptPath(options.stateDirectory, receipt);
+  writeConfigFile(filePath, receipt);
+  if (!isDeepStrictEqual(readForwardServicePendingReceipt(receipt, options), receipt)) {
+    throw new Error("OpenShell forward service pending receipt did not persist");
+  }
+}
+
+/** Remove only the pending child generation that the caller already classified. */
+export function removeForwardServicePendingReceipt(
+  expected: ForwardServicePendingReceipt,
+  options: ForwardServiceStateOptions,
+): RemoveForwardServiceReceiptResult {
+  const filePath = forwardServicePendingReceiptPath(options.stateDirectory, expected);
+  const actual = readForwardServicePendingReceipt(expected, options);
+  if (!actual) return "absent";
+  if (!isDeepStrictEqual(actual, expected)) return "changed";
+
+  const opened = openRegularFileNoFollow(filePath);
+  const before = opened.stat();
+  const quarantine = `${filePath}.removed.${randomUUID()}`;
+  let removeQuarantine = false;
+  try {
+    const current = fs.lstatSync(filePath);
+    if (!sameFileIdentity(before, current)) return "changed";
+    fs.renameSync(filePath, quarantine);
+    const quarantined = fs.lstatSync(quarantine);
+    if (!sameFileIdentity(before, quarantined)) {
+      if (!fs.existsSync(filePath)) fs.renameSync(quarantine, filePath);
+      return "changed";
+    }
+    removeQuarantine = true;
+    fs.rmSync(quarantine);
+    return "removed";
+  } finally {
+    opened.close();
+    if (removeQuarantine) fs.rmSync(quarantine, { force: true });
   }
 }
 

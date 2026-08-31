@@ -239,14 +239,13 @@ export function teardownSandboxDashboardForward(
     const run = deps.runOpenshell ?? runDashboardForwardStopBestEffort;
     const authority = exactForwardServiceAuthority(sandboxName, sandbox);
     const controller = authority ? runtimeForwardServiceController() : null;
-    let managedCleanupCompleted = true;
     if (authority && controller) {
       try {
         controller.stopAll(authority);
       } catch {
         // Teardown is best-effort; retain ambiguous receipts for a later
         // identity-bound recovery instead of signaling an unproven PID.
-        managedCleanupCompleted = false;
+        return false;
       }
     }
     for (const port of ports) {
@@ -261,7 +260,7 @@ export function teardownSandboxDashboardForward(
         deps.isLocalForwardReachable ?? isLocalForwardReachable,
       );
     }
-    return managedCleanupCompleted;
+    return true;
   } catch {
     // Defense in depth for injected or future runners: teardown is best-effort.
     return false;

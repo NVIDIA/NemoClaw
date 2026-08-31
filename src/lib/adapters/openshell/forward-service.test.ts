@@ -8,8 +8,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildForwardServiceArgs,
   classifyForwardServiceReceipt,
+  forwardServicePendingReceiptPath,
   forwardServiceReceiptPath,
+  isForwardServicePendingReceipt,
   isForwardServiceReceipt,
+  type ForwardServicePendingReceipt,
   type ForwardServiceProcessObservation,
   type ForwardServiceReceipt,
   type ForwardServiceTarget,
@@ -46,6 +49,16 @@ const observation: ForwardServiceProcessObservation = {
   hostIdentity: receipt.hostIdentity,
   pidNamespaceIdentity: receipt.pidNamespaceIdentity,
   argv,
+};
+const pendingReceipt: ForwardServicePendingReceipt = {
+  pendingSchemaVersion: 1,
+  ...target,
+  pid: 4343,
+  launcherUid: 501,
+  hostIdentity: "darwin:test-host",
+  pidNamespaceIdentity: null,
+  expectedArgv: argv,
+  startedAt: "2026-08-31T16:00:00.000Z",
 };
 
 describe("OpenShell ForwardTcp service contract (#10691)", () => {
@@ -93,6 +106,9 @@ describe("OpenShell ForwardTcp service contract (#10691)", () => {
       path.join("/private/state", "forwards", "alpha-18789.json"),
     );
     expect(() => forwardServiceReceiptPath("relative", target)).toThrow(/must be absolute/u);
+    expect(forwardServicePendingReceiptPath("/private/state", target)).toBe(
+      path.join("/private/state", "forwards", "alpha-18789.pending.json"),
+    );
   });
 
   it("accepts only the exact credential-free receipt schema", () => {
@@ -100,6 +116,17 @@ describe("OpenShell ForwardTcp service contract (#10691)", () => {
     expect(isForwardServiceReceipt({ ...receipt, token: "secret" })).toBe(false);
     expect(
       isForwardServiceReceipt({ ...receipt, argv: [...receipt.argv, "--gateway-endpoint"] }),
+    ).toBe(false);
+  });
+
+  it("accepts only the exact credential-free pending child schema", () => {
+    expect(isForwardServicePendingReceipt(pendingReceipt)).toBe(true);
+    expect(isForwardServicePendingReceipt({ ...pendingReceipt, token: "secret" })).toBe(false);
+    expect(
+      isForwardServicePendingReceipt({
+        ...pendingReceipt,
+        expectedArgv: [...pendingReceipt.expectedArgv, "--gateway-endpoint"],
+      }),
     ).toBe(false);
   });
 

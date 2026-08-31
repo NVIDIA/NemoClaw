@@ -7,11 +7,18 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { buildForwardServiceArgs, type ForwardServiceReceipt } from "./forward-service";
+import {
+  buildForwardServiceArgs,
+  type ForwardServicePendingReceipt,
+  type ForwardServiceReceipt,
+} from "./forward-service";
 import {
   listForwardServiceReceipts,
+  readForwardServicePendingReceipt,
   readForwardServiceReceipt,
+  removeForwardServicePendingReceipt,
   removeForwardServiceReceipt,
+  writeForwardServicePendingReceipt,
   writeForwardServiceReceipt,
 } from "./forward-service-state";
 
@@ -38,6 +45,16 @@ const receipt: ForwardServiceReceipt = {
   argv: [target.executable, ...buildForwardServiceArgs(target)],
   startedAt: "2026-08-31T16:00:00.000Z",
 };
+const pendingReceipt: ForwardServicePendingReceipt = {
+  pendingSchemaVersion: 1,
+  ...target,
+  pid: 4343,
+  launcherUid: uid,
+  hostIdentity: "linux:test-host",
+  pidNamespaceIdentity: "pid:[100]",
+  expectedArgv: [target.executable, ...buildForwardServiceArgs(target)],
+  startedAt: "2026-08-31T16:00:00.000Z",
+};
 
 describe("OpenShell ForwardTcp receipt storage (#10691)", () => {
   let stateDirectory = "";
@@ -56,6 +73,22 @@ describe("OpenShell ForwardTcp receipt storage (#10691)", () => {
     const filePath = path.join(stateDirectory, "forwards", "alpha-18789.json");
     expect(fs.lstatSync(path.dirname(filePath)).mode & 0o777).toBe(0o700);
     expect(fs.lstatSync(filePath).mode & 0o777).toBe(0o600);
+  });
+
+  it("retains and generation-safely removes an unidentified pending child", () => {
+    writeForwardServicePendingReceipt(pendingReceipt, { stateDirectory, uid });
+    expect(readForwardServicePendingReceipt(target, { stateDirectory, uid })).toEqual(
+      pendingReceipt,
+    );
+    expect(removeForwardServicePendingReceipt(pendingReceipt, { stateDirectory, uid })).toBe(
+      "removed",
+    );
+    expect(readForwardServicePendingReceipt(target, { stateDirectory, uid })).toBeNull();
+  });
+
+  it("blocks lifecycle-wide cleanup while unidentified pending authority exists", () => {
+    writeForwardServicePendingReceipt(pendingReceipt, { stateDirectory, uid });
+    expect(() => listForwardServiceReceipts({ stateDirectory, uid })).toThrow(/invalid/u);
   });
 
   it("enumerates exact receipt paths for lifecycle-wide cleanup", () => {

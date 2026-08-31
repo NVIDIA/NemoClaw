@@ -30,7 +30,12 @@ const target = {
 };
 
 function createProcessHarness(
-  options: { ignoreChildSignal?: boolean; neverReady?: boolean; unreachable?: boolean } = {},
+  options: {
+    ignoreChildSignal?: boolean;
+    neverReady?: boolean;
+    unreachable?: boolean;
+    unreadableMetadata?: boolean;
+  } = {},
 ): {
   deps: ForwardServiceProcessDeps;
   calls: { args: readonly string[]; environment: NodeJS.ProcessEnv }[];
@@ -43,7 +48,7 @@ function createProcessHarness(
   let reachable = false;
   let ownsListener = false;
   let foreignListener = false;
-  let processIdentity = "linux:test-boot:100";
+  let processIdentity: string | null = "linux:test-boot:100";
   let argv: readonly string[] | null = null;
   const calls: { args: readonly string[]; environment: NodeJS.ProcessEnv }[] = [];
   const stopChild = options.ignoreChildSignal
@@ -69,10 +74,14 @@ function createProcessHarness(
     },
     sleep: () => {},
     spawnDetached: (executable, args, environment) => {
-      alive = options.neverReady !== true;
+      alive = options.neverReady !== true || options.unreadableMetadata === true;
       reachable = options.neverReady !== true && options.unreachable !== true;
       ownsListener = reachable;
-      argv = options.neverReady === true ? null : [executable, ...args];
+      argv =
+        options.neverReady === true || options.unreadableMetadata === true
+          ? null
+          : [executable, ...args];
+      processIdentity = options.unreadableMetadata ? null : processIdentity;
       calls.push({ args, environment });
       return {
         pid,
@@ -272,5 +281,29 @@ describe("OpenShell ForwardTcp process lifecycle (#10691)", () => {
       disposition: "owned",
       reachable: false,
     });
+  });
+
+  it("retains pending authority when an unidentified failed child ignores SIGTERM", () => {
+    const harness = createProcessHarness({
+      ignoreChildSignal: true,
+      unreachable: true,
+      unreadableMetadata: true,
+    });
+    expect(() =>
+      ensureForwardServiceProcess(target, {
+        ...lifecycleOptions(harness),
+        startTimeoutMs: 1,
+        stopTimeoutMs: 1,
+      }),
+    ).toThrow(/remains running/u);
+    expect(inspectForwardServiceProcess(target, lifecycleOptions(harness))).toMatchObject({
+      disposition: "unknown",
+      ownsListener: null,
+      receipt: null,
+    });
+    expect(() => ensureForwardServiceProcess(target, lifecycleOptions(harness))).toThrow(
+      /pending process is unknown/u,
+    );
+    expect(harness.calls).toHaveLength(1);
   });
 });

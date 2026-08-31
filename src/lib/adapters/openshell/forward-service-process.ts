@@ -18,13 +18,17 @@ import {
   buildForwardServiceArgs,
   classifyForwardServiceReceipt,
   type ForwardServiceProcessObservation,
+  type ForwardServicePendingReceipt,
   type ForwardServiceReceipt,
   type ForwardServiceReceiptDisposition,
   type ForwardServiceTarget,
 } from "./forward-service";
 import {
   readForwardServiceReceipt,
+  readForwardServicePendingReceipt,
+  removeForwardServicePendingReceipt,
   removeForwardServiceReceipt,
+  writeForwardServicePendingReceipt,
   writeForwardServiceReceipt,
   type ForwardServiceStateOptions,
 } from "./forward-service-state";
@@ -234,13 +238,35 @@ function processObservation(
   };
 }
 
+function pendingDisposition(
+  pending: ForwardServicePendingReceipt,
+  deps: ForwardServiceProcessDeps,
+): ForwardServiceReceiptDisposition {
+  if (
+    pending.hostIdentity !== deps.hostIdentity ||
+    pending.pidNamespaceIdentity !== deps.pidNamespaceIdentity
+  ) {
+    return "foreign";
+  }
+  return deps.processIsAlive(pending.pid) ? "unknown" : "stale";
+}
+
 export function inspectForwardServiceProcess(
   target: ForwardServiceTarget,
   options: ForwardServiceProcessOptions,
 ): ForwardServiceInspection {
   const receipt = readForwardServiceReceipt(target, stateOptions(options));
   if (!receipt) {
-    return { disposition: "absent", ownsListener: false, reachable: false, receipt: null };
+    const deps = options.deps ?? DEFAULT_DEPS;
+    const pending = readForwardServicePendingReceipt(target, stateOptions(options));
+    return pending
+      ? {
+          disposition: pendingDisposition(pending, deps),
+          ownsListener: null,
+          reachable: deps.isReachable(target.localPort),
+          receipt: null,
+        }
+      : { disposition: "absent", ownsListener: false, reachable: false, receipt: null };
   }
   const deps = options.deps ?? DEFAULT_DEPS;
   const observation = processObservation(receipt, deps);
@@ -273,6 +299,18 @@ function stopForwardServiceProcessUnlocked(
   options: ForwardServiceProcessOptions,
 ): "absent" | "stopped" {
   const deps = options.deps ?? DEFAULT_DEPS;
+  const pending = readForwardServicePendingReceipt(target, stateOptions(options));
+  if (pending) {
+    const disposition = pendingDisposition(pending, deps);
+    if (disposition !== "stale") {
+      throw new Error(
+        `OpenShell forward service pending process is ${disposition}; refusing signal`,
+      );
+    }
+    if (removeForwardServicePendingReceipt(pending, stateOptions(options)) !== "removed") {
+      throw new Error("OpenShell forward service pending receipt changed during cleanup");
+    }
+  }
   const inspection = inspectForwardServiceProcess(target, options);
   if (!inspection.receipt) return "absent";
   if (inspection.disposition === "stale" && !inspection.reachable) {
@@ -351,12 +389,55 @@ function startedReceipt(
   };
 }
 
+function pendingReceipt(
+  target: ForwardServiceTarget,
+  pid: number,
+  deps: ForwardServiceProcessDeps,
+  uid: number,
+): ForwardServicePendingReceipt {
+  return {
+    pendingSchemaVersion: 1,
+    ...target,
+    pid,
+    launcherUid: uid,
+    hostIdentity: deps.hostIdentity,
+    pidNamespaceIdentity: deps.pidNamespaceIdentity,
+    expectedArgv: [target.executable, ...buildForwardServiceArgs(target)],
+    startedAt: deps.now(),
+  };
+}
+
+function waitForUnidentifiedProcessExit(
+  pid: number,
+  deps: ForwardServiceProcessDeps,
+  timeoutMs: number,
+): boolean {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!deps.processIsAlive(pid)) return true;
+    deps.sleep(POLL_INTERVAL_MS);
+  }
+  return !deps.processIsAlive(pid);
+}
+
 export function ensureForwardServiceProcess(
   target: ForwardServiceTarget,
   options: ForwardServiceProcessOptions,
 ): { readonly action: "reused" | "started"; readonly receipt: ForwardServiceReceipt } {
   return options.runExclusive(() => {
     const deps = options.deps ?? DEFAULT_DEPS;
+    const existingPending = readForwardServicePendingReceipt(target, stateOptions(options));
+    if (existingPending) {
+      const disposition = pendingDisposition(existingPending, deps);
+      if (disposition !== "stale") {
+        throw new Error(`OpenShell forward service pending process is ${disposition}`);
+      }
+      if (
+        removeForwardServicePendingReceipt(existingPending, stateOptions(options)) !== "removed"
+      ) {
+        throw new Error("OpenShell forward service pending receipt changed before start");
+      }
+    }
     const current = inspectForwardServiceProcess(target, options);
     if (
       current.disposition === "owned" &&
@@ -397,6 +478,13 @@ export function ensureForwardServiceProcess(
       child.kill("SIGTERM");
       throw new Error("OpenShell forward service process did not publish a PID");
     }
+    const launchedPending = pendingReceipt(target, Number(pid), deps, Number(uid));
+    try {
+      writeForwardServicePendingReceipt(launchedPending, stateOptions(options));
+    } catch (error) {
+      child.kill("SIGTERM");
+      throw error;
+    }
     child.unref();
 
     const deadline = Date.now() + (options.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS);
@@ -417,19 +505,48 @@ export function ensureForwardServiceProcess(
     }
     if (!receipt) {
       child.kill("SIGTERM");
-      if (
-        observedReceipt &&
-        !waitForProcessExit(observedReceipt, deps, options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS)
-      ) {
-        writeForwardServiceReceipt(observedReceipt, stateOptions(options));
+      const stopped = observedReceipt
+        ? waitForProcessExit(
+            observedReceipt,
+            deps,
+            options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
+          )
+        : waitForUnidentifiedProcessExit(
+            Number(pid),
+            deps,
+            options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS,
+          );
+      if (!stopped) {
+        if (observedReceipt) {
+          writeForwardServiceReceipt(observedReceipt, stateOptions(options));
+          if (
+            removeForwardServicePendingReceipt(launchedPending, stateOptions(options)) !== "removed"
+          ) {
+            throw new Error(
+              "OpenShell forward service pending receipt changed during failed-start publication",
+            );
+          }
+        }
         throw new Error(
           "OpenShell forward service process did not become ready and remains running",
         );
+      }
+      if (
+        removeForwardServicePendingReceipt(launchedPending, stateOptions(options)) !== "removed"
+      ) {
+        throw new Error("OpenShell forward service pending receipt changed after failed start");
       }
       throw new Error("OpenShell forward service process did not become ready");
     }
     try {
       writeForwardServiceReceipt(receipt, stateOptions(options));
+      const pendingRemoved = removeForwardServicePendingReceipt(
+        launchedPending,
+        stateOptions(options),
+      );
+      if (pendingRemoved !== "removed") {
+        throw new Error("OpenShell forward service pending receipt changed during publication");
+      }
       const verified = inspectForwardServiceProcess(target, options);
       if (
         verified.disposition !== "owned" ||
@@ -442,6 +559,7 @@ export function ensureForwardServiceProcess(
       child.kill("SIGTERM");
       if (waitForProcessExit(receipt, deps, options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS)) {
         removeForwardServiceReceipt(receipt, stateOptions(options));
+        removeForwardServicePendingReceipt(launchedPending, stateOptions(options));
       }
       throw error;
     }
