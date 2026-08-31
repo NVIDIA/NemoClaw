@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildForwardServiceArgs, type ForwardServiceReceipt } from "./forward-service";
 import {
+  listForwardServiceReceipts,
   readForwardServiceReceipt,
   removeForwardServiceReceipt,
   writeForwardServiceReceipt,
@@ -55,6 +56,38 @@ describe("OpenShell ForwardTcp receipt storage (#10691)", () => {
     const filePath = path.join(stateDirectory, "forwards", "alpha-18789.json");
     expect(fs.lstatSync(path.dirname(filePath)).mode & 0o777).toBe(0o700);
     expect(fs.lstatSync(filePath).mode & 0o777).toBe(0o600);
+  });
+
+  it("enumerates exact receipt paths for lifecycle-wide cleanup", () => {
+    const second = {
+      ...receipt,
+      localPort: 8_642,
+      targetPort: 8_642,
+      argv: [
+        target.executable,
+        ...buildForwardServiceArgs({ ...target, localPort: 8_642, targetPort: 8_642 }),
+      ],
+    };
+    writeForwardServiceReceipt(receipt, { stateDirectory, uid });
+    writeForwardServiceReceipt(second, { stateDirectory, uid });
+
+    expect(
+      listForwardServiceReceipts({ stateDirectory, uid })
+        .map((entry) => entry.localPort)
+        .sort((left, right) => left - right),
+    ).toEqual([8_642, 18_789]);
+  });
+
+  it("fails closed when an enumerated receipt filename disagrees with its target", () => {
+    writeForwardServiceReceipt(receipt, { stateDirectory, uid });
+    fs.renameSync(
+      path.join(stateDirectory, "forwards", "alpha-18789.json"),
+      path.join(stateDirectory, "forwards", "alpha-18790.json"),
+    );
+
+    expect(() => listForwardServiceReceipts({ stateDirectory, uid })).toThrow(
+      /path does not match/u,
+    );
   });
 
   it("rejects a receipt path that is a symbolic link", () => {

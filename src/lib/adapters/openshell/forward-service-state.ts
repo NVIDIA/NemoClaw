@@ -15,6 +15,7 @@ import {
 } from "./forward-service";
 
 const MAX_RECEIPT_BYTES = 64 * 1024;
+const MAX_RECEIPT_FILES = 1_024;
 
 export interface ForwardServiceStateOptions {
   readonly stateDirectory: string;
@@ -94,6 +95,13 @@ export function readForwardServiceReceipt(
     if (hasErrorCode(error, "ENOENT")) return null;
     throw error;
   }
+  return readForwardServiceReceiptFile(filePath, options);
+}
+
+function readForwardServiceReceiptFile(
+  filePath: string,
+  options: ForwardServiceStateOptions,
+): ForwardServiceReceipt | null {
   let opened: ReturnType<typeof openRegularFileNoFollow>;
   try {
     opened = openRegularFileNoFollow(filePath);
@@ -115,10 +123,44 @@ export function readForwardServiceReceipt(
     if (!isForwardServiceReceipt(parsed)) {
       throw new Error("OpenShell forward service receipt is invalid");
     }
+    if (receiptPath(parsed, options) !== filePath) {
+      throw new Error("OpenShell forward service receipt path does not match its target");
+    }
     return parsed;
   } finally {
     opened.close();
   }
+}
+
+/** Enumerate only exact owner-only receipts; any ambiguous entry fails closed. */
+export function listForwardServiceReceipts(
+  options: ForwardServiceStateOptions,
+): ForwardServiceReceipt[] {
+  const directory = path.join(options.stateDirectory, "forwards");
+  try {
+    assertOwnerOnlyDirectory(options.stateDirectory, options);
+    assertOwnerOnlyDirectory(directory, options);
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return [];
+    throw error;
+  }
+  const entries = fs.readdirSync(directory, { withFileTypes: true });
+  if (entries.length > MAX_RECEIPT_FILES) {
+    throw new Error("OpenShell forward service state contains too many receipts");
+  }
+  const receipts: ForwardServiceReceipt[] = [];
+  for (const entry of entries) {
+    if (!entry.name.endsWith(".json")) continue;
+    if (!entry.isFile() || entry.isSymbolicLink()) {
+      throw new Error("OpenShell forward service state contains a non-regular receipt");
+    }
+    const receipt = readForwardServiceReceiptFile(path.join(directory, entry.name), options);
+    if (!receipt) {
+      throw new Error("OpenShell forward service receipt disappeared during enumeration");
+    }
+    receipts.push(receipt);
+  }
+  return receipts;
 }
 
 export function writeForwardServiceReceipt(

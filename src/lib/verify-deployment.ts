@@ -601,7 +601,7 @@ export async function verifyDeployment(
     hint: dashboard.reachable
       ? ""
       : (customRuntimeHints?.dashboard ??
-        `Port forward on ${chain.port} is not working. Run: openshell forward start ${chain.forwardTarget} ${sandboxName}`),
+        `Port forward on ${chain.port} is not working. Run: nemoclaw ${sandboxName} recover`),
   });
 
   // 3b. Agent OpenAI-compatible API reachable from the host (second port
@@ -620,7 +620,7 @@ export async function verifyDeployment(
       hint: agentApi.reachable
         ? ""
         : `The OpenAI-compatible API on port ${chain.gatewayPort} is not reachable from the host. ` +
-          `Run: openshell forward start --background ${chain.gatewayPort} ${sandboxName}`,
+          `Run: nemoclaw ${sandboxName} recover`,
     });
   }
 

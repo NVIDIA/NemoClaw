@@ -4,7 +4,14 @@
 import { spawnSync } from "node:child_process";
 
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { captureOpenshell, isCommandTimeout, runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  captureOpenshell,
+  createForwardServiceController,
+  isCommandTimeout,
+  runOpenshell,
+  type ForwardServiceController,
+  type ForwardServiceSandboxAuthority,
+} from "../../adapters/openshell/runtime";
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
@@ -26,7 +33,7 @@ import {
   retargetHermesApiPortInUrl,
 } from "../../onboard/hermes-api-port";
 import { isWsl } from "../../platform";
-import { ROOT } from "../../state/paths";
+import { ROOT, resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
 import { buildSubprocessEnv } from "../../subprocess-env";
@@ -77,6 +84,45 @@ type DashboardForwardStopRunner = (
   args: string[],
   options: { ignoreError: true; stdio: "ignore"; timeout: number },
 ) => { status?: number | null };
+
+function exactForwardServiceAuthority(
+  sandboxName: string,
+  sandbox: ReturnType<typeof registry.getSandbox>,
+): ForwardServiceSandboxAuthority | null {
+  const sandboxIdentityFingerprint = sandbox?.lifecycleLiveIdentityFingerprint;
+  if (!sandboxIdentityFingerprint || !/^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint)) {
+    return null;
+  }
+  return {
+    gatewayName: resolveSandboxGatewayName(sandbox),
+    sandboxIdentityFingerprint,
+    sandboxName,
+  };
+}
+
+function runtimeForwardServiceController(): ForwardServiceController {
+  return createForwardServiceController({
+    executable: () => {
+      const executable = resolveOpenshell();
+      if (!executable) throw new Error("OpenShell is unavailable");
+      return executable;
+    },
+    stateDirectory: resolveNemoclawStateDir(),
+    // Runtime recovery, stop, and destroy call this module only from their
+    // already-held sandbox lifecycle fence. The process owner still requires
+    // an explicit serialization boundary so an un-fenced caller cannot be
+    // introduced accidentally through the controller API.
+    runExclusive: (_sandboxName, operation) => operation(),
+  });
+}
+
+function endpoint(port: number, expectedBind = "127.0.0.1") {
+  return {
+    localHost: expectedBind === "0.0.0.0" ? ("0.0.0.0" as const) : ("127.0.0.1" as const),
+    localPort: port,
+    targetPort: port,
+  };
+}
 
 function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
@@ -167,15 +213,53 @@ export function teardownSandboxDashboardForward(
     if (!sandbox) return;
     const gatewayName = (deps.resolveSandboxGatewayName ?? resolveSandboxGatewayName)(sandbox);
     const resolvePort = deps.resolveSandboxDashboardPort ?? resolveSandboxDashboardPort;
-    const port = resolvePort(sandboxName, { getSandbox: () => sandbox });
+    const primaryPort = resolvePort(sandboxName, { getSandbox: () => sandbox });
+    const registeredAgent = sandbox.agent ? agentRuntime.getRegisteredAgent(sandbox) : null;
+    const hermesDashboardPort =
+      sandbox.hermesDashboardEnabled === true && isValidPort(sandbox.hermesDashboardPort)
+        ? sandbox.hermesDashboardPort
+        : null;
+    const ports = new Set<number>([primaryPort]);
+    if (hermesDashboardPort !== null) ports.add(hermesDashboardPort);
+    const parsedMessaging = parseSandboxMessagingPlan(sandbox.messaging?.plan, { sandboxName });
+    const messagingForward = getActiveMessagingHostForward(
+      parsedMessaging ? hydrateDerivedSandboxMessagingPlanFields(parsedMessaging) : null,
+    );
+    if (messagingForward) ports.add(messagingForward.port);
+    for (const port of resolveDeclaredAgentForwardPorts(
+      sandbox,
+      primaryPort,
+      registeredAgent,
+      hermesDashboardPort,
+    )) {
+      ports.add(port);
+    }
     const run = deps.runOpenshell ?? runDashboardForwardStopBestEffort;
-    const result = run(["forward", "stop", String(port), sandboxName, "--gateway", gatewayName], {
-      ignoreError: true,
-      stdio: "ignore",
-      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-    });
-    if (result.status !== 0) return;
-    waitForStoppedForwardPortRelease(port, deps.isLocalForwardReachable ?? isLocalForwardReachable);
+    const authority = exactForwardServiceAuthority(sandboxName, sandbox);
+    const controller = authority ? runtimeForwardServiceController() : null;
+    if (authority && controller) {
+      try {
+        controller.stopAll(authority);
+      } catch {
+        // Teardown is best-effort; retain ambiguous receipts for a later
+        // identity-bound recovery instead of signaling an unproven PID.
+      }
+    }
+    for (const port of ports) {
+      const result = run(
+        ["forward", "stop", String(port), sandboxName, "--gateway", gatewayName],
+        {
+          ignoreError: true,
+          stdio: "ignore",
+          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+        },
+      );
+      if (result.status !== 0) continue;
+      waitForStoppedForwardPortRelease(
+        port,
+        deps.isLocalForwardReachable ?? isLocalForwardReachable,
+      );
+    }
   } catch {
     // Defense in depth for injected or future runners: teardown is best-effort.
   }
@@ -249,19 +333,37 @@ export function isSandboxPortForwardHealthy(
   port: number,
   expectedBind?: string,
 ): SandboxForwardHealth {
+  const sandbox = registry.getSandbox(sandboxName);
+  const authority = exactForwardServiceAuthority(sandboxName, sandbox);
+  if (authority) {
+    try {
+      const inspection = runtimeForwardServiceController().inspect(
+        authority,
+        endpoint(port, expectedBind),
+      );
+      if (inspection.disposition === "owned") return inspection.reachable;
+      if (inspection.disposition !== "absent") return inspection.reachable ? "occupied" : false;
+      // An absent receipt may still have a same-sandbox legacy SSH forward.
+      // Classify that row below, but report it unhealthy so the next recovery
+      // pass migrates it to the direct ForwardTcp owner.
+    } catch {
+      return null;
+    }
+  }
   const result = captureOpenshell(["forward", "list"], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (!result || isCommandTimeout(result) || result.status !== 0) return null;
   const entries = parseForwardList(result.output) as SandboxForwardListEntry[];
-  return classifyForwardHealthWithReachability(
+  const legacy = classifyForwardHealthWithReachability(
     entries,
     sandboxName,
     String(port),
     () => isLocalForwardReachable(port),
     expectedBind,
   );
+  return authority && legacy === true ? false : legacy;
 }
 
 export function ensureSandboxPortForwardForPort(
@@ -282,6 +384,13 @@ export function ensureSandboxPortForwardForPort(
     expectedBind,
     beforeStart = () => true,
   } = options;
+  const sandbox = registry.getSandbox(sandboxName);
+  const authority = exactForwardServiceAuthority(sandboxName, sandbox);
+  const controller = authority ? runtimeForwardServiceController() : null;
+  const managedEndpoint = endpoint(
+    port,
+    expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1"),
+  );
   const acceptSuccessfulForward = () => {
     let accepted = false;
     try {
@@ -290,10 +399,18 @@ export function ensureSandboxPortForwardForPort(
       accepted = false;
     }
     if (accepted) return true;
-    runOpenshell(["forward", "stop", String(port), sandboxName], {
-      ignoreError: true,
-      stdio: "ignore",
-    });
+    if (authority && controller) {
+      try {
+        controller.stop(authority, managedEndpoint);
+      } catch {
+        return false;
+      }
+    } else {
+      runOpenshell(["forward", "stop", String(port), sandboxName], {
+        ignoreError: true,
+        stdio: "ignore",
+      });
+    }
     return false;
   };
   let forwardHealth = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
@@ -301,6 +418,19 @@ export function ensureSandboxPortForwardForPort(
   if (forwardHealth === "occupied") return false;
   const configuredWaitMs = Number(process.env.NEMOCLAW_FORWARD_RECOVERY_WAIT_MS ?? "3000");
   const waitMs = Number.isFinite(configuredWaitMs) ? Math.max(0, configuredWaitMs) : 3000;
+
+  if (authority && controller) {
+    try {
+      controller.stop(authority, managedEndpoint);
+    } catch (error) {
+      console.error(
+        `  Warning: could not retire ForwardTcp ${String(port)} for ${sandboxName}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    }
+  }
 
   const stopResult = runOpenshell(["forward", "stop", String(port), sandboxName], {
     ignoreError: true,
@@ -350,6 +480,19 @@ export function ensureSandboxPortForwardForPort(
   }
 
   if (!beforeStart()) return false;
+  if (authority && controller) {
+    try {
+      controller.ensure(authority, managedEndpoint);
+      return acceptSuccessfulForward();
+    } catch (error) {
+      console.error(
+        `  Warning: OpenShell ForwardTcp ${String(port)} for ${sandboxName} did not start: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return false;
+    }
+  }
   const startResult = runOpenshell(
     ["forward", "start", "--background", forwardTarget, sandboxName],
     {
@@ -512,6 +655,26 @@ export function areSandboxLaunchForwardsHealthy(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const requiredPorts = resolveSandboxLaunchForwardPortsFromAuthority(sandboxName, sandbox, agent);
   if (requiredPorts.length === 0) return true;
+  const authority = exactForwardServiceAuthority(sandboxName, sandbox);
+  if (authority) {
+    const controller = runtimeForwardServiceController();
+    const primaryPort = resolveSandboxDashboardPort(sandboxName, { getSandbox: () => sandbox });
+    try {
+      for (const port of requiredPorts) {
+        const allInterface =
+          port === primaryPort &&
+          (sandbox.dashboardRemoteBindPrepared === true || isWsl({}));
+        const inspection = controller.inspect(
+          authority,
+          endpoint(port, allInterface ? "0.0.0.0" : "127.0.0.1"),
+        );
+        if (inspection.disposition !== "owned" || !inspection.reachable) return false;
+      }
+      return true;
+    } catch {
+      return null;
+    }
+  }
   const result = capture(["forward", "list", "--gateway", owningGatewayName], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,

@@ -64,6 +64,7 @@ import {
   prepareSandboxDestroy,
   stopModelRouterForDestroyedSandbox,
   stopSandboxInferenceResources,
+  teardownSandboxDashboardForward,
 } from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
@@ -855,6 +856,9 @@ async function destroySandboxUnlocked(
   const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
   if (!deleteSucceededOrAlreadyGone) {
     preparedManagedLlamaCppCleanup?.abort();
+  }
+  if (deleteSucceededOrAlreadyGone) {
+    teardownSandboxDashboardForward(sandboxName);
   }
   if (deleteSucceededOrAlreadyGone && sandbox) {
     const stateVolumeCleanup = abortPreparedCleanupOnError(() =>

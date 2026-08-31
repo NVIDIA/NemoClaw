@@ -516,7 +516,7 @@ resolve_hermes_api_port() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name agent_display port openshell_bin openshell_dir attempt selected_state_dir state_dir pid_file watcher_script watcher_pid start_diagnostic diagnostic_file
+  local sandbox_name agent_name agent_display port openshell_bin openshell_dir attempt selected_state_dir state_dir pid_file watcher_script watcher_pid start_diagnostic diagnostic_file forward_receipt cli_runner
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
   agent_display="$(agent_display_name "$agent_name")"
@@ -565,9 +565,27 @@ restore_onboard_forward_after_post_checks() {
         kill "$old_pid" >/dev/null 2>&1 || true
       fi
     fi
-    rm -f "$pid_file"
+    rm -f "$pid_file" "$expected_watcher_script"
   fi
-
+  forward_receipt="${state_dir}/forwards/${sandbox_name}-${port}.json"
+  if [[ -e "$forward_receipt" || -L "$forward_receipt" ]]; then
+    if command_exists curl \
+      && curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    cli_runner="${_CLI_PATH:-$_CLI_BIN}"
+    if [[ -x "$cli_runner" ]] || command_exists "$cli_runner"; then
+      if "$cli_runner" "$sandbox_name" recover; then
+        if ! command_exists curl \
+          || curl -sf --max-time 3 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+          return 0
+        fi
+      fi
+    fi
+    warn "Could not restore ${agent_display} ForwardTcp service on port ${port}."
+    warn "Run: ${_CLI_BIN} ${sandbox_name} recover"
+    return 1
+  fi
   redact_forward_start_diagnostic() {
     local redactor
     redactor="$(resolve_repo_root)/dist/lib/security/redact.js"

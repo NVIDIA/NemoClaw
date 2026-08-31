@@ -102,6 +102,7 @@ function createListenerFailureRecoveryHarness(targetPort: number) {
     isWsl: () => false,
     redact: (value: unknown) => String(value),
     sleep,
+    isPortBoundOnHost: () => false,
     printAgentDashboardUi: vi.fn(),
     listSandboxes: () => ({ sandboxes: [] }),
   });
@@ -110,6 +111,77 @@ function createListenerFailureRecoveryHarness(targetPort: number) {
 }
 
 describe("onboard dashboard helpers", () => {
+  it("starts primary and fixed host forwards through the direct ForwardTcp owner", () => {
+    const fingerprint = "b".repeat(64);
+    const controller = {
+      inspect: vi.fn(() => ({ disposition: "absent" as const, reachable: false, receipt: null })),
+      ensure: vi.fn(() => ({ action: "started" as const, receipt: {} as never })),
+      stop: vi.fn(() => "absent" as const),
+      stopPort: vi.fn(() => "absent" as const),
+      stopAll: vi.fn(() => 0),
+    };
+    const openshellArgv = vi.fn(() => {
+      throw new Error("legacy forward start must not run");
+    });
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => ""),
+      openshellArgv,
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      isPortBoundOnHost: () => false,
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [{ name: "alpha" }] }),
+      getSandbox: () => ({
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleLiveIdentityFingerprint: "d".repeat(64),
+      }),
+      forwardService: {
+        controller,
+        executable: () => "/usr/local/bin/openshell",
+        stateDirectory: "/private/state",
+        runExclusive: (_sandboxName, operation) => operation(),
+        resolveGatewayName: () => "nemoclaw",
+      },
+    });
+
+    expect(
+      helpers.ensureDashboardForward("alpha", "http://127.0.0.1:18789", {
+        gatewayName: "nemoclaw",
+        sandboxIdentityFingerprint: fingerprint,
+      }),
+    ).toBe(18_789);
+    expect(helpers.ensureAgentFixedForward("alpha", 8_642, "Hermes API")).toBe(true);
+    helpers.stopAllDashboardForwards();
+
+    expect(controller.ensure).toHaveBeenNthCalledWith(
+      1,
+      {
+        gatewayName: "nemoclaw",
+        sandboxIdentityFingerprint: fingerprint,
+        sandboxName: "alpha",
+      },
+      { localHost: "127.0.0.1", localPort: 18_789, targetPort: 18_789 },
+    );
+    expect(controller.ensure).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      { localHost: "127.0.0.1", localPort: 8_642, targetPort: 8_642 },
+    );
+    expect(openshellArgv).not.toHaveBeenCalled();
+    expect(controller.stopAll).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw",
+      sandboxIdentityFingerprint: fingerprint,
+      sandboxName: "alpha",
+    });
+  });
+
   it("builds a Hermes verification chain with the sandbox's allocated API port (#9290)", () => {
     const getSandbox = vi.fn(() => ({ hermesApiPort: 8643 }));
     const helpers = createOnboardDashboardHelpers({
@@ -413,6 +485,7 @@ describe("onboard dashboard helpers", () => {
       sleep: vi.fn(),
       printAgentDashboardUi: vi.fn(),
       listSandboxes: () => ({ sandboxes: [] }),
+      getSandbox: () => ({ hermesApiPort: 8_642 }),
     });
 
     expect(

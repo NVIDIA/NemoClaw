@@ -26,6 +26,13 @@ type EnsureForward = (
   label: string,
   revalidateSandboxIdentity?: RevalidateSandboxIdentity,
 ) => boolean;
+type EnsureForwardLifecycle = EnsureForward & {
+  stop?: (
+    sandboxName: string,
+    port: number,
+    revalidateSandboxIdentity?: RevalidateSandboxIdentity,
+  ) => void;
+};
 
 export function resolveHermesDashboardOnboardState({
   agentName,
@@ -149,7 +156,7 @@ export function ensureHermesDashboardForwardIfEnabled({
 }: {
   state: HermesDashboardOnboardState;
   sandboxName: string;
-  ensureForward: EnsureForward;
+  ensureForward: EnsureForwardLifecycle;
   note: (message: string) => void;
   revalidateSandboxIdentity?: RevalidateSandboxIdentity;
 }): boolean {
@@ -177,7 +184,7 @@ export function createHermesDashboardForwardEnsurer({
   fail,
 }: {
   state: HermesDashboardOnboardState;
-  ensureForward: EnsureForward;
+  ensureForward: EnsureForwardLifecycle;
   note: (message: string) => void;
   rollbackSandbox: (
     sandboxName: string,
@@ -224,7 +231,7 @@ export function createHermesDashboardOnboardForwarding({
 }: {
   agentName: string | null | undefined;
   env: NodeJS.ProcessEnv;
-  ensureForward: EnsureForward;
+  ensureForward: EnsureForwardLifecycle;
   note: (message: string) => void;
   runOpenshell: RunOpenshell;
   getApiForwardPort: () => string;
@@ -250,19 +257,28 @@ export function createHermesDashboardOnboardForwarding({
       ensureForward,
       note,
       rollbackSandbox: (targetSandbox, revalidateRollback) => {
-        revalidateRollback?.(
-          `stop Hermes API forward for sandbox '${targetSandbox}' during rollback`,
-        );
-        runOpenshell(["forward", "stop", getApiForwardPort(), targetSandbox], {
-          ignoreError: true,
-        });
-        if (state.config) {
+        const apiPort = Number(getApiForwardPort());
+        if (ensureForward.stop && Number.isInteger(apiPort)) {
+          ensureForward.stop(targetSandbox, apiPort, revalidateRollback);
+        } else {
           revalidateRollback?.(
-            `stop Hermes dashboard forward for sandbox '${targetSandbox}' during rollback`,
+            `stop Hermes API forward for sandbox '${targetSandbox}' during rollback`,
           );
-          runOpenshell(["forward", "stop", String(state.config.port), targetSandbox], {
+          runOpenshell(["forward", "stop", getApiForwardPort(), targetSandbox], {
             ignoreError: true,
           });
+        }
+        if (state.config) {
+          if (ensureForward.stop) {
+            ensureForward.stop(targetSandbox, state.config.port, revalidateRollback);
+          } else {
+            revalidateRollback?.(
+              `stop Hermes dashboard forward for sandbox '${targetSandbox}' during rollback`,
+            );
+            runOpenshell(["forward", "stop", String(state.config.port), targetSandbox], {
+              ignoreError: true,
+            });
+          }
         }
       },
       fail: failWithMessage,

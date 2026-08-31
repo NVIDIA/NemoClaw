@@ -90,6 +90,7 @@ import {
   type ManagedHermesStateVolumeContext,
   removeManagedHermesStateVolumes,
   requiresManagedHermesStateVolume,
+  stopForwardServicesForUninstall,
   stopHermesForwardWatchers,
 } from "./hermes-uninstall-cleanup";
 import {
@@ -3192,6 +3193,7 @@ function executePlan(
   sharedRegistryMustBePreserved: boolean,
   otherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
+  sandboxRegistrations: Readonly<Record<string, GatewayRegistryEntry>>,
   managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
@@ -3218,6 +3220,7 @@ function executePlan(
       sharedRegistryMustBePreserved,
       otherGatewayPorts,
       sandboxNames,
+      sandboxRegistrations,
       managedHermesStateVolumes,
       teardownAuthority,
       portableRuntimeCleanup,
@@ -3239,6 +3242,7 @@ function executePreparedPlan(
   sharedRegistryMustBePreserved: boolean,
   otherGatewayPorts: readonly number[],
   sandboxNames: readonly string[],
+  sandboxRegistrations: Readonly<Record<string, GatewayRegistryEntry>>,
   managedHermesStateVolumes: readonly ManagedHermesStateVolumeContext[],
   teardownAuthority: GatewayOwner,
   portableRuntimeCleanup: boolean,
@@ -3289,6 +3293,16 @@ function executePreparedPlan(
       continue;
     }
     if (step.name === "Stopping services") {
+      if (
+        !stopForwardServicesForUninstall(
+          sandboxRegistrations,
+          path.join(paths.nemoclawStateDir, "state"),
+          runtime,
+          (entry) => resolveGatewayName(registryEntryGatewayPort(entry as GatewayRegistryEntry)),
+        )
+      ) {
+        return { ok: false };
+      }
       if (
         !portableRuntimeCleanup &&
         !recordManagedModelCleanup(
@@ -3812,6 +3826,7 @@ function executePreparedUninstall(prepared: PreparedUninstallRun): UninstallRunO
       prepared.gatewayInspection.sharedRegistryMustBePreserved,
       prepared.gatewayInspection.otherGatewayPorts,
       selectedSandboxState.names,
+      selectedSandboxState.registrations,
       selectedSandboxState.managedHermesStateVolumes,
       teardownAuthority,
       portableRuntimeCleanup,

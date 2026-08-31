@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import {
   getActiveMessagingHostForward,
   MessagingHostStateApplier,
@@ -10,18 +12,47 @@ import { hydrateDerivedSandboxMessagingPlanFields } from "../messaging/hydration
 import type { SandboxMessagingHostForwardPlan } from "../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import * as registry from "../state/registry";
+import { withDashboardSandboxLifecycleLockSync } from "./dashboard-port";
 
 type RunOpenshell = (
   args: string[],
   options: { ignoreError: true },
 ) => { readonly status?: number | null };
 
+type GatewayBinding =
+  | {
+      gatewayName?: string | null;
+      gatewayPort?: number | null;
+    }
+  | null
+  | undefined;
+
+export function resolveProductionForwardServiceGatewayName(sandbox: GatewayBinding): string {
+  if (sandbox?.gatewayPort !== undefined && sandbox.gatewayPort !== null) {
+    const port = sandbox.gatewayPort;
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) return "invalid";
+    return port === 8_080 ? "nemoclaw" : `nemoclaw-${String(port)}`;
+  }
+  if (sandbox?.gatewayName !== undefined && sandbox.gatewayName !== null) {
+    return typeof sandbox.gatewayName === "string" ? sandbox.gatewayName : "invalid";
+  }
+  return "nemoclaw";
+}
+
+/** Bind production dashboard forwarding without widening the onboarding entry point. */
+export function productionForwardServiceRegistryContext() {
+  return {
+    getSandbox: registry.getSandbox,
+    listSandboxes: registry.listSandboxes,
+    stateDirectory: path.join(path.dirname(registry.REGISTRY_FILE), "state"),
+    runExclusive: withDashboardSandboxLifecycleLockSync,
+    resolveGatewayName: resolveProductionForwardServiceGatewayName,
+  };
+}
+
 export interface MessagingHostForwardRollbackOptions {
   readonly runOpenshell: RunOpenshell;
-  readonly buildRollbackMessage: (
-    sandboxName: string,
-    err: unknown,
-  ) => readonly string[];
+  readonly buildRollbackMessage: (sandboxName: string, err: unknown) => readonly string[];
   readonly cliName: () => string;
   readonly forwardPortsToStop?: readonly (number | string | null | undefined)[];
   readonly beforeMutation?: (operation: string) => void;

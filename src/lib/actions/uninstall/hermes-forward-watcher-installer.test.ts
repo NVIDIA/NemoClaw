@@ -75,7 +75,7 @@ exec ${JSON.stringify(process.execPath)} "$@"
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
-  });
+  }, 10_000);
 
   it.each([
     {

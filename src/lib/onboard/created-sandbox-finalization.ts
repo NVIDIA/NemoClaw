@@ -134,6 +134,8 @@ export interface CreatedSandboxCompletionOptions {
       chatUiUrl: string,
       options: {
         rollbackSandboxOnFailure: true;
+        gatewayName: string;
+        sandboxIdentityFingerprint: string;
         revalidateSandboxIdentity?: (operation: string) => void;
       },
     ) => number;
@@ -378,13 +380,17 @@ export function createCreatedSandboxCompletionActions(
       options.finalization.sandboxName,
     );
   }
-  async function finalizeDashboard(): Promise<void> {
+  async function finalizeDashboard(
+    lifecycle: CreatedSandboxLifecycleRegistration,
+  ): Promise<void> {
     await options.dashboard.releasePort();
     deps.revalidateSandboxIdentity?.(
       `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
     );
     dashboardPort = options.dashboard.ensureForward(options.finalization.sandboxName, chatUiUrl, {
       rollbackSandboxOnFailure: true,
+      gatewayName: options.registration.gatewayName,
+      sandboxIdentityFingerprint: lifecycle.lifecycleLiveIdentityFingerprint,
       revalidateSandboxIdentity: deps.revalidateSandboxIdentity,
     });
     deps.revalidateSandboxIdentity?.(
@@ -447,7 +453,7 @@ export function createCreatedSandboxCompletionActions(
         deps.revalidateSandboxIdentity?.(
           `configuring dashboard capability for sandbox '${options.finalization.sandboxName}'`,
         );
-        await finalizeDashboard();
+        await finalizeDashboard(verifiedLifecycle);
       }
       const resolved = managedWorkloadOnboard.resolveOnboardSandboxWorkloadReceipt({
         ...options.workload,

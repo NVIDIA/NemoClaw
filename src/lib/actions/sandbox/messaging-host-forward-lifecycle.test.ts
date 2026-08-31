@@ -10,6 +10,7 @@ import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(),
   getOpenshellBinary: vi.fn(() => "openshell"),
+  isCommandTimeout: vi.fn(() => false),
   runOpenshell: vi.fn(() => ({ status: 0 })),
 }));
 
@@ -64,14 +65,8 @@ describe("ensureMessagingHostForwardAfterRebuild", () => {
     const ok = ensureMessagingHostForwardAfterRebuild("demo", makePlan());
 
     expect(ok).toBe(true);
-    expect(captureOpenshell).toHaveBeenCalledTimes(2);
-    expect(captureOpenshell).toHaveBeenNthCalledWith(
-      1,
-      ["forward", "list"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(captureOpenshell).toHaveBeenNthCalledWith(
-      2,
+    expect(captureOpenshell).toHaveBeenCalledOnce();
+    expect(captureOpenshell).toHaveBeenCalledWith(
       ["forward", "list"],
       expect.objectContaining({ ignoreError: true, timeout: expect.any(Number) }),
     );

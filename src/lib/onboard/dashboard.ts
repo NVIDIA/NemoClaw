@@ -4,6 +4,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  createForwardServiceController,
+  type ForwardServiceController,
+  type ForwardServiceSandboxAuthority,
+} from "../adapters/openshell/forward-service-controller";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../agent/defs";
 import { getInteractiveAgentCommand } from "../agent/gateway-restart-scripts";
@@ -46,6 +51,7 @@ import {
 } from "./forward-start";
 import {
   ensureMessagingHostForwardForSandbox,
+  productionForwardServiceRegistryContext,
   resolveMessagingHostForwardForSandbox,
 } from "./messaging-host-forward";
 import { buildSshForwardHintLines } from "./ssh-forward-hint";
@@ -70,6 +76,7 @@ export interface OnboardDashboardDeps {
   isWsl(): boolean;
   redact(value: unknown): string;
   sleep(seconds: number): void;
+  productionForwardService?: boolean;
   /** Environment used to detect an SSH session for the port-forward hint. */
   env?: NodeJS.ProcessEnv;
   // Sandbox-registry lookup used by `ensureDashboardForward` for the
@@ -80,7 +87,26 @@ export interface OnboardDashboardDeps {
   /** Host-listener probe injected by forward release race tests. */
   isPortBoundOnHost?: typeof isPortBoundOnHost;
   /** Sandbox lookup used to resolve the per-sandbox Hermes API port. */
-  getSandbox?(name: string): { hermesApiPort?: number | null } | null | undefined;
+  getSandbox?(name: string):
+    | {
+        gatewayName?: string | null;
+        gatewayPort?: number | null;
+        hermesApiPort?: number | null;
+        lifecycleLiveIdentityFingerprint?: string;
+      }
+    | null
+    | undefined;
+  /** Direct ForwardTcp process owner. Omitted only by legacy-compatibility tests/callers. */
+  forwardService?: {
+    /** Focused tests may inject the process owner without spawning a child. */
+    controller?: ForwardServiceController;
+    executable(): string;
+    stateDirectory: string;
+    runExclusive<T>(sandboxName: string, operation: () => T): T;
+    resolveGatewayName(
+      sandbox: { gatewayName?: string | null; gatewayPort?: number | null } | null | undefined,
+    ): string;
+  };
   printAgentDashboardUi(
     sandboxName: string,
     token: string | null,
@@ -138,12 +164,18 @@ export interface OnboardDashboardHelpers {
       releaseBeforeForward(agentName: string, port: number): Promise<void> | void;
     },
   ): Promise<number> | number;
-  ensureAgentFixedForward(
+  ensureAgentFixedForward: ((
     sandboxName: string,
     port: number,
     label: string,
     revalidateSandboxIdentity?: (operation: string) => void,
-  ): boolean;
+  ) => boolean) & {
+    stop(
+      sandboxName: string,
+      port: number,
+      revalidateSandboxIdentity?: (operation: string) => void,
+    ): void;
+  };
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
   fetchAgentWebAuthTokenFromSandbox(sandboxName: string, agent: AgentDefinition): string | null;
   getDashboardForwardPort(
@@ -232,6 +264,74 @@ function printWslFallback(fallbackDashboardUrls: string[], indent: string): void
 
 export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): OnboardDashboardHelpers {
   const runCapture = deps.runCapture ?? defaultRunCapture;
+  const productionForwardService = deps.productionForwardService
+    ? productionForwardServiceRegistryContext()
+    : null;
+  const getSandbox = deps.getSandbox ?? productionForwardService?.getSandbox;
+  const listSandboxes = deps.listSandboxes ?? productionForwardService?.listSandboxes;
+  const forwardService: OnboardDashboardDeps["forwardService"] =
+    deps.forwardService ??
+    (productionForwardService
+      ? {
+          executable: () => {
+            const executable = deps.openshellArgv([])[0];
+            if (!executable) throw new Error("OpenShell is unavailable");
+            return executable;
+          },
+          stateDirectory: productionForwardService.stateDirectory,
+          runExclusive: productionForwardService.runExclusive,
+          resolveGatewayName: productionForwardService.resolveGatewayName,
+        }
+      : undefined);
+  const forwardServiceController: ForwardServiceController | null = forwardService
+    ? (forwardService.controller ??
+      createForwardServiceController({
+        executable: forwardService.executable,
+        stateDirectory: forwardService.stateDirectory,
+        runExclusive: forwardService.runExclusive,
+      }))
+    : null;
+  const forwardAuthorities = new Map<string, ForwardServiceSandboxAuthority>();
+
+  function resolveForwardServiceAuthority(
+    sandboxName: string,
+    options: DashboardForwardOptions = {},
+  ): ForwardServiceSandboxAuthority | null {
+    if (!forwardService) return null;
+    const cached = forwardAuthorities.get(sandboxName);
+    const sandbox = getSandbox?.(sandboxName);
+    const sandboxIdentityFingerprint =
+      options.sandboxIdentityFingerprint ??
+      cached?.sandboxIdentityFingerprint ??
+      sandbox?.lifecycleLiveIdentityFingerprint;
+    if (!sandboxIdentityFingerprint || !/^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint)) {
+      return null;
+    }
+    const gatewayName =
+      options.gatewayName ?? cached?.gatewayName ?? forwardService.resolveGatewayName(sandbox);
+    const authority = { gatewayName, sandboxIdentityFingerprint, sandboxName };
+    forwardAuthorities.set(sandboxName, authority);
+    return authority;
+  }
+
+  function forwardEndpoint(port: number, target: string) {
+    return {
+      localHost: target.startsWith("0.0.0.0:") ? ("0.0.0.0" as const) : ("127.0.0.1" as const),
+      localPort: port,
+      targetPort: port,
+    };
+  }
+
+  function stopManagedForward(
+    sandboxName: string,
+    port: number,
+    options: DashboardForwardOptions = {},
+  ): boolean {
+    const authority = resolveForwardServiceAuthority(sandboxName, options);
+    if (!authority || !forwardServiceController) return false;
+    forwardServiceController.stopPort(authority, port);
+    return true;
+  }
 
   function getDashboardForwardPort(
     chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
@@ -283,13 +383,19 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       wslHostAddress: getWslHostAddress({ isWsl }),
       dashboardHealthEndpoint: agent?.dashboard?.healthPath,
       gatewayPort: resolveVerifyAgentApiPort(sandboxName, agent, {
-        getSandbox: deps.getSandbox,
+        getSandbox,
       }),
       gatewayHealthEndpoint: agent?.healthProbe?.url,
     });
   }
 
   function stopAllDashboardForwards(): void {
+    if (forwardServiceController && listSandboxes) {
+      for (const sandbox of listSandboxes().sandboxes) {
+        const authority = resolveForwardServiceAuthority(sandbox.name);
+        if (authority) forwardServiceController.stopAll(authority);
+      }
+    }
     const forwardList = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     for (const port of getRunningForwardPorts(forwardList)) {
       bestEffortForwardStop(deps.runOpenshell, port);
@@ -338,6 +444,25 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const messagingForward = resolveMessagingHostForwardForSandbox(sandboxName);
     if (messagingForward) preservedPorts.add(String(messagingForward.port));
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
+    const preferredTarget = getDashboardForwardTarget(replaceUrlPort(chatUiUrl, preferredPort));
+    const forwardAuthority = resolveForwardServiceAuthority(sandboxName, options);
+    const managedPreferred =
+      forwardAuthority && forwardServiceController
+        ? forwardServiceController.inspect(
+            forwardAuthority,
+            forwardEndpoint(preferredPort, preferredTarget),
+          )
+        : null;
+    if (
+      managedPreferred &&
+      managedPreferred.disposition !== "absent" &&
+      managedPreferred.disposition !== "owned" &&
+      !(managedPreferred.disposition === "stale" && !managedPreferred.reachable)
+    ) {
+      throw new Error(
+        `ForwardTcp state for '${sandboxName}' on port ${String(preferredPort)} is ${managedPreferred.disposition}; refusing replacement.`,
+      );
+    }
     const makeStopForwardForSandbox = () =>
       createSandboxForwardStopper({
         runOpenshell: deps.runOpenshell,
@@ -375,8 +500,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         sandboxName,
         preferredPort,
         existingForwards,
-        deps.isPortBoundOnHost ?? isPortBoundOnHost,
-        getRegistryOccupiedDashboardPorts(sandboxName, deps.listSandboxes),
+        managedPreferred?.disposition === "owned" && managedPreferred.reachable
+          ? (port) =>
+              port === preferredPort ? false : (deps.isPortBoundOnHost ?? isPortBoundOnHost)(port)
+          : (deps.isPortBoundOnHost ?? isPortBoundOnHost),
+        getRegistryOccupiedDashboardPorts(sandboxName, listSandboxes),
       );
     } catch (err) {
       if (!rollbackSandboxOnFailure) throw err;
@@ -412,27 +540,51 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     parsedUrl.port = String(actualPort);
     const actualTarget = getDashboardForwardTarget(parsedUrl.toString());
     stopForwardForSandbox(actualPort);
-    const startDashboardForward = buildDetachedForwardStartSpawn(
-      deps.openshellArgv(["forward", "start", "--background", actualTarget, sandboxName]),
-    );
-    const { ok: fwdOk, diagnostic: fwdDiagnostic } = runDetachedForwardStartWithRetries(
-      (stdio) => {
+    const actualAuthority = resolveForwardServiceAuthority(sandboxName, options);
+    let fwdOk = false;
+    let fwdDiagnostic = "";
+    let managedAction: "reused" | "started" | null = null;
+    if (actualAuthority && forwardServiceController) {
+      try {
         revalidateSandboxIdentity?.(
           `start dashboard forward ${String(actualPort)} for sandbox '${sandboxName}'`,
         );
-        return startDashboardForward(stdio);
-      },
-      () => deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }),
-      { port: actualPort, sandboxName },
-      () => {
-        deps.sleep(1);
-        // The setup stopper intentionally de-duplicates ports. A port-conflict
-        // retry needs a fresh sandbox-scoped stopper so it can preserve the
-        // established conflict-recovery behavior despite that one-shot guard.
-        makeStopForwardForSandbox()(actualPort);
-      },
-      { onProgress: buildForwardStartProgressLogger(actualPort) },
-    );
+        managedAction = forwardServiceController.ensure(
+          actualAuthority,
+          forwardEndpoint(actualPort, actualTarget),
+        ).action;
+        fwdOk = true;
+      } catch (error) {
+        fwdDiagnostic = error instanceof Error ? error.message : String(error);
+      }
+    } else {
+      const startDashboardForward = buildDetachedForwardStartSpawn(
+        deps.openshellArgv(["forward", "start", "--background", actualTarget, sandboxName]),
+      );
+      const started = runDetachedForwardStartWithRetries(
+        (stdio) => {
+          revalidateSandboxIdentity?.(
+            `start dashboard forward ${String(actualPort)} for sandbox '${sandboxName}'`,
+          );
+          return startDashboardForward(stdio);
+        },
+        () =>
+          deps.runCaptureOpenshell(["forward", "list"], {
+            timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+          }),
+        { port: actualPort, sandboxName },
+        () => {
+          deps.sleep(1);
+          // The setup stopper intentionally de-duplicates ports. A port-conflict
+          // retry needs a fresh sandbox-scoped stopper so it can preserve the
+          // established conflict-recovery behavior despite that one-shot guard.
+          makeStopForwardForSandbox()(actualPort);
+        },
+        { onProgress: buildForwardStartProgressLogger(actualPort) },
+      );
+      fwdOk = started.ok;
+      fwdDiagnostic = started.diagnostic;
+    }
     if (!fwdOk) {
       const looksLikePortConflict = looksLikeForwardPortConflict(fwdDiagnostic);
       if (rollbackSandboxOnFailure) {
@@ -460,15 +612,25 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         );
       }
     }
-    if (fwdOk) options.onForwardStarted?.(actualPort);
+    if (fwdOk && managedAction !== "reused") options.onForwardStarted?.(actualPort);
     if (fwdOk && rollbackSandboxOnFailure) {
       ensureMessagingHostForwardForSandbox({
         sandboxName,
         ensureForward: (name, port, label) =>
-          ensureFixedAgentForward(deps, name, port, label, revalidateSandboxIdentity),
+          ensureAgentFixedForward(name, port, label, revalidateSandboxIdentity),
         note: deps.note,
         rollbackOnFailure: {
-          runOpenshell: deps.runOpenshell,
+          runOpenshell: (args, runOptions) => {
+            const rollbackPort = Number(args[2]);
+            if (Number.isInteger(rollbackPort)) {
+              try {
+                if (stopManagedForward(sandboxName, rollbackPort, options)) return { status: 0 };
+              } catch {
+                return { status: 1 };
+              }
+            }
+            return deps.runOpenshell(args, runOptions);
+          },
           buildRollbackMessage: (name, error) =>
             buildOrphanedSandboxRollbackMessage(name, error, options.gatewayName),
           cliName: deps.cliName,
@@ -498,9 +660,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     revalidateSandboxIdentity?: (operation: string) => void,
   ): number {
     const envUrl = process.env.CHAT_UI_URL;
-    const persistedPort = envUrl
-      ? null
-      : getPersistedDashboardPort(sandboxName, deps.listSandboxes);
+    const persistedPort = envUrl ? null : getPersistedDashboardPort(sandboxName, listSandboxes);
     const requestedUrl =
       envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
     let startedPort: number | null = null;
@@ -532,12 +692,14 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     } catch (error) {
       if (error === identityFailure && startedPort !== null) {
         try {
-          bestEffortForwardStopForSandbox(
-            deps.runOpenshell,
-            (args, options) => deps.runCaptureOpenshell(args, options),
-            startedPort,
-            sandboxName,
-          );
+          if (!stopManagedForward(sandboxName, startedPort)) {
+            bestEffortForwardStopForSandbox(
+              deps.runOpenshell,
+              (args, options) => deps.runCaptureOpenshell(args, options),
+              startedPort,
+              sandboxName,
+            );
+          }
         } catch {
           // Compensation is best effort and must not replace the identity failure.
         }
@@ -561,15 +723,18 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       ensureDashboardForward,
       chatUiUrl,
       controlUiPort: chatUiUrl ? Number(getDashboardForwardPort(chatUiUrl)) : undefined,
+      hermesApiPort: getSandbox?.(sandboxName)?.hermesApiPort,
       beforeForwardPort: options.beforeForwardPort,
       revalidateSandboxIdentity: options.revalidateSandboxIdentity,
       compensateDashboardForward: (port) => {
-        bestEffortForwardStopForSandbox(
-          deps.runOpenshell,
-          (args, captureOptions) => deps.runCaptureOpenshell(args, captureOptions),
-          port,
-          sandboxName,
-        );
+        if (!stopManagedForward(sandboxName, port)) {
+          bestEffortForwardStopForSandbox(
+            deps.runOpenshell,
+            (args, captureOptions) => deps.runCaptureOpenshell(args, captureOptions),
+            port,
+            sandboxName,
+          );
+        }
       },
     });
   }
@@ -598,8 +763,54 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     label: string,
     revalidateSandboxIdentity?: (operation: string) => void,
   ): boolean {
+    const authority = resolveForwardServiceAuthority(sandboxName);
+    if (authority && forwardServiceController) {
+      try {
+        revalidateSandboxIdentity?.(
+          `start ${label} forward ${String(port)} for sandbox '${sandboxName}'`,
+        );
+        // Retire a legacy SSH forward before publishing its direct ForwardTcp
+        // replacement. The sandbox-scoped stop cannot target another owner.
+        bestEffortForwardStopForSandbox(
+          deps.runOpenshell,
+          (args, options) => deps.runCaptureOpenshell(args, options),
+          port,
+          sandboxName,
+        );
+        forwardServiceController.ensure(authority, forwardEndpoint(port, String(port)));
+        return true;
+      } catch (error) {
+        const diagnostic = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `! ${label} forward on port ${port} did not start: ${diagnostic.slice(0, 240)}`,
+        );
+        console.warn(
+          `  Reconnect after resolving the issue: ${deps.cliName()} ${sandboxName} connect`,
+        );
+        return false;
+      }
+    }
     return ensureFixedAgentForward(deps, sandboxName, port, label, revalidateSandboxIdentity);
   }
+
+  function stopAgentFixedForward(
+    sandboxName: string,
+    port: number,
+    revalidateSandboxIdentity?: (operation: string) => void,
+  ): void {
+    revalidateSandboxIdentity?.(`stop host forward ${String(port)} for sandbox '${sandboxName}'`);
+    if (stopManagedForward(sandboxName, port)) return;
+    bestEffortForwardStopForSandbox(
+      deps.runOpenshell,
+      (args, options) => deps.runCaptureOpenshell(args, options),
+      port,
+      sandboxName,
+    );
+  }
+
+  const agentFixedForwardLifecycle = Object.assign(ensureAgentFixedForward, {
+    stop: stopAgentFixedForward,
+  });
 
   /**
    * Read a bearer_token agent's web-auth token (e.g. Hermes' API_SERVER_KEY)
@@ -782,7 +993,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     ensureAgentDashboardForward,
     ensureFinalizationAgentDashboardForward,
     ensureFinalizationDashboardForward,
-    ensureAgentFixedForward,
+    ensureAgentFixedForward: agentFixedForwardLifecycle,
     fetchGatewayAuthTokenFromSandbox,
     fetchAgentWebAuthTokenFromSandbox,
     getDashboardForwardPort,

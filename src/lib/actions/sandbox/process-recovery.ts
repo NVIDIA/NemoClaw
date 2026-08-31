@@ -1481,9 +1481,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
           console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
         } else {
           console.error("  Failed to re-establish the dashboard port forward.");
-          console.error(
-            `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
-          );
+          console.error(`  Run \`nemoclaw ${sandboxName} recover\` after resolving the error.`);
         }
       }
       if (!forwardRecovered) {
@@ -1825,9 +1823,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
       } else {
         console.error("  Failed to re-establish the dashboard port forward.");
-        console.error(
-          `  Run \`openshell forward start --background ${recoveryPort} ${sandboxName}\` manually.`,
-        );
+        console.error(`  Run \`nemoclaw ${sandboxName} recover\` after resolving the error.`);
       }
     }
     if (!forwardRecovered) {

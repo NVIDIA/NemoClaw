@@ -27,6 +27,56 @@ function callInstallerPayloadFn(fnCall: string, env: Record<string, string | und
 }
 
 describe("Hermes installer forward restore", () => {
+  it("delegates an existing ForwardTcp receipt to NemoClaw recovery", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-forward-service-"));
+    try {
+      const fakeBin = path.join(tempDir, "bin");
+      const stateRoot = path.join(tempDir, ".nemoclaw");
+      const runtimeState = path.join(stateRoot, "state");
+      const receiptDirectory = path.join(runtimeState, "forwards");
+      const cliLog = path.join(tempDir, "cli.log");
+      const healthMarker = path.join(tempDir, "healthy");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.mkdirSync(receiptDirectory, { recursive: true });
+      fs.symlinkSync(process.execPath, path.join(fakeBin, "node"));
+      fs.writeFileSync(
+        path.join(stateRoot, "onboard-session.json"),
+        JSON.stringify({ sandboxName: "created-by-onboard", agent: "hermes" }),
+      );
+      fs.writeFileSync(
+        path.join(stateRoot, "sandboxes.json"),
+        JSON.stringify({ sandboxes: { "created-by-onboard": { hermesApiPort: 8642 } } }),
+      );
+      fs.writeFileSync(path.join(receiptDirectory, "created-by-onboard-8642.json"), "{}\n");
+      writeExecutable(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
+      writeExecutable(
+        path.join(fakeBin, "nemoclaw"),
+        `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$CLI_LOG"
+touch "$HEALTH_MARKER"
+exit 0
+`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        "#!/usr/bin/env bash\n[[ -f \"$HEALTH_MARKER\" ]]\n",
+      );
+
+      const result = callInstallerPayloadFn("restore_onboard_forward_after_post_checks", {
+        HOME: tempDir,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        CLI_LOG: cliLog,
+        HEALTH_MARKER: healthMarker,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(cliLog), `${result.stdout}\n${result.stderr}`).toBe(true);
+      expect(fs.readFileSync(cliLog, "utf8").trim()).toBe("created-by-onboard recover");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed without a registered port and restores the recorded port (#8543)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-forward-restore-"));
     try {

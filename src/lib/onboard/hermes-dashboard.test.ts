@@ -320,4 +320,31 @@ describe("onboard Hermes dashboard helpers", () => {
       expect.anything(),
     );
   });
+
+  it("uses the ForwardTcp lifecycle stop during dashboard rollback", () => {
+    const runOpenshell = vi.fn();
+    const stop = vi.fn();
+    const ensureForward = Object.assign(
+      vi.fn(() => false),
+      { stop },
+    );
+    const forwarding = createHermesDashboardOnboardForwarding({
+      agentName: "hermes",
+      env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
+      ensureForward,
+      note: vi.fn(),
+      runOpenshell,
+      getApiForwardPort: () => "8642",
+      fail: (message): never => {
+        throw new Error(message);
+      },
+    });
+
+    expect(() =>
+      forwarding.ensureForState(forwarding.resolveStateForPort(18789), "hm", true),
+    ).toThrow(/left the sandbox running/u);
+    expect(stop).toHaveBeenNthCalledWith(1, "hm", 8642, undefined);
+    expect(stop).toHaveBeenNthCalledWith(2, "hm", 18789, undefined);
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
 });
