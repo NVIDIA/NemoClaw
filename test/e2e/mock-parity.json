@@ -456,6 +456,7 @@
       ],
       "fast": [
         "test/e2e/support/gpu-e2e-helpers.test.ts",
+        "test/e2e/support/runtime-provider-fixture.test.ts",
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
         "test/e2e/support/stock-managed-image-workflow-boundary.test.ts",
@@ -516,7 +517,9 @@
     },
     {
       "live": "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts",
+      "liveSources": ["test/e2e/live/issue-4462-admin-approval-helper.ts"],
       "fast": [
+        "test/e2e/support/issue-4462-fixture-boundary.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -683,6 +686,7 @@
         "src/lib/actions/sandbox/rebuild-flow-lifecycle.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/rebuild-hermes-bootstrap.test.ts",
         "test/e2e/support/rebuild-hermes-env.test.ts",
         "test/e2e/support/rebuild-hermes-base-identity.test.ts",
         "test/e2e/support/rebuild-hermes-image-state.test.ts",

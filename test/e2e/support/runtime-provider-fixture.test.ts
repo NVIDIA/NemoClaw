@@ -62,7 +62,7 @@ describe("configured E2E runtime provider fixture", () => {
       artifactName: "provider-info",
       environment,
       host: { command } as unknown as HostCliClient,
-      scenarioLabel: "network-policy",
+      scenarioLabel: "Hermes GPU response validation",
       skip: (reason) => {
         throw new Error(reason);
       },
