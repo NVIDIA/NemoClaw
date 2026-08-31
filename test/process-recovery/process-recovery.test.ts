@@ -249,7 +249,7 @@ beta  127.0.0.1  18789  12345  running`;
       });
       expect(runOpenshell).toHaveBeenCalledWith(
         ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
-        { ignoreError: true, stdio: "ignore" },
+        expect.objectContaining({ ignoreError: true }),
       );
     },
   );
@@ -288,7 +288,7 @@ beta  127.0.0.1  18789  12345  running`;
     expect(events).toEqual(["stale-listener", "stale-listener", "released", "start"]);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "8642", "beta"],
-      { ignoreError: true, stdio: "ignore" },
+      expect.objectContaining({ ignoreError: true }),
     );
   });
 
@@ -309,7 +309,7 @@ beta  127.0.0.1  18789  12345  running`;
     expect(ensureSandboxPortForwardForPort("beta", 8642)).toBe(false);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "8642", "beta"],
-      { ignoreError: true, stdio: "ignore" },
+      expect.objectContaining({ ignoreError: true }),
     );
   });
 
@@ -377,7 +377,7 @@ beta  127.0.0.1  3978  12346  running`;
     });
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "3978", "beta"],
-      { ignoreError: true, stdio: "ignore" },
+      expect.objectContaining({ ignoreError: true }),
     );
     probeTiming.finish("ready");
     expect(timingLines[0]).toContain("forwardAction=restored");
@@ -438,7 +438,7 @@ beta  127.0.0.1  18789  12345  running`;
     });
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "3978", "beta"],
-      { ignoreError: true, stdio: "ignore" },
+      expect.objectContaining({ ignoreError: true }),
     );
     probeTiming.finish("failed", "forward");
     expect(timingLines[0]).toContain("forwardAction=failed");
@@ -1257,7 +1257,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "18789", "hermes-box"],
-      { ignoreError: true, stdio: "ignore" },
+      expect.objectContaining({ ignoreError: true }),
     );
   });
 

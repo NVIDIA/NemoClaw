@@ -193,10 +193,10 @@ function blockingSleepMs(ms: number): void {
 // exposes an atomic recovery operation.
 const DEAD_FORWARD_GRACE_MS = 2_000;
 const SANDBOX_READY_RETRY_SETTLE_MS = 5_000;
-// A newly created sandbox can remain between OpenShell's create-ready and
-// forward-ready states longer than the ordinary listener retry budget. Keep
-// this exact-diagnostic path bounded to one additional minute without
-// widening retries for authentication, ownership, or listener failures.
+// A sandbox can remain between OpenShell's create-ready and forward-ready
+// states longer than the ordinary listener retry budget. Keep this
+// exact-diagnostic path bounded to one additional minute without widening
+// retries for authentication, ownership, or listener failures.
 const SANDBOX_READY_MAX_RETRIES = 12;
 
 /**
@@ -588,4 +588,110 @@ export function runDetachedForwardStartWithRetries(
     attempt = runAttempt();
   }
   return attempt;
+}
+
+export interface BackgroundForwardStartAttempt {
+  readonly status: number | null | undefined;
+  readonly diagnostic: string;
+  readonly attempts: number;
+}
+
+export interface BackgroundForwardStartRetryOptions {
+  /**
+   * Runs `openshell forward start --background …` with the supplied stdio.
+   * The caller owns the argv and the OpenShell runner so an existing recovery
+   * call site keeps its own command shape and instrumentation.
+   */
+  readonly runForwardStart: (stdio: "ignore" | ["ignore", number, number]) => {
+    readonly status?: number | null;
+  };
+  /** Whether the forwarded host port already answers a local connection. */
+  readonly isListenerReachable: () => boolean;
+  /**
+   * Whether another settle-and-retry is still safe. Recovery uses this to fail
+   * closed the moment OpenShell reports the port owned by another sandbox.
+   */
+  readonly isRetryAllowed: () => boolean;
+  readonly sleepMs?: (milliseconds: number) => void;
+}
+
+/**
+ * Start a background forward, absorbing OpenShell's readiness-handoff and
+ * listener-start rejections with the bounded settle-and-retry declared above.
+ *
+ * OpenShell 0.0.106 can reject `forward start` while a sandbox is still
+ * between its container phase and forward-ready state, and can exit non-zero
+ * after spawning an SSH child whose local listener opens milliseconds later.
+ * Both windows are transient, and both are diagnosed only through the text
+ * OpenShell writes to its stdio, so the child's descriptors are redirected to
+ * a temporary *file* rather than a pipe: OpenShell leaves the background SSH
+ * forward attached to whatever it inherits, and a pipe would keep the caller
+ * waiting for an EOF that only arrives when the forward itself dies.
+ *
+ * Onboarding reaches this window after a create; sandbox start and recovery
+ * reach the same window after a restart, so both share this one compatibility
+ * boundary. Remove it once every supported OpenShell release keeps the attempt
+ * alive until its listener is ready, or exposes a structured retryable
+ * outcome.
+ */
+export function runBackgroundForwardStartWithReadinessRetry(
+  options: BackgroundForwardStartRetryOptions,
+): BackgroundForwardStartAttempt {
+  const sleepImpl = options.sleepMs ?? blockingSleepMs;
+  let attempts = 0;
+
+  const runOnce = (): { status: number | null | undefined; diagnostic: string } => {
+    attempts += 1;
+    // Capturing the diagnostic is an optimisation over the previous
+    // discard-everything call, never a new way to fail: if the temporary file
+    // cannot be created the start still runs, just without a diagnostic, which
+    // simply cannot match the retry signature below.
+    let diagnosticPath: string | undefined;
+    let handle: number | undefined;
+    try {
+      diagnosticPath = secureTempFile("nemoclaw-forward-recovery", ".log");
+      handle = fs.openSync(diagnosticPath, "a");
+    } catch {
+      handle = undefined;
+    }
+    if (handle === undefined) {
+      if (diagnosticPath) cleanupTempDir(diagnosticPath, "nemoclaw-forward-recovery");
+      return { status: options.runForwardStart("ignore").status, diagnostic: "" };
+    }
+    const openHandle = handle;
+    const openPath = diagnosticPath as string;
+    try {
+      const result = options.runForwardStart(["ignore", openHandle, openHandle]);
+      let diagnostic = "";
+      try {
+        diagnostic = readDiagnosticFile(openPath);
+      } catch {
+        // An unreadable diagnostic must not turn a working recovery into a
+        // hard failure; an empty one only forgoes the retry.
+      }
+      return { status: result.status, diagnostic };
+    } finally {
+      try {
+        fs.closeSync(openHandle);
+      } catch {
+        // Best-effort: the descriptor is process-local and about to be dropped.
+      }
+      cleanupTempDir(openPath, "nemoclaw-forward-recovery");
+    }
+  };
+
+  let attempt = runOnce();
+  let retries = 0;
+  while (
+    attempt.status !== 0 &&
+    !options.isListenerReachable() &&
+    retries < SANDBOX_READY_MAX_RETRIES &&
+    looksLikeForwardListenerStartFailure(attempt.diagnostic)
+  ) {
+    if (!options.isRetryAllowed()) break;
+    sleepImpl(SANDBOX_READY_RETRY_SETTLE_MS);
+    retries += 1;
+    attempt = runOnce();
+  }
+  return { ...attempt, attempts };
 }

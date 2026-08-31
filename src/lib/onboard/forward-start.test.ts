@@ -10,9 +10,11 @@ import {
   looksLikeForwardListenerStartFailure,
   looksLikeForwardPortConflict,
   looksLikeUntrackedForward,
+  runBackgroundForwardStartWithReadinessRetry,
   runDetachedForwardStartWithDiagnostics,
   runDetachedForwardStartWithRetries,
 } from "./forward-start";
+import * as tempFiles from "./temp-files";
 
 // Build an `openshell forward list`-shaped output for the given live entries.
 // Mirrors the column layout (SANDBOX BIND PORT PID STATUS) that
@@ -1384,5 +1386,64 @@ describe("looksLikeUntrackedForward", () => {
   it("returns false for unrelated diagnostics", () => {
     expect(looksLikeUntrackedForward("forward did not appear in list within 180000ms")).toBe(false);
     expect(looksLikeUntrackedForward("")).toBe(false);
+  });
+});
+
+describe("runBackgroundForwardStartWithReadinessRetry", () => {
+  it("retries the readiness handoff until OpenShell accepts the forward", () => {
+    const rejections = [
+      SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC,
+      SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC,
+    ];
+    const runForwardStart = vi.fn((stdio: "ignore" | ["ignore", number, number]) => {
+      const diagnostic = rejections.shift() ?? "";
+      fs.writeSync((stdio as ["ignore", number, number])[1], diagnostic);
+      return { status: Number(diagnostic !== "") };
+    });
+
+    const outcome = runBackgroundForwardStartWithReadinessRetry({
+      runForwardStart,
+      isListenerReachable: () => false,
+      isRetryAllowed: () => true,
+      sleepMs: () => {},
+    });
+
+    expect(outcome.status).toBe(0);
+    expect(outcome.attempts).toBe(3);
+  });
+
+  it("stops retrying as soon as the caller withdraws permission", () => {
+    const runForwardStart = vi.fn((stdio: "ignore" | ["ignore", number, number]) => {
+      fs.writeSync((stdio as ["ignore", number, number])[1], SANDBOX_NOT_READY_FORWARD_DIAGNOSTIC);
+      return { status: 1 };
+    });
+
+    const outcome = runBackgroundForwardStartWithReadinessRetry({
+      runForwardStart,
+      isListenerReachable: () => false,
+      isRetryAllowed: () => false,
+      sleepMs: () => {},
+    });
+
+    expect(outcome.status).toBe(1);
+    expect(outcome.attempts).toBe(1);
+  });
+
+  it("still starts the forward when no diagnostic file can be created", () => {
+    vi.spyOn(tempFiles, "secureTempFile").mockImplementation(() => {
+      throw new Error("no space left on device");
+    });
+    const runForwardStart = vi.fn(() => ({ status: 0 }));
+
+    const outcome = runBackgroundForwardStartWithReadinessRetry({
+      runForwardStart,
+      isListenerReachable: () => false,
+      isRetryAllowed: () => true,
+      sleepMs: () => {},
+    });
+
+    expect(outcome.status).toBe(0);
+    expect(outcome.diagnostic).toBe("");
+    expect(runForwardStart).toHaveBeenCalledWith("ignore");
   });
 });

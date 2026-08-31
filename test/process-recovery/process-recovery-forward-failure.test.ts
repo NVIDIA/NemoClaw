@@ -10,6 +10,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as forwardHealth from "../../src/lib/actions/sandbox/forward-health.js";
 import { ensureSandboxPortForwardForPort } from "../../src/lib/actions/sandbox/forward-recovery.js";
 import * as openshellRuntime from "../../src/lib/adapters/openshell/runtime.js";
+import {
+  LISTENER_DIAGNOSTIC,
+  SANDBOX_NOT_READY_DIAGNOSTIC,
+  stubForwardStartFailures,
+  stubForwardStartLostToAnotherSandbox,
+} from "./forward-readiness-retry-fixtures.js";
 
 const requireSource = createRequire(import.meta.url);
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
@@ -226,7 +232,7 @@ beta  127.0.0.1  18789  12345  dead`,
     expect(teamsForwardStarted).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "3978", "beta"],
-      { ignoreError: true, stdio: "ignore" },
+      expect.objectContaining({ ignoreError: true }),
     );
   });
 });
@@ -415,5 +421,73 @@ gamma  127.0.0.1  18791  12345  running`
       ),
     ).toBe(false);
     expect(postStartProbes).toBe(2);
+  });
+});
+
+describe("ensureSandboxPortForwardForPort readiness-handoff retries after stop (#10640)", () => {
+  it("recovers the dashboard forward when OpenShell rejects the first starts as not ready", () => {
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "25");
+    const state = stubForwardStartFailures({
+      diagnostic: SANDBOX_NOT_READY_DIAGNOSTIC,
+      failures: 2,
+    });
+
+    expect(
+      withFakeOpenshellBinary(() =>
+        ensureSandboxPortForwardForPort("beta", 18791, {
+          expectedBind: "127.0.0.1",
+          sleepMs: () => {},
+        }),
+      ),
+    ).toBe(true);
+    expect(state.attempts).toBe(3);
+  });
+
+  it("recovers the dashboard forward when ssh exits before its listener opens", () => {
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "25");
+    const state = stubForwardStartFailures({ diagnostic: LISTENER_DIAGNOSTIC, failures: 1 });
+
+    expect(
+      withFakeOpenshellBinary(() =>
+        ensureSandboxPortForwardForPort("beta", 18791, {
+          expectedBind: "127.0.0.1",
+          sleepMs: () => {},
+        }),
+      ),
+    ).toBe(true);
+    expect(state.attempts).toBe(2);
+  });
+
+  it("fails without retrying when OpenShell reports an unrelated forward failure", () => {
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    const state = stubForwardStartFailures({
+      diagnostic: "Error: gateway authentication failed",
+      failures: 99,
+    });
+
+    expect(
+      withFakeOpenshellBinary(() =>
+        ensureSandboxPortForwardForPort("beta", 18791, {
+          expectedBind: "127.0.0.1",
+          sleepMs: () => {},
+        }),
+      ),
+    ).toBe(false);
+    expect(state.attempts).toBe(1);
+  });
+
+  it("stops retrying when another sandbox takes the port during the readiness settle", () => {
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    const state = stubForwardStartLostToAnotherSandbox({});
+
+    expect(
+      withFakeOpenshellBinary(() =>
+        ensureSandboxPortForwardForPort("beta", 18791, {
+          expectedBind: "127.0.0.1",
+          sleepMs: () => {},
+        }),
+      ),
+    ).toBe(false);
+    expect(state.attempts).toBe(1);
   });
 });

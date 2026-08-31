@@ -21,6 +21,7 @@ import {
   waitForForwardRecoveryState,
   waitForStoppedForwardPortRelease,
 } from "../../onboard/forward-cleanup";
+import { runBackgroundForwardStartWithReadinessRetry } from "../../onboard/forward-start";
 import {
   resolveSandboxHermesApiPort,
   retargetHermesApiPortInUrl,
@@ -273,6 +274,7 @@ export function ensureSandboxPortForwardForPort(
     forceRestart?: boolean;
     expectedBind?: string;
     beforeStart?: () => boolean;
+    sleepMs?: (milliseconds: number) => void;
   } = {},
 ): boolean {
   const {
@@ -350,17 +352,29 @@ export function ensureSandboxPortForwardForPort(
   }
 
   if (!beforeStart()) return false;
-  const startResult = runOpenshell(
-    ["forward", "start", "--background", forwardTarget, sandboxName],
-    {
-      ignoreError: true,
-      // OpenShell 0.0.85 leaves the background SSH forward attached to the
-      // caller's inherited descriptors. Detach them so a scripted `recover`
-      // can finish after the foreground OpenShell command exits. Keep this
-      // until every supported OpenShell release redirects those descriptors.
-      stdio: "ignore",
-    },
-  );
+  // A sandbox that has just restarted can still be inside OpenShell's
+  // readiness handoff, so the first `forward start` can be rejected for a
+  // reason that clears on its own. Until #7227 this path was accidentally
+  // tolerant of that: a stopped sandbox left its host listener behind, so the
+  // reachability check below was usually true and absorbed the rejection. Now
+  // that `stop` genuinely releases the port, a single rejection is terminal
+  // unless recovery retries, which is what makes `start` after `stop` exit
+  // non-zero intermittently (#10640). Onboarding already absorbs the same
+  // OpenShell diagnostics, so recovery shares that one bounded policy rather
+  // than declaring a second one. An authoritative `occupied` verdict still
+  // fails closed immediately so a sibling sandbox's forward is never contended.
+  const startResult = runBackgroundForwardStartWithReadinessRetry({
+    runForwardStart: (stdio) =>
+      runOpenshell(["forward", "start", "--background", forwardTarget, sandboxName], {
+        ignoreError: true,
+        stdio,
+      }),
+    isListenerReachable: () => isLocalForwardReachable(port),
+    isRetryAllowed: () =>
+      isSandboxPortForwardHealthy(sandboxName, port, expectedBind) !== "occupied",
+    ...(options.sleepMs ? { sleepMs: options.sleepMs } : {}),
+  });
+
   // OpenShell 0.0.85 returns an error when start preflight finds a validated
   // live forward for the requested port. Recovery cannot change that upstream
   // CLI contract, so a reachable listener settles against the authoritative
