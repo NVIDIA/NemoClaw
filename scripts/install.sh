@@ -849,6 +849,12 @@ print_done() {
   printf "  ${C_GREEN}${C_BOLD}%s${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$_CLI_DISPLAY" "$elapsed"
   printf "\n"
   if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
+    if [[ "$_needs_cli_refresh" == true ]]; then
+      printf "  ${C_YELLOW}%s installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
+      printf "\n"
+      printf "  ${C_GREEN}For this terminal:${C_RESET}\n"
+      print_cli_path_refresh_actions
+    fi
     if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
       printf "  ${C_YELLOW}The recovery command succeeded, but NemoClaw could not inspect its output.${C_RESET}\n"
       printf "  ${C_DIM}Run '%s upgrade-sandboxes --check' to verify every recorded sandbox.${C_RESET}\n" "$_CLI_BIN"
@@ -863,12 +869,6 @@ print_done() {
       printf "  ${C_DIM}Before running '%s onboard', verify or remove any remaining OpenShell sandbox if the gateway returns.${C_RESET}\n" "$_CLI_BIN"
     else
       printf "  ${C_GREEN}Existing sandboxes were recovered and upgraded.${C_RESET}\n"
-    fi
-    if [[ "$_needs_cli_refresh" == true ]]; then
-      printf "  ${C_YELLOW}%s installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
-      printf "\n"
-      printf "  ${C_GREEN}For this terminal:${C_RESET}\n"
-      print_cli_path_refresh_actions
     fi
     if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
       printf "  ${C_DIM}Generic onboarding was skipped because recovery verification is incomplete.${C_RESET}\n"
@@ -1260,6 +1260,7 @@ validate_installer_docker_target_before_host_changes() {
   candidate="${raw#"${raw%%[![:space:]]*}"}"
   candidate="${candidate%"${candidate##*[![:space:]]}"}"
   if [[ -n "$candidate" ]]; then
+    export DOCKER_HOST="$candidate"
     active_context="${DOCKER_CONTEXT:-default}"
   else
     unset DOCKER_HOST

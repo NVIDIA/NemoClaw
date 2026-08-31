@@ -64,6 +64,7 @@ function runRecoveryBeforeOnboard(
     recordPreinstall?: boolean;
     recordRuntimeTarget?: boolean;
     recoveryLogWriteFails?: boolean;
+    shellNeedsReload?: boolean;
     singleSession?: boolean;
     stationExpressSelected?: boolean;
     stationResumeLoaded?: boolean;
@@ -156,6 +157,8 @@ exit 0
     }
     print_banner() { :; }
     preflight_usage_notice_prompt() { :; }
+    needs_shell_reload() { return ${options.shellNeedsReload ? 0 : 1}; }
+    print_cli_path_refresh_actions() { printf 'PATH_REFRESH_ACTION\n'; }
     command_exists() {
       [[ "$1" == "docker" ]] && return 1
       command -v "$1" >/dev/null 2>&1
@@ -268,6 +271,19 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.output).toContain("Existing sandboxes recovered; skipping generic onboarding");
   });
 
+  it("normalizes a padded Docker socket before recovery", () => {
+    const result = runRecoveryBeforeOnboard(2, 0, {
+      dockerHost: "  unix:///var/run/docker.sock\t",
+      recordRuntimeTarget: true,
+    });
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls).toContain(
+      "cli-target=host:unix:///var/run/docker.sock,context:unset argv=upgrade-sandboxes --auto",
+    );
+    expect(result.output).toContain("Existing sandboxes recovered; skipping generic onboarding");
+  });
+
   it("treats a whitespace-only Docker host as unset", () => {
     const result = runRecoveryBeforeOnboard(2, 0, {
       dockerHost: " \t ",
@@ -322,7 +338,9 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     ["a TCP DOCKER_HOST endpoint", "tcp://203.0.113.10:2375"],
     ["an SSH DOCKER_HOST endpoint", "ssh://user@example.test"],
     ["a relative DOCKER_HOST socket", "unix://relative/docker.sock"],
+    ["an empty DOCKER_HOST socket path", "unix://"],
     ["a newline-bearing DOCKER_HOST socket", "unix:///var/run/docker.sock\n"],
+    ["a carriage-return-bearing DOCKER_HOST socket", "unix:///var/run/docker.sock\r"],
     ["a quote-bearing DOCKER_HOST socket", "unix:///tmp/bad'sock"],
   ])("rejects %s before sandbox recovery", (_name, dockerHost) => {
     const result = runRecoveryBeforeOnboard(2, 0, {
@@ -428,6 +446,7 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
       orphanedRecovery: true,
       realCompletionSummary: true,
       recoveryLogWriteFails: true,
+      shellNeedsReload: true,
     });
 
     expect(result.status, result.output).toBe(0);
@@ -441,6 +460,9 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
       "The recovery command succeeded, but NemoClaw could not inspect its output",
     );
     expect(result.output).toContain("upgrade-sandboxes --check");
+    expect(result.output.indexOf("PATH_REFRESH_ACTION")).toBeLessThan(
+      result.output.indexOf("upgrade-sandboxes --check"),
+    );
     expect(result.output).not.toContain("Existing sandboxes were recovered and upgraded");
     expect(result.output).not.toContain("No new sandbox onboarding was needed");
   });
