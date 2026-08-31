@@ -57,7 +57,7 @@ function runPayloadOnlyRecoveryBootstrap(dockerHost: string): {
   );
   fs.writeFileSync(
     path.join(payloadSupportDir, "setup-jetson.sh"),
-    "#!/usr/bin/env bash\nexit 0\n",
+    "#!/usr/bin/env bash\nprintf 'setup-jetson-started\\n' >> \"$BOOTSTRAP_CALL_LOG\"\n",
     { mode: 0o755 },
   );
   fs.writeFileSync(
@@ -86,14 +86,14 @@ info() { :; }
 warn() { :; }
 print_banner() { :; }
 preflight_usage_notice_prompt() { :; }
-ensure_docker() { :; }
+ensure_docker() { printf 'ensure-docker-started\n' >> "$BOOTSTRAP_CALL_LOG"; }
 ensure_openshell_build_deps() { :; }
 maybe_offer_express_install() { :; }
 sleep() { :; }
 step() { :; }
-install_nodejs() { :; }
+install_nodejs() { printf 'node-install-started\n' >> "$BOOTSTRAP_CALL_LOG"; }
 ensure_supported_runtime() { :; }
-fix_npm_permissions() { :; }
+fix_npm_permissions() { printf 'npm-permissions-started\n' >> "$BOOTSTRAP_CALL_LOG"; }
 preinstall_backup_and_retire_legacy_gateway() {
   printf 'preinstall-started\n' >> "$BOOTSTRAP_CALL_LOG"
   _PREEXISTING_SANDBOX_COUNT=1
@@ -169,6 +169,7 @@ function runRecoveryBeforeOnboard(
     orphanedRecovery?: boolean;
     registryJson?: string;
     realCompletionSummary?: boolean;
+    recordInstallPhases?: boolean;
     recordPreinstall?: boolean;
     recoveryLogWriteFails?: boolean;
     singleSession?: boolean;
@@ -200,9 +201,15 @@ function runRecoveryBeforeOnboard(
     options.registryJson ?? '{"sandboxes":{}}',
   );
   options.prepareState?.(tmp);
-  fs.writeFileSync(path.join(payloadDir, "setup-jetson.sh"), "#!/usr/bin/env bash\nexit 0\n", {
-    mode: 0o755,
-  });
+  fs.writeFileSync(
+    path.join(payloadDir, "setup-jetson.sh"),
+    `#!/usr/bin/env bash
+if [[ "\${RECORD_INSTALL_PHASES:-}" = "1" ]]; then
+  printf 'setup-jetson-started\n' >> "${callLog}"
+fi
+`,
+    { mode: 0o755 },
+  );
   fs.writeFileSync(
     cli,
     `#!/usr/bin/env bash
@@ -251,16 +258,21 @@ exit 0
     }
     print_banner() { :; }
     preflight_usage_notice_prompt() { :; }
-    ensure_docker() { :; }
+    record_install_phase() {
+      if [[ "$RECORD_INSTALL_PHASES" = "1" ]]; then
+        printf '%s\n' "$1" >> "${callLog}"
+      fi
+    }
+    ensure_docker() { record_install_phase ensure-docker-started; }
     ensure_openshell_build_deps() { :; }
     maybe_offer_express_install() {
       ${options.stationExpressSelected ? '_SELECTED_EXPRESS_PLATFORM="DGX Station"' : ":"}
     }
     sleep() { printf 'sleep=%s\n' "$*" >> "${callLog}"; }
     step() { :; }
-    install_nodejs() { :; }
-    ensure_supported_runtime() { :; }
-    fix_npm_permissions() { :; }
+    install_nodejs() { record_install_phase node-install-started; }
+    ensure_supported_runtime() { record_install_phase runtime-check-started; }
+    fix_npm_permissions() { record_install_phase npm-permissions-started; }
     preinstall_backup_and_retire_legacy_gateway() {
       if [[ "$RECORD_PREINSTALL" = "1" ]]; then
         printf 'preinstall-backup-retirement\n' >> "${callLog}"
@@ -294,6 +306,7 @@ exit 0
       HOME: tmp,
       NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
       ...(options.singleSession ? { NEMOCLAW_SINGLE_SESSION: "1" } : {}),
+      RECORD_INSTALL_PHASES: options.recordInstallPhases ? "1" : "",
       RECORD_PREINSTALL: options.recordPreinstall ? "1" : "",
       RECOVERY_LOG_WRITE_FAILS: options.recoveryLogWriteFails ? "1" : "",
     },
@@ -327,6 +340,10 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.output).not.toContain("preinstall-started");
     expect(result.output).not.toContain("recovery-started");
     expect(result.output).not.toContain("host-preflight-started");
+    expect(result.output).not.toContain("ensure-docker-started");
+    expect(result.output).not.toContain("node-install-started");
+    expect(result.output).not.toContain("npm-permissions-started");
+    expect(result.output).not.toContain("setup-jetson-started");
   });
 
   it("recovers through a supported Docker socket without generic onboarding", () => {
@@ -350,9 +367,11 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     ["an SSH DOCKER_HOST endpoint", "ssh://user@example.test"],
     ["a relative DOCKER_HOST socket", "unix://relative/docker.sock"],
     ["a newline-bearing DOCKER_HOST socket", "unix:///var/run/docker.sock\n"],
+    ["a quote-bearing DOCKER_HOST socket", "unix:///tmp/bad'sock"],
   ])("rejects %s before sandbox recovery", (_name, dockerHost) => {
     const result = runRecoveryBeforeOnboard(2, 0, {
       dockerHost,
+      recordInstallPhases: true,
       recordPreinstall: true,
     });
 

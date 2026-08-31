@@ -1270,6 +1270,26 @@ spin() {
 
 command_exists() { command -v "$1" &>/dev/null; }
 
+installer_docker_host_has_supported_shape() {
+  local raw="${DOCKER_HOST-}" candidate socket_path
+  [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* ]] || return 1
+  candidate="${raw#"${raw%%[![:space:]]*}"}"
+  candidate="${candidate%"${candidate##*[![:space:]]}"}"
+  [[ -n "$candidate" ]] || return 0
+  [[ "$candidate" == unix://* ]] || return 1
+  socket_path="${candidate#unix://}"
+  [[ "$socket_path" == /* && "$socket_path" != *"'"* ]]
+}
+
+fail_unsupported_installer_docker_host() {
+  error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer. Sandbox recovery did not start."
+}
+
+validate_installer_docker_host_before_host_changes() {
+  [[ -n "${DOCKER_HOST-}" ]] || return 0
+  installer_docker_host_has_supported_shape || fail_unsupported_installer_docker_host
+}
+
 MIN_NODE_VERSION="22.19.0"
 MIN_NPM_MAJOR=10
 
@@ -6306,7 +6326,7 @@ install_nemoclaw_before_onboarding() {
     case "$docker_host_status" in
       0) ;;
       10)
-        error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer. Sandbox recovery did not start."
+        fail_unsupported_installer_docker_host
         ;;
       *)
         error "Could not validate DOCKER_HOST before sandbox recovery. Rerun the installer from a complete NemoClaw source checkout. Sandbox recovery did not start."
@@ -6453,6 +6473,7 @@ main() {
   # repeats the same authoritative validation at the prompt boundary because
   # it is also exercised directly by sourced-installer callers and tests.
   preflight_explicit_express_flags
+  validate_installer_docker_host_before_host_changes
 
   print_banner
 
