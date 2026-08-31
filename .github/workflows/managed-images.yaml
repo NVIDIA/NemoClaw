@@ -1424,6 +1424,13 @@ jobs:
             node -e "const c=require(\"/sandbox/.pi/agent/models.json\"); if (!c.defaultModel || !c.providers.openshell.baseUrl) process.exit(1)"
             test -x /usr/local/bin/nemoclaw-managed-bootstrap
           '
+      - name: Remove Pi anonymous Docker configuration
+        if: always() && steps.publish.outputs.docker-config != ''
+        shell: bash
+        env:
+          ANONYMOUS_CONFIG: ${{ steps.publish.outputs.docker-config }}
+        run: rm -rf -- "$ANONYMOUS_CONFIG"
+
       # The checks above bypass /usr/local/bin/nemoclaw-start with a direct
       # --entrypoint override, so they never prove the entrypoint itself runs
       # correctly. Start the published digest through its declared entrypoint
@@ -2150,6 +2157,13 @@ jobs:
               --platform "$PLATFORM"
           printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+
+      - name: Remove anonymous Docker configuration
+        if: always() && steps.build.outputs.docker-config != ''
+        shell: bash
+        env:
+          ANONYMOUS_CONFIG: ${{ steps.build.outputs.docker-config }}
+        run: rm -rf -- "$ANONYMOUS_CONFIG"
 
       - name: Capture exact managed image publication evidence
         id: evidence
