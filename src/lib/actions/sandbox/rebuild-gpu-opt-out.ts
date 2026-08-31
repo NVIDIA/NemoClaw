@@ -119,6 +119,7 @@ export type RebuildRecreateOnboardOpts = {
   targetGatewayName: string;
   targetGatewayPort: number;
   onboardLockAlreadyHeld: true;
+  deferProcessExit: true;
   /** Target fingerprint of the replacement journal opened before deletion. */
   recreateJournalTargetIntentFingerprint?: string;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
@@ -202,6 +203,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     targetGatewayName,
     targetGatewayPort,
     onboardLockAlreadyHeld: true,
+    deferProcessExit: true,
     ...(args.preparedDcodeRebuild ? { preparedDcodeRebuild: args.preparedDcodeRebuild } : {}),
     autoYes: args.autoYes,
     toolDisclosure: toolDisclosureOrDefault(args.sb?.toolDisclosure),

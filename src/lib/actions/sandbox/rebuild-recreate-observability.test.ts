@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
+import { wrapOnboardDeferredExit } from "../../onboard/session-bootstrap";
 import * as shields from "../../shields";
 import { decisionSelected } from "../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
@@ -97,6 +98,7 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   targetGatewayName: "nemoclaw",
   targetGatewayPort: 8080,
   onboardLockAlreadyHeld: true,
+  deferProcessExit: true,
   autoYes: true,
   toolDisclosure: "progressive",
   dcodeAutoApprovalMode: "disabled",
@@ -461,6 +463,52 @@ describe("runRebuildRecreatePhase handoff", () => {
     }
   });
 
+  it("treats an integer-string inner onboarding result as recreate failure (#10394)", async () => {
+    const previousExitCode = process.exitCode;
+    const observedExitCodes: Array<typeof process.exitCode> = [];
+    const input = makeInput();
+    try {
+      process.exitCode = 23;
+      vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+        observedExitCodes.push(process.exitCode);
+        process.exitCode = "7";
+      });
+
+      await expect(runRebuildRecreatePhase(input)).rejects.toThrow(
+        "bail: Recreate failed (stale-sandbox recovery).",
+      );
+
+      expect(observedExitCodes).toEqual([undefined]);
+      expect(process.exitCode).toBe(23);
+      expect(input.onCreated).not.toHaveBeenCalled();
+      expect(input.registryRollback.restoreForRetry).toHaveBeenCalledOnce();
+      expect(input.bail).toHaveBeenCalledWith("Recreate failed (stale-sandbox recovery).", 7);
+      expect(input.log).toHaveBeenCalledWith("onboard() returned with exit code 7");
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("preserves an integer-string exit code through nested onboarding", async () => {
+    const input = makeInput();
+    const nestedOnboard = wrapOnboardDeferredExit(async () => {
+      process.exit("7");
+    });
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
+      expect(options.deferProcessExit).toBe(true);
+      await nestedOnboard(options);
+    });
+
+    await expect(runRebuildRecreatePhase(input)).rejects.toThrow(
+      "bail: Recreate failed (stale-sandbox recovery).",
+    );
+
+    expect(input.onCreated).not.toHaveBeenCalled();
+    expect(input.registryRollback.restoreForRetry).toHaveBeenCalledOnce();
+    expect(input.bail).toHaveBeenCalledWith("Recreate failed (stale-sandbox recovery).", 7);
+    expect(input.log).toHaveBeenCalledWith("onboard() exited with code 7");
+  });
+
   it("retains enabled observability through inner onboard failure, recovery, and bail", async () => {
     const checkpoints: Array<[string, boolean]> = [];
     vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
@@ -567,4 +615,35 @@ describe("rebuild recreate shields state", () => {
     );
     expect(clearShieldsState).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["without a backup", null, "    3. Restore shields lockdown:"],
+    [
+      "with a backup",
+      { backupPath: "/tmp/rebuild-backup", timestamp: "2026-08-30T00:00:00.000Z" },
+      "    4. Restore shields lockdown:",
+    ],
+  ])(
+    "keeps manual recovery steps sequential %s",
+    async (_scenario, backupManifest, expectedStep) => {
+      vi.mocked(rebuildOnboardDependencies.onboard).mockRejectedValue(
+        new Error("inner onboard failed"),
+      );
+
+      await expect(
+        runRebuildRecreatePhase(
+          makeInput({
+            backupManifest: backupManifest as never,
+            rebuildShieldsWindow: { relocked: false, wasLocked: true },
+          }),
+        ),
+      ).rejects.toThrow(
+        backupManifest
+          ? "bail: Recreate failed (sandbox destroyed). Backup: /tmp/rebuild-backup"
+          : "bail: Recreate failed (stale-sandbox recovery).",
+      );
+
+      expect(console.error).toHaveBeenCalledWith(expectedStep);
+    },
+  );
 });
