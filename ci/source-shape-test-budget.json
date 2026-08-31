@@ -198,7 +198,12 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
-      "test": "restores trusted compiled inputs for %s test consumers",
+      "test": "anchors pull request compile actions to the base checkout",
+      "category": "security"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "restores candidate compiled inputs from the base-controlled action for %s consumers",
       "category": "security"
     },
     {

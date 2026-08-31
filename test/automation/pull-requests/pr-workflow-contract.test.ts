@@ -489,14 +489,33 @@ describe("pull request and main workflow contracts", () => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
   });
 
-  const trustedCompileArtifactCases = [
+  // source-shape-contract: security -- The PR compile action must come from the pinned base checkout without persisted credentials
+  it("anchors pull request compile actions to the base checkout", () => {
+    const compileJob = prWorkflow.jobs["compile-artifacts"];
+    const trustedCheckout = requiredWorkflowStep(compileJob, "Checkout trusted CI actions");
+
+    expect(trustedCheckout.uses).toBe(trustedCheckoutAction);
+    expect(trustedCheckout.with).toMatchObject({
+      ref: "${{ github.event.pull_request.base.sha }}",
+      path: ".trusted-ci-actions",
+      "persist-credentials": false,
+    });
+    expect(String(trustedCheckout.with?.["sparse-checkout"]).split("\n")).toContain(
+      ".github/actions/ci-compile-artifacts",
+    );
+    expect(
+      requiredWorkflowStep(compileJob, "Compile and verify CLI and plugin outputs").uses,
+    ).toBe(trustedPrActionPaths.compileArtifacts);
+  });
+
+  const compiledArtifactCases = [
     ["pull request", prWorkflow, trustedPrActionPaths.compileArtifacts],
     ["main", mainWorkflow, sharedActionPaths.compileArtifacts],
   ] as const;
 
-  // source-shape-contract: security -- Base-trusted build outputs must reach test consumers without executing candidate workflow code
-  it.each(trustedCompileArtifactCases)(
-    "restores trusted compiled inputs for %s test consumers",
+  // source-shape-contract: security -- Base-controlled actions must produce candidate compiled inputs for same-run consumers without executing candidate-modified composite actions
+  it.each(compiledArtifactCases)(
+    "restores candidate compiled inputs from the base-controlled action for %s consumers",
     (_workflowName, workflow, expectedCompileAction) => {
       const compileJob = workflow.jobs["compile-artifacts"];
       const buildJob = workflow.jobs["build-typecheck"];
@@ -529,7 +548,7 @@ describe("pull request and main workflow contracts", () => {
       expect(buildDownload.uses).toBe(
         "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
       );
-      expect(buildDownload.with).toMatchObject({ name: "compiled-test-inputs", path: "." });
+      expect(buildDownload.with).toEqual({ name: "compiled-test-inputs", path: "." });
       expect(
         requiredWorkflowStepIndex(buildJob, "Download compiled test inputs"),
       ).toBeLessThan(
@@ -541,7 +560,7 @@ describe("pull request and main workflow contracts", () => {
       expect(shardDownload.uses).toBe(
         "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
       );
-      expect(shardDownload.with).toMatchObject({ name: "compiled-test-inputs", path: "." });
+      expect(shardDownload.with).toEqual({ name: "compiled-test-inputs", path: "." });
 
       const verifyIndex = requiredWorkflowStepIndex(shardJob, "Verify compiled test inputs");
       expect(
@@ -577,7 +596,7 @@ describe("pull request and main workflow contracts", () => {
       expect(mergeDownload.uses).toBe(
         "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
       );
-      expect(mergeDownload.with).toMatchObject({ name: "cli-build-output", path: "dist" });
+      expect(mergeDownload.with).toEqual({ name: "cli-build-output", path: "dist" });
       expect(
         requiredStepIndex(sharedActions.cliCoverageMerge, "Download compiled CLI artifact"),
       ).toBeLessThan(
