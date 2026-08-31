@@ -160,10 +160,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     () => {
       expect(validateE2eWorkflowBoundary()).toEqual([]);
 
-      const jobNames = [
-        "openclaw-plugin-runtime-exdev",
-        "openclaw-plugin-runtime-exdev-release",
-      ] as const;
+      const jobNames = ["openclaw-plugin-runtime-exdev"] as const;
       const cleanupMutations: Array<(cleanup: WorkflowStep) => void> = [
         (cleanup) => {
           cleanup.uses = "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@main";
@@ -182,7 +179,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
           for (const jobName of jobNames) {
             const cleanup = namedStep(
               workflow.jobs[jobName],
-              "Remove Docker auth before release-pinned fixture",
+              "Remove Docker auth before current-checkout fixture",
             );
             expect(cleanup).toBeDefined();
             mutateCleanup(cleanup!);
@@ -200,7 +197,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
         for (const jobName of jobNames) {
           const job = workflow.jobs[jobName];
           const steps = job.steps!;
-          const cleanup = namedStep(job, "Remove Docker auth before release-pinned fixture");
+          const cleanup = namedStep(job, "Remove Docker auth before current-checkout fixture");
           const restore = namedStep(job, "Restore exact-commit CLI artifact");
           expect(cleanup).toBeDefined();
           expect(restore).toBeDefined();
@@ -211,7 +208,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
 
       for (const jobName of jobNames) {
         expect(orderingErrors).toContain(
-          `${jobName} step 'Remove Docker auth before release-pinned fixture' must precede 'Prepare E2E workspace'`,
+          `${jobName} step 'Remove Docker auth before current-checkout fixture' must precede 'Prepare E2E workspace'`,
         );
       }
     },

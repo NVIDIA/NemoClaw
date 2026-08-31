@@ -14,7 +14,7 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
     const workflow = readOpenClawPluginRuntimeExdevWorkflow();
     const steps = workflow.jobs["openclaw-plugin-runtime-exdev"].steps!;
     const revokeIndex = steps.findIndex(
-      (step) => step.name === "Remove Docker auth before release-pinned fixture",
+      (step) => step.name === "Remove Docker auth before current-checkout fixture",
     );
     steps.splice(revokeIndex, 0, {
       name: "Read Docker credentials",
@@ -22,7 +22,7 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
     });
 
     expect(validateOpenClawPluginRuntimeExdevWorkflow(workflow)).toContain(
-      "openclaw-plugin-runtime-exdev step 'Pre-pull release-matched Docker Hub builder image' must immediately precede 'Remove Docker auth before release-pinned fixture'",
+      "openclaw-plugin-runtime-exdev step 'Pre-pull current-checkout Docker Hub builder image' must immediately precede 'Remove Docker auth before current-checkout fixture'",
     );
   });
 
@@ -50,12 +50,12 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
     prepare.uses = "./.github/actions/prepare-e2e";
 
     const prePull = steps.find(
-      (step) => step.name === "Pre-pull release-matched Docker Hub builder image",
+      (step) => step.name === "Pre-pull current-checkout Docker Hub builder image",
     )!;
     prePull.run = "docker pull node:22-trixie-slim";
 
     const revokeIndex = steps.findIndex(
-      (step) => step.name === "Remove Docker auth before release-pinned fixture",
+      (step) => step.name === "Remove Docker auth before current-checkout fixture",
     );
     const [revoke] = steps.splice(revokeIndex, 1);
     revoke!.if = "success()";
@@ -78,7 +78,7 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
     expect(validateOpenClawPluginRuntimeExdevWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "openclaw-plugin-runtime-exdev must run on ubuntu-latest",
-        "openclaw-plugin-runtime-exdev must retain its 105 minute runtime proof budget",
+        "openclaw-plugin-runtime-exdev must retain its 85 minute runtime proof budget",
         "openclaw-plugin-runtime-exdev must hold only contents: read",
         "openclaw-plugin-runtime-exdev must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev",
         "openclaw-plugin-runtime-exdev must remain enabled for scheduled and empty manual runs",
@@ -86,12 +86,12 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
         "openclaw-plugin-runtime-exdev action 'actions/checkout@v6' must pin a full SHA",
         "openclaw-plugin-runtime-exdev checkout must disable persisted credentials",
         "openclaw-plugin-runtime-exdev must use the reviewed prepare-e2e action",
-        "openclaw-plugin-runtime-exdev step 'Pre-pull release-matched Docker Hub builder image' must run: docker pull node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
-        "openclaw-plugin-runtime-exdev must always revoke Docker auth before the release-pinned fixture",
+        "openclaw-plugin-runtime-exdev step 'Pre-pull current-checkout Docker Hub builder image' must run: docker pull node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
+        "openclaw-plugin-runtime-exdev must always revoke Docker auth before the current-checkout fixture",
         "openclaw-plugin-runtime-exdev must use the pinned Docker auth cleanup action before artifact restore",
         "openclaw-plugin-runtime-exdev runtime proof must not receive workflow credentials",
         "openclaw-plugin-runtime-exdev must always use the reviewed artifact uploader",
-        "openclaw-plugin-runtime-exdev step 'Remove Docker auth before release-pinned fixture' must precede 'Prepare E2E workspace'",
+        "openclaw-plugin-runtime-exdev step 'Remove Docker auth before current-checkout fixture' must precede 'Prepare E2E workspace'",
       ]),
     );
   });
