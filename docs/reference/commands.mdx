@@ -1602,7 +1602,14 @@ Run a focused health check for one sandbox and the host services it depends on. 
   OpenShell gateway's sandbox registry.
 </AgentOnly>
 
-`doctor` also checks whether the sandbox registry contains the metadata required for snapshot, rebuild, upgrade, recovery, and reboot. When lifecycle metadata is incomplete, the report names the missing or invalid fields and affected operations without printing stored values. Dashboard metadata is required only for agents that manage a dashboard. If the registered gateway binding is invalid, `doctor` reports a failed gateway check and does not select, probe, or recover a gateway from that binding.
+`doctor` also checks whether the sandbox registry contains the metadata required for snapshot, rebuild, upgrade, recovery, and reboot.
+When lifecycle metadata is incomplete, the report names the missing or invalid fields and affected operations without printing stored values.
+Dashboard metadata is required only for agents that manage a dashboard.
+The `Registered gateway binding` result depends on the sandbox registry:
+
+- For a registered sandbox with a valid binding, `doctor` reports a successful check with the resolved gateway name.
+- For a registered sandbox with an invalid binding, the check fails, and `doctor` does not select, probe, or recover a gateway from that binding.
+- For an unregistered sandbox name, `doctor` uses the gateway selected by `NEMOCLAW_GATEWAY_PORT` for its other gateway checks and omits the `Registered gateway binding` check.
 
 <AgentOnly variant="hermes">
 
