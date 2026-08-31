@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-: "\${GITHUB_WORKSPACE:?GITHUB_WORKSPACE must name the source checkout}"
+: "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE must name the source checkout}"
 cd -- "$GITHUB_WORKSPACE"
 
 test -f package-lock.json

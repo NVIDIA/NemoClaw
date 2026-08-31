@@ -90,6 +90,22 @@ describe("trusted CI artifact compiler", () => {
     expect(readFileSync(fixture.trace, "utf8")).not.toContain("check-dist-sourcemaps");
   });
 
+  it("rejects an unset caller workspace before candidate commands run", () => {
+    const fixture = makeFixture();
+    const result = spawnSync("bash", [compiler], {
+      cwd: tmpdir(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        COMMAND_TRACE: fixture.trace,
+        GITHUB_WORKSPACE: "",
+        PATH: fixture.path,
+      },
+    });
+    expect(result.status).not.toBe(0);
+    expect(existsSync(fixture.trace)).toBe(false);
+  });
+
   it("rejects a checkout that lacks a fixed lockfile before candidate commands run", () => {
     const fixture = makeFixture();
     rmSync(join(fixture.root, "nemoclaw", "package-lock.json"));
