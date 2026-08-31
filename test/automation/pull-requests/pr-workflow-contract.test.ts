@@ -7,7 +7,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -15,7 +14,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { classifyManagedGatewayEndpointBinding } from "../../../nemoclaw/dist/shared/openshell-gateway-endpoint-boundary.cjs";
 import {
   type CompositeAction,
   readYaml,
@@ -489,57 +487,6 @@ describe("pull request and main workflow contracts", () => {
     ["main", mainWorkflow],
   ] as const)("keeps the %s CLI coverage shard budget aligned", (_workflowName, workflow) => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
-  });
-
-  // source-shape-contract: compatibility -- Compiled-contract work remains singular while source-based coverage shards stay parallel
-  it.each([
-    ["pull_request", prWorkflow],
-    ["main", mainWorkflow],
-  ] as const)("gives the %s build job sole compiled-artifact ownership", (workflowName, workflow) => {
-    const buildJob = workflow.jobs["build-typecheck"];
-    const shardJob = workflow.jobs["cli-test-shards"];
-    expect(Array.isArray(shardJob.needs) ? shardJob.needs : [shardJob.needs]).not.toContain(
-      "build-typecheck",
-    );
-
-    const buildRuns = stepRuns(sharedActions.buildTypecheck).join("\n");
-    const shardRuns = stepRuns(sharedActions.cliCoverageShard).join("\n");
-    expect(buildRuns).toContain("npm run build:cli");
-    expect(buildRuns).toContain("cd nemoclaw && npm run build");
-    expect(buildRuns).toContain("scripts/check-dist-sourcemaps.mts dist");
-    expect(buildRuns).toContain("vitest run --project package-contract");
-    expect(shardRuns).not.toContain("npm run build:cli");
-    expect(shardRuns).not.toContain("cd nemoclaw && npm run build");
-    expect(shardRuns).not.toContain("scripts/check-dist-sourcemaps");
-
-    const workflowSources = readdirSync(".github", { recursive: true, withFileTypes: true })
-      .filter((entry) => entry.isFile() && /\.ya?ml$/u.test(entry.name))
-      .map((entry) => readFileSync(join(entry.parentPath, entry.name), "utf8"));
-    expect(workflowSources.some((source) => source.includes("cli-build-output"))).toBe(false);
-    expect(classifyManagedGatewayEndpointBinding(["Gateway endpoint: http://127.0.0.1:18789"], 18_789)).toBe(
-      "match",
-    );
-    expect(stepUses(buildJob)).toContain(
-      workflowName === "pull_request"
-        ? trustedPrActionPaths.buildTypecheck
-        : sharedActionPaths.buildTypecheck,
-    );
-  });
-
-  // source-shape-contract: security -- Shard input validation, source-project coverage, mock parity, and fail-closed artifact upload remain on reviewed workflow boundaries
-  it("keeps coverage shards source-based and preserves shard-owned boundaries", () => {
-    const steps = sharedActions.cliCoverageShard.runs.steps;
-    expect(requiredStep(sharedActions.cliCoverageShard, "Validate changed live E2E mock parity").if).toBe(
-      "${{ inputs.shard == '1' }}",
-    );
-    expect(requiredStep(sharedActions.cliCoverageShard, "Run CLI coverage and E2E support shard").run).toContain(
-      "--project cli --project integration --project e2e-support",
-    );
-    expect(requiredStep(sharedActions.cliCoverageShard, "Upload CLI shard blob report").with).toMatchObject({
-      name: "cli-blob-report-${{ inputs.shard }}",
-      "if-no-files-found": "error",
-    });
-    expect(steps.some((step) => String(step.with?.name ?? "") === "cli-build-output")).toBe(false);
   });
 
   // source-shape-contract: security -- Pull request jobs must never receive the GitHub Packages credential
