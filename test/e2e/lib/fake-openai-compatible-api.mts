@@ -179,6 +179,10 @@ function requestedPromptReply(payload: JsonObject): string | null {
   ) {
     return "56";
   }
+  const profileMarker = prompt?.match(
+    /^(N8011_[0-9a-z]{8,10}_PROFILE_(?:SEED|CONTINUE))(?:\n\n[\s\S]+)?$/u,
+  );
+  if (profileMarker) return profileMarker[1];
   return null;
 }
 

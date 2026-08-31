@@ -538,19 +538,22 @@ RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
 # Hermes v0.20.6's operator drain is scoped to one container epoch. NemoClaw's
 # rebuild drain must instead survive gateway and container restarts until the
 # restored scripts and cron jobs are revalidated. Patch the pinned drain
-# predicate to compose an independent root-owned marker, and hydrate that
-# predicate during GatewayRunner construction so startup cannot dispatch before
-# the asynchronous watcher gets its first tick.
-ARG NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256=69ac0877810197ed0c400abf9eea62c7833018295fd01fdcecbc68f6efd229b3
+# predicate to compose an independent root-owned marker, hydrate that predicate
+# during GatewayRunner construction, and re-arm only unclaimed one-shots held
+# overdue when the authenticated release record opens the gate.
+ARG NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256=aeb2a7777d1d6ac9e4013671407dc47762ec6981f3627196bcdeaad0221f437c
 ARG NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256=4195245d27b7b067b416b69f4728fcfcdd97c912bdb0954f14402b35601f76cc
 ARG NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256=8b8def1d9cb8088d4de7dd3d920d31fb0d959f4d6ffffadf6dd8f8320da5e00b
+ARG NEMOCLAW_HERMES_CRON_JOBS_SOURCE_SHA256=dd5c7c601e23e5058e93d824b17ff426ed2cc5113c20d431ea4937274be59923
 ARG NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256=6d1c20afd6d0030a4d7c0fcc5a82dea1a9d9b912886aff1343597cfe74be1c8a
 ARG NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256=30a36097a525449bc9d3b721ba3c3047b1c4f2d8a19da8027bb280867c2d6823
+ARG NEMOCLAW_HERMES_CRON_JOBS_DRAIN_PATCHED_SHA256=e19c2563581433447871a4f5107b0c7ccb52631384b58336b2b893d13ab3769e
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_CRON_RESTORE_DRAIN_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
         "$NEMOCLAW_HERMES_DRAIN_CONTROL_SOURCE_SHA256" /opt/hermes/gateway/drain_control.py \
         "$NEMOCLAW_HERMES_GATEWAY_RUN_SOURCE_SHA256" /opt/hermes/gateway/run.py \
+        "$NEMOCLAW_HERMES_CRON_JOBS_SOURCE_SHA256" /opt/hermes/cron/jobs.py \
     | sha256sum -c - \
     || { echo "ERROR: Hermes cron restore drain source identity mismatch" >&2; exit 1; }
 # hadolint ignore=DL4006
@@ -558,9 +561,11 @@ RUN /usr/bin/python3 -I \
         /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py \
         --drain-control /opt/hermes/gateway/drain_control.py \
         --gateway-run /opt/hermes/gateway/run.py \
+        --cron-jobs /opt/hermes/cron/jobs.py \
     && printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_DRAIN_CONTROL_PATCHED_SHA256" /opt/hermes/gateway/drain_control.py \
         "$NEMOCLAW_HERMES_GATEWAY_RUN_DRAIN_PATCHED_SHA256" /opt/hermes/gateway/run.py \
+        "$NEMOCLAW_HERMES_CRON_JOBS_DRAIN_PATCHED_SHA256" /opt/hermes/cron/jobs.py \
     | sha256sum -c -
 
 # Hermes v0.20.6 writes gateway lifecycle metadata directly below HERMES_HOME.
@@ -715,7 +720,7 @@ ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=3c769f05292b840424a8feec9a9eb441e393a48bf
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=b355d1365fb1d15475e327f312ceb854ae96f9ebed28cf96bc8817f550df2688
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
-ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=e8593cf1580bffa4663e91c079ba0ce31c3d26391f5b1718872701138ce250b0
+ARG NEMOCLAW_HERMES_CRON_RESTORE_CONTROLLER_SHA256=398a0e1d49535fa41d7bb05216c6977240598da637ce787655bc39e97b1d5e64
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \

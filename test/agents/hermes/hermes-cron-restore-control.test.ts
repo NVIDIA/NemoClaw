@@ -27,6 +27,7 @@ const LIFECYCLE_HARNESS = String.raw`
 import importlib.util
 import os
 import sys
+import types
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("cron_restore_control", sys.argv[1])
@@ -133,6 +134,18 @@ class Status:
 drain = DrainControl()
 status = Status()
 module._load_gateway_modules = lambda: (drain, status)
+rearm_calls = []
+cron_package = types.ModuleType("cron")
+cron_jobs = types.ModuleType("cron.jobs")
+def rearm_nemoclaw_drained_oneshots(not_before):
+    if not module._marker_path().exists():
+        raise AssertionError("one-shot re-arm ran without the NemoClaw drain")
+    rearm_calls.append(not_before.isoformat())
+    return 1
+cron_jobs.rearm_nemoclaw_drained_oneshots = rearm_nemoclaw_drained_oneshots
+cron_package.jobs = cron_jobs
+sys.modules["cron"] = cron_package
+sys.modules["cron.jobs"] = cron_jobs
 
 try:
     if scenario == "success":
@@ -309,6 +322,13 @@ try:
         module.observe_replacement(41, 902, token)
         fail_directory_sync_on(1)
         module.complete_replacement(41, 902, 77, 903, token)
+    elif scenario == "rearm-failure":
+        token = module.begin_drain()
+        module.validate_restore(41, 902, token)
+        def fail_rearm(_not_before):
+            raise RuntimeError("simulated re-arm failure")
+        cron_jobs.rearm_nemoclaw_drained_oneshots = fail_rearm
+        module.recover_drain()
     elif scenario == "existing-recovery-sync-failure":
         token = module.begin_drain()
         module.validate_restore(41, 902, token)
@@ -458,6 +478,7 @@ finally:
     )
     print(f"CRON_VALIDATIONS:{cron_validations}")
     print(f"DURABILITY_SYNCS:{durability_sync_calls}")
+    print("REARM_CALLS:" + ",".join(rearm_calls))
     if drain.marker is not None:
         print("FINAL_MARKER:" + drain.marker["principal"])
 `;
@@ -530,6 +551,7 @@ describe("Hermes in-sandbox cron restore validator", () => {
       | "complete-release-rollback-failure"
       | "complete-durable-order"
       | "release-recovery-sync-failure"
+      | "rearm-failure"
       | "existing-recovery-sync-failure"
       | "drain-unlink-sync-failure"
       | "recovery-unlink-sync-failure"
@@ -664,6 +686,8 @@ describe("Hermes in-sandbox cron restore validator", () => {
     );
     expect(result.stdout).toContain("OPERATOR_MUTATIONS:0:0");
     expect(result.stdout).toContain("OWN_MARKER:absent");
+    expect(result.stdout).toMatch(/REARM_CALLS:[^\n]+/u);
+    expect(receipts.at(-1)).toMatchObject({ rearmed_oneshots: 1 });
   });
 
   it("rejects validation against a different gateway identity", () => {
@@ -893,6 +917,16 @@ describe("Hermes in-sandbox cron restore validator", () => {
     expect(result.stdout).toContain("RECOVERY_STATE:present");
     expect(result.stdout).toContain("DURABILITY_SYNCS:1");
     expect(result.stdout).not.toContain('"action":"complete"');
+  });
+
+  it("keeps dispatch drained when delayed one-shots cannot be re-armed (#8472)", () => {
+    const result = runLifecycle("rearm-failure");
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Hermes cron restore could not re-arm delayed one-shots");
+    expect(result.stdout).toContain("OWN_MARKER:present");
+    expect(result.stdout).toContain("RECOVERY_STATE:present");
+    expect(result.stdout).not.toContain('"action":"recover"');
   });
 
   it("rechecks existing recovery-record durability before marker deletion (#8472)", () => {

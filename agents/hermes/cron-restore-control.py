@@ -29,6 +29,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -244,6 +245,33 @@ def _require_owned_drain(drain_token: str) -> None:
         "NemoClaw cron restore drain",
         drain_token,
     )
+
+
+def _owned_drain_started_at(drain_token: str) -> datetime:
+    """Return the authenticated drain marker's durable creation time."""
+    _require_owned_drain(drain_token)
+    try:
+        metadata = _marker_path().lstat()
+    except OSError as error:
+        raise ControlError("NemoClaw cron restore drain time is unavailable") from error
+    _validate_marker_metadata(metadata, "NemoClaw cron restore drain marker")
+    return datetime.fromtimestamp(metadata.st_mtime_ns / 1_000_000_000, timezone.utc)
+
+
+def _rearm_drained_oneshots(drain_token: str) -> int:
+    """Re-arm only one-shots due at or after this drain was acquired."""
+    started_at = _owned_drain_started_at(drain_token)
+    try:
+        from cron.jobs import rearm_nemoclaw_drained_oneshots
+    except Exception as error:
+        raise ControlError("Hermes cron restore re-arm helper is unavailable") from error
+    try:
+        changed = rearm_nemoclaw_drained_oneshots(started_at)
+    except Exception as error:
+        raise ControlError("Hermes cron restore could not re-arm delayed one-shots") from error
+    if isinstance(changed, bool) or not isinstance(changed, int) or changed < 0:
+        raise ControlError("Hermes cron restore re-arm result is invalid")
+    return changed
 
 
 def _write_owned_token(
@@ -660,6 +688,9 @@ def _complete_release(
 ) -> None:
     _require_drained_idle(status_module, pid, start_time)
     _ensure_release_recovery(drain_token)
+    rearmed_oneshots = 0
+    if not _operator_drain_active(drain_control):
+        rearmed_oneshots = _rearm_drained_oneshots(drain_token)
     try:
         _remove_owned_drain(drain_token)
     except ControlError as release_error:
@@ -712,6 +743,7 @@ def _complete_release(
         disposition=disposition,
         operator_drain_active=operator_drain_active,
         preserved_drain=operator_drain_active,
+        rearmed_oneshots=rearmed_oneshots,
         **fields,
     )
 
