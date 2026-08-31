@@ -45,6 +45,7 @@ const SANDBOX_CONTEXT_DIR = `/${ADVISOR_CONTEXT_DIRECTORY_NAME}`;
 const SANDBOX_RUNTIME_DIR = `/sandbox/${ADVISOR_RUNTIME_DIRECTORY_NAME}`;
 const SANDBOX_TOOLS_DIR = `/${ADVISOR_TOOLS_DIRECTORY_NAME}`;
 const SANDBOX_CONTEXT_PATH = `${SANDBOX_CONTEXT_DIR}/${ADVISOR_CONTEXT_FILE_NAME}`;
+const SANDBOX_SPECIALIST_CONTEXT_DIR = `${SANDBOX_WORKDIR}/.${ADVISOR_CONTEXT_DIRECTORY_NAME}`;
 const ADVISOR_RUNTIME_TMPFS_BYTES = 512 * 1024 * 1024;
 const SANDBOX_API_KEY = "unused";
 const DEFAULT_SANDBOX_TIMEOUT_SECONDS = 2100;
@@ -140,6 +141,7 @@ function requireGitMetadataDirectory(directory: string, name: string): void {
 function advisorSandboxDriverConfig(input: {
   advisorDirectory: string;
   contextDirectory: string;
+  specialistContextDirectory: string;
   toolsDirectory: string;
   workdir: string;
 }): Readonly<Record<string, unknown>> {
@@ -162,6 +164,12 @@ function advisorSandboxDriverConfig(input: {
           type: "bind",
           source: input.contextDirectory,
           target: SANDBOX_CONTEXT_DIR,
+          read_only: true,
+        },
+        {
+          type: "bind",
+          source: input.specialistContextDirectory,
+          target: SANDBOX_SPECIALIST_CONTEXT_DIR,
           read_only: true,
         },
         {
@@ -298,6 +306,10 @@ export function createAdvisorSandbox(
       driverConfig: advisorSandboxDriverConfig({
         advisorDirectory,
         contextDirectory,
+        specialistContextDirectory: path.join(
+          contextDirectory,
+          ADVISOR_SPECIALIST_CONTEXT_DIRECTORY_NAME,
+        ),
         toolsDirectory,
         workdir: advisorWorkdir,
       }),
@@ -377,6 +389,7 @@ export function runAdvisorSandboxAsync(
         PR_REVIEW_ADVISOR_API_KEY: SANDBOX_API_KEY,
         PR_REVIEW_ADVISOR_BASE_URL: ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
         PR_REVIEW_ADVISOR_CONFIG_DIR: `${SANDBOX_RUNTIME_DIR}/config`,
+        PR_REVIEW_ADVISOR_CONTEXT_DIR: SANDBOX_SPECIALIST_CONTEXT_DIR,
         PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: SANDBOX_CONTEXT_PATH,
         TMPDIR: `${SANDBOX_RUNTIME_DIR}/tmp`,
       },

@@ -62,6 +62,7 @@ function advisorEnvironment(): NodeJS.ProcessEnv {
   for (const name of ["pr-review-advisor-context", "pr-review-advisor-tools"]) {
     fs.mkdirSync(path.join(runnerTemp, name));
   }
+  fs.mkdirSync(path.join(runnerTemp, "pr-review-advisor-context", "specialist"));
   return {
     ADVISOR_DIR: advisorDirectory,
     ADVISOR_WORKDIR: workDirectory,
@@ -979,6 +980,14 @@ describe("PR review advisor OpenShell wrapper", () => {
           {
             type: "bind",
             source: fs.realpathSync(
+              path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context", "specialist"),
+            ),
+            target: "/pr-workdir/.pr-review-advisor-context",
+            read_only: true,
+          },
+          {
+            type: "bind",
+            source: fs.realpathSync(
               path.join(env.RUNNER_TEMP as string, "pr-review-advisor-tools"),
             ),
             target: "/pr-review-advisor-tools",
@@ -1018,6 +1027,7 @@ describe("PR review advisor OpenShell wrapper", () => {
         "/pr-workdir",
         "PR_REVIEW_ADVISOR_API_KEY=unused",
         "PR_REVIEW_ADVISOR_BASE_URL=https://inference.local/v1",
+        "PR_REVIEW_ADVISOR_CONTEXT_DIR=/pr-workdir/.pr-review-advisor-context",
         "PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH=/pr-review-advisor-context/github-context.json",
         "GIT_DIR=/pr-workdir/.git",
         "GIT_WORK_TREE=/pr-workdir",
