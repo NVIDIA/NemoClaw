@@ -607,6 +607,44 @@ describe("maintainer merge-gate contributor compliance", () => {
           conclusion: "FAILURE",
         },
       ],
+      actionRunAttempts: {
+        "199": {
+          ...exactDiffGateRun("success", [
+            {
+              id: 1,
+              name: "matrix-check",
+              status: "completed",
+              conclusion: "success",
+              startedAt: "2026-01-01T00:00:00Z",
+              completedAt: "2026-01-01T00:00:30Z",
+            },
+          ]),
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:30Z",
+        },
+        "200": {
+          ...exactDiffGateRun("failure", [
+            {
+              id: 2,
+              name: "matrix-check",
+              status: "completed",
+              conclusion: "success",
+              startedAt: "2026-01-01T00:02:00Z",
+              completedAt: "2026-01-01T00:02:30Z",
+            },
+            {
+              id: 3,
+              name: "matrix-check",
+              status: "completed",
+              conclusion: "failure",
+              startedAt: "2026-01-01T00:03:00Z",
+              completedAt: "2026-01-01T00:03:30Z",
+            },
+          ]),
+          createdAt: "2026-01-01T00:02:00Z",
+          updatedAt: "2026-01-01T00:03:30Z",
+        },
+      },
     });
 
     const output = JSON.parse(result.stdout);
