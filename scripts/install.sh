@@ -834,6 +834,8 @@ print_done() {
   # not clean either.
   if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
     warn "=== Installation completed with warnings ==="
+  elif [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
+    warn "=== Installation completed with warnings ==="
   elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
     warn "=== Installation completed with warnings ==="
   else
@@ -843,7 +845,10 @@ print_done() {
   printf "  ${C_GREEN}${C_BOLD}%s${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$_CLI_DISPLAY" "$elapsed"
   printf "\n"
   if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
-    if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+    if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
+      printf "  ${C_YELLOW}The recovery command succeeded, but NemoClaw could not inspect its output.${C_RESET}\n"
+      printf "  ${C_DIM}Run '%s upgrade-sandboxes --check' to verify every recorded sandbox.${C_RESET}\n" "$_CLI_BIN"
+    elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
       # #6520: recovery exited 0 but recorded sandboxes were not found on
       # their own recorded gateway; do not report them as recovered, and give
       # a concrete remediation path instead.
@@ -859,7 +864,9 @@ print_done() {
       printf "  ${C_GREEN}For this terminal:${C_RESET}\n"
       print_cli_path_refresh_actions
     fi
-    if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+    if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
+      printf "  ${C_DIM}Generic onboarding was skipped because recovery verification is incomplete.${C_RESET}\n"
+    elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
       printf "  ${C_DIM}Generic onboarding was skipped because recorded sandboxes exist.${C_RESET}\n"
     else
       printf "  ${C_DIM}No new sandbox onboarding was needed.${C_RESET}\n"
@@ -1275,6 +1282,7 @@ _NEMOCLAW_CLI_INSTALL_MODE=""
 _OPENSHELL_INSTALL_REQUIRED_BEFORE_RECOVERY=false
 _PREEXISTING_SANDBOX_COUNT=0
 _PREEXISTING_SANDBOX_RECOVERY_RAN=false
+_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=false
 # #6520: set when the automatic recovery pass exited 0 but skipped recorded
 # sandboxes it could not observe on the selected gateway (e.g. their gateway
 # and Docker image were removed by a prior uninstall while sandboxes.json was
@@ -3956,26 +3964,6 @@ recover_preexisting_sandboxes_before_onboard() {
     return 0
   fi
 
-  local docker_host_contract="${NEMOCLAW_SOURCE_ROOT}/dist/lib/domain/docker-host.js"
-  if ! command_exists node || [[ ! -f "$docker_host_contract" ]]; then
-    error "Could not validate DOCKER_HOST before sandbox recovery. Existing sandboxes were not recovered."
-  fi
-  local docker_host_status=0
-  node -e '
-    const validator = require(process.argv[1]).isSupportedGatewayDockerHost;
-    if (typeof validator !== "function") process.exit(11);
-    process.exit(validator(process.argv[2]) ? 0 : 10);
-  ' "$docker_host_contract" "${DOCKER_HOST-}" >/dev/null 2>&1 || docker_host_status=$?
-  case "$docker_host_status" in
-    0) ;;
-    10)
-      error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Existing sandboxes were not recovered."
-      ;;
-    *)
-      error "Could not validate DOCKER_HOST before sandbox recovery. Existing sandboxes were not recovered."
-      ;;
-  esac
-
   info "Recovering and upgrading pre-existing sandboxes before onboarding…"
   # `--auto` is the existing non-interactive maintenance path. When the
   # pre-upgrade backup signal is present, the CLI also recovers registered
@@ -3993,9 +3981,12 @@ recover_preexisting_sandboxes_before_onboard() {
   # src/lib/actions/upgrade-sandboxes.ts.
   local recovery_log=""
   recovery_log="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-recovery-XXXXXX" 2>/dev/null)" || recovery_log=""
-  local recovery_status=0 recovery_pass=1
+  local recovery_status=0 recovery_pass=1 orphan_marker_status=0
+  local -a recovery_pipeline_status=()
   if [ -n "$recovery_log" ]; then
     _cleanup_files+=("$recovery_log")
+  else
+    _PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=true
   fi
   while [ "$recovery_pass" -le 2 ]; do
     recovery_status=0
@@ -4007,7 +3998,11 @@ recover_preexisting_sandboxes_before_onboard() {
         # pipefail: take the CLI's own status, not tee's — a log-write failure
         # (e.g. ENOSPC on TMPDIR) must not convert a successful recovery into
         # the #5735 failure path.
-        recovery_status=${PIPESTATUS[0]}
+        recovery_pipeline_status=("${PIPESTATUS[@]}")
+        recovery_status="${recovery_pipeline_status[0]:-1}"
+        if [ "${recovery_pipeline_status[1]:-1}" -ne 0 ]; then
+          _PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=true
+        fi
       fi
     else
       NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES="${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-[]}" \
@@ -4026,9 +4021,16 @@ recover_preexisting_sandboxes_before_onboard() {
   done
   if [ "$recovery_status" -eq 0 ]; then
     _PREEXISTING_SANDBOX_RECOVERY_RAN=true
-    if [ -n "$recovery_log" ] \
-      && grep -Fq "recorded sandbox(es) were not found on their recorded gateway" "$recovery_log"; then
-      _PREEXISTING_SANDBOX_ORPHANED=true
+    if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" != true ]] \
+      && [ -n "$recovery_log" ]; then
+      orphan_marker_status=0
+      grep -Fq "recorded sandbox(es) were not found on their recorded gateway" "$recovery_log" \
+        || orphan_marker_status=$?
+      case "$orphan_marker_status" in
+        0) _PREEXISTING_SANDBOX_ORPHANED=true ;;
+        1) ;;
+        *) _PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED=true ;;
+      esac
     fi
     rm -f "$recovery_log" 2>/dev/null || true
     return 0
@@ -6256,6 +6258,25 @@ install_nemoclaw_before_onboarding() {
   # `nemoclaw onboard` (the install-ollama / install-vllm branches).
   # install.sh stays focused on dependency setup.
   fix_npm_permissions
+  local docker_host_contract="${NEMOCLAW_SOURCE_ROOT}/src/lib/domain/docker-host.ts"
+  if ! command_exists node || [[ ! -f "$docker_host_contract" ]]; then
+    error "Could not validate DOCKER_HOST before sandbox recovery. Rerun the installer from a complete NemoClaw source checkout. Sandbox recovery did not start."
+  fi
+  local docker_host_status=0
+  node --experimental-strip-types --no-warnings -e '
+    const validator = require(process.argv[1]).isSupportedGatewayDockerHost;
+    if (typeof validator !== "function") process.exit(11);
+    process.exit(validator(process.argv[2]) ? 0 : 10);
+  ' "$docker_host_contract" "${DOCKER_HOST-}" >/dev/null 2>&1 || docker_host_status=$?
+  case "$docker_host_status" in
+    0) ;;
+    10)
+      error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer. Sandbox recovery did not start."
+      ;;
+    *)
+      error "Could not validate DOCKER_HOST before sandbox recovery. Rerun the installer from a complete NemoClaw source checkout. Sandbox recovery did not start."
+      ;;
+  esac
   preinstall_backup_and_retire_legacy_gateway
   install_nemoclaw
   verify_nemoclaw
@@ -6453,7 +6474,9 @@ main() {
 
       local _run_onboard_after_recovery=false
       if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
-        if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+        if [[ "${_PREEXISTING_SANDBOX_RECOVERY_UNCONFIRMED:-false}" == true ]]; then
+          warn "Recovery output could not be inspected; skipping generic onboarding."
+        elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
           # #6520: do not claim recovery when recorded sandboxes are stranded.
           warn "Some recorded sandboxes could not be recovered; skipping generic onboarding."
         elif [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] \
