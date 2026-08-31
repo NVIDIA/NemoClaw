@@ -726,6 +726,36 @@ export function reconcileCreatedHermesCredentialEnvironment(
   }, recordRecovery);
 }
 
+/** Keep post-registration effects bound to the exact published sandbox entry. */
+export function revalidateRegisteredSandboxCreateIdentity(
+  expected: SandboxEntry,
+  operation: string,
+  deps: {
+    readonly readRegistry: (sandboxName: string) => SandboxEntry | null;
+    readonly revalidateLiveIdentity: (expectedIdentity: string, operation: string) => void;
+  },
+): SandboxEntry {
+  const expectedIdentity = expected.lifecycleLiveIdentityFingerprint;
+  if (!expected.lifecycleGeneration || !expectedIdentity) {
+    throw new Error(
+      `Cannot continue sandbox '${expected.name}' creation without its registered identity.`,
+    );
+  }
+  const requireCurrentRegistration = (): SandboxEntry => {
+    const current = deps.readRegistry(expected.name);
+    if (!current || !isDeepStrictEqual(current, expected)) {
+      throw new Error(
+        `Cannot continue sandbox '${expected.name}' creation after its registered identity changed.`,
+      );
+    }
+    return current;
+  };
+
+  requireCurrentRegistration();
+  deps.revalidateLiveIdentity(expectedIdentity, operation);
+  return requireCurrentRegistration();
+}
+
 export async function finalizeCreatedSandboxBeforeHermesCredentialReconciliation<T>(
   completeRegistration: () => Promise<T>,
   reconcileCredentialEnvironment: () => void,
@@ -1584,6 +1614,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     let verifiedCreateBoundary: VerifiedSandboxCreateBoundary | null = null;
     let pendingCreateIdentity: PendingSandboxCreateIdentity | null = null;
     let admittedCreateReservation: QualifiedPendingSandboxCreateReservation | null = null;
+    let publishedCreateRegistration: SandboxEntry | null = null;
     let createEffectsFinalized = false;
     const createCheckpointSession = onboardSession.loadSession();
     const openingPendingCreateIdentity = pendingVerifiedCreateCheckpointForSession({
@@ -1596,6 +1627,13 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     });
     const revalidateSandboxIdentity = (sandboxIsLive: boolean, operation: string): void => {
       if (sandboxIsLive && !createEffectsFinalized && verifiedCreateBoundary) {
+        if (publishedCreateRegistration) {
+          revalidateRegisteredSandboxCreateIdentity(publishedCreateRegistration, operation, {
+            readRegistry: registry.getSandbox,
+            revalidateLiveIdentity: revalidateCreatedSandboxIdentity,
+          });
+          return;
+        }
         revalidateVerifiedCreateIdentity(requireVerifiedCreateBoundary(), operation);
       }
     };
@@ -2878,7 +2916,15 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
           finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
             async () => {
               const registration = await runAsyncWithPostCreateRecovery(
-                () => completeCreatedSandboxRegistration(created, null),
+                async () => {
+                  const result = await completeCreatedSandboxRegistration(created, null);
+                  const published = registry.getSandbox(sandboxName);
+                  if (!published) {
+                    throw new Error("Sandbox registration returned no published authority.");
+                  }
+                  publishedCreateRegistration = published;
+                  return result;
+                },
                 () => recordPostCreateRecovery("registry publication"),
               );
               return registration;

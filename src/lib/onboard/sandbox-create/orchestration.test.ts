@@ -22,6 +22,7 @@ import {
   readManagedDcodeCreateSelectionDrift,
   readSandboxRecreateRegistryEntry,
   reconcileCreatedHermesCredentialEnvironment,
+  revalidateRegisteredSandboxCreateIdentity,
   runAuthorityBoundProviderCleanup,
   runAsyncWithPostCreateRecovery,
   runSandboxCreateWithIdentityVerification,
@@ -68,6 +69,40 @@ describe("created Hermes credential environment reconciliation", () => {
       "effects:finalized",
     ]);
     expect(createEffectsFinalized).toBe(true);
+  });
+
+  it("revalidates the exact published registry entry around post-registration effects (#9833)", () => {
+    const registered = {
+      name: "alpha",
+      gatewayName: "nemoclaw",
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    } as SandboxEntry;
+    let current: SandboxEntry | null = structuredClone(registered);
+    const readRegistry = vi.fn(() => current);
+    const revalidateLiveIdentity = vi.fn((expectedIdentity: string, operation: string) => {
+      expect(expectedIdentity).toBe(registered.lifecycleLiveIdentityFingerprint);
+      expect(operation).toBe("reconciling Hermes credentials");
+    });
+
+    expect(
+      revalidateRegisteredSandboxCreateIdentity(registered, "reconciling Hermes credentials", {
+        readRegistry,
+        revalidateLiveIdentity,
+      }),
+    ).toEqual(registered);
+    expect(readRegistry).toHaveBeenCalledTimes(2);
+    expect(revalidateLiveIdentity).toHaveBeenCalledOnce();
+
+    current = structuredClone(registered);
+    expect(() =>
+      revalidateRegisteredSandboxCreateIdentity(registered, "restarting Hermes", {
+        readRegistry: () => current,
+        revalidateLiveIdentity: () => {
+          current = { ...registered, gatewayPort: 18790 };
+        },
+      }),
+    ).toThrow(/registered identity changed/u);
   });
 
   it("fails onboarding when a successful rebuild cannot retire its handoff policy", async () => {
