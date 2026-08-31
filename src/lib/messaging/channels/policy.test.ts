@@ -142,7 +142,7 @@ describe("messaging channel policy presets", () => {
   });
 
   it.each(["openclaw", "hermes"] as const)(
-    "clones the reviewed credential-bound endpoint for one exact WeChat IDC host on %s (#10606)",
+    "authorizes one exact validated WeChat IDC endpoint with its credential binding on %s (#10606)",
     (agent) => {
       const content = loadMessagingChannelPolicyPreset("wechat", {
         agent,
@@ -150,15 +150,24 @@ describe("messaging channel policy presets", () => {
         messagingConfig: { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" },
       });
       const endpoints = YAML.parse(content ?? "").network_policies.wechat_bridge.endpoints;
-      const template = endpoints.find(
-        (endpoint: { host: string }) => endpoint.host === "ilinkai.wechat.com",
-      );
       const configured = endpoints.find(
         (endpoint: { host: string }) => endpoint.host === "idc-37.weixin.qq.com",
       );
 
-      expect(configured).toEqual({ ...template, host: "idc-37.weixin.qq.com" });
-      expect(configured.credential_binding.provider).toBe(`${agent}-wechat-wechat-bridge`);
+      expect(configured).toEqual({
+        host: "idc-37.weixin.qq.com",
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+        credential_binding: { provider: `${agent}-wechat-wechat-bridge` },
+        rules: [
+          { allow: { method: "GET", path: "/**" } },
+          { allow: { method: "POST", path: "/**" } },
+        ],
+      });
+      expect(
+        endpoints.filter((endpoint: { host: string }) => endpoint.host.startsWith("idc-")),
+      ).toHaveLength(1);
       expect(endpoints.map((endpoint: { host: string }) => endpoint.host)).not.toContain(
         "*.weixin.qq.com",
       );
