@@ -25,11 +25,6 @@ import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 import {
-  CURRENT_LIFECYCLE_PHASES,
-  currentLifecycleCommands,
-  type WeatherFixtureVersion,
-} from "./openclaw-plugin-runtime-exdev-lifecycle.ts";
-import {
   buildTrustedPluginFixtureImage,
   createOpenShellTrustedImageWrapper,
   registerTrustedPluginFixtureImageCleanup,
@@ -70,6 +65,7 @@ const EXDEV_TMPFS_DRIVER_CONFIG = JSON.stringify({
     mounts: [EXDEV_TMPFS_MOUNT_CONFIG],
   },
 });
+type WeatherFixtureVersion = "v1" | "v2";
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
@@ -392,7 +388,15 @@ test(
   {
     timeout: ONBOARD_TIMEOUT_MS * 2 + 15 * 60_000,
     meta: {
-      e2ePhases: [...CURRENT_LIFECYCLE_PHASES],
+      e2ePhases: [
+        "confirm Docker CLI and clear the current plugin sandbox",
+        "clone and prepare the current plugin fixture",
+        "install and validate current OpenShell",
+        "build and onboard plugin v1",
+        "install plugin v1 across filesystems",
+        "restart the gateway and confirm plugin v1",
+        "recreate the sandbox with plugin v2",
+      ],
     },
   },
   async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
@@ -469,11 +473,6 @@ test(
     });
     cleanup.add("remove current EXDEV OpenShell PATH wrapper", openshellWrapper.remove);
     const sandboxEnv = withOpenShellWrapperEnv(deploymentEnv, openshellWrapper, openshell);
-    const lifecycleCommands = currentLifecycleCommands({
-      cliEntrypoint: CLI_ENTRYPOINT,
-      dockerfilePath: customPluginContext.dockerfilePath,
-      sandboxName: SANDBOX_NAME,
-    });
 
     progress.phase("build and onboard plugin v1");
     const baseImageResolution = withEnabledLocalBaseImageBuild(() =>
@@ -504,8 +503,18 @@ test(
     });
     openshellWrapper.selectImage(pluginImageV1);
     const onboard = await host.command(
-      lifecycleCommands.onboard.command,
-      lifecycleCommands.onboard.args,
+      "node",
+      [
+        CLI_ENTRYPOINT,
+        "onboard",
+        "--fresh",
+        "--non-interactive",
+        "--yes-i-accept-third-party-software",
+        "--agent",
+        "openclaw",
+        "--from",
+        customPluginContext.dockerfilePath,
+      ],
       {
         artifactName: "openclaw-plugin-exdev-onboard",
         env: sandboxEnv,
@@ -517,23 +526,19 @@ test(
     const weatherAfterOnboard = await assertWeatherPluginRuntime(sandbox, "after-onboard", "v1");
 
     progress.phase("install plugin v1 across filesystems");
-    const crossDeviceInstall = await sandbox.execShell(
-      SANDBOX_NAME,
-      crossDevicePluginInstall,
-      {
-        artifactName: "openclaw-plugin-exdev-production-install",
-        env: liveEnv(),
-        timeoutMs: PROBE_TIMEOUT_MS,
-      },
-    );
+    const crossDeviceInstall = await sandbox.execShell(SANDBOX_NAME, crossDevicePluginInstall, {
+      artifactName: "openclaw-plugin-exdev-production-install",
+      env: liveEnv(),
+      timeoutMs: PROBE_TIMEOUT_MS,
+    });
     const crossDeviceInstallText = resultText(crossDeviceInstall);
     expect(crossDeviceInstall.exitCode, crossDeviceInstallText).toBe(0);
     expect(crossDeviceInstallText).toMatch(/source_device=\d+ target_device=\d+/);
 
     progress.phase("restart the gateway and confirm plugin v1");
     const restart = await host.command(
-      lifecycleCommands.restart.command,
-      lifecycleCommands.restart.args,
+      "node",
+      [CLI_ENTRYPOINT, SANDBOX_NAME, "gateway", "restart"],
       {
         artifactName: "openclaw-weather-plugin-gateway-restart",
         env: sandboxEnv,
@@ -560,8 +565,22 @@ test(
     });
     openshellWrapper.selectImage(pluginImageV2);
     const recreate = await host.command(
-      lifecycleCommands.recreate.command,
-      lifecycleCommands.recreate.args,
+      "node",
+      [
+        CLI_ENTRYPOINT,
+        "onboard",
+        "--fresh",
+        "--recreate-sandbox",
+        "--non-interactive",
+        "--yes",
+        "--yes-i-accept-third-party-software",
+        "--name",
+        SANDBOX_NAME,
+        "--agent",
+        "openclaw",
+        "--from",
+        customPluginContext.dockerfilePath,
+      ],
       {
         artifactName: "openclaw-weather-plugin-recreate",
         env: sandboxEnv,

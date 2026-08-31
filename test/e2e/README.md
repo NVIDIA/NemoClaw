@@ -638,8 +638,8 @@ The current-checkout fixture locally prebuilds its repository-controlled v1
 and v2 Dockerfiles with BuildKit, then hands only those local image references
 to OpenShell. User-supplied `--from` Dockerfiles retain the gateway-builder
 trust boundary and are never host-prebuilt by this fixture.
-When a PR changes a base-image input, the current-checkout fixture enables that
-base-image build after the workflow removes Docker Hub credentials.
+The current-checkout fixture enables local base-image resolution after the
+workflow removes Docker Hub credentials.
 
 The release-baseline lane is retired. Historical package versions are not part
 of this current runtime contract.
