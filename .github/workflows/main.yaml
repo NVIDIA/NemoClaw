@@ -48,8 +48,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Run build and type checks
+      - name: Compile and verify CLI and plugin outputs
+        uses: ./.github/actions/ci-compile-artifacts
+
+      - name: Run package-contract and type checks
         uses: ./.github/actions/ci-build-typecheck
+
+      - name: Upload compiled CLI artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-build-output
+          path: dist
+          if-no-files-found: error
+          retention-days: 1
 
   installer-integration:
     permissions:
@@ -173,7 +184,7 @@ jobs:
           shard-count: "12"
 
   cli-tests:
-    needs: cli-test-shards
+    needs: [build-typecheck, cli-test-shards]
     if: ${{ always() }}
     permissions:
       actions: read
