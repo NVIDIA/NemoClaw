@@ -5,7 +5,8 @@ import fs from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
-import { parseOpenShellPolicy } from "../../policy/merge";
+import { reconcileTeamsOutlookLoginCredentialBinding } from "../../policy";
+import { parseOpenShellPolicy, stripProviderComposedPolicies } from "../../policy/merge";
 import { getCredentialBindingProviders, type InitialSandboxPolicy } from "../initial-policy";
 import { cleanupTempDir, createExactTempFileCleanup, secureTempFile } from "../temp-files";
 
@@ -229,8 +230,19 @@ export function mergeReplacementPolicyAccess(
   requiredNetworkPolicyKeys: readonly string[] = [],
   removedNetworkPolicyKeys: readonly string[] = [],
   requiredNetworkPolicySources: readonly string[] = [],
+  sandboxName?: string,
 ): { readonly changed: boolean; readonly source: string } {
-  const live = structuredClone(parseOpenShellPolicy(livePolicySource).policy) as PolicyMapping;
+  const providerNormalizedLivePolicySource = stripProviderComposedPolicies(livePolicySource);
+  const normalizedLivePolicySource = removedNetworkPolicyKeys.includes("teams")
+    ? reconcileTeamsOutlookLoginCredentialBinding(
+        providerNormalizedLivePolicySource,
+        sandboxName,
+        false,
+      )
+    : providerNormalizedLivePolicySource;
+  const live = structuredClone(
+    parseOpenShellPolicy(normalizedLivePolicySource).policy,
+  ) as PolicyMapping;
   const replacement = parseOpenShellPolicy(replacementPolicySource).policy as PolicyMapping;
   const processChanged = mergeMissingReplacementProcessIdentity(live, replacement);
   const filesystemChanged = mergeReplacementFilesystemAccess(live, replacement);
@@ -241,14 +253,19 @@ export function mergeReplacementPolicyAccess(
     removedNetworkPolicyKeys,
     requiredNetworkPolicySources,
   );
-  const changed = processChanged || filesystemChanged || networkChanged;
+  const changed =
+    normalizedLivePolicySource !== livePolicySource ||
+    processChanged ||
+    filesystemChanged ||
+    networkChanged;
   return changed
     ? { changed: true, source: YAML.stringify(live) }
-    : { changed: false, source: livePolicySource };
+    : { changed: false, source: normalizedLivePolicySource };
 }
 
 /** Materialize the single ephemeral policy input consumed by an explicit rebuild. */
 export function materializeRebuildPolicyHandoff(input: {
+  readonly sandboxName?: string;
   readonly livePolicyPath: string;
   readonly replacementPolicy: InitialSandboxPolicy;
   readonly requiredNetworkPolicyKeys?: readonly string[];
@@ -266,6 +283,7 @@ export function materializeRebuildPolicyHandoff(input: {
     input.requiredNetworkPolicyKeys,
     input.removedNetworkPolicyKeys,
     input.requiredNetworkPolicySources,
+    input.sandboxName,
   );
   if (!merged.changed) {
     return {

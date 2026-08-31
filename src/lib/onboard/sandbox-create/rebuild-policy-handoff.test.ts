@@ -369,4 +369,100 @@ network_policies:
       "host-added-provider",
     ]);
   });
+
+  it.each([
+    { agent: "OpenClaw", sandboxName: "openclaw-channel-test", telegramKey: "telegram_bot" },
+    { agent: "Hermes", sandboxName: "hermes-channel-test", telegramKey: "telegram" },
+  ])(
+    "removes disabled-channel provider artifacts before the $agent rebuild handoff",
+    ({ sandboxName, telegramKey }) => {
+      const teamsProvider = `${sandboxName}-teams-bridge`;
+      const telegramProvider = `${sandboxName}-telegram`;
+      const livePath = tempPolicy(
+        `${sandboxName}-live.yaml`,
+        `version: 1
+network_policies:
+  host_edit:
+    endpoints: [{host: host.example.com, port: 443}]
+  outlook_graph:
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+        credential_binding: {provider: ${teamsProvider}}
+  teams:
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+        credential_binding: {provider: ${teamsProvider}}
+  ${telegramKey}:
+    endpoints:
+      - host: api.telegram.org
+        port: 443
+        credential_binding: {provider: ${telegramProvider}}
+  _provider_disabled_channels:
+    endpoints:
+      - host: provider-composed.example.com
+        port: 443
+        credential_binding: {provider: ${telegramProvider}}
+`,
+      );
+      const replacementPath = tempPolicy(
+        `${sandboxName}-replacement.yaml`,
+        "version: 1\nnetwork_policies: {}\n",
+      );
+      const handoff = materializeRebuildPolicyHandoff({
+        livePolicyPath: livePath,
+        replacementPolicy: {
+          policyPath: replacementPath,
+          appliedPresets: [],
+          credentialBindingProviders: [],
+        },
+        removedNetworkPolicyKeys: [telegramKey, "teams"],
+        sandboxName,
+      });
+      const materialized = readPrivatePolicy(handoff.policyPath).policy as {
+        network_policies: Record<string, unknown>;
+      };
+
+      expect(materialized.network_policies).toEqual({
+        host_edit: { endpoints: [{ host: "host.example.com", port: 443 }] },
+        outlook_graph: {
+          endpoints: [{ host: "login.microsoftonline.com", port: 443 }],
+        },
+      });
+      expect(handoff.credentialBindingProviders).toEqual([]);
+      expect(handoff.cleanup?.()).toBe(true);
+    },
+  );
+
+  it("refuses to remove a non-Teams Outlook credential binding", () => {
+    const livePath = tempPolicy(
+      "foreign-outlook-binding.yaml",
+      `version: 1
+network_policies:
+  outlook_graph:
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+        credential_binding: {provider: operator-owned}
+`,
+    );
+    const replacementPath = tempPolicy(
+      "foreign-outlook-replacement.yaml",
+      "version: 1\nnetwork_policies: {}\n",
+    );
+
+    expect(() =>
+      materializeRebuildPolicyHandoff({
+        sandboxName: "channel-test",
+        livePolicyPath: livePath,
+        replacementPolicy: {
+          policyPath: replacementPath,
+          appliedPresets: [],
+          credentialBindingProviders: [],
+        },
+        removedNetworkPolicyKeys: ["teams"],
+      }),
+    ).toThrow("the existing credential binding is not owned by Teams");
+  });
 });
