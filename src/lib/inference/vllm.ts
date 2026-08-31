@@ -1796,10 +1796,16 @@ async function managedStorageAccepted(
   );
 }
 
-function ensureHfCacheDir(model: VllmModelDef): { ok: true } | { ok: false; reason: string } {
+// Exported for testing. The mode is explicit because a host umask only clears
+// permission bits and never adds them: without it the shared cache inherits a
+// group-writable mode on a umask-002 host, and every current-user authority
+// check on that cache then rejects NemoClaw's own directory (#10650).
+export function ensureHfCacheDir(
+  model: VllmModelDef,
+): { ok: true } | { ok: false; reason: string } {
   const cacheDir = hostHfCacheDir();
   try {
-    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
   } catch (err) {
     return {
       ok: false,

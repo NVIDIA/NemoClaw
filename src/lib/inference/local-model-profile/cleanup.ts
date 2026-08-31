@@ -8,6 +8,7 @@ import path from "node:path";
 
 import type { ContainerEngine } from "../../adapters/container-engine";
 import { dockerCapture, dockerForceRm, dockerRun } from "../../adapters/docker/local-model-runtime";
+import { shellQuote } from "../../core/shell-quote";
 import {
   createManagedLlamaCppEngine,
   dockerLlamaCppBindingSha256,
@@ -261,12 +262,96 @@ function requireCurrentUserCacheDirectory(
   if (status.uid !== currentUserId) {
     throw new Error(`${label} is not owned by the current user`);
   }
+  if ((status.mode & 0o022) !== 0) {
+    const mode = (status.mode & 0o7777).toString(8).padStart(4, "0");
+    throw new Error(
+      `${label} is not current-user filesystem authority: ${directory} is group- or ` +
+        `world-writable (mode ${mode}). Run: chmod go-w ${shellQuote(directory)}`,
+    );
+  }
   const expectedPath = path.join(
     fs.realpathSync(path.dirname(directory)),
     path.basename(directory),
   );
-  if ((status.mode & 0o022) !== 0 || fs.realpathSync(directory) !== expectedPath) {
-    throw new Error(`${label} is not current-user filesystem authority`);
+  if (fs.realpathSync(directory) !== expectedPath) {
+    throw new Error(
+      `${label} is not current-user filesystem authority: ${directory} does not resolve inside ` +
+        `${path.dirname(directory)}`,
+    );
+  }
+}
+
+/**
+ * Clear the group and world write bits from a cache directory the current user
+ * owns. Managed vLLM onboarding created `~/.cache/huggingface` without an
+ * explicit mode until #10650, so a host umask of 002 left the directory
+ * group-writable and the authority check below rejected NemoClaw's own
+ * artifact. Ownership is never changed, and a directory the current user does
+ * not own is left untouched for that check to reject. Exported for testing,
+ * because a cleanup run as root can chmod a directory it does not own.
+ */
+export function restrictSharedCacheWritesToOwner(
+  directory: string,
+  currentUserId: number | null,
+): void {
+  const status = fs.lstatSync(directory, { throwIfNoEntry: false });
+  if (status === undefined || status.isSymbolicLink() || !status.isDirectory()) return;
+  if (currentUserId === null || status.uid !== currentUserId) return;
+  if ((status.mode & 0o022) === 0) return;
+  fs.chmodSync(directory, status.mode & 0o7777 & ~0o022);
+}
+
+function directoryDeniesRemoval(directory: string): boolean {
+  try {
+    fs.accessSync(directory, fs.constants.W_OK | fs.constants.X_OK);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Return the outermost directory between `target` and `blocked` that the host
+ * user cannot write. Removing an entry needs write and search access on the
+ * directory that holds it, so a repair must name that directory rather than the
+ * descendant path `fs.rmSync` reports for the failed syscall.
+ */
+function removalBarrier(target: string, blocked: string): string {
+  const relative = path.relative(target, blocked);
+  const descendant = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  const segments = descendant ? relative.split(path.sep).slice(0, -1) : [];
+  let current = target;
+  for (const segment of segments) {
+    if (directoryDeniesRemoval(current)) return current;
+    current = path.join(current, segment);
+  }
+  return directoryDeniesRemoval(current) ? current : target;
+}
+
+/**
+ * Delete one cache entry and translate a permission failure into the ownership
+ * repair the host user must run. The managed vLLM container serves as root, so
+ * a model file it writes through the bind-mounted cache lands root-owned on the
+ * host and no unprivileged delete can remove it. NemoClaw never changes host
+ * file ownership on the user's behalf.
+ */
+function removeHuggingFaceCacheEntry(target: string): void {
+  try {
+    fs.rmSync(target, { force: true, recursive: true });
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException;
+    if (failure.code !== "EACCES" && failure.code !== "EPERM") throw error;
+    const blocked = failure.path ?? target;
+    const identity =
+      typeof process.getuid === "function" && typeof process.getgid === "function"
+        ? `${String(process.getuid())}:${String(process.getgid())}`
+        : "$(id -u):$(id -g)";
+    const barrier = removalBarrier(target, blocked);
+    throw new Error(
+      `Hugging Face cache path ${blocked} is not removable by host user ${identity}. ` +
+        "It may have been created by an earlier root-run model container; NemoClaw did not modify it. " +
+        `Repair ownership, then retry uninstall: sudo chown -R ${identity} ${shellQuote(barrier)}`,
+    );
   }
 }
 
@@ -280,17 +365,31 @@ function removeSharedHuggingFaceCacheData(
   if (!statePathExists(cacheDir)) return;
   const cacheParent = path.dirname(cacheDir);
   requireCurrentUserCacheDirectory(cacheParent, "Hugging Face cache parent", currentUserId);
+  // The caller asked to delete everything in this directory, so restoring its
+  // exclusive-write invariant costs the user nothing and closes the race the
+  // authority check guards against. The check still rejects every state this
+  // repair leaves untouched.
+  restrictSharedCacheWritesToOwner(cacheDir, currentUserId);
   requireCurrentUserCacheDirectory(cacheDir, "Hugging Face model cache", currentUserId);
-  const entries = fs.readdirSync(cacheDir);
+  // Sorted so a blocked entry stops the loop at the same point on every retry,
+  // which keeps the reported partial state reproducible for the user.
+  const entries = fs.readdirSync(cacheDir).sort();
   let deletedCacheData = false;
-  for (const entry of entries) {
-    const target = path.join(cacheDir, entry);
-    if (HUGGING_FACE_CREDENTIAL_ENTRIES.has(entry)) {
-      preserved.push(target);
-      continue;
+  try {
+    for (const entry of entries) {
+      const target = path.join(cacheDir, entry);
+      if (HUGGING_FACE_CREDENTIAL_ENTRIES.has(entry)) {
+        preserved.push(target);
+        continue;
+      }
+      removeHuggingFaceCacheEntry(target);
+      deletedCacheData = true;
     }
-    fs.rmSync(target, { force: true, recursive: true });
-    deletedCacheData = true;
+  } finally {
+    // A blocked entry aborts the loop after earlier entries are already gone,
+    // so record the deletion before the failure reaches the caller. Otherwise
+    // uninstall reports an untouched cache and asks the user to retry.
+    if (deletedCacheData) removed.push(`cache-contents:${cacheDir}`);
   }
   const unexpectedEntry = fs
     .readdirSync(cacheDir)
@@ -300,7 +399,6 @@ function removeSharedHuggingFaceCacheData(
       `Hugging Face cache cleanup left an unexpected entry at ${path.join(cacheDir, unexpectedEntry)}`,
     );
   }
-  if (deletedCacheData) removed.push(`cache-contents:${cacheDir}`);
 }
 
 function preserveSharedHuggingFaceCache(homeDir: string, preserved: string[]): void {

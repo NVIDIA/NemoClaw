@@ -290,7 +290,8 @@ An inconclusive Docker image-storage check retains its existing automatic-contin
 
 <Note>
 The model-cache guard applies when the selected registered recipe declares a pinned snapshot size.
-NemoClaw creates `~/.cache/huggingface` as the host user and runs the one-shot download container with the host UID and GID, avoiding root-owned cache paths.
+NemoClaw creates `~/.cache/huggingface` as the host user with owner-only access, and runs the one-shot download container with the host UID and GID, avoiding root-owned cache paths.
+The explicit mode keeps the host umask from leaving the cache group-writable, which the ownership checks on that cache reject.
 The long-lived vLLM container mounts only the Hugging Face hub cache read-only and uses offline mode, so it cannot change host-cache ownership.
 Hugging Face credentials are forwarded only to that temporary downloader, not retained by the long-lived vLLM container.
 

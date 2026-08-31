@@ -869,6 +869,7 @@ describe("installVllm model resolution", () => {
       expect.arrayContaining(hostIdentity === null ? [] : ["--user", hostIdentity]),
     );
     expect(mkdirSpy).toHaveBeenCalledWith(path.join(os.homedir(), ".cache", "huggingface"), {
+      mode: 0o700,
       recursive: true,
     });
     const [runArgs] = mocks.dockerRunDetached.mock.calls[0] as [string[]];
