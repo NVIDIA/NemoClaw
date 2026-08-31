@@ -35,6 +35,7 @@ function createProcessHarness(
     neverReady?: boolean;
     unreachable?: boolean;
     unreadableMetadata?: boolean;
+    diagnostic?: string;
   } = {},
 ): {
   deps: ForwardServiceProcessDeps;
@@ -73,7 +74,7 @@ function createProcessHarness(
       reachable = foreignListener;
     },
     sleep: () => {},
-    spawnDetached: (executable, args, environment) => {
+    spawnDetached: (executable, args, environment, stderrFd) => {
       alive = options.neverReady !== true || options.unreadableMetadata === true;
       reachable = options.neverReady !== true && options.unreachable !== true;
       ownsListener = reachable;
@@ -82,6 +83,7 @@ function createProcessHarness(
           ? null
           : [executable, ...args];
       processIdentity = options.unreadableMetadata ? null : processIdentity;
+      fs.writeSync(stderrFd, options.diagnostic ?? "");
       calls.push({ args, environment });
       return {
         pid,
@@ -250,6 +252,26 @@ describe("OpenShell ForwardTcp process lifecycle (#10691)", () => {
       reachable: false,
       receipt: null,
     });
+  });
+
+  it("reports bounded redacted OpenShell stderr when startup exits before readiness", () => {
+    const harness = createProcessHarness({
+      neverReady: true,
+      diagnostic: "gateway unavailable Authorization: Bearer super-secret",
+    });
+
+    expect(() =>
+      ensureForwardServiceProcess(target, {
+        ...lifecycleOptions(harness),
+        startTimeoutMs: 1,
+      }),
+    ).toThrow(/alpha 127\.0\.0\.1:18789: OpenShell reported that the gateway is unavailable/u);
+    expect(() =>
+      ensureForwardServiceProcess(target, {
+        ...lifecycleOptions(harness),
+        startTimeoutMs: 1,
+      }),
+    ).not.toThrow(/super-secret/u);
   });
 
   it("stops an identified child when its listener never becomes reachable", () => {

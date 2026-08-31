@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 
+import { openRegularFileNoFollow } from "../fs/regular-file";
 import {
   processIsAlive,
   readMcpLockHostIdentity,
@@ -26,6 +29,7 @@ import {
 import {
   readForwardServiceReceipt,
   readForwardServicePendingReceipt,
+  prepareForwardServiceStateDirectory,
   removeForwardServicePendingReceipt,
   removeForwardServiceReceipt,
   writeForwardServicePendingReceipt,
@@ -59,6 +63,7 @@ export interface ForwardServiceProcessDeps {
     executable: string,
     args: readonly string[],
     environment: NodeJS.ProcessEnv,
+    stderrFd: number,
   ) => SpawnedForwardService;
   readonly now: () => string;
 }
@@ -204,16 +209,82 @@ const DEFAULT_DEPS: ForwardServiceProcessDeps = {
   readProcessUid,
   signalProcess: (pid, signal) => process.kill(pid, signal),
   sleep: blockingSleep,
-  spawnDetached: (executable, args, environment) => {
+  spawnDetached: (executable, args, environment, stderrFd) => {
     const child = spawn(executable, [...args], {
       detached: true,
       env: environment,
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", stderrFd],
     });
     return child;
   },
   now: () => new Date().toISOString(),
 };
+
+const MAX_DIAGNOSTIC_BYTES = 16 * 1024;
+
+function createDiagnosticFile(
+  target: ForwardServiceTarget,
+  options: ForwardServiceProcessOptions,
+): { fd: number; filePath: string } {
+  const directory = prepareForwardServiceStateDirectory(target, stateOptions(options));
+  const filePath = path.join(
+    directory,
+    `.${target.sandboxName}-${String(target.localPort)}-${randomUUID()}.stderr`,
+  );
+  const fd = fs.openSync(
+    filePath,
+    fs.constants.O_CREAT |
+      fs.constants.O_EXCL |
+      fs.constants.O_WRONLY |
+      (fs.constants.O_NOFOLLOW ?? 0),
+    0o600,
+  );
+  return { fd, filePath };
+}
+
+function readAndRemoveDiagnostic(filePath: string): string {
+  let diagnostic = "";
+  try {
+    const opened = openRegularFileNoFollow(filePath);
+    try {
+      diagnostic = opened.readBytes(MAX_DIAGNOSTIC_BYTES).toString("utf8");
+    } finally {
+      opened.close();
+    }
+  } catch {
+    diagnostic = "";
+  }
+  fs.rmSync(filePath, { force: true });
+  const normalized = diagnostic
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .toLowerCase();
+  if (/address already in use|bind.*(?:failed|denied)|port.*in use/u.test(normalized)) {
+    return "OpenShell reported that the local bind is unavailable";
+  }
+  if (/unauthorized|forbidden|permission denied|authentication/u.test(normalized)) {
+    return "OpenShell reported an authorization failure";
+  }
+  if (/sandbox.*(?:not found|unavailable|no spec)|no such sandbox/u.test(normalized)) {
+    return "OpenShell reported that the sandbox target is unavailable";
+  }
+  if (
+    /gateway.*unavailable|service unavailable|connection refused|failed to connect/u.test(
+      normalized,
+    )
+  ) {
+    return "OpenShell reported that the gateway is unavailable";
+  }
+  return normalized ? "OpenShell reported a redacted startup failure" : "";
+}
+
+function startupFailure(message: string, target: ForwardServiceTarget, diagnostic: string): Error {
+  const suffix = diagnostic ? `: ${diagnostic}` : "";
+  return new Error(
+    `${message} for ${target.sandboxName} ${target.localHost}:${String(target.localPort)}${suffix}`,
+  );
+}
 
 function stateOptions(options: ForwardServiceProcessOptions): ForwardServiceStateOptions {
   return {
@@ -499,24 +570,39 @@ export function ensureForwardServiceProcess(
       throw new Error("OpenShell forward service process requires a current-user identity");
     }
     const args = buildForwardServiceArgs(target);
-    const child = deps.spawnDetached(
-      target.executable,
-      args,
-      buildOpenShellSubprocessEnv(
-        options.sourceEnvironment ?? process.env,
-        options.runtimeAuthority,
-      ),
-    );
+    const diagnostic = createDiagnosticFile(target, options);
+    let child: SpawnedForwardService;
+    try {
+      child = deps.spawnDetached(
+        target.executable,
+        args,
+        buildOpenShellSubprocessEnv(
+          options.sourceEnvironment ?? process.env,
+          options.runtimeAuthority,
+        ),
+        diagnostic.fd,
+      );
+    } catch (error) {
+      fs.closeSync(diagnostic.fd);
+      readAndRemoveDiagnostic(diagnostic.filePath);
+      throw error;
+    }
+    fs.closeSync(diagnostic.fd);
     const pid = child.pid;
     if (!Number.isSafeInteger(pid) || Number(pid) <= 0) {
       child.kill("SIGTERM");
-      throw new Error("OpenShell forward service process did not publish a PID");
+      throw startupFailure(
+        "OpenShell forward service process did not publish a PID",
+        target,
+        readAndRemoveDiagnostic(diagnostic.filePath),
+      );
     }
     const launchedPending = pendingReceipt(target, Number(pid), deps, Number(uid));
     try {
       writeForwardServicePendingReceipt(launchedPending, stateOptions(options));
     } catch (error) {
       child.kill("SIGTERM");
+      readAndRemoveDiagnostic(diagnostic.filePath);
       throw error;
     }
     child.unref();
@@ -556,21 +642,33 @@ export function ensureForwardServiceProcess(
           if (
             removeForwardServicePendingReceipt(launchedPending, stateOptions(options)) !== "removed"
           ) {
-            throw new Error(
+            throw startupFailure(
               "OpenShell forward service pending receipt changed during failed-start publication",
+              target,
+              readAndRemoveDiagnostic(diagnostic.filePath),
             );
           }
         }
-        throw new Error(
+        throw startupFailure(
           "OpenShell forward service process did not become ready and remains running",
+          target,
+          readAndRemoveDiagnostic(diagnostic.filePath),
         );
       }
       if (
         removeForwardServicePendingReceipt(launchedPending, stateOptions(options)) !== "removed"
       ) {
-        throw new Error("OpenShell forward service pending receipt changed after failed start");
+        throw startupFailure(
+          "OpenShell forward service pending receipt changed after failed start",
+          target,
+          readAndRemoveDiagnostic(diagnostic.filePath),
+        );
       }
-      throw new Error("OpenShell forward service process did not become ready");
+      throw startupFailure(
+        "OpenShell forward service process did not become ready",
+        target,
+        readAndRemoveDiagnostic(diagnostic.filePath),
+      );
     }
     try {
       writeForwardServiceReceipt(receipt, stateOptions(options));
@@ -589,12 +687,14 @@ export function ensureForwardServiceProcess(
       ) {
         throw new Error("OpenShell forward service process changed during publication");
       }
+      readAndRemoveDiagnostic(diagnostic.filePath);
     } catch (error) {
       child.kill("SIGTERM");
       if (waitForProcessExit(receipt, deps, options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS)) {
         removeForwardServiceReceipt(receipt, stateOptions(options));
         removeForwardServicePendingReceipt(launchedPending, stateOptions(options));
       }
+      readAndRemoveDiagnostic(diagnostic.filePath);
       throw error;
     }
     return { action: "started", receipt };

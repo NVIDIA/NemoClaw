@@ -77,7 +77,10 @@ beforeEach(() => {
   mocks.controller.stop.mockReturnValue("absent");
   mocks.controller.stopPort.mockReturnValue("absent");
   mocks.controller.stopAll.mockReturnValue(0);
-  mocks.controller.ensure.mockReturnValue({ action: "started", receipt: {} });
+  mocks.controller.ensure.mockImplementation((_authority, _endpoint, options) => {
+    options?.retireLegacy?.();
+    return { action: "started", receipt: {} };
+  });
 });
 
 describe("ForwardTcp runtime integration", () => {
@@ -136,6 +139,11 @@ describe("ForwardTcp runtime integration", () => {
   });
 
   it("migrates a healthy legacy SSH forward to ForwardTcp", async () => {
+    mocks.getSandbox.mockReturnValue({
+      ...SANDBOX,
+      gatewayName: "nemoclaw-18080",
+      gatewayPort: 18_080,
+    });
     mocks.controller.inspect.mockReturnValue({
       disposition: "absent",
       ownsListener: false,
@@ -149,12 +157,16 @@ describe("ForwardTcp runtime integration", () => {
     const { ensureSandboxPortForwardForPort } = await import("./forward-recovery");
 
     expect(ensureSandboxPortForwardForPort("alpha", 18_789)).toBe(true);
-    expect(mocks.controller.stop).toHaveBeenCalledOnce();
+    expect(mocks.controller.stop).not.toHaveBeenCalled();
     expect(mocks.controller.ensure).toHaveBeenCalledOnce();
-    expect(mocks.runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "alpha"], {
-      ignoreError: true,
-      stdio: "ignore",
-    });
+    expect(mocks.captureOpenshell).toHaveBeenCalledWith(
+      ["forward", "list", "--gateway", "nemoclaw-18080"],
+      expect.anything(),
+    );
+    expect(mocks.runOpenshell).toHaveBeenCalledWith(
+      ["forward", "stop", "18789", "alpha", "--gateway", "nemoclaw-18080"],
+      { ignoreError: true, stdio: "ignore" },
+    );
     expect(
       mocks.runOpenshell.mock.calls.some(([args]) => args[0] === "forward" && args[1] === "start"),
     ).toBe(false);

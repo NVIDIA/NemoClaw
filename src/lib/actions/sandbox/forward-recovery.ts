@@ -188,14 +188,11 @@ export function resolveSandboxHealthProbeUrl(sandboxName: string): string {
 /**
  * Tear down the host-side dashboard port-forward this sandbox created.
  *
- * `stop` stops the container but must also release the forward it spawned;
- * leaving it alive orphans an `ssh -L` listener on the dashboard port, which
- * `status` then misreports as a foreign `sandbox_dashboard_port_conflict` and
- * which `start`/`recover` contend with (#7227). Best-effort: a stop must still
- * free container resources when openshell is unreachable, so errors are ignored
- * — mirroring the sandbox- and gateway-scoped forward cleanup used elsewhere.
- * OpenShell may return before its SSH listener exits, so successful commands
- * also receive a bounded host-port release wait.
+ * `stop` stops the container but must also release every receipt-owned
+ * ForwardTcp child. Once that exact cleanup succeeds, the remaining scoped
+ * list-and-stop operations retire installed-base SSH forwards that predate the
+ * receipt lifecycle. Those legacy commands receive a bounded host-port release
+ * wait because OpenShell may return before their SSH listener exits.
  * Returns false only when receipt-owned ForwardTcp cleanup could not be
  * completed, so destructive callers can preserve immutable retry authority.
  */
@@ -355,10 +352,13 @@ export function isSandboxPortForwardHealthy(
       return null;
     }
   }
-  const result = captureOpenshell(["forward", "list"], {
+  const result = captureOpenshell(
+    ["forward", "list", ...(authority ? ["--gateway", authority.gatewayName] : [])],
+    {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
+    },
+  );
   if (!result || isCommandTimeout(result) || result.status !== 0) return null;
   const entries = parseForwardList(result.output) as SandboxForwardListEntry[];
   const legacy = classifyForwardHealthWithReachability(
@@ -392,6 +392,8 @@ export function ensureSandboxPortForwardForPort(
   const sandbox = registry.getSandbox(sandboxName);
   const authority = exactForwardServiceAuthority(sandboxName, sandbox);
   const controller = authority ? runtimeForwardServiceController() : null;
+  const legacyArgs = (args: string[]) =>
+    authority ? [...args, "--gateway", authority.gatewayName] : args;
   const managedEndpoint = endpoint(
     port,
     expectedBind ?? (forwardTarget.startsWith("0.0.0.0:") ? "0.0.0.0" : "127.0.0.1"),
@@ -411,7 +413,7 @@ export function ensureSandboxPortForwardForPort(
         return false;
       }
     } else {
-      runOpenshell(["forward", "stop", String(port), sandboxName], {
+      runOpenshell(legacyArgs(["forward", "stop", String(port), sandboxName]), {
         ignoreError: true,
         stdio: "ignore",
       });
@@ -425,11 +427,36 @@ export function ensureSandboxPortForwardForPort(
   const waitMs = Number.isFinite(configuredWaitMs) ? Math.max(0, configuredWaitMs) : 3000;
 
   if (authority && controller) {
+    if (!beforeStart()) return false;
     try {
-      controller.stop(authority, managedEndpoint);
+      if (forceRestart) controller.stop(authority, managedEndpoint);
+      controller.ensure(authority, managedEndpoint, {
+        retireLegacy: () => {
+          if (forwardHealth === null) {
+            throw new Error("legacy forward ownership is unavailable");
+          }
+          const stopResult = runOpenshell(
+            legacyArgs(["forward", "stop", String(port), sandboxName]),
+            { ignoreError: true, stdio: "ignore" },
+          );
+          if (stopResult.status !== 0) {
+            console.error(
+              `  Warning: openshell forward stop ${port} ${sandboxName} exited ${stopResult.status}; attempting direct migration anyway.`,
+            );
+          }
+          if (
+            isLocalForwardReachable(port) &&
+            (waitMs === 0 ||
+              !waitForForwardRecoveryState(() => !isLocalForwardReachable(port), waitMs))
+          ) {
+            throw new Error("legacy forward listener did not release its host port");
+          }
+        },
+      });
+      return acceptSuccessfulForward();
     } catch (error) {
       console.error(
-        `  Warning: could not retire ForwardTcp ${String(port)} for ${sandboxName}: ${
+        `  Warning: OpenShell ForwardTcp ${String(port)} for ${sandboxName} did not start: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
@@ -437,19 +464,22 @@ export function ensureSandboxPortForwardForPort(
     }
   }
 
-  const stopResult = runOpenshell(["forward", "stop", String(port), sandboxName], {
+  const stopResult = runOpenshell(
+    legacyArgs(["forward", "stop", String(port), sandboxName]),
+    {
     ignoreError: true,
     stdio: "ignore",
-  });
+    },
+  );
   if (stopResult.status !== 0) {
     console.error(
       `  Warning: openshell forward stop ${port} ${sandboxName} exited ${stopResult.status}; attempting restart anyway.`,
     );
   }
 
-  // OpenShell v0.0.85 removes the forward PID file shortly after SIGTERM,
-  // before the old SSH listener is guaranteed to release its host port. A
-  // blind stop -> start can therefore collide with the just-stopped process.
+  // An installed-base SSH forward can remove its PID file shortly after
+  // SIGTERM, before the old listener releases its host port. A blind legacy
+  // stop -> direct start can therefore collide with the retiring process.
   // Preserve authoritative owner metadata while waiting: accept a target-
   // owned forward that recovered on its own, reject another sandbox, and
   // prefer starting only after an otherwise-unowned local listener has
@@ -457,12 +487,9 @@ export function ensureSandboxPortForwardForPort(
   // stays reachable, `forward start` is still the reconciliation operation:
   // its result is accepted below only after the list reports the exact target
   // owner. An unavailable list and forced bind replacement remain fail-closed.
-  // NemoClaw must compensate while the supported OpenShell 0.0.85
-  // contract remains supported; test/process-recovery/process-recovery.test.ts locks both the
-  // delayed-release and fail-closed cases. Remove this wait only after every
-  // supported OpenShell release either waits for host-listener release before
-  // `forward stop` returns or exposes an authoritative listener-released state
-  // that this path consumes instead.
+  // test/process-recovery/process-recovery.test.ts locks both the delayed-release
+  // and fail-closed migration cases. Remove this wait with the final legacy SSH
+  // forward compatibility path.
   if (waitMs > 0 && isLocalForwardReachable(port)) {
     const stopState: { health: SandboxForwardHealth; portReleased: boolean } = {
       health: forwardHealth,
@@ -485,36 +512,19 @@ export function ensureSandboxPortForwardForPort(
   }
 
   if (!beforeStart()) return false;
-  if (authority && controller) {
-    try {
-      controller.ensure(authority, managedEndpoint);
-      return acceptSuccessfulForward();
-    } catch (error) {
-      console.error(
-        `  Warning: OpenShell ForwardTcp ${String(port)} for ${sandboxName} did not start: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return false;
-    }
-  }
   const startResult = runOpenshell(
-    ["forward", "start", "--background", forwardTarget, sandboxName],
+    legacyArgs(["forward", "start", "--background", forwardTarget, sandboxName]),
     {
       ignoreError: true,
-      // OpenShell 0.0.85 leaves the background SSH forward attached to the
-      // caller's inherited descriptors. Detach them so a scripted `recover`
-      // can finish after the foreground OpenShell command exits. Keep this
-      // until every supported OpenShell release redirects those descriptors.
+      // An installed-base background SSH forward may retain inherited
+      // descriptors. Detach them so legacy recovery can finish after the
+      // foreground OpenShell command exits.
       stdio: "ignore",
     },
   );
-  // OpenShell 0.0.85 returns an error when start preflight finds a validated
-  // live forward for the requested port. Recovery cannot change that upstream
-  // CLI contract, so a reachable listener settles against the authoritative
-  // forward list below; an absent listener still fails fast. Remove this
-  // tolerance once every supported OpenShell release makes `forward start`
-  // idempotent for an already-tracked live forward.
+  // Installed-base `forward start` may return an error after finding a valid
+  // live SSH forward. A reachable listener therefore settles against the
+  // authoritative legacy list below; an absent listener still fails fast.
   if (startResult.status !== 0 && !isLocalForwardReachable(port)) return false;
 
   // `forward start --background` can return before its authoritative list

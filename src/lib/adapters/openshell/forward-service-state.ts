@@ -65,6 +65,13 @@ function ensureForwardStateDirectory(
   return directory;
 }
 
+export function prepareForwardServiceStateDirectory(
+  target: ForwardServiceTarget,
+  options: ForwardServiceStateOptions,
+): string {
+  return ensureForwardStateDirectory(target, options);
+}
+
 function sameFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }

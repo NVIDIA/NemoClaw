@@ -33,6 +33,7 @@ export interface ForwardServiceController {
   ensure(
     authority: ForwardServiceSandboxAuthority,
     endpoint: ForwardServiceEndpoint,
+    options?: { retireLegacy?: () => void },
   ): ReturnType<typeof ensureForwardServiceProcess>;
   stop(
     authority: ForwardServiceSandboxAuthority,
@@ -90,9 +91,21 @@ export function createForwardServiceController(
       const forwardTarget = target(deps, authority, endpoint);
       return inspectForwardServiceProcess(forwardTarget, options(authority.sandboxName));
     },
-    ensure: (authority, endpoint) => {
+    ensure: (authority, endpoint, ensureOptions) => {
       const forwardTarget = target(deps, authority, endpoint);
-      return ensureForwardServiceProcess(forwardTarget, options(authority.sandboxName));
+      return deps.runExclusive(authority.sandboxName, () => {
+        const disposition = inspectForwardServiceProcess(forwardTarget, {
+          stateDirectory: deps.stateDirectory,
+          runExclusive: (operation) => operation(),
+        }).disposition;
+        if (disposition === "absent" || disposition === "stale") {
+          ensureOptions?.retireLegacy?.();
+        }
+        return ensureForwardServiceProcess(forwardTarget, {
+          stateDirectory: deps.stateDirectory,
+          runExclusive: (operation) => operation(),
+        });
+      });
     },
     stop: (authority, endpoint) => {
       const forwardTarget = target(deps, authority, endpoint);

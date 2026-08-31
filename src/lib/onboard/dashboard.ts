@@ -446,6 +446,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
     const preferredTarget = getDashboardForwardTarget(replaceUrlPort(chatUiUrl, preferredPort));
     const forwardAuthority = resolveForwardServiceAuthority(sandboxName, options);
+    const scopedForwardArgs = (args: string[]) =>
+      forwardAuthority ? [...args, "--gateway", forwardAuthority.gatewayName] : args;
     const managedPreferred =
       forwardAuthority && forwardServiceController
         ? forwardServiceController.inspect(
@@ -465,8 +467,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     }
     const makeStopForwardForSandbox = () =>
       createSandboxForwardStopper({
-        runOpenshell: deps.runOpenshell,
-        runCaptureOpenshell: deps.runCaptureOpenshell,
+        runOpenshell: (args, runOptions) =>
+          deps.runOpenshell(scopedForwardArgs(args), runOptions),
+        runCaptureOpenshell: (args, captureOptions) =>
+          deps.runCaptureOpenshell(scopedForwardArgs(args), captureOptions),
         sandboxName,
         revalidateSandboxIdentity,
       });
@@ -531,18 +535,19 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.warn(`  ! Port ${preferredPort} is taken. Using port ${actualPort} instead.`);
     }
 
-    const occupied = getOccupiedPorts(existingForwards);
-    for (const [port, owner] of occupied.entries()) {
-      if (owner === sandboxName && Number(port) !== actualPort && !preservedPorts.has(port)) {
-        stopForwardForSandbox(port);
-      }
-    }
-
     const parsedUrl = new URL(chatUiUrl.includes("://") ? chatUiUrl : `http://${chatUiUrl}`);
     parsedUrl.port = String(actualPort);
     const actualTarget = getDashboardForwardTarget(parsedUrl.toString());
-    stopForwardForSandbox(actualPort);
     const actualAuthority = resolveForwardServiceAuthority(sandboxName, options);
+    const retireLegacy = () => {
+      const occupied = getOccupiedPorts(existingForwards);
+      for (const [port, owner] of occupied.entries()) {
+        if (owner === sandboxName && Number(port) !== actualPort && !preservedPorts.has(port)) {
+          stopForwardForSandbox(port);
+        }
+      }
+      stopForwardForSandbox(actualPort);
+    };
     let fwdOk = false;
     let fwdDiagnostic = "";
     let managedAction: "reused" | "started" | null = null;
@@ -554,12 +559,14 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         managedAction = forwardServiceController.ensure(
           actualAuthority,
           forwardEndpoint(actualPort, actualTarget),
+          { retireLegacy },
         ).action;
         fwdOk = true;
       } catch (error) {
         fwdDiagnostic = error instanceof Error ? error.message : String(error);
       }
     } else {
+      retireLegacy();
       const startDashboardForward = buildDetachedForwardStartSpawn(
         deps.openshellArgv(["forward", "start", "--background", actualTarget, sandboxName]),
       );
@@ -771,15 +778,17 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         revalidateSandboxIdentity?.(
           `start ${label} forward ${String(port)} for sandbox '${sandboxName}'`,
         );
-        // Retire a legacy SSH forward before publishing its direct ForwardTcp
-        // replacement. The sandbox-scoped stop cannot target another owner.
-        bestEffortForwardStopForSandbox(
-          deps.runOpenshell,
-          (args, options) => deps.runCaptureOpenshell(args, options),
-          port,
-          sandboxName,
-        );
-        forwardServiceController.ensure(authority, forwardEndpoint(port, String(port)));
+        forwardServiceController.ensure(authority, forwardEndpoint(port, String(port)), {
+          retireLegacy: () =>
+            bestEffortForwardStopForSandbox(
+              (args, options) =>
+                deps.runOpenshell([...args, "--gateway", authority.gatewayName], options),
+              (args, options) =>
+                deps.runCaptureOpenshell([...args, "--gateway", authority.gatewayName], options),
+              port,
+              sandboxName,
+            ),
+        });
         return true;
       } catch (error) {
         const diagnostic = error instanceof Error ? error.message : String(error);

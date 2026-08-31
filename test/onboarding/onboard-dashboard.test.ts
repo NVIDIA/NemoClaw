@@ -173,11 +173,13 @@ describe("onboard dashboard helpers", () => {
         sandboxName: "alpha",
       },
       { localHost: "127.0.0.1", localPort: 18_789, targetPort: 18_789 },
+      { retireLegacy: expect.any(Function) },
     );
     expect(controller.ensure).toHaveBeenNthCalledWith(
       2,
       expect.anything(),
       { localHost: "127.0.0.1", localPort: 8_642, targetPort: 8_642 },
+      { retireLegacy: expect.any(Function) },
     );
     expect(openshellArgv).not.toHaveBeenCalled();
     expect(controller.stopAll).toHaveBeenCalledWith({
