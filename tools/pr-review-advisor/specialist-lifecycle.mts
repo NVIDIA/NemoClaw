@@ -202,11 +202,15 @@ export function publishSpecialistJobSummary(env: NodeJS.ProcessEnv): void {
     artifactDirectory,
     `pr-review-${interest}-summary.md`,
   );
-  const stat = fs.lstatSync(summary);
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error("Specialist job summary source must be a regular file");
+  const descriptor = fs.openSync(summary, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) {
+      throw new Error("Specialist job summary source must be a regular file");
+    }
+    fs.appendFileSync(jobSummary, fs.readFileSync(descriptor));
+  } finally {
+    fs.closeSync(descriptor);
   }
-  fs.appendFileSync(jobSummary, fs.readFileSync(summary));
 }
 
 export async function runAdvisorSpecialistCommand(

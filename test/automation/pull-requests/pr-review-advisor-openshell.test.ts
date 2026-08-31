@@ -135,6 +135,28 @@ describe("PR review advisor specialist lifecycle", () => {
     );
   });
 
+  it("rejects a specialist summary symlink without publishing its target", () => {
+    const workspace = temporaryDirectory();
+    const artifactDirectory = "pr-review-specialist-behavior";
+    const artifactPath = path.join(workspace, "artifacts", artifactDirectory);
+    const jobSummary = path.join(workspace, "job-summary.md");
+    const target = path.join(workspace, "untrusted.md");
+    fs.mkdirSync(artifactPath, { recursive: true });
+    fs.writeFileSync(jobSummary, "Existing summary.\n");
+    fs.writeFileSync(target, "Untrusted replacement.\n");
+    fs.symlinkSync(target, path.join(artifactPath, "pr-review-behavior-summary.md"));
+
+    expect(() =>
+      publishSpecialistJobSummary({
+        GITHUB_STEP_SUMMARY: jobSummary,
+        GITHUB_WORKSPACE: workspace,
+        PR_REVIEW_ADVISOR_ARTIFACT_DIR: artifactDirectory,
+        PR_REVIEW_ADVISOR_INTEREST: "behavior",
+      }),
+    ).toThrow();
+    expect(fs.readFileSync(jobSummary, "utf8")).toBe("Existing summary.\n");
+  });
+
   it("keeps local specialist analysis independent from GitHub job summaries", async () => {
     const calls: string[] = [];
     const lifecycle: AdvisorSpecialistLifecycle = {
