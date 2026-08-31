@@ -1335,15 +1335,16 @@ check_agent_and_inference_conflicts() {
     fatal "NEMOCLAW_VLLM_PORT must be an integer from 1024 to 65535."
   fi
   vllm_port="$((10#$vllm_port))"
-  processes="$(ps -eo pid=,ppid=,comm=,args=)"
-  agent_matches="$(awk -v self="$$" -v parent="$PPID" '
+  processes="$(ps -eo euid=,pid=,ppid=,comm=,args=)"
+  agent_matches="$(awk -v current_uid="$EUID" -v self="$$" -v parent="$PPID" '
     {
-      pid=$1
-      ppid=$2
-      comm=tolower($3)
-      $1=$2=$3=""
+      owner_uid=$1
+      pid=$2
+      ppid=$3
+      comm=tolower($4)
+      $1=$2=$3=$4=""
       args=tolower($0)
-      if (pid == self || pid == parent) next
+      if (owner_uid != current_uid || pid == self || pid == parent) next
       if (comm ~ /^(nemoclaw|openshell)$/ ||
           args ~ /(^|[[:space:]\/])(nemoclaw|openshell)([[:space:]:]|\.js([[:space:]]|$)|$)/) {
         print "pid=" pid " process=" comm
@@ -1359,12 +1360,12 @@ check_agent_and_inference_conflicts() {
 
   inference_matches="$(awk -v self="$$" -v parent="$PPID" '
     {
-      pid=$1
-      ppid=$2
-      comm=tolower($3)
-      executable=tolower($4)
+      pid=$2
+      ppid=$3
+      comm=tolower($4)
+      executable=tolower($5)
       sub(/^.*\//, "", executable)
-      $1=$2=$3=""
+      $1=$2=$3=$4=""
       args=tolower($0)
       if (pid == self || pid == parent) next
       python_module=(comm ~ /^python([0-9]+([.][0-9]+)*)?$/ &&
