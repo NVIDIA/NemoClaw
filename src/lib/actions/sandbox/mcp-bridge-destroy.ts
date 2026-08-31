@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { McpBridgeEntry } from "../../state/registry";
+import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
   rollbackScrubbedMcpAdapters,
@@ -9,6 +9,7 @@ import {
   type McpScrubbedAdapterEntry,
 } from "./mcp-bridge-adapter-teardown";
 import { MCP_BRIDGE_POLICY_SOURCE, McpBridgeError } from "./mcp-bridge-contracts";
+import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { removeGeneratedPolicy } from "./mcp-bridge-policy";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 import {
@@ -44,30 +45,98 @@ export {
   prepareMcpBridgesForAbsentSandboxDestroy,
 } from "./mcp-bridge-destroy-preflight";
 
+/** Restrict the forced scrub bypass to OpenClaw's locked Mcporter config. */
+function canForceSkipAdapterScrub(
+  sandbox: SandboxEntry,
+  entries: readonly McpBridgeEntry[],
+): boolean {
+  const sandboxAgent = sandbox.agent || "openclaw";
+  return (
+    entries.length > 0 &&
+    entries.every(
+      (entry) => entry.adapter === "mcporter" || (!entry.adapter && sandboxAgent === "openclaw"),
+    )
+  );
+}
+
+/**
+ * Classify whether an in-sandbox adapter mutation preflight blocks destroy.
+ *
+ * Returns true when `--force` may continue without the in-sandbox adapter
+ * scrub, and rethrows otherwise. Without `--force` a destroy
+ * that could still complete cleanly is never silently degraded. The warning is
+ * emitted here, at the decision, so it is still reported when a later teardown
+ * step fails and this preparation never returns.
+ */
+function classifyForcedAdapterScrubRefusal(
+  sandboxName: string,
+  assertAllowed: () => void,
+  force: boolean,
+): boolean {
+  try {
+    assertAllowed();
+    return false;
+  } catch (error) {
+    if (!force) throw error;
+    const detail = redactBridgeSecretsForDisplay(
+      error instanceof Error ? error.message : String(error),
+    );
+    console.warn(
+      `  Sandbox '${sandboxName}' keeps its retained-volume MCP adapter entry (--force): ${detail}`,
+    );
+    console.warn(
+      "  MCP policy and provider state remain until OpenShell confirms sandbox deletion. The workspace wipe can still remove the retained adapter entry.",
+    );
+    return true;
+  }
+}
+
 /**
  * Phase one of sandbox destroy. Remove the adapter entry from the retained
  * sandbox volume and detach exact MCP providers while preserving the global
  * provider objects (and therefore their host-only credentials) and registry
  * cleanup manifest. OpenShell requires the generated policy key to be removed before
  * detach. Any failure restores the managed runtime before returning.
+ *
+ * `--force` may continue when the live adapter config cannot be mutated at all
+ * — for example an OpenClaw sandbox whose Mcporter config is locked under the
+ * shields state root (#10469). In that case, phase one changes no complete MCP
+ * policy or provider state. The ordinary workspace wipe can still remove the
+ * retained adapter entry. Phase two deletes exact providers only after
+ * OpenShell confirms sandbox deletion.
  */
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
+  options: { force?: boolean } = {},
 ): Promise<McpDestroyPreparation> {
+  const force = options.force === true;
   validateSandboxName(sandboxName);
   const currentSandbox = getSandboxOrThrow(sandboxName);
   const entriesRequiringExternalCleanup = Object.values(bridgeState(currentSandbox)).filter(
     (entry) => entry.addState !== "prepared",
   );
+  // A destroy that already completed phase one, or that reached the
+  // confirmed-delete pending marker, scrubs no adapter entry on this pass. The
+  // posture that legitimately refuses a first attempt must not strand that
+  // retry, so skip the preflight exactly as `prepareSandboxDestroy` does.
+  const adapterScrubAlreadySettled =
+    !!currentSandbox.mcp?.destroyPreparedAt || !!currentSandbox.mcp?.destroyPendingAt;
   // Run the host-visible config preflight before
   // discardSafeIncompleteMcpAdds, which may remove the generated live policy key for a
   // providerless preflighted add. That cleanup has no adapter/provider to
   // probe; complete entries get the teardown runtime probe after retry markers.
-  assertMcpAdapterConfigMutationsAllowed(
-    sandboxName,
-    currentSandbox,
-    entriesRequiringExternalCleanup,
-  );
+  let adapterScrubSkipped = adapterScrubAlreadySettled
+    ? false
+    : classifyForcedAdapterScrubRefusal(
+        sandboxName,
+        () =>
+          assertMcpAdapterConfigMutationsAllowed(
+            sandboxName,
+            currentSandbox,
+            entriesRequiringExternalCleanup,
+          ),
+        force && canForceSkipAdapterScrub(currentSandbox, entriesRequiringExternalCleanup),
+      );
   const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox);
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const destroyAlreadyPrepared = !!sandbox.mcp?.destroyPreparedAt;
@@ -119,7 +188,21 @@ export async function prepareMcpBridgesForDestroy(
   }
 
   await ensureSandboxGatewaySelected(sandboxName);
-  assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
+  adapterScrubSkipped ||= classifyForcedAdapterScrubRefusal(
+    sandboxName,
+    () => assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries),
+    force && canForceSkipAdapterScrub(sandbox, entries),
+  );
+  if (adapterScrubSkipped) {
+    return {
+      entries,
+      detachedProviderEntries: [],
+      scrubbedAdapterEntries: [],
+      destroyAlreadyPrepared: false,
+      destroyAlreadyPending: false,
+      adapterScrubSkipped: true,
+    };
+  }
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpScrubbedAdapterEntry[] = [];
   const removedPolicies: McpBridgeEntry[] = [];
@@ -220,7 +303,11 @@ export async function restoreMcpBridgesAfterDestroyAbort(
   sandboxName: string,
   preparation: McpDestroyPreparation,
 ): Promise<void> {
-  if (preparation.entries.length === 0 || preparation.destroyAlreadyPending) {
+  if (
+    preparation.entries.length === 0 ||
+    preparation.destroyAlreadyPending ||
+    preparation.adapterScrubSkipped
+  ) {
     return;
   }
   const preparedSandbox = assertMcpDestroySnapshotCurrent(sandboxName, preparation.entries);

@@ -8,6 +8,9 @@ export function readFullE2eColdWorkloadEvidence(
   usedBuildKitPrebuild: boolean,
   environment: NodeJS.ProcessEnv = process.env,
 ) {
+  if (environment.E2E_WORKLOAD_SOURCE === "local-dockerfile") {
+    return { kind: "legacy-dockerfile" } as const;
+  }
   if (usedBuildKitPrebuild) {
     throw new Error("managed-image cold onboarding must not use a local BuildKit prebuild");
   }
@@ -16,6 +19,7 @@ export function readFullE2eColdWorkloadEvidence(
     expectedAgent: "openclaw",
     sandboxName,
   });
+  if (!receipt) throw new Error("managed-image cold onboarding receipt is missing");
   return {
     kind: "managed-image",
     reference: receipt.reference,
