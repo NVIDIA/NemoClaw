@@ -101,7 +101,10 @@ preinstall_backup_and_retire_legacy_gateway() {
 }
 install_nemoclaw() { :; }
 verify_nemoclaw() { _CLI_PATH="$FAKE_CLI"; }
-run_installer_host_preflight() { return 0; }
+run_installer_host_preflight() {
+  printf 'host-preflight-started\n' >> "$BOOTSTRAP_CALL_LOG"
+  return 0
+}
 ensure_station_express_host() { :; }
 ensure_station_express_pair() { :; }
 run_onboard() { "$FAKE_CLI" onboard; }
@@ -311,6 +314,7 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     );
     expect(result.output).toContain("preinstall-started");
     expect(result.output.match(/recovery-started/g)).toHaveLength(2);
+    expect(result.output).not.toContain("host-preflight-started");
   });
 
   it("rejects an unsupported Docker host after payload-only bootstrap before recovery", () => {
@@ -322,6 +326,7 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     );
     expect(result.output).not.toContain("preinstall-started");
     expect(result.output).not.toContain("recovery-started");
+    expect(result.output).not.toContain("host-preflight-started");
   });
 
   it("recovers through a supported Docker socket without generic onboarding", () => {
