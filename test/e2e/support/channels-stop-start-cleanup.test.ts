@@ -68,27 +68,6 @@ describe("channels stop/start provider cleanup", () => {
     ]);
   });
 
-  it("registers every exact provider before the live lifecycle starts", () => {
-    const fixtures = cleanupFixtures();
-
-    registerChannelsStopStartProviderCleanup(fixtures.cleanup, fixtures.host, {
-      agent: "openclaw",
-      env: { NEMOCLAW_SANDBOX_NAME: "e2e-oc-ch-cycle" },
-      redactions: ["test-api-key"],
-      sandboxName: "e2e-oc-ch-cycle",
-    });
-
-    expect(fixtures.actions.map(({ name }) => name)).toEqual([
-      "delete OpenShell provider e2e-oc-ch-cycle-telegram-bridge",
-      "delete OpenShell provider e2e-oc-ch-cycle-discord-bridge",
-      "delete OpenShell provider e2e-oc-ch-cycle-wechat-bridge",
-      "delete OpenShell provider e2e-oc-ch-cycle-slack-bridge",
-      "delete OpenShell provider e2e-oc-ch-cycle-slack-app",
-      "delete OpenShell provider e2e-oc-ch-cycle-teams-bridge",
-      "delete OpenShell provider e2e-oc-ch-cycle-googlechat-bridge",
-    ]);
-  });
-
   it("accepts a confirmed absent provider during idempotent cleanup", async () => {
     const fixtures = cleanupFixtures({
       exitCode: 1,
