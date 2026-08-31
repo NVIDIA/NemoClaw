@@ -20,6 +20,7 @@ const expectedAppToken = process.env.FAKE_SLACK_API_EXPECTED_APP_TOKEN || "";
 const socketUserId = process.env.FAKE_SLACK_API_SOCKET_USER_ID || "U3730E2E";
 const socketChannelId = process.env.FAKE_SLACK_API_SOCKET_CHANNEL_ID || "D3730E2E";
 const socketTeamId = process.env.FAKE_SLACK_API_SOCKET_TEAM_ID || "T3730E2E";
+const suppressPortTrafficReply = process.env.FAKE_SLACK_API_SUPPRESS_PORT_TRAFFIC_REPLY === "1";
 const MAX_BODY_BYTES = 1024 * 1024;
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -298,6 +299,13 @@ function handleUpgrade(req, socket) {
         tokenLooksPlaceholder: tokenLooksPlaceholder(text),
         textRedacted: true,
       });
+      if (messageType === "nemoclaw_port_traffic_probe") {
+        if (!suppressPortTrafficReply) {
+          socket.write(encodeServerText(JSON.stringify({ type: "nemoclaw_port_traffic_reply" })));
+          record({ event: "websocket-port-traffic-reply", path: pathname });
+        }
+        continue;
+      }
       if (!sentEvent) {
         sentEvent = true;
         sendSocketModeEvent(socket);

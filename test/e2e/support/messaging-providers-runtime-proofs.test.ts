@@ -30,7 +30,7 @@ import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-ru
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
 const FAKE_WECHAT_API = path.resolve(import.meta.dirname, "../lib/fake-wechat-api.mts");
-const FAKE_API_PORT_READINESS = path.resolve(
+const FAKE_API_PORT_TRAFFIC = path.resolve(
   import.meta.dirname,
   "../lib/fake-api-port-readiness.mts",
 );
@@ -91,11 +91,11 @@ describe("messaging provider installed-runtime proofs", () => {
             return successfulShellResult(invocation, "172.18.0.1:41080\n");
           case "port-fake-slack-websocket-api":
             return successfulShellResult(invocation, "172.18.0.1:41081\n");
-          case "prove-fake-slack-api-proxy-readiness":
+          case "prove-fake-slack-api-proxy-traffic":
             return {
               ...successfulShellResult(invocation),
               exitCode: 1,
-              stderr: "fake API port readiness failed: connection refused",
+              stderr: "fake API port traffic check failed: connection refused",
             };
           default:
             return successfulShellResult(invocation);
@@ -119,7 +119,7 @@ describe("messaging provider installed-runtime proofs", () => {
           redactionValues: [],
           env: {},
         }),
-      ).rejects.toThrow(/proxy .* did not become ready for API container .*traffic readiness/u);
+      ).rejects.toThrow(/proxy .* did not carry traffic to API container .*traffic check/u);
       expect(artifactNames.filter((name) => name.startsWith("failure-fake-slack-api-"))).toEqual([
         "failure-fake-slack-api-proxy-inspect",
         "failure-fake-slack-api-proxy-logs",
@@ -189,18 +189,18 @@ describe("messaging provider installed-runtime proofs", () => {
       const websocketPort = Number(
         listening.find((entry) => entry.kind === "websocket")?.port ?? 0,
       );
-      const readiness = spawnSync(
+      const trafficCheck = spawnSync(
         process.execPath,
         [
           "--experimental-strip-types",
-          FAKE_API_PORT_READINESS,
+          FAKE_API_PORT_TRAFFIC,
           "127.0.0.1",
           String(restPort),
           String(websocketPort),
         ],
         { encoding: "utf8", timeout: 15_000 },
       );
-      expect(readiness.status, readiness.stderr).toBe(0);
+      expect(trafficCheck.status, trafficCheck.stderr).toBe(0);
       const traffic = fs
         .readFileSync(captureFile, "utf8")
         .trim()
@@ -208,7 +208,7 @@ describe("messaging provider installed-runtime proofs", () => {
         .filter(Boolean)
         .map((line) => JSON.parse(line));
       expect(traffic).toContainEqual(
-        expect.objectContaining({ event: "request", path: "/__nemoclaw_e2e_readiness" }),
+        expect.objectContaining({ event: "request", path: "/__nemoclaw_e2e_port_traffic" }),
       );
       expect(traffic).toContainEqual(
         expect.objectContaining({ event: "websocket-upgrade", path: "/socket-mode" }),
@@ -216,9 +216,12 @@ describe("messaging provider installed-runtime proofs", () => {
       expect(traffic).toContainEqual(
         expect.objectContaining({
           event: "websocket-message",
-          messageType: "nemoclaw_readiness",
+          messageType: "nemoclaw_port_traffic_probe",
           path: "/socket-mode",
         }),
+      );
+      expect(traffic).toContainEqual(
+        expect.objectContaining({ event: "websocket-port-traffic-reply", path: "/socket-mode" }),
       );
     } finally {
       child.kill("SIGTERM");
@@ -228,6 +231,69 @@ describe("messaging provider installed-runtime proofs", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it("rejects a fake Slack websocket that upgrades without a port traffic reply", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-slack-no-reply-"));
+    const portFile = path.join(dir, "port");
+    const captureFile = path.join(dir, "capture.jsonl");
+    const child = spawn(process.execPath, [FAKE_SLACK_API], {
+      env: {
+        ...process.env,
+        FAKE_SLACK_API_HOST: "127.0.0.1",
+        FAKE_SLACK_API_PORT: "0",
+        FAKE_SLACK_API_WEBSOCKET_PORT: "0",
+        FAKE_SLACK_API_PORT_FILE: portFile,
+        FAKE_SLACK_API_CAPTURE_FILE: captureFile,
+        FAKE_SLACK_API_EXPECTED_BOT_TOKEN: "xoxb-fake-slack-no-reply-test",
+        FAKE_SLACK_API_EXPECTED_APP_TOKEN: "xapp-fake-slack-no-reply-test",
+        FAKE_SLACK_API_SUPPRESS_PORT_TRAFFIC_REPLY: "1",
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    try {
+      await waitFor(() => fs.existsSync(portFile), `fake Slack listeners did not start: ${stderr}`);
+      const listening = fs
+        .readFileSync(captureFile, "utf8")
+        .trim()
+        .split(/\r?\n/u)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .filter((entry) => entry.event === "listening");
+      const restPort = Number(fs.readFileSync(portFile, "utf8").trim());
+      const websocketPort = Number(
+        listening.find((entry) => entry.kind === "websocket")?.port ?? 0,
+      );
+      const trafficCheck = spawnSync(
+        process.execPath,
+        [
+          "--experimental-strip-types",
+          FAKE_API_PORT_TRAFFIC,
+          "127.0.0.1",
+          String(restPort),
+          String(websocketPort),
+        ],
+        { encoding: "utf8", timeout: 15_000 },
+      );
+      expect(trafficCheck.status).toBe(1);
+      expect(trafficCheck.stderr).toContain("WebSocket port traffic timed out");
+      const traffic = fs.readFileSync(captureFile, "utf8");
+      expect(traffic).toContain('"event":"websocket-upgrade"');
+      expect(traffic).toContain('"messageType":"nemoclaw_port_traffic_probe"');
+      expect(traffic).not.toContain('"event":"websocket-port-traffic-reply"');
+    } finally {
+      child.kill("SIGTERM");
+      await new Promise<void>((resolve) =>
+        child.exitCode !== null ? resolve() : child.once("exit", () => resolve()),
+      );
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
 
   it("keeps raw process-probe tokens out of argv and fails closed", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-process-token-probe-"));

@@ -34,7 +34,7 @@ export const BASE_POLICY = path.join(
   "openclaw-sandbox.yaml",
 );
 export const FAKE_LIB_DIR = path.join(REPO_ROOT, "test", "e2e", "lib");
-const FAKE_API_PORT_READINESS = path.join(FAKE_LIB_DIR, "fake-api-port-readiness.mts");
+const FAKE_API_PORT_TRAFFIC = path.join(FAKE_LIB_DIR, "fake-api-port-readiness.mts");
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-msg-${process.pid}`;
 export const INSTALL_TIMEOUT_MS = 45 * 60_000;
 export const REBUILD_TIMEOUT_MS = 25 * 60_000;
@@ -622,7 +622,7 @@ async function collectFakeApiStartupDiagnostics(
         timeoutMs: 30_000,
       });
     } catch {
-      // Preserve the readiness failure when a diagnostic command cannot start.
+      // Preserve the port traffic failure when a diagnostic command cannot start.
     }
     try {
       await runHost(host, "docker", ["logs", "--tail", "200", name], {
@@ -632,7 +632,7 @@ async function collectFakeApiStartupDiagnostics(
         timeoutMs: 30_000,
       });
     } catch {
-      // Preserve the readiness failure when a diagnostic command cannot start.
+      // Preserve the port traffic failure when a diagnostic command cannot start.
     }
   }
 }
@@ -863,7 +863,7 @@ export async function startFakeDockerApi(
   });
   expectExitZero(proxyStart, `start fake ${options.kind} API proxy`);
 
-  let readinessFailure = "published ports were unavailable";
+  let trafficFailure = "published ports were unavailable";
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (fs.existsSync(portFile) && fs.statSync(portFile).size > 0) {
       const restPort = await runHost(host, "docker", ["port", proxy, "8080/tcp"], {
@@ -873,7 +873,7 @@ export async function startFakeDockerApi(
         timeoutMs: 30_000,
       });
       if (restPort.exitCode !== 0) {
-        readinessFailure = `REST port lookup failed with exit ${restPort.exitCode ?? "unknown"}`;
+        trafficFailure = `REST port lookup failed with exit ${restPort.exitCode ?? "unknown"}`;
         break;
       }
       const publishedRestPort = restPort.stdout.trim().split(":").at(-1)?.trim() ?? "";
@@ -886,30 +886,30 @@ export async function startFakeDockerApi(
           timeoutMs: 30_000,
         });
         if (websocketPort.exitCode !== 0) {
-          readinessFailure = `WebSocket port lookup failed with exit ${websocketPort.exitCode ?? "unknown"}`;
+          trafficFailure = `WebSocket port lookup failed with exit ${websocketPort.exitCode ?? "unknown"}`;
           break;
         }
         publishedWebsocketPort = websocketPort.stdout.trim().split(":").at(-1)?.trim() ?? "";
       }
       if (publishedRestPort && (options.kind !== "slack" || publishedWebsocketPort)) {
-        const readiness = await runHost(
+        const traffic = await runHost(
           host,
           "node",
           [
             "--experimental-strip-types",
-            FAKE_API_PORT_READINESS,
+            FAKE_API_PORT_TRAFFIC,
             gatewayIp,
             publishedRestPort,
             ...(options.kind === "slack" ? [publishedWebsocketPort] : []),
           ],
           {
-            artifactName: `prove-fake-${options.kind}-api-proxy-readiness`,
+            artifactName: `prove-fake-${options.kind}-api-proxy-traffic`,
             env: options.env,
             redactionValues: options.redactionValues,
             timeoutMs: 15_000,
           },
         );
-        if (readiness.exitCode === 0) {
+        if (traffic.exitCode === 0) {
           return {
             kind: options.kind,
             port: publishedRestPort,
@@ -919,7 +919,7 @@ export async function startFakeDockerApi(
             container,
           };
         }
-        readinessFailure = `traffic readiness failed with exit ${readiness.exitCode ?? "unknown"}`;
+        trafficFailure = `proxy traffic check failed with exit ${traffic.exitCode ?? "unknown"}`;
         break;
       }
     }
@@ -934,7 +934,7 @@ export async function startFakeDockerApi(
     redactionValues: options.redactionValues,
   });
   throw new Error(
-    `fake ${options.kind} API proxy ${proxy} did not become ready for API container ${container}: ${readinessFailure}`,
+    `fake ${options.kind} API proxy ${proxy} did not carry traffic to API container ${container}: ${trafficFailure}`,
   );
 }
 
