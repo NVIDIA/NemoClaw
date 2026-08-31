@@ -1102,30 +1102,6 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       redactionValues,
       `${SANDBOX_NAME}-wechat-bridge`,
     );
-    // TEMPORARY: diagnose a reproducible ECONNREFUSED at send time. The
-    // create/connect/start steps and the sandbox's network policy update all
-    // report success, and the proxy container is confirmed running at send
-    // time. Check whether the host itself can reach the same published port
-    // to distinguish a proxy/Docker-side failure (host also refused) from a
-    // sandbox-scoped network-policy rejection (host succeeds, only the
-    // sandbox's outbound attempt is refused).
-    const diagnoseGateway = await host.command(
-      "docker",
-      ["network", "inspect", "openshell-docker", "--format", "{{(index .IPAM.Config 0).Gateway}}"],
-      {
-        artifactName: "diagnose-fake-wechat-openshell-network-gateway",
-        redactionValues,
-      },
-    );
-    const diagnoseGatewayIp = diagnoseGateway.stdout.trim() || "unresolved-gateway-ip";
-    await host.command(
-      "curl",
-      ["-sv", "--max-time", "5", `http://${diagnoseGatewayIp}:${fakeWechat.port}/`],
-      {
-        artifactName: "diagnose-fake-wechat-proxy-host-reachability",
-        redactionValues,
-      },
-    );
     const installedWechatProof = await runInstalledWechatRuntimeProof(
       sandbox,
       fakeWechat,
