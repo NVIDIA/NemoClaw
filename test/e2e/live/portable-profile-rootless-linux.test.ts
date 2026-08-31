@@ -511,12 +511,8 @@ async function main(progress: TestProgress): Promise<void> {
             `ARG BASE_IMAGE=${baseImageArgument[1]}`,
             "FROM ${BASE_IMAGE}",
             "COPY agents/hermes/dashboard-external-host.patch /tmp/hermes-dashboard-external-host.patch",
-            "RUN if ! grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py; then \\",
-            "      git -C /opt/hermes apply --check --include=hermes_cli/web_server.py /tmp/hermes-dashboard-external-host.patch; \\",
-            "      git -C /opt/hermes apply --include=hermes_cli/web_server.py /tmp/hermes-dashboard-external-host.patch; \\",
-            "    fi \\",
-            "    && grep -Fqx '_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = \"_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST\"' /opt/hermes/hermes_cli/web_server.py \\",
-            "    && grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py \\",
+            "RUN git -C /opt/hermes apply --check --include=hermes_cli/web_server.py /tmp/hermes-dashboard-external-host.patch \\",
+            "    && git -C /opt/hermes apply --include=hermes_cli/web_server.py /tmp/hermes-dashboard-external-host.patch \\",
             "    && rm /tmp/hermes-dashboard-external-host.patch",
             "",
           ].join("\n"),
@@ -590,11 +586,7 @@ async function main(progress: TestProgress): Promise<void> {
         "/bin/sh",
         hermesImageRef,
         "-c",
-        [
-          "test ! -e /scripts/hermes-dashboard-external-host.patch",
-          "grep -Fqx '_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = \"_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST\"' /opt/hermes/hermes_cli/web_server.py",
-          "grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py",
-        ].join(" && "),
+        "test ! -e /scripts/hermes-dashboard-external-host.patch",
       ]);
 
       progress.phase("verify Hermes accepts the configured external Host");

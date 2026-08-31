@@ -73,6 +73,21 @@ export function prepareManagedRebuildProfileHandoff(input: {
     agent === "hermes" && previousDashboard.agent === "hermes"
       ? previousDashboard.browserUrl
       : undefined;
+  const hermesDashboardState = resolveHermesDashboardOnboardState({
+    agentName: agent,
+    effectivePort: effectiveDashboardPort,
+    env: input.environment ?? process.env,
+  });
+  if (
+    agent === "hermes" &&
+    manageDashboard &&
+    hermesDashboardState.enabled &&
+    previousHermesBrowserUrl === undefined
+  ) {
+    throw new Error(
+      "Cannot rebuild the Hermes dashboard because its managed startup profile has no recorded browser URL. Rerun onboarding, then rebuild the sandbox.",
+    );
+  }
   const chatUiUrl = manageDashboard
     ? previousHermesBrowserUrl === undefined
       ? `http://127.0.0.1:${String(effectiveDashboardPort)}`
@@ -128,11 +143,7 @@ export function prepareManagedRebuildProfileHandoff(input: {
           ? "0.0.0.0"
           : undefined,
       wslExposure: previousDashboard.agent === "openclaw" && previousDashboard.wslExposure,
-      hermesDashboardState: resolveHermesDashboardOnboardState({
-        agentName: agent,
-        effectivePort: effectiveDashboardPort,
-        env: input.environment ?? process.env,
-      }),
+      hermesDashboardState,
       webSearch: durableConfig.webSearchConfig,
       toolDisclosure: recreateOptions.toolDisclosure,
       hermesToolGateways: targetConfig.hermesToolGateways,

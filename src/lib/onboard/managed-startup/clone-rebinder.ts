@@ -249,6 +249,11 @@ function currentSourceDashboard(
     };
   }
   if (profile.dashboard.agent === "hermes") {
+    if (current.hermesDashboardEnabled === true && profile.dashboard.browserUrl === undefined) {
+      fail(
+        "current source Hermes dashboard has no recorded browser URL; rerun onboarding before cloning the sandbox",
+      );
+    }
     if (current.hermesDashboardEnabled !== true) {
       return {
         ...profile.dashboard,

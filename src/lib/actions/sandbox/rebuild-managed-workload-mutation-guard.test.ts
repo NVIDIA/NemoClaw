@@ -144,7 +144,7 @@ describe("managed workload rebuild mutation guard", () => {
     ).toThrow("Unsupported managed startup inference API 'unsupported-api'.");
   });
 
-  it("retains the Hermes browser host when rebuild changes the dashboard port", () => {
+  it("rejects a legacy Hermes dashboard before retaining a recorded browser host", () => {
     const previousProfile = managedStartupE2eProfile("hermes");
     const previousDashboard = previousProfile.dashboard as Extract<
       typeof previousProfile.dashboard,
@@ -184,21 +184,41 @@ describe("managed workload rebuild mutation guard", () => {
       inferenceApi: "openai-completions",
       inferenceCompat: null,
     });
+    const recreateOptions = {
+      controlUiPort: 29_443,
+      toolDisclosure: "progressive",
+      dcodeAutoApprovalMode: "disabled",
+      observabilityEnabled: false,
+    } as unknown as RebuildRecreateOnboardOpts;
+    const environment = {
+      NEMOCLAW_HERMES_DASHBOARD: "1",
+      NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "19443",
+    };
+    const { browserUrl: _browserUrl, ...legacyDashboard } = previousDashboard;
+    expect(() =>
+      prepareManagedRebuildProfileHandoff({
+        catalogHandoff: {
+          ...catalogHandoff,
+          previousProfile: {
+            ...catalogHandoff.previousProfile,
+            dashboard: legacyDashboard,
+          },
+        },
+        targetConfig,
+        recreateOptions,
+        messagingPlan: null,
+        environment,
+      }),
+    ).toThrow(
+      "Cannot rebuild the Hermes dashboard because its managed startup profile has no recorded browser URL. Rerun onboarding, then rebuild the sandbox.",
+    );
 
     const prepared = prepareManagedRebuildProfileHandoff({
       catalogHandoff,
       targetConfig,
-      recreateOptions: {
-        controlUiPort: 29_443,
-        toolDisclosure: "progressive",
-        dcodeAutoApprovalMode: "disabled",
-        observabilityEnabled: false,
-      } as unknown as RebuildRecreateOnboardOpts,
+      recreateOptions,
       messagingPlan: null,
-      environment: {
-        NEMOCLAW_HERMES_DASHBOARD: "1",
-        NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "19443",
-      },
+      environment,
     });
 
     expect(prepared.replacementProfile.profile.dashboard).toMatchObject({
