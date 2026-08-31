@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as childProcess from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -147,6 +148,73 @@ describe("downloadFromSandbox", () => {
     ).rejects.toThrow(/source is not a regular file or directory/);
     expect(runMock).not.toHaveBeenCalled();
   });
+
+  // #10636: the root-type probe cleared a directory whose members were never
+  // inspected, so a nested symbolic link travelled with the archive.
+  it("rejects a directory source whose members are not files or directories (#10636)", async () => {
+    captureMock.mockReturnValue({ status: 0, output: "unsafe-member" });
+
+    await expect(
+      downloadFromSandbox({ sandboxName: "alpha", sandboxPath: "/sandbox/mydir", hostDest: "./o" }),
+    ).rejects.toThrow(/directory contains an entry that is not a regular file or directory/);
+    expect(runMock).not.toHaveBeenCalled();
+    expect(publishMock).not.toHaveBeenCalled();
+  });
+
+  it("walks a directory source without following symbolic links (#10636)", async () => {
+    captureMock.mockReturnValue({ status: 0, output: "dir" });
+
+    await downloadFromSandbox({
+      sandboxName: "alpha",
+      sandboxPath: "/sandbox/mydir",
+      hostDest: "./o",
+    });
+
+    const probeScript = captureMock.mock.calls[0]?.[0]?.at(-3) as string;
+    expect(probeScript).toContain('find "$root" ! -type d ! -type f -print -quit');
+    expect(probeScript).toContain("unsafe-member");
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "executes the directory probe for expression-like relative paths (#10636)",
+    async () => {
+      captureMock.mockReturnValue({ status: 0, output: "dir" });
+
+      await downloadFromSandbox({
+        sandboxName: "alpha",
+        sandboxPath: "-payload",
+        hostDest: "./o",
+      });
+
+      const probeScript = captureMock.mock.calls[0]?.[0]?.at(-3) as string;
+      const runProbe = (setup: string) =>
+        childProcess.spawnSync(
+          "sh",
+          [
+            "-c",
+            `tmp=$(mktemp -d); trap 'rm -rf "$tmp"' 0; ${setup}; cd "$tmp"; ${probeScript}`,
+            "sh",
+            "-payload",
+          ],
+          { encoding: "utf8" },
+        );
+      const clean = runProbe('mkdir -- "$tmp/-payload"');
+      const unsafe = runProbe(
+        'mkdir -- "$tmp/-payload"; ln -s missing "$tmp/-payload/linked.txt"',
+      );
+
+      expect({ status: clean.status, stdout: clean.stdout, stderr: clean.stderr }).toEqual({
+        status: 0,
+        stdout: "dir",
+        stderr: "",
+      });
+      expect({ status: unsafe.status, stdout: unsafe.stdout, stderr: unsafe.stderr }).toEqual({
+        status: 0,
+        stdout: "unsafe-member",
+        stderr: "",
+      });
+    },
+  );
 
   it("passes a directory source through without requiring a regular file", async () => {
     captureMock.mockReturnValue({ status: 0, output: "dir" });

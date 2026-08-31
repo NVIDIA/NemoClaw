@@ -491,6 +491,31 @@ function publishEntry(source: string, destination: string): void {
 }
 
 /**
+ * Reject an unpublishable staged tree before any destination path is created.
+ *
+ * `publishEntry` rejects the same entries, but it creates each destination
+ * directory before recursing into that directory's members, so a symbolic link
+ * nested in a directory artifact was only caught after the host destination
+ * existed (#10636). Walking the staged tree up front keeps the rejection
+ * atomic: nothing is created at the destination.
+ */
+function assertStagedTreeIsPublishable(source: string): void {
+  const sourceStat = fs.lstatSync(source);
+  if (sourceStat.isSymbolicLink()) {
+    throw new Error(`Refusing to publish symbolic link from staged artifact '${source}'.`);
+  }
+  if (sourceStat.isDirectory()) {
+    for (const entry of fs.readdirSync(source)) {
+      assertStagedTreeIsPublishable(path.join(source, entry));
+    }
+    return;
+  }
+  if (!sourceStat.isFile()) {
+    throw new Error(`Refusing to publish unsupported staged artifact '${source}'.`);
+  }
+}
+
+/**
  * Publish a verified staging artifact without following destination symlinks.
  * Parent directories are pinned and revalidated, and file writes target a
  * private O_EXCL descriptor (plus O_NOFOLLOW where available) before an atomic
@@ -508,5 +533,6 @@ export function publishDownloadArtifact(
   if (sourceKind === "file" && stagedStat.isDirectory()) {
     throw new Error(`Refusing to publish directory staged artifact '${stagedArtifact}' as a file.`);
   }
+  assertStagedTreeIsPublishable(stagedArtifact);
   publishEntry(stagedArtifact, expectedArtifact);
 }

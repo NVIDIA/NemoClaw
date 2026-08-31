@@ -18,6 +18,30 @@ import {
   type SandboxSourceKind,
 } from "./sessions/download-verify";
 
+// A directory source is archived whole, so every member travels with it. The
+// walk is part of the same probe as the root check: `find` does not follow
+// symbolic links, so any entry that is neither a regular file nor a directory
+// marks the tree unsafe. Relative paths are prefixed with `./` so names that
+// look like `find` expressions remain paths, and the walk stops at the first
+// unsafe entry. A `find` failure leaves the probe unable to determine a kind,
+// which fails closed.
+const SANDBOX_SOURCE_PROBE_SCRIPT = [
+  "p=$1",
+  'if [ -L "$p" ]; then printf unsupported; exit 0; fi',
+  'if [ -d "$p" ]; then',
+  '  case "$p" in',
+  '    /*) root=$p ;;',
+  '    *) root=./$p ;;',
+  "  esac",
+  '  unsafe=$(find "$root" ! -type d ! -type f -print -quit) || exit 1',
+  '  [ -n "$unsafe" ] && printf unsafe-member || printf dir',
+  "  exit 0",
+  "fi",
+  'if [ -f "$p" ]; then printf file; exit 0; fi',
+  'if [ -e "$p" ]; then printf unsupported; exit 0; fi',
+  "printf missing",
+].join("\n");
+
 // Probe whether the sandbox source path is a file, a directory, or missing.
 // The path is passed as a positional argument ($1), never interpolated into
 // the script, so a crafted path cannot inject shell. Returns `undefined` when
@@ -25,7 +49,7 @@ import {
 function probeSandboxSourceKind(
   sandboxName: string,
   sandboxPath: string,
-): SandboxSourceKind | "missing" | "unsupported" | undefined {
+): SandboxSourceKind | "missing" | "unsupported" | "unsafe-member" | undefined {
   const probe = captureOpenshell(
     [
       "sandbox",
@@ -35,14 +59,18 @@ function probeSandboxSourceKind(
       "--",
       "sh",
       "-c",
-      'p=$1; if [ -L "$p" ]; then printf unsupported; elif [ -d "$p" ]; then printf dir; elif [ -f "$p" ]; then printf file; elif [ -e "$p" ]; then printf unsupported; else printf missing; fi',
+      SANDBOX_SOURCE_PROBE_SCRIPT,
       "sh",
       sandboxPath,
     ],
     { ignoreError: true },
   );
   const kind = probe?.output?.trim();
-  return kind === "file" || kind === "dir" || kind === "missing" || kind === "unsupported"
+  return kind === "file" ||
+    kind === "dir" ||
+    kind === "missing" ||
+    kind === "unsupported" ||
+    kind === "unsafe-member"
     ? kind
     : undefined;
 }
@@ -100,6 +128,11 @@ async function downloadFromSandboxUnlocked(
   if (sourceKind === "unsupported") {
     throw new Error(
       `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': source is not a regular file or directory.`,
+    );
+  }
+  if (sourceKind === "unsafe-member") {
+    throw new Error(
+      `Cannot download '${sandboxPath}' from sandbox '${opts.sandboxName}': the directory contains an entry that is not a regular file or directory. Symbolic links are not supported.`,
     );
   }
   if (sourceKind === undefined) {
