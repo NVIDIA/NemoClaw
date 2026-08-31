@@ -215,6 +215,55 @@ describe("inference selection validation", () => {
     log.mockRestore();
   });
 
+  it("applies Gemini's reply budget through the native model-selection probe", async () => {
+    let payload: Record<string, unknown> | null = null;
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += String(chunk);
+      });
+      request.on("end", () => {
+        payload = JSON.parse(body) as Record<string, unknown>;
+        response.end('{"choices":[{"message":{"content":"OK"}}]}');
+      });
+    });
+    const port = await listen(server);
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const probeOptions = {
+      apiKey: "test-key",
+      provider: "gemini-api",
+      skipResponsesProbe: true,
+      validationTiming: { connectTimeoutSeconds: 1, maxTimeSeconds: 1, source: "standard" },
+      validationSessionOptions: {
+        env: {},
+        lookup: async () => [{ address: "127.0.0.1", family: 4 }],
+        allowPrivateAddressesForTesting: true,
+      },
+    };
+
+    try {
+      await expect(
+        helpers.validateOpenAiLikeSelection(
+          "Gemini",
+          `http://provider.example.com:${port}/v1`,
+          "gemini-2.5-flash",
+          null,
+          undefined,
+          undefined,
+          probeOptions,
+        ),
+      ).resolves.toEqual({ ok: true, api: "openai-completions" });
+      expect(payload).toMatchObject({ max_tokens: 256 });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("records a completed Chat Completions selection for the matching smoke check", async () => {
     const capabilityCache = new OnboardInferenceCapabilityCache();
     const helpers = createInferenceSelectionValidationHelpers({
@@ -364,7 +413,12 @@ describe("inference selection validation", () => {
         "https://generativelanguage.googleapis.com/v1beta/openai",
         "gemini-2.5-flash",
         apiKey,
-        { skipResponsesProbe: true, calibrateTimeouts: true },
+        {
+          skipResponsesProbe: true,
+          calibrateTimeouts: true,
+          provider: "gemini-api",
+          replyBudget: 256,
+        },
       );
       const errorOutput = error.mock.calls.map((args) => args.join(" ")).join("\n");
       expect(errorOutput).toContain(

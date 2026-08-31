@@ -246,7 +246,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
         preferredInferenceApi: null,
       },
       {},
-      30_000,
+      95_000,
     );
   });
 
@@ -282,7 +282,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
         preferredInferenceApi: "openai-responses",
       },
       {},
-      30_000,
+      95_000,
     );
   });
 

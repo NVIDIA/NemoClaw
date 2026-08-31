@@ -3,6 +3,7 @@
 
 import { getCredential } from "../credentials/store";
 import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../inference/config";
+import { resolveProbeReplyTokens } from "../inference/max-tokens-field";
 import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
 import type { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 
@@ -342,6 +343,9 @@ export function createInferenceSelectionValidationHelpers(
     const probe = await runOpenAiLikeProbe(endpointUrl, model, apiKey, {
       ...probeOptions,
       calibrateTimeouts: true,
+      ...(provider === "gemini-api"
+        ? { provider, replyBudget: resolveProbeReplyTokens(provider) }
+        : {}),
     });
     if (!probe.ok) {
       probeOptions.capabilityCache?.invalidate();

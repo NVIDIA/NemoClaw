@@ -48,7 +48,9 @@ export type SandboxInferenceInvocationDeps = {
  * Status and start run in an interactive wait and use the shorter timeout.
  */
 export const REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS = 100_000;
-export const READINESS_INFERENCE_INVOCATION_TIMEOUT_MS = 30_000;
+// The request itself permits up to 90 seconds, so readiness must also allow
+// bounded process startup and cleanup rather than cancelling a valid response.
+export const READINESS_INFERENCE_INVOCATION_TIMEOUT_MS = 95_000;
 const INFERENCE_INVOCATION_MAX_RESPONSE_BYTES = 64 * 1024;
 
 /** Build the protocol-specific request used to verify sandbox inference. */
