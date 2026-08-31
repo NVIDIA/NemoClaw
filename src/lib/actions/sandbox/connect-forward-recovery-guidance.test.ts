@@ -24,7 +24,7 @@ describe("connect forward recovery guidance", () => {
     [
       "readiness retry exhaustion",
       "forward-readiness-retry-limit",
-      "openshell sandbox status alpha` reports Ready",
+      "openshell sandbox get alpha` reports Ready",
       false,
     ],
     [

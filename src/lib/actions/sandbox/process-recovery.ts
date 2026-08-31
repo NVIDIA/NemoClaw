@@ -191,7 +191,7 @@ export function primaryForwardRecoveryGuidance(
   const recoverCommand = `\`nemoclaw ${sandboxName} recover\``;
   switch (reason) {
     case "forward-readiness-retry-limit":
-      return `Wait until \`openshell sandbox status ${sandboxName}\` reports Ready, then re-run ${recoverCommand}.`;
+      return `Wait until \`openshell sandbox get ${sandboxName}\` reports Ready, then re-run ${recoverCommand}.`;
     case "port-ownership-conflict":
       return `Run \`openshell forward list\` and identify the current owner of port ${port} before you change either sandbox. Then re-run ${recoverCommand}.`;
     case "forward-state-unavailable":
