@@ -459,7 +459,6 @@ export function backupSandboxStateForRebuild(
   log: (msg: string) => void,
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean,
   bail: (msg: string, code?: number) => never,
-  options?: { force?: boolean },
 ): sandboxState.RebuildManifest | null | undefined {
   if (staleRecovery) return null;
 
@@ -475,42 +474,18 @@ export function backupSandboxStateForRebuild(
   log(
     `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );
-  const hasAnyBackup = backup.backedUpDirs.length > 0 || backup.backedUpFiles.length > 0;
-  // Saving a few loose files while every state directory failed is still
-  // catastrophic: the top-level state dirs (memories, sessions, workspace,
-  // plans, ...) would be permanently lost once rebuild recreates the sandbox.
-  // Guard against it the same way as a fully-empty backup so the rebuild aborts
-  // by default instead of silently discarding them. See issue #6972: a
-  // post-reboot mount-ownership/permission corruption left every `.hermes`
-  // state dir unreadable, the sandbox-user tar backed up only 3 loose files,
-  // and the old code proceeded and destroyed all 14 state directories.
-  const allStateDirsFailed = backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
-  // State files are individually declared durability contracts. Losing even
-  // one cannot be treated like a salvageable partial directory archive: the
-  // replacement would otherwise delete the only live copy. (#7144)
-  const requiredStateFileFailed = backup.failedFiles.length > 0;
-  if (!backup.success && (!hasAnyBackup || allStateDirsFailed || requiredStateFileFailed)) {
-    if (options?.force) {
-      console.warn(
-        `  ${YW}⚠${R} Backup could not preserve sandbox state but --force was specified — continuing with any salvageable files and rebuilding from registry metadata.`,
-      );
-      log(
-        "Force-skip: backup could not preserve state directories; continuing as requested by --force",
-      );
-      // Keep the partial manifest when at least some files were saved so --force
-      // still restores what it could rather than throwing it away.
-      return hasAnyBackup ? (backup.manifest ?? null) : null;
-    }
+  if (!backup.success) {
     console.error("  Failed to back up sandbox state.");
-    if (allStateDirsFailed && hasAnyBackup) {
+    const allStateDirsFailed =
+      backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
+    if (allStateDirsFailed && backup.backedUpFiles.length > 0) {
       const dirCount = backup.failedDirs.length;
       const fileCount = backup.backedUpFiles.length;
       console.error(
         `  None of the ${dirCount} sandbox state ${dirCount === 1 ? "directory" : "directories"} could be preserved (only ${fileCount} loose ${fileCount === 1 ? "file was" : "files were"} saved).`,
       );
-      // Tailor the hypothesis to the recorded per-dir cause instead of always
-      // blaming ownership: "permission denied" points at ownership/permissions,
-      // while "absent after extraction" points at an unstable/disappearing mount.
+    }
+    if (backup.failedDirs.length > 0) {
       const reasons = Object.values(backup.failedDirReasons ?? {});
       const anyPermissionDenied = reasons.includes(BACKUP_FAILURE_PERMISSION_DENIED);
       const allAbsent =
@@ -537,10 +512,13 @@ export function backupSandboxStateForRebuild(
       );
     if (backup.failedFiles.length > 0)
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
+    if (backup.manifest?.backupPath) {
+      console.error(
+        `  Incomplete snapshot retained for manual recovery: ${backup.manifest.backupPath}`,
+      );
+      console.error("  It is excluded from snapshot restore selection.");
+    }
     console.error("  Aborting rebuild to prevent data loss.");
-    console.error(
-      `  Hint: use '${CLI_NAME} ${sandboxName} rebuild --force' only if you accept losing state the incomplete backup could not preserve.`,
-    );
     relockShieldsIfNeeded(true);
     bail("Failed to back up sandbox state.");
     return undefined;
@@ -553,20 +531,9 @@ export function backupSandboxStateForRebuild(
     bail("Failed to record backup metadata.");
     return undefined;
   }
-  if (!backup.success) {
-    console.warn(
-      `  ${YW}⚠${R} Partial backup: ${backup.backedUpDirs.length} dirs and ${backup.backedUpFiles.length} files OK; ${backup.failedDirs.length} dirs and ${backup.failedFiles.length} files failed`,
-    );
-    if (backup.failedDirs.length > 0)
-      console.warn(`    Failed dirs: ${backup.failedDirs.join(", ")}`);
-    if (backup.failedFiles.length > 0)
-      console.warn(`    Failed files: ${backup.failedFiles.join(", ")}`);
-    console.warn("    Rebuild will continue — failed state could not be preserved.");
-  } else {
-    console.log(
-      `  ${G}✓${R} State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
-    );
-  }
+  console.log(
+    `  ${G}✓${R} State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
+  );
   console.log(`    Backup: ${backupManifest.backupPath}`);
   return backupManifest;
 }
