@@ -147,8 +147,8 @@ const MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
   ...MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
 ] as const;
 // The managed-image capability union installs diagnostics-otel and brave-plugin. It does not
-// install Tavily. OpenClaw validates each plugins.entries key even when the
-// entry is disabled, so omit Tavily from a neutral managed image (#10325).
+// install the Tavily Search plugin. OpenClaw validates each plugins.entries key even when
+// the entry is disabled, so omit Tavily from a neutral managed image (#10325).
 const MANAGED_IMAGE_OPENCLAW_PLUGIN_IDS = [
   ...MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES.map(({ pluginId }) => pluginId),
   "diagnostics-otel",

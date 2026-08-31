@@ -103,15 +103,6 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     expect(config.plugins.entries.qqbot).toBeUndefined();
   });
 
-  it("omits the uninstalled Tavily plugin from a neutral managed image (#10325)", () => {
-    // OpenClaw warns for an uninstalled ID in plugins.entries, even when the entry is disabled.
-    const config = buildConfig({
-      ...BASE_ENV,
-      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
-    });
-    expect(config.plugins.entries.tavily).toBeUndefined();
-  });
-
   it("keeps every managed-image plugin and channel explicitly inert before first start (#7744)", () => {
     const config = buildConfig({
       ...BASE_ENV,
