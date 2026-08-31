@@ -172,6 +172,7 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     fakeSlack.alternatePort,
     "fake Slack API must publish an independent app-token port",
   ).toMatch(/^[1-9][0-9]*$/u);
+  expect(fakeSlack.alternatePort).not.toBe(fakeSlack.port);
   const fakeSlackWebSocket = {
     ...fakeSlack,
     port: fakeSlack.alternatePort!,
