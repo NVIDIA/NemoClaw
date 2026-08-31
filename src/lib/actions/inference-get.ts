@@ -102,6 +102,9 @@ function formatLookupFailure(
   if (failure === "exit") {
     return `OpenShell inference route lookup for gateway '${gatewayName}' failed with exit status ${String(status ?? "unknown")}. ${recovery}`;
   }
+  if (failure === "output") {
+    return `OpenShell inference route lookup for gateway '${gatewayName}' returned output NemoClaw could not interpret. ${recovery}`;
+  }
   return `OpenShell inference route lookup for gateway '${gatewayName}' failed before an exit status was available. ${recovery}`;
 }
 

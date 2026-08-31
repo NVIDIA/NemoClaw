@@ -14,14 +14,14 @@ type CaptureLiveInference = (
 ) => Pick<CaptureOpenshellResult, "status" | "output" | "error" | "signal">;
 
 export interface LiveGatewayInferenceResult {
-  failure: "execution" | "exit" | "timeout" | null;
+  failure: "execution" | "exit" | "output" | "timeout" | null;
   inference: GatewayInference | null;
   output: string;
   status: number | null;
 }
 
 function hasGatewayInferenceSection(output: string): boolean {
-  return /^Gateway inference:\s*$/im.test(output);
+  return /^(?:Gateway )?Inference:\s*$/im.test(output);
 }
 
 function classifyLookupFailure(
@@ -54,14 +54,16 @@ export function getLiveGatewayInference(
     const result = capture(args, { ignoreError: true, timeout: opts.timeout });
     const output = stripAnsi(result.output || "").trim();
     const inference = parseGatewayInference(output);
+    const recognizedOutput = Boolean(inference) || hasGatewayInferenceSection(output);
+    const failure = classifyLookupFailure(result);
     last = {
-      failure: classifyLookupFailure(result),
+      failure: failure ?? (result.status === 0 && !recognizedOutput ? "output" : null),
       inference,
       output,
       status: result.status,
     };
 
-    if (result.status === 0 && (inference || hasGatewayInferenceSection(output))) {
+    if (result.status === 0 && recognizedOutput) {
       return last;
     }
   }

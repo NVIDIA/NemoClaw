@@ -57,4 +57,31 @@ describe("getLiveGatewayInference", () => {
       { ignoreError: true, timeout: undefined },
     );
   });
+
+  it("classifies successful unrecognized gateway output as a lookup failure (#10671)", () => {
+    const capture = vi.fn().mockReturnValue({ status: 0, output: "unexpected format" });
+
+    expect(getLiveGatewayInference(capture, { gatewayName: "nemoclaw-19090" })).toMatchObject({
+      failure: "output",
+      inference: null,
+      status: 0,
+    });
+  });
+
+  it("recognizes the legacy unconfigured inference section after fallback (#10671)", () => {
+    const capture = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, output: "" })
+      .mockReturnValueOnce({ status: 0, output: "Inference:\n\n  Not configured" });
+
+    expect(getLiveGatewayInference(capture)).toMatchObject({
+      failure: null,
+      inference: null,
+      status: 0,
+    });
+    expect(capture.mock.calls.map(([args]) => args)).toEqual([
+      ["inference", "get", "-g", "nemoclaw"],
+      ["inference", "get"],
+    ]);
+  });
 });

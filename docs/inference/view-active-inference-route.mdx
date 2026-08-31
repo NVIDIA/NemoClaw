@@ -46,7 +46,8 @@ Expected output:
 
 The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.
 Run `$$nemoclaw onboard` to configure one.
-For lookup failures, the error names the gateway and reports a timeout, a nonzero exit status, or the absence of an exit status without rendering command output.
+For lookup failures, the error names the gateway without rendering command output.
+It reports a timeout, a nonzero exit status, no exit status, or output NemoClaw cannot interpret after a command exits successfully.
 Run `$$nemoclaw status` after a direct lookup fails.
 Run `$$nemoclaw <name> status` after a sandbox-first lookup fails.
 

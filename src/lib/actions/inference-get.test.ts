@@ -118,6 +118,26 @@ describe("runInferenceGet", () => {
     expect(deps.log).not.toHaveBeenCalled();
   });
 
+  it("keeps the legacy unconfigured response in the route absence branch (#10671)", async () => {
+    const deps = createDeps("Inference:\n\n  Not configured");
+
+    await expect(runInferenceGet({}, deps)).rejects.toThrow(
+      "OpenShell inference route is not configured for gateway 'nemoclaw'.",
+    );
+    expect(deps.log).not.toHaveBeenCalled();
+  });
+
+  it("reports unrecognized gateway output without rendering it (#10671)", async () => {
+    const deps = createDeps("secret output in an unexpected format");
+    deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
+
+    await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
+      message:
+        "OpenShell inference route lookup for gateway 'nemoclaw-19090' returned output NemoClaw could not interpret. Run 'nemoclaw beta status' to diagnose the sandbox's recorded gateway.",
+    });
+    expect(deps.log).not.toHaveBeenCalled();
+  });
+
   it("reports the gateway and timeout without command output (#10671)", async () => {
     const deps = createDeps("", null);
     deps.getSandboxTargetGatewayName.mockReturnValue("nemoclaw-19090");
