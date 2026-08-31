@@ -63,9 +63,10 @@ export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DE
  * ---------------------------------------
  * Delete this debounce once OpenShell guarantees `sandbox list` skips the
  * brief Error transition during a known registration. The runtime evidence
- * required is a fresh-onboard reproduction that shows a transient create-time
- * Error which recovers to Ready. The CLI-adapter test owns the captured table
- * layout, and sandbox-readiness-tracing.test.ts owns the typed phase replay.
+ * required is a fresh-onboard trace from a fixed OpenShell release that reaches
+ * Ready without reporting a transient create-time Error. The CLI-adapter test
+ * owns the captured table layout, and sandbox-readiness-tracing.test.ts owns
+ * the typed phase replay.
  *
  * Tracking mechanism: removal is tracked on NemoClaw #6043
  * (https://github.com/NVIDIA/NemoClaw/issues/6043), which owns the pending

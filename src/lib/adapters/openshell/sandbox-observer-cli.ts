@@ -255,10 +255,13 @@ export function createCliOpenShellLegacyPodReadinessProbe(
   deps: CliOpenShellSandboxObserverDeps,
 ): OpenShellSandboxReadinessProbe {
   return async (request) => {
+    const gatewayArgs =
+      request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
     const result = await deps.capture(
       [
         "doctor",
         "exec",
+        ...gatewayArgs,
         "--",
         "kubectl",
         "-n",

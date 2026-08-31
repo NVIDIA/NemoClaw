@@ -280,6 +280,8 @@ describe("CLI OpenShell sandbox observer", () => {
       [
         "doctor",
         "exec",
+        "-g",
+        "nemoclaw",
         "--",
         "kubectl",
         "-n",
@@ -296,6 +298,31 @@ describe("CLI OpenShell sandbox observer", () => {
         includeStreams: true,
         timeout: 7_000,
       },
+    );
+  });
+
+  it("keeps the legacy Kubernetes readiness command unscoped for the selected gateway (#9803)", async () => {
+    const capture = vi.fn(() => captured(0, "Running"));
+    const probe = createCliOpenShellLegacyPodReadinessProbe({ capture });
+
+    await expect(
+      probe({ target: selectedOpenShellGateway(), sandboxName: "alpha" }),
+    ).resolves.toEqual({ ok: true, value: "ready" });
+    expect(capture).toHaveBeenCalledWith(
+      [
+        "doctor",
+        "exec",
+        "--",
+        "kubectl",
+        "-n",
+        "openshell",
+        "get",
+        "pod",
+        "alpha",
+        "-o",
+        "jsonpath={.status.phase}",
+      ],
+      expect.objectContaining({ ignoreError: true }),
     );
   });
 
