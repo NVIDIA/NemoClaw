@@ -79,6 +79,7 @@ import {
   recoverPortableAgentSandboxLifecycle,
   requireHermesPortableActiveLifecycleAuthority,
 } from "../../onboard/experimental/portable-agent-lifecycle";
+import type { HermesPortableLifecycleRecoveryTiming } from "../../onboard/experimental/hermes-portable-lifecycle";
 import type { PortableDemoLifecycleRecoveryResult } from "../../onboard/experimental/portable-demo-lifecycle";
 import { compareAndSetLegacySandboxLifecycleGeneration } from "../../state/registry/lifecycle-generation";
 import type { SandboxEntry } from "../../state/registry/types";
@@ -205,9 +206,10 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
   sandbox: SandboxEntry | null,
   gatewayName: string,
   commandAuthority?: ReturnType<typeof qualifyHermesPortableOperatingCommandAuthority>,
+  lifecycleTiming?: HermesPortableLifecycleRecoveryTiming,
 ): PortableDemoLifecycleRecoveryResult {
   const capture = (args: readonly string[], timeoutMs: number) => {
-    commandAuthority?.assertCurrent();
+    commandAuthority?.assertTransactionCurrent();
     try {
       const result = commandAuthority
         ? captureResolvedOpenshell([...args], {
@@ -230,7 +232,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
         error: result.error,
       };
     } finally {
-      commandAuthority?.assertCurrent();
+      commandAuthority?.assertTransactionCurrent();
     }
   };
   commandAuthority?.assertCurrent();
@@ -263,6 +265,7 @@ export function recoverPortableDemoSandboxLifecycleForConnect(
           : {}),
         captureOpenshell: capture,
         readRegistry: (name) => (sandbox?.name === name ? sandbox : null),
+        ...(lifecycleTiming ? { recoveryTiming: lifecycleTiming } : {}),
       },
     );
   } finally {
