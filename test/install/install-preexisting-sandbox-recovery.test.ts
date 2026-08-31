@@ -29,7 +29,11 @@ function runPayloadOnlyRecoveryBootstrap(dockerHost: string): {
 } {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-payload-bootstrap-"));
   const payloadRoot = path.join(tmp, "payload-only");
+  const payloadSupportDir = path.join(tmp, "payload-support");
+  const fakeBin = path.join(tmp, "bin");
+  const standalonePayload = path.join(payloadRoot, "install.sh");
   const childPayload = path.join(tmp, "child-install.sh");
+  const cli = path.join(tmp, "nemoclaw");
   const callLog = path.join(tmp, "calls.log");
   const dockerHostContract = path.join(
     path.dirname(INSTALLER_PAYLOAD),
@@ -39,51 +43,111 @@ function runPayloadOnlyRecoveryBootstrap(dockerHost: string): {
     "domain",
     "docker-host.ts",
   );
+  fs.mkdirSync(path.join(payloadSupportDir, "lib"), { recursive: true });
+  fs.mkdirSync(fakeBin);
   fs.mkdirSync(payloadRoot);
+  fs.mkdirSync(path.join(tmp, ".nemoclaw"));
+  fs.chmodSync(path.join(tmp, ".nemoclaw"), 0o700);
+  fs.writeFileSync(path.join(tmp, ".nemoclaw", "sandboxes.json"), '{"sandboxes":{}}');
+  fs.copyFileSync(INSTALLER_PAYLOAD, standalonePayload);
+  fs.chmodSync(standalonePayload, 0o755);
+  fs.copyFileSync(
+    path.join(path.dirname(INSTALLER_PAYLOAD), "lib", "station-vllm-conflict.sh"),
+    path.join(payloadSupportDir, "lib", "station-vllm-conflict.sh"),
+  );
+  fs.writeFileSync(
+    path.join(payloadSupportDir, "setup-jetson.sh"),
+    "#!/usr/bin/env bash\nexit 0\n",
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    cli,
+    `#!/usr/bin/env bash
+if [ "\${1:-}" = "upgrade-sandboxes" ]; then
+  printf 'recovery-started\n' >> "$BOOTSTRAP_CALL_LOG"
+fi
+exit 0
+`,
+    { mode: 0o755 },
+  );
   fs.writeFileSync(
     childPayload,
     `#!/usr/bin/env bash
 set -euo pipefail
 NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1
-source_root="$(cd "$(dirname "$0")/.." && pwd)"
-node --experimental-strip-types --no-warnings -e '
-  const validator = require(process.argv[1]).isSupportedGatewayDockerHost;
-  process.exit(validator(process.argv[2]) ? 0 : 10);
-' "$source_root/src/lib/domain/docker-host.ts" "$DOCKER_HOST"
-printf 'ref=%s tag=%s bootstrap=%s host=%s recovery-started\n' "$NEMOCLAW_INSTALL_REF" "$NEMOCLAW_INSTALL_TAG" "$NEMOCLAW_BOOTSTRAP_PAYLOAD" "$DOCKER_HOST" > "$BOOTSTRAP_CALL_LOG"
+source "$PRODUCTION_INSTALLER_PAYLOAD" >/dev/null
+NEMOCLAW_SOURCE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+_CLI_BIN=nemoclaw
+_UPGRADE_SANDBOXES_FAILED=false
+_STATION_EXPRESS_RESUME_LOADED=""
+SCRIPT_DIR="$PAYLOAD_SUPPORT_DIR"
+printf 'ref=%s tag=%s bootstrap=%s host=%s\n' "$NEMOCLAW_INSTALL_REF" "$NEMOCLAW_INSTALL_TAG" "$NEMOCLAW_BOOTSTRAP_PAYLOAD" "$DOCKER_HOST" >> "$BOOTSTRAP_CALL_LOG"
+info() { :; }
+warn() { :; }
+print_banner() { :; }
+preflight_usage_notice_prompt() { :; }
+ensure_docker() { :; }
+ensure_openshell_build_deps() { :; }
+maybe_offer_express_install() { :; }
+sleep() { :; }
+step() { :; }
+install_nodejs() { :; }
+ensure_supported_runtime() { :; }
+fix_npm_permissions() { :; }
+preinstall_backup_and_retire_legacy_gateway() {
+  printf 'preinstall-started\n' >> "$BOOTSTRAP_CALL_LOG"
+  _PREEXISTING_SANDBOX_COUNT=1
+  _LEGACY_MANAGED_RECOVERY_NAMES_JSON='["legacy-box"]'
+}
+install_nemoclaw() { :; }
+verify_nemoclaw() { _CLI_PATH="$FAKE_CLI"; }
+run_installer_host_preflight() { return 0; }
+ensure_station_express_host() { :; }
+ensure_station_express_pair() { :; }
+run_onboard() { "$FAKE_CLI" onboard; }
+restore_onboard_forward_after_post_checks() { return 0; }
+print_done() { :; }
+main "$@"
+`,
+    { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    path.join(fakeBin, "git"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "init" ]; then
+  destination="\${@: -1}"
+  mkdir -p "$destination/scripts" "$destination/src/lib/domain"
+  cp "$CLONED_INSTALLER_PAYLOAD" "$destination/scripts/install.sh"
+  chmod +x "$destination/scripts/install.sh"
+  cp "$DOCKER_HOST_CONTRACT" "$destination/src/lib/domain/docker-host.ts"
+  exit 0
+fi
+if [ "\${1:-}" = "-C" ]; then
+  exit 0
+fi
+exit 99
 `,
     { mode: 0o755 },
   );
   const result = spawnSync(
     "bash",
-    [
-      "-c",
-      `
-set -e
-source "$INSTALLER_PAYLOAD" >/dev/null
-NEMOCLAW_SOURCE_ROOT="$PAYLOAD_ROOT"
-resolve_release_tag() { printf 'refs/tags/payload-test'; }
-clone_nemoclaw_ref() {
-  destination="$2"
-  mkdir -p "$destination/scripts" "$destination/src/lib/domain"
-  cp "$CHILD_PAYLOAD" "$destination/scripts/install.sh"
-  cp "$DOCKER_HOST_CONTRACT" "$destination/src/lib/domain/docker-host.ts"
-}
-standalone_installer_payload_needs_checkout --non-interactive
-bootstrap_standalone_installer_payload --non-interactive
-`,
-    ],
+    [standalonePayload, "--non-interactive", "--yes-i-accept-third-party-software"],
     {
       encoding: "utf-8",
       env: {
-        ...process.env,
         BOOTSTRAP_CALL_LOG: callLog,
-        CHILD_PAYLOAD: childPayload,
+        CLONED_INSTALLER_PAYLOAD: childPayload,
         DOCKER_HOST: dockerHost,
         DOCKER_HOST_CONTRACT: dockerHostContract,
-        INSTALLER_PAYLOAD,
+        FAKE_CLI: cli,
+        HOME: tmp,
         NEMOCLAW_BOOTSTRAP_PAYLOAD: "",
-        PAYLOAD_ROOT: payloadRoot,
+        NEMOCLAW_INSTALL_TAG: "refs/tags/payload-test",
+        NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
+        PATH: `${fakeBin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
+        PAYLOAD_SUPPORT_DIR: payloadSupportDir,
+        PRODUCTION_INSTALLER_PAYLOAD: INSTALLER_PAYLOAD,
       },
     },
   );
@@ -243,14 +307,20 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
 
     expect(result.status, result.output).toBe(0);
     expect(result.output).toContain(
-      "ref=refs/tags/payload-test tag=refs/tags/payload-test bootstrap=1 host=unix:///var/run/docker.sock recovery-started",
+      "ref=refs/tags/payload-test tag=refs/tags/payload-test bootstrap=1 host=unix:///var/run/docker.sock",
     );
+    expect(result.output).toContain("preinstall-started");
+    expect(result.output.match(/recovery-started/g)).toHaveLength(2);
   });
 
   it("rejects an unsupported Docker host after payload-only bootstrap before recovery", () => {
     const result = runPayloadOnlyRecoveryBootstrap("tcp://203.0.113.10:2375");
 
-    expect(result.status).toBe(10);
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(
+      "DOCKER_HOST is not a supported absolute local Unix socket endpoint",
+    );
+    expect(result.output).not.toContain("preinstall-started");
     expect(result.output).not.toContain("recovery-started");
   });
 
