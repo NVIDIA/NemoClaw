@@ -243,13 +243,10 @@ function removeCredentialBoundEndpointsForProviders(
 }
 
 /**
- * Build one replacement-create input from OpenShell's live policy. Host edits
- * win completely outside missing non-root process identity, filesystem access,
- * and network keys required by an explicit active messaging command. A live
- * collision on an enabled channel key must already match the selected channel
- * policy or rebuild stops before deletion. Those bounded image/command
- * requirements are added only to the replacement create input; they are never
- * persisted as a NemoClaw-owned policy shadow.
+ * Preserve the live OpenShell policy during a rebuild.
+ * Add only missing process identity, filesystem access, and active messaging policy keys.
+ * Apply those requirements only to the replacement create input.
+ * Stop the rebuild if an enabled channel conflicts with the live policy.
  */
 export function mergeReplacementPolicyAccess(
   livePolicySource: string,

@@ -740,6 +740,46 @@ export async function finalizeCreatedSandboxBeforeHermesCredentialReconciliation
   return registration;
 }
 
+/** Retire the temporary create policy after finalization or report retained state. */
+export async function finalizeCreatedSandboxWithTemporaryPolicyCleanup<T>(input: {
+  readonly finalize: () => Promise<T>;
+  readonly cleanup: () => boolean;
+  readonly policyPath: string;
+  readonly recordCleanupRecovery: () => void;
+}): Promise<T> {
+  let result: T | undefined;
+  let finalizationFailed = false;
+  let finalizationError: unknown;
+  try {
+    result = await input.finalize();
+  } catch (error) {
+    finalizationFailed = true;
+    finalizationError = error;
+  }
+
+  let cleanupError: Error | null = null;
+  const retainedMessage =
+    `Temporary sandbox create policy cleanup did not complete for '${input.policyPath}'. ` +
+    "Preserve this path for identity-bound administrator recovery.";
+  try {
+    if (!input.cleanup()) cleanupError = new Error(retainedMessage);
+  } catch (cause) {
+    cleanupError = new Error(retainedMessage, { cause });
+  }
+
+  if (finalizationFailed) {
+    if (cleanupError) {
+      throw new AggregateError(
+        [finalizationError, cleanupError],
+        "Sandbox finalization failed, and its temporary policy cleanup did not complete.",
+      );
+    }
+    throw finalizationError;
+  }
+  if (cleanupError) return throwPostCreateFailure(cleanupError, input.recordCleanupRecovery);
+  return result as T;
+}
+
 /**
  * Keep every effect after an unverified create behind one exact-identity gate.
  *
@@ -2836,32 +2876,34 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         undefined,
         providerEffectBoundary.runAfterVerifiedCreate,
       );
-      try {
-        await finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
-          async () => {
-            const registration = await runAsyncWithPostCreateRecovery(
-              () => completeCreatedSandboxRegistration(created, null),
-              () => recordPostCreateRecovery("registry publication"),
-            );
-            createEffectsFinalized = true;
-            return registration;
-          },
-          () =>
-            reconcileCreatedHermesCredentialEnvironment(
-              {
-                sandboxName,
-                plan: plannedMessagingState?.plan ?? null,
-              },
-              createHermesCredentialEnvReconciliationRuntime(
-                (args, options) => runOpenshell([...args], options),
-                (operation) => revalidateSandboxIdentity(true, operation),
+      await finalizeCreatedSandboxWithTemporaryPolicyCleanup({
+        finalize: () =>
+          finalizeCreatedSandboxBeforeHermesCredentialReconciliation(
+            async () => {
+              const registration = await runAsyncWithPostCreateRecovery(
+                () => completeCreatedSandboxRegistration(created, null),
+                () => recordPostCreateRecovery("registry publication"),
+              );
+              createEffectsFinalized = true;
+              return registration;
+            },
+            () =>
+              reconcileCreatedHermesCredentialEnvironment(
+                {
+                  sandboxName,
+                  plan: plannedMessagingState?.plan ?? null,
+                },
+                createHermesCredentialEnvReconciliationRuntime(
+                  (args, options) => runOpenshell([...args], options),
+                  (operation) => revalidateSandboxIdentity(true, operation),
+                ),
+                () => recordPostCreateRecovery("onboarding finalization"),
               ),
-              () => recordPostCreateRecovery("onboarding finalization"),
-            ),
-        );
-      } finally {
-        cleanupInitialCreateSource();
-      }
+          ),
+        cleanup: cleanupInitialCreateSource,
+        policyPath: initialSandboxPolicy.policyPath,
+        recordCleanupRecovery: () => recordPostCreateRecovery("onboarding finalization"),
+      });
     }
     return runWithPostCreateRecovery(
       () => {

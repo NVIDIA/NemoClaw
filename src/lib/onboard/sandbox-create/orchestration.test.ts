@@ -14,6 +14,7 @@ import {
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
+  finalizeCreatedSandboxWithTemporaryPolicyCleanup,
   hasManagedMcpRebuildHandoff,
   installPostCreateRecoveryRetryOwner,
   persistPostCreateRecovery,
@@ -26,6 +27,7 @@ import {
   runSandboxCreateWithIdentityVerification,
   runWithPostCreateRecovery,
 } from "./orchestration";
+import { materializeRebuildPolicyHandoff } from "./rebuild-policy-handoff";
 
 const UNVERIFIED_RECOVERY_CONTEXT = {
   gatewayName: "nemoclaw",
@@ -55,6 +57,91 @@ describe("created Hermes credential environment reconciliation", () => {
       "registration:complete",
       "credentials:reconcile",
     ]);
+  });
+
+  it("records recovery when a successful rebuild cannot retire its handoff policy", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-cleanup-test-"));
+    const livePolicyPath = path.join(root, "live.yaml");
+    const replacementPolicyPath = path.join(root, "replacement.yaml");
+    fs.writeFileSync(livePolicyPath, "version: 1\nnetwork_policies: {}\n", { mode: 0o600 });
+    fs.writeFileSync(
+      replacementPolicyPath,
+      "version: 1\nfilesystem_policy:\n  read_only: [/run/replacement]\n",
+      { mode: 0o600 },
+    );
+    const handoff = materializeRebuildPolicyHandoff({
+      livePolicyPath,
+      replacementPolicy: { policyPath: replacementPolicyPath, appliedPresets: [] },
+    });
+    const recordCleanupRecovery = vi.fn();
+
+    try {
+      fs.appendFileSync(handoff.policyPath, "# changed after cleanup authority capture\n");
+
+      await expect(
+        finalizeCreatedSandboxWithTemporaryPolicyCleanup({
+          finalize: async () => "created",
+          cleanup: handoff.cleanup ?? (() => true),
+          policyPath: handoff.policyPath,
+          recordCleanupRecovery,
+        }),
+      ).rejects.toThrow(handoff.policyPath);
+      expect(recordCleanupRecovery).toHaveBeenCalledOnce();
+      expect(fs.existsSync(handoff.policyPath)).toBe(true);
+    } finally {
+      fs.rmSync(path.dirname(handoff.policyPath), { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the finalization result after temporary policy cleanup succeeds", async () => {
+    const recordCleanupRecovery = vi.fn();
+
+    await expect(
+      finalizeCreatedSandboxWithTemporaryPolicyCleanup({
+        finalize: async () => "created",
+        cleanup: () => true,
+        policyPath: "/verified/temporary-policy.yaml",
+        recordCleanupRecovery,
+      }),
+    ).resolves.toBe("created");
+    expect(recordCleanupRecovery).not.toHaveBeenCalled();
+  });
+
+  it("preserves finalization and temporary policy cleanup failures together", async () => {
+    const finalizationError = new Error("registration failed");
+
+    const error = await finalizeCreatedSandboxWithTemporaryPolicyCleanup({
+      finalize: async () => {
+        throw finalizationError;
+      },
+      cleanup: () => false,
+      policyPath: "/verified/temporary-policy.yaml",
+      recordCleanupRecovery: vi.fn(),
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toEqual([
+      finalizationError,
+      expect.objectContaining({ message: expect.stringContaining("temporary-policy.yaml") }),
+    ]);
+  });
+
+  it("records recovery when temporary policy cleanup throws after finalization", async () => {
+    const cleanupError = new Error("cleanup transport failed");
+    const recordCleanupRecovery = vi.fn();
+
+    const error = await finalizeCreatedSandboxWithTemporaryPolicyCleanup({
+      finalize: async () => "created",
+      cleanup: () => {
+        throw cleanupError;
+      },
+      policyPath: "/verified/temporary-policy.yaml",
+      recordCleanupRecovery,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ cause: cleanupError });
+    expect(recordCleanupRecovery).toHaveBeenCalledOnce();
   });
 
   it("restarts and rechecks the managed gateway after changing the env file", () => {
