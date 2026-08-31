@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import readline from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
@@ -191,6 +192,40 @@ describe("credential actions use typed OpenShell provider results", () => {
       expect(result.failureLines).toHaveLength(includesStartGuidance ? 3 : 2);
     },
   );
+
+  it("rejects an invalid reset provider before prompting or gateway mutation (#9806)", async () => {
+    const recoverNamedGatewayRuntime = vi.fn(async () => ({ recovered: true }));
+    setGlobalCliActionRuntimeHooksForTest({
+      recoverNamedGatewayRuntime,
+      recordExtraProvider: () => true,
+      forgetExtraProvider: () => true,
+      listManagedMcpCredentialReservations: () => [],
+    });
+    const promptSpy = vi.spyOn(readline, "createInterface").mockImplementation(() => {
+      throw new Error("credentials reset prompted for an invalid provider name");
+    });
+    const adapter = providerAdapter();
+
+    try {
+      const result = await runCredentialsResetAction(
+        { provider: "bad name/with*chars", confirmed: false },
+        { providerAdapter: adapter },
+      );
+
+      expect(result).toEqual({
+        exitCode: 1,
+        outputLines: [],
+        failureLines: [
+          "  Provider name must be 1-128 chars, start with a letter, and use only letters, digits, '.', '_', or '-'.",
+        ],
+      });
+      expect(promptSpy).not.toHaveBeenCalled();
+      expect(recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+      expect(adapter.deleteProvider).not.toHaveBeenCalled();
+    } finally {
+      promptSpy.mockRestore();
+    }
+  });
 
   it("preserves detach-before-delete recovery with typed failures (#9806)", async () => {
     const operations: string[] = [];

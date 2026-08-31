@@ -8,7 +8,11 @@ import type {
 } from "../../adapters/openshell/provider-adapter";
 import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
-import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
+import {
+  NAME_MAX_LENGTH,
+  NAME_VALID_PATTERN,
+  PROVIDER_NAME_VALID_PATTERN,
+} from "../../name-validation";
 import { CLI_NAME } from "../../cli/branding";
 import {
   isBridgeProviderName,
@@ -73,6 +77,11 @@ export async function runCredentialsResetAction(
   deps: CredentialsResetDeps = {},
 ): Promise<CredentialsResetResult> {
   const key = input.provider;
+  if (!PROVIDER_NAME_VALID_PATTERN.test(key)) {
+    return fail([
+      "  Provider name must be 1-128 chars, start with a letter, and use only letters, digits, '.', '_', or '-'.",
+    ]);
+  }
   if (isBridgeProviderName(key)) {
     return fail([
       `  '${key}' is a per-sandbox messaging bridge, not a credential.`,

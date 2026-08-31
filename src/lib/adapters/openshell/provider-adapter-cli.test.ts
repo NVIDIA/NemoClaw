@@ -154,21 +154,8 @@ describe("CLI OpenShell provider adapter", () => {
     expect(JSON.stringify(result)).not.toContain(storedCredentialValue);
   });
 
-  it("imports an existing profile and returns sorted credential keys (#9806)", async () => {
-    const run = vi
-      .fn()
-      .mockReturnValueOnce(captured(1, "", "provider profile already exists"))
-      .mockReturnValueOnce(
-        captured(
-          0,
-          JSON.stringify({
-            credentials: [
-              { env_vars: ["ZETA_TOKEN", "ALPHA_TOKEN"] },
-              { env_vars: ["ALPHA_TOKEN"] },
-            ],
-          }),
-        ),
-      );
+  it("treats an existing provider profile as already present (#9806)", async () => {
+    const run = vi.fn(() => captured(1, "", "provider profile already exists"));
     const adapter = createCliOpenShellProviderAdapter({ run });
 
     await expect(
@@ -177,6 +164,23 @@ describe("CLI OpenShell provider adapter", () => {
         profilePath: "/repo/profile.yaml",
       }),
     ).resolves.toEqual({ ok: true, value: { state: "already_present" } });
+    expect(run).toHaveBeenCalledWith(
+      ["provider", "profile", "import", "--file", "/repo/profile.yaml"],
+      expect.any(Object),
+    );
+  });
+
+  it("returns sorted unique credential keys from a provider profile (#9806)", async () => {
+    const run = vi.fn(() =>
+      captured(
+        0,
+        JSON.stringify({
+          credentials: [{ env_vars: ["ZETA_TOKEN", "ALPHA_TOKEN"] }, { env_vars: ["ALPHA_TOKEN"] }],
+        }),
+      ),
+    );
+    const adapter = createCliOpenShellProviderAdapter({ run });
+
     await expect(
       adapter.inspectProviderProfile({
         target: selectedOpenShellGateway(),
@@ -186,10 +190,10 @@ describe("CLI OpenShell provider adapter", () => {
       ok: true,
       value: { credentialKeys: ["ALPHA_TOKEN", "ZETA_TOKEN"] },
     });
-    expect(run.mock.calls.map(([args]) => args)).toEqual([
-      ["provider", "profile", "import", "--file", "/repo/profile.yaml"],
+    expect(run).toHaveBeenCalledWith(
       ["provider", "profile", "export", "custom", "--output", "json"],
-    ]);
+      expect.any(Object),
+    );
   });
 
   it("reconciles an endpointless profile inside the CLI adapter (#9806)", async () => {

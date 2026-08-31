@@ -772,6 +772,25 @@ describe("credentials oclif commands", () => {
     expect(output.stderr).toContain("delete failed");
   });
 
+  it("credentials reset rejects invalid provider names before gateway mutation", async () => {
+    const gatewayRecoveries: string[] = [];
+    const openshellCalls = installRuntimeBridge({
+      recoverNamedGatewayRuntime: async () => {
+        gatewayRecoveries.push("recover");
+        return { recovered: true };
+      },
+    });
+    const { CredentialsResetCommand } = loadCommands();
+
+    const output = await captureOutput(() =>
+      expectExitCode(() => CredentialsResetCommand.run(["bad name/with*chars", "--yes"]), 1),
+    );
+
+    expect(output.stderr).toContain("Provider name must be");
+    expect(gatewayRecoveries).toEqual([]);
+    expect(openshellCalls).toEqual([]);
+  });
+
   it("credentials add rejects --config values that look secret-shaped", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-12345";
     installRuntimeBridge();
