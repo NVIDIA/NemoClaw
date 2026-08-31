@@ -1733,60 +1733,13 @@ function isSafeChannelStatePath(p: string): boolean {
 }
 
 const CHANNEL_CLEAR_SENTINEL = "NEMOCLAW_CHANNEL_CLEAR_OK";
-const STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE = {
-  "sandbox-registry-unavailable": "Restore the NemoClaw sandbox registry entry.",
-  "driver-not-docker": "Restore normal OpenShell lifecycle access for this non-Docker sandbox.",
-  "state-paths-invalid": "Restore the channel's declared state-path contract.",
-  "docker-discovery-failed": "Start Docker or restore access to its daemon.",
-  "no-eligible-stopped-container": "Restore the registered stopped OpenShell container.",
-  "container-ownership-invalid": "Reconcile the sandbox registry and Docker container identity.",
-  "container-inspection-failed": "Restore Docker inspection access for the stopped container.",
-  "container-not-stopped": "Stop the registered sandbox container before retrying removal.",
-  "sandbox-volume-unavailable":
-    "Restore a writable Docker volume at /sandbox or the stopped sandbox's Docker overlay2 writable layer.",
-  "cleanup-helper-image-unavailable": "Restore the pinned NemoClaw cleanup image locally.",
-  "cleanup-helper-ownership-invalid": "Remove the conflicting cleanup helper container.",
-  "cleanup-helper-reconciliation-failed": "Reconcile the named cleanup helper container.",
-  "cleanup-state-tree-unsafe":
-    "Inspect the stopped sandbox volume; recreate the sandbox if its state tree is untrusted.",
-  "cleanup-deletion-unconfirmed": "Restore writable access to the stopped sandbox volume.",
-  "cleanup-helper-failed": "Inspect the stopped sandbox and Docker daemon.",
-  "container-revalidation-failed": "Reconcile the stopped container identity and state.",
-  "lifecycle-authority-unavailable": "Finish the active lifecycle transition or repair its lock.",
-} as const;
-
-type StoppedWechatCleanupFailure = Exclude<
-  ReturnType<(typeof policyChannelDependencies)["clearStoppedDockerSandboxChannelState"]>,
-  { readonly cleared: true }
->;
-
-function stoppedWechatCleanupFailureGuidance(
-  sandboxName: string,
-  cleanup: StoppedWechatCleanupFailure,
-): string {
-  if (
-    cleanup.cleanupHelperName &&
-    (cleanup.failure === "cleanup-helper-ownership-invalid" ||
-      cleanup.failure === "cleanup-helper-reconciliation-failed")
-  ) {
-    return (
-      `Inspect or remove cleanup helper '${cleanup.cleanupHelperName}' ` +
-      `for sandbox '${sandboxName}'.`
-    );
-  }
-  return STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE[cleanup.failure];
-}
 
 /**
  * Wipe durable channel state before rebuild can preserve an obsolete auth blob.
- * OpenShell exec runs first, followed by SSH and the stopped WeChat Docker fallback.
+ * OpenShell exec runs first, followed by SSH.
  * Fixes #3998.
  */
-function clearSandboxChannelDurableState(
-  sandboxName: string,
-  channelName: string,
-  options: { readonly allowAbsentStoppedState?: boolean } = {},
-): boolean {
+function clearSandboxChannelDurableState(sandboxName: string, channelName: string): boolean {
   const agent = resolveAgentForSandbox(sandboxName);
   const paths = getSandboxChannelStatePaths(agent, channelName);
   if (!paths.every(isSafeChannelStatePath)) {
@@ -1803,30 +1756,6 @@ function clearSandboxChannelDurableState(
   let result = executeSandboxExecCommand(sandboxName, cmd);
   if (!sentinelSeen(result)) {
     result = executeSandboxCommand(sandboxName, cmd);
-  }
-  if (!sentinelSeen(result) && agent.name === "openclaw" && channelName === "wechat") {
-    const stoppedCleanup = policyChannelDependencies.clearStoppedDockerSandboxChannelState(
-      sandboxName,
-      paths,
-    );
-    if (stoppedCleanup.cleared) {
-      console.log(`  ${G}✓${R} Cleared stopped-sandbox '${channelName}' channel state.`);
-      return true;
-    }
-    if (
-      options.allowAbsentStoppedState &&
-      [
-        "sandbox-registry-unavailable",
-        "driver-not-docker",
-        "no-eligible-stopped-container",
-      ].includes(stoppedCleanup.failure)
-    ) {
-      return true;
-    }
-    console.error(
-      `  ${YW}⚠${R} Stopped-Docker cleanup failed (${stoppedCleanup.failure}). ` +
-        `${stoppedWechatCleanupFailureGuidance(sandboxName, stoppedCleanup)} Then retry removal.`,
-    );
   }
   if (!sentinelSeen(result)) {
     console.error(
@@ -1938,25 +1867,19 @@ async function removeSandboxChannelUnlocked(
   // Channels with durable account or session state store auth blobs inside
   // the sandbox that survive a rebuild via the state_dirs backup. Tear those
   // down FIRST so a cleanup failure leaves the registry/policy untouched.
-  // OpenClaw WeChat can additionally recover through a stopped Docker volume
-  // helper because the same missing account file may block its entrypoint.
   // Bailing here is the only way to keep #3998 from recurring on cleanup
   // error. OpenClaw WeChat also checks for physical residue after an earlier
-  // interrupted removal erased its logical plan or policy record. A missing
-  // registry, non-Docker driver, or absent stopped container remains a quiet
-  // no-op only when no logical residue exists (#4001 review).
+  // interrupted removal erased its logical plan or policy record.
   if (
     requiresStateCleanupBeforeTeardown &&
     (hasChannelResidue || recoverPhysicalWechatResidue) &&
-    !clearSandboxChannelDurableState(sandboxName, canonical, {
-      allowAbsentStoppedState: !hasChannelResidue,
-    })
+    !clearSandboxChannelDurableState(sandboxName, canonical)
   ) {
     console.error(
       `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,
     );
     console.error(
-      `    Restore sandbox lifecycle access or follow the cleanup diagnostic above, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
+      `    Start the sandbox, then re-run: ${CLI_NAME} ${sandboxName} channels remove ${canonical}`,
     );
     process.exit(1);
   }
