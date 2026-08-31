@@ -13,6 +13,7 @@ import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
   isNvidiaEndpointRateLimitFailure,
+  messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
 } from "../live/messaging-providers-helpers.ts";
@@ -37,6 +38,23 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("uses a synthetic WeChat token even when the host exports one", () => {
+    const previousToken = process.env.WECHAT_BOT_TOKEN;
+    process.env.WECHAT_BOT_TOKEN = "host-wechat-token-must-not-reach-the-fake-api";
+
+    try {
+      const fixture = messagingEnv();
+      expect(fixture.tokens.wechat).toBe("test-fake-wechat-token-e2e");
+      expect(fixture.env.WECHAT_BOT_TOKEN).toBe("test-fake-wechat-token-e2e");
+    } finally {
+      Reflect.deleteProperty(process.env, "WECHAT_BOT_TOKEN");
+      Object.assign(
+        process.env,
+        previousToken === undefined ? {} : { WECHAT_BOT_TOKEN: previousToken },
+      );
+    }
+  });
+
   it("publishes independent fake Slack REST and websocket ports", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-slack-ports-"));
     const portFile = path.join(dir, "port");
@@ -161,20 +179,12 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(parseRuntimeProofPort(rawPort)).toBe(expected);
   });
 
-  it.each([
-    "",
-    "0",
-    "65536",
-    "-1",
-    "+1",
-    "1.5",
-    "1e3",
-    " 443",
-    "443 ",
-    "abc",
-  ])("rejects invalid runtime-proof port %j", (rawPort) => {
-    expect(() => parseRuntimeProofPort(rawPort)).toThrow(/runtime proof port/u);
-  });
+  it.each(["", "0", "65536", "-1", "+1", "1.5", "1e3", " 443", "443 ", "abc"])(
+    "rejects invalid runtime-proof port %j",
+    (rawPort) => {
+      expect(() => parseRuntimeProofPort(rawPort)).toThrow(/runtime proof port/u);
+    },
+  );
 
   it("classifies only rate-limited NVIDIA endpoint validation failures", () => {
     expect(

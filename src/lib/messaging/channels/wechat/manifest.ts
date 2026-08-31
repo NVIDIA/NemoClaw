@@ -131,6 +131,11 @@ export const wechatManifest = {
       },
       nodePreloads: [
         {
+          module: "wechat-account-placeholder",
+          injectInto: ["boot"],
+          optional: false,
+        },
+        {
           module: "wechat-diagnostics",
           injectInto: ["boot", "connect"],
           optional: false,

@@ -59,7 +59,7 @@ def process_is_running(pid):
     return True
 
 
-def cleanup_stale_temporaries(accounts_fd, filename, account_metadata):
+def cleanup_stale_temporaries(accounts_fd, filename, account_metadata, account_mode):
     try:
         directory_metadata = os.fstat(accounts_fd)
     except OSError:
@@ -88,7 +88,7 @@ def cleanup_stale_temporaries(accounts_fd, filename, account_metadata):
         if (
             not stat.S_ISREG(metadata.st_mode)
             or metadata.st_nlink != 1
-            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or stat.S_IMODE(metadata.st_mode) != account_mode
             or metadata.st_uid != account_metadata.st_uid
             or metadata.st_gid != account_metadata.st_gid
         ):
@@ -182,9 +182,15 @@ try:
             metadata = os.fstat(account_fd)
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
                 fail("a managed account file is not a single regular file")
-            if stat.S_IMODE(metadata.st_mode) & 0o077:
-                fail("a managed account file is accessible outside its owner")
-            cleanup_stale_temporaries(accounts_fd, filename, metadata)
+            account_mode = stat.S_IMODE(metadata.st_mode)
+            directory_metadata = os.fstat(accounts_fd)
+            if (
+                account_mode not in {0o600, 0o660}
+                or metadata.st_uid != directory_metadata.st_uid
+                or metadata.st_gid != directory_metadata.st_gid
+            ):
+                fail("a managed account file has unsafe ownership or permissions")
+            cleanup_stale_temporaries(accounts_fd, filename, metadata, account_mode)
             try:
                 with os.fdopen(os.dup(account_fd), "r", encoding="utf-8") as stream:
                     account_data = json.load(stream)
@@ -202,9 +208,9 @@ try:
             fail("a managed account token is neither canonical nor revision-scoped")
         account_data["token"] = runtime_placeholder
         payload = (json.dumps(account_data, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-        pending.append((filename, metadata, payload))
+        pending.append((filename, metadata, account_mode, payload))
 
-    for filename, metadata, payload in pending:
+    for filename, metadata, account_mode, payload in pending:
         temporary = f".{filename}.nemoclaw-{os.getpid()}-{secrets.token_hex(8)}.tmp"
         temporary_created = False
         try:
@@ -212,7 +218,7 @@ try:
             temporary_fd = os.open(temporary, create_flags, 0o600, dir_fd=accounts_fd)
             temporary_created = True
             try:
-                os.fchmod(temporary_fd, 0o600)
+                os.fchmod(temporary_fd, account_mode)
                 if os.geteuid() == 0:
                     os.fchown(temporary_fd, metadata.st_uid, metadata.st_gid)
                 offset = 0

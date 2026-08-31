@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { resolveSandboxContainerOwner } from "../domain/sandbox/container-owner";
 import { resolvePortableDemoPrivilegedExecTarget } from "../onboard/experimental/portable-demo-lifecycle";
-import { isImmutableDockerImageId } from "../onboard/openshell-docker-sandbox-containers";
 import {
   createFilePersistedEngineLifecycleStore,
   hasActivePersistedEngineStateMutationTarget,
@@ -38,6 +38,9 @@ export type StoppedDockerSandboxChannelStateCleanupFailure =
   | "container-inspection-failed"
   | "container-not-stopped"
   | "sandbox-volume-unavailable"
+  | "cleanup-helper-image-unavailable"
+  | "cleanup-helper-ownership-invalid"
+  | "cleanup-helper-reconciliation-failed"
   | "cleanup-command-failed"
   | "container-revalidation-failed"
   | "lifecycle-authority-unavailable";
@@ -50,6 +53,47 @@ const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const DOCKER_VOLUME_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u;
 const STOPPED_CHANNEL_STATE_PATH_RE = /^\/sandbox\/\.(?:openclaw|hermes)\/[A-Za-z0-9_-]+$/u;
+const STOPPED_CHANNEL_CLEANUP_IMAGE =
+  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
+const STOPPED_CHANNEL_CLEANUP_LABEL = "com.nvidia.nemoclaw.channel-cleanup";
+const STOPPED_CHANNEL_CLEANUP_OWNER_LABEL = `${STOPPED_CHANNEL_CLEANUP_LABEL}.owner`;
+const STOPPED_CHANNEL_CLEANUP_VOLUME_LABEL = `${STOPPED_CHANNEL_CLEANUP_LABEL}.volume`;
+export function buildStoppedDockerSandboxChannelCleanupScript(root = "/sandbox"): string {
+  return String.raw`
+"use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+const root = ${JSON.stringify(root)};
+const targets = JSON.parse(process.argv[1]);
+function lstat(candidate) {
+  try { return fs.lstatSync(candidate); }
+  catch (error) { if (error && error.code === "ENOENT") return null; throw error; }
+}
+const rootMetadata = lstat(root);
+if (!rootMetadata || rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) process.exit(40);
+for (const target of targets) {
+  if (typeof target !== "string" || !target.startsWith(root + "/.")) process.exit(41);
+  const relative = path.posix.relative(root, target);
+  const segments = relative.split("/");
+  if (!relative || relative.startsWith("../") || segments.some((part) => !part || part === "." || part === "..")) process.exit(42);
+  let parent = root;
+  let absent = false;
+  for (const segment of segments.slice(0, -1)) {
+    parent = path.posix.join(parent, segment);
+    const metadata = lstat(parent);
+    if (!metadata) { absent = true; break; }
+    if (metadata.isSymbolicLink() || !metadata.isDirectory()) process.exit(43);
+  }
+  if (absent) continue;
+  const metadata = lstat(target);
+  if (!metadata) continue;
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) process.exit(44);
+  fs.rmSync(target, { force: false, maxRetries: 0, recursive: true });
+  if (lstat(target)) process.exit(45);
+}
+`;
+}
+const STOPPED_CHANNEL_CLEANUP_SCRIPT = buildStoppedDockerSandboxChannelCleanupScript();
 const OFFLINE_DOCKER_OPERATION_OPTIONS = {
   encoding: "utf-8",
   ignoreError: true,
@@ -259,7 +303,6 @@ function findStoppedDirectSandboxContainer(sandboxName: string): string | null {
 
 type InspectedStoppedContainer = {
   readonly id: string;
-  readonly image: string;
   readonly running: boolean;
   readonly sandboxVolumeName: string;
 };
@@ -268,17 +311,12 @@ type StoppedContainerInspection =
   | { readonly inspected: InspectedStoppedContainer }
   | { readonly failure: StoppedDockerSandboxChannelStateCleanupFailure };
 
-/** Read immutable image, lifecycle, and shared-state mount data for one container ID. */
+/** Read immutable lifecycle and shared-state mount data for one container ID. */
 function inspectStoppedContainer(containerId: string): StoppedContainerInspection {
   let result: ReturnType<typeof dockerRun>;
   try {
     result = dockerRun(
-      [
-        "inspect",
-        "--format",
-        "{{.Id}}\t{{.Image}}\t{{.State.Running}}\t{{json .Mounts}}",
-        containerId,
-      ],
+      ["inspect", "--format", "{{.Id}}\t{{.State.Running}}\t{{json .Mounts}}", containerId],
       OFFLINE_DOCKER_OPERATION_OPTIONS,
     );
   } catch {
@@ -287,13 +325,11 @@ function inspectStoppedContainer(containerId: string): StoppedContainerInspectio
   if (result.status !== 0 || typeof result.stdout !== "string") {
     return { failure: "container-inspection-failed" };
   }
-  const [id, image, running, mountsJson, ...unexpected] = result.stdout.trim().split("\t");
+  const [id, running, mountsJson, ...unexpected] = result.stdout.trim().split("\t");
   if (
     unexpected.length > 0 ||
     !id ||
     !FULL_CONTAINER_ID_RE.test(id) ||
-    !image ||
-    !isImmutableDockerImageId(image) ||
     !mountsJson ||
     (running !== "true" && running !== "false")
   ) {
@@ -321,7 +357,7 @@ function inspectStoppedContainer(containerId: string): StoppedContainerInspectio
       ? sandboxMount.Name
       : null;
   return sandboxVolumeName
-    ? { inspected: { id, image, running: running === "true", sandboxVolumeName } }
+    ? { inspected: { id, running: running === "true", sandboxVolumeName } }
     : { failure: "sandbox-volume-unavailable" };
 }
 
@@ -331,7 +367,7 @@ function stoppedDockerCleanupFailure(
   return { cleared: false, failure };
 }
 
-function stoppedDockerCleanupCommand(paths: readonly string[]): string | null {
+function stoppedDockerCleanupPaths(paths: readonly string[]): readonly string[] | null {
   if (
     paths.length === 0 ||
     paths.length > 4 ||
@@ -340,9 +376,97 @@ function stoppedDockerCleanupCommand(paths: readonly string[]): string | null {
   ) {
     return null;
   }
+  return [...paths];
+}
+
+function cleanupIdentity(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function cleanupHelperName(sandboxName: string): string {
+  return `nemoclaw-channel-cleanup-${cleanupIdentity(sandboxName).slice(0, 24)}`;
+}
+
+function dockerResultText(result: ReturnType<typeof dockerRun>): string {
+  return `${String(result.stderr ?? "")} ${String(result.stdout ?? "")} ${String(result.error?.message ?? "")}`;
+}
+
+function dockerReportsMissingContainer(result: ReturnType<typeof dockerRun>): boolean {
+  return result.status !== 0 && /No such (?:container|object)/iu.test(dockerResultText(result));
+}
+
+type CleanupHelperInspection =
+  | { readonly state: "absent" }
+  | { readonly state: "invalid" }
+  | { readonly state: "owned"; readonly id: string };
+
+function inspectCleanupHelper(
+  helperName: string,
+  ownerIdentity: string,
+  volumeIdentity: string,
+): CleanupHelperInspection {
+  let result: ReturnType<typeof dockerRun>;
+  try {
+    result = dockerRun(
+      [
+        "inspect",
+        "--format",
+        `{{.Id}}\t{{.Config.Image}}\t{{index .Config.Labels "${STOPPED_CHANNEL_CLEANUP_LABEL}"}}\t{{index .Config.Labels "${STOPPED_CHANNEL_CLEANUP_OWNER_LABEL}"}}\t{{index .Config.Labels "${STOPPED_CHANNEL_CLEANUP_VOLUME_LABEL}"}}`,
+        helperName,
+      ],
+      OFFLINE_DOCKER_OPERATION_OPTIONS,
+    );
+  } catch {
+    return { state: "invalid" };
+  }
+  if (dockerReportsMissingContainer(result)) return { state: "absent" };
+  if (result.status !== 0 || typeof result.stdout !== "string") return { state: "invalid" };
+  const [id, image, marker, owner, volume, ...unexpected] = result.stdout.trim().split("\t");
+  return unexpected.length === 0 &&
+    !!id &&
+    FULL_CONTAINER_ID_RE.test(id) &&
+    image === STOPPED_CHANNEL_CLEANUP_IMAGE &&
+    marker === "1" &&
+    owner === ownerIdentity &&
+    volume === volumeIdentity
+    ? { state: "owned", id }
+    : { state: "invalid" };
+}
+
+function removeAndConfirmCleanupHelper(containerId: string): boolean {
+  let removed: ReturnType<typeof dockerRun>;
+  let confirmation: ReturnType<typeof dockerRun>;
+  try {
+    removed = dockerRun(["rm", "-f", containerId], OFFLINE_DOCKER_OPERATION_OPTIONS);
+    if (removed.status !== 0) return false;
+    confirmation = dockerRun(["inspect", containerId], OFFLINE_DOCKER_OPERATION_OPTIONS);
+  } catch {
+    return false;
+  }
+  return dockerReportsMissingContainer(confirmation);
+}
+
+function pinnedCleanupImageIsAvailable(): boolean {
+  try {
+    const result = dockerRun(
+      ["image", "inspect", "--format", "{{.Id}}", STOPPED_CHANNEL_CLEANUP_IMAGE],
+      OFFLINE_DOCKER_OPERATION_OPTIONS,
+    );
+    return result.status === 0 && /^sha256:[a-f0-9]{64}\s*$/u.test(String(result.stdout ?? ""));
+  } catch {
+    return false;
+  }
+}
+
+function reconcileCleanupHelperAfterCreate(
+  helperName: string,
+  ownerIdentity: string,
+  volumeIdentity: string,
+): boolean {
+  const helper = inspectCleanupHelper(helperName, ownerIdentity, volumeIdentity);
   return (
-    `rm -rf -- ${paths.join(" ")} && ` +
-    paths.map((statePath) => `test ! -e ${statePath}`).join(" && ")
+    helper.state === "absent" ||
+    (helper.state === "owned" && removeAndConfirmCleanupHelper(helper.id))
   );
 }
 
@@ -351,8 +475,8 @@ function clearStoppedDockerSandboxChannelState(
   sandboxName: string,
   paths: readonly string[],
 ): StoppedDockerSandboxChannelStateCleanupResult {
-  const cleanupCommand = stoppedDockerCleanupCommand(paths);
-  if (!cleanupCommand) return stoppedDockerCleanupFailure("state-paths-invalid");
+  const cleanupPaths = stoppedDockerCleanupPaths(paths);
+  if (!cleanupPaths) return stoppedDockerCleanupFailure("state-paths-invalid");
   const entry = readSandboxEntry(sandboxName);
   if (!entry) return stoppedDockerCleanupFailure("sandbox-registry-unavailable");
   if (normalizeDriver(entry?.openshellDriver) !== "docker") {
@@ -379,12 +503,26 @@ function clearStoppedDockerSandboxChannelState(
         return stoppedDockerCleanupFailure("container-ownership-invalid");
       }
       if (inspected.running) return stoppedDockerCleanupFailure("container-not-stopped");
-      let cleared: ReturnType<typeof dockerRun>;
+      if (!pinnedCleanupImageIsAvailable()) {
+        return stoppedDockerCleanupFailure("cleanup-helper-image-unavailable");
+      }
+      const helperName = cleanupHelperName(sandboxName);
+      const ownerIdentity = cleanupIdentity(sandboxName);
+      const volumeIdentity = cleanupIdentity(inspected.sandboxVolumeName);
+      const existingHelper = inspectCleanupHelper(helperName, ownerIdentity, volumeIdentity);
+      if (existingHelper.state === "invalid") {
+        return stoppedDockerCleanupFailure("cleanup-helper-ownership-invalid");
+      }
+      if (existingHelper.state === "owned" && !removeAndConfirmCleanupHelper(existingHelper.id)) {
+        return stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed");
+      }
+      let created: ReturnType<typeof dockerRun>;
       try {
-        cleared = dockerRun(
+        created = dockerRun(
           [
-            "run",
-            "--rm",
+            "create",
+            "--name",
+            helperName,
             "--pull",
             "never",
             "--network",
@@ -401,23 +539,46 @@ function clearStoppedDockerSandboxChannelState(
             "--pids-limit",
             "64",
             ...NEUTRALIZED_OFFLINE_HELPER_ENV,
+            "--label",
+            `${STOPPED_CHANNEL_CLEANUP_LABEL}=1`,
+            "--label",
+            `${STOPPED_CHANNEL_CLEANUP_OWNER_LABEL}=${ownerIdentity}`,
+            "--label",
+            `${STOPPED_CHANNEL_CLEANUP_VOLUME_LABEL}=${volumeIdentity}`,
             "--mount",
             `type=volume,src=${inspected.sandboxVolumeName},dst=/sandbox,volume-nocopy`,
             "--entrypoint",
-            "/usr/bin/env",
-            inspected.image,
-            "-i",
-            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            "/bin/sh",
-            "-c",
-            cleanupCommand,
+            "/usr/local/bin/node",
+            STOPPED_CHANNEL_CLEANUP_IMAGE,
+            "-e",
+            STOPPED_CHANNEL_CLEANUP_SCRIPT,
+            JSON.stringify(cleanupPaths),
           ],
           OFFLINE_DOCKER_OPERATION_OPTIONS,
         );
       } catch {
+        return reconcileCleanupHelperAfterCreate(helperName, ownerIdentity, volumeIdentity)
+          ? stoppedDockerCleanupFailure("cleanup-command-failed")
+          : stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed");
+      }
+      const helperId = String(created.stdout ?? "").trim();
+      if (created.status !== 0 || !FULL_CONTAINER_ID_RE.test(helperId)) {
+        return reconcileCleanupHelperAfterCreate(helperName, ownerIdentity, volumeIdentity)
+          ? stoppedDockerCleanupFailure("cleanup-command-failed")
+          : stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed");
+      }
+      let cleared: ReturnType<typeof dockerRun> | null = null;
+      try {
+        cleared = dockerRun(["start", "--attach", helperId], OFFLINE_DOCKER_OPERATION_OPTIONS);
+      } catch {
+        cleared = null;
+      }
+      if (!removeAndConfirmCleanupHelper(helperId)) {
+        return stoppedDockerCleanupFailure("cleanup-helper-reconciliation-failed");
+      }
+      if (!cleared || cleared.status !== 0 || cleared.error) {
         return stoppedDockerCleanupFailure("cleanup-command-failed");
       }
-      if (cleared.status !== 0) return stoppedDockerCleanupFailure("cleanup-command-failed");
       const confirmation = inspectStoppedContainer(containerId);
       if ("failure" in confirmation) {
         return stoppedDockerCleanupFailure("container-revalidation-failed");

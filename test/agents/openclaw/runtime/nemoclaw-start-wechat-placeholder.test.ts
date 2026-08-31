@@ -12,12 +12,18 @@ const REFRESH_HELPER = path.join(
   "../../../..",
   "scripts/lib/refresh-openclaw-wechat-placeholder.py",
 );
+const MUTABLE_CONFIG_NORMALIZER = path.join(
+  import.meta.dirname,
+  "../../../..",
+  "scripts/lib/normalize_mutable_config_perms.py",
+);
 const CANONICAL = "openshell:resolve:env:WECHAT_BOT_TOKEN";
 const SAVED_AT = "2026-08-29T00:00:00.000Z";
 
 interface WechatRefreshFixture {
   readonly account: Record<string, unknown>;
   readonly accountFiles: readonly string[];
+  readonly accountMode: number;
   readonly config: OpenClawTestConfig;
   readonly result: ReturnType<typeof spawnSync>;
 }
@@ -98,8 +104,9 @@ function runWechatRefresh(
     });
     const account = JSON.parse(fs.readFileSync(accountPath, "utf-8"));
     const accountFiles = fs.readdirSync(path.dirname(accountPath));
+    const accountMode = fs.statSync(accountPath).mode & 0o777;
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as OpenClawTestConfig;
-    return { account, accountFiles, config, result };
+    return { account, accountFiles, accountMode, config, result };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -144,6 +151,37 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     expect(run.account.token).toBe(scoped);
     expect(run.config).toEqual(wechatConfig(true));
     expect(run.result.stderr).not.toContain(scoped);
+  });
+
+  it("refreshes after mutable-config normalization and preserves its group-write mode", () => {
+    const scoped = "openshell:resolve:env:v52_WECHAT_BOT_TOKEN";
+    const run = runWechatRefresh(
+      CANONICAL,
+      { WECHAT_BOT_TOKEN: scoped },
+      true,
+      ({ configPath }) => {
+        const normalized = spawnSync(
+          "python3",
+          [
+            "-I",
+            MUTABLE_CONFIG_NORMALIZER,
+            path.dirname(configPath),
+            String(process.getuid?.() ?? 0),
+            String(process.getgid?.() ?? 0),
+          ],
+          { encoding: "utf-8", timeout: 5000 },
+        );
+        expect(
+          fs.statSync(path.join(path.dirname(configPath), "openclaw-weixin/accounts/primary.json"))
+            .mode & 0o777,
+        ).toBe(0o660);
+        expect(process.platform === "linux" ? normalized.status : 0, normalized.stderr).toBe(0);
+      },
+    );
+
+    expect(run.result.status, String(run.result.stderr)).toBe(0);
+    expect(run.account.token).toBe(scoped);
+    expect(run.accountMode).toBe(0o660);
   });
 
   it("leaves an already-current placeholder untouched", () => {
@@ -321,7 +359,7 @@ describe("OpenClaw WeChat provider placeholder refresh (#10079)", () => {
     [
       "group-readable",
       ({ accountPath }: { accountPath: string }) => fs.chmodSync(accountPath, 0o640),
-      "managed account file is accessible outside its owner",
+      "managed account file has unsafe ownership or permissions",
     ],
     [
       "symlinked account-directory",

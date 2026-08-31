@@ -73,10 +73,8 @@ describe("policy channel remove/enable flows", () => {
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["whatsapp"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
     const updateSandbox = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
-    vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation(
-      ((args: string[]) =>
-        args.includes("cat") ? { status: 1, stderr: "missing" } : { status: 0 }) as never,
-    );
+    vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation(((args: string[]) =>
+      args.includes("cat") ? { status: 1, stderr: "missing" } : { status: 0 }) as never);
     vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["whatsapp"]);
     vi.spyOn(policies, "listPresets").mockReturnValue([{ name: "whatsapp" } as never]);
     const removePreset = vi.spyOn(policies, "removePreset").mockReturnValue(true);
@@ -137,7 +135,7 @@ describe("policy channel remove/enable flows", () => {
       name: "alpha",
       agent: "custom-agent",
       policies: ["wechat"],
-      messaging: { schemaVersion: 1, plan: {} as never },
+      messaging: { schemaVersion: 1, plan: { channels: [] } as never },
     } as SandboxEntry);
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["wechat"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);

@@ -1743,7 +1743,10 @@ const STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE = {
   "container-inspection-failed": "Restore Docker inspection access for the stopped container.",
   "container-not-stopped": "Stop the registered sandbox container before retrying removal.",
   "sandbox-volume-unavailable": "Restore a single writable Docker volume at /sandbox.",
-  "cleanup-command-failed": "Repair the stopped sandbox image or volume permissions.",
+  "cleanup-helper-image-unavailable": "Restore the pinned NemoClaw cleanup image locally.",
+  "cleanup-helper-ownership-invalid": "Remove the conflicting cleanup helper container.",
+  "cleanup-helper-reconciliation-failed": "Reconcile the named cleanup helper container.",
+  "cleanup-command-failed": "Repair the stopped sandbox volume permissions.",
   "container-revalidation-failed": "Reconcile the stopped container identity and state.",
   "lifecycle-authority-unavailable": "Finish the active lifecycle transition or repair its lock.",
 } as const;
@@ -1753,7 +1756,11 @@ const STOPPED_WECHAT_CLEANUP_FAILURE_GUIDANCE = {
  * OpenShell exec runs first, followed by SSH and the stopped WeChat Docker fallback.
  * Fixes #3998.
  */
-function clearSandboxChannelDurableState(sandboxName: string, channelName: string): boolean {
+function clearSandboxChannelDurableState(
+  sandboxName: string,
+  channelName: string,
+  options: { readonly allowAbsentStoppedState?: boolean } = {},
+): boolean {
   const agent = resolveAgentForSandbox(sandboxName);
   const paths = getSandboxChannelStatePaths(agent, channelName);
   if (!paths.every(isSafeChannelStatePath)) {
@@ -1778,6 +1785,16 @@ function clearSandboxChannelDurableState(sandboxName: string, channelName: strin
     );
     if (stoppedCleanup.cleared) {
       console.log(`  ${G}✓${R} Cleared stopped-sandbox '${channelName}' channel state.`);
+      return true;
+    }
+    if (
+      options.allowAbsentStoppedState &&
+      [
+        "sandbox-registry-unavailable",
+        "driver-not-docker",
+        "no-eligible-stopped-container",
+      ].includes(stoppedCleanup.failure)
+    ) {
       return true;
     }
     console.error(
@@ -1871,6 +1888,8 @@ async function removeSandboxChannelUnlocked(
   const hasChannelResidue =
     registry.getConfiguredMessagingChannelsFromEntry(registryEntry).includes(canonical) ||
     policies.getAppliedPresets(sandboxName).includes(canonical);
+  const recoverPhysicalWechatResidue =
+    canonical === "wechat" && resolveAgentForSandbox(sandboxName).name === "openclaw";
 
   // The public Google Chat endpoint must stop before credentials, providers,
   // policy, or durable plan state change. Otherwise a partial teardown leaves
@@ -1895,15 +1914,17 @@ async function removeSandboxChannelUnlocked(
   // down FIRST so a cleanup failure leaves the registry/policy untouched.
   // OpenClaw WeChat can additionally recover through a stopped Docker volume
   // helper because the same missing account file may block its entrypoint.
-  // Bailing here is the
-  // only way to keep #3998 from recurring on cleanup error. Skip the cleanup
-  // attempt entirely when the registry/policy show no residue. Removing a
-  // never-configured/already-clean channel must remain a quiet no-op even when
-  // the sandbox is stopped (#4001 review).
+  // Bailing here is the only way to keep #3998 from recurring on cleanup
+  // error. OpenClaw WeChat also checks for physical residue after an earlier
+  // interrupted removal erased its logical plan or policy record. A missing
+  // registry, non-Docker driver, or absent stopped container remains a quiet
+  // no-op only when no logical residue exists (#4001 review).
   if (
     requiresStateCleanupBeforeTeardown &&
-    hasChannelResidue &&
-    !clearSandboxChannelDurableState(sandboxName, canonical)
+    (hasChannelResidue || recoverPhysicalWechatResidue) &&
+    !clearSandboxChannelDurableState(sandboxName, canonical, {
+      allowAbsentStoppedState: !hasChannelResidue,
+    })
   ) {
     console.error(
       `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,
