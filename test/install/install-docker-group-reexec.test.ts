@@ -176,6 +176,25 @@ function runSourcedInstaller(body: string) {
 }
 
 describeLinux("install.sh ensure_docker — #4414 non-interactive self re-exec", () => {
+  it("preserves portable caller Docker context in the group-reactivated child", () => {
+    const { result, output } = runSourcedInstaller(`
+DOCKER_CONTEXT=remote-context
+export DOCKER_CONTEXT
+capture_portable_caller_docker_context
+export NEMOCLAW_DOCKER_GROUP_REACTIVATED=1
+bash --noprofile --norc -c '
+  source "$INSTALLER_UNDER_TEST" >/dev/null
+  printf "CAPTURED=%s SET=%s CONTEXT=%s\\n" \
+    "$_PORTABLE_CALLER_DOCKER_CONTEXT_CAPTURED" \
+    "$_PORTABLE_CALLER_DOCKER_CONTEXT_SET" \
+    "$_PORTABLE_CALLER_DOCKER_CONTEXT"
+'
+`);
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("CAPTURED=1 SET=x CONTEXT=remote-context");
+  });
+
   it("re-execs through 'sg docker' instead of exiting 0 when NEMOCLAW_NON_INTERACTIVE=1", () => {
     // Repro of #4414: on a clean Ubuntu VM, the non-interactive curl|bash
     // installer adds the user to the docker group, then exits and asks the
