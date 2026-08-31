@@ -7,6 +7,10 @@ import path from "node:path";
 import YAML from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { getMessagingPolicyKeysByChannel } from "../../messaging/channels";
+import * as policies from "../../policy";
+import { getCredentialBindingProviders } from "../initial-policy";
+import { allMessagingChannelPolicyPresets } from "../messaging-policy-presets";
 import {
   materializeRebuildPolicyHandoff,
   mergeReplacementPolicyAccess,
@@ -497,4 +501,91 @@ network_policies:
       },
     });
   });
+
+  it.each(["openclaw", "hermes"] as const)(
+    "preserves the complete %s messaging policy lifecycle across rebuilds",
+    (agent) => {
+      const channels = [
+        "telegram",
+        "discord",
+        "wechat",
+        "slack",
+        "whatsapp",
+        "teams",
+        "googlechat",
+      ];
+      const removedChannels = ["wechat", "teams", "googlechat"];
+      const remainingChannels = ["telegram", "discord", "slack", "whatsapp"];
+      const sandboxName = `lifecycle-${agent}`;
+      const baseSource = fs.readFileSync(
+        path.join(process.cwd(), "agents", agent, "policy-permissive.yaml"),
+        "utf8",
+      );
+      const keysByChannel = getMessagingPolicyKeysByChannel({ agent });
+      const keysFor = (selected: string[]) =>
+        selected.flatMap((channel) => [...(keysByChannel[channel] ?? [])]);
+      const compose = (selected: string[]) =>
+        policies.mergePresetNamesIntoPolicy(
+          baseSource,
+          allMessagingChannelPolicyPresets(selected),
+          { agent, sandboxName, credentialBoundMessagingChannels: selected },
+        ).policy;
+
+      const activeDocument = YAML.parse(compose(channels));
+      activeDocument.network_policies.github.endpoints[0].host = "host-maintained.example.com";
+      const activeSource = YAML.stringify(activeDocument);
+      expect(getCredentialBindingProviders(activeSource)).toContain(
+        `${sandboxName}-teams-bridge`,
+      );
+
+      const stopped = mergeReplacementPolicyAccess(
+        activeSource,
+        baseSource,
+        [],
+        keysFor(channels),
+        [],
+        sandboxName,
+      ).source;
+      expect(getCredentialBindingProviders(stopped)).toEqual([]);
+
+      const reenabled = mergeReplacementPolicyAccess(
+        stopped,
+        compose(channels),
+        keysFor(channels),
+        [],
+        [],
+        sandboxName,
+      ).source;
+      expect(getCredentialBindingProviders(reenabled)).toContain(
+        `${sandboxName}-teams-bridge`,
+      );
+
+      const selectedRemoved = mergeReplacementPolicyAccess(
+        reenabled,
+        compose(remainingChannels),
+        keysFor(remainingChannels),
+        keysFor(removedChannels),
+        [],
+        sandboxName,
+      ).source;
+      expect(getCredentialBindingProviders(selectedRemoved)).not.toContain(
+        `${sandboxName}-teams-bridge`,
+      );
+
+      expect(YAML.parse(stopped).network_policies.github.endpoints[0].host).toBe(
+        "host-maintained.example.com",
+      );
+      expect(YAML.parse(reenabled).network_policies.github.endpoints[0].host).toBe(
+        "host-maintained.example.com",
+      );
+      expect(YAML.parse(selectedRemoved).network_policies.github.endpoints[0].host).toBe(
+        "host-maintained.example.com",
+      );
+      const finalPolicies = YAML.parse(selectedRemoved).network_policies;
+      expect(Object.keys(finalPolicies)).not.toEqual(
+        expect.arrayContaining(keysFor(removedChannels)),
+      );
+      expect(Object.keys(finalPolicies)).toEqual(expect.arrayContaining(keysFor(remainingChannels)));
+    },
+  );
 });
