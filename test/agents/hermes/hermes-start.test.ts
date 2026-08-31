@@ -80,6 +80,7 @@ function runHermesDashboardPortBootstrap(env: Record<string, string | undefined>
       // This fixture deliberately starts with no command arguments.
       "set -eo pipefail",
       "set --",
+      `source ${shellQuote(path.join(import.meta.dirname, "../../../agents/hermes/dashboard-external-host.sh"))}`,
       extractDashboardPortBootstrap(src),
       'printf "CHAT_UI_URL=%s\\n" "${CHAT_UI_URL:-}"',
       'printf "DASHBOARD_PUBLIC_PORT=%s\\n" "$DASHBOARD_PUBLIC_PORT"',

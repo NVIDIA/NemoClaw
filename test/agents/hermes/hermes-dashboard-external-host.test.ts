@@ -9,7 +9,7 @@ import { expect, it } from "vitest";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const PATCH = path.join(ROOT, "agents", "hermes", "dashboard-external-host.patch");
-const START_SCRIPT = path.join(ROOT, "agents", "hermes", "start.sh");
+const EXTERNAL_HOST_HELPER = path.join(ROOT, "agents", "hermes", "dashboard-external-host.sh");
 const EXTERNAL_HOST_ENV = "_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST";
 
 const UPSTREAM_HOST_GUARD = `import os
@@ -140,38 +140,18 @@ function environmentWithoutExternalHost(): NodeJS.ProcessEnv {
   return env;
 }
 
-function extractDashboardBootstrap(): string {
-  const source = fs.readFileSync(START_SCRIPT, "utf8");
-  const start = source.indexOf('NEMOCLAW_CMD=("$@")');
-  const end = source.indexOf('\nHERMES="$(command -v hermes)"', start);
-  expect(start).toBeGreaterThanOrEqual(0);
-  expect(end).toBeGreaterThan(start);
-  return source.slice(start, end).trimEnd();
-}
-
-function runDashboardBootstrap(overrides: NodeJS.ProcessEnv) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-host-bootstrap-"));
-  const script = path.join(tmp, "run.sh");
-  const env = { ...process.env };
-  delete env.CHAT_UI_URL;
-  delete env.NEMOCLAW_DASHBOARD_PORT;
-  Object.assign(env, overrides);
-  fs.writeFileSync(
-    script,
+function resolveExternalHost(url: string) {
+  return spawnSync(
+    "bash",
     [
-      "#!/usr/bin/env bash",
-      "set -eo pipefail",
-      "set --",
-      extractDashboardBootstrap(),
-      'printf "CHAT_UI_URL=%s\\n" "${CHAT_UI_URL:-}"',
-      'printf "HERMES_DASHBOARD_EXTERNAL_HOST=%s\\n" "${HERMES_DASHBOARD_EXTERNAL_HOST:-}"',
-      'printf "DASHBOARD_PUBLIC_PORT=%s\\n" "$DASHBOARD_PUBLIC_PORT"',
-    ].join("\n"),
-    { mode: 0o700 },
+      "-c",
+      'set -eo pipefail; source "$1"; nemoclaw_hermes_dashboard_external_host "$2"',
+      "bash",
+      EXTERNAL_HOST_HELPER,
+      url,
+    ],
+    { encoding: "utf8", timeout: 5000 },
   );
-  const result = spawnSync("bash", [script], { encoding: "utf8", env, timeout: 5000 });
-  fs.rmSync(tmp, { recursive: true, force: true });
-  return result;
 }
 
 it("accepts only the configured proxy host on the loopback Hermes dashboard (#10651)", () => {
@@ -205,30 +185,22 @@ it("keeps non-loopback proxy hosts denied when none is configured (#10651)", () 
   });
 });
 
-it("preserves the secure proxy host before normalizing CHAT_UI_URL to loopback (#10651)", () => {
-  const run = runDashboardBootstrap({
-    CHAT_UI_URL: "https://nemoclaw0-abc123.brevlab.com:29443/dashboard",
-    NEMOCLAW_DASHBOARD_PORT: "29443",
-  });
+it("derives the lowercase hostname from an HTTPS CHAT_UI_URL with a port and path (#10651)", () => {
+  const run = resolveExternalHost("https://NEMOCLAW0-ABC123.BREVLAB.COM:29443/dashboard");
 
   expect(run.status).toBe(0);
-  expect(run.stdout).toContain("CHAT_UI_URL=http://127.0.0.1:29443");
-  expect(run.stdout).toContain("HERMES_DASHBOARD_EXTERNAL_HOST=nemoclaw0-abc123.brevlab.com");
-  expect(run.stdout).toContain("DASHBOARD_PUBLIC_PORT=29443");
+  expect(run.stdout).toBe("nemoclaw0-abc123.brevlab.com\n");
 });
 
 it.each([
-  "http://dashboard.example.test:29443",
-  "https://127.0.0.1:29443",
-  "https://localhost:29443",
-  "https://user@dashboard.example.test:29443",
-  "https://dashboard.example.test:invalid",
-])("does not trust an unsafe proxy URL as a Hermes dashboard host: %s (#10651)", (url) => {
-  const run = runDashboardBootstrap({
-    CHAT_UI_URL: url,
-    NEMOCLAW_DASHBOARD_PORT: "29443",
-  });
+  { condition: "the scheme is not HTTPS", url: "http://dashboard.example.test:29443" },
+  { condition: "the host is an IPv4 loopback address", url: "https://127.0.0.1:29443" },
+  { condition: "the host is localhost", url: "https://localhost:29443" },
+  { condition: "the URL includes user information", url: "https://user@dashboard.example.test" },
+  { condition: "the port is malformed", url: "https://dashboard.example.test:invalid" },
+])("rejects CHAT_UI_URL when $condition (#10651)", ({ url }) => {
+  const run = resolveExternalHost(url);
 
-  expect(run.status).toBe(0);
-  expect(run.stdout).toContain("HERMES_DASHBOARD_EXTERNAL_HOST=\n");
+  expect(run.status).not.toBe(0);
+  expect(run.stdout).toBe("");
 });

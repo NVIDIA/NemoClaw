@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Lets the loopback-bound Hermes dashboard accept the exact browser hostname
-# that NemoClaw derives from an HTTPS CHAT_UI_URL.
+# that NemoClaw derives from an HTTPS CHAT_UI_URL. This remains Host validation,
+# not proxy authentication; deployments keep their existing ingress controls.
 diff --git a/hermes_cli/web_server.py b/hermes_cli/web_server.py
 --- a/hermes_cli/web_server.py
 +++ b/hermes_cli/web_server.py

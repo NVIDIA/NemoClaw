@@ -67,6 +67,7 @@ export function runHermesSandboxInitPreludeWithFakePath(
     const fakeBin = path.join(tmpDir, "bin");
     const fakeInit = path.join(tmpDir, "sandbox-init.sh");
     const fakeSupervisor = path.join(tmpDir, "gateway-supervisor.sh");
+    const fakeDashboardExternalHostHelper = path.join(tmpDir, "dashboard-external-host.sh");
     const fakeGatePython = path.join(tmpDir, "gate-python");
     const fakeGateHelper = path.join(tmpDir, "runtime-state-mutation-startup-gate.py");
     const fakeSetpriv = path.join(tmpDir, "setpriv");
@@ -87,6 +88,10 @@ export function runHermesSandboxInitPreludeWithFakePath(
       ].join("\n"),
     );
     fs.writeFileSync(fakeSupervisor, "# supervisor fixture\n");
+    fs.writeFileSync(
+      fakeDashboardExternalHostHelper,
+      "nemoclaw_hermes_dashboard_external_host() { return 1; }\n",
+    );
     fs.writeFileSync(fakeGatePython, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
     fs.writeFileSync(fakeGateHelper, "# startup gate fixture\n");
     fs.writeFileSync(
@@ -115,7 +120,11 @@ export function runHermesSandboxInitPreludeWithFakePath(
       .replaceAll("/usr/bin/setpriv", fakeSetpriv)
       .replaceAll("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", envWrapper)
       .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", fakeInit)
-      .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", fakeSupervisor);
+      .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", fakeSupervisor)
+      .replaceAll(
+        "/usr/local/lib/nemoclaw/hermes-dashboard-external-host.sh",
+        fakeDashboardExternalHostHelper,
+      );
 
     fs.writeFileSync(
       scriptPath,

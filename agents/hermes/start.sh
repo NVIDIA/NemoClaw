@@ -182,6 +182,24 @@ fi
 # shellcheck source=scripts/lib/gateway-supervisor.sh
 source "$_GATEWAY_SUPERVISOR"
 
+_HERMES_DASHBOARD_EXTERNAL_HOST_HELPER="/usr/local/lib/nemoclaw/hermes-dashboard-external-host.sh"
+if [ ! -f "$_HERMES_DASHBOARD_EXTERNAL_HOST_HELPER" ]; then
+  _HERMES_START_SOURCE="${BASH_SOURCE[0]}"
+  _HERMES_START_DIR="${_HERMES_START_SOURCE%/*}"
+  if [ "$_HERMES_START_DIR" = "$_HERMES_START_SOURCE" ]; then
+    _HERMES_START_DIR="."
+  fi
+  _HERMES_DASHBOARD_EXTERNAL_HOST_HELPER="$(cd "$_HERMES_START_DIR" && pwd)/dashboard-external-host.sh"
+  unset _HERMES_START_SOURCE _HERMES_START_DIR
+fi
+if [ ! -f "$_HERMES_DASHBOARD_EXTERNAL_HOST_HELPER" ]; then
+  printf '%s\n' '[SECURITY] Required Hermes dashboard external-host helper is missing.' >&2
+  exit 1
+fi
+# shellcheck source=agents/hermes/dashboard-external-host.sh
+source "$_HERMES_DASHBOARD_EXTERNAL_HOST_HELPER"
+unset _HERMES_DASHBOARD_EXTERNAL_HOST_HELPER
+
 # Harden RLIMITs (nproc #809 + nofile #4527) as root PID 1, before any step-down.
 harden_resource_limits
 
@@ -262,49 +280,12 @@ print(port)
 PYPORT
 }
 
-_chat_ui_external_host() {
-  [ -n "${CHAT_UI_URL:-}" ] || return 1
-  python3 - "$CHAT_UI_URL" <<'PYHOST'
-import ipaddress
-import sys
-from urllib.parse import urlparse
-
-try:
-    parsed = urlparse(sys.argv[1])
-    host = parsed.hostname
-    parsed.port
-except ValueError:
-    sys.exit(1)
-
-if (
-    parsed.scheme.lower() != "https"
-    or not parsed.netloc
-    or not host
-    or parsed.username is not None
-    or parsed.password is not None
-):
-    sys.exit(1)
-
-host = host.lower()
-if host.rstrip(".") == "localhost":
-    sys.exit(1)
-try:
-    address = ipaddress.ip_address(host.rstrip("."))
-except ValueError:
-    pass
-else:
-    if address.is_loopback or address.is_unspecified:
-        sys.exit(1)
-
-print(host)
-PYHOST
-}
-
 HERMES_DASHBOARD_EXTERNAL_HOST=""
-if _dashboard_external_host="$(_chat_ui_external_host)"; then
+if _dashboard_external_host="$(nemoclaw_hermes_dashboard_external_host "${CHAT_UI_URL:-}")"; then
   HERMES_DASHBOARD_EXTERNAL_HOST="$_dashboard_external_host"
 fi
 unset _dashboard_external_host
+unset -f nemoclaw_hermes_dashboard_external_host
 
 _dashboard_port_raw="${NEMOCLAW_DASHBOARD_PORT:-}"
 if [ -z "$_dashboard_port_raw" ]; then
