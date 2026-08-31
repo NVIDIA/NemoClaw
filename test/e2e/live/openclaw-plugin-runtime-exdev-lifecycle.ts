@@ -6,9 +6,9 @@ export const CURRENT_LIFECYCLE_PHASES = [
   "clone and prepare the current plugin fixture",
   "install and validate current OpenShell",
   "build and onboard plugin v1",
+  "install plugin v1 across filesystems",
   "restart the gateway and confirm plugin v1",
   "recreate the sandbox with plugin v2",
-  "prove cross-device runtime dependency replacement",
 ] as const;
 
 export type WeatherFixtureVersion = "v1" | "v2";

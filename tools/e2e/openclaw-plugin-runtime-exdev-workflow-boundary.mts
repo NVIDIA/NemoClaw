@@ -22,8 +22,8 @@ const JOB_CONTRACTS = [
     artifactId: "openclaw-plugin-runtime-exdev",
     sandboxName: "e2e-oc-exdev",
     selector: "current-lifecycle",
-    runName: "Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test",
-    uploadName: "Upload OpenClaw plugin runtime-deps EXDEV artifacts",
+    runName: "Run OpenClaw cross-device plugin lifecycle live test",
+    uploadName: "Upload OpenClaw cross-device plugin lifecycle artifacts",
     builderImage:
       "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
   },

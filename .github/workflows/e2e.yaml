@@ -5789,9 +5789,8 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # Main-push current-lifecycle coverage for #6108 / #3513 / #3127. This
-  # proves restart and recreation behavior plus target-side runtime-dependency
-  # replacement across devices.
+  # Main-push current-lifecycle coverage for #6108. This proves a custom plugin
+  # installs across devices and remains usable after restart and recreation.
   openclaw-plugin-runtime-exdev:
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-plugin-runtime-exdev') }}
@@ -5805,7 +5804,7 @@ jobs:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openclaw-plugin-runtime-exdev"
       E2E_AGENT_RUNTIME: "openclaw"
-      E2E_OBSERVABLE_OUTCOME: "Plugin behavior survives restart and recreation; target-side dependency replacement succeeds across devices"
+      E2E_OBSERVABLE_OUTCOME: "OpenClaw installs the custom plugin across devices; plugin behavior survives restart and recreation"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; current package; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
@@ -5844,7 +5843,7 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
-      - name: Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test
+      - name: Run OpenClaw cross-device plugin lifecycle live test
         run: |
           set -euo pipefail
           test -n "${DOCKER_CONFIG:-}"
@@ -5856,7 +5855,7 @@ jobs:
               --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
               --selector current-lifecycle
 
-      - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts
+      - name: Upload OpenClaw cross-device plugin lifecycle artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 

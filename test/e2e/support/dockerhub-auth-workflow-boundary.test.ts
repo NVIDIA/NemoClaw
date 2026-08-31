@@ -274,7 +274,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     const errors = validateMutation((workflow) => {
       const run = namedStep(
         workflow.jobs["openclaw-plugin-runtime-exdev"],
-        "Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test",
+        "Run OpenClaw cross-device plugin lifecycle live test",
       );
       expect(run).toBeDefined();
       run!.env = {
@@ -284,7 +284,7 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     });
 
     expect(errors).toContain(
-      "openclaw-plugin-runtime-exdev step 'Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test' env must not include DOCKER_CONFIG",
+      "openclaw-plugin-runtime-exdev step 'Run OpenClaw cross-device plugin lifecycle live test' env must not include DOCKER_CONFIG",
     );
   });
 

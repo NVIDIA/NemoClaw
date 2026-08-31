@@ -65,13 +65,13 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
 
     const run = steps.find(
       (step) =>
-        step.name === "Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test",
+        step.name === "Run OpenClaw cross-device plugin lifecycle live test",
     )!;
     run.env = { DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}" };
     run.run = "npx vitest run --project e2e-live test/e2e/live/other.test.ts";
 
     const upload = steps.find(
-      (step) => step.name === "Upload OpenClaw plugin runtime-deps EXDEV artifacts",
+      (step) => step.name === "Upload OpenClaw cross-device plugin lifecycle artifacts",
     )!;
     upload.if = "success()";
 

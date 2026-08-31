@@ -43,9 +43,8 @@ import {
 } from "./openshell-driver-config-test-wrapper.ts";
 
 // Keep this contract as a focused live test: build a deterministic custom plugin
-// on top of the complete managed runtime, prove it survives restart/recreation, then
-// run the in-sandbox Node replacement probe that guards #3513/#3127's EXDEV
-// cross-device runtime-deps failure mode. No registry or ledger is required.
+// on top of the complete managed runtime, install it across a real filesystem
+// boundary, and prove it survives restart and recreation.
 
 const WEATHER_FIXTURE_DIR = path.join(REPO_ROOT, "test/e2e/fixtures/plugins/weather");
 const TOOL_DISCLOSURE_ENV_REFERENCE = "${NEMOCLAW_TOOL_DISCLOSURE}";
@@ -74,10 +73,6 @@ const EXDEV_TMPFS_DRIVER_CONFIG = JSON.stringify({
 validateSandboxName(SANDBOX_NAME);
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
-const EXDEV_PATTERNS = [
-  /EXDEV: cross-device link not permitted/i,
-  /cross-device link not permitted/i,
-];
 function normalizeSandboxStdoutFrames(output: string): string {
   return output
     .split(/\r?\n/)
@@ -302,79 +297,21 @@ async function assertWeatherPluginRuntime(
   };
 }
 
-const runtimeDepsReplacementProbeSource = `set -eu
-rm -rf /sandbox/.openclaw/plugin-runtime-deps/exdev-guard 2>/dev/null || true
+const crossDevicePluginInstallSource = `set -eu
 rm -rf ${EXDEV_TMPFS_SOURCE}
-mkdir -p ${EXDEV_TMPFS_SOURCE} /sandbox/.openclaw/plugin-runtime-deps/exdev-guard
-printf 'ok\n' >${EXDEV_TMPFS_SOURCE}/package.txt
+mkdir -p ${EXDEV_TMPFS_SOURCE} /sandbox/.openclaw/extensions
+cp -R /opt/weather-plugin/. ${EXDEV_TMPFS_SOURCE}/
 source_device=$(stat -c '%d' ${EXDEV_TMPFS_SOURCE})
-target_device=$(stat -c '%d' /sandbox/.openclaw/plugin-runtime-deps/exdev-guard)
+target_device=$(stat -c '%d' /sandbox/.openclaw/extensions)
 printf 'source_device=%s target_device=%s\n' "$source_device" "$target_device"
 if [ "$source_device" = "$target_device" ]; then
-  printf 'EXDEV guard did not get distinct filesystems for ${EXDEV_TMPFS_SOURCE} and /sandbox plugin-runtime-deps\n' >&2
+  printf 'EXDEV guard did not get distinct filesystems for ${EXDEV_TMPFS_SOURCE} and /sandbox extensions\n' >&2
   exit 2
 fi
-node --input-type=module - <<'NODE'
-import fs from 'node:fs';
-import path from 'node:path';
-function assertLegacySourceSideStagingFailsWithExdev(targetDir, sourceDir) {
-  const sourceParentDir = path.dirname(sourceDir);
-  const tempDir = fs.mkdtempSync(path.join(sourceParentDir, '.openclaw-runtime-deps-source-side-'));
-  const stagedDir = path.join(tempDir, 'node_modules');
-  try {
-    fs.mkdirSync(path.dirname(targetDir), { recursive: true });
-    fs.cpSync(sourceDir, stagedDir, { recursive: true });
-    const sourceDevice = fs.statSync(sourceDir).dev;
-    const stagedDevice = fs.statSync(stagedDir).dev;
-    const targetParentDevice = fs.statSync(path.dirname(targetDir)).dev;
-    if (stagedDevice !== sourceDevice || stagedDevice === targetParentDevice) {
-      throw new Error(
-        'legacy self-check lost cross-device layout: source=' +
-          sourceDevice +
-          ' staged=' +
-          stagedDevice +
-          ' target_parent=' +
-          targetParentDevice,
-      );
-    }
-    try {
-      fs.rmSync(targetDir, { recursive: true, force: true });
-      fs.renameSync(stagedDir, targetDir);
-      throw new Error('legacy source-side staging unexpectedly renamed across devices');
-    } catch (error) {
-      if (error && error.code === 'EXDEV') {
-        console.log('source-side staging failure self-check completed');
-        return;
-      }
-      throw error;
-    }
-  } finally {
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
-    try { fs.rmSync(path.dirname(targetDir), { recursive: true, force: true }); } catch {}
-  }
-}
-function replaceNodeModulesDir(targetDir, sourceDir) {
-  const targetParentDir = path.dirname(targetDir);
-  fs.mkdirSync(targetParentDir, { recursive: true });
-  const tempDir = fs.mkdtempSync(path.join(targetParentDir, '.openclaw-runtime-deps-copy-'));
-  const stagedDir = path.join(tempDir, 'node_modules');
-  try {
-    fs.cpSync(sourceDir, stagedDir, { recursive: true });
-    fs.rmSync(targetDir, { recursive: true, force: true });
-    fs.renameSync(stagedDir, targetDir);
-  } finally {
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
-  }
-}
-assertLegacySourceSideStagingFailsWithExdev(
-  '/sandbox/.openclaw/plugin-runtime-deps/exdev-guard/source-side-regression/node_modules',
-  '${EXDEV_TMPFS_SOURCE}',
-);
-replaceNodeModulesDir('/sandbox/.openclaw/plugin-runtime-deps/exdev-guard/node_modules', '${EXDEV_TMPFS_SOURCE}');
-console.log('runtime deps replacement completed');
-NODE`;
+HOME=/sandbox openclaw plugins install ${EXDEV_TMPFS_SOURCE} --force
+(cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash)`;
 
-const runtimeDepsReplacementProbe = trustedSandboxShellScript(runtimeDepsReplacementProbeSource);
+const crossDevicePluginInstall = trustedSandboxShellScript(crossDevicePluginInstallSource);
 
 async function prepareCustomPluginSource(
   host: HostCliClient,
@@ -462,15 +399,14 @@ test(
     await artifacts.target.declare({
       id: "openclaw-plugin-runtime-exdev",
       boundary: "fresh-openclaw-sandbox-exec",
-      regressionTargets: ["#6108", "#3513", "#3127"],
+      regressionTargets: ["#6108"],
       contract: [
         "the current checkout builds and onboards the weather plugin as v1",
         "tools.invoke proves v1 survives restart and recreation installs v2",
         "the repository-controlled fixture is prebuilt with local BuildKit and handed to OpenShell as a local image",
         `test-only driver config mounts tmpfs at ${EXDEV_TMPFS_MOUNT}`,
-        `sandbox proves ${EXDEV_TMPFS_SOURCE} and plugin-runtime-deps are distinct devices`,
-        `legacy source-side staging fails with EXDEV across the same ${EXDEV_TMPFS_SOURCE} to plugin-runtime-deps boundary`,
-        "OpenClaw-style target-side plugin runtime-deps replacement completes without EXDEV",
+        `sandbox proves ${EXDEV_TMPFS_SOURCE} and the OpenClaw extension target are distinct devices`,
+        "OpenClaw installs the weather plugin across that boundary before restart",
       ],
       selector: "current-lifecycle",
       nemoclawSource: "current-checkout",
@@ -580,6 +516,20 @@ test(
     expect(onboard.exitCode, onboardText).toBe(0);
     const weatherAfterOnboard = await assertWeatherPluginRuntime(sandbox, "after-onboard", "v1");
 
+    progress.phase("install plugin v1 across filesystems");
+    const crossDeviceInstall = await sandbox.execShell(
+      SANDBOX_NAME,
+      crossDevicePluginInstall,
+      {
+        artifactName: "openclaw-plugin-exdev-production-install",
+        env: liveEnv(),
+        timeoutMs: PROBE_TIMEOUT_MS,
+      },
+    );
+    const crossDeviceInstallText = resultText(crossDeviceInstall);
+    expect(crossDeviceInstall.exitCode, crossDeviceInstallText).toBe(0);
+    expect(crossDeviceInstallText).toMatch(/source_device=\d+ target_device=\d+/);
+
     progress.phase("restart the gateway and confirm plugin v1");
     const restart = await host.command(
       lifecycleCommands.restart.command,
@@ -621,28 +571,12 @@ test(
     expect(recreate.exitCode, resultText(recreate)).toBe(0);
     const weatherAfterRecreate = await assertWeatherPluginRuntime(sandbox, "after-recreate", "v2");
 
-    progress.phase("prove cross-device runtime dependency replacement");
-    const probe = await sandbox.execShell(SANDBOX_NAME, runtimeDepsReplacementProbe, {
-      artifactName: "openclaw-plugin-exdev-runtime-deps-replacement",
-      env: liveEnv(),
-      timeoutMs: PROBE_TIMEOUT_MS,
-    });
-    const probeText = resultText(probe);
-    expect(
-      EXDEV_PATTERNS.some((pattern) => pattern.test(probeText)),
-      probeText,
-    ).toBe(false);
-    expect(probe.exitCode, probeText).toBe(0);
-    expect(probeText).toMatch(/source_device=\d+ target_device=\d+/);
-    expect(probeText).toContain("source-side staging failure self-check completed");
-    expect(probeText).toContain("runtime deps replacement completed");
-
     await artifacts.target.complete({
       id: "openclaw-plugin-runtime-exdev",
       onboardExitCode: onboard.exitCode,
+      crossDeviceInstallExitCode: crossDeviceInstall.exitCode,
       restartExitCode: restart.exitCode,
       recreateExitCode: recreate.exitCode,
-      runtimeDepsProbeExitCode: probe.exitCode,
       testOnlyTmpfsSource: EXDEV_TMPFS_SOURCE,
       assertions: {
         weatherAfterOnboard: weatherAfterOnboard.toolInvoked,
@@ -652,12 +586,8 @@ test(
           weatherAfterOnboard.fixtureVersion === "v1" &&
           weatherAfterRestart.fixtureVersion === "v1",
         recreationInstalledV2: weatherAfterRecreate.fixtureVersion === "v2",
-        distinctDevices: /source_device=\d+ target_device=\d+/.test(probeText),
-        sourceSideExdevSelfCheck: probeText.includes(
-          "source-side staging failure self-check completed",
-        ),
-        noExdevSignature: !EXDEV_PATTERNS.some((pattern) => pattern.test(probeText)),
-        successMarker: probeText.includes("runtime deps replacement completed"),
+        distinctDevices: /source_device=\d+ target_device=\d+/.test(crossDeviceInstallText),
+        productionInstallCompleted: crossDeviceInstall.exitCode === 0,
       },
     });
   },

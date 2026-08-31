@@ -620,19 +620,19 @@ mode.
 The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
 
 1. Onboard the custom weather plugin as v1.
-2. Restart the gateway and verify v1.
-3. Recreate the sandbox with the plugin changed to v2.
-4. Run the cross-device runtime-dependency replacement probe.
+2. Install v1 with OpenClaw across distinct filesystems.
+3. Restart the gateway and verify v1.
+4. Recreate the sandbox with the plugin changed to v2 and verify v2.
 
 The recreation remains the replacement boundary. One `tools.invoke` assertion
 per phase proves the plugin version after onboarding, restart, and recreation.
-The job also keeps the test-only tmpfs mount, distinct-device proof, source-side
-`EXDEV` failure, and target-side replacement success. `e2e-support` tests own
-deterministic wrapper argument rewriting. Exact package versions, runtime inspection,
-and catalog permutations are outside this contract. Workspace preservation and
-policy selection retain their focused coverage instead of another assertion in
-this target. The `rebuild-openclaw` job remains the canonical live rebuild
-coverage.
+The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
+across the proven filesystem boundary before restart. `e2e-support` tests own
+deterministic wrapper argument rewriting. Deterministic tests own exact package
+versions and third-party replacement internals. Runtime inspection and catalog
+permutations are outside this live contract. Workspace preservation and policy
+selection retain their focused coverage instead of another assertion in this
+target. The `rebuild-openclaw` job remains the canonical live rebuild coverage.
 
 The current-checkout fixture locally prebuilds its repository-controlled v1
 and v2 Dockerfiles with BuildKit, then hands only those local image references
