@@ -135,35 +135,39 @@ describe("runWechatHostQrLogin", () => {
 
   it.each([
     "evil.example.com",
+    "*.weixin.qq.com",
     "idc-3.weixin.qq.com:8443",
     "idc-3.weixin.qq.com.evil.example",
     "idc-3.weixin.qq.com/path",
-  ])("rejects an invalid redirect before contacting it [case %#] (#10606)", async (redirectHost) => {
-    const { fetch, calls } = scriptedFetch([
-      {
-        match: isInit,
-        bodies: [{ qrcode: "qr-cookie-invalid", qrcode_img_content: "https://example.com/qr" }],
-      },
-      {
-        match: isStatus,
-        bodies: [{ status: "scaned_but_redirect", redirect_host: redirectHost }],
-      },
-    ]);
+  ])(
+    "rejects an invalid redirect before contacting it [case %#] (#10606)",
+    async (redirectHost) => {
+      const { fetch, calls } = scriptedFetch([
+        {
+          match: isInit,
+          bodies: [{ qrcode: "qr-cookie-invalid", qrcode_img_content: "https://example.com/qr" }],
+        },
+        {
+          match: isStatus,
+          bodies: [{ status: "scaned_but_redirect", redirect_host: redirectHost }],
+        },
+      ]);
 
-    const result = await runWechatHostQrLogin({
-      fetch,
-      renderQr: noopRender,
-      log: noopLog,
-      sleep: fastSleep,
-    });
+      const result = await runWechatHostQrLogin({
+        fetch,
+        renderQr: noopRender,
+        log: noopLog,
+        sleep: fastSleep,
+      });
 
-    expect(result).toEqual({
-      kind: "error",
-      message: "WeChat login returned an invalid IDC redirect host.",
-    });
-    expect(calls.filter(isStatus)).toHaveLength(1);
-    expect(calls).not.toContainEqual(expect.stringContaining(redirectHost));
-  });
+      expect(result).toEqual({
+        kind: "error",
+        message: "WeChat login returned an invalid IDC redirect host.",
+      });
+      expect(calls.filter(isStatus)).toHaveLength(1);
+      expect(calls).not.toContainEqual(expect.stringContaining(redirectHost));
+    },
+  );
 
   it("rejects an invalid confirmed origin without returning credentials (#10606)", async () => {
     const { fetch } = scriptedFetch([

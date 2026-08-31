@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const WECHAT_ILINK_HOSTS = new Set(["ilinkai.weixin.qq.com", "ilinkai.wechat.com"]);
-export const WECHAT_ILINK_IDC_HOST_PATTERN_SOURCE =
-  "^idc-[0-9]+[.]weixin[.]qq[.]com$";
-const WECHAT_ILINK_IDC_HOST_PATTERN = new RegExp(WECHAT_ILINK_IDC_HOST_PATTERN_SOURCE);
+const WECHAT_ILINK_IDC_HOST_PATTERN = /^idc-[0-9]+[.]weixin[.]qq[.]com$/u;
 
 export function normalizeWechatIlinkBaseUrl(value: unknown): string | undefined {
   const raw = String(value ?? "");
@@ -43,5 +41,9 @@ export function normalizeWechatIlinkBaseUrl(value: unknown): string | undefined 
 
 export function isWechatIlinkHost(hostname: string): boolean {
   const normalized = hostname.toLowerCase();
-  return WECHAT_ILINK_HOSTS.has(normalized) || WECHAT_ILINK_IDC_HOST_PATTERN.test(normalized);
+  return WECHAT_ILINK_HOSTS.has(normalized) || isWechatIlinkIdcHost(normalized);
+}
+
+export function isWechatIlinkIdcHost(hostname: string): boolean {
+  return WECHAT_ILINK_IDC_HOST_PATTERN.test(hostname.toLowerCase());
 }

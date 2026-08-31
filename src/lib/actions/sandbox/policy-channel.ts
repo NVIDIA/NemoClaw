@@ -30,7 +30,6 @@ import {
   getMessagingManifestAvailabilityContext,
   isMessagingChannelSupportedByAgent,
   isMessagingHookConflictError,
-  listMessagingPolicyPresetMetadata,
   markPlanChannelPendingRemoval,
   MessagingHostStateApplier,
   MessagingSetupApplier,
@@ -1467,13 +1466,10 @@ async function addSandboxChannelUnlocked(
 
   const plan = await planSandboxChannelAdd(sandboxName, canonical, agent, dependencies);
   const messagingConfig = getMessagingChannelConfigFromPlan(plan);
-  const hasConfiguredPolicyEndpoints = listMessagingPolicyPresetMetadata().some(
-    (preset) =>
-      preset.channelId === canonical && preset.configuredEndpoints.length > 0,
-  );
-  const disclosedPresetState = hasConfiguredPolicyEndpoints
-    ? loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add", messagingConfig)
-    : initialDisclosedPresetState;
+  const disclosedPresetState =
+    canonical === "wechat"
+      ? loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add", messagingConfig)
+      : initialDisclosedPresetState;
   const acquired = collectManifestCredentials(manifest);
   if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
     return; // user aborted; nothing registered or widened

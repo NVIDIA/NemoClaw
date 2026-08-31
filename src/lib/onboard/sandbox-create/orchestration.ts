@@ -192,7 +192,7 @@ export function resolveRebuildObservabilityPolicyDelta(input: {
 }
 
 /** Preserve OpenShell's live policy plus bounded requirements for this explicit create. */
-function selectRebuildCreatePolicy(
+export function selectRebuildCreatePolicy(
   policySourcePath: string,
   generatedPolicy: import("../initial-policy").InitialSandboxPolicy,
   requiredNetworkPolicyKeys: readonly string[],

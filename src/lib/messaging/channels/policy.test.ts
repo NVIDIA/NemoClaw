@@ -19,12 +19,6 @@ import {
 type PolicyFixture = {
   readonly channelId: string;
   readonly presetName: string;
-  readonly configuredEndpoints?: readonly {
-    readonly envKey: string;
-    readonly policyKey: string;
-    readonly templateHost: string;
-    readonly allowedHostPattern: string;
-  }[];
 };
 
 function fixtureContentFor(
@@ -178,6 +172,7 @@ describe("messaging channel policy presets", () => {
     "https://user@idc-3.weixin.qq.com",
     "https://idc-3.weixin.qq.com/path",
     "https://idc-3.weixin.qq.com?query=1",
+    "https://*.weixin.qq.com",
     "https://idc-3.weixin.qq.com.evil.example",
     "https://evil.example",
   ])("rejects an untrusted WeChat policy origin [case %#] (#10606)", (baseUrl) => {
@@ -187,30 +182,13 @@ describe("messaging channel policy presets", () => {
         sandboxName: "wechat-policy-test",
         messagingConfig: { WECHAT_BASE_URL: baseUrl },
       }),
-    ).toThrow(/Configured messaging policy/);
+    ).toThrow(/WeChat baseUrl/);
   });
 
   it("fails closed when a configured endpoint loses its reviewed template (#10606)", () => {
-    const policy = createPolicyWithFixtures(
-      [
-        {
-          channelId: "wechat",
-          presetName: "wechat",
-          configuredEndpoints: [
-            {
-              envKey: "WECHAT_BASE_URL",
-              policyKey: "wechat_bridge",
-              templateHost: "ilinkai.wechat.com",
-              allowedHostPattern: "^idc-[0-9]+[.]weixin[.]qq[.]com$",
-            },
-          ],
-        },
-      ],
-      {
-        wechat:
-          "preset:\n  name: wechat\nnetwork_policies:\n  wechat_bridge:\n    endpoints: []\n",
-      },
-    );
+    const policy = createPolicyWithFixtures([{ channelId: "wechat", presetName: "wechat" }], {
+      wechat: "preset:\n  name: wechat\nnetwork_policies:\n  wechat_bridge:\n    endpoints: []\n",
+    });
 
     expect(() =>
       policy.loadMessagingChannelPolicyPreset("wechat", {

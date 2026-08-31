@@ -58,14 +58,6 @@ export interface MessagingPolicyPresetMetadata {
   readonly agentPolicyKeys: Partial<Record<MessagingAgentId, readonly string[]>>;
   readonly requiredAtCreate: boolean;
   readonly validationWarningLines: readonly string[];
-  readonly configuredEndpoints: readonly MessagingPolicyConfiguredEndpointMetadata[];
-}
-
-export interface MessagingPolicyConfiguredEndpointMetadata {
-  readonly envKey: string;
-  readonly policyKey: string;
-  readonly templateHost: string;
-  readonly allowedHostPattern: string;
 }
 
 export interface OpenClawRuntimeChannelMetadata {
@@ -268,22 +260,6 @@ export function listMessagingPolicyPresetMetadata(
   return selectManifests(options).flatMap((manifest) =>
     (manifest.policyPresets ?? []).map((preset) => {
       const normalized = normalizePolicyPreset(preset);
-      const configuredEndpoints = (normalized.configuredEndpoints ?? []).map((endpoint) => {
-        const input = manifest.inputs.find(
-          (candidate) => candidate.id === endpoint.inputId && candidate.kind === "config",
-        );
-        if (!input?.envKey) {
-          throw new Error(
-            `Messaging policy preset '${normalized.name}' references config input '${endpoint.inputId}' without an environment key.`,
-          );
-        }
-        return {
-          envKey: input.envKey,
-          policyKey: endpoint.policyKey,
-          templateHost: endpoint.templateHost,
-          allowedHostPattern: endpoint.allowedHostPattern,
-        };
-      });
       return {
         channelId: manifest.id,
         presetName: normalized.name,
@@ -291,7 +267,6 @@ export function listMessagingPolicyPresetMetadata(
         agentPolicyKeys: normalized.agentPolicyKeys ?? {},
         requiredAtCreate: normalized.requiredAtCreate === true,
         validationWarningLines: normalized.validationWarningLines ?? [],
-        configuredEndpoints,
       };
     }),
   );
