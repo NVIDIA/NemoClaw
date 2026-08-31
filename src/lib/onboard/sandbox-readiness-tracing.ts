@@ -17,9 +17,11 @@ export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DE
 /*
  * OpenShell can briefly report Error while it registers a new sandbox.
  * Debounce only Error; Failed and CrashLoopBackOff remain terminal. Remove
- * this workaround only after a fresh-onboard trace from fixed OpenShell
- * contains no transient Error phase. The skipped removal-signal test in
- * sandbox-readiness-tracing.test.ts records that checkpoint (#6043).
+ * this workaround only after an OpenShell release guarantees that sandbox
+ * list does not report Error while registering a newly created sandbox.
+ * Capture a fresh-onboarding trace from that release and enable the skipped
+ * removal-signal test in sandbox-readiness-tracing.test.ts before removal
+ * (#6043).
  */
 const SANDBOX_READY_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS = 30;
 
