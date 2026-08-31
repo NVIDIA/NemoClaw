@@ -1102,24 +1102,6 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       redactionValues,
       `${SANDBOX_NAME}-wechat-bridge`,
     );
-    // TEMPORARY: diagnose a reproducible ECONNREFUSED at send time despite a
-    // successful proxy create/connect/start. Confirms whether the proxy
-    // container is still present/running immediately before the send.
-    await host.command(
-      "docker",
-      [
-        "ps",
-        "-a",
-        "--filter",
-        "name=nemoclaw-fake-wechat-proxy",
-        "--format",
-        "{{.Names}}\t{{.Status}}",
-      ],
-      {
-        artifactName: "diagnose-fake-wechat-proxy-state",
-        redactionValues,
-      },
-    );
     const installedWechatProof = await runInstalledWechatRuntimeProof(
       sandbox,
       fakeWechat,

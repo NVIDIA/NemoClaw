@@ -216,6 +216,50 @@ network_policies:
     });
   });
 
+  it("removes only endpoints bound to disabled channel providers", () => {
+    const live = `
+version: 1
+network_policies:
+  provider_composed:
+    endpoints:
+      - host: chat.googleapis.com
+        credential_binding: {provider: alpha-googlechat-bridge}
+      - host: operator.example.com
+  disabled_only:
+    endpoints:
+      - host: api.telegram.org
+        credential_binding: {provider: alpha-telegram-bridge}
+  host_added:
+    endpoints:
+      - host: host.example.com
+        credential_binding: {provider: host-added-provider}
+`;
+
+    const merged = mergeReplacementPolicyAccess(
+      live,
+      "version: 1\nnetwork_policies: {}\n",
+      [],
+      [],
+      [],
+      ["alpha-googlechat-bridge", "alpha-telegram-bridge"],
+    );
+
+    expect(merged.changed).toBe(true);
+    expect(YAML.parse(merged.source).network_policies).toEqual({
+      provider_composed: {
+        endpoints: [{ host: "operator.example.com" }],
+      },
+      host_added: {
+        endpoints: [
+          {
+            host: "host.example.com",
+            credential_binding: { provider: "host-added-provider" },
+          },
+        ],
+      },
+    });
+  });
+
   it("adds the explicit rebuild observability policy while preserving host entries", () => {
     const merged = mergeReplacementPolicyAccess(
       "version: 1\nnetwork_policies:\n  host_edit: {name: host_edit}\n",
