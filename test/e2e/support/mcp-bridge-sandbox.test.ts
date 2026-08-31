@@ -6,10 +6,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
+import * as policy from "../../../src/lib/policy";
 import { testTimeout } from "../../helpers/timeouts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   assertManagedMcpPolicySurvivedRemoval,
@@ -20,6 +22,7 @@ import {
   restoreDnsRebindingHostsFixture,
 } from "../live/mcp-bridge-sandbox.ts";
 import {
+  assertRawOpenShellAllowedIpsRebindingDenied,
   buildRawOpenShellAllowedIpsRebindingPolicy,
   buildRawOpenShellAllowedIpsRebindingProbeScript,
   parseRawOpenShellAllowedIpsRebindingEndpoint,
@@ -275,31 +278,63 @@ network_policies:
     expect(transportFailure.status).toBe(7);
   });
 
-  it("runs the raw proof in both MCP lanes without calling an adapter and restores policy", () => {
-    const mcpBridgeSource = fs.readFileSync("test/e2e/live/mcp-bridge.test.ts", "utf8");
-    const networkPolicySource = fs.readFileSync("test/e2e/live/network-policy.test.ts", "utf8");
-    const contractSource = fs.readFileSync(
-      "test/e2e/live/openshell-allowed-ips-rebinding.ts",
-      "utf8",
+  it("applies and restores the raw proof through live OpenShell policy authority", async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-raw-policy-proof-"));
+    tempDirs.push(rootDir);
+    const artifacts = new ArtifactSink(path.join(rootDir, "artifacts"));
+    await artifacts.ensureRoot();
+    const basePolicy = "version: 1\nnetwork_policies: {}\n";
+    let currentPolicy = basePolicy;
+    const policyMutations: Array<{ document: string; operation: string | undefined }> = [];
+    const setPolicy = vi
+      .spyOn(policy, "setPolicyDocument")
+      .mockImplementation((_sandboxName, document, options) => {
+        currentPolicy = document;
+        policyMutations.push({ document, operation: options?.operation });
+        return true;
+      });
+    const host = {
+      command: async (_command: string, _args: string[], options?: { artifactName?: string }) => ({
+        ...denialResult(),
+        stdout: options?.artifactName === "host-address-for-sandbox" ? "route 10.20.30.40\n" : "",
+      }),
+    } as unknown as HostCliClient;
+    const openshellCalls: string[][] = [];
+    const sandbox = {
+      openshell: async (args: string[]) => {
+        openshellCalls.push(args);
+        return {
+          ...denialResult(),
+          stdout: args.includes("--full") ? currentPolicy : basePolicy,
+        };
+      },
+      execShell: async () => ({
+        ...denialResult(),
+        stdout: `${RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER}403\n`,
+      }),
+    } as never;
+
+    try {
+      await assertRawOpenShellAllowedIpsRebindingDenied({
+        artifacts,
+        host,
+        policySettleMs: 0,
+        sandbox,
+        sandboxName: "raw-proof",
+        timeoutMs: 1_000,
+      });
+    } finally {
+      setPolicy.mockRestore();
+    }
+
+    expect(policyMutations).toHaveLength(2);
+    expect(policyMutations[0]?.document).toContain(RAW_OPENSHELL_REBIND_POLICY_KEY);
+    expect(policyMutations[0]?.operation).toBe("run the raw OpenShell allowed_ips rebinding proof");
+    expect(policyMutations[1]?.document).toBe(basePolicy.trim());
+    expect(policyMutations[1]?.operation).toBe(
+      "restore the raw OpenShell allowed_ips rebinding proof policy",
     );
-    expect(
-      mcpBridgeSource.match(
-        /await runFullMcpBridgeE2eCoverage\(\s*mcpBridgeE2eScope,\s*\(\) =>\s*assertRawOpenShellAllowedIpsRebindingDenied\(/gu,
-      ),
-    ).toHaveLength(1);
-    expect(networkPolicySource).not.toContain("assertRawOpenShellAllowedIpsRebindingDenied");
-    expect(contractSource).toContain('["policy", "set", "--policy"');
-    expect(contractSource).toContain("server.requestCount()");
-    expect(contractSource).toContain("raw-openshell-rebinding-policy-restore");
-    expect(contractSource).toContain("raw-openshell-rebinding-policy-verify-restored");
-    expect(contractSource.indexOf("raw-openshell-rebinding-policy-restore")).toBeGreaterThan(
-      contractSource.indexOf("} finally {"),
-    );
-    expect(contractSource).toContain(
-      "https://github.com/NVIDIA/OpenShell/blob/3dee5570a46076a57a3b056f35f35ebc0861ac85/",
-    );
-    expect(contractSource).not.toContain("host.nemoclaw");
-    expect(contractSource).not.toContain("assertAdapterDnsRebindingDenied");
+    expect(openshellCalls.some((args) => args[0] === "policy" && args[1] === "set")).toBe(false);
   });
 
   it("accepts an unchanged surviving policy only after the unrelated policy is absent", () => {
