@@ -107,6 +107,7 @@ type DestroyHarnessOptions = {
   onPrepareManagedLlamaCppRuntimeCleanup?: () => void;
   preparedManagedLlamaCppRuntimeCleanup?: PreparedManagedLlamaCppRuntimeCleanup | null;
   mcpAddState?: "prepared";
+  mcpAdapterScrubSkipped?: true;
   mcpServers?: string[];
   mcpRuntimeSelection?: {
     gatewayName: string;
@@ -495,9 +496,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
     });
   let dockerOrphanIds = [...(options.dockerOrphanIds ?? [])];
-  let dockerNameLabeledIds = [
-    ...(options.dockerNameLabeledIds ?? options.dockerOrphanIds ?? []),
-  ];
+  let dockerNameLabeledIds = [...(options.dockerNameLabeledIds ?? options.dockerOrphanIds ?? [])];
   let dockerIdentityResult = options.dockerRunResult;
   const dockerRunSpy = vi.spyOn(dockerRun, "dockerRun").mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args.map(String) : [];
@@ -552,9 +551,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     const sequencedResult = options.dockerRunResultSequence?.[identityProbeCall - 1];
     const exactCleanupResult = {
       status: options.dockerOrphanQueryStatus ?? 0,
-      stdout: dockerNameLabeledIds
-        .map((id) => `${id}\topenshell\tdefault\tsb-alpha`)
-        .join("\n"),
+      stdout: dockerNameLabeledIds.map((id) => `${id}\topenshell\tdefault\tsb-alpha`).join("\n"),
       stderr: "",
     };
     const result =
@@ -639,6 +636,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     ...(options.mcpServers?.length
       ? { runtimeSelection: resolvedMcpRuntimeSelection }
       : {}),
+    ...(options.mcpAdapterScrubSkipped ? { adapterScrubSkipped: true as const } : {}),
   };
   const gatewayPinsAtMcpPrepare: Array<string | undefined> = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

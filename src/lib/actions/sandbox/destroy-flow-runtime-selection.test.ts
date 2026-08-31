@@ -35,6 +35,7 @@ describe("destroySandbox OpenShell runtime selection", () => {
 
     expectMcpFinalizeAfterDelete(harness);
     expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", {
+      force: false,
       runtimeSelection,
     });
     const preflightRunner = harness.selectGatewaySpy.mock.calls[0]?.[2] as

@@ -151,10 +151,10 @@ async function prepareMcpDestroy(
         force,
         ...(runtimeSelection ? { runtimeSelection } : {}),
       })
-    : await prepareMcpBridgesForDestroy(
-        sandboxName,
-        runtimeSelection ? { runtimeSelection } : {},
-      );
+    : await prepareMcpBridgesForDestroy(sandboxName, {
+        force,
+        ...(runtimeSelection ? { runtimeSelection } : {}),
+      });
   if (sandboxConfirmedAbsent && preparation.entries.length > 0) {
     console.warn(
       `  ${YW}⚠${R} Sandbox '${sandboxName}' is already absent, so its retained-volume MCP adapter entry cannot be scrubbed in place. Exact OpenShell providers will be deleted so any stale credential placeholder cannot authenticate; same-name onboarding may need to replace stale MCP adapter config.`,
@@ -253,7 +253,11 @@ async function restoreMcpAfterDeleteAbort(
   let recoveryFailure: string | undefined;
   let openedRollbackWindow = false;
   try {
-    if (hardened.hardenedForDelete && preparation.entries.length > 0) {
+    if (
+      hardened.hardenedForDelete &&
+      preparation.entries.length > 0 &&
+      !preparation.adapterScrubSkipped
+    ) {
       if (!hardened.timerProcessToken) {
         throw new Error(
           "Cannot open a bounded MCP rollback window because the active shields timer had no valid process token.",
@@ -371,8 +375,7 @@ export async function executeSandboxDestroy({
         if (
           sandboxConfirmedAbsent &&
           expectedContainerIdentities !== undefined &&
-          expectedContainerIdentityFingerprint ===
-            pendingCreateIdentity.sandboxIdentityFingerprint
+          expectedContainerIdentityFingerprint === pendingCreateIdentity.sandboxIdentityFingerprint
         ) {
           return isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateIdentity)
             ? { status: "match" }

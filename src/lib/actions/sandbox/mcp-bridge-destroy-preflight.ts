@@ -35,6 +35,8 @@ export interface McpDestroyPreparation {
   destroyAlreadyPending: boolean;
   /** One authority-derived OpenShell target frozen for this destroy attempt. */
   runtimeSelection?: McpProviderInspectionRuntimeSelection;
+  /** True when `--force` continued without scrubbing the retained-volume adapter entry. */
+  adapterScrubSkipped?: true;
 }
 
 export function cloneMcpBridgeEntry(entry: McpBridgeEntry): McpBridgeEntry {

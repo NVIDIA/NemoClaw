@@ -1094,6 +1094,7 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
     expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", {
+      force: false,
       runtimeSelection: expect.objectContaining({
         gatewayName: "nemoclaw-19080",
         workspace: "default",

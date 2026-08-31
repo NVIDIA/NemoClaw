@@ -199,7 +199,11 @@ export function expectFailedHardeningMcpRestore(harness: DestroyHarness): void {
 }
 
 export function expectMcpFinalizeAfterDelete(harness: DestroyHarness): void {
+  // The live preparation is force-aware since #10469: `--force` may keep a
+  // retained-volume adapter entry that cannot be scrubbed. These flows are all
+  // plain destroys, so the flag must be threaded through as false.
   expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", {
+    force: false,
     runtimeSelection: expect.objectContaining({
       gatewayName: "nemoclaw-19080",
       workspace: "default",
