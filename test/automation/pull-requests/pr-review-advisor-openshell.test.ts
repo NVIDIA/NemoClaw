@@ -171,6 +171,50 @@ describe("PR review advisor specialist lifecycle", () => {
     );
   });
 
+  it("does not publish a specialist summary after cancellation during cleanup", async () => {
+    const workspace = temporaryDirectory();
+    const artifactDirectory = "pr-review-specialist-behavior";
+    const artifactPath = path.join(workspace, "artifacts", artifactDirectory);
+    const jobSummary = path.join(workspace, "job-summary.md");
+    let receive!: (signal: NodeJS.Signals) => void;
+    fs.mkdirSync(artifactPath, { recursive: true });
+    fs.writeFileSync(jobSummary, "Existing summary.\n");
+    fs.writeFileSync(
+      path.join(artifactPath, "pr-review-behavior-summary.md"),
+      "# Behavior specialist\n\nNo behavior finding.\n",
+    );
+    const restore = vi.fn();
+    const lifecycle: AdvisorSpecialistLifecycle = {
+      prepare: async () => undefined,
+      startGateway: () => ({ configure: Promise.resolve() }),
+      create: () => undefined,
+      run: () => undefined,
+      download: () => undefined,
+      remove: () => receive("SIGTERM"),
+    };
+
+    await runAdvisorSpecialistCommand(
+      "analysis",
+      {
+        GITHUB_STEP_SUMMARY: jobSummary,
+        GITHUB_WORKSPACE: workspace,
+        PR_REVIEW_ADVISOR_ARTIFACT_DIR: artifactDirectory,
+        PR_REVIEW_ADVISOR_INTEREST: "behavior",
+      },
+      lifecycle,
+      {
+        listen: (handler) => {
+          receive = handler;
+          return () => undefined;
+        },
+        restore,
+      },
+    );
+
+    expect(fs.readFileSync(jobSummary, "utf8")).toBe("Existing summary.\n");
+    expect(restore).toHaveBeenCalledWith("SIGTERM");
+  });
+
   it("rejects a specialist summary symlink without publishing its target", () => {
     const workspace = temporaryDirectory();
     const artifactDirectory = "pr-review-specialist-behavior";

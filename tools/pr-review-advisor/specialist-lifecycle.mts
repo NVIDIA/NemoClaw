@@ -241,7 +241,8 @@ export async function runAdvisorSpecialistCommand(
       },
       cancelled: () => received !== undefined,
     });
-    if (result === "complete" && env.GITHUB_STEP_SUMMARY) publishSpecialistJobSummary(env);
+    if (result === "complete" && received === undefined && env.GITHUB_STEP_SUMMARY)
+      publishSpecialistJobSummary(env);
   } catch (error) {
     cancellationFailure ??= error;
     if (!received) throw error;
