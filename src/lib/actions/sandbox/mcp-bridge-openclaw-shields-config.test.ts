@@ -48,7 +48,7 @@ describe("OpenClaw MCP config mutation posture (#10469)", () => {
     expect(mocks.isShieldsDown).toHaveBeenCalledWith("alpha", false);
   });
 
-  it("refuses a mutation while shields are up and names the recovery command", () => {
+  it("refuses a mutation while Shields are up and keeps the posture probe read-only (#10469)", () => {
     mocks.isShieldsDown.mockReturnValue(false);
     expect(() => assertOpenClawMcpConfigMutationAllowed("alpha")).toThrow(
       /shields up or an unreadable shields posture/,
@@ -56,11 +56,6 @@ describe("OpenClaw MCP config mutation posture (#10469)", () => {
     expect(() => assertOpenClawMcpConfigMutationAllowed("alpha")).toThrow(
       '`nemoclaw alpha shields down --timeout 15m --reason "MCP maintenance"`',
     );
-  });
-
-  it("refuses without inline recovery so an unreadable posture fails closed", () => {
-    mocks.isShieldsDown.mockReturnValue(false);
-    expect(() => assertOpenClawMcpConfigMutationAllowed("alpha")).toThrow();
     // `false` keeps the probe read-only: a mutation preflight must never repair
     // the posture it is inspecting.
     expect(mocks.isShieldsDown).toHaveBeenCalledWith("alpha", false);
