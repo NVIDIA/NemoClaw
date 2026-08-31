@@ -12,6 +12,7 @@ import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/run
 import * as credentialProviderRegistrationModule from "../../../src/lib/onboard/credential-provider-registration.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
 import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
+import { clearStoppedDockerSandboxChannelState } from "../../../src/lib/sandbox/privileged-exec.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -510,6 +511,35 @@ export function registerChannelsStopStartProviderCleanup(
     );
   }
 }
+
+export function registerChannelsStopStartCleanup(
+  cleanup: CleanupRegistry,
+  host: HostCliClient,
+  sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
+  options: {
+    readonly agent: AgentKind;
+    readonly env: NodeJS.ProcessEnv;
+    readonly redactions: string[];
+    readonly sandboxName: string;
+  },
+): void {
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: `cleanup-openshell-gateway-destroy-${options.agent}`,
+    env: options.env,
+    redactionValues: options.redactions,
+    timeoutMs: 60_000,
+  });
+  registerChannelsStopStartProviderCleanup(cleanup, host, options);
+  trackSandboxCleanup(
+    cleanup,
+    host,
+    sandbox,
+    options.sandboxName,
+    options.env,
+    options.redactions,
+    `cleanup-channels-stop-start-${options.agent}`,
+  );
+}
 // Channels that emit no credentialBinding, each for its own reason. Independent oracle —
 // hardcoded on purpose, not derived from the manifest under test (that would be circular).
 const CHANNELS_WITHOUT_CREDENTIAL_BINDING: Record<string, string> = {
@@ -684,9 +714,7 @@ function expectPlanChannelState(channelId: string, expected: ChannelPlanExpected
 function expectRemovedPlanChannelRetired(channelId: string): void {
   const plan = messagingPlan(SANDBOX_NAME);
   expect(planChannel(channelId), `${channelId} removal tombstone retired`).toBeUndefined();
-  expect(plan.disabledChannels, `${channelId} disabled tombstone retired`).not.toContain(
-    channelId,
-  );
+  expect(plan.disabledChannels, `${channelId} disabled tombstone retired`).not.toContain(channelId);
 }
 
 function requireEnvValue(env: NodeJS.ProcessEnv, key: string): string {
@@ -1010,9 +1038,73 @@ async function runChannelCommand(
 
 async function removeChannelsAndRebuild(
   host: import("../fixtures/clients/host.ts").HostCliClient,
+  sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
   env: NodeJS.ProcessEnv,
   redactions: string[],
 ): Promise<void> {
+  if (AGENT === "openclaw") {
+    const setup = await sandboxSh(
+      sandbox,
+      SANDBOX_NAME,
+      [
+        "mkdir -p /sandbox/.openclaw/wechat /sandbox/.openclaw/openclaw-weixin /sandbox/.openclaw/nemoclaw-cleanup-preserve",
+        "printf '%s\\n' residue > /sandbox/.openclaw/wechat/account.json",
+        "printf '%s\\n' residue > /sandbox/.openclaw/openclaw-weixin/account.json",
+        "printf '%s\\n' preserve > /sandbox/.openclaw/nemoclaw-cleanup-preserve/sentinel",
+      ].join("\n"),
+      {
+        artifactName: "prepare-stopped-wechat-cleanup-openclaw",
+        redactionValues: redactions,
+      },
+    );
+    expectExitZero(setup, "prepare stopped OpenClaw WeChat cleanup proof");
+
+    const stop = await host.command("node", [CLI, SANDBOX_NAME, "stop"], {
+      artifactName: "stop-before-wechat-cleanup-openclaw",
+      env,
+      redactionValues: redactions,
+      timeoutMs: 120_000,
+    });
+    expectExitZero(stop, "stop OpenClaw before WeChat cleanup");
+
+    const cleanupResult = await withLiveE2eEnvironment(env, async () =>
+      clearStoppedDockerSandboxChannelState(SANDBOX_NAME, [
+        "/sandbox/.openclaw/wechat",
+        "/sandbox/.openclaw/openclaw-weixin",
+      ]),
+    );
+    expect(cleanupResult).toEqual({ cleared: true });
+
+    const start = await host.command("node", [CLI, SANDBOX_NAME, "start"], {
+      artifactName: "start-after-wechat-cleanup-openclaw",
+      env,
+      redactionValues: redactions,
+      timeoutMs: 120_000,
+    });
+    expectExitZero(start, "start OpenClaw after stopped WeChat cleanup");
+    await expectSandboxReady(
+      host,
+      SANDBOX_NAME,
+      env,
+      redactions,
+      "sandbox-list-after-stopped-wechat-cleanup-openclaw",
+    );
+    const proof = await sandboxSh(
+      sandbox,
+      SANDBOX_NAME,
+      [
+        "test ! -e /sandbox/.openclaw/wechat",
+        "test ! -e /sandbox/.openclaw/openclaw-weixin",
+        'test "$(cat /sandbox/.openclaw/nemoclaw-cleanup-preserve/sentinel)" = preserve',
+      ].join("\n"),
+      {
+        artifactName: "verify-stopped-wechat-cleanup-openclaw",
+        redactionValues: redactions,
+      },
+    );
+    expectExitZero(proof, "stopped cleanup removed only OpenClaw WeChat state");
+  }
+
   for (const channel of REMOVAL_CHANNELS) {
     const remove = await host.command(
       "node",
@@ -1139,27 +1231,12 @@ export async function runChannelsStopStartTarget({
   const heartbeat = startChannelsStopStartProgress(AGENT);
   cleanup.trackDisposable("stop channels stop/start heartbeat", heartbeat.stop);
 
-  cleanup.trackGateway(host, "nemoclaw", {
-    artifactName: `cleanup-openshell-gateway-destroy-${AGENT}`,
-    env,
-    redactionValues: redactions,
-    timeoutMs: 60_000,
-  });
-  registerChannelsStopStartProviderCleanup(cleanup, host, {
+  registerChannelsStopStartCleanup(cleanup, host, sandbox, {
     agent: AGENT,
     env,
     redactions,
     sandboxName: SANDBOX_NAME,
   });
-  trackSandboxCleanup(
-    cleanup,
-    host,
-    sandbox,
-    SANDBOX_NAME,
-    env,
-    redactions,
-    `cleanup-channels-stop-start-${AGENT}`,
-  );
   await precleanSandbox(
     host,
     SANDBOX_NAME,
@@ -1271,7 +1348,7 @@ export async function runChannelsStopStartTarget({
   }
 
   progress.phase("remove WeChat, Microsoft Teams, and Google Chat and validate cleanup");
-  await removeChannelsAndRebuild(host, env, redactions);
+  await removeChannelsAndRebuild(host, sandbox, env, redactions);
   for (const channel of REMOVAL_CHANNELS) {
     expectPlanChannelState(channel, "removed");
     await expectChannelProvidersAbsent(host, env, redactions, channel, "after-remove");

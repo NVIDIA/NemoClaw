@@ -39,6 +39,8 @@ export interface ChannelManifest {
   readonly auth: ChannelAuthSpec;
   readonly inputs: readonly ChannelInputSpec[];
   readonly credentials: readonly ChannelCredentialSpec[];
+  /** Agent config-relative durable state directories cleared during channel removal. */
+  readonly state?: Partial<Record<MessagingAgentId, readonly string[]>>;
   /** Policy presets needed when this channel is active. */
   readonly policyPresets?: readonly ChannelPolicyPresetReference[];
   readonly render: readonly ChannelRenderSpec[];
