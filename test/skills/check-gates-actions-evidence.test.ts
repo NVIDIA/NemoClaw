@@ -337,6 +337,16 @@ describe("maintainer merge-gate contributor compliance", () => {
       check: { name: "Specialist / Future" },
       run: { jobName: "Specialist / Future" },
     },
+    {
+      evidence: "the retired GPT-5.6 Terra advisor job is not allowlisted",
+      check: { name: "PR review advisor (GPT-5.6 Terra)" },
+      run: { jobName: "PR review advisor (GPT-5.6 Terra)" },
+    },
+    {
+      evidence: "the retired Nemotron 3 Ultra advisor job is not allowlisted",
+      check: { name: "PR review advisor (Nemotron 3 Ultra)" },
+      run: { jobName: "PR review advisor (Nemotron 3 Ultra)" },
+    },
   ])("keeps an advisor-like check merge-relevant when $evidence", ({ check, run, includeRun }) => {
     const runId = 9010;
     const jobId = 9110;
