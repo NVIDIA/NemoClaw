@@ -3,6 +3,8 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { mapManagedStartupProfileToAgentEnvironment } from "../../onboard/managed-startup/agent-environment";
 import * as managedWorkload from "../../onboard/workload/rebuild";
 import * as registry from "../../state/registry";
 import type { SandboxEntry } from "../../state/registry/types";
@@ -140,5 +142,74 @@ describe("managed workload rebuild mutation guard", () => {
         environment: {},
       }),
     ).toThrow("Unsupported managed startup inference API 'unsupported-api'.");
+  });
+
+  it("retains the Hermes browser host when rebuild changes the dashboard port", () => {
+    const previousProfile = managedStartupE2eProfile("hermes");
+    const previousDashboard = previousProfile.dashboard as Extract<
+      typeof previousProfile.dashboard,
+      { readonly agent: "hermes" }
+    >;
+    expect(previousDashboard.agent).toBe("hermes");
+    const browserUrl = "https://hermes.example.test:18789/dashboard";
+    const catalogHandoff = {
+      agent: "hermes",
+      previousProfile: {
+        ...previousProfile,
+        dashboard: { ...previousDashboard, browserUrl },
+      },
+      previousReceipt: { credentialProxyReplayRequired: false },
+      corporateCa: null,
+    } as unknown as managedWorkload.ManagedWorkloadRebuildCatalogHandoff;
+    const targetConfig = {
+      agentDefinition: {},
+      resumeConfig: {
+        provider: "nvidia",
+        model: previousProfile.inference.model,
+        preferredInferenceApi: "openai-completions",
+        endpointUrl: null,
+        compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
+      },
+      durableConfig: { webSearchConfig: null },
+      hermesToolGateways: [],
+    } as unknown as RebuildTargetConfig;
+    vi.spyOn(
+      managedRebuildProfileDependencies,
+      "resolveManagedStartupInferenceRoute",
+    ).mockReturnValue({
+      providerKey: "inference",
+      primaryModelRef: "inference/unused-for-hermes",
+      inferenceBaseUrl: "https://inference.local/v1",
+      inferenceApi: "openai-completions",
+      inferenceCompat: null,
+    });
+
+    const prepared = prepareManagedRebuildProfileHandoff({
+      catalogHandoff,
+      targetConfig,
+      recreateOptions: {
+        controlUiPort: 29_443,
+        toolDisclosure: "progressive",
+        dcodeAutoApprovalMode: "disabled",
+        observabilityEnabled: false,
+      } as unknown as RebuildRecreateOnboardOpts,
+      messagingPlan: null,
+      environment: {
+        NEMOCLAW_HERMES_DASHBOARD: "1",
+        NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: "19443",
+      },
+    });
+
+    expect(prepared.replacementProfile.profile.dashboard).toMatchObject({
+      agent: "hermes",
+      browserUrl: "https://hermes.example.test:29443/dashboard",
+      publicPort: 29_443,
+      url: "http://127.0.0.1:29443",
+    });
+    expect(
+      mapManagedStartupProfileToAgentEnvironment(prepared.replacementProfile.profile, {})
+        .runtimeEnvironment.CHAT_UI_URL,
+    ).toBe("https://hermes.example.test:29443/dashboard");
   });
 });

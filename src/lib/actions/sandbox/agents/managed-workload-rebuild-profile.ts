@@ -49,6 +49,12 @@ export function resolveManagedRebuildOpenClawReasoningEffort(
     : "default";
 }
 
+function dashboardUrlAtPort(raw: string, port: number): string {
+  const url = new URL(raw);
+  url.port = String(port);
+  return url.toString();
+}
+
 /** Render the exact replacement profile while the old managed workload remains authoritative. */
 export function prepareManagedRebuildProfileHandoff(input: {
   readonly catalogHandoff: ManagedWorkloadRebuildCatalogHandoff;
@@ -62,7 +68,16 @@ export function prepareManagedRebuildProfileHandoff(input: {
   const { resumeConfig, durableConfig } = targetConfig;
   const manageDashboard = shouldManageDashboardForAgent(targetConfig.agentDefinition);
   const effectiveDashboardPort = manageDashboard ? (recreateOptions.controlUiPort ?? 0) : 0;
-  const chatUiUrl = manageDashboard ? `http://127.0.0.1:${String(effectiveDashboardPort)}` : "";
+  const previousDashboard = catalogHandoff.previousProfile.dashboard;
+  const previousHermesBrowserUrl =
+    agent === "hermes" && previousDashboard.agent === "hermes"
+      ? previousDashboard.browserUrl
+      : undefined;
+  const chatUiUrl = manageDashboard
+    ? previousHermesBrowserUrl === undefined
+      ? `http://127.0.0.1:${String(effectiveDashboardPort)}`
+      : dashboardUrlAtPort(previousHermesBrowserUrl, effectiveDashboardPort)
+    : "";
   const inference = managedRebuildProfileDependencies.resolveManagedStartupInferenceRoute(
     agent,
     resumeConfig.provider,
@@ -73,7 +88,6 @@ export function prepareManagedRebuildProfileHandoff(input: {
     agent === "hermes" && resumeConfig.provider === "hermes-provider"
       ? catalogHandoff.previousProfile.inference.upstreamProvider
       : resumeConfig.provider;
-  const previousDashboard = catalogHandoff.previousProfile.dashboard;
   const currentOpenClawContextWindow =
     agent === "openclaw"
       ? managedRebuildProfileDependencies.resolveContextWindowForModel(
