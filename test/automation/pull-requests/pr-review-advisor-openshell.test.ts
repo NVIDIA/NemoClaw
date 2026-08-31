@@ -30,9 +30,7 @@ import {
   runAdvisorSandboxAsync,
   runOpenShellAdvisorCommand,
   verifyAdvisorGitWorktree,
-  writeUnavailableAdvisorArtifacts,
 } from "../../../tools/pr-review-advisor/openshell.mts";
-import { runPrReviewAdvisorAnalysis } from "../../../tools/pr-review-advisor/run-analysis.mts";
 import {
   publishSpecialistJobSummary,
   runAdvisorSpecialistCommand,
@@ -170,7 +168,7 @@ describe("PR review advisor specialist lifecycle", () => {
 
     await runAdvisorSpecialistCommand(
       "analysis",
-      { PR_REVIEW_ADVISOR_RUN_ANALYSIS: "1" },
+      {},
       lifecycle,
     );
 
@@ -206,7 +204,7 @@ describe("PR review advisor specialist lifecycle", () => {
 
     const command = runAdvisorSpecialistCommand(
       "analysis",
-      { PR_REVIEW_ADVISOR_RUN_ANALYSIS: "1", SANDBOX_NAME: "signal-test" },
+      { SANDBOX_NAME: "signal-test" },
       lifecycle,
       {
         listen: (handler) => {
@@ -252,7 +250,6 @@ describe("PR review advisor specialist lifecycle", () => {
     const command = runAdvisorSpecialistCommand(
       "analysis",
       {
-        PR_REVIEW_ADVISOR_RUN_ANALYSIS: "1",
         PR_REVIEW_ADVISOR_API_KEY: credential,
         SANDBOX_NAME: "residual-sandbox",
       },
@@ -274,48 +271,6 @@ describe("PR review advisor specialist lifecycle", () => {
     expect(stderr).not.toHaveBeenCalledWith(expect.stringContaining(credential));
     expect(restore).toHaveBeenCalledWith("SIGHUP");
   });
-
-  it.each([
-    ["enabled", "1", ["prepare", "configure", "create", "run", "download", "remove"]],
-    ["disabled", "0", ["prepare", "unavailable"]],
-  ])(
-    "keeps prior preparation credential-free before %s analysis",
-    async (_case, enabled, expected) => {
-      const calls: string[] = [];
-      const lifecycle: AdvisorSpecialistLifecycle = {
-        prepare: async (env) => {
-          expect(env.OPENAI_API_KEY).toBeUndefined();
-          expect(env.PR_REVIEW_ADVISOR_API_KEY).toBeUndefined();
-          calls.push("prepare");
-        },
-        startGateway: (env) => {
-          expect(env.OPENAI_API_KEY).toBe("analysis-secret");
-          expect(env.GH_TOKEN).toBeUndefined();
-          expect(env.GITHUB_TOKEN).toBeUndefined();
-          calls.push("configure");
-          return { configure: Promise.resolve() };
-        },
-        create: () => void calls.push("create"),
-        run: () => void calls.push("run"),
-        download: () => void calls.push("download"),
-        remove: () => void calls.push("remove"),
-        unavailable: () => void calls.push("unavailable"),
-      };
-
-      await runAdvisorSpecialistCommand(
-        "prepare",
-        { PR_REVIEW_ADVISOR_RUN_ANALYSIS: enabled },
-        lifecycle,
-      );
-      await runAdvisorSpecialistCommand(
-        "analysis",
-        { PR_REVIEW_ADVISOR_RUN_ANALYSIS: enabled, OPENAI_API_KEY: "analysis-secret" },
-        lifecycle,
-      );
-
-      expect(calls).toEqual(expected);
-    },
-  );
 });
 
 describe("PR review advisor OpenShell wrapper", () => {
@@ -822,35 +777,6 @@ describe("PR review advisor OpenShell wrapper", () => {
     expect(gatewayConfig).toContain("enable_bind_mounts = true");
   });
 
-  it.each(["GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "PR_REVIEW_ADVISOR_API_KEY"])(
-    "writes unavailable artifacts through a credential-free trusted host fallback [case %#]",
-    (name) => {
-      const env = advisorEnvironment();
-      env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON = "provider configuration failed";
-      const tools = advisorTools();
-
-      writeUnavailableAdvisorArtifacts(env, tools);
-
-      expect(tools.run).toHaveBeenCalledTimes(1);
-      const [command, args, options] = vi.mocked(tools.run).mock.calls[0]!;
-      expect(command).toBe(process.execPath);
-      expect(args).toEqual([
-        "--experimental-strip-types",
-        "--no-warnings",
-        path.join(env.ADVISOR_DIR as string, "tools", "pr-review-advisor", "run-analysis.mts"),
-      ]);
-      expect(options.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
-      expect(options.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBe(
-        "provider configuration failed",
-      );
-      expect(options.env.PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH).toBe(
-        path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context", "github-context.json"),
-      );
-
-      expect(options.env[name]).toBeUndefined();
-    },
-  );
-
   it("creates, runs, downloads, and deletes the sandbox without host credentials", async () => {
     const env = advisorEnvironment();
     env.GIT_DIR = "/untrusted/ambient-git-dir";
@@ -944,12 +870,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     ]);
     expect(calls.some(([, args]) => args.slice(0, 2).join(" ") === "policy set")).toBe(false);
 
-    const runArgs =
-      vi
-        .mocked(tools.runAsync)
-        .mock.calls.find(([, args]) =>
-          args.includes("/advisor/tools/pr-review-advisor/run-analysis.mts"),
-        )?.[1] ?? [];
+    const runArgs = vi.mocked(tools.runAsync).mock.calls[0]?.[1] ?? [];
     expect(runArgs).toEqual(
       expect.arrayContaining([
         "sandbox",
@@ -966,7 +887,7 @@ describe("PR review advisor OpenShell wrapper", () => {
         "GIT_DIR=/pr-workdir/.git",
         "GIT_WORK_TREE=/pr-workdir",
         "TARGET_REPO=NVIDIA/NemoClaw",
-        "/advisor/tools/pr-review-advisor/run-analysis.mts",
+        "/advisor/tools/pr-review-advisor/run-specialist.mts",
         "--base",
         "target/base",
         "--head",
@@ -1015,68 +936,6 @@ describe("PR review advisor OpenShell wrapper", () => {
     });
   });
 
-  it("exposes validated specialist sessions inside the standard Pi workdir (#9949)", async () => {
-    const env = advisorEnvironment();
-    const sessionDirectory = path.join(
-      env.ADVISOR_WORKDIR as string,
-      ".pr-review-advisor-sessions",
-    );
-    const sessionAlias = path.join(env.GITHUB_WORKSPACE as string, "specialist-sessions-alias");
-    fs.mkdirSync(sessionDirectory);
-    const sessionEntries = Object.fromEntries(
-      ADVISOR_INTERESTS.map((interest) => [interest, interest]),
-    );
-    Object.entries(sessionEntries).forEach(([interest, id]) =>
-      fs.writeFileSync(
-        path.join(sessionDirectory, `pr-review-${interest}-session.jsonl`),
-        `${JSON.stringify({ type: "session", id })}\n`,
-      ),
-    );
-    fs.symlinkSync(sessionDirectory, sessionAlias, "dir");
-    env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR = sessionAlias;
-    env.PR_REVIEW_ADVISOR_INTEREST = "behavior";
-    const tools = advisorTools();
-
-    createAdvisorSandbox(env, tools);
-    await runAdvisorSandboxAsync(env, tools).completion;
-
-    const calls = vi.mocked(tools.run).mock.calls;
-    const createArgs =
-      calls.find(([, args]) => args.slice(0, 2).join(" ") === "sandbox create")?.[1] ?? [];
-    const driverConfigIndex = createArgs.indexOf("--driver-config-json");
-    const driverConfig = JSON.parse(createArgs[driverConfigIndex + 1] as string);
-    expect(
-      driverConfig.docker.mounts.filter(
-        (mount: { target?: string }) => mount.target === "/pr-workdir",
-      ),
-    ).toEqual([expect.objectContaining({ read_only: true })]);
-    const runArgs =
-      vi
-        .mocked(tools.runAsync)
-        .mock.calls.find(([, args]) =>
-          args.includes("/advisor/tools/pr-review-advisor/run-specialist.mts"),
-        )?.[1] ?? [];
-    expect(runArgs).toContain(
-      "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR=/pr-workdir/.pr-review-advisor-sessions",
-    );
-    expect(runArgs.slice(-4)).toEqual(["--base", "target/base", "--head", "HEAD"]);
-    expect(runArgs).not.toContain(expect.stringContaining("session-reader"));
-  });
-
-  it("rejects a specialist session alias outside the fixed workdir input (#9963)", () => {
-    const env = advisorEnvironment();
-    const outsideDirectory = path.join(env.GITHUB_WORKSPACE as string, "outside-sessions");
-    const outsideAlias = path.join(env.ADVISOR_WORKDIR as string, "outside-sessions-alias");
-    fs.mkdirSync(outsideDirectory);
-    fs.symlinkSync(outsideDirectory, outsideAlias, "dir");
-    env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR = outsideAlias;
-    const tools = advisorTools();
-
-    expect(() => createAdvisorSandbox(env, tools)).toThrow(
-      "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR must use the fixed workdir input path",
-    );
-    expect(tools.run).not.toHaveBeenCalled();
-  });
 
   it("rejects artifact paths that could escape the sandbox runtime directory", () => {
     const env = advisorEnvironment();

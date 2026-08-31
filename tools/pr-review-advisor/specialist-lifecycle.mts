@@ -11,7 +11,6 @@ import {
   prepareAdvisorSandboxInputs,
   runAdvisorSandboxAsync,
   startAdvisorOpenShellInference,
-  writeUnavailableAdvisorArtifacts,
 } from "./openshell.mts";
 export type AdvisorSpecialistLifecycle = {
   prepare: (env: NodeJS.ProcessEnv) => Promise<void>;
@@ -24,7 +23,6 @@ export type AdvisorSpecialistLifecycle = {
   ) => void | { cancel: () => void | Promise<void>; completion: Promise<void> };
   download: (env: NodeJS.ProcessEnv) => void;
   remove: (env: NodeJS.ProcessEnv) => void;
-  unavailable?: (env: NodeJS.ProcessEnv, error: unknown) => void;
 };
 const SECRET_NAME = /(auth|credential|key|password|secret|token)/iu;
 const SECRET_VALUE =
@@ -51,12 +49,6 @@ export const defaultAdvisorSpecialistLifecycle: AdvisorSpecialistLifecycle = {
   run: runAdvisorSandboxAsync,
   download: downloadAdvisorArtifacts,
   remove: deleteAdvisorSandbox,
-  unavailable: (env, error) =>
-    writeUnavailableAdvisorArtifacts({
-      ...env,
-      PR_REVIEW_ADVISOR_UNAVAILABLE_REASON:
-        env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON ?? diagnostic(error),
-    }),
 };
 function failure(stage: string, env: NodeJS.ProcessEnv, cause: unknown): Error {
   const detail = diagnostic(cause);
@@ -132,7 +124,6 @@ export async function runAdvisorSpecialist(input: {
       await gateway?.configure;
       if (input.cancelled?.()) result = "cancelled";
     } catch (error) {
-      lifecycle.unavailable?.(input.env, error);
       if (input.unavailableIsSuccess) result = "unavailable";
       else throw error;
     }
@@ -238,10 +229,6 @@ export async function runAdvisorSpecialistCommand(
   if (command === "prepare") return lifecycle.prepare(env);
   if (command !== "analysis")
     throw new Error(`Unsupported specialist lifecycle command: ${command ?? "missing"}`);
-  if (env.PR_REVIEW_ADVISOR_RUN_ANALYSIS === "0") {
-    lifecycle.unavailable?.(env, new Error("Advisor inference is unavailable"));
-    return;
-  }
   let received: NodeJS.Signals | undefined;
   let activeCleanup: (() => Promise<void>) | undefined;
   let cancellationFailure: unknown;

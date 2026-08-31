@@ -28,7 +28,6 @@ import {
   serializePreparedGitHubContext,
 } from "./github-context.mts";
 import { writeSpecialistDiff } from "./specialist-context.mts";
-import { validateSpecialistSessionDirectory } from "./specialist-sessions.mts";
 
 const ADVISOR_CONTEXT_DIRECTORY_NAME = "pr-review-advisor-context";
 const ADVISOR_RUNTIME_DIRECTORY_NAME = "pr-review-advisor-runtime";
@@ -46,12 +45,9 @@ const SANDBOX_CONTEXT_DIR = `/${ADVISOR_CONTEXT_DIRECTORY_NAME}`;
 const SANDBOX_RUNTIME_DIR = `/sandbox/${ADVISOR_RUNTIME_DIRECTORY_NAME}`;
 const SANDBOX_TOOLS_DIR = `/${ADVISOR_TOOLS_DIRECTORY_NAME}`;
 const SANDBOX_CONTEXT_PATH = `${SANDBOX_CONTEXT_DIR}/${ADVISOR_CONTEXT_FILE_NAME}`;
-const SANDBOX_SPECIALIST_SESSION_DIR = `${SANDBOX_WORKDIR}/.pr-review-advisor-sessions`;
 const ADVISOR_RUNTIME_TMPFS_BYTES = 512 * 1024 * 1024;
 const SANDBOX_API_KEY = "unused";
 const DEFAULT_SANDBOX_TIMEOUT_SECONDS = 2100;
-const DEFAULT_UNAVAILABLE_REASON =
-  "OpenShell inference configuration failed or the advisor credential is unavailable";
 const EXPECTED_WRITE_DENIAL_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
 
 type PrepareAdvisorSandboxOptions = {
@@ -263,32 +259,6 @@ export function startAdvisorOpenShellInference(
   return startOwnedOpenShellInference(env, advisorInferenceOptions(env), tools);
 }
 
-export function writeUnavailableAdvisorArtifacts(
-  env: NodeJS.ProcessEnv,
-  tools: OpenShellTools = defaultOpenShellTools,
-): void {
-  const advisorDirectory = required(env.ADVISOR_DIR, "ADVISOR_DIR");
-  const commandEnv = credentialFreeEnvironment({
-    ...env,
-    PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: path.join(
-      runnerDirectory(env, ADVISOR_CONTEXT_DIRECTORY_NAME),
-      ADVISOR_CONTEXT_FILE_NAME,
-    ),
-    PR_REVIEW_ADVISOR_RUN_ANALYSIS: "0",
-    PR_REVIEW_ADVISOR_UNAVAILABLE_REASON:
-      env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON || DEFAULT_UNAVAILABLE_REASON,
-  });
-  tools.run(
-    process.execPath,
-    [
-      "--experimental-strip-types",
-      "--no-warnings",
-      path.join(advisorDirectory, "tools", "pr-review-advisor", "run-analysis.mts"),
-    ],
-    { env: commandEnv },
-  );
-}
-
 export function createAdvisorSandbox(
   env: NodeJS.ProcessEnv,
   tools: OpenShellTools = defaultOpenShellTools,
@@ -314,16 +284,6 @@ export function createAdvisorSandbox(
     "advisor tools directory",
   );
   const sandboxName = required(env.SANDBOX_NAME, "SANDBOX_NAME");
-  if (env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR) {
-    const expected = path.join(advisorWorkdir, ".pr-review-advisor-sessions");
-    if (fs.realpathSync(env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR) !== expected) {
-      throw new Error(
-        "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR must use the fixed workdir input path",
-      );
-    }
-    validateSpecialistSessionDirectory(expected);
-  }
-
   createOpenShellSandbox(
     env,
     {
@@ -369,8 +329,6 @@ function passthroughEnvironment(env: NodeJS.ProcessEnv): Record<string, string> 
     "PR_REVIEW_ADVISOR_INTEREST",
     "PR_REVIEW_ADVISOR_MAX_CAPTURE_BYTES",
     "PR_REVIEW_ADVISOR_MODEL",
-    "PR_REVIEW_ADVISOR_RUN_ANALYSIS",
-    "PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR",
     "PR_REVIEW_ADVISOR_TIMEOUT_MS",
     "PR_REVIEW_ADVISOR_UNAVAILABLE_REASON",
     "PR_REVIEW_ADVISOR_WORKFLOW_NAME",
@@ -420,18 +378,13 @@ export function runAdvisorSandboxAsync(
         PR_REVIEW_ADVISOR_BASE_URL: ADVISOR_OPENSHELL_INFERENCE_BASE_URL,
         PR_REVIEW_ADVISOR_CONFIG_DIR: `${SANDBOX_RUNTIME_DIR}/config`,
         PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH: SANDBOX_CONTEXT_PATH,
-        ...(env.PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR
-          ? { PR_REVIEW_ADVISOR_SPECIALIST_SESSION_DIR: SANDBOX_SPECIALIST_SESSION_DIR }
-          : {}),
         TMPDIR: `${SANDBOX_RUNTIME_DIR}/tmp`,
       },
       command: [
         "/usr/bin/node",
         "--experimental-strip-types",
         "--no-warnings",
-        env.PR_REVIEW_ADVISOR_INTEREST
-          ? `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-specialist.mts`
-          : `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-analysis.mts`,
+        `${SANDBOX_ADVISOR_DIR}/tools/pr-review-advisor/run-specialist.mts`,
         "--base",
         required(env.BASE_REF, "BASE_REF"),
         "--head",

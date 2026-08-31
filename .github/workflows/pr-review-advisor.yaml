@@ -34,12 +34,6 @@ on:
         required: false
         type: string
         default: main
-      run_analysis:
-        description: Run PR review advisor analysis
-        required: false
-        type: boolean
-        default: true
-
 # Each job declares its own privilege domain. In particular, no model-bearing
 # job can write to a pull request, and the publisher never receives the model
 # credential or the untrusted PR worktree.
@@ -105,7 +99,7 @@ jobs:
       # Pin runtime packages to reviewed versions. Updates go through normal
       # dependency review rather than floating in a secret-bearing job.
       PI_SDK_VERSION: "0.80.6"
-      # The review ledger imports TypeBox directly. Pi 0.80.6 shrinkwraps its
+      # The advisor tools import TypeBox directly. Pi 0.80.6 shrinkwraps its
       # own copy, so the advisor runtime must install this direct dependency.
       TYPEBOX_VERSION: "1.1.38"
       # Workflow-boundary modules parse YAML before the advisor session starts.
@@ -123,7 +117,6 @@ jobs:
       PR_REVIEW_ADVISOR_MODEL: ${{ matrix.advisor.model }}
       PR_REVIEW_ADVISOR_INTEREST: ${{ matrix.advisor.interest }}
       PR_REVIEW_ADVISOR_ARTIFACT_DIR: ${{ matrix.advisor.artifact_dir }}
-      PR_REVIEW_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
       PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
       PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor
       PR_REVIEW_ADVISOR_COMMENT_LABEL: PR review advisor
@@ -264,7 +257,6 @@ jobs:
 
       # Shared lifecycle phases preserve the configure-only credential boundary.
       - name: Install OpenShell
-        if: ${{ env.PR_REVIEW_ADVISOR_RUN_ANALYSIS == '1' }}
         run: |
           env -u GITHUB_TOKEN -u GH_TOKEN -u PR_REVIEW_ADVISOR_API_KEY \
             NEMOCLAW_NON_INTERACTIVE=1 \
@@ -275,7 +267,6 @@ jobs:
         if: always()
         env:
           OPENAI_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
-          PR_REVIEW_ADVISOR_UNAVAILABLE_REASON: ${{ env.PR_REVIEW_ADVISOR_RUN_ANALYSIS == '0' && 'PR_REVIEW_ADVISOR_RUN_ANALYSIS=0' || 'OpenShell inference configuration failed or the advisor credential is unavailable' }}
         run: node --experimental-strip-types --no-warnings "$ADVISOR_DIR/tools/pr-review-advisor/specialist-lifecycle.mts" analysis
 
       - name: Upload specialist review
