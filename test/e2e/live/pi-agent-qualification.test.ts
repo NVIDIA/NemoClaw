@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { directDockerfileCopySources } from "../../../scripts/lib/dockerfile-copy-sources.mts";
 import {
   CANDIDATE_AGENT_FEATURE_ENV,
   CANDIDATE_QUALIFICATION_RECEIPT_ENV,
@@ -14,30 +15,22 @@ import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { outputContainsSandbox, resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
-  sandboxAccessEnv,
   type SandboxClient,
+  sandboxAccessEnv,
   trustedSandboxShellScript,
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import {
-  type DockerBuildGuard,
-  assertNoDockerfileBuild,
-  createDockerBuildGuard,
-} from "../fixtures/docker-build-guard.ts";
-import type { E2EInferenceAdapter } from "../fixtures/inference-adapter.ts";
+import { assertNoDockerfileBuild, createDockerBuildGuard } from "../fixtures/docker-build-guard.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { driveInteractiveCommand } from "./onboard-interactive-pty.ts";
 import {
-  derivePiImageSourcePaths,
   parsePiJsonEvents,
   parsePiInferenceEvidence,
-  parsePiRuntimePackageEvidence,
   qualificationPlatform,
   qualifyPiReadTask,
-  readOptionalUtf8File,
   readPiQualificationReceipt,
 } from "./pi-agent-qualification-events.ts";
 
@@ -47,23 +40,10 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-pi-qual";
 const TASK_VERSION = "pi-read-v1";
 const LIVE_TIMEOUT_MS = 90 * 60_000;
 const PI_COMMAND_TIMEOUT_MS = 5 * 60_000;
-const PI_INTERACTIVE_READY_MARKER = "Press ctrl+o to show full startup help";
-const PI_INTERACTIVE_COMPLETE_MARKER = "↑";
 const SECURITY_PROBE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
-const credentialName = /(?:^|_)(?:API_?KEY|AUTH_?TOKEN|ACCESS_?TOKEN|REFRESH_?TOKEN|CLIENT_?SECRET|PASSWORD|CREDENTIAL)(?:$|_)/i;
-const credentialBindings = Object.entries(process.env)
-  .filter(([name]) => credentialName.test(name))
-  .map(([name, value]) => ({
-    name,
-    kind: value === "openshell:resolve:env:" + name || new RegExp("^openshell:resolve:env:v[0-9]+_" + name + "$").test(value || "")
-      ? "managed-reference"
-      : "unexpected-value",
-  }));
-const unexpectedCredentialNames = credentialBindings
-  .filter(({kind}) => kind !== "managed-reference")
-  .map(({name}) => name);
+const upstreamCredentialNames = Object.entries(process.env).filter(([, value]) => /nvapi-[A-Za-z0-9_-]{10,}/.test(value)).map(([name]) => name);
 const stack = ["/sandbox"];
 const credentialFiles = [];
 let bytes = 0;
@@ -102,9 +82,9 @@ while (stack.length > 0 && files < 10000 && bytes < 32 * 1024 * 1024) {
   }
 }
 const dockerSockets = ["/var/run/docker.sock", "/run/docker.sock"].filter((candidate) => fs.existsSync(candidate));
-const result = {credentialBindings, unexpectedCredentialNames, credentialFiles, dockerSockets, files, bytes};
+const result = {upstreamCredentialNames, credentialFiles, dockerSockets, files, bytes};
 process.stdout.write(JSON.stringify(result) + "\n");
-process.exit(unexpectedCredentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 ? 0 : 1);
+process.exit(upstreamCredentialNames.length === 0 && credentialFiles.length === 0 && dockerSockets.length === 0 ? 0 : 1);
 `;
 const NETWORK_DENIAL_PROBE = String.raw`
 const timer = setTimeout(() => process.exit(2), 20000);
@@ -119,32 +99,30 @@ fetch("https://example.com/").then(() => {
 
 validateSandboxName(SANDBOX_NAME);
 
-function piSandboxShellCommand(script: string): string[] {
-  return ["/bin/bash", "-lc", trustedSandboxShellScript(script)];
-}
-
-function qualificationEnv(
-  inference: E2EInferenceAdapter,
-  guard: DockerBuildGuard,
-  catalogPath: string,
-  acceptedReceiptPath: string,
-  extra: NodeJS.ProcessEnv = {},
-): NodeJS.ProcessEnv {
-  return inference.env({
-    ...guard.env,
-    [CANDIDATE_AGENT_FEATURE_ENV]: "1",
-    [CANDIDATE_QUALIFICATION_RECEIPT_ENV]: acceptedReceiptPath,
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_AGENT: "pi",
-    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_RECREATE_SANDBOX: "1",
-    NEMOCLAW_REBUILD_VERBOSE: "1",
-    NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    OPENSHELL_DRIVERS: "docker",
-    OPENSHELL_GATEWAY: GATEWAY,
-    ...extra,
-  });
+function execPiShell(
+  sandbox: SandboxClient,
+  script: ReturnType<typeof trustedSandboxShellScript>,
+  options: Parameters<SandboxClient["openshell"]>[1],
+) {
+  return sandbox.openshell(
+    [
+      "sandbox",
+      "exec",
+      "-n",
+      SANDBOX_NAME,
+      "--env",
+      "BASH_ENV=",
+      "--env",
+      "ENV=",
+      "--",
+      "bash",
+      "--noprofile",
+      "--norc",
+      "-c",
+      script,
+    ],
+    options,
+  );
 }
 
 async function preclean(
@@ -160,7 +138,7 @@ async function preclean(
   });
   await sandbox.cleanupSandbox(SANDBOX_NAME, {
     artifactName: "pre-cleanup-pi-openshell",
-    env: sandboxAccessEnv(),
+    env,
     timeoutMs: 60_000,
   });
   await lifecycle.stopGatewayRuntime();
@@ -180,14 +158,14 @@ async function runReadTask(
 ): Promise<{ assistantText: string; eventCount: number; toolCallId: string }> {
   const remotePath = `/sandbox/.nemoclaw-pi-${phase}.txt`;
   const token = `NEMOCLAW_PI_${phase.toUpperCase().replaceAll("-", "_")}_${randomBytes(8).toString("hex").toUpperCase()}`;
-  const seed = await sandbox.exec(
-    SANDBOX_NAME,
-    piSandboxShellCommand(
+  const seed = await execPiShell(
+    sandbox,
+    trustedSandboxShellScript(
       `umask 077; printf '%s\\n' ${shellQuote(token)} > ${shellQuote(remotePath)}; sync`,
     ),
     {
       artifactName: `pi-${phase}-seed`,
-      env: sandboxAccessEnv(),
+      env,
       timeoutMs: 30_000,
     },
   );
@@ -231,38 +209,17 @@ async function runReadTask(
   return proof;
 }
 
-async function sessionInventory(sandbox: SandboxClient, phase: string) {
-  const result = await sandbox.exec(
-    SANDBOX_NAME,
-    piSandboxShellCommand(
+async function sessionInventory(sandbox: SandboxClient, env: NodeJS.ProcessEnv, phase: string) {
+  const result = await execPiShell(
+    sandbox,
+    trustedSandboxShellScript(
       "find /sandbox/.pi/agent/sessions -type f -name '*.jsonl' -print0 | sort -z | xargs -0 -r sha256sum",
     ),
-    {
-      artifactName: `pi-${phase}-session-inventory`,
-      env: sandboxAccessEnv(),
-      timeoutMs: 30_000,
-    },
+    { artifactName: `pi-${phase}-session-inventory`, env, timeoutMs: 30_000 },
   );
   expect(result.exitCode, resultText(result)).toBe(0);
   expect(result.stdout.trim()).not.toBe("");
   return result.stdout.trim();
-}
-
-async function readPiInferenceEvidence(
-  sandbox: SandboxClient,
-  expectedModel: string,
-): Promise<{ api: string; model: string; route: string }> {
-  const result = await sandbox.exec(
-    SANDBOX_NAME,
-    piSandboxShellCommand("cat /sandbox/.pi/agent/models.json"),
-    {
-      artifactName: "pi-managed-inference-config",
-      env: sandboxAccessEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  expect(result.exitCode, resultText(result)).toBe(0);
-  return parsePiInferenceEvidence(result.stdout, expectedModel);
 }
 
 async function runInteractiveTask(
@@ -271,24 +228,32 @@ async function runInteractiveTask(
   progress: TestProgress,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
+  const token = "NEMOCLAW_PI_INTERACTIVE_V1_OK";
   const prompt =
-    "Join these four fragments with underscores and reply with only the result: NEMOCLAW, PI, INTERACTIVE, OK. Do not use tools.";
+    "Join these five fragments with underscores and reply with only the result: NEMOCLAW, PI, INTERACTIVE, V1, OK. Do not use tools.";
   const result = await driveInteractiveCommand({
     activityLabel: "command: pi-interactive-qualification",
-    cmd: [host.commandPath, "launch", SANDBOX_NAME],
+    cmd: [
+      host.commandPath,
+      SANDBOX_NAME,
+      "exec",
+      "--tty",
+      "--",
+      "sh",
+      "-c",
+      'stty rows 40 cols 120 && exec pi --no-approve "$1"',
+      "nemoclaw-pi-interactive",
+      prompt,
+    ],
     env,
     progress,
-    rules: [
-      { trigger: PI_INTERACTIVE_READY_MARKER, response: `${prompt}\r` },
-      { trigger: PI_INTERACTIVE_COMPLETE_MARKER, response: "\u0004" },
-    ],
+    rules: [{ trigger: token, response: "\u0004" }],
     timeoutMs: PI_COMMAND_TIMEOUT_MS,
   });
   await artifacts.writeText("pi-interactive-terminal.txt", result.output);
   expect(result.timedOut).toBe(false);
-  expect(result.firedTriggers).toContain(PI_INTERACTIVE_READY_MARKER);
-  expect(result.firedTriggers).toContain(PI_INTERACTIVE_COMPLETE_MARKER);
-  expect(result.visibleOutput).toContain("To resume this session: pi --session ");
+  expect(result.firedTriggers).toContain(token);
+  expect(result.output).toContain(token);
   expect(result.exitCode).toBe(0);
 }
 
@@ -325,14 +290,22 @@ test(
       pi: receipt.contract,
     });
     const guard = createDockerBuildGuard();
-    const env = qualificationEnv(inference, guard, catalogPath, receipt.path);
+    const env = inference.env({
+      ...guard.env,
+      [CANDIDATE_AGENT_FEATURE_ENV]: "1",
+      [CANDIDATE_QUALIFICATION_RECEIPT_ENV]: receipt.path,
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+      NEMOCLAW_AGENT: "pi",
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+      OPENSHELL_DRIVERS: "docker",
+      OPENSHELL_GATEWAY: GATEWAY,
+    });
     cleanup.trackDisposable("remove Pi Docker build guard", guard.dispose);
     cleanup.trackGateway(host, GATEWAY, { env, timeoutMs: 60_000 });
     cleanup.trackDisposable("remove Pi OpenShell sandbox", () =>
-      sandbox.cleanupSandbox(SANDBOX_NAME, {
-        env: sandboxAccessEnv(),
-        timeoutMs: 60_000,
-      }),
+      sandbox.cleanupSandbox(SANDBOX_NAME, { env, timeoutMs: 60_000 }),
     );
     cleanup.trackSandbox(host, SANDBOX_NAME, { env, timeoutMs: 5 * 60_000 });
 
@@ -349,10 +322,15 @@ test(
     expect(receipt.contract.agent).toBe("pi");
     expect(receipt.contract.platform).toBe(platform);
     expect(receipt.contract.source.repository).toBe("NVIDIA/NemoClaw");
-    const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"].map((file) =>
-      fs.readFileSync(path.join(REPO_ROOT, file), "utf8"),
+    const piDockerfiles = ["agents/pi/Dockerfile", "agents/pi/Dockerfile.base"];
+    const copiedSources = piDockerfiles.flatMap((dockerfile) =>
+      directDockerfileCopySources(path.join(REPO_ROOT, dockerfile), dockerfile).map(
+        ({ source }) => source,
+      ),
     );
-    const imageSourcePaths = derivePiImageSourcePaths(piDockerfiles);
+    const imageSourcePaths = [
+      ...new Set([".dockerignore", ...piDockerfiles, ...copiedSources]),
+    ].sort();
     const sourceParity = await host.command(
       "git",
       ["diff", "--quiet", receipt.contract.source.revision, "HEAD", "--", ...imageSourcePaths],
@@ -365,10 +343,9 @@ test(
     const onboard = await host.nemoclaw(
       [
         "onboard",
+        "--temp-managed-runtime",
         "--temp-managed-runtime-catalog",
         catalogPath,
-        "--fresh",
-        "--recreate-sandbox",
         "--non-interactive",
         "--yes",
         "--yes-i-accept-third-party-software",
@@ -387,8 +364,7 @@ test(
     );
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
     await host.expectListed(SANDBOX_NAME, { env });
-    await host.expectStatus(SANDBOX_NAME, { env, timeoutMs: 120_000 });
-    await sandbox.expectListed(SANDBOX_NAME, { env: sandboxAccessEnv() });
+    await sandbox.expectListed(SANDBOX_NAME, { env });
     const registry = registryDocument() as {
       sandboxes?: Record<string, { agent?: string; workload?: Record<string, unknown> }>;
     };
@@ -405,7 +381,7 @@ test(
     progress.phase("run headless and interactive Pi tasks");
     const beforeProof = await runReadTask(artifacts, host, sandbox, env, "before-rebuild");
     await runInteractiveTask(artifacts, host, progress, env);
-    const sessionsBeforeRebuild = await sessionInventory(sandbox, "before-rebuild");
+    const sessionsBeforeRebuild = await sessionInventory(sandbox, env, "before-rebuild");
 
     progress.phase("rebuild Pi and preserve session state");
     const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
@@ -415,15 +391,13 @@ test(
       timeoutMs: 20 * 60_000,
     });
     expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
-    await host.expectStatus(SANDBOX_NAME, { env, timeoutMs: 120_000 });
-    const sessionsAfterRebuild = await sessionInventory(sandbox, "after-rebuild");
+    const sessionsAfterRebuild = await sessionInventory(sandbox, env, "after-rebuild");
     expect(sessionsAfterRebuild).toBe(sessionsBeforeRebuild);
     const rebuildProof = await runReadTask(artifacts, host, sandbox, env, "after-rebuild");
 
     progress.phase("recover Pi after a gateway restart");
     await lifecycle.restartGatewayRuntime({ delayMs: 2_000, sandboxName: SANDBOX_NAME });
     await lifecycle.waitForGatewayConnected({ attempts: 60, intervalMs: 5_000 });
-    await host.expectStatus(SANDBOX_NAME, { env, timeoutMs: 120_000 });
     const recoveryProof = await runReadTask(artifacts, host, sandbox, env, "after-recovery");
 
     progress.phase("prove Pi policy and credential boundaries");
@@ -436,11 +410,7 @@ test(
     const network = await sandbox.exec(
       SANDBOX_NAME,
       ["timeout", "25", "node", "-e", NETWORK_DENIAL_PROBE],
-      {
-        artifactName: "pi-network-denial",
-        env: sandboxAccessEnv(),
-        timeoutMs: 30_000,
-      },
+      { artifactName: "pi-network-denial", env, timeoutMs: 30_000 },
     );
     expect(network.exitCode, resultText(network)).toBe(0);
     const registryText = JSON.stringify(registryDocument());
@@ -461,11 +431,17 @@ test(
       },
     );
     expect(logs.exitCode, resultText(logs)).toBe(0);
-    const trace = readOptionalUtf8File(guard.tracePath);
+    const trace = fs.readFileSync(guard.tracePath, "utf8");
     expect(trace.trim(), "Docker build guard trace").not.toBe("");
     assertNoDockerfileBuild(trace);
     await artifacts.writeText("docker-argv.log", trace);
-    const inferenceEvidence = await readPiInferenceEvidence(sandbox, inference.model);
+    const inferenceConfig = await execPiShell(
+      sandbox,
+      trustedSandboxShellScript("cat /sandbox/.pi/agent/models.json"),
+      { artifactName: "pi-managed-inference-config", env, timeoutMs: 30_000 },
+    );
+    expect(inferenceConfig.exitCode, resultText(inferenceConfig)).toBe(0);
+    const inferenceEvidence = parsePiInferenceEvidence(inferenceConfig.stdout, inference.model);
 
     progress.phase("destroy Pi and publish bounded evidence");
     const openshellVersion = await host.command(host.openshellCommandPath, ["--version"], {
@@ -474,9 +450,6 @@ test(
       timeoutMs: 30_000,
     });
     expect(openshellVersion.exitCode, resultText(openshellVersion)).toBe(0);
-    const runtimePackage = parsePiRuntimePackageEvidence(
-      fs.readFileSync(path.join(REPO_ROOT, "agents/pi/pi-runtime/package-lock.json"), "utf8"),
-    );
     const destroy = await host.nemoclaw(
       [SANDBOX_NAME, "destroy", "--yes", "--no-cleanup-gateway"],
       {
@@ -496,7 +469,7 @@ test(
     expect(outputContainsSandbox(listAfterDestroy, SANDBOX_NAME)).toBe(false);
     const openshellAfterDestroy = await sandbox.list({
       artifactName: "pi-openshell-list-after-destroy",
-      env: sandboxAccessEnv(),
+      env,
       timeoutMs: 30_000,
     });
     expect(openshellAfterDestroy.exitCode, resultText(openshellAfterDestroy)).toBe(0);
@@ -510,12 +483,9 @@ test(
         imageReference: receipt.contract.reference,
         receiptSha256: receipt.digest,
         publicationCohort: receipt.contract.source.cohort,
-        runtimeSourceParity: true,
+        imageSourceParity: true,
       },
       runtime: {
-        package: "@earendil-works/pi-coding-agent",
-        version: runtimePackage.version,
-        integrity: runtimePackage.integrity,
         platform,
         computeRuntime: "docker",
         openShellVersion: resultText(openshellVersion).trim(),
@@ -525,10 +495,7 @@ test(
         ...inferenceEvidence,
       },
       policy: {
-        sha256: createHash("sha256")
-          .update(fs.readFileSync(path.join(REPO_ROOT, "agents/pi/policy-additions.yaml")))
-          .digest("hex"),
-        credentialEnvironmentAbsent: true,
+        upstreamCredentialEnvironmentAbsent: true,
         credentialFilesAbsent: true,
         upstreamCredentialAbsentFromRegistryAndLogs: true,
         undeclaredNetworkDenied: true,

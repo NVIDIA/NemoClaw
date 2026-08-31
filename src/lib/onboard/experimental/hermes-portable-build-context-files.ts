@@ -335,6 +335,14 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/channels/wechat/qr.test.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/wechat/qr.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/wechat/rendered-config-parser.ts", mode: "100644" },
+  {
+    path: "src/lib/messaging/channels/wechat/runtime/wechat-account-placeholder.test.ts",
+    mode: "100644",
+  },
+  {
+    path: "src/lib/messaging/channels/wechat/runtime/wechat-account-placeholder.ts",
+    mode: "100644",
+  },
   { path: "src/lib/messaging/channels/wechat/runtime/wechat-diagnostics.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/wechat/template-resolver.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/whatsapp/hooks/index.ts", mode: "100644" },

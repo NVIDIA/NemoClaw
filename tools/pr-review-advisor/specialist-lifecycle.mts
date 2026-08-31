@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+import fs from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   createAdvisorSandbox,
@@ -184,6 +186,33 @@ export async function runAdvisorSpecialist(input: {
   if (cleanupError) throw cleanupError;
   return result;
 }
+export function publishSpecialistJobSummary(env: NodeJS.ProcessEnv): void {
+  const interest = env.PR_REVIEW_ADVISOR_INTEREST;
+  const artifactDirectory = env.PR_REVIEW_ADVISOR_ARTIFACT_DIR;
+  const workspace = env.GITHUB_WORKSPACE;
+  const jobSummary = env.GITHUB_STEP_SUMMARY;
+  if (!interest || !artifactDirectory || !workspace || !jobSummary) {
+    throw new Error(
+      "Hosted specialist summary publication requires its interest, artifact directory, workspace, and job summary path",
+    );
+  }
+  const summary = path.join(
+    workspace,
+    "artifacts",
+    artifactDirectory,
+    `pr-review-${interest}-summary.md`,
+  );
+  const descriptor = fs.openSync(summary, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) {
+      throw new Error("Specialist job summary source must be a regular file");
+    }
+    fs.appendFileSync(jobSummary, fs.readFileSync(descriptor));
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 export async function runAdvisorSpecialistCommand(
   command: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
@@ -221,7 +250,7 @@ export async function runAdvisorSpecialistCommand(
     void activeCleanup?.().catch((error) => (cancellationFailure ??= error));
   });
   try {
-    await runAdvisorSpecialist({
+    const result = await runAdvisorSpecialist({
       env,
       lifecycle,
       prepare: false,
@@ -231,6 +260,7 @@ export async function runAdvisorSpecialistCommand(
       },
       cancelled: () => received !== undefined,
     });
+    if (result === "complete" && env.GITHUB_STEP_SUMMARY) publishSpecialistJobSummary(env);
   } catch (error) {
     cancellationFailure ??= error;
     if (!received) throw error;
