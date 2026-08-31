@@ -25,6 +25,7 @@ const PR_WORKFLOW_JOB_NAMES = [
   "changes",
   "docs-only-checks",
   "static-checks",
+  "openshell-sdk-package",
   "build-typecheck",
   "installer-integration",
   "wechat-runtime-audit",

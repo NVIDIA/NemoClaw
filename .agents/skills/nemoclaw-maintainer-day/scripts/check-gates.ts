@@ -1247,6 +1247,7 @@ const PR_METADATA_EDIT_JOB_NAMES = new Set([
   "cli-tests",
   "docs-only-checks",
   "installer-integration",
+  "openshell-sdk-package",
   "plugin-tests",
   "reviewed-npm-audit",
   "static-checks",
@@ -1255,8 +1256,15 @@ const PR_METADATA_EDIT_JOB_NAMES = new Set([
 const PR_REVIEW_ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
 const PR_REVIEW_ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
 const ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES = new Set([
-  "PR review advisor (GPT-5.6 Terra)",
-  "PR review advisor (Nemotron 3 Ultra)",
+  "Specialist / Behavior",
+  "Specialist / Code reduction",
+  "Specialist / Dependency use",
+  "Specialist / Design and architecture",
+  "Specialist / Documentation",
+  "Specialist / Migration completion",
+  "Specialist / Operations",
+  "Specialist / Test design",
+  "Specialist / Trust",
 ]);
 
 interface ActionRunMetadata {
@@ -1720,29 +1728,27 @@ function currentCheckRollup(
 
     const successfulE2eSeedReuse = Boolean(
       classifyE2eSeedRun(runId, run) === "reuse" &&
-        run.status === "COMPLETED" &&
-        run.conclusion === "SUCCESS" &&
-        [...jobs.values()].every(
-          (job) =>
-            job.status === "COMPLETED" &&
-            job.conclusion !== null &&
-            PASSING_ACTION_RUN_CONCLUSIONS.has(job.conclusion),
-        ),
+      run.status === "COMPLETED" &&
+      run.conclusion === "SUCCESS" &&
+      [...jobs.values()].every(
+        (job) =>
+          job.status === "COMPLETED" &&
+          job.conclusion !== null &&
+          PASSING_ACTION_RUN_CONCLUSIONS.has(job.conclusion),
+      ),
     );
     if (successfulE2eSeedReuse) return true;
 
     const allSkippedTargetRun = Boolean(
       (runIdentityEvidence(runId, true) === "current" ||
         e2eControllerHeadBinding(run) === "current") &&
-        run.event === "pull_request_target" &&
-        run.path === ".github/workflows/pr-e2e-gate.yaml" &&
-        run.e2eGateDiff === true &&
-        run.e2eGateRun === false &&
-        run.status === "COMPLETED" &&
-        run.conclusion === "SKIPPED" &&
-        [...jobs.values()].every(
-          (job) => job.status === "COMPLETED" && job.conclusion === "SKIPPED",
-        ),
+      run.event === "pull_request_target" &&
+      run.path === ".github/workflows/pr-e2e-gate.yaml" &&
+      run.e2eGateDiff === true &&
+      run.e2eGateRun === false &&
+      run.status === "COMPLETED" &&
+      run.conclusion === "SKIPPED" &&
+      [...jobs.values()].every((job) => job.status === "COMPLETED" && job.conclusion === "SKIPPED"),
     );
     if (allSkippedTargetRun) return true;
     return classifyPrMetadataEditRun(runId) === "recognized";
@@ -1753,23 +1759,23 @@ function currentCheckRollup(
     const jobs = latestAttemptJobs(runId);
     return Boolean(
       run &&
-        jobs &&
-        classifyPrMetadataEditRun(runId) === "not_metadata_edit" &&
-        runIdentityEvidence(runId, true) === "current" &&
-        run.event === event &&
-        run.path === path &&
-        (run.path !== ".github/workflows/pr.yaml" || run.prCiGate === true) &&
-        (run.path !== ".github/workflows/installer-hash-check.yaml" ||
-          run.installerHashGate === true) &&
-        (run.path !== ".github/workflows/pr-e2e-gate.yaml" ||
-          run.event !== "pull_request_target" ||
-          (run.e2eGateDiff === true && run.e2eGateRun === true)) &&
-        run.status === "COMPLETED" &&
-        run.conclusion !== null &&
-        run.conclusion !== "SKIPPED" &&
-        jobs.size > 0 &&
-        [...jobs.values()].every((job) => job.status === "COMPLETED" && job.conclusion !== null) &&
-        [...jobs.values()].some((job) => job.conclusion !== "SKIPPED"),
+      jobs &&
+      classifyPrMetadataEditRun(runId) === "not_metadata_edit" &&
+      runIdentityEvidence(runId, true) === "current" &&
+      run.event === event &&
+      run.path === path &&
+      (run.path !== ".github/workflows/pr.yaml" || run.prCiGate === true) &&
+      (run.path !== ".github/workflows/installer-hash-check.yaml" ||
+        run.installerHashGate === true) &&
+      (run.path !== ".github/workflows/pr-e2e-gate.yaml" ||
+        run.event !== "pull_request_target" ||
+        (run.e2eGateDiff === true && run.e2eGateRun === true)) &&
+      run.status === "COMPLETED" &&
+      run.conclusion !== null &&
+      run.conclusion !== "SKIPPED" &&
+      jobs.size > 0 &&
+      [...jobs.values()].every((job) => job.status === "COMPLETED" && job.conclusion !== null) &&
+      [...jobs.values()].some((job) => job.conclusion !== "SKIPPED"),
     );
   };
 
@@ -1913,13 +1919,13 @@ function currentCheckRollup(
           associationLessHeadBinding(run) === "current";
     return Boolean(
       run &&
-        job &&
-        run.event === "pull_request_target" &&
-        run.path === PR_REVIEW_ADVISOR_WORKFLOW_PATH &&
-        currentPrBinding &&
-        job.name === checkName &&
-        job.status === checkStatus &&
-        job.conclusion === checkConclusion,
+      job &&
+      run.event === "pull_request_target" &&
+      run.path === PR_REVIEW_ADVISOR_WORKFLOW_PATH &&
+      currentPrBinding &&
+      job.name === checkName &&
+      job.status === checkStatus &&
+      job.conclusion === checkConclusion,
     );
   };
 
@@ -1999,10 +2005,10 @@ function currentCheckRollup(
     const { event, path } = actionRunMetadata(runId) ?? {};
     return Boolean(
       event &&
-        path &&
-        [...allActionRunIds].some(
-          (otherRunId) => otherRunId !== runId && isMeaningfulExactDiffRun(otherRunId, event, path),
-        ),
+      path &&
+      [...allActionRunIds].some(
+        (otherRunId) => otherRunId !== runId && isMeaningfulExactDiffRun(otherRunId, event, path),
+      ),
     );
   };
 

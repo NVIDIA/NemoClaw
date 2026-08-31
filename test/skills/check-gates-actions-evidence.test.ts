@@ -13,6 +13,8 @@ import {
   exactDiffGateRun,
   HEAD_SHA,
   INCOMPLETE_E2E,
+  prWorkflowJobs,
+  prWorkflowRun,
   REQUIRED_CHECK_NAMES,
   runGate,
   successfulRequiredChecks,
@@ -21,7 +23,18 @@ import {
 
 const ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
 const ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
-const NEMOTRON_ADVISOR_JOB = "PR review advisor (Nemotron 3 Ultra)";
+const ADVISOR_JOB_NAMES = [
+  "Specialist / Behavior",
+  "Specialist / Code reduction",
+  "Specialist / Dependency use",
+  "Specialist / Design and architecture",
+  "Specialist / Documentation",
+  "Specialist / Migration completion",
+  "Specialist / Operations",
+  "Specialist / Test design",
+  "Specialist / Trust",
+] as const;
+const DEFAULT_ADVISOR_JOB = ADVISOR_JOB_NAMES.at(-1)!;
 
 interface AdvisorCheckOptions {
   name?: string;
@@ -48,7 +61,7 @@ interface AdvisorRunOptions {
 function advisorCheck(runId: number, jobId: number, options: AdvisorCheckOptions = {}) {
   return {
     __typename: "CheckRun",
-    name: NEMOTRON_ADVISOR_JOB,
+    name: DEFAULT_ADVISOR_JOB,
     workflowName: ADVISOR_WORKFLOW_NAME,
     detailsUrl: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}/job/${jobId}`,
     startedAt: "2026-01-01T00:00:00Z",
@@ -73,12 +86,24 @@ function advisorRun(jobId: number, options: AdvisorRunOptions = {}) {
     jobs: [
       {
         id: jobId,
-        name: options.jobName ?? NEMOTRON_ADVISOR_JOB,
+        name: options.jobName ?? DEFAULT_ADVISOR_JOB,
         status: options.jobStatus ?? "completed",
         conclusion: options.jobConclusion === undefined ? "failure" : options.jobConclusion,
       },
     ],
     ...options,
+  };
+}
+
+function prWorkflowCheck(runId: number, job: ActionJobFixture, startedAt: string) {
+  return {
+    __typename: "CheckRun",
+    name: job.name,
+    workflowName: "CI / Pull Request",
+    detailsUrl: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}/job/${job.id}`,
+    startedAt,
+    status: (job.status ?? "completed").toUpperCase(),
+    conclusion: (job.conclusion ?? "success")?.toUpperCase(),
   };
 }
 
@@ -116,48 +141,48 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.allPass).toBe(false);
   });
 
-  it.each([
-    {
-      state: "failed",
-      name: "PR review advisor (GPT-5.6 Terra)",
-      runId: 9001,
-      status: "COMPLETED",
-      conclusion: "FAILURE",
-      runStatus: "completed",
-      runConclusion: "failure",
+  it.each(ADVISOR_JOB_NAMES.map((name, index) => [name, 9_001 + index] as const))(
+    "keeps the authenticated %s failure advisory",
+    (name, runId) => {
+      const jobId = runId + 100;
+      const result = runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [...successfulRequiredChecks(), advisorCheck(runId, jobId, { name })],
+        actionRunAttempts: {
+          [String(runId)]: advisorRun(jobId, { jobName: name }),
+        },
+      });
+
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        allPass: true,
+        gates: { ci: { pass: true } },
+      });
     },
-    {
-      state: "pending",
-      name: NEMOTRON_ADVISOR_JOB,
-      runId: 9002,
-      status: "IN_PROGRESS",
-      conclusion: undefined,
-      runStatus: "in_progress",
-      runConclusion: null,
-    },
-  ])("keeps an authenticated $state PR Review Advisor lane advisory", ({
-    name,
-    runId,
-    status,
-    conclusion,
-    runStatus,
-    runConclusion,
-  }) => {
+  );
+
+  it("keeps an authenticated pending PR Review Advisor lane advisory", () => {
+    const name = DEFAULT_ADVISOR_JOB;
+    const runId = 9_020;
     const jobId = runId + 100;
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",
       verified: true,
       statusChecks: [
         ...successfulRequiredChecks(),
-        advisorCheck(runId, jobId, { name, status, conclusion }),
+        advisorCheck(runId, jobId, {
+          name,
+          status: "IN_PROGRESS",
+          conclusion: undefined,
+        }),
       ],
       actionRunAttempts: {
         [String(runId)]: advisorRun(jobId, {
           jobName: name,
-          status: runStatus,
-          conclusion: runConclusion,
-          jobStatus: runStatus,
-          jobConclusion: runConclusion,
+          status: "in_progress",
+          conclusion: null,
+          jobStatus: "in_progress",
+          jobConclusion: null,
         }),
       },
     });
@@ -293,7 +318,10 @@ describe("maintainer merge-gate contributor compliance", () => {
     { evidence: "the workflow event differs", run: { event: "workflow_dispatch" } },
     { evidence: "the PR association is missing", run: { pullRequests: [] } },
     { evidence: "the workflow name is missing", check: { workflowName: undefined } },
-    { evidence: "the workflow name differs", check: { workflowName: "Automation / PR Review Advisor 2" } },
+    {
+      evidence: "the workflow name differs",
+      check: { workflowName: "Automation / PR Review Advisor 2" },
+    },
     {
       evidence: "the run URL has no job",
       check: { detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/9010" },
@@ -301,13 +329,13 @@ describe("maintainer merge-gate contributor compliance", () => {
     { evidence: "the run metadata is missing", includeRun: false },
     {
       evidence: "the publish job is not allowlisted",
-      check: { name: "Publish PR review advisor" },
-      run: { jobName: "Publish PR review advisor" },
+      check: { name: "Publish advisor link" },
+      run: { jobName: "Publish advisor link" },
     },
     {
       evidence: "a future advisor job is not allowlisted",
-      check: { name: "PR review advisor (Future Model)" },
-      run: { jobName: "PR review advisor (Future Model)" },
+      check: { name: "Specialist / Future" },
+      run: { jobName: "Specialist / Future" },
     },
   ])("keeps an advisor-like check merge-relevant when $evidence", ({ check, run, includeRun }) => {
     const runId = 9010;
@@ -352,33 +380,33 @@ describe("maintainer merge-gate contributor compliance", () => {
   });
 
   it.each([
-    "push",
-    "dynamic",
-  ])("accepts an optional %s check tied to the current head SHA", (event) => {
+    {
+      order: "before",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:30Z",
+    },
+    {
+      order: "after",
+      createdAt: "2026-01-01T00:02:00Z",
+      updatedAt: "2026-01-01T00:02:30Z",
+    },
+  ])("keeps the code run when a valid metadata edit runs $order it", ({ createdAt, updatedAt }) => {
+    const runId = 9_100;
+    const jobs = prWorkflowJobs("skipped", {
+      checks: { conclusion: "success" },
+    });
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",
       verified: true,
       statusChecks: [
         ...successfulRequiredChecks(),
-        {
-          __typename: "CheckRun",
-          name: "optional-check",
-          workflowName: "CI / Optional",
-          detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/446/job/41",
-          startedAt: "2026-01-01T00:00:00Z",
-          status: "COMPLETED",
-          conclusion: "SUCCESS",
-        },
+        ...jobs.map((job) => prWorkflowCheck(runId, job, createdAt)),
       ],
       actionRunAttempts: {
-        "446": {
-          attempt: 1,
-          headSha: HEAD_SHA,
-          event,
-          path: ".github/workflows/optional.yaml",
-          status: "completed",
-          conclusion: "success",
-          jobs: [{ id: 41, name: "optional-check" }],
+        [String(runId)]: {
+          ...prWorkflowRun("success", jobs, false),
+          createdAt,
+          updatedAt,
         },
       },
     });
@@ -388,6 +416,74 @@ describe("maintainer merge-gate contributor compliance", () => {
       gates: { ci: { pass: true } },
     });
   });
+
+  it("keeps an edited PR run with an unknown job merge-relevant", () => {
+    const runId = 9_101;
+    const jobs = [
+      ...prWorkflowJobs("skipped", {
+        checks: { conclusion: "success" },
+      }),
+      { id: 99, name: "future-job", conclusion: "skipped" },
+    ];
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      statusChecks: [
+        ...successfulRequiredChecks(),
+        ...jobs.map((job) => prWorkflowCheck(runId, job, "2026-01-01T00:02:00Z")),
+      ],
+      actionRunAttempts: {
+        [String(runId)]: {
+          ...prWorkflowRun("success", jobs, false),
+          createdAt: "2026-01-01T00:02:00Z",
+          updatedAt: "2026-01-01T00:02:30Z",
+        },
+      },
+    });
+
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      allPass: false,
+      gates: { ci: { pass: false } },
+    });
+  });
+
+  it.each(["push", "dynamic"])(
+    "accepts an optional %s check tied to the current head SHA",
+    (event) => {
+      const result = runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [
+          ...successfulRequiredChecks(),
+          {
+            __typename: "CheckRun",
+            name: "optional-check",
+            workflowName: "CI / Optional",
+            detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/446/job/41",
+            startedAt: "2026-01-01T00:00:00Z",
+            status: "COMPLETED",
+            conclusion: "SUCCESS",
+          },
+        ],
+        actionRunAttempts: {
+          "446": {
+            attempt: 1,
+            headSha: HEAD_SHA,
+            event,
+            path: ".github/workflows/optional.yaml",
+            status: "completed",
+            conclusion: "success",
+            jobs: [{ id: 41, name: "optional-check" }],
+          },
+        },
+      });
+
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        allPass: true,
+        gates: { ci: { pass: true } },
+      });
+    },
+  );
 
   it("accepts duplicate optional runs with exact-PR and current-head identities", () => {
     const optionalCheck = (runId: number, jobId: number, startedAt: string) => ({
