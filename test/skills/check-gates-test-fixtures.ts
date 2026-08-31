@@ -58,12 +58,6 @@ interface ActionJobFixture {
 
 interface ActionRunFixture {
   attempt: number;
-  nextAttempt?: number;
-  nextCreatedAt?: string;
-  nextUpdatedAt?: string;
-  nextDisplayTitle?: string;
-  nextStatus?: string;
-  nextConclusion?: string | null;
   jobs?: ActionJobFixture[];
   previousAttemptJobs?: ActionJobFixture[];
   jobPages?: ActionJobFixture[][];
@@ -669,18 +663,8 @@ function runGate(fixture: ComplianceFixture) {
       const previousAttemptJobs = value.previousAttemptJobs?.map(actionJobData);
       const jobs = jobPages.flat();
       const runData = actionRunData(runId, value);
-      const refreshedRunData = {
-        ...runData,
-        run_attempt: value.nextAttempt ?? value.attempt,
-        ...(value.nextCreatedAt === undefined ? {} : { created_at: value.nextCreatedAt }),
-        ...(value.nextUpdatedAt === undefined ? {} : { updated_at: value.nextUpdatedAt }),
-        display_title: value.nextDisplayTitle ?? runData.display_title,
-        status: value.nextStatus ?? runData.status,
-        conclusion: value.nextConclusion === undefined ? runData.conclusion : value.nextConclusion,
-      };
-      const runMarker = path.join(tmp, `action-run-${runId}-seen`);
       return [
-        `  "api repos/NVIDIA/NemoClaw/actions/runs/${runId}") if mkdir ${shellSingleQuote(runMarker)} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(runData))}; else printf '%s' ${shellSingleQuote(JSON.stringify(refreshedRunData))}; fi ;;`,
+        `  "api repos/NVIDIA/NemoClaw/actions/runs/${runId}") printf '%s' ${shellSingleQuote(JSON.stringify(runData))} ;;`,
         `  "api --paginate --slurp repos/NVIDIA/NemoClaw/actions/runs/${runId}/attempts/${value.attempt}/jobs?per_page=100") printf '%s' ${shellSingleQuote(
           JSON.stringify(
             jobPages.map((page) => ({
