@@ -75,8 +75,7 @@ It tries `openshell sandbox exec` and falls back to SSH if the first transport d
 For OpenClaw WeChat only, if neither transport succeeds, NemoClaw tries the stopped Docker fallback.
 It confirms that the container belongs to the registered sandbox and has one writable Docker volume at `/sandbox`.
 The helper removes only the WeChat state paths declared by the channel manifest.
-During recovery, this exception applies only when WeChat no longer appears in either the messaging plan or the current OpenShell policy.
-NemoClaw then treats state cleanup as complete without inspecting a volume if the registry entry is missing, the driver is not Docker, or no eligible stopped container exists.
+Only when WeChat appears in neither the messaging plan nor the current OpenShell policy does NemoClaw treat state cleanup as complete without inspecting a volume if the registry entry is missing, the driver is not Docker, or no eligible stopped container exists.
 </AgentOnly>
 
 If the messaging plan or current OpenShell policy still records the channel and NemoClaw cannot confirm cleanup, the command exits nonzero with recovery guidance.
