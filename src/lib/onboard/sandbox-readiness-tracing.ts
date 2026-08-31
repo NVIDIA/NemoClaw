@@ -53,11 +53,11 @@ export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DE
  *
  * Scope
  * -----
- * Only the "Error" phase is debounced. "Failed" and "CrashLoopBackOff" are
- * genuinely terminal and still fast-fail immediately. A sandbox that stays in
- * Error also fast-fails after the bounded debounce window (well before the
- * full readiness timeout), and the caller still captures full failure
- * diagnostics — this does NOT hide terminal failures.
+ * Only the "Error" phase is debounced. Other terminal phases still fast-fail
+ * immediately. A sandbox that stays in Error becomes terminal after the
+ * bounded debounce window. If the readiness deadline expires first, NemoClaw
+ * reports the Error phase. The caller still captures full failure diagnostics,
+ * so this does not hide terminal failures.
  *
  * Regression evidence / removal condition
  * ---------------------------------------
@@ -511,16 +511,11 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
           return false;
         }
         consecutiveReadyPolls = 0;
-        const failurePhase =
-          sandbox?.phase === "Error" ||
-          sandbox?.phase === "Failed" ||
-          sandbox?.phase === "CrashLoopBackOff"
-            ? sandbox.phase
-            : null;
+        const failurePhase = sandbox?.readiness === "terminal" ? sandbox.phase : null;
         // Only the transient "Error" phase is debounced. It is the phase the
         // gateway briefly reports while re-registering the just-created sandbox
-        // (#6043). "Failed" and "CrashLoopBackOff" are genuinely terminal and
-        // must still fast-fail immediately rather than burn the debounce window.
+        // (#6043). Every other typed terminal phase must fast-fail immediately
+        // rather than burn the debounce window.
         if (failurePhase && failurePhase !== "Error") {
           addTraceEvent("terminal_failure_phase", { attempt, failure_phase: failurePhase });
           result = { ready: false, reason: "terminal_failure_phase", failurePhase };

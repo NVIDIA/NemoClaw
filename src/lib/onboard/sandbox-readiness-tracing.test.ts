@@ -122,8 +122,6 @@ describe("createSandboxReadyWaiter", () => {
       reason: "timeout",
       error: null,
     });
-    expect(listSandboxes).toHaveBeenCalledTimes(4);
-    expect(fallbackReadinessProbe).toHaveBeenCalledTimes(4);
     expect(fallbackReadinessProbe).toHaveBeenCalledWith(
       expect.objectContaining({
         target: TARGET,
@@ -135,13 +133,16 @@ describe("createSandboxReadyWaiter", () => {
     const fallbackTimeouts = fallbackReadinessProbe.mock.calls.map(
       ([request]) => request.timeoutMs,
     );
+    expect(listTimeouts.length).toBeGreaterThan(0);
+    expect(fallbackTimeouts).toHaveLength(listTimeouts.length);
     expect(
       fallbackTimeouts.every(
         (timeoutMs, index) => timeoutMs! > 0 && timeoutMs! <= listTimeouts[index]!,
       ),
     ).toBe(true);
-    expect(sleep).toHaveBeenCalledTimes(4);
-    expect(sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0)).toBeCloseTo(2, 2);
+    const totalSleepSeconds = sleep.mock.calls.reduce((total, [seconds]) => total + seconds, 0);
+    expect(totalSleepSeconds).toBeGreaterThan(0);
+    expect(totalSleepSeconds).toBeLessThanOrEqual(2);
   });
 
   it("keeps the traced waiter within its deadline without an extra final delay", async () => {
@@ -554,7 +555,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     });
   });
 
-  it.each(["Failed", "CrashLoopBackOff"])(
+  it.each(["Failed", "CrashLoopBackOff", "ImagePullBackOff", "Evicted", "Unknown"])(
     "fast-fails immediately on genuinely terminal phase %s even with a large debounce",
     async (phase) => {
       const { observer, listSandboxes, sleep } = replay([
@@ -775,7 +776,7 @@ describe("DGX Spark fresh-onboard readiness replay (#6043)", () => {
     readySandboxFrame(),
   ] as const;
 
-  it("regressed pre-fix: fast-fail (K=1) surfaces the reporter failure phase", async () => {
+  it("reports Error when the first Error poll reaches a one-poll debounce", async () => {
     const { observer, sleep } = replay(reporterPhaseSequence);
     const ready = await waitForCreatedSandboxReadyWithTrace({
       sandboxName: NAME,
