@@ -3,8 +3,8 @@
 
 import type { CaptureOpenshellResult } from "../adapters/openshell/client";
 import { stripAnsi } from "../adapters/openshell/client";
-import { buildGatewayInferenceGetArgs } from "../actions/sandbox/connect-inference-gateway";
 import { parseGatewayInference, type GatewayInference } from "./config";
+import { buildGatewayInferenceGetArgs } from "./gateway/command-args";
 
 const BASE_GATEWAY_NAME = "nemoclaw";
 

@@ -184,7 +184,7 @@ describe("provider recovery persisted routing state", () => {
   function helpers() {
     return createProviderRecoveryHelpers({
       captureOpenshell: () => ({ status: 0, output: "Gateway inference:" }),
-      selectedGatewayName: "nemoclaw",
+      selectedGatewayName: () => "nemoclaw",
     });
   }
 
@@ -208,8 +208,35 @@ describe("provider recovery persisted routing state", () => {
     }));
     const recovery = createProviderRecoveryHelpers({
       captureOpenshell,
-      selectedGatewayName: "nemoclaw",
+      selectedGatewayName: () => "nemoclaw",
     });
+
+    expect(recovery.readLiveInference("alpha")).toEqual({
+      provider: "nvidia-prod",
+      model: "selected-model",
+    });
+    expect(captureOpenshell).toHaveBeenCalledExactlyOnceWith(
+      ["inference", "get", "-g", "nemoclaw-19090"],
+      { ignoreError: true, timeout: undefined },
+    );
+  });
+
+  it("reads the current selected gateway when rebuilding an empty registry (#10671)", () => {
+    vi.spyOn(registry, "listSandboxes").mockReturnValue({
+      defaultSandbox: null,
+      sandboxes: [],
+    });
+    let selectedGatewayName = "nemoclaw";
+    const captureOpenshell = vi.fn(() => ({
+      status: 0,
+      output: "Gateway inference:\n  Provider: nvidia-prod\n  Model: selected-model\n",
+    }));
+    const recovery = createProviderRecoveryHelpers({
+      captureOpenshell,
+      selectedGatewayName: () => selectedGatewayName,
+    });
+
+    selectedGatewayName = "nemoclaw-19090";
 
     expect(recovery.readLiveInference("alpha")).toEqual({
       provider: "nvidia-prod",
@@ -376,7 +403,7 @@ describe("provider recovery persisted routing state", () => {
     const warn = vi.fn();
     const recovery = createProviderRecoveryHelpers({
       captureOpenshell: () => ({ status: 0, output: "Gateway inference:" }),
-      selectedGatewayName: "nemoclaw",
+      selectedGatewayName: () => "nemoclaw",
       warn,
     });
 
@@ -428,7 +455,7 @@ describe("provider recovery persisted routing state", () => {
     }));
     const recovery = createProviderRecoveryHelpers({
       captureOpenshell,
-      selectedGatewayName: "nemoclaw",
+      selectedGatewayName: () => "nemoclaw",
     });
 
     expect(recovery.readRecordedInferenceRoute("alpha")).toBeNull();

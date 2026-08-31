@@ -100,7 +100,7 @@ export function providerNameToOptionKey(
 
 export interface ProviderRecoveryDeps {
   captureOpenshell: Parameters<typeof getLiveGatewayInference>[0];
-  selectedGatewayName: string;
+  selectedGatewayName: () => string;
   warn?(message: string): void;
 }
 
@@ -263,7 +263,7 @@ export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): Provi
       const live = getLiveGatewayInference(deps.captureOpenshell, {
         gatewayName: sandbox
           ? getPersistedSandboxTargetGatewayName(sandbox)
-          : deps.selectedGatewayName,
+          : deps.selectedGatewayName(),
       }).inference;
       // `openshell inference get` is a display boundary, not a typed API.
       // Accept it only when both routing fields are complete, bounded, and safe;

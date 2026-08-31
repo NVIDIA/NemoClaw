@@ -131,6 +131,7 @@ describe("runInferenceGet", () => {
     await expect(runInferenceGet({ sandboxName: "beta" }, deps)).rejects.toMatchObject({
       message: "OpenShell inference route lookup for gateway 'nemoclaw-19090' timed out.",
     });
+    expect(deps.log).not.toHaveBeenCalled();
   });
 
   it("reports the gateway and exit status without command output (#10671)", async () => {
@@ -141,5 +142,6 @@ describe("runInferenceGet", () => {
       message:
         "OpenShell inference route lookup for gateway 'nemoclaw-19090' failed with exit status 7.",
     });
+    expect(deps.log).not.toHaveBeenCalled();
   });
 });

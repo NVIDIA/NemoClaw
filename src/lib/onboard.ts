@@ -1676,7 +1676,7 @@ const {
   readRecordedProviderEndpoints,
 } = providerRecovery.createProviderRecoveryHelpers({
   captureOpenshell,
-  selectedGatewayName: GATEWAY_NAME,
+  selectedGatewayName: () => GATEWAY_NAME,
   warn: (message) => console.warn(message),
 });
 
