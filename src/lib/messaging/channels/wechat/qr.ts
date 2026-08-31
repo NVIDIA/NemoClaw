@@ -75,6 +75,8 @@ export type FetchLike = (
 export interface WechatQrClientOptions {
   /** Override transport; defaults to global `fetch`. */
   fetch?: FetchLike;
+  /** Cancel a pending bootstrap request. */
+  signal?: AbortSignal;
   /** Override bootstrap base URL — useful for offline tests. */
   bootstrapBaseUrl?: string;
   /** Override bot type — defaults to `3` (personal WeChat). */
@@ -142,7 +144,19 @@ export async function fetchWechatQrSession(
 
   const timeoutMs = opts.timeoutMs ?? WECHAT_QR_BOOTSTRAP_TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let abortSource: "external" | "timeout" | null = null;
+  const abortRequest = (source: "external" | "timeout") => {
+    if (abortSource !== null) return;
+    abortSource = source;
+    controller.abort();
+  };
+  const abortFromExternalSignal = () => abortRequest("external");
+  if (opts.signal?.aborted) {
+    abortFromExternalSignal();
+  } else {
+    opts.signal?.addEventListener("abort", abortFromExternalSignal, { once: true });
+  }
+  const timer = setTimeout(() => abortRequest("timeout"), timeoutMs);
   let response: Awaited<ReturnType<FetchLike>>;
   try {
     response = await transport(url.toString(), {
@@ -151,12 +165,16 @@ export async function fetchWechatQrSession(
       signal: controller.signal,
     });
   } catch (err) {
-    if (isAbortError(err)) {
+    if (abortSource === "external") {
+      throw new WechatQrError("network", "WeChat QR init request was cancelled");
+    }
+    if (abortSource === "timeout" || isAbortError(err)) {
       throw new WechatQrError("network", `WeChat QR init request timed out after ${timeoutMs}ms`);
     }
     throw new WechatQrError("network", "WeChat QR init request failed");
   } finally {
     clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", abortFromExternalSignal);
   }
   if (!response.ok) {
     throw new WechatQrError("http", `WeChat QR init returned ${response.status}`, response.status);

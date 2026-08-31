@@ -145,8 +145,10 @@ export async function runWechatHostQrLogin(
     session = await fetchWechatQrSession({
       fetch: opts.fetch,
       bootstrapBaseUrl: opts.bootstrapBaseUrl,
+      signal: opts.signal,
     });
   } catch (err) {
+    if (opts.signal?.aborted) return { kind: "aborted" };
     return { kind: "error", message: safeWechatLoginErrorMessage(err) };
   }
 
@@ -234,8 +236,10 @@ export async function runWechatHostQrLogin(
           session = await fetchWechatQrSession({
             fetch: opts.fetch,
             bootstrapBaseUrl: opts.bootstrapBaseUrl,
+            signal: opts.signal,
           });
         } catch (err) {
+          if (opts.signal?.aborted) return { kind: "aborted" };
           return { kind: "error", message: safeWechatLoginErrorMessage(err) };
         }
         currentBaseUrl = opts.bootstrapBaseUrl;

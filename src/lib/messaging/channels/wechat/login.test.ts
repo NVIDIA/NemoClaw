@@ -302,6 +302,90 @@ describe("runWechatHostQrLogin", () => {
     expect(result).toEqual({ kind: "aborted" });
   });
 
+  it("aborts a pending QR initialization request", async () => {
+    const controller = new AbortController();
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    const fetch: FetchLike = async (_url, init) => {
+      markFetchStarted();
+      return await new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => {
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          },
+          { once: true },
+        );
+      });
+    };
+
+    const login = runWechatHostQrLogin({
+      fetch,
+      renderQr: noopRender,
+      log: noopLog,
+      sleep: fastSleep,
+      signal: controller.signal,
+    });
+    await fetchStarted;
+    controller.abort();
+
+    await expect(login).resolves.toEqual({ kind: "aborted" });
+  });
+
+  it("aborts a pending QR refresh request", async () => {
+    const controller = new AbortController();
+    let markRefreshStarted!: () => void;
+    const refreshStarted = new Promise<void>((resolve) => {
+      markRefreshStarted = resolve;
+    });
+    const responses: Array<
+      (init?: Parameters<FetchLike>[1]) => ReturnType<FetchLike>
+    > = [
+      async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ qrcode: "q", qrcode_img_content: "u" }),
+      }),
+      async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ status: "expired" }),
+      }),
+      async (init) => {
+        markRefreshStarted();
+        return await new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => {
+              const error = new Error("aborted");
+              error.name = "AbortError";
+              reject(error);
+            },
+            { once: true },
+          );
+        });
+      },
+    ];
+    const fetch: FetchLike = async (_url, init) =>
+      await responses.shift()!(init);
+
+    const login = runWechatHostQrLogin({
+      fetch,
+      renderQr: noopRender,
+      log: noopLog,
+      sleep: fastSleep,
+      signal: controller.signal,
+    });
+    await refreshStarted;
+    controller.abort();
+
+    await expect(login).resolves.toEqual({ kind: "aborted" });
+  });
+
   it("omits sensitive transport details when the QR init request fails", async () => {
     const sensitiveDetail = "bot_token=secret-value qrcode=session-value";
     const fetch: FetchLike = async () => {

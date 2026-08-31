@@ -181,6 +181,7 @@ describe("messaging channel policy presets", () => {
     "https://user@idc-3.weixin.qq.com",
     "https://idc-3.weixin.qq.com/path",
     "https://idc-3.weixin.qq.com?query=1",
+    "https://idc-3.weixin.qq.com#fragment",
     "https://*.weixin.qq.com",
     "https://idc-3.weixin.qq.com.evil.example",
     "https://evil.example",
