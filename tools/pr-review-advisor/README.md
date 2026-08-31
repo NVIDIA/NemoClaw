@@ -152,7 +152,7 @@ instead of failing closed without artifacts.
 
 Each specialist artifact contains a Markdown review and Pi's unchanged native JSONL session. The
 workflow run also displays each Markdown review as a job summary. Review agents can download an
-artifact with `gh run download <run-id> --name pr-review-specialist-<interest>`.
+artifact with `gh run download <run-id> --name pr-review-specialist-<interest>-<attempt>`.
 
 The publisher has the only pull-request write permission. It receives neither the model credential
 nor the specialist artifacts. It posts only the workflow-run link.
