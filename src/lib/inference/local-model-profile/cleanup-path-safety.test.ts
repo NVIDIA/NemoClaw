@@ -140,7 +140,11 @@ describe("host-local model cleanup path safety", () => {
         ),
       });
       expect(blockedRun).toMatchObject({
-        reason: expect.stringContaining(`sudo chown -R ${hostIdentity()} '${blocking}'`),
+        reason: expect.stringContaining(
+          `Repair ownership and owner access, then retry uninstall: ` +
+            `sudo chown -R ${hostIdentity()} '${blocking}' && ` +
+            `sudo chmod -R u+rwX '${blocking}'`,
+        ),
       });
       expect(repairedRun).toMatchObject({ ok: true });
       expect(fs.existsSync(path.join(cache, "hub"))).toBe(false);

@@ -119,7 +119,9 @@ NemoClaw stops and verifies its managed local and distributed model runtimes bef
 It validates that `~/.cache/` and `~/.cache/huggingface/` are real, current-user-owned directories that are not symlinks.
 When `~/.cache/huggingface/` is group- or world-writable, NemoClaw clears those write bits before it deletes anything, because NemoClaw created that directory during onboarding.
 A group- or world-writable `~/.cache/` still stops the cleanup, and the reported error names the directory and the permissions to remove.
-A cache path that an earlier root-run model container created is not removable by the host user; the reported error names that path and gives a `chown` command for the directory that holds it.
+A cache path that an earlier root-run model container created is not removable by the host user.
+The reported error names that path and gives the `chown` and `chmod` commands that restore ownership and owner access to the directory that holds it.
+A `chown` alone leaves a directory undeletable when its owner still lacks write and search permission.
 It inventories Ollama before it deletes any Ollama model.
 An Ollama inventory error, model deletion error, unsafe cache path, or cache-data deletion error makes uninstall exit nonzero.
 Cleanup can partially complete before an error.

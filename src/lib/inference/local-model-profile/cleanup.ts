@@ -329,11 +329,13 @@ function removalBarrier(target: string, blocked: string): string {
 }
 
 /**
- * Delete one cache entry and translate a permission failure into the ownership
- * repair the host user must run. The managed vLLM container serves as root, so
- * a model file it writes through the bind-mounted cache lands root-owned on the
- * host and no unprivileged delete can remove it. NemoClaw never changes host
- * file ownership on the user's behalf.
+ * Delete one cache entry and translate a permission failure into the repair the
+ * host user must run. The managed vLLM container serves as root, so a model file
+ * it writes through the bind-mounted cache lands root-owned on the host and no
+ * unprivileged delete can remove it. The repair restores owner access as well as
+ * ownership, because a directory whose owner lacks write and search permission
+ * stays undeletable after a `chown` alone. NemoClaw never changes host file
+ * ownership or permissions outside the cache it is deleting.
  */
 function removeHuggingFaceCacheEntry(target: string): void {
   try {
@@ -346,11 +348,12 @@ function removeHuggingFaceCacheEntry(target: string): void {
       typeof process.getuid === "function" && typeof process.getgid === "function"
         ? `${String(process.getuid())}:${String(process.getgid())}`
         : "$(id -u):$(id -g)";
-    const barrier = removalBarrier(target, blocked);
+    const barrier = shellQuote(removalBarrier(target, blocked));
     throw new Error(
       `Hugging Face cache path ${blocked} is not removable by host user ${identity}. ` +
         "It may have been created by an earlier root-run model container; NemoClaw did not modify it. " +
-        `Repair ownership, then retry uninstall: sudo chown -R ${identity} ${shellQuote(barrier)}`,
+        "Repair ownership and owner access, then retry uninstall: " +
+        `sudo chown -R ${identity} ${barrier} && sudo chmod -R u+rwX ${barrier}`,
     );
   }
 }
