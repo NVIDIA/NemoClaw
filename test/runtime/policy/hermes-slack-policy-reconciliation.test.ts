@@ -111,7 +111,7 @@ exit 1
       },
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const payload = parseResultPayload(result.stdout);
     expect(payload.appliedBefore).toEqual([]);
     expect(payload.appliedAfter).toEqual(["slack"]);
