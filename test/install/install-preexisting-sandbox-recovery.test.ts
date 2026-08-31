@@ -170,7 +170,7 @@ exit 0
       fi
     }
     ensure_docker() { record_install_phase ensure-docker-started; }
-    ensure_openshell_build_deps() { :; }
+    ensure_openshell_build_deps() { record_install_phase build-deps-started; }
     maybe_offer_express_install() {
       ${options.stationExpressSelected ? '_SELECTED_EXPRESS_PLATFORM="DGX Station"' : ":"}
     }
@@ -311,6 +311,9 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.status, result.output).toBe(0);
     expect(result.calls).toContain("ensure-docker-started");
     expect(result.calls).toContain("node-install-started");
+    expect(result.calls.indexOf("node-install-started")).toBeLessThan(
+      result.calls.indexOf("ensure-docker-started"),
+    );
     expect(result.calls).toContain("preinstall-backup-retirement");
     expect(result.calls).toContain("host-preflight");
     expect(result.output).not.toContain("Docker context does not select the local default target");
@@ -325,8 +328,10 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     });
 
     expect(result.status).toBe(1);
-    expect(result.calls).toContain("ensure-docker-started");
     expect(result.calls).toContain("node-install-started");
+    expect(result.calls).not.toContain("ensure-docker-started");
+    expect(result.calls).not.toContain("build-deps-started");
+    expect(result.calls).not.toContain("setup-jetson-started");
     expect(result.calls).not.toContain("preinstall-backup-retirement");
     expect(result.calls).not.toContain(
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
