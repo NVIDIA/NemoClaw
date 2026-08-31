@@ -591,10 +591,10 @@ describe("install.sh OpenShell gateway service", () => {
   });
 
   it.each([
-    ["HOME", (home: string) => ({ HOME: `${home}${path.sep}` })],
+    ["HOME", (home: string): NodeJS.ProcessEnv => ({ HOME: `${home}${path.sep}` })],
     [
       "XDG_CONFIG_HOME",
-      (home: string) => ({
+      (home: string): NodeJS.ProcessEnv => ({
         XDG_CONFIG_HOME: `${path.join(home, "xdg-config")}${path.sep}`,
       }),
     ],
