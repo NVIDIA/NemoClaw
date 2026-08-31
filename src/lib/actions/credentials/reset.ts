@@ -111,7 +111,6 @@ export async function runCredentialsResetAction(
 
   if (
     !recovery.ok &&
-    recovery.recoveryFailures.length === 0 &&
     !KNOWN_CREDENTIAL_ENV_KEY_SET.has(key) &&
     recovery.error?.kind === "command" &&
     recovery.error.reason === "not_found"

@@ -305,6 +305,52 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(result.failureLines).toContain("  provider deletion failed");
   });
 
+  it("cleans local state when concurrent deletion settles detach recovery (#9806)", async () => {
+    const forgetExtraProvider = vi.fn(() => true);
+    setGlobalCliActionRuntimeHooksForTest({
+      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
+      recordExtraProvider: () => true,
+      forgetExtraProvider,
+      listManagedMcpCredentialReservations: () => [],
+    });
+    const deleteProvider = vi
+      .fn<OpenShellProviderAdapter["deleteProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "attached",
+          message: "provider remains attached",
+          attachedSandboxes: ["alpha"],
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: "provider not found" },
+      });
+    const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
+      ok: false,
+      error: {
+        kind: "authentication",
+        message: "OpenShell could not authenticate the provider operation.",
+      },
+    }));
+    const adapter = providerAdapter({ deleteProvider, detachProvider });
+
+    const result = await runCredentialsResetAction(
+      { provider: "custom-provider", confirmed: true },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.outputLines).toContain(
+      "  Provider 'custom-provider' is already absent from the OpenShell gateway. Local state was cleaned up.",
+    );
+    expect(result.outputLines.join("\n")).not.toContain("Detach it with");
+    expect(detachProvider).toHaveBeenCalledOnce();
+    expect(forgetExtraProvider).toHaveBeenCalledWith("custom-provider");
+  });
+
   it("reports final attachments after successful detach recovery (#9806)", async () => {
     const deleteProvider = vi
       .fn<OpenShellProviderAdapter["deleteProvider"]>()
