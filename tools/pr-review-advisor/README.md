@@ -138,8 +138,8 @@ Configure this repository secret for review analysis:
 - `PR_REVIEW_ADVISOR_API_KEY`
 
 The trusted host uses this secret only to register the OpenAI-compatible
-`https://inference-api.nvidia.com/v1` service with OpenShell. The sandboxed analyzer reaches that
-provider through `https://inference.local/v1` and does not receive the secret.
+`https://inference-api.nvidia.com/v1` service with OpenShell. The sandboxed specialists reach that
+provider through `https://inference.local/v1` and do not receive the secret.
 The discovered specialists use the workflow-configured model and share the same credential boundary.
 
 ## Artifacts

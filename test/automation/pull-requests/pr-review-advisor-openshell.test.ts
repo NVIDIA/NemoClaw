@@ -215,7 +215,7 @@ describe("PR review advisor specialist lifecycle", () => {
 
   it.each([
     { failedStage: "configure", expectedCalls: ["configure", "gateway"] },
-    { failedStage: "create", expectedCalls: ["configure", "create", "sandbox", "gateway"] },
+    { failedStage: "create", expectedCalls: ["configure", "create", "gateway"] },
     { failedStage: "run", expectedCalls: ["configure", "create", "run", "sandbox", "gateway"] },
     {
       failedStage: "execution",
