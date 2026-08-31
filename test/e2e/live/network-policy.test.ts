@@ -521,6 +521,7 @@ test(
         "OpenShell 0.0.106 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
         "read-only preset allowlist behavior",
         "weather preset allows wttr.in GET and HEAD but denies POST and unrelated hosts",
+        "Homebrew raw GitHub GET and HEAD remain allowed while POST receives a local policy denial (#10380)",
         "live policy-add and dry-run behavior",
         "per-binary policy enforcement",
         "hot reload without sandbox restart",
@@ -762,15 +763,52 @@ export HOMEBREW_NO_ENV_HINTS=1
 check_status() {
   endpoint_name="$1"
   endpoint_url="$2"
-  status="$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 30 "$endpoint_url")"
+  shift 2
+  status="$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 30 "$@" "$endpoint_url")"
   case "$status" in
     2??|3??|401) printf 'BREW_ENDPOINT_%s_OK_%s\n' "$endpoint_name" "$status" ;;
     *) printf 'BREW_ENDPOINT_%s_BAD_%s\n' "$endpoint_name" "$status"; exit 1 ;;
   esac
 }
 check_status formulae https://formulae.brew.sh
-check_status raw https://raw.githubusercontent.com/Homebrew/brew/HEAD/README.md
+raw_url=https://raw.githubusercontent.com/Homebrew/brew/HEAD/README.md
+check_status raw "$raw_url"
+check_status raw_head "$raw_url" --head
 check_status ghcr https://ghcr.io/v2/
+post_body="$(mktemp)"
+trap 'rm -f "$post_body"' EXIT
+post_status="$(curl -sS -o "$post_body" -w "%{http_code}" --connect-timeout 10 --max-time 30 -X POST "$raw_url")"
+if [ "$post_status" != 403 ]; then
+  printf 'BREW_ENDPOINT_raw_POST_BAD_%s\n' "$post_status"
+  head -c 300 "$post_body" || true
+  exit 1
+fi
+if ! node - "$post_body" <<'NEMOCLAW_BREW_POLICY_DENIAL'
+const fs = require("node:fs");
+const body = fs.readFileSync(process.argv[2], "utf8");
+let payload;
+try {
+  payload = JSON.parse(body);
+} catch {
+  process.exit(1);
+}
+const detail = typeof payload.detail === "string" ? payload.detail : "";
+if (
+  payload.error !== "policy_denied" ||
+  !/\bPOST\b.*raw\.githubusercontent\.com(?::443)?/iu.test(detail) ||
+  /<html/iu.test(body)
+) {
+  process.exit(1);
+}
+NEMOCLAW_BREW_POLICY_DENIAL
+then
+  printf 'BREW_ENDPOINT_raw_POST_BAD_BODY\n'
+  head -c 300 "$post_body" || true
+  exit 1
+fi
+printf 'BREW_ENDPOINT_raw_POST_DENIED_LOCAL_403\n'
+rm -f "$post_body"
+trap - EXIT
 command -v brew
 brew --prefix
 brew install --quiet hello
@@ -782,6 +820,8 @@ hello
     const brewText = text(brewProbe);
     expect(brewText).toContain("BREW_ENDPOINT_formulae_OK_");
     expect(brewText).toContain("BREW_ENDPOINT_raw_OK_");
+    expect(brewText).toContain("BREW_ENDPOINT_raw_head_OK_");
+    expect(brewText).toContain("BREW_ENDPOINT_raw_POST_DENIED_LOCAL_403");
     expect(brewText).toContain("BREW_ENDPOINT_ghcr_OK_");
     expect(brewText).toContain("/usr/local/bin/brew");
     expect(brewText).toContain("/home/linuxbrew/.linuxbrew");
@@ -1082,6 +1122,7 @@ printf '\n'
         denyDefault: true,
         weatherReadOnlyPreset: true,
         brewPreset: true,
+        brewRawGithubMethodPolicy: true,
         pypiReadOnlyPreset: true,
         livePolicyAdd: true,
         dryRunNoSideEffect: true,

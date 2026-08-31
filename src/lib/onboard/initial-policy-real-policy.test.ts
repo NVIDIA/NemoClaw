@@ -721,13 +721,6 @@ describe("initial sandbox policy real preset merge", () => {
     const brewRaw = endpoint("brew", "raw.githubusercontent.com");
     const pricingRaw = endpoint("openclaw-pricing", "raw.githubusercontent.com");
     expect(connectionMetadata(brewRaw)).toEqual(connectionMetadata(pricingRaw));
-    expect(requestMetadata(brewRaw)).toEqual(requestMetadata(pricingRaw));
-    expect(brewRaw).toMatchObject({ protocol: "rest", enforcement: "enforce" });
-    expect(brewRaw).not.toHaveProperty("access");
-    expect(brewRaw.rules?.map((rule) => rule.allow)).toEqual([
-      { method: "GET", path: "/**" },
-      { method: "HEAD", path: "/**" },
-    ]);
     expect(pricingRaw).toMatchObject({ protocol: "rest", enforcement: "enforce" });
     expect(effective.network_policies?.brew?.binaries).not.toEqual(
       expect.arrayContaining([{ path: "/usr/local/bin/node" }, { path: "/usr/bin/node" }]),

@@ -24,15 +24,7 @@ const PERMISSIVE_POLICY_PATH = new URL(
   "../../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
   import.meta.url,
 );
-const OPENCLAW_PERMISSIVE_POLICY_PATH = new URL(
-  "../../agents/openclaw/policy-permissive.yaml",
-  import.meta.url,
-);
 const HERMES_POLICY_PATH = new URL("../../agents/hermes/policy-additions.yaml", import.meta.url);
-const HERMES_PERMISSIVE_POLICY_PATH = new URL(
-  "../../agents/hermes/policy-permissive.yaml",
-  import.meta.url,
-);
 
 type Blueprint = {
   digest?: string;
@@ -204,31 +196,6 @@ describe("effective sandbox policy behavior", () => {
       prepared.cleanup?.();
     }
   });
-
-  it.each([
-    ["shared", PERMISSIVE_POLICY_PATH, "openclaw"],
-    ["OpenClaw", OPENCLAW_PERMISSIVE_POLICY_PATH, "openclaw"],
-    ["Hermes", HERMES_PERMISSIVE_POLICY_PATH, "hermes"],
-  ] as const)(
-    "keeps the %s permissive Homebrew raw GitHub route read-only (#10380)",
-    (_policyName, policyPath, agentName) => {
-      const prepared = prepareInitialSandboxCreatePolicy(policyPath.pathname, [], { agentName });
-      try {
-        const policy = parseEffectivePolicy(readFileSync(prepared.policyPath, "utf-8"));
-        const rawGitHub = endpoint(policy, "brew", "raw.githubusercontent.com");
-
-        expect(rawGitHub).toMatchObject({
-          port: 443,
-          protocol: "rest",
-          enforcement: "enforce",
-        });
-        expect(rawGitHub).not.toHaveProperty("access");
-        expect(methods(rawGitHub)).toEqual(["GET", "HEAD"]);
-      } finally {
-        prepared.cleanup?.();
-      }
-    },
-  );
 
   it("keeps Hermes inference and package access narrow after create-policy preparation", () => {
     const prepared = prepareInitialSandboxCreatePolicy(HERMES_POLICY_PATH.pathname, [], {
