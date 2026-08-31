@@ -369,6 +369,21 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiredJobs).toEqual([]);
   });
 
+  it.each([
+    "test/e2e/lib/fake-api-port-proxy.mts",
+    "test/e2e/lib/fake-api-port-readiness.mts",
+    "test/e2e/live/messaging-providers-helpers.ts",
+  ])("selects every fake Docker API consumer for %s", (changedFile) => {
+    expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual(
+      [
+        "hermes-discord",
+        "messaging-providers",
+        "openclaw-discord-pairing",
+        "openclaw-slack-pairing",
+      ].map((id) => ({ id, matchedFiles: [changedFile] })),
+    );
+  });
+
   it("maps a shared gateway live test to every catalogue fixture (#7921)", () => {
     const changedFiles = ["test/e2e/live/openshell-gateway-upgrade.test.ts"];
     const focusedE2eJobs = catalogueTargetsForChangedFiles(changedFiles).map((target) => ({

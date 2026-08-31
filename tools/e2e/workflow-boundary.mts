@@ -702,8 +702,17 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/restore-gateway-pairing.ts",
   "src/lib/adapters/openshell/restore-gateway-pairing.ts",
 ]);
+const FAKE_DOCKER_API_CONSUMER_JOBS = [
+  "hermes-discord",
+  "messaging-providers",
+  "openclaw-discord-pairing",
+  "openclaw-slack-pairing",
+] as const;
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ["test/e2e/lib/fake-wechat-api.mts", ["messaging-providers"]],
+  ["test/e2e/lib/fake-api-port-proxy.mts", FAKE_DOCKER_API_CONSUMER_JOBS],
+  ["test/e2e/lib/fake-api-port-readiness.mts", FAKE_DOCKER_API_CONSUMER_JOBS],
+  ["test/e2e/live/messaging-providers-helpers.ts", FAKE_DOCKER_API_CONSUMER_JOBS],
   ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts", ["openclaw-plugin-runtime-exdev"]],
 ]);
 
@@ -717,7 +726,7 @@ export function focusedE2eJobsForChangedFiles(
       addMapValue(matchedFilesByJob, job, file);
     }
     for (const job of LIVE_E2E_OWNING_FILE_JOBS.get(file) ?? []) {
-      if (inventory.allowedJobs.includes(job)) addMapValue(matchedFilesByJob, job, file);
+      addMapValue(matchedFilesByJob, job, file);
     }
     if (RESTORED_GATEWAY_PAIRING_RUNTIME_FILES.has(file)) {
       addMapValue(matchedFilesByJob, "snapshot-commands", file);

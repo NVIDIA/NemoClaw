@@ -30,6 +30,10 @@ import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-ru
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
 const FAKE_WECHAT_API = path.resolve(import.meta.dirname, "../lib/fake-wechat-api.mts");
+const FAKE_API_PORT_READINESS = path.resolve(
+  import.meta.dirname,
+  "../lib/fake-api-port-readiness.mts",
+);
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -55,56 +59,53 @@ function successfulShellResult(command: string[], stdout = ""): ShellProbeResult
 }
 
 describe("messaging provider installed-runtime proofs", () => {
-  it("keeps fake Docker APIs internal and binds proxy ports to the OpenShell bridge", async () => {
-    const invocations: string[][] = [];
+  it("collects diagnostics when published fake API proxy ports do not carry traffic", async () => {
+    const artifactNames: string[] = [];
     const cleanupTasks: Array<() => Promise<void>> = [];
-    const responses: Array<(invocation: string[]) => ShellProbeResult> = [
-      (invocation) =>
-        successfulShellResult(
-          invocation,
-          JSON.stringify([
-            {
-              Driver: "bridge",
-              Id: "0123456789abcdef0123456789abcdef",
-              IPAM: { Config: [{ Subnet: "172.18.0.0/16", Gateway: "172.18.0.1" }] },
-              Options: {},
-            },
-          ]),
-        ),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => {
-        const mountSuffix = ":/tmp/fake";
-        const mount = invocation.find((argument) => argument.endsWith(mountSuffix));
-        expect(mount).toBeDefined();
-        fs.writeFileSync(path.join(mount!.slice(0, -mountSuffix.length), "port"), "8080\n");
-        return successfulShellResult(invocation, "fake-container-id\n");
-      },
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation, "172.18.0.1:41080\n"),
-      (invocation) => successfulShellResult(invocation, "172.18.0.1:41081\n"),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation),
-      (invocation) => successfulShellResult(invocation),
-    ];
     const runner: CommandRunner = {
-      async run(command) {
+      async run(command, options) {
         const invocation = [command.command, ...command.args];
-        invocations.push(invocation);
-        const respond = responses.shift();
-        expect(respond).toBeDefined();
-        return respond!(invocation);
+        const artifactName = options?.artifactName ?? "";
+        artifactNames.push(...(artifactName ? [artifactName] : []));
+        switch (artifactName) {
+          case "inspect-fake-slack-api-openshell-network":
+            return successfulShellResult(
+              invocation,
+              JSON.stringify([
+                {
+                  Driver: "bridge",
+                  Id: "0123456789abcdef0123456789abcdef",
+                  IPAM: { Config: [{ Subnet: "172.18.0.0/16", Gateway: "172.18.0.1" }] },
+                  Options: {},
+                },
+              ]),
+            );
+          case "start-fake-slack-api": {
+            const mountSuffix = ":/tmp/fake";
+            const mount = invocation.find((argument) => argument.endsWith(mountSuffix));
+            expect(mount).toBeDefined();
+            fs.writeFileSync(path.join(mount!.slice(0, -mountSuffix.length), "port"), "8080\n");
+            return successfulShellResult(invocation, "fake-container-id\n");
+          }
+          case "port-fake-slack-api":
+            return successfulShellResult(invocation, "172.18.0.1:41080\n");
+          case "port-fake-slack-websocket-api":
+            return successfulShellResult(invocation, "172.18.0.1:41081\n");
+          case "prove-fake-slack-api-proxy-readiness":
+            return {
+              ...successfulShellResult(invocation),
+              exitCode: 1,
+              stderr: "fake API port readiness failed: connection refused",
+            };
+          default:
+            return successfulShellResult(invocation);
+        }
       },
     };
 
     try {
-      const api = await startFakeDockerApi(
-        new HostCliClient(runner),
-        (_name, run) => cleanupTasks.push(run),
-        {
+      await expect(
+        startFakeDockerApi(new HostCliClient(runner), (_name, run) => cleanupTasks.push(run), {
           kind: "slack",
           imageScript: "fake-slack-api.cjs",
           containerPrefix: "nemoclaw-fake-slack-test",
@@ -117,54 +118,14 @@ describe("messaging provider installed-runtime proofs", () => {
           },
           redactionValues: [],
           env: {},
-        },
-      );
-      const networkCreates = invocations.filter(
-        ([command, group, action]) =>
-          command === "docker" && group === "network" && action === "create",
-      );
-      expect(invocations).toContainEqual(["docker", "network", "inspect", "openshell-docker"]);
-      const internalNetworkCreate = networkCreates.find((invocation) =>
-        invocation.includes("--internal"),
-      );
-      const proxyNetworkCreate = networkCreates.find((invocation) =>
-        invocation.includes("com.docker.network.bridge.enable_ip_masquerade=false"),
-      );
-      expect(internalNetworkCreate?.slice(0, -1)).toEqual([
-        "docker",
-        "network",
-        "create",
-        "--internal",
+        }),
+      ).rejects.toThrow(/proxy .* did not become ready for API container .*traffic readiness/u);
+      expect(artifactNames.filter((name) => name.startsWith("failure-fake-slack-api-"))).toEqual([
+        "failure-fake-slack-api-proxy-inspect",
+        "failure-fake-slack-api-proxy-logs",
+        "failure-fake-slack-api-api-inspect",
+        "failure-fake-slack-api-api-logs",
       ]);
-      expect(proxyNetworkCreate?.slice(0, -1)).toEqual([
-        "docker",
-        "network",
-        "create",
-        "--driver",
-        "bridge",
-        "--opt",
-        "com.docker.network.bridge.enable_ip_masquerade=false",
-      ]);
-      const containerRun = invocations.find(
-        ([command, action]) => command === "docker" && action === "run",
-      );
-      expect(containerRun).toContain(internalNetworkCreate?.at(-1));
-      expect(containerRun).not.toContain("-p");
-      expect(containerRun).not.toContain("0:8080");
-      expect(containerRun?.join("\n")).toContain("xoxb-fake-slack-network-test");
-      expect(containerRun?.join("\n")).toContain("xapp-fake-slack-network-test");
-      const proxyCreate = invocations.find(
-        ([command, action]) => command === "docker" && action === "create",
-      );
-      expect(proxyCreate).toContain(proxyNetworkCreate?.at(-1));
-      expect(proxyCreate).toContain("172.18.0.1:0:8080");
-      expect(proxyCreate).toContain("172.18.0.1:0:8081");
-      expect(proxyCreate).not.toContain("0:8080");
-      expect(proxyCreate?.join("\n")).not.toContain("xoxb-fake-slack-network-test");
-      expect(proxyCreate?.join("\n")).not.toContain("xapp-fake-slack-network-test");
-      expect(proxyCreate).toContain("/opt/nemoclaw-e2e/fake-api-port-proxy.mts");
-      expect(api.port).toBe("41080");
-      expect(api.alternatePort).toBe("41081");
     } finally {
       await cleanupTasks
         .reverse()
@@ -224,6 +185,41 @@ describe("messaging provider installed-runtime proofs", () => {
       expect(listening).toHaveLength(2);
       expect(listening.map((entry) => entry.kind).sort()).toEqual(["rest", "websocket"]);
       expect(new Set(listening.map((entry) => entry.port)).size).toBe(2);
+      const restPort = Number(fs.readFileSync(portFile, "utf8").trim());
+      const websocketPort = Number(
+        listening.find((entry) => entry.kind === "websocket")?.port ?? 0,
+      );
+      const readiness = spawnSync(
+        process.execPath,
+        [
+          "--experimental-strip-types",
+          FAKE_API_PORT_READINESS,
+          "127.0.0.1",
+          String(restPort),
+          String(websocketPort),
+        ],
+        { encoding: "utf8", timeout: 15_000 },
+      );
+      expect(readiness.status, readiness.stderr).toBe(0);
+      const traffic = fs
+        .readFileSync(captureFile, "utf8")
+        .trim()
+        .split(/\r?\n/u)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      expect(traffic).toContainEqual(
+        expect.objectContaining({ event: "request", path: "/__nemoclaw_e2e_readiness" }),
+      );
+      expect(traffic).toContainEqual(
+        expect.objectContaining({ event: "websocket-upgrade", path: "/socket-mode" }),
+      );
+      expect(traffic).toContainEqual(
+        expect.objectContaining({
+          event: "websocket-message",
+          messageType: "nemoclaw_readiness",
+          path: "/socket-mode",
+        }),
+      );
     } finally {
       child.kill("SIGTERM");
       await new Promise<void>((resolve) =>
@@ -231,7 +227,7 @@ describe("messaging provider installed-runtime proofs", () => {
       );
       fs.rmSync(dir, { recursive: true, force: true });
     }
-  }, 10_000);
+  }, 15_000);
 
   it("keeps raw process-probe tokens out of argv and fails closed", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-process-token-probe-"));

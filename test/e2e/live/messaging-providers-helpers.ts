@@ -34,6 +34,7 @@ export const BASE_POLICY = path.join(
   "openclaw-sandbox.yaml",
 );
 export const FAKE_LIB_DIR = path.join(REPO_ROOT, "test", "e2e", "lib");
+const FAKE_API_PORT_READINESS = path.join(FAKE_LIB_DIR, "fake-api-port-readiness.mts");
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-msg-${process.pid}`;
 export const INSTALL_TIMEOUT_MS = 45 * 60_000;
 export const REBUILD_TIMEOUT_MS = 25 * 60_000;
@@ -599,6 +600,43 @@ if [ -n "$match" ]; then printf '%s\n' "$match"; else echo ABSENT; fi`;
   return sandboxOutput(sandbox, probe, artifactName, redactionValues);
 }
 
+async function collectFakeApiStartupDiagnostics(
+  host: HostCliClient,
+  options: {
+    kind: string;
+    proxy: string;
+    container: string;
+    env: NodeJS.ProcessEnv;
+    redactionValues: string[];
+  },
+): Promise<void> {
+  for (const [role, name] of [
+    ["proxy", options.proxy],
+    ["api", options.container],
+  ] as const) {
+    try {
+      await runHost(host, "docker", ["inspect", "--format", "{{json .State}}", name], {
+        artifactName: `failure-fake-${options.kind}-api-${role}-inspect`,
+        env: options.env,
+        redactionValues: options.redactionValues,
+        timeoutMs: 30_000,
+      });
+    } catch {
+      // Preserve the readiness failure when a diagnostic command cannot start.
+    }
+    try {
+      await runHost(host, "docker", ["logs", "--tail", "200", name], {
+        artifactName: `failure-fake-${options.kind}-api-${role}-logs`,
+        env: options.env,
+        redactionValues: options.redactionValues,
+        timeoutMs: 30_000,
+      });
+    } catch {
+      // Preserve the readiness failure when a diagnostic command cannot start.
+    }
+  }
+}
+
 export async function startFakeDockerApi(
   host: HostCliClient,
   cleanup: (name: string, run: () => Promise<void>) => void,
@@ -825,6 +863,7 @@ export async function startFakeDockerApi(
   });
   expectExitZero(proxyStart, `start fake ${options.kind} API proxy`);
 
+  let readinessFailure = "published ports were unavailable";
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (fs.existsSync(portFile) && fs.statSync(portFile).size > 0) {
       const restPort = await runHost(host, "docker", ["port", proxy, "8080/tcp"], {
@@ -833,6 +872,10 @@ export async function startFakeDockerApi(
         redactionValues: options.redactionValues,
         timeoutMs: 30_000,
       });
+      if (restPort.exitCode !== 0) {
+        readinessFailure = `REST port lookup failed with exit ${restPort.exitCode ?? "unknown"}`;
+        break;
+      }
       const publishedRestPort = restPort.stdout.trim().split(":").at(-1)?.trim() ?? "";
       let publishedWebsocketPort = "";
       if (options.kind === "slack") {
@@ -842,23 +885,57 @@ export async function startFakeDockerApi(
           redactionValues: options.redactionValues,
           timeoutMs: 30_000,
         });
+        if (websocketPort.exitCode !== 0) {
+          readinessFailure = `WebSocket port lookup failed with exit ${websocketPort.exitCode ?? "unknown"}`;
+          break;
+        }
         publishedWebsocketPort = websocketPort.stdout.trim().split(":").at(-1)?.trim() ?? "";
       }
       if (publishedRestPort && (options.kind !== "slack" || publishedWebsocketPort)) {
-        return {
-          kind: options.kind,
-          port: publishedRestPort,
-          ...(options.kind === "slack" ? { alternatePort: publishedWebsocketPort } : {}),
-          dir,
-          captureFile,
-          container,
-        };
+        const readiness = await runHost(
+          host,
+          "node",
+          [
+            "--experimental-strip-types",
+            FAKE_API_PORT_READINESS,
+            gatewayIp,
+            publishedRestPort,
+            ...(options.kind === "slack" ? [publishedWebsocketPort] : []),
+          ],
+          {
+            artifactName: `prove-fake-${options.kind}-api-proxy-readiness`,
+            env: options.env,
+            redactionValues: options.redactionValues,
+            timeoutMs: 15_000,
+          },
+        );
+        if (readiness.exitCode === 0) {
+          return {
+            kind: options.kind,
+            port: publishedRestPort,
+            ...(options.kind === "slack" ? { alternatePort: publishedWebsocketPort } : {}),
+            dir,
+            captureFile,
+            container,
+          };
+        }
+        readinessFailure = `traffic readiness failed with exit ${readiness.exitCode ?? "unknown"}`;
+        break;
       }
     }
     await sleep(100);
   }
 
-  throw new Error(`fake ${options.kind} API did not publish a port`);
+  await collectFakeApiStartupDiagnostics(host, {
+    kind: options.kind,
+    proxy,
+    container,
+    env: options.env,
+    redactionValues: options.redactionValues,
+  });
+  throw new Error(
+    `fake ${options.kind} API proxy ${proxy} did not become ready for API container ${container}: ${readinessFailure}`,
+  );
 }
 
 export async function applyRestRewritePolicy(
