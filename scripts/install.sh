@@ -1253,46 +1253,25 @@ installer_docker_host_has_supported_shape() {
   [[ "$socket_path" == /* && "$socket_path" != *"'"* ]]
 }
 
-installer_docker_context_has_supported_target() {
-  case "${DOCKER_CONTEXT-}" in
-    "" | default) ;;
-    *) return 1 ;;
-  esac
-
-  local raw="${DOCKER_HOST-}" candidate active_context=""
-  candidate="${raw#"${raw%%[![:space:]]*}"}"
-  candidate="${candidate%"${candidate##*[![:space:]]}"}"
-  [[ -z "$candidate" ]] || return 0
-  if command_exists docker; then
-    active_context="$(docker context show 2>/dev/null)" || return 1
-  else
-    active_context="$(express_wsl_docker_active_context)"
-  fi
-  [[ "$active_context" == default ]]
-}
-
-installer_docker_context_validation_requires_node() {
-  [[ -z "${DOCKER_CONTEXT-}" ]] || return 1
-  local raw="${DOCKER_HOST-}" candidate config
-  candidate="${raw#"${raw%%[![:space:]]*}"}"
-  candidate="${candidate%"${candidate##*[![:space:]]}"}"
-  [[ -z "$candidate" ]] || return 1
-  command_exists docker && return 1
-  command_exists node && return 1
-  config="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
-  [[ -e "$config" ]]
-}
-
 validate_installer_docker_target_before_host_changes() {
+  local raw="${DOCKER_HOST-}" candidate active_context=""
   installer_docker_host_has_supported_shape \
-    || error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer. Sandbox recovery did not start."
-  if installer_docker_context_validation_requires_node; then
-    _INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED=1
-    export DOCKER_CONTEXT=default
-    return 0
+    || error "DOCKER_HOST is not a supported absolute local Unix socket endpoint. Unset DOCKER_HOST or set it to an absolute local Unix socket URL, such as unix:///var/run/docker.sock. Then rerun the installer."
+  candidate="${raw#"${raw%%[![:space:]]*}"}"
+  candidate="${candidate%"${candidate##*[![:space:]]}"}"
+  if [[ -n "$candidate" ]]; then
+    active_context="${DOCKER_CONTEXT:-default}"
+  else
+    unset DOCKER_HOST
+    if docker_context_needs_node; then
+      _INSTALLER_DOCKER_CONTEXT_VALIDATION_DEFERRED=1
+      export DOCKER_CONTEXT=default
+      return 0
+    fi
+    active_context="$(docker_active_context)"
   fi
-  installer_docker_context_has_supported_target \
-    || error "The Docker context does not select the local default target. Unset DOCKER_CONTEXT or set it to default, and run 'docker context use default' if a non-default context is persisted. Then rerun the installer. Sandbox recovery did not start."
+  [[ "$active_context" == default ]] \
+    || error "The Docker context does not select the local default target. Unset DOCKER_CONTEXT or set it to default, and run 'docker context use default' if a non-default context is persisted. Then rerun the installer."
 }
 
 complete_deferred_installer_docker_context_validation() {
@@ -5428,7 +5407,7 @@ express_wsl_docker_operating_system() {
 # `docker context use` writes). A missing config or a config with no
 # currentContext uses Docker's "default"; an unreadable or unparseable config
 # fails closed as non-local.
-express_wsl_docker_active_context() {
+docker_active_context() {
   if [ -n "${DOCKER_CONTEXT:-}" ]; then
     printf '%s' "${DOCKER_CONTEXT}"
     return 0
@@ -5483,7 +5462,7 @@ NODE
 # (non-local) on any non-default, unreadable, or unparseable context.
 express_wsl_docker_target_is_local() {
   [ -z "${DOCKER_HOST:-}" ] || return 1
-  [ "$(express_wsl_docker_active_context)" = "default" ]
+  [ "$(docker_active_context)" = "default" ]
 }
 
 # Windows-host Ollama only works through LOCAL Docker Desktop WSL integration
@@ -5501,7 +5480,7 @@ express_wsl_can_use_windows_host_ollama() {
 # window as non-local pinned WSL-local Ollama on hosts whose Docker Desktop
 # topology supports Windows-host Ollama, and onboarding then rejected the
 # preselected provider (#8199). Selection waits for the runtime instead.
-express_wsl_docker_context_needs_node() {
+docker_context_needs_node() {
   [ -z "${DOCKER_HOST:-}" ] || return 1
   [ -z "${DOCKER_CONTEXT:-}" ] || return 1
   local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
@@ -5517,7 +5496,7 @@ select_express_wsl_ollama_provider() {
     export NEMOCLAW_PROVIDER=install-windows-ollama
     return 0
   fi
-  if express_wsl_docker_context_needs_node; then
+  if docker_context_needs_node; then
     _EXPRESS_WSL_PROVIDER_PENDING=1
     return 0
   fi
@@ -6109,7 +6088,7 @@ describe_express_install() {
     "Windows WSL")
       if express_wsl_can_use_windows_host_ollama; then
         inference_summary="Windows-host Ollama through host.docker.internal"
-      elif express_wsl_docker_context_needs_node; then
+      elif docker_context_needs_node; then
         inference_summary="local Ollama, selected once the installed Node.js runtime reads the Docker configuration"
       else
         inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"

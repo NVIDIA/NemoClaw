@@ -316,7 +316,6 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
     );
     expect(result.output).toContain("Docker context does not select the local default target");
-    expect(result.output).toContain("Sandbox recovery did not start");
   });
 
   it.each([
@@ -340,7 +339,21 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.output).toContain(
       "Unset DOCKER_HOST or set it to an absolute local Unix socket URL",
     );
-    expect(result.output).toContain("Sandbox recovery did not start");
+  });
+
+  it("reports an invalid fresh-install Docker target without implying recovery state", () => {
+    const result = runRecoveryBeforeOnboard(0, 0, {
+      dockerHost: "tcp://203.0.113.10:2375",
+      recordInstallPhases: true,
+      recordPreinstall: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.calls).toEqual([]);
+    expect(result.output).toContain(
+      "DOCKER_HOST is not a supported absolute local Unix socket endpoint",
+    );
+    expect(result.output).not.toContain("Sandbox recovery did not start");
   });
 
   it.each([
@@ -357,7 +370,6 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.calls).toEqual([]);
     expect(result.output).toContain("Docker context does not select the local default target");
     expect(result.output).toContain("docker context use default");
-    expect(result.output).toContain("Sandbox recovery did not start");
   });
 
   it.each([
@@ -384,7 +396,6 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.calls).toContain(
       "cli-target=host:unix:///run/user/4242/podman/podman.sock,context:unset argv=upgrade-sandboxes --auto",
     );
-    expect(result.output).not.toContain("Sandbox recovery did not start");
   });
 
   it.each([
@@ -410,7 +421,6 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.calls).toContain(
       "cli-target=host:unset,context:default argv=upgrade-sandboxes --auto",
     );
-    expect(result.output).not.toContain("Sandbox recovery did not start");
   });
 
   it("does not report an orphaned sandbox as recovered when output recording fails", () => {
