@@ -402,7 +402,7 @@ function waitForCreatedOpenShellSandboxPublication(
   const published = sandboxReadinessTracing.waitForCreatedSandboxPublication({
     budgetMs: timeoutMs,
     pollIntervalMs: CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_MS,
-    now: deps.now,
+    now: deps.publicationNow,
     sleep: deps.sleep,
     probe: (getRemainingMs) => {
       const result = deps.runOpenshell(

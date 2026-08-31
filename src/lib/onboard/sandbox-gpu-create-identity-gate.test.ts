@@ -750,7 +750,7 @@ describe("created sandbox identity gate", () => {
     });
     const deps = createGpuFlowDeps();
     let nowMs = 0;
-    deps.now = () => nowMs;
+    deps.publicationNow = () => nowMs;
     vi.mocked(deps.sleep).mockImplementation((seconds) => {
       nowMs += seconds * 1_000;
     });
@@ -871,7 +871,7 @@ describe("created sandbox identity gate", () => {
     });
     const deps = createGpuFlowDeps();
     let nowMs = 0;
-    deps.now = () => nowMs;
+    deps.publicationNow = () => nowMs;
     vi.mocked(deps.sleep).mockImplementation((seconds) => {
       nowMs += seconds * 1_000;
     });
