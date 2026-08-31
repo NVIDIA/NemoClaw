@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runWechatHostQrLogin } from "./login";
-import type { FetchLike } from "./qr";
+import { WECHAT_QR_POLL_TIMEOUT_MS, type FetchLike } from "./qr";
 
 type StatusBody = {
   status: string;
@@ -49,6 +49,8 @@ const isStatus = (u: string) => u.includes("/ilink/bot/get_qrcode_status");
 const noopRender = (): void => {};
 const noopLog = (): void => {};
 const fastSleep = async (): Promise<void> => {};
+
+afterEach(() => vi.useRealTimers());
 
 describe("runWechatHostQrLogin", () => {
   it("returns ok with the bot token + per-account metadata on confirmed", async () => {
@@ -283,6 +285,68 @@ describe("runWechatHostQrLogin", () => {
     expect(result).toEqual({ kind: "timeout" });
   });
 
+  it("continues polling after a successful response body times out (#10606)", async () => {
+    vi.useFakeTimers();
+    let markBodyStarted = () => {};
+    const bodyStarted = new Promise<void>((resolve) => {
+      markBodyStarted = resolve;
+    });
+    const responses: Array<(init?: Parameters<FetchLike>[1]) => ReturnType<FetchLike>> = [
+      async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ qrcode: "q", qrcode_img_content: "u" }),
+      }),
+      async (init) => ({
+        ok: true,
+        status: 200,
+        text: async () => {
+          markBodyStarted();
+          return await new Promise<string>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => {
+                const error = new Error("aborted");
+                error.name = "AbortError";
+                reject(error);
+              },
+              { once: true },
+            );
+          });
+        },
+      }),
+      async () => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            status: "confirmed",
+            bot_token: "secret-bot-token",
+            ilink_bot_id: "bot-123",
+            baseurl: "https://idc-3.weixin.qq.com",
+            ilink_user_id: "user-abc",
+          }),
+      }),
+    ];
+    const calls: string[] = [];
+    const fetch: FetchLike = async (url, init) => {
+      calls.push(url);
+      return await responses.shift()!(init);
+    };
+
+    const login = runWechatHostQrLogin({
+      fetch,
+      renderQr: noopRender,
+      log: noopLog,
+      sleep: fastSleep,
+    });
+    await bodyStarted;
+    await vi.advanceTimersByTimeAsync(WECHAT_QR_POLL_TIMEOUT_MS);
+
+    await expect(login).resolves.toMatchObject({ kind: "ok" });
+    expect(calls.filter(isStatus)).toHaveLength(2);
+  });
+
   it("returns kind=aborted when an external signal fires before the first poll", async () => {
     const { fetch } = scriptedFetch([
       { match: isInit, bodies: [{ qrcode: "q", qrcode_img_content: "u" }] },
@@ -342,9 +406,7 @@ describe("runWechatHostQrLogin", () => {
     const refreshStarted = new Promise<void>((resolve) => {
       markRefreshStarted = resolve;
     });
-    const responses: Array<
-      (init?: Parameters<FetchLike>[1]) => ReturnType<FetchLike>
-    > = [
+    const responses: Array<(init?: Parameters<FetchLike>[1]) => ReturnType<FetchLike>> = [
       async () => ({
         ok: true,
         status: 200,
@@ -370,8 +432,7 @@ describe("runWechatHostQrLogin", () => {
         });
       },
     ];
-    const fetch: FetchLike = async (_url, init) =>
-      await responses.shift()!(init);
+    const fetch: FetchLike = async (_url, init) => await responses.shift()!(init);
 
     const login = runWechatHostQrLogin({
       fetch,

@@ -10,6 +10,7 @@ import {
   WechatQrError,
   WECHAT_ILINK_BOOTSTRAP_BASE_URL,
   WECHAT_ILINK_DEFAULT_BOT_TYPE,
+  WECHAT_ILINK_MAX_RESPONSE_BYTES,
   type FetchLike,
 } from "./qr";
 
@@ -59,6 +60,30 @@ function makePendingBodyFetch(): { fetch: FetchLike; bodyStarted: Promise<void> 
   return { fetch, bodyStarted };
 }
 
+function makeStreamingBodyFetch(bodyText: string): {
+  fetch: FetchLike;
+  usedTextFallback: () => boolean;
+} {
+  let textFallbackUsed = false;
+  const fetch: FetchLike = async () => ({
+    ok: true,
+    status: 200,
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(bodyText));
+        controller.close();
+      },
+    }),
+    text: async () => {
+      textFallbackUsed = true;
+      return bodyText;
+    },
+  });
+  return { fetch, usedTextFallback: () => textFallbackUsed };
+}
+
+afterEach(() => vi.useRealTimers());
+
 describe("encodeIlinkClientVersion", () => {
   it("packs SemVer parts into iLink's uint32 layout", () => {
     expect(encodeIlinkClientVersion("2.1.7")).toBe((2 << 16) | (1 << 8) | 7);
@@ -73,8 +98,6 @@ describe("encodeIlinkClientVersion", () => {
 });
 
 describe("fetchWechatQrSession", () => {
-  afterEach(() => vi.useRealTimers());
-
   it("hits the bootstrap iLink host with bot_type=3 and the iLink-App-Id header", async () => {
     const { fetch, calls } = makeFetch(() => ({
       ok: true,
@@ -145,6 +168,24 @@ describe("fetchWechatQrSession", () => {
       kind: "network",
       message: "WeChat QR init request was cancelled",
     });
+  });
+
+  it("rejects an oversized QR response before parsing sensitive content (#10606)", async () => {
+    const secret = "bot_token=secret-value qrcode=session-value";
+    const oversizedBody = JSON.stringify({
+      qrcode: secret,
+      qrcode_img_content: "https://example.com/qr",
+      padding: "x".repeat(WECHAT_ILINK_MAX_RESPONSE_BYTES),
+    });
+    const { fetch, usedTextFallback } = makeStreamingBodyFetch(oversizedBody);
+    const error = await fetchWechatQrSession({ fetch }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      kind: "parse",
+      message: "WeChat QR init response exceeded the size limit",
+    });
+    expect(String(error)).not.toContain(secret);
+    expect(usedTextFallback()).toBe(false);
   });
 });
 
@@ -270,5 +311,48 @@ describe("pollWechatQrStatus", () => {
       signal: controller.signal,
     });
     expect(result.status).toBe("wait");
+  });
+
+  it("returns wait when a successful poll body reaches its timeout (#10606)", async () => {
+    vi.useFakeTimers();
+    const { fetch, bodyStarted } = makePendingBodyFetch();
+    const debugEvents: string[] = [];
+
+    const pending = pollWechatQrStatus({
+      baseUrl: "https://ilinkai.weixin.qq.com",
+      qrcode: "qrcode-cookie",
+      fetch,
+      timeoutMs: 1_000,
+      onDebug: (event) => debugEvents.push(event),
+    });
+    await bodyStarted;
+    const resolved = expect(pending).resolves.toEqual({ status: "wait" });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await resolved;
+    expect(debugEvents).toContain("poll abort (treated as wait)");
+  });
+
+  it("rejects an oversized poll response without exposing its content (#10606)", async () => {
+    const secret = "bot_token=secret-value qrcode=session-value";
+    const oversizedBody = JSON.stringify({
+      status: "wait",
+      secret,
+      padding: "x".repeat(WECHAT_ILINK_MAX_RESPONSE_BYTES),
+    });
+    const { fetch, usedTextFallback } = makeStreamingBodyFetch(oversizedBody);
+    const debugEvents: string[] = [];
+    const error = await pollWechatQrStatus({
+      baseUrl: "https://ilinkai.weixin.qq.com",
+      qrcode: "qrcode-cookie",
+      fetch,
+      onDebug: (event) => debugEvents.push(event),
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      kind: "parse",
+      message: "WeChat QR status response exceeded the size limit",
+    });
+    expect(`${String(error)}\n${debugEvents.join("\n")}`).not.toContain(secret);
+    expect(usedTextFallback()).toBe(false);
   });
 });
