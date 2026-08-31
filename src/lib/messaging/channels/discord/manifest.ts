@@ -18,6 +18,8 @@ export const discordManifest = {
       kind: "secret",
       required: true,
       envKey: "DISCORD_BOT_TOKEN",
+      formatPattern: "^(?!<your-discord-bot-token>$)\\S+$",
+      formatHint: "Replace the documentation placeholder with your real Discord bot token.",
       prompt: {
         label: "Discord Bot Token",
         help: "Discord Developer Portal → Applications → Bot → Reset/Copy Token.",
