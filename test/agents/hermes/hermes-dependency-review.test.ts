@@ -97,6 +97,7 @@ describe("Hermes 0.20.6 dependency review", () => {
       `| Base image contract SHA-256 | \`${targetBaseContractSha256}\` |`,
     );
     expect(review).toContain("five exact preview queries");
+    expect(review).toContain("user-authored title remains authoritative");
     expect(review).toContain("Unresolved upgrade-created high-impact concerns: `0`");
 
     expect(config).toContain("_config_version: 33");

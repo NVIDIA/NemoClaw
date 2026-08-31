@@ -65,8 +65,10 @@ upstream file-lock behavior.
 
 The session-list implementation contains five exact preview queries in the
 target source. The patch remains necessary and changes each preview from the
-first message to the latest message. Its exact occurrence guard changed from
-six to five.
+first message to the latest message. It also makes the workspace-aware table
+show that latest preview in place of a derived or model-generated seed title,
+while a user-authored title remains authoritative. Both source shapes are
+exact-count guarded.
 
 The SQLite helper now calls `apply_database_pragmas` before enabling foreign
 keys. The temp-store patch was retargeted to that exact target shape. The cron

@@ -174,17 +174,61 @@ def verify_cron_runtime_source() -> None:
 
 
 def verify_session_preview() -> None:
+    import contextlib
+    import io
+    from types import SimpleNamespace
+
+    from hermes_cli.sessions_cmd import cmd_sessions
     from hermes_state import SessionDB
 
     db = SessionDB()
     session_id = "nemoclaw-preview-smoke"
-    db.create_session(session_id, "cli")
+    db.create_session(session_id, "cli", cwd="/sandbox")
+    assert db.set_auto_title(
+        session_id,
+        "NEMOCLAW_PREVIEW_FIRST",
+        source=SessionDB.TITLE_SOURCE_DERIVED,
+    )
     db.append_message(session_id, "user", "NEMOCLAW_PREVIEW_FIRST")
     db.append_message(session_id, "assistant", "ack")
     db.append_message(session_id, "user", "NEMOCLAW_PREVIEW_LATEST")
     rows = db.list_sessions_rich(limit=1)
     assert rows and rows[0]["id"] == session_id, rows
     assert rows[0]["preview"] == "NEMOCLAW_PREVIEW_LATEST", rows
+    db.close()
+
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        result = cmd_sessions(
+            SimpleNamespace(
+                sessions_action="list",
+                source=None,
+                limit=1,
+                workspace=None,
+            )
+        )
+    rendered = output.getvalue()
+    assert result is None, result
+    assert "NEMOCLAW_PREVIEW_LATEST" in rendered, rendered
+    assert "NEMOCLAW_PREVIEW_FIRST" not in rendered, rendered
+
+    db = SessionDB()
+    assert db.set_session_title(session_id, "NEMOCLAW_USER_TITLE")
+    db.close()
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        result = cmd_sessions(
+            SimpleNamespace(
+                sessions_action="list",
+                source=None,
+                limit=1,
+                workspace=None,
+            )
+        )
+    rendered = output.getvalue()
+    assert result is None, result
+    assert "NEMOCLAW_USER_TITLE" in rendered, rendered
+    assert "NEMOCLAW_PREVIEW_LATEST" not in rendered, rendered
 
 
 def verify_session_delete() -> None:

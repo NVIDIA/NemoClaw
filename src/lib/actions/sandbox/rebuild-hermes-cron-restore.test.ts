@@ -86,6 +86,7 @@ function receipt(
       operator_drain_active: false,
       preserved_drain: false,
       profiles: 1,
+      rearmed_oneshots: 1,
       script_jobs: 1,
     },
     recover: {
@@ -95,6 +96,7 @@ function receipt(
       operator_drain_active: false,
       preserved_drain: false,
       profiles: 1,
+      rearmed_oneshots: 1,
       script_jobs: 1,
     },
   };
@@ -438,6 +440,27 @@ describe("Hermes cron rebuild restore contract", () => {
     ).toThrow("receipt failed validation");
   });
 
+  it.each([
+    ["missing", undefined],
+    ["negative", -1],
+    ["fractional", 0.5],
+  ])("rejects a %s rearmed one-shot count", (_label, rearmedOneshots) => {
+    const overrides =
+      rearmedOneshots === undefined
+        ? { rearmed_oneshots: undefined }
+        : { rearmed_oneshots: rearmedOneshots };
+    const stdout = receipt("complete", 77, 903, "restore-token", overrides);
+    processMocks.dockerSpawnSync.mockReturnValue({ status: 0, stdout, stderr: "" });
+
+    expect(() =>
+      completeHermesCronRestoreAfterGatewayReplacement(
+        "alpha",
+        { pid: 41, start_time: 902, drain_token: "restore-token" },
+        { pid: 77, start_time: 903, drain_token: "restore-token" },
+      ),
+    ).toThrow("receipt failed validation");
+  });
+
   it("observes the replacement identity without releasing the held gate (#8472)", () => {
     processMocks.dockerSpawnSync.mockReturnValue({
       status: 0,
@@ -575,6 +598,16 @@ describe("Hermes cron rebuild restore contract", () => {
     });
 
     expect(recoverHermesCronRestore("alpha")).toBe("not-required");
+  });
+
+  it("rejects a rearmed one-shot count when no recovery gate exists", () => {
+    processMocks.dockerSpawnSync.mockReturnValue({
+      status: 0,
+      stdout: notRequiredRecoveryReceipt({ rearmed_oneshots: 0 }),
+      stderr: "",
+    });
+
+    expect(() => recoverHermesCronRestore("alpha")).toThrow("receipt failed validation");
   });
 
   it("accepts not-required while preserving an independent operator drain", () => {

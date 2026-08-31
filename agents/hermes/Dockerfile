@@ -416,7 +416,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=5a39899e67fe9d8726baff7ee5f9cc95222d76e0a0f0d0c494968c4474165e49
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=4bceb3bd7449eaf5af2680b8cfbbdbaaef33c8760e130ed066da58e8dfabce67
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -636,13 +636,14 @@ RUN set -eu; \
         /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
         /opt/nemoclaw-hermes-config/patch-cron-restore-drain.py
 
-# Hermes v0.20.6 computes `sessions list` preview from the first user message,
-# while #5254's user-facing expectation is that the existing row reflects the
-# latest resumed/continued one-shot turn. Patch only the pinned query shape and
-# prove the SessionDB list contract at build time so a Hermes update cannot
-# silently drift.
+# Hermes v0.20.6 computes `sessions list` preview from the first user message.
+# Its workspace-aware titled table then hides the preview behind an automatic
+# seed title. Patch both pinned source shapes and prove that an automatically
+# titled workspace row renders the latest resumed or continued one-shot turn
+# while a user-authored title remains authoritative.
 RUN /usr/bin/python3 -I /opt/nemoclaw-hermes-config/patch-session-list-preview.py \
     && grep -q 'ORDER BY m.timestamp DESC, m.id DESC LIMIT 1' /opt/hermes/hermes_state.py \
+    && grep -Fq 'if s.get("title_source") in ("derived", "llm")' /opt/hermes/hermes_cli/sessions_cmd.py \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py session-preview \
     && rm /opt/nemoclaw-hermes-config/patch-session-list-preview.py

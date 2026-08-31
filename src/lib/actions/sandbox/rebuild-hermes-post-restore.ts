@@ -48,6 +48,7 @@ interface HermesCronRestoreReceipt {
   profiles?: number;
   active_jobs?: number;
   script_jobs?: number;
+  rearmed_oneshots?: number;
   disposition: HermesCronRestoreDisposition;
   operator_drain_active: boolean;
   preserved_drain?: boolean;
@@ -392,6 +393,7 @@ function parseCronRestoreReceipt(
         isNonNegativeInteger(receipt.profiles) &&
         isNonNegativeInteger(receipt.active_jobs) &&
         isNonNegativeInteger(receipt.script_jobs) &&
+        isNonNegativeInteger(receipt.rearmed_oneshots) &&
         isReleaseDispositionValid(receipt) &&
         hasExactReceiptFields(receipt, [
           ...baseFields,
@@ -400,6 +402,7 @@ function parseCronRestoreReceipt(
           "profiles",
           "active_jobs",
           "script_jobs",
+          "rearmed_oneshots",
           "preserved_drain",
         ]);
       break;
@@ -410,6 +413,7 @@ function parseCronRestoreReceipt(
           isNonNegativeInteger(receipt.profiles) &&
           isNonNegativeInteger(receipt.active_jobs) &&
           isNonNegativeInteger(receipt.script_jobs) &&
+          isNonNegativeInteger(receipt.rearmed_oneshots) &&
           isReleaseDispositionValid(receipt) &&
           hasExactReceiptFields(receipt, [
             ...baseFields,
@@ -418,6 +422,7 @@ function parseCronRestoreReceipt(
             "profiles",
             "active_jobs",
             "script_jobs",
+            "rearmed_oneshots",
             "preserved_drain",
           ]);
       } else {
