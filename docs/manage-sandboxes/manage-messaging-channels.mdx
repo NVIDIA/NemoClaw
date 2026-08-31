@@ -69,9 +69,17 @@ The cleanup targets `/sandbox/.openclaw/<channel>/`.
 The cleanup targets `/sandbox/.hermes/platforms/<channel>/`.
 </AgentOnly>
 
-It tries `openshell sandbox exec` and falls back to SSH if the first transport does not produce the success sentinel. If neither transport can reach a running sandbox, the command exits nonzero and asks you to start the sandbox and rerun it.
+It tries `openshell sandbox exec` and falls back to SSH if the first transport does not produce the success sentinel.
 
-NemoClaw leaves the registry and current OpenShell policy unchanged on that failure path so a later retry can complete cleanly.
+<AgentOnly variant="openclaw">
+For OpenClaw WeChat only, if neither transport succeeds, NemoClaw tries the stopped Docker fallback.
+It confirms that the container belongs to the registered sandbox and has one writable Docker volume at `/sandbox`.
+The helper removes only the WeChat state paths declared by the channel manifest.
+Only when WeChat appears in neither the messaging plan nor the current OpenShell policy does NemoClaw treat state cleanup as complete without inspecting a volume if the registry entry is missing, the driver is not Docker, or no eligible stopped container exists.
+</AgentOnly>
+
+If the messaging plan or current OpenShell policy still records the channel and NemoClaw cannot confirm cleanup, the command exits nonzero with recovery guidance.
+It leaves the bridge provider, credentials, registry, and current OpenShell policy unchanged so you can fix the reported condition and retry removal.
 
 `channels remove whatsapp` clears the client-side Baileys session but cannot deregister the linked device with WhatsApp's servers after the local connection is gone. The phone continues to list the sandbox as a Linked Device until you remove it manually or WhatsApp's 14-day inactivity timeout expires.
 
