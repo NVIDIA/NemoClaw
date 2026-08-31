@@ -12,7 +12,6 @@ import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/run
 import * as credentialProviderRegistrationModule from "../../../src/lib/onboard/credential-provider-registration.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
 import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
-import { clearStoppedDockerSandboxChannelState } from "../../../src/lib/sandbox/privileged-exec.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -1053,56 +1052,11 @@ async function removeChannelsAndRebuild(
         "printf '%s\\n' preserve > /sandbox/.openclaw/nemoclaw-cleanup-preserve/sentinel",
       ].join("\n"),
       {
-        artifactName: "prepare-stopped-wechat-cleanup-openclaw",
+        artifactName: "prepare-running-wechat-cleanup-openclaw",
         redactionValues: redactions,
       },
     );
-    expectExitZero(setup, "prepare stopped OpenClaw WeChat cleanup proof");
-
-    const stop = await host.command("node", [CLI, SANDBOX_NAME, "stop"], {
-      artifactName: "stop-before-wechat-cleanup-openclaw",
-      env,
-      redactionValues: redactions,
-      timeoutMs: 120_000,
-    });
-    expectExitZero(stop, "stop OpenClaw before WeChat cleanup");
-
-    const cleanupResult = await withLiveE2eEnvironment(env, async () =>
-      clearStoppedDockerSandboxChannelState(SANDBOX_NAME, [
-        "/sandbox/.openclaw/wechat",
-        "/sandbox/.openclaw/openclaw-weixin",
-      ]),
-    );
-    expect(cleanupResult).toEqual({ cleared: true });
-
-    const start = await host.command("node", [CLI, SANDBOX_NAME, "start"], {
-      artifactName: "start-after-wechat-cleanup-openclaw",
-      env,
-      redactionValues: redactions,
-      timeoutMs: 120_000,
-    });
-    expectExitZero(start, "start OpenClaw after stopped WeChat cleanup");
-    await expectSandboxReady(
-      host,
-      SANDBOX_NAME,
-      env,
-      redactions,
-      "sandbox-list-after-stopped-wechat-cleanup-openclaw",
-    );
-    const proof = await sandboxSh(
-      sandbox,
-      SANDBOX_NAME,
-      [
-        "test ! -e /sandbox/.openclaw/wechat",
-        "test ! -e /sandbox/.openclaw/openclaw-weixin",
-        'test "$(cat /sandbox/.openclaw/nemoclaw-cleanup-preserve/sentinel)" = preserve',
-      ].join("\n"),
-      {
-        artifactName: "verify-stopped-wechat-cleanup-openclaw",
-        redactionValues: redactions,
-      },
-    );
-    expectExitZero(proof, "stopped cleanup removed only OpenClaw WeChat state");
+    expectExitZero(setup, "prepare running OpenClaw WeChat cleanup proof");
   }
 
   for (const channel of REMOVAL_CHANNELS) {
@@ -1125,6 +1079,23 @@ async function removeChannelsAndRebuild(
     expectExitZero(remove, `channels remove ${channel}`);
     expect(resultText(remove)).toContain(`Removed ${channel}`);
     expectPlanChannelState(channel, "removed");
+  }
+
+  if (AGENT === "openclaw") {
+    const proof = await sandboxSh(
+      sandbox,
+      SANDBOX_NAME,
+      [
+        "test ! -e /sandbox/.openclaw/wechat",
+        "test ! -e /sandbox/.openclaw/openclaw-weixin",
+        'test "$(cat /sandbox/.openclaw/nemoclaw-cleanup-preserve/sentinel)" = preserve',
+      ].join("\n"),
+      {
+        artifactName: "verify-running-wechat-cleanup-openclaw",
+        redactionValues: redactions,
+      },
+    );
+    expectExitZero(proof, "running cleanup removed only OpenClaw WeChat state");
   }
 
   const rebuild = await rebuildSandbox(
