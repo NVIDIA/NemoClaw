@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   encodeIlinkClientVersion,
@@ -33,6 +33,32 @@ function makeFetch(responder: (req: Capture) => { ok: boolean; status: number; b
   return { fetch, calls };
 }
 
+function makePendingBodyFetch(): { fetch: FetchLike; bodyStarted: Promise<void> } {
+  let markBodyStarted = () => {};
+  const bodyStarted = new Promise<void>((resolve) => {
+    markBodyStarted = resolve;
+  });
+  const fetch: FetchLike = async (_url, init) => ({
+    ok: true,
+    status: 200,
+    text: async () => {
+      markBodyStarted();
+      return await new Promise<string>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => {
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          },
+          { once: true },
+        );
+      });
+    },
+  });
+  return { fetch, bodyStarted };
+}
+
 describe("encodeIlinkClientVersion", () => {
   it("packs SemVer parts into iLink's uint32 layout", () => {
     expect(encodeIlinkClientVersion("2.1.7")).toBe((2 << 16) | (1 << 8) | 7);
@@ -47,6 +73,8 @@ describe("encodeIlinkClientVersion", () => {
 });
 
 describe("fetchWechatQrSession", () => {
+  afterEach(() => vi.useRealTimers());
+
   it("hits the bootstrap iLink host with bot_type=3 and the iLink-App-Id header", async () => {
     const { fetch, calls } = makeFetch(() => ({
       ok: true,
@@ -89,6 +117,34 @@ describe("fetchWechatQrSession", () => {
       body: JSON.stringify({ qrcode: "ok-but-no-img" }),
     }));
     await expect(fetchWechatQrSession({ fetch })).rejects.toBeInstanceOf(WechatQrError);
+  });
+
+  it("times out while the QR response body is pending (#10606)", async () => {
+    vi.useFakeTimers();
+    const { fetch, bodyStarted } = makePendingBodyFetch();
+
+    const pending = fetchWechatQrSession({ fetch, timeoutMs: 1_000 });
+    await bodyStarted;
+    const rejected = expect(pending).rejects.toMatchObject({
+      kind: "network",
+      message: "WeChat QR init request timed out after 1000ms",
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await rejected;
+  });
+
+  it("cancels while the QR response body is pending (#10606)", async () => {
+    const { fetch, bodyStarted } = makePendingBodyFetch();
+    const controller = new AbortController();
+
+    const pending = fetchWechatQrSession({ fetch, signal: controller.signal });
+    await bodyStarted;
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({
+      kind: "network",
+      message: "WeChat QR init request was cancelled",
+    });
   });
 });
 

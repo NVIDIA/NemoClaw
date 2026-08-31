@@ -157,14 +157,23 @@ export async function fetchWechatQrSession(
     opts.signal?.addEventListener("abort", abortFromExternalSignal, { once: true });
   }
   const timer = setTimeout(() => abortRequest("timeout"), timeoutMs);
-  let response: Awaited<ReturnType<FetchLike>>;
+  let text: string;
   try {
-    response = await transport(url.toString(), {
+    const response = await transport(url.toString(), {
       method: "GET",
       headers: buildIlinkHeaders(),
       signal: controller.signal,
     });
+    if (!response.ok) {
+      throw new WechatQrError(
+        "http",
+        `WeChat QR init returned ${response.status}`,
+        response.status,
+      );
+    }
+    text = await response.text();
   } catch (err) {
+    if (err instanceof WechatQrError) throw err;
     if (abortSource === "external") {
       throw new WechatQrError("network", "WeChat QR init request was cancelled");
     }
@@ -176,10 +185,6 @@ export async function fetchWechatQrSession(
     clearTimeout(timer);
     opts.signal?.removeEventListener("abort", abortFromExternalSignal);
   }
-  if (!response.ok) {
-    throw new WechatQrError("http", `WeChat QR init returned ${response.status}`, response.status);
-  }
-  const text = await response.text();
   let parsed: { qrcode?: unknown; qrcode_img_content?: unknown };
   try {
     parsed = JSON.parse(text) as typeof parsed;
