@@ -384,4 +384,35 @@ network_policies:
       "host-added-provider",
     ]);
   });
+
+  it("drops OpenShell provider-composed entries before rebuild authorization", () => {
+    const livePath = tempPolicy(
+      "live-provider-composed.yaml",
+      `version: 1
+network_policies:
+  host_edit: {name: host_edit}
+  _provider_disabled_channel:
+    endpoints:
+      - credential_binding: {provider: disabled-channel-provider}
+`,
+    );
+    const replacementPath = tempPolicy(
+      "replacement-provider-composed.yaml",
+      "version: 1\nnetwork_policies: {}\n",
+    );
+
+    const handoff = materializeRebuildPolicyHandoff({
+      livePolicyPath: livePath,
+      replacementPolicy: {
+        policyPath: replacementPath,
+        appliedPresets: [],
+      },
+    });
+
+    expect(YAML.parse(fs.readFileSync(handoff.policyPath, "utf8")).network_policies).toEqual({
+      host_edit: { name: "host_edit" },
+    });
+    expect(handoff.credentialBindingProviders).toEqual([]);
+    expect(handoff.cleanup?.()).toBe(true);
+  });
 });
