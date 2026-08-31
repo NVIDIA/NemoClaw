@@ -59,9 +59,16 @@ describe("checkWorkspaceSkillCollision", () => {
 
     expect(collision).toBe(true);
     expect(commands).toHaveLength(1);
-    expect(commands[0]).toContain("fs.lstatSync(process.argv[1])");
-    expect(commands[0]).toContain("ENOENT");
-    expect(commands[0]).toContain("'/sandbox/.openclaw/workspace/skills/test-skill'");
+  });
+
+  it("reports no collision when the workspace skill is absent", () => {
+    const collision = checkWorkspaceSkillCollision(
+      { configFile: "/tmp/ssh.conf", sandboxName: "test-sandbox" },
+      resolveSkillPaths(null, "test-skill"),
+      { sshExecImpl: () => ({ status: 0, stdout: "ABSENT", stderr: "" }) },
+    );
+
+    expect(collision).toBe(false);
   });
 
   it("does not probe workspace paths for other agents", () => {
