@@ -15,57 +15,11 @@ type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean })
 export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE";
 
 /*
- * Create/readiness Error-phase debounce.
- *
- * Invalid state
- * -------------
- * On a fresh onboard the OpenShell gateway may (re)start its supervisor
- * session and re-register the just-created sandbox. During that window
- * `openshell sandbox list` briefly reports the sandbox in the transient
- * "Error" phase before it flips to Ready. Observed on DGX Spark, where the
- * dashboard port fallback (18789 -> 18794) and supervisor restart race the
- * sandbox bootstrap (#6043). Fast-failing on the first Error poll turns that
- * recoverable transient into a terminal onboard failure.
- *
- * Source-of-truth boundary
- * ------------------------
- * The transient lives in the OpenShell gateway's `sandbox list` cache: the
- * preferred fix is upstream — `sandbox list` should not report a terminal
- * phase for a sandbox the gateway is still registering. Until that ships,
- * NemoClaw tolerates the transient at this layer via a consecutive-Error-poll
- * debounce, mirroring the Docker GPU supervisor-reconnect path
- * (docker-gpu-supervisor-reconnect.ts), which tolerates the same class of
- * transient while a recreated GPU container reconnects.
- *
- * Scope
- * -----
- * Only the "Error" phase is debounced. "Failed" and "CrashLoopBackOff" are
- * genuinely terminal and still fast-fail immediately. A sandbox that stays in
- * Error also fast-fails after the bounded debounce window (well before the
- * full readiness timeout), and the caller still captures full failure
- * diagnostics — this does NOT hide terminal failures.
- *
- * Regression evidence / removal condition
- * ---------------------------------------
- * Delete this debounce once OpenShell guarantees `sandbox list` skips the
- * brief Error transition during a known registration. The runtime evidence
- * required is a fresh-onboard reproduction (DGX Spark, or the deterministic
- * `sandbox list` replay in sandbox-readiness-tracing.test.ts) showing a
- * transient create-time Error that recovers to Ready.
- *
- * Tracking mechanism: removal is tracked on NemoClaw #6043
- * (https://github.com/NVIDIA/NemoClaw/issues/6043), which owns the pending
- * OpenShell `sandbox list` fix. The maintainer-enabled removal-signal
- * test `upstream_openshell_sandbox_list_error_transient_fixed`
- * (sandbox-readiness-tracing.test.ts, currently `it.skip`) is the executable
- * checkpoint — point it at a captured `sandbox list` trace from a fixed
- * OpenShell and, once it passes (no transient Error), this debounce can be
- * removed. Escalate to a dedicated OpenShell-fix tracking issue (referenced
- * here and in the test) if the workaround outlives a release cycle.
- *
- * The readiness loop starts at 250ms and backs off to 2 seconds. The default
- * of 30 therefore tolerates a substantial transient window while the overall
- * sandbox readiness deadline remains authoritative.
+ * OpenShell can briefly report Error while it registers a new sandbox.
+ * Debounce only Error; Failed and CrashLoopBackOff remain terminal. Remove
+ * this workaround only after a fresh-onboard trace from fixed OpenShell
+ * contains no transient Error phase. The skipped removal-signal test in
+ * sandbox-readiness-tracing.test.ts records that checkpoint (#6043).
  */
 const SANDBOX_READY_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS = 30;
 
