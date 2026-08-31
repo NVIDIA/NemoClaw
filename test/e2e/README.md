@@ -79,6 +79,7 @@ Before the action restores root `dist/` and `nemoclaw/dist/shared/` into the wor
 - The upload digest is present and well formed.
 - The candidate SHA matches the expected commit.
 - The manifest matches the source, workflow run, toolchain contract, and payload.
+- The restore action uses a Node.js 22 process to stream each file as binary data when it verifies SHA-256 digests.
 - The archive contains no path traversal, links, special files, or files outside root `dist/` and `nemoclaw/dist/shared/`.
 - Neither root `dist/` nor `nemoclaw/dist/` already exists, including as a dangling symbolic link.
 - The candidate checkout's `nemoclaw/` path is a directory and is not a symbolic link.
@@ -122,6 +123,13 @@ These are two required acceptance executions, not retries; either failure remain
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
+
+The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
+local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
+`managed-candidate-contract-*` artifact bound to the pull-request head. Pi remains outside the
+`managed-pr-contract-*` all-agent catalog pattern and every release alias. The checked-in Pi
+qualification receipts may consume these candidate contracts only when the recorded image-source
+paths are unchanged through the receipt commit.
 
 #### Timing Baseline
 

@@ -283,6 +283,7 @@ jobs:
     outputs:
       cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
       e2e_credentials_allowed: ${{ steps.e2e_credentials.outputs.allowed }}
+      managed_image_catalog: ${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}
       matrix: ${{ steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
@@ -647,6 +648,33 @@ jobs:
             fi
           fi
 
+      - id: resolve_pr_managed_image_catalog
+        name: Resolve exact PR managed-image catalog
+        if: ${{ inputs.checkout_sha != '' && (inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '') }}
+        env:
+          BASE_SHA: ${{ inputs.base_sha }}
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          catalog_path="${RUNNER_TEMP}/pr-managed-image-catalog.json"
+          rm -f -- "$catalog_path"
+          node --experimental-strip-types --no-warnings \
+            tools/e2e/pr-managed-image-publication.mts "$catalog_path"
+          if [[ -e "$catalog_path" ]]; then
+            [[ -f "$catalog_path" && ! -L "$catalog_path" && -s "$catalog_path" ]] || {
+              echo "::error::trusted PR managed-image catalog is not a nonempty regular file" >&2
+              exit 1
+            }
+            catalog="$(jq -c . "$catalog_path")"
+            catalog_sha256="$(printf '%s\n' "$catalog" | sha256sum | awk '{print $1}')"
+            printf 'catalog=%s\n' "$catalog" >>"$GITHUB_OUTPUT"
+            printf 'catalog_sha256=%s\n' "$catalog_sha256" >>"$GITHUB_OUTPUT"
+          fi
+
       - name: Check out E2E candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: ${{ inputs.checkout_sha == '' || inputs.jobs != 'native-runtime-qualification-producer' || inputs.targets != '' }}
@@ -724,6 +752,8 @@ jobs:
         env:
           CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
           CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          MANAGED_IMAGE_CATALOG: ${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}
+          MANAGED_IMAGE_CATALOG_SHA256: ${{ steps.resolve_pr_managed_image_catalog.outputs.catalog_sha256 }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -760,6 +790,43 @@ jobs:
             .sourceRevision == $candidateSha
           ' dist/build-identity.json >/dev/null ||
             { echo "::error::candidate CLI build identity does not match the candidate commit SHA"; exit 1; }
+
+          # BEGIN exact managed-image catalog staging
+          managed_catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"
+          artifact_catalog="dist/e2e-managed-image-catalog.json"
+          [[ ! -e "$artifact_catalog" && ! -L "$artifact_catalog" ]] || {
+            echo "::error::candidate build created the trusted managed-image catalog path" >&2
+            exit 1
+          }
+          if [[ -n "$MANAGED_IMAGE_CATALOG" ]]; then
+            [[ "$MANAGED_IMAGE_CATALOG_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
+              echo "::error::trusted PR managed-image catalog digest is invalid" >&2
+              exit 1
+            }
+            [[ -f "$managed_catalog" && ! -L "$managed_catalog" && -s "$managed_catalog" ]] || {
+              echo "::error::trusted PR managed-image catalog is not a nonempty regular file" >&2
+              exit 1
+            }
+            [[ "$(sha256sum "$managed_catalog" | awk '{print $1}')" == "$MANAGED_IMAGE_CATALOG_SHA256" ]] || {
+              echo "::error::trusted PR managed-image catalog changed after authentication" >&2
+              exit 1
+            }
+            (umask 077 && set -o noclobber && printf '%s\n' "$MANAGED_IMAGE_CATALOG" >"$artifact_catalog")
+            [[ -f "$artifact_catalog" && ! -L "$artifact_catalog" && -s "$artifact_catalog" ]] || {
+              echo "::error::packaged PR managed-image catalog is invalid" >&2
+              exit 1
+            }
+            [[ "$(sha256sum "$artifact_catalog" | awk '{print $1}')" == "$MANAGED_IMAGE_CATALOG_SHA256" ]] || {
+              echo "::error::packaged PR managed-image catalog does not match trusted output" >&2
+              exit 1
+            }
+          else
+            [[ -z "$MANAGED_IMAGE_CATALOG_SHA256" && ! -e "$managed_catalog" && ! -L "$managed_catalog" ]] || {
+              echo "::error::managed-image catalog authority is inconsistent" >&2
+              exit 1
+            }
+          fi
+          # END exact managed-image catalog staging
 
           artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
           install -d -m 0700 "$artifact_dir"
@@ -2574,7 +2641,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -2846,7 +2913,7 @@ jobs:
             "${test_evidence_dir}/dcode-base-image.json"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3012,7 +3079,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3278,7 +3345,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3353,7 +3420,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3638,7 +3705,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3775,7 +3842,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3958,6 +4025,7 @@ jobs:
           path: .trusted-openshell-dev-artifact
           persist-credentials: false
           sparse-checkout: |
+            .github/scripts/copy-openshell-dev-asset.sh
             .github/scripts/docker-auth-cleanup.sh
             scripts/install-openshell.sh
             tools/e2e/openshell-dev-artifact.mts
@@ -4001,15 +4069,14 @@ jobs:
           asset="$7"
           destination="$9"
           case "$asset" in
-            openshell-x86_64-unknown-linux-musl.tar.gz | openshell-checksums-sha256.txt | openshell-gateway-x86_64-unknown-linux-gnu.tar.gz | openshell-gateway-checksums-sha256.txt | openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz | openshell-sandbox-checksums-sha256.txt) ;;
+            openshell-x86_64-unknown-linux-musl.tar.gz | openshell-checksums-sha256.txt | openshell-gateway-x86_64-unknown-linux-gnu.tar.gz | openshell-gateway-checksums-sha256.txt | openshell-sandbox-x86_64-unknown-linux-musl.tar.gz | openshell-sandbox-checksums-sha256.txt) ;;
             *)
               printf 'Unsupported retained OpenShell asset: %s\n' "$asset" >&2
               exit 64
               ;;
           esac
-          source_asset="${OPENSHELL_DEV_ASSET_DIR}/${asset}"
-          [[ -f "$source_asset" && ! -L "$source_asset" && "$destination" = /* && -d "$destination" && ! -L "$destination" ]]
-          cp -- "$source_asset" "$destination/$asset"
+          bash "${{ github.workspace }}/.trusted-openshell-dev-artifact/.github/scripts/copy-openshell-dev-asset.sh" \
+            "$OPENSHELL_DEV_ASSET_DIR" "$asset" "$destination"
           EOF
           cat >"$shim_dir/curl" <<'EOF'
           #!/usr/bin/env bash
@@ -4031,7 +4098,7 @@ jobs:
       # The restore action executes the candidate CLI for its final identity
       # check. Candidate-controlled state starts with dependency preparation.
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5144,7 +5211,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5303,7 +5370,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5559,7 +5626,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5661,7 +5728,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5740,7 +5807,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5816,7 +5883,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@c246409193a31133cab10c8a3589001cc0d59eb3
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 

@@ -4,19 +4,19 @@
 title: "Create Custom Policy Presets"
 sidebar-title: "Create Custom Presets"
 description: "Author and apply a scoped network policy preset for an endpoint that NemoClaw does not include."
-description-agent: "Creates and applies custom policy presets. Use when adding a reviewed endpoint or applying preset files."
+description-agent: "Creates and applies custom policy presets. Use when adding an operator-reviewed endpoint or applying preset files."
 keywords: ["nemoclaw custom policy preset", "policy add from-file"]
 content:
   type: "how_to"
 skill:
   priority: 10
 ---
-Create a custom preset when a sandbox needs a reviewed endpoint that no maintained NemoClaw preset covers.
-Custom presets add scoped access to one sandbox without changing the baseline policy.
+
+Create a custom preset when a sandbox needs an operator-reviewed endpoint that no maintained NemoClaw preset covers. Custom presets add scoped access to one sandbox without changing the baseline policy.
 
 <Warning>
-Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress.
-Review every host before applying a custom preset, especially when the file originates outside your team.
+  Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress. Review every
+  host before applying a custom preset, especially when the file originates outside your team.
 </Warning>
 
 ## Author a Preset
@@ -41,44 +41,36 @@ network_policies:
       - { path: /path/to/requesting-binary }
 ```
 
-Replace `/path/to/requesting-binary` with the executable path reported for the blocked request in `openshell term`.
+Replace `/path/to/requesting-binary` with the exact executable path reported for the blocked request in `openshell term`.
+
 <AgentOnly variant="deepagents">
-For Deep Agents Code, OpenShell commonly reports `/usr/local/bin/dcode` or `/opt/venv/bin/python3*`.
-Authorize only the process that needs the reviewed endpoint.
+  For Deep Agents Code, OpenShell commonly reports `/usr/local/bin/dcode` or
+  `/opt/venv/bin/python3*`. Authorize only the process that needs the reviewed endpoint.
 </AgentOnly>
 
-The top-level `preset.name` must be a lowercase RFC 1123 label with letters, digits, and hyphens.
-It must not collide with a maintained preset name such as `slack` or `pypi`.
-Rename `preset.name` if NemoClaw reports a collision.
-Custom preset `network_policies` entries must not use `npm_yarn`.
-NemoClaw reserves that key for the maintained `npm` preset and rejects the file before applying it.
+The top-level `preset.name` must be a lowercase RFC 1123 label with letters, digits, and hyphens. It must not collide with a maintained preset name such as `slack` or `pypi`. Rename `preset.name` if NemoClaw reports a collision. Custom preset `network_policies` entries must not use `npm_yarn`. NemoClaw reserves that key for the maintained `npm` preset and rejects the file before applying it.
 
-Each endpoint must name a specific host or a scoped subdomain wildcard such as `*.example.com`.
-NemoClaw rejects catch-all destinations, including `*`, `0.0.0.0`, `0.0.0.0/0`, `::`, and `::/0`.
-Rule matchers must match the endpoint protocol.
+Each endpoint must name a specific host or a scoped subdomain wildcard such as `*.example.com`. NemoClaw rejects catch-all destinations, including `*`, `0.0.0.0`, `0.0.0.0/0`, `::`, and `::/0`. Rule matchers must match the endpoint protocol.
 
-| Protocol | Rule fields |
-|----------|-------------|
-| REST | `method` and `path`; `method` accepts standard HTTP methods or `*` |
+| Protocol  | Rule fields                                                           |
+| --------- | --------------------------------------------------------------------- |
+| REST      | `method` and `path`; `method` accepts standard HTTP methods or `*`    |
 | WebSocket | `method` and `path`; `method` accepts `GET`, `WEBSOCKET_TEXT`, or `*` |
-| JSON-RPC | `method` only |
-| MCP | `method` with optional `tool` or `params.name` |
+| JSON-RPC  | `method` only                                                         |
+| MCP       | `method` with optional `tool` or `params.name`                        |
 
 The same protocol-specific matcher shape applies to `deny_rules`.
 
-User-authored presets must not declare `allowed_ips` for ordinary endpoints.
-NemoClaw rejects that field in files passed through `--from-file` or `--from-dir` because it can widen the private ranges that OpenShell checks during SSRF protection.
-Use hostnames, ports, protocols, methods, paths, and binary restrictions instead.
-The only exception is the `host.openshell.internal` bridge endpoint for explicit sandbox-to-host service access.
+User-authored presets must not declare `allowed_ips` for ordinary endpoints. NemoClaw rejects that field in files passed through `--from-file` or `--from-dir` because it can widen the private ranges that OpenShell checks during SSRF protection. Use hostnames, ports, protocols, methods, paths, and binary restrictions instead. The only exception is the `host.openshell.internal` bridge endpoint for explicit sandbox-to-host service access.
 
 ## Admit a Private Host
 
-Use explicit private-host trust when a custom preset targets an operator-controlled endpoint on RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local address space.
-This flow applies to REST, WebSocket, JSON-RPC, and MCP endpoint protocols.
+Use explicit private-host trust when a custom preset targets an operator-controlled endpoint on RFC1918, carrier-grade network address translation (CGNAT), or IPv6 unique local address space. This flow applies to REST, WebSocket, JSON-RPC, and MCP endpoint protocols.
 
 <Warning>
-The `--trusted-private-host` option and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` grant the custom preset access to each exact matching private host.
-Review the preset, resolved addresses, requesting binaries, methods, and paths before you apply it.
+  The `--trusted-private-host` option and `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` grant the custom preset
+  access to each matching exact private host. Review the preset, resolved addresses, requesting
+  binaries, methods, and paths before you apply it.
 </Warning>
 
 Pass the endpoint host with `--from-file` or `--from-dir`:
@@ -90,26 +82,13 @@ $$nemoclaw my-assistant policy add \
   --dry-run
 ```
 
-The option is invalid for a built-in preset because maintained presets own their reviewed destinations.
-NemoClaw rejects unused, unrelated, wildcard, suffix, CIDR, URL-shaped, duplicate, or malformed `--trusted-private-host` declarations.
-It also rejects loopback, link-local, metadata, unspecified, multicast, documentation, translation, benchmarking, and other reserved ranges.
+The option is invalid for a built-in preset because maintained presets own their reviewed destinations. NemoClaw rejects unused, unrelated, wildcard, suffix, CIDR, URL-shaped, duplicate, or malformed `--trusted-private-host` declarations. It also rejects loopback, link-local, metadata, unspecified, multicast, documentation, translation, benchmarking, and other reserved ranges.
 
-As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hosts for the current command.
-NemoClaw combines the environment list with any `--trusted-private-host` options.
-It normalizes and deduplicates environment entries and ignores entries unrelated to the custom preset batch.
+As an alternative, set `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` to a comma-separated list of exact hosts for the current command. NemoClaw combines the environment list with any `--trusted-private-host` options. It normalizes and deduplicates environment entries and ignores entries unrelated to the custom preset batch.
 
-After schema validation, NemoClaw resolves each declared endpoint and inserts every validated address as an `allowed_ips` value in memory.
-A trusted host can return both public and supported private addresses.
-NemoClaw pins every canonical answer.
-If any answer is a disallowed private, reserved, or special-purpose address, validation rejects the preset instead of discarding that answer.
-The dry-run output shows the generated pins for review.
-NemoClaw applies and records the transformed preset instead of the unpinned source file.
-Rebuild replays recorded pins from the sandbox registry without depending on the ambient environment.
-A snapshot does not grant private-host authority to a clean target by itself; reapply the source preset with explicit trust after a cross-sandbox restore.
+After schema validation, NemoClaw resolves each declared endpoint and inserts every validated address as an exact `allowed_ips` value in memory. An exact trusted host can return both public and supported private addresses. NemoClaw pins every canonical answer. If any answer is a disallowed private, reserved, or special-purpose address, validation rejects the preset instead of discarding that answer. The dry-run output shows the generated pins for review. NemoClaw applies the transformed preset directly to the current OpenShell policy instead of the unpinned source file. Rebuild and cross-sandbox snapshot restore carry those live pins forward as part of the complete OpenShell policy without depending on ambient DNS. Reapply the source preset with explicit trust only when you intend to refresh the trusted host's address pins or change its endpoint policy.
 
-To change a recorded address set, apply the source preset again with explicit trust.
-NemoClaw performs a new preflight and shows the changed pins before it applies them.
-Do not add `allowed_ips` to the source YAML.
+To change the live address set, apply the source preset again with explicit trust. NemoClaw performs a new preflight and shows the changed pins before it applies them. Do not add `allowed_ips` to the source YAML.
 
 ## Apply a Single File
 
@@ -120,8 +99,7 @@ $$nemoclaw my-assistant policy add --from-file ./presets/my-service-api.yaml --d
 $$nemoclaw my-assistant policy add --from-file ./presets/my-service-api.yaml --yes
 ```
 
-NemoClaw records the complete YAML content with the sandbox.
-You can remove the preset later without keeping the original file.
+NemoClaw namespaces the preset keys in the current OpenShell policy. You can remove the preset later by name without keeping the original file while that live policy remains available.
 
 ## Apply Every File in a Directory
 
@@ -131,16 +109,11 @@ Apply preset files in lexicographic order:
 $$nemoclaw my-assistant policy add --from-dir ./presets/ --yes
 ```
 
-Processing stops at the first failure.
-NemoClaw does not remove presets that it already applied.
-Fix the failing file and run the command again to continue.
+Processing stops at the first failure. NemoClaw does not remove presets that it already applied. Fix the failing file and run the command again to continue.
 
 ## Add a Preset to the Source Catalog
 
-Save a maintained local preset under `nemoclaw-blueprint/policies/presets/`.
-The filename without `.yaml` must match `preset.name`.
-The preset catalog reads `preset.name`, while `policy add <name>` loads `presets/<name>.yaml`.
-A mismatch can list a preset that the named command cannot load.
+Save a maintained local preset under `nemoclaw-blueprint/policies/presets/`. The filename without `.yaml` must match `preset.name`. The preset catalog reads `preset.name`, while `policy add <name>` loads `presets/<name>.yaml`. A mismatch can list a preset that the named command cannot load.
 
 Apply the catalog preset by name:
 
@@ -148,37 +121,29 @@ Apply the catalog preset by name:
 $$nemoclaw my-assistant policy add my-service-api
 ```
 
-Run the same command after editing the file.
-NemoClaw compares the preset with the live policy and applies changed content.
+Run the same command after editing the file. NemoClaw compares the preset with the live policy and applies changed content.
 
 ## Remove a Custom Preset
 
-Remove the preset by its recorded name:
+Remove the preset by its name:
 
 ```bash
 $$nemoclaw my-assistant policy remove my-service-api --yes
 ```
 
-Run `$$nemoclaw <name> policy list` to see every maintained and custom preset recorded for the sandbox.
+Run `$$nemoclaw <name> policy list` to see every maintained and custom preset present in the current OpenShell policy.
 
 <AgentOnly variant="openclaw,hermes">
 
 ## Configure a URL-Based MCP Server
 
-Prefer the managed workflow in [Add an MCP Server](../../manage-sandboxes/mcp-servers/add-an-mcp-server) when the server uses authenticated HTTPS Streamable HTTP.
-Use this custom policy recipe only for an agent-native URL registration that is outside the managed workflow.
-Adding a URL such as `https://mcp.example.com/mcp` can cause a denied CONNECT tunnel.
-The proxy returns `HTTP 403 Forbidden` when the target host is not in the default allowlist.
-The related MCP client output contains this message:
+Prefer the managed workflow in [Add an MCP Server](../../manage-sandboxes/mcp-servers/add-an-mcp-server) when the server uses authenticated HTTPS Streamable HTTP. Use this custom policy recipe only for an agent-native URL registration that is outside the managed workflow. Adding a URL such as `https://mcp.example.com/mcp` can cause a denied CONNECT tunnel. The proxy returns `HTTP 403 Forbidden` when the target host is not in the default allowlist. The related MCP client output contains this message:
 
 ```text
 CONNECT tunnel failed, response 403
 ```
 
-This recipe applies only when URL-based MCP traffic uses the sandbox proxy and fails with this CONNECT response.
-An OAuth MCP login failure such as `getaddrinfo EAI_AGAIN` is a different transport problem.
-A direct-DNS path that bypasses the proxy is also a different problem.
-Widening this allowlist does not fix either case.
+This recipe applies only when URL-based MCP traffic uses the sandbox proxy and fails with this CONNECT response. An OAuth MCP login failure such as `getaddrinfo EAI_AGAIN` is a different transport problem. A direct-DNS path that bypasses the proxy is also a different problem. Widening this allowlist does not fix either case.
 
 Add the MCP host, Streamable HTTP route, required methods, and only the binary that opens the connection:
 
@@ -202,37 +167,25 @@ network_policies:
       - { path: /usr/local/bin/node }
 ```
 
-Streamable HTTP clients can use `DELETE` on the same endpoint to terminate a session.
-Keep that method scoped to the MCP route.
-Do not replace the route with `/**` unless the server contract requires every path.
+Streamable HTTP clients can use `DELETE` on the same endpoint to terminate a session. Keep that method scoped to the exact MCP route. Do not replace the route with `/**` unless the server contract requires every path.
 
-Save the file as `nemoclaw-blueprint/policies/presets/my-mcp.yaml`.
-Apply it by name:
+Save the file as `nemoclaw-blueprint/policies/presets/my-mcp.yaml`. Apply it by name:
 
 ```bash
 $$nemoclaw my-assistant policy add my-mcp
 ```
 
-NemoClaw previews the effective egress scope and prompts for confirmation before applying it.
-For a publicly routed host that passes SSRF checks, invoke the MCP tool again and confirm that the CONNECT tunnel succeeds.
+NemoClaw previews the effective egress scope and prompts for confirmation before applying it. For a publicly routed host that passes SSRF checks, invoke the MCP tool again and confirm that the CONNECT tunnel succeeds.
 
-The `binaries` list must include only the process that opens the connection.
-The example assumes the Node runtime opens the MCP connection.
-Replace the example path with the requesting binary that OpenShell reports in `openshell term`.
-Shell-invoked clients need their own binary path, such as `/usr/bin/curl`.
-Confirm a candidate path inside the sandbox:
+The `binaries` list must include only the process that opens the connection. The example assumes the Node runtime opens the MCP connection. Replace the example path with the requesting binary that OpenShell reports in `openshell term`. Shell-invoked clients need their own binary path, such as `/usr/bin/curl`. Confirm a candidate path inside the sandbox:
 
 ```bash
 $$nemoclaw my-assistant exec -- which node
 ```
 
-A preset with an endpoint but no matching binary authorizes no process, so requests still fail.
-OpenShell uses `protocol: rest` for this HTTP-based policy even though Streamable HTTP MCP carries JSON-RPC.
+A preset with an endpoint but no matching binary authorizes no process, so requests still fail. OpenShell uses `protocol: rest` for this HTTP-based policy even though Streamable HTTP MCP carries JSON-RPC.
 
-An allowlist entry does not disable OpenShell SSRF protection or create host routes.
-If the hostname resolves to a private, loopback, or link-local address, establish the required host or VPN route.
-Then follow the approved private-destination configuration.
-Refer to [Agent cannot reach a host-side HTTP service](../../reference/troubleshooting#agent-cannot-reach-a-host-side-http-service) for routing and private-destination diagnostics.
+An allowlist entry does not disable OpenShell SSRF protection or create host routes. If the hostname resolves to a private, loopback, or link-local address, establish the required host or VPN route. Then follow the approved private-destination configuration. Refer to [Agent cannot reach a host-side HTTP service](../../reference/troubleshooting#agent-cannot-reach-a-host-side-http-service) for routing and private-destination diagnostics.
 
 </AgentOnly>
 

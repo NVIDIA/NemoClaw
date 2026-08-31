@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { waitUntil } from "../core/wait";
+import { DEFAULT_GATEWAY_PORT, resolveGatewayStateDirForPort } from "./gateway/state-dir";
 import {
   gatewayIdForStateDir,
   hasStateScopedSandboxNamespace,
@@ -124,10 +125,13 @@ function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean 
 export function resolveDockerDriverGatewayStateDir(
   env: NodeJS.ProcessEnv = process.env,
   homeDir: string = env.HOME || os.homedir(),
+  gatewayPort: number = DEFAULT_GATEWAY_PORT,
 ): string {
-  const configured = env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
-  if (configured && configured.trim()) return path.resolve(configured.trim());
-  return path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+  return resolveGatewayStateDirForPort({
+    configured: env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+    home: homeDir,
+    port: gatewayPort,
+  });
 }
 
 export function resolveDockerDriverGatewayPidFile(
@@ -416,6 +420,60 @@ export function scopedHostGatewayProcessOwnershipFailure(
     return "selected gateway process is not running with a proven status";
   }
   return scopedGatewayOwnershipFailure(pid, deps, options, stateDir, pidFile, { name, port });
+}
+
+/** Prove that neither recorded nor discoverable host gateway processes claim this state root. */
+export function scopedHostGatewayProcessAbsenceFailure(
+  depsOverrides: Partial<HostGatewayProcessDeps>,
+  options: Pick<
+    StopHostGatewayOptions,
+    "gatewayBin" | "openShellGatewayName" | "openShellGatewayPort" | "pidFile" | "stateDir"
+  >,
+): string | null {
+  const deps = defaultDeps(depsOverrides);
+  const stateDir = options.stateDir ?? resolveDockerDriverGatewayStateDir(deps.env);
+  const pidFile = options.pidFile ?? path.join(stateDir, "openshell-gateway.pid");
+  const port = Number(options.openShellGatewayPort);
+  const name = options.openShellGatewayName?.trim() ?? "";
+  if (
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65_535 ||
+    !canonicalGatewayTargetMatches(name, port)
+  ) {
+    return "selected gateway name and port are not canonical";
+  }
+  if (deps.isPortFree?.(port) !== true) {
+    return "selected gateway port is occupied";
+  }
+  const recordedPid = readPidFile(pidFile);
+  if (recordedPid !== null) {
+    const status = hostGatewayProcessStatus(recordedPid, deps);
+    if (status === "running") return "the recorded gateway process is still running";
+    if (status === "unknown") return "the recorded gateway process status cannot be proven";
+  }
+  const sweep = pgrepHostGatewayPids(deps);
+  if (!sweep.scanned) return "the orphan gateway process scan did not complete";
+  for (const pid of sweep.pids) {
+    const status = hostGatewayProcessStatus(pid, deps);
+    if (status === "unknown") return `gateway process ${String(pid)} status cannot be proven`;
+    if (status === "exited") continue;
+    if (
+      processUsesStateScopedSandboxNamespace(pid, stateDir, deps) ||
+      hostGatewayCmdlineMatches(
+        processArgs(pid, deps),
+        options.gatewayBin,
+        { name, port },
+        { requireExpectedFlags: true },
+      )
+    ) {
+      return `live gateway process ${String(pid)} claims the selected state directory`;
+    }
+  }
+  if (deps.isPortFree?.(port) !== true) {
+    return "selected gateway port became occupied during the process scan";
+  }
+  return null;
 }
 
 function waitForExit(

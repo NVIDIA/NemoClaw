@@ -1105,7 +1105,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
-  it("installs Hermes Python packages supplied by the compiled Teams plan", async () => {
+  it("installs the Hermes Python package supplied by the compiled Teams plan", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-teams-packages-"));
     const tracePath = path.join(tmp, "uv.trace");
     const fakeUv = path.join(tmp, "uv");
@@ -1129,14 +1129,13 @@ describe("messaging-build-applier.mts: agent-install", () => {
       const plan = readMessagingBuildPlanFromEnv(planEnv, "hermes");
       expect(describeMessagingBuildPhase(plan, "agent-install", planEnv).hermesUvPackages).toEqual([
         "microsoft-teams-apps==2.0.13.4",
-        "aiohttp==3.14.3",
       ]);
 
       const result = runApplierProcess(planEnv, "hermes", "agent-install");
 
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(tracePath, "utf-8").trim()).toBe(
-        "pip install --python /opt/hermes/.venv/bin/python --no-cache -- microsoft-teams-apps==2.0.13.4 aiohttp==3.14.3",
+        "pip install --python /opt/hermes/.venv/bin/python --no-cache -- microsoft-teams-apps==2.0.13.4",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

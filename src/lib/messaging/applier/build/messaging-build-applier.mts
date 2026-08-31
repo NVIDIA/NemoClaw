@@ -21,13 +21,7 @@ import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { remediateReviewedOpenClawPluginArchive } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
-import { discordManifest } from "../../channels/discord/manifest.ts";
-import { googlechatManifest } from "../../channels/googlechat/manifest.ts";
-import { slackManifest } from "../../channels/slack/manifest.ts";
-import { teamsManifest } from "../../channels/teams/manifest.ts";
-import { telegramManifest } from "../../channels/telegram/manifest.ts";
-import { wechatManifest } from "../../channels/wechat/manifest.ts";
-import { whatsappManifest } from "../../channels/whatsapp/manifest.ts";
+import { BUILT_IN_CHANNEL_MANIFESTS } from "../../channels/built-ins.ts";
 import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
 import {
   migrationOnlyEnvTargets,
@@ -162,16 +156,6 @@ type HermesUvPackageInstall = {
   readonly spec: string;
 };
 
-const TRUSTED_CHANNEL_MANIFESTS: readonly ChannelManifest[] = [
-  telegramManifest,
-  discordManifest,
-  wechatManifest,
-  slackManifest,
-  whatsappManifest,
-  teamsManifest,
-  googlechatManifest,
-] as const;
-
 function isPinnedHermesUvPackageSpec(spec: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\[[A-Za-z0-9][A-Za-z0-9_.-]*(?:,[A-Za-z0-9][A-Za-z0-9_.-]*)*\])?==[A-Za-z0-9][A-Za-z0-9_.!+~-]*$/.test(
     spec,
@@ -185,7 +169,7 @@ export const DEFAULT_MESSAGING_RUNTIME_PLAN_PATH =
 
 export function reviewedOpenClawPluginIntegrityByPackageSpec(
   env: Env = process.env,
-  manifests: readonly ChannelManifest[] = TRUSTED_CHANNEL_MANIFESTS,
+  manifests: readonly ChannelManifest[] = BUILT_IN_CHANNEL_MANIFESTS,
 ): Readonly<Record<string, string>> {
   const entries: [string, string][] = [];
   for (const manifest of manifests) {
@@ -205,7 +189,7 @@ export function reviewedOpenClawPluginIntegrityByPackageSpec(
 
 export function reviewedOpenClawPluginTarballUrlByPackageSpec(
   env: Env = process.env,
-  manifests: readonly ChannelManifest[] = TRUSTED_CHANNEL_MANIFESTS,
+  manifests: readonly ChannelManifest[] = BUILT_IN_CHANNEL_MANIFESTS,
 ): Readonly<Record<string, string>> {
   const entries: [string, string][] = [];
   for (const manifest of manifests) {
@@ -434,6 +418,7 @@ function sanitizeRuntimeSetup(
     envAliases: sanitizeRuntimeSetupEntries(setup?.envAliases, [
       "channelId",
       "envKey",
+      "targetEnvKey",
       "match",
       "value",
       "message",
@@ -540,7 +525,7 @@ export function collectManagedImageOpenClawPluginInstallSpecs(env: Env): string[
 
 /** Return every pinned Hermes package required by a supported managed-image channel. */
 export function collectManagedImageHermesUvPackages(): string[] {
-  return collectTrustedHermesUvPackageInstalls(TRUSTED_CHANNEL_MANIFESTS).map(
+  return collectTrustedHermesUvPackageInstalls(BUILT_IN_CHANNEL_MANIFESTS).map(
     (install) => install.spec,
   );
 }
@@ -597,20 +582,20 @@ function collectOpenClawMessagingPluginInstalls(
 function collectManagedImageOpenClawPluginInstalls(env: Env): OpenClawPluginInstall[] {
   const reviewedIntegrity = reviewedOpenClawPluginIntegrityByPackageSpec(
     env,
-    TRUSTED_CHANNEL_MANIFESTS,
+    BUILT_IN_CHANNEL_MANIFESTS,
   );
   const reviewedTarballUrls = reviewedOpenClawPluginTarballUrlByPackageSpec(
     env,
-    TRUSTED_CHANNEL_MANIFESTS,
+    BUILT_IN_CHANNEL_MANIFESTS,
   );
   const runtimeLocks = reviewedOpenClawPluginRuntimeLocksByPackageSpec(
     env,
-    TRUSTED_CHANNEL_MANIFESTS,
+    BUILT_IN_CHANNEL_MANIFESTS,
   );
   const installs: OpenClawPluginInstall[] = [];
   const seen = new Set<string>();
 
-  for (const manifest of TRUSTED_CHANNEL_MANIFESTS) {
+  for (const manifest of BUILT_IN_CHANNEL_MANIFESTS as readonly ChannelManifest[]) {
     for (const packageSpec of manifest.agentPackages ?? []) {
       if (packageSpec.agent !== "openclaw" || packageSpec.manager !== "openclaw-plugin") continue;
       const spec = resolveOpenClawPackageSpec(packageSpec.spec, env);
@@ -649,7 +634,7 @@ function collectManagedImageOpenClawPluginInstalls(env: Env): OpenClawPluginInst
  */
 function trustedChannelManifestsForActivePlan(plan: MessagingBuildPlan | null): ChannelManifest[] {
   const active = new Set(activeChannels(plan));
-  return TRUSTED_CHANNEL_MANIFESTS.filter((manifest) => active.has(manifest.id));
+  return BUILT_IN_CHANNEL_MANIFESTS.filter((manifest) => active.has(manifest.id));
 }
 
 function trustedOpenClawPluginSpecsForManifests(
@@ -710,7 +695,7 @@ function trustedHermesUvPackageSpecsForPlan(plan: MessagingBuildPlan | null): Se
   const active = new Set(activeChannels(plan));
   return new Set(
     collectTrustedHermesUvPackageInstalls(
-      TRUSTED_CHANNEL_MANIFESTS.filter((manifest) => active.has(manifest.id)),
+      BUILT_IN_CHANNEL_MANIFESTS.filter((manifest) => active.has(manifest.id)),
     ).map((install) => install.spec),
   );
 }

@@ -929,9 +929,14 @@ echo "$OUT CURL_RC_$RC"
     );
     expect(directProvider).toMatch(/STATUS_403|ERROR_/);
 
-    expect(["169.254.169.254", "127.0.0.1", "10.0.0.1", "192.168.1.1", "0.0.0.0"].every((ip) =>
-        Object.is(isPrivateIp(ip), true))).toBe(true);
-    expect(["8.8.8.8", "142.250.80.46"].every((ip) => Object.is(isPrivateIp(ip), false))).toBe(true);
+    expect(
+      ["169.254.169.254", "127.0.0.1", "10.0.0.1", "192.168.1.1", "0.0.0.0"].every((ip) =>
+        Object.is(isPrivateIp(ip), true),
+      ),
+    ).toBe(true);
+    expect(["8.8.8.8", "142.250.80.46"].every((ip) => Object.is(isPrivateIp(ip), false))).toBe(
+      true,
+    );
 
     progress.phase("exercise scoped host-gateway web fetch policy");
     const marker = "NEMOCLAW_HOST_GATEWAY_WEB_FETCH_OK";
@@ -997,10 +1002,8 @@ NEMOCLAW_WEB_FETCH_PROBE`,
       await Promise.all([approvedServer.close(), deniedServer.close()]);
     }
 
-    // A direct OpenShell policy update intentionally invalidates NemoClaw's
-    // durable policy receipt. Keep this final among NemoClaw-owned mutations so
-    // the test proves the fail-closed ownership contract without asking a later
-    // policy-add to overwrite externally changed policy.
+    // A direct OpenShell policy update is authoritative. Keep this final so the
+    // test proves host-side edits require no NemoClaw receipt or adoption step.
     progress.phase("prove per-binary Jira approval after NemoClaw policy mutations");
     const curlApproval = await sandbox.openshell(
       [
@@ -1040,6 +1043,20 @@ printf '\n'
     expect(text(curlAfterApproval)).toMatch(/CURL_STATUS_401/);
     expect(text(curlAfterApproval)).toMatch(/Unauthorized|unauthorized/);
 
+    const githubAdd = await applyPreset(host, "github");
+    expect(githubAdd.exitCode, text(githubAdd)).toBe(0);
+    const policyAfterNemoclawMutation = await sandbox.openshell(
+      ["policy", "get", "--full", SANDBOX_NAME],
+      {
+        artifactName: "tc-net-08-policy-after-nemoclaw-mutation",
+        env: baseEnv(),
+        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+      },
+    );
+    expect(policyAfterNemoclawMutation.exitCode, text(policyAfterNemoclawMutation)).toBe(0);
+    expect(policyAfterNemoclawMutation.stdout).toContain("api.atlassian.com");
+    expect(policyAfterNemoclawMutation.stdout).toMatch(/github|api\.github\.com/i);
+
     progress.phase("switch to permissive policy and record the contract");
     const permissiveApply = await sandbox.openshell(
       ["policy", "set", "--policy", PERMISSIVE_POLICY, "--wait", SANDBOX_NAME],
@@ -1069,6 +1086,7 @@ printf '\n'
         livePolicyAdd: true,
         dryRunNoSideEffect: true,
         jiraPerBinaryPolicy: true,
+        hostEditSurvivesNemoclawMutation: true,
         hotReloadNoRestart: true,
         inferenceExemption: true,
         ssrfValidation: true,

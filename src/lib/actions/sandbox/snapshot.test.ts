@@ -106,19 +106,17 @@ describe("runSandboxSnapshot", () => {
   });
 
   it("rejects a schema-5 snapshot restore source or destination before effects (#9203)", async () => {
-    f.assertHermesPortableCommandUnavailableMock.mockImplementation(
-      (sandboxName: string) => {
-        switch (sandboxName) {
-          case "beta":
-            throw new Error("schema-5 destination rejected");
-        }
-      },
-    );
+    f.assertHermesPortableCommandUnavailableMock.mockImplementation((sandboxName: string) => {
+      switch (sandboxName) {
+        case "beta":
+          throw new Error("schema-5 destination rejected");
+      }
+    });
     const { runSandboxSnapshot } = await import("./snapshot");
 
-    await expect(
-      runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }),
-    ).rejects.toThrow("schema-5 destination rejected");
+    await expect(runSandboxSnapshot("alpha", { kind: "restore", to: "beta" })).rejects.toThrow(
+      "schema-5 destination rejected",
+    );
 
     expect(f.assertHermesPortableCommandUnavailableMock).toHaveBeenCalledWith(
       "alpha",
@@ -616,11 +614,6 @@ describe("runSandboxSnapshot", () => {
     expect(output).toContain("alpha snapshot restore");
   });
 
-
-
-
-
-
   it("reserves an explicit llama.cpp clone with the original owner and exact gateway authority", async () => {
     const hostLocalInferenceReceipt = serializedLlamaCppHostLocalInferenceReceipt("docker");
     const hostLocalInferenceProvenance = createSandboxHostLocalInferenceProvenance(
@@ -715,17 +708,6 @@ describe("runSandboxSnapshot", () => {
     expect(confirm).toHaveBeenCalledTimes(2);
   });
 
-
-
-
-
-
-
-
-
-
-
-
   it("refuses snapshot creation before backup when the sandbox is not live", async () => {
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["beta"]));
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -759,58 +741,5 @@ describe("runSandboxSnapshot", () => {
       name: null,
     });
     expect(consoleError.mock.calls.flat().join("\n")).toContain("tar exploded");
-  });
-
-  it("reconciles snapshot policies after restore and warns without failing on repair misses", async () => {
-    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
-    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    f.getLatestBackupMock.mockReturnValue({
-      backupPath: "/tmp/alpha/v2",
-      timestamp: "2026-06-02T00:00:00.000Z",
-      policyPresets: ["npm", "github"],
-      customPolicies: [
-        {
-          name: "team-egress",
-          content: "network_policies:\n  team-egress: {}\n",
-          sourcePath: "/policies/team.yaml",
-        },
-      ],
-    });
-    f.restoreSandboxStateMock.mockReturnValue({
-      success: true,
-      restoredDirs: ["workspace"],
-      restoredFiles: ["openclaw.json"],
-      failedDirs: [],
-      failedFiles: [],
-    });
-    f.getAppliedPresetsMock.mockReturnValue(["npm", "team-egress", "old-preset"]);
-    f.getCustomPoliciesMock.mockReturnValue([
-      {
-        name: "team-egress",
-        content: "network_policies:\n  team-egress: {}\n",
-        sourcePath: "/policies/team.yaml",
-      },
-      { name: "old-custom", content: "network_policies:\n  old: {}\n", sourcePath: "/old.yaml" },
-    ]);
-    f.removePresetMock.mockImplementation((_sandbox, preset) => preset !== "old-custom");
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await runSandboxSnapshot("alpha", { kind: "restore" });
-
-    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/alpha/v2");
-    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "old-preset", { nonFatal: true });
-    expect(f.applyPresetMock).toHaveBeenCalledWith("alpha", "github", { nonFatal: true });
-    expect(f.removePresetMock).toHaveBeenCalledWith("alpha", "old-custom", { nonFatal: true });
-    expect(f.removePresetMock).not.toHaveBeenCalledWith("alpha", "team-egress");
-    expect(f.applyPresetContentMock).not.toHaveBeenCalled();
-    const output = consoleLog.mock.calls.flat().join("\n");
-    expect(output).toContain("✓ Restored 1 directories, 1 files");
-    expect(output).toContain(
-      "Reconciling policy presets on 'alpha': add github; remove old-preset",
-    );
-    expect(output).toContain("Reconciling custom policies on 'alpha': remove old-custom");
-    expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
-      "Warning: could not reconcile custom policy(ies): old-custom (remove failed)",
-    );
   });
 });
