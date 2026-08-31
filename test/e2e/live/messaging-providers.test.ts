@@ -35,7 +35,6 @@ import {
   outputText,
   pluginEnabled,
   policyTextHasHost,
-  premergeSlackPolicyIfNeeded,
   REBUILD_TIMEOUT_MS,
   rawTokenSurfaceProbe,
   readOpenClawConfig,
@@ -142,9 +141,6 @@ test(
       redactionValues,
       timeoutMs: 15 * 60_000,
     });
-
-    const restoreSlackPolicy = await premergeSlackPolicyIfNeeded();
-    cleanup.add("restore messaging E2E Slack policy pre-merge", restoreSlackPolicy);
 
     await runSecondaryCleanup(() =>
       runHost(host, "node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
@@ -375,6 +371,11 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     check(
       whatsappPolicyPostText.includes("messaging_host_edit_e2e"),
       "M-WA5a: unrelated host policy edit survived messaging rebuild",
+    );
+    const slackPolicyPostEvidence = slackCredentialBindingEvidence(whatsappPolicyPostText);
+    check(
+      slackPolicyPostEvidence.bot && slackPolicyPostEvidence.app,
+      "M-WA5b: canonical credential-bound Slack policy survived messaging rebuild",
     );
 
     progress.phase("inspect providers placeholders and credential isolation");
