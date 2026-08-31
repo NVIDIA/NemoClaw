@@ -178,6 +178,11 @@
     },
     {
       "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
+      "test": "keeps the %s source-based CLI coverage shards parallel with independent compiled-contract checks",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/automation/pull-requests/pr-workflow-contract.test.ts",
       "test": "does not grant package access to pull request jobs",
       "category": "security"
     },

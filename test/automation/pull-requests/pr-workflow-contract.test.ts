@@ -489,6 +489,28 @@ describe("pull request and main workflow contracts", () => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
   });
 
+  // source-shape-contract: compatibility -- Source-only coverage must stay parallel while one independent job owns compiled package and sourcemap evidence
+  it.each([
+    ["pull_request", prWorkflow],
+    ["main", mainWorkflow],
+  ] as const)(
+    "keeps the %s source-based CLI coverage shards parallel with independent compiled-contract checks",
+    (_workflowName, workflow) => {
+      const shardNeeds = workflow.jobs["cli-test-shards"].needs;
+      expect(Array.isArray(shardNeeds) ? shardNeeds : [shardNeeds]).not.toContain("build-typecheck");
+
+      const buildRuns = stepRuns(sharedActions.buildTypecheck).join("\n");
+      const shardRuns = stepRuns(sharedActions.cliCoverageShard).join("\n");
+      expect(buildRuns).toContain("npm run build:cli");
+      expect(buildRuns).toContain("cd nemoclaw && npm run build");
+      expect(buildRuns).toContain("vitest run --project package-contract");
+      expect(buildRuns).toContain("scripts/check-dist-sourcemaps.mts dist");
+      expect(shardRuns).not.toContain("npm run build:cli");
+      expect(shardRuns).not.toContain("cd nemoclaw && npm run build");
+      expect(shardRuns).not.toContain("scripts/check-dist-sourcemaps");
+    },
+  );
+
   // source-shape-contract: security -- Pull request jobs must never receive the GitHub Packages credential
   it("does not grant package access to pull request jobs", () => {
     expect(prWorkflow.permissions).toEqual({ contents: "read" });
