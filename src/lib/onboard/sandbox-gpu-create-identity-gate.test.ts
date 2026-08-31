@@ -250,7 +250,6 @@ describe("created sandbox identity gate", () => {
     const sandboxId = "alpha-sandbox-id";
     const sandboxIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
     const input = noGpuInput();
-    input.cliName = "nemohermes";
     input.resumeVerifiedCreate = {
       route: "none",
       liveIdentityFingerprint: sandboxIdentityFingerprint,

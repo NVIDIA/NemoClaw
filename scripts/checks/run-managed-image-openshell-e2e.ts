@@ -1017,7 +1017,6 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       flow = await runSandboxGpuCreateFlow(
         {
           sandboxName: input.sandbox,
-          cliName: "nemoclaw",
           provider: input.localProvider
             ? resolveManagedImageLocalInferenceRoute(input.localProvider).providerName
             : "nvidia",
