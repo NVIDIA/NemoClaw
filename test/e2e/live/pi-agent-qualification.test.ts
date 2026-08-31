@@ -21,12 +21,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import {
-  type DockerBuildGuard,
-  assertNoDockerfileBuild,
-  createDockerBuildGuard,
-} from "../fixtures/docker-build-guard.ts";
-import type { E2EInferenceAdapter } from "../fixtures/inference-adapter.ts";
+import { assertNoDockerfileBuild, createDockerBuildGuard } from "../fixtures/docker-build-guard.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { LifecyclePhaseFixture } from "../fixtures/phases/lifecycle.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
@@ -130,28 +125,6 @@ function execPiShell(
   );
 }
 
-function qualificationEnv(
-  inference: E2EInferenceAdapter,
-  guard: DockerBuildGuard,
-  catalogPath: string,
-  acceptedReceiptPath: string,
-  extra: NodeJS.ProcessEnv = {},
-): NodeJS.ProcessEnv {
-  return inference.env({
-    ...guard.env,
-    [CANDIDATE_AGENT_FEATURE_ENV]: "1",
-    [CANDIDATE_QUALIFICATION_RECEIPT_ENV]: acceptedReceiptPath,
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_AGENT: "pi",
-    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    OPENSHELL_DRIVERS: "docker",
-    OPENSHELL_GATEWAY: GATEWAY,
-    ...extra,
-  });
-}
-
 async function preclean(
   host: HostCliClient,
   lifecycle: LifecyclePhaseFixture,
@@ -249,20 +222,6 @@ async function sessionInventory(sandbox: SandboxClient, env: NodeJS.ProcessEnv, 
   return result.stdout.trim();
 }
 
-async function readPiInferenceEvidence(
-  sandbox: SandboxClient,
-  env: NodeJS.ProcessEnv,
-  expectedModel: string,
-): Promise<{ api: string; model: string; route: string }> {
-  const result = await execPiShell(
-    sandbox,
-    trustedSandboxShellScript("cat /sandbox/.pi/agent/models.json"),
-    { artifactName: "pi-managed-inference-config", env, timeoutMs: 30_000 },
-  );
-  expect(result.exitCode, resultText(result)).toBe(0);
-  return parsePiInferenceEvidence(result.stdout, expectedModel);
-}
-
 async function runInteractiveTask(
   artifacts: ArtifactSink,
   host: HostCliClient,
@@ -331,7 +290,18 @@ test(
       pi: receipt.contract,
     });
     const guard = createDockerBuildGuard();
-    const env = qualificationEnv(inference, guard, catalogPath, receipt.path);
+    const env = inference.env({
+      ...guard.env,
+      [CANDIDATE_AGENT_FEATURE_ENV]: "1",
+      [CANDIDATE_QUALIFICATION_RECEIPT_ENV]: receipt.path,
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+      NEMOCLAW_AGENT: "pi",
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+      OPENSHELL_DRIVERS: "docker",
+      OPENSHELL_GATEWAY: GATEWAY,
+    });
     cleanup.trackDisposable("remove Pi Docker build guard", guard.dispose);
     cleanup.trackGateway(host, GATEWAY, { env, timeoutMs: 60_000 });
     cleanup.trackDisposable("remove Pi OpenShell sandbox", () =>
@@ -468,7 +438,13 @@ test(
     expect(trace.trim(), "Docker build guard trace").not.toBe("");
     assertNoDockerfileBuild(trace);
     await artifacts.writeText("docker-argv.log", trace);
-    const inferenceEvidence = await readPiInferenceEvidence(sandbox, env, inference.model);
+    const inferenceConfig = await execPiShell(
+      sandbox,
+      trustedSandboxShellScript("cat /sandbox/.pi/agent/models.json"),
+      { artifactName: "pi-managed-inference-config", env, timeoutMs: 30_000 },
+    );
+    expect(inferenceConfig.exitCode, resultText(inferenceConfig)).toBe(0);
+    const inferenceEvidence = parsePiInferenceEvidence(inferenceConfig.stdout, inference.model);
 
     progress.phase("destroy Pi and publish bounded evidence");
     const openshellVersion = await host.command(host.openshellCommandPath, ["--version"], {
