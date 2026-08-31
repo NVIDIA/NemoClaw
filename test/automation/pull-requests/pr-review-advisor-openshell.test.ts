@@ -292,6 +292,7 @@ describe("PR review advisor specialist lifecycle", () => {
     let analysisActive = false;
     let gatewayStopped = false;
     let downloaded = false;
+    let removeCalls = 0;
     const failures: Record<string, () => never> = {
       [failedStage]: () => {
         throw new Error(`${failedStage} failed`);
@@ -326,7 +327,10 @@ describe("PR review advisor specialist lifecycle", () => {
         downloaded = true;
         fail("download");
       },
-      remove: () => void (sandboxOwned = false),
+      remove: () => {
+        removeCalls += 1;
+        sandboxOwned = false;
+      },
     };
 
     await expect(
@@ -342,6 +346,7 @@ describe("PR review advisor specialist lifecycle", () => {
       gatewayStopped: true,
       sandboxOwned: false,
     });
+    expect(removeCalls).toBe(["configure", "create"].includes(failedStage) ? 0 : 1);
   });
 
   it("preserves the primary failure when cleanup also fails", async () => {
