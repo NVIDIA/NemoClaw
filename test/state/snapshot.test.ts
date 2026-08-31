@@ -142,7 +142,6 @@ function writeAgentRegistry(
           model: "m",
           provider: "p",
           gpuEnabled: false,
-          policies: [],
           agent,
           ...overrides,
         },
@@ -250,19 +249,6 @@ describe("listBackups computes virtual versions", () => {
     ]);
   });
 
-  it("surfaces customPolicies (name + content + sourcePath) through the manifest round-trip", () => {
-    const custom = [
-      {
-        name: "my-custom",
-        content: "version: 1\n\nnetwork_policies: {}\n",
-        sourcePath: "/host/policy.yaml",
-      },
-    ];
-    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", { customPolicies: custom });
-    const [entry] = sandboxState.listBackups("test-sandbox");
-    expect(entry.customPolicies).toEqual(custom);
-  });
-
   it("round-trips normalized managed workload and provider runtime authority", () => {
     const authority = managedSnapshotAuthority();
     writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
@@ -295,33 +281,6 @@ describe("listBackups computes virtual versions", () => {
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
   });
 
-  it("preserves an empty customPolicies array so restore can distinguish zero-custom from legacy snapshots", () => {
-    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", { customPolicies: [] });
-    const [entry] = sandboxState.listBackups("test-sandbox");
-    expect(entry.customPolicies).toEqual([]);
-  });
-
-  it("ignores rebuild manifests with malformed customPolicies (entry missing content)", () => {
-    const dir = path.join(BACKUPS_ROOT, "test-sandbox", "2026-04-21T14-02-00-000Z");
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, "rebuild-manifest.json"),
-      JSON.stringify({
-        version: 1,
-        sandboxName: "test-sandbox",
-        timestamp: "2026-04-21T14-02-00-000Z",
-        agentType: "openclaw",
-        agentVersion: null,
-        expectedVersion: null,
-        stateDirs: [],
-        dir: "/sandbox/.openclaw",
-        backupPath: dir,
-        blueprintDigest: null,
-        customPolicies: [{ name: "no-content" }],
-      }),
-    );
-    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
-  });
   it("preserves legacy manifests created before blueprintDigest existed", () => {
     const dir = path.join(BACKUPS_ROOT, "test-sandbox", "2026-04-21T13-59-00-000Z");
     fs.mkdirSync(dir, { recursive: true });
@@ -357,11 +316,10 @@ describe("listBackups computes virtual versions", () => {
         agentType: "openclaw",
         agentVersion: null,
         expectedVersion: null,
-        stateDirs: [],
+        stateDirs: "invalid",
         writableDir: "/sandbox/.openclaw-data",
         backupPath: dir,
         blueprintDigest: null,
-        policyPresets: [1],
       }),
     );
     expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
@@ -1076,30 +1034,29 @@ process.exit(0);
     }
   });
 
-  it.each([
-    "weather",
-    "slack",
-  ])("rejects a generic %s OpenClaw peer link with a tampered target", (extensionName) => {
-    // The generic peer path is valid, but its target must remain the exact
-    // global OpenClaw install rather than an arbitrary absolute path.
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-target-tampered-"));
-    const oldPath = process.env.PATH;
-    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
-    try {
-      const binDir = path.join(fixture, "bin");
-      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
-      const existingDirs = ["extensions"];
-      fs.mkdirSync(binDir, { recursive: true });
-      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
+  it.each(["weather", "slack"])(
+    "rejects a generic %s OpenClaw peer link with a tampered target",
+    (extensionName) => {
+      // The generic peer path is valid, but its target must remain the exact
+      // global OpenClaw install rather than an arbitrary absolute path.
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-target-tampered-"));
+      const oldPath = process.env.PATH;
+      const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+      try {
+        const binDir = path.join(fixture, "bin");
+        const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+        const existingDirs = ["extensions"];
+        fs.mkdirSync(binDir, { recursive: true });
+        for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
 
-      const auditOutput = encodePreBackupAuditRows([
-        `l\t/sandbox/.openclaw/extensions/${extensionName}/node_modules/openclaw\t/etc/passwd`,
-      ]);
+        const auditOutput = encodePreBackupAuditRows([
+          `l\t/sandbox/.openclaw/extensions/${extensionName}/node_modules/openclaw\t/etc/passwd`,
+        ]);
 
-      const openshell = writeFakeOpenshell(binDir);
-      writeExecutable(
-        path.join(binDir, "ssh"),
-        `#!/usr/bin/env node
+        const openshell = writeFakeOpenshell(binDir);
+        writeExecutable(
+          path.join(binDir, "ssh"),
+          `#!/usr/bin/env node
 const cmd = process.argv[process.argv.length - 1] || "";
 const existingDirs = ${JSON.stringify(existingDirs)};
 if (cmd.includes("[ -d ")) {
@@ -1112,26 +1069,27 @@ if (cmd.includes("find ")) {
 }
 process.exit(0);
 `,
-      );
+        );
 
-      writeOpenClawRegistry("alpha");
-      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}:${oldPath || ""}`;
+        writeOpenClawRegistry("alpha");
+        process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+        process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
-      expect(backup.success).toBe(false);
-      expect(backup.error).toContain(`extensions/${extensionName}`);
-      expect(backup.error).toMatch(/\/etc\/passwd/);
-    } finally {
-      if (oldOpenshell === undefined) {
-        delete process.env.NEMOCLAW_OPENSHELL_BIN;
-      } else {
-        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+        const backup = sandboxState.backupSandboxState("alpha");
+        expect(backup.success).toBe(false);
+        expect(backup.error).toContain(`extensions/${extensionName}`);
+        expect(backup.error).toMatch(/\/etc\/passwd/);
+      } finally {
+        if (oldOpenshell === undefined) {
+          delete process.env.NEMOCLAW_OPENSHELL_BIN;
+        } else {
+          process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+        }
+        process.env.PATH = oldPath;
+        fs.rmSync(fixture, { recursive: true, force: true });
       }
-      process.env.PATH = oldPath;
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   it("marks non-attributed directories failed when they are missing from partial extraction", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-missing-partial-"));

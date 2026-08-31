@@ -68,6 +68,12 @@ export function parseSandboxMessagingPlan(
     }
     if (Object.hasOwn(channel, "active") && typeof channel.active !== "boolean") return null;
     if (Object.hasOwn(channel, "disabled") && typeof channel.disabled !== "boolean") return null;
+    if (
+      Object.hasOwn(channel, "pendingRemoval") &&
+      typeof channel.pendingRemoval !== "boolean"
+    ) {
+      return null;
+    }
     if (Object.hasOwn(channel, "inputs") && !Array.isArray(channel.inputs)) return null;
     if (Object.hasOwn(channel, "hostForward") && !isHostForward(channel.hostForward)) return null;
     if (Object.hasOwn(channel, "hooks") && !Array.isArray(channel.hooks)) return null;
@@ -141,6 +147,11 @@ function hasMatchingAgentRenderEntries(value: unknown, agent: string): boolean {
     !Array.isArray(value) ||
     value.every((render) => isObjectRecord(render) && render.agent === agent)
   );
+}
+
+function hasCanonicalNetworkPolicyReferences(value: unknown): boolean {
+  if (!isObjectRecord(value) || !Object.hasOwn(value, "entries")) return true;
+  return hasCanonicalChannelReferences(value.entries);
 }
 
 export function cloneSandboxMessagingPlan(plan: SandboxMessagingPlan): SandboxMessagingPlan {
@@ -266,11 +277,6 @@ function hasCanonicalChannelReferences(value: unknown): boolean {
         (entry) => isObjectRecord(entry) && isCanonicalMessagingChannelId(entry.channelId),
       ))
   );
-}
-
-function hasCanonicalNetworkPolicyReferences(value: unknown): boolean {
-  if (!isObjectRecord(value) || !Object.hasOwn(value, "entries")) return true;
-  return hasCanonicalChannelReferences(value.entries);
 }
 
 function hasCanonicalRuntimeSetupReferences(value: unknown): boolean {

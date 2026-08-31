@@ -76,6 +76,7 @@ describe("runtime state mutation controller", () => {
       running_supervisor_hold: "supervisor-not-host-stopped",
       fixed_transport_broker: 88,
       forged_transport_broker_rejected: true,
+      wrong_device_transport_broker_rejected: true,
       wrong_argv_transport_broker_rejected: true,
       dynamic_transport_broker_rejected: true,
     });
@@ -151,6 +152,14 @@ describe("runtime state mutation controller", () => {
     expect(harnessResult.exec_replaced_supervisor).toBe("supervisor-identity-drift");
   });
 
+  it("rescans a replaced transient writer under its new identity (#9485)", () => {
+    expect(harnessResult.replacement_writer_signals).toEqual([
+      ["222", 15],
+      ["333", 15],
+    ]);
+    expect(harnessResult.replacement_writer_scans_remaining).toBe(0);
+  });
+
   it("publishes, rolls an activated fence back, and recovers every durable phase (#7744)", () => {
     expect(harnessResult).toMatchObject({
       publish: "published",
@@ -187,7 +196,7 @@ describe("runtime state mutation controller", () => {
   it("proves and freezes a fresh Hermes activation before it returns evidence (#7744)", () => {
     const sigcont = harnessResult.sigcont as number;
     expect(harnessResult.activation_events).toEqual([
-      ["guard-start"],
+      ["guard-start", true],
       ["assert-fence"],
       ["permit"],
       ["signal", 10, sigcont],
@@ -198,7 +207,7 @@ describe("runtime state mutation controller", () => {
       ["guard-disarm"],
     ]);
     expect(harnessResult.activation_failure_events).toEqual([
-      ["guard-start"],
+      ["guard-start", true],
       ["assert-fence"],
       ["permit"],
       ["signal", 10, sigcont],
@@ -206,7 +215,7 @@ describe("runtime state mutation controller", () => {
       ["guard-hold"],
     ]);
     expect(harnessResult.activation_retry_events).toEqual([
-      ["guard-start"],
+      ["guard-start", true],
       ["restore-hold"],
       ["retry-exec-ack"],
       ["permit"],
@@ -325,6 +334,15 @@ describe("runtime state mutation controller", () => {
       guardian_releases_controller_lock: true,
       guardian_blocks_mutation: true,
       guardian_writer_stopped: true,
+      required_transport_broker: "activation-transport-broker-unavailable",
+      required_transport_broker_hold: ["held"],
+      broker_guard_response: true,
+      broker_guard_resumed_broker: true,
+      broker_guard_resumed_controller: true,
+      broker_guard_resumed_only: true,
+      broker_guard_broker_running: true,
+      broker_guard_writer_held: true,
+      broker_guard_writer_stopped: true,
       last_resort_controller_ready: true,
       last_resort_client_eof: true,
       last_resort_writer_stopped: true,

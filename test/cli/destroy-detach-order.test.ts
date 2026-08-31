@@ -34,7 +34,6 @@ describe("CLI dispatch", () => {
                 model: "test-model",
                 provider: "nvidia-prod",
                 gpuEnabled: false,
-                policies: [],
               },
             },
             defaultSandbox: "alpha",

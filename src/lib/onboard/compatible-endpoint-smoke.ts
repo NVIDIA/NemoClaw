@@ -111,7 +111,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
   /** Force the provider-neutral inference.local proof for any supported agent. */
   forceCanonicalRoute?: boolean;
   hostLocalInferenceProofAuthority?: HostLocalInferenceSandboxProofAuthority;
-  /** Recheck policy authority after the sandbox proof and before success output. */
+  /** Recheck sandbox identity after the sandbox proof and before success output. */
   beforeSuccess?: () => void;
 }): void {
   const agentName = options.agent?.name || "openclaw";
@@ -122,8 +122,6 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
     return;
   }
 
-  const hasMessagingChannels =
-    Array.isArray(options.messagingChannels) && options.messagingChannels.length > 0;
   console.log(
     options.forceCanonicalRoute
       ? "  Verifying provider-neutral inference through the sandbox runtime..."
@@ -148,9 +146,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
         ? `  Provider-neutral inference provider '${options.provider}' is missing or unreachable in the OpenShell gateway.`
         : `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
     );
-    console.error(
-      "  The sandbox inference.local route cannot reach the selected model provider.",
-    );
+    console.error("  The sandbox inference.local route cannot reach the selected model provider.");
     if (providerDetails) {
       console.error(`  ${compactText(options.redact(providerDetails)).slice(0, 800)}`);
     }

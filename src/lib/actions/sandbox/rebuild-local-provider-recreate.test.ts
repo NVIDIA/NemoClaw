@@ -232,10 +232,8 @@ describe("rebuild local-provider recreation", () => {
       "30",
     ]);
     expect(calls.some((args) => args[0] === "provider" && args[1] === "update")).toBe(false);
-    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
-      "alpha",
-      "/tmp/nemoclaw-rebuild-backup",
-      { targetAgentType: "openclaw" },
-    );
+    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith("alpha", harness.backupPath, {
+      targetAgentType: "openclaw",
+    });
   });
 });
