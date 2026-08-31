@@ -55,8 +55,8 @@ describe("candidate agent gate", () => {
   });
 
   it.each(PUBLISHED_PI_RECEIPTS)(
-    "publishes the exact Pi receipt for %s",
-    (platform, relativePath) => {
+    "publishes the exact Pi receipt source for %s",
+    (_platform, relativePath) => {
       const receiptPath = path.join(ROOT, relativePath);
 
       expect(
@@ -64,7 +64,12 @@ describe("candidate agent gate", () => {
           [CANDIDATE_AGENT_FEATURE_ENV]: "1",
           [CANDIDATE_QUALIFICATION_RECEIPT_ENV]: receiptPath,
         }),
-      ).toMatchObject({ agent: "pi", platform });
+      ).toMatchObject({
+        source: {
+          repository: "NVIDIA/NemoClaw",
+          revision: "6339fcae1c239a84925715328fc0dff045b8f310",
+        },
+      });
     },
   );
 
