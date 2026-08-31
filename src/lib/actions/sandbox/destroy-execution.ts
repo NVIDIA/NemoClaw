@@ -347,8 +347,7 @@ export async function executeSandboxDestroy({
         if (
           sandboxConfirmedAbsent &&
           expectedContainerIdentities !== undefined &&
-          expectedContainerIdentityFingerprint ===
-            pendingCreateIdentity.sandboxIdentityFingerprint
+          expectedContainerIdentityFingerprint === pendingCreateIdentity.sandboxIdentityFingerprint
         ) {
           return isDeepStrictEqual(readCurrentCheckpoint(), pendingCreateIdentity)
             ? { status: "match" }

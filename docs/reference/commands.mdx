@@ -1852,10 +1852,13 @@ If the Hermes sandbox has managed MCP entries, shields must be down before destr
 If the OpenClaw sandbox has managed MCP entries, shields must be down before destroy can scrub their adapter configuration.
 The managed Mcporter config is locked with the rest of the `workspace` state root, so lockdown makes it unwritable from inside the sandbox and destroy refuses before it stops any local service.
 Use `$$nemoclaw <name> shields down --timeout 15m --reason "MCP maintenance"`, then rerun destroy.
-`$$nemoclaw <name> destroy --force` reports the refusal and continues to the workspace wipe and sandbox deletion.
+`$$nemoclaw <name> destroy --force` can continue only when every retained MCP adapter entry is an OpenClaw Mcporter entry.
+It reports the refusal, then continues to the workspace wipe and sandbox deletion.
 NemoClaw keeps the managed MCP policy and provider until OpenShell confirms deletion.
-If deletion fails, retry destroy and do not onboard a same-name replacement.
-A successful workspace wipe removes the adapter entry; if the wipe does not complete successfully, use a different sandbox name to avoid the retained config.
+If deletion fails, run `$$nemoclaw <name> destroy --force` again, or lower Shields and rerun ordinary destroy.
+Do not onboard a same-name replacement.
+A successful workspace wipe removes the adapter entry.
+If the wipe does not complete successfully, use a different sandbox name to avoid the retained config.
 
 </AgentOnly>
 
