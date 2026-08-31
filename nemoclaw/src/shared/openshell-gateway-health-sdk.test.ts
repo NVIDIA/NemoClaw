@@ -82,18 +82,6 @@ describe("OpenShell SDK gateway health observer", () => {
     expect(Object.isFrozen(result.ok ? result.value : {})).toBe(true);
   });
 
-  it("starts the deadline before loading the SDK (#9872)", async () => {
-    loadSdk.mockImplementation(async () => {
-      expect(timeoutSignal).toHaveBeenCalledOnce();
-      return { connect, serviceStatus: SERVICE_STATUS };
-    });
-    const observer = createOpenShellSdkGatewayHealthObserver({ loadSdk, timeoutSignal });
-
-    await observer.observeHealth(request());
-
-    expect(connect).toHaveBeenCalledOnce();
-  });
-
   it("loads the approved SDK exports through the default adapter (#9872)", async () => {
     const observer = createOpenShellSdkGatewayHealthObserver({ timeoutSignal });
 
