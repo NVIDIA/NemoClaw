@@ -2048,7 +2048,7 @@ Onboarding ends with:
 
 On a fresh onboard the OpenShell gateway can (re)start its supervisor session and re-register the just-created sandbox. During that window `openshell sandbox list` briefly reports the sandbox in the transient `Error` phase before it flips to `Ready`, as seen on DGX Spark when supervisor restart races the sandbox bootstrap.
 
-NemoClaw polls immediately, starts retrying after 250ms, and backs off to a 2-second cap.
+NemoClaw polls immediately. A single-observation wait retries after 250 ms and backs off to a two-second cap. A stable-readiness wait that requires two consecutive `Ready` observations checks every two seconds.
 It tolerates 30 consecutive `Error` observations by default so this transient recovers on its own.
 Only `Error` that persists through the debounce count is terminal, unless the overall `NEMOCLAW_SANDBOX_READY_TIMEOUT` deadline expires first.
 Every terminal observation outside the `Error` phase, including one with no reported phase, fails immediately.

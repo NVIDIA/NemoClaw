@@ -156,6 +156,19 @@ type NativeFallbackCleanupEvidence = Readonly<{
   nativeCleanupHandoff?: ManagedBootstrapNativeGpuFallbackOwnerCleanupHandoff;
 }>;
 
+function warnForAuthorizedCompatibilityRetry(
+  route: SelectedDockerGpuRoute,
+  initialGpuRoute: SelectedDockerGpuRoute,
+): void {
+  if (route !== "compatibility" || initialGpuRoute !== "native") return;
+  console.warn(
+    "  Native OpenShell GPU onboarding did not complete; retrying once by recreating the OpenShell-managed Docker container with the legacy GPU compatibility envelope.",
+  );
+  console.warn(
+    "  This compatibility container swap may relax container confinement compared with native injection. The retry is running only because NEMOCLAW_DOCKER_GPU_PATCH=fallback explicitly authorized it.",
+  );
+}
+
 async function rollbackNativeGpuFailureForFallback(
   managedLifecycle: ManagedBootstrapRuntimeCreateLifecycle | null,
   runtimePatch: ManagedBootstrapRuntimePatch,
@@ -251,6 +264,148 @@ async function verifyCreatedSandboxBeforeEffects(
   });
 }
 
+function persistCreateAttemptRecovery(options: {
+  readonly input: SandboxGpuCreateFlowInput;
+  readonly createAttemptNonce: string | null;
+  readonly detail: string;
+  readonly sandboxIdentityFingerprint?: string;
+}): void {
+  const { input, createAttemptNonce, detail, sandboxIdentityFingerprint } = options;
+  if (!createAttemptNonce) {
+    throw new Error("Sandbox create-attempt identity was not generated.");
+  }
+  const persist = input.persistRetainedSandboxRecovery;
+  if (!persist) {
+    throw new Error("Verified sandbox creation has no durable recovery evidence owner.");
+  }
+  const message =
+    `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}. ` +
+    (sandboxIdentityFingerprint
+      ? `Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}. `
+      : "") +
+    detail;
+  let persistenceFailure: unknown = null;
+  try {
+    if (!persist(message, sandboxIdentityFingerprint, createAttemptNonce)) {
+      persistenceFailure = new Error(
+        "The retained sandbox recovery writer did not confirm durable persistence.",
+      );
+    }
+  } catch (error) {
+    persistenceFailure = error;
+  }
+  console.error(`  ${message}`);
+  if (persistenceFailure) {
+    console.error(
+      "  NemoClaw could not save this create-attempt evidence. The recovery-only session remains blocked until its durable recovery record can be saved.",
+    );
+    throw new Error(
+      "NemoClaw could not save the retained sandbox recovery record; the recovery-only session remains blocked.",
+      { cause: persistenceFailure },
+    );
+  }
+}
+
+function persistIdentitySettlementRecoveryEvidence(options: {
+  readonly input: SandboxGpuCreateFlowInput;
+  readonly createAttemptNonce: string | null;
+  readonly sandboxIdentityFingerprint: string | null;
+}): void {
+  const { input, createAttemptNonce, sandboxIdentityFingerprint } = options;
+  const identityEvidence = sandboxIdentityFingerprint
+    ? `Sandbox '${input.sandboxName}' did not remain visible through owning gateway '${input.gatewayName}' before identity verification completed. `
+    : `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. Gateway '${input.gatewayName}'. OpenShell did not return one exact durable sandbox identity for this create attempt. `;
+  persistCreateAttemptRecovery({
+    input,
+    createAttemptNonce,
+    detail:
+      identityEvidence +
+      "Do not delete a sandbox by mutable name; preserve it until an OpenShell administrator resolves the create-attempt label to one sandbox.",
+    sandboxIdentityFingerprint: sandboxIdentityFingerprint ?? undefined,
+  });
+}
+
+async function confirmManagedRuntimeCommitReadiness(options: {
+  readonly input: SandboxGpuCreateFlowInput;
+  readonly deps: SandboxGpuCreateFlowDeps;
+  readonly sandboxId: string | null;
+  readonly createAttemptNonce: string | null;
+}): Promise<void> {
+  const { input, deps, sandboxId } = options;
+  if (!sandboxId) return;
+  input.revalidateVerifiedSandboxBeforeEffect?.(
+    `confirm committed runtime readiness for sandbox '${input.sandboxName}'`,
+  );
+  const committedReadiness = await sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
+    sandboxName: input.sandboxName,
+    timeoutSecs: input.sandboxReadyTimeoutSecs,
+    observer: deps.sandboxObserver,
+    target: { kind: "named", gatewayName: input.gatewayName },
+    stableReadyPolls: REPLACEMENT_STABLE_READY_POLLS,
+    checkReadyIdentity: (getRemainingMs = () => SANDBOX_RECREATE_PROBE_TIMEOUT_MS) =>
+      checkRecreatedSandboxReadyIdentity(
+        input.sandboxName,
+        input.gatewayName,
+        sandboxId,
+        deps,
+        getRemainingMs,
+      ),
+    sleep: deps.sleep,
+  });
+  if (committedReadiness.ready) return;
+  console.error("");
+  sandboxReadinessTracing.printReadinessFailure(
+    committedReadiness,
+    input.sandboxName,
+    input.sandboxReadyTimeoutSecs,
+  );
+  const sandboxIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
+  persistCreateAttemptRecovery({
+    input,
+    createAttemptNonce: options.createAttemptNonce,
+    sandboxIdentityFingerprint,
+    detail:
+      `Managed runtime commit completed for sandbox '${input.sandboxName}', but the same sandbox did not return to executable Ready state through owning gateway '${input.gatewayName}'. ` +
+      "Do not delete a sandbox by mutable name; preserve it for identity-bound recovery.",
+  });
+  (deps.printCreateFailureDiagnostics ?? printSandboxCreateFailureDiagnostics)(input.sandboxName, {
+    backupPath: input.restoreBackupPath,
+  });
+  console.error(
+    "  NemoClaw did not start dashboard forwarding. NemoClaw left the sandbox in place for identity-bound recovery.",
+  );
+  console.error(
+    `  Do not delete sandbox '${input.sandboxName}' by name. Give the create-attempt label above to an OpenShell administrator and ask them to remove that exact sandbox and reconcile its retained recovery state through an identity-bound procedure.`,
+  );
+  throw new Error(
+    `Sandbox '${input.sandboxName}' did not return to Ready after its managed runtime commit.`,
+  );
+}
+
+async function requireManagedBootstrapCreatedSandboxReady(options: {
+  readonly input: SandboxGpuCreateFlowInput;
+  readonly deps: SandboxGpuCreateFlowDeps;
+  readonly createAttemptNonce: string | null;
+  readonly persistIdentitySettlementRecovery: () => void;
+}): Promise<void> {
+  const observation = await sandboxReadinessTracing.observeOpenShellSandbox(
+    options.deps.sandboxObserver,
+    { kind: "named", gatewayName: options.input.gatewayName },
+    options.input.sandboxName,
+    SANDBOX_READY_PROBE_TIMEOUT_MS,
+  );
+  if (!observation.ok) {
+    if (options.createAttemptNonce) options.persistIdentitySettlementRecovery();
+    throw new Error(
+      `Managed bootstrap create completed, but NemoClaw could not observe the sandbox. ${observation.error.message}`,
+    );
+  }
+  if (observation.value.state !== "present" || observation.value.sandbox.readiness !== "ready") {
+    if (options.createAttemptNonce) options.persistIdentitySettlementRecovery();
+    throw new Error("Managed bootstrap create completed without an authoritative Ready sandbox.");
+  }
+}
+
 function resolveCreateAttemptNonce(
   input: SandboxGpuCreateFlowInput,
   deferPostCreateEffects: boolean,
@@ -315,6 +470,20 @@ function waitForCreatedOpenShellSandboxPublication(
     throw new Error(
       `Created sandbox '${input.sandboxName}' did not become visible through its owning gateway before identity verification completed.`,
     );
+  }
+}
+
+function waitForCreatedSandboxPublicationOrPersist(
+  sandboxId: string,
+  input: SandboxGpuCreateFlowInput,
+  deps: SandboxGpuCreateFlowDeps,
+  persistIdentitySettlementRecovery: (sandboxIdentityFingerprint: string) => void,
+): void {
+  try {
+    waitForCreatedOpenShellSandboxPublication(sandboxId, input, deps);
+  } catch (error) {
+    persistIdentitySettlementRecovery(fingerprintSandboxRecreateValue(sandboxId));
+    throw error;
   }
 }
 
@@ -435,14 +604,7 @@ export function createSandboxGpuCreateAttemptRunner(
   const runAttempt = async (route: SelectedDockerGpuRoute) => {
     const deferPostCreateEffects = input.verifyCreatedSandboxBeforeEffects !== undefined;
     const compatibility = route === "compatibility";
-    if (compatibility && input.initialGpuRoute === "native") {
-      console.warn(
-        "  Native OpenShell GPU onboarding did not complete; retrying once by recreating the OpenShell-managed Docker container with the legacy GPU compatibility envelope.",
-      );
-      console.warn(
-        "  This compatibility container swap may relax container confinement compared with native injection. The retry is running only because NEMOCLAW_DOCKER_GPU_PATCH=fallback explicitly authorized it.",
-      );
-    }
+    warnForAuthorizedCompatibilityRetry(route, input.initialGpuRoute);
     const hasRequiredUlimits = (input.requiredUlimits?.length ?? 0) > 0;
     const managedBootstrap = input.managedBootstrap ?? null;
     const unboundAttemptArgv = state.compatibilityArgv ?? input.createArgv;
@@ -451,49 +613,19 @@ export function createSandboxGpuCreateAttemptRunner(
     const persistIdentitySettlementRecovery = (
       sandboxIdentityFingerprint: string | null = null,
     ): void => {
-      if (!createAttemptNonce) {
-        throw new Error("Sandbox create-attempt identity was not generated.");
-      }
-      const persist = input.persistRetainedSandboxRecovery;
-      if (!persist) {
-        throw new Error("Verified sandbox creation has no durable recovery evidence owner.");
-      }
-      const identityEvidence = sandboxIdentityFingerprint
-        ? `Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}. Sandbox '${input.sandboxName}' did not remain visible through owning gateway '${input.gatewayName}' before identity verification completed. `
-        : `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. Gateway '${input.gatewayName}'. OpenShell did not return one exact durable sandbox identity for this create attempt. `;
-      const message =
-        `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}. ` +
-        identityEvidence +
-        "Do not delete a sandbox by mutable name; preserve it until an OpenShell administrator resolves the create-attempt label to one sandbox.";
-      let persistenceFailure: unknown = null;
-      try {
-        if (!persist(message, sandboxIdentityFingerprint ?? undefined, createAttemptNonce)) {
-          persistenceFailure = new Error(
-            "The retained sandbox recovery writer did not confirm durable persistence.",
-          );
-        }
-      } catch (error) {
-        persistenceFailure = error;
-      }
-      console.error(`  ${message}`);
-      if (persistenceFailure) {
-        console.error(
-          "  NemoClaw could not save this create-attempt evidence. The recovery-only session remains blocked until its durable recovery record can be saved.",
-        );
-        throw new Error(
-          "NemoClaw could not save the retained sandbox recovery record; the recovery-only session remains blocked.",
-          { cause: persistenceFailure },
-        );
-      }
+      persistIdentitySettlementRecoveryEvidence({
+        input,
+        createAttemptNonce,
+        sandboxIdentityFingerprint,
+      });
     };
-    const waitForCreatedSandboxPublication = (sandboxId: string): void => {
-      try {
-        waitForCreatedOpenShellSandboxPublication(sandboxId, input, deps);
-      } catch (error) {
-        persistIdentitySettlementRecovery(fingerprintSandboxRecreateValue(sandboxId));
-        throw error;
-      }
-    };
+    const waitForCreatedSandboxPublication = (sandboxId: string): void =>
+      waitForCreatedSandboxPublicationOrPersist(
+        sandboxId,
+        input,
+        deps,
+        persistIdentitySettlementRecovery,
+      );
     const captureRetainedSandboxRecovery = () => {
       if (!input.requirePolicylessCreate || !createAttemptNonce) return {};
       let liveIdentityFingerprint: string | null = null;
@@ -770,27 +902,12 @@ export function createSandboxGpuCreateAttemptRunner(
                 );
               }
             } else {
-              const observation = await sandboxReadinessTracing.observeOpenShellSandbox(
-                deps.sandboxObserver,
-                { kind: "named", gatewayName: input.gatewayName },
-                input.sandboxName,
-                SANDBOX_READY_PROBE_TIMEOUT_MS,
-              );
-              if (!observation.ok) {
-                if (createAttemptNonce) persistIdentitySettlementRecovery();
-                throw new Error(
-                  `Managed bootstrap create completed, but NemoClaw could not observe the sandbox. ${observation.error.message}`,
-                );
-              }
-              if (
-                observation.value.state !== "present" ||
-                observation.value.sandbox.readiness !== "ready"
-              ) {
-                if (createAttemptNonce) persistIdentitySettlementRecovery();
-                throw new Error(
-                  "Managed bootstrap create completed without an authoritative Ready sandbox.",
-                );
-              }
+              await requireManagedBootstrapCreatedSandboxReady({
+                input,
+                deps,
+                createAttemptNonce,
+                persistIdentitySettlementRecovery,
+              });
             }
             let sandboxId: string;
             try {
@@ -1155,54 +1272,29 @@ export function createSandboxGpuCreateAttemptRunner(
       revalidatePostCreateEffect(`commit runtime readiness for sandbox '${input.sandboxName}'`);
       await runtimePatch.commitAfterReady();
     }
-    const confirmManagedRuntimeCommitReadiness = async (): Promise<void> => {
-      if (!managedBootstrap || !verifiedCreatedSandboxId) return;
-      input.revalidateVerifiedSandboxBeforeEffect?.(
-        `confirm committed runtime readiness for sandbox '${input.sandboxName}'`,
-      );
-      const committedReadiness = await sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
-        sandboxName: input.sandboxName,
-        timeoutSecs: input.sandboxReadyTimeoutSecs,
-        observer: deps.sandboxObserver,
-        target: { kind: "named", gatewayName: input.gatewayName },
-        stableReadyPolls: REPLACEMENT_STABLE_READY_POLLS,
-        checkReadyIdentity: (getRemainingMs = () => SANDBOX_RECREATE_PROBE_TIMEOUT_MS) =>
-          checkRecreatedSandboxReadyIdentity(
-            input.sandboxName,
-            input.gatewayName,
-            verifiedCreatedSandboxId,
-            deps,
-            getRemainingMs,
-          ),
-        sleep: deps.sleep,
+    const confirmCommittedRuntimeReadiness = () =>
+      confirmManagedRuntimeCommitReadiness({
+        input,
+        deps,
+        sandboxId: managedBootstrap ? verifiedCreatedSandboxId : null,
+        createAttemptNonce,
       });
-      if (committedReadiness.ready) return;
-      console.error("");
-      sandboxReadinessTracing.printReadinessFailure(
-        committedReadiness,
-        input.sandboxName,
-        input.sandboxReadyTimeoutSecs,
-      );
-      persistIdentitySettlementRecovery(fingerprintSandboxRecreateValue(verifiedCreatedSandboxId));
-      (deps.printCreateFailureDiagnostics ?? printSandboxCreateFailureDiagnostics)(input.sandboxName, {
-        backupPath: input.restoreBackupPath,
-      });
-      console.error(
-        "  NemoClaw did not start dashboard forwarding. NemoClaw left the sandbox in place for identity-bound recovery.",
-      );
-      throw new Error(
-        `Sandbox '${input.sandboxName}' did not return to Ready after its managed runtime commit.`,
-      );
-    };
     if (!input.sandboxGpuConfig.sandboxGpuEnabled) {
-      await confirmManagedRuntimeCommitReadiness();
+      await confirmCommittedRuntimeReadiness();
     }
     return {
       ok: true,
       route,
       value: createResult
-        ? { createResult, runtimePatch, confirmManagedRuntimeCommitReadiness }
-        : { runtimePatch, confirmManagedRuntimeCommitReadiness },
+        ? {
+            createResult,
+            runtimePatch,
+            confirmManagedRuntimeCommitReadiness: confirmCommittedRuntimeReadiness,
+          }
+        : {
+            runtimePatch,
+            confirmManagedRuntimeCommitReadiness: confirmCommittedRuntimeReadiness,
+          },
     } as const;
   };
 

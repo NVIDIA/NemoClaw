@@ -111,10 +111,71 @@ function noGpuInput() {
   return input;
 }
 
+function attachManagedBootstrap(
+  input: ReturnType<typeof noGpuInput>,
+  patch: ReturnType<typeof createGpuPatchFixture>,
+): void {
+  input.managedBootstrap = {
+    bootstrapIdentity: "b".repeat(64),
+    stateRoot: "/tmp/nemoclaw-managed-bootstrap",
+    runtimeProvider: {
+      identity: { id: "mxc" },
+      bootstrap: {
+        createOnboardRouting: () => ({ nativeFallbackHasCleanBaseline: false }),
+        createLifecycle: (options: { launchArgv: readonly string[] }) => ({
+          launchArgv: options.launchArgv,
+          patch,
+          recoverUnfinished: async () => null,
+          prepareNetwork: async () => undefined,
+          runCreate: async () => {
+            throw new Error("resumed create must not launch");
+          },
+        }),
+      },
+    },
+  } as never;
+}
+
 function refuseEffectStartingWith(prefix: string): (operation: string) => void {
   return (operation) => {
     expect(operation, "checkpoint changed").not.toMatch(new RegExp(`^${prefix}`, "u"));
   };
+}
+
+async function expectCommittedReadinessPersistenceFailure(
+  persist: NonNullable<ReturnType<typeof noGpuInput>["persistRetainedSandboxRecovery"]>,
+): Promise<void> {
+  const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const input = noGpuInput();
+  input.resumeVerifiedCreate = {
+    route: "none",
+    liveIdentityFingerprint: fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+    createAttemptNonce: "a".repeat(62),
+  };
+  input.verifyCreatedSandboxBeforeEffects = vi.fn();
+  input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+  input.persistRetainedSandboxRecovery = persist;
+  const patch = createGpuPatchFixture();
+  attachManagedBootstrap(input, patch);
+  const deps = createGpuFlowDeps("alpha-sandbox-id");
+  mocks.waitForCreatedSandboxReadyWithTrace
+    .mockResolvedValueOnce({ ready: true, reason: "ready", failurePhase: null })
+    .mockResolvedValue({ ready: false, reason: "timeout", failurePhase: null });
+
+  await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+    "the recovery-only session remains blocked",
+  );
+
+  expect(persist).toHaveBeenCalledOnce();
+  expect(error.mock.calls.flat().join("\n")).toContain(
+    "The recovery-only session remains blocked until its durable recovery record can be saved.",
+  );
+  expect(error.mock.calls.flat().join("\n")).not.toContain("Preserve the terminal output");
+  expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+  expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+    ["sandbox", "delete", "alpha"],
+    expect.anything(),
+  );
 }
 
 beforeEach(() => setupGpuFlowMocks(mocks));
@@ -154,6 +215,127 @@ describe("created sandbox identity gate", () => {
     expect(deps.runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "exec", "-g", gatewayName, "--name", "alpha", "--", "true"],
       expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+  });
+
+  it("reconfirms exact managed sandbox readiness after the runtime commit (#9211)", async () => {
+    const sandboxId = "alpha-sandbox-id";
+    const input = noGpuInput();
+    input.gatewayName = "owner-gateway";
+    input.resumeVerifiedCreate = {
+      route: "none",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+      createAttemptNonce: "a".repeat(62),
+    };
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    attachManagedBootstrap(input, patch);
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runOpenshell)
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`,
+        stderr: "",
+      })
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr:
+          "Error:   × code: 'The system is not in a state required for the operation's\n" +
+          '  │ execution\', message: "sandbox is not ready"\n',
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`,
+        stderr: "",
+      })
+      .mockReturnValue({ status: 0, stdout: "", stderr: "" });
+    mocks.waitForCreatedSandboxReadyWithTrace
+      .mockResolvedValueOnce({ ready: true, reason: "ready", failurePhase: null })
+      .mockImplementationOnce(async (options) => {
+        expect(patch.commitAfterReady).toHaveBeenCalledOnce();
+        expect(options.target).toEqual({ kind: "named", gatewayName: "owner-gateway" });
+        expect(options.checkReadyIdentity?.()).toBe("not_ready");
+        expect(options.checkReadyIdentity?.()).toBe("ready");
+        return { ready: true, reason: "ready", failurePhase: null };
+      });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      origin: "resumed",
+      route: "none",
+    });
+
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledTimes(2);
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "owner-gateway", "alpha"],
+      expect.objectContaining({ suppressOutput: true }),
+    );
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "exec", "-g", "owner-gateway", "--name", "alpha", "--", "true"],
+      expect.objectContaining({ suppressOutput: true }),
+    );
+    expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
+  it("retains exact recovery when committed managed readiness does not return (#9211)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const sandboxId = "alpha-sandbox-id";
+    const sandboxIdentityFingerprint = fingerprintSandboxRecreateValue(sandboxId);
+    const input = noGpuInput();
+    input.resumeVerifiedCreate = {
+      route: "none",
+      liveIdentityFingerprint: sandboxIdentityFingerprint,
+      createAttemptNonce: "a".repeat(62),
+    };
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    attachManagedBootstrap(input, patch);
+    const deps = createGpuFlowDeps(sandboxId);
+    mocks.waitForCreatedSandboxReadyWithTrace
+      .mockResolvedValueOnce({ ready: true, reason: "ready", failurePhase: null })
+      .mockResolvedValue({ ready: false, reason: "timeout", failurePhase: null });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not return to Ready after its managed runtime commit",
+    );
+
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("did not return to executable Ready state"),
+      sandboxIdentityFingerprint,
+      "a".repeat(62),
+    );
+    expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(mocks.printSandboxCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
+      backupPath: null,
+    });
+    const recoveryOutput = error.mock.calls.flat().join("\n");
+    expect(recoveryOutput).toContain("Do not delete sandbox 'alpha' by name.");
+    expect(recoveryOutput).toContain(
+      "Give the create-attempt label above to an OpenShell administrator",
+    );
+    expect(recoveryOutput).not.toContain("destroy --yes");
+    expect(recoveryOutput).not.toContain("After OpenShell confirms the sandbox is absent");
+  });
+
+  it("blocks committed-readiness recovery when durable persistence returns false (#9211)", async () => {
+    await expectCommittedReadinessPersistenceFailure(vi.fn(() => false));
+  });
+
+  it("blocks committed-readiness recovery when durable persistence throws (#9211)", async () => {
+    await expectCommittedReadinessPersistenceFailure(
+      vi.fn(() => {
+        throw new Error("durable writer failed");
+      }),
     );
   });
 
