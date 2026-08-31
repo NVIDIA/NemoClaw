@@ -13,7 +13,6 @@ import type {
   SandboxMessagingCredentialBindingPlan,
   SandboxMessagingPlan,
 } from "../../src/lib/messaging";
-import { listMessagingCredentialMetadata } from "../../src/lib/messaging/channels";
 
 type DockerfilePlanChannel = {
   channelId?: unknown;
@@ -69,29 +68,6 @@ export function makeMessagingPlan(options: TestMessagingPlanOptions = {}): Sandb
     stateUpdates: [],
     healthChecks: [],
   };
-}
-
-/**
- * Synthetic bindings for conflict preflight only: `enforceMessagingChannelConflicts` needs a
- * complete hash per active credential channel. Not compiled, so never compare them across
- * sandboxes: `providerName` stays a template and each hash is a deterministic sentinel.
- */
-export function messagingCredentialBindingsForChannels(
-  channelIds: readonly MessagingChannelId[],
-): SandboxMessagingCredentialBindingPlan[] {
-  const wanted = new Set<string>(channelIds);
-  return listMessagingCredentialMetadata()
-    .filter((credential) => wanted.has(credential.channelId))
-    .map((credential) => ({
-      channelId: credential.channelId as MessagingChannelId,
-      credentialId: credential.credentialId,
-      sourceInput: credential.sourceInput,
-      providerName: credential.providerNameTemplate,
-      providerEnvKey: credential.providerEnvKey,
-      placeholder: credential.placeholder,
-      credentialAvailable: true,
-      credentialHash: `hash-${credential.channelId}-${credential.credentialId}`,
-    }));
 }
 
 export function encodeMessagingPlan(plan: SandboxMessagingPlan): string {

@@ -3,12 +3,51 @@
 
 import { describe, expect, it } from "vitest";
 
+import type {
+  MessagingChannelId,
+  SandboxMessagingChannelPlan,
+  SandboxMessagingCredentialBindingPlan,
+  SandboxMessagingPlan,
+} from "../../messaging/manifest";
 import {
   bindRebuildPolicyProvidersToCreateArgs,
   resolveRebuildMessagingPolicyDeltas,
   resolveRebuildObservabilityPolicyDelta,
   resolveRebuildPolicyProviderAuthority,
 } from "./orchestration";
+
+function channelPlan(
+  channelId: MessagingChannelId,
+  active: boolean,
+  disabled = false,
+): SandboxMessagingChannelPlan {
+  return {
+    channelId,
+    displayName: channelId,
+    authMode: "token-paste",
+    active,
+    selected: true,
+    configured: true,
+    disabled,
+    inputs: [],
+    hooks: [],
+  };
+}
+
+function credentialBinding(
+  channelId: MessagingChannelId,
+  providerName: string,
+): SandboxMessagingCredentialBindingPlan {
+  return {
+    channelId,
+    credentialId: "bot-token",
+    sourceInput: "token",
+    providerName,
+    providerEnvKey: `${channelId.toUpperCase()}_BOT_TOKEN`,
+    placeholder: `\${${channelId.toUpperCase()}_BOT_TOKEN}`,
+    credentialAvailable: true,
+  };
+}
 
 describe("rebuild policy provider handoff", () => {
   const preservedMcpState = {
@@ -30,6 +69,11 @@ describe("rebuild policy provider handoff", () => {
     expect(
       resolveRebuildMessagingPolicyDeltas({
         agent: "hermes",
+        channels: [
+          channelPlan("telegram", false, true),
+          channelPlan("googlechat", false, true),
+          channelPlan("wechat", true),
+        ],
         disabledChannels: ["telegram", "googlechat"],
         networkPolicy: {
           presets: ["wechat"],
@@ -137,32 +181,74 @@ describe("rebuild policy provider handoff", () => {
       resolveRebuildPolicyProviderAuthority({
         createArgs: ["--from", "image", "--provider", "inference-provider"],
         messagingPlan: {
+          channels: [channelPlan("telegram", true), channelPlan("discord", false, true)],
           disabledChannels: ["discord"],
           credentialBindings: [
-            {
-              channelId: "telegram",
-              credentialId: "bot-token",
-              sourceInput: "token",
-              providerName: "alpha-telegram-bridge",
-              providerEnvKey: "TELEGRAM_BOT_TOKEN",
-              placeholder: "${TELEGRAM_BOT_TOKEN}",
-              credentialAvailable: true,
-            },
-            {
-              channelId: "discord",
-              credentialId: "bot-token",
-              sourceInput: "token",
-              providerName: "alpha-discord-bridge",
-              providerEnvKey: "DISCORD_BOT_TOKEN",
-              placeholder: "${DISCORD_BOT_TOKEN}",
-              credentialAvailable: true,
-            },
+            credentialBinding("telegram", "alpha-telegram-bridge"),
+            credentialBinding("discord", "alpha-discord-bridge"),
           ],
         },
         preservedMcpState,
         managedMcpRebuildHandoff: true,
       }),
     ).toEqual(["inference-provider", "alpha-telegram-bridge", "alpha-mcp-github"]);
+  });
+
+  it.each(["openclaw", "hermes"] as const)(
+    "excludes inactive %s channel policy and provider effects during rebuild",
+    (agent) => {
+      const plan = {
+        agent,
+        channels: [channelPlan("slack", true), channelPlan("discord", false)],
+        disabledChannels: [],
+        credentialBindings: [
+          credentialBinding("slack", "alpha-slack-bridge"),
+          credentialBinding("discord", "alpha-discord-bridge"),
+        ],
+        networkPolicy: {
+          presets: ["slack", "discord"],
+          entries: [
+            {
+              channelId: "slack",
+              presetName: "slack",
+              policyKeys: ["slack"],
+              source: "manifest",
+            },
+            {
+              channelId: "discord",
+              presetName: "discord",
+              policyKeys: ["discord"],
+              source: "manifest",
+            },
+          ],
+        },
+      } satisfies Pick<
+        SandboxMessagingPlan,
+        "agent" | "channels" | "credentialBindings" | "disabledChannels" | "networkPolicy"
+      >;
+
+      expect(resolveRebuildMessagingPolicyDeltas(plan)).toEqual({
+        requiredNetworkPolicyKeys: ["slack"],
+        requiredNetworkPolicyPresetNames: ["slack"],
+        removedNetworkPolicyKeys: ["discord"],
+      });
+      expect(
+        resolveRebuildPolicyProviderAuthority({
+          createArgs: [],
+          messagingPlan: plan,
+          preservedMcpState: undefined,
+          managedMcpRebuildHandoff: false,
+        }),
+      ).toEqual(["alpha-slack-bridge"]);
+    },
+  );
+
+  it("does not infer messaging policy authority when the rebuild has no messaging plan", () => {
+    expect(resolveRebuildMessagingPolicyDeltas(null)).toEqual({
+      requiredNetworkPolicyKeys: [],
+      requiredNetworkPolicyPresetNames: [],
+      removedNetworkPolicyKeys: [],
+    });
   });
 
   it("does not authorize MCP registry names without the managed rebuild handoff", () => {

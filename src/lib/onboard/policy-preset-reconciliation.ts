@@ -106,7 +106,7 @@ export function isStaleBuiltinWebSearchPolicyPreset(
   } = {},
 ): boolean {
   if (options.customPresetNames?.has(name)) return false;
-  // A preset in the recorded tier is tier egress, not stale provider state.
+  // A preset in the selected tier is tier egress, not stale provider state.
   // Unknown tiers fail closed because the canonical tier lookup returns no match.
   if (
     setupPolicyPresetAppliesToAgent(name, options.agent) &&
