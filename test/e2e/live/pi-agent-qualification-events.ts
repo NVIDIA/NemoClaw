@@ -44,13 +44,11 @@ function record(value: unknown, label: string): JsonRecord {
 function assistantText(message: unknown): string | null {
   const value = record(message, "Pi message");
   if (value.role !== "assistant" || !Array.isArray(value.content)) return null;
-  return value.content
-    .flatMap((entry) => {
-      const content = record(entry, "Pi message content");
-      return content.type === "text" && typeof content.text === "string" ? [content.text] : [];
-    })
-    .join("")
-    .trim();
+  const text = value.content.flatMap((entry) => {
+    const content = record(entry, "Pi message content");
+    return content.type === "text" && typeof content.text === "string" ? [content.text] : [];
+  });
+  return text.length === 0 ? null : text.join("").trim();
 }
 
 export function parsePiInferenceEvidence(
@@ -150,16 +148,17 @@ export function qualifyPiReadTask(
     const text = assistantText(event.message);
     return text === null ? [] : [{ index, text }];
   });
-  const finalReply = replies.at(-1);
-  if (!finalReply || finalReply.index <= completion!.index) {
-    throw new Error("Pi task did not return an assistant response after the read completed");
+  const reply = replies[0];
+  if (replies.length !== 1 || !reply || reply.index <= completion!.index) {
+    throw new Error("Pi task must return exactly one assistant response after the read completed");
   }
-  const finalText = finalReply.text;
-  if (finalText !== expectedText) {
-    throw new Error(`Pi task returned ${JSON.stringify(finalText)} instead of exact file contents`);
+  if (reply.text !== expectedText) {
+    throw new Error(
+      `Pi task returned ${JSON.stringify(reply.text)} instead of exact file contents`,
+    );
   }
   return {
-    assistantText: finalText,
+    assistantText: reply.text,
     eventCount: events.length,
     toolCallId: start.toolCallId,
   };
