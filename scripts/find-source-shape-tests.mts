@@ -588,6 +588,9 @@ function collectDeclarativeImports(imports: readonly ImportBinding[]): Map<strin
 }
 
 const RAW_CONFIG_ACCESSORS: Readonly<Record<string, readonly string[]>> = {
+  "tools/e2e/external-gateway-health-workflow-boundary": [
+    "readExternalGatewayHealthHelper",
+  ],
   "test/helpers/e2e-workflow-contract": ["readWorkflow", "readYaml"],
   "test/e2e/registry/registry": ["getTarget", "listTargets", "requireTargets"],
   "test/e2e/registry/expected-states": [
@@ -1823,6 +1826,7 @@ function scanSourceTextReport(fileName: string, relPath: string, text: string): 
         const productionConsumerNames = collectProductionConsumerNames(scopedImports);
         const declarativeImports = collectDeclarativeImports(scopedImports);
         const rawConfigAccessors = collectRawConfigAccessors(scopedImports);
+        for (const name of rawConfigAccessors.keys()) productionConsumerNames.delete(name);
         const variables = [
           ...scopedVariableDecls(sourceFile, allVariables, node, body),
           ...collectSetupHookAssignments(sourceFile, node),

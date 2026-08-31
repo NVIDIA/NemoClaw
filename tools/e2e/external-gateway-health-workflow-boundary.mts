@@ -56,6 +56,10 @@ export function readExternalGatewayHealthWorkflow(
   return YAML.parse(readFileSync(workflowPath, "utf8")) as ExternalGatewayHealthWorkflow;
 }
 
+export function readExternalGatewayHealthHelper(helperPath = DEFAULT_LIVE_HELPER_PATH): string {
+  return readFileSync(helperPath, "utf8");
+}
+
 function findStep(job: WorkflowJob, name: string): WorkflowStep {
   return job.steps?.find((step) => step.name === name) ?? {};
 }
@@ -339,7 +343,7 @@ export function validateExternalGatewayHealthHelper(source: string): string[] {
 
 export function validateExternalGatewayHealthWorkflow(
   workflow: ExternalGatewayHealthWorkflow,
-  liveHelperSource = readFileSync(DEFAULT_LIVE_HELPER_PATH, "utf8"),
+  liveHelperSource = readExternalGatewayHealthHelper(),
 ): string[] {
   const errors: string[] = [];
   const packageJob = workflow.jobs[PACKAGE_JOB];
@@ -358,6 +362,6 @@ export function validateExternalGatewayHealthWorkflowBoundary(
 ): string[] {
   return validateExternalGatewayHealthWorkflow(
     readExternalGatewayHealthWorkflow(workflowPath),
-    readFileSync(liveHelperPath, "utf8"),
+    readExternalGatewayHealthHelper(liveHelperPath),
   );
 }

@@ -42,6 +42,21 @@
       "category": "compatibility"
     },
     {
+      "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
+      "test": "rejects a helper that bypasses the exact Runner or weakens its live boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
+      "test": "rejects a different module-relative Runner artifact",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/external-gateway-health-workflow-boundary.test.ts",
+      "test": "rejects a Runner invocation that bypasses the redacted shell fixture",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/larger-runner-routing-workflow-boundary.test.ts",
       "test": "keeps every candidate on standard runners when $name (#7145)",
       "category": "security"

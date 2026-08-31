@@ -32,6 +32,8 @@ export interface OpenShellCompatibilityRange {
   readonly maxVersion: string;
 }
 
+export const EXTERNAL_OPENSHELL_RELEASE = "0.0.106" as const;
+
 export interface SanitizedExternalOpenShellTargetPlan {
   readonly endpoint: string;
   readonly workspace: string;
@@ -207,6 +209,11 @@ function assertCompatibleRelease(
 ): void {
   if (compareSemver(compatibility.minVersion, compatibility.maxVersion) > 0) {
     throw new Error("OpenShell compatibility range minimum must not exceed its maximum");
+  }
+  if (expectedRelease !== EXTERNAL_OPENSHELL_RELEASE) {
+    throw new Error(
+      `external OpenShell target expected_release must be ${EXTERNAL_OPENSHELL_RELEASE}`,
+    );
   }
   if (
     compareSemver(expectedRelease, compatibility.minVersion) < 0 ||

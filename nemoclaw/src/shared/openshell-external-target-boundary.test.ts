@@ -260,10 +260,20 @@ describe("external OpenShell target boundary", () => {
   });
 
   it("rejects an incompatible expected release before reading files (#9872)", () => {
-    const target = { ...externalTarget(), expected_release: "0.0.107" };
+    const compatibility = { minVersion: "0.0.105", maxVersion: "0.0.105" };
 
-    expect(() => buildSanitizedExternalOpenShellTargetPlan(target, COMPATIBILITY)).toThrow(
-      /outside the compatible range/,
+    expect(() =>
+      buildSanitizedExternalOpenShellTargetPlan(externalTarget(), compatibility),
+    ).toThrow(/outside the compatible range/);
+    expect(fsMocks.openSync).not.toHaveBeenCalled();
+  });
+
+  it("rejects a range-compatible release that public health does not support (#9872)", () => {
+    const target = { ...externalTarget(), expected_release: "0.0.105" };
+    const compatibility = { minVersion: "0.0.105", maxVersion: "0.0.106" };
+
+    expect(() => buildSanitizedExternalOpenShellTargetPlan(target, compatibility)).toThrow(
+      "external OpenShell target expected_release must be 0.0.106",
     );
     expect(fsMocks.openSync).not.toHaveBeenCalled();
   });

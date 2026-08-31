@@ -4,20 +4,23 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  readExternalGatewayHealthHelper,
   readExternalGatewayHealthWorkflow,
   validateExternalGatewayHealthHelper,
   validateExternalGatewayHealthWorkflow,
   validateExternalGatewayHealthWorkflowBoundary,
 } from "../../../tools/e2e/external-gateway-health-workflow-boundary.mts";
-import { readRepoText } from "../../helpers/e2e-workflow-contract";
 
 describe("external gateway health workflow boundary", () => {
   it("accepts the checked-in trusted package and live-test contract", () => {
     expect(validateExternalGatewayHealthWorkflowBoundary()).toEqual([]);
   });
 
+  // source-shape-contract: security -- The live helper must keep SDK access behind the packaged Runner, bounded retry, and redacted evidence.
   it("rejects a helper that bypasses the exact Runner or weakens its live boundary", () => {
-    const source = readRepoText("test/e2e/live/external-gateway-health-helpers.ts")
+    const helperSource = readExternalGatewayHealthHelper();
+    expect(helperSource).toContain("const BLUEPRINT_RUNNER = path.join(");
+    const source = helperSource
       .replace('"--external-target"', '"--managed-target"')
       .replace("const address = externalHostAddress();", 'const address = "127.0.0.1";')
       .replace("maxAttempts: 10,", "maxAttempts: 100,")
@@ -38,8 +41,11 @@ describe("external gateway health workflow boundary", () => {
     ]);
   });
 
+  // source-shape-contract: security -- The live helper must execute the candidate Runner module before its health evidence is trusted.
   it("rejects a different module-relative Runner artifact", () => {
-    const source = readRepoText("test/e2e/live/external-gateway-health-helpers.ts").replace(
+    const helperSource = readExternalGatewayHealthHelper();
+    expect(helperSource).toContain('  "blueprint-runner.js",');
+    const source = helperSource.replace(
       '  "blueprint-runner.js",',
       '  "other-runner.js",',
     );
@@ -49,8 +55,11 @@ describe("external gateway health workflow boundary", () => {
     );
   });
 
+  // source-shape-contract: security -- The live helper must keep Runner output behind the bounded redacted shell boundary.
   it("rejects a Runner invocation that bypasses the redacted shell fixture", () => {
-    const source = readRepoText("test/e2e/live/external-gateway-health-helpers.ts").replace(
+    const helperSource = readExternalGatewayHealthHelper();
+    expect(helperSource).toContain("const result = await shellProbe.run(");
+    const source = helperSource.replace(
       "const result = await shellProbe.run(",
       "const result = spawnSync(",
     );

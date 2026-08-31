@@ -42,6 +42,7 @@ vi.mock("node:fs", async (importOriginal) => {
 });
 
 vi.mock("../shared/openshell-external-target-boundary.cjs", () => ({
+  EXTERNAL_OPENSHELL_RELEASE: "0.0.106",
   ...externalTargetBoundaryMocks,
   default: externalTargetBoundaryMocks,
 }));

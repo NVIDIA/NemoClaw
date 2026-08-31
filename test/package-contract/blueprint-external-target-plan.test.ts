@@ -284,7 +284,11 @@ describe("packaged Blueprint Runner external target", () => {
             "--package-lock=false",
             installRoot,
           ],
-          { cwd: consumerRoot, encoding: "utf8", env: npmEnvironment() },
+          {
+            cwd: consumerRoot,
+            encoding: "utf8",
+            env: { ...npmEnvironment(), NEMOCLAW_INSTALLING: "1" },
+          },
         );
         assertCommandSucceeded(
           consumerInstall,
@@ -377,7 +381,7 @@ describe("packaged Blueprint Runner external target", () => {
           PRIVATE_AMBIENT_CONTENTS,
         );
         const blueprintFile = path.join(blueprintRoot, "blueprint.yaml");
-        const validBlueprint = YAML.stringify({
+        const validBlueprintDocument = {
           version: "1.0.0",
           min_openshell_version: "0.0.106",
           max_openshell_version: "0.0.106",
@@ -389,7 +393,8 @@ describe("packaged Blueprint Runner external target", () => {
             trust: { ca_file: privateCaPath },
             authentication: { credential_file: privateAuthenticationPath },
           },
-        });
+        };
+        const validBlueprint = YAML.stringify(validBlueprintDocument);
         fs.writeFileSync(blueprintFile, validBlueprint);
 
         const probePath = path.join(installedPackage, "runtime-probe.mjs");
@@ -509,6 +514,28 @@ describe("packaged Blueprint Runner external target", () => {
         );
         expect(presentStatus.evidence).toEqual({ effects: ["network"] });
 
+        fs.writeFileSync(
+          blueprintFile,
+          YAML.stringify({
+            ...validBlueprintDocument,
+            min_openshell_version: "0.0.105",
+            openshell_target: {
+              ...validBlueprintDocument.openshell_target,
+              expected_release: "0.0.105",
+            },
+          }),
+        );
+        const unsupportedReleasePlan = runRunner(["plan"]);
+        expect(unsupportedReleasePlan.result.status, unsupportedReleasePlan.safeDiagnostics).toBe(
+          1,
+        );
+        expect(unsupportedReleasePlan.result.stderr).toContain(
+          "external OpenShell target expected_release must be 0.0.106",
+        );
+        expect(unsupportedReleasePlan.result.stdout).not.toContain("openshell_target");
+        expect(unsupportedReleasePlan.evidence.effects).toEqual([]);
+        fs.writeFileSync(blueprintFile, validBlueprint);
+
         const plan = runRunner(["plan"]);
         expect(plan.result.status, plan.safeDiagnostics).toBe(0);
         expect(plan.evidence.effects).toEqual([]);
@@ -541,6 +568,8 @@ describe("packaged Blueprint Runner external target", () => {
           absentStatus.result.stderr,
           presentStatus.result.stdout,
           presentStatus.result.stderr,
+          unsupportedReleasePlan.result.stdout,
+          unsupportedReleasePlan.result.stderr,
           plan.result.stdout,
           plan.result.stderr,
           apply.result.stdout,

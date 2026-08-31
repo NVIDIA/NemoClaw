@@ -4,9 +4,12 @@
 // sourceOfTruth: Transport-neutral external OpenShell observation contract
 // shared by the root CLI adapter surface and the Blueprint Runner.
 
-import type { SanitizedExternalOpenShellTargetPlan } from "./openshell-external-target-boundary.cjs";
+import {
+  EXTERNAL_OPENSHELL_RELEASE,
+  type SanitizedExternalOpenShellTargetPlan,
+} from "./openshell-external-target-boundary.cjs";
 
-export const EXTERNAL_OPENSHELL_RELEASE = "0.0.106" as const;
+export { EXTERNAL_OPENSHELL_RELEASE };
 
 export type OpenShellGatewayHealthStatus = "unspecified" | "healthy" | "degraded" | "unhealthy";
 
