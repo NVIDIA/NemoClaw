@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createHermesPortableUninstallFixture } from "../../../../test/helpers/hermes-portable-uninstall-fixture";
 import { createPodmanHostLocalInferenceTestHarness } from "../../../../test/helpers/podman-host-local-inference-test-harness";
 import type { ContainerEngineCommandResult } from "../../adapters/container-engine";
-import type { PodmanContainerEngine } from "../../adapters/podman";
+import type { PodmanBoundContainerEngine, PodmanContainerEngine } from "../../adapters/podman";
 import type { SandboxEntry } from "../../state/registry";
 import {
   normalizeHostLocalInferenceReceipt,
@@ -34,7 +34,9 @@ import { createPodmanRuntimeProviderBundle } from "../runtime-provider/podman";
 import { requireRuntimeProviderHostLocalInferenceOperation } from "../runtime-provider/registry";
 import {
   createPodmanHostLocalInferenceOperation,
+  preparePodmanHostLocalInferenceOperationAuthority,
   PODMAN_INFERENCE_SPEC_LABEL,
+  type PodmanPublishedResumeTiming,
 } from "../runtime-provider/podman-host-local-inference";
 import {
   createHermesPortableOllamaRuntimeAuthority,
@@ -50,16 +52,25 @@ function engineFor(
   source: PodmanContainerEngine,
   operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle",
   captures: string[],
+  authorityAssertions: string[],
   transformCapture: (
     args: readonly string[],
     result: ContainerEngineCommandResult,
   ) => ContainerEngineCommandResult,
-): PodmanContainerEngine {
+  assertTransactionAuthority: (
+    operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle",
+    captures: readonly string[],
+  ) => void,
+): PodmanBoundContainerEngine {
   return Object.freeze({
     ...source,
     operation,
     authorityId: CURRENT_AUTHORITY_ID,
     endpointAuthorityId: CURRENT_AUTHORITY_ID,
+    assertAuthority: vi.fn(() => {
+      authorityAssertions.push(operation);
+      assertTransactionAuthority(operation, captures);
+    }),
     capture: (args: readonly string[], timeoutMs?: number) => {
       captures.push(`${operation}:${args.join(" ")}`);
       return transformCapture(args, source.capture(args, timeoutMs));
@@ -104,11 +115,17 @@ function driftRestartPolicy(
 function setup(
   options: {
     readonly creationAuthority?: (value: PersistedEngineAuthority) => PersistedEngineAuthority;
+    readonly publishedIntent?: string;
     readonly serializedReceipt?: (value: string) => string;
+    readonly publishedResumeTiming?: PodmanPublishedResumeTiming;
     readonly transformCapture?: (
       args: readonly string[],
       result: ContainerEngineCommandResult,
     ) => ContainerEngineCommandResult;
+    readonly assertTransactionAuthority?: (
+      operation: "host-doctor" | "host-local-inference" | "sandbox-lifecycle",
+      captures: readonly string[],
+    ) => void;
   } = {},
 ) {
   const harness = createPodmanHostLocalInferenceTestHarness({ service: "ollama" });
@@ -161,38 +178,73 @@ function setup(
     : creationAuthority;
   const assertForwardAuthority = vi.fn();
   const currentExecutionCaptures: string[] = [];
+  const transactionAuthorityAssertions: string[] = [];
   const transformCapture = options.transformCapture ?? ((_args, result) => result);
+  const assertTransactionAuthority = options.assertTransactionAuthority ?? (() => undefined);
+  const hostDoctorEngine = engineFor(
+    harness.engine,
+    "host-doctor",
+    currentExecutionCaptures,
+    transactionAuthorityAssertions,
+    transformCapture,
+    assertTransactionAuthority,
+  );
+  const hostLocalInferenceEngine = engineFor(
+    harness.engine,
+    "host-local-inference",
+    currentExecutionCaptures,
+    transactionAuthorityAssertions,
+    transformCapture,
+    assertTransactionAuthority,
+  );
+  const sandboxLifecycleEngine = engineFor(
+    harness.engine,
+    "sandbox-lifecycle",
+    currentExecutionCaptures,
+    transactionAuthorityAssertions,
+    transformCapture,
+    assertTransactionAuthority,
+  );
+  const publishedEngineAuthority = {
+    intent: (options.publishedIntent ?? "connect-probe-only") as "connect-probe-only",
+    creationAuthority: publishedCreationAuthority,
+    serializedReceipt: publishedSerializedReceipt,
+    assertForwardAuthority,
+  } as const;
+  const publishedOperationAuthority = preparePodmanHostLocalInferenceOperationAuthority({
+    engine: hostLocalInferenceEngine,
+    env: harness.env,
+    acceleration: harness.operationAcceleration,
+    redactSensitive: harness.redactSensitive,
+  });
+  const publishedOperation = publishedOperationAuthority.createOperation({
+    authorityStore: harness.authorityStore,
+    routeAuthorityStore: harness.routeAuthorityStore,
+    externalNetwork,
+    hermesPortablePublishedEngineAuthority: publishedEngineAuthority,
+    ...(options.publishedResumeTiming
+      ? { publishedResumeTiming: options.publishedResumeTiming }
+      : {}),
+    onFailureEvidence: harness.onFailureEvidence,
+  });
   const bundle = createPodmanRuntimeProviderBundle({
     engines: {
-      hostDoctor: engineFor(
-        harness.engine,
-        "host-doctor",
-        currentExecutionCaptures,
-        transformCapture,
-      ),
-      hostLocalInference: engineFor(
-        harness.engine,
-        "host-local-inference",
-        currentExecutionCaptures,
-        transformCapture,
-      ),
-      sandboxLifecycle: engineFor(
-        harness.engine,
-        "sandbox-lifecycle",
-        currentExecutionCaptures,
-        transformCapture,
-      ),
+      hostDoctor: hostDoctorEngine,
+      hostLocalInference: hostLocalInferenceEngine,
+      sandboxLifecycle: sandboxLifecycleEngine,
     },
     hostLocalInference: {
       authorityStore: harness.authorityStore,
       routeAuthorityStore: harness.routeAuthorityStore,
       externalNetwork,
-      hermesPortablePublishedEngineAuthority: {
-        intent: "connect-probe-only",
-        creationAuthority: publishedCreationAuthority,
-        serializedReceipt: publishedSerializedReceipt,
-        assertForwardAuthority,
+      hermesPortablePublishedEngineAuthority: publishedEngineAuthority,
+      hermesPortablePublishedRecoveryOperation: {
+        operation: publishedOperation,
+        environment: harness.env,
       },
+      ...(options.publishedResumeTiming
+        ? { publishedResumeTiming: options.publishedResumeTiming }
+        : {}),
       onFailureEvidence: harness.onFailureEvidence,
       redactSensitive: harness.redactSensitive,
     },
@@ -220,8 +272,11 @@ function setup(
     harness,
     input,
     providerEntry,
+    publishedOperation,
+    publishedOperationAuthority,
     receipt,
     serializedReceipt,
+    transactionAuthorityAssertions,
   };
 }
 
@@ -241,22 +296,28 @@ function composedRecovery(fixture: ReturnType<typeof setup>, assertPublished = v
     sandboxName: "alpha",
   } as HermesPortableConfiguredReceipt;
   const assertOperating = vi.fn();
-  const assertRuntime = vi.fn(() => fixture.externalNetwork.assertCurrent());
+  const assertRuntimeTransaction = vi.fn(() => fixture.externalNetwork.assertCurrent());
+  const assertRuntime = vi.fn(() => {
+    fixture.externalNetwork.assertCurrent();
+    fixture.harness.events.push("test:full-runtime-qualified");
+  });
   const registryRecovery = {
     started: true,
+    assertTransactionCurrent: vi.fn(),
     assertCurrent: vi.fn(),
     rollback: vi.fn(),
     release: vi.fn(),
   };
   const createRuntimeAuthority = vi.fn(
-    (options: Parameters<typeof createHermesPortableOllamaRuntimeAuthority>[0]) => {
-      const forward = options.publishedRecovery?.assertForwardAuthority;
-      expect(forward).toBeTypeOf("function");
-      fixture.assertForwardAuthority.mockImplementation(forward!);
+    (options: { readonly assertForwardAuthority: () => void }) => {
+      expect(options.assertForwardAuthority).toBeTypeOf("function");
+      fixture.assertForwardAuthority.mockImplementation(options.assertForwardAuthority);
       return {
         bundle: fixture.bundle,
         inferenceStateDir: "/state/portable-inference/alpha",
         network: fixture.externalNetwork,
+        operation: fixture.publishedOperation,
+        assertTransactionCurrent: assertRuntimeTransaction,
         assertCurrent: assertRuntime,
       };
     },
@@ -269,29 +330,83 @@ function composedRecovery(fixture: ReturnType<typeof setup>, assertPublished = v
     stateDir: "/state",
     runGatewayOpenshell: vi.fn(),
     readRegistry: vi.fn(() => fixture.entry),
+    assertCallerTransactionCurrent: vi.fn(),
+    assertCallerCurrent: vi.fn(),
     verifyRoute: vi.fn(() => fixture.entry),
+    prepareProbeDependency: undefined as Parameters<
+      typeof recoverHermesPortableOllamaInference
+    >[0]["prepareProbeDependency"],
   };
   const overrides = {
     readReceipt: vi.fn(() => ({ receipt: operatingReceipt, successor: {} })),
     qualifyOperatingAuthority: vi.fn(() => ({
       receipt: operatingReceipt,
+      assertTransactionCurrent: assertOperating,
       assertCurrent: assertOperating,
     })),
-    createRuntimeAuthority,
+    prepareRecoveryEntry: vi.fn(() => ({
+      registryRecovery,
+      createRuntimeAuthority,
+    })),
+    prepareInferenceAuthority: vi.fn(
+      prepareHermesPortableHostLocalInferencePublishedRecoveryAuthority,
+    ),
     preparePublishedAuthority: vi.fn(() => ({
       receipt: fixture.receipt,
       serializedReceipt: fixture.serializedReceipt,
       receiptWriter: fixture.harness.writer,
+      assertTransactionCurrent: assertPublished,
       assertCurrent: assertPublished,
     })),
-    prepareRegistryRecovery: vi.fn(() => registryRecovery),
   };
-  return { assertOperating, assertPublished, assertRuntime, input, overrides, registryRecovery };
+  return {
+    assertOperating,
+    assertPublished,
+    assertRuntime,
+    assertRuntimeTransaction,
+    input,
+    overrides,
+    registryRecovery,
+  };
+}
+
+function observePublishedFinalization(events: string[]) {
+  const finalize = vi.fn();
+  const prepareStartup = vi.fn(
+    (...args: Parameters<typeof prepareHermesPortablePublishedHostLocalInferenceStartup>) => {
+      const route = prepareHermesPortablePublishedHostLocalInferenceStartup(...args);
+      const finalizePublishedResume = route.prepared.finalizePublishedResume!;
+      return Object.freeze({
+        ...route,
+        prepared: Object.freeze({
+          ...route.prepared,
+          finalizePublishedResume(assertPublishedAuthority: () => void) {
+            const receipt = finalizePublishedResume(assertPublishedAuthority);
+            finalize();
+            events.push("test:publication-finalized");
+            return receipt;
+          },
+        }),
+      });
+    },
+  );
+  return { finalize, prepareStartup };
 }
 
 describe("Hermes Portable published engine recovery", () => {
+  it("retains full generated, tool, and model-placement proof during creation (#10423)", () => {
+    const fixture = setup();
+
+    expect(fixture.harness.events.some((event) => event.includes("/api/tags"))).toBe(true);
+    expect(fixture.harness.events.some((event) => event.includes("/v1/chat/completions"))).toBe(
+      true,
+    );
+    expect(fixture.harness.events.some((event) => event.includes("/api/ps"))).toBe(true);
+  });
+
   it("carries the exact published receipt through the production runtime factory (#10423)", async () => {
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-published-factory-"));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const fixture = await createHermesPortableUninstallFixture(homeDir);
     try {
       const serializedReceipt = fixture.targetRow.hostLocalInferenceReceipt!;
@@ -325,6 +440,11 @@ describe("Hermes Portable published engine recovery", () => {
         runtimeAuthority.bundle,
         providerEntry,
         { environment: fixture.cleanupInput.env },
+        undefined,
+        requireRuntimeProviderHostLocalInferenceOperation(runtimeAuthority.bundle, "ollama", {
+          env: fixture.cleanupInput.env,
+          acceleration: "nvidia-gpu",
+        }),
       );
       expect(preparedAuthority?.serializedReceipt).toBe(serializedReceipt);
       const operation = requireRuntimeProviderHostLocalInferenceOperation(
@@ -340,6 +460,7 @@ describe("Hermes Portable published engine recovery", () => {
         >),
         resumeReceipt: receipt,
       };
+      const recoveryEventStart = fixture.harness.events.length;
       const route = prepareHermesPortablePublishedHostLocalInferenceStartup(
         operation,
         publishedRequest,
@@ -349,9 +470,33 @@ describe("Hermes Portable published engine recovery", () => {
       expect(route.prepared.finalizePublishedResume?.(runtimeAuthority.assertCurrent)).toEqual(
         receipt,
       );
+      const recoveryEvents = fixture.harness.events.slice(recoveryEventStart);
+      expect(recoveryEvents.filter((event) => event.includes("/api/tags"))).toHaveLength(0);
+      expect(
+        recoveryEvents.filter(
+          (event) => event.includes("podman:exec ") && event.includes(" nvidia-smi "),
+        ),
+      ).toHaveLength(1);
+      expect(recoveryEvents.some((event) => event.includes("/v1/chat/completions"))).toBe(false);
+      expect(recoveryEvents.some((event) => event.includes("/api/ps"))).toBe(false);
       expect(fixture.harness.container()).toMatchObject({ running: true, status: "running" });
       expect(assertForwardAuthority).toHaveBeenCalled();
+      const timingLines = log.mock.calls
+        .map(([line]) => line)
+        .filter(
+          (line) =>
+            typeof line === "string" && line.startsWith("  Hermes Portable Ollama resume timing:"),
+        );
+      expect(timingLines).toHaveLength(1);
+      expect(timingLines[0]).toMatch(
+        /^  Hermes Portable Ollama resume timing: start=\d+ms managedReady=0ms gpuIdentity=\d+ms generatedProof=0ms modelPlacement=0ms cleanupCurrentness=\d+ms total=\d+ms runtimeAction=started result=proved$/u,
+      );
+      expect(timingLines[0]).not.toContain(receipt.inference?.model);
+      expect(timingLines[0]).not.toContain(
+        receipt.runtime.kind === "container" ? receipt.runtime.name : "unexpected-host-runtime",
+      );
     } finally {
+      log.mockRestore();
       fixture.restore();
       fs.rmSync(homeDir, { force: true, recursive: true });
     }
@@ -371,8 +516,12 @@ describe("Hermes Portable published engine recovery", () => {
       fixture.bundle,
       fixture.providerEntry,
       { environment: fixture.harness.env },
+      undefined,
+      fixture.publishedOperation,
     );
     expect(prepared?.serializedReceipt).toBe(fixture.serializedReceipt);
+    expect(Object.isFrozen(prepared?.managedInspection)).toBe(true);
+    expect(Object.isFrozen(prepared?.managedInspection?.receipt)).toBe(true);
     const creationContainer = fixture.harness.container()!;
     const immutableContainer = JSON.stringify({
       id: creationContainer.id,
@@ -443,6 +592,24 @@ describe("Hermes Portable published engine recovery", () => {
       createArguments: beforeContainer.createArguments,
     });
     const composed = composedRecovery(fixture);
+    const observed = observePublishedFinalization(fixture.harness.events);
+    Object.assign(composed.overrides, { prepareStartup: observed.prepareStartup });
+    const recoveryEventStart = fixture.harness.events.length;
+    composed.input.verifyRoute.mockImplementation(() => {
+      fixture.harness.events.push("test:route-verified");
+      return fixture.entry;
+    });
+    const dependency = {
+      release: vi.fn(() => fixture.harness.events.push("test:dependency-released")),
+      rollback: vi.fn(() => fixture.harness.events.push("test:dependency-rolled-back")),
+    };
+    composed.input.prepareProbeDependency = vi.fn(() => {
+      fixture.harness.events.push("test:dependency-prepared");
+      return dependency;
+    });
+    composed.registryRecovery.release.mockImplementation(() => {
+      fixture.harness.events.push("test:registry-released");
+    });
 
     expect(recoverHermesPortableOllamaInference(composed.input, composed.overrides as never)).toBe(
       "recovered",
@@ -459,9 +626,301 @@ describe("Hermes Portable published engine recovery", () => {
     expect(JSON.stringify(fixture.entry)).toBe(beforeEntry);
     expect(fixture.harness.written).toEqual([fixture.serializedReceipt]);
     expect(composed.input.verifyRoute).toHaveBeenCalledOnce();
+    expect(composed.input.assertCallerCurrent).toHaveBeenCalled();
     expect(composed.registryRecovery.release).toHaveBeenCalledOnce();
     expect(composed.registryRecovery.rollback).not.toHaveBeenCalled();
     expect(composed.assertPublished).toHaveBeenCalled();
+    expect(observed.finalize).toHaveBeenCalledOnce();
+    expect(dependency.release).toHaveBeenCalledOnce();
+    expect(dependency.rollback).not.toHaveBeenCalled();
+    expect(composed.assertRuntime).toHaveBeenCalledOnce();
+    const recoveryOrder = fixture.harness.events.slice(recoveryEventStart);
+    const gpuIndex = recoveryOrder.findIndex(
+      (event) => event.includes("podman:exec ") && event.includes(" nvidia-smi "),
+    );
+    const routeIndex = recoveryOrder.indexOf("test:route-verified");
+    const dependencyIndex = recoveryOrder.indexOf("test:dependency-prepared");
+    const fullyQualifiedIndex = recoveryOrder.indexOf("test:full-runtime-qualified");
+    const finalizedIndex = recoveryOrder.indexOf("test:publication-finalized");
+    const releasedIndex = recoveryOrder.indexOf("test:registry-released");
+    const dependencyReleasedIndex = recoveryOrder.indexOf("test:dependency-released");
+    expect(recoveryOrder.some((event) => event.includes("/api/tags"))).toBe(false);
+    expect(gpuIndex).toBeGreaterThanOrEqual(0);
+    expect(routeIndex).toBeGreaterThan(gpuIndex);
+    expect(dependencyIndex).toBeGreaterThan(routeIndex);
+    expect(fullyQualifiedIndex).toBeGreaterThan(dependencyIndex);
+    expect(finalizedIndex).toBeGreaterThan(fullyQualifiedIndex);
+    expect(releasedIndex).toBeGreaterThan(finalizedIndex);
+    expect(dependencyReleasedIndex).toBeGreaterThan(releasedIndex);
+  });
+
+  it("reuses a running published runtime with one GPU proof before route health (#10423)", () => {
+    const onComplete = vi.fn();
+    const fixture = setup({ publishedResumeTiming: { onComplete } });
+    fixture.harness.container()!.running = true;
+    fixture.harness.container()!.status = "running";
+    const runningContainer = fixture.harness.container()!;
+    const immutableRuntime = JSON.stringify({
+      id: runningContainer.id,
+      name: runningContainer.name,
+      imageRef: runningContainer.imageRef,
+      labels: runningContainer.labels,
+      createArguments: runningContainer.createArguments,
+    });
+    const composed = composedRecovery(fixture);
+    const recoveryEventStart = fixture.harness.events.length;
+    const captureStart = fixture.currentExecutionCaptures.length;
+    fixture.transactionAuthorityAssertions.splice(0);
+
+    expect(recoverHermesPortableOllamaInference(composed.input, composed.overrides as never)).toBe(
+      "reused",
+    );
+
+    const recoveryEvents = fixture.harness.events.slice(recoveryEventStart);
+    expect(recoveryEvents.filter((event) => event.includes("/api/tags"))).toHaveLength(0);
+    expect(
+      recoveryEvents.filter(
+        (event) => event.includes("podman:exec ") && event.includes(" nvidia-smi "),
+      ),
+    ).toHaveLength(1);
+    expect(recoveryEvents.some((event) => event.includes("/v1/chat/completions"))).toBe(false);
+    expect(recoveryEvents.some((event) => event.includes("/api/ps"))).toBe(false);
+    const reconciledContainer = fixture.harness.container()!;
+    expect(
+      JSON.stringify({
+        id: reconciledContainer.id,
+        name: reconciledContainer.name,
+        imageRef: reconciledContainer.imageRef,
+        labels: reconciledContainer.labels,
+        createArguments: reconciledContainer.createArguments,
+      }),
+    ).toBe(immutableRuntime);
+    expect(
+      fixture.currentExecutionCaptures
+        .slice(captureStart)
+        .filter(
+          (event) =>
+            event === `host-local-inference:start ${runningContainer.id}` ||
+            (event.startsWith("host-local-inference:stop ") &&
+              event.endsWith(` ${runningContainer.id}`)) ||
+            (event.startsWith("host-local-inference:rm ") &&
+              event.endsWith(` ${runningContainer.id}`)) ||
+            (event.startsWith("host-local-inference:run ") &&
+              event.includes(` --name ${runningContainer.name} `)),
+        ),
+    ).toEqual([]);
+    expect(composed.input.verifyRoute).toHaveBeenCalledOnce();
+    expect(composed.registryRecovery.release).toHaveBeenCalledOnce();
+    expect(composed.registryRecovery.rollback).not.toHaveBeenCalled();
+    expect(composed.overrides.prepareInferenceAuthority).toHaveBeenCalledOnce();
+    expect(fixture.transactionAuthorityAssertions).toHaveLength(14);
+    expect(
+      fixture.currentExecutionCaptures
+        .slice(captureStart)
+        .filter((event) => event.includes("version") || event.includes("info")),
+    ).toEqual([]);
+    expect(onComplete).toHaveBeenCalledOnce();
+    expect(onComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generatedProofMs: 0,
+        managedReadyMs: 0,
+        modelPlacementMs: 0,
+        runtimeAction: "reused",
+        startMs: 0,
+      }),
+    );
+  });
+
+  it("qualifies one retained published operation at entry and once at completion (#10423)", () => {
+    const fixture = setup();
+    const qualificationCommands = () =>
+      fixture.currentExecutionCaptures.filter(
+        (event) => event.includes("version") || event.includes("info"),
+      );
+
+    expect(qualificationCommands()).toEqual([
+      "host-local-inference:version --format json",
+      "host-local-inference:info --format json",
+    ]);
+    expect(
+      requireRuntimeProviderHostLocalInferenceOperation(fixture.bundle, "ollama", {
+        env: fixture.harness.env,
+        acceleration: "nvidia-gpu",
+      }),
+    ).toBe(fixture.publishedOperation);
+    expect(
+      requireRuntimeProviderHostLocalInferenceOperation(fixture.bundle, "ollama", {
+        env: fixture.harness.env,
+        acceleration: "nvidia-gpu",
+      }),
+    ).toBe(fixture.publishedOperation);
+    expect(qualificationCommands()).toEqual([
+      "host-local-inference:version --format json",
+      "host-local-inference:info --format json",
+    ]);
+    expect(() => fixture.publishedOperationAuthority.createOperation({} as never)).toThrow(
+      "operation authority was already consumed",
+    );
+    fixture.publishedOperationAuthority.assertCurrent();
+    expect(qualificationCommands()).toEqual([
+      "host-local-inference:version --format json",
+      "host-local-inference:info --format json",
+      "host-local-inference:version --format json",
+      "host-local-inference:info --format json",
+    ]);
+  });
+
+  it("settles exact published-runtime authority after a failed GPU command (#10423)", () => {
+    let gpuAttempted = false;
+    let postGpuInspection = false;
+    const fixture = setup({
+      transformCapture(args, result) {
+        postGpuInspection ||= gpuAttempted && args[0] === "container" && args[1] === "inspect";
+        const gpuCommand = args[0] === "exec" && args[2] === "nvidia-smi";
+        gpuAttempted ||= gpuCommand;
+        return gpuCommand
+          ? { ...result, status: 1, stdout: "", stderr: "gpu proof failed" }
+          : result;
+      },
+    });
+    fixture.harness.container()!.running = true;
+    fixture.harness.container()!.status = "running";
+
+    expect(() =>
+      fixture.publishedOperation.managedRuntime?.validatePublishedResume?.(fixture.receipt),
+    ).toThrow("managed GPU proof failed");
+    expect(gpuAttempted).toBe(true);
+    expect(postGpuInspection).toBe(true);
+  });
+
+  it("reports post-GPU runtime drift instead of masking it with the GPU failure (#10423)", () => {
+    let gpuAttempted = false;
+    let postGpuInspection = false;
+    const fixture = setup({
+      transformCapture(args, result) {
+        postGpuInspection ||= gpuAttempted && args[0] === "container" && args[1] === "inspect";
+        const gpuCommand = args[0] === "exec" && args[2] === "nvidia-smi";
+        gpuAttempted ||= gpuCommand;
+        return gpuCommand
+          ? (() => {
+              fixture.harness.container()!.labels[PODMAN_INFERENCE_SPEC_LABEL] = "0".repeat(64);
+              return { ...result, status: 1, stdout: "", stderr: "gpu proof failed" };
+            })()
+          : result;
+      },
+    });
+    fixture.harness.container()!.running = true;
+    fixture.harness.container()!.status = "running";
+
+    let failure: unknown;
+    try {
+      fixture.publishedOperation.managedRuntime?.validatePublishedResume?.(fixture.receipt);
+    } catch (error) {
+      failure = error;
+    }
+    expect(gpuAttempted).toBe(true);
+    expect(postGpuInspection).toBe(true);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).not.toContain("managed GPU proof failed");
+  });
+
+  it("uses two full runtime inspections and no behavioral qualification around GPU proof (#10423)", () => {
+    const fixture = setup();
+    fixture.harness.container()!.running = true;
+    fixture.harness.container()!.status = "running";
+    const captureStart = fixture.currentExecutionCaptures.length;
+    fixture.transactionAuthorityAssertions.splice(0);
+
+    expect(
+      fixture.publishedOperation.managedRuntime?.validatePublishedResume?.(fixture.receipt),
+    ).toEqual(fixture.receipt);
+
+    const captures = fixture.currentExecutionCaptures.slice(captureStart);
+    expect(
+      captures.filter((event) => event.startsWith("host-local-inference:network inspect ")),
+    ).toHaveLength(2);
+    expect(
+      captures.filter((event) => event.startsWith("host-local-inference:container inspect ")),
+    ).toHaveLength(2);
+    expect(
+      captures.filter((event) => event.includes("exec") && event.includes("nvidia-smi")),
+    ).toHaveLength(1);
+    expect(captures.filter((event) => event.includes("version") || event.includes("info"))).toEqual(
+      [],
+    );
+    expect(fixture.transactionAuthorityAssertions).toHaveLength(6);
+  });
+
+  it.each([
+    "lifecycle-receipt",
+    "private-publication",
+    "command-endpoint",
+    "network",
+    "container",
+    "registry",
+  ] as const)("rejects %s drift immediately after the exact GPU command (#10423)", (driftKind) => {
+    let armed = false;
+    let gpuCommandCompleted = false;
+    let commandEndpointDrifted = false;
+    let fixture: ReturnType<typeof setup>;
+    let composed: ReturnType<typeof composedRecovery>;
+    fixture = setup({
+      assertTransactionAuthority(operation) {
+        expect(
+          armed && commandEndpointDrifted && operation === "host-local-inference",
+          "current executable or socket authority changed",
+        ).toBe(false);
+      },
+      transformCapture(args, result) {
+        const firstGpuCommand =
+          armed && args[0] === "exec" && args[2] === "nvidia-smi" && !gpuCommandCompleted;
+        const drift = {
+          "lifecycle-receipt": () =>
+            composed.input.assertCallerTransactionCurrent.mockImplementation(() => {
+              throw new Error("active receipt file identity changed");
+            }),
+          "private-publication": () =>
+            composed.assertPublished.mockImplementation(() => {
+              throw new Error("private publication receipt changed");
+            }),
+          "command-endpoint": () => {
+            commandEndpointDrifted = true;
+          },
+          network: () => {
+            fixture.harness.state.networkName = "drifted-network";
+          },
+          container: () => {
+            fixture.harness.container()!.labels[PODMAN_INFERENCE_SPEC_LABEL] = "0".repeat(64);
+          },
+          registry: () =>
+            composed.input.readRegistry.mockReturnValue({
+              ...fixture.entry,
+              model: "registry-model-drift",
+            }),
+        }[driftKind];
+        (firstGpuCommand
+          ? () => {
+              gpuCommandCompleted = true;
+              drift();
+            }
+          : () => undefined)();
+        return result;
+      },
+    });
+    fixture.harness.container()!.running = true;
+    fixture.harness.container()!.status = "running";
+    composed = composedRecovery(fixture);
+    armed = true;
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(composed.input, composed.overrides as never),
+    ).toThrow();
+
+    expect(gpuCommandCompleted).toBe(true);
+    expect(composed.input.verifyRoute).not.toHaveBeenCalled();
+    expect(composed.registryRecovery.release).not.toHaveBeenCalled();
+    expect(composed.registryRecovery.rollback).toHaveBeenCalledOnce();
+    expect(fixture.harness.container()).toMatchObject({ running: true, status: "running" });
   });
 
   it("rolls both stopped resources back when private publication drifts after start (#10423)", () => {
@@ -505,6 +964,83 @@ describe("Hermes Portable published engine recovery", () => {
     expect(failure).toBeInstanceOf(HermesPortableOllamaRecoveryError);
     expect((failure as HermesPortableOllamaRecoveryError).failure).toBe("authority-drift");
     expect(fixture.harness.container()).toMatchObject({ running: false, status: "exited" });
+    expect(composed.registryRecovery.rollback).toHaveBeenCalledOnce();
+    expect(composed.registryRecovery.release).not.toHaveBeenCalled();
+  });
+
+  it("restores both stopped resources when final managed route health fails (#10423)", () => {
+    const fixture = setup();
+    const composed = composedRecovery(fixture);
+    composed.input.verifyRoute.mockImplementation(() => {
+      throw new Error("managed route unavailable");
+    });
+    const observed = observePublishedFinalization([]);
+    Object.assign(composed.overrides, { prepareStartup: observed.prepareStartup });
+    composed.input.prepareProbeDependency = vi.fn(() => ({
+      release: vi.fn(),
+      rollback: vi.fn(),
+    }));
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(composed.input, composed.overrides as never),
+    ).toThrow();
+
+    expect(fixture.harness.container()).toMatchObject({ running: false, status: "exited" });
+    expect(composed.input.verifyRoute).toHaveBeenCalledOnce();
+    expect(composed.input.prepareProbeDependency).not.toHaveBeenCalled();
+    expect(observed.finalize).not.toHaveBeenCalled();
+    expect(composed.registryRecovery.rollback).toHaveBeenCalledOnce();
+    expect(composed.registryRecovery.release).not.toHaveBeenCalled();
+  });
+
+  it("restores both stopped resources when exact GPU identity changes (#10423)", () => {
+    const fixture = setup();
+    fixture.harness.state.gpuIdentities = ["GPU-00000000-0000-0000-0000-000000000000"];
+    const composed = composedRecovery(fixture);
+    const observed = observePublishedFinalization([]);
+    Object.assign(composed.overrides, { prepareStartup: observed.prepareStartup });
+    composed.input.prepareProbeDependency = vi.fn(() => ({
+      release: vi.fn(),
+      rollback: vi.fn(),
+    }));
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(composed.input, composed.overrides as never),
+    ).toThrow("requested CDI UUID authority");
+
+    expect(fixture.harness.container()).toMatchObject({ running: false, status: "exited" });
+    expect(composed.input.verifyRoute).not.toHaveBeenCalled();
+    expect(composed.input.prepareProbeDependency).not.toHaveBeenCalled();
+    expect(observed.finalize).not.toHaveBeenCalled();
+    expect(composed.registryRecovery.rollback).toHaveBeenCalledOnce();
+    expect(composed.registryRecovery.release).not.toHaveBeenCalled();
+  });
+
+  it("restores stopped state when published authority drifts during precommit validation (#10423)", () => {
+    let recoveryStarted = false;
+    let validationReached = false;
+    const fixture = setup({
+      transformCapture: (args, result) => {
+        validationReached ||=
+          recoveryStarted &&
+          args[0] === "exec" &&
+          args.some((argument) => argument === "nvidia-smi");
+        return result;
+      },
+    });
+    const assertPublished = vi.fn(() => {
+      expect(validationReached ? "published authority changed during validation" : null).toBeNull();
+    });
+    const composed = composedRecovery(fixture, assertPublished);
+    recoveryStarted = true;
+
+    expect(() =>
+      recoverHermesPortableOllamaInference(composed.input, composed.overrides as never),
+    ).toThrow();
+
+    expect(validationReached).toBe(true);
+    expect(fixture.harness.container()).toMatchObject({ running: false, status: "exited" });
+    expect(composed.input.verifyRoute).not.toHaveBeenCalled();
     expect(composed.registryRecovery.rollback).toHaveBeenCalledOnce();
     expect(composed.registryRecovery.release).not.toHaveBeenCalled();
   });
@@ -646,13 +1182,9 @@ describe("Hermes Portable published engine recovery", () => {
   });
 
   it("rejects noncanonical receipt bytes and a mismatched persisted authority (#10423)", () => {
-    const noncanonical = setup({ serializedReceipt: (value) => value.trimEnd() });
-    expect(() =>
-      requireRuntimeProviderHostLocalInferenceOperation(noncanonical.bundle, "ollama", {
-        env: noncanonical.harness.env,
-        acceleration: "nvidia-gpu",
-      }),
-    ).toThrow("serialized receipt is not canonical");
+    expect(() => setup({ serializedReceipt: (value) => value.trimEnd() })).toThrow(
+      "serialized receipt is not canonical",
+    );
 
     const mismatched = setup({
       creationAuthority: (value) => ({ ...value, bindingSha256: "9".repeat(64) }),
@@ -662,9 +1194,17 @@ describe("Hermes Portable published engine recovery", () => {
         mismatched.bundle,
         mismatched.providerEntry,
         { environment: mismatched.harness.env },
+        undefined,
+        mismatched.publishedOperation,
       ),
-    ).toThrow("differs from its persisted record");
+    ).toThrow("differs from its persisted engine authority");
     expect(mismatched.harness.container()).toMatchObject({ running: false });
+  });
+
+  it("rejects a published operation outside connect probe-only intent (#10423)", () => {
+    expect(() => setup({ publishedIntent: "interactive-launch" })).toThrow(
+      "invalid creation engine authority",
+    );
   });
 
   it("denies unrelated provider mutation surfaces in published recovery mode (#10423)", () => {
