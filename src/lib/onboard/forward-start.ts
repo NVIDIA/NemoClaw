@@ -620,6 +620,16 @@ export interface BackgroundForwardStartRetryOptions {
   readonly sleepMs?: (milliseconds: number) => void;
 }
 
+function cleanupForwardRecoveryDiagnostic(diagnosticPath: string): void {
+  try {
+    cleanupTempDir(diagnosticPath, "nemoclaw-forward-recovery");
+  } catch {
+    console.warn(
+      `NemoClaw could not remove temporary forward diagnostic directory '${path.dirname(diagnosticPath)}'. Remove it after no process uses it.`,
+    );
+  }
+}
+
 /**
  * Start a background forward, absorbing OpenShell's readiness-handoff and
  * listener-start rejections with the bounded settle-and-retry declared above.
@@ -658,7 +668,7 @@ export function runBackgroundForwardStartWithReadinessRetry(
       handle = undefined;
     }
     if (handle === undefined) {
-      if (diagnosticPath) cleanupTempDir(diagnosticPath, "nemoclaw-forward-recovery");
+      if (diagnosticPath) cleanupForwardRecoveryDiagnostic(diagnosticPath);
       return { status: options.runForwardStart("ignore").status, diagnostic: "" };
     }
     const openHandle = handle;
@@ -679,7 +689,7 @@ export function runBackgroundForwardStartWithReadinessRetry(
       } catch {
         // Best-effort: the descriptor is process-local and about to be dropped.
       }
-      cleanupTempDir(openPath, "nemoclaw-forward-recovery");
+      cleanupForwardRecoveryDiagnostic(openPath);
     }
   };
 

@@ -155,6 +155,11 @@ export function resolveSandboxHealthProbeUrl(sandboxName: string): string {
   return `http://127.0.0.1:${resolveSandboxDashboardPort(sandboxName)}/health`;
 }
 
+/** Resolve the recorded OpenShell gateway for sandbox forward operations. */
+export function resolveSandboxForwardGatewayName(sandboxName: string): string {
+  return resolveSandboxGatewayName(registry.getSandbox(sandboxName));
+}
+
 /**
  * Tear down the host-side dashboard port-forward this sandbox created.
  *
@@ -555,7 +560,7 @@ export function areSandboxLaunchForwardsHealthy(
 ): boolean | null {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) return false;
-  const owningGatewayName = resolveSandboxGatewayName(sandbox);
+  const owningGatewayName = resolveSandboxForwardGatewayName(sandboxName);
   if (gatewayName && gatewayName !== owningGatewayName) return false;
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const requiredPorts = resolveSandboxLaunchForwardPortsFromAuthority(sandboxName, sandbox, agent);

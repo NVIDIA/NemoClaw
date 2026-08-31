@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -144,5 +145,32 @@ describe("runBackgroundForwardStartWithReadinessRetry", () => {
     expect(outcome.status).toBe(0);
     expect(outcome.failureReason).toBeUndefined();
     expect(runForwardStart).toHaveBeenCalledWith("ignore");
+  });
+
+  it("preserves a successful start when diagnostic cleanup fails", () => {
+    const cleanupTempDir = tempFiles.cleanupTempDir;
+    const cleanupSpy = vi
+      .spyOn(tempFiles, "cleanupTempDir")
+      .mockImplementation((...args: Parameters<typeof tempFiles.cleanupTempDir>) => {
+        cleanupTempDir(...args);
+        throw new Error("directory is busy");
+      });
+    const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const runForwardStart = vi.fn(() => ({ status: 0 }));
+
+    const outcome = runBackgroundForwardStartWithReadinessRetry({
+      runForwardStart,
+      isListenerReachable: () => false,
+      isRetryAllowed: () => true,
+      sleepMs: () => {},
+    });
+
+    expect(outcome).toEqual({ status: 0 });
+    expect(cleanupSpy).toHaveBeenCalledOnce();
+    const diagnosticPath = cleanupSpy.mock.calls[0]?.[0];
+    expect(diagnosticPath).toBeDefined();
+    expect(warningSpy).toHaveBeenCalledWith(
+      expect.stringContaining(path.dirname(String(diagnosticPath))),
+    );
   });
 });

@@ -44,6 +44,7 @@ import {
   recoverHermesPortableLaunchForwards,
   recoverMessagingHostForward,
   resolveSandboxDashboardPort,
+  resolveSandboxForwardGatewayName,
   resolveSandboxLaunchForwardPorts,
   resolveSandboxHealthProbeUrl,
   type SandboxForwardRecoveryFailure,
@@ -188,22 +189,27 @@ export function primaryForwardRecoveryGuidance(
   port: number,
   reason?: SandboxForwardRecoveryFailureReason,
 ): string {
-  const recoverCommand = `\`nemoclaw ${sandboxName} recover\``;
+  const quotedSandboxName = shellQuote(sandboxName);
+  const gatewayName = shellQuote(resolveSandboxForwardGatewayName(sandboxName));
+  const sandboxGetCommand = `\`openshell sandbox get -g ${gatewayName} ${quotedSandboxName}\``;
+  const forwardListCommand = `\`openshell forward list --gateway ${gatewayName}\``;
+  const forwardStartCommand = `\`openshell forward start --background ${port} ${quotedSandboxName} --gateway ${gatewayName}\``;
+  const recoverCommand = `\`nemoclaw ${quotedSandboxName} recover\``;
   switch (reason) {
     case "forward-readiness-retry-limit":
-      return `\`openshell sandbox get ${sandboxName}\` can report Ready or Running before forwarding is ready. Run \`openshell forward list\`. If port ${port} has no owner, run \`openshell forward start --background ${port} ${sandboxName}\` to read the current OpenShell error. Correct the error, then rerun ${recoverCommand}.`;
+      return `${sandboxGetCommand} can report Ready or Running before forwarding is ready. Run ${forwardListCommand}. If port ${port} has no owner, run ${forwardStartCommand} to read the current OpenShell error. Correct the error, then rerun ${recoverCommand}.`;
     case "port-ownership-conflict":
-      return `Run \`openshell forward list\` and identify the current owner of port ${port} before you change either sandbox. Then rerun ${recoverCommand}.`;
+      return `Run ${forwardListCommand} and identify the current owner of port ${port} before you change either sandbox. Then rerun ${recoverCommand}.`;
     case "forward-state-unavailable":
-      return `Run \`openshell forward list\`. After OpenShell reports forward state, rerun ${recoverCommand}.`;
+      return `Run ${forwardListCommand}. After OpenShell reports forward state, rerun ${recoverCommand}.`;
     case "forward-ownership-unverified":
-      return `Run \`openshell forward list\` and confirm that '${sandboxName}' owns port ${port}, then rerun ${recoverCommand}.`;
+      return `Run ${forwardListCommand} and confirm that '${sandboxName}' owns port ${port}, then rerun ${recoverCommand}.`;
     case "forward-listener-retry-limit":
-      return `Run \`openshell forward list\`. If port ${port} has no owner, run \`openshell forward start --background ${port} ${sandboxName}\`, then rerun ${recoverCommand}.`;
+      return `Run ${forwardListCommand}. If port ${port} has no owner, run ${forwardStartCommand}, then rerun ${recoverCommand}.`;
     case "forward-start-failure":
-      return `Run \`openshell forward list\`. If port ${port} has no owner, run \`openshell forward start --background ${port} ${sandboxName}\` to read the OpenShell error. Correct the error, then rerun ${recoverCommand}.`;
+      return `Run ${forwardListCommand}. If port ${port} has no owner, run ${forwardStartCommand} to read the OpenShell error. Correct the error, then rerun ${recoverCommand}.`;
     default:
-      return `Run \`openshell forward start --background ${port} ${sandboxName}\` manually and rerun ${recoverCommand}.`;
+      return `Run ${forwardStartCommand} manually and rerun ${recoverCommand}.`;
   }
 }
 

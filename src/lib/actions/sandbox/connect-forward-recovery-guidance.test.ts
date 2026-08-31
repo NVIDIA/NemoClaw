@@ -4,6 +4,8 @@
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import { createConnectHarness } from "../../../../test/support/connect-flow-test-harness";
+import * as registry from "../../state/registry";
+import { primaryForwardRecoveryGuidance } from "./process-recovery";
 
 describe("connect forward recovery guidance", () => {
   let exitSpy: MockInstance;
@@ -24,7 +26,7 @@ describe("connect forward recovery guidance", () => {
     [
       "readiness retry exhaustion",
       "forward-readiness-retry-limit",
-      "openshell sandbox get alpha` can report Ready or Running before forwarding is ready. Run `openshell forward list`. If port 18789 has no owner, run `openshell forward start --background 18789 alpha` to read the current OpenShell error",
+      "openshell sandbox get -g 'nemoclaw' 'alpha'` can report Ready or Running before forwarding is ready. Run `openshell forward list --gateway 'nemoclaw'`. If port 18789 has no owner, run `openshell forward start --background 18789 'alpha' --gateway 'nemoclaw'` to read the current OpenShell error",
       true,
     ],
     [
@@ -90,10 +92,29 @@ describe("connect forward recovery guidance", () => {
         .map((call) => String(call[0] ?? ""))
         .join("\n");
       expect(errorOutput).toContain(expectedGuidance);
-      expect(errorOutput.includes("openshell forward start --background 18789 alpha")).toBe(
+      expect(errorOutput.includes("openshell forward start --background 18789")).toBe(
         includesManualStart,
       );
       expect(exitSpy).toHaveBeenCalledWith(1);
     },
   );
+
+  it("scopes recovery commands to the sandbox gateway (#10640)", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      gatewayPort: 18080,
+      name: "alpha",
+    } as NonNullable<ReturnType<typeof registry.getSandbox>>);
+
+    const guidance = primaryForwardRecoveryGuidance(
+      "alpha",
+      18789,
+      "forward-readiness-retry-limit",
+    );
+
+    expect(guidance).toContain("openshell sandbox get -g 'nemoclaw-18080' 'alpha'");
+    expect(guidance).toContain("openshell forward list --gateway 'nemoclaw-18080'");
+    expect(guidance).toContain(
+      "openshell forward start --background 18789 'alpha' --gateway 'nemoclaw-18080'",
+    );
+  });
 });
