@@ -29,8 +29,20 @@ describe("rebuild policy provider handoff", () => {
   it("derives active additions and disabled removals from current channel manifests", () => {
     expect(
       resolveRebuildMessagingPolicyDeltas({
+        sandboxName: "alpha",
         agent: "hermes",
         disabledChannels: ["telegram", "googlechat"],
+        credentialBindings: [
+          {
+            channelId: "telegram",
+            credentialId: "bot-token",
+            sourceInput: "token",
+            providerName: "alpha-telegram-bridge",
+            providerEnvKey: "TELEGRAM_BOT_TOKEN",
+            placeholder: "${TELEGRAM_BOT_TOKEN}",
+            credentialAvailable: true,
+          },
+        ],
         networkPolicy: {
           presets: ["wechat"],
           entries: [
@@ -52,6 +64,7 @@ describe("rebuild policy provider handoff", () => {
     ).toEqual({
       requiredNetworkPolicyKeys: ["wechat_bridge"],
       requiredNetworkPolicyPresetNames: ["wechat"],
+      removedCredentialBindingProviders: ["alpha-telegram-bridge", "alpha-googlechat-bridge"],
       removedNetworkPolicyKeys: ["telegram", "googlechat_hermes"],
     });
   });

@@ -412,6 +412,21 @@ export async function rebuildGooglechatForChannelsStopStartLiveE2e(
   }
 }
 
+async function withLiveE2eEnvironment<T>(
+  env: NodeJS.ProcessEnv,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const original = { ...process.env };
+  for (const key of Object.keys(process.env)) delete process.env[key];
+  Object.assign(process.env, env);
+  try {
+    return await operation();
+  } finally {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, original);
+  }
+}
+
 const AGENT = (process.env.NEMOCLAW_CHANNELS_STOP_START_AGENT ??
   process.env.NEMOCLAW_AGENT ??
   "openclaw") as AgentKind;
@@ -922,11 +937,13 @@ async function addGooglechatForLiveE2e(
   env: NodeJS.ProcessEnv,
   redactions: string[],
 ): Promise<void> {
-  await addAndRebuildGooglechatForChannelsStopStartLiveE2e({
-    sandboxName: SANDBOX_NAME,
-    agent: AGENT,
-    audience: env.GOOGLECHAT_AUDIENCE ?? "",
-  });
+  await withLiveE2eEnvironment(env, () =>
+    addAndRebuildGooglechatForChannelsStopStartLiveE2e({
+      sandboxName: SANDBOX_NAME,
+      agent: AGENT,
+      audience: env.GOOGLECHAT_AUDIENCE ?? "",
+    }),
+  );
   await expectSandboxReady(
     host,
     SANDBOX_NAME,
@@ -936,11 +953,13 @@ async function addGooglechatForLiveE2e(
   );
 }
 
-async function rebuildWithGooglechatFixtureForLiveE2e(): Promise<void> {
-  await rebuildGooglechatForChannelsStopStartLiveE2e({
-    sandboxName: SANDBOX_NAME,
-    agent: AGENT,
-  });
+async function rebuildWithGooglechatFixtureForLiveE2e(env: NodeJS.ProcessEnv): Promise<void> {
+  await withLiveE2eEnvironment(env, () =>
+    rebuildGooglechatForChannelsStopStartLiveE2e({
+      sandboxName: SANDBOX_NAME,
+      agent: AGENT,
+    }),
+  );
 }
 
 async function policyPresetState(
@@ -1238,7 +1257,7 @@ export async function runChannelsStopStartTarget({
   for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "start", channel);
   expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
-  await rebuildWithGooglechatFixtureForLiveE2e();
+  await rebuildWithGooglechatFixtureForLiveE2e(env);
   expectChannelInputs(env);
   await expectAgentConfig(sandbox, "active", "after-start", redactions);
   await expectGooglechatProviderEgress(sandbox, SANDBOX_NAME, AGENT, "after-start", redactions);

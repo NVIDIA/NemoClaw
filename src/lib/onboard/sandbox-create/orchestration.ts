@@ -13,6 +13,10 @@ import { getMessagingPolicyKeysByChannel } from "../../messaging/channels/metada
 import { loadMessagingChannelPolicyPreset } from "../../messaging/channels/policy";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import {
+  bridgeProviderNamesForChannel,
+  messagingBridgeProfilesForAgent,
+} from "../messaging-bridge-provider";
+import {
   isDcodeAgent,
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
 } from "../observability-policy-presets";
@@ -126,23 +130,29 @@ export function resolveRebuildPolicyProviderAuthority(input: {
 
 export function resolveRebuildMessagingPolicyDeltas(
   plan:
-    | Pick<SandboxMessagingPlan, "agent" | "disabledChannels" | "networkPolicy">
+    | Pick<
+        SandboxMessagingPlan,
+        "agent" | "credentialBindings" | "disabledChannels" | "networkPolicy" | "sandboxName"
+      >
     | null
     | undefined,
 ): {
   readonly requiredNetworkPolicyKeys: readonly string[];
   readonly requiredNetworkPolicyPresetNames: readonly string[];
+  readonly removedCredentialBindingProviders: readonly string[];
   readonly removedNetworkPolicyKeys: readonly string[];
 } {
   if (!plan) {
     return {
       requiredNetworkPolicyKeys: [],
       requiredNetworkPolicyPresetNames: [],
+      removedCredentialBindingProviders: [],
       removedNetworkPolicyKeys: [],
     };
   }
   const disabledChannels = new Set(plan.disabledChannels);
   const policyKeysByChannel = getMessagingPolicyKeysByChannel({ agent: plan.agent });
+  const bridgeProfiles = messagingBridgeProfilesForAgent(plan.agent);
   return {
     requiredNetworkPolicyKeys: [
       ...new Set(
@@ -157,6 +167,16 @@ export function resolveRebuildMessagingPolicyDeltas(
           .filter((entry) => !disabledChannels.has(entry.channelId))
           .map((entry) => entry.presetName),
       ),
+    ],
+    removedCredentialBindingProviders: [
+      ...new Set([
+        ...plan.credentialBindings
+          .filter((binding) => disabledChannels.has(binding.channelId))
+          .map((binding) => binding.providerName),
+        ...plan.disabledChannels.flatMap((channelId) =>
+          bridgeProviderNamesForChannel(plan.sandboxName, channelId, bridgeProfiles),
+        ),
+      ]),
     ],
     removedNetworkPolicyKeys: [
       ...new Set(
@@ -196,6 +216,7 @@ function selectRebuildCreatePolicy(
   generatedPolicy: import("../initial-policy").InitialSandboxPolicy,
   requiredNetworkPolicyKeys: readonly string[],
   removedNetworkPolicyKeys: readonly string[],
+  removedCredentialBindingProviders: readonly string[],
   requiredNetworkPolicyPresetNames: readonly string[],
   messagingPlan: SandboxMessagingPlan | null | undefined,
   sandboxName: string,
@@ -218,6 +239,7 @@ function selectRebuildCreatePolicy(
     replacementPolicy: generatedPolicy,
     requiredNetworkPolicyKeys,
     removedNetworkPolicyKeys,
+    removedCredentialBindingProviders,
     requiredNetworkPolicySources,
     authorizedCredentialBindingProviders,
   });
@@ -2187,6 +2209,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
             ...rebuildMessagingPolicyDeltas.removedNetworkPolicyKeys,
             ...rebuildObservabilityPolicyDelta.removedNetworkPolicyKeys,
           ],
+          rebuildMessagingPolicyDeltas.removedCredentialBindingProviders,
           rebuildMessagingPolicyDeltas.requiredNetworkPolicyPresetNames,
           plannedMessagingState?.plan,
           sandboxName,

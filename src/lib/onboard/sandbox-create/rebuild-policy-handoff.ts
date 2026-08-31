@@ -214,6 +214,34 @@ function mergeRequestedReplacementNetworkPolicies(
   return changed;
 }
 
+function removeCredentialBoundEndpointsForProviders(
+  live: PolicyMapping,
+  removedProviders: readonly string[],
+): boolean {
+  if (removedProviders.length === 0 || live.network_policies === undefined) return false;
+  const removed = new Set(removedProviders);
+  const policies = policyMapping(live.network_policies, "live network_policies");
+  let changed = false;
+
+  for (const [key, value] of Object.entries(policies)) {
+    if (!isPolicyMapping(value) || !Array.isArray(value.endpoints)) continue;
+    const endpoints = value.endpoints.filter((endpoint) => {
+      if (!isPolicyMapping(endpoint) || !isPolicyMapping(endpoint.credential_binding)) return true;
+      const provider = endpoint.credential_binding.provider;
+      return typeof provider !== "string" || !removed.has(provider);
+    });
+    if (endpoints.length === value.endpoints.length) continue;
+    changed = true;
+    if (endpoints.length === 0) {
+      delete policies[key];
+      continue;
+    }
+    value.endpoints = endpoints;
+  }
+
+  return changed;
+}
+
 /**
  * Build one replacement-create input from OpenShell's live policy. Host edits
  * win completely outside missing non-root process identity, filesystem access,
@@ -229,11 +257,16 @@ export function mergeReplacementPolicyAccess(
   requiredNetworkPolicyKeys: readonly string[] = [],
   removedNetworkPolicyKeys: readonly string[] = [],
   requiredNetworkPolicySources: readonly string[] = [],
+  removedCredentialBindingProviders: readonly string[] = [],
 ): { readonly changed: boolean; readonly source: string } {
   const live = structuredClone(parseOpenShellPolicy(livePolicySource).policy) as PolicyMapping;
   const replacement = parseOpenShellPolicy(replacementPolicySource).policy as PolicyMapping;
   const processChanged = mergeMissingReplacementProcessIdentity(live, replacement);
   const filesystemChanged = mergeReplacementFilesystemAccess(live, replacement);
+  const providerNetworkChanged = removeCredentialBoundEndpointsForProviders(
+    live,
+    removedCredentialBindingProviders,
+  );
   const networkChanged = mergeRequestedReplacementNetworkPolicies(
     live,
     replacement,
@@ -241,7 +274,7 @@ export function mergeReplacementPolicyAccess(
     removedNetworkPolicyKeys,
     requiredNetworkPolicySources,
   );
-  const changed = processChanged || filesystemChanged || networkChanged;
+  const changed = processChanged || filesystemChanged || providerNetworkChanged || networkChanged;
   return changed
     ? { changed: true, source: YAML.stringify(live) }
     : { changed: false, source: livePolicySource };
@@ -253,6 +286,7 @@ export function materializeRebuildPolicyHandoff(input: {
   readonly replacementPolicy: InitialSandboxPolicy;
   readonly requiredNetworkPolicyKeys?: readonly string[];
   readonly removedNetworkPolicyKeys?: readonly string[];
+  readonly removedCredentialBindingProviders?: readonly string[];
   readonly requiredNetworkPolicySources?: readonly string[];
   readonly authorizedCredentialBindingProviders?: readonly string[];
 }): InitialSandboxPolicy {
@@ -266,6 +300,7 @@ export function materializeRebuildPolicyHandoff(input: {
     input.requiredNetworkPolicyKeys,
     input.removedNetworkPolicyKeys,
     input.requiredNetworkPolicySources,
+    input.removedCredentialBindingProviders,
   );
   if (!merged.changed) {
     return {

@@ -216,6 +216,100 @@ network_policies:
     });
   });
 
+  it("removes only endpoints bound to explicitly disabled channel providers", () => {
+    const live = `
+version: 1
+network_policies:
+  provider_composed:
+    name: provider_composed
+    endpoints:
+      - host: chat.googleapis.com
+        credential_binding: {provider: alpha-googlechat-bridge}
+      - host: operator.example.com
+  host_added:
+    endpoints:
+      - host: host.example.com
+        credential_binding: {provider: host-added-provider}
+`;
+
+    const merged = mergeReplacementPolicyAccess(
+      live,
+      "version: 1\nnetwork_policies: {}\n",
+      [],
+      [],
+      [],
+      ["alpha-googlechat-bridge"],
+    );
+
+    expect(merged.changed).toBe(true);
+    expect(YAML.parse(merged.source).network_policies).toEqual({
+      provider_composed: {
+        name: "provider_composed",
+        endpoints: [{ host: "operator.example.com" }],
+      },
+      host_added: {
+        endpoints: [
+          {
+            host: "host.example.com",
+            credential_binding: { provider: "host-added-provider" },
+          },
+        ],
+      },
+    });
+  });
+
+  it("materializes no provider-composed policy for a disabled channel", () => {
+    const livePath = tempPolicy(
+      "live-disabled-provider.yaml",
+      `version: 1
+network_policies:
+  googlechat_provider:
+    endpoints:
+      - host: chat.googleapis.com
+        credential_binding: {provider: alpha-googlechat-bridge}
+  host_edit: {name: host_edit}
+`,
+    );
+    const replacementPath = tempPolicy(
+      "replacement-disabled-provider.yaml",
+      "version: 1\nnetwork_policies: {}\n",
+    );
+    const handoff = materializeRebuildPolicyHandoff({
+      livePolicyPath: livePath,
+      replacementPolicy: {
+        policyPath: replacementPath,
+        appliedPresets: [],
+        credentialBindingProviders: [],
+      },
+      removedCredentialBindingProviders: ["alpha-googlechat-bridge"],
+    });
+
+    expect(readPrivatePolicy(handoff.policyPath).policy).toMatchObject({
+      network_policies: {
+        host_edit: { name: "host_edit" },
+      },
+    });
+    expect(readPrivatePolicy(handoff.policyPath).policy).not.toMatchObject({
+      network_policies: {
+        googlechat_provider: expect.anything(),
+      },
+    });
+    expect(handoff.credentialBindingProviders).toEqual([]);
+    expect(handoff.cleanup?.()).toBe(true);
+    expect(fs.existsSync(handoff.policyPath)).toBe(false);
+    expect(YAML.parse(fs.readFileSync(livePath, "utf8")).network_policies).toEqual({
+      googlechat_provider: {
+        endpoints: [
+          {
+            host: "chat.googleapis.com",
+            credential_binding: { provider: "alpha-googlechat-bridge" },
+          },
+        ],
+      },
+      host_edit: { name: "host_edit" },
+    });
+  });
+
   it("adds the explicit rebuild observability policy while preserving host entries", () => {
     const merged = mergeReplacementPolicyAccess(
       "version: 1\nnetwork_policies:\n  host_edit: {name: host_edit}\n",
