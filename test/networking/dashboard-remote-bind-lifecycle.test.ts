@@ -612,11 +612,19 @@ describe("remote dashboard bind production lifecycle", () => {
 
     expect(ensureSandboxPortForward("beta")).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "stop", "18789", "beta"],
+      ["forward", "stop", "18789", "beta", "--gateway", "nemoclaw"],
       expect.anything(),
     );
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
+      [
+        "forward",
+        "start",
+        "--background",
+        "0.0.0.0:18789",
+        "beta",
+        "--gateway",
+        "nemoclaw",
+      ],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -643,7 +651,15 @@ describe("remote dashboard bind production lifecycle", () => {
 
     expect(ensureSandboxPortForward("beta")).toBe(false);
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
+      [
+        "forward",
+        "start",
+        "--background",
+        "0.0.0.0:18789",
+        "beta",
+        "--gateway",
+        "nemoclaw",
+      ],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -728,11 +744,19 @@ describe("remote dashboard bind production lifecycle", () => {
 
     expect(ensureSandboxPortForward("beta", { isWsl: false })).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "stop", "18789", "beta"],
+      ["forward", "stop", "18789", "beta", "--gateway", "nemoclaw"],
       expect.anything(),
     );
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "18789", "beta"],
+      [
+        "forward",
+        "start",
+        "--background",
+        "18789",
+        "beta",
+        "--gateway",
+        "nemoclaw",
+      ],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -765,7 +789,15 @@ describe("remote dashboard bind production lifecycle", () => {
 
     expect(ensureSandboxPortForward("beta", { isWsl: true })).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
+      [
+        "forward",
+        "start",
+        "--background",
+        "0.0.0.0:18789",
+        "beta",
+        "--gateway",
+        "nemoclaw",
+      ],
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -799,7 +831,15 @@ describe("remote dashboard bind production lifecycle", () => {
 
     expect(ensureSandboxPortForward("beta", { isWsl: false })).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "start", "--background", "18789", "beta"],
+      [
+        "forward",
+        "start",
+        "--background",
+        "18789",
+        "beta",
+        "--gateway",
+        "nemoclaw",
+      ],
       expect.objectContaining({ ignoreError: true }),
     );
   });
