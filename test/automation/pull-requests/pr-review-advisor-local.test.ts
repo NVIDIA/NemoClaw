@@ -496,6 +496,7 @@ describe("local PR review advisor", () => {
       lifecycle,
     });
 
+    expect(calls.filter((call) => call.startsWith("prepare:"))).toHaveLength(1);
     expect(calls.filter((call) => call.startsWith("run:"))).toEqual(
       ADVISOR_SPECIALISTS.map(({ interest }) => "run:" + interest),
     );

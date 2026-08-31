@@ -346,7 +346,7 @@ export async function runLocalReview(input: {
   const ownsRoot = input.temporaryRoot === undefined;
   const snapshot = path.join(root, "pr-workdir");
   const output = path.join(root, "output");
-  const runners = path.join(root, "runners");
+  const runnerTemp = path.join(root, "runner");
   const lifecycle = input.lifecycle ?? defaultLocalReviewLifecycle;
   const destination = path.join(source, LOCAL_OUTPUT_DIRECTORY);
   let activeCleanup: (() => Promise<void>) | undefined;
@@ -373,12 +373,23 @@ export async function runLocalReview(input: {
   let cleanup: unknown;
   try {
     fs.mkdirSync(output, { recursive: true });
-    fs.mkdirSync(runners, { recursive: true });
+    fs.mkdirSync(runnerTemp, { recursive: true });
     const base = gitValue(source, ["rev-parse", "--verify", "origin/main^{commit}"]);
     const refs = (input.prepareSnapshot ?? createLocalReviewSnapshot)(source, snapshot, base);
-    for (const specialist of input.specialists ?? ADVISOR_SPECIALISTS) {
-      const runnerTemp = path.join(runners, specialist.interest + "-" + randomUUID().slice(0, 8));
-      fs.mkdirSync(runnerTemp, { recursive: true });
+    const specialists = input.specialists ?? ADVISOR_SPECIALISTS;
+    if (specialists.length > 0) {
+      await lifecycle.prepare(
+        specialistEnvironment(
+          input.advisorDirectory ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+          output,
+          runnerTemp,
+          snapshot,
+          refs,
+          specialists[0]!,
+        ),
+      );
+    }
+    for (const specialist of specialists) {
       await runAdvisorSpecialist({
         env: specialistEnvironment(
           input.advisorDirectory ??
@@ -390,6 +401,7 @@ export async function runLocalReview(input: {
           specialist,
         ),
         lifecycle,
+        prepare: false,
         validate: () => validateSpecialistArtifacts(output, specialist.interest),
         setActiveCleanup: (value) => {
           activeCleanup = value;

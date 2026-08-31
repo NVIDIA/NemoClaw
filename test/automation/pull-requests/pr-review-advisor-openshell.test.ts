@@ -387,7 +387,7 @@ describe("PR review advisor specialist lifecycle", () => {
       (_resolve, reject) => (interrupt = () => reject(new Error("analysis stopped by SIGTERM"))),
     );
     const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const restore = vi.fn();
+    const restore = vi.fn(() => void calls.push("restore"));
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
       startGateway: () => ({
@@ -431,7 +431,7 @@ describe("PR review advisor specialist lifecycle", () => {
     receive("SIGTERM");
     await command;
 
-    expect(calls).toEqual(["create", "cancel", "sandbox", "gateway", "listeners"]);
+    expect(calls).toEqual(["create", "cancel", "sandbox", "gateway", "listeners", "restore"]);
     expect(sandboxNames).toEqual([expect.stringMatching(/^pr-adv-[A-Za-z0-9_-]{12}$/u), sandboxNames[0], sandboxNames[0]]);
     expect(restore).toHaveBeenCalledWith("SIGTERM");
     expect(stderr).not.toHaveBeenCalled();
@@ -442,8 +442,9 @@ describe("PR review advisor specialist lifecycle", () => {
     let receive!: (signal: NodeJS.Signals) => void;
     let finish!: () => void;
     const credential = "cleanup-secret";
-    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const restore = vi.fn();
+    const events: string[] = [];
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => void events.push("diagnostic"));
+    const restore = vi.fn(() => void events.push("restore"));
     const lifecycle: AdvisorSpecialistLifecycle = {
       prepare: async () => undefined,
       startGateway: () => ({ configure: Promise.resolve(), stop: async () => undefined }),
@@ -483,6 +484,7 @@ describe("PR review advisor specialist lifecycle", () => {
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("execution cleanup"));
     expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/sandbox pr-adv-[A-Za-z0-9_-]{12}/u));
     expect(stderr).not.toHaveBeenCalledWith(expect.stringContaining(credential));
+    expect(events).toEqual(["diagnostic", "restore"]);
     expect(restore).toHaveBeenCalledWith("SIGHUP");
   });
 });
