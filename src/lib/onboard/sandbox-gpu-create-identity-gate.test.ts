@@ -247,8 +247,11 @@ describe("created sandbox identity gate", () => {
       backupPath: null,
     });
     const recoveryOutput = error.mock.calls.flat().join("\n");
-    expect(recoveryOutput).toContain("Run `nemohermes alpha destroy` to recover");
-    expect(recoveryOutput).toContain("Stop if the command cannot verify its retained identity.");
+    expect(recoveryOutput).toContain("Do not delete sandbox 'alpha' by name.");
+    expect(recoveryOutput).toContain(
+      "Give the create-attempt label above to an OpenShell administrator",
+    );
+    expect(recoveryOutput).toContain("run `nemohermes alpha destroy --yes`");
   });
 
   it("resumes the exact verified sandbox without issuing another create (#9833)", async () => {

@@ -356,7 +356,7 @@ function confirmManagedRuntimeCommitReadiness(options: {
     "  NemoClaw did not start dashboard forwarding. NemoClaw left the sandbox in place for identity-bound recovery.",
   );
   console.error(
-    `  Run \`${input.cliName} ${input.sandboxName} destroy\` to recover the retained sandbox. Stop if the command cannot verify its retained identity.`,
+    `  Do not delete sandbox '${input.sandboxName}' by name. Give the create-attempt label above to an OpenShell administrator and ask them to remove that exact sandbox through an identity-bound procedure. After OpenShell confirms the sandbox is absent, run \`${input.cliName} ${input.sandboxName} destroy --yes\` to reconcile the retained local state.`,
   );
   throw new Error(
     `Sandbox '${input.sandboxName}' did not return to Ready after its managed runtime commit.`,
