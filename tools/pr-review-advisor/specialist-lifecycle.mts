@@ -123,8 +123,8 @@ export async function runAdvisorSpecialist(input: {
     if (input.cancelled?.()) result = "cancelled";
     if (result === "complete") {
       stage = "create";
-      sandbox = true;
       lifecycle.create(input.env);
+      sandbox = true;
       stage = "run";
       execution = lifecycle.run(input.env) || undefined;
       input.setActiveCleanup?.(cleanup);

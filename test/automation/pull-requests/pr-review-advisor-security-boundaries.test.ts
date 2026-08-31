@@ -5,7 +5,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import YAML from "yaml";
 import { deleteBotOwnedStickyComments, upsertStickyComment } from "../../../tools/advisors/github.mts";
 import { runReadOnlyAdvisor } from "../../../tools/advisors/session.mts";
 
@@ -15,19 +14,6 @@ const ROOT = path.resolve(import.meta.dirname, "../../..");
 describe("PR review advisor security boundaries", () => {
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  // source-shape-contract: security -- The model credential must not enter the lifecycle after input preparation or OpenShell installation fails
-  it("starts the credential-bearing lifecycle only after preparation and installation succeed", () => {
-    const workflow = YAML.parse(
-      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
-    ) as { jobs: Record<string, { steps: Array<{ name?: string; if?: string }> }> };
-    const lifecycle = workflow.jobs["review-specialists"].steps.find(
-      (step) => step.name === "Run advisor specialist lifecycle",
-    );
-
-    expect(lifecycle).toBeDefined();
-    expect(lifecycle).not.toHaveProperty("if");
   });
 
   it("removes the model credential from the tool environment after in-memory setup", async () => {

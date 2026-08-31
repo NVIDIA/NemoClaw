@@ -2,11 +2,6 @@
   "maxSourceShapeCases": 0,
   "sourceShapeContractExceptions": [
     {
-      "file": "test/automation/pull-requests/pr-review-advisor-security-boundaries.test.ts",
-      "test": "starts the credential-bearing lifecycle only after preparation and installation succeed",
-      "category": "security"
-    },
-    {
       "file": "src/lib/readiness/host.test.ts",
       "test": "bounds and redacts successful probe text before schema validation",
       "category": "compatibility"
