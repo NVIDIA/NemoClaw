@@ -65,6 +65,7 @@ interface ActionRunFixture {
   nextStatus?: string;
   nextConclusion?: string | null;
   jobs?: ActionJobFixture[];
+  previousAttemptJobs?: ActionJobFixture[];
   jobPages?: ActionJobFixture[][];
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -643,21 +644,29 @@ function runGate(fixture: ComplianceFixture) {
   });
   const actionRunCases = Object.entries(actionRunFixtures)
     .flatMap(([runId, value]) => {
+      const actionJobData = ({
+        startedAt,
+        completedAt,
+        omitStartedAt,
+        omitCompletedAt,
+        ...job
+      }: ActionJobFixture) => ({
+        ...job,
+        status: job.status ?? "completed",
+        conclusion: job.conclusion === undefined ? "success" : job.conclusion,
+        ...(omitStartedAt
+          ? {}
+          : { started_at: startedAt === undefined ? "2026-01-01T00:01:00Z" : startedAt }),
+        ...(omitCompletedAt
+          ? {}
+          : {
+              completed_at: completedAt === undefined ? "2026-01-01T00:03:00Z" : completedAt,
+            }),
+      });
       const jobPages = (value.jobPages ?? [value.jobs ?? []]).map((page) =>
-        page.map(({ startedAt, completedAt, omitStartedAt, omitCompletedAt, ...job }) => ({
-          ...job,
-          status: job.status ?? "completed",
-          conclusion: job.conclusion === undefined ? "success" : job.conclusion,
-          ...(omitStartedAt
-            ? {}
-            : { started_at: startedAt === undefined ? "2026-01-01T00:01:00Z" : startedAt }),
-          ...(omitCompletedAt
-            ? {}
-            : {
-                completed_at: completedAt === undefined ? "2026-01-01T00:03:00Z" : completedAt,
-              }),
-        })),
+        page.map(actionJobData),
       );
+      const previousAttemptJobs = value.previousAttemptJobs?.map(actionJobData);
       const jobs = jobPages.flat();
       const runData = actionRunData(runId, value);
       const refreshedRunData = {
@@ -680,6 +689,18 @@ function runGate(fixture: ComplianceFixture) {
             })),
           ),
         )} ;;`,
+        ...(previousAttemptJobs === undefined
+          ? []
+          : [
+              `  "api --paginate --slurp repos/NVIDIA/NemoClaw/actions/runs/${runId}/attempts/${value.attempt - 1}/jobs?per_page=100") printf '%s' ${shellSingleQuote(
+                JSON.stringify([
+                  {
+                    total_count: previousAttemptJobs.length,
+                    jobs: previousAttemptJobs,
+                  },
+                ]),
+              )} ;;`,
+            ]),
       ];
     })
     .join("\n");

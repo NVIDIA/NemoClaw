@@ -1310,6 +1310,7 @@ function createCiActionEvidenceCache(): CiActionEvidenceCache {
 interface CurrentCheckRollup {
   checks: StatusCheck[];
   incompleteAttemptEvidence: string[];
+  ambiguousRunEvidence: string[];
 }
 
 function currentCheckRollup(
@@ -1322,6 +1323,7 @@ function currentCheckRollup(
 ): CurrentCheckRollup {
   const { actionRunMetadataById, latestAttemptJobsByRun } = actionEvidence;
   const incompleteAttemptEvidence = new Set<string>();
+  const ambiguousRunEvidence = new Set<string>();
   const observedE2eLineage =
     e2eCoordinationEvidence.valid === true &&
     e2eCoordinationEvidence.checkSnapshot &&
@@ -2124,6 +2126,14 @@ function currentCheckRollup(
           if (candidates.length === 0) continue;
           const latestTimestamp = Math.max(...candidates.map(({ timestamp }) => timestamp));
           const latestRuns = candidates.filter(({ timestamp }) => timestamp === latestTimestamp);
+          if (latestRuns.length > 1) {
+            const runIds = latestRuns
+              .map(({ runId }) => runId)
+              .sort((left, right) => Number(left) - Number(right));
+            ambiguousRunEvidence.add(
+              `${groupName}: workflow runs ${runIds.join(", ")} share created_at ${new Date(latestTimestamp).toISOString()}; start a new workflow run`,
+            );
+          }
           for (const latest of latestRuns) {
             current.push(...latestAttemptChecks(latest.runId, latest.checks));
           }
@@ -2192,7 +2202,11 @@ function currentCheckRollup(
     incompleteAttemptEvidence.add("checks");
     incompleteAttemptEvidence.add("changes");
   }
-  return { checks: current, incompleteAttemptEvidence: [...incompleteAttemptEvidence].sort() };
+  return {
+    checks: current,
+    incompleteAttemptEvidence: [...incompleteAttemptEvidence].sort(),
+    ambiguousRunEvidence: [...ambiguousRunEvidence].sort(),
+  };
 }
 
 interface CiGateResult extends GateResult {
@@ -2284,6 +2298,7 @@ function evaluateCiRollup(
   );
   const currentChecks = rollup.checks;
   const incompleteAttemptEvidence = new Set(rollup.incompleteAttemptEvidence);
+  const ambiguousRunEvidence = rollup.ambiguousRunEvidence;
 
   // Check that all required checks are present.
   // Fork PRs from first-time contributors need "Approve and run" before
@@ -2296,6 +2311,14 @@ function evaluateCiRollup(
       pass: false,
       details: `${missingChecks.length} required check(s) not found — workflows may need approval`,
       missingChecks,
+    };
+  }
+
+  if (ambiguousRunEvidence.length > 0) {
+    return {
+      pass: false,
+      details: `${ambiguousRunEvidence.length} check context(s) have tied workflow-run evidence`,
+      failingChecks: ambiguousRunEvidence,
     };
   }
 

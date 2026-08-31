@@ -521,11 +521,13 @@ describe("maintainer merge-gate contributor compliance", () => {
       actionRunAttempts: {
         "447": {
           ...exactDiffGateRun("skipped", [skippedJob(41)]),
+          createdAt: "2026-01-01T00:00:00Z",
           event: "push",
           path: ".github/workflows/request-nvskills-ci.yml",
         },
         "448": {
           attempt: 1,
+          createdAt: "2026-01-01T00:02:00Z",
           headSha: HEAD_SHA,
           event: "push",
           path: ".github/workflows/request-nvskills-ci.yml",
@@ -542,7 +544,7 @@ describe("maintainer merge-gate contributor compliance", () => {
     });
   });
 
-  it("uses the latest attempt for duplicate check-run contexts", () => {
+  it("accepts a later successful duplicate workflow run", () => {
     const result = runGate(
       e2eRunFixture(
         [
@@ -565,6 +567,87 @@ describe("maintainer merge-gate contributor compliance", () => {
     const output = JSON.parse(result.stdout);
     expect(output.gates.ci).toMatchObject({ pass: true });
   });
+  it("uses jobs from the workflow run's reported latest attempt", () => {
+    const result = runGate(
+      e2eRunFixture(e2eChecks([102, 2, "SUCCESS"]), {
+        "102": {
+          ...exactDiffGateRun("success", [{ id: 2, name: "E2E / PR Gate" }], 2),
+          previousAttemptJobs: [
+            {
+              id: 1,
+              name: "E2E / PR Gate",
+              status: "completed",
+              conclusion: "failure",
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(JSON.parse(result.stdout).gates.ci).toMatchObject({ pass: true });
+  });
+  it.each([
+    ["FAILURE", "SUCCESS"],
+    ["SUCCESS", "FAILURE"],
+  ] as const)(
+    "fails closed when duplicate workflow runs share created_at (%s, %s)",
+    (lowerRunConclusion, higherRunConclusion) => {
+      const result = runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [
+          ...successfulRequiredChecksWithoutE2e(),
+          {
+            __typename: "CheckRun",
+            name: "matrix-check",
+            workflowName: "CI / Matrix",
+            detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/199/job/1",
+            startedAt: "2026-01-01T00:02:00Z",
+            status: "COMPLETED",
+            conclusion: lowerRunConclusion,
+          },
+          {
+            __typename: "CheckRun",
+            name: "matrix-check",
+            workflowName: "CI / Matrix",
+            detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/200/job/2",
+            startedAt: "2026-01-01T00:03:00Z",
+            status: "COMPLETED",
+            conclusion: higherRunConclusion,
+          },
+        ],
+        actionRunAttempts: {
+          "199": {
+            ...exactDiffGateRun(lowerRunConclusion.toLowerCase(), [
+              {
+                id: 1,
+                name: "matrix-check",
+                conclusion: lowerRunConclusion.toLowerCase(),
+              },
+            ]),
+            createdAt: "2026-01-01T00:01:00Z",
+          },
+          "200": {
+            ...exactDiffGateRun(higherRunConclusion.toLowerCase(), [
+              {
+                id: 2,
+                name: "matrix-check",
+                conclusion: higherRunConclusion.toLowerCase(),
+              },
+            ]),
+            createdAt: "2026-01-01T00:01:00Z",
+          },
+        },
+      });
+
+      expect(JSON.parse(result.stdout).gates.ci).toMatchObject({
+        pass: false,
+        failingChecks: [
+          "matrix-check: workflow runs 199, 200 share created_at 2026-01-01T00:01:00.000Z; start a new workflow run",
+        ],
+      });
+    },
+  );
   it("keeps every duplicate job from the latest workflow run", () => {
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",
