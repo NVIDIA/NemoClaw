@@ -30,6 +30,7 @@ const { ensurePulledOllamaModel }: typeof import("./model-discovery") =
 const { ollamaModelRefsMatch }: typeof import("./model-discovery") = require("./model-discovery");
 const {
   getBootstrapOllamaModelOptions,
+  getOllamaApiCommand,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
   getResolvedOllamaHost,
@@ -1043,8 +1044,7 @@ function pullOllamaModelViaHttp(model: string): Promise<boolean> {
 
     // The endpoint is restricted to the local Ollama hosts NemoClaw probes and
     // the model id is normalized before being serialized as JSON request data.
-    const proc = spawn(
-      "curl",
+    const [executable, ...args] = getOllamaApiCommand(
       [
         "-sN",
         "--connect-timeout",
@@ -1060,6 +1060,11 @@ function pullOllamaModelViaHttp(model: string): Promise<boolean> {
         body,
         url,
       ],
+      host,
+    );
+    const proc = spawn(
+      executable,
+      args,
       {
         stdio: ["ignore", "pipe", "pipe"],
         // #2616: inject NO_PROXY=localhost so the streamed pull against the

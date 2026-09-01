@@ -195,6 +195,16 @@ export function getResolvedOllamaHost(): string {
   return _resolvedOllamaHost ?? OLLAMA_LOCALHOST;
 }
 
+/** Keep Windows-host Ollama requests in Docker Desktop's verified network context. */
+export function getOllamaApiCommand(
+  curlArgs: readonly string[],
+  host: string = getResolvedOllamaHost(),
+): string[] {
+  return host === OLLAMA_HOST_DOCKER_INTERNAL
+    ? ["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE, ...curlArgs]
+    : ["curl", ...curlArgs];
+}
+
 export function resetOllamaHostCache(): void {
   _resolvedOllamaHost = null;
 }
@@ -1581,21 +1591,21 @@ export function getOllamaModelOptions(
   const capture = runCaptureImpl ?? runCapture;
   const host = getResolvedOllamaHost();
   const modelDiscoveryRetryDelaysMs = [500, 1_000] as const;
+  // Docker Desktop owns Windows-host reachability because host.docker.internal
+  // may not resolve from WSL. Keep model discovery on the verified transport.
+  const tagsCommand = getOllamaApiCommand(
+    buildValidatedCurlCommandArgs([
+      "-sf",
+      "--connect-timeout",
+      "3",
+      "--max-time",
+      "5",
+      `http://${host}:${OLLAMA_PORT}/api/tags`,
+    ]),
+    host,
+  );
   const readTags = () => {
-    const tagsOutput = capture(
-      [
-        "curl",
-        ...buildValidatedCurlCommandArgs([
-          "-sf",
-          "--connect-timeout",
-          "3",
-          "--max-time",
-          "5",
-          `http://${host}:${OLLAMA_PORT}/api/tags`,
-        ]),
-      ],
-      { ignoreError: true },
-    );
+    const tagsOutput = capture(tagsCommand, { ignoreError: true });
     return parseOllamaModelInventory(String(tagsOutput || ""));
   };
   // The daemon can become unreachable after the earlier readiness check.
@@ -1728,6 +1738,24 @@ export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string
     options: { num_predict: 16 },
   });
   const host = getResolvedOllamaHost();
+  if (host !== OLLAMA_HOST_DOCKER_INTERNAL) {
+    return [
+      "bash",
+      "-c",
+      `nohup curl -s http://${host}:${OLLAMA_PORT}/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} >/dev/null 2>&1 &`,
+    ];
+  }
+  const command = getOllamaApiCommand(
+    [
+      "-s",
+      `http://${host}:${OLLAMA_PORT}/api/generate`,
+      "-H",
+      "Content-Type: application/json",
+      "-d",
+      payload,
+    ],
+    host,
+  );
   // backgrounding (nohup ... &) and output redirection require a shell wrapper.
   // The payload is safe: model name is JSON-serialized (escaping all special
   // chars) then shellQuote'd (single-quoted), so injection through model
@@ -1735,7 +1763,7 @@ export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string
   return [
     "bash",
     "-c",
-    `nohup curl -s http://${host}:${OLLAMA_PORT}/api/generate -H 'Content-Type: application/json' -d ${shellQuote(payload)} >/dev/null 2>&1 &`,
+    `nohup ${command.map((arg) => shellQuote(arg)).join(" ")} >/dev/null 2>&1 &`,
   ];
 }
 
@@ -1763,8 +1791,7 @@ export function getOllamaProbeCommand(
     payload,
     endpoint,
   ]);
-  return [
-    "curl",
+  const curlArgs = [
     "-sS",
     "--max-time",
     String(timeoutSeconds),
@@ -1774,6 +1801,7 @@ export function getOllamaProbeCommand(
     "-d",
     payload,
   ];
+  return getOllamaApiCommand(curlArgs, host);
 }
 
 export function validateOllamaModel(

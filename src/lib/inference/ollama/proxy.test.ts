@@ -438,13 +438,16 @@ describe("pullOllamaModel CLI-vs-HTTP dispatch", () => {
     vi.restoreAllMocks();
   });
 
-  it("pulls over HTTP when the daemon resolves on the Windows host", async () => {
+  it("pulls through Docker when the daemon resolves on the Windows host (#10553)", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     active = loadProxyForDispatch({ host: "host.docker.internal", hasLocalCli: true });
 
     await active.proxy.pullOllamaModel("qwen3.5:9b");
 
-    expect(active.httpCommands.map((command) => command[0])).toContain("curl");
+    expect(active.httpCommands.map((command) => command[0])).toContain("docker");
+    expect(active.httpCommands[0]).toEqual(
+      expect.arrayContaining(["run", "--rm", "curlimages/curl:8.10.1"]),
+    );
     expect(active.cliCommands.map((command) => command[0])).not.toContain("bash");
   });
 
