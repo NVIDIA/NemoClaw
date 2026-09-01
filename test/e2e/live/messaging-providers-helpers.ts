@@ -495,6 +495,13 @@ export function policyTextHasHost(text: string, host: string): boolean {
 
 type SlackAllowRule = { readonly method: string; readonly path: string };
 
+type SlackRestEndpointExpectation = {
+  readonly host: string;
+  readonly path?: string;
+  readonly provider: string;
+  readonly rules: readonly SlackAllowRule[];
+};
+
 function hasExactSlackAllowRules(
   endpoint: Record<string, unknown> | undefined,
   expected: readonly SlackAllowRule[],
@@ -522,17 +529,18 @@ function hasExactSlackAllowRules(
 
 function isCredentialBoundSlackRestEndpoint(
   endpoint: Record<string, unknown> | undefined,
-  providerName: string,
-  rules: readonly SlackAllowRule[],
+  expected: SlackRestEndpointExpectation,
 ): boolean {
   return (
+    endpoint?.host === expected.host &&
+    endpoint.path === expected.path &&
     endpoint?.port === 443 &&
     endpoint.protocol === "rest" &&
     endpoint.enforcement === "enforce" &&
     endpoint.request_body_credential_rewrite === true &&
     (endpoint.credential_binding as { provider?: unknown } | undefined)?.provider ===
-      providerName &&
-    hasExactSlackAllowRules(endpoint, rules)
+      expected.provider &&
+    hasExactSlackAllowRules(endpoint, expected.rules)
   );
 }
 
@@ -553,31 +561,49 @@ export function slackCredentialBindingEvidence(
     slackPolicyRecord && Array.isArray(slackPolicyRecord.endpoints)
       ? (slackPolicyRecord.endpoints as Array<Record<string, unknown>>)
       : [];
-  const botEndpoint = endpoints.find(
-    (endpoint) => endpoint.host === "slack.com" && endpoint.path === undefined,
+  const appEndpoint: SlackRestEndpointExpectation = {
+    host: "slack.com",
+    path: "/api/apps.connections.open",
+    provider: `${sandboxName}-slack-app`,
+    rules: [{ method: "POST", path: "/api/apps.connections.open" }],
+  };
+  const botRules = [
+    { method: "GET", path: "/**" },
+    { method: "POST", path: "/**" },
+  ] as const;
+  const botEndpoints: readonly SlackRestEndpointExpectation[] = [
+    "slack.com",
+    "api.slack.com",
+    "hooks.slack.com",
+  ].map((host) => ({ host, provider: `${sandboxName}-slack-bridge`, rules: botRules }));
+  const expectedRestEndpoints = [appEndpoint, ...botEndpoints];
+  const matchesExpectedRoute = (
+    endpoint: Record<string, unknown>,
+    expected: SlackRestEndpointExpectation,
+  ): boolean => endpoint.host === expected.host && endpoint.path === expected.path;
+  const credentialRouteEndpoints = endpoints.filter((endpoint) =>
+    expectedRestEndpoints.some((expected) => matchesExpectedRoute(endpoint, expected)),
   );
-  const appEndpoint = endpoints.find(
-    (endpoint) => endpoint.host === "slack.com" && endpoint.path === "/api/apps.connections.open",
-  );
-  const hasUnexpectedSlackRestEndpoint = endpoints.some(
-    (endpoint) =>
-      endpoint.host === "slack.com" &&
-      endpoint.protocol === "rest" &&
-      endpoint !== botEndpoint &&
-      endpoint !== appEndpoint,
-  );
+  const hasCanonicalRouteSet =
+    credentialRouteEndpoints.length === expectedRestEndpoints.length &&
+    !endpoints.some(
+      (endpoint) =>
+        endpoint.protocol === "rest" &&
+        !expectedRestEndpoints.some((expected) => matchesExpectedRoute(endpoint, expected)),
+    );
   return {
     app:
-      !hasUnexpectedSlackRestEndpoint &&
-      isCredentialBoundSlackRestEndpoint(appEndpoint, `${sandboxName}-slack-app`, [
-        { method: "POST", path: "/api/apps.connections.open" },
-      ]),
+      hasCanonicalRouteSet &&
+      credentialRouteEndpoints.some((endpoint) =>
+        isCredentialBoundSlackRestEndpoint(endpoint, appEndpoint),
+      ),
     bot:
-      !hasUnexpectedSlackRestEndpoint &&
-      isCredentialBoundSlackRestEndpoint(botEndpoint, `${sandboxName}-slack-bridge`, [
-        { method: "GET", path: "/**" },
-        { method: "POST", path: "/**" },
-      ]),
+      hasCanonicalRouteSet &&
+      botEndpoints.every((expected) =>
+        credentialRouteEndpoints.some((endpoint) =>
+          isCredentialBoundSlackRestEndpoint(endpoint, expected),
+        ),
+      ),
   };
 }
 

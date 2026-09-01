@@ -52,6 +52,24 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+      - host: api.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        credential_binding: { provider: ${SLACK_POLICY_SANDBOX}-slack-bridge }
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: hooks.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        credential_binding: { provider: ${SLACK_POLICY_SANDBOX}-slack-bridge }
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
 `;
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
@@ -164,6 +182,27 @@ network_policies:
       bot: false,
     });
   });
+
+  it.each(["api.slack.com", "hooks.slack.com"])(
+    "rejects the %s bot route without credential rewrite",
+    (host) => {
+      const routeStart = CREDENTIAL_BOUND_SLACK_POLICY.indexOf(`      - host: ${host}`);
+      const nextRoute = CREDENTIAL_BOUND_SLACK_POLICY.indexOf("      - host:", routeStart + 1);
+      const routeEnd = nextRoute === -1 ? CREDENTIAL_BOUND_SLACK_POLICY.length : nextRoute;
+      const policy =
+        CREDENTIAL_BOUND_SLACK_POLICY.slice(0, routeStart) +
+        CREDENTIAL_BOUND_SLACK_POLICY.slice(routeStart, routeEnd).replace(
+          "request_body_credential_rewrite: true",
+          "request_body_credential_rewrite: false",
+        ) +
+        CREDENTIAL_BOUND_SLACK_POLICY.slice(routeEnd);
+
+      expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
+        app: true,
+        bot: false,
+      });
+    },
+  );
 
   it("rejects an extra unbound broad Slack REST endpoint", () => {
     const policy = `${CREDENTIAL_BOUND_SLACK_POLICY}      - host: slack.com
