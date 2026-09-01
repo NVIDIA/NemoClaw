@@ -51,8 +51,7 @@ export const reviewHeadlessUiSettings: AdvisoryCheck<HostAssessment> = {
     return hostAdvisory(reviewHeadlessUiSettings, {
       title: "Review remote/headless UI settings",
       kind: "info",
-      reason:
-        "Headless Linux hosts often need explicit remote UI handling if you want browser access.",
+      reason: "Headless hosts often need explicit remote UI handling if you want browser access.",
       commands: ["Set `CHAT_UI_URL` when remote browser access matters."],
     });
   },
