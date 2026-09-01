@@ -148,20 +148,25 @@ function bufferOrStringToText(value: string | Buffer | null | undefined): string
   return "";
 }
 
-function registeredStaticProfileMatchesCheckedInContract(
+function registeredMessagingProfileMatchesCheckedInContract(
   profile: MessagingBridgeProfile,
   exported: string,
   readFileSync: (file: string) => string,
 ): boolean {
-  const expected = parseCheckedInProviderProfileContract(readFileSync(profile.profilePath));
-  return (
-    expected !== null &&
-    expected.profileId === profile.profileId &&
-    expected.boundary.endpoints.length === 0 &&
-    expected.boundary.binaries.length === 0 &&
-    expected.boundary.inference_capable === false &&
-    exportedProviderProfileMatchesContract(exported, expected)
-  );
+  try {
+    const expected = parseCheckedInProviderProfileContract(readFileSync(profile.profilePath));
+    return (
+      expected !== null &&
+      expected.profileId === profile.profileId &&
+      (profile.strategy !== null ||
+        (expected.boundary.endpoints.length === 0 &&
+          expected.boundary.binaries.length === 0 &&
+          expected.boundary.inference_capable === false)) &&
+      exportedProviderProfileMatchesContract(exported, expected)
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Compare a registered static profile with its checked-in credential boundary. */
@@ -178,7 +183,7 @@ export function matchesRegisteredStaticMessagingProfile(
     { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
   );
   if (exported.status !== 0) return false;
-  return registeredStaticProfileMatchesCheckedInContract(
+  return registeredMessagingProfileMatchesCheckedInContract(
     profile,
     bufferOrStringToText(exported.stdout),
     deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
@@ -424,12 +429,39 @@ export function ensureMessagingBridgeProfiles(
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
   const readFileSync = deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8"));
 
-  const rejectMismatchedStaticProfile = (profile: MessagingBridgeProfile): void => {
+  const rejectUntrustedProfile = (profile: MessagingBridgeProfile): void => {
     errorLog(
-      `\n  ✗ OpenShell provider profile '${profile.profileId}' does not match NemoClaw's endpointless ${profile.channelId} credential contract.`,
+      `\n  ✗ OpenShell provider profile '${profile.profileId}' could not be read or does not exactly match NemoClaw's checked-in ${profile.channelId} credential contract.`,
     );
-    errorLog("    Remove the conflicting profile and re-run onboarding.");
+    errorLog(
+      "    Confirm the checked-in profile is readable; remove a conflicting gateway profile, then re-run onboarding.",
+    );
     exit(1);
+  };
+
+  const exportProfile = (profile: MessagingBridgeProfile) =>
+    deps.runOpenshell(["provider", "profile", "export", profile.profileId, "--output", "json"], {
+      ignoreError: true,
+      suppressOutput: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+  const acceptRegisteredProfile = (
+    profile: MessagingBridgeProfile,
+    exported: ReturnType<RunOpenshell>,
+  ): boolean => {
+    if (
+      exported.status === 0 &&
+      registeredMessagingProfileMatchesCheckedInContract(
+        profile,
+        bufferOrStringToText(exported.stdout),
+        readFileSync,
+      )
+    ) {
+      return true;
+    }
+    rejectUntrustedProfile(profile);
+    return false;
   };
 
   for (const profile of active) {
@@ -439,22 +471,9 @@ export function ensureMessagingBridgeProfiles(
     // "already exists" error. A fresh gateway answers the probe with a harmless
     // "not found" that suppressOutput hides — only the exit status says whether
     // the profile already exists.
-    const alreadyRegistered = deps.runOpenshell(
-      ["provider", "profile", "export", profile.profileId, "--output", "json"],
-      { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
-    );
+    const alreadyRegistered = exportProfile(profile);
     if (alreadyRegistered.status === 0) {
-      if (
-        profile.strategy === null &&
-        !registeredStaticProfileMatchesCheckedInContract(
-          profile,
-          bufferOrStringToText(alreadyRegistered.stdout),
-          readFileSync,
-        )
-      ) {
-        rejectMismatchedStaticProfile(profile);
-        return;
-      }
+      if (!acceptRegisteredProfile(profile, alreadyRegistered)) return;
       continue;
     }
     // Probe failed for something other than "not found" (gateway down, auth, …):
@@ -472,34 +491,20 @@ export function ensureMessagingBridgeProfiles(
       ["provider", "profile", "import", "--file", profile.profilePath],
       { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
     );
-    if (result.status === 0) continue;
+    if (result.status === 0) {
+      if (!acceptRegisteredProfile(profile, exportProfile(profile))) return;
+      continue;
+    }
 
     // Reconcile a lost race: the probe saw no profile but a concurrent import made it.
     const rawDiagnostic = `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`;
     if (/already exists/i.test(rawDiagnostic)) {
-      if (profile.strategy !== null) continue;
-      const racedProfile = deps.runOpenshell(
-        ["provider", "profile", "export", profile.profileId, "--output", "json"],
-        { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
-      );
-      if (
-        racedProfile.status !== 0 ||
-        !registeredStaticProfileMatchesCheckedInContract(
-          profile,
-          bufferOrStringToText(racedProfile.stdout),
-          readFileSync,
-        )
-      ) {
-        rejectMismatchedStaticProfile(profile);
-        return;
-      }
+      if (!acceptRegisteredProfile(profile, exportProfile(profile))) return;
       continue;
     }
 
     const diagnostic = compactText(deps.redact(rawDiagnostic));
-    errorLog(
-      `\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`,
-    );
+    errorLog(`\n  ✗ Failed to register the ${profile.channelId} provider profile with OpenShell.`);
     if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
     errorLog("    Update OpenShell with scripts/install-openshell.sh and re-run onboarding.");
     exit(result.status || 1);
