@@ -191,9 +191,7 @@ export type FakeDockerApi = {
   kind: FakeDockerApiKind;
   port: string;
   alternatePort?: string;
-  dir: string;
   captureFile: string;
-  container: string;
 };
 
 export function outputText(result: CommandOutput): string {
@@ -1005,9 +1003,7 @@ export async function startFakeDockerApi(
     kind: options.kind,
     port: publishedRestPort,
     ...(options.kind === "slack" ? { alternatePort: publishedWebsocketPort } : {}),
-    dir,
     captureFile,
-    container,
   };
 }
 

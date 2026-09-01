@@ -125,7 +125,7 @@ describe("messaging provider installed-runtime proofs", () => {
       ["8080/tcp", "8081/tcp"],
     ],
   ] as const)(
-    "proxies the isolated fake %s API through OpenShell-bridge ephemeral ports",
+    "configures an isolated fake %s API proxy on OpenShell-bridge ephemeral ports",
     async (kind, expectedPublications, expectedPortQueries) => {
       const { calls, commands, host } = fakeDockerHost();
       const cleanup: CleanupAction[] = [];
