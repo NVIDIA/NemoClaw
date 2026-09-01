@@ -8,7 +8,10 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveAgent } from "../../src/lib/agent/onboard.ts";
-import { parseOpenShellSandboxId } from "../../src/lib/adapters/openshell/sandbox-identity.ts";
+import {
+  NEMOCLAW_CREATE_ATTEMPT_LABEL,
+  parseOpenShellSandboxId,
+} from "../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { createCliOpenShellSandboxObserverFromRunner } from "../../src/lib/adapters/openshell/sandbox-observer-cli.ts";
 import { isValidName, NAME_ALLOWED_FORMAT } from "../../src/lib/name-validation.ts";
 import {
@@ -48,6 +51,7 @@ import {
   resolveDockerStartupCommandPatch,
   runSandboxGpuCreateFlow,
   type SandboxGpuCreateFlowInput,
+  waitForSandboxReadinessUntil,
 } from "../../src/lib/onboard/sandbox-gpu-create-flow.ts";
 import { createDirectSandboxGpuVerifier } from "../../src/lib/onboard/sandbox-gpu-preflight.ts";
 import {
@@ -322,6 +326,90 @@ function isDockerNotFound(result: ManagedImageCommandResult): boolean {
   );
 }
 
+export type ManagedImageRetainedSandboxRecovery = Readonly<{
+  schemaVersion: 1;
+  sandboxName: string;
+  createAttemptLabel: string;
+  sandboxIdentityFingerprint: string | null;
+  message: string;
+}>;
+
+const MANAGED_IMAGE_RETAINED_RECOVERY_FILE = "retained-sandbox-recovery.json";
+
+export function readManagedImageRetainedSandboxRecovery(
+  stateDir: string,
+): ManagedImageRetainedSandboxRecovery | null {
+  try {
+    const value = JSON.parse(
+      fs.readFileSync(path.join(stateDir, MANAGED_IMAGE_RETAINED_RECOVERY_FILE), "utf8"),
+    ) as Partial<ManagedImageRetainedSandboxRecovery>;
+    if (
+      value.schemaVersion !== 1 ||
+      typeof value.sandboxName !== "string" ||
+      typeof value.createAttemptLabel !== "string" ||
+      (value.sandboxIdentityFingerprint !== null &&
+        typeof value.sandboxIdentityFingerprint !== "string") ||
+      typeof value.message !== "string"
+    ) {
+      return null;
+    }
+    return value as ManagedImageRetainedSandboxRecovery;
+  } catch {
+    return null;
+  }
+}
+
+export function persistManagedImageRetainedSandboxRecovery(options: {
+  readonly stateDir: string;
+  readonly sandboxName: string;
+  readonly message: string;
+  readonly sandboxIdentityFingerprint?: string;
+  readonly createAttemptNonce?: string;
+}): boolean {
+  if (!options.createAttemptNonce) return false;
+  const record: ManagedImageRetainedSandboxRecovery = {
+    schemaVersion: 1,
+    sandboxName: options.sandboxName,
+    createAttemptLabel: `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${options.createAttemptNonce}`,
+    sandboxIdentityFingerprint: options.sandboxIdentityFingerprint ?? null,
+    message: options.message,
+  };
+  const recordPath = path.join(options.stateDir, MANAGED_IMAGE_RETAINED_RECOVERY_FILE);
+  const temporaryPath = `${recordPath}.tmp`;
+  let descriptor: number | null = null;
+  let directoryDescriptor: number | null = null;
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(record, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    descriptor = fs.openSync(temporaryPath, "r");
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
+    fs.renameSync(temporaryPath, recordPath);
+    directoryDescriptor = fs.openSync(options.stateDir, "r");
+    fs.fsyncSync(directoryDescriptor);
+    fs.closeSync(directoryDescriptor);
+    directoryDescriptor = null;
+    const persisted = readManagedImageRetainedSandboxRecovery(options.stateDir);
+    return (
+      persisted?.schemaVersion === record.schemaVersion &&
+      persisted.sandboxName === record.sandboxName &&
+      persisted.createAttemptLabel === record.createAttemptLabel &&
+      persisted.sandboxIdentityFingerprint === record.sandboxIdentityFingerprint &&
+      persisted.message === record.message
+    );
+  } catch {
+    return false;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+    if (directoryDescriptor !== null) fs.closeSync(directoryDescriptor);
+    fs.rmSync(temporaryPath, { force: true });
+  }
+}
+
 export function removeManagedImageGatewayStateIfSafe(
   stateDir: string,
   gatewayStop: Pick<StopHostGatewayResult, "failed" | "ownershipFailures">,
@@ -533,17 +621,28 @@ export function managedImageOpenShellCommittedProbe(
   ].join("\n");
 }
 
-async function waitForCommittedSandboxProbe(
+export type ManagedImageCommittedProbeWaitOptions = {
+  readonly budgetMs?: number;
+  readonly now?: () => number;
+  readonly runCommand?: ManagedImageCommandRunner;
+  readonly sleep?: (milliseconds: number) => void | Promise<void>;
+};
+
+export async function waitForCommittedSandboxProbe(
   onboard: OnboardModule,
   input: Inputs,
   env: NodeJS.ProcessEnv,
   requireCommitted = true,
+  options: ManagedImageCommittedProbeWaitOptions = {},
 ): Promise<void> {
   const healthProbe = managedImageOpenShellProbe(input.agent, input.model ?? MODEL);
   const committedProbe = managedImageOpenShellCommittedProbe();
-  const deadline = Date.now() + 240_000;
+  const now = options.now ?? Date.now;
+  const budgetMs = options.budgetMs ?? 240_000;
+  const deadlineMs = now() + budgetMs;
+  const runCommand = options.runCommand ?? commandResult;
   const runProbe = (probe: string, timeoutMs: number) =>
-    commandResult(
+    runCommand(
       onboard.openshellArgv([
         "sandbox",
         "exec",
@@ -559,26 +658,36 @@ async function waitForCommittedSandboxProbe(
       timeoutMs,
     );
   let lastHealthDetail = "";
-  while (Date.now() < deadline) {
-    const remainingMs = deadline - Date.now();
-    const health = runProbe(healthProbe, Math.max(1, Math.min(15_000, remainingMs)));
-    if (health.status === 0) {
-      if (!requireCommitted) return;
+  const ready = await waitForSandboxReadinessUntil(
+    () => {
+      const remainingMs = deadlineMs - now();
+      const health = runProbe(healthProbe, Math.max(1, Math.min(15_000, remainingMs)));
+      if (health.status !== 0) {
+        lastHealthDetail = commandDetail(health);
+        return false;
+      }
+      if (!requireCommitted) return true;
       const committed = runProbe(
         committedProbe,
-        Math.max(1, Math.min(15_000, deadline - Date.now())),
+        Math.max(1, Math.min(15_000, deadlineMs - now())),
       );
       if (committed.status !== 0) {
         throw new Error(
           `managed bootstrap committed, but transaction cleanup was not observable through the exact sandbox: ${commandDetail(committed)}`,
         );
       }
-      return;
-    }
-    lastHealthDetail = commandDetail(health);
-    const sleepMs = Math.min(2_000, Math.max(0, deadline - Date.now()));
-    if (sleepMs > 0) await new Promise((resolve) => setTimeout(resolve, sleepMs));
-  }
+      return true;
+    },
+    {
+      deadlineMs,
+      initialIntervalMs: 2_000,
+      maxIntervalMs: 2_000,
+      backoffFactor: 1,
+      now,
+      ...(options.sleep ? { sleep: options.sleep } : {}),
+    },
+  );
+  if (ready) return;
   throw new Error(
     `OpenShell sandbox did not pass the exact-image managed-bootstrap probe within 240s: ${lastHealthDetail}`,
   );
@@ -1142,6 +1251,19 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
             agentIdentity: managedImageRuntimeIdentity(input.agent),
             intendedWorkloadArgv: launch.intendedSandboxStartupCommand,
           }),
+          persistRetainedSandboxRecovery(
+            message,
+            sandboxIdentityFingerprint,
+            createAttemptNonce,
+          ) {
+            return persistManagedImageRetainedSandboxRecovery({
+              stateDir,
+              sandboxName: input.sandbox,
+              message,
+              ...(sandboxIdentityFingerprint ? { sandboxIdentityFingerprint } : {}),
+              ...(createAttemptNonce ? { createAttemptNonce } : {}),
+            });
+          },
           verifyCreatedSandboxBeforeEffects(identity) {
             if (ownedSandboxId && ownedSandboxId !== identity.sandboxId) {
               throw new Error("managed-image create returned more than one durable sandbox identity");

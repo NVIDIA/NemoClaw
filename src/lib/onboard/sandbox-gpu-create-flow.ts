@@ -44,6 +44,7 @@ import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import {
   createSandboxGpuCreateAttemptRunner,
   persistRetainedSandboxRecoveryOrBlock,
+  waitForSandboxReadinessUntil,
 } from "./sandbox-gpu-create-run-attempt";
 import { managedBootstrapCreateArgs } from "./sandbox-create-launch";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
@@ -56,6 +57,7 @@ import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import { addTraceEvent } from "./tracing";
 
 export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
+export { waitForSandboxReadinessUntil };
 
 export function resolvePortableLifecycleMode(
   agent: AgentDefinition | null,

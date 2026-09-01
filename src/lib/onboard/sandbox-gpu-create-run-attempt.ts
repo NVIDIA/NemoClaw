@@ -19,7 +19,7 @@ import {
   settleCreatedOpenShellSandboxId,
 } from "../adapters/openshell/sandbox-identity";
 import { createReadinessWaitOptions } from "../core/readiness-wait";
-import { waitUntil } from "../core/wait";
+import { waitUntil, waitUntilAsync } from "../core/wait";
 import { streamSandboxCreate, type StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
 import { redact, redactFullWithUrls } from "../security/redact";
@@ -82,6 +82,8 @@ type PostCreateReadinessDeadline = Readonly<{
   deadlineMs: number;
   now: () => number;
 }>;
+
+export { waitUntilAsync as waitForSandboxReadinessUntil };
 
 function createPostCreateReadinessDeadline(
   input: SandboxGpuCreateFlowInput,
@@ -1426,14 +1428,20 @@ export function createSandboxGpuCreateAttemptRunner(
       revalidatePostCreateEffect(`commit runtime readiness for sandbox '${input.sandboxName}'`);
       await runtimePatch.commitAfterReady();
     }
-    const confirmCommittedRuntimeReadiness = () =>
-      confirmManagedRuntimeCommitReadiness({
+    let committedRuntimeReadinessDeadline: PostCreateReadinessDeadline | null = null;
+    const confirmCommittedRuntimeReadiness = () => {
+      // GPU local-inference validation has its own timeout and runs before
+      // commit. Start this budget only when the caller has committed the
+      // runtime so slow inference validation cannot consume Ready recovery.
+      committedRuntimeReadinessDeadline ??= createPostCreateReadinessDeadline(input, deps);
+      return confirmManagedRuntimeCommitReadiness({
         input,
         deps,
         sandboxId: managedBootstrap ? verifiedCreatedSandboxId : null,
         createAttemptNonce,
-        deadline: requirePostCreateReadinessDeadline(),
+        deadline: committedRuntimeReadinessDeadline,
       });
+    };
     if (!input.sandboxGpuConfig.sandboxGpuEnabled) {
       await confirmCommittedRuntimeReadiness();
     }

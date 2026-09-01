@@ -368,7 +368,7 @@ describe("created sandbox identity gate", () => {
     expect(firstReadiness?.stableReadyPolls).toBe(1);
   });
 
-  it("shares managed bootstrap time with post-commit readiness (#10652)", async () => {
+  it("starts a fresh readiness deadline after the managed runtime commit (#10652)", async () => {
     let nonce = "";
     let nowMs = 0;
     const input = noGpuInput();
@@ -397,10 +397,58 @@ describe("created sandbox identity gate", () => {
       return { ready: true, reason: "ready", failurePhase: null };
     });
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
-    expect(readinessTimeouts).toEqual([10, 7, 5]);
+    expect(readinessTimeouts).toEqual([10, 7, 10]);
     expect(
       mocks.waitForCreatedSandboxReadyWithTrace.mock.calls.map(([options]) => options.now),
     ).toEqual([deps.publicationNow, deps.publicationNow, deps.publicationNow]);
+    expect(patch.commitAfterReady).toHaveBeenCalledOnce();
+  });
+
+  it("does not charge slow GPU inference validation to post-commit readiness (#10652)", async () => {
+    let nonce = "";
+    let nowMs = 0;
+    const input = noGpuInput();
+    input.sandboxGpuConfig = {
+      mode: "1",
+      hostGpuDetected: true,
+      hostGpuPlatform: "linux",
+      sandboxGpuEnabled: true,
+      sandboxGpuDevice: null,
+      errors: [],
+    };
+    input.gpuRoutePlan = "native-only";
+    input.initialGpuRoute = "native";
+    input.sandboxReadyTimeoutSecs = 10;
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    attachManagedBootstrap(input, patch, { freshCreate: true });
+    mocks.streamSandboxCreate.mockImplementationOnce(async (_command, args) => {
+      nonce = createAttemptNonce(args);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    deps.publicationNow = () => nowMs;
+    vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
+      args[1] === "list"
+        ? sandboxListJson("alpha-sandbox-id", {
+            [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+          })
+        : "Name: alpha\nId: alpha-sandbox-id\nState: Ready\n",
+    );
+    const readinessTimeouts: number[] = [];
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementation(async (options) => {
+      readinessTimeouts.push(options.timeoutSecs);
+      return { ready: true, reason: "ready", failurePhase: null };
+    });
+
+    const created = await runSandboxGpuCreateFlow(input, deps);
+    expect(patch.commitAfterReady).not.toHaveBeenCalled();
+    nowMs += 9_500;
+    await created.runtimePatch.commitAfterReady();
+    await created.confirmManagedRuntimeCommitReadiness();
+
+    expect(readinessTimeouts.at(-1)).toBe(10);
     expect(patch.commitAfterReady).toHaveBeenCalledOnce();
   });
 

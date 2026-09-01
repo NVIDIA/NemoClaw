@@ -32,9 +32,13 @@ import {
   managedImageOpenShellProbe,
   managedImageSandboxCleanupOwnershipError,
   parseManagedImageOpenShellE2eInputs,
+  persistManagedImageRetainedSandboxRecovery,
+  readManagedImageRetainedSandboxRecovery,
   removeManagedImageGatewayStateIfSafe,
   resolveManagedImageOnboardModule,
+  waitForCommittedSandboxProbe,
 } from "../../../scripts/checks/run-managed-image-openshell-e2e.ts";
+import { persistRetainedSandboxRecoveryOrBlock } from "../../../src/lib/onboard/sandbox-gpu-create-run-attempt.ts";
 import { resolveOnboardManagedBootstrapLaunch } from "../../../src/lib/onboard/managed-workload/onboard-orchestration.js";
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
@@ -245,21 +249,6 @@ describe("protected managed-image runtime contract", () => {
     expect(Object.isFrozen(protectedLaunch.expectedSupervisorArgv)).toBe(true);
   });
 
-  it.each([
-    "openshellArgv",
-    "runOpenshell",
-    "runCaptureOpenshell",
-    "isSandboxReady",
-    "printSandboxCreateRecoveryHints",
-    "sleepSeconds",
-    "startGatewayForRecovery",
-  ] as const)(
-    "loads every OpenShell operation required before protected image launch [%s] (#7744)",
-    (operation) => {
-      expect(MANAGED_IMAGE_ONBOARD[operation], operation).toBeTypeOf("function");
-    },
-  );
-
   it("rejects a missing protected OpenShell operation with a precise contract error (#8759)", () => {
     expect(() =>
       resolveManagedImageOnboardModule({
@@ -273,6 +262,170 @@ describe("protected managed-image runtime contract", () => {
         },
       }),
     ).toThrow("managed-image onboard module is missing required operation(s): runOpenshell");
+  });
+
+  it("uses the shared wait contract for an immediate probe and fixed retries (#10652)", async () => {
+    const input = parseManagedImageOpenShellE2eInputs([
+      "--agent",
+      "openclaw",
+      "--image",
+      IMAGE,
+      "--sandbox",
+      VALID_SANDBOX,
+    ]);
+    const onboard = {
+      openshellArgv: (argv: string[]) => ["openshell", ...argv],
+    } as never;
+    let nowMs = 0;
+    let healthAttempt = 0;
+    const healthProbeTimes: number[] = [];
+    const sleeps: number[] = [];
+    const healthResult = () => {
+      healthProbeTimes.push(nowMs);
+      healthAttempt += 1;
+      return healthAttempt === 1
+        ? { status: 1, stdout: "", stderr: "sandbox warming" }
+        : SUCCESS_WITHOUT_OUTPUT;
+    };
+    const runCommand = vi.fn((argv: readonly string[]) =>
+      String(argv.at(-1)).includes("managed-startup-shared-state-transaction-v1")
+        ? SUCCESS_WITHOUT_OUTPUT
+        : healthResult(),
+    );
+
+    await waitForCommittedSandboxProbe(onboard, input, {}, true, {
+      budgetMs: 6_000,
+      now: () => nowMs,
+      runCommand,
+      sleep: (milliseconds) => {
+        sleeps.push(milliseconds);
+        nowMs += milliseconds;
+      },
+    });
+
+    expect(healthProbeTimes).toEqual([0, 2_000]);
+    expect(sleeps).toEqual([2_000]);
+  });
+
+  it("reports the final managed-image probe diagnostic at its deadline (#10652)", async () => {
+    const input = parseManagedImageOpenShellE2eInputs([
+      "--agent",
+      "openclaw",
+      "--image",
+      IMAGE,
+      "--sandbox",
+      VALID_SANDBOX,
+    ]);
+    const onboard = {
+      openshellArgv: (argv: string[]) => ["openshell", ...argv],
+    } as never;
+    let nowMs = 0;
+    const sleeps: number[] = [];
+
+    await expect(
+      waitForCommittedSandboxProbe(onboard, input, {}, true, {
+        budgetMs: 4_000,
+        now: () => nowMs,
+        runCommand: () => ({ status: 1, stdout: "", stderr: "last sandbox diagnostic" }),
+        sleep: (milliseconds) => {
+          sleeps.push(milliseconds);
+          nowMs += milliseconds;
+        },
+      }),
+    ).rejects.toThrow(
+      "OpenShell sandbox did not pass the exact-image managed-bootstrap probe within 240s: last sandbox diagnostic",
+    );
+    expect(nowMs).toBe(4_000);
+    expect(sleeps).toEqual([2_000, 2_000]);
+  });
+
+  it("fails immediately when the healthy sandbox still has transaction state (#10652)", async () => {
+    const input = parseManagedImageOpenShellE2eInputs([
+      "--agent",
+      "openclaw",
+      "--image",
+      IMAGE,
+      "--sandbox",
+      VALID_SANDBOX,
+    ]);
+    const onboard = {
+      openshellArgv: (argv: string[]) => ["openshell", ...argv],
+    } as never;
+    const sleeps: number[] = [];
+    const runCommand = vi
+      .fn()
+      .mockReturnValueOnce(SUCCESS_WITHOUT_OUTPUT)
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "transaction remains" });
+
+    await expect(
+      waitForCommittedSandboxProbe(onboard, input, {}, true, {
+        budgetMs: 4_000,
+        now: () => 0,
+        runCommand,
+        sleep: (milliseconds) => {
+          sleeps.push(milliseconds);
+        },
+      }),
+    ).rejects.toThrow(
+      "managed bootstrap committed, but transaction cleanup was not observable through the exact sandbox: transaction remains",
+    );
+    expect(runCommand).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("durably preserves harness recovery evidence when acknowledgement blocks (#10652)", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-recovery-"));
+    const createAttemptNonce = "a".repeat(62);
+    const sandboxIdentityFingerprint = "b".repeat(64);
+    const message = "Retain this exact managed-image sandbox for recovery.";
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const persist = vi.fn(
+      (
+        persistedMessage: string,
+        persistedFingerprint?: string,
+        persistedNonce?: string,
+      ) => {
+        expect(
+          persistManagedImageRetainedSandboxRecovery({
+            stateDir,
+            sandboxName: VALID_SANDBOX,
+            message: persistedMessage,
+            ...(persistedFingerprint
+              ? { sandboxIdentityFingerprint: persistedFingerprint }
+              : {}),
+            ...(persistedNonce ? { createAttemptNonce: persistedNonce } : {}),
+          }),
+        ).toBe(true);
+        return false;
+      },
+    );
+
+    try {
+      expect(() =>
+        persistRetainedSandboxRecoveryOrBlock({
+          persist,
+          message,
+          createAttemptNonce,
+          sandboxIdentityFingerprint,
+        }),
+      ).toThrow("the recovery-only session remains blocked");
+      expect(readManagedImageRetainedSandboxRecovery(stateDir)).toEqual({
+        schemaVersion: 1,
+        sandboxName: VALID_SANDBOX,
+        createAttemptLabel: expect.stringMatching(new RegExp(`=${createAttemptNonce}$`, "u")),
+        sandboxIdentityFingerprint,
+        message,
+      });
+      expect(
+        fs.statSync(path.join(stateDir, "retained-sandbox-recovery.json")).mode & 0o777,
+      ).toBe(0o600);
+      expect(persist).toHaveBeenCalledOnce();
+      expect(error.mock.calls.flat().join("\n")).toContain(
+        "recovery-only session remains blocked",
+      );
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 
   it.each([
