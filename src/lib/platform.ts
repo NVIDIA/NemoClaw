@@ -85,7 +85,7 @@ export function windowsProcessListensOnlyOnLoopback(
   );
 }
 
-const DOCKER_PROBE_TIMEOUT_MS = 3_000;
+export const DOCKER_PROBE_TIMEOUT_MS = 3_000;
 const DOCKER_PROBE_MAX_BUFFER_BYTES = 1024 * 1024;
 const DOCKER_PROBE_ENV_NAMES = ["HOME", "USER", "LOGNAME", "PATH"] as const;
 

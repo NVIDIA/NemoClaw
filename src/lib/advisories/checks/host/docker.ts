@@ -95,6 +95,36 @@ export const invalidDockerHost: AdvisoryCheck<HostAssessment> = {
   },
 };
 
+export const dockerInfoTimeout: AdvisoryCheck<HostAssessment> = {
+  id: "docker_info_timeout",
+  phase: "preflight.host",
+  severity: "blocking",
+  resumeSafe: false,
+  check(host) {
+    if (
+      host.dockerHostInvalid ||
+      !host.dockerInstalled ||
+      host.dockerReachable ||
+      host.dockerInfoTimedOut !== true
+    ) {
+      return null;
+    }
+    return hostAdvisory(dockerInfoTimeout, {
+      title: "Docker did not answer the preflight probe in time",
+      kind: "manual",
+      reason:
+        "Docker is installed, but `docker info` did not finish within the bounded preflight timeout. " +
+        "This usually means the configured Docker authority accepted the connection but never returned a response. " +
+        "Retry after confirming Docker is healthy, or correct DOCKER_HOST if it points at a stalled socket or proxy.",
+      commands: [
+        "echo \"DOCKER_HOST=${DOCKER_HOST:-<unset>}\"",
+        "docker info",
+        "nemoclaw onboard",
+      ],
+    });
+  },
+};
+
 export const addUserToDockerGroup: AdvisoryCheck<HostAssessment> = {
   id: "docker_group_permission",
   phase: "preflight.host",
@@ -105,6 +135,7 @@ export const addUserToDockerGroup: AdvisoryCheck<HostAssessment> = {
       host.dockerHostInvalid ||
       !host.dockerInstalled ||
       host.dockerReachable ||
+      host.dockerInfoTimedOut === true ||
       host.isWsl ||
       host.platform !== "linux" ||
       host.dockerServiceActive !== true
@@ -141,6 +172,7 @@ export const startDocker: AdvisoryCheck<HostAssessment> = {
       host.dockerHostInvalid ||
       !host.dockerInstalled ||
       host.dockerReachable ||
+      host.dockerInfoTimedOut === true ||
       host.isWsl ||
       likelyGroupIssue
     )
@@ -199,6 +231,7 @@ export const DOCKER_HOST_ADVISORY_CHECKS = Object.freeze([
   enableDockerDesktopWslIntegration,
   installDocker,
   invalidDockerHost,
+  dockerInfoTimeout,
   addUserToDockerGroup,
   startDocker,
   dockerDesktopCredentialStoreHeadless,
