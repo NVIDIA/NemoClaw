@@ -23,7 +23,10 @@ import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-re
 import { isSandboxReady } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
-import { reportSandboxCreateFailure } from "./created-sandbox-failure";
+import {
+  formatRetainedSandboxRecoveryMessage,
+  reportSandboxCreateFailure,
+} from "./created-sandbox-failure";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
@@ -372,13 +375,17 @@ function checkSandboxExecutableReadiness(
     : "probe_failed";
 }
 
-function persistReadyTerminationTimeoutRecovery(
-  createResult: StreamSandboxCreateResult | null,
+function stopAfterReadyTerminationTimeout(
+  createResult: StreamSandboxCreateResult,
   sandboxId: string | null,
   persistRecovery: (sandboxIdentityFingerprint: string) => void,
+  sandboxName: string,
 ): void {
   if (!createResult?.readyTerminationTimedOut || !sandboxId) return;
   persistRecovery(fingerprintSandboxRecreateValue(sandboxId));
+  throw new Error(
+    `OpenShell create client did not exit after Ready for sandbox '${sandboxName}'. NemoClaw retained the sandbox and blocked post-create effects. Follow the retained recovery action above.`,
+  );
 }
 
 class ManagedBootstrapCreateStreamFailure extends Error {
@@ -469,13 +476,12 @@ export function createSandboxGpuCreateAttemptRunner(
       if (!persist) {
         throw new Error("Verified sandbox creation has no durable recovery evidence owner.");
       }
-      const identityEvidence = sandboxIdentityFingerprint
-        ? `Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}. NemoClaw stopped before owning-gateway publication and identity verification completed for sandbox '${input.sandboxName}' through gateway '${input.gatewayName}'. `
-        : `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. Gateway '${input.gatewayName}'. OpenShell did not return one exact durable sandbox identity for this create attempt. `;
-      const message =
-        `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}. ` +
-        identityEvidence +
-        "Do not delete a sandbox by mutable name; preserve it until an OpenShell administrator resolves the create-attempt label to one sandbox.";
+      const message = formatRetainedSandboxRecoveryMessage({
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        createAttemptLabel: `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}`,
+        sandboxIdentityFingerprint,
+      });
       let persisted = false;
       try {
         persisted = sandboxIdentityFingerprint
@@ -634,8 +640,8 @@ export function createSandboxGpuCreateAttemptRunner(
       }
       return sandboxId;
     };
-    const streamCreate = () =>
-      streamSandboxCreateWithPublicImageCredentialIsolation(
+    const streamCreate = async () => {
+      const createResult = await streamSandboxCreateWithPublicImageCredentialIsolation(
         managedBootstrap != null,
         input.sandboxName,
         input.sandboxEnv,
@@ -698,6 +704,14 @@ export function createSandboxGpuCreateAttemptRunner(
                 : undefined,
           }),
       );
+      stopAfterReadyTerminationTimeout(
+        createResult,
+        readyCheckCreatedSandboxId,
+        persistIdentitySettlementRecovery,
+        input.sandboxName,
+      );
+      return createResult;
+    };
     let createResult: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
     let resumedSandboxId: string | null = null;
     let managedIncompleteCreateRecovered = false;
@@ -849,11 +863,6 @@ export function createSandboxGpuCreateAttemptRunner(
       createResult = await streamCreate();
     }
     if (createResult && !state.firstCreateOutput) state.firstCreateOutput = createResult.output;
-    persistReadyTerminationTimeoutRecovery(
-      createResult,
-      readyCheckCreatedSandboxId,
-      persistIdentitySettlementRecovery,
-    );
     if (!deferPostCreateEffects) await runtimePatch.exitOnPatchError();
     if (createResult && createResult.status !== 0) {
       const failure = classifySandboxCreateFailure(createResult.output);

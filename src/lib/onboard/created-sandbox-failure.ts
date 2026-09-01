@@ -2,7 +2,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { redact } from "../security/redact";
+import { cliName } from "./branding";
 import type { CreatedSandboxReadinessResult } from "./sandbox-readiness-tracing";
+
+export function formatRetainedSandboxRecoveryMessage(input: {
+  sandboxName: string;
+  gatewayName: string;
+  createAttemptLabel: string;
+  sandboxIdentityFingerprint: string | null;
+}): string {
+  const createAttemptEvidence = `Create-attempt label: ${input.createAttemptLabel}. `;
+  if (!input.sandboxIdentityFingerprint) {
+    return (
+      createAttemptEvidence +
+      `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. Gateway '${input.gatewayName}'. ` +
+      "OpenShell did not return one exact durable sandbox identity for this create attempt. " +
+      "Do not delete a sandbox by mutable name; preserve it until an OpenShell administrator resolves the create-attempt label to one sandbox."
+    );
+  }
+  return (
+    createAttemptEvidence +
+    `Durable sandbox identity fingerprint: ${input.sandboxIdentityFingerprint}. ` +
+    `NemoClaw stopped before owning-gateway publication and identity verification completed for sandbox '${input.sandboxName}' through gateway '${input.gatewayName}'. ` +
+    `Do not delete the sandbox by mutable name. Run '${cliName()} ${input.sandboxName} destroy' to use the retained identity. ` +
+    "If OpenShell still reports the sandbox present, preserve the recovery record. Give the create-attempt label to an OpenShell administrator for identity-bound removal, then rerun destroy."
+  );
+}
 
 export type SandboxCreateFailureReportOptions = {
   sandboxName: string;
