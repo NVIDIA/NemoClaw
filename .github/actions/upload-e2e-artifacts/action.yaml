@@ -24,5 +24,5 @@ runs:
         name: ${{ inputs.name != '' && inputs.name || format('e2e-{0}', env.E2E_TARGET_ID) }}
         path: ${{ inputs.path != '' && inputs.path || format('e2e-artifacts/live/{0}/', env.E2E_TARGET_ID) }}
         include-hidden-files: false
-        if-no-files-found: ignore
+        if-no-files-found: warn
         retention-days: 14
