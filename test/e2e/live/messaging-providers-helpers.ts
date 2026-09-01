@@ -3,6 +3,7 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { isIPv4 } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -36,6 +37,7 @@ export const LIVE_TIMEOUT_MS = 90 * 60_000;
 export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
 const FAKE_API_IMAGE =
   "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
+const DEFAULT_OPENSHELL_DOCKER_NETWORK = "openshell-docker";
 const FAKE_API_PROXY_SOURCE = String.raw`
 const net = require("node:net");
 const upstream = process.env.NEMOCLAW_FAKE_API_UPSTREAM;
@@ -407,6 +409,48 @@ async function inspectDockerJson(
   }
 }
 
+async function inspectOpenShellBridgeAddress(
+  host: HostCliClient,
+  kind: FakeDockerApiKind,
+  env: NodeJS.ProcessEnv,
+  redactionValues: string[],
+): Promise<string> {
+  const networkName =
+    env.OPENSHELL_DOCKER_NETWORK_NAME ??
+    process.env.OPENSHELL_DOCKER_NETWORK_NAME ??
+    DEFAULT_OPENSHELL_DOCKER_NETWORK;
+  const result = await runHost(host, "docker", ["network", "inspect", networkName], {
+    artifactName: `inspect-fake-${kind}-openshell-network`,
+    env,
+    redactionValues,
+    timeoutMs: 30_000,
+  });
+  expectExitZero(result, "inspect OpenShell Docker network");
+
+  let records: unknown;
+  try {
+    records = JSON.parse(result.stdout);
+  } catch {
+    throw new Error("OpenShell Docker network inspection returned invalid JSON");
+  }
+  const record = Array.isArray(records) && records.length === 1 ? records[0] : undefined;
+  const gateways =
+    record !== null && typeof record === "object"
+      ? ((record as { IPAM?: { Config?: Array<{ Gateway?: unknown }> } }).IPAM?.Config?.flatMap(
+          ({ Gateway }) => (typeof Gateway === "string" && isIPv4(Gateway) ? [Gateway] : []),
+        ) ?? [])
+      : [];
+  if (
+    record === null ||
+    typeof record !== "object" ||
+    (record as { Driver?: unknown }).Driver !== "bridge" ||
+    gateways.length !== 1
+  ) {
+    throw new Error("OpenShell Docker network must expose exactly one IPv4 bridge gateway");
+  }
+  return gateways[0]!;
+}
+
 export async function runSandboxShell(
   sandbox: SandboxClient,
   script: string,
@@ -647,6 +691,12 @@ export async function startFakeDockerApi(
     env: NodeJS.ProcessEnv;
   },
 ): Promise<FakeDockerApi> {
+  const openshellBridgeAddress = await inspectOpenShellBridgeAddress(
+    host,
+    options.kind,
+    options.env,
+    options.redactionValues,
+  );
   fs.mkdirSync(path.join(REPO_ROOT, ".tmp"), { recursive: true });
   const dir = fs.mkdtempSync(path.join(REPO_ROOT, ".tmp", `fake-${options.kind}.`));
   const portFile = path.join(dir, "port");
@@ -771,10 +821,9 @@ export async function startFakeDockerApi(
   });
 
   // The fake API receives raw expected credentials. Keep it unpublished and
-  // expose only this credential-free forwarding container on host loopback.
-  // Docker does not install published-port forwarding for a container whose
-  // only attachment is an internal network, so establish the loopback binding
-  // on the default bridge before adding the private API network.
+  // expose only this credential-free forwarding container on the OpenShell
+  // bridge gateway. That is the host address behind host.openshell.internal;
+  // loopback-only publication is unreachable from the policy gateway.
   const proxyStart = await runHost(
     host,
     "docker",
@@ -786,7 +835,7 @@ export async function startFakeDockerApi(
       proxyContainer,
       "--network",
       "bridge",
-      ...containerPorts.flatMap((port) => ["-p", `127.0.0.1::${String(port)}`]),
+      ...containerPorts.flatMap((port) => ["-p", `${openshellBridgeAddress}::${String(port)}`]),
       "--read-only",
       "--cap-drop",
       "ALL",
@@ -898,11 +947,13 @@ export async function startFakeDockerApi(
       },
     );
     expectExitZero(result, `read fake ${options.kind} API proxy port`);
-    const hostPort = result.stdout.trim().match(/^127\.0\.0\.1:(\d+)$/u)?.[1];
-    if (!hostPort) {
-      throw new Error(`fake ${options.kind} API proxy port did not bind only to 127.0.0.1`);
+    const published = result.stdout.trim().match(/^(\d+\.\d+\.\d+\.\d+):(\d+)$/u);
+    if (published?.[1] !== openshellBridgeAddress || !published[2]) {
+      throw new Error(
+        `fake ${options.kind} API proxy port did not bind only to the OpenShell bridge`,
+      );
     }
-    return hostPort;
+    return published[2];
   };
 
   const publishedRestPort = await publishedPort(8080, `port-fake-${options.kind}-api`);
@@ -914,7 +965,7 @@ export async function startFakeDockerApi(
     [
       "--experimental-strip-types",
       FAKE_API_PORT_TRAFFIC,
-      "127.0.0.1",
+      openshellBridgeAddress,
       publishedRestPort,
       ...(options.kind === "slack" ? [publishedWebsocketPort] : []),
     ],

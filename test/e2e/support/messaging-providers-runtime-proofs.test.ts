@@ -42,6 +42,13 @@ const FAKE_API_PORT_TRAFFIC = path.resolve(
 const FAKE_SLACK_APP_TOKEN = "xapp-fake-slack-port-test";
 const FAKE_SLACK_BOT_TOKEN = "xoxb-fake-slack-port-test";
 const STDERR_TAIL_LIMIT = 4_096;
+const OPENSHELL_BRIDGE_ADDRESS = "172.18.0.1";
+const OPENSHELL_NETWORK_INSPECT = JSON.stringify([
+  {
+    Driver: "bridge",
+    IPAM: { Config: [{ Subnet: "172.18.0.0/16", Gateway: OPENSHELL_BRIDGE_ADDRESS }] },
+  },
+]);
 
 async function waitFor(predicate: () => boolean, message: string | (() => string)): Promise<void> {
   await vi.waitFor(
@@ -224,11 +231,16 @@ function successfulCommand(stdout = "") {
   };
 }
 
-function fakeDockerHost(publishedAddress = "127.0.0.1"): HostCliClient {
+function fakeDockerHost(
+  publishedAddress = OPENSHELL_BRIDGE_ADDRESS,
+  calls: string[][] = [],
+  networkInspect = OPENSHELL_NETWORK_INSPECT,
+): HostCliClient {
   let network = "";
   let proxyContainer = "";
   const host = {
     command: async (command: string, args: string[]) => {
+      calls.push([command, ...args]);
       switch (command) {
         case "node":
           return successfulCommand();
@@ -236,8 +248,15 @@ function fakeDockerHost(publishedAddress = "127.0.0.1"): HostCliClient {
           expect(command).toBe("docker");
           switch (args[0]) {
             case "network":
-              network = args[1] === "create" ? (args.at(-1) ?? "") : network;
-              return successfulCommand();
+              switch (args[1]) {
+                case "inspect":
+                  return successfulCommand(networkInspect);
+                case "create":
+                  network = args.at(-1) ?? "";
+                  return successfulCommand();
+                default:
+                  return successfulCommand();
+              }
             case "run":
               proxyContainer = args.some((argument) =>
                 argument.startsWith("NEMOCLAW_FAKE_API_UPSTREAM="),
@@ -300,6 +319,8 @@ describe("messaging provider installed-runtime proofs", () => {
         artifactNames.push(...(artifactName ? [artifactName] : []));
         invocations.push({ artifactName, command: command.command, args: command.args });
         switch (artifactName) {
+          case "inspect-fake-slack-openshell-network":
+            return successfulShellResult(invocation, OPENSHELL_NETWORK_INSPECT);
           case "start-fake-slack-api":
             container = invocation[invocation.indexOf("--name") + 1] ?? "";
             break;
@@ -378,6 +399,8 @@ describe("messaging provider installed-runtime proofs", () => {
         const artifactName = options?.artifactName ?? "";
         invocations.push({ artifactName, command: command.command, args: command.args });
         switch (artifactName) {
+          case "inspect-fake-slack-openshell-network":
+            return successfulShellResult(invocation, OPENSHELL_NETWORK_INSPECT);
           case "create-fake-slack-api-network":
             network = invocation.at(-1) ?? "";
             return successfulShellResult(invocation);
@@ -395,10 +418,7 @@ describe("messaging provider installed-runtime proofs", () => {
           case "prove-fake-slack-api-api-internal-network":
             return successfulShellResult(invocation, JSON.stringify({ [network]: {} }));
           case "prove-fake-slack-api-proxy-internal-network":
-            return successfulShellResult(
-              invocation,
-              JSON.stringify({ bridge: {}, [network]: {} }),
-            );
+            return successfulShellResult(invocation, JSON.stringify({ bridge: {}, [network]: {} }));
           case "prove-fake-slack-api-internal-only":
             return successfulShellResult(invocation);
           case "prove-fake-slack-api-proxy-credential-free":
@@ -407,9 +427,9 @@ describe("messaging provider installed-runtime proofs", () => {
               '["NEMOCLAW_FAKE_API_UPSTREAM=fake-api","NEMOCLAW_FAKE_API_PROXY_PORTS=8080,8081"]',
             );
           case "port-fake-slack-api":
-            return successfulShellResult(invocation, "127.0.0.1:41080\n");
+            return successfulShellResult(invocation, `${OPENSHELL_BRIDGE_ADDRESS}:41080\n`);
           case "port-fake-slack-websocket-api":
-            return successfulShellResult(invocation, "127.0.0.1:41081\n");
+            return successfulShellResult(invocation, `${OPENSHELL_BRIDGE_ADDRESS}:41081\n`);
           case "prove-fake-slack-api-proxy-traffic":
             return {
               ...successfulShellResult(invocation),
@@ -476,7 +496,49 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it("rejects a fake API proxy port that Docker publishes beyond loopback", async () => {
+  it("binds and probes the credential-free proxy through the OpenShell bridge", async () => {
+    const calls: string[][] = [];
+    const host = fakeDockerHost(OPENSHELL_BRIDGE_ADDRESS, calls);
+    const cleanup: Array<() => Promise<void>> = [];
+
+    try {
+      await startFakeDockerApi(host, (_name, run) => cleanup.push(run), {
+        kind: "slack",
+        imageScript: "fake-slack-api.cjs",
+        containerPrefix: "fake-slack",
+        portEnv: "FAKE_SLACK_API_PORT",
+        portFileEnv: "FAKE_SLACK_API_PORT_FILE",
+        captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
+        expectedEnv: {},
+        redactionValues: [],
+        env: {},
+      });
+      const proxyRun = calls.find(
+        (call) =>
+          call[0] === "docker" &&
+          call[1] === "run" &&
+          call.some((argument) => argument.startsWith("NEMOCLAW_FAKE_API_UPSTREAM=")),
+      );
+      expect(proxyRun).toBeDefined();
+      expect(
+        proxyRun!.flatMap((argument, index) => (argument === "-p" ? [proxyRun![index + 1]] : [])),
+      ).toEqual([`${OPENSHELL_BRIDGE_ADDRESS}::8080`, `${OPENSHELL_BRIDGE_ADDRESS}::8081`]);
+      expect(calls).toContainEqual([
+        "node",
+        "--experimental-strip-types",
+        FAKE_API_PORT_TRAFFIC,
+        OPENSHELL_BRIDGE_ADDRESS,
+        "32100",
+        "32101",
+      ]);
+    } finally {
+      await cleanup
+        .reverse()
+        .reduce((previous, action) => previous.then(action), Promise.resolve());
+    }
+  });
+
+  it("rejects a fake API proxy port that Docker publishes beyond the OpenShell bridge", async () => {
     const host = fakeDockerHost("0.0.0.0");
     const cleanup: Array<() => Promise<void>> = [];
 
@@ -493,12 +555,42 @@ describe("messaging provider installed-runtime proofs", () => {
           redactionValues: [],
           env: {},
         }),
-      ).rejects.toThrow(/did not bind only to 127\.0\.0\.1/u);
+      ).rejects.toThrow(/did not bind only to the OpenShell bridge/u);
     } finally {
       await cleanup
         .reverse()
         .reduce((previous, action) => previous.then(action), Promise.resolve());
     }
+  });
+
+  it("rejects an ambiguous configured OpenShell bridge before creating resources", async () => {
+    const calls: string[][] = [];
+    const networkInspect = JSON.stringify([
+      {
+        Driver: "bridge",
+        IPAM: {
+          Config: [{ Gateway: OPENSHELL_BRIDGE_ADDRESS }, { Gateway: "172.19.0.1" }],
+        },
+      },
+    ]);
+    const host = fakeDockerHost(OPENSHELL_BRIDGE_ADDRESS, calls, networkInspect);
+    const cleanup: Array<() => Promise<void>> = [];
+
+    await expect(
+      startFakeDockerApi(host, (_name, run) => cleanup.push(run), {
+        kind: "discord-gateway",
+        imageScript: "fake-discord-gateway-api.cjs",
+        containerPrefix: "fake-discord-gateway",
+        portEnv: "FAKE_API_PORT",
+        portFileEnv: "FAKE_API_PORT_FILE",
+        captureFileEnv: "FAKE_API_CAPTURE_FILE",
+        expectedEnv: {},
+        redactionValues: [],
+        env: { OPENSHELL_DOCKER_NETWORK_NAME: "configured-openshell-network" },
+      }),
+    ).rejects.toThrow(/exactly one IPv4 bridge gateway/u);
+    expect(calls).toEqual([["docker", "network", "inspect", "configured-openshell-network"]]);
+    expect(cleanup).toHaveLength(0);
   });
 
   it("uses a synthetic WeChat token even when the host exports one", () => {
