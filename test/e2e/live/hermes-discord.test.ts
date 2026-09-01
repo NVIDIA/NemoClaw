@@ -719,11 +719,14 @@ PY`,
   const deniedNodeRestProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
-    `/usr/local/bin/node -e "require('node:http').get('http://host.docker.internal:${shellQuote(fakeRest.port)}/api/v10/users/@me',r=>{r.resume();process.exitCode=3}).on('error',()=>{process.exitCode=2})"`,
+    `/usr/local/bin/node -e "require('node:http').get('http://host.docker.internal:${fakeRest.port}/api/v10/users/@me',r=>{r.resume();process.exitCode=3}).on('error',()=>{process.exitCode=2})"`,
     [],
     { artifactName: "phase-6-node-rest-denied", redactionValues, timeoutMs: 30_000 },
   );
-  expect(deniedNodeRestProbe.exitCode, "Node.js must be denied by the Hermes Discord policy").not.toBe(0);
+  expect(deniedNodeRestProbe.exitCode, resultText(deniedNodeRestProbe)).not.toBe(0);
+  expect(resultText(deniedNodeRestProbe)).toMatch(
+    /response 403|policy[_ ]denied|not allowed by any policy/i,
+  );
   const restCaptureAfterNodeProbe = fs.existsSync(fakeRest.captureFile)
     ? fs.readFileSync(fakeRest.captureFile, "utf8")
     : "";
