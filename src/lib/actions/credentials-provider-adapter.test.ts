@@ -92,7 +92,7 @@ describe("credential actions use typed OpenShell provider results", () => {
 
     expect(result.exitCode).toBe(0);
     expect(adapter.createProvider).toHaveBeenCalledWith({
-      target: { kind: "selected" },
+      target: { kind: "named", gatewayName: "nemoclaw" },
       name: "custom-provider",
       type: "generic",
       credentials: [{ name: "CUSTOM_TOKEN", value: "credential-value" }],
@@ -120,7 +120,7 @@ describe("credential actions use typed OpenShell provider results", () => {
 
     expect(result.exitCode).toBe(0);
     expect(adapter.importProviderProfile).toHaveBeenCalledWith({
-      target: { kind: "selected" },
+      target: { kind: "named", gatewayName: "nemoclaw" },
       profilePath: expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
       timeoutMs: 30_000,
     });
@@ -285,6 +285,11 @@ describe("credential actions use typed OpenShell provider results", () => {
       "  Refusing --from-existing because the provider profile credential keys could not be compared with managed MCP reservations.",
     );
     expect(result.failureLines).toContain("  OpenShell returned an invalid provider profile.");
+    expect(adapter.inspectProviderProfile).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      profileType: "generic",
+      timeoutMs: 30_000,
+    });
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
 
@@ -472,9 +477,19 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(result.exitCode).toBe(0);
     expect(operations).toEqual(["delete:first", "detach:alpha", "delete:retry"]);
     expect(detachProvider).toHaveBeenCalledWith({
-      target: { kind: "selected" },
+      target: { kind: "named", gatewayName: "nemoclaw" },
       providerName: "custom-provider",
       sandboxName: "alpha",
+      timeoutMs: 30_000,
+    });
+    expect(deleteProvider).toHaveBeenNthCalledWith(1, {
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      providerName: "custom-provider",
+      timeoutMs: 30_000,
+    });
+    expect(deleteProvider).toHaveBeenNthCalledWith(2, {
+      target: { kind: "named", gatewayName: "nemoclaw" },
+      providerName: "custom-provider",
       timeoutMs: 30_000,
     });
     expect(result.outputLines).toContain(

@@ -8,7 +8,7 @@ import type {
   OpenShellProviderAdapter,
   OpenShellProviderError,
 } from "../adapters/openshell/provider-adapter";
-import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
+import type { OpenShellGatewayTarget } from "../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
 import {
@@ -111,13 +111,14 @@ function bundledProviderProfileRecoveryLines(error: OpenShellProviderError): str
 
 async function ensureBundledProviderProfile(
   type: string,
+  target: OpenShellGatewayTarget,
   providerAdapter: OpenShellProviderAdapter,
 ): Promise<CredentialsAddResult | null> {
   const profilePath = bundledProviderProfilePath(type);
   if (!fs.existsSync(profilePath)) return null;
 
   const result = await providerAdapter.importProviderProfile({
-    target: selectedOpenShellGateway(),
+    target,
     profilePath,
     timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
@@ -240,20 +241,20 @@ export async function runCredentialsAddAction(
   }
 
   const recoveryFailureLines: string[] = [];
-  const recovered = await recoverGatewayForCredentialMutationOrExit((lines) => {
+  const target = await recoverGatewayForCredentialMutationOrExit((lines) => {
     recoveryFailureLines.push(...lines);
   });
-  if (!recovered) {
+  if (!target) {
     return fail(recoveryFailureLines);
   }
 
-  const providerProfileFailure = await ensureBundledProviderProfile(type, providerAdapter);
+  const providerProfileFailure = await ensureBundledProviderProfile(type, target, providerAdapter);
   if (providerProfileFailure) return providerProfileFailure;
 
   let importedCredentialKeys: string[] | null = null;
   if (fromExisting) {
     const inspection = await providerAdapter.inspectProviderProfile({
-      target: selectedOpenShellGateway(),
+      target,
       profileType: type,
       timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
@@ -285,7 +286,7 @@ export async function runCredentialsAddAction(
     let keepReservation = false;
     try {
       const result = await providerAdapter.createProvider({
-        target: selectedOpenShellGateway(),
+        target,
         name: provider,
         type,
         credentials: credentials.map((credential) => ({

@@ -6,7 +6,7 @@ import type {
   OpenShellProviderAdapter,
   OpenShellProviderError,
 } from "../../adapters/openshell/provider-adapter";
-import { selectedOpenShellGateway } from "../../adapters/openshell/sandbox-observer";
+import type { OpenShellGatewayTarget } from "../../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import {
   NAME_MAX_LENGTH,
@@ -114,13 +114,13 @@ export async function runCredentialsResetAction(
   }
 
   const recoveryFailureLines: string[] = [];
-  const recovered = await recoverGatewayForCredentialMutationOrExit((lines) => {
+  const target = await recoverGatewayForCredentialMutationOrExit((lines) => {
     recoveryFailureLines.push(...lines);
   });
-  if (!recovered) return fail(recoveryFailureLines);
+  if (!target) return fail(recoveryFailureLines);
 
   const providerAdapter = deps.providerAdapter ?? createCliOpenShellProviderAdapter();
-  const recovery = await deleteProviderWithRecovery(key, providerAdapter);
+  const recovery = await deleteProviderWithRecovery(key, target, providerAdapter);
 
   if (
     !recovery.ok &&
@@ -207,10 +207,11 @@ export function formatResetOutcome(
 
 async function deleteProviderWithRecovery(
   providerName: string,
+  target: OpenShellGatewayTarget,
   providerAdapter: OpenShellProviderAdapter,
 ): Promise<CredentialsProviderDeleteWithRecoveryResult> {
   const request = {
-    target: selectedOpenShellGateway(),
+    target,
     providerName,
     timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
   } as const;

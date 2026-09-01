@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { recoverNamedGatewayRuntime } from "../actions/global";
+import {
+  namedOpenShellGateway,
+  type OpenShellGatewayTarget,
+} from "../adapters/openshell/sandbox-observer";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { GATEWAY_PORT } from "../core/ports";
 import { gatewayStartGuidance } from "../gateway-start-guidance";
@@ -58,17 +62,18 @@ export async function recoverGatewayOrExit(
 export async function recoverGatewayForCredentialMutationOrExit(
   reportFailure: (lines: readonly string[]) => void = (lines) =>
     lines.forEach((line) => console.error(line)),
-): Promise<boolean> {
-  if (!(await recoverGatewayOrExit("reach", reportFailure))) return false;
+): Promise<OpenShellGatewayTarget | null> {
+  if (!(await recoverGatewayOrExit("reach", reportFailure))) return null;
 
+  const gatewayName = resolveGatewayName(GATEWAY_PORT);
   try {
     resolveGatewayCredentialMutationAuthority({
-      gatewayName: resolveGatewayName(GATEWAY_PORT),
+      gatewayName,
       gatewayPort: GATEWAY_PORT,
     });
-    return true;
+    return namedOpenShellGateway(gatewayName);
   } catch (error) {
     reportFailure(credentialsGatewayAuthorityFailureLines(error));
-    return false;
+    return null;
   }
 }
