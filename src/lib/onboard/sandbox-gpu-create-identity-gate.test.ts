@@ -55,42 +55,20 @@ import {
   NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH,
 } from "../adapters/openshell/sandbox-identity";
 import {
+  ALPHA_SANDBOX_IDENTITY_FINGERPRINT,
+  createAttemptNonce,
   createGpuFlowDeps,
   createGpuFlowInput,
   createGpuPatchFixture,
+  createNoGpuFlowInput as noGpuInput,
+  createTimedOutCreateResult,
+  expectNoPostCreateEffects as expectNoEffects,
   resetGpuFlowMocks,
+  sandboxListJson,
   setupGpuFlowMocks,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
-import {
-  createHermesPortableReadyCapture,
-  createHermesPortableReadyRunner,
-} from "./experimental/hermes-portable-onboarding";
 import { runSandboxGpuCreateFlow } from "./sandbox-gpu-create-flow";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
-
-function sandboxListJson(
-  sandboxId: string,
-  labels: Readonly<Record<string, string>>,
-  overrides: Readonly<Record<string, unknown>> = {},
-): string {
-  return JSON.stringify([
-    {
-      id: sandboxId,
-      name: "alpha",
-      labels,
-      resource_version: 1,
-      created_at: "2026-08-25T00:00:00Z",
-      phase: "Ready",
-      current_policy_version: 1,
-      ...overrides,
-    },
-  ]);
-}
-
-function createAttemptNonce(args: readonly string[]): string {
-  const labelIndex = args.indexOf("--label");
-  return (args[labelIndex + 1] ?? "").slice(NEMOCLAW_CREATE_ATTEMPT_LABEL.length + 1);
-}
 
 const durableRecoveryWriterFailures = [
   ["returns false", () => false],
@@ -101,8 +79,6 @@ const durableRecoveryWriterFailures = [
     },
   ],
 ] as const;
-const ALPHA_SANDBOX_IDENTITY_FINGERPRINT =
-  "8174fa2a5d65755138d8339e086c03d736633130b22dca10952e80e74750c01d";
 
 function expectNoSandboxDelete(deps: ReturnType<typeof createGpuFlowDeps>): void {
   expect(
@@ -110,23 +86,6 @@ function expectNoSandboxDelete(deps: ReturnType<typeof createGpuFlowDeps>): void
       .mocked(deps.runOpenshell)
       .mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "delete"),
   ).toBe(false);
-}
-
-function noGpuInput() {
-  const input = createGpuFlowInput();
-  input.sandboxGpuConfig = {
-    mode: "0",
-    hostGpuDetected: false,
-    hostGpuPlatform: null,
-    sandboxGpuEnabled: false,
-    sandboxGpuDevice: null,
-    errors: [],
-  };
-  input.gpuRoutePlan = "none";
-  input.initialGpuRoute = "none";
-  input.createArgv = ["openshell", "sandbox", "create", "--name", "alpha", "--", "agent"];
-  input.persistRetainedSandboxRecovery = vi.fn(() => true);
-  return input;
 }
 
 function attachManagedBootstrap(
@@ -184,42 +143,6 @@ function createCommittedReadinessPersistenceFixture() {
     .mockResolvedValueOnce({ ready: true, reason: "ready", failurePhase: null })
     .mockResolvedValue({ ready: false, reason: "timeout", failurePhase: null });
   return { deps, error, input, patch };
-}
-
-function createApfFallbackRecoveryFixture(captureExactIdentity = true) {
-  let nonce = "";
-  const input = createGpuFlowInput();
-  input.requirePolicylessCreate = true;
-  input.verifyCreatedSandboxBeforeEffects = vi.fn();
-  input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
-  input.persistRetainedSandboxRecovery = vi.fn(() => true);
-  mocks.streamSandboxCreate.mockImplementationOnce(async (_command, args) => {
-    nonce = createAttemptNonce(args);
-    return {
-      status: 1,
-      output: "native runtime failed after sandbox creation",
-      sawProgress: true,
-    };
-  });
-  mocks.queryOpenShellDockerSandboxRuntimeSnapshot.mockReturnValue({
-    ok: true,
-    imageId: "sha256:" + "a".repeat(64),
-    bookkeepingImageRef: "openshell/sandbox-from:test",
-    stateError: "CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
-    deviceRequests: null,
-    devices: null,
-    runtime: "runc",
-    nvidiaVisibleDevices: null,
-    nativeGpuAttachmentState: "absent",
-    containerId: "container-a",
-  });
-  const deps = createGpuFlowDeps();
-  vi.mocked(deps.runCaptureOpenshell).mockImplementation(() =>
-    captureExactIdentity
-      ? sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce })
-      : "[]",
-  );
-  return { deps, input, readNonce: () => nonce };
 }
 
 beforeEach(() => setupGpuFlowMocks(mocks));
@@ -736,90 +659,6 @@ describe("created sandbox identity gate", () => {
     expect(deps.sleep).toHaveBeenCalledExactlyOnceWith(0.25);
   });
 
-  it("carries Hermes receipt authority from selector settlement through publication lookup (#10423)", async () => {
-    const events: string[] = [];
-    let nonce = "";
-    const input = noGpuInput();
-    const patch = createGpuPatchFixture();
-    input.verifyCreatedSandboxBeforeEffects = vi.fn(async () => {
-      events.push("verify-policy");
-    });
-    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
-    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
-    mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
-      events.push("create");
-      nonce = createAttemptNonce(args);
-      expect(options.readyCheck?.()).toBe(true);
-      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
-    });
-    mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValue({
-      ready: true,
-      reason: "ready",
-      failurePhase: null,
-    });
-    const capture = vi.fn((args: readonly string[]) => {
-      const results = {
-        [["sandbox", "list", "-g", "nemoclaw"].join("\0")]: () => {
-          events.push("ready-visible");
-          return { status: 0, stdout: Buffer.from("alpha Ready"), stderr: Buffer.alloc(0) };
-        },
-        [[
-          "sandbox",
-          "list",
-          "-g",
-          "nemoclaw",
-          "--selector",
-          `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
-          "--output",
-          "json",
-          "--limit",
-          "2",
-        ].join("\0")]: () => {
-          events.push("selector-settled");
-          return {
-            status: 0,
-            stdout: Buffer.from(
-              sandboxListJson("alpha-sandbox-id", {
-                [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
-              }),
-            ),
-            stderr: Buffer.alloc(0),
-          };
-        },
-        [["sandbox", "get", "-g", "nemoclaw", "alpha"].join("\0")]: () => {
-          events.push("publication-get");
-          return {
-            status: 0,
-            stdout: Buffer.from("ID: alpha-sandbox-id\n"),
-            stderr: Buffer.alloc(0),
-          };
-        },
-      } satisfies Readonly<
-        Record<string, () => { status: number; stdout: Buffer; stderr: Buffer }>
-      >;
-      return (
-        results[args.join("\0") as keyof typeof results] ??
-        (() => ({ status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }))
-      )();
-    });
-    const deps = createGpuFlowDeps();
-    deps.runOpenshell = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
-    deps.runCaptureOpenshell = createHermesPortableReadyCapture("alpha", "nemoclaw", capture);
-
-    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
-
-    expect(events.slice(0, 6)).toEqual([
-      "create",
-      "ready-visible",
-      "selector-settled",
-      "selector-settled",
-      "publication-get",
-      "verify-policy",
-    ]);
-    expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
-    expect(capture).toHaveBeenCalledWith(["sandbox", "get", "-g", "nemoclaw", "alpha"]);
-  });
-
   it.each([
     [
       "changes durable ID",
@@ -1293,84 +1132,6 @@ describe("created sandbox identity gate", () => {
     expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
   });
 
-  it("persists exact APF recovery evidence before refusing native fallback (#9833)", async () => {
-    const { deps, input, readNonce } = createApfFallbackRecoveryFixture();
-    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
-      throw new Error("process.exit:1");
-    });
-
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
-
-    const nonce = readNonce();
-    const fingerprint = ALPHA_SANDBOX_IDENTITY_FINGERPRINT;
-    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
-      expect.stringMatching(
-        new RegExp(
-          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\. Durable sandbox identity fingerprint: ${fingerprint}\\.`,
-          "u",
-        ),
-      ),
-      fingerprint,
-      nonce,
-    );
-    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledBefore(exit);
-    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
-    expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
-    expect(output).toContain(`Durable sandbox identity fingerprint: ${fingerprint}`);
-    expect(output).not.toContain("alpha-sandbox-id");
-    expectNoSandboxDelete(deps);
-    expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
-  });
-
-  it("persists the APF create-attempt label when exact recovery identity is unavailable (#9833)", async () => {
-    const { deps, input, readNonce } = createApfFallbackRecoveryFixture(false);
-    vi.spyOn(process, "exit").mockImplementation(() => {
-      throw new Error("process.exit:1");
-    });
-
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
-
-    const nonce = readNonce();
-    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
-      expect.stringMatching(
-        new RegExp(
-          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\..*Recovery is blocked until an OpenShell administrator resolves the create-attempt label`,
-          "u",
-        ),
-      ),
-      undefined,
-      nonce,
-    );
-    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
-    expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
-    expect(output).toContain("Recovery is blocked");
-    expectNoSandboxDelete(deps);
-  });
-
-  it.each(durableRecoveryWriterFailures)(
-    "blocks APF fallback when durable recovery persistence %s (#9833)",
-    async (_name, writer) => {
-      const { deps, input, readNonce } = createApfFallbackRecoveryFixture();
-      const persist = vi.fn(writer);
-      input.persistRetainedSandboxRecovery = persist;
-      const exit = vi.spyOn(process, "exit").mockImplementation(() => {
-        throw new Error("process.exit:1");
-      });
-
-      await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-        "The APF recovery-only session remains blocked until its durable recovery record can be saved.",
-      );
-
-      expect(persist).toHaveBeenCalledOnce();
-      expect(exit).not.toHaveBeenCalled();
-      const output = vi.mocked(console.error).mock.calls.flat().join("\n");
-      expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${readNonce()}`);
-      expect(output).toContain("APF recovery is blocked because NemoClaw could not save");
-      expectNoSandboxDelete(deps);
-      expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
-    },
-  );
-
   it("stops before a runtime patch when the durable checkpoint drifts (#9833)", async () => {
     let nonce = "";
     const input = noGpuInput();
@@ -1449,4 +1210,269 @@ describe("created sandbox identity gate", () => {
     expect(mocks.verifyGpuSandboxAccessAfterReady).not.toHaveBeenCalled();
     expect(patch.commitAfterReady).not.toHaveBeenCalled();
   });
+
+  it("ends the create-client handoff after a nonce-owned ID appears and settles metadata before effects (#10769)", async () => {
+    const metadataStates: string[] = [];
+    let nonce = "";
+    const input = noGpuInput();
+    const patch = createGpuPatchFixture();
+    const deps = createGpuFlowDeps();
+    input.verifyCreatedSandboxBeforeEffects = vi.fn(async (identity) => {
+      expect(metadataStates).toEqual(["pending", "complete"]);
+      expect(identity).toEqual({
+        sandboxId: "alpha-sandbox-id",
+        liveIdentityFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        createAttemptNonce: expect.stringMatching(/^[0-9a-f]{62}$/u),
+        route: "none",
+      });
+      expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+      expect(patch.ensureApplied).not.toHaveBeenCalled();
+      expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
+      expect(deps.installPortableDemoLifecycle).not.toHaveBeenCalled();
+    });
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+      expect(options.waitForReadyTermination).toBe(true);
+      expect(args.indexOf("--label")).toBeLessThan(args.indexOf("--"));
+      nonce = createAttemptNonce(args);
+      expect(nonce).toMatch(/^[0-9a-f]{62}$/u);
+      expect(options.readyCheck?.()).toBe(true);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValue({
+      ready: true,
+      reason: "ready",
+      failurePhase: null,
+    });
+    deps.installPortableDemoLifecycle = vi.fn(() => "generation-1");
+    vi.mocked(deps.runCaptureOpenshell)
+      .mockImplementationOnce((args) => {
+        expect(args).not.toContain("--selector");
+        return "alpha Ready";
+      })
+      .mockImplementationOnce((args) => {
+        expect(args).toContain("--selector");
+        metadataStates.push("pending");
+        expectNoEffects(input, patch, deps, mocks.waitForCreatedSandboxReadyWithTrace);
+        return sandboxListJson(
+          "alpha-sandbox-id",
+          { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce },
+          {
+            resource_version: null,
+            created_at: null,
+            phase: null,
+            current_policy_version: null,
+          },
+        );
+      })
+      .mockImplementationOnce((args) => {
+        expect(args).toContain("--selector");
+        metadataStates.push("complete");
+        expectNoEffects(input, patch, deps, mocks.waitForCreatedSandboxReadyWithTrace);
+        return sandboxListJson("alpha-sandbox-id", {
+          [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+        });
+      });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
+
+    expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
+    expect(patch.exitOnPatchError).toHaveBeenCalledOnce();
+    expect(patch.ensureApplied).toHaveBeenCalledOnce();
+    expect(patch.waitForSupervisorReconnectIfNeeded).toHaveBeenCalledOnce();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledOnce();
+    expect(patch.commitAfterReady).toHaveBeenCalledOnce();
+    expect(deps.installPortableDemoLifecycle).toHaveBeenCalledOnce();
+    expect(deps.runCaptureOpenshell).toHaveBeenNthCalledWith(
+      2,
+      [
+        "sandbox",
+        "list",
+        "-g",
+        "nemoclaw",
+        "--selector",
+        `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
+        "--output",
+        "json",
+        "--limit",
+        "2",
+      ],
+      {
+        ignoreError: false,
+        timeout: expect.any(Number),
+        maxBuffer: 1024 * 1024,
+        killSignal: "SIGKILL",
+        killProcessTreeOnTimeout: true,
+      },
+    );
+    const firstIdentityTimeout = vi.mocked(deps.runCaptureOpenshell).mock.calls[1]?.[1]?.timeout;
+    expect(firstIdentityTimeout as number).toBeGreaterThan(0);
+    expect(firstIdentityTimeout as number).toBeLessThanOrEqual(30_000);
+    expect(deps.runCaptureOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", "nemoclaw", "alpha"],
+      expect.anything(),
+    );
+    expect(deps.sleep).not.toHaveBeenCalled();
+  });
+
+  it("returns false and blocks effects when the create-attempt selector returns no sandbox ID (#10769)", async () => {
+    const input = noGpuInput();
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, _args, _env, options) => {
+      expect(options.readyCheck?.()).toBe(false);
+      return { status: 0, output: "", sawProgress: true };
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runCaptureOpenshell)
+      .mockReturnValueOnce("alpha Ready")
+      .mockReturnValueOnce("[]");
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "did not return one exact durable sandbox identity before post-create effects",
+    );
+
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledOnce();
+    expectNoEffects(input, patch, deps, mocks.waitForCreatedSandboxReadyWithTrace);
+  });
+
+  it("persists recovery before reporting a handoff timeout that looks like an incomplete create (#10769)", async () => {
+    const events: string[] = [];
+    let nonce = "";
+    const input = noGpuInput();
+    input.persistRetainedSandboxRecovery = vi.fn(() => {
+      events.push("persist-recovery");
+      return true;
+    });
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+      nonce = createAttemptNonce(args);
+      expect(options.readyCheck?.()).toBe(true);
+      return createTimedOutCreateResult(
+        "Created sandbox: alpha\nOpenShell create client did not exit after Ready; aborting cutover.",
+      );
+    });
+    const deps = createGpuFlowDeps();
+    vi.mocked(deps.runCaptureOpenshell)
+      .mockReturnValueOnce("alpha Ready")
+      .mockImplementationOnce(() =>
+        sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
+      );
+    vi.mocked(console.error).mockImplementation(() => events.push("report-recovery"));
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit:1");
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "OpenShell create client did not exit after Ready for sandbox 'alpha'",
+    );
+
+    const fingerprint = ALPHA_SANDBOX_IDENTITY_FINGERPRINT;
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringMatching(
+        new RegExp(
+          `^Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}\\. Durable sandbox identity fingerprint: ${fingerprint}\\.`,
+          "u",
+        ),
+      ),
+      fingerprint,
+      nonce,
+    );
+    expect(events.slice(0, 2)).toEqual(["persist-recovery", "report-recovery"]);
+    expect(exit).not.toHaveBeenCalled();
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
+    expect(output).toContain(`Durable sandbox identity fingerprint: ${fingerprint}`);
+    expect(output).toContain("Run 'nemoclaw alpha destroy'");
+    expect(output).toContain("the command removes nothing and preserves the recovery record");
+    expect(output).toContain("Give the create-attempt label to an OpenShell administrator");
+    expect(output).toContain("After OpenShell confirms removal");
+    expect(output).toContain("run 'nemoclaw alpha destroy --yes'");
+    expect(output).not.toContain("alpha-sandbox-id");
+    expect(output).not.toContain("Recovery:");
+    expect(output).not.toContain("Or:      nemoclaw onboard");
+    expect(output).not.toContain("onboard --resume");
+    expectNoEffects(input, patch, deps, mocks.waitForCreatedSandboxReadyWithTrace);
+  });
+
+  it("blocks a restart-safe handoff timeout without create-attempt identity (#10769)", async () => {
+    const input = noGpuInput();
+    input.persistStartupCommand = true;
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, _args, _env, options) => {
+      expect(options.waitForReadyTermination).toBe(true);
+      expect(options.readyCheck?.()).toBe(true);
+      return createTimedOutCreateResult(
+        "Created sandbox: alpha\nOpenShell create client did not exit after Ready; aborting cutover.",
+      );
+    });
+    const deps = createGpuFlowDeps();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "No create-attempt identity was available for retained recovery",
+    );
+
+    expect(input.persistRetainedSandboxRecovery).not.toHaveBeenCalled();
+    expectNoEffects(input, patch, deps, mocks.waitForCreatedSandboxReadyWithTrace);
+  });
+
+  it.each([
+    ["returns false", (): boolean => false],
+    [
+      "throws",
+      (): boolean => {
+        throw new Error("recovery writer failed");
+      },
+    ],
+  ] as const)(
+    "blocks the create after retained recovery persistence %s (#10769)",
+    async (_failureMode, persistRecovery) => {
+      let nonce = "";
+      const input = noGpuInput();
+      input.persistRetainedSandboxRecovery = vi.fn(persistRecovery);
+      input.verifyCreatedSandboxBeforeEffects = vi.fn();
+      input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+      const patch = createGpuPatchFixture();
+      mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+      mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+        nonce = createAttemptNonce(args);
+        expect(options.readyCheck?.()).toBe(true);
+        return createTimedOutCreateResult(
+          "OpenShell create client did not exit after Ready; aborting cutover.",
+        );
+      });
+      const deps = createGpuFlowDeps();
+      vi.mocked(deps.runCaptureOpenshell)
+        .mockReturnValueOnce("alpha Ready")
+        .mockImplementationOnce(() =>
+          sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
+        );
+
+      await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+        "NemoClaw could not save the retained sandbox recovery record for this create attempt",
+      );
+
+      expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+        expect.stringContaining(
+          `Durable sandbox identity fingerprint: ${ALPHA_SANDBOX_IDENTITY_FINGERPRINT}`,
+        ),
+        ALPHA_SANDBOX_IDENTITY_FINGERPRINT,
+        nonce,
+      );
+      const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);
+      expect(output).toContain(
+        "NemoClaw could not save the retained sandbox recovery record for this create attempt",
+      );
+      expect(output).not.toContain("alpha-sandbox-id");
+      expectNoEffects(input, patch, deps, mocks.waitForCreatedSandboxReadyWithTrace);
+    },
+  );
 });

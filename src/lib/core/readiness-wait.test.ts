@@ -31,13 +31,22 @@ describe("readiness deadline options", () => {
   });
 
   it("honors a slower initial interval for readiness paths with a stability contract", () => {
+    let nowMs = 0;
+    const sleep = vi.fn((ms: number) => {
+      nowMs += ms;
+    });
     const options = createReadinessWaitOptions({
       budgetMs: 10_000,
       initialIntervalMs: 2_000,
       maxIntervalMs: 2_000,
+      now: () => nowMs,
+      sleep,
     });
 
-    expect(options?.initialIntervalMs).toBe(2_000);
+    expect(waitUntil(() => false, options!)).toBe(false);
+    expect(sleep).toHaveBeenNthCalledWith(1, 2_000);
+    expect(sleep.mock.calls.every(([ms]) => ms <= 2_000)).toBe(true);
+    expect(sleep.mock.calls.reduce((total, [ms]) => total + ms, 0)).toBe(10_000);
   });
 
   it("preserves bounded immediate probes for a zero-interval legacy configuration", () => {

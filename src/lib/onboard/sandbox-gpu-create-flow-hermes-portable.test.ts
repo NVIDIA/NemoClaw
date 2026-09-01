@@ -41,13 +41,22 @@ vi.mock("./openshell-docker-sandbox-containers", async (importOriginal) => ({
   queryOpenShellDockerSandboxRuntimeSnapshot: mocks.queryOpenShellDockerSandboxRuntimeSnapshot,
 }));
 
+import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
 import {
+  createAttemptNonce,
   createGpuFlowDeps as createDeps,
   createGpuFlowInput as createInput,
+  createGpuPatchFixture,
+  createNoGpuFlowInput as createNoGpuInput,
   resetGpuFlowMocks,
+  sandboxListJson,
   setupGpuFlowMocks,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
+import {
+  createHermesPortableReadyCapture,
+  createHermesPortableReadyRunner,
+} from "./experimental/hermes-portable-onboarding";
 import { runSandboxGpuCreateFlow, type SandboxGpuCreateFlowInput } from "./sandbox-gpu-create-flow";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 
@@ -181,5 +190,84 @@ describe("Hermes portable sandbox create flow", () => {
     expect(createLifecycle).not.toHaveBeenCalled();
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
     expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
+  });
+
+  it("carries Hermes receipt authority from selector settlement through publication lookup (#10423)", async () => {
+    let nonce = "";
+    const input = createNoGpuInput();
+    const patch = createGpuPatchFixture();
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+      nonce = createAttemptNonce(args);
+      expect(options.readyCheck?.()).toBe(true);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValue({
+      ready: true,
+      reason: "ready",
+      failurePhase: null,
+    });
+    const capture = vi.fn((args: readonly string[]) => {
+      const results = {
+        [["sandbox", "list", "-g", "nemoclaw"].join("\0")]: () => ({
+          status: 0,
+          stdout: Buffer.from("alpha Ready"),
+          stderr: Buffer.alloc(0),
+        }),
+        [[
+          "sandbox",
+          "list",
+          "-g",
+          "nemoclaw",
+          "--selector",
+          `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
+          "--output",
+          "json",
+          "--limit",
+          "2",
+        ].join("\0")]: () => ({
+          status: 0,
+          stdout: Buffer.from(
+            sandboxListJson("alpha-sandbox-id", {
+              [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+            }),
+          ),
+          stderr: Buffer.alloc(0),
+        }),
+        [["sandbox", "get", "-g", "nemoclaw", "alpha"].join("\0")]: () => ({
+          status: 0,
+          stdout: Buffer.from("ID: alpha-sandbox-id\n"),
+          stderr: Buffer.alloc(0),
+        }),
+      } satisfies Readonly<
+        Record<string, () => { status: number; stdout: Buffer; stderr: Buffer }>
+      >;
+      return (
+        results[args.join("\0") as keyof typeof results] ??
+        (() => ({ status: 1, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }))
+      )();
+    });
+    const deps = createDeps();
+    deps.runOpenshell = createHermesPortableReadyRunner("alpha", "nemoclaw", capture);
+    deps.runCaptureOpenshell = createHermesPortableReadyCapture("alpha", "nemoclaw", capture);
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
+
+    expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
+    expect(capture).toHaveBeenCalledWith([
+      "sandbox",
+      "list",
+      "-g",
+      "nemoclaw",
+      "--selector",
+      `${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`,
+      "--output",
+      "json",
+      "--limit",
+      "2",
+    ]);
+    expect(capture).toHaveBeenCalledWith(["sandbox", "get", "-g", "nemoclaw", "alpha"]);
   });
 });

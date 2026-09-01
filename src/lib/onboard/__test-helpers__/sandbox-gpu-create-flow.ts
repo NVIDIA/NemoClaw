@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { expect, vi } from "vitest";
 
+import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../../adapters/openshell/sandbox-identity";
 import { createCliOpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer-cli";
 import { isSandboxReady } from "../../state/gateway";
 import type { CheckpointPortableRuntimeAuthority } from "../../state/onboard-checkpoint-types";
@@ -26,6 +27,41 @@ export const VERIFIED_GPU_PROOF: SandboxGpuProofResult = {
   at: "2026-07-06T00:00:00.000Z",
 };
 export const GPU_IMAGE_ID = `sha256:${"a".repeat(64)}`;
+export const ALPHA_SANDBOX_IDENTITY_FINGERPRINT =
+  "8174fa2a5d65755138d8339e086c03d736633130b22dca10952e80e74750c01d";
+
+export function sandboxListJson(
+  sandboxId: string,
+  labels: Readonly<Record<string, string>>,
+  overrides: Readonly<Record<string, unknown>> = {},
+): string {
+  return JSON.stringify([
+    {
+      id: sandboxId,
+      name: "alpha",
+      labels,
+      resource_version: 1,
+      created_at: "2026-08-25T00:00:00Z",
+      phase: "Ready",
+      current_policy_version: 1,
+      ...overrides,
+    },
+  ]);
+}
+
+export function createAttemptNonce(args: readonly string[]): string {
+  const labelIndex = args.indexOf("--label");
+  return (args[labelIndex + 1] ?? "").slice(NEMOCLAW_CREATE_ATTEMPT_LABEL.length + 1);
+}
+
+export function createTimedOutCreateResult(output: string) {
+  return {
+    status: 1,
+    output,
+    sawProgress: true,
+    readyTerminationTimedOut: true,
+  } as const;
+}
 
 export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
   return {
@@ -57,6 +93,23 @@ export function createGpuFlowInput(): SandboxGpuCreateFlowInput {
     restoreBackupPath: null,
     terminalAgent: false,
   };
+}
+
+export function createNoGpuFlowInput(): SandboxGpuCreateFlowInput {
+  const input = createGpuFlowInput();
+  input.sandboxGpuConfig = {
+    mode: "0",
+    hostGpuDetected: false,
+    hostGpuPlatform: null,
+    sandboxGpuEnabled: false,
+    sandboxGpuDevice: null,
+    errors: [],
+  };
+  input.gpuRoutePlan = "none";
+  input.initialGpuRoute = "none";
+  input.createArgv = ["openshell", "sandbox", "create", "--name", "alpha", "--", "agent"];
+  input.persistRetainedSandboxRecovery = vi.fn(() => true);
+  return input;
 }
 
 export function createGpuFlowDeps(sandboxId?: string): SandboxGpuCreateFlowDeps;
@@ -132,6 +185,26 @@ export function createGpuPatchFixture() {
     printReadinessFailureIfEnabled: vi.fn(),
     verifyGpuOrExit: vi.fn(() => VERIFIED_GPU_PROOF),
   };
+}
+
+export function expectNoPostCreateEffects(
+  input: SandboxGpuCreateFlowInput,
+  patch: ReturnType<typeof createGpuPatchFixture>,
+  deps: SandboxGpuCreateFlowDeps,
+  readinessWait: ReturnType<typeof vi.fn>,
+): void {
+  for (const effect of [
+    input.verifyCreatedSandboxBeforeEffects,
+    input.revalidateVerifiedSandboxBeforeEffect,
+    patch.exitOnPatchError,
+    patch.ensureApplied,
+    patch.waitForSupervisorReconnectIfNeeded,
+    patch.commitAfterReady,
+    readinessWait,
+    deps.installPortableDemoLifecycle,
+  ]) {
+    if (effect) expect(effect).not.toHaveBeenCalled();
+  }
 }
 
 export function setupGpuFlowMocks(mocks: Record<string, ReturnType<typeof vi.fn>>): void {
