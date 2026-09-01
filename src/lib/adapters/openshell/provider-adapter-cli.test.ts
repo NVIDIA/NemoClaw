@@ -124,7 +124,7 @@ describe("CLI OpenShell provider adapter", () => {
         config: [{ key: "region", value: "us-west" }],
         fromExisting: false,
       }),
-    ).resolves.toEqual({ ok: true, value: { state: "created" } });
+    ).resolves.toEqual({ ok: true });
 
     expect(run).toHaveBeenCalledWith(
       [
@@ -251,7 +251,7 @@ describe("CLI OpenShell provider adapter", () => {
         target: selectedOpenShellGateway(),
         profilePath: "/repo/profile.yaml",
       }),
-    ).resolves.toEqual({ ok: true, value: { state: "already_present" } });
+    ).resolves.toEqual({ ok: true });
     expect(run.mock.calls.map(([args]) => args)).toEqual([
       ["provider", "profile", "import", "--file", "/repo/profile.yaml"],
       ["provider", "profile", "export", "tavily", "--output", "json"],
@@ -274,7 +274,7 @@ describe("CLI OpenShell provider adapter", () => {
         target: selectedOpenShellGateway(),
         profilePath: "/repo/profile.yaml",
       }),
-    ).resolves.toEqual({ ok: true, value: { state: "imported" } });
+    ).resolves.toEqual({ ok: true });
     expect(run.mock.calls.map(([args]) => args)).toEqual([
       ["provider", "profile", "import", "--file", "/repo/profile.yaml"],
       ["provider", "profile", "export", "tavily", "--output", "json"],
@@ -454,7 +454,7 @@ describe("CLI OpenShell provider adapter", () => {
         profilePath: "/repo/provider-profiles/openai.yaml",
         inferenceCapable: true,
       }),
-    ).resolves.toEqual({ ok: true, value: { state: "ready" } });
+    ).resolves.toEqual({ ok: true });
     expect(run.mock.calls.map(([args]) => args)).toEqual([
       ["provider", "profile", "export", "openai", "--output", "json"],
       ["provider", "profile", "import", "--file", "/repo/provider-profiles/openai.yaml"],
@@ -505,7 +505,7 @@ describe("CLI OpenShell provider adapter", () => {
         providerName: "search-prod",
         sandboxName: "alpha",
       }),
-    ).resolves.toEqual({ ok: true, value: { state: "detached" } });
+    ).resolves.toEqual({ ok: true });
     expect(run.mock.calls[1]?.[0]).toEqual([
       "sandbox",
       "provider",
@@ -546,7 +546,7 @@ describe("CLI OpenShell provider adapter", () => {
         providerName: "search-prod",
         sandboxName: "alpha",
       }),
-    ).resolves.toEqual({ ok: true, value: { state: "detached" } });
+    ).resolves.toEqual({ ok: true });
     expect(run).toHaveBeenCalledWith(
       ["sandbox", "provider", "detach", "-g", "nemoclaw-18080", "alpha", "search-prod"],
       expect.objectContaining({ ignoreError: true, timeout: 30_000 }),
@@ -566,7 +566,7 @@ describe("CLI OpenShell provider adapter", () => {
           providerName: "search-prod",
           sandboxName: "alpha",
         }),
-      ).resolves.toEqual({ ok: true, value: { state: "absent" } });
+      ).resolves.toEqual({ ok: true });
     },
   );
 

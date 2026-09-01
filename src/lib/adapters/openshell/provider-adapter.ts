@@ -39,6 +39,10 @@ export type OpenShellProviderResult<T> =
   | Readonly<{ ok: true; value: T }>
   | Readonly<{ ok: false; error: OpenShellProviderError }>;
 
+export type OpenShellProviderMutationResult =
+  | Readonly<{ ok: true }>
+  | Readonly<{ ok: false; error: OpenShellProviderError }>;
+
 export type OpenShellProviderRequest = Readonly<{
   target: OpenShellGatewayTarget;
   timeoutMs?: number;
@@ -88,53 +92,27 @@ export type DetachOpenShellProviderRequest = DeleteOpenShellProviderRequest &
     sandboxName: string;
   }>;
 
-export type OpenShellProviderProfileImport = Readonly<{
-  state: "already_present" | "imported";
-}>;
-
-export type OpenShellEndpointlessProviderProfile = Readonly<{
-  state: "ready";
-}>;
-
-export type OpenShellProviderCreate = Readonly<{
-  state: "created";
-}>;
-
-export type OpenShellProviderDelete = Readonly<{
-  state: "deleted";
-}>;
-
-export type OpenShellProviderDetach = Readonly<{
-  state: "absent" | "detached";
-}>;
-
 /** Transport-neutral provider capabilities used by NemoClaw credential actions. */
 export interface OpenShellProviderAdapter {
   listProviders(
     request: OpenShellProviderRequest,
   ): Promise<OpenShellProviderResult<OpenShellProviderInventory>>;
 
-  createProvider(
-    request: CreateOpenShellProviderRequest,
-  ): Promise<OpenShellProviderResult<OpenShellProviderCreate>>;
+  createProvider(request: CreateOpenShellProviderRequest): Promise<OpenShellProviderMutationResult>;
 
   importProviderProfile(
     request: ImportOpenShellProviderProfileRequest,
-  ): Promise<OpenShellProviderResult<OpenShellProviderProfileImport>>;
+  ): Promise<OpenShellProviderMutationResult>;
 
   ensureEndpointlessProviderProfile(
     request: EnsureOpenShellEndpointlessProviderProfileRequest,
-  ): Promise<OpenShellProviderResult<OpenShellEndpointlessProviderProfile>>;
+  ): Promise<OpenShellProviderMutationResult>;
 
   inspectProviderProfile(
     request: InspectOpenShellProviderProfileRequest,
   ): Promise<OpenShellProviderResult<OpenShellProviderProfileInspection>>;
 
-  deleteProvider(
-    request: DeleteOpenShellProviderRequest,
-  ): Promise<OpenShellProviderResult<OpenShellProviderDelete>>;
+  deleteProvider(request: DeleteOpenShellProviderRequest): Promise<OpenShellProviderMutationResult>;
 
-  detachProvider(
-    request: DetachOpenShellProviderRequest,
-  ): Promise<OpenShellProviderResult<OpenShellProviderDetach>>;
+  detachProvider(request: DetachOpenShellProviderRequest): Promise<OpenShellProviderMutationResult>;
 }

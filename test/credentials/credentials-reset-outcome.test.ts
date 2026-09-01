@@ -13,6 +13,7 @@ function result(
 ): CredentialsProviderDeleteWithRecoveryResult {
   return {
     ok: false,
+    detachedSandboxes: [],
     recoveryFailures: [],
     ...over,
   };

@@ -28,7 +28,8 @@ vi.mock("../lib/actions/global", () => ({
   listManagedMcpCredentialReservations: mocks.listManagedMcpCredentialReservations,
 }));
 vi.mock("../lib/adapters/openshell/provider-command", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../lib/adapters/openshell/provider-command")>();
+  const actual =
+    await importOriginal<typeof import("../lib/adapters/openshell/provider-command")>();
   return {
     ...actual,
     OPENSHELL_OPERATION_TIMEOUT_MS: 30_000,
@@ -305,6 +306,17 @@ describe("credentials oclif adapter source coverage", () => {
     mocks.runOpenshellProviderCommand
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider profile not found" })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify({
+          id: "openai",
+          credentials: [],
+          endpoints: [],
+          binaries: [],
+          inference_capable: true,
+        }),
+        stderr: "",
+      })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
 
     const result = await runCredentialsAddAction({
@@ -325,6 +337,7 @@ describe("credentials oclif adapter source coverage", () => {
         "--file",
         expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
       ],
+      ["provider", "profile", "export", "openai", "--output", "json"],
       [
         "provider",
         "create",
@@ -337,8 +350,14 @@ describe("credentials oclif adapter source coverage", () => {
       ],
     ]);
     expect(
-      mocks.runOpenshellProviderCommand.mock.calls.slice(0, 2).map(([, options]) => options),
+      mocks.runOpenshellProviderCommand.mock.calls.slice(0, 3).map(([, options]) => options),
     ).toEqual([
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      },
       {
         ignoreError: true,
         suppressOutput: true,

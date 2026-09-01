@@ -39,6 +39,7 @@ export type CredentialsResetDeps = Readonly<{
 export type CredentialsProviderDeleteWithRecoveryResult = Readonly<{
   ok: boolean;
   error?: OpenShellProviderError;
+  detachedSandboxes: readonly string[];
   recoveryFailures: readonly Readonly<{
     sandbox: string;
     error: OpenShellProviderError;
@@ -173,6 +174,16 @@ export function formatResetOutcome(
       `  for each, then re-run '${CLI_NAME} credentials reset ${key}'.`,
     );
   }
+  const detachedSandboxes = [...new Set(recovery.detachedSandboxes)];
+  if (detachedSandboxes.length > 0) {
+    lines.push(
+      "",
+      `  Provider '${key}' was detached from sandbox(es): ${detachedSandboxes.join(", ")}, but provider removal was not confirmed.`,
+      `  Re-run '${CLI_NAME} credentials reset ${key}' to complete provider removal.`,
+      "  If the provider remains registered, restore it by rebuilding the detached sandbox(es):",
+      ...detachedSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} rebuild`),
+    );
+  }
   if (recovery.error?.message) lines.push(`  ${recovery.error.message}`);
   return { ok: false, lines };
 }
@@ -187,24 +198,26 @@ async function deleteProviderWithRecovery(
     timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
   } as const;
   let result = await providerAdapter.deleteProvider(request);
+  const detachedSandboxes: string[] = [];
   const recoveryFailures: Array<{ sandbox: string; error: OpenShellProviderError }> = [];
   if (result.ok || result.error.kind !== "command" || result.error.reason !== "attached") {
     return result.ok
-      ? { ok: true, recoveryFailures }
-      : { ok: false, error: result.error, recoveryFailures };
+      ? { ok: true, detachedSandboxes, recoveryFailures }
+      : { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
   }
 
   const attachedSandboxes = validatedAttachedSandboxes(result.error);
   if (attachedSandboxes.length === 0) {
-    return { ok: false, error: result.error, recoveryFailures };
+    return { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
   }
 
   for (const sandbox of attachedSandboxes) {
     const detach = await providerAdapter.detachProvider({ ...request, sandboxName: sandbox });
-    if (!detach.ok) recoveryFailures.push({ sandbox, error: detach.error });
+    if (detach.ok) detachedSandboxes.push(sandbox);
+    else recoveryFailures.push({ sandbox, error: detach.error });
   }
   result = await providerAdapter.deleteProvider(request);
   return result.ok
-    ? { ok: true, recoveryFailures }
-    : { ok: false, error: result.error, recoveryFailures };
+    ? { ok: true, detachedSandboxes, recoveryFailures }
+    : { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
 }

@@ -18,6 +18,7 @@ import {
   type InspectOpenShellProviderProfileRequest,
   type OpenShellProviderAdapter,
   type OpenShellProviderError,
+  type OpenShellProviderMutationResult,
   type OpenShellProviderRequest,
   type OpenShellProviderResult,
 } from "./provider-adapter";
@@ -60,6 +61,10 @@ const TOLERATED_DETACH_OUTPUT_RE =
 
 function success<T>(value: T): OpenShellProviderResult<T> {
   return { ok: true, value };
+}
+
+function mutationSuccess(): OpenShellProviderMutationResult {
+  return { ok: true };
 }
 
 function failure<T>(error: OpenShellProviderError): OpenShellProviderResult<T> {
@@ -276,7 +281,7 @@ export function createCliOpenShellProviderAdapter(
         message: "OpenShell could not create the provider from existing credentials.",
       });
     }
-    return error ? failure(error) : success({ state: "created" });
+    return error ? failure(error) : mutationSuccess();
   };
 
   const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async (
@@ -303,11 +308,8 @@ export function createCliOpenShellProviderAdapter(
       request,
     );
     const error = commandError(result);
-    const state =
-      error?.kind === "command" && error.reason === "already_exists"
-        ? "already_present"
-        : "imported";
-    if (error && state !== "already_present") return failure(error);
+    const alreadyPresent = error?.kind === "command" && error.reason === "already_exists";
+    if (error && !alreadyPresent) return failure(error);
 
     const exported = invoke(
       ["provider", "profile", "export", contract.profileId, "--output", "json"],
@@ -326,7 +328,7 @@ export function createCliOpenShellProviderAdapter(
           "The OpenShell provider profile does not match the checked-in credential boundary.",
       });
     }
-    return success({ state });
+    return mutationSuccess();
   };
 
   const ensureEndpointlessProviderProfile: OpenShellProviderAdapter["ensureEndpointlessProviderProfile"] =
@@ -338,7 +340,7 @@ export function createCliOpenShellProviderAdapter(
         runOpenshell: (args, options) =>
           invoke(args, request, undefined, 2, options?.suppressOutput === true),
       });
-      if (result.ok) return success({ state: "ready" });
+      if (result.ok) return mutationSuccess();
       const reason =
         result.reason === "export-failed"
           ? "profile_export_failed"
@@ -377,7 +379,7 @@ export function createCliOpenShellProviderAdapter(
   ) => {
     const result = invoke(["provider", "delete", request.providerName], request);
     const error = commandError(result);
-    return error ? failure(error) : success({ state: "deleted" });
+    return error ? failure(error) : mutationSuccess();
   };
 
   const detachProvider: OpenShellProviderAdapter["detachProvider"] = async (
@@ -391,10 +393,10 @@ export function createCliOpenShellProviderAdapter(
     );
     const output = commandOutput(result);
     if (result.status !== 0 && TOLERATED_DETACH_OUTPUT_RE.test(output)) {
-      return success({ state: "absent" });
+      return mutationSuccess();
     }
     const error = commandError(result);
-    return error ? failure(error) : success({ state: "detached" });
+    return error ? failure(error) : mutationSuccess();
   };
 
   return {
