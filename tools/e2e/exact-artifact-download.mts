@@ -202,7 +202,7 @@ export async function downloadBoundArtifact(
   }
 
   const fetchImpl = options.fetchImpl ?? fetch;
-  const log = options.log ?? console.log;
+  const log = options.log ?? console.error;
   const now = options.now ?? Date.now;
   const sleep =
     options.sleep ??
