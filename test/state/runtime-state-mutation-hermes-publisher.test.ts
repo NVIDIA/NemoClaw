@@ -25,6 +25,7 @@ sys.modules[spec.name] = publisher
 spec.loader.exec_module(publisher)
 publisher.ROOT_UID = os.getuid()
 publisher.ROOT_GID = os.getgid()
+real_verify_final_posture = publisher._verify_final_posture
 
 installed_plan = {
     "version": 1,
@@ -314,6 +315,88 @@ with tempfile.TemporaryDirectory() as temporary:
     )
     results["rollback_recovery_events"] = events
 
+publisher._verify_final_posture = real_verify_final_posture
+publisher._verify_top_posture = lambda posture: None
+
+class VerificationResult:
+    ok = False
+
+class MutableGuard:
+    def __init__(self, finding):
+        self.finding = finding
+        self.calls = []
+
+    def parse_agent_state_lock_plan(self, plan_json):
+        return json.loads(plan_json)
+
+    def _production_identity(self):
+        return "production-identity"
+
+    def run_guard(self, action, config_dir, identity, plan, **options):
+        self.calls.append({
+            "action": action,
+            "configDir": config_dir,
+            "identity": identity,
+            "plan": plan,
+            "options": options,
+            "finding": self.finding,
+        })
+        return VerificationResult()
+
+results["mutable_verification_failures"] = []
+for index, finding in enumerate(
+    ("verification-flags-mismatch", "verification-config-binding-changed")
+):
+    with tempfile.TemporaryDirectory() as temporary:
+        durable = os.path.join(temporary, "durable")
+        os.mkdir(durable, 0o711)
+        publisher.DURABLE_DIRECTORY = durable
+        publisher.HERMES_DIR = os.path.join(temporary, "sandbox", ".hermes")
+        normalized = {
+            "bindingSha256": format(index + 1, "064x"),
+            "transactionId": format(index + 2, "064x"),
+            "nonce": format(index + 3, "064x"),
+            "planSha256": format(index + 4, "064x"),
+            "projectionSha256": format(index + 5, "064x"),
+            "target": "locked",
+            "rollback": "mutable",
+            "posture": "mutable",
+            "stateLockPlanJson": canonical(installed_plan),
+        }
+        journal = publisher._new_journal(normalized)
+        operation = publisher._operation("mutable", "locked")
+        operation["phase"] = "top-applied"
+        operation["guardToken"] = "a" * 64
+        journal["operation"] = operation
+        directory_fd = os.open(durable, os.O_RDONLY | os.O_DIRECTORY)
+        publisher._write_journal(directory_fd, journal)
+        guard = MutableGuard(finding)
+        publisher._load_module = lambda path, name: guard
+        emitted_receipt = None
+        try:
+            emitted_receipt = publisher._complete(
+                directory_fd, journal, normalized
+            )
+            failure = "ok"
+        except publisher.PublisherError as error:
+            failure = error.code
+        finally:
+            os.close(directory_fd)
+        with open(
+            os.path.join(durable, publisher.JOURNAL_NAME),
+            "r",
+            encoding="utf-8",
+        ) as stream:
+            persisted = json.load(stream)
+        results["mutable_verification_failures"].append({
+            "finding": finding,
+            "failure": failure,
+            "emittedReceipt": emitted_receipt,
+            "persistedOperation": persisted["operation"],
+            "finalPosture": persisted["finalPosture"],
+            "calls": guard.calls,
+        })
+
 print(json.dumps(results, sort_keys=True))
 `;
 
@@ -541,6 +624,56 @@ describe("Hermes runtime state mutation publisher", () => {
       ["run-state-dir-transition"],
       ["abort-shields-transition"],
       ["verify", "mutable"],
+    ]);
+  });
+
+  it("retains the mutable operation without a receipt when final posture verification fails (#9485)", () => {
+    const failures = harnessResult.mutable_verification_failures as Array<
+      Record<string, unknown>
+    >;
+    expect(failures).toHaveLength(2);
+    const retainedFailure = {
+      failure: "publisher-state-posture-invalid",
+      emittedReceipt: null,
+      finalPosture: null,
+      persistedOperation: {
+        posture: "mutable",
+        rollbackPosture: "locked",
+        phase: "top-applied",
+        guardToken: "a".repeat(64),
+      },
+    };
+    const canonicalCall = {
+      action: "verify-mutable",
+      configDir: expect.stringMatching(/\/sandbox\/\.hermes$/),
+      identity: "production-identity",
+      plan: {
+        version: 1,
+        readOnlyRoots: ["plugins", "workspace"],
+        confidentialRoots: ["pairing"],
+        readOnlyPrefixes: ["profile-"],
+        confidentialPrefixes: ["secret-"],
+        writableSubpaths: ["workspace/cache"],
+      },
+      options: {
+        mutable_top_level_files: [
+          expect.stringMatching(/\/sandbox\/\.hermes\/\.config-hash$/),
+          expect.stringMatching(/\/sandbox\/\.hermes\/\.env$/),
+          expect.stringMatching(/\/sandbox\/\.hermes\/config\.yaml$/),
+        ],
+      },
+    };
+    expect(failures).toMatchObject([
+      {
+        ...retainedFailure,
+        finding: "verification-flags-mismatch",
+        calls: [{ ...canonicalCall, finding: "verification-flags-mismatch" }],
+      },
+      {
+        ...retainedFailure,
+        finding: "verification-config-binding-changed",
+        calls: [{ ...canonicalCall, finding: "verification-config-binding-changed" }],
+      },
     ]);
   });
 

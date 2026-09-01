@@ -22,7 +22,7 @@ import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
-import { parseGatewayInference } from "../../inference/config";
+import { buildGatewayInferenceGetArgs, parseGatewayInference } from "../../inference/config";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
@@ -390,7 +390,7 @@ function resolveInferenceRoute(
   const live =
     openshellBin && openshellConnected && gatewayName
       ? parseGatewayInference(
-          captureOpenshell(["inference", "get", "-g", gatewayName], {
+          captureOpenshell(buildGatewayInferenceGetArgs(gatewayName), {
             ignoreError: true,
             timeout: OPENSHELL_PROBE_TIMEOUT_MS,
           }).output,

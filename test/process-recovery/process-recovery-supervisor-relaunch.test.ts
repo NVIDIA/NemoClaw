@@ -24,6 +24,10 @@ const MISSING_MANAGED_SUPERVISOR = {
   stderr: "SUPERVISOR_NOT_RUNNING",
 } as const;
 const DEFAULT_FORWARD_SCOPE = ["--gateway", "nemoclaw"];
+
+function missingSupervisorOnRecover(_name: string, action: string) {
+  return action === "recover" ? MISSING_MANAGED_SUPERVISOR : null;
+}
 function pinnedIdentityRefusal(sandboxName: string) {
   return {
     status: 1,
@@ -158,16 +162,8 @@ function scriptedPinnedGatewayRecovery(
   order: string[],
   postRestoreRestart: { status: number; stdout: string; stderr: string },
 ) {
-  const unavailableProbe = {
-    status: 1,
-    stdout: "",
-    stderr: "SUPERVISOR_NOT_RUNNING",
-  };
-  const acceptedProbe = {
-    status: 0,
-    stdout: "GATEWAY_PID=4242\n",
-    stderr: "",
-  };
+  const unavailableProbe = MISSING_MANAGED_SUPERVISOR;
+  const acceptedProbe = ACCEPTED_MANAGED_PROBE;
   const probeResults = [unavailableProbe, acceptedProbe] as const;
   let probeIndex = 0;
   const actions = {
@@ -236,6 +232,59 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
   });
 
+  it("reports the onboarding remediation for a legacy Hermes recovery refusal", () => {
+    setImmediateRecoveryPolling();
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
+      name: "hermes",
+      displayName: "Hermes",
+      forwardPort: 19_189,
+      healthProbe: { url: "http://127.0.0.1:19189/health", port: 19_189, timeout_seconds: 30 },
+    } as never);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "legacy-hermes-box",
+      agent: "hermes",
+      dashboardPort: 19_189,
+      hermesDashboardEnabled: true,
+      hermesDashboardPort: 19_189,
+      hermesDashboardInternalPort: 8643,
+      openshellDriver: "docker",
+    });
+    const resolveContainer = vi.fn(() => "old-container-id");
+    const recreate = vi.fn(() => {
+      throw new Error("legacy Hermes recovery allowed container mutation");
+    });
+    const relaunchManagedSupervisorSessionImpl = vi.fn(
+      (sandboxName: string, options: Parameters<typeof relaunchManagedSupervisorSession>[1]) =>
+        relaunchManagedSupervisorSession(sandboxName, {
+          quiet: options.quiet,
+          deps: {
+            ...options.deps,
+            readManagedWorkloadAuthority: vi.fn(
+              () => ({ agent: "hermes", profile: { dashboard: { agent: "hermes" } } }) as never,
+            ),
+            recreate,
+            resolveContainer,
+          },
+        }),
+    );
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = checkAndRecoverSandboxProcesses("legacy-hermes-box", {
+      quiet: false,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction: vi.fn(() => MISSING_MANAGED_SUPERVISOR),
+      relaunchManagedSupervisorSessionImpl,
+    });
+
+    expect(result).toMatchObject({ checked: true, wasRunning: false, recovered: false });
+    expect(resolveContainer).not.toHaveBeenCalled();
+    expect(recreate).not.toHaveBeenCalled();
+    const output = errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Hermes dashboard profile");
+    expect(output).toContain("no recorded browser URL");
+    expect(output).toContain("Rerun onboarding before retrying recovery");
+  });
+
   it("does not turn ambiguous supervisor unavailability into a container mutation", () => {
     mockOpenClawSandbox("ambiguous-box");
     setImmediateRecoveryPolling();
@@ -284,11 +333,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     vi.stubEnv("NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH", "1");
     mockOpenClawSandbox("legacy-box");
     setImmediateRecoveryPolling();
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 1,
-      stdout: "",
-      stderr: "SUPERVISOR_NOT_RUNNING",
-    }));
+    const requestGatewaySupervisorAction = vi.fn(() => MISSING_MANAGED_SUPERVISOR);
     const resolveContainer = vi.fn(() => "old-container-id");
     const recreate = vi.fn(() => {
       throw new Error("kill switch allowed container mutation");
@@ -340,9 +385,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       containerId: "replacement-container-id",
       finalize,
     }));
-    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
-      action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
-    );
+    const requestGatewaySupervisorAction = vi.fn(missingSupervisorOnRecover);
     const requestPinnedGatewaySupervisorAction = vi.fn(() => null);
 
     const result = checkAndRecoverSandboxProcesses("rejected-box", {
@@ -383,11 +426,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       containerId: "replacement-container-id",
       finalize,
     }));
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 1,
-      stdout: "",
-      stderr: "SUPERVISOR_NOT_RUNNING",
-    }));
+    const requestGatewaySupervisorAction = vi.fn(() => MISSING_MANAGED_SUPERVISOR);
     const requestPinnedGatewaySupervisorAction = vi.fn(() => ({
       status: 1,
       stdout: "",
@@ -427,9 +466,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     const order: string[] = [];
     const { finalizeTransaction, relaunchManagedSupervisorSessionImpl, runOpenshell } =
       composedRelaunchTransaction(order);
-    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
-      action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
-    );
+    const requestGatewaySupervisorAction = vi.fn(missingSupervisorOnRecover);
     const requestPinnedGatewaySupervisorAction = scriptedPinnedGatewayRecovery(order, {
       status: 0,
       stdout: `v1 ${"a".repeat(64)} complete ok 4242 4343\nGATEWAY_PID=4343`,
@@ -520,9 +557,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         old: oldContainerId,
         replacement: replacementContainerId,
       });
-    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
-      action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
-    );
+    const requestGatewaySupervisorAction = vi.fn(missingSupervisorOnRecover);
     const restartedGateway = {
       status: 0,
       stdout: `v1 ${"c".repeat(64)} complete ok 4242 4343\nGATEWAY_PID=4343`,
@@ -737,11 +772,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
         containerId: "replacement-container-id",
         finalize,
       }));
-      const requestGatewaySupervisorAction = vi.fn(() => ({
-        status: 1,
-        stdout: "",
-        stderr: "SUPERVISOR_NOT_RUNNING",
-      }));
+      const requestGatewaySupervisorAction = vi.fn(() => MISSING_MANAGED_SUPERVISOR);
       const requestPinnedGatewaySupervisorAction = vi
         .fn()
         .mockReturnValueOnce(ACCEPTED_MANAGED_PROBE)
@@ -800,9 +831,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     const order: string[] = [];
     const { finalizeTransaction, relaunchManagedSupervisorSessionImpl } =
       composedRelaunchTransaction(order);
-    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
-      action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
-    );
+    const requestGatewaySupervisorAction = vi.fn(missingSupervisorOnRecover);
     const requestPinnedGatewaySupervisorAction = scriptedPinnedGatewayRecovery(order, {
       status: 0,
       stdout: `v1 ${"b".repeat(64)} complete already-running 4242 4242\nGATEWAY_PID=4242`,
@@ -850,14 +879,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       containerId: "replacement-container-id",
       finalize,
     }));
-    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
-      action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
-    );
-    const requestPinnedGatewaySupervisorAction = vi.fn(() => ({
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    }));
+    const requestGatewaySupervisorAction = vi.fn(missingSupervisorOnRecover);
+    const requestPinnedGatewaySupervisorAction = vi.fn(() => ACCEPTED_MANAGED_PROBE);
     const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(
       (
         _name: string,
@@ -914,14 +937,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       containerId: "replacement-container-id",
       finalize,
     }));
-    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
-      action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
-    );
-    const requestPinnedGatewaySupervisorAction = vi.fn(() => ({
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    }));
+    const requestGatewaySupervisorAction = vi.fn(missingSupervisorOnRecover);
+    const requestPinnedGatewaySupervisorAction = vi.fn(() => ACCEPTED_MANAGED_PROBE);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const captureOpenshell = vi
@@ -974,14 +991,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       containerId: "replacement-container-id",
       finalize,
     }));
-    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
-      action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
-    );
-    const acceptedProbe = {
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    };
+    const requestGatewaySupervisorAction = vi.fn(missingSupervisorOnRecover);
+    const acceptedProbe = ACCEPTED_MANAGED_PROBE;
     const requestPinnedGatewaySupervisorAction = vi
       .fn()
       .mockReturnValueOnce(acceptedProbe)
@@ -1101,16 +1112,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       containerId: "replacement-container-id",
       finalize,
     }));
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 1,
-      stdout: "",
-      stderr: "SUPERVISOR_NOT_RUNNING",
-    }));
-    const requestPinnedGatewaySupervisorAction = vi.fn(() => ({
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    }));
+    const requestGatewaySupervisorAction = vi.fn(() => MISSING_MANAGED_SUPERVISOR);
+    const requestPinnedGatewaySupervisorAction = vi.fn(() => ACCEPTED_MANAGED_PROBE);
     const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(
       (
         _name: string,
@@ -1225,16 +1228,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       containerId: "replacement-container-id",
       finalize,
     }));
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 1,
-      stdout: "",
-      stderr: "SUPERVISOR_NOT_RUNNING",
-    }));
-    const requestPinnedGatewaySupervisorAction = vi.fn(() => ({
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    }));
+    const requestGatewaySupervisorAction = vi.fn(() => MISSING_MANAGED_SUPERVISOR);
+    const requestPinnedGatewaySupervisorAction = vi.fn(() => ACCEPTED_MANAGED_PROBE);
     const timeoutError = Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
     const captureOpenshell = vi
       .spyOn(openshellRuntime, "captureOpenshell")
@@ -1287,16 +1282,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       containerId: "replacement-container-id",
       finalize,
     }));
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 1,
-      stdout: "",
-      stderr: "SUPERVISOR_NOT_RUNNING",
-    }));
-    const acceptedProbe = {
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    };
+    const requestGatewaySupervisorAction = vi.fn(() => MISSING_MANAGED_SUPERVISOR);
+    const acceptedProbe = ACCEPTED_MANAGED_PROBE;
     const requestPinnedGatewaySupervisorAction = vi
       .fn()
       .mockReturnValueOnce(acceptedProbe)
@@ -1368,16 +1355,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       containerId: "replacement-container-id",
       finalize,
     }));
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 1,
-      stdout: "",
-      stderr: "SUPERVISOR_NOT_RUNNING",
-    }));
-    const acceptedProbe = {
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    };
+    const requestGatewaySupervisorAction = vi.fn(() => MISSING_MANAGED_SUPERVISOR);
+    const acceptedProbe = ACCEPTED_MANAGED_PROBE;
     const requestPinnedGatewaySupervisorAction = vi
       .fn()
       .mockReturnValueOnce(acceptedProbe)
