@@ -137,15 +137,17 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
   openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
   ```
 
-- Export the round-trippable OpenShell base policy through NemoClaw, then replace it through OpenShell:
+- Export the parsed OpenShell base policy through NemoClaw, then replace it through OpenShell:
 
-  Requires OpenShell 0.0.72+ for the round-trippable `policy get --base` and `policy set --wait` syntax.
+  This workflow requires OpenShell 0.0.72+ for `policy get --base` and `policy set --wait`.
 
   ```bash
   $$nemoclaw <sandbox-name> policy get > current-policy.yaml
   ```
 
-  NemoClaw strips the OpenShell metadata header and exits non-zero if it cannot validate the base policy.
+  NemoClaw parses the policy, strips the OpenShell metadata header, and replaces literal credentials with `[STRIPPED_BY_MIGRATION]`.
+  Replace every marker with a supported OpenShell credential binding or resolver placeholder before you apply the file.
+  NemoClaw exits nonzero if it cannot validate the base policy.
   Do not use `--raw` for a file that you plan to reapply.
 
   Edit or review `current-policy.yaml`, then apply it:
@@ -263,7 +265,8 @@ Use `$$nemoclaw <name> policy add` or `policy remove` for NemoClaw presets and c
 NemoClaw merges the new policy with the live policy and reapplies presets during rebuilds.
 
 Use `openshell policy update` for precise live endpoint or REST rule changes.
-Use `$$nemoclaw <name> policy get` and `openshell policy set --policy <file> --wait <name>` only when you need to edit and replace the round-trippable base policy.
+Use `$$nemoclaw <name> policy get` and `openshell policy set --policy <file> --wait <name>` only when you need to edit and replace the complete base policy.
+Replace every `[STRIPPED_BY_MIGRATION]` marker before you apply the file.
 Use `openshell policy get --full <name>` only to inspect the effective policy, including provider-composed rules.
 
 ### Move Workspace Files

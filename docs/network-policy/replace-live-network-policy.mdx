@@ -23,13 +23,14 @@ Applying a file that contains only one part silently removes the other entries.
 
 ## Export the Base Policy
 
-Start from the current round-trippable base policy so the applied presets remain in the file:
+Start from the current parsed base policy so the applied presets remain in the file:
 
 ```bash
 $$nemoclaw my-assistant policy get > current-policy.yaml
 ```
 
-The command retrieves and validates the base policy.
+The command retrieves and parses the base policy.
+It replaces literal credential values with `[STRIPPED_BY_MIGRATION]`.
 It exits nonzero instead of writing partial output when retrieval or validation fails.
 Do not use `--raw` because raw output retains the OpenShell metadata header.
 
@@ -38,6 +39,12 @@ Do not use `--raw` because raw output retains the OpenShell metadata header.
 Edit `current-policy.yaml`.
 Add entries under `network_policies` and keep the existing `version` field.
 Preserve every baseline and preset entry that the sandbox still needs.
+
+<Warning title="Replace Redaction Markers">
+Do not apply a file that contains `[STRIPPED_BY_MIGRATION]`.
+Replace every marker with a supported OpenShell credential binding or resolver placeholder before you continue.
+Applying the marker as a literal value can break credential delivery for the sandbox.
+</Warning>
 
 The `openshell policy set` command accepts a raw policy file.
 It does not accept a preset file that starts with a `preset:` metadata block.
