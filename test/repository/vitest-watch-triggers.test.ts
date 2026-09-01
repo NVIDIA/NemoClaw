@@ -253,6 +253,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/hosted-inference.test.ts",
     ]);
     expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/install/setup-jetson.test.ts"]);
+    expect(triggeredBy("scripts/backup-workspace.sh")).toEqual([
+      "test/scripts/backup-workspace.test.ts",
+    ]);
     expect(triggeredBy("tools/e2e/contracts/v1/jetson-dispatch.json")).toEqual([
       "test/e2e/support/jetson-dispatch-client.test.ts",
     ]);

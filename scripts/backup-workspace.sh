@@ -4,6 +4,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+NEMOCLAW_CLI_BIN="${NEMOCLAW_CLI_BIN:-${SCRIPT_DIR}/../bin/nemoclaw.js}"
 WORKSPACE_PATH="/sandbox/.openclaw/workspace"
 BACKUP_BASE="${HOME}/.nemoclaw/backups"
 FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md)
@@ -82,6 +84,7 @@ restore_directory() {
 
 do_backup() {
   local sandbox="$1"
+  require_cmd "$NEMOCLAW_CLI_BIN"
   local ts
   ts="$(date +%Y%m%d-%H%M%S)"
   local dest="${BACKUP_BASE}/${ts}"
@@ -96,7 +99,7 @@ do_backup() {
 
   local count=0
   for f in "${FILES[@]}"; do
-    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${f}" "${dest}/" 2>/dev/null; then
+    if "$NEMOCLAW_CLI_BIN" "$sandbox" download "${WORKSPACE_PATH}/${f}" "${dest}/" 2>/dev/null; then
       count=$((count + 1))
     else
       warn "Skipped ${f} (not found or download failed)"
@@ -104,7 +107,7 @@ do_backup() {
   done
 
   for d in "${DIRS[@]}"; do
-    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/" 2>/dev/null; then
+    if "$NEMOCLAW_CLI_BIN" "$sandbox" download "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/" 2>/dev/null; then
       count=$((count + 1))
     else
       warn "Skipped ${d}/ (not found or download failed)"

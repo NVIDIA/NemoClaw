@@ -196,6 +196,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/install/setup-jetson.test.ts"),
   },
   {
+    pattern: /(?:^|\/)scripts\/backup-workspace\.sh$/,
+    testsToRun: runTests("test/scripts/backup-workspace.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)tools\/e2e\/contracts\/v1\/jetson-dispatch\.json$/,
     testsToRun: runTests("test/e2e/support/jetson-dispatch-client.test.ts"),
   },
