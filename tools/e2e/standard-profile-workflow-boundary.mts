@@ -161,11 +161,9 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       risk_signal_correlation_id:
         "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
-      managed_image_catalog: "${{ needs.generate-matrix.outputs.managed_image_catalog }}",
-      managed_image_revision:
-        "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_revision || '' }}",
-      managed_image_receipt:
-        "${{ needs.generate-matrix.outputs.managed_image_catalog == '' && needs.base-image-publication.outputs.managed_image_receipt || '' }}",
+      managed_image_catalog: "${{ needs.base-image-publication.outputs.managed_image_catalog }}",
+      managed_image_revision: "${{ needs.base-image-publication.outputs.managed_image_revision }}",
+      managed_image_receipt: "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
       workload_source: "${{ needs.generate-matrix.outputs.workload_source }}",
       credential_boundary: contract.credentialBoundary,
       catalogue_id: "${{ matrix.id }}",
@@ -289,6 +287,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const expectedJobEnv = {
     E2E_JOB: "1",
     E2E_EXECUTION_ID: "${{ inputs.execution_id }}",
+    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "${{ inputs.managed_image_catalog }}",
     E2E_MANAGED_IMAGE_REVISION: "${{ inputs.managed_image_revision }}",
     E2E_TARGET_ID: "${{ inputs.target_id }}",
     E2E_MANAGED_IMAGE_COHORT_RECEIPT: "${{ inputs.managed_image_receipt }}",

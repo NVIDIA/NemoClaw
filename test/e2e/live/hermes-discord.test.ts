@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
@@ -156,14 +157,6 @@ async function applyHermesFakeDiscordPolicy(options: {
       "--add-allow",
       `${FAKE_DISCORD_HOST}:${options.api.port}:WEBSOCKET_TEXT:/**`,
       "--binary",
-      "/usr/local/bin/node",
-      "--binary",
-      "/usr/bin/node",
-      "--binary",
-      "/usr/local/bin/python3",
-      "--binary",
-      "/usr/bin/python3",
-      "--binary",
       "/opt/hermes/.venv/bin/python",
       "--wait",
     ],
@@ -189,6 +182,32 @@ async function applyHermesFakeDiscordPolicy(options: {
     providerName,
     redactionValues: options.redactions,
   });
+
+  const binaryAssertion = await options.host.command(
+    "bash",
+    [
+      "-lc",
+      String.raw`set -eu
+policy_file="$(mktemp)"
+trap 'rm -f "$policy_file"' EXIT
+"$1" policy get --base "$2" >"$policy_file"
+node --import tsx "$5" --assert-binaries "$policy_file" "$3" "$4" websocket /opt/hermes/.venv/bin/python`,
+      "assert-hermes-fake-discord-policy-binaries",
+      options.host.openshellCommandPath,
+      options.sandboxName,
+      FAKE_DISCORD_HOST,
+      String(options.api.port),
+      path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
+    ],
+    {
+      artifactName: "assert-hermes-fake-discord-gateway-binaries",
+      cwd: REPO_ROOT,
+      env: options.env,
+      redactionValues: options.redactions,
+      timeoutMs: 120_000,
+    },
+  );
+  expectExitZero(binaryAssertion, "assert Hermes fake Discord Gateway binary restriction");
 }
 
 const HERMES_DISCORD_PYTHON_GATEWAY_PROOF = String.raw`

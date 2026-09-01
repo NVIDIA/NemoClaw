@@ -125,6 +125,15 @@ function candidateCatalogEnvironment(home: string): NodeJS.ProcessEnv {
   };
 }
 
+function candidateInlineCatalogEnvironment(home: string): NodeJS.ProcessEnv {
+  const environment = candidateCatalogEnvironment(home);
+  const catalogPath = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG!;
+  const catalog = fs.readFileSync(catalogPath, "utf8").trim();
+  delete environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG;
+  environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON = catalog;
+  return environment;
+}
+
 function writeRegistry(workload: Record<string, unknown>): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-only-receipt-"));
   temporaryHomes.push(home);
@@ -167,6 +176,18 @@ describe("stock E2E managed-image receipt assertion", () => {
     expect(
       assertStockManagedImageReceipt({
         environment: candidateCatalogEnvironment(home),
+        expectedAgent: "openclaw",
+        sandboxName: SANDBOX_NAME,
+      }),
+    ).toMatchObject({ agent: "openclaw", sourceRevision: REVISION });
+  });
+
+  it("accepts the durable receipt from the trusted inline candidate catalog", () => {
+    const home = writeRegistry(managedReceipt());
+
+    expect(
+      assertStockManagedImageReceipt({
+        environment: candidateInlineCatalogEnvironment(home),
         expectedAgent: "openclaw",
         sandboxName: SANDBOX_NAME,
       }),
@@ -302,7 +323,7 @@ describe("stock E2E managed-image receipt assertion", () => {
     ).toThrow("complete selected managed-image cohort receipt");
   });
 
-  it("rejects a stock legacy Dockerfile receipt", () => {
+  it("does not let a local-Dockerfile marker bypass candidate receipt validation", () => {
     const home = writeRegistry({
       schemaVersion: 1,
       kind: "legacy-dockerfile",
@@ -312,7 +333,10 @@ describe("stock E2E managed-image receipt assertion", () => {
 
     expect(() =>
       assertStockManagedImageReceipt({
-        environment: { E2E_MANAGED_IMAGE_REVISION: REVISION, HOME: home },
+        environment: {
+          ...candidateCatalogEnvironment(home),
+          E2E_WORKLOAD_SOURCE: "local-dockerfile",
+        },
         sandboxName: SANDBOX_NAME,
       }),
     ).toThrow("must record a managed-image receipt");

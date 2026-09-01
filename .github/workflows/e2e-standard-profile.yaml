@@ -126,6 +126,7 @@ jobs:
       E2E_JOB: "1"
       E2E_EXECUTION_ID: ${{ inputs.execution_id }}
       E2E_MANAGED_IMAGE_REVISION: ${{ inputs.managed_image_revision }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ inputs.managed_image_catalog }}
       E2E_WORKLOAD_SOURCE: ${{ inputs.workload_source }}
       E2E_TARGET_ID: ${{ inputs.target_id }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
