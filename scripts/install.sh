@@ -4541,11 +4541,12 @@ n1x_fastos_release_metadata_is_trusted() {
 
 n1x_fastos_release_contents_are_valid() {
   local contents=${1:-}
+  local expected_name=${2:-'N1x FASTOS'}
   local line="" name_count=0
   [[ "$contents" != *$'\r'* ]] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
-      'NAME="N1x FASTOS"') ((name_count += 1)) ;;
+      "NAME=\"${expected_name}\"") ((name_count += 1)) ;;
       NAME=*) return 1 ;;
     esac
   done <<<"$contents"
@@ -4564,6 +4565,11 @@ n1x_opened_fastos_release_has_nul() {
 }
 
 n1x_fastos_release_is_trusted() {
+  fastos_release_is_trusted_for_name 'N1x FASTOS'
+}
+
+fastos_release_is_trusted_for_name() {
+  local expected_name=${1:?expected FastOS marker name is required}
   local marker="" before="" opened="" after="" contents=""
   marker="$(n1x_fastos_release_path)"
   [ -e "$marker" ] && [ ! -L "$marker" ] || return 1
@@ -4606,7 +4612,11 @@ n1x_fastos_release_is_trusted() {
   contents="$(head -c $((N1X_FASTOS_RELEASE_MAX_BYTES + 1)) <&9)"
   exec 9<&-
   [ "${#contents}" -le "$N1X_FASTOS_RELEASE_MAX_BYTES" ] || return 1
-  n1x_fastos_release_contents_are_valid "$contents"
+  n1x_fastos_release_contents_are_valid "$contents" "$expected_name"
+}
+
+spark_fastos_release_is_trusted() {
+  fastos_release_is_trusted_for_name 'DGX SPARK FASTOS'
 }
 
 n1x_pci_identity_is_valid() {
@@ -4666,6 +4676,10 @@ detect_express_platform() {
       return
       ;;
   esac
+  if spark_fastos_release_is_trusted; then
+    printf "DGX Spark"
+    return
+  fi
   if is_station_gb300_product "$model"; then
     release_state="$(classify_dgx_station_release)"
     case "$release_state" in

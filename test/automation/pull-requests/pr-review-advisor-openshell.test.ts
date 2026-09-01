@@ -432,7 +432,7 @@ describe("PR review advisor specialist lifecycle", () => {
     await command;
 
     expect(calls).toEqual(["create", "cancel", "sandbox", "gateway", "listeners", "restore"]);
-    expect(sandboxNames).toEqual([expect.stringMatching(/^pr-adv-[A-Za-z0-9_-]{12}$/u), sandboxNames[0], sandboxNames[0]]);
+    expect(sandboxNames).toEqual([expect.stringMatching(/^pr-adv-[a-f0-9]{12}$/u), sandboxNames[0], sandboxNames[0]]);
     expect(restore).toHaveBeenCalledWith("SIGTERM");
     expect(stderr).not.toHaveBeenCalled();
     expect(calls).not.toContain("download");
@@ -482,7 +482,7 @@ describe("PR review advisor specialist lifecycle", () => {
     await command;
 
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("execution cleanup"));
-    expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/sandbox pr-adv-[A-Za-z0-9_-]{12}/u));
+    expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/sandbox pr-adv-[a-f0-9]{12}/u));
     expect(stderr).not.toHaveBeenCalledWith(expect.stringContaining(credential));
     expect(events).toEqual(["diagnostic", "restore"]);
     expect(restore).toHaveBeenCalledWith("SIGHUP");
@@ -1060,14 +1060,6 @@ describe("PR review advisor OpenShell wrapper", () => {
           {
             type: "bind",
             source: fs.realpathSync(
-              path.join(env.RUNNER_TEMP as string, "pr-review-advisor-context", "specialist"),
-            ),
-            target: "/pr-workdir/.pr-review-advisor-context",
-            read_only: true,
-          },
-          {
-            type: "bind",
-            source: fs.realpathSync(
               path.join(env.RUNNER_TEMP as string, "pr-review-advisor-tools"),
             ),
             target: "/pr-review-advisor-tools",
@@ -1082,6 +1074,7 @@ describe("PR review advisor OpenShell wrapper", () => {
         ],
       },
     });
+    expect(createArgs[driverConfigIndex + 1]).not.toContain('"target":"/pr-workdir/');
     expect(createArgs).not.toContain("--upload");
     expect(createArgs).not.toContain("--no-git-ignore");
     expect(createArgs.slice(-6)).toEqual([
@@ -1107,7 +1100,7 @@ describe("PR review advisor OpenShell wrapper", () => {
         "/pr-workdir",
         "PR_REVIEW_ADVISOR_API_KEY=unused",
         "PR_REVIEW_ADVISOR_BASE_URL=https://inference.local/v1",
-        "PR_REVIEW_ADVISOR_CONTEXT_DIR=/pr-workdir/.pr-review-advisor-context",
+        "PR_REVIEW_ADVISOR_CONTEXT_DIR=/pr-review-advisor-context/specialist",
         "PR_REVIEW_ADVISOR_GITHUB_CONTEXT_PATH=/pr-review-advisor-context/github-context.json",
         "GIT_DIR=/pr-workdir/.git",
         "GIT_WORK_TREE=/pr-workdir",
