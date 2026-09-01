@@ -557,6 +557,7 @@
         "test/e2e/live/mcp-bridge-deepagents-config.ts",
         "test/e2e/live/mcp-bridge-hermes-http.ts",
         "test/e2e/live/mcp-bridge-onboard-env.ts",
+        "test/e2e/live/mcp-bridge-reliability.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",
         "test/e2e/live/mcp-bridge-trusted-private.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
