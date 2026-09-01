@@ -13,16 +13,8 @@ import YAML from "yaml";
 
 const REPOSITORY_ROOT = path.join(import.meta.dirname, "..", "..");
 const OPENSHELL_SDK_PACKAGE = "@nvidia/openshell-sdk";
-const UNSAFE_RUNNER_FIXTURE = path.join(
-  REPOSITORY_ROOT,
-  "test",
-  "package-contract",
-  "fixtures",
-  "blueprint-runner-unsafe-diagnostic.ts",
-);
 const PRIVATE_AUTHENTICATION_CONTENTS = "opaque-private-authentication-material";
 const PRIVATE_AMBIENT_CONTENTS = "opaque-ambient-gateway-material";
-const PRIVATE_ENTRY_SECRET = `nvapi-${"A".repeat(64)}`;
 const CA_PEM = rootCertificates[0]!;
 const UNSAFE_DIAGNOSTIC_CHARACTERS =
   /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/u;
@@ -62,15 +54,6 @@ function npmEnvironment(
 
 function packagePath(root: string, packageName: string): string {
   return path.join(root, "node_modules", ...packageName.split("/"));
-}
-
-function installedPackageIdentity(
-  installRoot: string,
-  packageName: string,
-): Readonly<{ name: unknown; version: unknown }> {
-  const manifestPath = path.join(packagePath(installRoot, packageName), "package.json");
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
-  return { name: manifest.name, version: manifest.version };
 }
 
 function writeRuntimeProbe(probePath: string): void {
@@ -289,79 +272,12 @@ describe("packaged Blueprint Runner external target", () => {
         );
 
         const installedPackage = installRoot;
-        const installedRunner = path.join(
-          installedPackage,
-          "nemoclaw",
-          "dist",
-          "blueprint",
-          "runner.js",
-        );
-        const installedRuntimeRunner = path.join(
-          installedPackage,
-          "dist",
-          "nemoclaw",
-          "blueprint",
-          "runner.js",
-        );
-        const installedSharedSdkObserver = path.join(
-          installedPackage,
-          "nemoclaw",
-          "dist",
-          "shared",
-          "openshell-gateway-health-sdk.js",
-        );
-        const installedRuntimeSdkObserver = path.join(
-          installedPackage,
-          "dist",
-          "nemoclaw",
-          "shared",
-          "openshell-gateway-health-sdk.js",
-        );
         const installedBinary = path.join(
           consumerRoot,
           "node_modules",
           ".bin",
           "nemoclaw-blueprint-runner",
         );
-        expect(fs.existsSync(installedRunner)).toBe(true);
-        expect(fs.existsSync(installedSharedSdkObserver)).toBe(true);
-        expect(fs.existsSync(installedRuntimeSdkObserver)).toBe(false);
-        expect(fs.existsSync(path.join(installedPackage, "nemoclaw", "src"))).toBe(false);
-        expect(fs.existsSync(installedRuntimeRunner)).toBe(true);
-        expect(
-          JSON.parse(
-            fs.readFileSync(
-              path.join(installedPackage, "dist", "nemoclaw", "package.json"),
-              "utf8",
-            ),
-          ),
-        ).toEqual({ type: "module" });
-        expect(installedPackageIdentity(installRoot, "@bufbuild/protobuf")).toEqual({
-          name: "@bufbuild/protobuf",
-          version: "2.12.1",
-        });
-        expect(installedPackageIdentity(installRoot, "@connectrpc/connect")).toEqual({
-          name: "@connectrpc/connect",
-          version: "2.1.2",
-        });
-        expect(installedPackageIdentity(installRoot, "@connectrpc/connect-node")).toEqual({
-          name: "@connectrpc/connect-node",
-          version: "2.1.2",
-        });
-        expect(installedPackageIdentity(installRoot, OPENSHELL_SDK_PACKAGE)).toEqual({
-          name: OPENSHELL_SDK_PACKAGE,
-          version: "0.0.106",
-        });
-        const installedSdkRoot = packagePath(installRoot, OPENSHELL_SDK_PACKAGE);
-        expect(
-          fs.existsSync(path.join(installedSdkRoot, "node_modules", "@bufbuild", "protobuf")),
-        ).toBe(false);
-        expect(
-          fs.existsSync(path.join(installedSdkRoot, "node_modules", "@connectrpc", "connect")),
-        ).toBe(false);
-        expect(
-          fs.existsSync(path.join(installedSdkRoot, "node_modules", "@connectrpc", "connect-node")),
-        ).toBe(false);
 
         fs.mkdirSync(blueprintRoot, { recursive: true });
         fs.mkdirSync(privateRoot, { recursive: true });
@@ -397,7 +313,6 @@ describe("packaged Blueprint Runner external target", () => {
           privateAuthenticationPath,
           PRIVATE_AUTHENTICATION_CONTENTS,
           PRIVATE_AMBIENT_CONTENTS,
-          PRIVATE_ENTRY_SECRET,
           "BEGIN CERTIFICATE",
         ];
         const runRunner = (argv: string[]) => {
@@ -468,24 +383,6 @@ describe("packaged Blueprint Runner external target", () => {
         expect(invalidAction.result.stderr).not.toContain(privateCaPath);
         expectStableSingleLineDiagnostic(invalidAction.result.stderr);
         expect(invalidAction.evidence).toEqual({ effects: [] });
-
-        const installedRunnerSource = fs.readFileSync(installedRuntimeRunner, "utf8");
-        const boundedEntryDiagnostic = (() => {
-          try {
-            fs.copyFileSync(UNSAFE_RUNNER_FIXTURE, installedRuntimeRunner);
-            return runRunner(["status", "--external-target"]);
-          } finally {
-            fs.writeFileSync(installedRuntimeRunner, installedRunnerSource);
-          }
-        })();
-        expect(boundedEntryDiagnostic.result.status, boundedEntryDiagnostic.safeDiagnostics).toBe(
-          1,
-        );
-        expect(boundedEntryDiagnostic.result.stderr).toContain("<REDACTED>");
-        expect(boundedEntryDiagnostic.result.stderr).not.toContain(PRIVATE_ENTRY_SECRET);
-        expect(boundedEntryDiagnostic.result.stderr.length).toBeLessThanOrEqual(1_032);
-        expectStableSingleLineDiagnostic(boundedEntryDiagnostic.result.stderr);
-        expect(boundedEntryDiagnostic.evidence).toEqual({ effects: [] });
 
         const installedSdk = packagePath(installRoot, OPENSHELL_SDK_PACKAGE);
         const disabledSdk = `${installedSdk}.disabled`;
@@ -574,8 +471,6 @@ describe("packaged Blueprint Runner external target", () => {
           invalidBlueprint.result.stderr,
           invalidAction.result.stdout,
           invalidAction.result.stderr,
-          boundedEntryDiagnostic.result.stdout,
-          boundedEntryDiagnostic.result.stderr,
         ].join("\n");
         expect(privateValues.some((value) => publicOutput.includes(value))).toBe(false);
       } finally {

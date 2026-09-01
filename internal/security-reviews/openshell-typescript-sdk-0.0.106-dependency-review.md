@@ -117,15 +117,18 @@ The image software bill of materials and third-party notice must bind to the ins
 
 - Severity and confidence: high, high confidence.
 - Failure mode: a validated hostname resolves or rebinds to a local service when the request starts.
-- Control: the official SDK retains TLS certificate and hostname verification against the explicit
-  CA, and the slice sends only unauthenticated public health. The accepted initial contract treats
-  platform infrastructure administrators as trusted.
+- Control: the accepted initial contract treats cluster and storage administrators as trusted
+  infrastructure actors. The configured endpoint and CA come from those administrators. The
+  operation sends only unauthenticated public health and retains TLS certificate and hostname
+  verification.
 - Residual: SDK 0.0.106 does not expose a pinned lookup. A hostname can resolve differently between
   validation and connection, including to a local address. TLS identity verification prevents an
   unrelated local service from impersonating the configured gateway, but it does not prevent the
-  connection attempt.
-- Verification: wrong-CA and wrong-hostname package tests; independent security review must keep
-  this residual visible.
+  connection attempt. Restrict deployment authority to the trusted administrators named in issue
+  #9872.
+- Verification: wrong-CA and wrong-hostname package tests protect TLS identity. The live test uses
+  an administrator-selected private gateway address. Independent security review must keep this
+  accepted trust boundary visible.
 
 ### DEP-5: Transport outlives the bounded observation
 

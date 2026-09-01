@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  CLI_ARTIFACT_PACKAGE_SCRIPT,
   CLI_ARTIFACT_PACKAGE_STEP,
   CLI_ARTIFACT_PUBLISH_STEP,
   validateCliArtifactRestoreAction,
@@ -25,8 +26,6 @@ const CANDIDATE_SHA = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
 }).trim();
 const PAYLOAD_SHA256 = "b".repeat(64);
-const CONTENT_ADDRESSED_ARTIFACT_NAME = `artifact_name="nemoclaw-cli-\${CANDIDATE_SHA}-\${payload_sha256}"`;
-const UNBOUND_ARTIFACT_NAME = `artifact_name="nemoclaw-cli-\${CANDIDATE_SHA}"`;
 
 function runIdentityValidation(overrides: Record<string, unknown> = {}, consumerAttempt = "1") {
   const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
@@ -909,17 +908,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       "${{ steps.upload_cli_artifact.outputs.artifact-url }}";
     const packageStep = requireStep(workflow, "generate-matrix", CLI_ARTIFACT_PACKAGE_STEP);
     packageStep.env!.WORKFLOW_SHA = "${{ inputs.checkout_sha }}";
-    packageStep.run = packageStep.run!.replace(
-      CONTENT_ADDRESSED_ARTIFACT_NAME,
-      UNBOUND_ARTIFACT_NAME,
-    );
-    packageStep.run = packageStep
-      .run!.replace("openshell-gateway-health-sdk.js", "missing-gateway-health-sdk.js")
-      .replace("openshell-observation-boundary.cjs", "missing-observation-boundary.cjs")
-      .replace("sandbox-name.cjs", "missing-boundary.cjs");
-    packageStep.run = packageStep
-      .run!.replaceAll("dist/nemoclaw/package.json", "dist/nemoclaw/missing-package.json")
-      .replace('.type == "module"', '.type == "commonjs"');
+    packageStep.run = `bash ${CLI_ARTIFACT_PACKAGE_SCRIPT}`;
     const uploadStep = requireStep(workflow, "generate-matrix", CLI_ARTIFACT_PUBLISH_STEP);
     uploadStep.uses = "actions/upload-artifact@v7";
 
@@ -927,12 +916,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       expect.arrayContaining([
         "generate-matrix must expose exact cli_artifact_provenance provenance",
         "CLI artifact package step must bind candidate and trusted workflow identities explicitly",
-        `CLI artifact package step must contain ${CONTENT_ADDRESSED_ARTIFACT_NAME}`,
-        "CLI artifact package step must contain openshell-gateway-health-sdk.js",
-        "CLI artifact package step must contain openshell-observation-boundary.cjs",
-        "CLI artifact package step must contain sandbox-name.cjs",
-        "CLI artifact package step must contain dist/nemoclaw/package.json",
-        'CLI artifact package step must contain .type == "module"',
+        `CLI artifact package step must invoke ${CLI_ARTIFACT_PACKAGE_SCRIPT} directly`,
         "CLI artifact upload must use the immutable content-addressed upload contract",
       ]),
     );
