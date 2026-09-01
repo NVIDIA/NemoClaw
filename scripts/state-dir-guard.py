@@ -84,7 +84,7 @@ FS_APPEND_FL = 0x00000020
 FS_IOC_GETFLAGS = 0x80086601
 FS_IOC_SETFLAGS = 0x40086602
 
-Action = Literal["preflight", "lock", "unlock", "startup"]
+Action = Literal["preflight", "lock", "unlock", "verify-mutable", "startup"]
 Policy = Literal["high-risk", "confidentiality"]
 
 
@@ -464,6 +464,32 @@ def _clear_mutation_flags(fd: int) -> int | None:
     return original
 
 
+def _verify_mutable_flags(fd: int, path: str) -> Issue | None:
+    try:
+        flags = _get_inode_flags(fd)
+    except OSError as exc:
+        return _os_issue("verification-flags-failed", path, "inspect inode flags", exc)
+    if flags is None:
+        return Issue(
+            "verification-flags-unavailable",
+            path,
+            "immutable and append-only inode flags could not be inspected",
+        )
+    active = flags & (FS_IMMUTABLE_FL | FS_APPEND_FL)
+    if active:
+        names = []
+        if active & FS_IMMUTABLE_FL:
+            names.append("immutable")
+        if active & FS_APPEND_FL:
+            names.append("append-only")
+        return Issue(
+            "verification-flags-mismatch",
+            path,
+            f"{', '.join(names)} inode flag remains set",
+        )
+    return None
+
+
 def _display_path(config_path: str, relative_path: str) -> str:
     if not relative_path:
         return config_path
@@ -528,6 +554,17 @@ def _open_child_dir(parent_fd: int, name: str, expected: os.stat_result) -> int:
         os.close(child_fd)
         raise GuardOperationError(
             Issue("entry-raced", name, "directory changed while it was being opened")
+        )
+    return child_fd
+
+
+def _open_child_file(parent_fd: int, name: str, expected: os.stat_result) -> int:
+    child_fd = os.open(name, _file_flags(), dir_fd=parent_fd)
+    actual = os.fstat(child_fd)
+    if not stat.S_ISREG(actual.st_mode) or not _same_entry(expected, actual):
+        os.close(child_fd)
+        raise GuardOperationError(
+            Issue("entry-raced", name, "regular file changed while it was being opened")
         )
     return child_fd
 
@@ -1887,6 +1924,203 @@ def _verify_writable_subpath_metadata(
     return None
 
 
+def _verify_mutable_boundary_metadata(
+    path: str,
+    st: os.stat_result,
+    kind: str,
+    modes: tuple[int, ...],
+    identity: Identity,
+) -> Issue | None:
+    if st.st_uid != identity.sandbox_uid or st.st_gid != identity.sandbox_gid:
+        return Issue(
+            "verification-owner-mismatch",
+            path,
+            f"owner is {st.st_uid}:{st.st_gid}, "
+            f"expected {identity.sandbox_uid}:{identity.sandbox_gid}",
+        )
+    actual_mode = stat.S_IMODE(st.st_mode)
+    if actual_mode not in modes:
+        expected = " or ".join(f"{mode:04o}" for mode in modes)
+        return Issue(
+            "verification-mode-mismatch",
+            path,
+            f"{kind} mode is {actual_mode:04o}, expected {expected}",
+        )
+    return None
+
+
+def _verify_mutable_boundary(
+    config_fd: int,
+    config_path: str,
+    identity: Identity,
+    top_level_files: tuple[str, ...],
+    issues: list[Issue],
+) -> None:
+    parent_path = posixpath.dirname(config_path)
+    config_name = posixpath.basename(config_path)
+    outer_path = posixpath.dirname(parent_path)
+    parent_name = posixpath.basename(parent_path)
+    outer_fd = -1
+    parent_fd = -1
+    try:
+        outer_fd = _open_absolute_dir_nofollow(outer_path)
+        parent_before = os.stat(parent_name, dir_fd=outer_fd, follow_symlinks=False)
+        parent_fd = _open_child_dir(outer_fd, parent_name, parent_before)
+        parent_st = os.fstat(parent_fd)
+        config_st = os.fstat(config_fd)
+        linked_config_st = os.stat(
+            config_name, dir_fd=parent_fd, follow_symlinks=False
+        )
+        if not _same_entry(config_st, linked_config_st):
+            issues.append(
+                Issue(
+                    "verification-config-binding-changed",
+                    config_path,
+                    "config directory changed under its parent",
+                )
+            )
+            return
+        parent_issue = _verify_mutable_boundary_metadata(
+            parent_path, parent_st, "directory", (0o755,), identity
+        )
+        if parent_issue is not None:
+            issues.append(parent_issue)
+        config_issue = _verify_mutable_boundary_metadata(
+            config_path, config_st, "directory", (0o700, 0o3770), identity
+        )
+        if config_issue is not None:
+            issues.append(config_issue)
+        parent_flags_issue = _verify_mutable_flags(parent_fd, parent_path)
+        if parent_flags_issue is not None:
+            issues.append(parent_flags_issue)
+        config_flags_issue = _verify_mutable_flags(config_fd, config_path)
+        if config_flags_issue is not None:
+            issues.append(config_flags_issue)
+        for file_path in top_level_files:
+            name = posixpath.basename(file_path)
+            try:
+                before = os.stat(name, dir_fd=config_fd, follow_symlinks=False)
+                if before.st_dev != config_st.st_dev:
+                    issues.append(
+                        Issue(
+                            "cross-device-entry",
+                            file_path,
+                            "top-level file is on a different filesystem",
+                        )
+                    )
+                    continue
+                if not stat.S_ISREG(before.st_mode):
+                    issues.append(
+                        Issue(
+                            "verification-type-mismatch",
+                            file_path,
+                            f"entry is a {_entry_kind(before)}, expected regular file",
+                        )
+                    )
+                    continue
+                if before.st_nlink != 1:
+                    issues.append(
+                        Issue(
+                            "hardlinked-entry",
+                            file_path,
+                            f"regular file has link count {before.st_nlink}, expected 1",
+                        )
+                    )
+                file_fd = _open_child_file(config_fd, name, before)
+                try:
+                    file_st = os.fstat(file_fd)
+                    metadata_issue = _verify_mutable_boundary_metadata(
+                        file_path, file_st, "file", (0o640,), identity
+                    )
+                    if metadata_issue is not None:
+                        issues.append(metadata_issue)
+                    flags_issue = _verify_mutable_flags(file_fd, file_path)
+                    if flags_issue is not None:
+                        issues.append(flags_issue)
+                    after = os.stat(name, dir_fd=config_fd, follow_symlinks=False)
+                    if not _same_entry(file_st, after):
+                        issues.append(
+                            Issue(
+                                "verification-entry-raced",
+                                file_path,
+                                "top-level file changed during observation",
+                            )
+                        )
+                finally:
+                    os.close(file_fd)
+            except GuardOperationError as exc:
+                issues.append(Issue(exc.issue.code, file_path, exc.issue.detail))
+            except OSError as exc:
+                issues.append(
+                    _os_issue("verification-open-failed", file_path, "open", exc)
+                )
+        linked_config_after = os.stat(
+            config_name, dir_fd=parent_fd, follow_symlinks=False
+        )
+        if not _same_entry(config_st, linked_config_after):
+            issues.append(
+                Issue(
+                    "verification-config-binding-changed",
+                    config_path,
+                    "config directory changed during observation",
+                )
+            )
+        parent_after = os.stat(parent_name, dir_fd=outer_fd, follow_symlinks=False)
+        if not _same_entry(parent_st, parent_after):
+            issues.append(
+                Issue(
+                    "verification-parent-binding-changed",
+                    parent_path,
+                    "config parent changed during observation",
+                )
+            )
+    except (OSError, GuardOperationError) as exc:
+        issues.append(
+            exc.issue
+            if isinstance(exc, GuardOperationError)
+            else _os_issue(
+                "verification-parent-open-failed", parent_path, "open parent", exc
+            )
+        )
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
+        if outer_fd >= 0:
+            os.close(outer_fd)
+
+
+def _normalize_mutable_top_level_files(
+    config_path: str, files: tuple[str, ...]
+) -> tuple[str, ...]:
+    normalized_files: list[str] = []
+    seen: set[str] = set()
+    for file_path in files:
+        normalized = posixpath.normpath(file_path)
+        name = posixpath.basename(normalized)
+        try:
+            _validate_top_level_name(name, "mutable top-level file")
+        except PlanValidationError as exc:
+            raise GuardOperationError(
+                Issue("invalid-mutable-top-level-file", file_path, str(exc))
+            ) from exc
+        if (
+            not posixpath.isabs(file_path)
+            or file_path != normalized
+            or posixpath.dirname(normalized) != config_path
+            or normalized in seen
+        ):
+            raise GuardOperationError(
+                Issue(
+                    "invalid-mutable-top-level-file",
+                    file_path,
+                    "file must be a unique canonical direct child of the config directory",
+                )
+            )
+        seen.add(normalized)
+        normalized_files.append(normalized)
+    return tuple(normalized_files)
+
+
 def _verify_dir(
     context: TraversalContext,
     dir_fd: int,
@@ -1898,6 +2132,7 @@ def _verify_dir(
     issues: list[Issue],
     depth: int,
     is_root: bool = False,
+    verify_mutation_flags: bool = False,
 ) -> None:
     if depth > MAX_TRAVERSAL_DEPTH:
         issues.append(
@@ -1933,6 +2168,10 @@ def _verify_dir(
     )
     if dir_issue is not None:
         issues.append(dir_issue)
+    if verify_mutation_flags:
+        flags_issue = _verify_mutable_flags(dir_fd, context.display(relative_dir))
+        if flags_issue is not None:
+            issues.append(flags_issue)
     for name in names:
         relative_path = posixpath.join(relative_dir, name)
         path = context.display(relative_path)
@@ -1949,6 +2188,19 @@ def _verify_dir(
         if st.st_dev != context.config_dev:
             issues.append(
                 Issue("cross-device-entry", path, "entry is on a different filesystem")
+            )
+            continue
+        if (
+            verify_mutation_flags
+            and context.is_writable_root(relative_path)
+            and not stat.S_ISDIR(st.st_mode)
+        ):
+            issues.append(
+                Issue(
+                    "verification-type-mismatch",
+                    path,
+                    f"entry is a {_entry_kind(st)}, expected directory",
+                )
             )
             continue
         if stat.S_ISDIR(st.st_mode):
@@ -1974,6 +2226,10 @@ def _verify_dir(
                     )
                     if writable_issue is not None:
                         issues.append(writable_issue)
+                    if verify_mutation_flags:
+                        flags_issue = _verify_mutable_flags(child_fd, path)
+                        if flags_issue is not None:
+                            issues.append(flags_issue)
                 else:
                     _verify_dir(
                         context,
@@ -1985,7 +2241,18 @@ def _verify_dir(
                         replaced_inodes,
                         issues,
                         depth + 1,
+                        verify_mutation_flags=verify_mutation_flags,
                     )
+                if verify_mutation_flags:
+                    after = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                    if not _same_entry(os.fstat(child_fd), after):
+                        issues.append(
+                            Issue(
+                                "verification-entry-raced",
+                                path,
+                                "directory changed during observation",
+                            )
+                        )
             finally:
                 os.close(child_fd)
         elif stat.S_ISREG(st.st_mode):
@@ -2012,6 +2279,30 @@ def _verify_dir(
             )
             if metadata_issue is not None:
                 issues.append(metadata_issue)
+            if verify_mutation_flags:
+                try:
+                    file_fd = _open_child_file(dir_fd, name, st)
+                    try:
+                        flags_issue = _verify_mutable_flags(file_fd, path)
+                        if flags_issue is not None:
+                            issues.append(flags_issue)
+                        after = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                        if not _same_entry(os.fstat(file_fd), after):
+                            issues.append(
+                                Issue(
+                                    "verification-entry-raced",
+                                    path,
+                                    "regular file changed during observation",
+                                )
+                            )
+                    finally:
+                        os.close(file_fd)
+                except GuardOperationError as exc:
+                    issues.append(Issue(exc.issue.code, path, exc.issue.detail))
+                except OSError as exc:
+                    issues.append(
+                        _os_issue("verification-open-failed", path, "open", exc)
+                    )
             old_inode = replaced_inodes.get(relative_path)
             if action == "lock" and old_inode is not None and st.st_ino == old_inode:
                 issues.append(
@@ -2169,12 +2460,20 @@ def _run_guard_unserialized(
     config_dir: str,
     identity: Identity,
     plan: AgentStateLockPlan,
+    mutable_top_level_files: tuple[str, ...] = (),
 ) -> GuardResult:
     """Run one guard action.  ``identity`` is explicit for focused tests."""
 
     result = GuardResult(action=action)
     deadline = time.monotonic() + MAX_GUARD_SECONDS
     normalized_config = posixpath.normpath(config_dir)
+    try:
+        normalized_top_level_files = _normalize_mutable_top_level_files(
+            normalized_config, mutable_top_level_files
+        )
+    except GuardOperationError as exc:
+        result.issues.append(exc.issue)
+        return result
     if action == "startup":
         return _restore_empty_credentials_startup_access(
             normalized_config, identity, deadline, plan
@@ -2256,46 +2555,50 @@ def _run_guard_unserialized(
             plan.writable_subpaths,
         )
         replaced_inodes: dict[str, int] = {}
-        for root in roots:
-            path = context.display(root.name)
-            try:
-                root_lstat = os.stat(root.name, dir_fd=config_fd, follow_symlinks=False)
-                context.budget.observe_entry(path, root_lstat)
-                if root_lstat.st_dev != root.dev or root_lstat.st_ino != root.ino:
-                    raise GuardOperationError(
-                        Issue(
-                            "entry-raced",
-                            path,
-                            "state-dir root changed after preflight",
-                        )
-                    )
-                root_fd = _open_child_dir(config_fd, root.name, root_lstat)
+        if action != "verify-mutable":
+            for root in roots:
+                path = context.display(root.name)
                 try:
-                    _mutate_dir(
-                        context,
-                        root_fd,
-                        root.name,
-                        root.policy,
-                        action,
-                        identity,
-                        result,
-                        replaced_inodes,
-                        1,
-                        is_root=True,
+                    root_lstat = os.stat(
+                        root.name, dir_fd=config_fd, follow_symlinks=False
                     )
-                finally:
-                    os.close(root_fd)
-            except GuardOperationError as exc:
-                result.issues.append(exc.issue)
-                return result
-            except OSError as exc:
-                result.issues.append(
-                    _os_issue("mutation-failed", path, "mutate state-dir root", exc)
-                )
-                return result
+                    context.budget.observe_entry(path, root_lstat)
+                    if root_lstat.st_dev != root.dev or root_lstat.st_ino != root.ino:
+                        raise GuardOperationError(
+                            Issue(
+                                "entry-raced",
+                                path,
+                                "state-dir root changed after preflight",
+                            )
+                        )
+                    root_fd = _open_child_dir(config_fd, root.name, root_lstat)
+                    try:
+                        _mutate_dir(
+                            context,
+                            root_fd,
+                            root.name,
+                            root.policy,
+                            action,
+                            identity,
+                            result,
+                            replaced_inodes,
+                            1,
+                            is_root=True,
+                        )
+                    finally:
+                        os.close(root_fd)
+                except GuardOperationError as exc:
+                    result.issues.append(exc.issue)
+                    return result
+                except OSError as exc:
+                    result.issues.append(
+                        _os_issue("mutation-failed", path, "mutate state-dir root", exc)
+                    )
+                    return result
 
-        # A second independent descriptor traversal verifies the recursive
-        # result and catches entries changed by a concurrent pre-open FD.
+        # An independent descriptor traversal verifies the recursive result
+        # and catches entries changed by a concurrent pre-open FD. The
+        # verify-mutable action performs only this traversal.
         verify_roots, selection_issues = _select_roots(
             config_fd, normalized_config, config_st.st_dev, plan
         )
@@ -2311,6 +2614,9 @@ def _run_guard_unserialized(
             )
             return result
         context.budget = WorkBudget(deadline)
+        verification_action: Action = (
+            "unlock" if action == "verify-mutable" else action
+        )
         for root in verify_roots:
             path = context.display(root.name)
             try:
@@ -2331,15 +2637,50 @@ def _run_guard_unserialized(
                     root_fd,
                     root.name,
                     root.policy,
-                    action,
+                    verification_action,
                     identity,
                     replaced_inodes,
                     result.issues,
                     1,
                     is_root=True,
+                    verify_mutation_flags=action == "verify-mutable",
                 )
+                if action == "verify-mutable":
+                    root_after = os.stat(
+                        root.name, dir_fd=config_fd, follow_symlinks=False
+                    )
+                    if not _same_entry(os.fstat(root_fd), root_after):
+                        result.issues.append(
+                            Issue(
+                                "verification-entry-raced",
+                                path,
+                                "state-dir root changed during observation",
+                            )
+                        )
             finally:
                 os.close(root_fd)
+        if action == "verify-mutable":
+            final_roots, final_selection_issues = _select_roots(
+                config_fd, normalized_config, config_st.st_dev, plan
+            )
+            result.issues.extend(final_selection_issues)
+            final_root_set = {(root.name, root.dev, root.ino) for root in final_roots}
+            if final_root_set != verify_root_set:
+                result.issues.append(
+                    Issue(
+                        "verification-root-set-changed",
+                        normalized_config,
+                        "protected state-dir roots changed during observation",
+                    )
+                )
+            if normalized_top_level_files:
+                _verify_mutable_boundary(
+                    config_fd,
+                    normalized_config,
+                    identity,
+                    normalized_top_level_files,
+                    result.issues,
+                )
         if fail_closed_config_root and not result.issues:
             os.fchmod(config_fd, 0o755)
             os.fsync(config_fd)
@@ -2497,10 +2838,19 @@ def run_guard(
     plan: AgentStateLockPlan,
     *,
     transition_lock_fd: int | None = None,
+    mutable_top_level_files: tuple[str, ...] = (),
 ) -> GuardResult:
     """Serialize production OpenClaw recursive transitions with its top guard."""
 
     normalized_config = posixpath.normpath(config_dir)
+    if action == "verify-mutable":
+        return _run_guard_unserialized(
+            action,
+            normalized_config,
+            identity,
+            plan,
+            mutable_top_level_files,
+        )
     lock_path = _transition_lock_path(normalized_config)
     if transition_lock_fd is not None:
         if lock_path is None:
@@ -2573,12 +2923,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Safely manage recursive agent state directories"
     )
-    parser.add_argument("action", choices=("preflight", "lock", "unlock", "startup"))
+    parser.add_argument(
+        "action",
+        choices=("preflight", "lock", "unlock", "verify-mutable", "startup"),
+    )
     parser.add_argument("--config-dir", required=True)
     plan_source = parser.add_mutually_exclusive_group()
     plan_source.add_argument("--plan-json")
     plan_source.add_argument("--plan-file")
     parser.add_argument("--transition-lock-fd", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--mutable-top-level-file", action="append", default=[])
     return parser.parse_args(argv)
 
 
@@ -2650,6 +3004,7 @@ def main(argv: list[str] | None = None) -> int:
                     identity,
                     plan,
                     transition_lock_fd=args.transition_lock_fd,
+                    mutable_top_level_files=tuple(args.mutable_top_level_file),
                 )
 
     for issue in result.issues:
