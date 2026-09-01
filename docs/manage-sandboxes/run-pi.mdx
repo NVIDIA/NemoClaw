@@ -113,7 +113,7 @@ After a NemoClaw update, rebuild the sandbox to consume a newer reviewed Pi pack
 
 ## Stop, Start, and Destroy
 
-Destroy removes the registered sandbox and its managed runtime resources. It does not remove gateway-held provider credentials. Create a snapshot before destroy when you need declared user state, and reset a provider credential separately after every dependent sandbox is gone.
+Destroy removes the registered sandbox and its managed runtime resources. It does not remove gateway-held provider credentials. Create a snapshot before destroy when you need declared user state, and reset a provider credential separately when no dependent sandbox needs it. Reset detaches the provider from sandboxes currently using it, removes the gateway-held credential, and prints a rebuild command for every detached sandbox. Run each printed rebuild command to remove the provider from that sandbox's configuration.
 
 ```bash
 nemoclaw <sandbox-name> stop
