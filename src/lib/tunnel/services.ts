@@ -50,6 +50,8 @@ export interface ServiceOptions {
   processControl?: ProcessControl;
   /** Injectable Ollama model cleanup for tests. */
   unloadOllamaModels?: () => OllamaUnloadResult | void;
+  /** Whether this scoped stop owns Ollama models that require cleanup. Defaults to true. */
+  cleanupOllamaModels?: boolean;
   /** Injectable retirement of sandbox-scoped Ollama cleanup recovery. */
   clearPendingOllamaModelCleanup?: (sandboxName: string) => void;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
@@ -530,39 +532,41 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
 
   let ollamaCleanupIncomplete = false;
   let ollamaCleanup: OllamaUnloadResult | undefined;
-  try {
-    const unloadOllamaModels = opts.unloadOllamaModels ?? unloadDefaultOllamaModels;
-    const cleanup = unloadOllamaModels();
-    if (cleanup) ollamaCleanup = cleanup;
-    if (cleanup && !cleanup.ok) {
+  if (opts.cleanupOllamaModels !== false) {
+    try {
+      const unloadOllamaModels = opts.unloadOllamaModels ?? unloadDefaultOllamaModels;
+      const cleanup = unloadOllamaModels();
+      if (cleanup) ollamaCleanup = cleanup;
+      if (cleanup && !cleanup.ok) {
+        ollamaCleanupIncomplete = true;
+        warn(
+          `Ollama model cleanup failed at ${cleanup.endpoint} (${cleanup.outcome}: ${cleanup.message ?? "no detail"}). The saved local route was retained; ${
+            cleanup.outcome === "discovery-failed"
+              ? `restore access to ${cleanup.endpoint}`
+              : cleanup.outcome === "still-resident"
+                ? `stop the recorded model at ${cleanup.endpoint}`
+                : `allow the model unload request at ${cleanup.endpoint}`
+          }, then retry this command.`,
+        );
+      } else if (sandboxName) {
+        (opts.clearPendingOllamaModelCleanup ?? clearDefaultPendingOllamaModelCleanup)(sandboxName);
+      }
+    } catch (error) {
       ollamaCleanupIncomplete = true;
+      const detail = error instanceof Error ? error.message : String(error);
+      ollamaCleanup = {
+        ok: false,
+        outcome: "discovery-failed",
+        endpoint: "the saved local Ollama endpoint",
+        selectedModels: [],
+        discoveries: [],
+        requests: [],
+        message: detail,
+      };
       warn(
-        `Ollama model cleanup failed at ${cleanup.endpoint} (${cleanup.outcome}: ${cleanup.message ?? "no detail"}). The saved local route was retained; ${
-          cleanup.outcome === "discovery-failed"
-            ? `restore access to ${cleanup.endpoint}`
-            : cleanup.outcome === "still-resident"
-              ? `stop the recorded model at ${cleanup.endpoint}`
-              : `allow the model unload request at ${cleanup.endpoint}`
-        }, then retry this command.`,
+        `Ollama model cleanup failed unexpectedly: ${detail}. The saved local route was retained; restore access to the saved local Ollama endpoint, then retry this command.`,
       );
-    } else if (sandboxName) {
-      (opts.clearPendingOllamaModelCleanup ?? clearDefaultPendingOllamaModelCleanup)(sandboxName);
     }
-  } catch (error) {
-    ollamaCleanupIncomplete = true;
-    const detail = error instanceof Error ? error.message : String(error);
-    ollamaCleanup = {
-      ok: false,
-      outcome: "discovery-failed",
-      endpoint: "the saved local Ollama endpoint",
-      selectedModels: [],
-      discoveries: [],
-      requests: [],
-      message: detail,
-    };
-    warn(
-      `Ollama model cleanup failed unexpectedly: ${detail}. The saved local route was retained; restore access to the saved local Ollama endpoint, then retry this command.`,
-    );
   }
 
   // Stop host-side services only when their state directory is explicit or

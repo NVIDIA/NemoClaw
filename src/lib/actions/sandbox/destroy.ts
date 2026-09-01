@@ -168,7 +168,10 @@ type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status
 export type CleanupSandboxServicesDeps = {
   getSandbox?: typeof registry.getSandbox;
   listSandboxes?: typeof registry.listSandboxes;
-  stopAll?: (opts: { sandboxName: string }) => OllamaUnloadResult | void;
+  stopAll?: (opts: {
+    sandboxName: string;
+    cleanupOllamaModels?: boolean;
+  }) => OllamaUnloadResult | void;
   unloadOllamaModels?: (onlyModels?: readonly string[]) => OllamaUnloadResult | void;
   loadPendingOllamaModelCleanup?: (sandboxName: string) => readonly string[];
   clearPendingOllamaModelCleanup?: (
@@ -236,9 +239,12 @@ export function cleanupSandboxServices(
   const listSandboxes = deps.listSandboxes ?? registry.listSandboxes;
   const stopAll =
     deps.stopAll ??
-    ((opts: { sandboxName: string }) => {
+    ((opts: { sandboxName: string; cleanupOllamaModels?: boolean }) => {
       const services = require("../../tunnel/services") as {
-        stopAll: (opts: { sandboxName: string }) => OllamaUnloadResult | void;
+        stopAll: (opts: {
+          sandboxName: string;
+          cleanupOllamaModels?: boolean;
+        }) => OllamaUnloadResult | void;
       };
       return services.stopAll(opts);
     });
@@ -331,9 +337,15 @@ export function cleanupSandboxServices(
 
   let ollamaCleanup: OllamaUnloadResult | void = undefined;
   if (stopHostServices) {
-    // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
-    // see src/lib/tunnel/services.ts. Don't double-call here.
-    ollamaCleanup = stopAll({ sandboxName: validatedSandboxName });
+    // `stopAll()` owns the host-wide unload when this sandbox has an Ollama
+    // route or retained cleanup work. Don't probe an unrelated daemon for a
+    // sandbox with no Ollama ownership, and don't double-call cleanup here.
+    const cleanupOllamaModels = withOllamaModelOwnershipLock(() => {
+      const sandbox = getSandbox(validatedSandboxName);
+      const pending = loadPendingOllamaModelCleanup(validatedSandboxName);
+      return Boolean(sandbox?.provider?.includes("ollama") || pending.length > 0);
+    });
+    ollamaCleanup = stopAll({ sandboxName: validatedSandboxName, cleanupOllamaModels });
   } else {
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
     // models for this sandbox if its provider used Ollama. Without this

@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Regression guard for #2717: cleanupSandboxServices must invoke
-// `unloadOllamaModels()` exactly once across both branches of the destroy
-// flow — never zero (orphans GPU memory) and never twice (the original
-// duplicate-call bug). Mirrors the structural argument captured in the
-// inline comments in `src/lib/actions/sandbox/destroy.ts`.
+// `unloadOllamaModels()` exactly once across both branches when the sandbox
+// owns Ollama cleanup work, and never for an unrelated provider. This avoids
+// both orphaned GPU memory and the original duplicate-call bug.
 
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -38,11 +37,11 @@ function buildDeps(
       | "googlechatWebhookTunnelPidDir"
     >
   >;
-  stopAllCalls: Array<{ sandboxName: string }>;
+  stopAllCalls: Array<{ sandboxName: string; cleanupOllamaModels?: boolean }>;
   unloadCalls: number;
   unloadArgs: Array<readonly string[] | undefined>;
 } {
-  const stopAllCalls: Array<{ sandboxName: string }> = [];
+  const stopAllCalls: Array<{ sandboxName: string; cleanupOllamaModels?: boolean }> = [];
   const target = sandbox
     ? { name: "regression-2717", model: "target-model:latest", ...sandbox }
     : null;
@@ -60,7 +59,7 @@ function buildDeps(
         sandboxes: [...(target ? [target] : []), ...peers] as never,
         defaultSandbox: null,
       })),
-      stopAll: vi.fn((opts: { sandboxName: string }) => {
+      stopAll: vi.fn((opts: { sandboxName: string; cleanupOllamaModels?: boolean }) => {
         stopAllCalls.push(opts);
       }),
       unloadOllamaModels: vi.fn((onlyModels?: readonly string[]) => {
@@ -96,11 +95,36 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
 
     expect(harness.deps.stopAll).toHaveBeenCalledTimes(1);
-    expect(harness.stopAllCalls[0]).toEqual({ sandboxName: "regression-2717" });
+    expect(harness.stopAllCalls[0]).toEqual({
+      sandboxName: "regression-2717",
+      cleanupOllamaModels: true,
+    });
     // stopAll() invokes unloadOllamaModels() internally — see services.ts.
     // cleanupSandboxServices itself must not call it again.
     expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
     expect(harness.unloadCalls).toBe(0);
+  });
+
+  it("skips host-wide Ollama discovery for a final sandbox with no Ollama ownership", () => {
+    const harness = buildDeps({ provider: "nvidia-prod" });
+
+    cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
+
+    expect(harness.stopAllCalls).toEqual([
+      { sandboxName: "regression-2717", cleanupOllamaModels: false },
+    ]);
+    expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
+  });
+
+  it("keeps host-wide Ollama cleanup enabled for retained model recovery", () => {
+    const harness = buildDeps({ provider: "nvidia-prod" });
+    vi.mocked(harness.deps.loadPendingOllamaModelCleanup).mockReturnValue(["old-model"]);
+
+    cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
+
+    expect(harness.stopAllCalls).toEqual([
+      { sandboxName: "regression-2717", cleanupOllamaModels: true },
+    ]);
   });
 
   it("calls unloadOllamaModels() exactly once for an Ollama sandbox when stopHostServices=false", () => {
