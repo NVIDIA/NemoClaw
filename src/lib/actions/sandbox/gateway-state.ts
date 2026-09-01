@@ -51,6 +51,7 @@ import {
 } from "../../adapters/openshell/gateway-drift";
 import {
   createCliOpenShellSandboxPolicyReader,
+  redactOpenShellSandboxPolicyDocumentForDisplay,
   type OpenShellSandboxPolicyReader,
 } from "../../adapters/openshell/sandbox-policy-cli";
 import {
@@ -419,6 +420,34 @@ function policyObservationFailureState(
   };
 }
 
+function policyObservationSuccessState(
+  output: string,
+  phase: string | null,
+  sandboxName: string,
+  policyDocument: string,
+  appliedRevision: number | null,
+  gatewayName?: string,
+): SandboxGatewayState {
+  const displayPolicy = redactOpenShellSandboxPolicyDocumentForDisplay(policyDocument);
+  if (displayPolicy === null) {
+    return policyObservationFailureState(
+      output,
+      phase,
+      sandboxName,
+      {
+        kind: "schema",
+        message: "OpenShell returned an invalid sandbox policy document.",
+      },
+      gatewayName,
+    );
+  }
+  return {
+    state: "present",
+    output: mergeLivePolicyIntoSandboxOutput(output, displayPolicy, appliedRevision),
+    phase,
+  };
+}
+
 /** Query sandbox presence and return its output with the live enforced policy. */
 function sandboxObservationTarget(gatewayName?: string) {
   return gatewayName ? namedOpenShellGateway(gatewayName) : selectedOpenShellGateway();
@@ -509,15 +538,14 @@ export async function getSandboxGatewayState(
         gatewayName,
       );
     }
-    return {
-      state: "present",
-      output: mergeLivePolicyIntoSandboxOutput(
-        observed.displayOutput,
-        livePolicy.value.document,
-        livePolicy.value.appliedRevision,
-      ),
-      phase: lookup.value.sandbox.phase,
-    };
+    return policyObservationSuccessState(
+      observed.displayOutput,
+      lookup.value.sandbox.phase,
+      sandboxName,
+      livePolicy.value.document,
+      livePolicy.value.appliedRevision,
+      gatewayName,
+    );
   }
   return { state: "unknown_error", output: "OpenShell returned an unknown sandbox state." };
 }
@@ -586,15 +614,14 @@ export async function getSandboxGatewayStateForStatus(
         gatewayName,
       );
     }
-    return {
-      state: "present",
-      output: mergeLivePolicyIntoSandboxOutput(
-        observed.displayOutput,
-        livePolicy.value.document,
-        livePolicy.value.appliedRevision,
-      ),
-      phase: lookup.value.sandbox.phase,
-    };
+    return policyObservationSuccessState(
+      observed.displayOutput,
+      lookup.value.sandbox.phase,
+      sandboxName,
+      livePolicy.value.document,
+      livePolicy.value.appliedRevision,
+      gatewayName,
+    );
   }
   return { state: "unknown_error", output: "OpenShell returned an unknown sandbox state." };
 }

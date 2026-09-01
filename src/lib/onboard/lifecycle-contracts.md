@@ -68,7 +68,7 @@ The machine still cannot resume inside gateway startup, an individual credential
 
 When `--apf-interceptor` is not selected, fresh onboarding passes the operator-selected initial policy to sandbox creation. When it is selected, onboarding creates the sandbox without `--policy`. OpenShell owns and stores the sandbox policy. For an existing sandbox, policy-dependent operations read the current live policy through the sandbox's recorded gateway.
 
-Completed onboarding stores no policy authority, receipt, copy, hash, version, preset list, or desired tier. Incomplete operations retain only the bounded transaction data required for recovery and cleanup.
+Completed onboarding stores no policy authority, policy receipt, policy copy, policy hash, policy version, preset list, or desired policy tier. Incomplete operations retain only the bounded transaction data required for recovery and cleanup.
 
 ## Effect-order flows
 

@@ -27,6 +27,20 @@ const hermesApiPortMocks = vi.hoisted(() => ({
   findAvailableHermesApiPort: vi.fn(() => 8643),
 }));
 
+function parseEnvironmentCommand(args: readonly string[]): {
+  readonly command: string | undefined;
+  readonly environment: Record<string, string>;
+} {
+  const delimiterIndex = args.lastIndexOf("--");
+  const environment = Object.fromEntries(
+    args.slice(delimiterIndex + 2, -1).map((assignment) => {
+      const separatorIndex = assignment.indexOf("=");
+      return [assignment.slice(0, separatorIndex), assignment.slice(separatorIndex + 1)];
+    }),
+  );
+  return { command: args.at(-1), environment };
+}
+
 vi.mock("../../onboard/dashboard-port", () => ({
   findAvailableDashboardPort: dashboardPortMocks.findAvailableDashboardPort,
   getRegistryOccupiedDashboardPorts: dashboardPortMocks.getRegistryOccupiedDashboardPorts,
@@ -96,13 +110,13 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
       ["policy", "get", "-g", "nemoclaw-18080", "--base", "alpha"],
       expect.objectContaining({ ignoreError: true }),
     );
-    expect(createArgs.slice(createArgs.lastIndexOf("--") + 1)).toEqual([
-      "env",
-      "NEMOCLAW_OBSERVABILITY=0",
-      "CHAT_UI_URL=http://127.0.0.1:18901",
-      "NEMOCLAW_DASHBOARD_PORT=18901",
-      "nemoclaw-start",
-    ]);
+    const environmentCommand = parseEnvironmentCommand(createArgs);
+    expect(environmentCommand.command).toBe("nemoclaw-start");
+    expect(environmentCommand.environment).toMatchObject({
+      NEMOCLAW_OBSERVABILITY: "0",
+      CHAT_UI_URL: "http://127.0.0.1:18901",
+      NEMOCLAW_DASHBOARD_PORT: "18901",
+    });
     expect(f.registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "beta",
@@ -563,18 +577,18 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
       { pending: true },
     );
     const createArgs = f.streamSandboxCreateMock.mock.calls[0]?.[1] ?? [];
-    expect(createArgs.slice(createArgs.lastIndexOf("--") + 1)).toEqual([
-      "env",
-      "NEMOCLAW_OBSERVABILITY=0",
-      "CHAT_UI_URL=http://127.0.0.1:18902",
-      "NEMOCLAW_DASHBOARD_PORT=18902",
-      `${HERMES_DASHBOARD_ENABLE_ENV}=1`,
-      `${HERMES_DASHBOARD_PORT_ENV}=18902`,
-      `${HERMES_DASHBOARD_INTERNAL_PORT_ENV}=18901`,
-      `${HERMES_DASHBOARD_TUI_ENV}=1`,
-      `${HERMES_API_PORT_ENV}=8643`,
-      "nemoclaw-start",
-    ]);
+    const environmentCommand = parseEnvironmentCommand(createArgs);
+    expect(environmentCommand.command).toBe("nemoclaw-start");
+    expect(environmentCommand.environment).toMatchObject({
+      NEMOCLAW_OBSERVABILITY: "0",
+      CHAT_UI_URL: "http://127.0.0.1:18902",
+      NEMOCLAW_DASHBOARD_PORT: "18902",
+      [HERMES_DASHBOARD_ENABLE_ENV]: "1",
+      [HERMES_DASHBOARD_PORT_ENV]: "18902",
+      [HERMES_DASHBOARD_INTERNAL_PORT_ENV]: "18901",
+      [HERMES_DASHBOARD_TUI_ENV]: "1",
+      [HERMES_API_PORT_ENV]: "8643",
+    });
     expect(resolveRebuildHermesDashboardEnv("hermes", registeredClone as never, 18902)).toEqual({
       ok: true,
       env: {

@@ -144,6 +144,45 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
     expect(result.output).not.toContain("schema-stub");
   });
 
+  it.each([
+    ["sandbox state", getSandboxGatewayState],
+    ["sandbox status", getSandboxGatewayStateForStatus],
+  ])("redacts credentials from the effective policy rendered by %s", async (_label, getState) => {
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
+    const lookupSandbox = vi.fn(async () => ({
+      result: {
+        ok: true as const,
+        value: {
+          state: "present" as const,
+          sandbox: {
+            name: "beta",
+            phase: "Ready",
+            readiness: "ready" as const,
+          },
+        },
+      },
+      displayOutput: ["Sandbox:", "  Name: beta", "Policy:", "  Phase: Ready"].join("\n"),
+    }));
+    const credential = "must-not-cross-the-status-boundary";
+    const readPolicy = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        document: ["version: 1", "sandbox:", "  env:", `    SERVICE_API_KEY: ${credential}`].join(
+          "\n",
+        ),
+        appliedRevision: 4,
+      },
+    }));
+
+    const result = await getState("beta", "nemoclaw-8091", lookupSandbox, readPolicy);
+
+    expect(result).toMatchObject({ state: "present", phase: "Ready" });
+    expect(result.output).toContain("SERVICE_API_KEY");
+    expect(result.output).toContain("[STRIPPED_BY_MIGRATION]");
+    expect(result.output).not.toContain(credential);
+    expect(result.output).toContain("Applied revision: 4");
+  });
+
   it("rejects endpoint routing before a status RPC can bypass the owner", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://sibling.invalid");
     const syncCapture = vi.spyOn(openshellRuntime, "captureOpenshell");

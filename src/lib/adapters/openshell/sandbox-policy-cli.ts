@@ -9,6 +9,8 @@ import {
   parseSandboxPolicyMetadata,
   type OpenShellPolicyInspection,
 } from "../../policy/merge";
+import { stripCredentials } from "../../security/credential-filter";
+import YAML from "yaml";
 import { stripAnsi } from "./client";
 import { openshellNotFoundDiagnosticLines } from "./command-argv";
 import * as openshellPolicyRuntime from "./policy-runtime";
@@ -71,6 +73,15 @@ export type CliOpenShellSandboxPolicyRead = (
 ) => Promise<CliOpenShellSandboxPolicyReadResult>;
 
 const DEFAULT_POLICY_READ_TIMEOUT_MS = 15_000;
+
+/** Return a validated, credential-redacted policy document for terminal display. */
+export function redactOpenShellSandboxPolicyDocumentForDisplay(document: string): string | null {
+  try {
+    return YAML.stringify(stripCredentials(parseOpenShellPolicy(document).policy)).trim();
+  } catch {
+    return null;
+  }
+}
 
 const capturePolicyWithRunner: CapturePolicyCommand = (args, options) => {
   try {
