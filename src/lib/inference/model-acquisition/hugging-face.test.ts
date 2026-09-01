@@ -18,17 +18,21 @@ import {
 const dockerSpawn = vi.fn();
 
 interface MockProcess extends EventEmitter {
-  readonly stderr: EventEmitter;
-  readonly stdout: EventEmitter;
+  readonly stderr: EventEmitter & { destroy: ReturnType<typeof vi.fn> };
+  readonly stdout: EventEmitter & { destroy: ReturnType<typeof vi.fn> };
   readonly kill: ReturnType<typeof vi.fn>;
+  readonly unref: ReturnType<typeof vi.fn>;
 }
 
 function mockProcess(): MockProcess {
   const proc = new EventEmitter() as MockProcess;
+  const stderr = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+  const stdout = Object.assign(new EventEmitter(), { destroy: vi.fn() });
   Object.defineProperties(proc, {
-    stderr: { value: new EventEmitter() },
-    stdout: { value: new EventEmitter() },
+    stderr: { value: stderr },
+    stdout: { value: stdout },
     kill: { value: vi.fn() },
+    unref: { value: vi.fn() },
   });
   return proc;
 }
@@ -406,10 +410,13 @@ describe("Hugging Face model acquisition", () => {
     await vi.advanceTimersByTimeAsync(999);
     expect(proc.kill).not.toHaveBeenCalled();
 
-    proc.kill.mockImplementationOnce(() => proc.emit("exit", 0));
+    proc.kill.mockImplementationOnce(() => {
+      proc.emit("exit", 0);
+      return true;
+    });
     await vi.advanceTimersByTimeAsync(1);
 
-    expect(proc.kill).toHaveBeenCalledTimes(1);
+    expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
     await expect(resultPromise).resolves.toEqual({
       ok: false,
       reason: "hf download stalled: no output for 1s",
@@ -420,6 +427,39 @@ describe("Hugging Face model acquisition", () => {
     proc.stdout.emit("data", Buffer.from("late output\n"));
     await vi.advanceTimersByTimeAsync(1_000);
     expect(proc.kill).toHaveBeenCalledTimes(1);
+    vi.unstubAllEnvs();
+  });
+
+  it("reports when bounded cleanup cannot confirm a stalled download exited (#10346)", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", "1");
+    const proc = mockProcess();
+    Object.defineProperty(proc, "pid", { value: 4242 });
+    proc.kill.mockReturnValue(true);
+    dockerSpawn.mockReturnValue(proc);
+    const resultPromise = acquireHuggingFaceModel(request(), observer());
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    let settled = false;
+    void resultPromise.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(proc.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
+    expect(proc.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(resultPromise).resolves.toEqual({
+      ok: false,
+      reason: expect.stringContaining("cleanup could not confirm Docker process 4242 exited"),
+    });
+    expect(proc.stdout.destroy).toHaveBeenCalledOnce();
+    expect(proc.stderr.destroy).toHaveBeenCalledOnce();
+    expect(proc.unref).toHaveBeenCalledOnce();
     vi.unstubAllEnvs();
   });
 

@@ -294,6 +294,7 @@ export function acquireHuggingFaceModel(
     const suppressedOutputStreams = new Set<NodeJS.WriteStream>();
     let reportedOutputSuppression = false;
     let resolved = false;
+    let stallCleanupInProgress = false;
     let decodersFinalized = false;
     const start = Date.now();
     let lastOutputAt = start;
@@ -315,23 +316,66 @@ export function acquireHuggingFaceModel(
     function scheduleStallTimeout(): void {
       clearTimeout(stallTimer);
       stallTimer = setTimeout(() => {
-        if (resolved) return;
+        if (resolved || stallCleanupInProgress) return;
+        stallCleanupInProgress = true;
+        clearInterval(heartbeat);
         const idleMs = Date.now() - lastOutputAt;
         if (!lastOutputEndedCleanly) process.stdout.write("\n");
         observer.logLine(
           `Model download stalled: no output for ${formatElapsed(idleMs)}; aborting`,
         );
         finalizeOutputDecoders();
-        done({
-          ok: false,
-          reason: `hf download stalled: no output for ${formatElapsed(idleMs)}`,
+        void terminateStalledDownload().then((terminated) => {
+          const cleanup = terminated
+            ? ""
+            : `; cleanup could not confirm Docker process ${String(proc.pid ?? "unknown")} exited`;
+          if (!terminated) {
+            proc.stdout?.destroy();
+            proc.stderr?.destroy();
+            proc.unref();
+          }
+          done({
+            ok: false,
+            reason: `hf download stalled: no output for ${formatElapsed(idleMs)}${cleanup}`,
+          });
         });
-        proc.kill();
       }, stallTimeoutMs);
       stallTimer.unref?.();
     }
 
     scheduleStallTimeout();
+
+    function terminateStalledDownload(): Promise<boolean> {
+      return new Promise((resolveTermination) => {
+        let forceTimer: NodeJS.Timeout | undefined;
+        let terminalTimer: NodeJS.Timeout | undefined;
+        let terminationSettled = false;
+        const settled = (terminated: boolean): void => {
+          if (terminationSettled) return;
+          terminationSettled = true;
+          if (forceTimer !== undefined) clearTimeout(forceTimer);
+          if (terminalTimer !== undefined) clearTimeout(terminalTimer);
+          proc.off("error", failed);
+          proc.off("exit", confirmed);
+          resolveTermination(terminated);
+        };
+        const confirmed = (): void => settled(true);
+        const failed = (): void => settled(false);
+        forceTimer = setTimeout(() => {
+          if (!proc.kill("SIGKILL")) {
+            settled(false);
+            return;
+          }
+          if (terminationSettled) return;
+          terminalTimer = setTimeout(() => settled(false), 5_000);
+          terminalTimer.unref?.();
+        }, 5_000);
+        forceTimer.unref?.();
+        proc.once("error", failed);
+        proc.once("exit", confirmed);
+        if (!proc.kill("SIGTERM")) settled(false);
+      });
+    }
 
     function done(result: HuggingFaceModelAcquisitionResult): void {
       if (resolved) return;
@@ -402,7 +446,7 @@ export function acquireHuggingFaceModel(
     }
 
     function onChunk(buf: Buffer, state: (typeof outputDecoders)[number]): void {
-      if (resolved) return;
+      if (resolved || stallCleanupInProgress) return;
       lastOutputAt = Date.now();
       scheduleStallTimeout();
       const text = state.decoder.write(buf);
@@ -413,12 +457,13 @@ export function acquireHuggingFaceModel(
     proc.stderr?.on("data", (buf: Buffer) => onChunk(buf, outputDecoders[1]));
 
     proc.on("error", (err: Error) => {
+      if (stallCleanupInProgress) return;
       finalizeOutputDecoders();
       done({ ok: false, reason: `spawn error: ${err.message}` });
     });
 
     proc.on("exit", (code: number | null) => {
-      if (resolved) return;
+      if (resolved || stallCleanupInProgress) return;
       finalizeOutputDecoders();
       if (code === 0) {
         if (!lastOutputEndedCleanly) process.stdout.write("\n");
