@@ -3,6 +3,7 @@
 
 import * as childProcess from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -162,45 +163,40 @@ describe("downloadFromSandbox", () => {
   });
 
   it.runIf(process.platform !== "win32")(
-    "executes the directory probe for expression-like relative paths (#10636)",
+    "rejects a nested symbolic link in an expression-like directory before download (#10636)",
     async () => {
-      captureMock.mockReturnValue({ status: 0, output: "dir" });
-
-      await downloadFromSandbox({
-        sandboxName: "alpha",
-        sandboxPath: "-payload",
-        hostDest: "./o",
-      });
-
-      const probeScript = captureMock.mock.calls[0]?.[0]?.at(-3) as string;
-      const runProbe = (setup: string) =>
-        childProcess.spawnSync(
-          "sh",
-          [
-            "-c",
-            `tmp=$(mktemp -d); trap 'rm -rf "$tmp"' 0; ${setup}; cd "$tmp"; ${probeScript}`,
-            "sh",
-            "-payload",
-          ],
-          { encoding: "utf8" },
-        );
-      const clean = runProbe('mkdir -- "$tmp/-payload"');
-      // Live target: find -L would classify the member as a file; physical
-      // traversal must still report unsafe-member.
-      const unsafe = runProbe(
-        'touch "$tmp/target"; mkdir -- "$tmp/-payload"; ln -s "$tmp/target" "$tmp/-payload/linked.txt"',
+      const probeRoot = await fs.promises.mkdtemp(
+        path.join(os.tmpdir(), "nemoclaw-download-probe-"),
       );
+      try {
+        const nestedDir = path.join(probeRoot, "-payload", "nested");
+        const target = path.join(probeRoot, "target.txt");
+        await fs.promises.mkdir(nestedDir, { recursive: true });
+        await fs.promises.writeFile(target, "safe target");
+        await fs.promises.symlink(target, path.join(nestedDir, "linked.txt"));
 
-      expect({ status: clean.status, stdout: clean.stdout, stderr: clean.stderr }).toEqual({
-        status: 0,
-        stdout: "dir",
-        stderr: "",
-      });
-      expect({ status: unsafe.status, stdout: unsafe.stdout, stderr: unsafe.stderr }).toEqual({
-        status: 0,
-        stdout: "unsafe-member",
-        stderr: "",
-      });
+        captureMock.mockImplementation((args: string[]) => {
+          const separator = args.indexOf("--");
+          const command = args.slice(separator + 1);
+          const probe = childProcess.spawnSync(command[0], command.slice(1), {
+            cwd: probeRoot,
+            encoding: "utf8",
+          });
+          return { status: probe.status, output: probe.stdout };
+        });
+
+        await expect(
+          downloadFromSandbox({
+            sandboxName: "alpha",
+            sandboxPath: "-payload",
+            hostDest: "./o",
+          }),
+        ).rejects.toThrow(/directory contains an entry that is not a regular file or directory/);
+        expect(runMock).not.toHaveBeenCalled();
+        expect(publishMock).not.toHaveBeenCalled();
+      } finally {
+        await fs.promises.rm(probeRoot, { recursive: true, force: true });
+      }
     },
   );
 
