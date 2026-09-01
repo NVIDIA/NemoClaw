@@ -565,6 +565,7 @@ function releaseSupersededOllamaModel(
   let authorityRefusal: unknown;
   let cleanupWarning: string | null = null;
   let attemptedModels: readonly string[] = [];
+  let pendingRecordFailure: string | null = null;
   const loadPending =
     deps.localInference.loadPendingOllamaModelCleanup ?? loadPendingOllamaModelCleanup;
   const persistPending =
@@ -608,10 +609,13 @@ function releaseSupersededOllamaModel(
         return;
       }
       if (attemptedModels.length > 0 && deps.unloadOllamaModels) {
+        // The committed route no longer names the old model. Record it before
+        // release so later lifecycle commands retain a scoped retry target.
+        pendingRecordFailure = persistRetry();
         try {
           const cleanup = deps.unloadOllamaModels(attemptedModels);
           if (cleanup && !cleanup.ok) {
-            const persistenceFailure = persistRetry();
+            if (pendingRecordFailure) pendingRecordFailure = persistRetry();
             const detail = cleanup.message
               ? `: ${cleanup.message.replace(/\s+/g, " ").slice(0, 240)}`
               : "";
@@ -624,26 +628,24 @@ function releaseSupersededOllamaModel(
             cleanupWarning =
               `  Warning: Ollama did not release recorded model cleanup for '${previous.name}' from ` +
               `${cleanup.endpoint} (outcome: ${cleanup.outcome}${detail}). The new inference ` +
-              `route remains active. ${recoveryAction}, then re-run onboarding, stop, or destroy ` +
-              `'${previous.name}' to retry only: ${attemptedModels.join(", ")}.` +
-              (persistenceFailure
-                ? ` Cleanup retry state could not be recorded: ${persistenceFailure}.`
-                : "");
+              `route remains active. ${recoveryAction}. ` +
+              (pendingRecordFailure
+                ? `Cleanup retry state could not be recorded: ${pendingRecordFailure}. Manually release only ${attemptedModels.join(", ")} at ${cleanup.endpoint}.`
+                : `Re-run onboarding, stop, or destroy '${previous.name}' to retry only: ${attemptedModels.join(", ")}.`);
           } else {
             clearPending(previous.name, attemptedModels);
           }
         } catch (error) {
-          const persistenceFailure = persistRetry();
+          if (pendingRecordFailure) pendingRecordFailure = persistRetry();
           const detail = (error instanceof Error ? error.message : String(error))
             .replace(/\s+/g, " ")
             .slice(0, 240);
           cleanupWarning =
             `  Warning: Ollama cleanup for '${previous.name}' failed: ${detail}. The new inference ` +
-            `route remains active. Re-run onboarding, stop, or destroy '${previous.name}' to ` +
-            `retry only the recorded models: ${attemptedModels.join(", ")}.` +
-            (persistenceFailure
-              ? ` Cleanup retry state could not be recorded: ${persistenceFailure}.`
-              : "");
+            `route remains active. ` +
+            (pendingRecordFailure
+              ? `Cleanup retry state could not be recorded: ${pendingRecordFailure}. Manually release only ${attemptedModels.join(", ")} from the saved local Ollama endpoint.`
+              : `Re-run onboarding, stop, or destroy '${previous.name}' to retry only the recorded models: ${attemptedModels.join(", ")}.`);
         }
       }
       const pendingAfterCleanup = loadPending(previous.name);
@@ -652,17 +654,16 @@ function releaseSupersededOllamaModel(
       }
     });
   } catch (error) {
-    const persistenceFailure = persistRetry();
+    if (!pendingRecordFailure) pendingRecordFailure = persistRetry();
     const detail = (error instanceof Error ? error.message : String(error))
       .replace(/\s+/g, " ")
       .slice(0, 240);
     cleanupWarning =
       `  Warning: NemoClaw could not finish superseded Ollama cleanup: ${detail}. The new ` +
-      `inference route remains active. Re-run onboarding, stop, or destroy '${previous.name}' to ` +
-      `retry only the recorded models: ${attemptedModels.join(", ") || "none"}.` +
-      (persistenceFailure
-        ? ` Cleanup retry state could not be recorded: ${persistenceFailure}.`
-        : "");
+      `inference route remains active. ` +
+      (pendingRecordFailure
+        ? `Cleanup retry state could not be recorded: ${pendingRecordFailure}. Manually release only ${attemptedModels.join(", ") || "the superseded model"} from the saved local Ollama endpoint.`
+        : `Re-run onboarding, stop, or destroy '${previous.name}' to retry only the recorded models: ${attemptedModels.join(", ") || "none"}.`);
   }
   if (cleanupWarning) console.warn(cleanupWarning);
   if (authorityRefusal) throw authorityRefusal;

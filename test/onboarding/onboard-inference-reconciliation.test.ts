@@ -1192,6 +1192,41 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     expect(pending).toEqual([]);
   });
 
+  it("names manual cleanup when a superseded-model retry record cannot be written", async () => {
+    const persistPendingOllamaModelCleanup = vi.fn(() => {
+      throw new Error("state directory is unavailable");
+    });
+    const unloadOllamaModels = vi.fn(() => ({
+      ok: false as const,
+      outcome: "unload-request-failed" as const,
+      endpoint: "http://host.docker.internal:11434",
+      selectedModels: ["llama3"],
+      discoveries: [],
+      requests: [],
+      message: "connection refused",
+    }));
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [priorEntry],
+      unloadOllamaModels,
+      persistPendingOllamaModelCleanup,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+      const warning = warn.mock.calls.map(([message]) => String(message)).join("\n");
+      expect(warning).toContain("Manually release only llama3");
+      expect(warning).toContain("http://host.docker.internal:11434");
+      expect(warning).not.toContain("Re-run onboarding, stop, or destroy");
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(persistPendingOllamaModelCleanup.mock.invocationCallOrder[0]).toBeLessThan(
+      unloadOllamaModels.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
   it("keeps the model when the re-onboard selects the same one (#9110)", async () => {
     const unloadOllamaModels = vi.fn<(onlyModels: readonly string[]) => void>();
     const prior = { ...priorEntry, model: "qwen3.5:9b" };

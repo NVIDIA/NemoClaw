@@ -33,9 +33,9 @@ function respondsOnlyThroughDockerDesktop(apiPath: string, response: string) {
     const expectedUrl = `http://host.docker.internal:11434${apiPath}`;
     const usesExpectedTransport =
       command[0] === "docker" &&
-      command[1] === "run" &&
-      command[2] === "--rm" &&
-      command[3] === CONTAINER_REACHABILITY_IMAGE &&
+      command.includes("run") &&
+      command.includes("--rm") &&
+      command.includes(CONTAINER_REACHABILITY_IMAGE) &&
       command.some((argument) => argument === expectedUrl);
     return usesExpectedTransport ? response : "";
   });
