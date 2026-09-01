@@ -417,6 +417,73 @@ const TRUSTED_OPENSHELL_RELEASES: readonly OpenShellReleaseTrust[] = [
     },
     version: "0.0.106",
   },
+  {
+    brevTemplateSha256: [
+      "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
+      "56fc6482d1508b73604099e6fd6c16daea16275cf36cc25c1c5366c82a4394e3",
+    ],
+    formula: {
+      asset: "openshell.rb",
+      sha256: "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558",
+      url: "https://github.com/NVIDIA/OpenShell/releases/download/v0.0.116/openshell.rb",
+    },
+    // The first template came from the downstream 0.0.106 pin. The second authorizes its
+    // fail-before-download strings preflight. The third authorizes repair when an existing formula
+    // has an invalid checksum or its release formula is unavailable. The fourth preserves that
+    // template after installer tests moved under test/install. Following the intentional two-step
+    // trust rollout in check-installer-hash.sh, the fifth authorizes the dev-channel installer
+    // template, which selects a MUSL sandbox while retaining the GNU gateway. The sixth preserves
+    // that dev-channel template with the historical flat installer-test paths. The seventh
+    // authorizes the exact successor template after macOS install selection becomes method-bound
+    // and fail-closed.
+    // Homebrew owns the formula source state, so NemoClaw cannot correct it there; the installer
+    // verifies the trusted release formula before reuse. installer-homebrew-formula-reuse-trust.test.ts
+    // and installer-hash-check.test.ts lock the template and trust transitions. Remove the repair
+    // digests when supported Homebrew installs no longer need this repair path.
+    installerTemplateSha256: [
+      "5d4cdb2db60df7539193b486ac15bb9be96ec1d40fc0f739a94d4d2f0bf597a0",
+      "e850e927aab619d52c5de72967137569d65dd7fa669920c7c5b558f0770140d1",
+      "e7d51536442b217e3d5e77c4ba3b7c25e6a74898bf22523f7fb58627d34329cb",
+      "18175cf47a0fece8ce75e5d523185062c7a7c913a3f4ceafbba4a7ca4df7c69b",
+      "293f45ea1d54e1531c3a070123c04b47f972f29504bd8902a44ab71acdfe6cca",
+      "ee3db19d06d34a625bff9e0ab021f095ce97eadf5f7a98fc60def62af87577ad",
+      "4b45161017a5936331300e982168160575701632711328cbbb97480eb087fb51",
+    ],
+    manifests: [
+      {
+        asset: "openshell-checksums-sha256.txt",
+        sha256: "f8b6ec65366f9d256737b884ba4d9f184b4dbbbb9540711ed9e4934d772eba7e",
+      },
+      {
+        asset: "openshell-gateway-checksums-sha256.txt",
+        sha256: "572d80ded99fab0c2cf75f8108c62ab3e8455356b3c3b38de1be98806a2440e9",
+      },
+      {
+        asset: "openshell-sandbox-checksums-sha256.txt",
+        sha256: "0cb63b3b4436214224872c1ba245bda0d92d904822aa4f28015081269f398f93",
+      },
+    ],
+    sandboxBuilds: [
+      {
+        required: false,
+        sha256: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40",
+      },
+      {
+        required: false,
+        sha256: "7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d",
+      },
+    ],
+    supervisor: {
+      image: "ghcr.io/nvidia/openshell/supervisor",
+      manifestDigest: "sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42",
+      required: false,
+      runtimeTemplateSha256: [
+        "c1922eaa4f73c1a05aa8bccf50fc40208d7f71db0e6c110dcd09d0372d1aa068",
+        "abfc1337284d437e71e47945936af7ef0bc6f28ac2495e12fac41894eb24ce3c",
+      ],
+    },
+    version: "0.0.116",
+  },
 ] as const;
 const EXPECTED_INSTALLER_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
@@ -425,8 +492,8 @@ const EXPECTED_INSTALLER_ASSETS = [
   "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
   "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
   "openshell-gateway-aarch64-apple-darwin.tar.gz",
-  "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
-  "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
+  "openshell-sandbox-x86_64-unknown-linux-musl.tar.gz",
+  "openshell-sandbox-aarch64-unknown-linux-musl.tar.gz",
   "openshell.rb",
 ] as const;
 const EXPECTED_BREV_ASSETS = [

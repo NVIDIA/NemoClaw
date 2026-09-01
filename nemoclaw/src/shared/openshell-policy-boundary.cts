@@ -40,7 +40,7 @@ export type OpenShellGlobalPolicyHistoryState = "absent" | "present" | "invalid"
 
 const OPENSHELL_GLOBAL_POLICY_HISTORY_ABSENT = "No global policy history found";
 
-/** Classify the exact OpenShell 0.0.106 global-policy history output contract. */
+/** Classify the exact OpenShell 0.0.116 global-policy history output contract. */
 export function classifyOpenShellGlobalPolicyHistory(
   stdout: string,
   stderr: string,
@@ -321,7 +321,7 @@ export function parseOpenShellPolicy(raw: string): ParsedOpenShellPolicy {
 // regressionTest: the root policy round-trip and plugin runner policy tests.
 // removalCondition: OpenShell's supported base-policy contract guarantees that
 // provider-composed entries are absent from every mutation read.
-// tracking: revalidated for stable OpenShell 0.0.106; revalidate after 0.0.106.
+// tracking: revalidated for stable OpenShell 0.0.116; revalidate after 0.0.116.
 export function withoutProviderComposedPolicies<T>(policies: Record<string, T>): Record<string, T> {
   return Object.fromEntries(
     Object.entries(policies).filter(([name]) => !name.startsWith("_provider_")),

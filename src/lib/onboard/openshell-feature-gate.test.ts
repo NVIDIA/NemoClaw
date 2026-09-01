@@ -129,6 +129,30 @@ describe("OpenShell MCP feature gate", () => {
     }
   });
 
+  it("identifies the pinned v0.0.116 sandbox artifacts without executing them", () => {
+    const sandbox = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-")),
+      "openshell-sandbox",
+    );
+    try {
+      fs.writeFileSync(
+        sandbox,
+        `#!/bin/sh\nexit 127\n# ${REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE}\n`,
+        { mode: 0o755 },
+      );
+      const digest = "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40";
+      const arm64Digest = "7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d";
+
+      expect(pinnedOpenShellSandboxBuildVersion(digest)).toBe("0.0.116");
+      expect(pinnedOpenShellSandboxBuildVersion(arm64Digest)).toBe("0.0.116");
+      expect(resolveOpenShellComponentBuildVersion(sandbox, "sandbox", () => digest)).toBe(
+        "0.0.116",
+      );
+    } finally {
+      fs.rmSync(path.dirname(sandbox), { recursive: true, force: true });
+    }
+  });
+
   it("finds provider rewrite and MCP L7 markers across OpenShell binaries", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-"));
     try {

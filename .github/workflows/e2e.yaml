@@ -3327,7 +3327,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_CANDIDATE_VERSION: "0.0.106"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.116"
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3405,7 +3405,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/external-gateway-health
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.116"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -3492,7 +3492,7 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42
     steps:
       - id: trusted_hermes_swap
         name: Provision trusted Hermes E2E swap
@@ -3752,12 +3752,12 @@ jobs:
             jq -n '{
               schemaVersion: 1,
               sourceRepository: "NVIDIA/OpenShell",
-              releaseTag: "v0.0.106",
-              sourceSha: "c4b500a7de64d0b66e3ee8098f58d14299092162",
+              releaseTag: "v0.0.116",
+              sourceSha: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
               artifacts: {
-                cli: {binarySha256: "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59"},
-                gateway: {binarySha256: "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c"},
-                standaloneSandbox: {binarySha256: "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8"}
+                cli: {binarySha256: "24e85062073d512d1951c76cd3890b7bce1ab01cc36a08f88b3b43c067a402da"},
+                gateway: {binarySha256: "780fc7ad871e2163f3fb866a2d0254ee682fc0d83e6261a84b350c8dcdd9f47b"},
+                standaloneSandbox: {binarySha256: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40"}
               }
             }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
           fi
@@ -3825,7 +3825,7 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -3878,12 +3878,12 @@ jobs:
           jq -n '{
             schemaVersion: 1,
             sourceRepository: "NVIDIA/OpenShell",
-            releaseTag: "v0.0.106",
-            sourceSha: "c4b500a7de64d0b66e3ee8098f58d14299092162",
+            releaseTag: "v0.0.116",
+            sourceSha: "d1155aa70042d3e2ee49dbfa15346b108b7c1d92",
             artifacts: {
-              cli: {binarySha256: "98ecf95113fea999e94a928043e57b04cf58a45a1b66ae8bffc73d1bc8bb1d59"},
-              gateway: {binarySha256: "e6cde8a54568aa1926ff6584ffd6984314c68dad64d2722509618a74094c622c"},
-              standaloneSandbox: {binarySha256: "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8"}
+              cli: {binarySha256: "24e85062073d512d1951c76cd3890b7bce1ab01cc36a08f88b3b43c067a402da"},
+              gateway: {binarySha256: "780fc7ad871e2163f3fb866a2d0254ee682fc0d83e6261a84b350c8dcdd9f47b"},
+              standaloneSandbox: {binarySha256: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40"}
             }
           }' > "$E2E_ARTIFACT_DIR/openshell-credential-generation-window/openshell-exact-main-provenance.json"
 

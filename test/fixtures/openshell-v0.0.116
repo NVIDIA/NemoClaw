@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+set -euo pipefail
+
+if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then
+  printf '%s\n' "openshell 0.0.116"
+  exit 0
+fi
+
+# Stable fixture capability markers used by install and feature-gate tests.
+# request-body-credential-rewrite
+# websocket-credential-rewrite
+# allow_all_known_mcp_methods
+exit 0

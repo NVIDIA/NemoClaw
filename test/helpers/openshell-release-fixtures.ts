@@ -11,16 +11,16 @@ export const CANDIDATE_RUNTIME = {
 export const CANDIDATE_RUNTIME_ENABLED = Object.values(CANDIDATE_RUNTIME).every(Boolean);
 
 export const PINNED_OPEN_SHELL_SHA256 = {
-  cliDarwinArm64: "969493205e3d3462226ff613eaba0b9cde0f582e3026294169d533d41e87c905",
-  cliLinuxArm64: "ce981904ae8febd9cd6b3fbceb04e1dcfb48da6042bac08eadf0c2211f83fe55",
-  cliLinuxX64: "d1a885a91b3e5aaa006c36aca95dc78bed0638c1ba1a79b55f1da93211b8a0a0",
-  formula: "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642",
-  gatewayDarwinArm64: "de8f90db9dd0d3b47855b2b6d2542660730917bd1249e53140300990a8690b94",
-  gatewayLinuxArm64: "22b7781249e3487085694d0f0f3797a0e549018b81144cd24b2f1118c730d1c7",
-  gatewayLinuxX64: "b7760cb752a4363c2f21d32298dd0c683dc438f6edfd16c2e4242bc0baefbb7c",
-  sandboxLinuxArm64: "5e5d758d53c6abc6d7a936be907dafa9dfce10423289536f39b50abe294dfafd",
-  sandboxLinuxX64: "559b8aaad3a8eeab45c511e7de531d9baa98a311282dcb0c2c5f38cc2d4ca355",
-  sandboxBinaryLinuxX64: "019301ec8618abbed8135e8d39dde7bea47e5e92813bbc17768550de34db59f8",
+  cliDarwinArm64: "e582f2374053bebac8e6aaeb4a369931b7d4bb97bd55055e2c02e85502627e22",
+  cliLinuxArm64: "7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43",
+  cliLinuxX64: "4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e",
+  formula: "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558",
+  gatewayDarwinArm64: "f192d3d737c125264e13ef73458541df2ca6a9eb2fa599736a7f2587d5d2ce8d",
+  gatewayLinuxArm64: "292c379193a339220234ffea585350901468bb8f4076e2076bc074e8ed18974b",
+  gatewayLinuxX64: "59c6da724eae7a00c28826f9191efbdf4fbaa5c768afdc8dea6a80a949ebcc89",
+  sandboxLinuxArm64: "959d9a88270e0336f04342560df750591da603424d0a9bfb481ee29670342557",
+  sandboxLinuxX64: "0bb160f73e5007338b94e3c868f66f50c71cd65c27c932ed9a4fa67c49e6d423",
+  sandboxBinaryLinuxX64: "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40",
 } as const;
 
 export const ZERO_SHA256 = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -66,12 +66,19 @@ export const V00106_SANDBOX_BUILD_DIGESTS = [
 ] as const;
 export const V00106_SUPERVISOR_MANIFEST_DIGEST =
   "sha256:722f44669722961b7f432b0b81de25b91a58f34a61d6403bef967acaf2b3af01";
+export const V00116_SANDBOX_BUILD_DIGESTS = [
+  "326ee26df8f8575ba761470757a12fe5c1cdc904ba064b81946692dd0328dd40",
+  "7052a87d2b46ef52ecc0f7c64b9bac008dd3010c467881b0648045334eb0ed1d",
+] as const;
+export const V00116_SUPERVISOR_MANIFEST_DIGEST =
+  "sha256:c8c42aef16c200063e32cbf72e553e4ead027085427b555efafd95063ecead42";
 export const INSTALLER_HASH_SUPERVISOR_MANIFEST_DIGESTS = new Map([
   ["0.0.72", "sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d"],
   ["0.0.99", "sha256:ea3632b6e9528e2309103af5b6949606fcdc83ca1f69e8db81482a25bea84bb6"],
   ["0.0.101", "sha256:b58be5e40c788977ffa0e8305a8cad9c656efdf1a3fe182582a00ca870bb0edb"],
   ["0.0.103", V00103_SUPERVISOR_MANIFEST_DIGEST],
   ["0.0.106", V00106_SUPERVISOR_MANIFEST_DIGEST],
+  ["0.0.116", V00116_SUPERVISOR_MANIFEST_DIGEST],
   ["9.9.9", `sha256:${"c".repeat(64)}`],
 ]);
 
@@ -261,4 +268,31 @@ export const V00106_ASSET_DIGESTS = new Map([
       }),
   ),
   ["openshell.rb", "f0f86519e227b3b326431410058ba690b1a7b83e5af7384014e4b96283d3a642"],
+]);
+
+export const V00116_CHECKSUM_MANIFESTS = new Map([
+  [
+    "openshell-checksums-sha256.txt",
+    `4fb4476d80a1875a0b83547ec3aba999cf0a2e2d75f95f2f709b622e2103520e  openshell-x86_64-unknown-linux-musl.tar.gz\n7a949c48d1e000cd280869eea1e203e24816b9cfefc575b68a8b72b939cb3f43  openshell-aarch64-unknown-linux-musl.tar.gz\ne582f2374053bebac8e6aaeb4a369931b7d4bb97bd55055e2c02e85502627e22  openshell-aarch64-apple-darwin.tar.gz\n`,
+  ],
+  [
+    "openshell-gateway-checksums-sha256.txt",
+    `59c6da724eae7a00c28826f9191efbdf4fbaa5c768afdc8dea6a80a949ebcc89  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz\n292c379193a339220234ffea585350901468bb8f4076e2076bc074e8ed18974b  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz\nf192d3d737c125264e13ef73458541df2ca6a9eb2fa599736a7f2587d5d2ce8d  openshell-gateway-aarch64-apple-darwin.tar.gz\n`,
+  ],
+  [
+    "openshell-sandbox-checksums-sha256.txt",
+    `0bb160f73e5007338b94e3c868f66f50c71cd65c27c932ed9a4fa67c49e6d423  openshell-sandbox-x86_64-unknown-linux-musl.tar.gz\n959d9a88270e0336f04342560df750591da603424d0a9bfb481ee29670342557  openshell-sandbox-aarch64-unknown-linux-musl.tar.gz\n`,
+  ],
+]);
+export const V00116_ASSET_DIGESTS = new Map([
+  ...[...V00116_CHECKSUM_MANIFESTS.values()].flatMap((contents) =>
+    contents
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const [digest, asset] = line.split(/\s+/);
+        return [asset, digest] as const;
+      }),
+  ),
+  ["openshell.rb", "cf00a9441589702ffe006720fd6a9dffc0f0745b337036aad26dc53eb94c1558"],
 ]);
