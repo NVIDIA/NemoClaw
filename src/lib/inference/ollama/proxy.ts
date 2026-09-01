@@ -1532,12 +1532,13 @@ function unloadOllamaModels(
   }
   if (!releaseHost) {
     return {
-      ok: true,
-      outcome: "not-resident",
+      ok: false,
+      outcome: "discovery-failed",
       endpoint: buildLocalOllamaEndpoint(),
       selectedModels: selectedModels ?? [],
       discoveries: [],
       requests: [],
+      message: "No reachable local Ollama endpoint was found for cleanup",
     };
   }
   const releaseEndpoint = buildLocalOllamaEndpoint(() => releaseHost!);
