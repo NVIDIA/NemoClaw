@@ -1447,6 +1447,22 @@ function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): 
   if (specialistEnv.BASE_REF !== expectedBaseRef || specialistEnv.HEAD_REF !== expectedHeadRef) {
     errors.push("Unified advisor specialists must retain target refs through execution");
   }
+  const discoverySteps = advisor.jobs?.["discover-specialists"]?.steps ?? [];
+  const contextUpload = discoverySteps.find((step) => step.name === "Upload GitHub review context");
+  const specialistSteps = advisor.jobs?.["review-specialists"]?.steps ?? [];
+  const contextDownload = specialistSteps.find((step) => step.name === "Download GitHub review context");
+  const specialistUpload = specialistSteps.find((step) => step.name === "Upload specialist review");
+  const contextArtifactName = "pr-review-advisor-context-${{ github.run_id }}";
+  if (
+    contextUpload?.with?.name !== contextArtifactName ||
+    contextDownload?.with?.name !== contextArtifactName ||
+    contextUpload?.with?.overwrite !== true
+  ) {
+    errors.push("Unified advisor context artifact must survive failed-job and full reruns");
+  }
+  if (specialistUpload?.with?.name !== "${{ matrix.advisor.artifact_name }}-${{ github.run_attempt }}") {
+    errors.push("Unified advisor specialist artifacts must be unique per rerun attempt");
+  }
 }
 
 export function validateE2eOperationsWorkflow(
