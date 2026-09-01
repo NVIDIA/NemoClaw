@@ -528,6 +528,16 @@ describe("pull request and main workflow contracts", () => {
       expect(
         requiredWorkflowStep(compileJob, "Compile and verify CLI and plugin outputs").uses,
       ).toBe(expectedCompileAction);
+      const compileIndex = requiredWorkflowStepIndex(
+        compileJob,
+        "Compile and verify CLI and plugin outputs",
+      );
+      expect(compileIndex).toBeLessThan(
+        requiredWorkflowStepIndex(compileJob, "Upload compiled test inputs"),
+      );
+      expect(compileIndex).toBeLessThan(
+        requiredWorkflowStepIndex(compileJob, "Upload compiled CLI artifact"),
+      );
 
       const upload = requiredWorkflowStep(compileJob, "Upload compiled test inputs");
       expect(upload.uses).toBe(
