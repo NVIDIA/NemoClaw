@@ -12,6 +12,8 @@ Explain that Express keeps the selected agent, selects the admitted local infere
 For a qualifying N1x WSL host, Express uses managed llama.cpp with Qwen 3.6 35B-A3B and downloads a pinned 20.4 GB GGUF file.
 The installer checks only the preliminary Express-selection conditions.
 Before managed llama.cpp starts, onboarding also requires the default local Docker context, at least 48,000 MiB of Docker memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
+Before selecting managed llama.cpp, unset `DOCKER_HOST` and select Docker's `default` context.
+Managed N1x WSL selection rejects other Docker selectors.
 For other Windows WSL hosts, Express uses Windows-host Ollama only when local Docker Desktop is confirmed. Native Docker Engine, remote or unknown Docker targets, and failed Docker detection use WSL-local Ollama with its memory-aware default model.
 Include the third-party-software notice, then ask: "Run Express install with these settings?"
 Choices:

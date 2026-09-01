@@ -114,11 +114,13 @@ For Windows WSL N1x, also confirm these requirements:
 
 - Use Arm64 WSL with the Windows N1x product identity.
 - Use the default local Docker Desktop context with at least 48,000 MiB of Docker memory.
+- Unset `DOCKER_HOST` and select Docker's `default` context before you select the managed recipe.
 - Provide at least 48,000 MiB of GPU memory.
 - Pass Docker storage, runtime, NVIDIA GPU integration, and Docker Desktop GPU passthrough readiness.
 
 If the preliminary Express checks do not match, Windows Express retains Windows-host or WSL-local Ollama.
 If a later readiness check fails, onboarding stops managed llama.cpp selection before installation.
+Managed N1x WSL selection rejects any other Docker selector.
 
 NemoClaw uses `HF_TOKEN` only while it acquires the model.
 It does not write the value to managed llama.cpp state, the receipt, the serving container environment, or the sandbox registry.
