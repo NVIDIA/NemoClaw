@@ -4,25 +4,18 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import onboardFixtureContract from "./onboard-fixture-contract.json";
-
-export const ONBOARD_CREATED_SANDBOX_ID = onboardFixtureContract.createdSandboxId;
-
 function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
 export function writeOkOpenshell(
   fakeBin: string,
-  options: { gatewayPort?: number; readySandboxGet?: boolean } = {},
+  options: { gatewayPort?: number } = {},
 ): void {
   const gatewayPort = options.gatewayPort ?? 8080;
-  const sandboxGet = options.readySandboxGet
-    ? `if [ "\${1:-}" = sandbox ] && [ "\${2:-}" = get ]; then printf "Sandbox:\\n\\n  Id: ${ONBOARD_CREATED_SANDBOX_ID}\\n  Name: %s\\n  Phase: Ready\\n" "\${!#}"; fi\n`
-    : "";
   writeExecutable(
     path.join(fakeBin, "openshell"),
-    `#!/usr/bin/env bash\n${sandboxGet}if [ "\${1:-}" = policy ] && [ "\${2:-}" = list ] && [[ " $* " = *" --global "* ]]; then printf '%s\\n' 'No global policy history found' >&2; fi\nif [ "\${1:-}" = policy ] && [ "\${2:-}" = get ] && [[ " $* " = *" --output json "* ]]; then printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","hash":"fixture-policy","active_version":1,"policy":{}}\\n' "\${!#}"; fi\nif [ "\${1:-}" = policy ] && [ "\${2:-}" = get ] && [[ " $* " = *" --base "* ]]; then printf 'version: 1\\n'; fi\nif [ "\${1:-}" = gateway ] && [ "\${2:-}" = info ]; then printf 'Gateway endpoint: http://127.0.0.1:${gatewayPort}\\n'; fi\nif [ "\${1:-}" = sandbox ] && [ "\${2:-}" = ssh-config ]; then printf "Host openshell-%s.default\\n  HostName 127.0.0.1\\n  User sandbox\\n" "\${3:-sandbox}"; fi\nexit 0\n`,
+    `#!/usr/bin/env bash\nif [ "\${1:-}" = policy ] && [ "\${2:-}" = list ] && [[ " $* " = *" --global "* ]]; then printf '%s\\n' 'No global policy history found' >&2; fi\nif [ "\${1:-}" = policy ] && [ "\${2:-}" = get ] && [[ " $* " = *" --output json "* ]]; then printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","hash":"fixture-policy","active_version":1,"policy":{}}\\n' "\${!#}"; fi\nif [ "\${1:-}" = policy ] && [ "\${2:-}" = get ] && [[ " $* " = *" --base "* ]]; then printf 'version: 1\\n'; fi\nif [ "\${1:-}" = gateway ] && [ "\${2:-}" = info ]; then printf 'Gateway endpoint: http://127.0.0.1:${gatewayPort}\\n'; fi\nif [ "\${1:-}" = sandbox ] && [ "\${2:-}" = ssh-config ]; then printf "Host openshell-%s.default\\n  HostName 127.0.0.1\\n  User sandbox\\n" "\${3:-sandbox}"; fi\nexit 0\n`,
   );
   writeExecutable(
     path.join(fakeBin, "ssh"),

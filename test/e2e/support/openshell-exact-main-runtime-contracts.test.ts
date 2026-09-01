@@ -3,9 +3,11 @@
 
 import { spawnSync } from "node:child_process";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import * as policy from "../../../src/lib/policy";
 import {
+  assertExactMainPolicyNftAndIdentityContracts,
   buildExactMainLiveExeIdentityScript,
   buildExactMainNftInspectionScript,
   DIRECT_BYPASS_PROBE_CODE,
@@ -81,6 +83,76 @@ function completeRuleset(): Record<string, unknown> {
 }
 
 describe("OpenShell exact-main policy, nft, and process-identity proof helpers", () => {
+  it("applies and restores the identity proof through live OpenShell policy authority", async () => {
+    vi.stubEnv("NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF", "1");
+    const basePolicy = "version: 1\nnetwork_policies: {}\n";
+    const policyMutations: Array<{ document: string; operation: string | undefined }> = [];
+    const setPolicy = vi
+      .spyOn(policy, "setPolicyDocument")
+      .mockImplementation((_sandboxName, document, options) => {
+        policyMutations.push({ document, operation: options?.operation });
+        return true;
+      });
+    const success = (stdout: string) => ({
+      artifacts: { result: "", stderr: "", stdout: "" },
+      command: [],
+      exitCode: 0,
+      signal: null,
+      stderr: "",
+      stdout,
+      timedOut: false,
+    });
+    const openshell = vi
+      .fn()
+      .mockResolvedValueOnce(success(basePolicy))
+      .mockResolvedValueOnce(
+        success(
+          JSON.stringify({
+            active_version: 1,
+            config_revision: 1,
+            hash: "sha256:before",
+            policy_source: "sandbox",
+            sandbox: "exact-main-proof",
+            status: "effective",
+            version: 1,
+          }),
+        ),
+      )
+      .mockResolvedValueOnce({
+        ...success(""),
+        exitCode: 1,
+        stderr: "stop after live-policy mutation",
+      })
+      .mockResolvedValueOnce(success(basePolicy));
+    const sandbox = {
+      openshell,
+    } as never;
+
+    try {
+      await expect(
+        assertExactMainPolicyNftAndIdentityContracts({
+          artifacts: {} as never,
+          cleanup: { add: vi.fn() } as never,
+          host: {} as never,
+          mcpUrl: "https://mcp.example.test/mcp",
+          sandbox,
+          sandboxName: "exact-main-proof",
+        }),
+      ).rejects.toThrow("stop after live-policy mutation");
+    } finally {
+      setPolicy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+
+    expect(policyMutations).toHaveLength(2);
+    expect(policyMutations[0]?.document).toContain("exact_main_live_exe_identity");
+    expect(policyMutations[0]?.operation).toBe("apply the exact-main live-exe identity policy");
+    expect(policyMutations[1]?.document).toBe(basePolicy.trim());
+    expect(policyMutations[1]?.operation).toBe("restore the exact-main policy proof");
+    const openshellCalls = openshell.mock.calls.map(([args]) => args as string[]);
+    expect(openshellCalls.some((args) => args[0] === "policy" && args[1] === "set")).toBe(false);
+  });
+
   it("parses effective and stored revision identities without discarding version or hash", () => {
     expect(
       parseExactMainPolicyStatus(

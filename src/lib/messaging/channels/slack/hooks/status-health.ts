@@ -32,7 +32,7 @@ export type SlackStatusHealthHookOptions = ChannelStatusHealthHookOptions;
 function canRunSlackProbe(inputs: MessagingHookInputMap | undefined): boolean {
   return (
     inputs?.channelEnabledInRegistry === true &&
-    inputs.presetInRegistry === true &&
+    inputs.presetApplied === true &&
     inputs.presetOnGateway === true
   );
 }
@@ -138,7 +138,7 @@ function evaluateSlackReadiness(
     probedAt: normalizeString(inputs?.probedAt) ?? "",
     lastTransitionAt: probe.lastTransitionAt,
     channelEnabledInRegistry: Boolean(inputs?.channelEnabledInRegistry),
-    presetInRegistry: Boolean(inputs?.presetInRegistry),
+    presetApplied: Boolean(inputs?.presetApplied),
     presetOnGateway: normalizeBoolean(inputs?.presetOnGateway),
     probeReachable: probe.probeReachable,
     pluginConfigured: probe.pluginConfigured,
@@ -168,7 +168,7 @@ function evaluateSlackReadiness(
   const classify = (): ChannelReadiness => {
     if (!input.channelEnabledInRegistry)
       return result("terminal", "runtime", "channel_not_registered");
-    if (!input.presetInRegistry || input.presetOnGateway === false)
+    if (!input.presetApplied || input.presetOnGateway === false)
       return result("terminal", "policy", "policy_missing");
     if (input.presetOnGateway === null)
       return result("waiting", "network", "policy_status_unavailable");
@@ -237,7 +237,7 @@ function evaluateSlackReadiness(
   };
 
   const readiness = classify();
-  const policyMissing = !input.presetInRegistry || input.presetOnGateway === false;
+  const policyMissing = !input.presetApplied || input.presetOnGateway === false;
   const liveSignals = canProbe
     ? [
         runtimeSignal(),
@@ -276,7 +276,7 @@ function evaluateSlackReadiness(
       signal(
         "Policy coverage",
         policyMissing ? "fail" : input.presetOnGateway === true ? "ok" : "info",
-        !input.presetInRegistry
+        !input.presetApplied
           ? "slack preset not recorded for the sandbox"
           : input.presetOnGateway === false
             ? "slack preset missing from the OpenShell gateway"

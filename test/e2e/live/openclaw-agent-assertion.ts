@@ -10,11 +10,11 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import {
   buildOpenClawToolEvidenceReducerScript,
   classifyOpenClawAgentAssertion,
-  parseOpenClawAgentText,
   projectOpenClawAgentFailureArtifact,
   projectPersonalPublicFetchToolEvidenceArtifact,
   runOpenClawAgentAssertionRetry,

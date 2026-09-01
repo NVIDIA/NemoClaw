@@ -3,118 +3,32 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createSession, type SessionUpdates } from "../../../state/onboard-session";
-import { handlePoliciesState, type PoliciesStateOptions } from "./policies";
+import { basePolicyHandlerOptions, createPolicyHandlerDeps } from "./policies-test-fixture";
+import { handlePoliciesState } from "./policies";
 
-type Agent = { name: string };
-
-describe("handlePoliciesState observability", () => {
-  it("threads durable observability intent into policy reconciliation", async () => {
-    const session = createSession({ observabilityEnabled: true, policyAuthority: "nemoclaw-managed" });
-    const prepareResume = vi.fn(() => ({
-      policyPresets: [],
-      recordedPolicyPresetsNeedReconcile: false,
-      disabledMessagingPolicyPresetApplied: false,
-      suppressedAgentRequiredPresetsLive: false,
-    }));
-    const setupPolicies = vi.fn(async () => []);
-    const deps = {
-      loadSession: () => session,
-      getActiveSandbox: () => null,
-      mergePolicyMessagingChannels: () => [],
-      detectUnconfiguredMessagingChannels: () => [],
-      verifyCompatibleEndpointSandboxSmoke: vi.fn(),
-      preparePolicyPresetResumeSelection: prepareResume,
-      arePolicyPresetsApplied: () => false,
-      skippedStepMessage: vi.fn(),
-      recordStateSkipped: vi.fn(async () => session),
-      startRecordedStep: vi.fn(async () => undefined),
-      setupPoliciesWithSelection: setupPolicies,
-      updateSession: () => session,
-      recordStepComplete: vi.fn(async () => session),
-      toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
-      persistAppliedPolicyPresets: vi.fn(() => true),
-    } satisfies PoliciesStateOptions<Agent, never>["deps"];
-
-    await handlePoliciesState({
-      resume: false,
-      sandboxName: "my-assistant",
-      provider: "provider",
-      model: "model",
-      endpointUrl: "https://example.com/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      selectedMessagingChannels: [],
-      webSearchConfig: null,
-      webSearchSupported: true,
-      hermesToolGateways: [],
-      agent: { name: "langchain-deepagents-code" },
-      deps,
-    });
-
-    expect(prepareResume).toHaveBeenCalledWith(
-      "my-assistant",
-      expect.objectContaining({ observabilityEnabled: true }),
-    );
-    expect(setupPolicies).toHaveBeenCalledWith(
-      "my-assistant",
-      expect.objectContaining({ observabilityEnabled: true }),
-    );
-  });
-
-  it("keeps an authoritative rebuild tier through resume preparation and policy setup", async () => {
-    const session = createSession({
-      observabilityEnabled: true,
-      policyAuthority: "nemoclaw-managed",
+describe("policy observability requirements", () => {
+  it("threads durable observability intent into live policy reconciliation", async () => {
+    const prepare = vi.fn(() => ({
       policyPresets: ["observability-otlp-local"],
-    });
-    const prepareResume = vi.fn(() => ({
-      policyPresets: [],
-      recordedPolicyPresetsNeedReconcile: true,
+      livePolicyPresetsNeedUpdate: true,
       disabledMessagingPolicyPresetApplied: false,
       suppressedAgentRequiredPresetsLive: false,
     }));
-    const setupPolicies = vi.fn(async () => []);
-    const deps = {
-      loadSession: () => session,
-      getActiveSandbox: () => ({ policyTier: null }),
-      mergePolicyMessagingChannels: () => [],
-      detectUnconfiguredMessagingChannels: () => [],
-      verifyCompatibleEndpointSandboxSmoke: vi.fn(),
-      preparePolicyPresetResumeSelection: prepareResume,
-      arePolicyPresetsApplied: () => false,
-      skippedStepMessage: vi.fn(),
-      recordStateSkipped: vi.fn(async () => session),
-      startRecordedStep: vi.fn(async () => undefined),
-      setupPoliciesWithSelection: setupPolicies,
-      updateSession: () => session,
-      recordStepComplete: vi.fn(async () => session),
-      toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
-      persistAppliedPolicyPresets: vi.fn(() => true),
-    } satisfies PoliciesStateOptions<Agent, never>["deps"];
-
-    await handlePoliciesState({
-      resume: true,
-      authoritativePolicyTier: "restricted",
-      sandboxName: "my-assistant",
-      provider: "provider",
-      model: "model",
-      endpointUrl: "https://example.com/v1",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      selectedMessagingChannels: [],
-      webSearchConfig: null,
-      webSearchSupported: true,
-      hermesToolGateways: [],
-      agent: { name: "langchain-deepagents-code" },
-      deps,
+    const { deps, setSession, calls } = createPolicyHandlerDeps({
+      preparePolicyPresetResumeSelection: prepare,
     });
+    const session = calls.load();
+    setSession({ ...session, observabilityEnabled: true });
 
-    expect(prepareResume).toHaveBeenCalledWith(
+    await handlePoliciesState({ ...basePolicyHandlerOptions(deps), resume: true });
+
+    expect(prepare).toHaveBeenCalledWith(
       "my-assistant",
-      expect.objectContaining({ tierName: "restricted" }),
+      expect.objectContaining({ observabilityEnabled: true }),
     );
-    expect(setupPolicies).toHaveBeenCalledWith(
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
       "my-assistant",
-      expect.objectContaining({ tierName: "restricted", selectedPresets: [] }),
+      expect.objectContaining({ selectedPresets: ["observability-otlp-local"] }),
     );
   });
 });

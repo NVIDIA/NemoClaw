@@ -73,7 +73,11 @@ const channels = [
 
 const discordProviderName = "sandbox-discord-bridge";
 
-function resolveDiscordCreateIntent(input: { selected: boolean; reusable?: boolean }) {
+function resolveDiscordCreateIntent(input: {
+  selected: boolean;
+  reusable?: boolean;
+  policyTier?: "balanced" | "restricted";
+}) {
   const messagingTokenDefs: MessagingTokenDef[] = [
     {
       name: discordProviderName,
@@ -101,7 +105,7 @@ function resolveDiscordCreateIntent(input: { selected: boolean; reusable?: boole
     gpuRoutePlan: "none",
     sandboxGpuLogMessage: null,
     agentName: "openclaw",
-    policyTier: "balanced",
+    policyTier: input.policyTier ?? null,
   });
   return { intent, messagingTokenDefs };
 }
@@ -123,7 +127,6 @@ function materializeDiscordCreatePlan(
   return materializeSandboxCreatePlan({
     ...resolved,
     fromRef: "/tmp/Dockerfile",
-    policyAuthority: "nemoclaw-managed",
     runProviderPreDeleteCleanup: vi.fn(),
     upsertMessagingProviders: vi.fn(() => [discordProviderName]),
     getHermesToolGatewayProviderName: vi.fn(),
@@ -158,7 +161,6 @@ function expectCredentialBindingFailure({
     gpuCreateArgs: [],
     gpuRoutePlan: "native-only",
     sandboxGpuLogMessage: null,
-    policyTier: null,
   });
   const preparePolicy = vi.fn(() => ({
     policyPath: "/tmp/policy.yaml",
@@ -171,7 +173,6 @@ function expectCredentialBindingFailure({
     materializeSandboxCreatePlan({
       intent,
       fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
-      policyAuthority: "nemoclaw-managed",
       messagingTokenDefs: materializedTokenDefs,
       prepareInitialSandboxCreatePolicy: preparePolicy,
       runProviderPreDeleteCleanup: cleanupProviders,
@@ -201,7 +202,6 @@ describe("prepareSandboxCreatePolicy", () => {
       gpuCreateArgs: [],
       gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: null,
-      policyTier: null,
     });
     const seenOptions: Array<Record<string, unknown>> = [];
     const preparePolicy: typeof prepareInitialSandboxCreatePolicy = (
@@ -225,6 +225,28 @@ describe("resolveSandboxCreatePolicyTier", () => {
     vi.stubEnv("NEMOCLAW_POLICY_TIER", "personal");
 
     expect(resolveSandboxCreatePolicyTier()).toBe("personal");
+  });
+
+  it("ends policy-tier transport after initial policy composition", () => {
+    const resolved = resolveDiscordCreateIntent({ selected: false, policyTier: "balanced" });
+    const preparePolicy = vi.fn(() => ({
+      policyPath: "/tmp/policy.yaml",
+      appliedPresets: ["openclaw-diagnostics-otel-local"],
+    }));
+
+    const plan = materializeDiscordCreatePlan(resolved, {
+      prepareInitialSandboxCreatePolicy: preparePolicy,
+    });
+
+    expect(preparePolicy).toHaveBeenCalledWith(
+      expect.any(String),
+      [],
+      expect.objectContaining({ policyTier: "balanced" }),
+    );
+    expect(plan.initialSandboxPolicy.appliedPresets).toContain(
+      "openclaw-diagnostics-otel-local",
+    );
+    expect(plan).not.toHaveProperty("policyTier");
   });
 });
 
@@ -299,17 +321,6 @@ describe("resolveSandboxCreateIntent", () => {
       sandboxGpuLogMessage: "gpu note",
       extraPlaceholderKeys: ["TELEGRAM_BOT_TOKEN_AGENT_A"],
       agentName: "hermes",
-      policyTier: "balanced",
-      baselineExclusions: [
-        {
-          version: 1 as const,
-          agent: "hermes",
-          key: "nous_research",
-          digest: "abc",
-          acknowledgedAt: "2026-07-19T00:00:00.000Z",
-          appliedAgentVersion: null,
-        },
-      ],
     };
 
     const first = resolveSandboxCreateIntent(input);
@@ -338,17 +349,7 @@ describe("resolveSandboxCreateIntent", () => {
         hostGpuAvailable: true,
         additionalPresets: ["github"],
         agentName: "hermes",
-        policyTier: "balanced",
-        baselineExclusions: [
-          {
-            version: 1,
-            agent: "hermes",
-            key: "nous_research",
-            digest: "abc",
-            acknowledgedAt: "2026-07-19T00:00:00.000Z",
-            appliedAgentVersion: null,
-          },
-        ],
+        policyTier: null,
       },
     });
     expect(JSON.parse(JSON.stringify(first))).toEqual(first);
@@ -468,14 +469,12 @@ describe("resolveSandboxCreateIntent", () => {
       gpuRoutePlan: "none",
       sandboxGpuLogMessage: null,
       agentName: "hermes",
-      policyTier: "balanced",
     });
     const upsertMessagingProviders = vi.fn(() => []);
 
     const plan = materializeSandboxCreatePlan({
       intent,
       fromRef: "/tmp/Dockerfile",
-      policyAuthority: "nemoclaw-managed",
       messagingTokenDefs: [],
       runProviderPreDeleteCleanup: vi.fn(),
       upsertMessagingProviders,
@@ -514,7 +513,6 @@ describe("resolveSandboxCreateIntent", () => {
       gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: null,
       agentName: "hermes",
-      policyTier: "balanced",
     });
     const preparePolicy = vi.fn(() => ({
       policyPath: "/tmp/policy.yaml",
@@ -524,7 +522,6 @@ describe("resolveSandboxCreateIntent", () => {
     const plan = materializeSandboxCreatePlan({
       intent,
       fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
-      policyAuthority: "nemoclaw-managed",
       messagingTokenDefs: [],
       prepareInitialSandboxCreatePolicy: preparePolicy,
       runProviderPreDeleteCleanup: vi.fn(),
@@ -572,7 +569,6 @@ describe("resolveSandboxCreateIntent", () => {
       gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: null,
       agentName: "hermes",
-      policyTier: "balanced",
     });
     const serializedIntent = JSON.stringify(intent);
     const events: string[] = [];
@@ -580,7 +576,6 @@ describe("resolveSandboxCreateIntent", () => {
     const result = materializeSandboxCreatePlan({
       intent,
       fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
-      policyAuthority: "nemoclaw-managed",
       messagingTokenDefs: tokenDefs,
       prepareInitialSandboxCreatePolicy: vi.fn(() => {
         events.push("policy");
@@ -661,7 +656,6 @@ describe("resolveSandboxCreateIntent", () => {
       gpuRoutePlan: "none",
       sandboxGpuLogMessage: null,
       agentName: "hermes",
-      policyTier: null,
     });
     const events: string[] = [];
     const cleanupPolicy = vi.fn(() => {
@@ -682,8 +676,7 @@ describe("resolveSandboxCreateIntent", () => {
       materializeSandboxCreatePlan({
         intent,
         fromRef: "example.invalid/image@sha256:abc",
-        policyAuthority: "externally-managed",
-        deferSandboxEffectsUntilPolicyVerification: true,
+        deferSandboxEffectsUntilIdentityVerification: true,
         messagingTokenDefs: tokenDefs,
         prepareInitialSandboxCreatePolicy: () => ({
           policyPath: "/tmp/policy.yaml",
@@ -722,13 +715,11 @@ describe("resolveSandboxCreateIntent", () => {
       gpuRoutePlan: "none",
       sandboxGpuLogMessage: null,
       agentName: "openclaw",
-      policyTier: null,
     });
     const plan = materializeSandboxCreatePlan({
       intent,
       fromRef: "example.invalid/image@sha256:abc",
-      policyAuthority: "nemoclaw-managed",
-      deferSandboxEffectsUntilPolicyVerification: true,
+      deferSandboxEffectsUntilIdentityVerification: true,
       messagingTokenDefs: [],
       prepareInitialSandboxCreatePolicy: () => ({
         policyPath: "/tmp/policy.yaml",
@@ -741,44 +732,6 @@ describe("resolveSandboxCreateIntent", () => {
 
     expect(plan.createArgs).toEqual(expect.arrayContaining(["--policy", "/tmp/policy.yaml"]));
     expect(plan.createArgs).not.toContain("--provider");
-  });
-
-  it("omits caller policy when external authority owns sandbox policy (#9833)", () => {
-    const intent = resolveSandboxCreateIntent({
-      basePolicyPath: "/repo/policy.yaml",
-      sandboxName: "sandbox",
-      channels: [],
-      enabledChannels: [],
-      disabledChannelNames: new Set(),
-      messagingProviderRequests: [],
-      primaryMessagingCredentialEnvKeys: [],
-      reusableMessagingChannels: [],
-      reusableMessagingProviders: [],
-      hermesToolGateways: [],
-      sandboxGpuConfig,
-      gpuCreateArgs: [],
-      gpuRoutePlan: "none",
-      sandboxGpuLogMessage: null,
-      policyTier: null,
-    });
-
-    const plan = materializeSandboxCreatePlan({
-      intent,
-      fromRef: "example.invalid/image@sha256:abc",
-      policyAuthority: "externally-managed",
-      messagingTokenDefs: [],
-      prepareInitialSandboxCreatePolicy: () => ({
-        policyPath: "/tmp/policy.yaml",
-        appliedPresets: ["github"],
-      }),
-      runProviderPreDeleteCleanup: vi.fn(),
-      upsertMessagingProviders: vi.fn(() => []),
-      getHermesToolGatewayProviderName: vi.fn(),
-    });
-
-    expect(plan.policyAuthority).toBe("externally-managed");
-    expect(plan.createArgs).not.toContain("--policy");
-    expect(plan.createArgs).not.toContain("/tmp/policy.yaml");
   });
 
   it("materializes a raw GPU UUID as Docker and Podman CDI driver config", () => {
@@ -802,13 +755,11 @@ describe("resolveSandboxCreateIntent", () => {
       gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: null,
       agentName: "hermes",
-      policyTier: null,
     });
 
     const plan = materializeHermesPortableCreatePlan({
       intent,
       fromRef: "ghcr.io/nvidia/nemoclaw/hermes:test",
-      policyAuthority: "nemoclaw-managed",
     });
     const configIndex = plan.createArgs.indexOf("--driver-config-json");
 
@@ -840,14 +791,12 @@ describe("resolveSandboxCreateIntent", () => {
       gpuCreateArgs: [],
       gpuRoutePlan: "none",
       sandboxGpuLogMessage: null,
-      policyTier: null,
     });
 
     expect(() =>
       materializeSandboxCreatePlan({
         intent,
         fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
-        policyAuthority: "nemoclaw-managed",
         messagingTokenDefs: [],
         prepareInitialSandboxCreatePolicy: vi.fn(),
         runProviderPreDeleteCleanup: vi.fn(),
@@ -875,12 +824,10 @@ describe("resolveSandboxCreateIntent", () => {
       gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: null,
       agentName: "langchain-deepagents-code",
-      policyTier: null,
     });
     const plan = materializeSandboxCreatePlan({
       intent,
       fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
-      policyAuthority: "nemoclaw-managed",
       messagingTokenDefs: [],
       prepareInitialSandboxCreatePolicy: vi.fn(() => ({
         policyPath: "/tmp/policy.yaml",
@@ -929,12 +876,10 @@ describe("resolveSandboxCreateIntent", () => {
       gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: null,
       agentName: "hermes",
-      policyTier: null,
     });
     const plan = materializeSandboxCreatePlan({
       intent,
       fromRef: `ghcr.io/nvidia/nemoclaw/hermes@sha256:${"a".repeat(64)}`,
-      policyAuthority: "nemoclaw-managed",
       managedStateMount: {
         type: "volume",
         source: "nemoclaw-hermes-state-v1-hermes-box",
@@ -984,14 +929,12 @@ describe("resolveSandboxCreateIntent", () => {
       gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: null,
       agentName: "hermes",
-      policyTier: null,
     });
 
     expect(() =>
       materializeSandboxCreatePlan({
         intent,
         fromRef: `ghcr.io/nvidia/nemoclaw/hermes@sha256:${"a".repeat(64)}`,
-        policyAuthority: "nemoclaw-managed",
         managedStateMount: {
           type: "volume",
           source: "nemoclaw-hermes-state-v1-hermes-box",
@@ -1026,7 +969,6 @@ describe("resolveSandboxCreateIntent", () => {
       gpuCreateArgs: [],
       gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: null,
-      policyTier: null,
     });
     const cleanupPolicy = vi.fn(() => true);
     const cleanupProviders = vi.fn();
@@ -1036,7 +978,6 @@ describe("resolveSandboxCreateIntent", () => {
       materializeSandboxCreatePlan({
         intent,
         fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
-        policyAuthority: "nemoclaw-managed",
         messagingTokenDefs: [],
         prepareInitialSandboxCreatePolicy: vi.fn(() => ({
           policyPath: "/tmp/policy.yaml",
@@ -1126,13 +1067,11 @@ describe("resolveSandboxCreateIntent", () => {
       gpuCreateArgs: [],
       gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: null,
-      policyTier: null,
     });
 
     const plan = materializeSandboxCreatePlan({
       intent,
       fromRef: reference,
-      policyAuthority: "nemoclaw-managed",
       messagingTokenDefs: [],
       prepareInitialSandboxCreatePolicy: vi.fn(() => ({
         policyPath: "/tmp/policy.yaml",

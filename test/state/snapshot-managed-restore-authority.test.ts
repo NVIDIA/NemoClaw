@@ -98,7 +98,6 @@ function writeOpenClawRegistry(): void {
           model: "demo",
           provider: "compatible-endpoint",
           gpuEnabled: false,
-          policies: [],
           agent: "openclaw",
         },
       },
