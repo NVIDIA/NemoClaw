@@ -469,6 +469,7 @@
     },
     {
       "live": "test/e2e/live/hermes-discord.test.ts",
+      "liveSources": ["test/e2e/live/fake-api-docker-topology-proof.ts"],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
@@ -582,6 +583,7 @@
     {
       "live": "test/e2e/live/messaging-providers.test.ts",
       "liveSources": [
+        "test/e2e/live/fake-api-docker-topology-proof.ts",
         "test/e2e/live/messaging-providers-helpers.ts",
         "test/e2e/live/messaging-providers-wechat-runtime-proof.ts"
       ],
