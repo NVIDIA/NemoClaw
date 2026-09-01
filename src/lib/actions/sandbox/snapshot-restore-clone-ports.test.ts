@@ -161,6 +161,47 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
   });
 
+  it("rejects an endpoint override before a clone policy read or destructive restore effect", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://sibling.invalid");
+    f.getSandboxMock.mockImplementation((name) => ({
+      name: name ?? "alpha",
+      agent: "openclaw",
+      imageTag: `nemoclaw-${name}:test`,
+      openshellDriver: "docker",
+      provider: "nvidia-nim",
+      model: "nvidia/model-a",
+      dashboardPort: name === "alpha" ? 18790 : 18791,
+    }));
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const secureTempFile = vi.spyOn(tempFiles, "secureTempFile");
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }),
+    ).rejects.toThrow("OPENSHELL_GATEWAY_ENDPOINT is set");
+
+    expect(
+      f.captureOpenshellMock.mock.calls.some(([args]) => args[0] === "policy" && args[1] === "get"),
+    ).toBe(false);
+    expect(secureTempFile).not.toHaveBeenCalled();
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       label: "authentication failure",

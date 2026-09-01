@@ -7,10 +7,7 @@ import {
   NAME_ALLOWED_FORMAT,
   NAME_MAX_LENGTH,
 } from "../../sandbox-name-contract";
-import {
-  buildGlobalPolicyGetFullJsonArgs,
-  buildGlobalPolicyListArgs,
-} from "../../policy/commands";
+import { buildGlobalPolicyGetFullJsonArgs, buildGlobalPolicyListArgs } from "../../policy/commands";
 import {
   assertPolicyRequirementContainment,
   classifyOpenShellGlobalPolicyHistory,
@@ -18,7 +15,8 @@ import {
   type ActiveGlobalPolicyInspection,
   type OpenShellPolicyInspection,
 } from "../../policy/merge";
-import * as openshellRuntime from "./policy-runtime";
+import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
+import * as openshellRuntime from "./runtime";
 import {
   createSyncCliOpenShellSandboxPolicyReader,
   type SyncCapturePolicyCommand,
@@ -126,9 +124,8 @@ export function readSandboxPolicyWithCapture(input: {
   readonly gatewayName: string;
   readonly scope: "base" | "effective";
   readonly timeoutMs?: number;
-}): ReturnType<
-  ReturnType<typeof createSyncCliOpenShellSandboxPolicyReader>["readSandboxPolicy"]
-> {
+}): ReturnType<ReturnType<typeof createSyncCliOpenShellSandboxPolicyReader>["readSandboxPolicy"]> {
+  assertNoOpenShellGatewayEndpointOverride();
   const sandboxName = validatePolicyName(input.sandboxName, "sandbox name");
   const gatewayName = validatePolicyName(input.gatewayName, "gateway name");
   return createSyncCliOpenShellSandboxPolicyReader({ capture: input.capture }).readSandboxPolicy({
@@ -155,6 +152,7 @@ function captureSandboxPolicyDocument(input: {
 }
 
 function createBoundSandboxPolicyReader(gatewayName?: string) {
+  if (gatewayName !== undefined) assertNoOpenShellGatewayEndpointOverride();
   return createSyncCliOpenShellSandboxPolicyReader({
     capture: (args, options) =>
       captureBoundedOpenShell(args, "sandbox", { gatewayName }, options.timeout),

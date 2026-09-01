@@ -33,22 +33,16 @@ describe("OpenShell policy boundary", () => {
     expect(buildOpenShellSandboxPolicyReadArgs(input)).toEqual(expected);
   });
 
-  it("builds inspection and immutable revision reads", () => {
+  it("builds an effective-policy inspection read", () => {
     expect(
       buildOpenShellSandboxPolicyInspectionArgs({
         sandboxName: "alpha",
         gatewayName: "nemoclaw",
       }),
-    ).toEqual([
-      "policy",
-      "get",
-      "-g",
-      "nemoclaw",
-      "--full",
-      "--output",
-      "json",
-      "alpha",
-    ]);
+    ).toEqual(["policy", "get", "-g", "nemoclaw", "--full", "--output", "json", "alpha"]);
+  });
+
+  it("builds an immutable base-policy revision read", () => {
     expect(
       buildOpenShellSandboxPolicyRevisionReadArgs({
         sandboxName: "alpha",

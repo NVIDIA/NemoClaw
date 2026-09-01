@@ -154,7 +154,7 @@ describe("CLI OpenShell sandbox policy reader", () => {
     );
   });
 
-  it("fails closed on invalid inspection metadata and revision requests (#9805)", async () => {
+  it("fails closed on invalid inspection metadata (#9805)", async () => {
     const capture = vi.fn(() => result({ output: "not-json" }));
     const reader = createCliOpenShellSandboxPolicyReader({ capture });
 
@@ -170,6 +170,13 @@ describe("CLI OpenShell sandbox policy reader", () => {
         message: "OpenShell returned invalid sandbox policy metadata.",
       },
     });
+    expect(capture).toHaveBeenCalledOnce();
+  });
+
+  it("rejects an invalid revision without invoking capture (#9805)", async () => {
+    const capture = vi.fn(() => result({ output: "unused" }));
+    const reader = createCliOpenShellSandboxPolicyReader({ capture });
+
     await expect(
       reader.readSandboxPolicyRevision({
         target: selectedOpenShellGateway(),
@@ -184,7 +191,7 @@ describe("CLI OpenShell sandbox policy reader", () => {
         message: "The requested OpenShell sandbox policy revision is invalid.",
       },
     });
-    expect(capture).toHaveBeenCalledOnce();
+    expect(capture).not.toHaveBeenCalled();
   });
 
   it("parses ANSI-formatted policy metadata and content (#9805)", async () => {

@@ -94,23 +94,49 @@ describe("getSandboxPolicy", () => {
     });
   });
 
-  it("returns empty output when OpenShell succeeds without a policy", async () => {
+  it("fails closed when OpenShell succeeds without a policy", async () => {
     const fake = createFakeOpenShell("");
 
-    await expect(getSandboxPolicy("alpha", fake.readPolicy)).resolves.toEqual({
-      raw: "",
-      yaml: "",
-    });
+    await expect(getSandboxPolicy("alpha", fake.readPolicy)).rejects.toThrow(
+      "OpenShell returned an invalid sandbox policy document",
+    );
     expect(fs.readFileSync(fake.argsPath, "utf8").trim()).toBe("policy get --base alpha");
   });
 
-  it("preserves unparsed output while rejecting malformed policy YAML", async () => {
+  it("does not return unparsed output when policy YAML is malformed", async () => {
     const fake = createFakeOpenShell("Version: 1\nHash: sha256:abc\nStatus: active\n");
 
-    await expect(getSandboxPolicy("alpha", fake.readPolicy)).resolves.toEqual({
-      raw: fake.output.trim(),
-      yaml: "",
-    });
+    await expect(getSandboxPolicy("alpha", fake.readPolicy)).rejects.toThrow(
+      "OpenShell returned an invalid sandbox policy document",
+    );
+  });
+
+  it("redacts literal credentials from parsed and raw display output", async () => {
+    const credential = "opaque-live-policy-credential";
+    const fake = createFakeOpenShell(
+      [
+        "Version: 4",
+        "Hash: sha256:abc",
+        "Status: active",
+        "Active: 4",
+        "---",
+        "version: 1",
+        "network_policies: {}",
+        "process:",
+        "  environment:",
+        `    SERVICE_API_KEY: ${credential}`,
+      ].join("\n"),
+    );
+
+    const result = await getSandboxPolicy("alpha", fake.readPolicy);
+
+    expect(result.raw).toContain("Version: 4");
+    expect(result.raw).toContain("---");
+    expect(result.yaml).toContain("SERVICE_API_KEY");
+    expect(result.raw).toContain("[STRIPPED_BY_MIGRATION]");
+    expect(result.yaml).toContain("[STRIPPED_BY_MIGRATION]");
+    expect(result.raw).not.toContain(credential);
+    expect(result.yaml).not.toContain(credential);
   });
 
   it("adds sandbox context when the OpenShell subprocess fails", async () => {
@@ -188,5 +214,20 @@ describe("getSandboxPolicy", () => {
       sandboxName: "alpha",
       scope: "base",
     });
+  });
+
+  it("rejects an endpoint override before reading a registered sandbox policy", async () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      gatewayName: "nemoclaw-8091",
+      gatewayPort: 8091,
+    } as never);
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://sibling.invalid");
+    const readPolicy: CliOpenShellSandboxPolicyRead = vi.fn();
+
+    await expect(getSandboxPolicy("alpha", readPolicy)).rejects.toThrow(
+      "OPENSHELL_GATEWAY_ENDPOINT is set",
+    );
+    expect(readPolicy).not.toHaveBeenCalled();
   });
 });

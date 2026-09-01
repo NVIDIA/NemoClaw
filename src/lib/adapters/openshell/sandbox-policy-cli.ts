@@ -13,7 +13,7 @@ import { stripCredentials } from "../../security/credential-filter";
 import YAML from "yaml";
 import { stripAnsi } from "./client";
 import { openshellNotFoundDiagnosticLines } from "./command-argv";
-import * as openshellPolicyRuntime from "./policy-runtime";
+import * as openshellPolicyRuntime from "./runtime";
 import { type OpenShellSandboxError, type OpenShellSandboxResult } from "./sandbox-observer";
 import {
   type InspectOpenShellSandboxPolicyRequest,
@@ -81,6 +81,20 @@ export function redactOpenShellSandboxPolicyDocumentForDisplay(document: string)
   } catch {
     return null;
   }
+}
+
+/** Redact a parsed policy while retaining safe OpenShell metadata for `--raw`. */
+export function redactOpenShellSandboxPolicyReadForDisplay(input: {
+  readonly displayOutput: string;
+  readonly document: string;
+}): { readonly raw: string; readonly yaml: string } | null {
+  const yaml = redactOpenShellSandboxPolicyDocumentForDisplay(input.document);
+  if (yaml === null) return null;
+  const metadata = metadataSection(stripAnsi(input.displayOutput)).trimEnd();
+  return {
+    raw: metadata ? `${metadata}\n---\n${yaml}` : yaml,
+    yaml,
+  };
 }
 
 const capturePolicyWithRunner: CapturePolicyCommand = (args, options) => {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  redactOpenShellSandboxPolicyReadForDisplay,
   type CliOpenShellSandboxPolicyRead,
   readCliOpenShellSandboxPolicy,
 } from "../../adapters/openshell/sandbox-policy-cli";
@@ -9,6 +10,7 @@ import {
   namedOpenShellGateway,
   selectedOpenShellGateway,
 } from "../../adapters/openshell/sandbox-observer";
+import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { captureRecordedSandboxBasePolicy } from "../../policy/index";
 import { getKnownSandboxTargetGatewayName } from "./gateway-target";
 
@@ -32,8 +34,9 @@ export function getSandboxPolicy(
 ): Promise<PolicyGetResult>;
 export function getSandboxPolicy(
   sandboxName: string,
-  readerOrOptions: CliOpenShellSandboxPolicyRead | RecordedGatewayPolicyGetOptions =
-    readCliOpenShellSandboxPolicy,
+  readerOrOptions:
+    | CliOpenShellSandboxPolicyRead
+    | RecordedGatewayPolicyGetOptions = readCliOpenShellSandboxPolicy,
 ): PolicyGetResult | Promise<PolicyGetResult> {
   if (typeof readerOrOptions !== "function") {
     const yaml = captureRecordedSandboxBasePolicy(
@@ -51,6 +54,7 @@ async function readSandboxPolicy(
   readPolicy: CliOpenShellSandboxPolicyRead,
 ): Promise<PolicyGetResult> {
   const recordedGatewayName = getKnownSandboxTargetGatewayName(sandboxName);
+  if (recordedGatewayName) assertNoOpenShellGatewayEndpointOverride();
   const read = await readPolicy({
     target: recordedGatewayName
       ? namedOpenShellGateway(recordedGatewayName)
@@ -59,12 +63,18 @@ async function readSandboxPolicy(
     scope: "base",
   });
   if (!read.result.ok) {
-    if (read.result.error.kind === "schema") {
-      return { raw: read.displayOutput, yaml: "" };
-    }
     throw new Error(
       `Failed to retrieve base policy for sandbox '${sandboxName}'. ${read.result.error.message}`,
     );
   }
-  return { raw: read.displayOutput, yaml: read.result.value.document };
+  const display = redactOpenShellSandboxPolicyReadForDisplay({
+    displayOutput: read.displayOutput,
+    document: read.result.value.document,
+  });
+  if (display === null) {
+    throw new Error(
+      `Failed to retrieve base policy for sandbox '${sandboxName}'. OpenShell returned an invalid sandbox policy document.`,
+    );
+  }
+  return display;
 }
