@@ -122,6 +122,8 @@ function setupFixture(opts: {
 
   fs.mkdirSync(homeLocalBin, { recursive: true });
   fs.mkdirSync(registryDir, { recursive: true });
+  const legacyReadiness = launchReadinessRegistryFixture() as Record<string, unknown>;
+  delete legacyReadiness.lifecycleLiveIdentityFingerprint;
 
   fs.writeFileSync(
     path.join(registryDir, "sandboxes.json"),
@@ -130,7 +132,7 @@ function setupFixture(opts: {
       sandboxes: {
         [sandboxName]: {
           name: sandboxName,
-          ...launchReadinessRegistryFixture(),
+          ...legacyReadiness,
           model: "nvidia/test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,

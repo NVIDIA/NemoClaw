@@ -109,6 +109,7 @@ vi.mock("../../shields/timer-bound-lock", () => ({
 }));
 
 vi.mock("../../state/mcp-lifecycle-lock", () => ({
+  withMcpLifecycleLockSync: vi.fn((_name: string, callback: () => unknown) => callback()),
   withSandboxMutationLock: vi.fn((_name: string, callback: () => Promise<unknown>) => callback()),
 }));
 

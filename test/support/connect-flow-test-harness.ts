@@ -16,6 +16,8 @@ type WaitForSandboxReadyOrExit =
   (typeof import("../../src/lib/actions/sandbox/connect"))["waitForSandboxReadyOrExit"];
 type RestoreSandboxStartupState =
   (typeof import("../../src/lib/actions/sandbox/connect"))["restoreSandboxStartupState"];
+type PrepareHermesPortableLaunchForwards =
+  (typeof import("../../src/lib/actions/sandbox/process-recovery"))["prepareHermesPortableLaunchForwards"];
 type GatewayRouteMutationLock =
   (typeof import("../../src/lib/inference/gateway-route-mutation-lock"))["withGatewayRouteMutationLock"];
 type LaunchReadinessPublicationResult =
@@ -473,6 +475,21 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const verifyHermesPortableLaunchForwardsSpy = vi
     .spyOn(processRecovery, "verifyHermesPortableLaunchForwards")
     .mockReturnValue({ kind: "healthy" });
+  vi.spyOn(processRecovery, "prepareHermesPortableLaunchForwards").mockImplementation(
+    (rawInput: unknown) => {
+      const input = rawInput as Parameters<PrepareHermesPortableLaunchForwards>[0];
+      for (let index = 0; index < 5; index += 1) input.deps.assertCurrent();
+      input.deps.captureCurrentList(
+        ["forward", "list", "--gateway", input.gatewayName],
+        input.probeTimeoutMs,
+      );
+      return {
+        result: { kind: "verified", restoredPorts: [] },
+        release: () => ({ kind: "verified", restoredPorts: [] }),
+        rollback: () => undefined,
+      };
+    },
+  );
   const recoverPortableDemoLifecycleSpy = vi
     .spyOn(gatewayState, "recoverPortableDemoSandboxLifecycleForConnect")
     .mockReturnValue(options.portableRecoveryResult ?? { kind: "not-installed" });

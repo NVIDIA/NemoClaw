@@ -165,9 +165,29 @@ export function createForwardServiceController(
           receipt.gatewayName === authority.gatewayName;
         const receipts = allReceipts.filter(matchesSandboxGateway);
         const pending = allPending.filter(matchesSandboxGateway);
+        const cleanupPriority = (inspection: ForwardServiceInspection): number =>
+          inspection.disposition === "owned" && inspection.ownsListener === true
+            ? 0
+            : inspection.disposition === "owned"
+              ? 1
+              : inspection.disposition === "stale"
+                ? 3
+                : 2;
+        const orderedReceipts = receipts
+          .map((receipt) => ({
+            inspection: inspectForwardServiceProcess(receipt, {
+              stateDirectory: deps.stateDirectory,
+              runExclusive: (operation) => operation(),
+            }),
+            receipt,
+          }))
+          .sort(
+            (left, right) => cleanupPriority(left.inspection) - cleanupPriority(right.inspection),
+          )
+          .map(({ receipt }) => receipt);
         const lifecycleTargets = [
           ...pending,
-          ...receipts.filter(
+          ...orderedReceipts.filter(
             (receipt) =>
               !pending.some(
                 (candidate) =>

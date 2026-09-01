@@ -762,6 +762,28 @@ function installVerifiedSandboxCreateFixture(registry, options) {
     require.cache[registryPath].exports = registry;
   }
 
+  // Generic onboarding integration fixtures verify registration, policy, and
+  // provider behavior rather than host process ownership. Install a bounded
+  // in-process ForwardTcp controller before onboard.ts is loaded so those
+  // fixtures do not have to impersonate a real executable with /proc identity
+  // and a listening socket. Dedicated forward-service tests exercise the real
+  // receipt/process implementation.
+  const forwardController = require(
+    path.resolve(__dirname, "../../src/lib/adapters/openshell/forward-service-controller.ts"),
+  );
+  forwardController.createForwardServiceController = () => ({
+    inspect: () => ({
+      disposition: "owned",
+      ownsListener: true,
+      reachable: true,
+      receipt: {},
+    }),
+    ensure: () => ({ action: "started", receipt: {} }),
+    stop: () => "absent",
+    stopPort: () => "absent",
+    stopAll: () => 0,
+  });
+
   const prepareCreateIntent = () => {
     const onboardSession = require(
       path.resolve(__dirname, "../../src/lib/state/onboard-session.ts"),

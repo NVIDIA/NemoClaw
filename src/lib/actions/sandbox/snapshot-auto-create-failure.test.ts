@@ -220,6 +220,7 @@ vi.mock("../../state/gateway", () => ({
 }));
 vi.mock("../../state/mcp-lifecycle-lock", () => ({
   withMcpLifecycleLock: vi.fn((_key, fn) => fn()),
+  withMcpLifecycleLockSync: vi.fn((_key, fn) => fn()),
   withSandboxMutationLock: vi.fn((_sandbox, fn) => fn()),
 }));
 vi.mock("../../state/registry", () => ({

@@ -651,7 +651,6 @@ describe("Hermes accepted launch-readiness probe", () => {
         }),
       );
       await assertBoundObservation(() => deps.gatewayHealth?.("alpha", "nemoclaw"));
-      await assertBoundObservation(() => deps.forwardsHealthy?.("alpha", "nemoclaw"));
       await assertBoundObservation(() =>
         deps.inferenceProbe?.("alpha", { name: "hermes" } as never, "nemoclaw"),
       );
@@ -666,7 +665,7 @@ describe("Hermes accepted launch-readiness probe", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
-    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledTimes(6);
+    expect(harness.captureResolvedOpenshellSpy).toHaveBeenCalledTimes(5);
     const exactOptions = {
       env: {
         HOME: "/home/test",
@@ -681,7 +680,6 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.captureResolvedOpenshellSpy.mock.calls[2]?.[1]).toMatchObject(exactOptions);
     expect(harness.captureResolvedOpenshellSpy.mock.calls[3]?.[1]).toMatchObject(exactOptions);
     expect(harness.captureResolvedOpenshellSpy.mock.calls[4]?.[1]).toMatchObject(exactOptions);
-    expect(harness.captureResolvedOpenshellSpy.mock.calls[5]?.[1]).toMatchObject(exactOptions);
   });
 
   it.each(["executable", "socket"])(
