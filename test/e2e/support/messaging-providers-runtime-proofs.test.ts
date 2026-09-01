@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
+import net, { type AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
@@ -20,6 +23,9 @@ import {
   buildSandboxShellInvocation,
   countJsonLines,
   type FakeDockerApi,
+  FAKE_API_PROXY_READINESS_PORT,
+  FAKE_API_PROXY_READINESS_SOURCE,
+  FAKE_API_PROXY_SOURCE,
   isNvidiaEndpointRateLimitFailure,
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
@@ -27,7 +33,6 @@ import {
   precleanMessagingResources,
   REPO_ROOT,
   registerRetainedSandboxPolicyRestore,
-  slackCredentialBindingEvidence,
   startFakeDockerApi,
 } from "../live/messaging-providers-helpers.ts";
 import {
@@ -39,22 +44,9 @@ import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-ru
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
 const FAKE_WECHAT_API = path.resolve(import.meta.dirname, "../lib/fake-wechat-api.mts");
-const SLACK_POLICY_SANDBOX = "e2e-msg-policy";
-
 type CleanupAction = {
   name: string;
   run: () => Promise<void>;
-};
-
-type SyntheticSlackEndpoint = {
-  host: string;
-  port: number;
-  protocol: string;
-  enforcement: string;
-  request_body_credential_rewrite: boolean;
-  path?: string;
-  credential_binding?: { provider: string };
-  rules: Array<{ allow: { method: string; path: string } }>;
 };
 
 const PRECLEAN_DENIAL_CASES: Array<[string, string[]]> = [
@@ -63,52 +55,14 @@ const PRECLEAN_DENIAL_CASES: Array<[string, string[]]> = [
   ["openshell-gateway", ["nemoclaw", "openshell-sandbox", "openshell-gateway"]],
 ];
 
-const SYNTHETIC_SLACK_ENDPOINTS: readonly SyntheticSlackEndpoint[] = [
+const OPENSHELL_BRIDGE_ADDRESS = "172.18.0.1";
+const OPENSHELL_NETWORK_INSPECT = JSON.stringify([
   {
-    host: "slack.com",
-    port: 443,
-    protocol: "rest",
-    enforcement: "enforce",
-    request_body_credential_rewrite: true,
-    path: "/api/apps.connections.open",
-    credential_binding: { provider: `${SLACK_POLICY_SANDBOX}-slack-app` },
-    rules: [{ allow: { method: "POST", path: "/api/apps.connections.open" } }],
+    Driver: "bridge",
+    IPAM: { Config: [{ Subnet: "172.18.0.0/16", Gateway: OPENSHELL_BRIDGE_ADDRESS }] },
   },
-  ...["slack.com", "api.slack.com", "hooks.slack.com"].map((host) => ({
-    host,
-    port: 443,
-    protocol: "rest",
-    enforcement: "enforce",
-    request_body_credential_rewrite: true,
-    credential_binding: { provider: `${SLACK_POLICY_SANDBOX}-slack-bridge` },
-    rules: [{ allow: { method: "GET", path: "/**" } }, { allow: { method: "POST", path: "/**" } }],
-  })),
-];
-
-function syntheticSlackPolicy(mutate?: (endpoints: SyntheticSlackEndpoint[]) => void): string {
-  const endpoints = structuredClone(SYNTHETIC_SLACK_ENDPOINTS) as SyntheticSlackEndpoint[];
-  mutate?.(endpoints);
-  return YAML.stringify({
-    version: 1,
-    network_policies: { slack: { name: "slack", endpoints } },
-  });
-}
-
-function mutateSlackEndpoint(
-  host: string,
-  provider: string,
-  mutate: (endpoint: SyntheticSlackEndpoint) => void,
-): string {
-  return syntheticSlackPolicy((endpoints) => {
-    const endpoint = endpoints.find(
-      (candidate) => candidate.host === host && candidate.credential_binding?.provider === provider,
-    );
-    expect(endpoint).toBeDefined();
-    mutate(endpoint!);
-  });
-}
-
-const CREDENTIAL_BOUND_SLACK_POLICY = syntheticSlackPolicy();
+]);
+const execFileAsync = promisify(execFile);
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -132,82 +86,328 @@ function successfulCommand(stdout = "") {
   };
 }
 
-type FakeDockerObservationOverrides = {
-  readonly extraNetwork?: boolean;
-  readonly internal?: boolean;
-  readonly publishedAddress?: string;
-};
+function failedCommand(stderr: string) {
+  return { ...successfulCommand(), exitCode: 1, stderr };
+}
 
-type FakeDockerHost = HostCliClient & {
-  readonly calls: string[][];
-  readonly envFiles: Array<{ path: string; source: string }>;
-};
+function optionValues(args: string[], option: string): string[] {
+  return args.flatMap((argument, index) => (argument === option ? [args[index + 1]!] : []));
+}
+
+function optionValue(args: string[], option: string): string {
+  return optionValues(args, option)[0]!;
+}
+
+function fakePublishedPorts(containerPorts: readonly number[], hostAddress: string) {
+  return Object.fromEntries(
+    containerPorts.map((containerPort) => {
+      return [
+        String(containerPort) + "/tcp",
+        [{ HostIp: hostAddress, HostPort: fakeHostPort(containerPort) }],
+      ];
+    }),
+  );
+}
+
+function fakeHostPort(containerPort: number): string {
+  return containerPort === 8081 ? "32101" : containerPort === 8080 ? "32100" : "32079";
+}
+
+function publishedPortsFromRun(run: string[], publishedAddress?: string) {
+  return Object.fromEntries(
+    optionValues(run, "-p").map((publication) => {
+      const [commandAddress, containerPort] = publication.split("::");
+      return [
+        `${containerPort}/tcp`,
+        [
+          {
+            HostIp: publishedAddress ?? commandAddress,
+            HostPort: fakeHostPort(Number(containerPort)),
+          },
+        ],
+      ];
+    }),
+  );
+}
+
+type MissingProxyControl =
+  | "--cap-drop"
+  | "--pids-limit"
+  | "--read-only"
+  | "--security-opt"
+  | "internal-network";
+
+function fakeDockerInspect(
+  calls: string[][],
+  options: {
+    apiPublished: boolean;
+    missingProxyControl?: MissingProxyControl;
+    proxyEnvironment: readonly string[];
+    publishedAddress?: string;
+  },
+): string {
+  const [apiRun, proxyRun] = calls.filter((call) => call[0] === "run") as [string[], string[]];
+  const apiContainer = optionValue(apiRun, "--name");
+  const proxyContainer = optionValue(proxyRun, "--name");
+  const apiNetwork = optionValue(apiRun, "--network");
+  const connectedProxyNetworks = calls
+    .filter((call) => call[0] === "network" && call[1] === "connect" && call[3] === proxyContainer)
+    .map((call) => call[2]!);
+  const proxyNetworks = [optionValue(proxyRun, "--network"), ...connectedProxyNetworks].filter(
+    (network) => options.missingProxyControl !== "internal-network" || network !== apiNetwork,
+  );
+  return JSON.stringify([
+    {
+      Name: "/" + apiContainer,
+      HostConfig: {},
+      NetworkSettings: {
+        Networks: { [apiNetwork]: {} },
+        Ports: {
+          ...publishedPortsFromRun(apiRun),
+          ...(options.apiPublished ? fakePublishedPorts([8080], "0.0.0.0") : {}),
+        },
+      },
+    },
+    {
+      Config: {
+        Env: [...optionValues(proxyRun, "-e"), ...options.proxyEnvironment],
+      },
+      Name: "/" + proxyContainer,
+      HostConfig: {
+        CapDrop:
+          options.missingProxyControl === "--cap-drop" ? [] : optionValues(proxyRun, "--cap-drop"),
+        PidsLimit:
+          options.missingProxyControl === "--pids-limit"
+            ? undefined
+            : Number(optionValue(proxyRun, "--pids-limit")),
+        ReadonlyRootfs:
+          options.missingProxyControl !== "--read-only" && proxyRun.includes("--read-only"),
+        SecurityOpt:
+          options.missingProxyControl === "--security-opt"
+            ? []
+            : optionValues(proxyRun, "--security-opt"),
+      },
+      NetworkSettings: {
+        Networks: Object.fromEntries(proxyNetworks.map((network) => [network, {}])),
+        Ports: publishedPortsFromRun(proxyRun, options.publishedAddress),
+      },
+    },
+  ]);
+}
 
 function fakeDockerHost(
-  overrides: FakeDockerObservationOverrides = {},
-): FakeDockerHost {
+  options: {
+    apiPublished?: boolean;
+    missingProxyControl?: MissingProxyControl;
+    proxyEnvironment?: readonly string[];
+    publishedAddress?: string;
+    networkInspect?: string;
+    proxyRunning?: boolean;
+    proxyReady?: boolean;
+  } = {},
+): {
+  artifacts: Map<string, string>;
+  calls: string[][];
+  commands: Array<{ command: string; args: string[] }>;
+  envFiles: Array<{ path: string; source: string }>;
+  host: HostCliClient;
+  resources: () => { containers: string[]; networks: string[] };
+  setProxyRunning: (running: boolean) => void;
+} {
+  const artifacts = new Map<string, string>();
   const calls: string[][] = [];
+  const commands: Array<{ command: string; args: string[] }> = [];
   const envFiles: Array<{ path: string; source: string }> = [];
-  const host = {
-    command: async (command: string, args: string[]) => {
-      expect(command).toBe("docker");
-      calls.push([...args]);
-      (args[0] === "run" ? [args] : []).forEach((runArgs) => {
-        const envFileIndex = runArgs.indexOf("--env-file");
-        expect(envFileIndex).toBeGreaterThan(0);
-        const envFile = runArgs[envFileIndex + 1]!;
-        envFiles.push({ path: envFile, source: fs.readFileSync(envFile, "utf8") });
-      });
-      args
-        .filter((argument) => args[0] === "run" && argument.endsWith(":/tmp/fake"))
-        .forEach((fakeApiMount) => {
-          const fixtureDir = fakeApiMount.slice(0, -":/tmp/fake".length);
-          fs.writeFileSync(path.join(fixtureDir, "port"), "8080");
+  const containers = new Set<string>();
+  const networks = new Set<string>();
+  const networkInspect = options.networkInspect ?? OPENSHELL_NETWORK_INSPECT;
+  let proxyRunning = options.proxyRunning !== false;
+  const dockerCommand = (args: string[]) => {
+    const executedArgs = [...args];
+    calls.push(executedArgs);
+    switch (executedArgs[0]) {
+      case "network":
+        switch (executedArgs[1]) {
+          case "inspect": {
+            const createdNetwork = calls.find(
+              (call) =>
+                call[0] === "network" && call[1] === "create" && call.at(-1) === executedArgs[2],
+            );
+            return successfulCommand(
+              executedArgs[2] === "openshell-docker"
+                ? networkInspect
+                : JSON.stringify([
+                    { Driver: "bridge", Internal: createdNetwork?.includes("--internal") === true },
+                  ]),
+            );
+          }
+          case "create":
+            networks.add(executedArgs.at(-1)!);
+            return successfulCommand();
+          case "rm":
+            networks.delete(executedArgs[2]!);
+            return successfulCommand();
+          default:
+            return successfulCommand();
+        }
+      case "run":
+        (executedArgs.includes("--env-file") ? [executedArgs] : []).forEach((runArgs) => {
+          const envFile = runArgs[runArgs.indexOf("--env-file") + 1]!;
+          envFiles.push({ path: envFile, source: fs.readFileSync(envFile, "utf8") });
         });
-      const inspectContainer = () => {
-        const containerName = args.at(-1);
-        const run = calls.find(
-          (candidate) =>
-            candidate[0] === "run" && candidate[candidate.indexOf("--name") + 1] === containerName,
+        containers.add(optionValue(executedArgs, "--name"));
+        return successfulCommand();
+      case "rm":
+        containers.delete(executedArgs.at(-1)!);
+        return successfulCommand();
+      case "inspect": {
+        const container = executedArgs.at(-1)!;
+        const component = container.includes("-proxy-") ? "proxy" : "api";
+        return !containers.has(container)
+          ? failedCommand(`No such container: ${container}`)
+          : executedArgs[1] !== "--format"
+            ? successfulCommand(
+                fakeDockerInspect(calls, {
+                  apiPublished: options.apiPublished === true,
+                  missingProxyControl: options.missingProxyControl,
+                  proxyEnvironment: options.proxyEnvironment ?? [],
+                  publishedAddress: options.publishedAddress,
+                }),
+              )
+            : executedArgs[2] === "{{json .State}}"
+              ? successfulCommand(
+                  `${JSON.stringify({ Running: proxyRunning, source: component })}\n`,
+                )
+              : successfulCommand(`${String(proxyRunning)}\n`);
+      }
+      case "logs": {
+        const container = executedArgs.at(-1)!;
+        return !containers.has(container)
+          ? failedCommand(`No such container: ${container}`)
+          : successfulCommand(
+              `${container.includes("-proxy-") ? "proxy" : "api"} diagnostic logs\n`,
+            );
+      }
+      case "port": {
+        const containerPort = Number(executedArgs[2]!.replace(/\/tcp$/u, ""));
+        const proxyRun = calls.filter((call) => call[0] === "run").at(-1)!;
+        const publication = optionValues(proxyRun, "-p").find((value) =>
+          value.endsWith(`::${String(containerPort)}`),
         );
-        expect(run, `Docker run exists for ${String(containerName)}`).toBeDefined();
-        const network = run![run!.indexOf("--network") + 1]!;
-        const networks: Record<string, unknown> = {
-          [network]: {},
-          ...(overrides.extraNetwork ? { bridge: {} } : {}),
-        };
-        const publications = run!.flatMap((argument, index) =>
-          argument === "-p" ? [run![index + 1]!] : [],
-        );
-        const ports = Object.fromEntries(
-          publications.map((publication, index) => {
-            const containerPort = publication.split(":").at(-1)!;
-            return [
-              `${containerPort}/tcp`,
-              [
-                {
-                  HostIp: overrides.publishedAddress ?? "127.0.0.1",
-                  HostPort: index === 0 ? "32100" : "32101",
-                },
-              ],
-            ];
-          }),
-        );
-        return successfulCommand(`${JSON.stringify({ Networks: networks, Ports: ports })}\n`);
-      };
-      const responses: Record<string, () => ReturnType<typeof successfulCommand>> = {
-        "container:inspect": inspectContainer,
-        "network:inspect": () =>
-          successfulCommand(`${JSON.stringify(overrides.internal ?? true)}\n`),
-      };
-      return (responses[`${String(args[0])}:${String(args[1])}`] ?? successfulCommand)();
+        const commandAddress = publication?.split("::")[0];
+        return publication === undefined
+          ? failedCommand(`No public port for ${String(containerPort)}/tcp`)
+          : successfulCommand(
+              `${options.publishedAddress ?? commandAddress}:${fakeHostPort(containerPort)}\n`,
+            );
+      }
+      default:
+        return successfulCommand();
+    }
+  };
+  const host = {
+    command: async (
+      command: string,
+      args: string[],
+      commandOptions?: { artifactName?: string },
+    ) => {
+      commands.push({ command, args: [...args] });
+      expect(["docker", "node"]).toContain(command);
+      const result =
+        command === "node"
+          ? options.proxyReady === false
+            ? failedCommand("proxy could not reach the upstream API")
+            : successfulCommand()
+          : dockerCommand(args);
+      const artifactNames =
+        commandOptions?.artifactName === undefined ? [] : [commandOptions.artifactName];
+      for (const artifactName of artifactNames) {
+        artifacts.set(artifactName, [result.stdout, result.stderr].filter(Boolean).join("\n"));
+      }
+      return result;
+    },
+  } as unknown as HostCliClient;
+  return {
+    artifacts,
+    calls,
+    commands,
+    envFiles,
+    host,
+    resources: () => ({
+      containers: [...containers].sort(),
+      networks: [...networks].sort(),
+    }),
+    setProxyRunning: (running) => {
+      proxyRunning = running;
+      const autoRemovedContainers = calls
+        .filter(
+          (args) =>
+            !running &&
+            args[0] === "run" &&
+            args.includes("--rm") &&
+            optionValue(args, "--name").includes("-proxy-"),
+        )
+        .map((args) => optionValue(args, "--name"));
+      for (const container of autoRemovedContainers) containers.delete(container);
     },
   };
-  return Object.assign(host, { calls, envFiles }) as unknown as FakeDockerHost;
+}
+
+function expectFakeDiscordDiagnosticArtifacts(artifacts: Map<string, string>): void {
+  expect(artifacts.get("diagnose-fake-discord-gateway-api-proxy-state")).toContain(
+    '"source":"proxy"',
+  );
+  expect(artifacts.get("diagnose-fake-discord-gateway-api-proxy-logs")).toContain(
+    "proxy diagnostic logs",
+  );
+  expect(artifacts.get("diagnose-fake-discord-gateway-api-state")).toContain('"source":"api"');
+  expect(artifacts.get("diagnose-fake-discord-gateway-api-logs")).toContain("api diagnostic logs");
+}
+
+function startFakeDiscordApi(host: HostCliClient, cleanup: CleanupAction[]) {
+  return startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
+    kind: "discord-gateway",
+    imageScript: "fake-discord-gateway.cjs",
+    containerPrefix: "fake-discord-gateway",
+    portEnv: "FAKE_DISCORD_GATEWAY_PORT",
+    captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
+    expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: "fixture-discord-token" },
+    redactionValues: ["fixture-discord-token"],
+    env: {},
+  });
 }
 
 async function runCleanup(actions: CleanupAction[]): Promise<void> {
   for (let index = actions.length - 1; index >= 0; index -= 1) await actions[index]!.run();
+}
+
+async function listenServer(server: net.Server, host: string): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, host, resolve);
+  });
+  return (server.address() as AddressInfo).port;
+}
+
+async function closeServer(server: net.Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+async function tcpRequest(host: string, port: number, payload: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host, port });
+    let response = "";
+    socket.setEncoding("utf8");
+    socket.setTimeout(5_000, () => socket.destroy(new Error("proxy request timed out")));
+    socket.once("connect", () => socket.write(payload));
+    socket.on("data", (chunk) => {
+      response += chunk;
+    });
+    socket.once("end", () => resolve(response));
+    socket.once("error", reject);
+  });
 }
 
 describe("messaging provider installed-runtime proofs", () => {
@@ -358,17 +558,11 @@ describe("messaging provider installed-runtime proofs", () => {
       protocol: "websocket" as const,
       rewrite: "websocket-credential-rewrite" as const,
       allowRules: [
-        "host.docker.internal:43117:GET:/**",
-        "host.docker.internal:43117:WEBSOCKET_TEXT:/**",
+        "host.openshell.internal:43117:GET:/**",
+        "host.openshell.internal:43117:WEBSOCKET_TEXT:/**",
       ],
-      policyHost: "host.docker.internal",
-      binaries: [
-        "/usr/local/bin/node",
-        "/usr/bin/node",
-        "/usr/local/bin/python3",
-        "/usr/bin/python3",
-        "/opt/hermes/.venv/bin/python",
-      ],
+      policyHost: "host.openshell.internal",
+      binaries: ["/opt/hermes/.venv/bin/python"],
     },
   ])(
     "when a $protocol fake endpoint is bound, one policy owner retains update arguments and invokes the reconciled transaction",
@@ -394,7 +588,7 @@ describe("messaging provider installed-runtime proofs", () => {
         redactions: [],
         artifactName: `apply-${protocol}-policy`,
         policyHost,
-        binaries: binaries.slice(2),
+        binaries,
       });
 
       expect(calls).toHaveLength(2);
@@ -427,270 +621,44 @@ describe("messaging provider installed-runtime proofs", () => {
     },
   );
 
-  it("accepts Slack bot and app credential bindings and rejects policies without them", () => {
-    const legacyPolicy = `
-network_policies:
-  slack:
-    name: slack
-    endpoints:
-      - host: slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: POST, path: "/**" }
-`;
-
-    expect(
-      slackCredentialBindingEvidence(CREDENTIAL_BOUND_SLACK_POLICY, SLACK_POLICY_SANDBOX),
-    ).toEqual({
-      app: true,
-      bot: true,
-    });
-    expect(slackCredentialBindingEvidence(legacyPolicy, SLACK_POLICY_SANDBOX)).toEqual({
-      app: false,
-      bot: false,
-    });
-  });
-
-  it.each([
-    [
-      "port",
-      (endpoint: SyntheticSlackEndpoint) => {
-        endpoint.port = 80;
-      },
-    ],
-    [
-      "protocol",
-      (endpoint: SyntheticSlackEndpoint) => {
-        endpoint.protocol = "websocket";
-      },
-    ],
-    [
-      "enforcement",
-      (endpoint: SyntheticSlackEndpoint) => {
-        endpoint.enforcement = "audit";
-      },
-    ],
-    [
-      "app rule",
-      (endpoint: SyntheticSlackEndpoint) => {
-        endpoint.rules = [{ allow: { method: "GET", path: "/api/apps.connections.open" } }];
-      },
-    ],
-  ])("rejects an app credential endpoint with the wrong %s", (_field, mutate) => {
-    const policy = mutateSlackEndpoint("slack.com", `${SLACK_POLICY_SANDBOX}-slack-app`, mutate);
-
-    expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
-      app: false,
-      bot: true,
-    });
-  });
-
-  it("rejects a bot credential endpoint without both broad Slack API rules", () => {
-    const policy = mutateSlackEndpoint(
-      "slack.com",
-      `${SLACK_POLICY_SANDBOX}-slack-bridge`,
-      (endpoint) => {
-        endpoint.rules = endpoint.rules.filter((rule) => rule.allow.method !== "GET");
-      },
-    );
-
-    expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
-      app: true,
-      bot: false,
-    });
-  });
-
-  it.each([
-    ["app", "slack.com", `${SLACK_POLICY_SANDBOX}-slack-app`, false, true],
-    ["broad bot", "slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
-    ["API bot", "api.slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
-    ["webhook bot", "hooks.slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
-  ] as const)(
-    "rejects the %s endpoint when its credential provider is wrong",
-    (_label, host, provider, expectedApp, expectedBot) => {
-      const policy = mutateSlackEndpoint(host, provider, (endpoint) => {
-        endpoint.credential_binding = { provider: "wrong-provider" };
-      });
-
-      expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
-        app: expectedApp,
-        bot: expectedBot,
-      });
-    },
-  );
-
-  it.each([
-    ["app", "slack.com", `${SLACK_POLICY_SANDBOX}-slack-app`, false, true],
-    ["broad bot", "slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
-    ["API bot", "api.slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
-    ["webhook bot", "hooks.slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
-  ] as const)(
-    "rejects the %s endpoint when its credential provider is absent",
-    (_label, host, provider, expectedApp, expectedBot) => {
-      const policy = mutateSlackEndpoint(host, provider, (endpoint) => {
-        delete endpoint.credential_binding;
-      });
-
-      expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
-        app: expectedApp,
-        bot: expectedBot,
-      });
-    },
-  );
-
-  it.each([
-    ["app", "slack.com", `${SLACK_POLICY_SANDBOX}-slack-app`, false, true],
-    ["broad bot", "slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
-    ["API bot", "api.slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
-    ["webhook bot", "hooks.slack.com", `${SLACK_POLICY_SANDBOX}-slack-bridge`, true, false],
-  ] as const)(
-    "rejects the %s endpoint with an extra credential-bearing permission",
-    (_label, host, provider, expectedApp, expectedBot) => {
-      const policy = mutateSlackEndpoint(host, provider, (endpoint) => {
-        endpoint.rules.push({ allow: { method: "DELETE", path: "/**" } });
-      });
-
-      expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
-        app: expectedApp,
-        bot: expectedBot,
-      });
-    },
-  );
-
-  it.each(["api.slack.com", "hooks.slack.com"])(
-    "rejects the %s bot route without credential rewrite",
-    (host) => {
-      const policy = mutateSlackEndpoint(
-        host,
-        `${SLACK_POLICY_SANDBOX}-slack-bridge`,
-        (endpoint) => {
-          endpoint.request_body_credential_rewrite = false;
-        },
-      );
-
-      expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
-        app: true,
-        bot: false,
-      });
-    },
-  );
-
-  it("rejects an extra unbound broad Slack REST endpoint", () => {
-    const policy = syntheticSlackPolicy((endpoints) => {
-      endpoints.push({
-        host: "slack.com",
-        port: 443,
-        protocol: "rest",
-        enforcement: "enforce",
-        request_body_credential_rewrite: false,
-        rules: [
-          { allow: { method: "GET", path: "/**" } },
-          { allow: { method: "POST", path: "/**" } },
-        ],
-      });
-    });
-
-    expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
-      app: false,
-      bot: false,
-    });
-  });
-
-  it("treats a malformed Slack endpoint as missing credential evidence", () => {
-    const policy = `
-network_policies:
-  slack:
-    endpoints:
-      - null
-`;
-
-    expect(slackCredentialBindingEvidence(policy, SLACK_POLICY_SANDBOX)).toEqual({
-      app: false,
-      bot: false,
-    });
-  });
-
-  it.each(["discord-gateway", "slack"] as const)(
-    "accepts observed internal-network and loopback-only evidence for the fake %s API",
-    async (kind) => {
-      const host = fakeDockerHost();
-      const cleanup: CleanupAction[] = [];
-
-      try {
-        const api = await startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
-          kind,
-          imageScript: `fake-${kind}-api.cjs`,
-          containerPrefix: `fake-${kind}`,
-          portEnv: "FAKE_API_PORT",
-          portFileEnv: "FAKE_API_PORT_FILE",
-          captureFileEnv: "FAKE_API_CAPTURE_FILE",
-          expectedEnv: {},
-          redactionValues: [],
-          env: {},
-        });
-        const runCalls = host.calls.filter((args) => args[0] === "run");
-        expect(runCalls).toHaveLength(1);
-        const apiRun = runCalls[0]!;
-        expect(apiRun).toEqual(expect.arrayContaining(["--network"]));
-        expect(
-          apiRun.flatMap((argument, index) => (argument === "-p" ? [apiRun[index + 1]] : [])),
-        ).toEqual(
-          kind === "slack"
-            ? ["127.0.0.1::8080", "127.0.0.1::8081"]
-            : ["127.0.0.1::8080"],
-        );
-        expect(apiRun).toEqual(
-          expect.arrayContaining([
-            "--read-only",
-            "--cap-drop",
-            "ALL",
-            "--security-opt",
-            "no-new-privileges",
-            "--pids-limit",
-            "32",
-          ]),
-        );
-        expect(apiRun.some((argument) => argument.includes("FAKE_API_PROXY"))).toBe(false);
-        expect(api.port).toBe("32100");
-        expect(api.alternatePort).toBe(kind === "slack" ? "32101" : undefined);
-      } finally {
-        await runCleanup(cleanup);
-      }
-    },
-  );
-
   it("keeps a fake API expected credential out of Docker argv and removes its env file", async () => {
     const sentinel = "xoxb-nemoclaw-docker-argv-secret";
     const encoded = Buffer.from(sentinel, "utf8").toString("base64");
-    const host = fakeDockerHost();
+    const { calls, envFiles, host } = fakeDockerHost();
     const cleanup: CleanupAction[] = [];
     let envFile = "";
 
     try {
-      const api = await startFakeDockerApi(
-        host,
-        (name, run) => cleanup.push({ name, run }),
-        {
-          kind: "discord-gateway",
-          imageScript: "fake-discord-gateway-api.cjs",
-          containerPrefix: "fake-discord-gateway",
-          portEnv: "FAKE_API_PORT",
-          portFileEnv: "FAKE_API_PORT_FILE",
-          captureFileEnv: "FAKE_API_CAPTURE_FILE",
-          expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: sentinel },
-          redactionValues: [sentinel],
-          env: {},
-        },
-      );
-      const dockerArgv = JSON.stringify(host.calls);
+      const api = await startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
+        kind: "discord-gateway",
+        imageScript: "fake-discord-gateway.cjs",
+        containerPrefix: "fake-discord-gateway",
+        portEnv: "FAKE_API_PORT",
+        captureFileEnv: "FAKE_API_CAPTURE_FILE",
+        expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: sentinel },
+        redactionValues: [sentinel],
+        env: {},
+      });
+      const dockerArgv = JSON.stringify(calls);
       expect(dockerArgv).not.toContain(sentinel);
       expect(dockerArgv).not.toContain(encoded);
+      const apiRun = calls.find((call) => call[0] === "run" && call.includes("--env-file"));
+      expect(apiRun).toEqual(
+        expect.arrayContaining([
+          "--read-only",
+          "--cap-drop",
+          "ALL",
+          "--security-opt",
+          "no-new-privileges",
+          "--pids-limit",
+          "32",
+        ]),
+      );
+      expect(optionValues(apiRun!, "-p")).toEqual([]);
       expect(api.port).toBe("32100");
-      expect(host.envFiles).toHaveLength(1);
-      expect(host.envFiles[0]?.source).toBe(`FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN=${sentinel}`);
-      envFile = host.envFiles[0]!.path;
+      expect(envFiles).toHaveLength(1);
+      expect(envFiles[0]?.source).toBe(`FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN=${sentinel}`);
+      envFile = envFiles[0]!.path;
       expect(envFile).not.toBe("");
       expect(fs.statSync(envFile).mode & 0o777).toBe(0o600);
     } finally {
@@ -700,65 +668,257 @@ network_policies:
     expect(fs.existsSync(envFile)).toBe(false);
   });
 
-  it("rejects a fake API port that Docker publishes beyond loopback", async () => {
-    const host = fakeDockerHost({ publishedAddress: "0.0.0.0" });
+  it("rejects Docker state that publishes the credential-bearing fake API", async () => {
+    const { host } = fakeDockerHost({ apiPublished: true });
     const cleanup: CleanupAction[] = [];
 
     try {
-      await expect(
-        startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
-          kind: "discord-gateway",
-          imageScript: "fake-discord-gateway-api.cjs",
-          containerPrefix: "fake-discord-gateway",
-          portEnv: "FAKE_API_PORT",
-          portFileEnv: "FAKE_API_PORT_FILE",
-          captureFileEnv: "FAKE_API_CAPTURE_FILE",
-          expectedEnv: {},
-          redactionValues: [],
-          env: {},
-        }),
-      ).rejects.toThrow(/did not bind only to 127\.0\.0\.1/u);
+      await expect(startFakeDiscordApi(host, cleanup)).rejects.toThrow(
+        /Docker topology did not preserve isolation/u,
+      );
     } finally {
       await runCleanup(cleanup);
     }
   });
 
   it.each([
-    [
-      "a non-internal network",
-      { internal: false },
-      /fake discord-gateway API network is not internal/u,
-    ],
-    [
-      "an extra bridge attachment",
-      { extraNetwork: true },
-      /API container did not use only its internal Docker network/u,
-    ],
-  ] as const)(
-    "rejects observed Docker isolation evidence with %s",
-    async (_label, overrides, error) => {
-      const host = fakeDockerHost(overrides);
-      const cleanup: CleanupAction[] = [];
+    ["credential value", "PROXY_FIXTURE_VALUE=fixture-discord-token"],
+    ["credential name", "FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN=not-a-redaction-value"],
+  ])("rejects Docker state that exposes a %s through the fake API proxy", async (_case, leak) => {
+    const { host } = fakeDockerHost({ proxyEnvironment: [leak] });
+    const cleanup: CleanupAction[] = [];
 
+    try {
+      await expect(startFakeDiscordApi(host, cleanup)).rejects.toThrow(
+        /Docker topology did not preserve isolation/u,
+      );
+    } finally {
+      await runCleanup(cleanup);
+    }
+  });
+
+  it.each([
+    { label: "capability drop", control: "--cap-drop" },
+    { label: "PID limit", control: "--pids-limit" },
+    { label: "read-only root", control: "--read-only" },
+    { label: "security option", control: "--security-opt" },
+    { label: "internal-network attachment", control: "internal-network" },
+  ] as const)("rejects Docker state missing the proxy $label", async ({ control }) => {
+    const { host } = fakeDockerHost({ missingProxyControl: control });
+    const cleanup: CleanupAction[] = [];
+
+    try {
+      await expect(startFakeDiscordApi(host, cleanup)).rejects.toThrow(
+        /Docker topology did not preserve isolation/u,
+      );
+    } finally {
+      await runCleanup(cleanup);
+    }
+  });
+
+  it("returns distinct Slack REST and websocket ports from accepted Docker state", async () => {
+    const { host } = fakeDockerHost();
+    const cleanup: CleanupAction[] = [];
+
+    try {
+      const api = await startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
+        kind: "slack",
+        imageScript: "fake-slack-api.cjs",
+        containerPrefix: "fake-slack",
+        portEnv: "FAKE_SLACK_API_PORT",
+        captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
+        expectedEnv: {},
+        redactionValues: [],
+        env: {},
+      });
+      expect(api.port).toBe("32100");
+      expect(api.alternatePort).toBe("32101");
+    } finally {
+      await runCleanup(cleanup);
+    }
+  });
+
+  it("relays both ports without inheriting host credentials and proves upstream readiness", async () => {
+    const upstreamAddress = "127.0.0.1";
+    const proxyAddress = "127.0.0.1";
+    const inheritedCredentialName = "NEMOCLAW_FAKE_API_PROXY_TEST_CREDENTIAL";
+    const previousCredential = process.env[inheritedCredentialName];
+    const restoreCredential =
+      previousCredential === undefined
+        ? () => delete process.env[inheritedCredentialName]
+        : () => {
+            process.env[inheritedCredentialName] = previousCredential;
+          };
+    process.env[inheritedCredentialName] = "must-not-reach-the-proxy-child";
+    const requests: string[] = [];
+    const upstreamServers = ["discord", "slack"].map((label) =>
+      net.createServer((socket) => {
+        socket.setEncoding("utf8");
+        socket.on("data", (payload) => {
+          requests.push(`${label}:${payload}`);
+          socket.end(`${label}:${payload}`);
+        });
+      }),
+    );
+    const upstreamPorts = await Promise.all(
+      upstreamServers.map((server) => listenServer(server, upstreamAddress)),
+    );
+    const portReservations = [net.createServer(), net.createServer(), net.createServer()];
+    const [readinessPort, ...proxyPorts] = await Promise.all(
+      portReservations.map((server) => listenServer(server, proxyAddress)),
+    );
+    await Promise.all(portReservations.map(closeServer));
+    const credentialGuardSource = `Object.hasOwn(process.env, ${JSON.stringify(inheritedCredentialName)}) && (() => { throw new Error("proxy child inherited host credential"); })();\n`;
+    const proxy = spawn(process.execPath, ["-e", credentialGuardSource + FAKE_API_PROXY_SOURCE], {
+      env: {
+        NEMOCLAW_FAKE_API_UPSTREAM: upstreamAddress,
+        NEMOCLAW_FAKE_API_PROXY_LISTEN_ADDRESS: proxyAddress,
+        NEMOCLAW_FAKE_API_PROXY_PORTS: proxyPorts
+          .map((port, index) => `${String(port)}:${String(upstreamPorts[index])}`)
+          .join(","),
+        NEMOCLAW_FAKE_API_PROXY_READINESS_PORT: String(readinessPort),
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let proxyStderr = "";
+    proxy.stderr.setEncoding("utf8");
+    proxy.stderr.on("data", (chunk) => {
+      proxyStderr += chunk;
+    });
+
+    try {
       try {
-        await expect(
-          startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
-            kind: "discord-gateway",
-            imageScript: "fake-discord-gateway-api.cjs",
-            containerPrefix: "fake-discord-gateway",
-            portEnv: "FAKE_API_PORT",
-            portFileEnv: "FAKE_API_PORT_FILE",
-            captureFileEnv: "FAKE_API_CAPTURE_FILE",
-            expectedEnv: {},
-            redactionValues: [],
-            env: {},
-          }),
-        ).rejects.toThrow(error);
-      } finally {
-        await runCleanup(cleanup);
+        await execFileAsync(
+          process.execPath,
+          ["-e", FAKE_API_PROXY_READINESS_SOURCE, proxyAddress, String(readinessPort)],
+          { timeout: 10_000 },
+        );
+      } catch (error) {
+        throw new Error(
+          `proxy readiness probe failed: ${error instanceof Error ? error.message : String(error)}; proxy stderr: ${proxyStderr}`,
+        );
       }
-    },
-  );
+      const responses = await Promise.all([
+        tcpRequest(proxyAddress, proxyPorts[0]!, "gateway"),
+        tcpRequest(proxyAddress, proxyPorts[1]!, "websocket"),
+      ]);
+      expect(responses, proxyStderr).toEqual(["discord:gateway", "slack:websocket"]);
+      expect(requests.sort()).toEqual(["discord:gateway", "slack:websocket"]);
+    } finally {
+      restoreCredential();
+      proxy.kill("SIGTERM");
+      await (proxy.exitCode === null
+        ? once(proxy, "exit").then(() => undefined)
+        : Promise.resolve());
+      await Promise.all(upstreamServers.map(closeServer));
+    }
+  });
+
+  it("rejects a fake API proxy port that Docker publishes beyond the OpenShell bridge", async () => {
+    const { host } = fakeDockerHost({ publishedAddress: "0.0.0.0" });
+    const cleanup: CleanupAction[] = [];
+
+    try {
+      await expect(startFakeDiscordApi(host, cleanup)).rejects.toThrow(
+        /Docker topology did not preserve isolation/u,
+      );
+    } finally {
+      await runCleanup(cleanup);
+    }
+  });
+
+  it("rejects ambiguous OpenShell IPv4 gateways and cleans its temporary directory", async () => {
+    const networkInspect = JSON.stringify([
+      {
+        Driver: "bridge",
+        IPAM: {
+          Config: [
+            { Subnet: "172.18.0.0/16", Gateway: OPENSHELL_BRIDGE_ADDRESS },
+            { Subnet: "172.19.0.0/16", Gateway: "172.19.0.1" },
+          ],
+        },
+      },
+    ]);
+    const { calls, host } = fakeDockerHost({ networkInspect });
+    const cleanup: CleanupAction[] = [];
+    let fixtureDir: string | undefined;
+    let credentialDir: string | undefined;
+
+    try {
+      await expect(startFakeDiscordApi(host, cleanup)).rejects.toThrow(
+        /exactly one IPv4 bridge gateway/u,
+      );
+      expect(calls).toEqual([["network", "inspect", "openshell-docker"]]);
+      expect(cleanup).toHaveLength(2);
+      fixtureDir = cleanup[0]!.name.replace(/^remove /u, "");
+      credentialDir = cleanup[1]!.name.replace(/^remove /u, "");
+      expect(fs.existsSync(fixtureDir)).toBe(true);
+      expect(fs.existsSync(credentialDir)).toBe(true);
+    } finally {
+      await runCleanup(cleanup);
+    }
+    expect(fixtureDir).toBeDefined();
+    expect(credentialDir).toBeDefined();
+    expect(fs.existsSync(fixtureDir!)).toBe(false);
+    expect(fs.existsSync(credentialDir!)).toBe(false);
+  });
+
+  it("fails with proxy diagnostics when the detached proxy stops before readiness", async () => {
+    const { artifacts, host, resources } = fakeDockerHost({ proxyRunning: false });
+    const cleanup: CleanupAction[] = [];
+    let failure: unknown;
+
+    try {
+      await startFakeDiscordApi(host, cleanup);
+    } catch (error) {
+      failure = error;
+    } finally {
+      await runCleanup(cleanup);
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(
+      "attempted to capture redacted proxy and API diagnostics",
+    );
+    expectFakeDiscordDiagnosticArtifacts(artifacts);
+    expect(resources()).toEqual({ containers: [], networks: [] });
+  });
+
+  it("fails with API and proxy diagnostics when the proxy cannot reach the API", async () => {
+    const { artifacts, host, resources } = fakeDockerHost({ proxyReady: false });
+    const cleanup: CleanupAction[] = [];
+    let failure: unknown;
+
+    try {
+      await startFakeDiscordApi(host, cleanup);
+    } catch (error) {
+      failure = error;
+    } finally {
+      await runCleanup(cleanup);
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(
+      "attempted to capture redacted proxy and API diagnostics",
+    );
+    expectFakeDiscordDiagnosticArtifacts(artifacts);
+    expect(resources()).toEqual({ containers: [], networks: [] });
+  });
+
+  it("captures proxy diagnostics before cleanup after a post-readiness stop", async () => {
+    const { artifacts, host, resources, setProxyRunning } = fakeDockerHost();
+    const cleanup: CleanupAction[] = [];
+
+    try {
+      await startFakeDiscordApi(host, cleanup);
+      setProxyRunning(false);
+    } finally {
+      await runCleanup(cleanup);
+    }
+
+    expectFakeDiscordDiagnosticArtifacts(artifacts);
+    expect(resources()).toEqual({ containers: [], networks: [] });
+  });
 
   it("uses a synthetic WeChat token even when the host exports one", () => {
     const previousToken = process.env.WECHAT_BOT_TOKEN;
@@ -862,7 +1022,7 @@ network_policies:
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("reconstructs multi-argument Node source byte-for-byte below the OpenShell limit", () => {
     const source = [

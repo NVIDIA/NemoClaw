@@ -82,7 +82,6 @@ export async function startFakeDiscordGateway(
     imageScript: "fake-discord-gateway.cjs",
     containerPrefix: "nemoclaw-fake-discord-pairing",
     portEnv: "FAKE_DISCORD_GATEWAY_PORT",
-    portFileEnv: "FAKE_DISCORD_GATEWAY_PORT_FILE",
     captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
     expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: token },
     env,
@@ -103,7 +102,6 @@ export async function startFakeSlackApi(
     imageScript: "fake-slack-api.cjs",
     containerPrefix: "nemoclaw-fake-slack-pairing",
     portEnv: "FAKE_SLACK_API_PORT",
-    portFileEnv: "FAKE_SLACK_API_PORT_FILE",
     captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
     expectedEnv: {
       FAKE_SLACK_API_EXPECTED_BOT_TOKEN: botToken,

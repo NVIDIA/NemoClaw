@@ -366,7 +366,7 @@ When the recovery record contains a durable identity fingerprint, run `$$nemocla
 Use the result from `destroy` to choose the next action:
 
 - If OpenShell still reports the sandbox present, `destroy` preserves the record and removes no resources. Do not delete the sandbox manually by mutable name. Give the displayed create-attempt label to an OpenShell administrator when present and ask them to remove that exact sandbox through an identity-bound procedure. Without a label, preserve the terminal output and ask the administrator to identify the exact sandbox from gateway or controller evidence.
-- After the administrator removes the exact sandbox, rerun `$$nemoclaw <sandbox-name> destroy`.
+- After the administrator removes the exact sandbox, run `$$nemoclaw <sandbox-name> destroy --yes` to reconcile the recovery record.
 - If OpenShell confirms the sandbox is absent, `destroy` verifies one retained recovery record and its immutable runtime identity. For Docker-backed sandboxes, it also verifies the immutable Docker sandbox identity and removes only qualified residual containers. It clears the matching recovery record only after verified cleanup.
 - If the recovery record is ambiguous or immutable runtime-identity verification fails, cleanup stops and the record remains. For Docker-backed sandboxes, a foreign container, changed Docker identity, or failed Docker probe has the same fail-closed result.
 

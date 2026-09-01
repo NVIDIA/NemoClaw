@@ -16,7 +16,9 @@
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/docker-driver-gateway-env.test.ts",
         "src/lib/onboard/experimental/portable-host-preparation.test.ts",
-        "src/lib/onboard/sandbox-prebuild.test.ts"
+        "src/lib/onboard/sandbox-prebuild.test.ts",
+        "test/agents/hermes/hermes-start.test.ts",
+        "test/e2e/support/portable-profile-rootless-runtime-workflow.test.ts"
       ]
     },
     {
@@ -546,6 +548,7 @@
       "live": "test/e2e/live/mcp-bridge.test.ts",
       "liveSources": [
         "test/e2e/live/mcp-bridge-cleanup.ts",
+        "test/e2e/live/mcp-bridge-onboard-env.ts",
         "test/e2e/live/mcp-bridge-reliability.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
@@ -593,6 +596,7 @@
         "src/lib/onboard/providers.test.ts",
         "test/channels/channels-add-bridge-lifecycle.test.ts",
         "test/e2e/support/credential-policy-binding.test.ts",
+        "test/e2e/support/messaging-provider-slack-policy.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/onboarding/onboard-messaging.test.ts",
         "test/runtime/messaging/messaging-build-applier.test.ts",
@@ -669,6 +673,7 @@
       "fast": [
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/e2e/support/credential-policy-binding.test.ts",
+        "test/e2e/support/messaging-provider-slack-policy.test.ts",
         "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
         "test/onboarding/onboard-messaging.test.ts",

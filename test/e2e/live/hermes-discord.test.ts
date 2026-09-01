@@ -44,7 +44,7 @@ const DISCORD_SERVER_IDS = process.env.DISCORD_SERVER_IDS ?? "149159099275359059
 const DISCORD_ALLOWED_IDS = process.env.DISCORD_ALLOWED_IDS ?? "1005536447329222676";
 const DISCORD_REQUIRE_MENTION = process.env.DISCORD_REQUIRE_MENTION ?? "0";
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
-const FAKE_DISCORD_HOST = "host.docker.internal";
+const FAKE_DISCORD_HOST = "host.openshell.internal";
 const HERMES_DISCORD_HTTP_PROXY_GATEWAY_TEMPLATE = hermesDiscordHttpProxyWebSocketUrl(
   "{host}",
   "{port}",
@@ -96,7 +96,6 @@ async function startHermesFakeDiscordGateway(
     imageScript: "fake-discord-gateway.cjs",
     containerPrefix: "nemoclaw-fake-discord-hermes",
     portEnv: "FAKE_DISCORD_GATEWAY_PORT",
-    portFileEnv: "FAKE_DISCORD_GATEWAY_PORT_FILE",
     captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
     expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: token },
     env,
@@ -169,7 +168,7 @@ results = []
 
 async def main():
     port = int(os.environ["FAKE_DISCORD_GATEWAY_CLIENT_PORT"])
-    host = os.environ.get("FAKE_DISCORD_GATEWAY_CLIENT_HOST", "host.docker.internal")
+    host = os.environ.get("FAKE_DISCORD_GATEWAY_CLIENT_HOST", "host.openshell.internal")
     token = read_env_token()
     client = discord.Client(intents=discord.Intents.none())
     setup = getattr(client, "_async_setup_hook", None)
@@ -542,7 +541,7 @@ PY`,
       redactions: redactionValues,
       artifactName: "apply-hermes-fake-discord-gateway-policy",
       policyHost: FAKE_DISCORD_HOST,
-      binaries: ["/usr/local/bin/python3", "/usr/bin/python3", "/opt/hermes/.venv/bin/python"],
+      binaries: ["/opt/hermes/.venv/bin/python"],
     });
 
     const nativeGateway = await runHermesPythonDiscordGatewayProof(
