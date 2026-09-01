@@ -246,7 +246,8 @@ Back up important state before destroying a Hermes sandbox.
 
 Prefer NemoClaw host commands for generated configuration such as model, provider, messaging, and policy settings.
 Direct edits to `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` can be overwritten by rebuilds.
-Use `$$nemoclaw <name> connect` when you need to inspect runtime files interactively, or use `openshell sandbox download` and `openshell sandbox upload` for manual file transfer.
+Use `$$nemoclaw <name> connect` when you need to inspect runtime files interactively.
+Use `$$nemoclaw <name> download` for manual host downloads, or use `openshell sandbox upload` when you intentionally need the raw OpenShell upload path.
 
 ## Next Steps
 
@@ -323,7 +324,8 @@ Back up important Deep Agents state before destroying the sandbox.
 Prefer NemoClaw host commands for generated configuration such as model, provider, managed MCP, and policy settings.
 Direct edits to NemoClaw-owned or non-allowlisted keys in `/sandbox/.deepagents/config.toml` can be overwritten by rebuilds.
 
-Use `$$nemoclaw <name> connect` when you need to inspect runtime files interactively, or use `openshell sandbox download` and `openshell sandbox upload` for manual file transfer.
+Use `$$nemoclaw <name> connect` when you need to inspect runtime files interactively.
+Use `$$nemoclaw <name> download` for manual host downloads, or use `openshell sandbox upload` when you intentionally need the raw OpenShell upload path.
 
 Use Deep Agents Code commands for upstream-managed memories and skills.
 For example, run `dcode skills create <name>` inside the sandbox to create a user skill, or use `/remember` inside an interactive `dcode` session to update memory.

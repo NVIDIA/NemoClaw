@@ -5,7 +5,7 @@ title: "Transfer State Manually"
 sidebar-title: "Transfer State Manually"
 description: "Download and upload selected sandbox state files when a managed snapshot is not the right transfer path."
 description-agent: "Explains safe manual download and upload paths for OpenClaw workspace files, Hermes state, and Deep Agents state. Use when inspecting or transferring specific files."
-keywords: ["openshell sandbox download", "openshell sandbox upload", "manual sandbox backup", "workspace transfer"]
+keywords: ["nemoclaw download", "openshell sandbox upload", "manual sandbox backup", "workspace transfer"]
 content:
   type: "how_to"
 skill:
@@ -16,7 +16,8 @@ Use [Create and Restore Snapshots](create-and-restore-snapshots) for normal back
 
 ## Download State
 
-Use `openshell sandbox download` to copy files from the sandbox to your host.
+Use `$$nemoclaw <name> download` to copy files from the sandbox to your host.
+The wrapper rejects a directory that contains a symbolic link or another special file before it invokes the OpenShell download or creates the host destination.
 
 <AgentOnly variant="openclaw">
 
@@ -25,12 +26,12 @@ SANDBOX=my-assistant
 BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
 mkdir -p "$BACKUP_DIR"
 
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/SOUL.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/USER.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/IDENTITY.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/AGENTS.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/MEMORY.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/memory/ "$BACKUP_DIR/memory/"
+$$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/SOUL.md "$BACKUP_DIR/"
+$$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/USER.md "$BACKUP_DIR/"
+$$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/IDENTITY.md "$BACKUP_DIR/"
+$$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/AGENTS.md "$BACKUP_DIR/"
+$$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/MEMORY.md "$BACKUP_DIR/"
+$$nemoclaw "$SANDBOX" download /sandbox/.openclaw/workspace/memory/ "$BACKUP_DIR/memory/"
 ```
 
 </AgentOnly>
@@ -44,11 +45,11 @@ SANDBOX=my-hermes
 BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
 mkdir -p "$BACKUP_DIR/dashboard-home"
 
-openshell sandbox download "$SANDBOX" /sandbox/SOUL.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.hermes/state.db "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.hermes/profiles/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home/MEMORY.md"
-openshell sandbox download "$SANDBOX" /sandbox/.hermes/profiles/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home/USER.md"
-openshell sandbox download "$SANDBOX" /sandbox/.hermes/platforms/ "$BACKUP_DIR/platforms/"
+$$nemoclaw "$SANDBOX" download /sandbox/SOUL.md "$BACKUP_DIR/"
+$$nemoclaw "$SANDBOX" download /sandbox/.hermes/state.db "$BACKUP_DIR/"
+$$nemoclaw "$SANDBOX" download /sandbox/.hermes/profiles/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home/MEMORY.md"
+$$nemoclaw "$SANDBOX" download /sandbox/.hermes/profiles/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home/USER.md"
+$$nemoclaw "$SANDBOX" download /sandbox/.hermes/platforms/ "$BACKUP_DIR/platforms/"
 ```
 
 Copy only the dashboard profile's `MEMORY.md` and `USER.md` files.
@@ -60,8 +61,8 @@ If startup refuses a legacy profile migration, download the preserved user files
 
 ```bash
 mkdir -p "$BACKUP_DIR/dashboard-home-legacy"
-openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home-legacy/MEMORY.md"
-openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home-legacy/USER.md"
+$$nemoclaw "$SANDBOX" download /sandbox/.hermes/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home-legacy/MEMORY.md"
+$$nemoclaw "$SANDBOX" download /sandbox/.hermes/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home-legacy/USER.md"
 ```
 
 Do not download the legacy `.env` or `config.yaml`.
@@ -75,11 +76,11 @@ SANDBOX=my-deepagents
 BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
 mkdir -p "$BACKUP_DIR"
 
-openshell sandbox download "$SANDBOX" /sandbox/.deepagents/config.toml "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.deepagents/agent/AGENTS.md "$BACKUP_DIR/agent/"
-openshell sandbox download "$SANDBOX" /sandbox/.deepagents/agent/memories/ "$BACKUP_DIR/agent/memories/"
-openshell sandbox download "$SANDBOX" /sandbox/.deepagents/skills/ "$BACKUP_DIR/skills/"
-openshell sandbox download "$SANDBOX" /sandbox/.deepagents/agent/skills/ "$BACKUP_DIR/agent-skills/"
+$$nemoclaw "$SANDBOX" download /sandbox/.deepagents/config.toml "$BACKUP_DIR/"
+$$nemoclaw "$SANDBOX" download /sandbox/.deepagents/agent/AGENTS.md "$BACKUP_DIR/agent/"
+$$nemoclaw "$SANDBOX" download /sandbox/.deepagents/agent/memories/ "$BACKUP_DIR/agent/memories/"
+$$nemoclaw "$SANDBOX" download /sandbox/.deepagents/skills/ "$BACKUP_DIR/skills/"
+$$nemoclaw "$SANDBOX" download /sandbox/.deepagents/agent/skills/ "$BACKUP_DIR/agent-skills/"
 ```
 
 Do not recursively download `/sandbox/.deepagents/.state/`.

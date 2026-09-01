@@ -17,7 +17,7 @@ Use `openshell` when you need a lower-level OpenShell operation that NemoClaw in
 
 If the task changes how NemoClaw creates, rebuilds, preserves, or configures a sandbox, start with `$$nemoclaw`.
 
-If the task inspects or changes the live OpenShell gateway, TUI, raw policy, port forwarding, inference route, or sandbox file transfer, use `openshell`.
+If the task inspects or changes the live OpenShell gateway, TUI, raw policy, port forwarding, inference route, or intentionally bypasses a NemoClaw file-transfer wrapper, use `openshell`.
 
 Do not create or recreate NemoClaw-managed sandboxes directly with `openshell sandbox create` unless you intend to manage OpenShell yourself.
 Run `$$nemoclaw onboard` afterward if you need to return to a NemoClaw-managed environment.
@@ -130,6 +130,8 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
   openshell sandbox download <sandbox-name> /sandbox/output ./output
   openshell sandbox exec -n <sandbox-name> -- env | grep '^HOME='
   ```
+
+  The direct download command does not use NemoClaw's source validation, private staging, or destination publication safeguards.
 
 - Merge a single endpoint into the live OpenShell policy:
 
@@ -270,7 +272,8 @@ Use `openshell policy get --full <name>` only to inspect the effective policy, i
 
 Use `$$nemoclaw <name> snapshot create`, `snapshot restore`, or `share mount` for normal workspace preservation and editing.
 
-Use `openshell sandbox upload` and `openshell sandbox download` for manual file copies when you need control over source and destination paths.
+Use `$$nemoclaw <name> download` for manual host downloads when you need control over source and destination paths.
+Use `openshell sandbox upload` when you intentionally want the raw OpenShell upload path.
 
 ## Related Topics
 
