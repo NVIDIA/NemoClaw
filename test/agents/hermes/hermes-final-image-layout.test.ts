@@ -164,8 +164,6 @@ function indexOfRequired(haystack: string, needle: string): number {
   return index;
 }
 
-
-
 function runFinalLayout({
   legacyData = "none",
   openclaw = "none",
@@ -271,22 +269,21 @@ describe("Hermes final image layout", () => {
     }
   });
 
-  it.each([
-    "directory-symlink",
-    "entry-symlink",
-    "nested-symlink",
-  ] as const)("refuses a legacy data %s before migration", (legacyData) => {
-    const run = runFinalLayout({ legacyData });
-    try {
-      expect(run.result.status).toBe(1);
-      expect(run.result.stderr).toContain("refusing legacy layout cleanup");
-      const sentinel =
-        legacyData === "directory-symlink"
-          ? path.join(run.legacyTarget, "sentinel")
-          : run.legacyTarget;
-      expect(readText(sentinel)).toBe("keep\n");
-    } finally {
-      fs.rmSync(run.tmp, { recursive: true, force: true });
-    }
-  });
+  it.each(["directory-symlink", "entry-symlink", "nested-symlink"] as const)(
+    "refuses a legacy data %s before migration",
+    (legacyData) => {
+      const run = runFinalLayout({ legacyData });
+      try {
+        expect(run.result.status).toBe(1);
+        expect(run.result.stderr).toContain("refusing legacy layout cleanup");
+        const sentinel =
+          legacyData === "directory-symlink"
+            ? path.join(run.legacyTarget, "sentinel")
+            : run.legacyTarget;
+        expect(readText(sentinel)).toBe("keep\n");
+      } finally {
+        fs.rmSync(run.tmp, { recursive: true, force: true });
+      }
+    },
+  );
 });
