@@ -513,7 +513,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const requestedUrl =
       envUrl || (persistedPort === null ? undefined : `http://127.0.0.1:${String(persistedPort)}`);
     const actualPort = ensureDashboardForward(sandboxName, requestedUrl, {
-      ...(persistedPort === null ? {} : { allowPortReallocation: false }),
+      allowPortReallocation: false,
       ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
     });
     revalidateSandboxIdentity?.(`publish the dashboard URL for sandbox '${sandboxName}'`);
