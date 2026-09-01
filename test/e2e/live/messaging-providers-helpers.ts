@@ -772,6 +772,9 @@ export async function startFakeDockerApi(
 
   // The fake API receives raw expected credentials. Keep it unpublished and
   // expose only this credential-free forwarding container on host loopback.
+  // Docker does not install published-port forwarding for a container whose
+  // only attachment is an internal network, so establish the loopback binding
+  // on the default bridge before adding the private API network.
   const proxyStart = await runHost(
     host,
     "docker",
@@ -782,7 +785,7 @@ export async function startFakeDockerApi(
       "--name",
       proxyContainer,
       "--network",
-      network,
+      "bridge",
       ...containerPorts.flatMap((port) => ["-p", `127.0.0.1::${String(port)}`]),
       "--read-only",
       "--cap-drop",
@@ -809,6 +812,19 @@ export async function startFakeDockerApi(
   );
   expectExitZero(proxyStart, `start fake ${options.kind} API proxy`);
 
+  const proxyConnect = await runHost(
+    host,
+    "docker",
+    ["network", "connect", network, proxyContainer],
+    {
+      artifactName: `connect-fake-${options.kind}-api-proxy-internal-network`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  expectExitZero(proxyConnect, `connect fake ${options.kind} API proxy to private network`);
+
   const networkInspections = await Promise.all(
     [
       ["api", container],
@@ -826,12 +842,13 @@ export async function startFakeDockerApi(
     })),
   );
   for (const { role, networks } of networkInspections) {
+    const expectedNetworks = role === "api" ? [network] : ["bridge", network];
     if (
       typeof networks !== "object" ||
       networks === null ||
       Array.isArray(networks) ||
-      Object.keys(networks).length !== 1 ||
-      !Object.hasOwn(networks, network)
+      Object.keys(networks).length !== expectedNetworks.length ||
+      expectedNetworks.some((name) => !Object.hasOwn(networks, name))
     ) {
       throw new Error(`fake ${options.kind} API ${role} has unexpected network attachments`);
     }

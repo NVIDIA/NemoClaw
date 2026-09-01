@@ -226,6 +226,7 @@ function successfulCommand(stdout = "") {
 
 function fakeDockerHost(publishedAddress = "127.0.0.1"): HostCliClient {
   let network = "";
+  let proxyContainer = "";
   const host = {
     command: async (command: string, args: string[]) => {
       switch (command) {
@@ -238,6 +239,11 @@ function fakeDockerHost(publishedAddress = "127.0.0.1"): HostCliClient {
               network = args[1] === "create" ? (args.at(-1) ?? "") : network;
               return successfulCommand();
             case "run":
+              proxyContainer = args.some((argument) =>
+                argument.startsWith("NEMOCLAW_FAKE_API_UPSTREAM="),
+              )
+                ? (args[args.indexOf("--name") + 1] ?? "")
+                : proxyContainer;
               args
                 .filter((argument) => argument.endsWith(":/tmp/fake"))
                 .forEach((fakeApiMount) => {
@@ -247,7 +253,13 @@ function fakeDockerHost(publishedAddress = "127.0.0.1"): HostCliClient {
               return successfulCommand();
             case "inspect":
               return args[2] === "{{json .NetworkSettings.Networks}}"
-                ? successfulCommand(JSON.stringify({ [network]: {} }))
+                ? successfulCommand(
+                    JSON.stringify(
+                      args.at(-1) === proxyContainer
+                        ? { bridge: {}, [network]: {} }
+                        : { [network]: {} },
+                    ),
+                  )
                 : successfulCommand(
                     JSON.stringify([
                       "PATH=/usr/local/bin:/usr/bin:/bin",
@@ -385,8 +397,12 @@ describe("messaging provider installed-runtime proofs", () => {
             proxyContainer = invocation[invocation.indexOf("--name") + 1] ?? "";
             return successfulShellResult(invocation);
           case "prove-fake-slack-api-api-internal-network":
-          case "prove-fake-slack-api-proxy-internal-network":
             return successfulShellResult(invocation, JSON.stringify({ [network]: {} }));
+          case "prove-fake-slack-api-proxy-internal-network":
+            return successfulShellResult(
+              invocation,
+              JSON.stringify({ bridge: {}, [network]: {} }),
+            );
           case "prove-fake-slack-api-internal-only":
             return successfulShellResult(invocation);
           case "prove-fake-slack-api-proxy-credential-free":
