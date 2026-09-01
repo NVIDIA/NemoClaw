@@ -67,7 +67,7 @@ describe("candidate agent gate", () => {
       ).toMatchObject({
         platform,
         source: {
-          revision: "6339fcae1c239a84925715328fc0dff045b8f310",
+          revision: "3e8795a397ca898316bbaf96ef3540110915448f",
         },
       });
     },

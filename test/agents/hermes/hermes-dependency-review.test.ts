@@ -416,6 +416,8 @@ describe("Hermes 0.19.0 dependency review", () => {
       `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages/hindsight_client/__init__.py)" = "sandbox:sandbox 640"`,
       "assert m.version('hindsight-client') == '0.6.1'",
       "assert hindsight_client.NEMOCLAW_BUILD_PROBE_FIXTURE is True",
+      `chmod 3770 /sandbox/.hermes`,
+      `test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "sandbox:sandbox 3770"`,
       "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups --",
       "activate_durable_lazy_target(); import hindsight_client; from pathlib",
       "gateway can modify installed Hermes lazy packages",

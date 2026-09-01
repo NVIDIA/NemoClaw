@@ -1191,6 +1191,9 @@ RUN set -eu; \
 # is the next Python process to use it.
 # ensurepip reads only Python's bundled wheel payload; it performs no external
 # package lookup and therefore needs no BuildKit network option.
+# Hermes may tighten HERMES_HOME while installing. Production root startup
+# restores the mutable cross-identity mode before launching the gateway; this
+# layer mirrors that sequence before exercising the real gateway identity.
 RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
     && /opt/hermes/.venv/bin/python -I -m pip --version \
     && chmod 644 /opt/hermes/.venv/.lock \
@@ -1265,6 +1268,8 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
         "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client, importlib.metadata as m; from pathlib import Path; target = Path('/sandbox/.hermes/lazy-packages').resolve(); assert m.version('hindsight-client') == '0.6.1'; assert hindsight_client.NEMOCLAW_BUILD_PROBE_FIXTURE is True; assert Path(hindsight_client.__file__).resolve().is_relative_to(target)" \
+    && chmod 3770 /sandbox/.hermes \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "sandbox:sandbox 3770" \
     && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         env HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
         /opt/hermes/.venv/bin/python -I -c \

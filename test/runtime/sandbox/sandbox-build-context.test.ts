@@ -471,7 +471,7 @@ describe("sandbox build context staging", () => {
         relativePath,
       );
       expect(fs.lstatSync(stagedPath).isFile(), relativePath).toBe(true);
-      // lgtm[js/file-system-race] Test-owned immutable fixture paths.
+      // codeql[js/file-system-race] Test-owned, quiescent fixture paths.
       expect(fs.readFileSync(stagedPath), relativePath).toEqual(fs.readFileSync(sourcePath));
       expect((fs.statSync(stagedPath).mode & 0o777).toString(8), relativePath).toBe("644");
     }

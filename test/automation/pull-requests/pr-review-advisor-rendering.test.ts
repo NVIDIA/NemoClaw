@@ -66,7 +66,10 @@ describe("PR review advisor", () => {
         noChangesReason: null,
       },
     ];
-    expect(invalidReceipts.every((terminologyReview) =>
-        Object.is(validate({ ...result, terminologyReview }), false))).toBe(true);
+    expect(
+      invalidReceipts.every((terminologyReview) =>
+        Object.is(validate({ ...result, terminologyReview }), false),
+      ),
+    ).toBe(true);
   });
 });
