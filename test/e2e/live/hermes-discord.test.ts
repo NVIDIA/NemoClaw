@@ -113,25 +113,6 @@ async function precleanHermesDiscord(
   );
 }
 
-async function startHermesFakeDiscordGateway(
-  host: HostCliClient,
-  cleanup: CleanupRegistry,
-  env: NodeJS.ProcessEnv,
-  token: string,
-  redactionValues: string[],
-): Promise<FakeDockerApi> {
-  return startFakeDockerApi(host, cleanup.trackDisposable.bind(cleanup), {
-    kind: "discord-gateway",
-    imageScript: "fake-discord-gateway.cjs",
-    containerPrefix: "nemoclaw-fake-discord-hermes",
-    portEnv: "FAKE_DISCORD_GATEWAY_PORT",
-    captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
-    expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: token },
-    env,
-    redactionValues,
-  });
-}
-
 async function applyHermesFakeDiscordPolicy(options: {
   host: HostCliClient;
   sandboxName: string;
@@ -600,12 +581,19 @@ PY`,
   expect(envProbe.stdout.trim()).toBe("OK");
 
   progress.phase("exercise native Discord gateway rewrite");
-  const fakeGateway = await startHermesFakeDiscordGateway(
+  const fakeGateway = await startFakeDockerApi(
     host,
-    cleanup,
-    env,
-    DISCORD_TOKEN,
-    redactionValues,
+    cleanup.trackDisposable.bind(cleanup),
+    {
+      kind: "discord-gateway",
+      imageScript: "fake-discord-gateway.cjs",
+      containerPrefix: "nemoclaw-fake-discord-hermes",
+      portEnv: "FAKE_DISCORD_GATEWAY_PORT",
+      captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
+      expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: DISCORD_TOKEN },
+      env,
+      redactionValues,
+    },
   );
   await applyHermesFakeDiscordPolicy({
     host,
