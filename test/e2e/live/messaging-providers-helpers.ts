@@ -34,6 +34,19 @@ export const REBUILD_TIMEOUT_MS = 25 * 60_000;
 export const PROBE_TIMEOUT_MS = 120_000;
 export const LIVE_TIMEOUT_MS = 90 * 60_000;
 export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
+export const MESSAGING_PROVIDER_SCENARIOS = {
+  prepare: "given messaging credentials, cleanup leaves a fresh host for installation",
+  install: "when all channels are installed, the OpenClaw sandbox becomes ready",
+  whatsappRebuild:
+    "when WhatsApp is added, rebuild preserves its policy, Slack bindings, and unrelated host edits",
+  credentialIsolation:
+    "when providers are installed, the sandbox exposes placeholders without raw credentials",
+  policyRewrites: "when provider routes are probed, Telegram and Discord rewrites remain scoped",
+  installedRuntimeSends:
+    "when installed runtimes send, rewritten credentials reach only isolated fake APIs",
+  gatewayHealth:
+    "when gateway health and optional live sends run, provider contracts remain healthy",
+} as const;
 const FAKE_API_IMAGE =
   "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
 const FAKE_API_PROXY_SOURCE = String.raw`

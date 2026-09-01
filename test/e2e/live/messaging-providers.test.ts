@@ -30,6 +30,7 @@ import {
   isUnresolvedPlaceholderRejection,
   LIVE_TIMEOUT_MS,
   lastJsonLine,
+  MESSAGING_PROVIDER_SCENARIOS,
   messagingEnv,
   nonEmpty,
   outputText,
@@ -58,18 +59,18 @@ import { runInstalledWechatRuntimeProof } from "./messaging-providers-wechat-run
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
 test(
-  "messaging providers preserve placeholder, policy, runtime, and send contracts",
+  "given one clean all-channel installation, named messaging scenarios preserve rebuild, isolation, and send contracts",
   {
     ...testTimeoutOptions(LIVE_TIMEOUT_MS),
     meta: {
       e2ePhases: [
-        "load messaging credentials and clear the sandbox",
-        "install the all-channel OpenClaw sandbox",
-        "add WhatsApp and prove rebuild persistence",
-        "inspect providers placeholders and credential isolation",
-        "probe Telegram and Discord policy rewrites",
-        "exercise installed Slack, Telegram, and WeChat runtimes",
-        "inspect gateway health and optional live sends",
+        MESSAGING_PROVIDER_SCENARIOS.prepare,
+        MESSAGING_PROVIDER_SCENARIOS.install,
+        MESSAGING_PROVIDER_SCENARIOS.whatsappRebuild,
+        MESSAGING_PROVIDER_SCENARIOS.credentialIsolation,
+        MESSAGING_PROVIDER_SCENARIOS.policyRewrites,
+        MESSAGING_PROVIDER_SCENARIOS.installedRuntimeSends,
+        MESSAGING_PROVIDER_SCENARIOS.gatewayHealth,
       ],
     },
   },
@@ -133,7 +134,7 @@ test(
     });
     expectExitZero(dockerInfo, "Docker must be running");
 
-    progress.phase("install the all-channel OpenClaw sandbox");
+    progress.phase("when all channels are installed, the OpenClaw sandbox becomes ready");
     const install = await runHost(host, "bash", ["install.sh", "--non-interactive"], {
       artifactName: "install-messaging-providers",
       env: state.env,
@@ -177,7 +178,9 @@ test(
       .find((line) => line.includes(SANDBOX_NAME));
     check(Boolean(sandboxRow && /\bReady\b/.test(sandboxRow)), "M0b: sandbox is Ready");
 
-    progress.phase("add WhatsApp and prove rebuild persistence");
+    progress.phase(
+      "when WhatsApp is added, rebuild preserves its policy, Slack bindings, and unrelated host edits",
+    );
     const whatsappAdd = await runHost(
       host,
       "node",
@@ -330,7 +333,9 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "M-WA5b: Slack bot and app credential bindings survived messaging rebuild",
     );
 
-    progress.phase("inspect providers placeholders and credential isolation");
+    progress.phase(
+      "when providers are installed, the sandbox exposes placeholders without raw credentials",
+    );
     const providerList = await runHost(host, "openshell", ["provider", "list"], {
       artifactName: "provider-list-messaging-providers",
       env: state.env,
@@ -651,7 +656,9 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "M6h: OpenClaw channels list reports WhatsApp plugin installed",
     );
 
-    progress.phase("probe Telegram and Discord policy rewrites");
+    progress.phase(
+      "when provider routes are probed, Telegram and Discord rewrites remain scoped",
+    );
     // Probe the allowed Telegram bot API path (/bot<token>/**). The bare root
     // path is blocked by the Telegram egress policy by design (asserted by M14),
     // so probing it would conflate a correct policy denial with unreachability
@@ -863,7 +870,9 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       check(false, `M17: unexpected Discord response (${discordApi.slice(0, 200)})`);
     }
 
-    progress.phase("exercise installed Slack, Telegram, and WeChat runtimes");
+    progress.phase(
+      "when installed runtimes send, rewritten credentials reach only isolated fake APIs",
+    );
     const fakeSlack = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
       kind: "slack",
       imageScript: "fake-slack-api.cjs",
@@ -1179,7 +1188,9 @@ setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
       await skipNote(artifacts, skips, "S2: no Slack-related output in gateway log");
     }
 
-    progress.phase("inspect gateway health and optional live sends");
+    progress.phase(
+      "when gateway health and optional live sends run, provider contracts remain healthy",
+    );
     const doctor = await runHost(host, "node", [CLI_ENTRYPOINT, SANDBOX_NAME, "doctor", "--json"], {
       artifactName: "doctor-json-messaging-providers",
       env: state.env,

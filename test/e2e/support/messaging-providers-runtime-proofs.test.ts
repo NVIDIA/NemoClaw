@@ -17,6 +17,7 @@ import {
   buildSandboxShellInvocation,
   countJsonLines,
   isNvidiaEndpointRateLimitFailure,
+  MESSAGING_PROVIDER_SCENARIOS,
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
@@ -235,6 +236,18 @@ async function runCleanup(actions: CleanupAction[]): Promise<void> {
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("names each shared-install scenario by its condition, action, and observable result", () => {
+    expect(Object.values(MESSAGING_PROVIDER_SCENARIOS)).toEqual([
+      "given messaging credentials, cleanup leaves a fresh host for installation",
+      "when all channels are installed, the OpenClaw sandbox becomes ready",
+      "when WhatsApp is added, rebuild preserves its policy, Slack bindings, and unrelated host edits",
+      "when providers are installed, the sandbox exposes placeholders without raw credentials",
+      "when provider routes are probed, Telegram and Discord rewrites remain scoped",
+      "when installed runtimes send, rewritten credentials reach only isolated fake APIs",
+      "when gateway health and optional live sends run, provider contracts remain healthy",
+    ]);
+  });
+
   it("counts only matching upstream capture rows", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-captures-"));
     const captureFile = path.join(dir, "capture.jsonl");
@@ -305,6 +318,44 @@ describe("messaging provider installed-runtime proofs", () => {
       expect(installAttempted).toBe(false);
     },
   );
+
+  it("blocks Hermes target completion when final gateway cleanup is denied", async () => {
+    const calls: string[] = [];
+    let targetCompleted = false;
+    const host: Pick<HostCliClient, "cleanupGatewayRegistration" | "cleanupSandbox"> = {
+      cleanupSandbox: async (name, options) => {
+        calls.push(`nemoclaw:${name}:${String(options?.artifactName)}`);
+      },
+      cleanupGatewayRegistration: async (name, options) => {
+        calls.push(`openshell-gateway:${name}:${String(options?.artifactName)}`);
+        throw new Error("permission denied during final gateway cleanup");
+      },
+    };
+    const sandbox: Pick<SandboxClient, "cleanupSandbox"> = {
+      cleanupSandbox: async (name, options) => {
+        calls.push(`openshell-sandbox:${name}:${String(options?.artifactName)}`);
+      },
+    };
+
+    await expect(
+      (async () => {
+        await precleanMessagingResources(host, sandbox, {
+          sandboxName: "e2e-hermes-discord",
+          artifactPrefix: "phase-8-finalize-hermes-discord",
+          env: {},
+          redactionValues: [],
+        });
+        targetCompleted = true;
+      })(),
+    ).rejects.toThrow("permission denied during final gateway cleanup");
+
+    expect(targetCompleted).toBe(false);
+    expect(calls).toEqual([
+      "nemoclaw:e2e-hermes-discord:phase-8-finalize-hermes-discord-nemoclaw-destroy",
+      "openshell-sandbox:e2e-hermes-discord:phase-8-finalize-hermes-discord-openshell-sandbox-delete",
+      "openshell-gateway:nemoclaw:phase-8-finalize-hermes-discord-openshell-gateway-destroy",
+    ]);
+  });
 
   it("accepts Slack bot and app credential bindings and rejects policies without them", () => {
     const legacyPolicy = `

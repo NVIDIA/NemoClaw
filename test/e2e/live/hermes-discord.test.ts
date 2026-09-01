@@ -25,7 +25,6 @@ import {
   startFakeDockerApi,
 } from "./messaging-providers-helpers.ts";
 import {
-  runSecondaryCleanup as bestEffortLifecycleCleanup,
   dockerInfo,
   expectExitZero,
   phase6Env,
@@ -754,21 +753,12 @@ done`,
           return;
         default:
       }
-      const destroy = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "phase-8-nemoclaw-destroy",
+      await precleanMessagingResources(host, sandbox, {
+        sandboxName: SANDBOX_NAME,
+        artifactPrefix: "phase-8-finalize-hermes-discord",
         env,
         redactionValues,
-        timeoutMs: 15 * 60_000,
       });
-      expectExitZero(destroy, "destroy Hermes Discord sandbox");
-      await bestEffortLifecycleCleanup(() =>
-        host.command(host.openshellCommandPath, ["gateway", "destroy", "-g", "nemoclaw"], {
-          artifactName: "phase-8-openshell-gateway-destroy",
-          env,
-          redactionValues,
-          timeoutMs: 120_000,
-        }),
-      );
       const registryProbe = await host.command(
         "bash",
         [
