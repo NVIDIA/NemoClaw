@@ -73,14 +73,14 @@ describe("manual PR E2E credential authorization", () => {
       expectedAllowed: false,
     },
     {
-      caseName: "an NVIDIA-owned PR workflow ref with matching identities",
+      caseName: "a non-main workflow ref with otherwise matching identities",
       checkoutRepository: "NVIDIA/NemoClaw",
       nvidiaOwned: true,
       workflowRepository: "NVIDIA/NemoClaw",
       workflowRef: "refs/heads/pr-controlled-workflow",
       checkoutShaMatches: true,
       workflowShaMatches: true,
-      expectedAllowed: true,
+      expectedAllowed: false,
     },
   ])(
     "sets E2E credential access to $expectedAllowed for $caseName (#9047)",

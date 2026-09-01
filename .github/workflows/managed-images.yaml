@@ -9,7 +9,6 @@
 # cohort pointer move. Consumers use that pointer to discover the matching
 # Hermes and Deep Agents Code cohort aliases, so a failed run cannot expose a
 # mixed-agent or mixed-architecture cohort.
-# Manual PR E2E consumes the exact-candidate contracts from this workflow.
 #
 # The Pi candidate lane builds and validates its own per-architecture images and
 # publishes exact candidate digests under a separate contract artifact name. It
