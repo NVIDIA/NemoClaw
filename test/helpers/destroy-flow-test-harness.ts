@@ -62,7 +62,9 @@ export type DestroyHarness = {
   setRegistryEntryPresent: (present: boolean) => void;
   setRetainedRecoveryRecords: (records: RetainedSandboxRecoveryRecord[]) => void;
   setSandboxPresent: (present: boolean) => void;
+  isShieldsDownSpy: MockInstance;
   shieldsDownSpy: MockInstance;
+  shieldsUpSpy: MockInstance;
   stopAllSpy: MockInstance;
   stopModelRouterForDestroyedSandboxSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
@@ -107,6 +109,11 @@ type DestroyHarnessOptions = {
   mcpAddState?: "prepared";
   mcpAdapterScrubSkipped?: true;
   mcpServers?: string[];
+  mcpRuntimeSelection?: {
+    gatewayName: string;
+    localTlsDir?: string;
+    workspace: string;
+  };
   openshellDriver?: string;
   portableCommandError?: string;
   portableDestroyAuthority?: boolean;
@@ -241,6 +248,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const shields = requireSource("../../shields/index.js");
   const timerControl = requireSource("../../shields/timer-control.js");
   const mcpBridge = requireSource("./mcp-bridge.js");
+  const mcpBridgeProvider = requireSource("./mcp-bridge-provider.js");
   const dockerRun = requireSource("../../adapters/docker/run.js");
   const portableAgentLifecycle = requireSource(
     "../../onboard/experimental/portable-agent-lifecycle.js",
@@ -593,7 +601,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         }
       : null,
   );
-  vi.spyOn(shields, "shieldsUp").mockImplementation(() => {
+  const shieldsUpSpy = vi.spyOn(shields, "shieldsUp").mockImplementation(() => {
     events.push("harden");
     options.shieldsUpError === undefined
       ? undefined
@@ -601,7 +609,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
           throw options.shieldsUpError;
         })();
   });
-  vi.spyOn(shields, "isShieldsDown").mockReturnValue(options.shieldsDown ?? true);
+  const isShieldsDownSpy = vi
+    .spyOn(shields, "isShieldsDown")
+    .mockReturnValue(options.shieldsDown ?? true);
   const shieldsDownSpy = vi.spyOn(shields, "shieldsDown").mockImplementation(() => {
     events.push("unlock");
   });
@@ -610,12 +620,22 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     return { warnings: [] };
   });
   const preparedServers = options.mcpAddState === "prepared" ? [] : (options.mcpServers ?? []);
+  const resolvedMcpRuntimeSelection = options.mcpRuntimeSelection ?? {
+    gatewayName: "nemoclaw-19080",
+    workspace: "default",
+  };
+  vi.spyOn(mcpBridgeProvider, "getMcpProviderInspectionRuntimeSelection").mockReturnValue(
+    resolvedMcpRuntimeSelection,
+  );
   const mcpPreparation = {
     entries: preparedServers.map((server) => ({ server })),
     detachedProviderEntries: preparedServers.map((server) => ({ server })),
     scrubbedAdapterEntries: preparedServers.map((server) => ({ server })),
     destroyAlreadyPrepared: false,
     destroyAlreadyPending: false,
+    ...(options.mcpServers?.length
+      ? { runtimeSelection: resolvedMcpRuntimeSelection }
+      : {}),
     ...(options.mcpAdapterScrubSkipped ? { adapterScrubSkipped: true as const } : {}),
   };
   const gatewayPinsAtMcpPrepare: Array<string | undefined> = [];
@@ -706,7 +726,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     setSandboxPresent: (present: boolean) => {
       sandboxPresent = present;
     },
+    isShieldsDownSpy,
     shieldsDownSpy,
+    shieldsUpSpy,
     stopAllSpy,
     stopModelRouterForDestroyedSandboxSpy,
     stopNimByNameSpy,

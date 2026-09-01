@@ -106,7 +106,7 @@ export function inspectAgentAdapterRegistration(
 export function assertAgentMcpConfigMutationAllowed(
   sandboxName: string,
   adapter: AgentMcpAdapter,
-  runtimeSelection?: McpProviderInspectionRuntimeSelection,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   switch (adapter) {
     case "hermes-config":

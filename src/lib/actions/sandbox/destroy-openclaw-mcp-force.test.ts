@@ -54,7 +54,13 @@ describe("forced OpenClaw MCP destroy", () => {
       harness.destroySandbox("alpha", { yes: true, force: true }),
     ).resolves.toBeUndefined();
 
-    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", { force: true });
+    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", {
+      force: true,
+      runtimeSelection: {
+        gatewayName: "nemoclaw-19080",
+        workspace: "default",
+      },
+    });
     expect(exitSpy).not.toHaveBeenCalled();
   });
 

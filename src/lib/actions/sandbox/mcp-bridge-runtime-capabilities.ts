@@ -44,7 +44,7 @@ export function assertMcpAdapterConfigMutationsAllowed(
   sandboxName: string,
   sandbox: SandboxEntry,
   entries: readonly McpBridgeEntry[],
-  runtimeSelection?: McpProviderInspectionRuntimeSelection,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   for (const adapter of adaptersForEntries(sandbox, entries)) {
     assertAgentMcpConfigMutationAllowed(sandboxName, adapter, runtimeSelection);

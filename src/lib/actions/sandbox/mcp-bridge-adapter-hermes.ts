@@ -112,7 +112,7 @@ function parseLastJsonObject(output: string): Record<string, unknown> | null {
 /** Refuse an in-sandbox Hermes config mutation while config is locked. */
 export function assertHermesMcpConfigMutationAllowed(
   sandboxName: string,
-  runtimeSelection?: McpProviderInspectionRuntimeSelection,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   if (isShieldsDown(sandboxName, false, runtimeSelection)) return;
   throw new McpBridgeError(

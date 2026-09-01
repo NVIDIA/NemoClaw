@@ -57,7 +57,7 @@ function mcporterRootForEntry(entry: McpBridgeEntry): string {
  */
 export function assertOpenClawMcpConfigMutationAllowed(
   sandboxName: string,
-  runtimeSelection?: McpProviderInspectionRuntimeSelection,
+  runtimeSelection: McpProviderInspectionRuntimeSelection,
 ): void {
   if (isShieldsDown(sandboxName, false, runtimeSelection)) return;
   throw new McpBridgeError(

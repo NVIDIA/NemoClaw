@@ -53,7 +53,7 @@ export function expectSuccessfulLiveDestroy(harness: DestroyHarness, exitSpy: Mo
   expect(harness.selectGatewaySpy).toHaveBeenCalledWith(
     "alpha",
     "nemoclaw-19080",
-    harness.runOpenshellSpy,
+    expect.any(Function),
   );
   expect(harness.gatewayPinsAtSandboxList).toEqual(["nemoclaw-19080"]);
   expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
@@ -94,9 +94,17 @@ export function expectShieldsUpRefusalBeforeMutation(harness: DestroyHarness): v
   expect(harness.selectGatewaySpy).toHaveBeenCalledWith(
     "alpha",
     "nemoclaw-19080",
-    harness.runOpenshellSpy,
+    expect.any(Function),
   );
   expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
+  expect(harness.isShieldsDownSpy).toHaveBeenCalledWith(
+    "alpha",
+    false,
+    expect.objectContaining({
+      gatewayName: "nemoclaw-19080",
+      workspace: "default",
+    }),
+  );
   expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
     ["sandbox", "list", "-o", "json"],
     expect.objectContaining({ ignoreError: true }),
@@ -173,6 +181,15 @@ export function expectFailedHardeningMcpRestore(harness: DestroyHarness): void {
   // shields-down rollback window it cannot close again.
   expect(harness.events).not.toContain("unlock");
   expect(harness.shieldsDownSpy).not.toHaveBeenCalled();
+  expect(harness.shieldsUpSpy).toHaveBeenCalledWith(
+    "alpha",
+    expect.objectContaining({
+      runtimeSelection: expect.objectContaining({
+        gatewayName: "nemoclaw-19080",
+        workspace: "default",
+      }),
+    }),
+  );
   expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).toHaveBeenCalledWith(
     "alpha",
     expect.objectContaining({ entries: [{ server: "github" }] }),
@@ -185,10 +202,20 @@ export function expectMcpFinalizeAfterDelete(harness: DestroyHarness): void {
   // The live preparation is force-aware since #10469: `--force` may keep a
   // retained-volume adapter entry that cannot be scrubbed. These flows are all
   // plain destroys, so the flag must be threaded through as false.
-  expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", { force: false });
+  expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", {
+    force: false,
+    runtimeSelection: expect.objectContaining({
+      gatewayName: "nemoclaw-19080",
+      workspace: "default",
+    }),
+  });
   expect(harness.gatewayPinsAtMcpPrepare).toEqual(["nemoclaw-19080"]);
   const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
-    (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete alpha",
+    (call) =>
+      Array.isArray(call[0]) &&
+      call[0][0] === "sandbox" &&
+      call[0][1] === "delete" &&
+      call[0].at(-1) === "alpha",
   );
   expect(deleteCall).toBeGreaterThanOrEqual(0);
   expect(harness.prepareMcpBridgesForDestroySpy.mock.invocationCallOrder.at(-1)).toBeLessThan(
@@ -225,9 +252,22 @@ export function expectMcpRestoreAfterDeleteFailure(harness: DestroyHarness): voi
       deferAutoRestoreWhileOwnerAlive: true,
       processToken: "a".repeat(32),
       throwOnError: true,
+      runtimeSelection: expect.objectContaining({
+        gatewayName: "nemoclaw-19080",
+        workspace: "default",
+      }),
     }),
   );
   expect(harness.shieldsDownSpy.mock.calls[0]?.[1]).not.toHaveProperty("skipTimer");
+  expect(harness.shieldsUpSpy).toHaveBeenLastCalledWith(
+    "alpha",
+    expect.objectContaining({
+      runtimeSelection: expect.objectContaining({
+        gatewayName: "nemoclaw-19080",
+        workspace: "default",
+      }),
+    }),
+  );
 }
 
 export function expectFailedMcpRestorePreservesDestroyFailure(harness: DestroyHarness): void {
@@ -262,7 +302,11 @@ export function expectMcpFinalizeBridgeErrorReturnsFailure(
 ): void {
   expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).toHaveBeenCalled();
   const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
-    (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete alpha",
+    (call) =>
+      Array.isArray(call[0]) &&
+      call[0][0] === "sandbox" &&
+      call[0][1] === "delete" &&
+      call[0].at(-1) === "alpha",
   );
   expect(deleteCall).toBeGreaterThanOrEqual(0);
   expect(
@@ -280,6 +324,10 @@ export function expectAbsentSandboxMcpFinalize(harness: DestroyHarness): void {
   expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
   expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
     force: false,
+    runtimeSelection: expect.objectContaining({
+      gatewayName: "nemoclaw-19080",
+      workspace: "default",
+    }),
   });
   expect(harness.gatewayPinsAtMcpPrepare).toEqual(["nemoclaw-19080"]);
   expect(harness.restoreMcpBridgesAfterDestroyAbortSpy).not.toHaveBeenCalled();
