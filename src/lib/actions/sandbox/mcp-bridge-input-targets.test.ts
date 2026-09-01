@@ -49,6 +49,24 @@ describe("MCP URL target validation", () => {
     }
   });
 
+  it("samples a public answer even when the host has configured private trust (#10755)", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
+      .mockResolvedValueOnce([{ address: "1.1.1.1", family: 4 }] as never)
+      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never);
+    try {
+      await expect(
+        preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp"), {
+          trustedPrivateHosts: ["mcp.example.test"],
+        }),
+      ).resolves.toEqual({ addresses: ["1.1.1.1", "8.8.8.8"] });
+      expect(lookup).toHaveBeenCalledTimes(3);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
   it("rejects a private address discovered in a later public DNS snapshot (#10755)", async () => {
     const lookup = vi
       .spyOn(dns, "lookup")
@@ -58,6 +76,23 @@ describe("MCP URL target validation", () => {
       await expect(
         preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
       ).rejects.toThrow(/resolves to private, local, or special-use address '127\.0\.0\.1'/);
+      expect(lookup).toHaveBeenCalledTimes(2);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("rejects private rotation after a public answer despite configured trust (#10755)", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
+      .mockResolvedValueOnce([{ address: "10.20.30.40", family: 4 }] as never);
+    try {
+      await expect(
+        preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp"), {
+          trustedPrivateHosts: ["mcp.example.test"],
+        }),
+      ).rejects.toThrow(/resolves to private, local, or special-use address '10\.20\.30\.40'/);
       expect(lookup).toHaveBeenCalledTimes(2);
     } finally {
       lookup.mockRestore();
@@ -313,7 +348,7 @@ require("./src/lib/actions/sandbox/mcp-bridge.js").addMcpBridge("alpha", {
         }),
       ).rejects.toThrow(/must resolve only to supported routed private addresses/);
 
-      lookup.mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never);
+      lookup.mockResolvedValue([{ address: "8.8.8.8", family: 4 }] as never);
       await expect(
         preflightMcpServerUrlResolvedTarget(new URL("https://mcp.corp.example/mcp"), {
           trustedPrivateHosts: ["mcp.corp.example"],

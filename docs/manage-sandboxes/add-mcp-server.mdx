@@ -164,10 +164,11 @@ Endpoint paths cannot contain percent escapes, backslashes, semicolons, or OpenS
 Endpoint URLs cannot use port `0`.
 
 NemoClaw resolves hostnames before registration and pins the validated addresses in the generated policy.
-If a public hostname's first DNS response contains one address, NemoClaw takes two more validated snapshots and pins the sorted union from all three responses.
+If a public hostname's first DNS response contains one address, NemoClaw takes two more validated responses and pins the sorted union from all three responses.
 If the first public response contains multiple addresses, NemoClaw uses that response without another lookup.
-NemoClaw rejects a public preflight if either additional snapshot is unresolved or contains a private, special-use, or otherwise disallowed address.
-Explicitly trusted private targets use one DNS lookup and retain exact host-bound address pins.
+NemoClaw rejects a public preflight if either additional response is unresolved or contains a private, special-use, or otherwise disallowed address.
+Explicitly trusted private hostnames use one DNS lookup and retain exact host-bound address pins.
+A trusted private IPv4 literal requires no DNS lookup.
 These preflight lookups do not refresh `allowed_ips` during a live connection or replace address pins with hostname-only trust.
 Public endpoints need no trusted-private declaration.
 Private endpoints require a trust declaration and can use only RFC1918, CGNAT, or IPv6 unique local addresses.

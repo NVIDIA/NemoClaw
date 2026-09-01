@@ -253,11 +253,11 @@ export async function preflightMcpServerUrlResolvedTarget(
   if (isBlockedMcpUrlTargetHost(parsed.hostname)) {
     validateMcpServerUrlTarget(parsed, normalizedTrustedHosts);
   }
-  const resolveSnapshot = () =>
+  const resolveSnapshot = (trustedPrivateHosts = normalizedTrustedHosts) =>
     assertEndpointResolvesPublic(
       parsed.toString(),
       async (hostname) => resolveHostAddresses(hostname),
-      { trustedPrivateHosts: normalizedTrustedHosts },
+      { trustedPrivateHosts },
     );
   const snapshots = [];
   let result = await resolveSnapshot();
@@ -267,9 +267,11 @@ export async function preflightMcpServerUrlResolvedTarget(
     // even with `all: true`. Two additional snapshots capture the reported
     // A/B rotation and confirm the wraparound without changing private-host
     // admission or refreshing policy during a live connection.
-    if (!explicitTrust && result.addresses?.length === 1) {
+    if (!result.trustedPrivateEndpoint && result.addresses?.length === 1) {
       for (let attempt = 1; attempt < MCP_PUBLIC_DNS_ROTATION_SNAPSHOTS; attempt += 1) {
-        result = await resolveSnapshot();
+        // Once the first snapshot is public, a later private answer is DNS
+        // rebinding even when the hostname also has configured private trust.
+        result = await resolveSnapshot([]);
         if (!result.ok) break;
         snapshots.push(result);
       }
