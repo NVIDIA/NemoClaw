@@ -342,12 +342,22 @@ function Write-JsonAtomic {
     $parent = Split-Path -Parent $Path
     [IO.Directory]::CreateDirectory($parent) | Out-Null
     $temporary = Join-Path $parent ('.' + (Split-Path -Leaf $Path) + '.' + [guid]::NewGuid().ToString('N') + '.partial')
+    $replacementBackup = Join-Path $parent ('.' + (Split-Path -Leaf $Path) + '.' + [guid]::NewGuid().ToString('N') + '.replace-backup')
     $text = ($Value | ConvertTo-Json -Depth 12 -Compress) + [Environment]::NewLine
     [IO.File]::WriteAllText($temporary, $text, [Text.UTF8Encoding]::new($false))
-    if (Test-Path -LiteralPath $Path -PathType Leaf) {
-        [IO.File]::Replace($temporary, $Path, $null, $true)
-    } else {
-        [IO.File]::Move($temporary, $Path)
+    try {
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            [IO.File]::Replace($temporary, $Path, $replacementBackup, $true)
+        } else {
+            [IO.File]::Move($temporary, $Path)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temporary -PathType Leaf) {
+            [IO.File]::Delete($temporary)
+        }
+        if (Test-Path -LiteralPath $replacementBackup -PathType Leaf) {
+            [IO.File]::Delete($replacementBackup)
+        }
     }
 }
 
