@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 import type { AgentConfigTarget } from "./agent-config";
 import {
@@ -184,6 +189,56 @@ describe("mutable OpenClaw config permissions", () => {
         throw new Error("config.yaml remains read-only");
       }),
     ).toEqual({ verified: false, errors: ["config.yaml remains read-only"] });
+  });
+
+  it("executes the Hermes probe and rejects read-only or linked config artifacts", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mutable-probe-"));
+    const configDir = path.join(root, ".hermes");
+    const configPath = path.join(configDir, "config.yaml");
+    const hashPath = path.join(configDir, ".config-hash");
+    const envPath = path.join(configDir, ".env");
+    fs.mkdirSync(configDir, { mode: 0o700 });
+    fs.chmodSync(configDir, 0o3770);
+    fs.writeFileSync(configPath, "fixture\n", { mode: 0o640 });
+    fs.writeFileSync(hashPath, "fixture\n", { mode: 0o640 });
+    fs.writeFileSync(envPath, "fixture\n", { mode: 0o640 });
+    fs.chmodSync(configPath, 0o640);
+    fs.chmodSync(hashPath, 0o640);
+    fs.chmodSync(envPath, 0o640);
+
+    const command = mutableHermesConfigProbeCommand({
+      ...hermesTarget,
+      configDir,
+      configPath,
+      sensitiveFiles: [hashPath, envPath],
+    });
+    const script = command[8]!;
+    const runProbe = () =>
+      spawnSync(process.env.PYTHON || "python3", ["-I", "-c", script, ...command.slice(9)], {
+        encoding: "utf8",
+      });
+
+    try {
+      const valid = runProbe();
+      expect(valid.status, valid.stderr).toBe(0);
+      expect(
+        fs.readdirSync(configDir).some((entry) => entry.startsWith(".nemoclaw-mutable-posture-")),
+      ).toBe(false);
+
+      fs.chmodSync(configPath, 0o440);
+      const readOnly = runProbe();
+      expect(readOnly.status).not.toBe(0);
+      expect(readOnly.stderr).toContain("PermissionError");
+
+      fs.chmodSync(configPath, 0o640);
+      fs.rmSync(envPath);
+      fs.symlinkSync(configPath, envPath);
+      const linked = runProbe();
+      expect(linked.status).not.toBe(0);
+      expect(linked.stderr).toMatch(/(?:ELOOP|Too many levels of symbolic links)/u);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("does not apply the Hermes proof to another agent", () => {
