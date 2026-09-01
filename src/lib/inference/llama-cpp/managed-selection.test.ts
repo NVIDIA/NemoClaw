@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { createHostReadinessReport } from "../../readiness/host";
+import {
+  type CollectHostObservationsOptions,
+  createHostReadinessReport,
+} from "../../readiness/host";
 import type { SystemReadinessReport } from "../../readiness/types";
 import { loadManagedInferenceCatalog } from "../serving/catalog-loader";
 import type { ManagedInferenceServingPreset } from "../serving/types";
@@ -75,7 +78,10 @@ function fixture(presetId = SPARK_PRESET_ID) {
   return { catalog, preset: preset!, report: readinessReport(preset!) };
 }
 
-function n1xCollectionOptions() {
+function n1xCollectionOptions(): Omit<
+  CollectHostObservationsOptions,
+  "detectGpu" | "wslDockerDesktopGpuProofPassed"
+> {
   const now = new Date();
   return {
     now: () => now,
