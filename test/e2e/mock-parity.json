@@ -315,8 +315,15 @@
     },
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
+      "liveSources": ["test/e2e/live/snapshot-commands-helpers.ts"],
       "fast": [
         "src/lib/actions/sandbox/snapshot-command-host-local-authority.test.ts",
+        "src/lib/actions/sandbox/snapshot-restore-lifecycle.test.ts",
+        "src/lib/actions/sandbox/stopped-sandbox-backup.test.ts",
+        "src/lib/state/sandbox-backup-sanitization.test.ts",
+        "test/agents/openclaw/openclaw-config-snapshot.test.ts",
+        "test/cli/snapshot-shields.test.ts",
+        "test/state/snapshot.test.ts",
         "test/e2e/support/snapshot-commands-helpers.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
