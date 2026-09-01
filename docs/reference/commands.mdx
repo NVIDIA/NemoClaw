@@ -366,7 +366,7 @@ When the recovery record contains a durable identity fingerprint, run `$$nemocla
 Use the result from `destroy` to choose the next action:
 
 - If OpenShell still reports the sandbox present, `destroy` preserves the record and removes no resources. Do not delete the sandbox manually by mutable name. Give the displayed create-attempt label to an OpenShell administrator when present and ask them to remove that exact sandbox through an identity-bound procedure. Without a label, preserve the terminal output and ask the administrator to identify the exact sandbox from gateway or controller evidence.
-- After the administrator removes the exact sandbox, rerun `$$nemoclaw <sandbox-name> destroy`.
+- After the administrator removes the exact sandbox, run `$$nemoclaw <sandbox-name> destroy --yes` to reconcile the recovery record.
 - If OpenShell confirms the sandbox is absent, `destroy` verifies one retained recovery record and its immutable runtime identity. For Docker-backed sandboxes, it also verifies the immutable Docker sandbox identity and removes only qualified residual containers. It clears the matching recovery record only after verified cleanup.
 - If the recovery record is ambiguous or immutable runtime-identity verification fails, cleanup stops and the record remains. For Docker-backed sandboxes, a foreign container, changed Docker identity, or failed Docker probe has the same fail-closed result.
 
@@ -834,7 +834,20 @@ When GPU passthrough is enabled and a gateway already exists without it, onboard
 
 ### `$$nemoclaw list`
 
-List all registered sandboxes with their model, provider, and policy presets. Pass `--json` for machine-readable output that includes a `schemaVersion`, the default sandbox, recovery metadata, and the sandbox inventory. When the latest resumable onboarding session owns the matching inference-route reservation but has not created a sandbox, text output shows it under `Incomplete onboarding` with the recorded step and resume command. JSON output reports the same state in `incompleteOnboarding`; it remains separate from `sandboxes` and never affects the default sandbox. When present, `incompleteOnboarding` contains `name`, `status` (`failed` or `in_progress`), `step` (a string or `null`), `interrupted` (a boolean), and `resumable: true`; otherwise it is `null`. NemoClaw does not expose stale reservations that belong to another onboarding session. Each sandbox row reports `activeSessionCount` as a nonnegative integer when the SSH-session probe is available and `null` when it is unavailable. Each sandbox row reports `agent` as a string in both text and JSON output, never `null`. The row reports `openclaw` when the registry records no agent for the sandbox. The row reports `unknown` for a sandbox that `$$nemoclaw list` recovers from the live OpenShell gateway. The gateway sandbox list does not expose the agent. The row does not include the former derived `connected` boolean. Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
+List sandboxes in the registry for the gateway port that `NEMOCLAW_GATEWAY_PORT` selects and any sandbox entries recovered from that live gateway, with their model, provider, and policy presets.
+The command reads that port's registry and live gateway; it does not scan registries for other gateway ports.
+Pass `--json` for machine-readable output that includes a `schemaVersion`, the default sandbox, recovery metadata, and the sandbox inventory.
+When the latest resumable onboarding session owns the matching inference-route reservation but has not created a sandbox, text output shows it under `Incomplete onboarding` with the recorded step and resume command.
+JSON output reports the same state in `incompleteOnboarding`; it remains separate from `sandboxes` and never affects the default sandbox.
+When present, `incompleteOnboarding` contains `name`, `status` (`failed` or `in_progress`), `step` (a string or `null`), `interrupted` (a boolean), and `resumable: true`; otherwise it is `null`.
+NemoClaw does not expose stale reservations that belong to another onboarding session.
+Each sandbox row reports `activeSessionCount` as a nonnegative integer when the SSH-session probe is available and `null` when it is unavailable.
+Each sandbox row reports `agent` as a string in both text and JSON output, never `null`.
+The row reports `openclaw` when the registry records no agent for the sandbox.
+The row reports `unknown` for a sandbox that `$$nemoclaw list` recovers from the live OpenShell gateway.
+The gateway sandbox list does not expose the agent.
+The row does not include the former derived `connected` boolean.
+Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
 
 <AgentOnly variant="openclaw,hermes">
   When a sandbox has a recorded dashboard port, the output includes its local dashboard URL.
@@ -1244,7 +1257,7 @@ Host-side gateway recovery uses the same per-sandbox serialization.
 
 <AgentOnly variant="hermes">
 
-For a current NemoClaw-managed Hermes image on the Docker driver, `shields status` is a recovery and reconciliation command, not only a display command. It first recovers any retained exact runtime provider state mutation, then applies and verifies the declared recursive posture. A result exits with status `0` only after the command verifies that posture. A status check can therefore complete work retained by an interrupted host process.
+For a current NemoClaw-managed Hermes image on the Docker driver, `shields status` is a recovery and reconciliation command, not only a display command. It first recovers any retained exact runtime provider state mutation. For locked posture, it applies and verifies the declared recursive posture. For mutable-default or timed Shields down posture, it verifies the posture without starting another runtime provider state mutation. A result exits with status `0` only after the command verifies that posture. A status check can therefore complete work retained by an interrupted host process.
 
 If provider recovery restores lockdown while the persisted Shields posture still says mutable, status prints `ERROR (runtime-provider recovery restored lockdown)`, exits with status `2`, and tells you to retry the intended Shields transition. If live verification of a mutable default or timed Shields down posture fails, status prints `NOT CONFIGURED (DRIFTED...)` or `DOWN (DRIFTED...)`, exits with status `2`, and directs you to run `$$nemoclaw <name> shields up` to reconcile and verify lockdown. Status does not report `UP`, `DOWN`, or mutable-default with exit status `0` when the provider cannot verify the exact recursive posture.
 
@@ -3018,7 +3031,8 @@ This command stops tunnel services and, for a manifest-resolved non-OpenClaw age
 
 ### `$$nemoclaw status`
 
-Show the global sandbox list and the status of host auxiliary services (for example cloudflared). This command is host-wide. It summarizes registered sandboxes, the default sandbox's live inference route, gateway health, and host services.
+Show the sandbox inventory for the gateway port that `NEMOCLAW_GATEWAY_PORT` selects and the host-scoped status of auxiliary services such as cloudflared.
+It reads the selected port's registry, live inference route, and gateway health; it does not scan registries for other gateway ports.
 
 <AgentOnly variant="openclaw,hermes">
 For gateway-based messaging agents, it also reports messaging overlap warnings within the selected OpenShell gateway's sandbox registry.
@@ -3043,14 +3057,21 @@ When at least one sandbox is registered and the named NemoClaw gateway is unreac
 
 ### `$$nemoclaw inference get`
 
-Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway. Use this command when you want the direct runtime route without the rest of the sandbox status output. It is also available in sandbox-first form as `$$nemoclaw <name> inference get`.
+Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway that `NEMOCLAW_GATEWAY_PORT` selects.
+Use this command when you want the direct runtime route without the rest of the sandbox status output.
+It is also available in sandbox-first form as `$$nemoclaw <name> inference get`.
 
 ```bash
 $$nemoclaw inference get
 $$nemoclaw inference get --json
 ```
 
-The sandbox-first grammar `$$nemoclaw <name> inference get` is also accepted and reads the same gateway-wide route, so it stays symmetric with `$$nemoclaw <name> inference set`.
+For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
+When that registry contains `<name>`, the command resolves the sandbox's recorded gateway and reads that gateway's live route.
+It does not search registries for other gateway ports.
+Lookup failures include timeouts, nonzero exits, no exit status, and output NemoClaw cannot interpret after a command exits successfully.
+The error names the gateway without rendering command output.
+It directs a direct lookup to `$$nemoclaw status` and a sandbox-first lookup to `$$nemoclaw <name> status`.
 
 ```bash
 $$nemoclaw my-assistant inference get
@@ -3617,9 +3638,9 @@ non-interactive, disables Express selection, and sets this value automatically w
 `--local-model-runtime=vllm`. | | `NEMOCLAW_LOCAL_MODEL_RUNTIME` | `vllm` | Selects the fixed vLLM
 local model profile. Requires `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1`; direct onboarding also
 requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer sets this value from
-`--local-model-runtime=vllm`. | | `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model ID |
+`--local-model-runtime=vllm`. | | `NEMOCLAW_VLLM_MODEL` | registry slug, Hugging Face model ID, or registered served model name |
 Selects the model the managed-vLLM install path serves and remains authoritative during DGX Station
-installer setup. Slugs and full model IDs are case-insensitive. Recognized slugs: `qwen3.6-27b`,
+installer setup. Slugs, full model IDs, and registered served model names are case-insensitive. Recognized slugs: `qwen3.6-27b`,
 `qwen3.6-35b-a3b-nvfp4`, `muse-glimmer-30b`, `nemotron-3.5-lightning-30b`, `nemotron-3-nano-4b`,
 `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. The `muse-glimmer-30b`
 and `nemotron-3.5-lightning-30b` profiles are Experimental on DGX Spark and Linux x86_64 with a
@@ -3919,6 +3940,7 @@ The following environment variables tune onboard-time and recovery wall-clock li
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
+| `NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT` | `600` (10 minutes) | Maximum silence between Hugging Face download output during onboard. A positive finite value in seconds overrides the default, up to the Node.js timer limit of about 24.8 days. Blank, invalid, non-positive, sub-millisecond, and oversized values use the default. This is not a total download limit. Increase it only when a working download can produce no output for ten minutes. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise the timeout when the managed-image pull, explicit custom image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). Ordinary onboarding deletes the partially created sandbox when the deadline expires and prints the retry hint. Portable OpenClaw onboarding instead preserves the sandbox when NemoClaw cannot verify its runtime identity. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. Every terminal observation outside the `Error` phase, including one with no reported phase, fails immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
