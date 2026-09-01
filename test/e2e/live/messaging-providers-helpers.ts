@@ -426,12 +426,12 @@ async function inspectDockerJson(
   }
 }
 
-async function inspectOpenShellBridgeAddress(
+async function inspectOpenShellBridge(
   host: HostCliClient,
   kind: FakeDockerApiKind,
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
-): Promise<string> {
+): Promise<{ address: string; networkName: string }> {
   const networkName =
     env.OPENSHELL_DOCKER_NETWORK_NAME ??
     process.env.OPENSHELL_DOCKER_NETWORK_NAME ??
@@ -465,7 +465,7 @@ async function inspectOpenShellBridgeAddress(
   ) {
     throw new Error("OpenShell Docker network must expose exactly one IPv4 bridge gateway");
   }
-  return gateways[0]!;
+  return { address: gateways[0]!, networkName };
 }
 
 export async function runSandboxShell(
@@ -717,12 +717,8 @@ export async function startFakeDockerApi(
     env: NodeJS.ProcessEnv;
   },
 ): Promise<FakeDockerApi> {
-  const openshellBridgeAddress = await inspectOpenShellBridgeAddress(
-    host,
-    options.kind,
-    options.env,
-    options.redactionValues,
-  );
+  const { address: openshellBridgeAddress, networkName: openshellNetwork } =
+    await inspectOpenShellBridge(host, options.kind, options.env, options.redactionValues);
   fs.mkdirSync(path.join(REPO_ROOT, ".tmp"), { recursive: true });
   const dir = fs.mkdtempSync(path.join(REPO_ROOT, ".tmp", `fake-${options.kind}.`));
   const fixtureDir = path.join(dir, "fixture");
@@ -868,11 +864,10 @@ export async function startFakeDockerApi(
     }
   });
 
-  // Docker does not expose a usable `-p` mapping for the credential-bearing API
-  // on this internal network, which is the regression this helper covers. Keep
-  // both it and its TCP forwarder on that network, and publish only the forwarder
-  // on the OpenShell bridge gateway. The forwarder carries rewritten credential
-  // traffic, so it must not retain default-bridge egress.
+  // Docker ignores `-p` mappings when a container starts on an internal network.
+  // Start the credential-free proxy on the OpenShell bridge so its ports can bind
+  // only to that bridge's gateway, then attach it to the private API network.
+  // The credential-bearing API remains attached only to the private network.
   const proxyStart = await runHost(
     host,
     "docker",
@@ -883,7 +878,7 @@ export async function startFakeDockerApi(
       "--name",
       proxyContainer,
       "--network",
-      network,
+      openshellNetwork,
       ...containerPorts.flatMap((port) => ["-p", `${openshellBridgeAddress}::${String(port)}`]),
       "--read-only",
       "--cap-drop",
@@ -910,6 +905,19 @@ export async function startFakeDockerApi(
   );
   expectExitZero(proxyStart, `start fake ${options.kind} API proxy`);
 
+  const connectProxy = await runHost(
+    host,
+    "docker",
+    ["network", "connect", network, proxyContainer],
+    {
+      artifactName: `connect-fake-${options.kind}-api-proxy-internal-network`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  expectExitZero(connectProxy, `connect fake ${options.kind} API proxy to private network`);
+
   const networkInspections = await Promise.all(
     [
       ["api", container],
@@ -927,7 +935,7 @@ export async function startFakeDockerApi(
     })),
   );
   for (const { role, networks } of networkInspections) {
-    const expectedNetworks = [network];
+    const expectedNetworks = role === "api" ? [network] : [openshellNetwork, network];
     if (
       typeof networks !== "object" ||
       networks === null ||

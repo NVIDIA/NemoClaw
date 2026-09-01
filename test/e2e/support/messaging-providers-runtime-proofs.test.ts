@@ -52,6 +52,7 @@ const FAKE_SLACK_APP_TOKEN = "xapp-fake-slack-port-test";
 const FAKE_SLACK_BOT_TOKEN = "xoxb-fake-slack-port-test";
 const STDERR_TAIL_LIMIT = 4_096;
 const OPENSHELL_BRIDGE_ADDRESS = "172.18.0.1";
+const OPENSHELL_NETWORK_NAME = "openshell-docker";
 const OPENSHELL_NETWORK_INSPECT = JSON.stringify([
   {
     Driver: "bridge",
@@ -248,6 +249,8 @@ function fakeDockerHost(
 ): HostCliClient {
   let network = "";
   let proxyContainer = "";
+  let proxyPrimaryNetwork = "";
+  let proxyConnectedToInternal = false;
   const host = {
     command: async (command: string, args: string[]) => {
       calls.push([command, ...args]);
@@ -264,15 +267,22 @@ function fakeDockerHost(
                 case "create":
                   network = args.at(-1) ?? "";
                   return successfulCommand();
+                case "connect":
+                  proxyConnectedToInternal = args[2] === network && args[3] === proxyContainer;
+                  return successfulCommand();
                 default:
                   return successfulCommand();
               }
             case "run":
-              proxyContainer = args.some((argument) =>
+              const startsProxy = args.some((argument) =>
                 argument.startsWith("NEMOCLAW_FAKE_API_UPSTREAM="),
-              )
+              );
+              proxyContainer = startsProxy
                 ? (args[args.indexOf("--name") + 1] ?? "")
                 : proxyContainer;
+              proxyPrimaryNetwork = startsProxy
+                ? (args[args.indexOf("--network") + 1] ?? "")
+                : proxyPrimaryNetwork;
               args
                 .filter((argument) => argument.endsWith(":/tmp/fake"))
                 .forEach((fakeApiMount) => {
@@ -287,7 +297,8 @@ function fakeDockerHost(
                       args.at(-1) === proxyContainer
                         ? {
                             ...(proxyOnDefaultBridge ? { bridge: {} } : {}),
-                            [network]: {},
+                            [proxyPrimaryNetwork]: {},
+                            ...(proxyConnectedToInternal ? { [network]: {} } : {}),
                           }
                         : { [network]: {} },
                     ),
@@ -571,7 +582,10 @@ describe("messaging provider installed-runtime proofs", () => {
           case "prove-fake-slack-api-api-internal-network":
             return successfulShellResult(invocation, JSON.stringify({ [network]: {} }));
           case "prove-fake-slack-api-proxy-internal-network":
-            return successfulShellResult(invocation, JSON.stringify({ [network]: {} }));
+            return successfulShellResult(
+              invocation,
+              JSON.stringify({ [OPENSHELL_NETWORK_NAME]: {}, [network]: {} }),
+            );
           case "prove-fake-slack-api-internal-only":
             return successfulShellResult(invocation);
           case "prove-fake-slack-api-proxy-credential-environment-free":
@@ -674,8 +688,9 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it("accepts an isolated proxy published only on the OpenShell bridge", async () => {
-    const host = fakeDockerHost();
+  it("publishes the proxy from the OpenShell bridge and connects it to the private API", async () => {
+    const calls: string[][] = [];
+    const host = fakeDockerHost(OPENSHELL_BRIDGE_ADDRESS, calls);
     const cleanup: Array<() => Promise<void>> = [];
 
     try {
@@ -691,6 +706,28 @@ describe("messaging provider installed-runtime proofs", () => {
         env: {},
       });
       expect(api.port).toBe("32100");
+      const proxyRun = calls.find(
+        (invocation) =>
+          invocation[0] === "docker" &&
+          invocation[1] === "run" &&
+          invocation.some((argument) => argument.startsWith("NEMOCLAW_FAKE_API_UPSTREAM=")),
+      );
+      expect(proxyRun).toBeDefined();
+      expect(proxyRun?.[proxyRun.indexOf("--network") + 1]).toBe(OPENSHELL_NETWORK_NAME);
+      const privateNetwork = calls
+        .find(
+          (invocation) =>
+            invocation[0] === "docker" && invocation[1] === "network" && invocation[2] === "create",
+        )
+        ?.at(-1);
+      const proxyContainer = proxyRun?.[proxyRun.indexOf("--name") + 1];
+      expect(calls).toContainEqual([
+        "docker",
+        "network",
+        "connect",
+        privateNetwork,
+        proxyContainer,
+      ]);
     } finally {
       await cleanup
         .reverse()
