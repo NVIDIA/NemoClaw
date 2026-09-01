@@ -20,6 +20,7 @@ import { collectDeterministicContext } from "./deterministic-context.mts";
 import { collectGitHubReviewContext } from "./github-context.mts";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
+  ADVISOR_SPECIALISTS,
   buildSpecialistInvestigateTurn,
   parseAdvisorInterest,
   type AdvisorInterest,
@@ -48,11 +49,9 @@ export function documentationSpecialistTools(
 }
 
 export function renderSpecialistSummary(interest: AdvisorInterest, text: string): string {
-  const title = interest
-    .split("-")
-    .map((part) => part[0]!.toUpperCase() + part.slice(1))
-    .join(" / ");
-  return `# PR Review Advisor — ${title} specialist\n\n> Complete specialist review for maintainers and review agents.\n\n${text.trim()}\n`;
+  const specialist = ADVISOR_SPECIALISTS.find((candidate) => candidate.interest === interest);
+  if (!specialist) throw new Error(`Unknown specialist: ${interest}`);
+  return `# PR Review Advisor — ${specialist.label} specialist\n\n> Complete specialist review for maintainers and review agents.\n\n${text.trim()}\n`;
 }
 
 export function writeSpecialistSummary(

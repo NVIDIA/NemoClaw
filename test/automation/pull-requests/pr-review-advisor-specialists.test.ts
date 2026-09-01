@@ -16,6 +16,7 @@ import { writeSpecialistDiff } from "../../../tools/pr-review-advisor/specialist
 import type { RunAdvisorResult, RunReadOnlyAdvisorOptions } from "../../../tools/advisors/session.mts";
 import {
   ADVISOR_INTERESTS,
+  ADVISOR_SPECIALISTS,
   buildSpecialistInvestigateTurn,
   parseAdvisorInterest,
   readAdvisorSpecialists,
@@ -48,14 +49,17 @@ const context: InvestigateTurnContext = {
 
 describe("PR review advisor specialist prompts", () => {
   it("runs the seven Lean specialist areas on every review", () => {
-    expect(ADVISOR_INTERESTS).toEqual([
-      "architecture-standard-work",
-      "customer-value-behavior",
-      "delivery-flow",
-      "documentation-standard-work",
-      "operability-recovery",
-      "security-built-in-quality",
-      "verification-mistake-proofing",
+    expect(ADVISOR_SPECIALISTS.map(({ interest, label }) => ({ interest, label }))).toEqual([
+      { interest: "architecture-standard-work", label: "Architecture and standard work" },
+      { interest: "customer-value-behavior", label: "Customer value and behavior" },
+      { interest: "delivery-flow", label: "Delivery flow" },
+      { interest: "documentation-standard-work", label: "Documentation and standard work" },
+      { interest: "operability-recovery", label: "Operability and recovery" },
+      { interest: "security-built-in-quality", label: "Security and built-in quality" },
+      {
+        interest: "verification-mistake-proofing",
+        label: "Verification and mistake-proofing",
+      },
     ]);
   });
 
@@ -247,7 +251,7 @@ describe("PR review advisor specialist prompts", () => {
 
     const expected = fs.readFileSync(artifact, "utf8");
     expect(path.basename(artifact)).toBe("pr-review-architecture-standard-work-summary.md");
-    expect(expected).toContain("PR Review Advisor — Architecture / Standard / Work specialist");
+    expect(expected).toContain("PR Review Advisor — Architecture and standard work specialist");
     expect(expected).toContain("Complete specialist review for maintainers and review agents.");
     expect(expected).toContain("Concrete reduction.");
   });
