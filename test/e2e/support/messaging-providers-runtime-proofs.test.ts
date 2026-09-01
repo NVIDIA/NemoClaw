@@ -17,6 +17,7 @@ import {
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
+  REPO_ROOT,
   slackCredentialBindingEvidence,
   startFakeDockerApi,
 } from "../live/messaging-providers-helpers.ts";
@@ -30,6 +31,12 @@ const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegra
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
 const FAKE_WECHAT_API = path.resolve(import.meta.dirname, "../lib/fake-wechat-api.mts");
 const SLACK_POLICY_SANDBOX = "e2e-msg-policy-proof";
+const CANONICAL_OPENCLAW_SLACK_POLICY = fs
+  .readFileSync(
+    path.join(REPO_ROOT, "src", "lib", "messaging", "channels", "slack", "policy", "openclaw.yaml"),
+    "utf8",
+  )
+  .replaceAll("{sandboxName}", SLACK_POLICY_SANDBOX);
 const CREDENTIAL_BOUND_SLACK_POLICY = `
 network_policies:
   slack:
@@ -127,6 +134,15 @@ async function runCleanup(actions: CleanupAction[]): Promise<void> {
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("accepts the canonical OpenClaw Slack credential policy", () => {
+    expect(
+      slackCredentialBindingEvidence(CANONICAL_OPENCLAW_SLACK_POLICY, SLACK_POLICY_SANDBOX),
+    ).toEqual({
+      app: true,
+      bot: true,
+    });
+  });
+
   it("accepts Slack bot and app credential bindings and rejects policies without them", () => {
     const legacyPolicy = `
 network_policies:
