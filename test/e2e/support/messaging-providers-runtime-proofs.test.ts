@@ -7,17 +7,18 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { CommandRunner } from "../fixtures/clients/command.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
+import { bindPolicyEndpoints } from "../fixtures/policy-credential-binding.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
 import { redactString } from "../fixtures/redaction.ts";
 import { superviseChild } from "../fixtures/shell/supervisor.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { SyntheticFakeApiPolicyConsumer } from "./fake-api-policy-consumer.ts";
 import {
   applyFakeApiPolicy,
   buildSandboxNodeInvocation,
@@ -321,11 +322,7 @@ describe("messaging provider installed-runtime proofs", () => {
     let observedInvocation: string[] = [];
     let observedArtifact = "";
     const sandbox = {
-      async exec(
-        sandboxName: string,
-        invocation: string[],
-        options: { artifactName?: string },
-      ) {
+      async exec(sandboxName: string, invocation: string[], options: { artifactName?: string }) {
         observedSandbox = sandboxName;
         observedInvocation = invocation;
         observedArtifact = options.artifactName ?? "";
@@ -349,7 +346,11 @@ describe("messaging provider installed-runtime proofs", () => {
   });
 
   it("shares secondary cleanup ownership across phase 6 messaging consumers", async () => {
-    expect(runPhase6SecondaryCleanup).toBe(runSecondaryCleanup);
+    await expect(
+      runSecondaryCleanup(async () => {
+        throw new Error("secondary cleanup failure");
+      }),
+    ).resolves.toBeUndefined();
     await expect(
       runPhase6SecondaryCleanup(async () => {
         throw new Error("secondary cleanup failure");
@@ -357,48 +358,107 @@ describe("messaging provider installed-runtime proofs", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("produces mixed REST and WebSocket policy state through a synthetic consumer", async () => {
-    const consumer = new SyntheticFakeApiPolicyConsumer("/opt/openshell");
-    const host = new HostCliClient(consumer, { openshellPath: "/opt/openshell" });
+  it("produces mixed REST and WebSocket policy state through a minimal consumer", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-api-policy-"));
+    const policyFile = path.join(dir, "policy.yaml");
+    const commands: Array<{ command: string; args: string[] }> = [];
+    const consumer: CommandRunner = {
+      async run(command) {
+        const invocation = [command.command, ...command.args];
+        commands.push({ command: command.command, args: [...command.args] });
+        return successfulShellResult(invocation);
+      },
+    };
 
-    await applyFakeApiPolicy({
-      host,
-      sandboxName: "e2e-slack-policy-owner",
-      policyHost: "host.openshell.internal",
-      endpoints: [
+    try {
+      const host = new HostCliClient(consumer, { openshellPath: "/opt/openshell" });
+      await applyFakeApiPolicy({
+        host,
+        sandboxName: "e2e-slack-policy-owner",
+        policyHost: "host.openshell.internal",
+        endpoints: [
+          {
+            port: "43117",
+            protocol: "rest",
+            providerName: "e2e-slack-policy-owner-slack-bridge",
+          },
+          {
+            port: "43118",
+            protocol: "websocket",
+            providerName: "e2e-slack-policy-owner-slack-app",
+          },
+        ],
+        binaries: ["/usr/local/bin/node", "/usr/bin/node"],
+        artifactName: "apply-slack-owner-policy",
+        env: {},
+        redactionValues: [],
+      });
+
+      const updateArgs = commands.find(({ command }) => command === "/opt/openshell")?.args ?? [];
+      const endpointSpecs = updateArgs.flatMap((value, index) =>
+        value === "--add-endpoint" ? [updateArgs[index + 1] ?? ""] : [],
+      );
+      const syntheticEndpoints = endpointSpecs.map((spec) => {
+        const match =
+          /^([^:]+):([1-9][0-9]*):read-write:(rest|websocket):enforce:(request-body-credential-rewrite|websocket-credential-rewrite)/u.exec(
+            spec,
+          );
+        expect(match, "synthetic policy consumer accepted the endpoint").not.toBeNull();
+        const [, host, rawPort, protocol, rewrite] = match!;
+        return {
+          host,
+          port: Number(rawPort),
+          protocol,
+          ...(rewrite === "request-body-credential-rewrite"
+            ? { request_body_credential_rewrite: true }
+            : { websocket_credential_rewrite: true }),
+        };
+      });
+      fs.writeFileSync(
+        policyFile,
+        YAML.stringify({
+          version: 1,
+          network_policies: { synthetic: { endpoints: syntheticEndpoints } },
+        }),
+      );
+      const bindingArgs = commands.find(({ command }) => command === "bash")?.args ?? [];
+      const rawBindings = bindingArgs.slice(-(syntheticEndpoints.length * 4));
+      bindPolicyEndpoints(
+        policyFile,
+        Array.from({ length: syntheticEndpoints.length }, (_, index) => {
+          const [providerName, host, rawPort, protocol] = rawBindings.slice(
+            index * 4,
+            index * 4 + 4,
+          );
+          return {
+            providerName: providerName!,
+            host: host!,
+            port: Number(rawPort),
+            protocol: protocol!,
+          };
+        }),
+      );
+      const endpoints = YAML.parse(fs.readFileSync(policyFile, "utf8")).network_policies.synthetic
+        .endpoints;
+      expect(endpoints).toEqual([
         {
-          port: "43117",
+          host: "host.openshell.internal",
+          port: 43_117,
           protocol: "rest",
-          providerName: "e2e-slack-policy-owner-slack-bridge",
+          request_body_credential_rewrite: true,
+          credential_binding: { provider: "e2e-slack-policy-owner-slack-bridge" },
         },
         {
-          port: "43118",
+          host: "host.openshell.internal",
+          port: 43_118,
           protocol: "websocket",
-          providerName: "e2e-slack-policy-owner-slack-app",
+          websocket_credential_rewrite: true,
+          credential_binding: { provider: "e2e-slack-policy-owner-slack-app" },
         },
-      ],
-      binaries: ["/usr/local/bin/node", "/usr/bin/node"],
-      artifactName: "apply-slack-owner-policy",
-      env: {},
-      redactionValues: [],
-    });
-
-    expect(consumer.endpoints).toEqual([
-      {
-        host: "host.openshell.internal",
-        port: 43_117,
-        protocol: "rest",
-        request_body_credential_rewrite: true,
-        credential_binding: { provider: "e2e-slack-policy-owner-slack-bridge" },
-      },
-      {
-        host: "host.openshell.internal",
-        port: 43_118,
-        protocol: "websocket",
-        websocket_credential_rewrite: true,
-        credential_binding: { provider: "e2e-slack-policy-owner-slack-app" },
-      },
-    ]);
+      ]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("collects API diagnostics when the fake container does not become ready", async () => {
@@ -645,12 +705,7 @@ describe("messaging provider installed-runtime proofs", () => {
   });
 
   it("rejects a proxy that retains default-bridge egress", async () => {
-    const host = fakeDockerHost(
-      OPENSHELL_BRIDGE_ADDRESS,
-      [],
-      OPENSHELL_NETWORK_INSPECT,
-      true,
-    );
+    const host = fakeDockerHost(OPENSHELL_BRIDGE_ADDRESS, [], OPENSHELL_NETWORK_INSPECT, true);
     const cleanup: Array<() => Promise<void>> = [];
 
     try {
