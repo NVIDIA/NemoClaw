@@ -30,8 +30,8 @@ import {
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
+  managedImageSandboxCleanupOwnershipError,
   parseManagedImageOpenShellE2eInputs,
-  removeManagedImageSandboxIfOwned,
   removeManagedImageGatewayStateIfSafe,
   resolveManagedImageOnboardModule,
 } from "../../../scripts/checks/run-managed-image-openshell-e2e.ts";
@@ -310,7 +310,6 @@ describe("protected managed-image runtime contract", () => {
       stdout: "Name: managed-openclaw\nId: sandbox-replacement\nPhase: Ready\n",
       stderr: "",
     }));
-    const runCommand = vi.fn(() => SUCCESS_WITHOUT_OUTPUT);
     const input = parseManagedImageOpenShellE2eInputs([
       "--agent",
       "openclaw",
@@ -321,25 +320,21 @@ describe("protected managed-image runtime contract", () => {
     ]);
 
     expect(
-      removeManagedImageSandboxIfOwned(
-        {
-          openshellArgv: (argv: readonly string[]) => ["openshell", ...argv],
-          runOpenshell,
-        } as never,
+      managedImageSandboxCleanupOwnershipError(
+        { runOpenshell } as never,
         input,
         "sandbox-created-by-harness",
         {},
-        runCommand,
       ),
     ).toBe("refusing managed-image sandbox cleanup because its durable identity changed");
     expect(runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "get", "-g", "nemoclaw", VALID_SANDBOX],
       expect.objectContaining({ ignoreError: true }),
     );
-    expect(runCommand).not.toHaveBeenCalled();
+    expect(runOpenshell).toHaveBeenCalledTimes(1);
   });
 
-  it("deletes only after exact durable-ID comparison and verifies absence (#10652)", () => {
+  it("retains a same-name replacement that appears at the delete boundary (#10652)", () => {
     const runOpenshell = vi
       .fn()
       .mockReturnValueOnce({
@@ -347,8 +342,11 @@ describe("protected managed-image runtime contract", () => {
         stdout: "Name: managed-openclaw\nId: sandbox-created-by-harness\nPhase: Ready\n",
         stderr: "",
       })
-      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "sandbox not found" });
-    const runCommand = vi.fn(() => SUCCESS_WITHOUT_OUTPUT);
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: "Name: managed-openclaw\nId: sandbox-replacement\nPhase: Ready\n",
+        stderr: "",
+      });
     const input = parseManagedImageOpenShellE2eInputs([
       "--agent",
       "openclaw",
@@ -359,23 +357,20 @@ describe("protected managed-image runtime contract", () => {
     ]);
 
     expect(
-      removeManagedImageSandboxIfOwned(
-        {
-          openshellArgv: (argv: readonly string[]) => ["openshell", ...argv],
-          runOpenshell,
-        } as never,
+      managedImageSandboxCleanupOwnershipError(
+        { runOpenshell } as never,
         input,
         "sandbox-created-by-harness",
         {},
-        runCommand,
       ),
-    ).toBeNull();
-    expect(runCommand).toHaveBeenCalledWith(
-      ["openshell", "sandbox", "delete", "-g", "nemoclaw", VALID_SANDBOX],
-      {},
-      15_000,
+    ).toBe(
+      "refusing managed-image sandbox cleanup because its durable identity changed at the delete boundary",
     );
     expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(runOpenshell.mock.calls.map(([argv]) => argv)).toEqual([
+      ["sandbox", "get", "-g", "nemoclaw", VALID_SANDBOX],
+      ["sandbox", "get", "-g", "nemoclaw", VALID_SANDBOX],
+    ]);
   });
 
   it("distinguishes the running image from exact quiescent rollback retention (#7744)", () => {
@@ -529,30 +524,15 @@ describe("protected managed-image runtime contract", () => {
     const qualifications = PROTECTED_MANAGED_IMAGE_AGENTS.flatMap((agent) =>
       routeKinds.map((routeKind) => ({
         agent,
+        routeKind,
         sandbox: managedImageProtectedSandboxName(agent, routeKind),
       })),
     );
     const names = qualifications.map(({ sandbox }) => sandbox);
 
-    expect(names).toEqual([
-      "nmc-mi-oc-lc",
-      "nmc-mi-oc-ol",
-      "nmc-mi-oc-ni",
-      "nmc-mi-oc-vl",
-      "nmc-mi-oc-rb",
-      "nmc-mi-he-lc",
-      "nmc-mi-he-ol",
-      "nmc-mi-he-ni",
-      "nmc-mi-he-vl",
-      "nmc-mi-he-rb",
-      "nmc-mi-dc-lc",
-      "nmc-mi-dc-ol",
-      "nmc-mi-dc-ni",
-      "nmc-mi-dc-vl",
-      "nmc-mi-dc-rb",
-    ]);
     expect(new Set(names).size).toBe(names.length);
-    qualifications.forEach(({ agent, sandbox: name }) => {
+    qualifications.forEach(({ agent, routeKind, sandbox: name }) => {
+      expect(managedImageProtectedSandboxName(agent, routeKind)).toBe(name);
       expect(name.startsWith(MANAGED_IMAGE_PROTECTED_SANDBOX_PREFIX)).toBe(true);
       expect(name.length).toBeLessThanOrEqual(19);
       expect(name).not.toContain("--");

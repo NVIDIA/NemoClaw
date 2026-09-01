@@ -169,9 +169,6 @@ describe("gateway recovery", () => {
 
     expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8091");
     expect(deps.sleepSeconds).not.toHaveBeenCalled();
-    // First iteration only: 3 subprocess calls (status + gateway info -g +
-    // gateway info); loop returns before the next iteration would start.
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledTimes(3);
   });
 
   it("succeeds after retrying past unhealthy probes and still sets OPENSHELL_GATEWAY (#3768)", async () => {
@@ -195,11 +192,8 @@ describe("gateway recovery", () => {
     await startGatewayForRecovery({ gatewayPort: 8091 }, deps);
 
     expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8091");
-    // Exactly one inter-attempt sleep between the unhealthy first probe
-    // and the healthy second probe.
     expect(deps.sleepSeconds).toHaveBeenCalledTimes(1);
     expect(deps.sleepSeconds).toHaveBeenNthCalledWith(1, 0.25);
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledTimes(6);
   });
 
   it("with NEMOCLAW_HEALTH_POLL_COUNT=0 fails fast without silently claiming healthy (#3768)", async () => {

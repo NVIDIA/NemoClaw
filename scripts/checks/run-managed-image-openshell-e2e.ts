@@ -942,12 +942,11 @@ function assertManagedImageSandboxIdentity(
   }
 }
 
-export function removeManagedImageSandboxIfOwned(
-  onboard: Pick<OnboardModule, "openshellArgv" | "runOpenshell">,
+export function managedImageSandboxCleanupOwnershipError(
+  onboard: Pick<OnboardModule, "runOpenshell">,
   input: Pick<Inputs, "sandbox">,
   expectedSandboxId: string | null,
   env: NodeJS.ProcessEnv,
-  runCommand: ManagedImageCommandRunner = commandResult,
 ): string | null {
   const observed = queryManagedImageSandboxIdentity(onboard, input, env);
   if (!expectedSandboxId) {
@@ -961,19 +960,11 @@ export function removeManagedImageSandboxIfOwned(
   if (observed.sandboxId !== expectedSandboxId) {
     return "refusing managed-image sandbox cleanup because its durable identity changed";
   }
-
-  const remove = runCommand(
-    onboard.openshellArgv(["sandbox", "delete", "-g", GATEWAY_NAME, input.sandbox]),
-    env,
-    15_000,
-  );
-  if (remove.status !== 0) {
-    return `OpenShell sandbox cleanup failed with status ${String(remove.status)}`;
+  const deleteBoundary = queryManagedImageSandboxIdentity(onboard, input, env);
+  if (deleteBoundary.sandboxId !== expectedSandboxId) {
+    return "refusing managed-image sandbox cleanup because its durable identity changed at the delete boundary";
   }
-  const verification = queryManagedImageSandboxIdentity(onboard, input, env);
-  return verification.result.status === 0 || verification.sandboxId !== null
-    ? "OpenShell sandbox cleanup did not prove exact absence"
-    : null;
+  return null;
 }
 
 async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = never>(
@@ -1288,7 +1279,12 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     hasPrimaryError = true;
   } finally {
     if (onboard) {
-      const sandboxCleanupError = removeManagedImageSandboxIfOwned(
+      // OpenShell 0.0.106 deletes sandboxes only by mutable name. Recheck the
+      // captured durable identity at the teardown boundary, but do not turn
+      // that observation into name-based deletion authority. The owner-level
+      // gateway, exact container, network, and state teardown below removes
+      // only harness resources and reports any same-name replacement.
+      const sandboxCleanupError = managedImageSandboxCleanupOwnershipError(
         onboard,
         input,
         ownedSandboxId,
