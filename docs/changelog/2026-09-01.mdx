@@ -14,7 +14,7 @@ It also broadens Deferred N1x detection and gives N1x managed vLLM a dedicated s
   The Blueprint Runner can also check a configured external OpenShell gateway through the pinned SDK without credentials or mutation.
   Related changes: [PR #10703](https://github.com/NVIDIA/NemoClaw/pull/10703) and [PR #10618](https://github.com/NVIDIA/NemoClaw/pull/10618).
 - OpenClaw sandbox destruction now detects Shields-locked Mcporter configuration before mutation and provides recovery guidance.
-  `destroy --force` can continue only for retained OpenClaw Mcporter entries, while Hermes and ordinary MCP mutations remain fail closed.
+  `destroy --force` can continue only for retained OpenClaw Mcporter entries, while Hermes and ordinary MCP mutations remain fail-closed.
   Related change: [PR #10483](https://github.com/NVIDIA/NemoClaw/pull/10483).
 - Rebuild now stops before deleting the original sandbox when any declared state directory or file cannot be preserved, including with `--force`.
   When cleanup fails, NemoClaw retains the incomplete snapshot outside snapshot list and restore selection. Do not restore, copy, share, or edit it. Repair the original state. After you verify that the original sandbox or a complete snapshot contains every required state item, remove the retained directory at the reported path. Confirm that path is absent, then rerun the operation. A failed nested onboarding result no longer proceeds to restore or report success.
