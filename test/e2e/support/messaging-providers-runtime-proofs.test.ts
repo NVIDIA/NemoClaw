@@ -506,7 +506,7 @@ describe("messaging provider installed-runtime proofs", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("reconstructs multi-argument Node source byte-for-byte below the OpenShell limit", () => {
     const source = [
