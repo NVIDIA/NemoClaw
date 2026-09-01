@@ -615,6 +615,27 @@ describe("stopAll", () => {
     expect(cleanup).toHaveBeenCalledOnce();
     expect(cleanup.mock.invocationCallOrder[0]).toBeLessThan(stoppedCallOrder ?? 0);
   });
+
+  it("returns and reports Ollama cleanup failure instead of suppressing it", () => {
+    const failure = {
+      ok: false as const,
+      outcome: "discovery-failed" as const,
+      endpoint: "http://host.docker.internal:11434",
+      selectedModels: [],
+      discoveries: [],
+      requests: [],
+      message: "could not connect",
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const result = stopAll({ pidDir, unloadOllamaModels: () => failure });
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    logSpy.mockRestore();
+
+    expect(result).toBe(failure);
+    expect(output).toContain("Ollama model cleanup failed at http://host.docker.internal:11434");
+    expect(output).toContain("saved local route was retained");
+  });
 });
 
 // #6212: after cloudflared yields a public URL, startAll must register that

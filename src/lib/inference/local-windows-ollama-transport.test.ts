@@ -1,25 +1,47 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   applyOllamaRuntimeContextWindow,
   CONTAINER_REACHABILITY_IMAGE,
+  getLocalProviderHealthCheck,
+  getOllamaHostForCleanup,
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupRequestCommand,
   OLLAMA_HOST_DOCKER_INTERNAL,
+  loadPersistedOllamaHost,
+  persistResolvedOllamaHost,
   probeOllamaModelCapabilities,
   resetOllamaHostCache,
   resetOllamaRuntimeContextWindowAutoState,
   setResolvedOllamaHost,
+  validateLocalProvider,
 } from "./local";
 
 describe("Windows-host Ollama transport", () => {
   afterEach(() => {
     resetOllamaHostCache();
     resetOllamaRuntimeContextWindowAutoState();
+  });
+
+  it("restores the accepted route for cleanup in a fresh process", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-receipt-"));
+    try {
+      setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+      persistResolvedOllamaHost(undefined, stateRoot);
+      resetOllamaHostCache();
+
+      expect(loadPersistedOllamaHost(stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+      expect(getOllamaHostForCleanup(stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
   });
 
   it("reads the model inventory through Docker Desktop (#10553)", () => {
@@ -80,17 +102,61 @@ describe("Windows-host Ollama transport", () => {
     ]);
   });
 
-  it("checks the Hermes context window and model metadata through Docker Desktop (#10553)", () => {
+  it("validates health and container reachability through Docker Desktop (#10553)", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
-    const responses: Record<string, string> = {
-      "http://host.docker.internal:11434/api/ps": JSON.stringify({
-        models: [{ name: "qwen3.5:9b", context_length: 65_536, processor: "100% GPU" }],
-      }),
-      "http://host.docker.internal:11434/api/show": JSON.stringify({ capabilities: ["tools"] }),
-    };
-    const capture = vi.fn((command: readonly string[]) => {
-      return responses[String(command.at(-1))] ?? "";
-    });
+    const capture = vi.fn((_command: readonly string[]) => JSON.stringify({ models: [] }));
+
+    expect(getLocalProviderHealthCheck("ollama-local")).toEqual([
+      "docker",
+      "run",
+      "--rm",
+      CONTAINER_REACHABILITY_IMAGE,
+      "-sf",
+      "http://host.docker.internal:11434/api/tags",
+    ]);
+    expect(
+      validateLocalProvider(
+        "ollama-local",
+        capture,
+        () => {},
+        () => ({
+          env: {},
+          isolatedCredentialConfig: false,
+          cleanup: () => ({ ok: true }),
+        }),
+      ),
+    ).toEqual({ ok: true });
+
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(capture.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining([
+        "docker",
+        "run",
+        "--rm",
+        CONTAINER_REACHABILITY_IMAGE,
+        "http://host.docker.internal:11434/api/tags",
+      ]),
+    );
+    expect(capture.mock.calls[1]?.[0]).toEqual(
+      expect.arrayContaining([
+        "docker",
+        "run",
+        "--rm",
+        "--add-host",
+        "host.openshell.internal:host-gateway",
+      ]),
+    );
+  });
+
+  it("checks the Hermes context window through Docker Desktop (#10553)", () => {
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const capture = vi.fn((command: readonly string[]) =>
+      String(command.at(-1)).endsWith("/api/ps")
+        ? JSON.stringify({
+            models: [{ name: "qwen3.5:9b", context_length: 65_536, processor: "100% GPU" }],
+          })
+        : "",
+    );
     const env: NodeJS.ProcessEnv = {};
 
     expect(
@@ -102,16 +168,26 @@ describe("Windows-host Ollama transport", () => {
       }),
     ).toEqual({ ok: true });
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining(["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE]),
+    );
+  });
+
+  it("checks model capability metadata through Docker Desktop (#10553)", () => {
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const capture = vi.fn((_command: readonly string[]) =>
+      JSON.stringify({ capabilities: ["tools"] }),
+    );
+
     expect(probeOllamaModelCapabilities("qwen3.5:9b", capture)).toMatchObject({
       source: "api",
       supportsTools: true,
     });
-    expect(capture).toHaveBeenCalledTimes(2);
-    capture.mock.calls.forEach(([command]) => {
-      expect(command).toEqual(
-        expect.arrayContaining(["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE]),
-      );
-    });
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining(["docker", "run", "--rm", CONTAINER_REACHABILITY_IMAGE]),
+    );
   });
 
   it("keeps the Hermes context-window check fail-closed on an invalid Docker response (#10553)", () => {

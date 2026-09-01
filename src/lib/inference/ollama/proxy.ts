@@ -31,6 +31,7 @@ const { ollamaModelRefsMatch }: typeof import("./model-discovery") = require("./
 const {
   getBootstrapOllamaModelOptions,
   getOllamaApiCommand,
+  getOllamaHostForCleanup,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
   getResolvedOllamaHost,
@@ -1362,6 +1363,7 @@ export type OllamaUnloadResult = {
 
 type OllamaUnloadOptions = {
   readonly getResolvedOllamaHost?: typeof getResolvedOllamaHost;
+  readonly ollamaHostStateRoot?: string;
   readonly maxAttempts?: number;
   readonly sleep?: (milliseconds: number) => void;
   readonly spawnSync?: typeof spawnSync;
@@ -1481,7 +1483,9 @@ function unloadOllamaModels(
   onlyModels?: readonly string[],
   options: OllamaUnloadOptions = {},
 ): OllamaUnloadResult {
-  const releaseHost = (options.getResolvedOllamaHost ?? getResolvedOllamaHost)();
+  const releaseHost = options.getResolvedOllamaHost
+    ? options.getResolvedOllamaHost()
+    : getOllamaHostForCleanup(options.ollamaHostStateRoot);
   const releaseEndpoint = buildLocalOllamaEndpoint(() => releaseHost);
   const spawnSyncImpl = options.spawnSync ?? spawnSync;
   const sleepImpl = options.sleep ?? defaultReleaseSleep;

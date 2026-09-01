@@ -30,7 +30,11 @@ import { containerCanReachHostLoopback, isWsl, type WslDetectionOptions } from "
 import { type CaptureResult, runCapture, runCaptureEx, shellQuote } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
 
-import { resolveSharedLocalAdapterStateRoot } from "./local-adapter-lifecycle";
+import {
+  readLocalAdapterJsonFile,
+  resolveSharedLocalAdapterStateRoot,
+  writeLocalAdapterJsonFile,
+} from "./local-adapter-lifecycle";
 import { detectNvidiaPlatform } from "./nim";
 import {
   anyRegistryModelFits,
@@ -147,6 +151,22 @@ export function getWindowsHostOllamaDockerReachabilityArgs(): string[] {
 }
 
 let _resolvedOllamaHost: string | null = null;
+const OLLAMA_HOST_RECEIPT_NAME = "ollama-host.json";
+
+type OllamaHostReceipt = {
+  readonly schemaVersion: 1;
+  readonly host: typeof OLLAMA_LOCALHOST | typeof OLLAMA_HOST_DOCKER_INTERNAL;
+};
+
+function isSupportedOllamaHost(
+  host: unknown,
+): host is typeof OLLAMA_LOCALHOST | typeof OLLAMA_HOST_DOCKER_INTERNAL {
+  return host === OLLAMA_LOCALHOST || host === OLLAMA_HOST_DOCKER_INTERNAL;
+}
+
+function ollamaHostReceiptPath(stateRoot: string): string {
+  return nodePath.join(stateRoot, OLLAMA_HOST_RECEIPT_NAME);
+}
 
 function ollamaCandidateHosts(wslDetection: WslDetectionOptions = {}): string[] {
   return isWsl(wslDetection) ? [OLLAMA_LOCALHOST, OLLAMA_HOST_DOCKER_INTERNAL] : [OLLAMA_LOCALHOST];
@@ -193,6 +213,35 @@ export function findReachableOllamaHost(
 // Used by URL-builder helpers that need a string and don't want to re-probe.
 export function getResolvedOllamaHost(): string {
   return _resolvedOllamaHost ?? OLLAMA_LOCALHOST;
+}
+
+/** Persist the accepted local Ollama route for later CLI processes. */
+export function persistResolvedOllamaHost(
+  host: string = getResolvedOllamaHost(),
+  stateRoot: string = resolveSharedLocalAdapterStateRoot(),
+): void {
+  if (!isSupportedOllamaHost(host)) {
+    throw new Error(`Refusing to persist unexpected Ollama host: ${host}`);
+  }
+  writeLocalAdapterJsonFile(ollamaHostReceiptPath(stateRoot), {
+    schemaVersion: 1,
+    host,
+  } satisfies OllamaHostReceipt);
+}
+
+/** Read only the two fixed local Ollama routes NemoClaw can establish. */
+export function loadPersistedOllamaHost(
+  stateRoot: string = resolveSharedLocalAdapterStateRoot(),
+): typeof OLLAMA_LOCALHOST | typeof OLLAMA_HOST_DOCKER_INTERNAL | null {
+  const receipt = readLocalAdapterJsonFile(ollamaHostReceiptPath(stateRoot));
+  return receipt?.schemaVersion === 1 && isSupportedOllamaHost(receipt.host) ? receipt.host : null;
+}
+
+/** Resolve cleanup transport after process-local onboarding state is gone. */
+export function getOllamaHostForCleanup(
+  stateRoot: string = resolveSharedLocalAdapterStateRoot(),
+): string {
+  return _resolvedOllamaHost ?? loadPersistedOllamaHost(stateRoot) ?? OLLAMA_LOCALHOST;
 }
 
 /** Keep Windows-host Ollama requests in Docker Desktop's verified network context. */
@@ -790,7 +839,9 @@ export function getLocalProviderHealthCheck(provider: string): string[] | null {
       endpoint,
     ];
   }
-  return endpoint ? ["curl", ...buildValidatedCurlCommandArgs(["-sf", endpoint])] : null;
+  if (!endpoint) return null;
+  const curlArgs = buildValidatedCurlCommandArgs(["-sf", endpoint]);
+  return provider === "ollama-local" ? getOllamaApiCommand(curlArgs) : ["curl", ...curlArgs];
 }
 
 /**
@@ -1172,9 +1223,8 @@ export function probeOllamaEndpointInventory(
 ): string[] | null {
   const capture = runCaptureImpl ?? runCapture;
   const body = capture(
-    [
-      "curl",
-      ...buildValidatedCurlCommandArgs([
+    getOllamaApiCommand(
+      buildValidatedCurlCommandArgs([
         "-sf",
         "--connect-timeout",
         "3",
@@ -1182,7 +1232,8 @@ export function probeOllamaEndpointInventory(
         "5",
         `http://${host}:${OLLAMA_PORT}/api/tags`,
       ]),
-    ],
+      host,
+    ),
     { ignoreError: true },
   );
   return parseOllamaModelInventory(body);

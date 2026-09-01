@@ -69,6 +69,25 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     expect(harness.unloadCalls).toBe(0);
   });
 
+  it("does not suppress a failed Windows-host unload from stopAll during destroy", () => {
+    const harness = buildDeps({ provider: "ollama-local" });
+    vi.mocked(harness.deps.stopAll).mockReturnValue({
+      ok: false,
+      outcome: "discovery-failed",
+      endpoint: "http://host.docker.internal:11434",
+      selectedModels: [],
+      discoveries: [],
+      requests: [],
+      message: "could not connect",
+    });
+
+    expect(() =>
+      cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps),
+    ).toThrow(/host\.docker\.internal:11434.*retry destroy/);
+
+    expect(harness.deps.rmSync).not.toHaveBeenCalled();
+  });
+
   it("calls unloadOllamaModels() exactly once for an Ollama sandbox when stopHostServices=false", () => {
     const harness = buildDeps({ provider: "ollama-local" });
 

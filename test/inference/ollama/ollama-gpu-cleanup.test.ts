@@ -2,8 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncReturns } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import {
+  OLLAMA_HOST_DOCKER_INTERNAL,
+  persistResolvedOllamaHost,
+  resetOllamaHostCache,
+} from "../../../src/lib/inference/local.js";
 import { unloadOllamaModels as unloadOllamaModelsImpl } from "../../../src/lib/inference/ollama/proxy.js";
 
 type SpawnCall = { command: string; args: readonly string[] };
@@ -80,6 +88,41 @@ function unloadOf(model: string) {
 }
 
 describe("Ollama GPU cleanup", () => {
+  it("restores the persisted Windows-host transport after the process cache is cleared", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-cleanup-route-"));
+    const calls: SpawnCall[] = [];
+    const respond = respondWithLoadedModels("llama3.2:1b");
+    const spawnSync = ((command: string, args: readonly string[]) => {
+      const call = { command, args };
+      calls.push(call);
+      return respond(call);
+    }) as SpawnSync;
+
+    try {
+      persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
+      resetOllamaHostCache();
+      const result = unloadOllamaModelsImpl(["llama3.2:1b"], {
+        ollamaHostStateRoot: stateRoot,
+        sleep: () => {},
+        spawnSync,
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        outcome: "released",
+        endpoint: "http://host.docker.internal:11434",
+      });
+      expect(calls).toHaveLength(3);
+      calls.forEach(({ command, args }) => {
+        expect(command).toBe("docker");
+        expect(args).toEqual(expect.arrayContaining(["run", "--rm", "curlimages/curl:8.10.1"]));
+      });
+    } finally {
+      resetOllamaHostCache();
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
   it("uses the resolved local Ollama host for discovery, release, and verification (#10074)", async () => {
     await withMockedSpawnSync(
       respondWithLoadedModels("llama3.2:1b"),
@@ -93,17 +136,13 @@ describe("Ollama GPU cleanup", () => {
         });
         const dockerCalls = calls.filter(({ command }) => command === "docker");
         expect(dockerCalls).toHaveLength(3);
-        expect(
-          dockerCalls.map(({ args }) => args.at(-1)),
-        ).toEqual([
+        expect(dockerCalls.map(({ args }) => args.at(-1))).toEqual([
           "http://host.docker.internal:11434/api/ps",
           "http://host.docker.internal:11434/api/generate",
           "http://host.docker.internal:11434/api/ps",
         ]);
         dockerCalls.forEach(({ args }) => {
-          expect(args).toEqual(
-            expect.arrayContaining(["run", "--rm", "curlimages/curl:8.10.1"]),
-          );
+          expect(args).toEqual(expect.arrayContaining(["run", "--rm", "curlimages/curl:8.10.1"]));
         });
       },
       "host.docker.internal",

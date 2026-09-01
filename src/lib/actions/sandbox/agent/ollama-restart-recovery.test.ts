@@ -63,9 +63,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     expect(getCommandUrl(runCaptureImpl.mock.calls[0][0])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/ps`,
     );
+    expect(runCaptureImpl.mock.calls[0][0][0]).toBe("docker");
     expect(getCommandUrl(runCaptureExImpl.mock.calls[0][0])).toBe(
       `http://host.docker.internal:${OLLAMA_PORT}/api/generate`,
     );
+    expect(runCaptureExImpl.mock.calls[0][0][0]).toBe("docker");
     expect(getCommandBody(runCaptureExImpl.mock.calls[0][0])).toMatchObject({
       model: "qwen3.6:35b",
       stream: false,
@@ -89,9 +91,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
     expect(getCommandUrl(runCaptureImpl.mock.calls[0][0])).toBe(
       `http://127.0.0.1:${OLLAMA_PORT}/api/ps`,
     );
+    expect(runCaptureImpl.mock.calls[0][0][0]).toBe("curl");
     expect(getCommandUrl(runCaptureExImpl.mock.calls[0][0])).toBe(
       `http://127.0.0.1:${OLLAMA_PORT}/api/generate`,
     );
+    expect(runCaptureExImpl.mock.calls[0][0][0]).toBe("curl");
   });
 
   it("falls back to an allowlisted host instead of probing an arbitrary registry URL", () => {
@@ -228,7 +232,7 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       endpoint: `http://host.docker.internal:${OLLAMA_PORT}`,
       inventoryLabel: "llama3.2:1b",
     });
-    expect(probeModelInventory).toHaveBeenCalledWith("host.docker.internal", undefined);
+    expect(probeModelInventory).toHaveBeenCalledWith("host.docker.internal", expect.any(Function));
   });
 
   it("keeps the warm failure when the daemon does hold the model (#9455)", () => {

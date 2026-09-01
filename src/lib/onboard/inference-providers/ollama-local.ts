@@ -78,6 +78,16 @@ export async function setupOllamaLocalInference(
     error(`  ${sandboxModel.message}`);
     return exitProcess(1);
   }
+  try {
+    localInference.persistResolvedOllamaHost?.();
+  } catch (persistError) {
+    error(
+      `  Could not record the selected local Ollama route for later stop/destroy cleanup: ${
+        persistError instanceof Error ? persistError.message : String(persistError)
+      }`,
+    );
+    return exitProcess(1);
+  }
   const baseUrl = getLocalProviderBaseUrl(provider);
   let ollamaCredential = "ollama";
   if (frontOllamaWithProxy) {

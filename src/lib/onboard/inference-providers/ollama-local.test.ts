@@ -99,11 +99,19 @@ describe("Ollama local provider sandbox-facing model gate", () => {
 
   it("records the route when the sandbox endpoint serves the model", async () => {
     const upsertProvider = vi.fn(() => ({ ok: true }));
+    const persistResolvedOllamaHost = vi.fn();
 
     await expect(
       setupOllamaLocalInference(
         { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
-        deps({ upsertProvider }),
+        deps({
+          upsertProvider,
+          localInference: {
+            validateOllamaModelWithToolsOverride: () => ({ ok: true }),
+            validateSandboxFacingOllamaModel: () => ({ ok: true }),
+            persistResolvedOllamaHost,
+          },
+        }),
       ),
     ).resolves.toEqual({ done: false });
 
@@ -114,5 +122,31 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       "http://host.openshell.internal:11434/v1",
       { [CREDENTIAL_ENV]: "ollama" },
     );
+    expect(persistResolvedOllamaHost).toHaveBeenCalledOnce();
+  });
+
+  it("fails before recording the provider when the cleanup route cannot be persisted", async () => {
+    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const error = vi.fn();
+
+    await expect(
+      setupOllamaLocalInference(
+        { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
+        deps({
+          upsertProvider,
+          error,
+          localInference: {
+            validateOllamaModelWithToolsOverride: () => ({ ok: true }),
+            validateSandboxFacingOllamaModel: () => ({ ok: true }),
+            persistResolvedOllamaHost: () => {
+              throw new Error("state path is unsafe");
+            },
+          },
+        }),
+      ),
+    ).rejects.toThrow("exit 1");
+
+    expect(upsertProvider).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("state path is unsafe"));
   });
 });
