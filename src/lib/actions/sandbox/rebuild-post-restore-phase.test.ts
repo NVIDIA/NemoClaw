@@ -122,7 +122,6 @@ describe("rebuild post-restore phase", () => {
       backupManifest: null,
       mcpEntries: [],
       restoreSucceeded: true,
-      backupWasForceSkipped: false,
       failedPresets: [],
       finalBuiltinPresets: [],
       failedPresetRemovals: [],
