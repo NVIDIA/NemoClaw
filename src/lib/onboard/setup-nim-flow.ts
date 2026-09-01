@@ -642,6 +642,23 @@ function requestedManagedVllmModel(
   return requested?.servedModelId ?? requested?.id ?? null;
 }
 
+/** Preserve explicit route intent while converting a known catalog alias to its served name. */
+function requestedManagedVllmRouteModel(input: {
+  requestedModel: string | null;
+  selectVllmModelFromEnv: SetupNimFlowDeps["selectVllmModelFromEnv"];
+}): string | null {
+  if (!input.requestedModel) return requestedManagedVllmModel(input.selectVllmModelFromEnv);
+  if (!input.selectVllmModelFromEnv) return input.requestedModel;
+  try {
+    const catalogModel = input.selectVllmModelFromEnv({
+      NEMOCLAW_VLLM_MODEL: input.requestedModel,
+    });
+    return catalogModel?.servedModelId ?? catalogModel?.id ?? input.requestedModel;
+  } catch {
+    return input.requestedModel;
+  }
+}
+
 function resolveInitialVllmSelectionModel(input: {
   preparedState: SetupNimSelectionState | null;
   requestedProvider: string | null;
@@ -651,10 +668,9 @@ function resolveInitialVllmSelectionModel(input: {
 }): SetupNimSelectionState["model"] {
   return (
     input.preparedState?.model ??
-    input.requestedModel ??
     (input.preparedState === null && input.requestedProvider === "install-vllm"
-      ? requestedManagedVllmModel(input.selectVllmModelFromEnv)
-      : null) ??
+      ? requestedManagedVllmRouteModel(input)
+      : input.requestedModel) ??
     input.recoveredModel
   );
 }
