@@ -417,6 +417,7 @@ export async function issuePairingRequest(options: {
       : [PAIRING_USER.discord, DISCORD_DM_CHANNEL];
   return sandboxShWithArgs(options.sandbox, options.sandboxName, script, args, {
     artifactName: `${options.channel}-issue-pairing-request`,
+    persistArtifacts: false,
     redactionValues: options.redactions,
     timeoutMs: 120_000,
   });
@@ -531,7 +532,12 @@ export async function runDiscordGatewayProof(options: {
 export async function writePairingArtifacts(
   artifacts: ArtifactSink,
   channel: PairingChannel,
-  data: Record<string, unknown>,
+  data: { code: string; senderId: string; replyText?: string },
 ): Promise<void> {
-  await artifacts.writeJson(`${channel}-pairing-result.json`, data);
+  artifacts.addRedactionValues([data.code]);
+  await artifacts.writeJson(`${channel}-pairing-result.json`, {
+    channel,
+    senderId: data.senderId,
+    codeIssued: data.code.length > 0,
+  });
 }

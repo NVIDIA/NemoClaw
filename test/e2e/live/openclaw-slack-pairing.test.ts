@@ -160,7 +160,7 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
   await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "slack", redactions);
 
   progress.phase("route Slack API and websocket traffic through managed policies");
-  const fakeSlackRest = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
+  const fakeSlack = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
     kind: "slack",
     imageScript: "fake-slack-api.cjs",
     containerPrefix: "nemoclaw-fake-slack-pairing",
@@ -174,24 +174,18 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     env,
     redactionValues: redactions,
   });
-  const fakeSlackWebSocket = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
-    kind: "slack",
-    imageScript: "fake-slack-api.cjs",
-    containerPrefix: "nemoclaw-fake-slack-pairing",
-    portEnv: "FAKE_SLACK_API_PORT",
-    captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
-    expectedEnv: {
-      FAKE_SLACK_API_EXPECTED_BOT_TOKEN: SLACK_BOT_TOKEN,
-      FAKE_SLACK_API_EXPECTED_APP_TOKEN: SLACK_APP_TOKEN,
-      FAKE_SLACK_API_SOCKET_USER_ID: PAIRING_USER.slack,
-    },
-    env,
-    redactionValues: redactions,
-  });
+  expect(
+    fakeSlack.alternatePort,
+    "fake Slack API must publish an independent websocket port",
+  ).toMatch(/^[1-9][0-9]*$/u);
+  const fakeSlackWebSocket = {
+    ...fakeSlack,
+    port: fakeSlack.alternatePort!,
+  };
   await applyCredentialBoundFakePolicy({
     host,
     sandboxName: SANDBOX_NAME,
-    api: fakeSlackRest,
+    api: fakeSlack,
     protocol: "rest",
     rewrite: "request-body-credential-rewrite",
     providerName: `${SANDBOX_NAME}-slack-bridge`,
@@ -217,17 +211,16 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     sandboxName: SANDBOX_NAME,
     channel: "slack",
     redactions,
-    fakeSlackPort: fakeSlackRest.port,
+    fakeSlackPort: fakeSlack.port,
     fakeSlackWebSocketPort: fakeSlackWebSocket.port,
   });
   expectExitZero(issue, "Slack pairing request creation");
   const code = extractPairingCode(resultText(issue), "PAIRING_E2E_RESULT");
-  assertSlackCapture(
-    [fakeSlackRest.captureFile, fakeSlackWebSocket.captureFile],
+  await writePairingArtifacts(artifacts, "slack", {
     code,
-    PAIRING_USER.slack,
-  );
-  await writePairingArtifacts(artifacts, "slack", { code, user: PAIRING_USER.slack });
+    senderId: PAIRING_USER.slack,
+  });
+  assertSlackCapture([fakeSlack.captureFile], code, PAIRING_USER.slack);
 
   progress.phase("approve the Slack code through connect-shell");
   await approveAndAssertPairing({

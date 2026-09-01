@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   assertDiscordGatewayCapture,
   DISCORD_GATEWAY_CLIENT_SOURCE,
@@ -25,6 +26,7 @@ import {
   buildPairingPendingCommand,
   LOAD_CONVERSATION_RUNTIME_SOURCE,
   SLACK_PROBE_INPUT_VALIDATION_SOURCE,
+  writePairingArtifacts,
 } from "../live/openclaw-pairing-helpers.ts";
 import { sandboxNode } from "../live/phase6-messaging-helpers.ts";
 
@@ -192,6 +194,31 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(approveCommand).not.toContain('"abc$(touch /tmp/e2e-should-not-run)"');
   });
 
+  it("omits a pairing code and reply text from artifacts", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-pairing-artifact-"));
+    const code = "SYNTHETIC-PAIRING-CODE";
+    const replyText = `Use pairing code ${code}`;
+    try {
+      const artifacts = new ArtifactSink(tmp);
+      await writePairingArtifacts(artifacts, "discord", {
+        code,
+        senderId: "synthetic-sender",
+        replyText,
+      });
+
+      const artifact = fs.readFileSync(path.join(tmp, "discord-pairing-result.json"), "utf8");
+      expect(JSON.parse(artifact)).toEqual({
+        channel: "discord",
+        senderId: "synthetic-sender",
+        codeIssued: true,
+      });
+      expect(artifact).not.toContain(code);
+      expect(artifact).not.toContain(replyText);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("finds the active OpenClaw package when shell startup shadows openclaw with a function", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-runtime-shadowed-"));
     try {
@@ -357,26 +384,6 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       expect(result.stderr).not.toContain(value || "xapp-raw-secret");
     },
   );
-
-  it.each([
-    { name: "missing", value: "" },
-    { name: "unscoped", value: "openshell:resolve:env:SLACK_APP_TOKEN" },
-    { name: "wrong credential", value: "openshell:resolve:env:v2_SLACK_BOT_TOKEN" },
-    { name: "raw token", value: "xapp-raw-slack-token" },
-  ])("rejects a $name Slack app credential before network access", ({ value }) => {
-    const result = spawnSync(process.execPath, ["--input-type=module"], {
-      input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false;\ntry { parseManagedCredentialReference("SLACK_APP_TOKEN"); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
-      encoding: "utf8",
-      env: { ...process.env, SLACK_APP_TOKEN: value },
-    });
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
-      "SLACK_APP_TOKEN must be the revision-scoped OpenShell credential reference",
-    );
-    expect(result.stderr).toContain("NETWORK_ATTEMPTED=false");
-    expect(result.stderr).not.toContain("xapp-raw-slack-token");
-  });
 
   it("sends the revision-scoped Discord placeholder through the shared gateway client (#10155)", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "discord-gateway-proof-revision-"));

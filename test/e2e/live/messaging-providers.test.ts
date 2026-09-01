@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- *
- * Preserves the high-value provider/config/redaction contracts. Telegram, Discord,
- * and Slack use fake tokens when no channel token is set; WeChat always uses a
- * synthetic token. Provider placeholders may appear in sandbox-visible surfaces,
- * but raw credentials must remain absent. Installed OpenClaw channel runtime exports
- * drive the hermetic Slack and Telegram send proofs.
+ * Tests messaging-provider credentials, sandbox placeholders, and redaction.
+ * Telegram, Discord, and Slack use fake tokens when channel tokens are absent.
+ * WeChat always uses a synthetic token. Sandbox-visible data may contain placeholders
+ * but must not contain raw credentials. Installed OpenClaw exports send through
+ * isolated fake Slack and Telegram APIs.
  */
 
 import fs from "node:fs";

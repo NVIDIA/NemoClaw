@@ -181,6 +181,7 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   });
   expectExitZero(issue, "Discord pairing request creation");
   const pairing = extractPairingResult(resultText(issue), "DISCORD_PAIRING_E2E_RESULT");
+  await writePairingArtifacts(artifacts, "discord", pairing);
   expect(pairing.senderId).toBe(PAIRING_USER.discord);
   expect(pairing.channelId).toBe(DISCORD_DM_CHANNEL);
   expect(pairing.replyText, "Discord pairing reply includes generated code").toContain(
@@ -189,7 +190,6 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   expect(pairing.replyText, "Discord pairing reply includes sender identity").toContain(
     PAIRING_USER.discord,
   );
-  await writePairingArtifacts(artifacts, "discord", { ...pairing, user: PAIRING_USER.discord });
 
   progress.phase("approve the Discord code through connect-shell");
   await approveAndAssertPairing({

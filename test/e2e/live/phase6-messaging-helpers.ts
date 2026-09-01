@@ -282,6 +282,7 @@ export async function sandboxShWithArgs(
   args: string[],
   options: {
     artifactName: string;
+    persistArtifacts?: boolean;
     redactionValues?: string[];
     timeoutMs?: number;
   },
@@ -289,6 +290,7 @@ export async function sandboxShWithArgs(
   return sandbox.exec(sandboxName, ["sh", "-c", script, "nemoclaw-e2e-script", ...args], {
     artifactName: options.artifactName,
     env: sandboxAccessEnv(),
+    persistArtifacts: options.persistArtifacts,
     redactionValues: options.redactionValues ?? [],
     timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
   });
