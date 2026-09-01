@@ -273,12 +273,20 @@ describe("live OpenShell policy mutations", () => {
     );
   });
 
-  it("restores a later credential conflict rejected by the caller invariant", () => {
+  it("restores a later policy that removes the caller's credential rewrite invariant", () => {
     livePolicy = YAML.stringify({
       version: 1,
       network_policies: {
         fake: {
-          endpoints: [{ host: "host.openshell.internal", port: 43117, protocol: "rest" }],
+          endpoints: [
+            {
+              host: "host.openshell.internal",
+              port: 43117,
+              protocol: "rest",
+              enforcement: "enforce",
+              request_body_credential_rewrite: true,
+            },
+          ],
         },
       },
     });
@@ -304,9 +312,8 @@ describe("live OpenShell policy mutations", () => {
         ? (concurrent.network_policies.concurrent_host_edit = {
             endpoints: [{ host: "concurrent.example.com", port: 443 }],
           })
-        : (concurrent.network_policies.fake.endpoints[0].credential_binding = {
-            provider: "external-policy-provider",
-          });
+        : delete concurrent.network_policies.fake.endpoints[0].request_body_credential_rewrite;
+      writes === 2 && delete concurrent.network_policies.fake.endpoints[0].credential_binding;
       const raced = writes <= 2;
       concurrentRevision = raced ? YAML.stringify(concurrent) : concurrentRevision;
       activeVersion += Number(raced);
@@ -322,16 +329,23 @@ describe("live OpenShell policy mutations", () => {
     expect(
       setPolicyDocument(sandboxName, YAML.stringify(desired), {
         nonFatal: true,
-        reconciledDocumentIsAcceptable: (document) =>
-          YAML.parse(document).network_policies.fake.endpoints[0].credential_binding.provider ===
-          "e2e-policy-provider",
+        reconciledDocumentIsAcceptable: (document) => {
+          const endpoint = YAML.parse(document).network_policies.fake.endpoints[0];
+          return (
+            endpoint.credential_binding?.provider === "e2e-policy-provider" &&
+            endpoint.enforcement === "enforce" &&
+            endpoint.request_body_credential_rewrite === true
+          );
+        },
       }),
     ).toBe(false);
     expect(writes).toBe(3);
     expect(YAML.parse(livePolicy)).toEqual(YAML.parse(concurrentRevision));
-    expect(YAML.parse(livePolicy).network_policies.fake.endpoints[0]).toHaveProperty(
+    expect(YAML.parse(livePolicy).network_policies.fake.endpoints[0]).not.toHaveProperty(
       "credential_binding",
-      { provider: "external-policy-provider" },
+    );
+    expect(YAML.parse(livePolicy).network_policies.fake.endpoints[0]).not.toHaveProperty(
+      "request_body_credential_rewrite",
     );
   });
 

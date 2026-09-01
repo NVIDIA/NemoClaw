@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
-import path from "node:path";
-
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 const policyMocks = vi.hoisted(() => ({
@@ -18,12 +15,10 @@ vi.mock("../../../src/lib/policy/index.ts", async (importOriginal) => ({
   setPolicyDocument: policyMocks.setPolicyDocument,
 }));
 
-import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/hermes-discord-policy-boundary-build.ts";
-import { policyDocumentWithEndpointCredentialBinding } from "../fixtures/policy-credential-binding.ts";
-import { applyPolicyCredentialBinding } from "../live/policy-credential-binding.ts";
-
-const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
-const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
+import {
+  applyPolicyCredentialBinding,
+  policyDocumentWithEndpointCredentialBinding,
+} from "../live/policy-credential-binding.ts";
 
 function endpointPolicy(protocols: string[]): string {
   return [
@@ -35,6 +30,10 @@ function endpointPolicy(protocols: string[]): string {
       "      - host: host.openshell.internal",
       "        port: 43117",
       `        protocol: ${protocol}`,
+      "        enforcement: enforce",
+      `        ${
+        protocol === "rest" ? "request_body_credential_rewrite" : "websocket_credential_rewrite"
+      }: true`,
     ]),
     "",
   ].join("\n");
@@ -47,15 +46,6 @@ function policyWithBinding(provider: string): string {
 }
 
 describe("binds a credential to exactly one policy endpoint", () => {
-  beforeAll(async () => {
-    const result = spawnSync(process.execPath, [TYPESCRIPT, "-p", POLICY_BOUNDARY_CONFIG], {
-      encoding: "utf8",
-      killSignal: "SIGKILL",
-      timeout: 15_000,
-    });
-    await requireSuccessfulPolicyBoundaryBuild(result);
-  });
-
   beforeEach(() => {
     policyMocks.inspectPolicyMutationContext.mockReset();
     policyMocks.setPolicyDocument.mockReset();
@@ -73,6 +63,8 @@ describe("binds a credential to exactly one policy endpoint", () => {
         "      - host: host.openshell.internal",
         "        port: 43117",
         "        protocol: websocket",
+        "        enforcement: enforce",
+        "        websocket_credential_rewrite: true",
         "      - host: discord.com",
         "        port: 443",
         "",
@@ -92,6 +84,8 @@ describe("binds a credential to exactly one policy endpoint", () => {
               host: "host.openshell.internal",
               port: 43117,
               protocol: "websocket",
+              enforcement: "enforce",
+              websocket_credential_rewrite: true,
               credential_binding: { provider: "e2e-hermes-discord-discord-bridge" },
             },
             { host: "discord.com", port: 443 },
@@ -164,6 +158,36 @@ describe("binds a credential to exactly one policy endpoint", () => {
     ).toThrow("already has a conflicting credential binding");
   });
 
+  it("rejects an endpoint without enforced credential rewriting", () => {
+    const policy = YAML.parse(endpointPolicy(["rest"]));
+    policy.network_policies.fake.endpoints[0].enforcement = "audit";
+
+    expect(() =>
+      policyDocumentWithEndpointCredentialBinding(
+        YAML.stringify(policy),
+        "e2e-policy-provider",
+        "host.openshell.internal",
+        43117,
+        "rest",
+      ),
+    ).toThrow("must use enforcement: enforce");
+  });
+
+  it("rejects an endpoint without the protocol-specific rewrite control", () => {
+    const policy = YAML.parse(endpointPolicy(["rest"]));
+    delete policy.network_policies.fake.endpoints[0].request_body_credential_rewrite;
+
+    expect(() =>
+      policyDocumentWithEndpointCredentialBinding(
+        YAML.stringify(policy),
+        "e2e-policy-provider",
+        "host.openshell.internal",
+        43117,
+        "rest",
+      ),
+    ).toThrow("must enable request_body_credential_rewrite");
+  });
+
   it("delegates the transformed policy and binding invariant to the production mutation owner", () => {
     const basePolicy = endpointPolicy(["rest", "websocket"]);
     const context = {
@@ -183,6 +207,13 @@ describe("binds a credential to exactly one policy endpoint", () => {
         const validate = options.reconciledDocumentIsAcceptable as (document: string) => boolean;
         expect(validate(requestedDocument)).toBe(true);
         expect(validate(policyWithBinding("external-policy-provider"))).toBe(false);
+        const auditPolicy = YAML.parse(requestedDocument);
+        auditPolicy.network_policies.fake.endpoints[0].enforcement = "audit";
+        expect(validate(YAML.stringify(auditPolicy))).toBe(false);
+        const missingRewritePolicy = YAML.parse(requestedDocument);
+        delete missingRewritePolicy.network_policies.fake.endpoints[0]
+          .request_body_credential_rewrite;
+        expect(validate(YAML.stringify(missingRewritePolicy))).toBe(false);
         return true;
       },
     );
