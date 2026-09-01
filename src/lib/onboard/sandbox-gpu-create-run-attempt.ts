@@ -470,18 +470,22 @@ export function createSandboxGpuCreateAttemptRunner(
         sandboxIdentityFingerprint,
       });
       let persisted = false;
+      let persistenceCause: unknown;
       try {
         persisted = sandboxIdentityFingerprint
           ? persist(message, sandboxIdentityFingerprint, createAttemptNonce)
           : persist(message, undefined, createAttemptNonce);
-      } catch {
-        persisted = false;
+      } catch (error) {
+        persistenceCause = error;
       }
       console.error(`  ${message}`);
       if (!persisted) {
+        const persistenceFailureMessage =
+          "NemoClaw could not save the retained sandbox recovery record for this create attempt.";
         console.error(
-          "  NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
+          `  ${persistenceFailureMessage} Preserve the terminal output for an OpenShell administrator.`,
         );
+        throw new Error(persistenceFailureMessage, { cause: persistenceCause });
       }
     };
     const waitForCreatedSandboxPublication = (sandboxId: string): void => {
