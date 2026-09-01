@@ -30,6 +30,7 @@ concurrency:
 
 jobs:
   ubuntu-2604-contract:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer) }}
     runs-on: ubuntu-latest
     container:
       image: ubuntu:26.04@sha256:b7f48194d4d8b763a478a621cdc81c27be222ba2206ca3ca6bc42b49685f3d9e
@@ -88,6 +89,7 @@ jobs:
 
   macos-vitest:
     name: macOS compatibility (${{ matrix.shard }}/4)
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer) }}
     runs-on: macos-26
     timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
@@ -258,7 +260,7 @@ jobs:
           rust-src-dir: openshell
           rustflags: ""
 
-      - name: Build the pinned OpenShell PR distribution
+      - name: Build the pinned NVIDIA/OpenShell#2721 candidate
         working-directory: openshell
         shell: powershell
         run: |
@@ -292,6 +294,7 @@ jobs:
 
   wsl-vitest:
     name: WSL compatibility (${{ matrix.shard }}/4)
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer) }}
     runs-on: windows-latest
     timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
