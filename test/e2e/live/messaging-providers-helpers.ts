@@ -235,11 +235,7 @@ export function assertDiscordGatewayCapture(captureFile: string, expectedToken: 
   expect(identify?.tokenLooksPlaceholder, "Discord placeholder leaked").toBe(false);
 }
 
-export type FakeDockerApiKind =
-  | "slack"
-  | "telegram"
-  | "wechat"
-  | "discord-gateway";
+export type FakeDockerApiKind = "slack" | "telegram" | "wechat" | "discord-gateway";
 
 export type FakeDockerApi = {
   kind: FakeDockerApiKind;
@@ -794,6 +790,130 @@ async function requireFakeApiProxyReady(
   );
 }
 
+type DockerContainerInspect = {
+  Name?: unknown;
+  HostConfig?: {
+    CapDrop?: unknown;
+    PidsLimit?: unknown;
+    ReadonlyRootfs?: unknown;
+    SecurityOpt?: unknown;
+  };
+  NetworkSettings?: {
+    Networks?: unknown;
+    Ports?: unknown;
+  };
+};
+
+function containerNetworks(record: DockerContainerInspect): string[] {
+  const networks = record.NetworkSettings?.Networks;
+  return networks !== null && typeof networks === "object" ? Object.keys(networks).sort() : [];
+}
+
+function publishedPortBindings(record: DockerContainerInspect): Array<{
+  containerPort: string;
+  hostAddress: string;
+  hostPort: string;
+}> {
+  const ports = record.NetworkSettings?.Ports;
+  if (ports === null || typeof ports !== "object") return [];
+  return Object.entries(ports).flatMap(([containerPort, bindings]) =>
+    Array.isArray(bindings)
+      ? bindings.flatMap((binding) => {
+          if (binding === null || typeof binding !== "object") return [];
+          const { HostIp: hostAddress, HostPort: hostPort } = binding as {
+            HostIp?: unknown;
+            HostPort?: unknown;
+          };
+          return typeof hostAddress === "string" && typeof hostPort === "string"
+            ? [{ containerPort, hostAddress, hostPort }]
+            : [];
+        })
+      : [],
+  );
+}
+
+async function requireFakeApiDockerTopology(
+  host: HostCliClient,
+  options: {
+    kind: FakeDockerApiKind;
+    apiContainer: string;
+    proxyContainer: string;
+    network: string;
+    openshellBridgeAddress: string;
+    proxyPorts: readonly number[];
+    env: NodeJS.ProcessEnv;
+    redactionValues: string[];
+  },
+): Promise<void> {
+  const containerInspect = await runHost(
+    host,
+    "docker",
+    ["inspect", options.apiContainer, options.proxyContainer],
+    {
+      artifactName: `inspect-fake-${options.kind}-api-topology`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  expectExitZero(containerInspect, `inspect fake ${options.kind} API topology`);
+  const networkInspect = await runHost(host, "docker", ["network", "inspect", options.network], {
+    artifactName: `inspect-fake-${options.kind}-api-network`,
+    env: options.env,
+    redactionValues: options.redactionValues,
+    timeoutMs: 30_000,
+  });
+  expectExitZero(networkInspect, `inspect fake ${options.kind} API network`);
+
+  let containers: unknown;
+  let networks: unknown;
+  try {
+    containers = JSON.parse(containerInspect.stdout);
+    networks = JSON.parse(networkInspect.stdout);
+  } catch {
+    throw new Error(`fake ${options.kind} API Docker topology inspection returned invalid JSON`);
+  }
+  const records = Array.isArray(containers) ? (containers as DockerContainerInspect[]) : [];
+  const api = records.find((record) => record.Name === `/${options.apiContainer}`);
+  const proxy = records.find((record) => record.Name === `/${options.proxyContainer}`);
+  const networkRecord = Array.isArray(networks) && networks.length === 1 ? networks[0] : undefined;
+  const apiNetworks = api === undefined ? [] : containerNetworks(api);
+  const proxyNetworks = proxy === undefined ? [] : containerNetworks(proxy);
+  const apiBindings = api === undefined ? [] : publishedPortBindings(api);
+  const proxyBindings = proxy === undefined ? [] : publishedPortBindings(proxy);
+  const expectedContainerPorts = options.proxyPorts.map((port) => `${String(port)}/tcp`).sort();
+  const observedContainerPorts = proxyBindings.map(({ containerPort }) => containerPort).sort();
+  const proxySecurityOptions = Array.isArray(proxy?.HostConfig?.SecurityOpt)
+    ? proxy.HostConfig.SecurityOpt
+    : [];
+  const proxyCapabilityDrops = Array.isArray(proxy?.HostConfig?.CapDrop)
+    ? proxy.HostConfig.CapDrop
+    : [];
+
+  if (
+    api === undefined ||
+    proxy === undefined ||
+    networkRecord === null ||
+    typeof networkRecord !== "object" ||
+    (networkRecord as { Driver?: unknown }).Driver !== "bridge" ||
+    (networkRecord as { Internal?: unknown }).Internal !== true ||
+    JSON.stringify(apiNetworks) !== JSON.stringify([options.network]) ||
+    JSON.stringify(proxyNetworks) !== JSON.stringify(["bridge", options.network].sort()) ||
+    apiBindings.length !== 0 ||
+    JSON.stringify(observedContainerPorts) !== JSON.stringify(expectedContainerPorts) ||
+    proxyBindings.some(
+      ({ hostAddress, hostPort }) =>
+        hostAddress !== options.openshellBridgeAddress || !/^\d+$/u.test(hostPort),
+    ) ||
+    proxy?.HostConfig?.ReadonlyRootfs !== true ||
+    !proxyCapabilityDrops.includes("ALL") ||
+    !proxySecurityOptions.includes("no-new-privileges") ||
+    proxy?.HostConfig?.PidsLimit !== 32
+  ) {
+    throw new Error(`fake ${options.kind} API Docker topology did not preserve isolation`);
+  }
+}
+
 export async function startFakeDockerApi(
   host: HostCliClient,
   cleanup: (name: string, run: () => Promise<void>) => void,
@@ -1028,6 +1148,17 @@ export async function startFakeDockerApi(
     },
   );
   expectExitZero(proxyConnect, `connect fake ${options.kind} API proxy`);
+
+  await requireFakeApiDockerTopology(host, {
+    kind: options.kind,
+    apiContainer: container,
+    proxyContainer,
+    network,
+    openshellBridgeAddress,
+    proxyPorts,
+    env: options.env,
+    redactionValues: options.redactionValues,
+  });
 
   const publishedPort = async (containerPort: number, artifactName: string): Promise<string> => {
     const result = await runHost(
