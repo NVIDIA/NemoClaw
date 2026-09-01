@@ -41,6 +41,7 @@ function createSuccessfulOllamaServiceExecutionProofRunner(fallback) {
   elf.writeBigUInt64LE(BigInt(interpreter.length), programHeaderOffset + 32);
   interpreter.copy(elf, interpreterOffset);
   fs.writeFileSync(executablePath, elf, { mode: 0o755 });
+  const failUnmatchedExecutionProof = typeof fallback !== "function";
   const runFallback =
     typeof fallback === "function"
       ? fallback
@@ -73,12 +74,8 @@ function createSuccessfulOllamaServiceExecutionProofRunner(fallback) {
     ) {
       return success("997\n");
     }
-    const sudoPrefix = argv[1] === "-n" ? ["/usr/bin/sudo", "-n"] : ["/usr/bin/sudo"];
-    const executionProof = [
-      ...sudoPrefix,
-      "/usr/bin/env",
-      "LC_ALL=C",
-      "/usr/bin/systemd-run",
+    const commandOffset = argv[1] === "-n" ? 2 : 1;
+    const executionProofArguments = [
       "--wait",
       "--pipe",
       "--collect",
@@ -88,14 +85,30 @@ function createSuccessfulOllamaServiceExecutionProofRunner(fallback) {
       "--property=RuntimeMaxSec=15s",
       "--property=TimeoutStopSec=250ms",
       "--property=SendSIGKILL=yes",
-      executablePath,
-      "--version",
     ];
     if (
-      argv.length === executionProof.length &&
-      argv.every((value, index) => value === executionProof[index])
+      argv[0] === "/usr/bin/sudo" &&
+      argv[commandOffset] === "/usr/bin/env" &&
+      argv[commandOffset + 1] === "LC_ALL=C" &&
+      argv[commandOffset + 2] === "/usr/bin/systemd-run" &&
+      executionProofArguments.every((argument) => argv.includes(argument)) &&
+      argv.at(-2) === executablePath &&
+      argv.at(-1) === "--version"
     ) {
       return success("ollama version is 0.11.10\n");
+    }
+    if (
+      failUnmatchedExecutionProof &&
+      argv[0] === "/usr/bin/sudo" &&
+      argv.at(-2) === executablePath &&
+      argv.at(-1) === "--version"
+    ) {
+      return {
+        stdout: "",
+        stderr: "Unexpected Ollama service execution-proof command",
+        exitCode: 1,
+        timedOut: false,
+      };
     }
     return runFallback(command, options);
   };

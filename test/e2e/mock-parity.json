@@ -617,6 +617,14 @@
       ]
     },
     {
+      "live": "test/e2e/live/ollama-proof-process-cleanup.test.ts",
+      "liveSources": ["test/e2e/live/ollama-proof-process-cleanup-helpers.ts"],
+      "fast": [
+        "src/lib/onboard/ollama-systemd/executable-proof.test.ts",
+        "test/helpers/onboard-child-runtime.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/openclaw-discord-pairing.test.ts",
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",

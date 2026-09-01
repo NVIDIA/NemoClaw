@@ -357,6 +357,8 @@ Catalogue entries may request only the reviewed `expect` and `iptables` host pac
 The reusable workflow installs those packages through the pinned host-dependency action before workspace preparation.
 An optional `selector` limits execution to matching tests in the target's declared Vitest file.
 A host package or selector alone does not require a dedicated workflow job.
+The `ollama-proof-process-cleanup` target owns the systemd boundary for issue #10663.
+It runs a test-owned process tree in a transient service, waits for the runtime limit, and confirms that the descendant is absent when the proof returns.
 When a target selects non-interactive installation, the reusable workflow sets `NEMOCLAW_NON_INTERACTIVE=1` for its OpenShell install step.
 The reusable workflow sets `NEMOCLAW_E2E_EXPECTED_SHA` to the candidate commit for every target.
 TUI exact-ref checks use this shared value instead of a target-specific checkout variable.

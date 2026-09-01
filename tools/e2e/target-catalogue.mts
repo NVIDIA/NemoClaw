@@ -1018,6 +1018,17 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
       NEMOCLAW_E2E_OLLAMA_PROXY_PORT: "11435",
     },
   }),
+  target("ollama-proof-process-cleanup", {
+    displayName: "Onboarding: stops timed-out Ollama proof descendants",
+    agentRuntime: "none",
+    environmentOrInferenceEndpoint: "Ubuntu systemd host; transient service fixture",
+    profile: "standard",
+    timeoutMinutes: 10,
+    installMode: "none",
+    restoreCli: false,
+    exposeCliBin: false,
+    owningPaths: ["src/lib/onboard/ollama-systemd/executable-proof.ts"],
+  }),
   target("onboard-repair", {
     displayName: "Onboarding: repairs a missing sandbox and rejects conflicting resume input",
     agentRuntime: "openclaw",
