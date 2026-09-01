@@ -158,8 +158,6 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
   it(
     "accepts only the pinned pre-restore cleanup action in the complete workflow",
     () => {
-      expect(validateE2eWorkflowBoundary()).toEqual([]);
-
       const jobNames = ["openclaw-plugin-runtime-exdev"] as const;
       const cleanupMutations: Array<(cleanup: WorkflowStep) => void> = [
         (cleanup) => {

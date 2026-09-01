@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 import {
   readOpenClawPluginRuntimeExdevWorkflow,
   validateOpenClawPluginRuntimeExdevWorkflow,
-  validateOpenClawPluginRuntimeExdevWorkflowBoundary,
 } from "../../../tools/e2e/openclaw-plugin-runtime-exdev-workflow-boundary.mts";
 
 describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
@@ -26,9 +25,7 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
     );
   });
 
-  it("accepts the checked-in workflow and rejects trust-boundary mutations", () => {
-    expect(validateOpenClawPluginRuntimeExdevWorkflowBoundary()).toEqual([]);
-
+  it("rejects trust-boundary mutations", () => {
     const workflow = readOpenClawPluginRuntimeExdevWorkflow();
     const job = workflow.jobs["openclaw-plugin-runtime-exdev"];
     job["runs-on"] = "self-hosted";

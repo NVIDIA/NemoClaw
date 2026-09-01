@@ -8,13 +8,15 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { REQUIRED_OPENSHELL_MCP_FEATURES } from "../../../src/lib/onboard/openshell-feature-gate.ts";
+import {
+  hasRequiredOpenshellMessagingFeatures,
+  REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE,
+} from "../../../src/lib/onboard/openshell-feature-gate.ts";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   acceptTrustedPluginFixturePrebuild,
   createOpenShellTrustedImageWrapper,
-  DELEGATED_CAPABILITY_COMMENT_PREFIX,
   registerTrustedPluginFixtureImageCleanup,
   trustedExdevImageRef,
   withEnabledLocalBaseImageBuild,
@@ -37,10 +39,14 @@ function createWrapperFixture() {
   const delegate = path.join(directory, "real-openshell");
   const gateway = path.join(directory, "openshell-gateway");
   const sandbox = path.join(directory, "openshell-sandbox");
-  const executableSource = "#!/bin/sh\nprintf '%s\\n' \"$@\"\n";
-  for (const executable of [delegate, gateway, sandbox]) {
+  const executableSource = "#!/bin/sh\nif [ \"${1:-}\" = \"--version\" ]; then echo 'openshell 0.0.106'; exit 0; fi\nprintf '%s\\n' \"$@\"\n";
+  for (const executable of [delegate, gateway]) {
     fs.writeFileSync(executable, executableSource, { encoding: "utf8", mode: 0o700 });
   }
+  fs.writeFileSync(sandbox, `${executableSource}# ${REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE}\n`, {
+    encoding: "utf8",
+    mode: 0o700,
+  });
   const components = resolveOpenShellSiblingComponents(delegate);
   const wrapper = createOpenShellTrustedImageWrapper({
     driverConfigJson: DRIVER_CONFIG_JSON,
@@ -140,19 +146,18 @@ describe("trusted EXDEV OpenShell wrapper", () => {
     }
   });
 
-  it("preserves feature markers and exposes sibling component paths through the wrapper environment", () => {
+  it("passes the OpenShell feature gate and exposes sibling component paths", () => {
     const fixture = createWrapperFixture();
     try {
-      const wrapperSource = fs.readFileSync(fixture.wrapper.executable, "utf8");
       expect(
-        wrapperSource
-          .split("\n")
-          .filter((line) => line.startsWith(DELEGATED_CAPABILITY_COMMENT_PREFIX)),
-      ).toEqual(
-        REQUIRED_OPENSHELL_MCP_FEATURES.map(
-          (marker) => `${DELEGATED_CAPABILITY_COMMENT_PREFIX}${marker}`,
-        ),
-      );
+        hasRequiredOpenshellMessagingFeatures({
+          openshellBin: fixture.wrapper.executable,
+          gatewayBin: fixture.components.gateway,
+          sandboxBin: fixture.components.sandbox,
+          allowExternalGatewayBin: true,
+          allowExternalSandboxBin: true,
+        }),
+      ).toBe(true);
       expect(
         withOpenShellDriverConfigWrapperEnv(
           { PATH: "/usr/bin" },
