@@ -25,6 +25,7 @@ import {
   sandboxShWithArgs,
   shellQuote,
 } from "./phase6-messaging-helpers.ts";
+import { applyPolicyCredentialBinding } from "./policy-credential-binding.ts";
 
 export type PairingChannel = "slack" | "discord";
 
@@ -215,34 +216,17 @@ export async function applyFakePolicy(options: {
   });
   expectExitZero(result, options.artifactName);
 
-  const binding = await options.host.command(
-    "bash",
-    [
-      "-lc",
-      String.raw`set -eu
-policy_file="$(mktemp)"
-trap 'rm -f "$policy_file"' EXIT
-"$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
-"$1" policy set --policy "$policy_file" --wait "$2"`,
-      `bind-fake-${options.protocol}-policy`,
-      options.host.openshellCommandPath,
-      options.sandboxName,
-      options.providerName,
-      policyHost,
-      String(options.api.port),
-      options.protocol,
-      path.join(REPO_ROOT, "test/e2e/fixtures/policy-credential-binding.ts"),
-    ],
-    {
-      artifactName: `${options.artifactName}-credential-binding`,
-      cwd: REPO_ROOT,
-      env: options.env,
-      redactionValues: options.redactions,
-      timeoutMs: 120_000,
-    },
-  );
-  expectExitZero(binding, `${options.artifactName} credential binding`);
+  await applyPolicyCredentialBinding({
+    host: options.host,
+    sandboxName: options.sandboxName,
+    providerName: options.providerName,
+    endpointHost: policyHost,
+    endpointPort: options.api.port,
+    protocol: options.protocol,
+    env: options.env,
+    redactionValues: options.redactions,
+    artifactName: `${options.artifactName}-credential-binding`,
+  });
 }
 
 export async function assertOpenClawStateRoot(

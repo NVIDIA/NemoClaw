@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
-import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
+import {
+  cleanupWhenOpenShellAvailable,
+  registerSandboxCleanupUnlessKept,
+} from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -20,6 +22,7 @@ import {
   type FakeDockerApi,
   startFakeDockerApi,
 } from "./messaging-providers-helpers.ts";
+import { applyPolicyCredentialBinding } from "./policy-credential-binding.ts";
 import {
   runSecondaryCleanup as bestEffortLifecycleCleanup,
   dockerInfo,
@@ -173,33 +176,17 @@ async function applyHermesFakeDiscordPolicy(options: {
   );
   expectExitZero(result, "apply Hermes fake Discord Gateway policy");
 
-  const binding = await options.host.command(
-    "bash",
-    [
-      "-lc",
-      String.raw`set -eu
-policy_file="$(mktemp)"
-trap 'rm -f "$policy_file"' EXIT
-"$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$6" "$policy_file" "$3" "$4" "$5" websocket
-"$1" policy set --policy "$policy_file" --wait "$2"`,
-      "bind-hermes-fake-discord-policy",
-      options.host.openshellCommandPath,
-      options.sandboxName,
-      `${options.sandboxName}-discord-bridge`,
-      FAKE_DISCORD_HOST,
-      String(options.api.port),
-      path.join(REPO_ROOT, "test/e2e/fixtures/policy-credential-binding.ts"),
-    ],
-    {
-      artifactName: "bind-hermes-fake-discord-gateway-credential",
-      cwd: REPO_ROOT,
-      env: options.env,
-      redactionValues: options.redactions,
-      timeoutMs: 120_000,
-    },
-  );
-  expectExitZero(binding, "bind Hermes fake Discord Gateway credential");
+  await applyPolicyCredentialBinding({
+    host: options.host,
+    sandboxName: options.sandboxName,
+    providerName: `${options.sandboxName}-discord-bridge`,
+    endpointHost: FAKE_DISCORD_HOST,
+    endpointPort: options.api.port,
+    protocol: "websocket",
+    env: options.env,
+    redactionValues: options.redactions,
+    artifactName: "bind-hermes-fake-discord-gateway-credential",
+  });
 }
 
 const HERMES_DISCORD_PYTHON_GATEWAY_PROOF = String.raw`
@@ -425,32 +412,35 @@ test(
       redactionValues,
       timeoutMs: 120_000,
     };
-    cleanup.trackGateway(
-      {
-        cleanupGatewayRegistration: (name: string) =>
-          cleanupWhenOpenShellAvailable(
-            host,
-            {
-              artifactName: "cleanup-hermes-discord-probe-openshell-gateway",
-              env,
-              redactionValues,
-              timeoutMs: 30_000,
-            },
-            () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
-          ),
-      },
-      "nemoclaw",
-      gatewayCleanupOptions,
-    );
-    trackPreinstallSandboxCleanup(
-      cleanup,
-      host,
-      sandbox,
-      SANDBOX_NAME,
-      env,
-      redactionValues,
-      "cleanup-hermes-discord",
-    );
+    const keepSandbox = process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1";
+    registerSandboxCleanupUnlessKept(keepSandbox, () => {
+      cleanup.trackGateway(
+        {
+          cleanupGatewayRegistration: (name: string) =>
+            cleanupWhenOpenShellAvailable(
+              host,
+              {
+                artifactName: "cleanup-hermes-discord-probe-openshell-gateway",
+                env,
+                redactionValues,
+                timeoutMs: 30_000,
+              },
+              () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
+            ),
+        },
+        "nemoclaw",
+        gatewayCleanupOptions,
+      );
+      trackPreinstallSandboxCleanup(
+        cleanup,
+        host,
+        sandbox,
+        SANDBOX_NAME,
+        env,
+        redactionValues,
+        "cleanup-hermes-discord",
+      );
+    });
 
     await precleanHermesDiscord(
       host,
@@ -776,8 +766,8 @@ done`,
 
     progress.phase("finalize Hermes Discord resources");
     await (async (): Promise<void> => {
-      switch (process.env.NEMOCLAW_E2E_KEEP_SANDBOX) {
-        case "1":
+      switch (keepSandbox) {
+        case true:
           return;
         default:
       }
@@ -826,7 +816,7 @@ done`,
         rawTokenAbsentFromConfigEnvProcessAndFilesystem: true,
         discordRestBoundaryReachedOrSkippedOnTimeout: true,
         noLocalDiscordBridgeResidue: true,
-        cleanupVerified: process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1",
+        cleanupVerified: !keepSandbox,
       },
     });
   },

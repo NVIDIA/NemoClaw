@@ -9,12 +9,107 @@ import path from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/hermes-discord-policy-boundary-build.ts";
+import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
+import { applyPolicyCredentialBinding } from "../live/policy-credential-binding.ts";
 
 const HELPER = path.resolve(import.meta.dirname, "../fixtures/policy-credential-binding.ts");
 const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
 const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
 const tempDirs: string[] = [];
+
+function localCommandHost(
+  openshellCommandPath: string,
+): Pick<HostCliClient, "command" | "openshellCommandPath"> {
+  return {
+    openshellCommandPath,
+    async command(
+      command: string,
+      args: string[] = [],
+      options: ShellProbeRunOptions = {},
+    ): Promise<ShellProbeResult> {
+      const result = spawnSync(command, args, {
+        cwd: options.cwd,
+        encoding: "utf8",
+        env: { ...process.env, ...options.env },
+        killSignal: "SIGKILL",
+        timeout: options.timeoutMs,
+      });
+      return {
+        command: [command, ...args],
+        exitCode: result.status,
+        signal: result.signal,
+        timedOut: false,
+        stdout: result.stdout ?? "",
+        stderr: [result.stderr, result.error?.message].filter(Boolean).join("\n"),
+        artifacts: { stdout: "", stderr: "", result: "" },
+      };
+    },
+  };
+}
+
+function fakeOpenShell(policy: string): {
+  appliedPolicy: string;
+  callsFile: string;
+  env: NodeJS.ProcessEnv;
+  executable: string;
+} {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-transaction-"));
+  tempDirs.push(tempDir);
+  const executable = path.join(tempDir, "openshell");
+  const basePolicy = path.join(tempDir, "base-policy.yaml");
+  const appliedPolicy = path.join(tempDir, "applied-policy.yaml");
+  const callsFile = path.join(tempDir, "calls");
+  fs.writeFileSync(basePolicy, policy);
+  fs.writeFileSync(
+    executable,
+    [
+      "#!/usr/bin/env bash",
+      "set -eu",
+      'case "${1-}:${2-}" in',
+      "  policy:get)",
+      `    printf 'get\\n' >>"$FAKE_OPENSHELL_CALLS"`,
+      `    cat "$FAKE_OPENSHELL_BASE_POLICY"`,
+      "    ;;",
+      "  policy:set)",
+      `    printf 'set\\n' >>"$FAKE_OPENSHELL_CALLS"`,
+      `    cp "$4" "$FAKE_OPENSHELL_APPLIED_POLICY"`,
+      "    ;;",
+      "  *)",
+      "    exit 64",
+      "    ;;",
+      "esac",
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  return {
+    appliedPolicy,
+    callsFile,
+    env: {
+      FAKE_OPENSHELL_APPLIED_POLICY: appliedPolicy,
+      FAKE_OPENSHELL_BASE_POLICY: basePolicy,
+      FAKE_OPENSHELL_CALLS: callsFile,
+    },
+    executable,
+  };
+}
+
+function endpointPolicy(protocols: string[]): string {
+  return [
+    "version: 1",
+    "network_policies:",
+    "  fake:",
+    "    endpoints:",
+    ...protocols.flatMap((protocol) => [
+      "      - host: host.docker.internal",
+      "        port: 43117",
+      `        protocol: ${protocol}`,
+    ]),
+    "",
+  ].join("\n");
+}
 
 function runBinding(policyFile: string, protocol = "websocket") {
   return spawnSync(
@@ -181,5 +276,56 @@ describe("E2E policy credential binding", () => {
       "fake endpoint host.docker.internal:43117/websocket matches 2 base policy entries; expected exactly one",
     );
     expect(fs.readFileSync(policyFile, "utf8")).toBe(source);
+  });
+
+  it.each(["rest", "websocket"] as const)(
+    "applies the shared host transaction for the %s endpoint",
+    async (protocol) => {
+      const fake = fakeOpenShell(endpointPolicy(["rest", "websocket"]));
+
+      await applyPolicyCredentialBinding({
+        host: localCommandHost(fake.executable),
+        sandboxName: "e2e-policy-transaction",
+        providerName: "e2e-policy-provider",
+        endpointHost: "host.docker.internal",
+        endpointPort: 43117,
+        protocol,
+        env: fake.env,
+        redactionValues: [],
+        artifactName: `bind-${protocol}-policy-credential`,
+      });
+
+      expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual(["get", "set"]);
+      const endpoints = YAML.parse(fs.readFileSync(fake.appliedPolicy, "utf8")).network_policies
+        .fake.endpoints as Array<Record<string, unknown>>;
+      expect(endpoints.find((endpoint) => endpoint.protocol === protocol)).toHaveProperty(
+        "credential_binding",
+        { provider: "e2e-policy-provider" },
+      );
+      expect(endpoints.find((endpoint) => endpoint.protocol !== protocol)).not.toHaveProperty(
+        "credential_binding",
+      );
+    },
+  );
+
+  it("does not set a policy when the shared transaction finds ambiguous endpoint ownership", async () => {
+    const fake = fakeOpenShell(endpointPolicy(["rest", "rest"]));
+
+    await expect(
+      applyPolicyCredentialBinding({
+        host: localCommandHost(fake.executable),
+        sandboxName: "e2e-policy-transaction",
+        providerName: "e2e-policy-provider",
+        endpointHost: "host.docker.internal",
+        endpointPort: 43117,
+        protocol: "rest",
+        env: fake.env,
+        redactionValues: [],
+        artifactName: "bind-ambiguous-policy-credential",
+      }),
+    ).rejects.toThrow("matches 2 base policy entries; expected exactly one");
+
+    expect(fs.readFileSync(fake.callsFile, "utf8").trim()).toBe("get");
+    expect(fs.existsSync(fake.appliedPolicy)).toBe(false);
   });
 });

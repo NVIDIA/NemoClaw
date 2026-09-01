@@ -24,6 +24,7 @@ import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { applyPolicyCredentialBinding } from "./policy-credential-binding.ts";
 
 export { CLI_ENTRYPOINT, expectExitZero, REPO_ROOT };
 
@@ -937,33 +938,17 @@ export async function applyRestRewritePolicy(
   expectExitZero(result, `apply ${api.kind} fake REST policy`);
   if (!providerName) return;
 
-  const binding = await runHost(
+  await applyPolicyCredentialBinding({
     host,
-    "bash",
-    [
-      "-lc",
-      String.raw`set -eu
-policy_file="$(mktemp)"
-trap 'rm -f "$policy_file"' EXIT
-"$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$5" "$policy_file" "$3" host.openshell.internal "$4" rest
-"$1" policy set --policy "$policy_file" --wait "$2"`,
-      `bind-fake-${api.kind}-rest-policy`,
-      host.openshellCommandPath,
-      SANDBOX_NAME,
-      providerName,
-      api.port,
-      path.join(REPO_ROOT, "test/e2e/fixtures/policy-credential-binding.ts"),
-    ],
-    {
-      artifactName: `apply-${api.kind}-rest-policy-credential-binding`,
-      cwd: REPO_ROOT,
-      env,
-      redactionValues,
-      timeoutMs: 120_000,
-    },
-  );
-  expectExitZero(binding, `bind ${api.kind} fake REST policy credential`);
+    sandboxName: SANDBOX_NAME,
+    providerName,
+    endpointHost: "host.openshell.internal",
+    endpointPort: api.port,
+    protocol: "rest",
+    env,
+    redactionValues,
+    artifactName: `apply-${api.kind}-rest-policy-credential-binding`,
+  });
 }
 
 export function lastJsonLine(
