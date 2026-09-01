@@ -295,4 +295,121 @@ bridge.restartMcpBridge("alpha", "example").then(
     expect(payload.proofScripts).toHaveLength(6);
     expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
   });
+
+  it("refuses to report a refresh when the host exports no credential (#10750)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-credential-"));
+    const script = String.raw`
+process.env.HOME = ${JSON.stringify(home)};
+delete process.env.MCP_TOKEN;
+const registry = require("./src/lib/state/registry.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
+const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
+const policies = require("./src/lib/policy/index.js");
+const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+
+let policyApplyCalls = 0;
+let resourceVersion = 1;
+const providerCalls = [];
+const entry = {
+  server: "example",
+  agent: "openclaw",
+  adapter: "mcporter",
+  url: "https://8.8.8.8/mcp",
+  env: ["MCP_TOKEN"],
+  providerName: "alpha-mcp-example",
+  providerId: "11111111-2222-4333-8444-555555555555",
+  policyName: "mcp-bridge-example",
+  addedAt: "2026-06-01T00:00:00.000Z",
+};
+
+gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
+  recovered: true,
+  attempted: false,
+  before: { state: "healthy_named" },
+  after: { state: "healthy_named" },
+});
+providerCommands.runOpenshellProviderCommand = (args) => {
+  const profileResult = mockManagedEndpointlessProviderProfileRun(args);
+  if (profileResult) return profileResult;
+  const command = args.join(" ");
+  if (command === "status --output json") {
+    return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw" }), stderr: "" };
+  }
+  if (args[0] === "provider" && args[1] === "get") {
+    return {
+      status: 0,
+      stdout: "Id: " + entry.providerId + "\nType: nemoclaw-mcp-v1\nResource version: " + resourceVersion + "\nCredential keys: MCP_TOKEN\n",
+      stderr: "",
+    };
+  }
+  if (args[0] === "provider" && (args[1] === "create" || args[1] === "update")) {
+    providerCalls.push(command);
+    resourceVersion += 1;
+    return { status: 0, stdout: "Updated provider", stderr: "" };
+  }
+  if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
+    return {
+      status: 0,
+      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + entry.providerName + " nemoclaw-mcp-v1 1 0\n",
+      stderr: "",
+    };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+policies.getPresetContentGatewayState = () => "match";
+policies.applyPresetContent = () => {
+  policyApplyCalls += 1;
+  return true;
+};
+processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "v" + resourceVersion, stderr: "" });
+processRecovery.executeSandboxCommand = (_sandbox, command) => ({
+  status: 0,
+  stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "registered\n",
+  stderr: "",
+});
+
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw",
+  mcp: { bridges: { example: entry } },
+});
+
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+bridge.restartMcpBridge("alpha", "example").then(
+  () => process.exit(9),
+  (error) => {
+    process.stdout.write(JSON.stringify({
+      message: error instanceof Error ? error.message : String(error),
+      exitCode: error && error.exitCode,
+      policyApplyCalls,
+      providerCalls,
+    }));
+  },
+);
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
+      timeout: 30_000,
+    });
+    fs.rmSync(home, { recursive: true, force: true });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as {
+      message: string;
+      exitCode: number;
+      policyApplyCalls: number;
+      providerCalls: string[];
+    };
+    expect(payload.message).toContain(
+      "MCP server 'example' cannot be refreshed: host environment variable 'MCP_TOKEN' is unset or empty",
+    );
+    expect(payload.message).toContain("nemoclaw alpha mcp restart example");
+    expect(payload.exitCode).toBe(1);
+    expect(payload.policyApplyCalls).toBe(0);
+    expect(payload.providerCalls).toEqual([]);
+  });
 });

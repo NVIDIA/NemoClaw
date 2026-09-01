@@ -61,6 +61,29 @@ function resolvedTargetPins(
   return target;
 }
 
+/**
+ * Refuse a restart that cannot refresh the credential it exists to refresh.
+ *
+ * `upsertMcpProvider` returns `reused` when the host exports no value for a
+ * server's credential: OpenShell keeps the credential it already holds and
+ * nothing is republished. The restart still attached, rebound the policy, and
+ * ran a bare `provider update`, so it reported every server refreshed while the
+ * stored credential was untouched. Check every target before the first side
+ * effect, so a multi-server restart cannot half-apply (#10750).
+ */
+function assertRestartCredentialsExported(
+  sandboxName: string,
+  entries: readonly McpBridgeEntry[],
+): void {
+  for (const entry of entries) {
+    const exported = resolveCredentialEnv(entry.env.map((name) => ({ name })));
+    if (Object.keys(exported).length > 0) continue;
+    throw new McpBridgeError(
+      `MCP server '${entry.server}' cannot be refreshed: host environment variable '${entry.env[0]}' is unset or empty. Export it and re-run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\`. Without it OpenShell keeps the credential it already holds, so no credential is refreshed.`,
+    );
+  }
+}
+
 export async function restartMcpBridge(sandboxName: string, server?: string): Promise<void> {
   return withMcpLifecycleLock(sandboxName, () => {
     assertHermesPortableCommandUnavailable(sandboxName, "sandbox:mcp:restart");
@@ -98,6 +121,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   // Hermes shields posture is host-visible. Refuse before DNS, gateway
   // recovery/selection, provider inspection, or any lifecycle mutation.
   assertMcpAdapterConfigMutationsAllowed(sandboxName, sandbox, targetEntries);
+  assertRestartCredentialsExported(sandboxName, targetEntries);
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
   assertMcpCredentialBoundaryRuntimeVersion();
   await ensureSandboxGatewaySelected(sandboxName);
