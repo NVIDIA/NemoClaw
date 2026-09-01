@@ -635,16 +635,19 @@ async function collectFakeApiStartupDiagnostics(
   host: HostCliClient,
   options: {
     kind: string;
-    proxy: string;
+    proxy?: string;
     container: string;
     env: NodeJS.ProcessEnv;
     redactionValues: string[];
   },
 ): Promise<void> {
-  for (const [role, name] of [
-    ["proxy", options.proxy],
-    ["api", options.container],
-  ] as const) {
+  const targets = options.proxy
+    ? ([
+        ["proxy", options.proxy],
+        ["api", options.container],
+      ] as const)
+    : ([["api", options.container]] as const);
+  for (const [role, name] of targets) {
     try {
       await runHost(host, "docker", ["inspect", "--format", "{{json .State}}", name], {
         artifactName: `failure-fake-${options.kind}-api-${role}-inspect`,
@@ -785,7 +788,15 @@ export async function startFakeDockerApi(
     }
     await sleep(100);
   }
-  if (!apiReady) throw new Error(`fake ${options.kind} API did not become ready`);
+  if (!apiReady) {
+    await collectFakeApiStartupDiagnostics(host, {
+      kind: options.kind,
+      container,
+      env: options.env,
+      redactionValues: options.redactionValues,
+    });
+    throw new Error(`fake ${options.kind} API container ${container} did not become ready`);
+  }
 
   cleanup(`remove ${proxyContainer}`, async () => {
     const remove = await runHost(host, "docker", ["rm", "-f", proxyContainer], {

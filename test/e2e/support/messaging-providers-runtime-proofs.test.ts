@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { CommandRunner } from "../fixtures/clients/command.ts";
@@ -115,9 +115,7 @@ async function startFakeSlackPortFixture(options?: {
       (entry) => entry.event === "listening",
     );
     const restPort = Number(fs.readFileSync(portFile, "utf8").trim());
-    const websocketPort = Number(
-      listening.find((entry) => entry.kind === "websocket")?.port ?? 0,
-    );
+    const websocketPort = Number(listening.find((entry) => entry.kind === "websocket")?.port ?? 0);
     return { restPort, websocketPort, captureFile, stop };
   } catch (error) {
     await stop();
@@ -191,6 +189,65 @@ async function runCleanup(actions: CleanupAction[]): Promise<void> {
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("collects API diagnostics when the fake container does not become ready", async () => {
+    vi.useFakeTimers();
+    const artifactNames: string[] = [];
+    const cleanupTasks: Array<() => Promise<void>> = [];
+    let container = "";
+    const runner: CommandRunner = {
+      async run(command, options) {
+        const invocation = [command.command, ...command.args];
+        const artifactName = options?.artifactName ?? "";
+        artifactNames.push(...(artifactName ? [artifactName] : []));
+        switch (artifactName) {
+          case "start-fake-slack-api":
+            container = invocation[invocation.indexOf("--name") + 1] ?? "";
+            break;
+          default:
+            break;
+        }
+        return successfulShellResult(invocation);
+      },
+    };
+
+    try {
+      const start = expect(
+        startFakeDockerApi(new HostCliClient(runner), (_name, run) => cleanupTasks.push(run), {
+          kind: "slack",
+          imageScript: "fake-slack-api.cjs",
+          containerPrefix: "nemoclaw-fake-slack-not-ready-test",
+          portEnv: "FAKE_SLACK_API_PORT",
+          portFileEnv: "FAKE_SLACK_API_PORT_FILE",
+          captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
+          expectedEnv: {
+            FAKE_SLACK_API_EXPECTED_BOT_TOKEN: "xoxb-fake-slack-not-ready-test",
+            FAKE_SLACK_API_EXPECTED_APP_TOKEN: "xapp-fake-slack-not-ready-test",
+          },
+          redactionValues: [],
+          env: {},
+        }),
+      ).rejects.toThrow(/fake slack API container .* did not become ready/u);
+
+      await vi.runAllTimersAsync();
+      await start;
+      expect(container).not.toBe("");
+      expect(artifactNames.filter((name) => name.startsWith("failure-fake-slack-api-"))).toEqual([
+        "failure-fake-slack-api-api-inspect",
+        "failure-fake-slack-api-api-logs",
+      ]);
+    } finally {
+      vi.useRealTimers();
+      await cleanupTasks
+        .reverse()
+        .reduce((previous, cleanupTask) => previous.then(cleanupTask), Promise.resolve());
+    }
+
+    expect(artifactNames).toContain(`cleanup-${container}`);
+    expect(artifactNames).toContainEqual(
+      expect.stringMatching(/^cleanup-nemoclaw-fake-api-network-/u),
+    );
+  });
+
   it("collects diagnostics when published fake API proxy ports do not carry traffic", async () => {
     const artifactNames: string[] = [];
     const cleanupTasks: Array<() => Promise<void>> = [];
@@ -257,7 +314,7 @@ describe("messaging provider installed-runtime proofs", () => {
     ["discord-gateway", ["127.0.0.1::8080"], ["8080/tcp"]],
     ["slack", ["127.0.0.1::8080", "127.0.0.1::8081"], ["8080/tcp", "8081/tcp"]],
   ] as const)(
-    "proxies the isolated fake %s API through loopback-only ephemeral ports",
+    "configures the fake %s API with an internal backend and loopback-only proxy ports",
     async (kind, expectedPublications, expectedPortQueries) => {
       const { calls, host } = fakeDockerHost();
       const cleanup: CleanupAction[] = [];
