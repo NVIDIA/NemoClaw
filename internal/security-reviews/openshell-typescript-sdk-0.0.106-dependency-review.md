@@ -117,8 +117,9 @@ The image software bill of materials and third-party notice must bind to the ins
 
 - Severity and confidence: high, high confidence.
 - Failure mode: a validated hostname resolves or rebinds to a local service when the request starts.
-- Control: the accepted initial contract treats cluster and storage administrators as trusted
-  infrastructure actors. The configured endpoint and CA come from those administrators. The
+- Control: the [accepted read-only slice decision](https://github.com/NVIDIA/NemoClaw/issues/9872#issuecomment-5417049313)
+  treats cluster and storage administrators as trusted infrastructure actors. The configured
+  endpoint and CA come from those administrators. The
   operation sends only unauthenticated public health and retains TLS certificate and hostname
   verification.
 - Residual: SDK 0.0.106 does not expose a pinned lookup. A hostname can resolve differently between
