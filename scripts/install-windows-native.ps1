@@ -142,7 +142,7 @@ function Enter-InstallerLock {
     Assert-NoReparsePoint -Path $parent -Label 'InstallRoot parent'
     $lockPath = Join-Path $parent ('.' + (Split-Path -Leaf $Root) + '.native-installer.lock')
     try {
-        return [IO.File]::Open(
+        return [IO.FileStream]::new(
             $lockPath,
             [IO.FileMode]::OpenOrCreate,
             [IO.FileAccess]::ReadWrite,
