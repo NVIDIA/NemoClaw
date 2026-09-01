@@ -8,17 +8,9 @@ model-backed analysis in OpenShell sandboxes from trusted GitHub Actions jobs an
 read-only data. It posts a sticky comment that links to the complete specialist reviews in the
 workflow run.
 
-For each configured pull-request event, it runs seven independent specialist reviews:
+For each configured pull-request event, it runs every specialist prompt in `tools/pr-review-advisor/specialists`. Each prompt owns a distinct review concern and defines its purpose, method, scope, exclusions, review principles, and finding threshold.
 
-- **Customer value and behavior** checks accepted scope, observable results, contracts, compatibility, and data integrity.
-- **Security and built-in quality** checks authority, sensitive data, isolation, supply-chain trust, and fail-closed controls.
-- **Architecture and standard work** checks ownership, dependency direction, reuse, total change economy, and migration completion.
-- **Verification and mistake-proofing** checks independent oracles, stable behavior boundaries, test depth, and E2E coverage.
-- **Operability and recovery** checks diagnostics, retries, reconciliation, cleanup, lifecycle states, and resource bounds.
-- **Documentation and standard work** checks reader actions, procedures, support claims, and terminology.
-- **Delivery flow** checks CI dependencies, fan-out, repeated work, artifact handoffs, failure localization, and feedback latency.
-
-The specialists cover distinct review concerns: customer value, built-in quality, standard work, mistake-proofing, recovery, reader action, and delivery flow. They inspect the actual value path, prevent defects at their source, reduce waiting and rework, and recommend the smallest direct correction. All seven run unconditionally and publish separate reports. The advisor does not add a selection, aggregation, or summarization stage.
+The specialists inspect the actual value path, prevent defects at their source, reduce waiting and rework, and recommend the smallest direct correction. They run independently and publish separate reports. The advisor does not add a selection, aggregation, or summarization stage.
 
 It intentionally does not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
 

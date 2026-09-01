@@ -140,60 +140,17 @@ describe("PR review advisor specialist prompts", () => {
       ["--experimental-strip-types", "render-specialist-matrix.mts"],
       { cwd: directory, encoding: "utf8", env: { PATH: process.env.PATH } },
     );
-    const matrix = JSON.parse(output);
+    const matrix = JSON.parse(output) as Array<Record<string, unknown>>;
+    const expected = ADVISOR_SPECIALISTS.map(({ interest, label }) => ({
+      interest,
+      label,
+      model: "azure/openai/gpt-5.6-terra",
+      artifact_dir: `pr-review-specialist-${interest}`,
+      artifact_name: `pr-review-specialist-${interest}`,
+    }));
 
-    expect(matrix).toEqual([
-      {
-        interest: "architecture-standard-work",
-        label: "Architecture and standard work",
-        model: "azure/openai/gpt-5.6-terra",
-        artifact_dir: "pr-review-specialist-architecture-standard-work",
-        artifact_name: "pr-review-specialist-architecture-standard-work",
-      },
-      {
-        interest: "customer-value-behavior",
-        label: "Customer value and behavior",
-        model: "azure/openai/gpt-5.6-terra",
-        artifact_dir: "pr-review-specialist-customer-value-behavior",
-        artifact_name: "pr-review-specialist-customer-value-behavior",
-      },
-      {
-        interest: "delivery-flow",
-        label: "Delivery flow",
-        model: "azure/openai/gpt-5.6-terra",
-        artifact_dir: "pr-review-specialist-delivery-flow",
-        artifact_name: "pr-review-specialist-delivery-flow",
-      },
-      {
-        interest: "documentation-standard-work",
-        label: "Documentation and standard work",
-        model: "azure/openai/gpt-5.6-terra",
-        artifact_dir: "pr-review-specialist-documentation-standard-work",
-        artifact_name: "pr-review-specialist-documentation-standard-work",
-      },
-      {
-        interest: "operability-recovery",
-        label: "Operability and recovery",
-        model: "azure/openai/gpt-5.6-terra",
-        artifact_dir: "pr-review-specialist-operability-recovery",
-        artifact_name: "pr-review-specialist-operability-recovery",
-      },
-      {
-        interest: "security-built-in-quality",
-        label: "Security and built-in quality",
-        model: "azure/openai/gpt-5.6-terra",
-        artifact_dir: "pr-review-specialist-security-built-in-quality",
-        artifact_name: "pr-review-specialist-security-built-in-quality",
-      },
-      {
-        interest: "verification-mistake-proofing",
-        label: "Verification and mistake-proofing",
-        model: "azure/openai/gpt-5.6-terra",
-        artifact_dir: "pr-review-specialist-verification-mistake-proofing",
-        artifact_name: "pr-review-specialist-verification-mistake-proofing",
-      },
-    ]);
-    expect(matrix.every((entry: Record<string, unknown>) => !("sandbox_name" in entry))).toBe(true);
+    expect(matrix).toEqual(expected);
+    expect(matrix.every((entry) => !("sandbox_name" in entry))).toBe(true);
   });
 
   it("discovers a specialist from one Markdown prompt file", () => {
