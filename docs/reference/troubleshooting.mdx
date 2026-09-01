@@ -4397,13 +4397,17 @@ The Hermes Discord policy allows its virtual-environment Python interpreter and 
 Use the Hermes virtual-environment Python runtime inside the affected sandbox for the manual REST probe:
 
 ```bash
-nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c 'import urllib.request; print(urllib.request.urlopen("https://discord.com/api/v10/gateway", timeout=20).status)'
+nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c 'import urllib.error, urllib.request; u="https://discord.com/api/v10/gateway";
+try: print(urllib.request.urlopen(u, timeout=20).status)
+except urllib.error.HTTPError as error: print(error.code)'
 ```
 
 To check Discord CDN egress, use the same sandbox-qualified Python runtime:
 
 ```bash
-nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c 'import urllib.request; print(urllib.request.urlopen("https://cdn.discordapp.com/", timeout=20).status)'
+nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c 'import urllib.error, urllib.request; u="https://cdn.discordapp.com/";
+try: print(urllib.request.urlopen(u, timeout=20).status)
+except urllib.error.HTTPError as error: print(error.code)'
 ```
 
 Any HTTP status means the Python process reached the endpoint; the exact status can vary by unauthenticated path. A transport error or OpenShell policy denial means the probe failed. If the REST probe works but the Discord channel is still unhealthy, inspect the gateway logs and blocked-request output with `openshell term`. Look for `gateway.discord.gg` connection or WebSocket upgrade failures instead of widening the preset.

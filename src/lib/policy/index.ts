@@ -23,7 +23,6 @@ import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
 import {
   getMessagingPolicyKeyAliases,
-  getMessagingPolicyPresetValidationWarnings,
   isMessagingChannelPolicyPreset,
   listBuiltInMessagingChannelManifests,
   listMessagingChannelPolicyPresets,
@@ -485,10 +484,28 @@ function getPresetValidationWarning(
     "configuration are wired up at onboard time and are not added by applying",
     "this preset alone.",
   ];
-  const validationWarningLines = getMessagingPolicyPresetValidationWarnings({
-    agent: options.agent,
-  });
-  lines.push(...(validationWarningLines[presetName] ?? []));
+  if (presetName === "discord") {
+    lines.push(
+      "curl is not in the preset binary allowlist, so curl probes can fail even",
+      "when the configured agent runtime is permitted. Direct DNS-only checks",
+      'such as dns.resolve("gateway.discord.gg") are also inconclusive behind',
+      "the OpenShell proxy. Use the agent-specific HTTPS probe against",
+      "https://discord.com/api/v10/gateway instead:",
+      "The agent-specific gateway probe prints 200 on success. A transport error",
+      "or OpenShell policy denial means validation failed.",
+    );
+    if (options.agent === "hermes") {
+      lines.push(
+        "Hermes validation uses its virtual-environment Python runtime:",
+        `nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c "import urllib.request; print(urllib.request.urlopen('https://discord.com/api/v10/gateway', timeout=20).status)"`,
+      );
+    } else if (options.agent === "openclaw") {
+      lines.push(
+        "OpenClaw validation uses its Node runtime:",
+        `node -e "require('node:https').get('https://discord.com/api/v10/gateway',r=>console.log(r.statusCode)).on('error',e=>{console.error(e.message);process.exitCode=1})"`,
+      );
+    }
+  }
 
   return lines.join("\n  ");
 }

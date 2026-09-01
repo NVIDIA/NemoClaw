@@ -15,7 +15,6 @@ import {
   getMessagingCredentialEnvKeysByChannel,
   getMessagingPolicyKeyAliases,
   getMessagingPolicyKeysByChannel,
-  getMessagingPolicyPresetValidationWarnings,
   getMessagingProviderSuffixesByChannel,
   listAvailableMessagingChannelIds,
   listBuiltInMessagingChannelManifests,
@@ -188,23 +187,6 @@ describe("built-in messaging channel metadata", () => {
       "slack",
       "teams",
     ]);
-    expect(getMessagingPolicyPresetValidationWarnings().discord).toContain(
-      "The agent-specific gateway probe prints 200 on success. A transport error",
-    );
-    const openClawDiscordWarning = getMessagingPolicyPresetValidationWarnings({
-      agent: "openclaw",
-    }).discord;
-    expect(openClawDiscordWarning).toContain("OpenClaw validation uses its Node runtime:");
-    expect(openClawDiscordWarning).not.toContain(
-      "Hermes validation uses its virtual-environment Python runtime:",
-    );
-    const hermesDiscordWarning = getMessagingPolicyPresetValidationWarnings({
-      agent: "hermes",
-    }).discord;
-    expect(hermesDiscordWarning).toContain(
-      "Hermes validation uses its virtual-environment Python runtime:",
-    );
-    expect(hermesDiscordWarning).not.toContain("OpenClaw validation uses its Node runtime:");
     expect(listOpenClawManagedChannelNames()).toEqual([
       "telegram",
       "discord",
@@ -337,12 +319,10 @@ describe("built-in messaging channel metadata", () => {
         name: "shared",
         policyKeys: ["alpha_key"],
         agentPolicyKeys: { hermes: ["alpha_hermes"] },
-        validationWarningLines: ["alpha warning"],
       }),
       manifestWithPreset("beta", {
         name: "shared",
         policyKeys: ["beta_key"],
-        validationWarningLines: ["beta warning"],
       }),
     ];
 
@@ -350,10 +330,6 @@ describe("built-in messaging channel metadata", () => {
       "alpha_key",
       "alpha_hermes",
       "beta_key",
-    ]);
-    expect(getMessagingPolicyPresetValidationWarnings({ manifests }).shared).toEqual([
-      "alpha warning",
-      "beta warning",
     ]);
   });
 
