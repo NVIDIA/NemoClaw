@@ -30,6 +30,10 @@ import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-ru
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
 const FAKE_WECHAT_API = path.resolve(import.meta.dirname, "../lib/fake-wechat-api.mts");
+const FAKE_API_PORT_TRAFFIC = path.resolve(
+  import.meta.dirname,
+  "../lib/fake-api-port-readiness.mts",
+);
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -159,18 +163,24 @@ function fakeDockerHost(publishedAddress = "127.0.0.1"): {
   const calls: string[][] = [];
   const host = {
     command: async (command: string, args: string[]) => {
-      if (command === "node") return successfulCommand();
-      expect(command).toBe("docker");
-      calls.push([...args]);
-      args
-        .filter((argument) => args[0] === "run" && argument.endsWith(":/tmp/fake"))
-        .forEach((fakeApiMount) => {
-          const fixtureDir = fakeApiMount.slice(0, -":/tmp/fake".length);
-          fs.writeFileSync(path.join(fixtureDir, "port"), "8080");
-        });
-      return args[0] === "port"
-        ? successfulCommand(`${publishedAddress}:${args[2] === "8081/tcp" ? "32101" : "32100"}\n`)
-        : successfulCommand();
+      switch (command) {
+        case "node":
+          return successfulCommand();
+        default:
+          expect(command).toBe("docker");
+          calls.push([...args]);
+          args
+            .filter((argument) => args[0] === "run" && argument.endsWith(":/tmp/fake"))
+            .forEach((fakeApiMount) => {
+              const fixtureDir = fakeApiMount.slice(0, -":/tmp/fake".length);
+              fs.writeFileSync(path.join(fixtureDir, "port"), "8080");
+            });
+          return args[0] === "port"
+            ? successfulCommand(
+                `${publishedAddress}:${args[2] === "8081/tcp" ? "32101" : "32100"}\n`,
+              )
+            : successfulCommand();
+      }
     },
   } as unknown as HostCliClient;
   return { calls, host };
@@ -189,26 +199,27 @@ describe("messaging provider installed-runtime proofs", () => {
         const invocation = [command.command, ...command.args];
         const artifactName = options?.artifactName ?? "";
         artifactNames.push(...(artifactName ? [artifactName] : []));
-        if (artifactName === "start-fake-slack-api") {
-          const mountSuffix = ":/tmp/fake";
-          const mount = invocation.find((argument) => argument.endsWith(mountSuffix));
-          expect(mount).toBeDefined();
-          fs.writeFileSync(path.join(mount!.slice(0, -mountSuffix.length), "port"), "8080\n");
+        switch (artifactName) {
+          case "start-fake-slack-api": {
+            const mountSuffix = ":/tmp/fake";
+            const mount = invocation.find((argument) => argument.endsWith(mountSuffix));
+            expect(mount).toBeDefined();
+            fs.writeFileSync(path.join(mount!.slice(0, -mountSuffix.length), "port"), "8080\n");
+            return successfulShellResult(invocation);
+          }
+          case "port-fake-slack-api":
+            return successfulShellResult(invocation, "127.0.0.1:41080\n");
+          case "port-fake-slack-websocket-api":
+            return successfulShellResult(invocation, "127.0.0.1:41081\n");
+          case "prove-fake-slack-api-proxy-traffic":
+            return {
+              ...successfulShellResult(invocation),
+              exitCode: 1,
+              stderr: "fake API port traffic check failed: connection refused",
+            };
+          default:
+            return successfulShellResult(invocation);
         }
-        if (artifactName === "port-fake-slack-api") {
-          return successfulShellResult(invocation, "127.0.0.1:41080\n");
-        }
-        if (artifactName === "port-fake-slack-websocket-api") {
-          return successfulShellResult(invocation, "127.0.0.1:41081\n");
-        }
-        if (artifactName === "prove-fake-slack-api-proxy-traffic") {
-          return {
-            ...successfulShellResult(invocation),
-            exitCode: 1,
-            stderr: "fake API port traffic check failed: connection refused",
-          };
-        }
-        return successfulShellResult(invocation);
       },
     };
 
@@ -334,50 +345,6 @@ describe("messaging provider installed-runtime proofs", () => {
       );
     }
   });
-
-  it("publishes independent fake Slack REST and websocket ports", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-slack-ports-"));
-    const portFile = path.join(dir, "port");
-    const captureFile = path.join(dir, "capture.jsonl");
-    const child = spawn(process.execPath, [FAKE_SLACK_API], {
-      env: {
-        ...process.env,
-        FAKE_SLACK_API_HOST: "127.0.0.1",
-        FAKE_SLACK_API_PORT: "0",
-        FAKE_SLACK_API_WEBSOCKET_PORT: "0",
-        FAKE_SLACK_API_PORT_FILE: portFile,
-        FAKE_SLACK_API_CAPTURE_FILE: captureFile,
-        FAKE_SLACK_API_EXPECTED_BOT_TOKEN: "xoxb-fake-slack-port-test",
-        FAKE_SLACK_API_EXPECTED_APP_TOKEN: "xapp-fake-slack-port-test",
-      },
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    let stderr = "";
-    child.stderr?.setEncoding("utf8");
-    child.stderr?.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-
-    try {
-      await waitFor(() => fs.existsSync(portFile), `fake Slack listeners did not start: ${stderr}`);
-      const listening = fs
-        .readFileSync(captureFile, "utf8")
-        .trim()
-        .split(/\r?\n/u)
-        .filter(Boolean)
-        .map((line) => JSON.parse(line))
-        .filter((entry) => entry.event === "listening");
-      expect(listening).toHaveLength(2);
-      expect(listening.map((entry) => entry.kind).sort()).toEqual(["rest", "websocket"]);
-      expect(new Set(listening.map((entry) => entry.port)).size).toBe(2);
-    } finally {
-      child.kill("SIGTERM");
-      await new Promise<void>((resolve) =>
-        child.exitCode !== null ? resolve() : child.once("exit", () => resolve()),
-      );
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  }, 10_000);
 
   it("publishes independent fake Slack REST and websocket ports from one fixture", async () => {
     const fixture = await startFakeSlackPortFixture();

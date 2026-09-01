@@ -370,7 +370,6 @@ describe("deterministic PR risk plan", () => {
   });
 
   it.each([
-    "test/e2e/lib/fake-api-port-proxy.mts",
     "test/e2e/lib/fake-api-port-readiness.mts",
     "test/e2e/live/messaging-providers-helpers.ts",
   ])("selects every fake Docker API consumer for %s", (changedFile) => {
