@@ -224,9 +224,13 @@ function successfulCommand(stdout = "") {
   };
 }
 
-function fakeDockerHost(publishedAddress = "127.0.0.1"): HostCliClient {
+function fakeDockerHost(
+  publishedAddress = "127.0.0.1",
+  invocations: Array<readonly string[]> = [],
+): HostCliClient {
   const host = {
     command: async (command: string, args: string[]) => {
+      invocations.push([command, ...args]);
       switch (command) {
         case "node":
           return successfulCommand();
@@ -250,6 +254,52 @@ function fakeDockerHost(publishedAddress = "127.0.0.1"): HostCliClient {
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("runs the published proxy only on the internal fake API network", async () => {
+    const invocations: Array<readonly string[]> = [];
+    const host = fakeDockerHost("127.0.0.1", invocations);
+    const cleanup: Array<() => Promise<void>> = [];
+
+    try {
+      await startFakeDockerApi(host, (_name, run) => cleanup.push(run), {
+        kind: "discord-gateway",
+        imageScript: "fake-discord-gateway.cjs",
+        containerPrefix: "fake-discord-gateway",
+        portEnv: "FAKE_DISCORD_GATEWAY_PORT",
+        portFileEnv: "FAKE_DISCORD_GATEWAY_PORT_FILE",
+        captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
+        expectedEnv: {},
+        redactionValues: [],
+        env: {},
+      });
+
+      const networkCreate = invocations.find(
+        (invocation) => invocation[0] === "docker" && invocation[1] === "network",
+      );
+      const network = networkCreate?.at(-1);
+      const proxyRun = invocations.find(
+        (invocation) =>
+          invocation[0] === "docker" &&
+          invocation[1] === "run" &&
+          invocation.some((argument) => argument.startsWith("NEMOCLAW_FAKE_API_UPSTREAM=")),
+      );
+
+      expect(network).toMatch(/^nemoclaw-fake-api-network-/u);
+      expect(proxyRun).toEqual(expect.arrayContaining(["--network", network]));
+      expect(
+        invocations.some(
+          (invocation) =>
+            invocation[0] === "docker" &&
+            invocation[1] === "network" &&
+            invocation[2] === "connect",
+        ),
+      ).toBe(false);
+    } finally {
+      await cleanup
+        .reverse()
+        .reduce((previous, action) => previous.then(action), Promise.resolve());
+    }
+  });
+
   it("collects API diagnostics when the fake container does not become ready", async () => {
     vi.useFakeTimers();
     const artifactNames: string[] = [];

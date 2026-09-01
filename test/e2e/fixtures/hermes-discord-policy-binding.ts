@@ -60,16 +60,6 @@ export function bindPolicyEndpoints(
   fs.chmodSync(policyFile, 0o600);
 }
 
-export function bindHermesDiscordPolicyEndpoint(
-  policyFile: string,
-  providerName: string,
-  host: string,
-  port: number,
-  protocol: string,
-): void {
-  bindPolicyEndpoints(policyFile, [{ providerName, host, port, protocol }]);
-}
-
 function main(): void {
   const [policyFile, ...rawBindings] = process.argv.slice(2);
   if (!policyFile || rawBindings.length === 0 || rawBindings.length % 4 !== 0) {
