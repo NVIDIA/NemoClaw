@@ -81,13 +81,6 @@ function extractHermesRuntimeGuard(dockerfile: string): string {
     .replace(/\\\n/g, " ");
 }
 
-function extractAgentBrowserCacheBlock(dockerfile: string): string {
-  const warmStart = dockerfile.indexOf("RUN HOME=/sandbox");
-  const runtimeGuard = dockerfile.indexOf("RUN /usr/local/bin/hermes --version", warmStart);
-  expect(warmStart).toBeGreaterThanOrEqual(0);
-  expect(runtimeGuard).toBeGreaterThan(warmStart);
-  return dockerfile.slice(warmStart, runtimeGuard);
-}
 
 function expectReadableVenvBeforeSandboxProbe(dockerfile: string): void {
   const permissionStep = dockerfile.indexOf("RUN chmod -R a+rX /opt/hermes/.venv");
