@@ -23,7 +23,10 @@ import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-re
 import { isSandboxReady } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
-import { reportSandboxCreateFailure } from "./created-sandbox-failure";
+import {
+  redactCreatedSandboxFailureDiagnostic,
+  reportSandboxCreateFailure,
+} from "./created-sandbox-failure";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
@@ -47,7 +50,10 @@ import type {
 } from "./sandbox-gpu-create-flow";
 import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
 import * as sandboxGpuPreflight from "./sandbox-gpu-preflight";
-import { SANDBOX_RECREATE_PROBE_TIMEOUT_MS } from "./sandbox-recreate-probe";
+import {
+  isExplicitMissingSandboxGatewayOutput,
+  SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
+} from "./sandbox-recreate-probe";
 import type { CreatedSandboxReadyIdentityCheck } from "./sandbox-readiness-tracing";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
 import { addTraceEvent } from "./tracing";
@@ -70,6 +76,7 @@ export type SandboxGpuCreateAttemptState = {
 const REPLACEMENT_STABLE_READY_POLLS = 2;
 const SANDBOX_READY_PROBE_TIMEOUT_MS = 5_000;
 const CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_MS = 1_000;
+const CREATED_SANDBOX_PUBLICATION_DIAGNOSTIC_LIMIT = 1_000;
 
 async function streamSandboxCreateWithPublicImageCredentialIsolation(
   isolate: boolean,
@@ -192,6 +199,23 @@ function normalizedOpenShellCommandOutput(result: OpenShellCommandResult): strin
     .trim();
 }
 
+function boundedPublicationDiagnostic(value: string): string {
+  return redactCreatedSandboxFailureDiagnostic(
+    value,
+    CREATED_SANDBOX_PUBLICATION_DIAGNOSTIC_LIMIT,
+  );
+}
+
+function publicationFailureDiagnostic(result: OpenShellCommandResult): string {
+  const commandOutput = normalizedOpenShellCommandOutput(result);
+  const processError =
+    result.error instanceof Error ? result.error.message : String(result.error ?? "");
+  const status = result.status === null ? "no exit status" : `exit ${result.status}`;
+  return boundedPublicationDiagnostic(
+    [status, processError, commandOutput].filter((value) => value.length > 0).join(": "),
+  );
+}
+
 type OpenShellSandboxIdentityProbe =
   | { state: "identified"; sandboxId: string }
   | { state: "not_ready" }
@@ -310,6 +334,7 @@ function persistIdentitySettlementRecoveryEvidence(options: {
   readonly input: SandboxGpuCreateFlowInput;
   readonly createAttemptNonce: string | null;
   readonly sandboxIdentityFingerprint: string | null;
+  readonly failureDiagnostic?: string;
 }): void {
   const { input, createAttemptNonce, sandboxIdentityFingerprint } = options;
   const identityEvidence = sandboxIdentityFingerprint
@@ -320,6 +345,7 @@ function persistIdentitySettlementRecoveryEvidence(options: {
     createAttemptNonce,
     detail:
       identityEvidence +
+      (options.failureDiagnostic ? `OpenShell detail: ${options.failureDiagnostic}. ` : "") +
       "Do not delete a sandbox by mutable name; preserve it until an OpenShell administrator resolves the create-attempt label to one sandbox.",
     sandboxIdentityFingerprint: sandboxIdentityFingerprint ?? undefined,
   });
@@ -463,7 +489,23 @@ function waitForCreatedOpenShellSandboxPublication(
         }
         return true;
       }
-      return false;
+      const output = normalizedOpenShellCommandOutput(result);
+      const failedCleanly =
+        !result.error &&
+        result.status !== null &&
+        !("signal" in result && result.signal) &&
+        result.status !== 0;
+      if (
+        failedCleanly &&
+        (OPENSHELL_SANDBOX_NOT_READY.test(output) ||
+          isExplicitMissingSandboxGatewayOutput(output, input.sandboxName))
+      ) {
+        return false;
+      }
+      const diagnostic = publicationFailureDiagnostic(result);
+      throw new Error(
+        `OpenShell could not verify publication of created sandbox '${input.sandboxName}'${diagnostic ? `: ${diagnostic}` : "."}`,
+      );
     },
   });
   if (!published) {
@@ -477,12 +519,18 @@ function waitForCreatedSandboxPublicationOrPersist(
   sandboxId: string,
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
-  persistIdentitySettlementRecovery: (sandboxIdentityFingerprint: string) => void,
+  persistIdentitySettlementRecovery: (
+    sandboxIdentityFingerprint: string,
+    failureDiagnostic?: string,
+  ) => void,
 ): void {
   try {
     waitForCreatedOpenShellSandboxPublication(sandboxId, input, deps);
   } catch (error) {
-    persistIdentitySettlementRecovery(fingerprintSandboxRecreateValue(sandboxId));
+    persistIdentitySettlementRecovery(
+      fingerprintSandboxRecreateValue(sandboxId),
+      boundedPublicationDiagnostic(error instanceof Error ? error.message : String(error)),
+    );
     throw error;
   }
 }
@@ -612,11 +660,13 @@ export function createSandboxGpuCreateAttemptRunner(
     const createAttemptNonce = resolveCreateAttemptNonce(input, deferPostCreateEffects);
     const persistIdentitySettlementRecovery = (
       sandboxIdentityFingerprint: string | null = null,
+      failureDiagnostic?: string,
     ): void => {
       persistIdentitySettlementRecoveryEvidence({
         input,
         createAttemptNonce,
         sandboxIdentityFingerprint,
+        ...(failureDiagnostic ? { failureDiagnostic } : {}),
       });
     };
     const waitForCreatedSandboxPublication = (sandboxId: string): void =>

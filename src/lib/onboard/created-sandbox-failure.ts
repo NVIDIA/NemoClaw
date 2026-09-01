@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { redact } from "../security/redact";
+import { redact, redactFullWithUrls } from "../security/redact";
 import type { CreatedSandboxReadinessResult } from "./sandbox-readiness-tracing";
 
 export type SandboxCreateFailureReportOptions = {
@@ -24,6 +24,10 @@ export type SandboxCreateFailureReportDeps = {
   error(message: string): void;
   exitProcess(code: number): never;
 };
+
+export function redactCreatedSandboxFailureDiagnostic(value: string, limit: number): string {
+  return redactFullWithUrls(value).replace(/\s+/gu, " ").trim().slice(0, limit);
+}
 
 /**
  * Report a non-zero sandbox create-stream exit. A mere "create incomplete"
