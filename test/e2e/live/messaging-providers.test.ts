@@ -3,16 +3,18 @@
 
 /**
  *
- * Preserves the high-value provider/config/redaction contracts: fake tokens by
- * default, _REAL secrets opt in to real sends, provider placeholders must not
- * leak into sandbox-visible surfaces, and installed OpenClaw channel runtime
+ * Preserves the high-value provider/config/redaction contracts. Fake tokens are
+ * used only when no channel token is set. Each _REAL token takes precedence over
+ * its ordinary token, and either value can enable live sends. Provider placeholders
+ * must not leak into sandbox-visible surfaces, and installed OpenClaw channel runtime
  * exports must drive the hermetic Slack and Telegram send proofs.
  */
 
 import fs from "node:fs";
+import { describe } from "vitest";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
-import { expect, test } from "../fixtures/e2e-test.ts";
+import { type E2ETargetFixtures, expect, test } from "../fixtures/e2e-test.ts";
 import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receipt.ts";
 import {
   accountBool,
@@ -57,125 +59,151 @@ import { runInstalledWechatRuntimeProof } from "./messaging-providers-wechat-run
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
-test(
-  "given one clean all-channel installation, named messaging scenarios preserve rebuild, isolation, and send contracts",
-  {
-    ...testTimeoutOptions(LIVE_TIMEOUT_MS),
-    meta: {
-      e2ePhases: [
-        "given messaging credentials, cleanup leaves a fresh host for installation",
-        "when all channels are installed, the OpenClaw sandbox becomes ready",
-        "when WhatsApp is added, rebuild preserves its policy, Slack bindings, and unrelated host edits",
-        "when providers are installed, the sandbox exposes placeholders without raw credentials",
-        "when provider routes are probed, Telegram and Discord rewrites remain scoped",
-        "when installed runtimes send, rewritten credentials reach only isolated fake APIs",
-        "when gateway health and optional live sends run, provider contracts remain healthy",
-      ],
-    },
-  },
-  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
-    if (!process.env.NVIDIA_INFERENCE_API_KEY) {
-      skip("NVIDIA_INFERENCE_API_KEY is required for live messaging-provider E2E");
-      return;
-    }
-    if (!fs.existsSync(CLI_ENTRYPOINT)) {
-      throw new Error(`NemoClaw CLI entrypoint missing: ${CLI_ENTRYPOINT}`);
-    }
+type MessagingSetupFixtures = Pick<
+  E2ETargetFixtures,
+  "artifacts" | "cleanup" | "host" | "progress" | "sandbox"
+> & { skip: (message?: string) => never };
 
-    const state = messagingEnv();
-    const redactionValues = tokenValues(state.tokens);
-    const skips: string[] = [];
-    await artifacts.writeJson("messaging-provider-env-summary.json", {
-      sandboxName: SANDBOX_NAME,
-      telegramTokenChars: state.tokens.telegram.length,
-      discordTokenChars: state.tokens.discord.length,
-      slackBotTokenChars: state.tokens.slackBot.length,
-      slackAppTokenChars: state.tokens.slackApp.length,
-      telegramAllowlistKey: state.telegramAllowlistKey,
-      telegramAllowedIdCount: countCsv(state.telegramIds),
-      slackAllowedUserCount: countCsv(state.slackIds),
-      wechatAccount: state.wechatAccount,
-    });
+async function installMessagingSandbox({
+  artifacts,
+  cleanup,
+  host,
+  progress,
+  sandbox,
+  skip,
+}: MessagingSetupFixtures): Promise<{
+  state: ReturnType<typeof messagingEnv>;
+  redactionValues: string[];
+  skips: string[];
+}> {
+  if (!process.env.NVIDIA_INFERENCE_API_KEY) {
+    return skip("NVIDIA_INFERENCE_API_KEY is required for live messaging-provider E2E");
+  }
+  if (!fs.existsSync(CLI_ENTRYPOINT)) {
+    throw new Error(`NemoClaw CLI entrypoint missing: ${CLI_ENTRYPOINT}`);
+  }
+  progress.phase(
+    "given messaging credentials, cleanup and installation leave a ready OpenClaw sandbox",
+  );
 
-    cleanup.trackGateway(host, "nemoclaw", {
-      artifactName: "cleanup-openshell-gateway-destroy-messaging-providers",
+  const state = messagingEnv();
+  const redactionValues = tokenValues(state.tokens);
+  const skips: string[] = [];
+  await artifacts.writeJson("messaging-provider-env-summary.json", {
+    sandboxName: SANDBOX_NAME,
+    telegramTokenChars: state.tokens.telegram.length,
+    discordTokenChars: state.tokens.discord.length,
+    slackBotTokenChars: state.tokens.slackBot.length,
+    slackAppTokenChars: state.tokens.slackApp.length,
+    telegramAllowlistKey: state.telegramAllowlistKey,
+    telegramAllowedIdCount: countCsv(state.telegramIds),
+    slackAllowedUserCount: countCsv(state.slackIds),
+    wechatAccount: state.wechatAccount,
+  });
+
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-openshell-gateway-destroy-messaging-providers",
+    env: state.env,
+    redactionValues,
+    timeoutMs: 120_000,
+  });
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-sandbox-delete-messaging-providers",
       env: state.env,
       redactionValues,
       timeoutMs: 120_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy-messaging-providers",
+    env: state.env,
+    redactionValues,
+    timeoutMs: 15 * 60_000,
+  });
+
+  await precleanMessagingResources(host, sandbox, {
+    sandboxName: SANDBOX_NAME,
+    artifactPrefix: "preclean-messaging-providers",
+    env: state.env,
+    redactionValues,
+  });
+
+  const dockerInfo = await runHost(host, "docker", ["info"], {
+    artifactName: "prereq-docker-info-messaging-providers",
+    env: state.env,
+    redactionValues,
+    timeoutMs: 30_000,
+  });
+  expectExitZero(dockerInfo, "Docker must be running");
+
+  const install = await runHost(host, "bash", ["install.sh", "--non-interactive"], {
+    artifactName: "install-messaging-providers",
+    env: state.env,
+    redactionValues,
+    timeoutMs: INSTALL_TIMEOUT_MS,
+  });
+  if (install.exitCode !== 0 && isNvidiaEndpointRateLimitFailure(outputText(install))) {
+    await artifacts.writeJson("messaging-provider-early-skip.json", {
+      reason: "NVIDIA endpoint validation was rate-limited before messaging-provider assertions ran",
+      exitCode: install.exitCode,
+      artifact: install.artifacts.result,
     });
-    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-      sandbox.cleanupSandbox(SANDBOX_NAME, {
-        artifactName: "cleanup-openshell-sandbox-delete-messaging-providers",
-        env: state.env,
-        redactionValues,
-        timeoutMs: 120_000,
-      }),
+    return skip(
+      "NVIDIA endpoint validation was rate-limited before messaging-provider assertions ran",
     );
-    cleanup.trackSandbox(host, SANDBOX_NAME, {
-      artifactName: "cleanup-nemoclaw-destroy-messaging-providers",
-      env: state.env,
-      redactionValues,
-      timeoutMs: 15 * 60_000,
-    });
+  }
+  expectExitZero(install, "M0: install.sh completed");
+  assertStockManagedImageReceipt({
+    environment: state.env,
+    expectedAgent: "openclaw",
+    sandboxName: SANDBOX_NAME,
+  });
 
-    await precleanMessagingResources(host, sandbox, {
-      sandboxName: SANDBOX_NAME,
-      artifactPrefix: "preclean-messaging-providers",
-      env: state.env,
-      redactionValues,
-    });
+  const openshellVersion = await runHost(host, "openshell", ["--version"], {
+    artifactName: "openshell-version-messaging-providers",
+    env: state.env,
+    redactionValues,
+    timeoutMs: 60_000,
+  });
+  expectExitZero(openshellVersion, "openshell installed");
 
-    const dockerInfo = await runHost(host, "docker", ["info"], {
-      artifactName: "prereq-docker-info-messaging-providers",
-      env: state.env,
-      redactionValues,
-      timeoutMs: 30_000,
-    });
-    expectExitZero(dockerInfo, "Docker must be running");
+  const sandboxList = await runHost(host, "openshell", ["sandbox", "list"], {
+    artifactName: "sandbox-list-messaging-providers",
+    env: state.env,
+    redactionValues,
+    timeoutMs: 60_000,
+  });
+  expectExitZero(sandboxList, "openshell sandbox list");
+  const sandboxRow = stripAnsi(sandboxList.stdout)
+    .split(/\r?\n/)
+    .find((line) => line.includes(SANDBOX_NAME));
+  check(Boolean(sandboxRow && /\bReady\b/.test(sandboxRow)), "M0b: sandbox is Ready");
 
-    progress.phase("when all channels are installed, the OpenClaw sandbox becomes ready");
-    const install = await runHost(host, "bash", ["install.sh", "--non-interactive"], {
-      artifactName: "install-messaging-providers",
-      env: state.env,
-      redactionValues,
-      timeoutMs: INSTALL_TIMEOUT_MS,
-    });
-    if (install.exitCode !== 0 && isNvidiaEndpointRateLimitFailure(outputText(install))) {
-      await artifacts.writeJson("messaging-provider-early-skip.json", {
-        reason:
-          "NVIDIA endpoint validation was rate-limited before messaging-provider assertions ran",
-        exitCode: install.exitCode,
-        artifact: install.artifacts.result,
+  return { state, redactionValues, skips };
+}
+
+describe.sequential("messaging provider live contracts", () => {
+  test(
+    "when WhatsApp is added, rebuild preserves its policy, Slack bindings, and unrelated host edits",
+    {
+      ...testTimeoutOptions(LIVE_TIMEOUT_MS),
+      meta: {
+        e2ePhases: [
+          "given messaging credentials, cleanup and installation leave a ready OpenClaw sandbox",
+          "when WhatsApp is added, rebuild preserves its policy, Slack bindings, and unrelated host edits",
+        ],
+      },
+    },
+    async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+      const { state, redactionValues } = await installMessagingSandbox({
+        artifacts,
+        cleanup,
+        host,
+        progress,
+        sandbox,
+        skip,
       });
-      skip("NVIDIA endpoint validation was rate-limited before messaging-provider assertions ran");
-      return;
-    }
-    expectExitZero(install, "M0: install.sh completed");
-    assertStockManagedImageReceipt({
-      environment: state.env,
-      expectedAgent: "openclaw",
-      sandboxName: SANDBOX_NAME,
-    });
-
-    const openshellVersion = await runHost(host, "openshell", ["--version"], {
-      artifactName: "openshell-version-messaging-providers",
-      env: state.env,
-      redactionValues,
-      timeoutMs: 60_000,
-    });
-    expectExitZero(openshellVersion, "openshell installed");
-
-    const sandboxList = await runHost(host, "openshell", ["sandbox", "list"], {
-      artifactName: "sandbox-list-messaging-providers",
-      env: state.env,
-      redactionValues,
-      timeoutMs: 60_000,
-    });
-    expectExitZero(sandboxList, "openshell sandbox list");
-    const sandboxRow = stripAnsi(sandboxList.stdout)
-      .split(/\r?\n/)
-      .find((line) => line.includes(SANDBOX_NAME));
-    check(Boolean(sandboxRow && /\bReady\b/.test(sandboxRow)), "M0b: sandbox is Ready");
 
     progress.phase(
       "when WhatsApp is added, rebuild preserves its policy, Slack bindings, and unrelated host edits",
@@ -331,6 +359,75 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       slackPolicyPostEvidence.bot && slackPolicyPostEvidence.app,
       "M-WA5b: Slack bot and app credential bindings survived messaging rebuild",
     );
+    const whatsappConfig = await readOpenClawConfig(sandbox, redactionValues);
+    check(channelEnabled(whatsappConfig, "whatsapp"), "M-WA6: WhatsApp channel is enabled");
+    check(pluginEnabled(whatsappConfig, "whatsapp"), "M-WA7: WhatsApp plugin is enabled");
+    const whatsappAccount = channelAccount(whatsappConfig, "whatsapp");
+    check(accountBool(whatsappAccount, "enabled") === true, "M-WA8: WhatsApp account is enabled");
+    const whatsappHealth = whatsappAccount.healthMonitor;
+    check(
+      Boolean(
+        whatsappHealth &&
+        typeof whatsappHealth === "object" &&
+        (whatsappHealth as Record<string, unknown>).enabled === false,
+      ),
+      "M-WA8a: WhatsApp health monitor is disabled for unpaired QR session",
+    );
+    check(
+      !JSON.stringify(whatsappAccount).match(
+        /token|secret|auth|session|openshell:resolve:env:WHATSAPP/i,
+      ),
+      "M-WA9: WhatsApp config has no token/auth/session provider placeholders",
+    );
+    const whatsappRuntimeResult = await runSandboxShell(
+      sandbox,
+      "timeout 45 openclaw channels list --all --json --no-color",
+      {
+        artifactName: "openclaw-channels-list-whatsapp-post-rebuild",
+        redactionValues,
+      },
+    );
+    expectExitZero(whatsappRuntimeResult, "OpenClaw channels list after WhatsApp rebuild");
+    const whatsappRuntimeOutput = whatsappRuntimeResult.stdout.trim();
+    expect(
+      whatsappRuntimeOutput,
+      `OpenClaw channels list did not emit WhatsApp state after rebuild:\n${
+        whatsappRuntimeResult.stderr.trim() || "stderr was empty"
+      }`,
+    ).not.toBe("");
+    const whatsappRuntime = (
+      JSON.parse(whatsappRuntimeOutput) as {
+        chat?: Record<string, { installed?: unknown; origin?: unknown }>;
+      }
+    ).chat?.whatsapp;
+    check(
+      whatsappRuntime?.installed === true &&
+        (whatsappRuntime.origin === "available" || whatsappRuntime.origin === "configured"),
+      "M-WA10: OpenClaw channels list reports WhatsApp installed after rebuild",
+    );
+    },
+  );
+
+  test(
+    "when providers are installed, sandbox-visible surfaces contain placeholders but no raw credentials",
+    {
+      ...testTimeoutOptions(LIVE_TIMEOUT_MS),
+      meta: {
+        e2ePhases: [
+          "given messaging credentials, cleanup and installation leave a ready OpenClaw sandbox",
+          "when providers are installed, the sandbox exposes placeholders without raw credentials",
+        ],
+      },
+    },
+    async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+      const { state, redactionValues, skips } = await installMessagingSandbox({
+        artifacts,
+        cleanup,
+        host,
+        progress,
+        sandbox,
+        skip,
+      });
 
     progress.phase(
       "when providers are installed, the sandbox exposes placeholders without raw credentials",
@@ -504,7 +601,6 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
         ["M6a", "telegram", "telegram"],
         ["M6b", "discord", "discord"],
         ["M6c", "slack", "slack"],
-        ["M6d", "whatsapp", "whatsapp"],
       ] as const
     ).forEach(([assertionId, channel, plugin]) => {
       check(channelEnabled(config, channel), `${assertionId}: channels.${channel}.enabled is true`);
@@ -517,7 +613,6 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const telegramAccount = channelAccount(config, "telegram");
     const discordAccount = channelAccount(config, "discord");
     const slackAccount = channelAccount(config, "slack");
-    const whatsappAccount = channelAccount(config, "whatsapp");
     const wechatAccount = channelAccount(config, "openclaw-weixin", state.wechatAccount);
 
     check(
@@ -568,22 +663,6 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "M11h: Slack wildcard channel mention allowlist contains expected users",
     );
 
-    check(accountBool(whatsappAccount, "enabled") === true, "M-WA8: WhatsApp account is enabled");
-    const whatsappHealth = whatsappAccount.healthMonitor;
-    check(
-      Boolean(
-        whatsappHealth &&
-        typeof whatsappHealth === "object" &&
-        (whatsappHealth as Record<string, unknown>).enabled === false,
-      ),
-      "M-WA8a: WhatsApp health monitor is disabled for unpaired QR session",
-    );
-    check(
-      !JSON.stringify(whatsappAccount).match(
-        /token|secret|auth|session|openshell:resolve:env:WHATSAPP/i,
-      ),
-      "M-WA9: WhatsApp config has no token/auth/session provider placeholders",
-    );
     check(
       accountBool(wechatAccount, "enabled") === true,
       "M-W8: WeChat configured account is enabled",
@@ -648,12 +727,31 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
         `${assertionId}: OpenClaw channels list reports ${channel} installed/configured`,
       );
     });
-    const whatsappRuntime = parsedRuntime.chat?.whatsapp;
-    check(
-      whatsappRuntime?.installed === true &&
-        (whatsappRuntime.origin === "available" || whatsappRuntime.origin === "configured"),
-      "M6h: OpenClaw channels list reports WhatsApp plugin installed",
-    );
+    },
+  );
+
+  test(
+    "when installed messaging runtimes send, credential rewrites reach only isolated fake APIs",
+    {
+      ...testTimeoutOptions(LIVE_TIMEOUT_MS),
+      meta: {
+        e2ePhases: [
+          "given messaging credentials, cleanup and installation leave a ready OpenClaw sandbox",
+          "when provider routes are probed, Telegram and Discord rewrites remain scoped",
+          "when installed runtimes send, rewritten credentials reach only isolated fake APIs",
+          "when gateway health and optional live sends run, provider contracts remain healthy",
+        ],
+      },
+    },
+    async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+      const { state, redactionValues, skips } = await installMessagingSandbox({
+        artifacts,
+        cleanup,
+        host,
+        progress,
+        sandbox,
+        skip,
+      });
 
     progress.phase("when provider routes are probed, Telegram and Discord rewrites remain scoped");
     // Probe the allowed Telegram bot API path (/bot<token>/**). The bare root
@@ -1303,3 +1401,4 @@ setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
     }
   },
 );
+});

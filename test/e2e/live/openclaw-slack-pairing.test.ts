@@ -4,8 +4,8 @@
 import fs from "node:fs";
 
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { applyCredentialBoundFakePolicy } from "./messaging-providers-helpers.ts";
 import {
-  applyFakePolicy,
   approveAndAssertPairing,
   assertOpenClawStateRoot,
   assertSlackPresetPolicySemantics,
@@ -176,7 +176,7 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     SLACK_APP_TOKEN,
     redactions,
   );
-  await applyFakePolicy({
+  await applyCredentialBoundFakePolicy({
     host,
     sandboxName: SANDBOX_NAME,
     api: fakeSlackRest,
@@ -187,7 +187,7 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     redactions,
     artifactName: "apply-slack-rest-policy",
   });
-  await applyFakePolicy({
+  await applyCredentialBoundFakePolicy({
     host,
     sandboxName: SANDBOX_NAME,
     api: fakeSlackWebSocket,

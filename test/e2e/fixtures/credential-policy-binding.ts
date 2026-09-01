@@ -28,6 +28,18 @@ export function bindCredentialPolicyEndpoint(
   protocol: string,
 ): void {
   const source = fs.readFileSync(policyFile, "utf8");
+  const boundPolicy = bindCredentialPolicyDocument(source, providerName, host, port, protocol);
+  fs.writeFileSync(policyFile, boundPolicy, { encoding: "utf8", mode: 0o600 });
+  fs.chmodSync(policyFile, 0o600);
+}
+
+export function bindCredentialPolicyDocument(
+  source: string,
+  providerName: string,
+  host: string,
+  port: number,
+  protocol: string,
+): string {
   const policy = parseOpenShellPolicy(source).policy;
   const endpoints = Object.values(policy.network_policies ?? {}).flatMap((entry) => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
@@ -44,8 +56,7 @@ export function bindCredentialPolicyEndpoint(
   if (!endpoint) throw new Error("credential-bound endpoint is missing from the base policy");
 
   endpoint.credential_binding = { provider: providerName };
-  fs.writeFileSync(policyFile, YAML.stringify(policy));
-  fs.chmodSync(policyFile, 0o600);
+  return YAML.stringify(policy);
 }
 
 function main(): void {

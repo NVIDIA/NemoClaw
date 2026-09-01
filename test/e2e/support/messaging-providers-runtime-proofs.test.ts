@@ -304,7 +304,7 @@ describe("messaging provider installed-runtime proofs", () => {
       ],
     },
   ])(
-    "when a $protocol fake endpoint is bound, one policy owner retains rewrite, binary, and wait arguments",
+    "when a $protocol fake endpoint is bound, one policy owner retains update arguments and invokes the reconciled transaction",
     async ({ protocol, rewrite, allowRules, policyHost, binaries }) => {
       const calls: Array<{ command: string; args: string[] }> = [];
       const host = {
@@ -341,16 +341,13 @@ describe("messaging provider installed-runtime proofs", () => {
       expect(update.args.at(-1)).toBe("--wait");
 
       const binding = calls[1]!;
-      expect(binding.command).toBe("bash");
-      expect(binding.args).toContain("/trusted/openshell");
+      expect(binding.command).toBe(process.execPath);
       expect(binding.args).toContain("e2e-messaging-policy-bridge");
       expect(binding.args).toContain(expectedHost);
       expect(binding.args).toContain(protocol);
       expect(binding.args).toContain(
-        path.join(REPO_ROOT, "test/e2e/fixtures/credential-policy-binding.ts"),
+        path.join(REPO_ROOT, "test/e2e/fixtures/credential-policy-transaction.ts"),
       );
-      expect(binding.args[1]).toContain('policy get --base "$2"');
-      expect(binding.args[1]).toContain('policy set --policy "$policy_file" --wait "$2"');
     },
   );
 

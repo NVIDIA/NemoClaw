@@ -1062,28 +1062,24 @@ export async function applyCredentialBoundFakePolicy(options: {
 
   const binding = await runHost(
     options.host,
-    "bash",
+    process.execPath,
     [
-      "-lc",
-      String.raw`set -eu
-policy_file="$(mktemp)"
-trap 'rm -f "$policy_file"' EXIT
-"$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$7" "$policy_file" "$3" "$4" "$5" "$6"
-"$1" policy set --policy "$policy_file" --wait "$2"`,
-      `bind-fake-${options.protocol}-policy`,
-      options.host.openshellCommandPath,
+      "--import",
+      "tsx",
+      path.join(REPO_ROOT, "test/e2e/fixtures/credential-policy-transaction.ts"),
       options.sandboxName,
       options.providerName,
       policyHost,
       String(options.api.port),
       options.protocol,
-      path.join(REPO_ROOT, "test/e2e/fixtures/credential-policy-binding.ts"),
     ],
     {
       artifactName: `${options.artifactName}-credential-binding`,
       cwd: REPO_ROOT,
-      env: options.env,
+      env: {
+        ...options.env,
+        NEMOCLAW_OPENSHELL_BIN: options.host.openshellCommandPath,
+      },
       redactionValues: options.redactions,
       timeoutMs: 120_000,
     },

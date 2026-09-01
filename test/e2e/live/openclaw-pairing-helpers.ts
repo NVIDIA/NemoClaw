@@ -26,8 +26,6 @@ import {
   shellQuote,
 } from "./phase6-messaging-helpers.ts";
 
-export { applyCredentialBoundFakePolicy as applyFakePolicy } from "./messaging-providers-helpers.ts";
-
 export type PairingChannel = "slack" | "discord";
 
 export const PAIRING_USER = {
