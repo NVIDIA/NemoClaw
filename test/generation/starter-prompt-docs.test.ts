@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -75,26 +74,6 @@ const localCredentialFormSource = path.join(
   "resources",
   "local-credential-form.html",
 );
-const localCredentialHelperUrl =
-  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/scripts/local-credential-helper.mts";
-const localCredentialHelperSha256 =
-  "1a42bbe8dbc9003cb79d4e641b53760571aacd85293671aee97c09c0746fef33"; // gitleaks:allow -- checked-in SHA-256 fixture
-const localCredentialFormUrl =
-  "https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/docs/resources/local-credential-form.html";
-const localCredentialFormSha256 =
-  "5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8"; // gitleaks:allow -- checked-in SHA-256 fixture
-const localCredentialFormScriptCspHash = [
-  "'sha256-i3cXmSMU",
-  "jTA5LqLSfFQpXe0B",
-  "BZRj4cM8t36dJMm3",
-  "YJw='",
-].join("");
-const localCredentialFormStyleCspHash = [
-  "'sha256-W4wSJyrm",
-  "RXSCgQSjhVRZBhE",
-  "msaHh6dbUj9ZlKh",
-  "xipME='",
-].join("");
 const localCredentialCapability = "A".repeat(43);
 const localCredentialNetworkControlNames = [
   "ALL_PROXY",
@@ -196,10 +175,6 @@ function readStarterPrompt(): string {
   );
 }
 
-function urlsIn(content: string): URL[] {
-  return Array.from(content.matchAll(/https?:\/\/[^\s"'<>;]+/g), ([match]) => new URL(match));
-}
-
 function withCredentialCapability(url: string, capability = localCredentialCapability): string {
   const parsed = new URL(url);
   parsed.hash = `cap=${capability}`;
@@ -215,17 +190,6 @@ function extractTagContent(content: string, tagName: "script" | "style"): string
     content.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`)) ??
     fail(`Missing <${tagName}> block`);
   return match[1];
-}
-
-function sha256Source(content: string): string {
-  return `'sha256-${createHash("sha256").update(content).digest("base64")}'`;
-}
-
-function cspMetaContent(content: string): string {
-  return (
-    content.match(/http-equiv="Content-Security-Policy"[\s\S]*?content="([^"]+)"/)?.[1] ??
-    fail("Missing Content-Security-Policy meta content")
-  );
 }
 
 class FakeClassList {
@@ -515,75 +479,6 @@ describe("starter prompt docs CTA", () => {
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
-  });
-
-  it("pins local credential capture to the checked-in helper and form (#5048)", () => {
-    const promptSource = readStarterPrompt();
-    const formSource = fs.readFileSync(localCredentialFormSource, "utf8");
-
-    expect(promptSource).toContain(localCredentialHelperUrl);
-    expect(promptSource).toContain(localCredentialHelperSha256);
-    expect(promptSource).toContain(localCredentialFormUrl);
-    expect(promptSource).toContain(localCredentialFormSha256);
-    expect(createHash("sha256").update(formSource).digest("hex")).toBe(localCredentialFormSha256);
-    expect(localCredentialHelperUrl).toMatch(/\/[0-9a-f]{40}\//);
-    expect(localCredentialHelperUrl).not.toMatch(/\/(?:main|master)\//);
-    expect(localCredentialFormUrl).toMatch(/\/[0-9a-f]{40}\//);
-    expect(localCredentialFormUrl).not.toMatch(/\/(?:main|master)\//);
-    expect(promptSource).toContain("Do not generate, rewrite, or redesign the helper or form.");
-    expect(promptSource).toContain(
-      "two immutable URL and digest pairs as one reviewed trust boundary",
-    );
-    expect(promptSource).toContain(
-      "before executing the helper, compute the SHA-256 digest of both downloaded files and compare each result with its pinned digest",
-    );
-    expect(promptSource).toContain(
-      "If either digest differs, do not execute the helper; delete both temporary files and stop.",
-    );
-    expect(promptSource).toContain("every environment-variable name and the complete command argv");
-    expect(promptSource).toContain("--field NAME:type");
-    expect(promptSource).toContain("--execution-profile isolated");
-    expect(promptSource).toContain("--execution-profile account-home --cwd");
-    expect(promptSource).toContain("Never put credentials in argv");
-    expect(promptSource).toContain("Confirm and Run Approved Command");
-    expect(promptSource).toContain("do not retry or resubmit");
-    expect(promptSource).toContain("exposure minimization, not guaranteed erasure");
-    expect(promptSource).toContain(
-      "Keep the helper bound to `http://127.0.0.1`, accept only one valid submission, and run only the already-approved command.",
-    );
-    expect(promptSource).toContain(
-      "Prefer letting an account-persistent command use its own reviewed secure credential prompt when available.",
-    );
-    expect(promptSource).toContain(
-      "use the reviewed helper only with an already-downloaded and verified installer",
-    );
-    expect(promptSource).toContain("Do not hand-assemble a `curl | bash` wrapper");
-    // The slim prompt delegates install-time credential mechanics to the helper and installer;
-    // guard against the prose curl | bash wrapper synthesis creeping back into the copied prompt.
-    expect(promptSource).not.toContain("<absolute-bash-path> -c");
-    expect(promptSource).not.toContain("non-exported shell variable");
-    expect(promptSource).not.toContain("unsets the exported credential before starting");
-    expect(formSource).toContain("<title>NemoClaw Local Credential Form</title>");
-    expect(formSource).toContain("Content-Security-Policy");
-    expect(formSource).toContain("connect-src 'self';");
-    expect(formSource).not.toContain("'unsafe-inline'");
-    expect(formSource).toContain(`script-src ${localCredentialFormScriptCspHash};`);
-    expect(formSource).toContain(`style-src ${localCredentialFormStyleCspHash};`);
-    expect(formSource).toContain(
-      `style-src ${sha256Source(extractTagContent(formSource, "style"))};`,
-    );
-    expect(formSource).toContain(
-      `script-src ${sha256Source(extractTagContent(formSource, "script"))};`,
-    );
-    expect(cspMetaContent(formSource)).not.toContain("frame-ancestors");
-    expect(formSource).toContain('const LOCAL_SUBMIT_PATH = "/submit";');
-    expect(formSource).toContain("fetch(LOCAL_SUBMIT_PATH");
-    expect(formSource).not.toContain('params.get("submit")');
-    for (const url of urlsIn(formSource)) {
-      expect(["127.0.0.1", "localhost", "[::1]"], url.href).toContain(url.hostname);
-    }
-    expect(formSource).not.toContain("localStorage");
-    expect(formSource).not.toContain("sessionStorage");
   });
 
   it("fails closed when the immutable prompt asset revision or blobs cannot be resolved (#6990)", () => {

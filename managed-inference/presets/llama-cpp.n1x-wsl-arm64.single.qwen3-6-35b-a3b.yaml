@@ -41,11 +41,6 @@ spec:
       - readiness:
           scope: everyNode
           kind: capability
-          id: host.platform.n1x_wsl
-          state: present
-      - readiness:
-          scope: everyNode
-          kind: capability
           id: host.docker.available
           state: present
       - readiness:

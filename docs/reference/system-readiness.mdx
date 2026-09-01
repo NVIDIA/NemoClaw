@@ -139,18 +139,25 @@ Each capability uses `present`, `absent`, or `unknown`.
 | `host.platform.wsl_docker_desktop` | Docker Desktop integration in WSL. |
 | `host.platform.wsl_native_docker` | Native Docker Engine inside WSL. |
 | `host.platform.wsl_gpu_passthrough` | Docker Desktop GPU passthrough proof. |
+| `host.platform.n1x_wsl` | Windows N1x product identity qualified through WSL on Linux ARM64 with reachable Docker Desktop and an available NVIDIA GPU. |
 | `host.platform.dgx_spark` | DGX Spark identity on ARM64 with an available NVIDIA GPU. |
 | `host.platform.n1x` | N1x identity from the trusted FastOS marker and NVIDIA display PCI device on Linux ARM64 with an available NVIDIA GPU. This capability does not promote the Deferred platform status. |
 | `host.platform.dgx_station` | Qualified DGX Station GB300 identity, Linux ARM64 runtime, Ubuntu 24.04, hardware, and software profile. |
 
 If the combined platform capability is absent and no more specific platform qualification finding applies, the blocking `host.platform.unsupported` finding identifies an unsupported host and runtime combination.
 
-The report adds `host.platform.wsl`, `host.platform.dgx_spark`, `host.platform.n1x`, or `host.platform.dgx_station` qualifications when those platforms apply.
+The report adds `host.platform.wsl`, `host.platform.n1x_wsl`, `host.platform.dgx_spark`, `host.platform.n1x`, or `host.platform.dgx_station` qualifications when those platforms apply.
 For WSL, Docker Desktop is `qualified`, native Docker is `unqualified`, and an unrecognized reachable runtime is `unknown`.
 The `host.platform.wsl_gpu_passthrough` capability is `present` only after the Docker Desktop proof passes.
 It is `absent` when the proof fails or the host has no NVIDIA GPU, and `unknown` when the proof cannot run conclusively.
 The read-only `host probe` command does not pull or start the container-backed WSL GPU proof, so a host that needs that proof reports this capability as `unknown`.
 Onboarding can run the bounded proof only after its current host and gateway readiness checks admit the run.
+
+The `host.platform.n1x_wsl` qualification applies when the bounded Windows product query identifies an N1x host through WSL.
+It is `qualified` only for Linux ARM64 WSL with reachable Docker Desktop and an available NVIDIA GPU.
+The capability is `present` only when that qualification passes.
+Managed llama.cpp admission also requires `host.platform.wsl_gpu_passthrough` to be `present`.
+The N1x WSL qualification does not replace the separate Docker Desktop GPU proof.
 
 DGX Station qualification fails closed.
 The `host.platform.dgx_station` capability is `present` only when the host runs Linux ARM64 on Ubuntu 24.04, reports an effective NVIDIA GPU, and the product identity, a display-class PCI device with NVIDIA vendor ID (`0x10de`) and GB300 device ID (`0x31c2` or `0x31c3`), and the software profile all qualify.
@@ -161,7 +168,7 @@ An unreadable marker or missing required OS or PCI evidence produces an `unknown
 Both outcomes prevent `host.platform.supported` from becoming `present`.
 When available, bounded Station identity appears under evidence ID `host.platform.identity`.
 
-N1x identity qualification also fails closed.
+Native N1x FASTOS identity qualification also fails closed.
 The `host.platform.n1x` capability is `present` only when the host runs Linux ARM64, reports an effective NVIDIA GPU, and both identity sources qualify.
 `/etc/fastos-release` must be a regular file of 1 through 4,096 bytes that is owned by UID and GID 0, is not a symbolic link, grants no group or world write access, contains no NUL or carriage-return byte, and contains exactly one `NAME="N1x FASTOS"` line.
 NemoClaw parses the marker as inert text and does not pin its `VERSION` value.

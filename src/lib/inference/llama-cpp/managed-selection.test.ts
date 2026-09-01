@@ -308,11 +308,6 @@ describe("managed llama.cpp selection", () => {
     const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
     const withoutN1xIdentity = {
       ...report,
-      capabilities: report.capabilities.map((capability) =>
-        capability.id === "host.platform.n1x_wsl"
-          ? { ...capability, state: "absent" as const }
-          : capability,
-      ),
       qualifications: report.qualifications.map((qualification) =>
         qualification.id === "host.platform.n1x_wsl"
           ? { ...qualification, status: "unqualified" as const }
