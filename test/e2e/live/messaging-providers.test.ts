@@ -24,6 +24,8 @@ import {
   check,
   countCsv,
   expectExitZero,
+  FAKE_API_PROXY_READINESS_PORT,
+  type FakeDockerApiTopology,
   INSTALL_TIMEOUT_MS,
   isNvidiaEndpointRateLimitFailure,
   isUnresolvedPlaceholderRejection,
@@ -55,6 +57,39 @@ import { runInstalledTelegramRuntimeProof } from "./messaging-providers-telegram
 import { runInstalledWechatRuntimeProof } from "./messaging-providers-wechat-runtime-proof.ts";
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
+
+function assertObservedSlackDockerTopology(topology: FakeDockerApiTopology): void {
+  expect(topology.networkDriver, "fake Slack API network driver").toBe("bridge");
+  expect(topology.networkInternal, "fake Slack API network isolation").toBe(true);
+  expect(topology.apiBindings, "credential-bearing fake Slack API published ports").toEqual([]);
+  expect(topology.apiNetworks, "credential-bearing fake Slack API networks").toHaveLength(1);
+  expect(topology.proxyNetworks, "fake Slack proxy networks").toEqual(
+    ["bridge", topology.apiNetworks[0]].sort(),
+  );
+  expect(
+    topology.proxyBindings.map(({ containerPort }) => containerPort).sort(),
+    "fake Slack proxy container ports",
+  ).toEqual(
+    [
+      `${String(FAKE_API_PROXY_READINESS_PORT)}/tcp`,
+      "8080/tcp",
+      "8081/tcp",
+    ].sort(),
+  );
+  expect(
+    topology.proxyBindings.every(
+      ({ hostAddress, hostPort }) =>
+        hostAddress === topology.openshellBridgeAddress && /^\d+$/u.test(hostPort),
+    ),
+    "fake Slack proxy host bindings",
+  ).toBe(true);
+  expect(topology.proxyReadonlyRootfs, "fake Slack proxy read-only filesystem").toBe(true);
+  expect(topology.proxyCapabilityDrops, "fake Slack proxy capability drops").toContain("ALL");
+  expect(topology.proxySecurityOptions, "fake Slack proxy security options").toContain(
+    "no-new-privileges",
+  );
+  expect(topology.proxyPidsLimit, "fake Slack proxy process limit").toBe(32);
+}
 
 test(
   "messaging providers preserve placeholder, policy, runtime, and send contracts",
@@ -883,6 +918,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
+    assertObservedSlackDockerTopology(fakeSlack.topology);
     await applyRestRewritePolicy(
       host,
       fakeSlack,
