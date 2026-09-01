@@ -6,6 +6,7 @@ import {
   inspectLaunchableEvidence,
   parseOptions,
   runCli,
+  workflowJobsFromPages,
   workflowRunsFromPages,
   type ArtifactFiles,
   type EvidenceReader,
@@ -142,6 +143,14 @@ describe("Launchable evidence inspection", () => {
       { workflow_runs: [run()] },
     ]);
     expect(inspectLaunchableEvidence({ candidate: SHA }, reader(runs)).run.id).toBe(10);
+  });
+  it("merges workflow-job pages before selecting evidence (#10798)", () => {
+    expect(
+      workflowJobsFromPages([{ jobs: [job(19, { name: "another job" })] }, { jobs: [job()] }]),
+    ).toEqual([job(19, { name: "another job" }), job()]);
+    expect(
+      workflowJobsFromPages([{ jobs: [job(19, { name: "another job" })] }, { jobs: [] }]),
+    ).toEqual([job(19, { name: "another job" })]);
   });
   it("binds job selection to the workflow attempt (#10798)", () => {
     expect(() =>

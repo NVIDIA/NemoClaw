@@ -243,13 +243,19 @@ export function artifactDownloadArgs(runId: number, name: string, directory: str
   ];
 }
 
-export function workflowRunsFromPages(value: unknown): WorkflowRun[] {
-  if (!Array.isArray(value)) fail("runs response must contain pages");
+function pageItems<T>(value: unknown, field: string): T[] {
+  if (!Array.isArray(value)) fail(`${field} response must contain pages`);
   return value.flatMap((page, index) => {
-    const response = record(page, `runs response page ${index + 1}`);
-    return Array.isArray(response.workflow_runs) ? (response.workflow_runs as WorkflowRun[]) : [];
+    const response = record(page, `${field} response page ${index + 1}`),
+      items = response[field];
+    return Array.isArray(items) ? (items as T[]) : [];
   });
 }
+
+export const workflowRunsFromPages = (value: unknown): WorkflowRun[] =>
+  pageItems<WorkflowRun>(value, "workflow_runs");
+export const workflowJobsFromPages = (value: unknown): WorkflowJob[] =>
+  pageItems<WorkflowJob>(value, "jobs");
 
 export function createGitHubReader(): EvidenceReader {
   return {
@@ -263,14 +269,14 @@ export function createGitHubReader(): EvidenceReader {
       return workflowRunsFromPages(pages);
     },
     listJobs(runId, attempt) {
-      const response = record(
+      return workflowJobsFromPages(
         gh([
           "api",
+          "--paginate",
+          "--slurp",
           `repos/${REPOSITORY}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`,
         ]),
-        "jobs response",
       );
-      return Array.isArray(response.jobs) ? (response.jobs as WorkflowJob[]) : [];
     },
     readArtifact(runId, name) {
       const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-launchable-evidence-"));
