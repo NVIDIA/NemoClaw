@@ -275,7 +275,7 @@ describe("exact PR managed-image publication", () => {
   it("keeps artifact download evidence out of the machine-readable selection", async () => {
     const input = resolverInput();
     const apiRequest = candidateRequest({ imageChanged: true });
-    const artifactResponses = new Map(
+    const artifactResponses = new Map<string, Response>(
       SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
         const archive = contractArchive(agent, index);
         return [
