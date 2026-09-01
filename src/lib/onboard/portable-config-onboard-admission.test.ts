@@ -95,10 +95,12 @@ describe("ordinary onboarding against an abandoned portable configuration (#1074
   it("still refuses the directory when the host owns a portable lifecycle receipt", async () => {
     makePortableConfigDir(0o755);
     writeLifecycleReceipt();
+    const operation = vi.fn(() => "onboarded");
 
     await expect(
-      withPortableOnboardRetirementBoundary(boundary(), () => "onboarded", deps),
+      withPortableOnboardRetirementBoundary(boundary(), operation, deps),
     ).rejects.toThrow(/Unsafe portable authority directory/);
+    expect(operation).not.toHaveBeenCalled();
   });
 
   it("finds the host receipt when onboarding uses a gateway-scoped state directory", async () => {
@@ -182,9 +184,11 @@ describe("ordinary onboarding against an abandoned portable configuration (#1074
       mode: 0o600,
     });
     writeLifecycleReceipt();
+    const operation = vi.fn(() => "onboarded");
 
     await expect(
-      withPortableOnboardRetirementBoundary(boundary(), () => "onboarded", deps),
+      withPortableOnboardRetirementBoundary(boundary(), operation, deps),
     ).rejects.toThrow(/unknown portable uninstall artifact/);
+    expect(operation).not.toHaveBeenCalled();
   });
 });
