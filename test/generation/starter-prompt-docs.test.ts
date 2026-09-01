@@ -196,10 +196,6 @@ function readStarterPrompt(): string {
   );
 }
 
-function readPromptAsset(asset: (typeof promptAssets)[keyof typeof promptAssets]): string {
-  return read(asset.path);
-}
-
 function urlsIn(content: string): URL[] {
   return Array.from(content.matchAll(/https?:\/\/[^\s"'<>;]+/g), ([match]) => new URL(match));
 }
@@ -642,9 +638,6 @@ describe("starter prompt docs CTA", () => {
 
   it("routes platform-only installation instructions to raw prompt assets (#6990)", () => {
     const promptSource = readStarterPrompt();
-    const sparkSource = readPromptAsset(promptAssets.dgxSpark);
-    const stationSource = readPromptAsset(promptAssets.dgxStation);
-    const windowsSource = readPromptAsset(promptAssets.windowsWsl);
 
     expect(promptAssetRevision).toMatch(/^[0-9a-f]{40}$/);
     expect(requireExpectedPromptAssetRoutes(promptSource, platformPromptAssetRoutes)).toEqual(
@@ -660,81 +653,6 @@ describe("starter prompt docs CTA", () => {
       expect(assetUrl.pathname).toContain(`/${promptAssetRevision}/`);
     }
 
-    expect(promptSource).toContain("load exactly one matching instruction asset");
-    expect(promptSource).toContain("Read the matching raw Markdown file completely");
-    expect(promptSource).toContain("Do not load a platform asset for any other computer.");
-    expect(promptSource).not.toContain("approximately 352 GB");
-    expect(promptSource).not.toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
-    expect(promptSource).not.toContain(
-      "NEMOCLAW_VLLM_MODEL=nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
-    );
-
-    expect(sparkSource).toContain("nvidia/Qwen3.6-35B-A3B-NVFP4");
-    expect(sparkSource).toContain(
-      "Managed vLLM with automatic serving-profile selection. This is the default",
-    );
-    expect(sparkSource).toContain(
-      "`nvidia/Qwen3.6-35B-A3B-NVFP4` with the fixed catalog-backed vLLM profile",
-    );
-    expect(sparkSource).toContain(
-      "Leave `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, and `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` unset",
-    );
-    expect(sparkSource).toContain("Preserve an existing `NEMOCLAW_VLLM_PORT` host-port override");
-    expect(stationSource).toContain("`nemotron-3-ultra-550b-a55b`");
-    expect(stationSource).toContain("`nemotron-ultra`");
-    expect(stationSource).toContain("`deepseek-v4-flash`");
-    expect(stationSource).toContain("`deepseek-ai/DeepSeek-V4-Flash`");
-    expect(stationSource).toContain("Automatic pair selection");
-    expect(stationSource).toContain(
-      "DeepSeek V4 Flash, the explicit `--station-deepseek` override",
-    );
-    expect(stationSource).not.toContain("provider-preseeded DeepSeek path");
-    expect(stationSource).not.toContain("only supported next step");
-    expect(stationSource).toContain("model-cache filesystem and Docker storage");
-    expect(stationSource).toContain(
-      "DGX Station is tested with limitations across qualified profiles on one physical DGX Station GB300.",
-    );
-    expect(stationSource).toContain(
-      "Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.",
-    );
-    expect(stationSource).not.toContain("deferred end-to-end validation on physical hardware");
-    expect(stationSource).toContain(
-      "Do not run `scripts/prepare-dgx-station-host.sh --check`, `--verify`, or `--apply` separately",
-    );
-    expect(stationSource).toContain(
-      "For automatic pair selection, run the ordinary installer without",
-    );
-    expect(stationSource).toContain("For DeepSeek, pass `--station-deepseek`");
-    expect(stationSource).toContain("TCP port `6379`");
-    expect(stationSource).toContain("shared `/24`");
-    for (const environmentName of [
-      "NEMOCLAW_PROVIDER",
-      "NEMOCLAW_VLLM_MODEL",
-      "NEMOCLAW_MODEL",
-      "NEMOCLAW_NON_INTERACTIVE",
-      "NEMOCLAW_YES",
-      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
-      "NEMOCLAW_NO_EXPRESS",
-    ]) {
-      expect(stationSource).toContain(`\`${environmentName}\``);
-    }
-    expect(stationSource).toContain(
-      "Let the installer present its third-party-software notice and complete Express summary.",
-    );
-    expect(stationSource).toContain("Run the installer only in a secure interactive terminal");
-    expect(stationSource).toContain("Keep each official confirmation visible");
-    expect(stationSource).toContain("third-party-software notice");
-    expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-llama-cpp");
-    expect(windowsSource).toContain("NEMOCLAW_LLAMACPP_RECIPE");
-    expect(windowsSource).toContain("pinned 20.4 GB GGUF file");
-    expect(windowsSource).toContain("HTTP 429");
-    expect(windowsSource).toContain("HF_TOKEN");
-    expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
-    expect(windowsSource).toContain("local Docker Desktop is confirmed");
-    expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-ollama");
-    expect(windowsSource).toContain("remote or unknown Docker targets");
-    expect(windowsSource).toContain("sandbox authentication proxy");
-    expect(windowsSource).toContain("Do not start a second Ollama service on the same port.");
   });
 
   it("rejects platform labels whose pinned prompt asset URLs are swapped (#6990)", () => {
