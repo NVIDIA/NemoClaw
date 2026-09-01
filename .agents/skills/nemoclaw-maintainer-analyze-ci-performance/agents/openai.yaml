@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "NemoClaw CI Performance Analysis"
+  short_description: "Analyze retained NemoClaw CI timing evidence"
+  default_prompt: "Use $nemoclaw-maintainer-analyze-ci-performance to identify the largest retained CI timing bottlenecks."
