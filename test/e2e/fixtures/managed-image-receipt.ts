@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -10,14 +9,15 @@ import {
   isShippedManagedImageAgent,
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
-  parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ManagedImageContractV1,
-  type ManagedImagePlatform,
   type ShippedManagedImageAgent,
 } from "../../../src/lib/onboard/managed-image/contract.ts";
 import { readManagedWorkloadAuthority } from "../../../src/lib/onboard/workload/authority.ts";
-import { liveE2eManagedImageCatalog } from "../../../src/lib/onboard/workload/preparation.ts";
+import {
+  liveE2eManagedImageCatalog,
+  readLiveE2eManagedImageCatalogContracts,
+} from "../../../src/lib/onboard/workload/preparation.ts";
 import { readConfigFile } from "../../../src/lib/state/config-io.ts";
 import { parseSandboxRegistryEntries } from "../../../src/lib/state/registry-normalization.ts";
 import { cloneSandboxWorkloadReceipt } from "../../../src/lib/state/registry/workload.ts";
@@ -33,55 +33,10 @@ function readCandidateCatalog(
     throw new Error("stock onboarding requires a selected candidate managed-image catalog");
   }
 
-  let descriptor: number | null = null;
   try {
-    descriptor = fs.openSync(selected.path, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-    const metadata = fs.fstatSync(descriptor);
-    const pathMetadata = fs.lstatSync(selected.path);
-    if (
-      pathMetadata.isSymbolicLink() ||
-      !metadata.isFile() ||
-      metadata.dev !== pathMetadata.dev ||
-      metadata.ino !== pathMetadata.ino ||
-      metadata.size < 2 ||
-      metadata.size > 64 * 1024
-    ) {
-      throw new Error();
-    }
-    const parsed = JSON.parse(fs.readFileSync(descriptor, "utf8")) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
-    const catalog = parsed as Record<string, unknown>;
-    if (
-      JSON.stringify(Object.keys(catalog).sort()) !==
-      JSON.stringify([...SHIPPED_MANAGED_IMAGE_AGENTS].sort())
-    ) {
-      throw new Error();
-    }
-
-    const contracts = new Map<ShippedManagedImageAgent, ManagedImageContractV1>();
-    let cohort: string | null = null;
-    let platform: ManagedImagePlatform | null = null;
-    let release: string | null = null;
-    for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
-      const contract = parseManagedImageContractV1(catalog[agent], agent);
-      cohort ??= contract.source.cohort;
-      platform ??= contract.platform;
-      release ??= contract.source.release;
-      if (
-        contract.source.revision !== selected.revision ||
-        contract.source.cohort !== cohort ||
-        contract.platform !== platform ||
-        contract.source.release !== release
-      ) {
-        throw new Error();
-      }
-      contracts.set(agent, contract);
-    }
-    return contracts;
+    return readLiveE2eManagedImageCatalogContracts(selected);
   } catch {
     throw new Error("stock onboarding candidate managed-image catalog is invalid");
-  } finally {
-    if (descriptor !== null) fs.closeSync(descriptor);
   }
 }
 
@@ -221,9 +176,6 @@ export function assertStockManagedImageReceipt(options: {
   readonly sandboxName: string;
 }): StockManagedImageReceiptEvidence | null {
   const environment = options.environment ?? process.env;
-  const workloadSource =
-    environment.E2E_WORKLOAD_SOURCE?.trim() ?? process.env.E2E_WORKLOAD_SOURCE?.trim();
-  if (workloadSource === "local-dockerfile") return null;
   const revision = selectedManagedImageRevision(environment);
   const home = environment.HOME?.trim() || os.homedir();
   const registryPath = path.join(
