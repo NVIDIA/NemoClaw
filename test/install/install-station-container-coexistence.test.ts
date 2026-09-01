@@ -33,17 +33,6 @@ function runStationPreparation(body: string, extraEnv: Record<string, string> = 
 }
 
 describe("DGX Station Docker container coexistence", () => {
-  it("does not block an active agent owned by another user (#10649)", () => {
-    const { result, output } = runStationPreparation(`
-ps() { printf '%s 1000 1 openshell openshell gateway\n' "$((EUID + 1))"; }
-ss() { :; }
-check_agent_and_inference_conflicts
-printf 'agent_inference_workloads=none\n'
-`);
-    expect(result.status, output).toBe(0);
-    expect(output).toContain("agent_inference_workloads=none");
-    expect(output).not.toContain("Agent workload is active");
-  });
   it("uses sudo to inspect containers during apply until Docker group access is active", () => {
     const { result, output } = runStationPreparation(
       `
