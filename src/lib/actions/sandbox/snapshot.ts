@@ -410,7 +410,8 @@ async function prepareSnapshotClonePolicy(
 
 // Used by `snapshot restore --to <dst>` when dst does not exist yet: reuses
 // the source's baked image so the user does not have to re-run onboarding.
-// Returns true on success; on failure, logs and throws SnapshotCommandError.
+// Leaves a verified pending registration on success. The caller publishes it
+// only after the clone-policy handoff file has been securely removed.
 async function autoCreateSandboxFromSource(
   srcName: string,
   dstName: string,
@@ -640,13 +641,9 @@ async function autoCreateSandboxFromSource(
     releaseCloneHostLocalReservation();
     failUnregisteredSnapshotClone(dstName, sourceGatewayName);
   }
-  if (!registry.finalizePendingSandboxRegistration(dstName)) {
-    registry.removeSandbox(dstName);
-    releaseCloneHostLocalReservation();
-    failUnregisteredSnapshotClone(dstName, sourceGatewayName);
-  }
+  // The pending registry row now owns any host-local inference reservation.
+  // Keep it unpublished until the caller completes sensitive-file cleanup.
   cloneHostLocalReservation = null;
-  console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
 }
 
 // Delete an existing destination sandbox so `snapshot restore --to <dst> --force`
@@ -1408,7 +1405,7 @@ async function runSnapshotRestoreUnlocked(
       const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
       const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
-      let cloneCreatedAndRegistered = false;
+      let cloneCreatedPending = false;
       try {
         if (targetExists) {
           if (targetEntry) {
@@ -1432,15 +1429,15 @@ async function runSnapshotRestoreUnlocked(
           dashboardEnvArgs,
           dstHermesApiPort,
         );
-        cloneCreatedAndRegistered = true;
+        cloneCreatedPending = true;
       } finally {
         if (clonePolicy.cleanup && !clonePolicy.cleanup()) {
-          if (cloneCreatedAndRegistered) {
+          if (cloneCreatedPending) {
             throw new SnapshotCommandError([
               `Temporary clone policy '${clonePolicy.policyPath}' could not be securely removed after '${targetSandbox}' was created.`,
-              `Destination '${targetSandbox}' remains registered. Snapshot state was not restored.`,
+              `Destination '${targetSandbox}' remains registered as a pending clone. Snapshot state was not restored.`,
               "Inspect and remove the task-owned temporary policy file before continuing.",
-              `Then rerun the restore against the already-created destination '${targetSandbox}' so NemoClaw can reconcile it and continue, or explicitly destroy '${targetSandbox}' before starting a new restore.`,
+              `Then rerun the same restore without --force so NemoClaw can reconcile '${targetSandbox}' and continue without deleting or recreating it.`,
             ]);
           }
           throw new SnapshotCommandError([
@@ -1449,6 +1446,11 @@ async function runSnapshotRestoreUnlocked(
           ]);
         }
       }
+      if (!registry.finalizePendingSandboxRegistration(targetSandbox)) {
+        registry.removeSandbox(targetSandbox);
+        failUnregisteredSnapshotClone(targetSandbox, lockedGatewayName);
+      }
+      console.log(`  ${G}\u2713${R} Sandbox '${targetSandbox}' created`);
     };
     // Lock order is both sandbox names (sorted by the outer caller), host
     // dashboard, then gateway route. The host-wide lease stays held from port

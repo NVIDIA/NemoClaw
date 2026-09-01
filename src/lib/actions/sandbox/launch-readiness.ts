@@ -653,11 +653,13 @@ function validateLivePolicy(
   gatewayName: string,
   deps: LaunchReadinessDeps,
 ): void {
-  const capture =
-    deps.capture ??
-    ((args: string[]) => captureLaunchReadiness(args, { maxBuffer: LIVE_POLICY_MAX_BYTES }));
+  const capture = deps.capture ?? captureLaunchReadiness;
   const result = readSandboxPolicyWithCapture({
-    capture: (args) => capture(args),
+    capture: (args, options) =>
+      capture(args, {
+        ...options,
+        maxBuffer: LIVE_POLICY_MAX_BYTES,
+      }),
     gatewayName,
     sandboxName,
     scope: "effective",

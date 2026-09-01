@@ -370,6 +370,7 @@ function markLivePolicyObservationFailed(
   output: string,
   sandboxName: string,
   error: OpenShellSandboxError,
+  gatewayName?: string,
 ): string {
   const sections = sandboxPolicyOutputSections(output);
   const before = sections?.before ?? `${String(output).replace(/\n+$/u, "")}\n\nPolicy:`;
@@ -378,17 +379,21 @@ function markLivePolicyObservationFailed(
     "",
     "  Live effective policy was not observed.",
     `  Warning: ${error.message}`,
-    `  ${policyObservationRecovery(error, sandboxName)}${sections?.suffix ?? ""}`,
+    `  ${policyObservationRecovery(error, sandboxName, gatewayName)}${sections?.suffix ?? ""}`,
     "",
   ].join("\n");
 }
 
-function policyObservationRecovery(error: OpenShellSandboxError, sandboxName: string): string {
+function policyObservationRecovery(
+  error: OpenShellSandboxError,
+  sandboxName: string,
+  gatewayName?: string,
+): string {
   if (error.kind === "authentication") {
     return `Restore authentication for the sandbox's OpenShell gateway, then retry \`${CLI_NAME} ${sandboxName} status\`.`;
   }
   if (error.kind === "timeout" || (error.kind === "transport" && error.reason === "unreachable")) {
-    return `Verify the gateway with \`openshell status\`, recover its availability, then retry \`${CLI_NAME} ${sandboxName} status\`.`;
+    return `Verify the gateway with \`openshell status\`. ${gatewayStartGuidance(gatewayName)} Then retry \`${CLI_NAME} ${sandboxName} status\`.`;
   }
   if (error.kind === "transport") {
     return `Verify the sandbox's recorded gateway identity with \`openshell status\`, restore the expected gateway, then retry \`${CLI_NAME} ${sandboxName} status\`.`;
@@ -404,10 +409,11 @@ function policyObservationFailureState(
   phase: string | null,
   sandboxName: string,
   error: OpenShellSandboxError,
+  gatewayName?: string,
 ): SandboxGatewayState {
   return {
     state: "present",
-    output: markLivePolicyObservationFailed(output, sandboxName, error),
+    output: markLivePolicyObservationFailed(output, sandboxName, error, gatewayName),
     phase,
     policyObservationError: error,
   };
@@ -500,6 +506,7 @@ export async function getSandboxGatewayState(
         lookup.value.sandbox.phase,
         sandboxName,
         livePolicy.error,
+        gatewayName,
       );
     }
     return {
@@ -576,6 +583,7 @@ export async function getSandboxGatewayStateForStatus(
         lookup.value.sandbox.phase,
         sandboxName,
         livePolicy.error,
+        gatewayName,
       );
     }
     return {

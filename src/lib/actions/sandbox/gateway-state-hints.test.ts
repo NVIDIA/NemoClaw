@@ -185,12 +185,14 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     {
       label: "authentication",
       result: { status: 1, output: "authentication failed credential-value" },
+      gatewayLauncher: "nemoclaw" as const,
       expected: "Restore authentication for the sandbox's OpenShell gateway",
     },
     {
       label: "unreachable gateway",
       result: { status: 1, output: "connection refused credential-value" },
-      expected: "Verify the gateway with `openshell status`, recover its availability",
+      gatewayLauncher: "openshell" as const,
+      expected: "openshell gateway select nemoclaw",
     },
     {
       label: "timeout",
@@ -199,26 +201,35 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
         output: "credential-value",
         error: Object.assign(new Error("credential-value"), { code: "ETIMEDOUT" }),
       },
-      expected: "Verify the gateway with `openshell status`, recover its availability",
+      gatewayLauncher: "nemoclaw" as const,
+      expected: "nemoclaw onboard",
     },
     {
       label: "gateway identity mismatch",
       result: { status: 1, output: "handshake verification failed credential-value" },
+      gatewayLauncher: "nemoclaw" as const,
       expected: "Verify the sandbox's recorded gateway identity with `openshell status`",
     },
     {
       label: "schema mismatch",
       result: { status: 1, output: "invalid wire type credential-value" },
+      gatewayLauncher: "nemoclaw" as const,
       expected: "Update the OpenShell CLI and gateway to compatible versions",
     },
     {
       label: "command failure",
       result: { status: 1, output: "unknown policy failure credential-value" },
+      gatewayLauncher: "nemoclaw" as const,
       expected: "Inspect `openshell status`, correct the policy-read failure",
     },
   ])(
-    "rejects a ready sandbox with actionable $label policy-read recovery",
-    async ({ result, expected }) => {
+    "exits when an effective-policy read fails after a Ready sandbox observation [$label]",
+    async ({ result, expected, gatewayLauncher }) => {
+      const guidance = requireDist("../../gateway-start-guidance.js") as typeof import("../../gateway-start-guidance");
+      const renderGuidance = guidance.gatewayStartGuidance;
+      vi.spyOn(guidance, "gatewayStartGuidance").mockImplementation((gatewayName) =>
+        renderGuidance(gatewayName, gatewayLauncher),
+      );
       captureOpenshellSpy
         .mockReturnValueOnce({
           status: 0,

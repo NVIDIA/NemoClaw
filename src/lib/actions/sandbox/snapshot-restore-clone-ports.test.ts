@@ -284,12 +284,20 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     expect(fs.existsSync(observedPolicyPath)).toBe(false);
   });
 
-  it("reports non-destructive recovery when clone policy cleanup fails after registration", async () => {
+  it("reconciles a pending clone without force after clone policy cleanup fails", async () => {
     let registeredClone: f.SandboxRecord | null = null;
     let observedPolicyPath = "";
-    f.registerSandboxMock.mockImplementation(
-      (entry) => (registeredClone = entry as f.SandboxRecord),
-    );
+    f.registerSandboxMock.mockImplementation((entry) => {
+      registeredClone = {
+        ...(entry as f.SandboxRecord),
+        pendingRouteReservation: true,
+      };
+    });
+    f.finalizePendingSandboxRegistrationMock.mockImplementation((name) => {
+      expect(registeredClone).toMatchObject({ name, pendingRouteReservation: true });
+      registeredClone = { ...registeredClone!, pendingRouteReservation: undefined };
+      return true;
+    });
     f.getSandboxMock.mockImplementation((name) =>
       name === "alpha"
         ? {
@@ -333,15 +341,32 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
         name: "SnapshotCommandError",
         lines: expect.arrayContaining([
           expect.stringContaining(observedPolicyPath),
-          "Destination 'beta' remains registered. Snapshot state was not restored.",
-          expect.stringContaining("already-created destination 'beta'"),
-          expect.stringContaining("explicitly destroy 'beta'"),
+          "Destination 'beta' remains registered as a pending clone. Snapshot state was not restored.",
+          expect.stringContaining("same restore without --force"),
+          expect.stringContaining("without deleting or recreating it"),
         ]),
       });
-      expect(String((failure as Error).message)).not.toContain(
-        "retrying the snapshot restore command",
-      );
+      expect(registeredClone).toMatchObject({
+        name: "beta",
+        pendingRouteReservation: true,
+      });
+      expect(f.finalizePendingSandboxRegistrationMock).not.toHaveBeenCalled();
       expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+
+      vi.mocked(tempFiles.createExactTempFileCleanup).mockRestore();
+      f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+
+      await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+
+      expect(f.streamSandboxCreateMock).toHaveBeenCalledOnce();
+      expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledOnce();
+      expect(f.finalizePendingSandboxRegistrationMock).toHaveBeenCalledWith("beta");
+      expect(f.lifecycleMock.events).not.toContain("delete");
+      expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
+      expect(f.getSandboxMock("beta")).toMatchObject({
+        name: "beta",
+        pendingRouteReservation: undefined,
+      });
     } finally {
       tempFiles.cleanupTempDir(observedPolicyPath, "nemoclaw-clone-policy");
     }
