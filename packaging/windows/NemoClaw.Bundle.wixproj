@@ -17,6 +17,11 @@
     <ProjectReference Include="NemoClaw.wixproj">
       <AdditionalProperties>ProductVersion=$(ProductVersion);PayloadRoot=$(PayloadRoot);SourceRoot=$(SourceRoot);PackageOutputRoot=$(PackageOutputRoot);PackageIntermediateRoot=$(PackageIntermediateRoot)</AdditionalProperties>
     </ProjectReference>
-    <PackageReference Include="WixToolset.BootstrapperApplications.wixext" Version="5.0.2" PrivateAssets="all" />
+    <PackageReference
+      Include="WixToolset.BootstrapperApplications.wixext"
+      Version="5.0.2"
+      GeneratePathProperty="true"
+      PrivateAssets="all" />
+    <WixExtension Include="$(PkgWixToolset_BootstrapperApplications_wixext)\wixext5\WixToolset.BootstrapperApplications.wixext.dll" />
   </ItemGroup>
 </Project>
