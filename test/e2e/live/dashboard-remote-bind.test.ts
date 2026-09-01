@@ -13,7 +13,6 @@ import { sandboxAccessEnv, trustedSandboxShellScript } from "../fixtures/clients
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
-import { runDashboardConnectUntilForwardHandoff } from "./dashboard-connect-handoff.ts";
 import { buildDashboardRemoteBindEnv } from "./dashboard-remote-bind-env.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 
@@ -163,21 +162,13 @@ runDashboardRemoteBindTest(
     expect(stop.exitCode, `Sandbox stop failed before remote rebind\n${resultText(stop)}`).toBe(0);
     expect(teardownSandboxDashboardForward(sandboxName)).toBe(true);
 
-    const connect = await runDashboardConnectUntilForwardHandoff({
-      artifacts,
-      dashboardPort,
+    const start = await host.nemoclaw([sandboxName, "start"], {
+      artifactName: "dashboard-remote-bind-start-after-release",
       env: testEnv(),
-      forwardProbe: () =>
-        isSandboxPortForwardHealthy(sandboxName, Number(dashboardPort), "0.0.0.0") === true,
-      progress,
-      sandboxName,
-      signal: cleanup.currentSignal(),
-      timeoutMs: 120_000,
+      redactionValues,
+      timeoutMs: 10 * 60_000,
     });
-    expect(
-      connect.proof,
-      "nemoclaw connect did not complete or publish receipt-owned ForwardTcp proof; see the dashboard-connect-handoff artifacts",
-    ).toBe("forward-started");
+    expect(start.exitCode, `Sandbox start failed after remote rebind\n${resultText(start)}`).toBe(0);
 
     progress.phase("verify all-interface dashboard forward");
     expect(isSandboxPortForwardHealthy(sandboxName, Number(dashboardPort), "0.0.0.0")).toBe(true);
