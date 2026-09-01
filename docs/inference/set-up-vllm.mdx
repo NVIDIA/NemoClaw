@@ -410,8 +410,6 @@ A full uninstall removes it only after managed-runtime cleanup succeeds and no s
 On an N1x host that matches the required identity, the Deferred Express preview selects one-host managed vLLM with `nvidia/Qwen3.6-35B-A3B-NVFP4`.
 The installer uses the existing managed-vLLM image, download, container, receipt, recovery, and uninstall lifecycle.
 The installer applies the existing CUDA and Container Device Interface (CDI) readiness checks before it downloads the image or model.
-Before model downloads and immediately before vLLM launch, the current N1x recipe requires Linux `MemAvailable` of at least `64,000,000,000` bytes (about `59.6 GiB`).
-Missing or insufficient host-memory telemetry stops onboarding; a host that cannot expose that amount cannot safely start the current N1x recipe.
 
 NemoClaw requires all of this N1x identity evidence:
 
@@ -604,9 +602,7 @@ If the selected image does not support an argument, the managed container exits 
 
 When the selected managed recipe defines a GPU-memory utilization value, NemoClaw checks `nvidia-smi` total and free memory for the Docker-selected GPU before large downloads.
 It repeats the same check with fresh telemetry immediately before launch so another workload cannot consume the required free GPU memory unnoticed during the download.
-For a qualified N1x profile, if the selected GPU has a valid index and UUID but both memory values are exactly `[N/A]`, NemoClaw compares Linux `MemAvailable` against the recipe minimum before downloads and again before launch.
-Missing or insufficient host-memory telemetry stops onboarding before the vLLM container starts.
-For a qualified DGX Spark profile, the same exact `[N/A]` result remains a warning: NemoClaw cannot pre-validate utilization and continues without inferring available memory.
+For a qualified N1x or DGX Spark profile, if the selected GPU has a valid index and UUID but both memory values are exactly `[N/A]`, NemoClaw warns that it cannot pre-validate utilization and continues without inferring available memory.
 Every other unavailable, missing, or malformed telemetry result stops onboarding.
 Insufficient numeric free memory also stops onboarding.
 Follow the diagnostic to restore valid telemetry, correct the selected GPU, or free the required memory.

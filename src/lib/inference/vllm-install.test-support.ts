@@ -198,7 +198,6 @@ export function withVllmInstallTestReadiness(
   options: InstallVllmOptions,
 ): InstallVllmOptions {
   return {
-    readHostAvailableMemoryBytes: () => 1_000_000_000_000n,
     resolveManagedBridgeHost: () => "172.18.0.1",
     ...options,
     readinessReports: vllmInstallTestReadiness(profile),
