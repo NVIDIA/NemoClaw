@@ -34,14 +34,21 @@ export function bindPolicyEndpointCredential(
     const candidateEndpoints = (entry as { endpoints?: unknown }).endpoints;
     return Array.isArray(candidateEndpoints) ? candidateEndpoints : [];
   });
-  const endpoint = endpoints.find((candidate) => {
+  const matchingEndpoints = endpoints.filter((candidate): candidate is Record<string, unknown> => {
     if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
       return false;
     }
     const value = candidate as { host?: unknown; port?: unknown; protocol?: unknown };
     return value.host === host && value.port === port && value.protocol === protocol;
-  }) as Record<string, unknown> | undefined;
-  if (!endpoint) throw new Error("fake endpoint is missing from the base policy");
+  });
+  if (matchingEndpoints.length !== 1) {
+    throw new Error(
+      matchingEndpoints.length === 0
+        ? `fake endpoint ${host}:${port}/${protocol} is missing from the base policy`
+        : `fake endpoint ${host}:${port}/${protocol} matches ${matchingEndpoints.length} base policy entries; expected exactly one`,
+    );
+  }
+  const endpoint = matchingEndpoints[0]!;
 
   endpoint.credential_binding = { provider: providerName };
   fs.writeFileSync(policyFile, YAML.stringify(policy));

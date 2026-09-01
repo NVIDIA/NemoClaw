@@ -152,4 +152,34 @@ describe("E2E policy credential binding", () => {
       provider: "e2e-hermes-discord-discord-bridge",
     });
   });
+
+  it("rejects duplicate endpoint ownership across network policies", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-policy-"));
+    tempDirs.push(tempDir);
+    const policyFile = path.join(tempDir, "policy.yaml");
+    const source = [
+      "version: 1",
+      "network_policies:",
+      "  first:",
+      "    endpoints:",
+      "      - host: host.docker.internal",
+      "        port: 43117",
+      "        protocol: websocket",
+      "  second:",
+      "    endpoints:",
+      "      - host: host.docker.internal",
+      "        port: 43117",
+      "        protocol: websocket",
+      "",
+    ].join("\n");
+    fs.writeFileSync(policyFile, source);
+
+    const result = runBinding(policyFile);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "fake endpoint host.docker.internal:43117/websocket matches 2 base policy entries; expected exactly one",
+    );
+    expect(fs.readFileSync(policyFile, "utf8")).toBe(source);
+  });
 });

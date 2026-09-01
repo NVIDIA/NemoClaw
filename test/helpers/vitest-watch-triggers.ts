@@ -190,7 +190,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern:
       /(?:^|\/)nemoclaw\/(?:src\/shared\/openshell-policy-boundary\.cts|tsconfig\.shared\.json)$/,
-    testsToRun: runTests("test/e2e/support/hermes-discord-policy-binding.test.ts"),
+    testsToRun: runTests("test/e2e/support/policy-credential-binding.test.ts"),
   },
   {
     pattern: /(?:^|\/)scripts\/setup-jetson\.sh$/,
