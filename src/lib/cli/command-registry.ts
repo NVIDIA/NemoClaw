@@ -184,24 +184,6 @@ export function directGlobalCommandIds(): Set<string> {
   return ids;
 }
 
-/**
- * Longest registered sandbox route that prefixes the given public tokens.
- *
- * Diagnostics render the returned route instead of the tokens a reader typed,
- * so untrusted argument text never reaches terminal or log output (#10212).
- */
-export function matchSandboxRoute(tokens: readonly string[]): string[] | null {
-  let longest: string[] | null = null;
-  for (const commandId of Object.keys(getRegisteredOclifCommandsMetadata())) {
-    for (const route of sandboxRouteTokenVariants(commandId)) {
-      if (route.length === 0 || route.length > tokens.length) continue;
-      if (!route.every((token, index) => token === tokens[index])) continue;
-      if (!longest || route.length > longest.length) longest = route;
-    }
-  }
-  return longest;
-}
-
 export function sandboxActionTokens(): string[] {
   const seen = new Set<string>();
   const tokens: string[] = [];

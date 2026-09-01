@@ -659,62 +659,50 @@ describe("CLI dispatch", () => {
     });
   });
 
-  it("omits a flag argument from the sandbox-first grammar hint (#10212)", async () => {
-    await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
-      await expect(dispatchCli(["doctor", "--json"])).rejects.toThrow("process.exit:1");
+  it.each([
+    {
+      input: "flag argument",
+      argv: ["doctor", "--json"],
+      route: "doctor",
+      forbidden: /--json/,
+    },
+    {
+      input: "credential-bearing argument",
+      argv: ["exec", "--", "curl", "-H", "Authorization: Bearer nvapi-SECRET12345"],
+      route: "exec",
+      forbidden: /Authorization|nvapi-SECRET12345/,
+    },
+    {
+      input: "newline argument",
+      argv: ["exec", "x\n  Sandbox alpha was destroyed."],
+      route: "exec",
+      forbidden: /Sandbox alpha was destroyed\./,
+    },
+    {
+      input: "terminal escape argument",
+      argv: ["exec", "\u001b[31mRED"],
+      route: "exec",
+      forbidden: /\u001b|RED/,
+    },
+    {
+      input: "long argument",
+      argv: ["exec", "A".repeat(4000)],
+      route: "exec",
+      forbidden: /A{80}/,
+    },
+  ])(
+    "omits an untrusted $input from the sandbox-first grammar hint (#10212)",
+    async ({ argv, route, forbidden }) => {
+      await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
+        await expect(dispatchCli(argv)).rejects.toThrow("process.exit:1");
 
-      const output = stderr.join("\n");
-      expect(output).toContain("Run: nemoclaw <name> doctor");
-      expect(output).not.toContain("--json");
-    });
-  });
-
-  it("omits a credential-bearing action argument from the hint (#10212)", async () => {
-    await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
-      await expect(
-        dispatchCli(["exec", "--", "curl", "-H", "Authorization: Bearer nvapi-SECRET12345"]),
-      ).rejects.toThrow("process.exit:1");
-
-      const output = stderr.join("\n");
-      expect(output).toContain("Run: nemoclaw <name> exec");
-      expect(output).not.toContain("nvapi-SECRET12345");
-      expect(output).not.toContain("Authorization");
-    });
-  });
-
-  it("omits a newline argument that would forge a diagnostic line (#10212)", async () => {
-    await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
-      await expect(
-        dispatchCli(["exec", "x\n  Sandbox alpha was destroyed."]),
-      ).rejects.toThrow("process.exit:1");
-
-      const output = stderr.join("\n");
-      expect(output).toContain("Run: nemoclaw <name> exec");
-      expect(output).not.toContain("Sandbox alpha was destroyed.");
-    });
-  });
-
-  it("omits an escape byte that would rewrite terminal output (#10212)", async () => {
-    await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
-      await expect(dispatchCli(["exec", "\u001b[31mRED"])).rejects.toThrow("process.exit:1");
-
-      const output = stderr.join("\n");
-      expect(output).toContain("Run: nemoclaw <name> exec");
-      expect(output).not.toContain("\u001b");
-      expect(output).not.toContain("RED");
-    });
-  });
-
-  it("bounds the hint length for a long action argument (#10212)", async () => {
-    await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
-      const long = "A".repeat(4000);
-      await expect(dispatchCli(["exec", long])).rejects.toThrow("process.exit:1");
-
-      const runLine = stderr.find((line) => line.includes("Run: nemoclaw <name>")) ?? "";
-      expect(runLine).toBe("  Run: nemoclaw <name> exec");
-      expect(runLine.length).toBeLessThan(80);
-    });
-  });
+        const output = stderr.join("\n");
+        const runLine = stderr.find((line) => line.includes("Run: nemoclaw <name>")) ?? "";
+        expect(runLine).toBe(`  Run: nemoclaw <name> ${route}`);
+        expect(output).not.toMatch(forbidden);
+      });
+    },
+  );
 
   it("renders the registered route for an unregistered trailing token (#10212)", async () => {
     await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
@@ -726,16 +714,22 @@ describe("CLI dispatch", () => {
     });
   });
 
-  it("reports the sandbox-first grammar for a two-token sandbox action (#10212)", async () => {
-    await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
-      await expect(dispatchCli(["policy", "list"])).rejects.toThrow("process.exit:1");
+  it.each([
+    { argv: ["policy", "list"], action: "policy", route: "policy list" },
+    { argv: ["policy-add"], action: "policy-add", route: "policy-add" },
+  ])(
+    "reports the sandbox-first grammar for the registered $route route (#10212)",
+    async ({ argv, action, route }) => {
+      await withDirectPublicDispatch(async ({ dispatchCli, stderr }) => {
+        await expect(dispatchCli(argv)).rejects.toThrow("process.exit:1");
 
-      const output = stderr.join("\n");
-      expect(output).toContain("'policy' is a sandbox command. It needs a sandbox name.");
-      expect(output).toContain("Run: nemoclaw <name> policy list");
-      expect(output).not.toContain("Unknown command: policy");
-    });
-  });
+        const output = stderr.join("\n");
+        expect(output).toContain(`'${action}' is a sandbox command. It needs a sandbox name.`);
+        expect(output).toContain(`Run: nemoclaw <name> ${route}`);
+        expect(output).not.toContain(`Unknown command: ${action}`);
+      });
+    },
+  );
 
   it("lists registered sandboxes in the sandbox-first grammar hint (#10212)", async () => {
     await withDirectPublicDispatch(
@@ -747,6 +741,20 @@ describe("CLI dispatch", () => {
         expect(output).not.toContain("Run 'nemoclaw onboard' to create one.");
       },
       { sandboxNames: ["alpha", "beta"] },
+    );
+  });
+
+  it("reports pending setup instead of new onboarding for a bare sandbox action (#10212)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, stderr }) => {
+        await expect(dispatchCli(["doctor"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(output).toContain("Sandbox setup is still pending: alpha");
+        expect(output).toContain("Wait for onboarding to finish or remove the incomplete sandbox.");
+        expect(output).not.toContain("Run 'nemoclaw onboard' to create one.");
+      },
+      { sandboxNames: ["alpha"], pendingSandboxNames: ["alpha"] },
     );
   });
 
@@ -791,7 +799,7 @@ describe("CLI dispatch", () => {
 
   it("recovers a live sandbox named after an action before reporting scope (#10212)", async () => {
     await withDirectPublicDispatch(
-      async ({ dispatchCli, recoverRegistryEntries, sandboxes, stderr }) => {
+      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById, sandboxes, stderr }) => {
         recoverRegistryEntries.mockImplementation(async () => {
           sandboxes.set("doctor", { name: "doctor" });
           return { sandboxes: [...sandboxes.values()], defaultSandbox: null };
@@ -800,6 +808,11 @@ describe("CLI dispatch", () => {
         await dispatchCli(["doctor", "status"]);
 
         expect(recoverRegistryEntries).toHaveBeenCalledTimes(1);
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:status",
+          ["doctor"],
+          expect.anything(),
+        );
         expect(stderr.join("\n")).not.toContain("is a sandbox command");
       },
     );

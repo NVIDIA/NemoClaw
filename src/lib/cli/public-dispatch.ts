@@ -19,7 +19,6 @@ const {
   canonicalCommandFlagLines,
   canonicalUsageList,
   globalCommandTokens,
-  matchSandboxRoute,
   sandboxActionTokensForDispatch,
 } = require("./command-registry");
 
@@ -34,6 +33,7 @@ import {
 import { resolveBareConnectArgv } from "./bare-connect-routing";
 import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
 import {
+  matchSandboxRoute,
   type PublicTranslationResult,
   translatePublicGlobalArgv,
   translatePublicSandboxArgv,
@@ -135,11 +135,20 @@ function isMigrationRecoveryInvocation(argv: readonly string[]): boolean {
   );
 }
 
-function registeredSandboxNames(): string[] {
+function sandboxRegistrationNames(): { published: string[]; pending: string[] } {
   const registryApi = registry();
-  // Suggestions must use the same published sandbox inventory as `list` and global `status`.
-  return registryApi.listSandboxes().sandboxes.filter(registryApi.isPublishedSandboxRegistration)
-    .map((sandbox) => sandbox.name);
+  const sandboxes = registryApi.listSandboxes().sandboxes;
+  return {
+    // Suggestions must use the same published inventory as `list` and global `status`.
+    published: sandboxes.filter(registryApi.isPublishedSandboxRegistration).map(({ name }) => name),
+    pending: sandboxes
+      .filter(({ pendingRouteReservation }) => pendingRouteReservation === true)
+      .map(({ name }) => name),
+  };
+}
+
+function registeredSandboxNames(): string[] {
+  return sandboxRegistrationNames().published;
 }
 
 function findRegisteredSandboxName(tokens: string[]): string | null {
@@ -283,16 +292,20 @@ function printSandboxScopeHint(action: string, remainingArgs: readonly string[])
   console.error(`  '${action}' is a sandbox command. It needs a sandbox name.`);
   console.error("");
   console.error(`  Run: ${CLI_NAME} <name> ${route.join(" ")}`);
-  const allNames = registeredSandboxNames();
+  const { published: allNames, pending: pendingNames } = sandboxRegistrationNames();
   if (allNames.length > 0) {
     console.error(`  Registered sandboxes: ${allNames.join(", ")}`);
     console.error(`  Run '${CLI_NAME} list' to see all sandboxes.`);
+  } else if (pendingNames.length > 0) {
+    console.error(`  Sandbox setup is still pending: ${pendingNames.join(", ")}`);
+    console.error("  Wait for onboarding to finish or remove the incomplete sandbox.");
   } else {
     console.error(`  Run '${CLI_NAME} onboard' to create one.`);
   }
   process.exit(1);
 }
 
+/** Recover a missing name before reporting an action-like first token as a grammar error. */
 async function recoverRequestedSandboxIfNeeded(
   sandboxName: string,
   action: string,
