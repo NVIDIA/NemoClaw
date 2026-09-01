@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
@@ -32,6 +34,8 @@ const PROVIDER_COMMAND_PATH = path.join(
   "openshell",
   "provider-command.js",
 );
+let authorityFixtureRoot = "";
+let authorityDeclarationPath = "";
 type CredentialsCommandClasses = {
   CredentialsCommand: typeof import("../../../src/commands/credentials.js").default;
   CredentialsAddCommand: typeof import("../../../src/commands/credentials/add.js").default;
@@ -200,6 +204,25 @@ async function expectExitCode(action: () => Promise<unknown>, expectedCode: numb
   }
 }
 
+beforeAll(() => {
+  authorityFixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-credentials-cli-"));
+  authorityDeclarationPath = path.join(authorityFixtureRoot, "gateway-management.json");
+  fs.writeFileSync(
+    authorityDeclarationPath,
+    JSON.stringify({
+      version: 1,
+      mode: "nemoclaw-managed",
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  );
+});
+
+beforeEach(() => {
+  vi.stubEnv("HOME", authorityFixtureRoot);
+  vi.stubEnv("NEMOCLAW_GATEWAY_MANAGEMENT", authorityDeclarationPath);
+});
+
 afterEach(() => {
   for (const modulePath of Object.values(COMMAND_PATHS)) {
     delete require.cache[modulePath];
@@ -211,6 +234,11 @@ afterEach(() => {
     }) => void;
   };
   providerCommands.setProviderCommandRuntimeHooksForTest({});
+  vi.unstubAllEnvs();
+});
+
+afterAll(() => {
+  fs.rmSync(authorityFixtureRoot, { recursive: true, force: true });
 });
 
 describe("credentials oclif commands", () => {
@@ -334,7 +362,7 @@ describe("credentials oclif commands", () => {
       },
     ]);
     expect(output.stdout).toContain("Removed provider 'nvidia-prod'");
-    expect(output.stdout).toContain("Re-run 'nemoclaw onboard'");
+    expect(output.stdout).toContain("Rerun 'nemoclaw onboard'");
   });
 
   it("rejects per-sandbox messaging bridge names for credential reset", async () => {
@@ -848,7 +876,7 @@ describe("credentials oclif commands", () => {
     expect(output.stderr).toContain("delete failed");
   });
 
-  it("credentials reset rejects invalid provider names before gateway mutation", async () => {
+  it("credentials reset rejects invalid provider names before gateway mutation (#9806)", async () => {
     const gatewayRecoveries: string[] = [];
     const openshellCalls = installRuntimeBridge({
       recoverNamedGatewayRuntime: async () => {

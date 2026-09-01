@@ -32,7 +32,7 @@ describe("formatResetOutcome (#5560)", () => {
     expect(outcome.lines.join("\n")).not.toContain("rebuild");
   });
 
-  it("reports every sandbox detached during a successful removal", () => {
+  it("reports every sandbox detached during a successful removal (#9806)", () => {
     const outcome = formatResetOutcome(
       "my-assistant-brave-search",
       result({ ok: true, detachedSandboxes: ["alpha", "beta", "alpha"] }),

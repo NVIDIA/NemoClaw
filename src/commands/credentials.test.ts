@@ -304,7 +304,7 @@ describe("credentials oclif adapter source coverage", () => {
     expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
   });
 
-  it("stops before provider creation when OpenAI profile import times out", async () => {
+  it("stops before provider creation when OpenAI profile import times out (#9806)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-secret");
     mocks.runOpenshellProviderCommand.mockReturnValueOnce({
       status: null,
@@ -346,7 +346,7 @@ describe("credentials oclif adapter source coverage", () => {
     expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
   });
 
-  it("imports and verifies the OpenAI profile before provider creation", async () => {
+  it("imports and verifies the OpenAI profile before provider creation (#9806)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-secret");
     mocks.runOpenshellProviderCommand
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" })
@@ -413,7 +413,7 @@ describe("credentials oclif adapter source coverage", () => {
     ]);
   });
 
-  it("reports profile recovery guidance when OpenAI profile import fails", async () => {
+  it("reports profile recovery guidance when OpenAI profile import fails (#9806)", async () => {
     vi.stubEnv("OPENAI_API_KEY", "host-only-secret");
     mocks.runOpenshellProviderCommand.mockReturnValueOnce({
       status: 1,

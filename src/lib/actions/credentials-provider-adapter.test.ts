@@ -103,6 +103,28 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(JSON.stringify(result)).not.toContain("credential-value");
   });
 
+  it("recommends a supported OpenAI base URL after rejecting a config key (#9806)", async () => {
+    vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
+    const adapter = providerAdapter();
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "custom-provider",
+        type: "openai",
+        credentials: ["CUSTOM_TOKEN"],
+        configPairs: ["OPENAI-BASE-URL=https://93.184.216.34/v1"],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines).toEqual([
+      "  --config key must be alphanumeric / underscore (e.g. `--config OPENAI_BASE_URL=https://93.184.216.34/v1`).",
+    ]);
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["loopback IP literal", "http://127.0.0.1/v1"],
     ["link-local metadata IP literal", "http://169.254.169.254/latest"],
@@ -776,7 +798,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       "Provider 'custom-provider' was detached from sandbox(es): alpha, beta, but provider removal was not confirmed.",
     );
     expect(failure).toContain(
-      "Re-run 'nemoclaw credentials reset custom-provider' to complete provider removal.",
+      "Rerun 'nemoclaw credentials reset custom-provider' to complete provider removal.",
     );
     expect(failure).toContain("nemoclaw alpha rebuild");
     expect(failure).toContain("nemoclaw beta rebuild");
@@ -993,7 +1015,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       "    openshell sandbox provider detach -g nemoclaw beta custom-provider",
     );
     expect(result.failureLines).toContain(
-      "  Then re-run 'nemoclaw credentials reset custom-provider'.",
+      "  Then rerun 'nemoclaw credentials reset custom-provider'.",
     );
   });
 
