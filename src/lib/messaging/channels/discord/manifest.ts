@@ -95,7 +95,7 @@ export const discordManifest = {
         ],
         hermes: [
           "Hermes validation uses its virtual-environment Python runtime:",
-          `/opt/hermes/.venv/bin/python -c "import urllib.request; print(urllib.request.urlopen('https://discord.com/api/v10/gateway', timeout=20).status)"`,
+          `nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c "import urllib.request; print(urllib.request.urlopen('https://discord.com/api/v10/gateway', timeout=20).status)"`,
         ],
       },
     },

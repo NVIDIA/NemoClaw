@@ -12,7 +12,6 @@ import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts"
 import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { requireHermesDiscordRestProof } from "../fixtures/hermes-discord-rest-proof.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -114,6 +113,26 @@ async function precleanHermesDiscord(
   );
 }
 
+async function startHermesFakeDiscordRest(
+  host: HostCliClient,
+  cleanup: CleanupRegistry,
+  env: NodeJS.ProcessEnv,
+  token: string,
+  redactionValues: string[],
+): Promise<FakeDockerApi> {
+  return startFakeDockerApi(host, cleanup.trackDisposable.bind(cleanup), {
+    kind: "discord-message",
+    imageScript: "fake-discord-message-api.cjs",
+    containerPrefix: "nemoclaw-fake-discord-rest-hermes",
+    portEnv: "FAKE_DISCORD_MESSAGE_API_PORT",
+    portFileEnv: "FAKE_DISCORD_MESSAGE_API_PORT_FILE",
+    captureFileEnv: "FAKE_DISCORD_MESSAGE_API_CAPTURE_FILE",
+    expectedEnv: { FAKE_DISCORD_MESSAGE_API_EXPECTED_TOKEN: token },
+    env,
+    redactionValues,
+  });
+}
+
 async function startHermesFakeDiscordGateway(
   host: HostCliClient,
   cleanup: CleanupRegistry,
@@ -138,6 +157,7 @@ async function applyHermesFakeDiscordPolicy(options: {
   host: HostCliClient;
   sandboxName: string;
   api: FakeDockerApi;
+  restApi: FakeDockerApi;
   env: NodeJS.ProcessEnv;
   redactions: string[];
 }): Promise<void> {
@@ -153,6 +173,10 @@ async function applyHermesFakeDiscordPolicy(options: {
       `${FAKE_DISCORD_HOST}:${options.api.port}:GET:/**`,
       "--add-allow",
       `${FAKE_DISCORD_HOST}:${options.api.port}:WEBSOCKET_TEXT:/**`,
+      "--add-endpoint",
+      `${FAKE_DISCORD_HOST}:${options.restApi.port}:read-only:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
+      "--add-allow",
+      `${FAKE_DISCORD_HOST}:${options.restApi.port}:GET:/**`,
       "--binary",
       "/usr/local/bin/python3",
       "--binary",
@@ -178,7 +202,8 @@ async function applyHermesFakeDiscordPolicy(options: {
 policy_file="$(mktemp)"
 trap 'rm -f "$policy_file"' EXIT
 "$1" policy get --base "$2" >"$policy_file"
-node --import tsx "$6" "$policy_file" "$3" "$4" "$5" websocket
+node --import tsx "$7" "$policy_file" "$3" "$4" "$5" websocket
+node --import tsx "$7" "$policy_file" "$3" "$4" "$6" rest
 "$1" policy set --policy "$policy_file" --wait "$2"`,
       "bind-hermes-fake-discord-policy",
       options.host.openshellCommandPath,
@@ -186,6 +211,7 @@ node --import tsx "$6" "$policy_file" "$3" "$4" "$5" websocket
       `${options.sandboxName}-discord-bridge`,
       FAKE_DISCORD_HOST,
       String(options.api.port),
+      String(options.restApi.port),
       path.join(REPO_ROOT, "test/e2e/fixtures/hermes-discord-policy-binding.ts"),
     ],
     {
@@ -664,10 +690,18 @@ PY`,
     DISCORD_TOKEN,
     redactionValues,
   );
+  const fakeRest = await startHermesFakeDiscordRest(
+    host,
+    cleanup,
+    env,
+    DISCORD_TOKEN,
+    redactionValues,
+  );
   await applyHermesFakeDiscordPolicy({
     host,
     sandboxName: SANDBOX_NAME,
     api: fakeGateway,
+    restApi: fakeRest,
     env,
     redactions: redactionValues,
   });
@@ -745,43 +779,39 @@ PY`,
   const discordApi = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
-    `/opt/hermes/.venv/bin/python - <<'PY'
-import json
+    `FAKE_DISCORD_REST_PORT=${shellQuote(fakeRest.port)} /opt/hermes/.venv/bin/python - <<'PY'
 import os
 import re
-import socket
-import urllib.error
 import urllib.request
 
 token = os.environ.get("DISCORD_BOT_TOKEN", "")
 if not re.fullmatch(r"openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN", token):
-    print(json.dumps({"error": "invalid_token_placeholder"}))
-    raise SystemExit(0)
-
+    raise SystemExit("invalid Discord token placeholder")
 request = urllib.request.Request(
-    "https://discord.com/api/v10/users/@me",
+    f"http://host.docker.internal:{os.environ['FAKE_DISCORD_REST_PORT']}/api/v10/users/@me",
     headers={"Authorization": f"Bot {token}"},
     method="GET",
 )
-try:
-    with urllib.request.urlopen(request, timeout=20) as response:
-        print(json.dumps({"statusCode": response.status}))
-except urllib.error.HTTPError as error:
-    print(json.dumps({"statusCode": error.code}))
-except (TimeoutError, socket.timeout):
-    print(json.dumps({"error": "timeout"}))
-except Exception as error:
-    print(json.dumps({"error": str(error)}))
+with urllib.request.urlopen(request, timeout=20) as response:
+    if response.status != 200:
+        raise SystemExit(f"unexpected status {response.status}")
 PY`,
     [],
-    {
-      artifactName: "phase-6-discord-users-me",
-      redactionValues,
-      timeoutMs: 30_000,
-    },
+    { artifactName: "phase-6-discord-users-me", redactionValues, timeoutMs: 30_000 },
   );
-  expectExitZero(discordApi, "Hermes Python Discord REST users/@me probe command");
-  requireHermesDiscordRestProof(discordApi.stdout);
+  expectExitZero(discordApi, "Hermes Python Discord REST users/@me rewrite proof");
+  const restRows = fs.readFileSync(fakeRest.captureFile, "utf8").trim().split(/\n+/u).filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const restCapture = restRows.find(
+    (row) => row.event === "request" && row.method === "GET" && row.path === "/api/v10/users/@me",
+  );
+  expect(restCapture, "fake Discord REST endpoint did not capture users/@me").toMatchObject({
+    authorizationPresent: true,
+    authorizationRedacted: true,
+    tokenMatchesExpected: true,
+    tokenLooksPlaceholder: false,
+  });
+  expect(JSON.stringify(restRows)).not.toContain(DISCORD_TOKEN);
 
   const bridgeResidue = await sandboxShWithArgs(
     sandbox,
@@ -862,7 +892,7 @@ done`,
       envPlaceholders: true,
       nativePythonDiscordGatewayRewrite: true,
       rawTokenAbsentFromConfigEnvProcessAndFilesystem: true,
-      discordRestBoundaryReached: true,
+      nativePythonDiscordRestRewrite: true,
       noLocalDiscordBridgeResidue: true,
       cleanupVerified: process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1",
     },

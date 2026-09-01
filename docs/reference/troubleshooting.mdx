@@ -4394,34 +4394,16 @@ The issues below are common problems you may encounter when running Hermes throu
 
 The Hermes Discord policy allows its virtual-environment Python interpreter and does not grant Node.js or `curl` Discord egress. A Node.js or `curl` failure is therefore not proof that the Discord preset is broken.
 
-Use the Hermes virtual-environment Python runtime for the manual REST probe:
+Use the Hermes virtual-environment Python runtime inside the affected sandbox for the manual REST probe:
 
 ```bash
-/opt/hermes/.venv/bin/python - <<'PY'
-import urllib.error
-import urllib.request
-
-try:
-    with urllib.request.urlopen("https://discord.com/api/v10/gateway", timeout=20) as response:
-        print(response.status)
-except urllib.error.HTTPError as error:
-    print(error.code)
-PY
+nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c 'import urllib.request; print(urllib.request.urlopen("https://discord.com/api/v10/gateway", timeout=20).status)'
 ```
 
-To check Discord CDN egress, use the same Python runtime:
+To check Discord CDN egress, use the same sandbox-qualified Python runtime:
 
 ```bash
-/opt/hermes/.venv/bin/python - <<'PY'
-import urllib.error
-import urllib.request
-
-try:
-    with urllib.request.urlopen("https://cdn.discordapp.com/", timeout=20) as response:
-        print(response.status)
-except urllib.error.HTTPError as error:
-    print(error.code)
-PY
+nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c 'import urllib.request; print(urllib.request.urlopen("https://cdn.discordapp.com/", timeout=20).status)'
 ```
 
 Any HTTP status means the Python process reached the endpoint; the exact status can vary by unauthenticated path. A transport error or OpenShell policy denial means the probe failed. If the REST probe works but the Discord channel is still unhealthy, inspect the gateway logs and blocked-request output with `openshell term`. Look for `gateway.discord.gg` connection or WebSocket upgrade failures instead of widening the preset.

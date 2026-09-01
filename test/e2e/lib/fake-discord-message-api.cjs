@@ -86,6 +86,7 @@ const server = http.createServer((req, res) => {
     const tokenMatchesExpected = token === expectedToken;
     const messageMatch = /^\/api\/v10\/channels\/([^/]+)\/messages$/.exec(url.pathname);
     const channelMatch = /^\/api\/v10\/channels\/([^/]+)$/.exec(url.pathname);
+    const currentUserMatch = url.pathname === "/api/v10/users/@me";
     const parsed = parseJson(body);
     const content = typeof parsed.content === "string" ? parsed.content : "";
 
@@ -105,6 +106,11 @@ const server = http.createServer((req, res) => {
 
     if (!tokenMatchesExpected) {
       writeJson(res, 401, { message: "401: Unauthorized", code: 0 });
+      return;
+    }
+
+    if (req.method === "GET" && currentUserMatch) {
+      writeJson(res, 200, { id: "420000000000000000", username: "NemoClaw E2E", bot: true });
       return;
     }
 

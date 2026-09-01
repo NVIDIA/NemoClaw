@@ -338,7 +338,10 @@ describe("addSandboxPolicy", () => {
     await addSandboxPolicy("test-sandbox", { preset: "discord", yes: true });
 
     expect(printedText()).toContain("curl is not in the preset binary allowlist");
-    expect(printedText()).toContain("/opt/hermes/.venv/bin/python -c");
+    expect(printedText()).toContain(
+      "nemohermes <name> exec -- /opt/hermes/.venv/bin/python -c",
+    );
+    expect(printedText()).not.toMatch(/^\/opt\/hermes\/\.venv\/bin\/python -c/mu);
     expect(printedText()).not.toContain("node -e");
     expect(promptMock).not.toHaveBeenCalled();
     expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "discord", {
