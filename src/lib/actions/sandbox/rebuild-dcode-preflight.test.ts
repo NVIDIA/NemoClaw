@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   configureDcodeSession,
   expectNoDcodeMutation,
@@ -12,10 +12,70 @@ import {
   installRebuildFlowTestHooks,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-dcode-harness";
+import * as gatewayRuntime from "../../gateway-runtime-action";
+import { ensureDcodeRebuildTargetGatewaySelected } from "./rebuild-dcode-preflight";
 import { resolveRebuildDurableConfig } from "./rebuild-durable-config";
 
 describe("rebuildSandbox DCode flow: preflight", () => {
   installRebuildFlowTestHooks({ acceptThirdPartySoftware: true });
+
+  it("keeps non-MCP ambient selectors while pinning the recorded gateway (#10514)", async () => {
+    const restoreEnv = snapshotEnv([
+      "OPENSHELL_GATEWAY",
+      "OPENSHELL_GATEWAY_ENDPOINT",
+      "OPENSHELL_LOCAL_TLS_DIR",
+      "OPENSHELL_TOKEN",
+      "OPENSHELL_WORKSPACE",
+    ]);
+    process.env.OPENSHELL_GATEWAY = "hostile-gateway";
+    process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://hostile.invalid";
+    process.env.OPENSHELL_LOCAL_TLS_DIR = "/hostile/tls";
+    process.env.OPENSHELL_TOKEN = "hostile-token";
+    process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
+    const gatewayState = {
+      state: "healthy_named" as const,
+      activeGateway: "nemoclaw",
+      status: "",
+      gatewayInfo: "",
+    };
+    const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
+      recovered: true,
+      attempted: false,
+      before: gatewayState,
+      after: gatewayState,
+    });
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    try {
+      await expect(
+        ensureDcodeRebuildTargetGatewaySelected(
+          "alpha",
+          makeDcodeSandboxEntry() as never,
+          vi.fn(),
+          bail,
+        ),
+      ).resolves.toBe(true);
+
+      expect(recover).toHaveBeenCalledWith({
+        gatewayName: "nemoclaw",
+        recoverableStates: [
+          "missing_named",
+          "named_unhealthy",
+          "named_unreachable",
+          "connected_other",
+        ],
+      });
+      expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw");
+      expect(process.env.OPENSHELL_GATEWAY_ENDPOINT).toBe("https://hostile.invalid");
+      expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe("/hostile/tls");
+      expect(process.env.OPENSHELL_TOKEN).toBe("hostile-token");
+      expect(process.env.OPENSHELL_WORKSPACE).toBe("hostile-workspace");
+    } finally {
+      restoreEnv();
+    }
+  });
 
   it.each([
     ["defaults legacy state to disabled", undefined, undefined, "disabled", null],
@@ -28,25 +88,28 @@ describe("rebuildSandbox DCode flow: preflight", () => {
       "thread-opt-in",
       "recorded dcodeAutoApprovalMode value must be disabled or thread-opt-in",
     ],
-  ] as const)("resolves durable DCode mode: %s (#6478)", (_label, recorded, requested, expected, error) => {
-    const config = resolveRebuildDurableConfig(
-      "alpha",
-      {
-        name: "alpha",
-        agent: "langchain-deepagents-code",
-        nemoclawVersion: "0.1.0",
-        ...(recorded !== undefined ? { dcodeAutoApprovalMode: recorded as never } : {}),
-      },
-      null,
-      undefined,
-      undefined,
-      false,
-      requested,
-    );
+  ] as const)(
+    "resolves durable DCode mode: %s (#6478)",
+    (_label, recorded, requested, expected, error) => {
+      const config = resolveRebuildDurableConfig(
+        "alpha",
+        {
+          name: "alpha",
+          agent: "langchain-deepagents-code",
+          nemoclawVersion: "0.1.0",
+          ...(recorded !== undefined ? { dcodeAutoApprovalMode: recorded as never } : {}),
+        },
+        null,
+        undefined,
+        undefined,
+        false,
+        requested,
+      );
 
-    expect(config.dcodeAutoApprovalMode).toBe(expected);
-    expect(config.dcodeAutoApprovalModeError).toBe(error);
-  });
+      expect(config.dcodeAutoApprovalMode).toBe(expected);
+      expect(config.dcodeAutoApprovalModeError).toBe(error);
+    },
+  );
 
   it("rejects a DCode auto-approval override for unsupported agents before mutation (#6478)", async () => {
     const harness = createRebuildFlowHarness({
@@ -177,14 +240,37 @@ describe("rebuildSandbox DCode flow: preflight", () => {
       restoreEnv();
     }
   });
-  it("restores the prior gateway when messaging conflict preflight throws after target pin (#6195)", async () => {
-    const restoreEnv = snapshotEnv(["OPENSHELL_GATEWAY"]);
+  it("restores the complete OpenShell environment when preflight fails after target pin (#6195)", async () => {
+    const restoreEnv = snapshotEnv([
+      "OPENSHELL_GATEWAY",
+      "OPENSHELL_GATEWAY_ENDPOINT",
+      "OPENSHELL_LOCAL_TLS_DIR",
+      "OPENSHELL_TOKEN",
+      "OPENSHELL_UNRELATED",
+      "OPENSHELL_WORKSPACE",
+    ]);
     process.env.OPENSHELL_GATEWAY = "previous-gateway";
+    process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://previous.invalid";
+    process.env.OPENSHELL_LOCAL_TLS_DIR = "/previous/tls";
+    process.env.OPENSHELL_TOKEN = "previous-token";
+    process.env.OPENSHELL_UNRELATED = "previous-value";
+    process.env.OPENSHELL_WORKSPACE = "previous-workspace";
+    const mcpEntry = { server: "search", providerName: "mcp-search" };
+    const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
 
     try {
       const harness = createRebuildFlowHarness({
         agentName: "langchain-deepagents-code",
-        sandboxEntry: makeDcodeSandboxEntry(),
+        sandboxEntry: {
+          ...makeDcodeSandboxEntry(),
+          mcp: { bridges: { search: mcpEntry } },
+        },
+        mcpPreparation: {
+          entries: [mcpEntry],
+          detachedProviderEntries: [],
+          scrubbedAdapterEntries: [],
+          runtimeSelection,
+        },
         preflightMessagingConflicts: () => {
           throw new Error("messaging conflict preflight failed");
         },
@@ -197,6 +283,11 @@ describe("rebuildSandbox DCode flow: preflight", () => {
 
       expect(harness.preflightMessagingConflictsSpy).toHaveBeenCalledOnce();
       expect(process.env.OPENSHELL_GATEWAY).toBe("previous-gateway");
+      expect(process.env.OPENSHELL_GATEWAY_ENDPOINT).toBe("https://previous.invalid");
+      expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe("/previous/tls");
+      expect(process.env.OPENSHELL_TOKEN).toBe("previous-token");
+      expect(process.env.OPENSHELL_UNRELATED).toBe("previous-value");
+      expect(process.env.OPENSHELL_WORKSPACE).toBe("previous-workspace");
       expect(harness.preflightDcodeRouteSpy).not.toHaveBeenCalled();
       expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
       expect(harness.disposePreparedDcodeRebuildImageSpy).not.toHaveBeenCalled();

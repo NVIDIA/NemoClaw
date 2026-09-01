@@ -20,6 +20,10 @@ import {
 
 export { resolveGatewayName, resolveSandboxGatewayName };
 
+export const replaceOpenShellRuntimeSelectionEnv =
+  openshellRuntime.replaceOpenShellRuntimeSelectionEnv;
+export const snapshotOpenShellEnv = openshellRuntime.snapshotOpenShellEnv;
+
 type StartGatewayForRecoveryOptions = {
   gatewayName?: string;
   gatewayPort?: number;

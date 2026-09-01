@@ -31,6 +31,7 @@ import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import {
   disposeRebuildAgentBaseImagePreflight,
   removeStaleRebuildDockerOrphan,
+  snapshotOpenShellEnv,
 } from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import {
@@ -110,11 +111,11 @@ export async function rebuildSandbox(
     () =>
       withMcpLifecycleLock(sandboxName, async () => {
         assertSandboxRebuildCommandAvailable(sandboxName);
+        const restoreOpenShellEnv = snapshotOpenShellEnv();
         const scopedEnvKeys = [
           BRAVE_API_KEY_ENV,
           TAVILY_API_KEY_ENV,
           MESSAGING_SETUP_APPLIER_ENV_KEY,
-          "OPENSHELL_GATEWAY",
           DOCKER_GPU_PATCH_NETWORK_ENV,
           ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
           ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
@@ -123,6 +124,7 @@ export async function rebuildSandbox(
         try {
           await rebuildSandboxUnlocked(sandboxName, options, opts);
         } finally {
+          restoreOpenShellEnv();
           for (const key of scopedEnvKeys) delete process.env[key];
           Object.assign(
             process.env,
@@ -281,11 +283,7 @@ async function rebuildSandboxUnlocked(
         }
       };
       const capturePolicyHandoff = (runtimeSelection?: OpenShellRuntimeSelection): boolean => {
-        const capturedPath = captureRebuildPolicySource(
-          sandboxName,
-          undefined,
-          runtimeSelection,
-        );
+        const capturedPath = captureRebuildPolicySource(sandboxName, undefined, runtimeSelection);
         if (!capturedPath) return false;
         try {
           return publishPolicyHandoff(fs.readFileSync(capturedPath, "utf8"));
@@ -353,6 +351,7 @@ async function rebuildSandboxUnlocked(
           durableConfig.dcodeAutoApprovalMode,
           recoveryRecreate,
           recreateOptions.targetGatewayPort,
+          recreateOptions.runtimeSelection,
         ))
       ) {
         return;
@@ -388,9 +387,7 @@ async function rebuildSandboxUnlocked(
         expectedGatewayAuthority,
         agentName: rebuildAgent || "openclaw",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
-        ...(mcpRuntimeSelection
-          ? { resolveRuntimeSelection: () => mcpRuntimeSelection }
-          : {}),
+        ...(mcpRuntimeSelection ? { resolveRuntimeSelection: () => mcpRuntimeSelection } : {}),
         log,
         onAuthorityRefusal: (lines) => bail(lines.join("\n")),
       });
@@ -413,9 +410,7 @@ async function rebuildSandboxUnlocked(
       // restart converges to that sandbox instead of deleting it.
       if (recreateJournal.acceptedTarget) {
         if (mcpEntries.length > 0 && !recreateJournal.runtimeSelection) {
-          bail(
-            "The accepted MCP replacement is missing its recorded OpenShell runtime target.",
-          );
+          bail("The accepted MCP replacement is missing its recorded OpenShell runtime target.");
           return;
         }
         const recoveryBackup = findRebuildRecoveryBackup(rebuildRecoveryIdentity);
@@ -607,11 +602,7 @@ async function rebuildSandboxUnlocked(
               };
         },
         cleanupDockerOrphanAfterDelete: () =>
-          removeStaleRebuildDockerOrphan(
-            sandboxName,
-            sandboxEntry.openshellDriver,
-            log,
-          ),
+          removeStaleRebuildDockerOrphan(sandboxName, sandboxEntry.openshellDriver, log),
         onDeleted: () => {
           sandboxStillExists = false;
           retainPolicyHandoffForRecovery = true;

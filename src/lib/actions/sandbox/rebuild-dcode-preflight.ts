@@ -14,7 +14,11 @@ import {
   pinTrustedAgentRemoteBaseImageOverrideForOperation,
 } from "../../agent/onboard";
 import { RD as _RD, R } from "../../cli/terminal-style";
-import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
+import {
+  recoverNamedGatewayRuntime,
+  replaceOpenShellRuntimeSelectionEnv,
+  snapshotOpenShellEnv,
+} from "../../gateway-runtime-action";
 import * as nim from "../../inference/nim";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
@@ -104,9 +108,8 @@ export function createDcodeRebuildPreflightScope(
   bail: DcodeRebuildPreflightBail,
   env: NodeJS.ProcessEnv = process.env,
 ): DcodeRebuildPreflightScope {
-  const previousOpenshellGateway = env.OPENSHELL_GATEWAY;
+  const restoreOpenShellEnv = snapshotOpenShellEnv(env);
   let preparedReplacement: PreparedDcodeReplacement | null = null;
-  let gatewayRestored = false;
   let cleaned = false;
   const cleanup = () => {
     if (!enabled || cleaned) return;
@@ -117,11 +120,7 @@ export function createDcodeRebuildPreflightScope(
         console.warn("  Warning: temporary DCode rebuild inputs could not be fully removed.");
       }
     } finally {
-      if (!gatewayRestored) {
-        gatewayRestored = true;
-        if (previousOpenshellGateway === undefined) delete env.OPENSHELL_GATEWAY;
-        else env.OPENSHELL_GATEWAY = previousOpenshellGateway;
-      }
+      restoreOpenShellEnv();
       cleaned = disposed;
     }
   };
@@ -200,7 +199,8 @@ export async function ensureDcodeRebuildTargetGatewaySelected(
     bail(`Could not select healthy gateway '${gatewayName}' for sandbox '${sandboxName}'`);
     return false;
   }
-  process.env.OPENSHELL_GATEWAY = gatewayName;
+  if (runtimeSelection) replaceOpenShellRuntimeSelectionEnv(process.env, runtimeSelection);
+  else process.env.OPENSHELL_GATEWAY = gatewayName;
   log(`Pinned rebuild subprocesses to target gateway '${gatewayName}'`);
   return true;
 }
@@ -519,6 +519,7 @@ export async function prepareDcodeReplacementBeforeMutation(
     gatewayPort,
     log,
     bail,
+    runtimeSelection,
   } = input;
   let buildContext: PreparedDcodeRebuildImage | null = null;
   let pinnedBase: PinnedDcodeBaseImage | null = null;
@@ -533,7 +534,7 @@ export async function prepareDcodeReplacementBeforeMutation(
 
     const session = loadMatchingDcodeSession(sandboxName);
     const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
-    if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail);
+    if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
 
     pinnedBase = resolvePinnedDcodeBaseImage(bail, input.baseImageOptions);
     const sandboxGpuConfig = getRecordedGpuConfig(sandboxName, entry, session);
@@ -558,11 +559,19 @@ export async function prepareDcodeReplacementBeforeMutation(
     if (!imageResult.ok) fail(imageResult.detail, bail);
     buildContext = imageResult.prepared;
 
-    if (!(await ensureDcodeRebuildTargetGatewaySelected(sandboxName, entry, log, bail))) {
+    if (
+      !(await ensureDcodeRebuildTargetGatewaySelected(
+        sandboxName,
+        entry,
+        log,
+        bail,
+        runtimeSelection,
+      ))
+    ) {
       return null;
     }
-    if (!input.checkGatewaySchema()) return null;
-    if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail);
+    if (!input.checkGatewaySchema(runtimeSelection)) return null;
+    if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail, runtimeSelection);
     requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
     if (!verifyPreparedDcodeRebuildImage(buildContext) || !pinnedBase.verify()) {
       fail("the prepared DCode replacement inputs changed during preflight", bail);

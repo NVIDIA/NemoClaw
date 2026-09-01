@@ -90,6 +90,7 @@ export type RebuildFlowOverrides = {
     manifest: Record<string, unknown>,
   ) => { ok: true; manifest: Record<string, unknown> } | { ok: false; reason: string };
   managedImageEvidence?: boolean;
+  openshellBinary?: string | null;
   staleRecovery?: boolean;
   reconciledSandboxGatewayState?: SandboxGatewayState;
   mcpPreparation?: {
@@ -124,6 +125,8 @@ export type RebuildFlowOverrides = {
     error?: Error;
   };
   backupPreservedEnv?: PreservedEnvFile[];
+  beforeActiveSessionCount?: () => void;
+  beforeVersionCheck?: () => void;
   ensureValidatedBraveSearchCredential?: () => Promise<unknown>;
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
   hermesCredentialKeys?: string[] | null;
@@ -148,6 +151,8 @@ export type RebuildFlowHarness = {
   errorSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   executeSandboxExecCommandSpy: MockInstance;
+  gatewaySchemaSpy: MockInstance;
+  mcpRuntimeSelectionResolverSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   ensureRebuildAgentBaseImageSpy: MockInstance;
   ensureTargetGatewaySpy: MockInstance;

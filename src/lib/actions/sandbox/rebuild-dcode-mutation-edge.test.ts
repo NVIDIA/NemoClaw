@@ -20,7 +20,10 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
     const harness = createRebuildFlowHarness({
       agentName: "langchain-deepagents-code",
-      sandboxEntry: makeDcodeSandboxEntry(),
+      sandboxEntry: {
+        ...makeDcodeSandboxEntry(),
+        mcp: { bridges: { search: mcpEntry } },
+      },
       dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }, { ok: true }],
       mcpPreparation: {
         entries: [mcpEntry],
@@ -41,7 +44,38 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
       ),
     ).resolves.toBeUndefined();
 
+    expect(harness.mcpRuntimeSelectionResolverSpy).toHaveBeenCalledOnce();
     expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(4);
+    expect(
+      (harness.preflightDcodeRouteSpy.mock.calls[0]?.[0] as { runtimeSelection?: unknown })
+        .runtimeSelection,
+    ).toBe(runtimeSelection);
+    expect(
+      (harness.preflightDcodeRouteSpy.mock.calls[1]?.[0] as { runtimeSelection?: unknown })
+        .runtimeSelection,
+    ).toBe(runtimeSelection);
+    expect(
+      (harness.preflightDcodeRouteSpy.mock.calls[2]?.[0] as { runtimeSelection?: unknown })
+        .runtimeSelection,
+    ).toBe(runtimeSelection);
+    expect(
+      (harness.preflightDcodeRouteSpy.mock.calls[3]?.[0] as { runtimeSelection?: unknown })
+        .runtimeSelection,
+    ).toBe(runtimeSelection);
+    expect(harness.gatewayRecoverySpy).toHaveBeenCalled();
+    expect(
+      harness.gatewayRecoverySpy.mock.calls.every(
+        ([options]) =>
+          (options as { runtimeSelection?: unknown }).runtimeSelection === runtimeSelection,
+      ),
+    ).toBe(true);
+    expect(harness.gatewaySchemaSpy).toHaveBeenCalled();
+    expect(
+      harness.gatewaySchemaSpy.mock.calls.every(
+        ([options]) =>
+          (options as { runtimeSelection?: unknown }).runtimeSelection === runtimeSelection,
+      ),
+    ).toBe(true);
     expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
     expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -97,6 +131,8 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
       [mcpEntry],
       runtimeSelection,
     );
+    expect(harness.prepareMcpBridgesForRebuildSpy.mock.calls[0]?.[1]).toBe(runtimeSelection);
+    expect(harness.restoreMcpBridgesAfterRebuildSpy.mock.calls[0]?.[2]).toBe(runtimeSelection);
   });
   it("rolls back managed MCP mutation when DCode inputs drift during MCP preparation (#6195)", async () => {
     const detached = { server: "search", providerName: "mcp-search" };
@@ -104,7 +140,10 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
     const harness = createRebuildFlowHarness({
       agentName: "langchain-deepagents-code",
-      sandboxEntry: makeDcodeSandboxEntry(),
+      sandboxEntry: {
+        ...makeDcodeSandboxEntry(),
+        mcp: { bridges: { search: detached } },
+      },
       dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }, { ok: true }],
       dcodeImageVerificationResults: [true, true, false],
       mcpPreparation: {
@@ -120,10 +159,8 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("the prepared DCode replacement inputs changed before deletion");
 
-    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith(
-      "alpha",
-      runtimeSelection,
-    );
+    expect(harness.mcpRuntimeSelectionResolverSpy).toHaveBeenCalledOnce();
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha", runtimeSelection);
     expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledWith(
       "alpha",
       [detached],
@@ -137,7 +174,12 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
       expect.any(Object),
       true,
       "nemoclaw",
-      undefined,
+      runtimeSelection,
     );
+    expect(harness.prepareMcpBridgesForRebuildSpy.mock.calls[0]?.[1]).toBe(runtimeSelection);
+    expect(harness.reattachMcpProvidersAfterRebuildAbortSpy.mock.calls[0]?.[3]).toBe(
+      runtimeSelection,
+    );
+    expect(harness.relockSpy.mock.calls[0]?.[4]).toBe(runtimeSelection);
   });
 });

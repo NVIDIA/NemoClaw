@@ -3,7 +3,8 @@
 
 import { findDashboardForwardOwner } from "./dashboard-port";
 import {
-  buildOpenShellRuntimeSelectionEnv,
+  replaceOpenShellRuntimeSelectionEnv,
+  snapshotOpenShellEnv,
   type OpenShellRuntimeSelection,
 } from "../adapters/openshell/runtime-selection";
 import { resolveGatewayName } from "./gateway-binding";
@@ -46,32 +47,9 @@ function beginOpenShellRuntimeSelectionEnvScope(
   runtimeSelection: OpenShellRuntimeSelection,
   env: NodeJS.ProcessEnv,
 ): () => void {
-  const previous = Object.fromEntries(
-    Object.entries(env).filter(
-      (entry): entry is [string, string] =>
-        entry[0].startsWith("OPENSHELL_") && entry[1] !== undefined,
-    ),
-  );
-  const baseEnv = Object.fromEntries(
-    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
-  );
-  const selected = buildOpenShellRuntimeSelectionEnv(baseEnv, runtimeSelection);
-  for (const name of Object.keys(env)) {
-    if (name.startsWith("OPENSHELL_")) delete env[name];
-  }
-  for (const [name, value] of Object.entries(selected)) {
-    if (name.startsWith("OPENSHELL_")) env[name] = value;
-  }
-
-  let restored = false;
-  return () => {
-    if (restored) return;
-    restored = true;
-    for (const name of Object.keys(env)) {
-      if (name.startsWith("OPENSHELL_")) delete env[name];
-    }
-    Object.assign(env, previous);
-  };
+  const restore = snapshotOpenShellEnv(env);
+  replaceOpenShellRuntimeSelectionEnv(env, runtimeSelection);
+  return restore;
 }
 
 /** Keep every OpenShell child in an inner rebuild onboard on its frozen target. */

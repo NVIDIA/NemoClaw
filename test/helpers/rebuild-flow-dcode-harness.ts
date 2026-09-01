@@ -157,6 +157,9 @@ export type RebuildFlowHarness = {
   restoreTrustedAgentRemoteBaseImageOverrideSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   executeSandboxExecCommandSpy: MockInstance;
+  gatewayRecoverySpy: MockInstance;
+  gatewaySchemaSpy: MockInstance;
+  mcpRuntimeSelectionResolverSpy: MockInstance;
   checkAndRecoverSandboxProcessesSpy: MockInstance;
   restartSandboxGatewaySpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
@@ -247,7 +250,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     requiredCapabilities: [],
   });
 
-  vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
+  const gatewaySchemaSpy = vi
+    .spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue")
+    .mockReturnValue(null);
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
   vi.spyOn(gatewayTeardownAuthority, "resolveGatewayTeardownAuthority").mockImplementation(
     resolveGatewayAuthority,
@@ -328,8 +333,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       : ({ name: sessionAgentName } as never),
   );
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue(agentDisplayName);
-  vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockImplementation(
-    async (...args: unknown[]) => {
+  const gatewayRecoverySpy = vi
+    .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
+    .mockImplementation(async (...args: unknown[]) => {
       const gatewayName =
         (args[0] as { gatewayName?: string } | undefined)?.gatewayName ?? "nemoclaw";
       const state = { state: "healthy_named", activeGateway: gatewayName };
@@ -341,8 +347,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           after: state,
         }
       );
-    },
-  );
+    });
   vi.spyOn(gatewayState, "getReconciledSandboxGatewayState").mockResolvedValue(
     overrides.reconciledSandboxGatewayState ?? { state: "present", output: "alpha Ready" },
   );
@@ -756,10 +761,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     gatewayName: "nemoclaw",
     workspace: "default",
   };
-  vi.spyOn(
-    mcpBridgeProviderInspection,
-    "getMcpProviderInspectionRuntimeSelection",
-  ).mockReturnValue(mcpRuntimeSelection);
+  const mcpRuntimeSelectionResolverSpy = vi
+    .spyOn(mcpBridgeProviderInspection, "getMcpProviderInspectionRuntimeSelection")
+    .mockReturnValue(mcpRuntimeSelection);
   const emptyMcpPreparation = {
     entries: [],
     detachedProviderEntries: [],
@@ -801,6 +805,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restoreTrustedAgentRemoteBaseImageOverrideSpy,
     executeSandboxCommandSpy,
     executeSandboxExecCommandSpy,
+    gatewayRecoverySpy,
+    gatewaySchemaSpy,
+    mcpRuntimeSelectionResolverSpy,
     checkAndRecoverSandboxProcessesSpy,
     restartSandboxGatewaySpy,
     ensureMessagingHostForwardAfterRebuildSpy,

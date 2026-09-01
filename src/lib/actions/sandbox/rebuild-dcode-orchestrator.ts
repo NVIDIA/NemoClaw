@@ -53,7 +53,7 @@ export type DcodeRebuildOrchestrator = {
   readonly preparedReplacement: PreparedDcodeReplacement | null;
   run<T>(action: () => Promise<T>): Promise<T>;
   runSync<T>(action: () => T): T;
-  preflightCredentials(): Promise<boolean>;
+  preflightCredentials(runtimeSelection?: OpenShellRuntimeSelection): Promise<boolean>;
   prepareImage(
     resumeConfig: RebuildResumeConfig,
     webSearchConfig: WebSearchConfig | null,
@@ -62,6 +62,7 @@ export type DcodeRebuildOrchestrator = {
     skipLiveRoute: boolean,
     gatewayPort: number,
     baseImageOptions?: RebuildAgentBaseImageOptions,
+    runtimeSelection?: OpenShellRuntimeSelection,
   ): Promise<boolean>;
   revalidateBeforeDelete(
     resumeConfig: RebuildResumeConfig,
@@ -69,6 +70,7 @@ export type DcodeRebuildOrchestrator = {
     dcodeAutoApprovalMode: DcodeAutoApprovalMode,
     skipLiveRoute: boolean,
     gatewayPort: number,
+    runtimeSelection?: OpenShellRuntimeSelection,
   ): Promise<boolean>;
   checkAtDeleteEdge(
     resumeConfig: RebuildResumeConfig,
@@ -141,15 +143,21 @@ export function createDcodeRebuildOrchestrator(
     },
     run,
     runSync,
-    preflightCredentials: () =>
+    preflightCredentials: (runtimeSelection) =>
       run(async () => {
         if (scope.enabled) {
           if (
-            !(await ensureDcodeRebuildTargetGatewaySelected(sandboxName, entry, log, scope.bail))
+            !(await ensureDcodeRebuildTargetGatewaySelected(
+              sandboxName,
+              entry,
+              log,
+              scope.bail,
+              runtimeSelection,
+            ))
           ) {
             return false;
           }
-          if (!deps.checkGatewaySchema(sandboxName, scope.bail)) return false;
+          if (!deps.checkGatewaySchema(sandboxName, scope.bail, runtimeSelection)) return false;
         }
         return deps.preflightCredentials(sandboxName, entry, log, scope.bail);
       }),
@@ -161,6 +169,7 @@ export function createDcodeRebuildOrchestrator(
       skipLiveRoute,
       gatewayPort,
       baseImageOptions,
+      runtimeSelection,
     ) =>
       run(async () => {
         if (!scope.enabled) {
@@ -177,7 +186,9 @@ export function createDcodeRebuildOrchestrator(
             gatewayPort,
             log,
             bail: scope.bail,
-            checkGatewaySchema: () => deps.checkGatewaySchema(sandboxName, scope.bail),
+            checkGatewaySchema: (selection) =>
+              deps.checkGatewaySchema(sandboxName, scope.bail, selection),
+            runtimeSelection,
           });
         }
         const replacement = await prepareDcodeReplacementBeforeMutation({
@@ -192,7 +203,9 @@ export function createDcodeRebuildOrchestrator(
           baseImageOptions,
           log,
           bail: scope.bail,
-          checkGatewaySchema: () => deps.checkGatewaySchema(sandboxName, scope.bail),
+          checkGatewaySchema: (selection) =>
+            deps.checkGatewaySchema(sandboxName, scope.bail, selection),
+          runtimeSelection,
         });
         if (!replacement) {
           scope.cleanup();
@@ -207,6 +220,7 @@ export function createDcodeRebuildOrchestrator(
       dcodeAutoApprovalMode,
       skipLiveRoute,
       gatewayPort,
+      runtimeSelection,
     ) =>
       run(async () => {
         if (!scope.enabled) return true;
@@ -221,7 +235,9 @@ export function createDcodeRebuildOrchestrator(
             gatewayPort,
             log,
             bail: scope.bail,
-            checkGatewaySchema: () => deps.checkGatewaySchema(sandboxName, scope.bail),
+            checkGatewaySchema: (selection) =>
+              deps.checkGatewaySchema(sandboxName, scope.bail, selection),
+            runtimeSelection,
           });
         }
         const replacement = scope.preparedReplacement;
@@ -236,7 +252,9 @@ export function createDcodeRebuildOrchestrator(
           gatewayPort,
           log,
           bail: scope.bail,
-          checkGatewaySchema: () => deps.checkGatewaySchema(sandboxName, scope.bail),
+          checkGatewaySchema: (selection) =>
+            deps.checkGatewaySchema(sandboxName, scope.bail, selection),
+          runtimeSelection,
           replacement,
         });
       }),

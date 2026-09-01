@@ -106,7 +106,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     requiredCapabilities: [],
   });
 
-  vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
+  const gatewaySchemaSpy = vi
+    .spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue")
+    .mockReturnValue(null);
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
   vi.spyOn(gatewayTeardownAuthority, "resolveGatewayTeardownAuthority").mockImplementation(
     resolveGatewayAuthority,
@@ -193,7 +195,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const warnUnpreservedUserManagedFilesSpy = vi
     .spyOn(rebuildFlowHelpers, "warnUnpreservedUserManagedFiles")
     .mockImplementation(() => undefined);
-  vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
+  vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(overrides.openshellBinary ?? null);
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(
     agentDef.name === "openclaw" ? null : ({ name: agentDef.name } as never),
@@ -395,11 +397,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       }
       return true;
     });
-  vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
-    detected: false,
-    sessions: [],
+  vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockImplementation(() => {
+    overrides.beforeActiveSessionCount?.();
+    return { detected: false, sessions: [] };
   });
   vi.spyOn(sandboxVersion, "checkAgentVersion").mockImplementation(() => {
+    overrides.beforeVersionCheck?.();
     Object.assign(currentSandboxEntry, overrides.entryUpdatesAfterVersionCheck ?? {});
     return (
       overrides.versionCheck ?? {
@@ -671,9 +674,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     gatewayName: "nemoclaw",
     workspace: "default",
   };
-  vi.spyOn(mcpBridgeProvider, "getMcpProviderInspectionRuntimeSelection").mockReturnValue(
-    mcpRuntimeSelection,
-  );
+  const mcpRuntimeSelectionResolverSpy = vi
+    .spyOn(mcpBridgeProvider, "getMcpProviderInspectionRuntimeSelection")
+    .mockReturnValue(mcpRuntimeSelection);
   const mcpPreparation = overrides.mcpPreparation
     ? { ...overrides.mcpPreparation, runtimeSelection: mcpRuntimeSelection }
     : undefined;
@@ -715,6 +718,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     errorSpy,
     executeSandboxCommandSpy,
     executeSandboxExecCommandSpy,
+    gatewaySchemaSpy,
+    mcpRuntimeSelectionResolverSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     ensureRebuildAgentBaseImageSpy,
     ensureTargetGatewaySpy,

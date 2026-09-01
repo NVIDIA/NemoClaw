@@ -98,7 +98,13 @@ registry.registerSandbox({
   } } },
 });
 require("./src/lib/actions/sandbox/mcp-bridge-status.js").statusMcpBridge("alpha", "github").then(
-  () => process.stdout.write(JSON.stringify({ providerEnvironments, policyEnvironments })),
+  () => process.stdout.write(JSON.stringify({
+    processEnvironment: Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => name.startsWith("OPENSHELL_")),
+    ),
+    providerEnvironments,
+    policyEnvironments,
+  })),
   (error) => process.stderr.write(error.stack || error.message, () => process.exit(1)),
 );
 `;
@@ -111,8 +117,13 @@ require("./src/lib/actions/sandbox/mcp-bridge-status.js").statusMcpBridge("alpha
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const payload = JSON.parse(result.stdout) as {
       policyEnvironments: Array<Record<string, string>>;
+      processEnvironment: Record<string, string>;
       providerEnvironments: Array<Record<string, string>>;
     };
+    expect(payload.processEnvironment).toEqual({
+      OPENSHELL_GATEWAY: "nemoclaw-9090",
+      OPENSHELL_WORKSPACE: "default",
+    });
     expect(payload.providerEnvironments.length).toBeGreaterThan(0);
     expect(
       payload.providerEnvironments.every(

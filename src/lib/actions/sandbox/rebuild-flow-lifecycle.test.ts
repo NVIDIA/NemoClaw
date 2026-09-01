@@ -460,11 +460,10 @@ describe("rebuildSandbox flow: lifecycle", () => {
       expect.objectContaining({ toolDisclosure: "direct" }),
     );
     expect(harness.session.toolDisclosure).toBe("direct");
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
-      "alpha",
-      [mcpEntry],
-      { gatewayName: "nemoclaw", workspace: "default" },
-    );
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry], {
+      gatewayName: "nemoclaw",
+      workspace: "default",
+    });
     harness.registryUpdateSpy.mock.calls.forEach(([, update]) => {
       expect(update).not.toHaveProperty("toolDisclosure");
     });
@@ -518,10 +517,20 @@ describe("rebuildSandbox flow: lifecycle", () => {
       "COMPATIBLE_API_KEY",
       "NEMOCLAW_REASONING",
       "NEMOCLAW_REASONING_EFFORT",
+      "OPENSHELL_GATEWAY",
+      "OPENSHELL_GATEWAY_ENDPOINT",
+      "OPENSHELL_LOCAL_TLS_DIR",
+      "OPENSHELL_TOKEN",
+      "OPENSHELL_WORKSPACE",
     ]);
     process.env.COMPATIBLE_API_KEY = "compat-key";
     process.env.NEMOCLAW_REASONING = "false";
     process.env.NEMOCLAW_REASONING_EFFORT = "low";
+    process.env.OPENSHELL_GATEWAY = "hostile-gateway";
+    process.env.OPENSHELL_GATEWAY_ENDPOINT = "https://hostile.invalid";
+    process.env.OPENSHELL_LOCAL_TLS_DIR = "/hostile/tls";
+    process.env.OPENSHELL_TOKEN = "hostile-token";
+    process.env.OPENSHELL_WORKSPACE = "hostile-workspace";
     const mcpEntry = {
       server: "github",
       agent: "openclaw",
@@ -532,8 +541,12 @@ describe("rebuildSandbox flow: lifecycle", () => {
       policyName: "mcp-bridge-github",
       addedAt: "2026-06-01T00:00:00.000Z",
     };
+    const runtimeSelection = { gatewayName: "nemoclaw", workspace: "default" };
     let reasoningSeenInsideOnboard: string | undefined;
     let effortSeenInsideOnboard: string | undefined;
+    let openShellEnvDuringSessionCount: Record<string, string | undefined> | undefined;
+    let openShellEnvDuringVersionCheck: Record<string, string | undefined> | undefined;
+    let openShellEnvBeforeBackup: Record<string, string | undefined> | undefined;
     try {
       const harness = createRebuildFlowHarness({
         applyPreset: () => true,
@@ -545,10 +558,39 @@ describe("rebuildSandbox flow: lifecycle", () => {
           compatibleEndpointReasoningEffort: "high",
           mcp: { bridges: { github: mcpEntry } },
         },
+        openshellBinary: "/test/openshell",
         sessionSandboxName: "other",
         mcpPreparation: {
           entries: [mcpEntry],
           detachedProviderEntries: [mcpEntry],
+          runtimeSelection,
+        },
+        beforeActiveSessionCount: () => {
+          openShellEnvDuringSessionCount = {
+            gateway: process.env.OPENSHELL_GATEWAY,
+            endpoint: process.env.OPENSHELL_GATEWAY_ENDPOINT,
+            localTlsDir: process.env.OPENSHELL_LOCAL_TLS_DIR,
+            token: process.env.OPENSHELL_TOKEN,
+            workspace: process.env.OPENSHELL_WORKSPACE,
+          };
+        },
+        beforeVersionCheck: () => {
+          openShellEnvDuringVersionCheck = {
+            gateway: process.env.OPENSHELL_GATEWAY,
+            endpoint: process.env.OPENSHELL_GATEWAY_ENDPOINT,
+            localTlsDir: process.env.OPENSHELL_LOCAL_TLS_DIR,
+            token: process.env.OPENSHELL_TOKEN,
+            workspace: process.env.OPENSHELL_WORKSPACE,
+          };
+        },
+        beforeBackup: () => {
+          openShellEnvBeforeBackup = {
+            gateway: process.env.OPENSHELL_GATEWAY,
+            endpoint: process.env.OPENSHELL_GATEWAY_ENDPOINT,
+            localTlsDir: process.env.OPENSHELL_LOCAL_TLS_DIR,
+            token: process.env.OPENSHELL_TOKEN,
+            workspace: process.env.OPENSHELL_WORKSPACE,
+          };
         },
         onboard: (session) => {
           // The recreate reapplies the recorded configuration, never the
@@ -569,12 +611,43 @@ describe("rebuildSandbox flow: lifecycle", () => {
       expect(effortSeenInsideOnboard).toBe("high");
       expect(harness.session.compatibleEndpointReasoning).toBe("true");
       expect(harness.session.compatibleEndpointReasoningEffort).toBe("high");
+      expect(harness.mcpRuntimeSelectionResolverSpy).toHaveBeenCalledOnce();
+      expect(openShellEnvDuringSessionCount).toEqual({
+        gateway: "nemoclaw",
+        endpoint: undefined,
+        localTlsDir: undefined,
+        token: undefined,
+        workspace: "default",
+      });
+      expect(openShellEnvDuringVersionCheck).toEqual({
+        gateway: "nemoclaw",
+        endpoint: undefined,
+        localTlsDir: undefined,
+        token: undefined,
+        workspace: "default",
+      });
+      expect(
+        (harness.gatewaySchemaSpy.mock.calls[0]?.[0] as { runtimeSelection?: unknown })
+          .runtimeSelection,
+      ).toBe(runtimeSelection);
+      expect(openShellEnvBeforeBackup).toEqual({
+        gateway: "nemoclaw",
+        endpoint: undefined,
+        localTlsDir: undefined,
+        token: undefined,
+        workspace: "default",
+      });
       expect(process.env.NEMOCLAW_REASONING).toBe("false");
       expect(process.env.NEMOCLAW_REASONING_EFFORT).toBe("low");
+      expect(process.env.OPENSHELL_GATEWAY).toBe("hostile-gateway");
+      expect(process.env.OPENSHELL_GATEWAY_ENDPOINT).toBe("https://hostile.invalid");
+      expect(process.env.OPENSHELL_LOCAL_TLS_DIR).toBe("/hostile/tls");
+      expect(process.env.OPENSHELL_TOKEN).toBe("hostile-token");
+      expect(process.env.OPENSHELL_WORKSPACE).toBe("hostile-workspace");
       expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith(
         "alpha",
         [mcpEntry],
-        { gatewayName: "nemoclaw", workspace: "default" },
+        runtimeSelection,
       );
     } finally {
       restoreEnv();

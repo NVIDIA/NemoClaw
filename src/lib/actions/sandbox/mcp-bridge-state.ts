@@ -3,7 +3,10 @@
 
 import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../agent/defs";
 import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
-import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
+import {
+  recoverNamedGatewayRuntime,
+  replaceOpenShellRuntimeSelectionEnv,
+} from "../../gateway-runtime-action";
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { getSandboxTargetGatewayName } from "./gateway-target";
@@ -253,5 +256,5 @@ export async function ensureSandboxGatewaySelected(
   // the sandbox's recorded gateway. The globally selected gateway is mutable
   // shared metadata and another NemoClaw process may select a sibling between
   // this health check and the provider/policy mutation.
-  process.env.OPENSHELL_GATEWAY = gatewayName;
+  replaceOpenShellRuntimeSelectionEnv(process.env, runtimeSelection);
 }

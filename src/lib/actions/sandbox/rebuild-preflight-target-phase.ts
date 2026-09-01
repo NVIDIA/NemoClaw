@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { randomUUID } from "node:crypto";
+import type { OpenShellRuntimeSelection } from "../../adapters/openshell/runtime-selection";
 import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
@@ -36,6 +37,7 @@ import {
   ensureRebuildAgentBaseImage,
   ensureRebuildTargetGatewaySelected,
   pinRebuildAgentBaseImageForRecreate,
+  replaceOpenShellRuntimeSelectionEnv,
   type RebuildAgentBaseImagePreflight,
   type RebuildSandboxEntry,
 } from "./rebuild-flow-helpers";
@@ -94,14 +96,36 @@ export interface RebuildPreparedTarget {
   routePreflightReceipt: RebuildRoutePreflightReceipt;
 }
 
+/** Freeze the MCP-bearing rebuild on the recorded OpenShell target before live probes. */
+export function resolveRebuildMcpRuntimeSelection(
+  sandboxEntry: RebuildSandboxEntry,
+  bail: RebuildBail,
+): OpenShellRuntimeSelection | undefined {
+  if (Object.keys(sandboxEntry.mcp?.bridges ?? {}).length === 0) return undefined;
+  try {
+    return getMcpPreparationRuntimeSelection(sandboxEntry);
+  } catch (error) {
+    return bail(
+      `Could not bind MCP rebuild preflight to the recorded OpenShell target: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 /** Pin read-only rebuild probes without selecting, starting, or repairing a gateway. */
 export function pinRebuildTargetGatewayForReadiness(
   sandboxName: string,
   sandboxEntry: RebuildSandboxEntry,
   log: RebuildLog,
+  runtimeSelection?: OpenShellRuntimeSelection,
 ): string {
   const gatewayName = getPersistedSandboxTargetGatewayName(sandboxEntry);
-  process.env.OPENSHELL_GATEWAY = gatewayName;
+  if (runtimeSelection && runtimeSelection.gatewayName !== gatewayName) {
+    throw new Error(
+      `OpenShell runtime selection '${runtimeSelection.gatewayName}' does not match recorded gateway '${gatewayName}'.`,
+    );
+  }
+  if (runtimeSelection) replaceOpenShellRuntimeSelectionEnv(process.env, runtimeSelection);
+  else process.env.OPENSHELL_GATEWAY = gatewayName;
   log(`Pinned rebuild readiness probes for '${sandboxName}' to target gateway '${gatewayName}'`);
   return gatewayName;
 }
@@ -155,6 +179,7 @@ export async function prepareRebuildTargetPreflights(args: {
   requestedObservabilityEnabled?: boolean;
   allowLegacyManagedImageRecovery?: boolean;
   preparedBackupRecovery?: boolean;
+  mcpRuntimeSelection?: OpenShellRuntimeSelection;
   log: RebuildLog;
   bail: RebuildBail;
 }): Promise<RebuildPreparedTarget | null> {
@@ -168,11 +193,14 @@ export async function prepareRebuildTargetPreflights(args: {
     requestedObservabilityEnabled,
     allowLegacyManagedImageRecovery,
     preparedBackupRecovery,
+    mcpRuntimeSelection: frozenMcpRuntimeSelection,
     log,
     bail,
   } = args;
+  const mcpRuntimeSelection =
+    frozenMcpRuntimeSelection ?? resolveRebuildMcpRuntimeSelection(sandboxEntry, bail);
   hydrateMessagingConfigForRebuild(sandboxName, log);
-  pinRebuildTargetGatewayForReadiness(sandboxName, sandboxEntry, log);
+  pinRebuildTargetGatewayForReadiness(sandboxName, sandboxEntry, log, mcpRuntimeSelection);
 
   const targetConfig = prepareRebuildTargetConfig(
     sandboxName,
@@ -199,16 +227,7 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   );
   if (!recreateOptions) return null;
-  if (Object.keys(sandboxEntry.mcp?.bridges ?? {}).length > 0) {
-    try {
-      recreateOptions.runtimeSelection = getMcpPreparationRuntimeSelection(sandboxEntry);
-    } catch (error) {
-      bail(
-        `Could not bind MCP rebuild preflight to the recorded OpenShell target: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return null;
-    }
-  }
+  if (mcpRuntimeSelection) recreateOptions.runtimeSelection = mcpRuntimeSelection;
   let managedWorkloadRebuildCatalog: Awaited<
     ReturnType<typeof prepareManagedWorkloadRebuildHandoff>
   > = null;
@@ -308,10 +327,13 @@ export async function prepareRebuildTargetPreflights(args: {
         },
         resumeConfig.registryInferenceRoute,
       ),
-    recoverGateway: () => ensureRebuildTargetGatewaySelected(sandboxName, sandboxEntry, log, bail),
+    recoverGateway: () =>
+      ensureRebuildTargetGatewaySelected(sandboxName, sandboxEntry, log, bail, mcpRuntimeSelection),
   });
   if (!gatewayRecovered) return null;
-  if (!checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail)) return null;
+  if (!checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail, mcpRuntimeSelection)) {
+    return null;
+  }
 
   const rebuildsDcodeSandbox = isDcodeRebuildAgent(rebuildAgent);
   const rebuildsManagedWorkload = recreateOptions.managedWorkloadRebuild !== undefined;

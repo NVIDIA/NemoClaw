@@ -21,6 +21,8 @@ export {
   buildOpenShellCommandEnv,
   buildOpenShellRuntimeSelectionEnv,
   buildSelectedOpenShellSubprocessEnv,
+  replaceOpenShellRuntimeSelectionEnv,
+  snapshotOpenShellEnv,
   type OpenShellRuntimeSelection,
 } from "./runtime-selection";
 
