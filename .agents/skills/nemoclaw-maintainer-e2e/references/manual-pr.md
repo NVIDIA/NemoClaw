@@ -4,8 +4,8 @@
 # Manual PR E2E
 
 Use this mode when a maintainer requests E2E for a pull request. The trusted workflow stays on
-`main` and checks out the latest PR commit. The result is advisory and does not create a required PR
-check.
+`main` and checks out the latest commit of an open PR. It rejects an arbitrary or historical commit
+SHA. The result is advisory and does not create a required PR check.
 
 ## Credential Boundary
 

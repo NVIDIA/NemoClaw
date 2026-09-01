@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-e2e
-description: Dispatches and reports trusted GitHub Actions E2E runs. Use for focused, full, staging Launchable, manual PR, and release-decision requests.
+description: Runs local live E2E or dispatches and reports trusted GitHub Actions E2E. Use for local, focused, full, staging Launchable, manual PR, and release-decision requests.
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -10,12 +10,19 @@ description: Dispatches and reports trusted GitHub Actions E2E runs. Use for foc
 
 Use `.github/workflows/e2e.yaml` from trusted `main`. Do not substitute local live E2E unless the maintainer explicitly requests local execution.
 
-Push runs publish `Relevant E2E`. Only a full manual run publishes `Release qualification`. That
-aggregate reports the full suite; it does not decide whether a tag can proceed. A generic E2E
-request does not authorize `Staging Brev Launchable`.
+Push runs select change-relevant E2E and publish `Relevant E2E`; they do not always run the
+full suite. Only a full manual run publishes `Release qualification`. That aggregate reports the
+full suite; it does not decide whether a tag can proceed. A generic E2E request does not authorize
+`Staging Brev Launchable`.
+
+A GitHub dispatch can test the latest commit of an open PR or the current `main` commit. It cannot
+test an arbitrary historical commit SHA. Report either unsupported request instead of weakening the
+workflow's commit and trust checks.
 
 ## Route the Request
 
+- For local E2E against working-tree content, `HEAD`, or a commit, read and follow
+  [Local Runs](references/local-runs.md).
 - For E2E against a pull request revision, read and follow [Manual PR Runs](references/manual-pr.md).
 - To dispatch ordinary, focused, staging Launchable, or full E2E on `main`, read and follow
   [Main Runs](references/main-runs.md) and the Launchable boundary below.

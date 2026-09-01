@@ -10,7 +10,7 @@ user_invocable: true
 # Cut Release Tag
 
 Cut one signed annotated semver tag from a generated plan. Use the release scripts for tag writes
-and `nemoclaw-maintainer-e2e` for maintainer-requested workflow dispatches. Do not improvise raw tag,
+and [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) for maintainer-requested workflow dispatches. Do not improvise raw tag,
 push, version-bump, or other release-state GitHub writes.
 
 Treat these as separate states:
@@ -146,14 +146,8 @@ URLs, PR state, commit ranges, review state, check state, and image identities i
 
 ### 3. Present General E2E and Ask for a Decision
 
-Use `nemoclaw-maintainer-e2e` to find the newest completed or active full E2E run. Show these details
-instead of reducing the run to one passing/failing label:
-
-- candidate SHA and full-run SHA;
-- status and conclusion;
-- workflow attempt, created, started, and last-updated timestamps, plus age at inspection;
-- workflow URL and `Release qualification` job URL; and
-- any failed, cancelled, skipped, queued, or still-running results.
+Follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md) to inspect the newest
+completed or active full run and present its canonical release-context report for the candidate.
 
 Offer exactly these three choices:
 

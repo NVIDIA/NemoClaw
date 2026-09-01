@@ -93,11 +93,9 @@ qualification` aggregate does not replace the candidate result.
 
 ## General E2E Decision
 
-The general E2E decision records whether the maintainer chooses focused tests, the full suite, or the
-displayed general E2E status. General E2E informs the maintainer; it does not decide whether a tag
-can exist. Show the newest full run's full SHA, status, conclusion, attempt, created, started, and
-last-updated timestamps, age at inspection, workflow URL, `Release qualification` URL, and any
-failed, cancelled, skipped, queued, or active results.
+General E2E informs the maintainer; it does not decide whether a tag can exist. Follow
+[Run Maintainer E2E](../../nemoclaw-maintainer-e2e/SKILL.md) to inspect and report the newest full
+run and any maintainer-requested runs. Record its canonical handoff in the release decision.
 
 Offer three choices:
 
@@ -105,9 +103,7 @@ Offer three choices:
 2. run the full suite; or
 3. proceed with the status shown.
 
-Show and record every requested run result. A requested run remains unresolved while it is queued or
-running, or after it ends without success. It becomes resolved only when a successful result covers
-the same requested scope.
+Use the owning E2E skill's result to record whether every requested run is resolved.
 
 Use `Exceptions: None` only when the maintainer accepts a successful full result for the candidate
 and no requested run remains unresolved. Otherwise, record one plain-language reason that names the

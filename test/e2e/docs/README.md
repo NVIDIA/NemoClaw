@@ -99,7 +99,77 @@ exits 0. That exit-0 skip is specific to the typed-registry matrix; the
 catalogue path sets `NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST=1` and exits nonzero
 when its selection runs no tests.
 
-## How To Run
+## Run Live E2E Locally
+
+Run `test:live-e2e` from the checkout whose source you want to test. The command
+deletes and rebuilds `dist/` from source in that checkout before Vitest starts.
+It includes tracked and untracked source inputs, runs selected test files serially,
+and does not retry a failed test. It deletes direct edits under generated `dist/`
+and `nemoclaw/runner-dist/` paths.
+
+| Goal | Checkout | Command |
+| --- | --- | --- |
+| Run one test file with local changes | Current working tree | `npm run test:live-e2e -- test/e2e/live/<name>.test.ts --silent=false --reporter=default` |
+| Run all locally eligible live test files | Current working tree | `npm run test:live-e2e -- --silent=false --reporter=default` |
+| Run one test file at a commit | Detached worktree at the commit | Use the same focused command in that worktree. |
+| Run all locally eligible live test files at a commit | Detached worktree at the commit | Use the same aggregate command in that worktree. |
+
+A local aggregate run is not the GitHub full E2E matrix. Tests that require another
+platform, runner, credential, service, or explicit target-specific opt-in can skip
+or fail locally. GitHub Actions owns those job capabilities and the strict full-run
+aggregate.
+
+### Run the current working tree
+
+Use a repository-relative test file to select one live E2E implementation.
+Add `-t` when the file contains more than one test and you need one named case:
+
+```bash
+npm run test:live-e2e -- \
+  test/e2e/live/<name>.test.ts \
+  -t '<test-name-regex>' \
+  --silent=false --reporter=default
+```
+
+Omit `-t` to run the complete file. Omit the test file to collect every
+`e2e-live` test file that the local host can run. That aggregate tests `HEAD`
+only when `git status --short` is empty. Otherwise, it tests working-tree source.
+
+Review the selected test's environment checks and cleanup contract before you start
+it. Live tests can install software and mutate Docker, OpenShell, sandbox, and
+external-service state.
+
+### Run a commit without changing the current checkout
+
+Create a detached worktree, prepare that checkout, and run the selected command
+inside it:
+
+```bash
+SHA='<commit-sha>'
+COMMIT="$(git rev-parse --verify "${SHA}^{commit}")"
+WORKTREE="$(mktemp -d -t nemoclaw-e2e-XXXXXXXX)"
+rmdir "$WORKTREE"
+git worktree add --detach "$WORKTREE" "$COMMIT"
+(
+  cd "$WORKTREE"
+  npm run dev:setup
+  NEMOCLAW_E2E_EXPECTED_SHA="$COMMIT" npm run test:live-e2e -- \
+    test/e2e/live/<name>.test.ts \
+    -t '<test-name-regex>' \
+    --silent=false --reporter=default
+)
+```
+
+Omit `-t` to run the complete file. Omit the test file for the aggregate local
+run. `NEMOCLAW_E2E_EXPECTED_SHA` checks identity; it does not select or clean a
+checkout. Do not use it in a dirty checkout to claim that a run tested only the
+named commit.
+
+The recipe intentionally leaves the worktree in place. Remove external resources
+recorded by a failed test and preserve any needed artifacts. Then return to the
+primary checkout and run `git worktree remove "$WORKTREE"`.
+
+## Inspect E2E Selection and Support
 
 ```bash
 # List canonical target ids
@@ -117,15 +187,9 @@ npx vitest run --project e2e-support --silent=false --reporter=default
 # Validate every live test and workflow-selected integration test without running bodies
 npm run test:e2e-phases:check
 
-# Opt-in live E2E targets
-npm run test:live-e2e -- --silent=false --reporter=default
-
 # Rank one or more downloaded/extracted live artifact directories
 npm run test:runtime-audit -- e2e-artifacts/run-1 e2e-artifacts/run-2
 ```
-
-The aggregate local command rebuilds the CLI before Vitest starts and runs E2E
-test files serially. It does not retry a failed test.
 
 After an eligible `E2E main` push workflow completes, `E2E / Main Retry Evidence` records its conclusion and source-attempt evidence.
 It does not request a broad failed-job or workflow rerun.

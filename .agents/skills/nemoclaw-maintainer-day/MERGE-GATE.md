@@ -54,7 +54,7 @@ A first-time fork contributor can require an **Approve and run** decision before
 
 ### Live E2E
 
-Live E2E is not a default PR merge gate. When a maintainer requires it, use `nemoclaw-maintainer-e2e`. Evaluate its result for this PR.
+Live E2E is not a default PR merge gate. When a maintainer requires it, follow [Run Maintainer E2E](../nemoclaw-maintainer-e2e/SKILL.md), then evaluate its result for this PR.
 
 ### Contributor and approver overlap
 

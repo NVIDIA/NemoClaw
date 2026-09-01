@@ -50,23 +50,11 @@ When one or more checks ran without failure but another required check did not r
 
 ## Resolve the Candidate and Image Evidence
 
-Record the expected NemoClaw commit SHA before deployment.
-Use the latest successful `Staging Brev Launchable` job for that SHA.
-Record the selected workflow and job URLs and the producer run ID selected in that job's log.
-Download its private artifact and require `launchable-e2e.json` to report:
-
-- `candidateSha` equal to the selected commit SHA;
-- `producer.status` equal to `success` and `producer.runId` equal to the producer run ID selected by the automated job;
-- a concrete `boot.bootImage` URI;
-- `boot.schemaVersion` equal to `1`, `boot.sourceRepository` equal to `NVIDIA/NemoClaw`, and `boot.sourcePath` equal to `/opt/nemoclaw-image/NemoClaw`;
-- `boot.repoSha` and `boot.provisionSha` equal to the selected commit SHA;
-- a lowercase 40-character `boot.imageRepositorySha`, `boot.repoClean` equal to `true`, and `boot.runtimeOverrides` equal to `false`; and
-- `fullE2e` equal to `passed`.
-
-Stop when the artifact is absent, malformed, or belongs to another commit.
-Classify that evidence as `failed` when GitHub is available and the selected job or artifact can be inspected.
-Classify it as `partially blocked` when GitHub or the required artifact service is unavailable and no performed check failed.
-Do not substitute the mutable image-family URI for the concrete expected image URI.
+Record the expected commit, then follow
+[Validate Existing Launchable Evidence](../nemoclaw-maintainer-e2e/references/launchable-evidence.md)
+to select and validate candidate-bound `Staging Brev Launchable` evidence. Stop if the canonical
+inspection does not establish matching successful evidence. Use its concrete boot image and producer
+identity for the web journey below; do not substitute a mutable image-family URI.
 
 ## Validate the Web Journey
 

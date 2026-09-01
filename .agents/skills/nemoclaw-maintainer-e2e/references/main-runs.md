@@ -65,8 +65,9 @@ git fetch --prune origin main
 CANDIDATE_SHA="$(git rev-parse origin/main)"
 ```
 
-A new dispatch tests the `origin/main` commit resolved here. If the caller supplied another candidate
-SHA, report the difference. Do not reject it or decide the release outcome.
+A new dispatch tests the `origin/main` commit resolved here. It cannot select an arbitrary historical
+commit. If the caller supplied another candidate SHA, report that this path cannot test it. Do not
+dispatch a different commit or decide the release outcome.
 
 ## Dispatch Once
 
