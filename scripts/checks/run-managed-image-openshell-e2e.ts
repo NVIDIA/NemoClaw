@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveAgent } from "../../src/lib/agent/onboard.ts";
 import { parseOpenShellSandboxId } from "../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { createCliOpenShellSandboxObserverFromRunner } from "../../src/lib/adapters/openshell/sandbox-observer-cli.ts";
 import { isValidName, NAME_ALLOWED_FORMAT } from "../../src/lib/name-validation.ts";
 import {
   type StopHostGatewayResult,
@@ -1049,6 +1050,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         {
           runOpenshell: onboard.runOpenshell,
           runCaptureOpenshell: onboard.runCaptureOpenshell,
+          sandboxObserver: createCliOpenShellSandboxObserverFromRunner(onboard.runOpenshell),
           sleep: onboard.sleepSeconds,
           openshellArgv: onboard.openshellArgv,
           verifyDirectSandboxGpu,
@@ -1100,7 +1102,9 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         throw new Error("production managed-bootstrap flow returned no result");
       }
       if (flow.origin !== "created") {
-        throw new Error("production managed-bootstrap flow unexpectedly resumed an existing sandbox");
+        throw new Error(
+          "production managed-bootstrap flow unexpectedly resumed an existing sandbox",
+        );
       }
       const expectedRoute = gpuEnabled ? "native" : "none";
       if (flow.route !== expectedRoute || flow.createResult.status !== 0) {

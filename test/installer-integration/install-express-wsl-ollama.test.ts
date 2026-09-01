@@ -140,6 +140,55 @@ sys.exit(exit_code)
     );
   });
 
+  it("maps a qualifying N1x WSL host to managed Qwen 3.6 llama.cpp (#10102)", () => {
+    const { result, output } = runInstallerSourced(
+      `uname() { printf 'aarch64\\n'; }\n` +
+        `timeout() { shift; "$@"; }\n` +
+        `powershell.exe() { printf 'RTX Spark N1X\\r\\n'; }\n` +
+        `nvidia-smi() { printf '49088\\n'; }\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `describe_express_install "Windows WSL"\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s RECIPE=%s\\n' "$NEMOCLAW_PROVIDER" "$NEMOCLAW_LLAMACPP_RECIPE"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain(
+      "PROVIDER=install-llama-cpp RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
+    );
+  });
+
+  it("rejects managed N1x WSL selection for a remote Docker target (#10102)", () => {
+    const { result, output } = runInstallerSourced(
+      `export DOCKER_HOST=tcp://10.0.0.5:2375\n` +
+        `uname() { printf 'aarch64\\n'; }\n` +
+        `timeout() { shift; "$@"; }\n` +
+        `powershell.exe() { printf 'RTX Spark N1X\\r\\n'; }\n` +
+        `nvidia-smi() { printf '49088\\n'; }\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s RECIPE=%s\\n' "$NEMOCLAW_PROVIDER" "\${NEMOCLAW_LLAMACPP_RECIPE:-}"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-ollama RECIPE=");
+  });
+
+  it.each([
+    ["a non-N1x product", "Generic ARM64 PC", "49088"],
+    ["insufficient GPU memory", "RTX Spark N1X", "47999"],
+  ])("keeps Windows-host Ollama for %s (#10102)", (_scenario, product, memoryMb) => {
+    const { result, output } = runInstallerSourced(
+      `uname() { printf 'aarch64\\n'; }\n` +
+        `timeout() { shift; "$@"; }\n` +
+        `powershell.exe() { printf '${product}\\r\\n'; }\n` +
+        `nvidia-smi() { printf '${memoryMb}\\n'; }\n` +
+        `express_wsl_can_use_windows_host_ollama() { return 0; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s RECIPE=%s\\n' "$NEMOCLAW_PROVIDER" "\${NEMOCLAW_LLAMACPP_RECIPE:-}"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-windows-ollama RECIPE=");
+  });
+
   it("maps Windows WSL express install to WSL-local Ollama under native Docker Engine", () => {
     const dockerBin = dockerStubBin("Ubuntu 24.04.4 LTS");
     const result = runWslExpressPrompt({ PATH: `${dockerBin}:${TEST_SYSTEM_PATH}` });
@@ -362,7 +411,7 @@ sys.exit(exit_code)
     );
     expect(result.status, output).toBe(0);
     expect(output).toMatch(
-      /Express install will configure local Ollama, selected once the installed Node\.js runtime reads the Docker configuration/,
+      /Express install will configure local inference, selected once the installed Node\.js runtime reads the Docker configuration/,
     );
   });
 

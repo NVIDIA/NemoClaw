@@ -77,6 +77,7 @@ COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-br
 COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY agents/hermes/security-dependencies.patch /scripts/hermes-security-dependencies.patch
+COPY agents/hermes/dashboard-external-host.patch /scripts/hermes-dashboard-external-host.patch
 
 FROM scratch AS hermes-agent-payload
 
@@ -130,6 +131,7 @@ COPY agents/hermes/cron-restore-control.py /usr/local/lib/nemoclaw/hermes-cron-r
 COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.106.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.106.json
 COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
 COPY scripts/runtime-state-mutation-control.py /usr/local/lib/nemoclaw/runtime-state-mutation-control.py
+COPY scripts/runtime-state-mutation-transport-broker.py /usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py
 COPY scripts/runtime-state-mutation-startup-gate.py /usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py
 COPY scripts/runtime_state_mutation_hermes_publisher.py /usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py
 COPY agents/hermes/state-lock-plan.json /usr/local/share/nemoclaw/state-lock-plan.json
@@ -250,9 +252,9 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 # one final-image layer while preserving metadata on existing parent paths.
 COPY --from=hermes-npm-patch-payload / /
 
-# A published base can lag the source patch in Dockerfile.base. Apply only the
-# two Hindsight compatibility hunks when needed, then verify the final source
-# contract. This remains idempotent once the published base contains them.
+# A published base can lag the source patches in Dockerfile.base. Apply only
+# the required final-image hunks, then verify the source contracts in one layer
+# so the already-deep Hermes image remains importable by Docker.
 RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py; then \
         git -C /opt/hermes apply --check \
             --include=hermes_cli/memory_setup.py \
@@ -271,7 +273,18 @@ RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_
     fi \
     && grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py \
     && grep -Fqx '  - "hindsight-client==0.6.1"' /opt/hermes/plugins/memory/hindsight/plugin.yaml \
-    && rm /scripts/hermes-security-dependencies.patch
+    && rm /scripts/hermes-security-dependencies.patch \
+    && if ! grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py; then \
+        git -C /opt/hermes apply --check \
+            --include=hermes_cli/web_server.py \
+            /scripts/hermes-dashboard-external-host.patch; \
+        git -C /opt/hermes apply \
+            --include=hermes_cli/web_server.py \
+            /scripts/hermes-dashboard-external-host.patch; \
+    fi \
+    && grep -Fqx '_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = "_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST"' /opt/hermes/hermes_cli/web_server.py \
+    && grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py \
+    && rm /scripts/hermes-dashboard-external-host.patch
 
 # The final Hermes image owns the shipped dependency boundary independently of
 # base freshness. Reassert the idempotent npm-private node-tar fix from the
@@ -493,14 +506,14 @@ RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/runtime/sandbox/sandbox-rlimit-hooks.test.ts covers that base.
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
-    && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/runtime-state-mutation-control.py /usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py /usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.106.json \
+    && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/runtime-state-mutation-control.py /usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py /usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py /usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.106.json \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/hermes-cron-restore-control.py \
-    && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/runtime-state-mutation-control.py /usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
+    && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/runtime-state-mutation-control.py /usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py /usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 555 /usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py \
     && chmod 444 /usr/local/lib/nemoclaw/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/share/nemoclaw/state-lock-plan.json /usr/local/share/nemoclaw/runtime-state-mutation-publisher-v1.json /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/managed_policy.py \
     && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
     && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.106.json \
-    && /opt/hermes/.venv/bin/python3 -I -c 'import runpy, yaml; assert yaml.safe_load("ready: true")["ready"] is True; runpy.run_path("/usr/local/lib/nemoclaw/runtime-state-mutation-control.py", run_name="nemoclaw_runtime_state_mutation_control_probe"); runpy.run_path("/usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py", run_name="nemoclaw_runtime_state_mutation_publisher_probe"); runpy.run_path("/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py", run_name="nemoclaw_runtime_state_mutation_gate_probe"); runpy.run_path("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", run_name="nemoclaw_runtime_config_guard_probe")' \
+    && /opt/hermes/.venv/bin/python3 -I -c 'import runpy, yaml; assert yaml.safe_load("ready: true")["ready"] is True; runpy.run_path("/usr/local/lib/nemoclaw/runtime-state-mutation-control.py", run_name="nemoclaw_runtime_state_mutation_control_probe"); runpy.run_path("/usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py", run_name="nemoclaw_runtime_state_mutation_transport_broker_probe"); runpy.run_path("/usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py", run_name="nemoclaw_runtime_state_mutation_publisher_probe"); runpy.run_path("/usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py", run_name="nemoclaw_runtime_state_mutation_gate_probe"); runpy.run_path("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", run_name="nemoclaw_runtime_config_guard_probe")' \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
         chown -R 0:0 /usr/local/lib/nemoclaw/preloads \
         && find /usr/local/lib/nemoclaw/preloads -type f -exec chmod 444 {} + \
@@ -1450,6 +1463,7 @@ RUN check_metadata() { \
     && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root 700' \
     && check_metadata /usr/local/share/nemoclaw/state-lock-plan.json 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/runtime-state-mutation-control.py 'root:root 500' \
+    && check_metadata /usr/local/lib/nemoclaw/runtime-state-mutation-transport-broker.py 'root:root 500' \
     && check_metadata /usr/local/lib/nemoclaw/runtime-state-mutation-startup-gate.py 'root:root 555' \
     && check_metadata /usr/local/lib/nemoclaw/runtime_state_mutation_hermes_publisher.py 'root:root 500' \
     && check_metadata /var/lib/nemoclaw/runtime-state-mutation 'root:root 711' \

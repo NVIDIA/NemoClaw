@@ -9,8 +9,10 @@ import type { AddSandboxChannelDependencies } from "../../../src/lib/actions/san
 import * as policyChannelDependenciesModule from "../../../src/lib/actions/sandbox/policy-channel-dependencies.ts";
 import * as policyChannelModule from "../../../src/lib/actions/sandbox/policy-channel.ts";
 import * as openshellRuntimeModule from "../../../src/lib/adapters/openshell/runtime.ts";
+import * as credentialProviderRegistrationModule from "../../../src/lib/onboard/credential-provider-registration.ts";
 import * as messagingBridgeProviderModule from "../../../src/lib/onboard/messaging-bridge-provider.ts";
-import * as onboardProvidersModule from "../../../src/lib/onboard/providers.ts";
+import * as legacyProvidersModule from "../../../src/lib/onboard/providers.ts";
+import { clearStoppedDockerSandboxChannelState } from "../../../src/lib/sandbox/privileged-exec.ts";
 import * as statePathsModule from "../../../src/lib/state/paths.ts";
 import {
   assertCleanupSucceededOrAbsent,
@@ -55,12 +57,17 @@ type PolicyChannelModule = typeof import("../../../src/lib/actions/sandbox/polic
 type PolicyChannelDependenciesModule =
   typeof import("../../../src/lib/actions/sandbox/policy-channel-dependencies.ts");
 type OpenshellRuntimeModule = typeof import("../../../src/lib/adapters/openshell/runtime.ts");
+type CredentialProviderRegistrationModule =
+  typeof import("../../../src/lib/onboard/credential-provider-registration.ts");
+type LiveE2eCredentialProviderOverrideInput = Parameters<
+  CredentialProviderRegistrationModule["installLiveE2eCredentialProviderRegistrationOverride"]
+>[0];
 type MessagingBridgeProviderModule =
   typeof import("../../../src/lib/onboard/messaging-bridge-provider.ts");
 type StatePathsModule = typeof import("../../../src/lib/state/paths.ts");
 type ProviderUpsertOptions = {
   readonly replaceExisting?: boolean;
-  readonly revalidatePolicyRequirements?: (operation: string) => void;
+  readonly revalidateSandboxIdentity?: (operation: string) => void;
 };
 type ProviderDependencies = {
   upsertMessagingProviders(
@@ -90,8 +97,15 @@ const messagingBridgeProvider = (
     : messagingBridgeProviderModule
 ) as MessagingBridgeProviderModule;
 const { ensureMessagingBridgeProfiles } = messagingBridgeProvider;
-const onboardProviders = (
-  "default" in onboardProvidersModule ? onboardProvidersModule.default : onboardProvidersModule
+const credentialProviderRegistration = (
+  "default" in credentialProviderRegistrationModule
+    ? credentialProviderRegistrationModule.default
+    : credentialProviderRegistrationModule
+) as CredentialProviderRegistrationModule;
+const credentialProviderRegistrationDependencies =
+  credentialProviderRegistration.credentialProviderRegistrationDependencies as ProviderDependencies;
+const legacyProviderDependencies = (
+  "default" in legacyProvidersModule ? legacyProvidersModule.default : legacyProvidersModule
 ) as ProviderDependencies;
 const statePaths = (
   "default" in statePathsModule ? statePathsModule.default : statePathsModule
@@ -115,15 +129,28 @@ interface GooglechatLiveE2eDependencies {
 }
 
 interface GooglechatCredentialFixtureDependencies {
+  readonly channelDependencies?: Pick<
+    typeof policyChannelDependencies,
+    "runGatewayOpenshell" | "upsertMessagingProviders"
+  >;
   readonly ensureProfiles?: typeof ensureMessagingBridgeProfiles;
   readonly providerDependencies?: ProviderDependencies;
+  readonly legacyProviderDependencies?: ProviderDependencies;
   readonly root?: string;
   readonly run?: typeof runOpenshell;
 }
 
+type InstalledGooglechatCredentialFixture = (() => void) & {
+  readonly upsertMessagingProviders: NonNullable<
+    AddSandboxChannelDependencies["upsertMessagingProviders"]
+  >;
+};
+
 export const GOOGLECHAT_E2E_ACCESS_TOKEN = "e2e-fake-googlechat-access-token";
 
-const PROVIDER_TYPE_BY_AGENT: Readonly<Record<AgentKind, string>> = {
+const PROVIDER_TYPE_BY_AGENT: Readonly<
+  Record<AgentKind, "google-chat-bridge" | "google-chat-hermes-bridge">
+> = {
   openclaw: "google-chat-bridge",
   hermes: "google-chat-hermes-bridge",
 };
@@ -139,17 +166,93 @@ export function installGooglechatCredentialFixture(
   sandboxName: string,
   agent: AgentKind,
   dependencies: GooglechatCredentialFixtureDependencies = {},
-): () => void {
+): InstalledGooglechatCredentialFixture {
   assertChannelsStopStartSandboxName(sandboxName, agent);
   const ensureProfiles = dependencies.ensureProfiles ?? ensureMessagingBridgeProfiles;
-  const providerDependencies = dependencies.providerDependencies ?? onboardProviders;
-  const root = dependencies.root ?? ROOT;
-  const run = dependencies.run ?? runOpenshell;
+  const channelDependencies = dependencies.channelDependencies ?? policyChannelDependencies;
+  const originalChannelUpsert = channelDependencies.upsertMessagingProviders;
   const expectedName = `${sandboxName}-googlechat-bridge`;
   const expectedType = PROVIDER_TYPE_BY_AGENT[agent];
-  const original = providerDependencies.upsertMessagingProviders;
+  const directUpsert: InstalledGooglechatCredentialFixture["upsertMessagingProviders"] = (
+    tokenDefs,
+    gatewayName,
+    options = {},
+  ) => {
+    const fixtureTokenDefs = tokenDefs.filter(({ name }) => name === expectedName);
+    const fixtureTokenDef = fixtureTokenDefs[0];
+    if (
+      fixtureTokenDefs.length !== 1 ||
+      fixtureTokenDef?.envKey !== "GOOGLE_CHAT_ACCESS_TOKEN" ||
+      fixtureTokenDef?.providerType !== expectedType
+    ) {
+      throw new Error("Google Chat live fixture received an unexpected provider definition");
+    }
+    const delegatedTokenDefs = tokenDefs.filter(({ name }) => name !== expectedName);
+    const delegatedProviderNames =
+      delegatedTokenDefs.length === 0
+        ? []
+        : originalChannelUpsert.call(channelDependencies, delegatedTokenDefs, gatewayName, options);
+    const effectiveRun: typeof runOpenshell = (args, runOptions) =>
+      channelDependencies.runGatewayOpenshell(gatewayName, args, runOptions);
+    ensureProfiles(fixtureTokenDefs, {
+      root: dependencies.root ?? ROOT,
+      runOpenshell: effectiveRun,
+      redact: (value) => value.replaceAll(GOOGLECHAT_E2E_ACCESS_TOKEN, "[redacted]"),
+    });
+    const existing = effectiveRun(["provider", "get", expectedName], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (existing.status === 0 && options.replaceExisting) {
+      const removed = effectiveRun(["provider", "delete", expectedName], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (removed.status !== 0) {
+        throw new Error(`Google Chat live fixture could not replace provider '${expectedName}'`);
+      }
+    }
+    const action = existing.status === 0 && !options.replaceExisting ? "update" : "create";
+    const providerArgs =
+      action === "update"
+        ? ["provider", "update", expectedName, "--credential", "GOOGLE_CHAT_ACCESS_TOKEN"]
+        : [
+            "provider",
+            "create",
+            "--name",
+            expectedName,
+            "--type",
+            expectedType,
+            "--credential",
+            "GOOGLE_CHAT_ACCESS_TOKEN",
+          ];
+    const mutated = effectiveRun(providerArgs, {
+      env: { GOOGLE_CHAT_ACCESS_TOKEN: GOOGLECHAT_E2E_ACCESS_TOKEN },
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (mutated.status !== 0) {
+      throw new Error(`Google Chat live fixture could not ${action} provider '${expectedName}'`);
+    }
+    const registered = new Set([...delegatedProviderNames, expectedName]);
+    return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
+  };
+  const providerDependencies =
+    dependencies.providerDependencies ?? credentialProviderRegistrationDependencies;
+  const injectedProviderDependencies = dependencies.providerDependencies !== undefined;
+  const effectiveLegacyProviderDependencies =
+    dependencies.legacyProviderDependencies ??
+    (injectedProviderDependencies ? providerDependencies : legacyProviderDependencies);
+  const root = dependencies.root ?? ROOT;
+  const run = dependencies.run ?? runOpenshell;
+  const originalRegistrationUpsert = providerDependencies.upsertMessagingProviders;
+  const originalLegacyUpsert = effectiveLegacyProviderDependencies.upsertMessagingProviders;
 
-  providerDependencies.upsertMessagingProviders = (tokenDefs, providerRun, options = {}) => {
+  const fixtureUpsert: ProviderDependencies["upsertMessagingProviders"] = (
+    tokenDefs,
+    providerRun,
+    options = {},
+  ) => {
     const fixtureTokenDefs = tokenDefs.filter(({ name }) => name === expectedName);
     const fixtureTokenDef = fixtureTokenDefs[0];
     if (
@@ -162,10 +265,12 @@ export function installGooglechatCredentialFixture(
 
     const delegatedTokenDefs = tokenDefs.filter(({ name }) => name !== expectedName);
     const delegatedProviderNames =
-      delegatedTokenDefs.length === 0 ? [] : original(delegatedTokenDefs, providerRun, options);
+      delegatedTokenDefs.length === 0
+        ? []
+        : originalLegacyUpsert(delegatedTokenDefs, providerRun, options);
     const baseRun = providerRun ?? run;
     const revalidate = () =>
-      options.revalidatePolicyRequirements?.(
+      options.revalidateSandboxIdentity?.(
         `manage Google Chat live fixture provider '${expectedName}'`,
       );
     const effectiveRun: typeof runOpenshell = (args, runOptions) => {
@@ -215,10 +320,22 @@ export function installGooglechatCredentialFixture(
     const registered = new Set([...delegatedProviderNames, expectedName]);
     return tokenDefs.map(({ name }) => name).filter((name) => registered.has(name));
   };
-
-  return () => {
-    providerDependencies.upsertMessagingProviders = original;
-  };
+  let restore: () => void;
+  if (injectedProviderDependencies) {
+    providerDependencies.upsertMessagingProviders = fixtureUpsert;
+    effectiveLegacyProviderDependencies.upsertMessagingProviders = fixtureUpsert;
+    restore = () => {
+      providerDependencies.upsertMessagingProviders = originalRegistrationUpsert;
+      effectiveLegacyProviderDependencies.upsertMessagingProviders = originalLegacyUpsert;
+    };
+  } else {
+    restore = credentialProviderRegistration.installLiveE2eCredentialProviderRegistrationOverride({
+      expectedName,
+      expectedType,
+      upsert: fixtureUpsert as LiveE2eCredentialProviderOverrideInput["upsert"],
+    });
+  }
+  return Object.assign(restore, { upsertMessagingProviders: directUpsert });
 }
 
 const DEFAULT_GOOGLECHAT_DEPENDENCIES: GooglechatLiveE2eDependencies = {
@@ -241,15 +358,22 @@ async function addGooglechatWithInstalledFixture(
   input: GooglechatLiveE2eComposition,
   audience: string,
   dependencies: GooglechatLiveE2eDependencies,
+  fixture: (() => void) & {
+    readonly upsertMessagingProviders?: AddSandboxChannelDependencies["upsertMessagingProviders"];
+  },
 ): Promise<void> {
+  const providerDependency = fixture.upsertMessagingProviders
+    ? { upsertMessagingProviders: fixture.upsertMessagingProviders }
+    : {};
   await dependencies.addSandboxChannel(
     input.sandboxName,
     { channel: "googlechat" },
     input.agent === "openclaw"
       ? {
           googlechatNonInteractiveAudienceCapability: Object.freeze({ audience }),
+          ...providerDependency,
         }
-      : {},
+      : providerDependency,
   );
 }
 
@@ -265,7 +389,7 @@ export async function addAndRebuildGooglechatForChannelsStopStartLiveE2e(
 
   const restore = dependencies.installCredentialFixture(input.sandboxName, input.agent);
   try {
-    await addGooglechatWithInstalledFixture(input, audience, dependencies);
+    await addGooglechatWithInstalledFixture(input, audience, dependencies, restore);
     await dependencies.rebuildSandbox(input.sandboxName, ["--yes"]);
   } finally {
     restore();
@@ -386,6 +510,35 @@ export function registerChannelsStopStartProviderCleanup(
       ),
     );
   }
+}
+
+export function registerChannelsStopStartCleanup(
+  cleanup: CleanupRegistry,
+  host: HostCliClient,
+  sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
+  options: {
+    readonly agent: AgentKind;
+    readonly env: NodeJS.ProcessEnv;
+    readonly redactions: string[];
+    readonly sandboxName: string;
+  },
+): void {
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: `cleanup-openshell-gateway-destroy-${options.agent}`,
+    env: options.env,
+    redactionValues: options.redactions,
+    timeoutMs: 60_000,
+  });
+  registerChannelsStopStartProviderCleanup(cleanup, host, options);
+  trackSandboxCleanup(
+    cleanup,
+    host,
+    sandbox,
+    options.sandboxName,
+    options.env,
+    options.redactions,
+    `cleanup-channels-stop-start-${options.agent}`,
+  );
 }
 // Channels that emit no credentialBinding, each for its own reason. Independent oracle —
 // hardcoded on purpose, not derived from the manifest under test (that would be circular).
@@ -556,6 +709,12 @@ function expectPlanChannelState(channelId: string, expected: ChannelPlanExpected
     }),
     `${channelId} ${expected} persisted messaging plan contract`,
   ).toEqual([]);
+}
+
+function expectRemovedPlanChannelRetired(channelId: string): void {
+  const plan = messagingPlan(SANDBOX_NAME);
+  expect(planChannel(channelId), `${channelId} removal tombstone retired`).toBeUndefined();
+  expect(plan.disabledChannels, `${channelId} disabled tombstone retired`).not.toContain(channelId);
 }
 
 function requireEnvValue(env: NodeJS.ProcessEnv, key: string): string {
@@ -879,9 +1038,73 @@ async function runChannelCommand(
 
 async function removeChannelsAndRebuild(
   host: import("../fixtures/clients/host.ts").HostCliClient,
+  sandbox: import("../fixtures/clients/sandbox.ts").SandboxClient,
   env: NodeJS.ProcessEnv,
   redactions: string[],
 ): Promise<void> {
+  if (AGENT === "openclaw") {
+    const setup = await sandboxSh(
+      sandbox,
+      SANDBOX_NAME,
+      [
+        "mkdir -p /sandbox/.openclaw/wechat /sandbox/.openclaw/openclaw-weixin /sandbox/.openclaw/nemoclaw-cleanup-preserve",
+        "printf '%s\\n' residue > /sandbox/.openclaw/wechat/account.json",
+        "printf '%s\\n' residue > /sandbox/.openclaw/openclaw-weixin/account.json",
+        "printf '%s\\n' preserve > /sandbox/.openclaw/nemoclaw-cleanup-preserve/sentinel",
+      ].join("\n"),
+      {
+        artifactName: "prepare-stopped-wechat-cleanup-openclaw",
+        redactionValues: redactions,
+      },
+    );
+    expectExitZero(setup, "prepare stopped OpenClaw WeChat cleanup proof");
+
+    const stop = await host.command("node", [CLI, SANDBOX_NAME, "stop"], {
+      artifactName: "stop-before-wechat-cleanup-openclaw",
+      env,
+      redactionValues: redactions,
+      timeoutMs: 120_000,
+    });
+    expectExitZero(stop, "stop OpenClaw before WeChat cleanup");
+
+    const cleanupResult = await withLiveE2eEnvironment(env, async () =>
+      clearStoppedDockerSandboxChannelState(SANDBOX_NAME, [
+        "/sandbox/.openclaw/wechat",
+        "/sandbox/.openclaw/openclaw-weixin",
+      ]),
+    );
+    expect(cleanupResult).toEqual({ cleared: true });
+
+    const start = await host.command("node", [CLI, SANDBOX_NAME, "start"], {
+      artifactName: "start-after-wechat-cleanup-openclaw",
+      env,
+      redactionValues: redactions,
+      timeoutMs: 120_000,
+    });
+    expectExitZero(start, "start OpenClaw after stopped WeChat cleanup");
+    await expectSandboxReady(
+      host,
+      SANDBOX_NAME,
+      env,
+      redactions,
+      "sandbox-list-after-stopped-wechat-cleanup-openclaw",
+    );
+    const proof = await sandboxSh(
+      sandbox,
+      SANDBOX_NAME,
+      [
+        "test ! -e /sandbox/.openclaw/wechat",
+        "test ! -e /sandbox/.openclaw/openclaw-weixin",
+        'test "$(cat /sandbox/.openclaw/nemoclaw-cleanup-preserve/sentinel)" = preserve',
+      ].join("\n"),
+      {
+        artifactName: "verify-stopped-wechat-cleanup-openclaw",
+        redactionValues: redactions,
+      },
+    );
+    expectExitZero(proof, "stopped cleanup removed only OpenClaw WeChat state");
+  }
+
   for (const channel of REMOVAL_CHANNELS) {
     const remove = await host.command(
       "node",
@@ -919,6 +1142,7 @@ async function removeChannelsAndRebuild(
     redactions,
     `sandbox-list-after-channel-remove-${AGENT}`,
   );
+  for (const channel of REMOVAL_CHANNELS) expectRemovedPlanChannelRetired(channel);
 }
 
 async function expectHermesChannelConfigRemoved(
@@ -1007,22 +1231,7 @@ export async function runChannelsStopStartTarget({
   const heartbeat = startChannelsStopStartProgress(AGENT);
   cleanup.trackDisposable("stop channels stop/start heartbeat", heartbeat.stop);
 
-  cleanup.trackGateway(host, "nemoclaw", {
-    artifactName: `cleanup-openshell-gateway-destroy-${AGENT}`,
-    env,
-    redactionValues: redactions,
-    timeoutMs: 60_000,
-  });
-  trackSandboxCleanup(
-    cleanup,
-    host,
-    sandbox,
-    SANDBOX_NAME,
-    env,
-    redactions,
-    `cleanup-channels-stop-start-${AGENT}`,
-  );
-  registerChannelsStopStartProviderCleanup(cleanup, host, {
+  registerChannelsStopStartCleanup(cleanup, host, sandbox, {
     agent: AGENT,
     env,
     redactions,
@@ -1077,6 +1286,26 @@ export async function runChannelsStopStartTarget({
       `${channel} policy active`,
     ).toBe("active");
   }
+  const hostPolicyEdit = await sandbox.openshell(
+    [
+      "policy",
+      "update",
+      SANDBOX_NAME,
+      "--add-endpoint",
+      `host-edit-channels-${AGENT}.example.com:443:read-only:rest:enforce`,
+      "--rule-name",
+      "channels_stop_start_host_edit_e2e",
+      "--binary",
+      "/usr/bin/curl",
+      "--wait",
+    ],
+    {
+      artifactName: `host-policy-edit-before-channel-stop-${AGENT}`,
+      env,
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(hostPolicyEdit, `${AGENT} direct OpenShell policy edit before channel stop`);
 
   progress.phase("disable channels and rebuild sandbox");
   for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "stop", channel);
@@ -1119,7 +1348,7 @@ export async function runChannelsStopStartTarget({
   }
 
   progress.phase("remove WeChat, Microsoft Teams, and Google Chat and validate cleanup");
-  await removeChannelsAndRebuild(host, env, redactions);
+  await removeChannelsAndRebuild(host, sandbox, env, redactions);
   for (const channel of REMOVAL_CHANNELS) {
     expectPlanChannelState(channel, "removed");
     await expectChannelProvidersAbsent(host, env, redactions, channel, "after-remove");
@@ -1134,4 +1363,14 @@ export async function runChannelsStopStartTarget({
       await expectHermesChannelConfigRemoved(sandbox, channel, redactions);
     }
   }
+  const policyAfterChannelLifecycle = await sandbox.openshell(
+    ["policy", "get", "--full", SANDBOX_NAME],
+    {
+      artifactName: `policy-after-channel-stop-start-${AGENT}`,
+      env,
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(policyAfterChannelLifecycle, `${AGENT} policy after channel stop/start`);
+  expect(policyAfterChannelLifecycle.stdout).toContain("channels_stop_start_host_edit_e2e");
 }

@@ -91,28 +91,30 @@ After the checks pass, the action restores root `dist/` and `nemoclaw/dist/share
 If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
-The `base-image-publication` job selects the nearest fully successful publication on the PR base
-first-parent history. It downloads the complete cohort contract and Deep Agents Code base contract
-by immutable artifact ID. It binds each artifact to the selected workflow run, attempt, revision,
-artifact ID, and artifact digest. The cohort validator requires OpenClaw, Hermes, and LangChain Deep
-Agents Code on `linux/amd64` and `linux/arm64` before it emits `managed_image_revision`.
-`generate-matrix` and every stock-onboarding job depend on this job, so a missing, failed,
-incomplete, or mixed publication starts no onboarding consumer.
+The `base-image-publication` job selects managed-image authority before any stock-onboarding consumer starts.
 
-For a same-repository PR that changes a managed-image workflow path, the trusted planner also
-requires one successful `Images / Build, Test, and Publish Managed Images` run for the candidate
-commit. Before candidate checkout, the planner downloads the three nonexpired contract artifacts by
-immutable artifact ID.
-It verifies each artifact digest, producer run, attempt, and candidate commit. The planner rejects a
-missing, incomplete, or mixed all-agent publication before E2E jobs start.
+For a manual same-repository PR run, the trusted planner compares immutable base and candidate commit trees against the reviewed image-input paths.
+When those paths are unchanged, the job selects the nearest fully successful cohort publication from the PR base's first-parent history.
+It downloads the complete cohort and Deep Agents Code base contracts by immutable artifact ID.
+It binds each artifact to the selected workflow run, attempt, revision, artifact ID, and digest.
+The cohort validator requires OpenClaw, Hermes, and LangChain Deep Agents Code on `linux/amd64` and `linux/arm64`.
+Only then does it emit `managed_image_revision` and the complete cohort receipt.
 
-The planner adds the all-agent catalog to `dist/` after the candidate CLI build completes.
-Each live E2E consumer verifies that the catalog source revision matches `checkout_sha`. A PR that
-does not change a managed-image workflow path receives the selected base publication through
-`E2E_MANAGED_IMAGE_REVISION` and the complete cohort receipt. Every stock-onboarding test asserts
-its durable `managed-image` receipt against either the exact candidate catalog or the selected base
-cohort before later probes. The GitHub token is available only to the trusted planner job and is not
-included in the candidate CLI artifact.
+When a reviewed image input changed, the planner validates every returned managed-image PR workflow run for the candidate commit and selects the newest successful run by run ID.
+An earlier failed run does not block a later successful run.
+Every returned run must belong to the same open PR and an NVIDIA/NemoClaw source branch.
+The planner downloads one `managed-pr-contract-*` artifact for each shipped agent.
+It binds every artifact to the workflow run, attempt, candidate commit, artifact ID, and digest.
+It requires every shipped agent once, one candidate revision, one release, and one cohort before it assembles the candidate catalog.
+No matching successful run, invalid or duplicated run metadata, or incomplete, duplicated, mixed, or substituted artifact evidence stops before any stock-onboarding consumer starts.
+Manual PR E2E does not fall back to local Dockerfile builds.
+
+Unchanged runs pass the selected base revision and complete cohort receipt to every stock-onboarding consumer.
+Changed-input runs pass the authenticated candidate catalog separately to those consumers.
+The candidate CLI artifact cannot contain the catalog.
+The GitHub token remains available only to the trusted planner and is not included in the candidate CLI artifact.
+The candidate catalog qualifies `linux/amd64` only, so a changed-input manual PR run does not dispatch the Jetson target.
+The trusted publication job reports this exclusion before the Jetson job is skipped.
 
 The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the
 OpenClaw managed-image MCP discovery and lifecycle scope in two independent matrix jobs. Each job
@@ -123,6 +125,13 @@ These are two required acceptance executions, not retries; either failure remain
 The managed-image scope does not claim trusted-private DNS-rebinding coverage: host and sandbox
 `/etc/hosts` fixtures do not control the OpenShell supervisor's egress resolver. Full MCP bridge E2E
 coverage retains that assertion for environments with supervisor-authoritative DNS.
+
+The same workflow publishes each Pi pull-request candidate by immutable digest after validating the
+local image, removes registry credentials, validates the anonymously pullable digest, and uploads a
+`managed-candidate-contract-*` artifact bound to the pull-request head. Pi remains outside the
+`managed-pr-contract-*` all-agent catalog pattern and every release alias. The checked-in Pi
+qualification receipts may consume these candidate contracts only when the recorded image-source
+paths are unchanged through the receipt commit.
 
 #### Timing Baseline
 
@@ -273,8 +282,10 @@ npx tsx tools/e2e/credential-free-tests.mts
 OpenShell target work in issue #9872. The trusted workflow downloads and
 verifies the exact OpenShell SDK archive with package-read permission. The
 candidate job receives the archive but no package credential. It calls a local
-OpenShell 0.0.106 gateway over HTTPS with an explicit CA. The target does not
-read an authentication file or make an authenticated gateway call.
+OpenShell 0.0.106 gateway over HTTPS with an explicit CA. The target confirms
+that its configured authentication file path does not exist before and after
+the health request. A successful request proves that public health does not
+require a credential read or make an authenticated gateway call.
 
 Use `jobs=external-gateway-health` for the manual pull request E2E run. The
 target records the expected release, reported release, public health status,
@@ -616,25 +627,30 @@ mode.
 The `openclaw-plugin-runtime-exdev` job keeps one current-version lifecycle:
 
 1. Onboard the custom weather plugin as v1.
-2. Restart the gateway and verify v1.
-3. Recreate the sandbox with the plugin changed to v2.
-4. Run the cross-device runtime-dependency replacement probe.
+2. Install v1 with OpenClaw across distinct filesystems.
+3. Restart the gateway and verify v1.
+4. Recreate the sandbox with the plugin changed to v2 and verify v2.
 
-The recreation remains the replacement boundary. It verifies the v2 plugin
-with runtime inspection, `tools.catalog`, and `tools.invoke`, and it preserves
-the workspace marker. The job also keeps the test-only tmpfs mount, unchanged
-stock policy-source bytes, and the distinct-device and source-side `EXDEV`
-checks. The duplicate v3 rebuild is removed from this job. The
-`rebuild-openclaw` job remains the canonical live rebuild coverage.
+The recreation remains the replacement boundary. One `tools.invoke` assertion
+per phase proves the plugin version after onboarding, restart, and recreation.
+The job also keeps the test-only tmpfs mount and uses OpenClaw's plugin installer
+across the proven filesystem boundary before restart. `e2e-support` tests own
+deterministic wrapper argument rewriting. Deterministic tests own exact package
+versions and third-party replacement internals. Runtime inspection and catalog
+permutations are outside this live contract. Workspace preservation and policy
+selection retain their focused coverage instead of another assertion in this
+target. The `rebuild-openclaw` job remains the canonical live rebuild coverage.
 
 The current-checkout fixture locally prebuilds its repository-controlled v1
 and v2 Dockerfiles with BuildKit, then hands only those local image references
 to OpenShell. User-supplied `--from` Dockerfiles retain the gateway-builder
 trust boundary and are never host-prebuilt by this fixture.
-When a PR changes a base-image input, the current-checkout fixture enables that
-base-image build after the workflow removes Docker Hub credentials.
+The current-checkout fixture enables local base-image resolution after the
+workflow removes Docker Hub credentials.
 
-The runtime target for `openclaw-plugin-runtime-exdev` is 16–17 minutes.
+The release-baseline lane is retired. Historical package versions are not part
+of this current runtime contract.
+
 Push-run timing for the reduced lifecycle has not yet been measured.
 
 ## OpenShell development artifact retention

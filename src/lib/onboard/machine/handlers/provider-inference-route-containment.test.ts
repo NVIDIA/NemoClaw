@@ -86,7 +86,6 @@ function createDeps() {
   const deps: Options["deps"] = {
     checkGatewayRouteCompatibility: calls.checkGatewayRouteCompatibility,
     preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
-    preflightPolicyRequirements: vi.fn(),
     getSandboxRecoveryAuthority: (): "missing" => "missing",
     withGatewayRouteMutationLock: async (_gatewayName, operation) => await operation(),
     withModelRouterPortLifecycleLock: async (_port, operation) => await operation(),
