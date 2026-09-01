@@ -8,6 +8,7 @@ import type { McpBridgeEntry } from "../../state/registry";
 import { registerAgentAdapterAtCurrentCredentialRevision } from "./mcp-bridge-adapters";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
+import { redactBridgeFailureForDisplay } from "./mcp-bridge-output";
 import { applyGeneratedPolicy, assertGeneratedPolicyMutationSafe } from "./mcp-bridge-policy";
 import {
   assertMcpProviderRecoverable,
@@ -49,6 +50,8 @@ import {
   validateSandboxName,
 } from "./mcp-bridge-validation";
 
+const MCP_RESTART_STATUS_DETAIL_MAX_LENGTH = 240;
+
 function resolvedTargetPins(
   resolvedByServer: ReadonlyMap<string, McpBridgeTargetValidation>,
   entry: McpBridgeEntry,
@@ -77,8 +80,12 @@ async function assertRestartCredentialsAvailable(
       const probe = status?.provider.credentialResolution;
       if (probe?.ok === true) continue;
       if (probe?.detail) detail = probe.detail;
-    } catch {
-      detail = "stored credential status inspection failed";
+    } catch (error) {
+      detail =
+        redactBridgeFailureForDisplay(error instanceof Error ? error.message : String(error), entry)
+          .trim()
+          .slice(0, MCP_RESTART_STATUS_DETAIL_MAX_LENGTH) ||
+        "stored credential status inspection failed";
     }
     throw new McpBridgeError(
       `MCP server '${entry.server}' cannot reuse its stored credential: ${detail}. Export host environment variable '${entry.env[0]}' and run \`nemoclaw ${sandboxName} mcp restart ${entry.server}\` to replace it.`,

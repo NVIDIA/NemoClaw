@@ -299,12 +299,15 @@ bridge.restartMcpBridge("alpha", "example").then(
   it.each([
     {
       title: "refuses a hostless restart whose stored credential is not verified",
-      probe: {
-        ok: null,
-        httpStatus: 401,
-        controlHttpStatus: 401,
-        detail:
-          "the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401)",
+      statusResponse: {
+        kind: "probe",
+        value: {
+          ok: null,
+          httpStatus: 401,
+          controlHttpStatus: 401,
+          detail:
+            "the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401)",
+        },
       },
       expectedPayload: {
         outcome: "rejected",
@@ -317,16 +320,35 @@ bridge.restartMcpBridge("alpha", "example").then(
     },
     {
       title: "reuses a stored credential that verifies on the wire",
-      probe: { ok: true, httpStatus: 200, controlHttpStatus: 401 },
+      statusResponse: {
+        kind: "probe",
+        value: { ok: true, httpStatus: 200, controlHttpStatus: 401 },
+      },
       expectedPayload: {
         outcome: "refreshed",
         policyApplyCalls: 2,
         providerCalls: ["provider update alpha-mcp-example"],
       },
     },
+    {
+      title: "preserves a redacted actionable status failure",
+      statusResponse: {
+        kind: "error",
+        value:
+          "sandbox transport https://operator:credential@example.com failed; MCP_TOKEN=untrusted-secret-value",
+      },
+      expectedPayload: {
+        outcome: "rejected",
+        message:
+          "MCP server 'example' cannot reuse its stored credential: sandbox transport https://example.com/ failed; MCP_TOKEN=<REDACTED>. Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
+        exitCode: 1,
+        policyApplyCalls: 0,
+        providerCalls: [],
+      },
+    },
   ])(
     "$title (#10750)",
-    ({ probe, expectedPayload }) => {
+    ({ statusResponse, expectedPayload }) => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-credential-"));
       const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
@@ -399,7 +421,12 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => ({
   stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "registered\n",
   stderr: "",
 });
-bridgeStatus.statusMcpBridge = async () => [{ provider: { credentialResolution: ${JSON.stringify(probe)} } }];
+const statusResponse = ${JSON.stringify(statusResponse)};
+const statusHandlers = {
+  probe: async () => [{ provider: { credentialResolution: statusResponse.value } }],
+  error: async () => { throw new Error(statusResponse.value); },
+};
+bridgeStatus.statusMcpBridge = statusHandlers[statusResponse.kind];
 
 registry.registerSandbox({
   name: "alpha",
