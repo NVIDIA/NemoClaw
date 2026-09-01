@@ -17,11 +17,46 @@ export type InstalledWechatRuntimeProof = {
   pluginVersion: string;
 };
 
+export const WECHAT_INSTALLED_PLUGIN_DISCOVERY_SOURCE = String.raw`
+function resolveInstalledWechatPluginRoot(inventoryText) {
+  let inventory;
+  try {
+    inventory = JSON.parse(inventoryText);
+  } catch {
+    throw new Error("OpenClaw plugin inventory is not valid JSON");
+  }
+  const plugins = Array.isArray(inventory?.plugins) ? inventory.plugins : [];
+  const matches = plugins.filter(
+    (plugin) =>
+      plugin &&
+      plugin.id === "openclaw-weixin" &&
+      plugin.enabled === true &&
+      plugin.status === "loaded" &&
+      typeof plugin.rootDir === "string" &&
+      plugin.rootDir.length > 0,
+  );
+  if (matches.length !== 1) {
+    throw new Error("OpenClaw plugin inventory did not identify one loaded openclaw-weixin root");
+  }
+  const configuredRoot = matches[0].rootDir;
+  if (!path.isAbsolute(configuredRoot)) {
+    throw new Error("OpenClaw plugin inventory returned a relative openclaw-weixin root");
+  }
+  try {
+    return fs.realpathSync(configuredRoot);
+  } catch {
+    throw new Error("OpenClaw plugin inventory returned a missing openclaw-weixin root");
+  }
+}
+`;
+
 export const WECHAT_INSTALLED_RUNTIME_PROOF_SOURCE = String.raw`
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+
+${WECHAT_INSTALLED_PLUGIN_DISCOVERY_SOURCE}
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
@@ -60,9 +95,12 @@ function resolveOpenClawRoot() {
 }
 
 const stateDir = process.env.OPENCLAW_STATE_DIR || "/sandbox/.openclaw";
-const extensionRoot = path.join(stateDir, "extensions", "openclaw-weixin");
-invariant(fs.existsSync(extensionRoot), "installed openclaw-weixin extension is missing");
-const pluginRoot = fs.realpathSync(extensionRoot);
+const pluginInventory = execFileSync("openclaw", ["plugins", "list", "--json"], {
+  encoding: "utf8",
+  maxBuffer: 4 * 1024 * 1024,
+  timeout: 45_000,
+});
+const pluginRoot = resolveInstalledWechatPluginRoot(pluginInventory);
 const pluginMetadata = JSON.parse(fs.readFileSync(path.join(pluginRoot, "package.json"), "utf8"));
 invariant(
   pluginMetadata.name === "@tencent-weixin/openclaw-weixin",

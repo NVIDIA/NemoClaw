@@ -29,7 +29,10 @@ import {
   parseInstalledSlackProof,
   SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
 } from "../live/messaging-providers-slack-runtime-proof.ts";
-import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-runtime-proof.ts";
+import {
+  parseInstalledWechatProof,
+  WECHAT_INSTALLED_PLUGIN_DISCOVERY_SOURCE,
+} from "../live/messaging-providers-wechat-runtime-proof.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
@@ -934,6 +937,40 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(() => parseInstalledWechatProof(JSON.stringify({ ...proof, accountId: "" }))).toThrow(
       /did not emit a valid result/u,
     );
+  });
+
+  it("uses OpenClaw's loaded plugin inventory for the WeChat runtime root", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wechat-plugin-root-"));
+    const packageRoot = path.join(dir, "packages", "openclaw-weixin");
+    fs.mkdirSync(packageRoot, { recursive: true });
+    try {
+      const inventory = JSON.stringify({
+        plugins: [
+          {
+            id: "openclaw-weixin",
+            enabled: true,
+            status: "loaded",
+            rootDir: packageRoot,
+            installPath: "/sandbox/.openclaw/extensions/openclaw-weixin",
+          },
+        ],
+      });
+      const source = [
+        'import fs from "node:fs";',
+        'import path from "node:path";',
+        WECHAT_INSTALLED_PLUGIN_DISCOVERY_SOURCE,
+        `process.stdout.write(resolveInstalledWechatPluginRoot(${JSON.stringify(inventory)}));`,
+      ].join("\n");
+      const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
+        encoding: "utf8",
+        input: source,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe(fs.realpathSync(packageRoot));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("redacts Telegram tokens from fake API captures", async () => {
