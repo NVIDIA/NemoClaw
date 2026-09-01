@@ -10,6 +10,8 @@
  */
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -35,7 +37,6 @@ import {
   outputText,
   pluginEnabled,
   policyTextHasHost,
-  premergeSlackPolicyIfNeeded,
   REBUILD_TIMEOUT_MS,
   rawTokenSurfaceProbe,
   readOpenClawConfig,
@@ -56,6 +57,13 @@ import { runInstalledTelegramRuntimeProof } from "./messaging-providers-telegram
 import { runInstalledWechatRuntimeProof } from "./messaging-providers-wechat-runtime-proof.ts";
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
+
+const SANDBOX_BACKUP_ROOT = path.join(
+  os.homedir(),
+  ".nemoclaw",
+  "rebuild-backups",
+  SANDBOX_NAME,
+);
 
 test(
   "messaging providers preserve placeholder, policy, runtime, and send contracts",
@@ -97,6 +105,13 @@ test(
       wechatAccount: state.wechatAccount,
     });
 
+    cleanup.trackDisposable(`remove rebuild backups for ${SANDBOX_NAME}`, () => {
+      fs.rmSync(SANDBOX_BACKUP_ROOT, { recursive: true, force: true });
+      expect(
+        fs.existsSync(SANDBOX_BACKUP_ROOT),
+        `rebuild backup directory remains after cleanup: ${SANDBOX_BACKUP_ROOT}`,
+      ).toBe(false);
+    });
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "cleanup-openshell-sandbox-delete-messaging-providers",
@@ -111,9 +126,6 @@ test(
       redactionValues,
       timeoutMs: 15 * 60_000,
     });
-
-    const restoreSlackPolicy = await premergeSlackPolicyIfNeeded();
-    cleanup.add("restore messaging E2E Slack policy pre-merge", restoreSlackPolicy);
 
     await runSecondaryCleanup(() =>
       runHost(host, "node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {

@@ -26,12 +26,6 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 export { CLI_ENTRYPOINT, expectExitZero, REPO_ROOT };
 
-export const BASE_POLICY = path.join(
-  REPO_ROOT,
-  "nemoclaw-blueprint",
-  "policies",
-  "openclaw-sandbox.yaml",
-);
 export const FAKE_LIB_DIR = path.join(REPO_ROOT, "test", "e2e", "lib");
 const FAKE_API_PORT_TRAFFIC = path.join(FAKE_LIB_DIR, "fake-api-port-readiness.mts");
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-msg-${process.pid}`;
@@ -519,62 +513,6 @@ export function policyTextHasHost(text: string, host: string): boolean {
     `- host: '${host}'`,
   ]);
   return text.split(/\r?\n/).some((line) => accepted.has(line.trim()));
-}
-
-export async function premergeSlackPolicyIfNeeded(): Promise<() => void> {
-  const original = fs.readFileSync(BASE_POLICY, "utf8");
-  if (policyTextHasHost(original, "api.slack.com")) {
-    return () => {};
-  }
-  fs.appendFileSync(
-    BASE_POLICY,
-    `
-
-  # Slack - pre-merged for messaging provider E2E (#2340)
-  slack:
-    name: slack
-    endpoints:
-      - host: slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: api.slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: hooks.slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: wss-primary.slack.com
-        port: 443
-        protocol: websocket
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
-      - host: wss-backup.slack.com
-        port: 443
-        protocol: websocket
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
-      - { path: /usr/bin/node }
-`,
-  );
-  return () => fs.writeFileSync(BASE_POLICY, original);
 }
 
 export async function readOpenClawConfig(
