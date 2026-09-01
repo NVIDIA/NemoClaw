@@ -555,6 +555,77 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });
 
+  it("creates from existing credentials when inspected keys do not overlap managed MCP reservations (#9806)", async () => {
+    setGlobalCliActionRuntimeHooksForTest({
+      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
+      recordExtraProvider: () => true,
+      forgetExtraProvider: () => true,
+      listManagedMcpCredentialReservations: () => [
+        {
+          sandboxName: "hermes",
+          server: "maas-glean",
+          credentialKeys: ["MAAS_GLEAN_TOKEN"],
+        },
+      ],
+    });
+    const inspectProviderProfile = vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(
+      async () => ({ ok: true, value: { credentialKeys: ["CUSTOM_TOKEN"] } }),
+    );
+    const adapter = providerAdapter({ inspectProviderProfile });
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "custom-provider",
+        type: "generic",
+        credentials: [],
+        configPairs: [],
+        fromExisting: true,
+      },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
+    expect(adapter.createProvider).toHaveBeenCalledOnce();
+  });
+
+  it("rejects existing credentials whose inspected key overlaps a managed MCP reservation (#9806)", async () => {
+    setGlobalCliActionRuntimeHooksForTest({
+      recoverNamedGatewayRuntime: async () => ({ recovered: true }),
+      recordExtraProvider: () => true,
+      forgetExtraProvider: () => true,
+      listManagedMcpCredentialReservations: () => [
+        {
+          sandboxName: "hermes",
+          server: "maas-glean",
+          credentialKeys: ["MAAS_GLEAN_TOKEN"],
+        },
+      ],
+    });
+    const inspectProviderProfile = vi.fn<OpenShellProviderAdapter["inspectProviderProfile"]>(
+      async () => ({ ok: true, value: { credentialKeys: ["MAAS_GLEAN_TOKEN"] } }),
+    );
+    const adapter = providerAdapter({ inspectProviderProfile });
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "custom-provider",
+        type: "generic",
+        credentials: [],
+        configPairs: [],
+        fromExisting: true,
+      },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines.join("\n")).toContain(
+      "Credential key 'MAAS_GLEAN_TOKEN' is reserved by managed MCP server 'maas-glean' on sandbox 'hermes'",
+    );
+    expect(adapter.inspectProviderProfile).toHaveBeenCalledOnce();
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+  });
+
   it("lists credentials separately from messaging bridge providers (#9806)", async () => {
     const listProviders: OpenShellProviderAdapter["listProviders"] = async () => ({
       ok: true,
@@ -841,6 +912,38 @@ describe("credential actions use typed OpenShell provider results", () => {
       "  Could not detach provider 'custom-provider' from sandbox 'alpha': OpenShell could not authenticate the provider operation.",
     );
     expect(result.failureLines).toContain("  provider deletion failed");
+  });
+
+  it("reports rebuild guidance when final deletion succeeds after a concurrent detach (#9806)", async () => {
+    const deleteProvider = vi
+      .fn<OpenShellProviderAdapter["deleteProvider"]>()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "attached",
+          message: "provider remains attached",
+          attachedSandboxes: ["alpha"],
+        },
+      })
+      .mockResolvedValueOnce({ ok: true });
+    const detachProvider = vi.fn<OpenShellProviderAdapter["detachProvider"]>(async () => ({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "detach raced" },
+    }));
+    const adapter = providerAdapter({ deleteProvider, detachProvider });
+
+    const result = await runCredentialsResetAction(
+      { provider: "custom-provider", confirmed: true },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.outputLines).toContain(
+      "  Provider 'custom-provider' was detached from sandbox(es): alpha during removal.",
+    );
+    expect(result.outputLines).toContain("    nemoclaw alpha rebuild");
+    expect(detachProvider).toHaveBeenCalledOnce();
   });
 
   it("cleans local state when concurrent deletion settles detach recovery (#9806)", async () => {

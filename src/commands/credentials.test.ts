@@ -206,7 +206,7 @@ describe("credentials oclif adapter source coverage", () => {
     expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
   });
 
-  it("rejects --from-existing before gateway work when managed MCP reserves credentials (#9388)", async () => {
+  it("allows --from-existing after inspecting disjoint managed MCP credential keys (#9388)", async () => {
     mocks.listManagedMcpCredentialReservations.mockReturnValue([
       {
         sandboxName: "hermes",
@@ -214,23 +214,36 @@ describe("credentials oclif adapter source coverage", () => {
         credentialKeys: ["MAAS_GLEAN_TOKEN"],
       },
     ]);
+    mocks.runOpenshellProviderCommand
+      .mockReturnValueOnce({
+        status: 0,
+        stdout: JSON.stringify({
+          id: "generic",
+          credentials: [{ env_vars: ["CUSTOM_TOKEN"] }],
+        }),
+      })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
 
     const result = await runCredentialsAddAction({
-      provider: "maas-glean",
+      provider: "custom-provider",
       type: "generic",
       credentials: [],
       configPairs: [],
       fromExisting: true,
     });
 
-    expect(result.exitCode).toBe(1);
-    expect(result.failureLines.join("\n")).toContain(
-      "Cannot compare imported provider credentials with keys reserved by managed MCP servers.",
+    expect(result.exitCode).toBe(0);
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenNthCalledWith(
+      1,
+      ["provider", "profile", "-g", "nemoclaw", "export", "generic", "--output", "json"],
+      expect.any(Object),
     );
-    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
-    expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
-    expect(mocks.resolveGatewayCredentialMutationAuthority).not.toHaveBeenCalled();
-    expect(mocks.recordExtraProvider).not.toHaveBeenCalled();
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenNthCalledWith(
+      2,
+      expect.arrayContaining(["provider", "create", "custom-provider", "--from-existing"]),
+      expect.any(Object),
+    );
+    expect(mocks.recordExtraProvider).toHaveBeenCalledWith("custom-provider");
   });
 
   it("releases a provider reservation when credential registration fails (#9388)", async () => {

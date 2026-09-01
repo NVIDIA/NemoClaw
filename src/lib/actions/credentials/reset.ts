@@ -190,8 +190,7 @@ export function formatResetOutcome(
       ),
       "  Detach the provider from each remaining sandbox:",
       ...stuckSandboxes.map(
-        (sandbox) =>
-          `    openshell sandbox provider detach -g ${gatewayName} ${sandbox} ${key}`,
+        (sandbox) => `    openshell sandbox provider detach -g ${gatewayName} ${sandbox} ${key}`,
       ),
       `  Then rerun '${CLI_NAME} credentials reset ${key}'.`,
     );
@@ -241,6 +240,6 @@ async function deleteProviderWithRecovery(
   }
   result = await providerAdapter.deleteProvider(request);
   return result.ok
-    ? { ok: true, detachedSandboxes, recoveryFailures }
+    ? { ok: true, detachedSandboxes: attachedSandboxes, recoveryFailures }
     : { ok: false, error: result.error, detachedSandboxes, recoveryFailures };
 }

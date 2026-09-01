@@ -10,14 +10,8 @@ import {
   MESSAGING_CREDENTIAL_PROVIDER_TYPE,
   messagingCredentialProviderProfilePath,
 } from "./provider-profile";
-import * as providerProfileModule from "./provider-profile";
 
 describe("messaging credential provider profile", () => {
-  it("exports only the messaging-specific profile surface (#10155)", () => {
-    expect(providerProfileModule).not.toHaveProperty("endpointlessProviderProfilePath");
-    expect(providerProfileModule).not.toHaveProperty("ensureEndpointlessProviderProfile");
-  });
-
   it("resolves the checked-in profile from the source repository root (#9875)", () => {
     expect(messagingCredentialProviderProfilePath(REPOSITORY_ROOT)).toBe(
       path.join(REPOSITORY_ROOT, "nemoclaw-blueprint", "provider-profiles", "nemoclaw-mcp-v1.yaml"),

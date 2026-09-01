@@ -358,14 +358,6 @@ export async function runCredentialsAddAction(
   );
   if (explicitCollision) return explicitCollision;
 
-  if (fromExisting && managedMcpReservations.length > 0) {
-    return fail([
-      "  --from-existing does not expose credential keys before provider creation.",
-      "  Cannot compare imported provider credentials with keys reserved by managed MCP servers.",
-      "  Rerun with explicit --credential <ENV_NAME> input, or remove every managed MCP server that reserves credential keys before retrying.",
-    ]);
-  }
-
   const recoveryFailureLines: string[] = [];
   const target = await recoverCredentialGatewayTargetOrExit("mutation", (lines) => {
     recoveryFailureLines.push(...lines);
