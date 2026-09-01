@@ -695,12 +695,18 @@ export function createSandboxGpuCreateAttemptRunner(
                 : undefined,
           }),
       );
-      if (createResult.readyTerminationTimedOut && readyCheckCreatedSandboxId) {
-        persistIdentitySettlementRecovery(
-          fingerprintSandboxRecreateValue(readyCheckCreatedSandboxId),
-        );
+      if (createResult.readyTerminationTimedOut) {
+        if (createAttemptNonce) {
+          persistIdentitySettlementRecovery(
+            readyCheckCreatedSandboxId
+              ? fingerprintSandboxRecreateValue(readyCheckCreatedSandboxId)
+              : null,
+          );
+        }
         throw new Error(
-          `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw retained the sandbox and blocked post-create effects. Follow the retained recovery action above.`,
+          createAttemptNonce
+            ? `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw retained the sandbox and blocked post-create effects. Follow the retained recovery action above.`
+            : `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw blocked post-create effects. No create-attempt identity was available for retained recovery. Preserve the sandbox for identity-bound OpenShell administrator recovery; do not delete it by mutable name.`,
         );
       }
       return createResult;

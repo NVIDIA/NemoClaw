@@ -530,6 +530,36 @@ describe("created sandbox identity gate", () => {
     expect(deps.installPortableDemoLifecycle).not.toHaveBeenCalled();
   });
 
+  it("blocks a restart-safe handoff timeout without create-attempt identity (#10769)", async () => {
+    const input = noGpuInput();
+    input.persistStartupCommand = true;
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, _args, _env, options) => {
+      expect(options.waitForReadyTermination).toBe(true);
+      expect(options.readyCheck?.()).toBe(true);
+      return {
+        status: 1,
+        output:
+          "Created sandbox: alpha\nOpenShell create client did not exit after Ready; aborting cutover.",
+        sawProgress: true,
+        readyTerminationTimedOut: true,
+      };
+    });
+    const deps = createGpuFlowDeps();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "No create-attempt identity was available for retained recovery",
+    );
+
+    expect(input.persistRetainedSandboxRecovery).not.toHaveBeenCalled();
+    expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+    expect(patch.ensureApplied).not.toHaveBeenCalled();
+    expect(patch.waitForSupervisorReconnectIfNeeded).not.toHaveBeenCalled();
+    expect(patch.commitAfterReady).not.toHaveBeenCalled();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["returns false", (): boolean => false],
     ["throws", (): boolean => {
