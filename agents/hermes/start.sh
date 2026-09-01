@@ -302,7 +302,7 @@ if [ -n "${CHAT_UI_URL:-}" ]; then
     HERMES_DASHBOARD_EXTERNAL_HOST="${_chat_ui_settings#*|}"
   else
     printf '%s\n' \
-      '[SECURITY] Invalid CHAT_UI_URL for the Hermes dashboard. Use an HTTPS external URL without credentials or an HTTP(S) loopback URL, then restart the sandbox.' >&2
+      '[SECURITY] Invalid CHAT_UI_URL for the Hermes dashboard. Use an HTTPS external URL without credentials or an HTTP(S) loopback URL. Set CHAT_UI_URL and rerun onboarding before starting the sandbox.' >&2
     exit 1
   fi
 fi

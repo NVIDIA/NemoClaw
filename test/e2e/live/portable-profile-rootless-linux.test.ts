@@ -252,6 +252,10 @@ function assertHermesDashboardStartupRefusal(imageRef: string, chatUiUrl: string
   );
   assert.equal(refusal.status, 1, refusal.stderr || refusal.stdout);
   assert.match(refusal.stderr, /Invalid CHAT_UI_URL for the Hermes dashboard/u);
+  assert.match(
+    refusal.stderr,
+    /Set CHAT_UI_URL and rerun onboarding before starting the sandbox\./u,
+  );
   assert.equal(refusal.stderr.includes(chatUiUrl), false);
 }
 
@@ -509,7 +513,7 @@ async function main(progress: TestProgress): Promise<void> {
           patchedBaseDockerfile,
           [
             `ARG BASE_IMAGE=${baseImageArgument[1]}`,
-            "FROM ${BASE_IMAGE}",
+            `FROM \${BASE_IMAGE}`,
             "COPY agents/hermes/dashboard-external-host.patch /tmp/hermes-dashboard-external-host.patch",
             "RUN git -C /opt/hermes apply --check --include=hermes_cli/web_server.py /tmp/hermes-dashboard-external-host.patch \\",
             "    && git -C /opt/hermes apply --include=hermes_cli/web_server.py /tmp/hermes-dashboard-external-host.patch \\",
