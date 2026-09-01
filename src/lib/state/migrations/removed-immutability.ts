@@ -27,10 +27,6 @@ export interface RemovedImmutabilityMigrationInspection {
   readonly recoveryArtifacts: readonly string[];
 }
 
-interface RemovedImmutabilityMigrationDetail extends RemovedImmutabilityMigrationInspection {
-  readonly unattributedProviderArtifacts: readonly string[];
-}
-
 export interface RemovedImmutabilityUpgradeNotice {
   readonly affectedSandboxes: readonly string[];
   readonly hasUnattributedRecoveryState: boolean;
@@ -196,17 +192,16 @@ function inspectLegacyProviderLedger(stateDir: string): LegacyProviderLedgerInsp
   return { artifactsBySandbox, ambiguousArtifacts, noticeArtifacts };
 }
 
-function inspectRemovedImmutabilityMigrationDetail(
+function inspectRemovedImmutabilityMigrationState(
   sandboxName: string,
   stateDir = resolveNemoclawStateDir(),
-): RemovedImmutabilityMigrationDetail {
+): RemovedImmutabilityMigrationInspection {
   // Command parsing owns the user-facing name error. Avoid deriving filesystem
   // keys from an invalid value if this preflight runs before normal validation.
   if (!isValidName(sandboxName)) {
     return {
       stateRecord: null,
       recoveryArtifacts: [],
-      unattributedProviderArtifacts: [],
     };
   }
 
@@ -218,7 +213,6 @@ function inspectRemovedImmutabilityMigrationDetail(
       return {
         stateRecord: null,
         recoveryArtifacts: [],
-        unattributedProviderArtifacts: [],
       };
     }
     throw error;
@@ -250,16 +244,14 @@ function inspectRemovedImmutabilityMigrationDetail(
   );
   const providerLedger = inspectLegacyProviderLedger(stateDir);
 
-  const unattributedProviderArtifacts = [...providerLedger.ambiguousArtifacts].sort();
   return {
     stateRecord,
     recoveryArtifacts: [
       ...recoveryNames.map((entry) => path.join(stateDir, entry)),
       ...nestedRecoveryPaths,
       ...(providerLedger.artifactsBySandbox.get(sandboxName) ?? []),
-      ...unattributedProviderArtifacts,
+      ...providerLedger.ambiguousArtifacts,
     ].sort(),
-    unattributedProviderArtifacts,
   };
 }
 
@@ -267,9 +259,27 @@ export function inspectRemovedImmutabilityMigration(
   sandboxName: string,
   stateDir = resolveNemoclawStateDir(),
 ): RemovedImmutabilityMigrationInspection {
-  const { unattributedProviderArtifacts: _unattributedProviderArtifacts, ...inspection } =
-    inspectRemovedImmutabilityMigrationDetail(sandboxName, stateDir);
-  return inspection;
+  return inspectRemovedImmutabilityMigrationState(sandboxName, stateDir);
+}
+
+function hasLegacyLifecycleSentinel(stateDir: string): boolean {
+  const root = path.join(stateDir, MCP_LIFECYCLE_LOCK_DIRNAME);
+  let rootStat: fs.Stats;
+  try {
+    rootStat = fs.lstatSync(root);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return false;
+    return true;
+  }
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return true;
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(root);
+  } catch {
+    return true;
+  }
+  if (entries.length > MAX_LEGACY_LEDGER_ENTRIES) return true;
+  return entries.some((entry) => /^[0-9a-f]{64}\.lock\.(?:deadline|containment)$/u.test(entry));
 }
 
 export function reportRemovedImmutabilityUpgrade(
@@ -313,6 +323,7 @@ export function reportRemovedImmutabilityUpgrade(
   }
   const hasUnattributedRecoveryState =
     hasTopLevelRecoveryState ||
+    hasLegacyLifecycleSentinel(stateDir) ||
     providerLedger.ambiguousArtifacts.length > 0 ||
     providerLedger.noticeArtifacts.length > 0;
   const names = [...affectedSandboxes].sort();
@@ -331,27 +342,13 @@ export function reportRemovedImmutabilityUpgrade(
 export function enforceRemovedImmutabilityMigrationBoundary(
   sandboxName: string,
   options: {
-    /**
-     * A fresh, unregistered replacement does not mutate an older sandbox or
-     * the preserved provider ledger. The caller must still reject every
-     * artifact attributable to the requested name.
-     */
-    readonly allowUnattributedProviderArtifactsForNewSandbox?: boolean;
     readonly allowStateRecord?: boolean;
     readonly stateDir?: string;
   } = {},
 ): RemovedImmutabilityMigrationInspection {
-  const detail = inspectRemovedImmutabilityMigrationDetail(sandboxName, options.stateDir);
-  const unattributedProviderArtifacts = new Set(detail.unattributedProviderArtifacts);
-  const blockingRecoveryArtifacts = options.allowUnattributedProviderArtifactsForNewSandbox
-    ? detail.recoveryArtifacts.filter((artifact) => !unattributedProviderArtifacts.has(artifact))
-    : detail.recoveryArtifacts;
-  const inspection: RemovedImmutabilityMigrationInspection = {
-    stateRecord: detail.stateRecord,
-    recoveryArtifacts: detail.recoveryArtifacts,
-  };
-  if (blockingRecoveryArtifacts.length > 0) {
-    const artifacts = blockingRecoveryArtifacts
+  const inspection = inspectRemovedImmutabilityMigrationState(sandboxName, options.stateDir);
+  if (inspection.recoveryArtifacts.length > 0) {
+    const artifacts = inspection.recoveryArtifacts
       .map((artifact) => path.relative(options.stateDir ?? resolveNemoclawStateDir(), artifact))
       .join(", ");
     throw new Error(
