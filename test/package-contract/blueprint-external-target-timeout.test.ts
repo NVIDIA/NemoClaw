@@ -239,7 +239,7 @@ function expectFixedReachabilityFailure(
 
 describe("packaged Blueprint Runner external health deadline", () => {
   it(
-    "cancels official SDK health and exits when the TLS peer stalls (#9872)",
+    "returns a fixed reachability failure within the deadline when the TLS peer stalls (#9872)",
     { timeout: 20_000 },
     async () => {
       const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-health-timeout-"));

@@ -145,8 +145,8 @@ openshell_target:
     credential_file: /var/run/openshell-target/authentication
 ```
 
-Run the target-only plan before the health request.
-The plan validates local input, fingerprints the CA bundle, and prints a sanitized JSON plan without connecting.
+Run the target-only plan when you need to validate the complete target configuration and print a sanitized plan.
+Planning requires the referenced authentication file, validates local input, fingerprints the CA bundle, and does not connect.
 
 ```bash
 NEMOCLAW_BLUEPRINT_PATH=/absolute/path/to/blueprint nemoclaw-blueprint-runner plan
@@ -158,7 +158,9 @@ NEMOCLAW_BLUEPRINT_PATH=/absolute/path/to/blueprint nemoclaw-blueprint-runner pl
   You must control the target hostname and its DNS resolution.
 </Warning>
 
-Run the external status command to make one public health request through the official OpenShell SDK.
+Run the external status command directly when you only need public health.
+Status requires the absolute authentication file reference but does not access the file.
+It makes one public health request through the official OpenShell SDK.
 
 ```bash
 NEMOCLAW_BLUEPRINT_PATH=/absolute/path/to/blueprint nemoclaw-blueprint-runner status --external-target
