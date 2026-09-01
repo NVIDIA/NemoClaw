@@ -536,6 +536,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
           gatewayName: portableDisposition.gatewayName,
           lifecycleGeneration: portableDisposition.lifecycleGeneration,
           lifecycleLiveIdentityFingerprint: portableDisposition.liveIdentityFingerprint,
+          forwardServiceMigrationVersion: 1,
         }
       : {}),
     ...options.registryEntry,

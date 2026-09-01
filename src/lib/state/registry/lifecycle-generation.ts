@@ -65,3 +65,29 @@ export function compareAndSetLegacySandboxLifecycleAuthority(
     return true;
   });
 }
+
+/** Mark legacy forward retirement complete only for the exact lifecycle authority. */
+export function compareAndSetForwardServiceMigrationComplete(
+  sandboxName: string,
+  lifecycleGeneration: string,
+  sandboxIdentityFingerprint: string,
+): boolean {
+  if (!sandboxName || !lifecycleGeneration || !/^[0-9a-f]{64}$/u.test(sandboxIdentityFingerprint)) {
+    return false;
+  }
+  return withLock(() => {
+    const data = load();
+    const current = data.sandboxes[sandboxName];
+    if (
+      !current ||
+      current.pendingRouteReservation === true ||
+      current.lifecycleGeneration !== lifecycleGeneration ||
+      current.lifecycleLiveIdentityFingerprint !== sandboxIdentityFingerprint
+    ) {
+      return false;
+    }
+    current.forwardServiceMigrationVersion = 1;
+    save(data);
+    return true;
+  });
+}

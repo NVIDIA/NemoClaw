@@ -371,6 +371,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     gatewayPort: 8080,
     lifecycleGeneration: "rebuild-dcode-generation",
     lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    forwardServiceMigrationVersion: 1,
     ...(overrides.sandboxEntry ?? {}),
   };
   const preDeleteDefaultSandbox =

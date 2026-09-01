@@ -21,11 +21,18 @@ export interface ForwardServiceAuthorityMigration {
   readonly migrated: boolean;
   assertCurrent(): void;
   assertLiveCurrent(): void;
+  completeLegacyMigration(): void;
+  isLegacyMigrationComplete(): boolean;
 }
 
 export interface ForwardServiceAuthorityMigrationDeps {
   readonly compareAndSet: (
     expected: SandboxEntry,
+    lifecycleGeneration: string,
+    sandboxIdentityFingerprint: string,
+  ) => boolean;
+  readonly completeMigration: (
+    sandboxName: string,
     lifecycleGeneration: string,
     sandboxIdentityFingerprint: string,
   ) => boolean;
@@ -84,6 +91,7 @@ export function requireForwardServiceAuthority(
   const initialFingerprint = initial.lifecycleLiveIdentityFingerprint;
   const initialGeneration = initial.lifecycleGeneration;
   let migrated = false;
+  let legacyMigrationComplete = initial.forwardServiceMigrationVersion === 1;
   let lifecycleGeneration = initialGeneration;
   let sandboxIdentityFingerprint = initialFingerprint;
 
@@ -129,6 +137,7 @@ export function requireForwardServiceAuthority(
     if (
       current.lifecycleGeneration !== lifecycleGeneration ||
       current.lifecycleLiveIdentityFingerprint !== sandboxIdentityFingerprint ||
+      (legacyMigrationComplete && current.forwardServiceMigrationVersion !== 1) ||
       resolveGatewayName(current) !== gatewayName
     ) {
       throw new Error(`Sandbox '${sandboxName}' forwarding authority changed`);
@@ -145,9 +154,23 @@ export function requireForwardServiceAuthority(
       throw new Error(`Sandbox '${sandboxName}' live identity changed`);
     }
   };
+  const completeLegacyMigration = (): void => {
+    assertLiveCurrent();
+    if (!deps.completeMigration(sandboxName, lifecycleGeneration, sandboxIdentityFingerprint!)) {
+      throw new Error(`Sandbox '${sandboxName}' forwarding migration marker changed`);
+    }
+    legacyMigrationComplete = true;
+  };
   assertCurrent();
   if (migrated) assertLiveCurrent();
-  return { authority, migrated, assertCurrent, assertLiveCurrent };
+  return {
+    authority,
+    migrated,
+    assertCurrent,
+    assertLiveCurrent,
+    completeLegacyMigration,
+    isLegacyMigrationComplete: () => legacyMigrationComplete,
+  };
 }
 
 export interface LegacyForwardMigrationDeps {
@@ -178,6 +201,7 @@ export function retireLegacySandboxForwards(
   deps: LegacyForwardMigrationDeps,
 ): number {
   migration.assertCurrent();
+  if (migration.isLegacyMigrationComplete()) return 0;
   const listed = deps.capture(migration.authority.gatewayName);
   if (listed.error || listed.signal || listed.status !== 0) {
     throw new Error("Cannot enumerate legacy OpenShell forwards during ForwardTcp migration");
@@ -198,6 +222,7 @@ export function retireLegacySandboxForwards(
       throw new Error(`Legacy OpenShell forward ${String(port)} did not release its host port`);
     }
   }
+  migration.completeLegacyMigration();
   migration.assertCurrent();
   return ports.length;
 }

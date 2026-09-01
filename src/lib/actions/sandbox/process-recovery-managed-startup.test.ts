@@ -67,6 +67,7 @@ function mockOpenClawSandbox(sandboxName: string): void {
     gatewayPort: 8080,
     lifecycleGeneration: "startup-generation",
     lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    forwardServiceMigrationVersion: 1,
     openshellDriver: "docker",
   });
 }

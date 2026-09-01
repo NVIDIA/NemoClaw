@@ -235,22 +235,28 @@ describe("sandbox registry normalization", () => {
 
   it("publishes complete ForwardTcp authority only for an unchanged legacy row", async () => {
     const registry = await loadRegistryWith({});
-    const { compareAndSetLegacySandboxLifecycleAuthority } =
-      await import("./registry/lifecycle-generation");
+    const {
+      compareAndSetForwardServiceMigrationComplete,
+      compareAndSetLegacySandboxLifecycleAuthority,
+    } = await import("./registry/lifecycle-generation");
     registry.registerSandbox({ name: "legacy-forward" });
     const expected = registry.getSandbox("legacy-forward")!;
 
     expect(
-      compareAndSetLegacySandboxLifecycleAuthority(
-        expected,
-        "forward-generation",
-        "a".repeat(64),
-      ),
+      compareAndSetLegacySandboxLifecycleAuthority(expected, "forward-generation", "a".repeat(64)),
     ).toBe(true);
     expect(registry.getSandbox("legacy-forward")).toMatchObject({
       lifecycleGeneration: "forward-generation",
       lifecycleLiveIdentityFingerprint: "a".repeat(64),
     });
+    expect(
+      compareAndSetForwardServiceMigrationComplete(
+        "legacy-forward",
+        "forward-generation",
+        "a".repeat(64),
+      ),
+    ).toBe(true);
+    expect(registry.getSandbox("legacy-forward")?.forwardServiceMigrationVersion).toBe(1);
     expect(
       compareAndSetLegacySandboxLifecycleAuthority(
         expected,

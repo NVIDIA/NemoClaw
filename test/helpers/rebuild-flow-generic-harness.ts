@@ -271,6 +271,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     gatewayPort: 8080,
     lifecycleGeneration: "rebuild-flow-generation",
     lifecycleLiveIdentityFingerprint: "a".repeat(64),
+    forwardServiceMigrationVersion: 1,
     ...customOpenClawPluginProvenance,
     ...(overrides.sandboxEntry ?? {}),
   };

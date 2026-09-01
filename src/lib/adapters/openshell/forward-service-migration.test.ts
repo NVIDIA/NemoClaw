@@ -32,6 +32,10 @@ describe("ForwardTcp legacy migration", () => {
 
     const migration = requireForwardServiceAuthority("alpha", {
       compareAndSet: compareAndSet as never,
+      completeMigration: vi.fn(() => {
+        current = { ...current, forwardServiceMigrationVersion: 1 };
+        return true;
+      }),
       generation: () => "generation-1",
       getSandbox: () => current as never,
       observe,
@@ -60,6 +64,7 @@ describe("ForwardTcp legacy migration", () => {
   it("retires only same-gateway same-sandbox legacy rows before direct service adoption", () => {
     const assertCurrent = vi.fn();
     const assertLiveCurrent = vi.fn();
+    const completeLegacyMigration = vi.fn();
     const run = vi.fn(() => ({ status: 0 }));
     const migration = {
       authority: {
@@ -70,6 +75,8 @@ describe("ForwardTcp legacy migration", () => {
       migrated: false,
       assertCurrent,
       assertLiveCurrent,
+      completeLegacyMigration,
+      isLegacyMigrationComplete: () => false,
     };
 
     expect(
@@ -87,6 +94,33 @@ describe("ForwardTcp legacy migration", () => {
     ).toBe(1);
     expect(run).toHaveBeenCalledWith("nemoclaw", "alpha", 18_789);
     expect(assertLiveCurrent).toHaveBeenCalledOnce();
+    expect(completeLegacyMigration).toHaveBeenCalledOnce();
+  });
+
+  it("does not enumerate the removed legacy path after migration is complete", () => {
+    const capture = vi.fn();
+    const migration = {
+      authority: {
+        gatewayName: "nemoclaw",
+        sandboxIdentityFingerprint: fingerprint,
+        sandboxName: "alpha",
+      },
+      migrated: false,
+      assertCurrent: vi.fn(),
+      assertLiveCurrent: vi.fn(),
+      completeLegacyMigration: vi.fn(),
+      isLegacyMigrationComplete: () => true,
+    };
+
+    expect(
+      retireLegacySandboxForwards(migration, {
+        capture: capture as never,
+        isReachable: vi.fn(),
+        run: vi.fn() as never,
+      }),
+    ).toBe(0);
+    expect(capture).not.toHaveBeenCalled();
+    expect(migration.completeLegacyMigration).not.toHaveBeenCalled();
   });
 
   it("refuses mutable-name legacy cleanup after live identity drift", () => {
@@ -102,6 +136,8 @@ describe("ForwardTcp legacy migration", () => {
       assertLiveCurrent: vi.fn(() => {
         throw new Error("live identity changed");
       }),
+      completeLegacyMigration: vi.fn(),
+      isLegacyMigrationComplete: () => false,
     };
 
     expect(() =>

@@ -514,6 +514,13 @@ export function registerSandbox(
       ...(hostLocalInferenceProvenance ? { hostLocalInferenceProvenance } : {}),
       lifecycleGeneration: entry.lifecycleGeneration,
       lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
+      forwardServiceMigrationVersion:
+        entry.forwardServiceMigrationVersion === 1 ||
+        (options.verifiedCreate &&
+          typeof entry.lifecycleGeneration === "string" &&
+          /^[0-9a-f]{64}$/u.test(entry.lifecycleLiveIdentityFingerprint ?? ""))
+          ? 1
+          : undefined,
       messaging: cloneSandboxMessagingState(entry.messaging),
       mcp: normalizeSandboxMcpState(entry.mcp),
       hermesToolGateways:
@@ -824,7 +831,15 @@ export function finalizePendingSandboxRegistration(name: string): boolean {
     ) {
       return false;
     }
-    data.sandboxes[name] = { ...current, pendingRouteReservation: undefined };
+    data.sandboxes[name] = {
+      ...current,
+      pendingRouteReservation: undefined,
+      forwardServiceMigrationVersion:
+        typeof current.lifecycleGeneration === "string" &&
+        /^[0-9a-f]{64}$/u.test(current.lifecycleLiveIdentityFingerprint ?? "")
+          ? 1
+          : current.forwardServiceMigrationVersion,
+    };
     save(reversibleRemoval.claimInitialDefaultInRegistry(data, name));
     return true;
   });

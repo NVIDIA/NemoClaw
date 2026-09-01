@@ -406,6 +406,17 @@ export function isSandboxPortForwardHealthy(
       if (inspection.ownsListener === null) return null;
       return inspection.ownsListener && inspection.reachable;
     }
+    if (
+      inspection.receipt?.sandboxName === authority.sandboxName &&
+      inspection.receipt.gatewayName === authority.gatewayName &&
+      inspection.receipt.sandboxIdentityFingerprint === authority.sandboxIdentityFingerprint
+    ) {
+      // The current lifecycle owns this port, but its receipt describes a
+      // different bind/target endpoint. Treat that as repairable drift rather
+      // than another sandbox occupying the port; stopPort will revalidate and
+      // retire the exact recorded process before the replacement starts.
+      return false;
+    }
     return inspection.disposition === "absent" || !inspection.reachable ? false : "occupied";
   } catch {
     return null;
@@ -459,7 +470,12 @@ export function ensureSandboxPortForwardForPort(
     migration.assertLiveCurrent();
     retireLegacyForwardServiceMigration(migration);
     const controller = runtimeForwardServiceController();
-    if (forceRestart) controller.stop(migration.authority, managedEndpoint);
+    // A receipt is keyed by lifecycle authority and host port, so a bind-mode
+    // transition (loopback <-> all interfaces) must stop the recorded endpoint
+    // rather than attempting to signal it through the replacement endpoint.
+    // stopPort performs that exact receipt/PID revalidation and is a no-op when
+    // no ForwardTcp service exists.
+    controller.stopPort(migration.authority, port);
     controller.ensure(migration.authority, managedEndpoint);
     return acceptSuccessfulForward();
   } catch (error) {

@@ -170,6 +170,8 @@ describe("teardownSandboxDashboardForward", () => {
       migrated: true,
       assertCurrent: vi.fn(),
       assertLiveCurrent: vi.fn(),
+      completeLegacyMigration: vi.fn(),
+      isLegacyMigrationComplete: () => true,
     };
     const controller = { stopAll: vi.fn(() => 1) };
     const retireLegacy = vi.fn();

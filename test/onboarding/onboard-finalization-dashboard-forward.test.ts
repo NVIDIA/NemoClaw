@@ -80,6 +80,8 @@ function createFinalizationForwardHarness(options: {
         migrated: false,
         assertCurrent: vi.fn(),
         assertLiveCurrent: vi.fn(),
+        completeLegacyMigration: vi.fn(),
+        isLegacyMigrationComplete: () => true,
       }),
       retireLegacy: vi.fn(() => 0),
     },

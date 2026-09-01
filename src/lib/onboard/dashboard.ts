@@ -309,6 +309,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       migrated: false,
       assertCurrent,
       assertLiveCurrent: assertCurrent,
+      completeLegacyMigration: assertCurrent,
+      isLegacyMigrationComplete: () => true,
     };
     forwardMigrations.set(sandboxName, migration);
     return migration;

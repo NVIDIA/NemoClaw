@@ -147,6 +147,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   lifecycleGeneration?: string;
   /** Hashed OpenShell identity paired with lifecycleGeneration for exact recovery. */
   lifecycleLiveIdentityFingerprint?: string;
+  /** Legacy SSH forwards were retired before receipt-owned ForwardTcp adoption. */
+  forwardServiceMigrationVersion?: 1;
   // OpenShell gateway registration name and host port bound to this sandbox.
   // Persisted so later lifecycle commands operate on the sandbox's own gateway
   // instead of the process-global `nemoclaw` singleton — a second sandbox on a

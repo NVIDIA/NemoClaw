@@ -915,6 +915,7 @@ function sandboxLifecycleFixture(entry, options = {}) {
     ...entry,
     gatewayName,
     gatewayPort,
+    forwardServiceMigrationVersion: 1,
     lifecycleGeneration,
     lifecycleLiveIdentityFingerprint: sandboxIdentityFingerprint,
   };

@@ -8,7 +8,10 @@ import {
 } from "../adapters/openshell/forward-service-migration";
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import * as registry from "../state/registry";
-import { compareAndSetLegacySandboxLifecycleAuthority } from "../state/registry/lifecycle-generation";
+import {
+  compareAndSetForwardServiceMigrationComplete,
+  compareAndSetLegacySandboxLifecycleAuthority,
+} from "../state/registry/lifecycle-generation";
 import type { SandboxEntry } from "../state/registry/types";
 import { observeSandboxOnGateway } from "./sandbox-recreate-probe";
 
@@ -39,6 +42,7 @@ export function requireProductionForwardServiceAuthority(
 ): ForwardServiceAuthorityMigration {
   return requireForwardServiceAuthority(sandboxName, {
     compareAndSet: compareAndSetLegacySandboxLifecycleAuthority,
+    completeMigration: compareAndSetForwardServiceMigrationComplete,
     getSandbox: registry.getSandbox,
     observe: options.observe ?? observeSandboxOnGateway,
     resolveGatewayName: resolveForwardServiceGatewayName,
