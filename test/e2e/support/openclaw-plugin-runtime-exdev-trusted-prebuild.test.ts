@@ -22,6 +22,10 @@ import {
   trustedExdevImageRef,
 } from "../live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
 import {
+  reconcileOpenClawPluginOnboardPairing,
+  runOpenClawPluginOnboardWithPairingResume,
+} from "../live/openclaw-plugin-runtime-exdev-onboard.ts";
+import {
   resolveOpenShellSiblingComponents,
   withOpenShellDriverConfigWrapperEnv,
 } from "../live/openshell-driver-config-test-wrapper.ts";
@@ -45,6 +49,133 @@ it("makes the runtime plugin fixture readable before the tmpfs copy", () => {
   const readable = dockerfile.indexOf("USER root\nRUN chmod -R a+rX /opt/weather-plugin");
   expect(install).toBeGreaterThan(-1);
   expect(readable).toBeGreaterThan(install);
+});
+
+function onboardResult(exitCode: number, stderr = ""): ShellProbeResult {
+  return {
+    artifacts: { result: "result.json", stderr: "stderr.txt", stdout: "stdout.txt" },
+    command: ["node", "bin/nemoclaw.js", "onboard"],
+    exitCode,
+    signal: null,
+    stderr,
+    stdout: "",
+    timedOut: false,
+  };
+}
+
+describe("OpenClaw plugin onboarding pairing resume", () => {
+  it("reconciles a Ready sandbox that has canonical pairing (#9844)", async () => {
+    const observePairing = vi.fn();
+
+    await expect(
+      reconcileOpenClawPluginOnboardPairing({
+        sandboxName: "fixture-sandbox",
+        captureDiagnostics: vi.fn(async () => {}),
+        listSandbox: vi.fn(async () => ({
+          ...onboardResult(0),
+          stdout: "NAME STATUS\nfixture-sandbox Ready\n",
+        })),
+        resolveTarget: vi.fn(() => ({
+          gatewayName: "nemoclaw",
+          stateDirectory: "/sandbox/.openclaw",
+          version: "",
+        })),
+        observePairing,
+      }),
+    ).resolves.toBe(true);
+    expect(observePairing).toHaveBeenCalledExactlyOnceWith({
+      gatewayName: "nemoclaw",
+      stateDirectory: "/sandbox/.openclaw",
+      version: "",
+    });
+  });
+
+  it("rejects reconciliation while canonical pairing is absent (#9844)", async () => {
+    await expect(
+      reconcileOpenClawPluginOnboardPairing({
+        sandboxName: "fixture-sandbox",
+        captureDiagnostics: vi.fn(async () => {}),
+        listSandbox: vi.fn(async () => ({
+          ...onboardResult(0),
+          stdout: "NAME STATUS\nfixture-sandbox Ready\n",
+        })),
+        resolveTarget: vi.fn(() => ({
+          gatewayName: "nemoclaw",
+          stateDirectory: "/sandbox/.openclaw",
+          version: "",
+        })),
+        observePairing: vi.fn(() => {
+          throw new Error("pairing absent");
+        }),
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it("resumes once after canonical pairing appears late (#9844)", async () => {
+    const sandboxName = "fixture-sandbox";
+    const attempts = [
+      onboardResult(
+        1,
+        `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
+      ),
+      onboardResult(0),
+    ];
+    const reconcile = vi.fn(async () => true);
+    const evidence = vi.fn();
+
+    const result = await runOpenClawPluginOnboardWithPairingResume({
+      sandboxName,
+      run: vi.fn(async (attempt) => attempts[attempt - 1]),
+      reconcile,
+      onEvidence: evidence,
+    });
+
+    expect(result.outcome).toBe("passed");
+    expect(reconcile).toHaveBeenCalledExactlyOnceWith(attempts[0], undefined, 1);
+    expect(evidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotence: "reconciled-mutation",
+        maxAttempts: 2,
+        outcome: "passed-after-retry",
+      }),
+    );
+  });
+
+  it("does not resume after another onboarding failure (#9844)", async () => {
+    const run = vi.fn(async () => onboardResult(1, "provider registration failed"));
+    const reconcile = vi.fn(async () => true);
+
+    const result = await runOpenClawPluginOnboardWithPairingResume({
+      sandboxName: "fixture-sandbox",
+      run,
+      reconcile,
+      onEvidence: vi.fn(),
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(run).toHaveBeenCalledOnce();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it("does not resume when canonical pairing is still absent (#9844)", async () => {
+    const sandboxName = "fixture-sandbox";
+    const run = vi.fn(async () =>
+      onboardResult(
+        1,
+        `OpenClaw onboarding for '${sandboxName}' is incomplete because its canonical CLI device pairing did not appear. Resume or rerun onboarding.`,
+      ),
+    );
+
+    const result = await runOpenClawPluginOnboardWithPairingResume({
+      sandboxName,
+      run,
+      reconcile: vi.fn(async () => false),
+      onEvidence: vi.fn(),
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(run).toHaveBeenCalledOnce();
+  });
 });
 
 function createWrapperFixture() {

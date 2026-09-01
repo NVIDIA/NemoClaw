@@ -8,6 +8,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveOpenshell } from "../../../src/lib/adapters/openshell/resolve.ts";
+import { resolveOrdinaryOpenClawPairingTarget } from "../../../src/lib/actions/sandbox/launch-readiness.ts";
+import { observeOrdinaryOpenClawPairingSettlement } from "../../../src/lib/actions/sandbox/launch-readiness/openclaw-pairing-qualification.ts";
 import { pullAndResolveBaseImageDigest } from "../../../src/lib/onboard/base-image.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -21,9 +23,14 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { captureIssue4462FailureDiagnostics } from "../fixtures/issue-4462-diagnostics.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
+import {
+  reconcileOpenClawPluginOnboardPairing,
+  runOpenClawPluginOnboardWithPairingResume,
+} from "./openclaw-plugin-runtime-exdev-onboard.ts";
 import {
   buildTrustedPluginFixtureImage,
   createOpenShellTrustedImageWrapper,
@@ -478,27 +485,65 @@ test(
       version: "v1",
     });
     openshellWrapper.selectImage(pluginImageV1);
-    const onboard = await host.command(
-      "node",
-      [
-        CLI_ENTRYPOINT,
-        "onboard",
-        "--fresh",
-        "--non-interactive",
-        "--yes-i-accept-third-party-software",
-        "--agent",
-        "openclaw",
-        "--from",
-        customPluginContext.dockerfilePath,
-      ],
-      {
-        artifactName: "openclaw-plugin-exdev-onboard",
-        env: sandboxEnv,
-        timeoutMs: ONBOARD_TIMEOUT_MS,
+    const onboard = await runOpenClawPluginOnboardWithPairingResume({
+      sandboxName: SANDBOX_NAME,
+      run: (attempt) =>
+        host.command(
+          "node",
+          attempt === 1
+            ? [
+                CLI_ENTRYPOINT,
+                "onboard",
+                "--fresh",
+                "--non-interactive",
+                "--yes-i-accept-third-party-software",
+                "--agent",
+                "openclaw",
+                "--from",
+                customPluginContext.dockerfilePath,
+              ]
+            : [CLI_ENTRYPOINT, "onboard", "--resume", "--non-interactive"],
+          {
+            artifactName:
+              attempt === 1
+                ? "openclaw-plugin-exdev-onboard"
+                : "openclaw-plugin-exdev-onboard-pairing-resume",
+            env: sandboxEnv,
+            timeoutMs: ONBOARD_TIMEOUT_MS,
+          },
+        ),
+      reconcile: () =>
+        reconcileOpenClawPluginOnboardPairing({
+          sandboxName: SANDBOX_NAME,
+          captureDiagnostics: () =>
+            captureIssue4462FailureDiagnostics(sandbox, {
+              env: sandboxEnv,
+              redactionValues: ["nemoclaw-exdev-dummy-key"],
+              sandboxName: SANDBOX_NAME,
+            }),
+          listSandbox: () =>
+            sandbox.list({
+              artifactName: "openclaw-plugin-exdev-onboard-pairing-reconcile",
+              env: sandboxEnv,
+              timeoutMs: PROBE_TIMEOUT_MS,
+            }),
+          resolveTarget: () => resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME),
+          observePairing: (target) => {
+            observeOrdinaryOpenClawPairingSettlement(
+              SANDBOX_NAME,
+              target.gatewayName,
+              target.version,
+              target.stateDirectory,
+              { getOpenshellBinary: () => openshellWrapper.executable },
+            );
+          },
+        }),
+      onEvidence: async (evidence) => {
+        await artifacts.writeJson("openclaw-plugin-exdev-onboard-retry.json", evidence);
       },
-    );
-    const onboardText = resultText(onboard);
-    expect(onboard.exitCode, onboardText).toBe(0);
+    });
+    const onboardText = onboard.value ? resultText(onboard.value) : "onboard returned no result";
+    expect(onboard.outcome, onboardText).toBe("passed");
     const weatherAfterOnboard = await assertWeatherPluginRuntime(sandbox, "after-onboard", "v1");
 
     progress.phase("install plugin v1 across filesystems");
@@ -568,7 +613,7 @@ test(
 
     await artifacts.target.complete({
       id: "openclaw-plugin-runtime-exdev",
-      onboardExitCode: onboard.exitCode,
+      onboardExitCode: onboard.value!.exitCode,
       crossDeviceInstallExitCode: crossDeviceInstall.exitCode,
       restartExitCode: restart.exitCode,
       recreateExitCode: recreate.exitCode,
