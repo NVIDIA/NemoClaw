@@ -26,6 +26,7 @@ export interface DeepAgentsConfigCommandResult {
   stderr: string;
   configExists: boolean;
   configIsFifo: boolean;
+  configIsSocket: boolean;
   configIsSymlink: boolean;
   config: Record<string, unknown> | null;
   configText: string | null;
@@ -41,7 +42,7 @@ export interface DeepAgentsManagedFixtureOptions {
   directory?: boolean;
   fifo?: boolean;
   mode?: number;
-  swapOnManagedOpen?: "fifo" | "symlink";
+  swapOnManagedOpen?: "fifo" | "socket" | "symlink";
   symlink?: boolean;
 }
 
@@ -53,7 +54,8 @@ export function runDeepAgentsConfigCommand(
   initialLegacyMode = 0o600,
   managedOptions: DeepAgentsManagedFixtureOptions = {},
 ): DeepAgentsConfigCommandResult {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-mcp-"));
+  const fixtureRoot = managedOptions.swapOnManagedOpen === "socket" ? "/tmp" : os.tmpdir();
+  const tmp = fs.mkdtempSync(path.join(fixtureRoot, "nemoclaw-deepagents-mcp-"));
   const configPath = path.join(tmp, ".deepagents", ".nemoclaw-mcp.json");
   const managedSymlinkTarget = path.join(tmp, "managed-projection-target.json");
   const legacyConfigPath = path.join(tmp, ".deepagents", ".mcp.json");
@@ -99,20 +101,25 @@ export function runDeepAgentsConfigCommand(
     const swapOnManagedOpenPrelude = managedOptions.swapOnManagedOpen
       ? [
           "import os as _nemoclaw_test_os",
+          "import socket as _nemoclaw_test_socket_module",
           `_nemoclaw_test_path = ${JSON.stringify(configPath)}`,
           `_nemoclaw_test_target = ${JSON.stringify(managedSymlinkTarget)}`,
           `_nemoclaw_test_swap = ${JSON.stringify(managedOptions.swapOnManagedOpen)}`,
           "_nemoclaw_test_real_open = _nemoclaw_test_os.open",
+          "_nemoclaw_test_socket = None",
           "_nemoclaw_test_swapped = False",
           "def _nemoclaw_test_open(path, flags, *args, **kwargs):",
-          "    global _nemoclaw_test_swapped",
+          "    global _nemoclaw_test_socket, _nemoclaw_test_swapped",
           "    if not _nemoclaw_test_swapped and _nemoclaw_test_os.fspath(path) == _nemoclaw_test_path:",
           "        _nemoclaw_test_swapped = True",
           "        _nemoclaw_test_os.unlink(_nemoclaw_test_path)",
           "        if _nemoclaw_test_swap == 'symlink':",
           "            _nemoclaw_test_os.symlink(_nemoclaw_test_target, _nemoclaw_test_path)",
-          "        else:",
+          "        elif _nemoclaw_test_swap == 'fifo':",
           "            _nemoclaw_test_os.mkfifo(_nemoclaw_test_path, 0o600)",
+          "        else:",
+          "            _nemoclaw_test_socket = _nemoclaw_test_socket_module.socket(_nemoclaw_test_socket_module.AF_UNIX, _nemoclaw_test_socket_module.SOCK_STREAM)",
+          "            _nemoclaw_test_socket.bind(_nemoclaw_test_path)",
           "    return _nemoclaw_test_real_open(path, flags, *args, **kwargs)",
           "_nemoclaw_test_os.open = _nemoclaw_test_open",
         ].join("\n")
@@ -130,10 +137,11 @@ export function runDeepAgentsConfigCommand(
     const configExists = fs.existsSync(configPath);
     const legacyConfigExists = fs.existsSync(legacyConfigPath);
     const configIsFifo = configExists && fs.lstatSync(configPath).isFIFO();
+    const configIsSocket = configExists && fs.lstatSync(configPath).isSocket();
     const configIsSymlink = configExists && fs.lstatSync(configPath).isSymbolicLink();
     const configIsDirectory = configExists && fs.lstatSync(configPath).isDirectory();
     const configText =
-      configExists && !configIsFifo && !configIsDirectory
+      configExists && !configIsFifo && !configIsSocket && !configIsDirectory
         ? fs.readFileSync(configPath, "utf-8")
         : null;
     const managedSymlinkTargetExists = fs.existsSync(managedSymlinkTarget);
@@ -155,6 +163,7 @@ export function runDeepAgentsConfigCommand(
       stderr: result.stderr,
       configExists,
       configIsFifo,
+      configIsSocket,
       configIsSymlink,
       config: parseConfigText(configText),
       configText,

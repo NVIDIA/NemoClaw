@@ -158,6 +158,21 @@ describe("Deep Agents managed MCP projection safety", () => {
       "Unsafe managed Deep Agents MCP projection path: FIFO",
     );
     expect(racedFifo.configIsFifo).toBe(true);
+
+    const racedSocket = runDeepAgentsConfigCommand(
+      statusCommand,
+      emptyProjection,
+      "v2",
+      undefined,
+      0o600,
+      { swapOnManagedOpen: "socket" },
+    );
+    expect(racedSocket.status).toBe(2);
+    expect(racedSocket.stdout.trim()).toBe("");
+    expect(racedSocket.stderr).toContain(
+      "Unsafe managed Deep Agents MCP projection path: non-regular file",
+    );
+    expect(racedSocket.configIsSocket).toBe(true);
   });
 
   it("keeps the generic diagnostic for ordinary projection inspection failures (#10754)", () => {
