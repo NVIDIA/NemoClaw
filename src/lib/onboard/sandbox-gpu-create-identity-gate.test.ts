@@ -142,9 +142,7 @@ function refuseEffectStartingWith(prefix: string): (operation: string) => void {
   };
 }
 
-async function expectCommittedReadinessPersistenceFailure(
-  persist: NonNullable<ReturnType<typeof noGpuInput>["persistRetainedSandboxRecovery"]>,
-): Promise<void> {
+function createCommittedReadinessPersistenceFixture() {
   const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const input = noGpuInput();
   input.resumeVerifiedCreate = {
@@ -154,28 +152,13 @@ async function expectCommittedReadinessPersistenceFailure(
   };
   input.verifyCreatedSandboxBeforeEffects = vi.fn();
   input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
-  input.persistRetainedSandboxRecovery = persist;
   const patch = createGpuPatchFixture();
   attachManagedBootstrap(input, patch);
   const deps = createGpuFlowDeps("alpha-sandbox-id");
   mocks.waitForCreatedSandboxReadyWithTrace
     .mockResolvedValueOnce({ ready: true, reason: "ready", failurePhase: null })
     .mockResolvedValue({ ready: false, reason: "timeout", failurePhase: null });
-
-  await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-    "the recovery-only session remains blocked",
-  );
-
-  expect(persist).toHaveBeenCalledOnce();
-  expect(error.mock.calls.flat().join("\n")).toContain(
-    "The recovery-only session remains blocked until its durable recovery record can be saved.",
-  );
-  expect(error.mock.calls.flat().join("\n")).not.toContain("Preserve the terminal output");
-  expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
-  expect(deps.runOpenshell).not.toHaveBeenCalledWith(
-    ["sandbox", "delete", "alpha"],
-    expect.anything(),
-  );
+  return { deps, error, input, patch };
 }
 
 beforeEach(() => setupGpuFlowMocks(mocks));
@@ -328,14 +311,46 @@ describe("created sandbox identity gate", () => {
   });
 
   it("blocks committed-readiness recovery when durable persistence returns false (#9211)", async () => {
-    await expectCommittedReadinessPersistenceFailure(vi.fn(() => false));
+    const { deps, error, input, patch } = createCommittedReadinessPersistenceFixture();
+    const persist = vi.fn(() => false);
+    input.persistRetainedSandboxRecovery = persist;
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "the recovery-only session remains blocked",
+    );
+
+    expect(persist).toHaveBeenCalledOnce();
+    expect(error.mock.calls.flat().join("\n")).toContain(
+      "The recovery-only session remains blocked until its durable recovery record can be saved.",
+    );
+    expect(error.mock.calls.flat().join("\n")).not.toContain("Preserve the terminal output");
+    expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
   });
 
   it("blocks committed-readiness recovery when durable persistence throws (#9211)", async () => {
-    await expectCommittedReadinessPersistenceFailure(
-      vi.fn(() => {
-        throw new Error("durable writer failed");
-      }),
+    const { deps, error, input, patch } = createCommittedReadinessPersistenceFixture();
+    const persist = vi.fn(() => {
+      throw new Error("durable writer failed");
+    });
+    input.persistRetainedSandboxRecovery = persist;
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "the recovery-only session remains blocked",
+    );
+
+    expect(persist).toHaveBeenCalledOnce();
+    expect(error.mock.calls.flat().join("\n")).toContain(
+      "The recovery-only session remains blocked until its durable recovery record can be saved.",
+    );
+    expect(error.mock.calls.flat().join("\n")).not.toContain("Preserve the terminal output");
+    expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
     );
   });
 
