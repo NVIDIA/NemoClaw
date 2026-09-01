@@ -302,7 +302,7 @@ function assertVllmGpuProviderSelection(
   recoveredFromSandbox: boolean,
   deps: Pick<
     SetupNimFlowDeps,
-    "abortNonInteractive" | "error" | "exitProcess" | "isNonInteractive"
+    "abortNonInteractive" | "error" | "exitProcess" | "isNonInteractive" | "vllmPort"
   >,
 ): void {
   const requestedDevice = String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim();
@@ -310,8 +310,13 @@ function assertVllmGpuProviderSelection(
   if (!requestedDevice || selected.key === "install-vllm" || resumedManagedVllm) return;
 
   const message =
-    `--vllm-gpu-device applies only when NemoClaw installs managed vLLM; ` +
-    `the selected provider is '${selected.key}'.`;
+    selected.key === "vllm"
+      ? `vLLM is already running on localhost:${deps.vllmPort}, so --vllm-gpu-device cannot change its GPU. ` +
+        `Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm to reuse that server. ` +
+        `To select a different GPU, stop the server only if no other gateway or distributed deployment uses it. ` +
+        `Otherwise, keep it running and set NEMOCLAW_VLLM_PORT to an unused port before rerunning managed onboarding.`
+      : `--vllm-gpu-device applies only when NemoClaw installs managed vLLM; ` +
+        `the selected provider is '${selected.key}'.`;
   deps.error(`  ${message}`);
   if (deps.isNonInteractive()) deps.abortNonInteractive(message);
   deps.exitProcess(1);
@@ -622,11 +627,15 @@ async function handleEndpointProviderSelection(input: {
 function vllmPortConflictMessage(
   platform: InferenceProviderHostGpu["platform"],
   port: number,
+  hasGpuSelection: boolean,
 ): string {
   if (platform === "n1x") {
-    return `The N1x Deferred preview requires managed vLLM, but vLLM is already running on localhost:${port}. Stop the existing server, then rerun with NEMOCLAW_PROVIDER=install-vllm.`;
+    return `The N1x Deferred preview requires managed vLLM, but vLLM is already running on localhost:${port}. Stop the server only if no other gateway or distributed deployment uses it. Otherwise, keep it running and set NEMOCLAW_VLLM_PORT to an unused port. Then rerun with NEMOCLAW_PROVIDER=install-vllm.`;
   }
-  return "vLLM is already running on this host. Select Local vLLM, or stop the existing server before selecting the managed install path.";
+  const reuseAction = hasGpuSelection
+    ? "Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm to reuse it."
+    : "Rerun with NEMOCLAW_PROVIDER=vllm to reuse it.";
+  return `vLLM is already running on localhost:${port}. ${reuseAction} To change its GPU or port, stop the server only if no other gateway or distributed deployment uses it. Otherwise, keep it running and set NEMOCLAW_VLLM_PORT to an unused port before rerunning managed onboarding.`;
 }
 
 /**
@@ -1247,7 +1256,13 @@ export function createSetupNim(
             continue selectionLoop;
           }
           if (vllmRunning) {
-            const message = vllmPortConflictMessage(gpu?.platform, deps.vllmPort);
+            const hasGpuSelection =
+              String(process.env.NEMOCLAW_VLLM_GPU_DEVICE ?? "").trim() !== "";
+            const message = vllmPortConflictMessage(
+              gpu?.platform,
+              deps.vllmPort,
+              hasGpuSelection,
+            );
             deps.error(`  ${message}`);
             if (deps.isNonInteractive()) {
               deps.abortNonInteractive(message);
