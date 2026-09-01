@@ -5,12 +5,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import type { OpenShellProviderAdapter } from "../adapters/openshell/provider-adapter";
-import {
-  endpointlessProviderProfileFailureMessages,
-  ensureEndpointlessProviderProfile,
-  OPENAI_GATEWAY_PROVIDER_TYPE,
-} from "../adapters/openshell/provider-profile";
-import { runOpenshellProviderCommand } from "../adapters/openshell/provider-command";
 import { selectedOpenShellGateway } from "../adapters/openshell/sandbox-observer";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
@@ -109,23 +103,6 @@ async function ensureBundledProviderProfile(
     "  Update OpenShell with scripts/install-openshell.sh and retry.",
     ...(result.error.message ? [`  ${result.error.message}`] : []),
   ]);
-}
-
-async function ensureCredentialProviderProfile(
-  type: string,
-  providerAdapter: OpenShellProviderAdapter,
-): Promise<CredentialsAddResult | null> {
-  if (type.toLowerCase() !== OPENAI_GATEWAY_PROVIDER_TYPE) {
-    return ensureBundledProviderProfile(type, providerAdapter);
-  }
-  const profile = ensureEndpointlessProviderProfile({
-    profileId: OPENAI_GATEWAY_PROVIDER_TYPE,
-    profilePath: bundledProviderProfilePath(OPENAI_GATEWAY_PROVIDER_TYPE),
-    inferenceCapable: true,
-    runOpenshell: runOpenshellProviderCommand,
-  });
-  if (profile.ok) return null;
-  return fail(endpointlessProviderProfileFailureMessages(profile.reason));
 }
 
 export async function runCredentialsAddAction(
@@ -239,7 +216,7 @@ export async function runCredentialsAddAction(
     return fail(recoveryFailureLines);
   }
 
-  const providerProfileFailure = await ensureCredentialProviderProfile(type, providerAdapter);
+  const providerProfileFailure = await ensureBundledProviderProfile(type, providerAdapter);
   if (providerProfileFailure) return providerProfileFailure;
 
   let importedCredentialKeys: string[] | null = null;

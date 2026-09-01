@@ -96,6 +96,60 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(JSON.stringify(result)).not.toContain("credential-value");
   });
 
+  it("imports the bundled OpenAI profile through the provider adapter (#9806)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "host-only-value");
+    const adapter = providerAdapter();
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "openai-prod",
+        type: "openai",
+        credentials: ["OPENAI_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(adapter.importProviderProfile).toHaveBeenCalledWith({
+      target: { kind: "selected" },
+      profilePath: expect.stringMatching(/provider-profiles\/openai\.yaml$/u),
+      timeoutMs: 30_000,
+    });
+    expect(adapter.createProvider).toHaveBeenCalledOnce();
+  });
+
+  it("does not create an OpenAI provider after profile import fails (#9806)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "host-only-value");
+    const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
+      ok: false,
+      error: {
+        kind: "command",
+        reason: "profile_incompatible",
+        message: "The OpenShell provider profile does not match the checked-in boundary.",
+      },
+    });
+    const adapter = providerAdapter({ importProviderProfile: vi.fn(importProviderProfile) });
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "openai-prod",
+        type: "openai",
+        credentials: ["OPENAI_API_KEY"],
+        configPairs: [],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines).toContain(
+      "  OpenShell provider profile 'openai' does not match NemoClaw's checked-in credential boundary.",
+    );
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+  });
+
   it("does not create a provider from an incompatible bundled profile (#9806)", async () => {
     vi.stubEnv("TAVILY_API_KEY", "host-only-value");
     const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async () => ({
