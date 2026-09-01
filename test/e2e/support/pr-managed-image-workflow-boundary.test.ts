@@ -9,6 +9,21 @@ import {
 } from "../../../tools/e2e/operations-workflow-boundary.mts";
 
 describe("manual PR managed-image workflow boundary", () => {
+  it("keeps exact PR candidate catalogs outside the candidate CLI artifact", () => {
+    const workflow = readE2eOperationsWorkflow();
+
+    expect(workflow.jobs["base-image-publication"].outputs?.managed_image_catalog).toBe(
+      "${{ steps.select_pr_source.outputs.catalog }}",
+    );
+    expect(workflow.jobs["generate-matrix"].outputs?.managed_image_catalog).toBeUndefined();
+    expect(validateE2eOperationsWorkflow(workflow)).not.toEqual(
+      expect.arrayContaining([
+        "Manual PR E2E must not resolve an exact candidate managed-image catalog",
+        "Manual PR CLI packaging must not accept obsolete managed-image catalog authority",
+      ]),
+    );
+  });
+
   it.each([
     ["workflow", (workflow: ReturnType<typeof readE2eOperationsWorkflow>) => workflow],
     [
@@ -39,7 +54,7 @@ describe("manual PR managed-image workflow boundary", () => {
     );
   });
 
-  it("rejects restoration of the obsolete manual PR catalog resolver", () => {
+  it("rejects moving the trusted catalog resolver into candidate CLI packaging", () => {
     const workflow = readE2eOperationsWorkflow();
     const matrixJob = workflow.jobs["generate-matrix"];
     matrixJob.outputs!.managed_image_catalog =

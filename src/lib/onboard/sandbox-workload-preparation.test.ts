@@ -182,6 +182,14 @@ describe("sandbox workload preparation", () => {
       expect(
         liveE2eManagedImageCatalog({
           GITHUB_ACTIONS: "true",
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: JSON.stringify(CATALOG),
+        }),
+      ).toEqual({ catalog: CATALOG, revision: REVISION });
+      expect(
+        liveE2eManagedImageCatalog({
+          GITHUB_ACTIONS: "true",
           GITHUB_WORKSPACE: fixtureRoot,
           NEMOCLAW_RUN_LIVE_E2E: "1",
           NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
@@ -219,6 +227,15 @@ describe("sandbox workload preparation", () => {
           NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
         }),
       ).toThrow("requires an exact candidate revision");
+      expect(() =>
+        liveE2eManagedImageCatalog({
+          GITHUB_ACTIONS: "true",
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_E2E_EXPECTED_SHA: REVISION,
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG: catalogPath,
+          NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: JSON.stringify(CATALOG),
+        }),
+      ).toThrow("conflicting authorities");
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }
@@ -362,6 +379,21 @@ describe("sandbox workload preparation", () => {
     } finally {
       fs.rmSync(fixtureRoot, { force: true, recursive: true });
     }
+  });
+
+  it("loads an exact inline all-agent catalog without using the registry resolver", async () => {
+    const resolveCatalog = vi.fn(async () => CATALOG);
+
+    const prepared = await prepareSandboxWorkloadSource(
+      { ...input("hermes"), catalog: CATALOG, expectedCatalogRevision: REVISION },
+      { resolveCatalog },
+    );
+
+    expect(resolveCatalog).not.toHaveBeenCalled();
+    expect(prepared.source).toMatchObject({
+      kind: "managed-image",
+      contract: { source: { revision: REVISION } },
+    });
   });
 
   it("rejects a symlinked local managed-image catalog before selection (#7744)", async () => {
@@ -673,7 +705,7 @@ describe("sandbox workload preparation", () => {
         { ...input("pi"), acceptedCandidateContract: contract("pi", 3) },
         { resolveCatalog },
       ),
-    ).rejects.toThrow("requires an exact managed image catalog file");
+    ).rejects.toThrow("requires an exact managed image catalog");
     expect(resolveCatalog).not.toHaveBeenCalled();
   });
 

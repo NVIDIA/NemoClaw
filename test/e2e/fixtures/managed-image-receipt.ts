@@ -35,20 +35,28 @@ function readCandidateCatalog(
 
   let descriptor: number | null = null;
   try {
-    descriptor = fs.openSync(selected.path, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-    const metadata = fs.fstatSync(descriptor);
-    const pathMetadata = fs.lstatSync(selected.path);
-    if (
-      pathMetadata.isSymbolicLink() ||
-      !metadata.isFile() ||
-      metadata.dev !== pathMetadata.dev ||
-      metadata.ino !== pathMetadata.ino ||
-      metadata.size < 2 ||
-      metadata.size > 64 * 1024
-    ) {
-      throw new Error();
+    let parsed: unknown;
+    if (selected.catalog) {
+      parsed = selected.catalog;
+    } else {
+      descriptor = fs.openSync(
+        selected.path,
+        fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+      );
+      const metadata = fs.fstatSync(descriptor);
+      const pathMetadata = fs.lstatSync(selected.path);
+      if (
+        pathMetadata.isSymbolicLink() ||
+        !metadata.isFile() ||
+        metadata.dev !== pathMetadata.dev ||
+        metadata.ino !== pathMetadata.ino ||
+        metadata.size < 2 ||
+        metadata.size > 64 * 1024
+      ) {
+        throw new Error();
+      }
+      parsed = JSON.parse(fs.readFileSync(descriptor, "utf8")) as unknown;
     }
-    const parsed = JSON.parse(fs.readFileSync(descriptor, "utf8")) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
     const catalog = parsed as Record<string, unknown>;
     if (
