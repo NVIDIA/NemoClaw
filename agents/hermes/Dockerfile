@@ -1330,7 +1330,10 @@ RUN set -eu; \
     test "$(stat -c '%U:%G' /tmp/nemoclaw-hostile-user-plugin)" = 'sandbox:sandbox'; \
     rm -rf "$user_plugins" "$project_root" "$fake_bundled"; \
     rm -f /tmp/nemoclaw-hostile-user-plugin; \
-    install -d -o sandbox -g sandbox -m 0770 "$user_plugins"
+    install -d -o sandbox -g sandbox -m 0770 "$user_plugins"; \
+    rm -f /sandbox/.hermes/runtime/state.db \
+        /sandbox/.hermes/runtime/state.db-wal \
+        /sandbox/.hermes/runtime/state.db-shm
 
 # Exercise the reviewed runtime installer without shipping Hindsight in the
 # image. Root-separated startup gives the gateway a private, ephemeral target

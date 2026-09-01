@@ -136,6 +136,18 @@ assert module._session_state_journal_mode(SimpleNamespace(_conn=Connection())) =
     expect(sessionStateLayers[0]?.text).toContain(
       "rm -f /sandbox/.hermes/runtime/state.db",
     );
+    const pluginIsolationLayer = runInstructions.find(({ text }) =>
+      text.includes("nemoclaw-hostile-user-plugin"),
+    );
+    const pluginIsolationText = pluginIsolationLayer?.text ?? "";
+    const pluginStateCleanup = "rm -f /sandbox/.hermes/runtime/state.db";
+    expect(pluginIsolationText.lastIndexOf(pluginStateCleanup)).toBeGreaterThan(
+      pluginIsolationText.lastIndexOf("discover_plugins()"),
+    );
+    expect(pluginIsolationText).toContain("/sandbox/.hermes/runtime/state.db");
+    expect(pluginIsolationText).toContain("/sandbox/.hermes/runtime/state.db-wal");
+    expect(pluginIsolationText).toContain("/sandbox/.hermes/runtime/state.db-shm");
+    expect(pluginIsolationText).not.toContain("/sandbox/.hermes/runtime/state.db*");
     expect(dockerfile).toContain('rm -f "/sandbox/.hermes/runtime/${name}"');
     expect(dockerfile).toContain("check_absent /sandbox/.hermes/runtime/state.db");
   });
