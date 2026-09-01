@@ -3,11 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  buildGlobalPolicyGetFullJsonArgs,
-  buildGlobalPolicyListArgs,
-  buildPolicySetCommand,
-} from "./commands";
+import { buildPolicySetCommand } from "./commands";
 
 describe("OpenShell policy command builders", () => {
   it("keeps sandbox policy writes in an argv-only command", () => {
@@ -21,25 +17,16 @@ describe("OpenShell policy command builders", () => {
     ]);
   });
 
-  it("pins policy requirements reads to the selected gateway", () => {
-    expect(buildGlobalPolicyGetFullJsonArgs("nemoclaw")).toEqual([
+  it("pins sandbox policy writes to the selected gateway", () => {
+    expect(buildPolicySetCommand("/tmp/policy.yaml", "alpha", "nemoclaw").slice(1)).toEqual([
       "policy",
-      "get",
+      "set",
       "-g",
       "nemoclaw",
-      "--global",
-      "--full",
-      "--output",
-      "json",
-    ]);
-    expect(buildGlobalPolicyListArgs("nemoclaw")).toEqual([
-      "policy",
-      "list",
-      "-g",
-      "nemoclaw",
-      "--global",
-      "--limit",
-      "1",
+      "--policy",
+      "/tmp/policy.yaml",
+      "--wait",
+      "alpha",
     ]);
   });
 });

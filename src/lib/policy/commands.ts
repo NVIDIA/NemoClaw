@@ -22,21 +22,3 @@ export function buildPolicySetCommand(
 function policyGatewayArgs(gatewayName?: string): string[] {
   return gatewayName ? ["-g", gatewayName] : [];
 }
-
-/** Read the active global policy and its authority metadata as JSON. */
-export function buildGlobalPolicyGetFullJsonArgs(gatewayName?: string): string[] {
-  return [
-    "policy",
-    "get",
-    ...policyGatewayArgs(gatewayName),
-    "--global",
-    "--full",
-    "--output",
-    "json",
-  ];
-}
-
-/** Check whether the global policy has revision history. */
-export function buildGlobalPolicyListArgs(gatewayName?: string): string[] {
-  return ["policy", "list", ...policyGatewayArgs(gatewayName), "--global", "--limit", "1"];
-}
