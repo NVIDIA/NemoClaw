@@ -236,7 +236,9 @@ export function createManagedWorkloadOnboardRuntime(
     : {
         ...discoveredRuntimeCapabilities,
         managedImageSelectionPolicy: "prefer-managed" as const,
-        managedImages: input.stockManagedRuntime ? discoveredRuntimeCapabilities.managedImages : null,
+        managedImages: input.stockManagedRuntime
+          ? discoveredRuntimeCapabilities.managedImages
+          : null,
       };
   const runtimeProvider = resolveRuntimeProviderBundle(
     input.computePlan.driverName,
@@ -273,6 +275,9 @@ export function createManagedWorkloadOnboardRuntime(
           customDockerfilePath: input.customDockerfilePath,
           runtime: runtimeCapabilities,
           version: getVersion({ rootDir: input.rootDir }),
+          ...(!input.tempManagedRuntimeCatalog && liveCatalog?.catalog
+            ? { catalog: liveCatalog.catalog }
+            : {}),
           catalogPath: input.tempManagedRuntimeCatalog ?? liveCatalog?.path ?? null,
           ...(liveCatalog ? { expectedCatalogRevision: liveCatalog.revision } : {}),
           ...(catalogRevision ? { catalogRevision } : {}),
