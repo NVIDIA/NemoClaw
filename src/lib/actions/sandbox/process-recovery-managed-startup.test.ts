@@ -7,7 +7,10 @@ import * as openshellRuntime from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import * as registry from "../../state/registry";
 import * as forwardHealth from "./forward-health";
-import { checkAndRecoverSandboxProcesses } from "./process-recovery";
+import {
+  checkAndRecoverSandboxProcesses,
+  executeGatewaySupervisorActionWithStartupRetry,
+} from "./process-recovery";
 
 const forwardMocks = vi.hoisted(() => ({
   controller: {
@@ -86,6 +89,25 @@ afterEach(() => {
 });
 
 describe("checkAndRecoverSandboxProcesses managed startup", () => {
+  it("retries exact startup transitions before a post-create restart completes", () => {
+    const sleep = vi.fn();
+    const request = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "SUPERVISOR_DISCOVERY_PENDING" })
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "SUPERVISOR_BUSY" })
+      .mockReturnValueOnce(ACCEPTED_MANAGED_RECOVERY);
+
+    expect(
+      executeGatewaySupervisorActionWithStartupRetry("startup-box", "restart", {
+        intervalSeconds: 0,
+        requestGatewaySupervisorActionImpl: request,
+        sleepImpl: sleep,
+      }),
+    ).toBe(ACCEPTED_MANAGED_RECOVERY);
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     "SUPERVISOR_NOT_RUNNING",
     "SUPERVISOR_DISCOVERY_PENDING",

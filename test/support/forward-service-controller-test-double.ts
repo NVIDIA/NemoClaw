@@ -35,6 +35,7 @@ function defaultAuthority(sandboxName: string): TestAuthority {
 /** Stateful direct ForwardTcp owner for recovery/integration fixtures. */
 export function createForwardServiceControllerTestDouble() {
   const active = new Map<string, ActiveForward>();
+  const failingPorts = new Set<number>();
   const inspectImpl = (authority: TestAuthority, endpoint: TestEndpoint) => {
     const exact = active.get(activeKey(authority, endpoint));
     if (exact) {
@@ -62,6 +63,9 @@ export function createForwardServiceControllerTestDouble() {
         };
   };
   const ensureImpl = (authority: TestAuthority, endpoint: TestEndpoint) => {
+    if (failingPorts.has(endpoint.localPort)) {
+      throw new Error(`simulated ForwardTcp failure on ${String(endpoint.localPort)}`);
+    }
     active.set(activeKey(authority, endpoint), { authority, endpoint });
     return { action: "started" as const, receipt: {} };
   };
@@ -93,6 +97,7 @@ export function createForwardServiceControllerTestDouble() {
     controller,
     reset: () => {
       active.clear();
+      failingPorts.clear();
       controller.ensure.mockReset().mockImplementation(ensureImpl);
       controller.inspect.mockReset().mockImplementation(inspectImpl);
       controller.stop.mockReset().mockImplementation(stopImpl);
@@ -104,6 +109,7 @@ export function createForwardServiceControllerTestDouble() {
       const endpoint = { localHost, localPort, targetPort: localPort };
       active.set(activeKey(authority, endpoint), { authority, endpoint });
     },
+    failPort: (localPort: number) => failingPorts.add(localPort),
     start: ensureImpl,
   };
 }

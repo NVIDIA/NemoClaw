@@ -3,6 +3,10 @@
 
 import os from "node:os";
 
+import {
+  isSandboxPortForwardHealthy,
+  teardownSandboxDashboardForward,
+} from "../../../src/lib/actions/sandbox/forward-recovery.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { sandboxAccessEnv, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -10,10 +14,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { runDashboardConnectUntilForwardHandoff } from "./dashboard-connect-handoff.ts";
-import {
-  buildDashboardRemoteBindEnv,
-  dashboardForwardIsRunning,
-} from "./dashboard-remote-bind-env.ts";
+import { buildDashboardRemoteBindEnv } from "./dashboard-remote-bind-env.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 
 const runDashboardRemoteBindTest =
@@ -23,31 +24,6 @@ const TEST_TIMEOUT_MS = 50 * 60_000;
 
 function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return buildDashboardRemoteBindEnv(SANDBOX_NAME, extra);
-}
-
-function matchingForwardLine(output: string, sandboxName: string, dashboardPort: string): string {
-  return (
-    output
-      .split("\n")
-      .map((line) => line.trim())
-      .find((line) => line.includes(sandboxName) && line.includes(dashboardPort)) ?? ""
-  );
-}
-
-function bindsAllInterfaces(line: string, dashboardPort: string): boolean {
-  return (
-    line.includes(`0.0.0.0:${dashboardPort}`) ||
-    line.includes(`*:${dashboardPort}`) ||
-    new RegExp(`\\b0\\.0\\.0\\.0\\s+${dashboardPort}\\b`).test(line)
-  );
-}
-
-function bindsLoopback(line: string, dashboardPort: string): boolean {
-  return (
-    line.includes(`127.0.0.1:${dashboardPort}`) ||
-    line.includes(`localhost:${dashboardPort}`) ||
-    new RegExp(`\\b127\\.0\\.0\\.1\\s+${dashboardPort}\\b`).test(line)
-  );
 }
 
 function remoteHostCandidate(): string {
@@ -178,16 +154,14 @@ runDashboardRemoteBindTest(
     expect(cliProbe.stdout).toContain("openshell");
 
     progress.phase("restart dashboard with remote binding");
-    await sandbox.openshell(["forward", "stop", dashboardPort], {
-      artifactName: "dashboard-remote-bind-forward-stop",
-      env: sandboxAccessEnv(),
-      timeoutMs: 30_000,
-    });
+    expect(teardownSandboxDashboardForward(sandboxName)).toBe(true);
 
     const connect = await runDashboardConnectUntilForwardHandoff({
       artifacts,
       dashboardPort,
       env: testEnv(),
+      forwardProbe: () =>
+        isSandboxPortForwardHealthy(sandboxName, Number(dashboardPort), "0.0.0.0") === true,
       progress,
       sandboxName,
       signal: cleanup.currentSignal(),
@@ -195,35 +169,11 @@ runDashboardRemoteBindTest(
     });
     expect(
       connect.proof,
-      "nemoclaw connect did not complete or print background-forward proof; see the dashboard-connect-handoff.stdout.txt and dashboard-connect-handoff.stderr.txt artifacts",
+      "nemoclaw connect did not complete or publish receipt-owned ForwardTcp proof; see the dashboard-connect-handoff artifacts",
     ).toBe("forward-started");
 
     progress.phase("verify all-interface dashboard forward");
-    const forwardList = await sandbox.openshell(["forward", "list"], {
-      artifactName: "dashboard-remote-bind-forward-list",
-      env: sandboxAccessEnv(),
-      timeoutMs: 30_000,
-    });
-    expect(forwardList.exitCode, `openshell forward list failed\n${forwardList.stderr}`).toBe(0);
-    await artifacts.writeText("forward-list.txt", forwardList.stdout);
-
-    const forwardLine = matchingForwardLine(forwardList.stdout, sandboxName, dashboardPort);
-    expect(
-      forwardLine,
-      `No OpenShell forward found for ${sandboxName} on ${dashboardPort}`,
-    ).not.toBe("");
-    expect(
-      dashboardForwardIsRunning(forwardLine),
-      `Dashboard forward is not running after connect handoff: ${forwardLine}`,
-    ).toBe(true);
-    expect(
-      bindsLoopback(forwardLine, dashboardPort),
-      `Dashboard forward is still localhost-only; expected an all-interface bind: ${forwardLine}`,
-    ).toBe(false);
-    expect(
-      bindsAllInterfaces(forwardLine, dashboardPort),
-      `Could not prove dashboard forward uses 0.0.0.0:${dashboardPort}: ${forwardLine}`,
-    ).toBe(true);
+    expect(isSandboxPortForwardHealthy(sandboxName, Number(dashboardPort), "0.0.0.0")).toBe(true);
 
     const forwardReachable = await host.command(
       process.execPath,

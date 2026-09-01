@@ -1,22 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, expect, it, vi } from "vitest";
-import * as forwardHealth from "../../src/lib/actions/sandbox/forward-health.ts";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { areSandboxLaunchForwardsHealthy } from "../../src/lib/actions/sandbox/forward-recovery.ts";
-import * as openshellRuntime from "../../src/lib/adapters/openshell/runtime.ts";
 import * as agentRuntime from "../../src/lib/agent/runtime.ts";
 import * as registry from "../../src/lib/state/registry.ts";
+import { forwardServiceControllerTestDouble as forwardMocks } from "../support/forward-service-controller-test-double";
+
+vi.mock("../../src/lib/adapters/openshell/forward-service-controller", async () => {
+  const { forwardServiceControllerTestDouble } =
+    await import("../support/forward-service-controller-test-double");
+  return { createForwardServiceController: () => forwardServiceControllerTestDouble.controller };
+});
+
+beforeEach(() => {
+  forwardMocks.reset();
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mockLaunchForwardObservation(
-  result: { status: number | null; output: string },
-  reachable = true,
-  gatewayRuntime = true,
-) {
+function mockLaunchForwardObservation(gatewayRuntime = true) {
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
     runtime: { kind: gatewayRuntime ? "gateway" : "terminal" },
     forward_ports: [18790],
@@ -25,38 +30,25 @@ function mockLaunchForwardObservation(
     name: "beta",
     agent: "openclaw",
     dashboardPort: 18789,
+    forwardServiceMigrationVersion: 1,
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
+    lifecycleGeneration: "current-generation",
+    lifecycleLiveIdentityFingerprint: "a".repeat(64),
   });
-  vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(reachable);
-  return vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue(result);
 }
 
 it("checks launch forwards through the sandbox's owning gateway without repair (#8942)", () => {
-  const capture = mockLaunchForwardObservation({
-    status: 0,
-    output: `SANDBOX  BIND  PORT  PID  STATUS
-beta  127.0.0.1  18789  12345  running
-beta  127.0.0.1  18790  12346  running`,
-  });
+  mockLaunchForwardObservation();
+  forwardMocks.seed("beta", "127.0.0.1", 18789);
+  forwardMocks.seed("beta", "127.0.0.1", 18790);
 
   expect(areSandboxLaunchForwardsHealthy("beta")).toBe(true);
-  expect(capture).toHaveBeenCalledOnce();
-  expect(capture).toHaveBeenCalledWith(["forward", "list", "--gateway", "nemoclaw"], {
-    ignoreError: true,
-    timeout: expect.any(Number),
-  });
+  expect(forwardMocks.controller.inspect).toHaveBeenCalledTimes(2);
 });
 
 it("checks sandbox-owned Hermes forwards instead of manifest defaults (#9716)", () => {
-  mockLaunchForwardObservation({
-    status: 0,
-    output: `SANDBOX  BIND  PORT  PID  STATUS
-alpha  127.0.0.1  18789  12345  running
-alpha  127.0.0.1  8642  12346  running
-beta  127.0.0.1  18790  12347  running
-beta  127.0.0.1  8643  12348  running`,
-  });
+  mockLaunchForwardObservation();
   vi.mocked(agentRuntime.getSessionAgent).mockReturnValue({
     name: "hermes",
     runtime: { kind: "gateway" },
@@ -67,33 +59,40 @@ beta  127.0.0.1  8643  12348  running`,
     name: "beta",
     agent: "hermes",
     dashboardPort: 18790,
+    forwardServiceMigrationVersion: 1,
     hermesApiPort: 8643,
     gatewayName: "nemoclaw",
     gatewayPort: 8080,
+    lifecycleGeneration: "current-generation",
+    lifecycleLiveIdentityFingerprint: "a".repeat(64),
   });
+  forwardMocks.seed("beta", "127.0.0.1", 18790);
+  forwardMocks.seed("beta", "127.0.0.1", 8643);
 
   expect(areSandboxLaunchForwardsHealthy("beta", "nemoclaw")).toBe(true);
-  expect(vi.mocked(forwardHealth.isLocalForwardReachable).mock.calls).toEqual([[18790], [8643]]);
+  expect(
+    forwardMocks.controller.inspect.mock.calls.map(([, endpoint]) => endpoint.localPort),
+  ).toEqual([18790, 8643]);
 });
 
 it("rejects a reachable listener when the owning forward row is missing (#8942)", () => {
-  mockLaunchForwardObservation({
-    status: 0,
-    output: "SANDBOX  BIND  PORT  PID  STATUS",
-  });
+  mockLaunchForwardObservation();
 
   expect(areSandboxLaunchForwardsHealthy("beta", "nemoclaw")).toBe(false);
 });
 
 it("returns unknown when the owner-scoped forward observation fails (#8942)", () => {
-  mockLaunchForwardObservation({ status: 1, output: "" });
+  mockLaunchForwardObservation();
+  forwardMocks.controller.inspect.mockImplementation(() => {
+    throw new Error("OpenShell ForwardTcp state unavailable");
+  });
 
   expect(areSandboxLaunchForwardsHealthy("beta", "nemoclaw")).toBeNull();
 });
 
 it("rejects an owning-gateway mismatch before the no-forward shortcut (#8942)", () => {
-  const capture = mockLaunchForwardObservation({ status: 0, output: "" }, true, false);
+  mockLaunchForwardObservation(false);
 
   expect(areSandboxLaunchForwardsHealthy("beta", "ambient-sibling")).toBe(false);
-  expect(capture).not.toHaveBeenCalled();
+  expect(forwardMocks.controller.inspect).not.toHaveBeenCalled();
 });

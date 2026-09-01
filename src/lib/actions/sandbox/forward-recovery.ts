@@ -193,6 +193,13 @@ function retireLegacyForwardServiceMigration(migration: ForwardServiceAuthorityM
   });
 }
 
+/** Complete installed-base forwarding migration before another durable journal snapshots state. */
+export function completeSandboxForwardServiceMigration(sandboxName: string): void {
+  const migration = migrateForwardServiceAuthority(sandboxName);
+  migration.assertLiveCurrent();
+  retireLegacyForwardServiceMigration(migration);
+}
+
 function runtimeForwardServiceController(): ForwardServiceController {
   return createForwardServiceController({
     executable: () => {

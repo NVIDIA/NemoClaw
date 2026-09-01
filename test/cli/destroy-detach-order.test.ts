@@ -30,6 +30,11 @@ describe("CLI dispatch", () => {
           JSON.stringify({
             sandboxes: {
               alpha: {
+                forwardServiceMigrationVersion: 1,
+                gatewayName: "nemoclaw",
+                gatewayPort: 8080,
+                lifecycleGeneration: "current-generation",
+                lifecycleLiveIdentityFingerprint: "a".repeat(64),
                 name: "alpha",
                 model: "test-model",
                 provider: "nvidia-prod",
