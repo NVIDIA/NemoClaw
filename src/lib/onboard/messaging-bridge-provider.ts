@@ -17,9 +17,12 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
+import {
+  exportedProviderProfileMatchesContract,
+  parseCheckedInProviderProfileContract,
+} from "../adapters/openshell/provider-profile";
 import { compactText } from "../core/url-utils";
 import { createBuiltInChannelManifestRegistry } from "../messaging/channels";
 import type {
@@ -145,63 +148,20 @@ function bufferOrStringToText(value: string | Buffer | null | undefined): string
   return "";
 }
 
-function credentialBoundary(doc: Record<string, unknown>): Record<string, unknown> | null {
-  if (
-    typeof doc.id !== "string" ||
-    !Array.isArray(doc.credentials) ||
-    !Array.isArray(doc.endpoints) ||
-    !Array.isArray(doc.binaries) ||
-    typeof doc.inference_capable !== "boolean"
-  ) {
-    return null;
-  }
-  const credentials = doc.credentials.map((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
-    const credential = entry as Record<string, unknown>;
-    return {
-      name: credential.name,
-      env_vars: credential.env_vars,
-      required: credential.required,
-      auth_style: credential.auth_style,
-      header_name: credential.header_name,
-      query_param: credential.query_param,
-      refresh: credential.refresh ?? null,
-    };
-  });
-  if (credentials.some((entry) => entry === null)) return null;
-  return {
-    id: doc.id,
-    credentials,
-    endpoints: doc.endpoints,
-    binaries: doc.binaries,
-    inference_capable: doc.inference_capable,
-  };
-}
-
-function staticProfileMatchesCheckedInBoundary(
+function registeredStaticProfileMatchesCheckedInContract(
   profile: MessagingBridgeProfile,
   exported: string,
   readFileSync: (file: string) => string,
 ): boolean {
-  try {
-    const actual = JSON.parse(exported) as Record<string, unknown>;
-    const expected = YAML.parse(readFileSync(profile.profilePath)) as Record<string, unknown>;
-    const actualBoundary = credentialBoundary(actual);
-    const expectedBoundary = credentialBoundary(expected);
-    return (
-      actualBoundary !== null &&
-      expectedBoundary !== null &&
-      expectedBoundary.id === profile.profileId &&
-      Array.isArray(expectedBoundary.endpoints) &&
-      expectedBoundary.endpoints.length === 0 &&
-      Array.isArray(expectedBoundary.binaries) &&
-      expectedBoundary.binaries.length === 0 &&
-      expectedBoundary.inference_capable === false &&
-      isDeepStrictEqual(actualBoundary, expectedBoundary)
-    );
-  } catch {
-    return false;
-  }
+  const expected = parseCheckedInProviderProfileContract(readFileSync(profile.profilePath));
+  return (
+    expected !== null &&
+    expected.profileId === profile.profileId &&
+    expected.boundary.endpoints.length === 0 &&
+    expected.boundary.binaries.length === 0 &&
+    expected.boundary.inference_capable === false &&
+    exportedProviderProfileMatchesContract(exported, expected)
+  );
 }
 
 /** Compare a registered static profile with its checked-in credential boundary. */
@@ -218,7 +178,7 @@ export function matchesRegisteredStaticMessagingProfile(
     { ignoreError: true, suppressOutput: true, stdio: ["ignore", "pipe", "pipe"] },
   );
   if (exported.status !== 0) return false;
-  return staticProfileMatchesCheckedInBoundary(
+  return registeredStaticProfileMatchesCheckedInContract(
     profile,
     bufferOrStringToText(exported.stdout),
     deps.readFileSync ?? ((file: string) => fs.readFileSync(file, "utf-8")),
@@ -486,7 +446,7 @@ export function ensureMessagingBridgeProfiles(
     if (alreadyRegistered.status === 0) {
       if (
         profile.strategy === null &&
-        !staticProfileMatchesCheckedInBoundary(
+        !registeredStaticProfileMatchesCheckedInContract(
           profile,
           bufferOrStringToText(alreadyRegistered.stdout),
           readFileSync,
@@ -524,7 +484,7 @@ export function ensureMessagingBridgeProfiles(
       );
       if (
         racedProfile.status !== 0 ||
-        !staticProfileMatchesCheckedInBoundary(
+        !registeredStaticProfileMatchesCheckedInContract(
           profile,
           bufferOrStringToText(racedProfile.stdout),
           readFileSync,
