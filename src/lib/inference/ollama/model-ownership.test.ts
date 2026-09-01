@@ -1,12 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  clearPendingOllamaModelCleanup,
   decideOllamaModelOwnership,
   exclusivelyHeldOllamaModel,
+  loadPendingOllamaModelCleanup,
   type OllamaModelHolder,
+  persistPendingOllamaModelCleanup,
   supersededOllamaModel,
 } from "./model-ownership";
 
@@ -95,9 +101,11 @@ describe("decideOllamaModelOwnership", () => {
   it.each([[undefined], [""], ["   "]])(
     "returns missing-model for registry model %j (#10074)",
     (model) => {
-      expect(decideOllamaModelOwnership(holder({ model }), [holder({ model })], new Set())).toEqual({
-        kind: "missing-model",
-      });
+      expect(decideOllamaModelOwnership(holder({ model }), [holder({ model })], new Set())).toEqual(
+        {
+          kind: "missing-model",
+        },
+      );
     },
   );
 
@@ -119,5 +127,32 @@ describe("exclusivelyHeldOllamaModel", () => {
   it("is not blocked by a non-Ollama peer that records the same model (#9110)", () => {
     const peer = holder({ name: "peer", provider: "nvidia-prod" });
     expect(exclusivelyHeldOllamaModel(holder(), [holder(), peer])).toBe("llama3");
+  });
+});
+
+describe("pending Ollama model cleanup", () => {
+  it("persists exact sandbox-scoped models until verified release", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-pending-ollama-cleanup-"));
+    try {
+      persistPendingOllamaModelCleanup("test-box", ["llama3", "llama3:latest"], stateRoot);
+      persistPendingOllamaModelCleanup("test-box", ["qwen3.5:9b"], stateRoot);
+
+      expect(loadPendingOllamaModelCleanup("test-box", stateRoot)).toEqual([
+        "llama3",
+        "qwen3.5:9b",
+      ]);
+      clearPendingOllamaModelCleanup("test-box", ["llama3:latest"], stateRoot);
+      expect(loadPendingOllamaModelCleanup("test-box", stateRoot)).toEqual(["qwen3.5:9b"]);
+      clearPendingOllamaModelCleanup("test-box", undefined, stateRoot);
+      expect(loadPendingOllamaModelCleanup("test-box", stateRoot)).toEqual([]);
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unsafe sandbox name before state access", () => {
+    expect(() => loadPendingOllamaModelCleanup("../peer")).toThrow(
+      "Invalid sandbox name for pending Ollama cleanup",
+    );
   });
 });

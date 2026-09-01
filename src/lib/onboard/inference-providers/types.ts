@@ -256,6 +256,9 @@ export type OllamaDeps = CommonDeps & {
     ): { ok: boolean; message?: string };
     validateSandboxFacingOllamaModel(model: string): { ok: boolean; message?: string };
     runOllamaWarmup?(model: string, runImpl: RunFn): void;
+    loadPendingOllamaModelCleanup?(sandboxName: string): readonly string[];
+    persistPendingOllamaModelCleanup?(sandboxName: string, models: readonly string[]): void;
+    clearPendingOllamaModelCleanup?(sandboxName: string, releasedModels?: readonly string[]): void;
     persistResolvedOllamaHost?(): (() => void) | void;
     clearPersistedOllamaHostIfUnused?(providers: readonly (string | null | undefined)[]): boolean;
   };

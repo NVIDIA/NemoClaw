@@ -31,6 +31,10 @@ const {
 }: typeof import("./model-discovery") = require("./model-discovery");
 const { ollamaModelRefsMatch }: typeof import("./model-discovery") = require("./model-discovery");
 const {
+  clearPendingOllamaModelCleanup,
+  loadPendingOllamaModelCleanup,
+}: typeof import("./model-ownership") = require("./model-ownership");
+const {
   getBootstrapOllamaModelOptions,
   findReachableOllamaHost,
   getOllamaModelOptions,
@@ -1707,11 +1711,13 @@ function unloadOllamaModels(
 
 export {
   checkOllamaModelToolSupport,
+  clearPendingOllamaModelCleanup,
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
   getOllamaPullTimeoutMs,
   isProxyHealthy,
   killStaleProxy,
+  loadPendingOllamaModelCleanup,
   noAuthProxy,
   persistAndProbeOllamaProxy,
   persistProxyToken,

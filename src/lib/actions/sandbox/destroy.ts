@@ -170,6 +170,12 @@ export type CleanupSandboxServicesDeps = {
   listSandboxes?: typeof registry.listSandboxes;
   stopAll?: (opts: { sandboxName: string }) => OllamaUnloadResult | void;
   unloadOllamaModels?: (onlyModels?: readonly string[]) => OllamaUnloadResult | void;
+  loadPendingOllamaModelCleanup?: (sandboxName: string) => readonly string[];
+  clearPendingOllamaModelCleanup?: (
+    sandboxName: string,
+    releasedModels?: readonly string[],
+  ) => void;
+  withOllamaModelOwnershipLock?: <T>(operation: () => T) => T;
   runOpenshell?: RunOpenshell;
   rmSync?: typeof fs.rmSync;
   stopGooglechatWebhookTunnel?: (sandboxName: string) => string;
@@ -252,6 +258,30 @@ export function cleanupSandboxServices(
       };
       return unload(onlyModels);
     });
+  const loadPendingOllamaModelCleanup =
+    deps.loadPendingOllamaModelCleanup ??
+    ((name: string) => {
+      const local = require("../../inference/ollama/proxy") as {
+        loadPendingOllamaModelCleanup(sandboxName: string): readonly string[];
+      };
+      return local.loadPendingOllamaModelCleanup(name);
+    });
+  const clearPendingOllamaModelCleanup =
+    deps.clearPendingOllamaModelCleanup ??
+    ((name: string, releasedModels?: readonly string[]) => {
+      const local = require("../../inference/ollama/proxy") as {
+        clearPendingOllamaModelCleanup(sandboxName: string, models?: readonly string[]): void;
+      };
+      local.clearPendingOllamaModelCleanup(name, releasedModels);
+    });
+  const withOllamaModelOwnershipLock =
+    deps.withOllamaModelOwnershipLock ??
+    (<T>(operation: () => T): T => {
+      const proxy = require("../../inference/ollama/proxy") as {
+        withOllamaModelOwnershipLock<T>(operation: () => T): T;
+      };
+      return proxy.withOllamaModelOwnershipLock(operation);
+    });
   const runOpenshell =
     deps.runOpenshell ??
     ((args: string[], opts?: Record<string, unknown>) => {
@@ -308,23 +338,39 @@ export function cleanupSandboxServices(
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
     // models for this sandbox if its provider used Ollama. Without this
     // branch a single-sandbox destroy would leave models loaded on the GPU.
-    const sb = getSandbox(validatedSandboxName);
-    const model = String(sb?.model ?? "").trim();
-    if (sb?.provider?.includes("ollama") && model) {
+    withOllamaModelOwnershipLock(() => {
+      const sb = getSandbox(validatedSandboxName);
       const peers = listSandboxes().sandboxes.filter(
         (candidate) =>
           candidate.name !== validatedSandboxName && candidate.provider?.includes("ollama"),
       );
-      const sharedModel = peers.some(
-        (candidate) => candidate.model && sameOllamaModelRef(model, candidate.model),
+      const pending = loadPendingOllamaModelCleanup(validatedSandboxName);
+      const currentModel = String(sb?.model ?? "").trim();
+      const candidates = [
+        ...pending,
+        ...(sb?.provider?.includes("ollama") && currentModel ? [currentModel] : []),
+      ].filter(
+        (model, index, models) =>
+          models.findIndex((candidate) => sameOllamaModelRef(candidate, model)) === index &&
+          !peers.some((candidate) => candidate.model && sameOllamaModelRef(model, candidate.model)),
       );
-      if (!sharedModel) ollamaCleanup = unloadOllamaModels([model]);
-    }
+      if (candidates.length === 0) return;
+      ollamaCleanup = unloadOllamaModels(candidates);
+      if (!ollamaCleanup || ollamaCleanup.ok) {
+        clearPendingOllamaModelCleanup(validatedSandboxName, candidates);
+      }
+    });
   }
   if (ollamaCleanup && !ollamaCleanup.ok) {
+    const recoveryAction =
+      ollamaCleanup.outcome === "discovery-failed"
+        ? `restore access to ${ollamaCleanup.endpoint}`
+        : ollamaCleanup.outcome === "still-resident"
+          ? `stop the recorded model at ${ollamaCleanup.endpoint}`
+          : `allow the model unload request at ${ollamaCleanup.endpoint}`;
     throw new Error(
       `Ollama model cleanup failed at ${ollamaCleanup.endpoint} (${ollamaCleanup.outcome}: ${ollamaCleanup.message ?? "no detail"}). ` +
-        "The sandbox registry and saved route were retained; repair Ollama and retry destroy.",
+        `The sandbox registry and saved route were retained; ${recoveryAction}, then retry destroy.`,
     );
   }
 

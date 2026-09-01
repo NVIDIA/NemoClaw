@@ -27,6 +27,9 @@ function buildDeps(
       | "listSandboxes"
       | "stopAll"
       | "unloadOllamaModels"
+      | "loadPendingOllamaModelCleanup"
+      | "clearPendingOllamaModelCleanup"
+      | "withOllamaModelOwnershipLock"
       | "runOpenshell"
       | "rmSync"
       | "stopGooglechatWebhookTunnel"
@@ -62,6 +65,9 @@ function buildDeps(
         unloadCalls += 1;
         unloadArgs.push(onlyModels);
       }),
+      loadPendingOllamaModelCleanup: vi.fn(() => []),
+      clearPendingOllamaModelCleanup: vi.fn(),
+      withOllamaModelOwnershipLock: (operation) => operation(),
       runOpenshell: vi.fn(() => ({ status: 0 })),
       rmSync: vi.fn(),
       stopGooglechatWebhookTunnel: vi.fn(() => "/tmp/nemoclaw-services-regression-2717-googlechat"),
@@ -123,6 +129,30 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
 
     expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
+  });
+
+  it("retries a pending superseded model after the sandbox route changes", () => {
+    const harness = buildDeps({ provider: "nvidia-prod", model: "new-model" });
+    vi.mocked(harness.deps.loadPendingOllamaModelCleanup).mockReturnValue(["old-model"]);
+
+    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
+
+    expect(harness.unloadArgs).toEqual([["old-model"]]);
+    expect(harness.deps.clearPendingOllamaModelCleanup).toHaveBeenCalledWith("regression-2717", [
+      "old-model",
+    ]);
+  });
+
+  it("keeps a pending superseded model that an Ollama peer shares", () => {
+    const harness = buildDeps({ provider: "nvidia-prod", model: "new-model" }, [
+      { name: "peer", provider: "ollama-local", model: "old-model:latest" },
+    ]);
+    vi.mocked(harness.deps.loadPendingOllamaModelCleanup).mockReturnValue(["old-model"]);
+
+    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
+
+    expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
+    expect(harness.deps.clearPendingOllamaModelCleanup).not.toHaveBeenCalled();
   });
 
   it("preserves destroy recovery state when stopAll cannot release Ollama", () => {

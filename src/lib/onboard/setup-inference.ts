@@ -19,7 +19,13 @@ import {
   withModelRouterPortLifecycleLock,
 } from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding } from "../inference/local";
-import { type OllamaModelHolder, supersededOllamaModel } from "../inference/ollama/model-ownership";
+import {
+  clearPendingOllamaModelCleanup,
+  loadPendingOllamaModelCleanup,
+  type OllamaModelHolder,
+  persistPendingOllamaModelCleanup,
+  supersededOllamaModel,
+} from "../inference/ollama/model-ownership";
 import {
   getOllamaProxyToken,
   persistAndProbeOllamaProxy,
@@ -558,57 +564,105 @@ function releaseSupersededOllamaModel(
   if (!previous || result.retry) return;
   let authorityRefusal: unknown;
   let cleanupWarning: string | null = null;
+  let attemptedModels: readonly string[] = [];
+  const loadPending =
+    deps.localInference.loadPendingOllamaModelCleanup ?? loadPendingOllamaModelCleanup;
+  const persistPending =
+    deps.localInference.persistPendingOllamaModelCleanup ?? persistPendingOllamaModelCleanup;
+  const clearPending =
+    deps.localInference.clearPendingOllamaModelCleanup ?? clearPendingOllamaModelCleanup;
+  const persistRetry = (): string | null => {
+    if (attemptedModels.length === 0) return null;
+    try {
+      persistPending(previous.name, attemptedModels);
+      return null;
+    } catch (error) {
+      return (error instanceof Error ? error.message : String(error))
+        .replace(/\s+/g, " ")
+        .slice(0, 240);
+    }
+  };
   try {
     const withOwnershipLock = deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
     withOwnershipLock(() => {
       const peers = deps.listSandboxes?.().sandboxes ?? [];
       const superseded = supersededOllamaModel(previous, nextModel, peers);
+      const pending = loadPending(previous.name);
+      const retryablePending = pending.filter((model) =>
+        supersededOllamaModel(
+          { name: previous.name, provider: "ollama-local", model },
+          nextModel,
+          peers,
+        ),
+      );
+      attemptedModels = [...new Set([...(superseded ? [superseded] : []), ...retryablePending])];
       const retireRoute =
         !!previous.provider?.includes("ollama") &&
         !nextProvider.includes("ollama") &&
         !peers.some((peer) => peer.provider?.includes("ollama"));
-      if (!superseded && !retireRoute) return;
+      if (attemptedModels.length === 0 && !retireRoute) return;
       try {
         revalidateSandboxIdentity?.("release the superseded Ollama model");
       } catch (error) {
         authorityRefusal = error;
         return;
       }
-      if (superseded) {
+      if (attemptedModels.length > 0 && deps.unloadOllamaModels) {
         try {
-          const cleanup = deps.unloadOllamaModels?.([superseded]);
+          const cleanup = deps.unloadOllamaModels(attemptedModels);
           if (cleanup && !cleanup.ok) {
+            const persistenceFailure = persistRetry();
             const detail = cleanup.message
               ? `: ${cleanup.message.replace(/\s+/g, " ").slice(0, 240)}`
               : "";
+            const recoveryAction =
+              cleanup.outcome === "discovery-failed"
+                ? `Restore access to ${cleanup.endpoint}`
+                : cleanup.outcome === "still-resident"
+                  ? `Stop the recorded model at ${cleanup.endpoint}`
+                  : `Allow the model unload request at ${cleanup.endpoint}`;
             cleanupWarning =
-              `  Warning: Ollama did not release superseded model '${superseded}' from ` +
+              `  Warning: Ollama did not release recorded model cleanup for '${previous.name}' from ` +
               `${cleanup.endpoint} (outcome: ${cleanup.outcome}${detail}). The new inference ` +
-              `route remains active. Restore Ollama access at ${cleanup.endpoint}, then stop or ` +
-              `destroy the former sandbox to retry cleanup.`;
+              `route remains active. ${recoveryAction}, then re-run onboarding, stop, or destroy ` +
+              `'${previous.name}' to retry only: ${attemptedModels.join(", ")}.` +
+              (persistenceFailure
+                ? ` Cleanup retry state could not be recorded: ${persistenceFailure}.`
+                : "");
+          } else {
+            clearPending(previous.name, attemptedModels);
           }
         } catch (error) {
+          const persistenceFailure = persistRetry();
           const detail = (error instanceof Error ? error.message : String(error))
             .replace(/\s+/g, " ")
             .slice(0, 240);
           cleanupWarning =
-            `  Warning: Ollama cleanup for superseded model '${superseded}' failed: ${detail}. ` +
-            `The new inference route remains active. Restore Ollama access, then stop or destroy ` +
-            `the former sandbox to retry cleanup.`;
+            `  Warning: Ollama cleanup for '${previous.name}' failed: ${detail}. The new inference ` +
+            `route remains active. Re-run onboarding, stop, or destroy '${previous.name}' to ` +
+            `retry only the recorded models: ${attemptedModels.join(", ")}.` +
+            (persistenceFailure
+              ? ` Cleanup retry state could not be recorded: ${persistenceFailure}.`
+              : "");
         }
       }
-      if (retireRoute) {
+      const pendingAfterCleanup = loadPending(previous.name);
+      if (retireRoute && !cleanupWarning && pendingAfterCleanup.length === 0) {
         deps.localInference.clearPersistedOllamaHostIfUnused?.(peers.map((peer) => peer.provider));
       }
     });
   } catch (error) {
+    const persistenceFailure = persistRetry();
     const detail = (error instanceof Error ? error.message : String(error))
       .replace(/\s+/g, " ")
       .slice(0, 240);
     cleanupWarning =
       `  Warning: NemoClaw could not finish superseded Ollama cleanup: ${detail}. The new ` +
-      `inference route remains active. Restore Ollama access, then stop or destroy the former ` +
-      `sandbox to retry cleanup.`;
+      `inference route remains active. Re-run onboarding, stop, or destroy '${previous.name}' to ` +
+      `retry only the recorded models: ${attemptedModels.join(", ") || "none"}.` +
+      (persistenceFailure
+        ? ` Cleanup retry state could not be recorded: ${persistenceFailure}.`
+        : "");
   }
   if (cleanupWarning) console.warn(cleanupWarning);
   if (authorityRefusal) throw authorityRefusal;

@@ -20,6 +20,7 @@ import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding"
 import { isObjectRecord } from "../core/json-types";
 import { DASHBOARD_PORT } from "../core/ports";
 import {
+  clearPendingOllamaModelCleanup as clearDefaultPendingOllamaModelCleanup,
   unloadOllamaModels as unloadDefaultOllamaModels,
   type OllamaUnloadResult,
 } from "../inference/ollama/proxy";
@@ -49,6 +50,8 @@ export interface ServiceOptions {
   processControl?: ProcessControl;
   /** Injectable Ollama model cleanup for tests. */
   unloadOllamaModels?: () => OllamaUnloadResult | void;
+  /** Injectable retirement of sandbox-scoped Ollama cleanup recovery. */
+  clearPendingOllamaModelCleanup?: (sandboxName: string) => void;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
   cloudflareTunnelToken?: string;
   /** Also release the managed host gateway port (legacy full-stop only). */
@@ -534,8 +537,16 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     if (cleanup && !cleanup.ok) {
       ollamaCleanupIncomplete = true;
       warn(
-        `Ollama model cleanup failed at ${cleanup.endpoint} (${cleanup.outcome}: ${cleanup.message ?? "no detail"}). The saved local route was retained; repair Ollama and retry this command.`,
+        `Ollama model cleanup failed at ${cleanup.endpoint} (${cleanup.outcome}: ${cleanup.message ?? "no detail"}). The saved local route was retained; ${
+          cleanup.outcome === "discovery-failed"
+            ? `restore access to ${cleanup.endpoint}`
+            : cleanup.outcome === "still-resident"
+              ? `stop the recorded model at ${cleanup.endpoint}`
+              : `allow the model unload request at ${cleanup.endpoint}`
+        }, then retry this command.`,
       );
+    } else if (sandboxName) {
+      (opts.clearPendingOllamaModelCleanup ?? clearDefaultPendingOllamaModelCleanup)(sandboxName);
     }
   } catch (error) {
     ollamaCleanupIncomplete = true;
