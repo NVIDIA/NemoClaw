@@ -38,6 +38,7 @@ import { resolveOnboardManagedBootstrapLaunch } from "../../../src/lib/onboard/m
 
 const IMAGE = `localhost:5000/nemoclaw-managed-protected/openclaw@sha256:${"a".repeat(64)}`;
 const VALID_SANDBOX = "managed-openclaw";
+const LOCAL_MODEL = "nvidia/nemotron-3-nano";
 const MANAGED_IMAGE_ONBOARD = resolveManagedImageOnboardModule(
   await import("../../../src/lib/onboard.ts"),
 );
@@ -47,6 +48,93 @@ const SUCCESS_WITHOUT_OUTPUT: ManagedImageCommandResult = {
   stdout: "",
   stderr: "",
 };
+
+function managedProbeFixturePath(rootPath: string, absolutePath: string): string {
+  return path.join(rootPath, absolutePath.replace(/^\/+/, ""));
+}
+
+function writeManagedProbeFixture(
+  rootPath: string,
+  absolutePath: string,
+  contents: string,
+  mode: number,
+): void {
+  const fixturePath = managedProbeFixturePath(rootPath, absolutePath);
+  fs.mkdirSync(path.dirname(fixturePath), { recursive: true });
+  fs.writeFileSync(fixturePath, contents, { mode });
+}
+
+function materializeManagedProbeFixture(rootPath: string): void {
+  const rootOwnedStatStub = `#!/usr/bin/env node
+const fs = require("node:fs");
+const stat = fs.statSync(process.argv.at(-1));
+process.stdout.write(\`0:0:\${(stat.mode & 0o777).toString(8)}\\n\`);
+`;
+  const curlStub = `#!/bin/sh
+case "$*" in
+  *http_code*) printf '200' ;;
+esac
+exit 0
+`;
+  const successStub = "#!/bin/sh\nexit 0\n";
+  const caMaterial = "managed corporate CA\n";
+
+  writeManagedProbeFixture(
+    rootPath,
+    "/sandbox/.openclaw/openclaw.json",
+    `${LOCAL_MODEL}\n`,
+    0o444,
+  );
+  writeManagedProbeFixture(rootPath, "/sandbox/.hermes/config.yaml", `${LOCAL_MODEL}\n`, 0o444);
+  writeManagedProbeFixture(
+    rootPath,
+    "/sandbox/.deepagents/config.toml",
+    `${LOCAL_MODEL}\n`,
+    0o444,
+  );
+  writeManagedProbeFixture(rootPath, "/usr/local/bin/openclaw", successStub, 0o555);
+  writeManagedProbeFixture(rootPath, "/usr/local/bin/hermes", successStub, 0o555);
+  writeManagedProbeFixture(rootPath, "/usr/local/bin/dcode", successStub, 0o555);
+  writeManagedProbeFixture(
+    rootPath,
+    "/run/nemoclaw/managed-startup-runtime.env",
+    "MODEL=managed\n",
+    0o444,
+  );
+  writeManagedProbeFixture(
+    rootPath,
+    "/run/nemoclaw/managed-startup-complete.json",
+    '{"status":"ready"}\n',
+    0o444,
+  );
+  writeManagedProbeFixture(
+    rootPath,
+    "/usr/local/share/nemoclaw/corporate-ca.pem",
+    caMaterial,
+    0o444,
+  );
+  writeManagedProbeFixture(
+    rootPath,
+    "/usr/local/share/ca-certificates/nemoclaw-corporate-ca-01.crt",
+    caMaterial,
+    0o444,
+  );
+  writeManagedProbeFixture(
+    rootPath,
+    "/etc/ssl/certs/ca-certificates.crt",
+    caMaterial,
+    0o444,
+  );
+  writeManagedProbeFixture(
+    rootPath,
+    "/run/nemoclaw/managed-startup-ca-bundle.pem",
+    caMaterial,
+    0o444,
+  );
+  writeManagedProbeFixture(rootPath, "/usr/bin/stat", rootOwnedStatStub, 0o555);
+  writeManagedProbeFixture(rootPath, "/usr/bin/curl", curlStub, 0o555);
+  writeManagedProbeFixture(rootPath, "/usr/bin/openssl", successStub, 0o555);
+}
 
 function managedContainerInspectResult(
   contentId: string,
@@ -461,7 +549,7 @@ describe("protected managed-image runtime contract", () => {
   });
 
   it.each(["openclaw", "hermes", "langchain-deepagents-code"] as const)(
-    "binds %s to an exact GPU/local-inference launch",
+    "binds %s to an exact GPU/local-inference launch and verified startup receipt",
     (agent) => {
       const parsed = parseManagedImageOpenShellE2eInputs([
         "--agent",
@@ -474,7 +562,7 @@ describe("protected managed-image runtime contract", () => {
         "--local-provider",
         "nim",
         "--model",
-        "nvidia/nemotron-3-nano",
+        LOCAL_MODEL,
       ]);
 
       expect(parsed).toEqual({
@@ -482,26 +570,34 @@ describe("protected managed-image runtime contract", () => {
         gpu: true,
         image: IMAGE,
         localProvider: "nim",
-        model: "nvidia/nemotron-3-nano",
+        model: LOCAL_MODEL,
         sandbox: managedImageProtectedSandboxName(agent, "nim"),
       });
       expect(path.isAbsolute(managedImageOpenShellBasePolicyPath(agent))).toBe(true);
-      const probe = managedImageOpenShellProbe(agent);
-      const syntax = spawnSync("/bin/sh", ["-n", "-c", probe], { encoding: "utf8" });
-      expect(syntax.status, syntax.stderr).toBe(0);
-      expect(probe).toContain("managed-startup-complete.json");
-      expect(probe).toContain(
-        `managed-image startup probe failed: ${
-          agent === "openclaw"
-            ? "OpenClaw health endpoint"
-            : agent === "hermes"
-              ? "Hermes health endpoint"
-              : "LangChain Deep Agents Code version command"
-        }`,
-      );
-      expect(probe).toContain(
-        "managed-image startup probe failed: managed startup completion owner, group, and mode must equal 0:0:444",
-      );
+      const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-probe-"));
+      try {
+        materializeManagedProbeFixture(fixtureRoot);
+        const probe = managedImageOpenShellProbe(agent, LOCAL_MODEL, { rootPath: fixtureRoot });
+        const syntax = spawnSync("/bin/sh", ["-n", "-c", probe], { encoding: "utf8" });
+        expect(syntax.status, syntax.stderr).toBe(0);
+
+        const verified = spawnSync("/bin/sh", ["-eu", "-c", probe], { encoding: "utf8" });
+        expect(verified.status, verified.stderr).toBe(0);
+
+        fs.chmodSync(
+          managedProbeFixturePath(fixtureRoot, "/run/nemoclaw/managed-startup-complete.json"),
+          0o644,
+        );
+        const mutableReceipt = spawnSync("/bin/sh", ["-eu", "-c", probe], {
+          encoding: "utf8",
+        });
+        expect(mutableReceipt.status).not.toBe(0);
+        expect(mutableReceipt.stderr).toContain(
+          "managed startup completion owner, group, and mode must equal 0:0:444",
+        );
+      } finally {
+        fs.rmSync(fixtureRoot, { recursive: true, force: true });
+      }
     },
   );
 

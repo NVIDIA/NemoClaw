@@ -409,19 +409,27 @@ function managedConfigPath(agent: ShippedManagedImageAgent): string {
 export function managedImageOpenShellProbe(
   agent: ShippedManagedImageAgent,
   model: string = MODEL,
+  options: { readonly rootPath?: string } = {},
 ): string {
+  const rootPath = options.rootPath ? path.resolve(options.rootPath) : null;
+  const probePath = (absolutePath: string) =>
+    rootPath ? path.join(rootPath, absolutePath.replace(/^\/+/, "")) : absolutePath;
+  const quotePath = (absolutePath: string) => JSON.stringify(probePath(absolutePath));
+  const stat = rootPath ? quotePath("/usr/bin/stat") : "stat";
+  const openssl = rootPath ? quotePath("/usr/bin/openssl") : "openssl";
+  const curl = quotePath("/usr/bin/curl");
   const healthProbe =
     agent === "openclaw"
       ? [
-          "openclaw_health_code=\"$(/usr/bin/curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18789/health || true)\"",
+          `openclaw_health_code="$(${curl} -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18789/health || true)"`,
           'case "$openclaw_health_code" in',
           "  200 | 401) ;;",
           "  *) printf 'OpenClaw /health returned HTTP %s\\n' \"${openclaw_health_code:-000}\" >&2; exit 1 ;;",
           "esac",
         ].join("\n")
       : agent === "hermes"
-        ? "/usr/bin/curl -fsS --max-time 5 http://127.0.0.1:8642/health >/dev/null"
-        : "/usr/local/bin/dcode --version >/dev/null";
+        ? `${curl} -fsS --max-time 5 http://127.0.0.1:8642/health >/dev/null`
+        : `${quotePath("/usr/local/bin/dcode")} --version >/dev/null`;
   const readinessLabel =
     agent === "openclaw"
       ? "OpenClaw health endpoint"
@@ -436,61 +444,75 @@ export function managedImageOpenShellProbe(
     "set -u",
     probeStep(
       `${agent} executable`,
-      `test -x ${
+      `test -x ${quotePath(
         agent === "openclaw"
           ? "/usr/local/bin/openclaw"
           : agent === "hermes"
             ? "/usr/local/bin/hermes"
-            : "/usr/local/bin/dcode"
-      }`,
+            : "/usr/local/bin/dcode",
+      )}`,
     ),
     probeStep(
       `${agent} managed model configuration`,
-      `grep -F ${JSON.stringify(model)} ${JSON.stringify(managedConfigPath(agent))} >/dev/null`,
+      `grep -F ${JSON.stringify(model)} ${quotePath(managedConfigPath(agent))} >/dev/null`,
     ),
     probeStep(
       "managed runtime environment must not be a symbolic link",
-      "test ! -L /run/nemoclaw/managed-startup-runtime.env",
+      `test ! -L ${quotePath("/run/nemoclaw/managed-startup-runtime.env")}`,
     ),
     probeStep(
       "managed runtime environment owner, group, and mode must equal 0:0:444",
-      'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-runtime.env)" = "0:0:444"',
+      `test "$(${stat} -c "%u:%g:%a" ${quotePath(
+        "/run/nemoclaw/managed-startup-runtime.env",
+      )})" = "0:0:444"`,
     ),
     probeStep(
       "managed startup completion must not be a symbolic link",
-      "test ! -L /run/nemoclaw/managed-startup-complete.json",
+      `test ! -L ${quotePath("/run/nemoclaw/managed-startup-complete.json")}`,
     ),
     probeStep(
       "managed startup completion owner, group, and mode must equal 0:0:444",
-      'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-complete.json)" = "0:0:444"',
+      `test "$(${stat} -c "%u:%g:%a" ${quotePath(
+        "/run/nemoclaw/managed-startup-complete.json",
+      )})" = "0:0:444"`,
     ),
     probeStep(
       "corporate CA file must exist and be nonempty",
-      "test -s /usr/local/share/nemoclaw/corporate-ca.pem",
+      `test -s ${quotePath("/usr/local/share/nemoclaw/corporate-ca.pem")}`,
     ),
     probeStep(
       "corporate CA owner, group, and mode must equal 0:0:444",
-      'test "$(stat -c "%u:%g:%a" /usr/local/share/nemoclaw/corporate-ca.pem)" = "0:0:444"',
+      `test "$(${stat} -c "%u:%g:%a" ${quotePath(
+        "/usr/local/share/nemoclaw/corporate-ca.pem",
+      )})" = "0:0:444"`,
     ),
     probeStep(
       "corporate CA system anchor must match the managed material",
-      "cmp -s /usr/local/share/nemoclaw/corporate-ca.pem /usr/local/share/ca-certificates/nemoclaw-corporate-ca-01.crt",
+      `cmp -s ${quotePath("/usr/local/share/nemoclaw/corporate-ca.pem")} ${quotePath(
+        "/usr/local/share/ca-certificates/nemoclaw-corporate-ca-01.crt",
+      )}`,
     ),
     probeStep(
       "corporate CA system anchor owner, group, and mode must equal 0:0:444",
-      'test "$(stat -c "%u:%g:%a" /usr/local/share/ca-certificates/nemoclaw-corporate-ca-01.crt)" = "0:0:444"',
+      `test "$(${stat} -c "%u:%g:%a" ${quotePath(
+        "/usr/local/share/ca-certificates/nemoclaw-corporate-ca-01.crt",
+      )})" = "0:0:444"`,
     ),
     probeStep(
       "system trust must verify the managed corporate CA",
-      "openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt /usr/local/share/nemoclaw/corporate-ca.pem >/dev/null",
+      `${openssl} verify -CAfile ${quotePath("/etc/ssl/certs/ca-certificates.crt")} ${quotePath(
+        "/usr/local/share/nemoclaw/corporate-ca.pem",
+      )} >/dev/null`,
     ),
     probeStep(
       "managed startup CA bundle must exist and be nonempty",
-      "test -s /run/nemoclaw/managed-startup-ca-bundle.pem",
+      `test -s ${quotePath("/run/nemoclaw/managed-startup-ca-bundle.pem")}`,
     ),
     probeStep(
       "managed startup CA bundle owner, group, and mode must equal 0:0:444",
-      'test "$(stat -c "%u:%g:%a" /run/nemoclaw/managed-startup-ca-bundle.pem)" = "0:0:444"',
+      `test "$(${stat} -c "%u:%g:%a" ${quotePath(
+        "/run/nemoclaw/managed-startup-ca-bundle.pem",
+      )})" = "0:0:444"`,
     ),
     probeStep(readinessLabel, healthProbe),
   ].join("\n");
