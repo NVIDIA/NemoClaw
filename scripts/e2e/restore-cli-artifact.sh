@@ -7,11 +7,10 @@ set -euo pipefail
 artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
 manifest="$artifact_dir/manifest.json"
 payload="$artifact_dir/nemoclaw-cli.tar"
-test -s "$manifest" && test -s "$payload" \
-  || {
-    echo "::error::exact-commit CLI artifact is incomplete"
-    exit 1
-  }
+if [[ ! -s "$manifest" || ! -s "$payload" ]]; then
+  echo "::error::exact-commit CLI artifact is incomplete"
+  exit 1
+fi
 [[ "$(node --version)" =~ ^v22\.[0-9]+\.[0-9]+$ ]] \
   || {
     echo "::error::consumer must restore the CLI under the pinned Node 22 toolchain"
