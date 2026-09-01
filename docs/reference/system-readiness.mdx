@@ -165,7 +165,7 @@ N1x identity qualification also fails closed.
 The `host.platform.n1x` capability is `present` only when the host runs Linux ARM64, reports an effective NVIDIA GPU, and both identity sources qualify.
 `/etc/fastos-release` must be a regular file of 1 through 4,096 bytes that is owned by UID and GID 0, is not a symbolic link, grants no group or world write access, contains no NUL or carriage-return byte, and contains exactly one `NAME="N1x FASTOS"` line.
 NemoClaw parses the marker as inert text and does not pin its `VERSION` value.
-A display-class PCI device must report NVIDIA vendor ID `0x10de` and device ID `0x2e2a`.
+A display-class PCI device must report NVIDIA vendor ID `0x10de`.
 Generic DMI values do not satisfy either requirement.
 
 A matching identity produces a `qualified` `host.platform.n1x` qualification, but `host.platform.supported` remains `absent` while N1x is Deferred.
