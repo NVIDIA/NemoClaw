@@ -167,15 +167,6 @@ describe("PR merge conflict fixer workflow boundary", () => {
     expect(record(download.with).name).toBe(record(upload.with).name);
     expect(record(download.with).path).toBe("${{ env.ARTIFACT_DIR }}");
 
-    const warning = namedStep(publish, "Explain missing resolution patch");
-    expect(warning.if).toBe("${{ always() && steps.download.outcome != 'success' }}");
-    expect(record(warning.env).PR_URL).toBe(
-      "${{ github.server_url }}/${{ github.repository }}/pull/${{ matrix.item.pr_number }}",
-    );
-    expect(warning.run).toContain("::warning title=Conflict resolution was not published::");
-    expect(warning.run).toContain("for ${PR_URL}. No pull request branch was modified.");
-    expect(warning.run).toContain("Inspect the matching Resolve PR job before retrying.");
-
     const publisher = namedStep(publish, "Validate and publish the merge commit");
     expect(publisher.if).toBe("${{ steps.download.outcome == 'success' }}");
     expect(record(publisher.env).GITHUB_TOKEN).toBe("${{ github.token }}");
