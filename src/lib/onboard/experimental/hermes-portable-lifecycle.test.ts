@@ -848,9 +848,9 @@ describe("Hermes portable lifecycle", () => {
     expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1);
   });
 
-  it("launches the receipt-owned startup once after restarting the stopped container (#9211)", () => {
+  it("uses only the receipt-owned startup after restarting a stopped container (#9211)", () => {
     const receipt = activeReceipt();
-    const { deps, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);
+    const { deps, podman, captureOpenShell, launchOpenShell } = lifecycleDeps(receipt, false);
     const defaultCapture = captureOpenShell.getMockImplementation()!;
     let healthAttempts = 0;
     let now = 0;
@@ -883,7 +883,7 @@ describe("Hermes portable lifecycle", () => {
     expect(result).toEqual({ kind: "recovered" });
     expect(healthAttempts).toBe(3);
     expect(launchOpenShell).toHaveBeenCalledTimes(1);
-    expect(launchOpenShell).toHaveBeenCalledWith([
+    expect(podman.mock.calls.filter(([args]) => args[1] === "start")).toHaveLength(1); expect(launchOpenShell).toHaveBeenCalledWith([
       "sandbox",
       "exec",
       "-g",
