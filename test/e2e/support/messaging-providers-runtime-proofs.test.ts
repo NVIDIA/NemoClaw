@@ -139,13 +139,18 @@ function fakeDockerHost(
     proxyReady?: boolean;
   } = {},
 ): {
+  artifacts: Map<string, string>;
   calls: string[][];
   commands: Array<{ command: string; args: string[] }>;
   host: HostCliClient;
+  resources: () => { containers: string[]; networks: string[] };
   setProxyRunning: (running: boolean) => void;
 } {
+  const artifacts = new Map<string, string>();
   const calls: string[][] = [];
   const commands: Array<{ command: string; args: string[] }> = [];
+  const containers = new Set<string>();
+  const networks = new Set<string>();
   const publishedAddress = options.publishedAddress ?? OPENSHELL_BRIDGE_ADDRESS;
   const networkInspect = options.networkInspect ?? OPENSHELL_NETWORK_INSPECT;
   const proxyContainerPorts = options.proxyContainerPorts ?? [FAKE_API_PROXY_READINESS_PORT, 8080];
@@ -153,57 +158,127 @@ function fakeDockerHost(
   const dockerCommand = (args: string[]) => {
     const executedArgs = [...args];
     calls.push(executedArgs);
-    return executedArgs[0] === "network" && executedArgs[1] === "inspect"
-      ? successfulCommand(
-          executedArgs[2] === "openshell-docker"
-            ? networkInspect
-            : JSON.stringify([{ Driver: "bridge", Internal: true }]),
-        )
-      : executedArgs[0] === "inspect"
-        ? executedArgs[1] === "--format"
-          ? executedArgs[2] === "{{json .State}}"
-            ? successfulCommand(`${JSON.stringify({ Running: proxyRunning })}\n`)
-            : successfulCommand(`${String(proxyRunning)}\n`)
-          : successfulCommand(
-              fakeDockerInspect(calls, {
-                apiPublished: options.apiPublished === true,
-                proxyContainerPorts,
-                publishedAddress,
-              }),
-            )
-        : executedArgs[0] === "logs"
-          ? successfulCommand("proxy fixture stopped\n")
-          : executedArgs[0] === "port"
+    switch (executedArgs[0]) {
+      case "network":
+        switch (executedArgs[1]) {
+          case "inspect":
+            return successfulCommand(
+              executedArgs[2] === "openshell-docker"
+                ? networkInspect
+                : JSON.stringify([{ Driver: "bridge", Internal: true }]),
+            );
+          case "create":
+            networks.add(executedArgs.at(-1)!);
+            return successfulCommand();
+          case "rm":
+            networks.delete(executedArgs[2]!);
+            return successfulCommand();
+          default:
+            return successfulCommand();
+        }
+      case "run":
+        containers.add(optionValue(executedArgs, "--name"));
+        return successfulCommand();
+      case "rm":
+        containers.delete(executedArgs.at(-1)!);
+        return successfulCommand();
+      case "inspect": {
+        const container = executedArgs.at(-1)!;
+        const component = container.includes("-proxy-") ? "proxy" : "api";
+        return !containers.has(container)
+          ? failedCommand(`No such container: ${container}`)
+          : executedArgs[1] !== "--format"
             ? successfulCommand(
-                `${publishedAddress}:${
-                  executedArgs[2] === "8081/tcp"
-                    ? "32101"
-                    : executedArgs[2] === `${String(FAKE_API_PROXY_READINESS_PORT)}/tcp`
-                      ? "32079"
-                      : "32100"
-                }\n`,
+                fakeDockerInspect(calls, {
+                  apiPublished: options.apiPublished === true,
+                  proxyContainerPorts,
+                  publishedAddress,
+                }),
               )
-            : successfulCommand();
+            : executedArgs[2] === "{{json .State}}"
+              ? successfulCommand(
+                  `${JSON.stringify({ Running: proxyRunning, source: component })}\n`,
+                )
+              : successfulCommand(`${String(proxyRunning)}\n`);
+      }
+      case "logs": {
+        const container = executedArgs.at(-1)!;
+        return !containers.has(container)
+          ? failedCommand(`No such container: ${container}`)
+          : successfulCommand(
+              `${container.includes("-proxy-") ? "proxy" : "api"} diagnostic logs\n`,
+            );
+      }
+      case "port":
+        return successfulCommand(
+          `${publishedAddress}:${
+            executedArgs[2] === "8081/tcp"
+              ? "32101"
+              : executedArgs[2] === `${String(FAKE_API_PROXY_READINESS_PORT)}/tcp`
+                ? "32079"
+                : "32100"
+          }\n`,
+        );
+      default:
+        return successfulCommand();
+    }
   };
   const host = {
-    command: async (command: string, args: string[]) => {
+    command: async (
+      command: string,
+      args: string[],
+      commandOptions?: { artifactName?: string },
+    ) => {
       commands.push({ command, args: [...args] });
       expect(["docker", "node"]).toContain(command);
-      return command === "node"
-        ? options.proxyReady === false
-          ? failedCommand("proxy could not reach the upstream API")
-          : successfulCommand()
-        : dockerCommand(args);
+      const result =
+        command === "node"
+          ? options.proxyReady === false
+            ? failedCommand("proxy could not reach the upstream API")
+            : successfulCommand()
+          : dockerCommand(args);
+      const artifactNames =
+        commandOptions?.artifactName === undefined ? [] : [commandOptions.artifactName];
+      for (const artifactName of artifactNames) {
+        artifacts.set(artifactName, [result.stdout, result.stderr].filter(Boolean).join("\n"));
+      }
+      return result;
     },
   } as unknown as HostCliClient;
   return {
+    artifacts,
     calls,
     commands,
     host,
+    resources: () => ({
+      containers: [...containers].sort(),
+      networks: [...networks].sort(),
+    }),
     setProxyRunning: (running) => {
       proxyRunning = running;
+      const autoRemovedContainers = calls
+        .filter(
+          (args) =>
+            !running &&
+            args[0] === "run" &&
+            args.includes("--rm") &&
+            optionValue(args, "--name").includes("-proxy-"),
+        )
+        .map((args) => optionValue(args, "--name"));
+      for (const container of autoRemovedContainers) containers.delete(container);
     },
   };
+}
+
+function expectFakeDiscordDiagnosticArtifacts(artifacts: Map<string, string>): void {
+  expect(artifacts.get("diagnose-fake-discord-gateway-api-proxy-state")).toContain(
+    '"source":"proxy"',
+  );
+  expect(artifacts.get("diagnose-fake-discord-gateway-api-proxy-logs")).toContain(
+    "proxy diagnostic logs",
+  );
+  expect(artifacts.get("diagnose-fake-discord-gateway-api-state")).toContain('"source":"api"');
+  expect(artifacts.get("diagnose-fake-discord-gateway-api-logs")).toContain("api diagnostic logs");
 }
 
 function startFakeDiscordApi(host: HostCliClient, cleanup: CleanupAction[]) {
@@ -401,7 +476,7 @@ describe("messaging provider installed-runtime proofs", () => {
   });
 
   it("fails with proxy diagnostics when the detached proxy stops before readiness", async () => {
-    const { calls, host } = fakeDockerHost({ proxyRunning: false });
+    const { artifacts, host, resources } = fakeDockerHost({ proxyRunning: false });
     const cleanup: CleanupAction[] = [];
     let failure: unknown;
 
@@ -413,25 +488,16 @@ describe("messaging provider installed-runtime proofs", () => {
       await runCleanup(cleanup);
     }
 
-    const runCalls = calls.filter((args) => args[0] === "run");
-    expect(runCalls).toHaveLength(2);
-    const [apiRun, proxyRun] = runCalls as [string[], string[]];
-    const apiContainer = apiRun[apiRun.indexOf("--name") + 1]!;
-    const proxyContainer = proxyRun[proxyRun.indexOf("--name") + 1]!;
-    const networkCreate = calls.find((args) => args[0] === "network" && args[1] === "create");
-    const network = networkCreate?.at(-1);
-
     expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toContain(proxyContainer);
-    expect(calls).toContainEqual(["inspect", "--format", "{{json .State}}", proxyContainer]);
-    expect(calls).toContainEqual(["logs", "--tail", "100", proxyContainer]);
-    expect(calls).toContainEqual(["rm", "-f", proxyContainer]);
-    expect(calls).toContainEqual(["rm", "-f", apiContainer]);
-    expect(calls).toContainEqual(["network", "rm", network]);
+    expect((failure as Error).message).toContain(
+      "attempted to capture redacted proxy and API diagnostics",
+    );
+    expectFakeDiscordDiagnosticArtifacts(artifacts);
+    expect(resources()).toEqual({ containers: [], networks: [] });
   });
 
   it("fails with API and proxy diagnostics when the proxy cannot reach the API", async () => {
-    const { calls, host } = fakeDockerHost({ proxyReady: false });
+    const { artifacts, host, resources } = fakeDockerHost({ proxyReady: false });
     const cleanup: CleanupAction[] = [];
     let failure: unknown;
 
@@ -443,34 +509,16 @@ describe("messaging provider installed-runtime proofs", () => {
       await runCleanup(cleanup);
     }
 
-    const runCalls = calls.filter((args) => args[0] === "run");
-    expect(runCalls).toHaveLength(2);
-    const [apiRun, proxyRun] = runCalls as [string[], string[]];
-    const apiContainer = apiRun[apiRun.indexOf("--name") + 1]!;
-    const proxyContainer = proxyRun[proxyRun.indexOf("--name") + 1]!;
-    const networkCreate = calls.find((args) => args[0] === "network" && args[1] === "create");
-    const network = networkCreate?.at(-1);
-    const stateDiagnostics = ["inspect", "--format", "{{json .State}}", proxyContainer];
-    const logDiagnostics = ["logs", "--tail", "100", proxyContainer];
-    const apiStateDiagnostics = ["inspect", "--format", "{{json .State}}", apiContainer];
-    const apiLogDiagnostics = ["logs", "--tail", "100", apiContainer];
-    const countCalls = (expected: string[]): number =>
-      calls.filter((args) => JSON.stringify(args) === JSON.stringify(expected)).length;
-
     expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toContain(proxyContainer);
-    expect(calls).toContainEqual(["inspect", "--format", "{{.State.Running}}", proxyContainer]);
-    expect(countCalls(stateDiagnostics)).toBe(1);
-    expect(countCalls(logDiagnostics)).toBe(1);
-    expect(countCalls(apiStateDiagnostics)).toBe(1);
-    expect(countCalls(apiLogDiagnostics)).toBe(1);
-    expect(calls).toContainEqual(["rm", "-f", proxyContainer]);
-    expect(calls).toContainEqual(["rm", "-f", apiContainer]);
-    expect(calls).toContainEqual(["network", "rm", network]);
+    expect((failure as Error).message).toContain(
+      "attempted to capture redacted proxy and API diagnostics",
+    );
+    expectFakeDiscordDiagnosticArtifacts(artifacts);
+    expect(resources()).toEqual({ containers: [], networks: [] });
   });
 
   it("captures proxy diagnostics before cleanup after a post-readiness stop", async () => {
-    const { calls, host, setProxyRunning } = fakeDockerHost();
+    const { artifacts, host, resources, setProxyRunning } = fakeDockerHost();
     const cleanup: CleanupAction[] = [];
 
     try {
@@ -480,30 +528,8 @@ describe("messaging provider installed-runtime proofs", () => {
       await runCleanup(cleanup);
     }
 
-    const runCalls = calls.filter((args) => args[0] === "run");
-    expect(runCalls).toHaveLength(2);
-    const [apiRun, proxyRun] = runCalls as [string[], string[]];
-    const proxyContainer = proxyRun[proxyRun.indexOf("--name") + 1]!;
-    const stateDiagnostics = ["inspect", "--format", "{{json .State}}", proxyContainer];
-    const logDiagnostics = ["logs", "--tail", "100", proxyContainer];
-    const removeProxy = ["rm", "-f", proxyContainer];
-    const stateDiagnosticsIndex = calls.findIndex(
-      (args) => JSON.stringify(args) === JSON.stringify(stateDiagnostics),
-    );
-    const logDiagnosticsIndex = calls.findIndex(
-      (args) => JSON.stringify(args) === JSON.stringify(logDiagnostics),
-    );
-    const removeProxyIndex = calls.findIndex(
-      (args) => JSON.stringify(args) === JSON.stringify(removeProxy),
-    );
-
-    expect(apiRun).not.toContain("--rm");
-    expect(proxyRun).not.toContain("--rm");
-    expect(calls).toContainEqual(stateDiagnostics);
-    expect(calls).toContainEqual(logDiagnostics);
-    expect(stateDiagnosticsIndex).toBeLessThan(removeProxyIndex);
-    expect(logDiagnosticsIndex).toBeLessThan(removeProxyIndex);
-    expect(calls).toContainEqual(removeProxy);
+    expectFakeDiscordDiagnosticArtifacts(artifacts);
+    expect(resources()).toEqual({ containers: [], networks: [] });
   });
 
   it("uses a synthetic WeChat token even when the host exports one", () => {
