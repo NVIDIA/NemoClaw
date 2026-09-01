@@ -40,6 +40,7 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
+  vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 describe("onboard messaging", () => {
@@ -1211,7 +1212,6 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.DISCORD_BOT_TOKEN = "test-discord-token-value";
   await createSandbox(null, "gpt-5.4", "nvidia-prod");
-  // Should not reach here
   console.log("ERROR_DID_NOT_EXIT");
 })().catch((error) => {
   console.error(error);

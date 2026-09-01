@@ -18,6 +18,10 @@ vi.mock("../../adapters/openshell/forward-service", async (importOriginal) => ({
   launchForwardService: mocks.launchForwardService,
 }));
 
+vi.mock("../../adapters/openshell/resolve", () => ({
+  resolveOpenshell: () => "/usr/local/bin/openshell",
+}));
+
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: mocks.captureOpenshell,
   runOpenshell: mocks.runOpenshell,

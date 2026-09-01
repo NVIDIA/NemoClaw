@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, it } from "vitest";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
 
 import { writeOkOpenshell } from "../helpers/onboard-openshell-fixture";
 
@@ -16,6 +16,10 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 const ONBOARD_SUBPROCESS_TIMEOUT_MS = 30_000;
 const createdTmpDirs: string[] = [];
+
+beforeEach(() => {
+  vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
+});
 
 function makeTmpDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));

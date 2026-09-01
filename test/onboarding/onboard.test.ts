@@ -688,6 +688,7 @@ const { EventEmitter } = require("node:events");
 
 const commands = [];
 const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 existingSandbox.installRuntimeObservation();
 const sandboxCommand = (command) => Array.isArray(command) ? command : _n(command).split(/\s+/u);
 runner.run = (command, opts = {}) => {
@@ -708,6 +709,7 @@ runner.runCapture = (command) => {
 	}, { sandboxId: existingSandbox.state.sandboxId });
 
 childProcess.spawn = (...args) => {
+  forwardService.recordSpawn(args);
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -750,10 +752,11 @@ const { createSandbox } = require(${onboardPath});
     }>(result.stdout);
     assert.equal(payload.sandboxName, "my-assistant");
     assert.ok(
-      payload.commands.some((entry: CommandEntry) =>
-        entry.command.includes("forward service my-assistant") &&
-        entry.command.includes("--target-port 18789") &&
-        entry.command.includes("--local 0.0.0.0:18789"),
+      payload.commands.some(
+        (entry: CommandEntry) =>
+          entry.command.includes("forward service my-assistant") &&
+          entry.command.includes("--target-port 18789") &&
+          entry.command.includes("--local 0.0.0.0:18789"),
       ),
       "expected dashboard forward restore on sandbox reuse",
     );

@@ -195,6 +195,7 @@ const fixtureMocks = require(${onboardScriptMocksPath});
 const createdSandbox = fixtureMocks.createCreatedSandboxFixture({
   sandboxName: "my-assistant",
 });
+const forwardService = fixtureMocks.installForwardServiceReachabilityFixture();
 createdSandbox.installRuntimeObservation();
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -263,7 +264,7 @@ preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
 
 childProcess.spawn = (...args) => {
-  createdSandbox.create(args.flat());
+  if (!forwardService.recordSpawn(args)) createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();

@@ -15,6 +15,7 @@ import { encodeMessagingPlan, makeMessagingPlan } from "../helpers/messaging-pla
 
 beforeEach(() => {
   vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_CATALOG", "1");
+  vi.stubEnv("NEMOCLAW_TEST_FORWARD_SERVICE_FIXTURE", "1");
   vi.stubEnv("NEMOCLAW_SANDBOX_PREBUILD", "1");
 });
 
