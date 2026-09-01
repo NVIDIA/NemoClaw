@@ -183,12 +183,10 @@ const { createSandbox } = require(${onboardPath});
       assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
       assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
       assert.ok(
-        payload.commands.some(
-          (entry: CommandEntry) =>
-            entry.command.includes("forward service my-assistant") &&
-            /--local (?:127\.0\.0\.1|0\.0\.0\.0):18789(?:\s|$)/u.test(entry.command),
+        !payload.commands.some((entry: CommandEntry) =>
+          entry.command.includes("forward service my-assistant"),
         ),
-        "expected dashboard forward (loopback or WSL 0.0.0.0)",
+        "sandbox creation must defer forwarding until agent setup or final recovery",
       );
     },
   );
@@ -597,7 +595,7 @@ const { createSandbox } = require(${onboardPath});
     );
   });
 
-  it("binds the dashboard forward to 0.0.0.0 when CHAT_UI_URL points to a remote host", async () => {
+  it("defers a remote dashboard forward until post-create recovery", async () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-remote-forward-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -703,12 +701,10 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
     assert.ok(
-      commands.some(
-        (entry: CommandEntry) =>
-          entry.command.includes("forward service my-assistant") &&
-          entry.command.includes("--local 0.0.0.0:18789"),
+      !commands.some((entry: CommandEntry) =>
+        entry.command.includes("forward service my-assistant"),
       ),
-      "expected remote dashboard forward target",
+      "sandbox creation must not launch the remote forward before agent setup",
     );
   });
 
@@ -877,22 +873,11 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(noProxyEntries.includes("localhost"));
     assert.ok(noProxyEntries.includes("127.0.0.1"));
     assert.ok(noProxyEntries.includes("host.docker.internal"));
-    // Forward must use same-port mapping (openshell does not support asymmetric)
     assert.ok(
-      payload.commands.some(
-        (entry: CommandEntry) =>
-          entry.command.includes("forward service my-assistant") &&
-          /--local (?:127\.0\.0\.1|0\.0\.0\.0):19000(?:\s|$)/u.test(entry.command),
+      !payload.commands.some((entry: CommandEntry) =>
+        entry.command.includes("forward service my-assistant"),
       ),
-      "expected dashboard forward for port 19000",
-    );
-    assert.ok(
-      !payload.commands.some((entry: CommandEntry) => entry.command.includes("19000:18789")),
-      "forward must not use asymmetric 19000:18789 mapping",
-    );
-    assert.ok(
-      !payload.commands.some((entry: CommandEntry) => entry.command.includes("19000:19000")),
-      "forward must not use port:port form (openshell does not support it)",
+      "sandbox creation must defer the custom-port forward until agent setup or final recovery",
     );
   });
 });
