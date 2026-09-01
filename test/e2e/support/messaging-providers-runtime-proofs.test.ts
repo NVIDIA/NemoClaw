@@ -144,13 +144,24 @@ function fakeDockerHost(
                   {
                     Name: `/${proxyContainer}`,
                     HostConfig: {
-                      CapDrop: ["ALL"],
-                      PidsLimit: 32,
-                      ReadonlyRootfs: true,
-                      SecurityOpt: ["no-new-privileges"],
+                      CapDrop: [proxyRun[proxyRun.indexOf("--cap-drop") + 1]],
+                      PidsLimit: Number(proxyRun[proxyRun.indexOf("--pids-limit") + 1]),
+                      ReadonlyRootfs: proxyRun.includes("--read-only"),
+                      SecurityOpt: [proxyRun[proxyRun.indexOf("--security-opt") + 1]],
                     },
                     NetworkSettings: {
-                      Networks: { bridge: {}, [network]: {} },
+                      Networks: Object.fromEntries(
+                        [
+                          proxyRun[proxyRun.indexOf("--network") + 1],
+                          ...calls.flatMap((call) =>
+                            call[0] === "network" &&
+                            call[1] === "connect" &&
+                            call[3] === proxyContainer
+                              ? [call[2]]
+                              : [],
+                          ),
+                        ].map((name) => [name, {}]),
+                      ),
                       Ports: Object.fromEntries(
                         proxyPorts.map(({ containerPort, hostPort }) => [
                           `${containerPort}/tcp`,
@@ -201,6 +212,22 @@ async function runCleanup(actions: CleanupAction[]): Promise<void> {
   for (let index = actions.length - 1; index >= 0; index -= 1) await actions[index]!.run();
 }
 
+async function startFakeDiscordApi(
+  host: HostCliClient,
+  cleanup: CleanupAction[],
+) {
+  return startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
+    kind: "discord-gateway",
+    imageScript: "fake-discord-gateway-api.cjs",
+    containerPrefix: "fake-discord-gateway",
+    portEnv: "FAKE_API_PORT",
+    captureFileEnv: "FAKE_API_CAPTURE_FILE",
+    expectedEnv: {},
+    redactionValues: [],
+    env: {},
+  });
+}
+
 async function listenServer(server: net.Server, host: string): Promise<number> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -237,17 +264,43 @@ describe("messaging provider installed-runtime proofs", () => {
 
     try {
       await expect(
-        startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
-          kind: "discord-gateway",
-          imageScript: "fake-discord-gateway-api.cjs",
-          containerPrefix: "fake-discord-gateway",
-          portEnv: "FAKE_API_PORT",
-          captureFileEnv: "FAKE_API_CAPTURE_FILE",
-          expectedEnv: {},
-          redactionValues: [],
-          env: {},
-        }),
+        startFakeDiscordApi(host, cleanup),
       ).rejects.toThrow(/Docker topology did not preserve isolation/u);
+    } finally {
+      await runCleanup(cleanup);
+    }
+  });
+
+  it("configures and returns both Slack API proxy ports", async () => {
+    const { calls, host } = fakeDockerHost();
+    const cleanup: CleanupAction[] = [];
+
+    try {
+      const api = await startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
+        kind: "slack",
+        imageScript: "fake-slack-api.cjs",
+        containerPrefix: "fake-slack",
+        portEnv: "FAKE_SLACK_API_PORT",
+        captureFileEnv: "FAKE_SLACK_API_CAPTURE_FILE",
+        expectedEnv: {},
+        redactionValues: [],
+        env: {},
+      });
+      const runCalls = calls.filter((args) => args[0] === "run");
+      const [apiRun, proxyRun] = runCalls as [string[], string[]];
+      const publications = proxyRun.flatMap((argument, index) =>
+        argument === "-p" ? [proxyRun[index + 1]] : [],
+      );
+
+      expect(apiRun).not.toContain("-p");
+      expect(publications).toEqual([
+        `${OPENSHELL_BRIDGE_ADDRESS}::${String(FAKE_API_PROXY_READINESS_PORT)}`,
+        `${OPENSHELL_BRIDGE_ADDRESS}::8080`,
+        `${OPENSHELL_BRIDGE_ADDRESS}::8081`,
+      ]);
+      expect(proxyRun).toContain("NEMOCLAW_FAKE_API_PROXY_PORTS=8080:8080,8081:8081");
+      expect(api.port).toBe("32100");
+      expect(api.alternatePort).toBe("32101");
     } finally {
       await runCleanup(cleanup);
     }
@@ -325,16 +378,7 @@ describe("messaging provider installed-runtime proofs", () => {
 
     try {
       await expect(
-        startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
-          kind: "discord-gateway",
-          imageScript: "fake-discord-gateway-api.cjs",
-          containerPrefix: "fake-discord-gateway",
-          portEnv: "FAKE_API_PORT",
-          captureFileEnv: "FAKE_API_CAPTURE_FILE",
-          expectedEnv: {},
-          redactionValues: [],
-          env: {},
-        }),
+        startFakeDiscordApi(host, cleanup),
       ).rejects.toThrow(/Docker topology did not preserve isolation/u);
     } finally {
       await runCleanup(cleanup);
@@ -359,16 +403,7 @@ describe("messaging provider installed-runtime proofs", () => {
 
     try {
       await expect(
-        startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
-          kind: "discord-gateway",
-          imageScript: "fake-discord-gateway-api.cjs",
-          containerPrefix: "fake-discord-gateway",
-          portEnv: "FAKE_API_PORT",
-          captureFileEnv: "FAKE_API_CAPTURE_FILE",
-          expectedEnv: {},
-          redactionValues: [],
-          env: {},
-        }),
+        startFakeDiscordApi(host, cleanup),
       ).rejects.toThrow(/exactly one IPv4 bridge gateway/u);
       expect(calls).toEqual([["network", "inspect", "openshell-docker"]]);
       expect(cleanup).toHaveLength(1);
@@ -387,16 +422,7 @@ describe("messaging provider installed-runtime proofs", () => {
     let failure: unknown;
 
     try {
-      await startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
-        kind: "discord-gateway",
-        imageScript: "fake-discord-gateway-api.cjs",
-        containerPrefix: "fake-discord-gateway",
-        portEnv: "FAKE_API_PORT",
-        captureFileEnv: "FAKE_API_CAPTURE_FILE",
-        expectedEnv: {},
-        redactionValues: [],
-        env: {},
-      });
+      await startFakeDiscordApi(host, cleanup);
     } catch (error) {
       failure = error;
     } finally {
@@ -426,16 +452,7 @@ describe("messaging provider installed-runtime proofs", () => {
     let failure: unknown;
 
     try {
-      await startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
-        kind: "discord-gateway",
-        imageScript: "fake-discord-gateway-api.cjs",
-        containerPrefix: "fake-discord-gateway",
-        portEnv: "FAKE_API_PORT",
-        captureFileEnv: "FAKE_API_CAPTURE_FILE",
-        expectedEnv: {},
-        redactionValues: [],
-        env: {},
-      });
+      await startFakeDiscordApi(host, cleanup);
     } catch (error) {
       failure = error;
     } finally {
@@ -473,16 +490,7 @@ describe("messaging provider installed-runtime proofs", () => {
     const cleanup: CleanupAction[] = [];
 
     try {
-      await startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
-        kind: "discord-gateway",
-        imageScript: "fake-discord-gateway-api.cjs",
-        containerPrefix: "fake-discord-gateway",
-        portEnv: "FAKE_API_PORT",
-        captureFileEnv: "FAKE_API_CAPTURE_FILE",
-        expectedEnv: {},
-        redactionValues: [],
-        env: {},
-      });
+      await startFakeDiscordApi(host, cleanup);
       setProxyRunning(false);
     } finally {
       await runCleanup(cleanup);

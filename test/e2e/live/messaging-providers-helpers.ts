@@ -165,7 +165,7 @@ function reachesUpstream() {
 })().catch(() => process.exit(4));
 `;
 
-// Keep each source chunk below half of OpenShell's 32,768-byte argument limit.
+// Keep each source chunk at or below half of OpenShell's 32,768-byte argument limit.
 const SANDBOX_SOURCE_CHUNK_BYTES = 16_384;
 const SANDBOX_SHELL_BOOTSTRAP = `set -eu; printf '%s' "$@" | base64 -d | sh`;
 
