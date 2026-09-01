@@ -167,6 +167,25 @@ Success requires a replacement gateway identity, healthy loopback endpoints on i
 There is no host listener, persistent control socket, MCP relay, or service for this operation.
 The command carries no MCP traffic or raw service credential, and its payload contains only the endpoint definition and OpenShell placeholder.
 </AgentOnly>
+<AgentOnly variant="openclaw">
+
+### Prepare OpenClaw for Mutation
+
+OpenClaw stores its managed MCP servers in the Mcporter config under the `workspace` state root, which lockdown re-owns to `root` and makes unwritable from inside the sandbox.
+When OpenClaw shields are up, run `nemoclaw <sandbox> shields down --timeout 15m --reason "MCP maintenance"` before `mcp add`, `mcp restart`, `mcp remove`, or destroy, then restore shields if the sandbox still exists.
+
+`--force` does not bypass the refusal for `mcp add`, `mcp restart`, or `mcp remove`: the posture is checked before any provider, policy, or adapter side effect, so ownership state is preserved for a retry once shields are down.
+
+`destroy --force` can continue only when every retained MCP adapter entry is an OpenClaw Mcporter entry.
+It reports the refusal, then continues to the workspace wipe and sandbox deletion.
+NemoClaw keeps the managed MCP policy and provider until OpenShell confirms deletion.
+If deletion fails, run `destroy --force` again, or lower Shields and rerun ordinary destroy.
+Do not onboard a same-name replacement.
+A successful workspace wipe removes the adapter entry.
+If the wipe does not complete successfully, use a different sandbox name to avoid the retained config.
+A destroy that was interrupted after its MCP phase already completed retries without this refusal, because that pass scrubs no adapter entry.
+
+</AgentOnly>
 <AgentOnly variant="deepagents">
 The managed image pins Deep Agents Code `0.1.55` and keeps NemoClaw definitions in `/sandbox/.deepagents/.nemoclaw-mcp.json`.
 The launcher validates canonical HTTPS endpoints and OpenShell credential placeholders, then supplies Deep Agents Code with a process-local, integrity-bound snapshot for server starts and restarts.

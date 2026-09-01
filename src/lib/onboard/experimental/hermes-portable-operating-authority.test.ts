@@ -186,6 +186,9 @@ describe("Hermes Portable schema-8 operation authority", () => {
 
     expect(authority.receipt).toBe(durable.receipt);
     expect(authority.assertCurrent).not.toThrow();
+    expect(authority.assertTransactionCurrent).toThrow(
+      "transaction currentness requires durable successor authority",
+    );
     expect(captureSocketAuthority).not.toHaveBeenCalled();
     expect(captureOpenShellExecutableAuthority).not.toHaveBeenCalled();
     expect(capturePodmanExecutableAuthority).not.toHaveBeenCalled();
@@ -331,6 +334,36 @@ describe("Hermes Portable schema-8 operation authority", () => {
     fs.renameSync(replacement, policyPath);
 
     expect(authority.assertCurrent).not.toThrow();
+  });
+
+  it("checks transaction identity without repeating executable behavior probes (#10423)", () => {
+    const openshell = {
+      version: "0.0.106" as const,
+      executable: executable("/usr/bin/openshell", "b".repeat(64)),
+    };
+    const podman = {
+      version: "5.7.0" as const,
+      executable: executable("/usr/bin/podman", "c".repeat(64)),
+    };
+    const captureOpenShellExecutableAuthority = vi.fn(() => openshell);
+    const capturePodmanExecutableAuthority = vi.fn(() => podman);
+    const assertOpenShellExecutableFileAuthority = vi.fn(() => "/usr/bin/openshell");
+    const capturePodmanExecutableFileAuthority = vi.fn(() => podman);
+    const authority = qualifyHermesPortableOperatingAuthority(snapshot(), {
+      env: environment(),
+      captureSocketAuthority: () => socket("99"),
+      captureOpenShellExecutableAuthority,
+      capturePodmanExecutableAuthority,
+      assertOpenShellExecutableFileAuthority,
+      capturePodmanExecutableFileAuthority,
+    });
+
+    authority.assertTransactionCurrent();
+
+    expect(captureOpenShellExecutableAuthority).toHaveBeenCalledOnce();
+    expect(capturePodmanExecutableAuthority).toHaveBeenCalledOnce();
+    expect(assertOpenShellExecutableFileAuthority).toHaveBeenCalledOnce();
+    expect(capturePodmanExecutableFileAuthority).toHaveBeenCalledOnce();
   });
 
   it.each(["openshell", "podman"] as const)(
