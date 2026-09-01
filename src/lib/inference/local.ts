@@ -39,6 +39,7 @@ import {
 import { detectNvidiaPlatform } from "./nim";
 import {
   anyRegistryModelFits,
+  DEFAULT_OLLAMA_MODEL_TAG,
   effectiveGpuMemoryMB,
   fittableOllamaModelTags,
   largestFittableOllamaModelTag,
@@ -112,7 +113,7 @@ function assertRegistryTag(tag: string): string {
 }
 
 export const SMALL_OLLAMA_MODEL = SMALLEST_OLLAMA_MODEL_TAG;
-export const DEFAULT_OLLAMA_MODEL = assertRegistryTag("nemotron-3-nano:30b");
+export const DEFAULT_OLLAMA_MODEL = assertRegistryTag(DEFAULT_OLLAMA_MODEL_TAG);
 export const QWEN3_6_OLLAMA_MODEL = assertRegistryTag("qwen3.6:35b");
 
 export type RunCaptureFn = (

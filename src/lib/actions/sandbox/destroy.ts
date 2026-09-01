@@ -6,13 +6,13 @@ import path from "node:path";
 
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
-import { isNonInteractiveEnv } from "../../core/non-interactive";
 import { prompt as askPrompt } from "../../credentials/store";
 import {
   type DestroySandboxOptions,
   normalizeDestroySandboxOptions,
 } from "../../domain/lifecycle/options";
 import {
+  isDestroyNonInteractiveEnv,
   resolveDestroyGatewayCleanupDecision,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
@@ -39,7 +39,6 @@ import { validateName } from "../../runner";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
-import type { RetainedSandboxRecoveryRecord } from "../../state/onboard-session/retained-sandbox-recovery";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import {
@@ -90,8 +89,8 @@ type RemoveSandboxRegistryEntryWithReceiptDeps = {
 function selectRetainedSandboxRecoveryAuthority(
   sandboxName: string,
   sandbox: registry.SandboxEntry | null,
-  records: readonly RetainedSandboxRecoveryRecord[],
-): RetainedSandboxRecoveryRecord | null {
+  records: readonly onboardSession.RetainedSandboxRecoveryRecord[],
+): onboardSession.RetainedSandboxRecoveryRecord | null {
   const candidates = records.filter(
     (record) => record.sandboxName === sandboxName && record.sandboxIdentityFingerprint !== null,
   );
@@ -116,7 +115,9 @@ function selectRetainedSandboxRecoveryAuthority(
     return observedMatches.length === 1 ? observedMatches[0]! : null;
   }
 
-  const matchesRegistryAuthority = (record: RetainedSandboxRecoveryRecord): boolean => {
+  const matchesRegistryAuthority = (
+    record: onboardSession.RetainedSandboxRecoveryRecord,
+  ): boolean => {
     const pending = sandbox.pendingCreateIdentity;
     if (pending) {
       return (
@@ -202,7 +203,7 @@ type RemoveShieldsStateDeps = {
 
 async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Promise<boolean> {
   const decision = resolveDestroyGatewayCleanupDecision(options, {
-    nonInteractive: isNonInteractiveEnv(),
+    nonInteractive: isDestroyNonInteractiveEnv(),
     platform: process.platform,
   });
   if (decision === "cleanup") return true;
@@ -987,7 +988,7 @@ async function destroySandboxUnlocked(
     if (sandbox?.provider?.includes("ollama")) {
       try {
         const remainingSandboxes = registry.listSandboxes().sandboxes;
-        const { clearPersistedOllamaHostIfUnused } = require("../../inference/ollama/proxy") as {
+        const { clearPersistedOllamaHostIfUnused } = require("../../inference/local") as {
           clearPersistedOllamaHostIfUnused(
             providers: readonly (string | null | undefined)[],
           ): boolean;

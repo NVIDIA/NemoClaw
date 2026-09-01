@@ -33,7 +33,6 @@ const { ollamaModelRefsMatch }: typeof import("./model-discovery") = require("./
 const {
   getBootstrapOllamaModelOptions,
   findReachableOllamaHost,
-  clearPersistedOllamaHostIfUnused,
   getOllamaModelOptions,
   getResolvedOllamaHost,
   loadPersistedOllamaHost,
@@ -1709,7 +1708,6 @@ function unloadOllamaModels(
 export {
   checkOllamaModelToolSupport,
   ensureOllamaAuthProxy,
-  clearPersistedOllamaHostIfUnused,
   getOllamaProxyToken,
   getOllamaPullTimeoutMs,
   isProxyHealthy,
