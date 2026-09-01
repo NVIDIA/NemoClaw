@@ -262,7 +262,43 @@ describe("Windows-host Ollama transport", () => {
       }),
     );
     expect(result).toEqual({ ok: true });
-    expect(capture).toHaveBeenCalled();
+    const endpoints = capture.mock.calls.map(([command]) =>
+      command.find((argument: string) => argument.startsWith("http://")),
+    );
+    expect(endpoints).toContain("http://host.docker.internal:11434/api/tags");
+    expect(endpoints).toContain("http://host.openshell.internal:11434/api/tags");
+  });
+
+  it("rejects Windows-host health when the container route is unreachable", () => {
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const capture = vi.fn((command: readonly string[]) =>
+      command.includes("http://host.docker.internal:11434/api/tags")
+        ? JSON.stringify({ models: [] })
+        : "",
+    );
+
+    const result = validateLocalProvider(
+      "ollama-local",
+      capture,
+      () => {},
+      () => ({
+        env: {},
+        isolatedCredentialConfig: false,
+        cleanup: () => ({ ok: true }),
+      }),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("container reachability check failed"),
+    });
+    const endpoints = capture.mock.calls.map(([command]) =>
+      command.find((argument: string) => argument.startsWith("http://")),
+    );
+    expect(endpoints).toContain("http://host.docker.internal:11434/api/tags");
+    expect(
+      endpoints.some((endpoint) => endpoint?.startsWith("http://host.openshell.internal:")),
+    ).toBe(true);
   });
 
   it("checks the Hermes context window through Docker Desktop (#10553)", () => {

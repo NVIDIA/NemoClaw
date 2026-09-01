@@ -283,21 +283,41 @@ export function getOllamaApiCommand(
     : ["curl", ...curlArgs];
 }
 
-function withIsolatedOllamaDockerClient<T>(
-  options: { env?: NodeJS.ProcessEnv } | undefined,
-  execute: (options: { env?: NodeJS.ProcessEnv } | undefined) => T,
-  prepareDockerEnvironment: PrepareDockerEnvironmentFn,
-  operation: string,
-): T {
-  const prepared = prepareDockerEnvironment();
-  try {
-    return execute({
-      ...options,
-      env: mergeIsolatedDockerClientEnv(options?.env ?? {}, prepared),
-    });
-  } finally {
-    warnIfDockerBuildEnvironmentCleanupFailed(prepared.cleanup(), operation);
+export type PreparedOllamaApiExecution = {
+  readonly command: string[];
+  readonly env?: NodeJS.ProcessEnv;
+  cleanup(): void;
+};
+
+/** Own command translation and Docker-client isolation for one Ollama API process. */
+export function prepareOllamaApiExecution(
+  command: readonly string[],
+  host: string = getResolvedOllamaHost(),
+  options: {
+    env?: NodeJS.ProcessEnv;
+    operation?: string;
+    prepareDockerEnvironment?: PrepareDockerEnvironmentFn;
+  } = {},
+): PreparedOllamaApiExecution {
+  const [executable, ...args] = command;
+  const translated = executable === "curl" ? getOllamaApiCommand(args, host) : [...command];
+  if (translated[0] !== "docker") {
+    return { command: translated, env: options.env, cleanup: () => {} };
   }
+  const prepared = (options.prepareDockerEnvironment ?? prepareIsolatedDockerEnvironment)();
+  let cleaned = false;
+  return {
+    command: translated,
+    env: mergeIsolatedDockerClientEnv(options.env ?? {}, prepared),
+    cleanup: () => {
+      if (cleaned) return;
+      cleaned = true;
+      warnIfDockerBuildEnvironmentCleanupFailed(
+        prepared.cleanup(),
+        options.operation ?? "Windows-host Ollama API request",
+      );
+    },
+  };
 }
 
 export function createOllamaApiCapture(
@@ -307,31 +327,39 @@ export function createOllamaApiCapture(
 ): RunCaptureFn {
   const capture = runCaptureImpl ?? runCapture;
   return (command, options) => {
-    const [executable, ...args] = command;
-    const translated = executable === "curl" ? getOllamaApiCommand(args, host) : command;
-    if (translated[0] !== "docker") return capture(translated, options);
-    return withIsolatedOllamaDockerClient(
-      options,
-      (isolatedOptions) => capture(translated, isolatedOptions),
+    const execution = prepareOllamaApiExecution(command, host, {
+      env: options?.env,
       prepareDockerEnvironment,
-      "Windows-host Ollama API request",
-    );
+    });
+    try {
+      return capture(execution.command, {
+        ...options,
+        ...(execution.env === undefined ? {} : { env: execution.env }),
+      });
+    } finally {
+      execution.cleanup();
+    }
   };
 }
 
-function createOllamaApiCaptureEx(
+export function createOllamaApiCaptureEx(
   runCaptureExImpl: RunCaptureExFn = runCaptureEx,
   host: string = getResolvedOllamaHost(),
   prepareDockerEnvironment: PrepareDockerEnvironmentFn = prepareIsolatedDockerEnvironment,
 ): RunCaptureExFn {
   return (command, options) => {
-    if (command[0] !== "docker") return runCaptureExImpl(command, options);
-    return withIsolatedOllamaDockerClient(
-      options,
-      (isolatedOptions) => runCaptureExImpl(command, isolatedOptions),
+    const execution = prepareOllamaApiExecution(command, host, {
+      env: options?.env,
       prepareDockerEnvironment,
-      "Windows-host Ollama API request",
-    );
+    });
+    try {
+      return runCaptureExImpl(execution.command, {
+        ...options,
+        ...(execution.env === undefined ? {} : { env: execution.env }),
+      });
+    } finally {
+      execution.cleanup();
+    }
   };
 }
 
@@ -1964,19 +1992,18 @@ export function runOllamaWarmup(
   const command = windowsHost
     ? getOllamaWarmupRequestCommand(model)
     : getOllamaWarmupCommand(model);
-  const execute = (options?: { ignoreError?: boolean; env?: NodeJS.ProcessEnv }) => {
-    runImpl(command, { ...options, ignoreError: true });
-  };
-  if (!windowsHost) {
-    execute();
-    return;
-  }
-  withIsolatedOllamaDockerClient(
-    undefined,
-    execute,
+  const execution = prepareOllamaApiExecution(command, getResolvedOllamaHost(), {
     prepareDockerEnvironment,
-    `Windows-host Ollama warm-up for '${model}'`,
-  );
+    operation: `Windows-host Ollama warm-up for '${model}'`,
+  });
+  try {
+    runImpl(execution.command, {
+      ignoreError: true,
+      ...(execution.env === undefined ? {} : { env: execution.env }),
+    });
+  } finally {
+    execution.cleanup();
+  }
 }
 
 export function getOllamaProbeCommand(

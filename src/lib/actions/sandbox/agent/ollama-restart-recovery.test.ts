@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
+import { prepareOllamaApiExecution } from "../../../inference/local";
 import {
   maybeWarmOllamaAfterDaemonRestart,
   type OllamaRestartRecoveryDeps,
@@ -46,8 +47,23 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
   });
 
   it("uses the persisted direct bridge route for both the default probe and warm-up", () => {
-    const runCaptureImpl = vi.fn((_command: readonly string[]) => JSON.stringify({ models: [] }));
-    const runCaptureExImpl = vi.fn((_command: string[]) => successfulWarmResult());
+    const cleanup = vi.fn(() => ({ ok: true as const }));
+    const prepareDockerEnvironment = () => ({
+      env: { DOCKER_CONFIG: "/tmp/credential-free-docker" },
+      isolatedCredentialConfig: true,
+      cleanup,
+    });
+    const runCaptureImpl = vi.fn(
+      (_command: readonly string[], options?: { env?: NodeJS.ProcessEnv }) =>
+        options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
+          ? JSON.stringify({ models: [] })
+          : "",
+    );
+    const runCaptureExImpl = vi.fn((_command: string[], options?: { env?: NodeJS.ProcessEnv }) =>
+      options?.env?.DOCKER_CONFIG === "/tmp/credential-free-docker"
+        ? successfulWarmResult()
+        : { stdout: "", exitCode: 1, timedOut: false },
+    );
 
     expect(
       maybeWarmOllamaAfterDaemonRestart(
@@ -56,7 +72,16 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
           model: "qwen3.6:35b",
           endpointUrl: `http://host.openshell.internal:${OLLAMA_PORT}/v1`,
         },
-        { runCaptureImpl, runCaptureExImpl },
+        {
+          runCaptureImpl,
+          runCaptureExImpl,
+          prepareDockerEnvironment,
+          prepareOllamaApiExecution: (command, host, options) =>
+            prepareOllamaApiExecution(command, host, {
+              ...options,
+              prepareDockerEnvironment,
+            }),
+        },
       ),
     ).toEqual({ kind: "warmed", ok: true, timedOut: false });
 
@@ -73,6 +98,11 @@ describe("maybeWarmOllamaAfterDaemonRestart", () => {
       stream: false,
       think: false,
     });
+    expect(runCaptureImpl.mock.calls[0][1]?.env?.DOCKER_CONFIG).toBe("/tmp/credential-free-docker");
+    expect(runCaptureExImpl.mock.calls[0][1]?.env?.DOCKER_CONFIG).toBe(
+      "/tmp/credential-free-docker",
+    );
+    expect(cleanup).toHaveBeenCalledTimes(2);
   });
 
   it("maps an auth-proxy route back to host loopback", () => {

@@ -24,6 +24,7 @@ import {
   ollamaInventoryContainsModel,
   OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_LOCALHOST,
+  prepareOllamaApiExecution,
   probeOllamaEndpointInventory,
   type RunCaptureFn,
   type RunCaptureExFn,
@@ -50,6 +51,8 @@ export interface OllamaRestartRecoveryDeps {
   runCaptureExImpl?: RunCaptureExFn;
   getOllamaHost?: () => string;
   runCaptureImpl?: RunCaptureFn;
+  prepareDockerEnvironment?: Parameters<typeof createOllamaApiCapture>[2];
+  prepareOllamaApiExecution?: typeof prepareOllamaApiExecution;
 }
 
 export type OllamaRestartRecoveryFailureReason =
@@ -218,7 +221,11 @@ export function maybeWarmOllamaAfterDaemonRestart(
   const rawHost = resolveRawOllamaHost(route.endpointUrl, getOllamaHost);
   const rawEndpoint = `http://${rawHost}:${OLLAMA_PORT}`;
   const probe = deps.probeRuntimeModelStatus ?? probeOllamaRuntimeModelStatus;
-  const rawCapture = createOllamaApiCapture(deps.runCaptureImpl, rawHost);
+  const rawCapture = createOllamaApiCapture(
+    deps.runCaptureImpl,
+    rawHost,
+    deps.prepareDockerEnvironment,
+  );
   let status: OllamaRuntimeModelStatus;
   try {
     status = probe(model, () => rawHost, rawCapture);
@@ -234,7 +241,19 @@ export function maybeWarmOllamaAfterDaemonRestart(
 
   const captureEx = deps.runCaptureExImpl ?? runCaptureEx;
   try {
-    const result = captureEx(buildWarmCommand(model, rawHost));
+    const execution = (deps.prepareOllamaApiExecution ?? prepareOllamaApiExecution)(
+      buildWarmCommand(model, rawHost),
+      rawHost,
+      { operation: `Ollama restart warm-up for '${model}'` },
+    );
+    let result;
+    try {
+      result = captureEx(execution.command, {
+        ...(execution.env === undefined ? {} : { env: execution.env }),
+      });
+    } finally {
+      execution.cleanup();
+    }
     if (result.timedOut) {
       return {
         kind: "warmed",
