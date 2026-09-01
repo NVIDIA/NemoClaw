@@ -617,6 +617,9 @@ describe("complete managed-image publication workflow", () => {
     );
     expect(activation.permissions).toEqual({ contents: "read" });
     expect(activation.env?.CANDIDATE_SHA).toBe("${{ github.event.pull_request.head.sha }}");
+    expect(activation.env?.NEMOCLAW_E2E_EXPECTED_SHA).toBe(
+      "${{ github.event.pull_request.head.sha }}",
+    );
     expect(activation.env?.NEMOCLAW_MANAGED_ACTIVATION_CATALOG).toBe(
       "${{ github.workspace }}/managed-pr-catalog.json",
     );
