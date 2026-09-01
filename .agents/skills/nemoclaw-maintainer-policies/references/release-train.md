@@ -103,7 +103,8 @@ Offer three choices:
 2. run the full suite; or
 3. proceed with the status shown.
 
-Use the owning E2E skill's result to record whether every requested run is resolved.
+Record every requested run. A run remains unresolved while queued or running, or when
+it ends without success. Resolve it only when a successful result covers the requested scope.
 
 Use `Exceptions: None` only when the maintainer accepts a successful full result for the candidate
 and no requested run remains unresolved. Otherwise, record one plain-language reason that names the
