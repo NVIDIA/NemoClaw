@@ -349,7 +349,9 @@ export function renderE2eReport(input: {
     selectedEntries.length > 0
       ? selectedEntries
       : selectiveDispatch
-        ? allEntries.filter(([, { result }]) => result !== "skipped")
+        ? allEntries.filter(
+            ([name, { result }]) => result !== "skipped" && name !== "generate-matrix",
+          )
         : allEntries;
   const rows = reportedEntries.map(([name, { jobUrl, result, wallClockRange }]) => {
     const label = result === "failure" ? `[${name}](${jobUrl ?? runUrl})` : name;
@@ -367,6 +369,12 @@ export function renderE2eReport(input: {
   const unknown = ran.filter(([, v]) => v.result === "unknown");
   const sharedJobAggregateFailed = sharedJobAggregateResult === "failure";
   const sharedJobAggregateCancelled = sharedJobAggregateResult === "cancelled";
+  const noResultsReported = reportedEntries.length === 0 && missingRequestedTestIds.length === 0;
+  if (noResultsReported) {
+    warnings.push(
+      "No E2E target reported a result. The check remains successful but provides no affirmative E2E qualification evidence.",
+    );
+  }
   const passingStatus =
     requestedTestIds.length > 0
       ? "✅ All requested tests passed"
@@ -382,9 +390,11 @@ export function renderE2eReport(input: {
           ? "⚠️ Some tests cancelled — partial pass"
           : unknown.length > 0
             ? "⚠️ Per-test results incomplete"
-            : skipped.length > 0 && passed.length === 0
-              ? "⚠️ No selected tests ran"
-              : passingStatus;
+            : noResultsReported
+              ? "⚠️ No E2E results reported"
+              : skipped.length > 0 && passed.length === 0
+                ? "⚠️ No selected tests ran"
+                : passingStatus;
 
   const lines = [
     `### E2E Target Results — ${status}`,

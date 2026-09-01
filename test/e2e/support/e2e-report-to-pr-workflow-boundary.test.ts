@@ -183,6 +183,7 @@ async function executeReport(options: {
   apiJobs?: ReportApiJob[];
   testMatrix?: CredentialFreeTestMatrixRow[];
   jobs?: string;
+  targets?: string;
   needs?: ReportNeeds;
   paginateError?: Error;
 }): Promise<{
@@ -194,6 +195,7 @@ async function executeReport(options: {
     apiJobs = [],
     testMatrix = DEFAULT_TEST_MATRIX,
     jobs = testMatrix.map(({ id }) => id).join(","),
+    targets = "",
     needs = {
       "generate-matrix": { result: "success" },
       "shared-e2e": { result: "failure" },
@@ -213,7 +215,7 @@ async function executeReport(options: {
     EXPLICIT_ONLY_JOBS: "",
     TEST_MATRIX: JSON.stringify(testMatrix),
     JOB_PR_NUMBER: "42",
-    JOB_TARGETS: "",
+    JOB_TARGETS: targets,
     JOBS: jobs,
   };
 
@@ -608,26 +610,24 @@ it("reports cancelled tests alongside passing tests as a partial pass", () => {
   expect(report.body).toContain("⚠️ Some tests cancelled — partial pass");
 });
 
-it("reports empty selectors without claiming an E2E was omitted", () => {
-  const report = renderE2eReport({
+it("warns when empty selectors produce no E2E results", async () => {
+  const { body, setFailed, warning } = await executeReport({
+    testMatrix: [],
+    jobs: "",
+    targets: "mcp-bridge-dev",
     needs: {
       "generate-matrix": { result: "success" },
     },
-    env: {
-      EXPLICIT_ONLY_JOBS: "mcp-bridge-dev",
-      TEST_MATRIX: "[]",
-      JOB_PR_NUMBER: "42",
-      JOB_TARGETS: "",
-      JOBS: "",
-    },
-    apiJobs: [],
-    apiJobsLoaded: true,
-    context: REPORT_CONTEXT,
   });
 
-  expect(report.body).not.toContain("jobs skipped");
-  expect(report.body).toContain("✅ All tests selected by empty selectors passed");
-  expect(report.body).toContain("**Requested targets:** _(no target selector)_");
+  expect(setFailed).not.toHaveBeenCalled();
+  expect(warning).toHaveBeenCalledWith(
+    "No E2E target reported a result. The check remains successful but provides no affirmative E2E qualification evidence.",
+  );
+  expect(body).not.toContain("jobs skipped");
+  expect(body).not.toContain("All tests selected by empty selectors passed");
+  expect(body).toContain("⚠️ No E2E results reported");
+  expect(body).toContain("**Requested targets:** `mcp-bridge-dev`");
 });
 
 it("reports matrix children by test ID without fabricating a missing child result", async () => {
