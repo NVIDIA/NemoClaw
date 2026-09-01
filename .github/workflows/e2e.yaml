@@ -495,7 +495,7 @@ jobs:
 
       - name: Upload trusted E2E dispatch receipt
         if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/nemoclaw-e2e-dispatch/dispatch.json
@@ -1245,7 +1245,7 @@ jobs:
 
       - name: Upload the pinned native Podman toolchain
         if: success()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: native-runtime-podman-toolchain-${{ matrix.architecture }}
           path: ${{ runner.temp }}/native-runtime-podman-toolchain/
@@ -2471,7 +2471,7 @@ jobs:
 
       - name: Upload the qualification case evidence
         if: success()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: ${{ matrix.artifactName }}
           path: ${{ runner.temp }}/native-runtime-evidence/
@@ -2612,7 +2612,7 @@ jobs:
 
       - name: Upload retired selector compatibility evidence
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-retired-selector-compatibility
           path: e2e-artifacts/live/retired-selector-compatibility/
@@ -2673,7 +2673,7 @@ jobs:
 
       - name: Upload Launchable evidence
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -2760,7 +2760,7 @@ jobs:
 
       - name: Upload Launchable identity evidence
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: staging-brev-launchable-identity-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -2984,7 +2984,7 @@ jobs:
 
       - name: Upload E2E artifacts
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-${{ matrix.id }}
           path: |
@@ -3059,7 +3059,7 @@ jobs:
 
       - name: Upload test artifacts
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
 
   catalogue-standard:
     name: ${{ matrix.display_name }}
@@ -3344,7 +3344,7 @@ jobs:
 
       - name: Upload OpenShell gateway auth contract artifacts
         if: ${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-openshell-gateway-auth-contract
           path: ${{ steps.artifact_safety.outputs.approved_path }}
@@ -3414,7 +3414,7 @@ jobs:
 
       - name: Upload external gateway health artifacts
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-external-gateway-health
           path: e2e-artifacts/live/external-gateway-health/
@@ -3757,7 +3757,7 @@ jobs:
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-mcp-bridge-${{ matrix.agent }}
           path: e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/
@@ -3881,7 +3881,7 @@ jobs:
 
       - name: Upload credential-window artifacts
         if: ${{ always() && steps.credential_window_artifact_secret_scan.outcome == 'success' }}
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-openshell-credential-generation-window
           path: e2e-artifacts/live/openshell-credential-generation-window/
@@ -3926,7 +3926,7 @@ jobs:
 
       - name: Upload OpenShell dev artifact resolution
         if: ${{ always() }}
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: ${{ steps.resolve_openshell_dev_artifact.outputs.artifact_name || format('openshell-dev-infrastructure-failure-{0}-{1}', github.run_id, github.run_attempt) }}
           path: ${{ runner.temp }}/openshell-dev-artifact/
@@ -4126,7 +4126,7 @@ jobs:
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-mcp-bridge-dev-${{ matrix.agent }}
           path: e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/
@@ -4528,7 +4528,7 @@ jobs:
 
       - name: Upload protected managed-image evidence
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-managed-image-multiarch-startup-${{ matrix.shard }}
           path: e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}/
@@ -4786,7 +4786,7 @@ jobs:
 
       - name: Upload protected llama.cpp evidence
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-llama-cpp-dgx-spark-qualification
           path: e2e-artifacts/live/llama-cpp-dgx-spark-qualification/
@@ -5108,7 +5108,7 @@ jobs:
 
       - name: Upload protected managed-image runtime artifacts
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-managed-image-protected-runtime
           path: e2e-artifacts/live/managed-image-protected-runtime/
@@ -5204,7 +5204,7 @@ jobs:
 
       - name: Upload Hermes live Vitest artifacts
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
 
       - name: Clean up Docker auth
         if: always()
@@ -5486,7 +5486,7 @@ jobs:
 
       - name: Upload Hermes GPU startup artifacts
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-hermes-gpu-startup-${{ matrix.scenario }}
           path: e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/
@@ -5530,7 +5530,7 @@ jobs:
 
       - name: Upload Jetson nvmap GPU artifacts
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-jetson-nvmap-gpu
           path: ${{ runner.temp }}/e2e-artifacts/live/jetson-nvmap-gpu/
@@ -5659,7 +5659,7 @@ jobs:
 
       - name: Upload cloud-onboard artifacts
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
 
       - name: Clean up Docker auth
         if: always()
@@ -5729,7 +5729,7 @@ jobs:
 
       - name: Upload messaging providers artifacts
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
 
       - name: Clean up Docker auth
         if: always()
@@ -5800,7 +5800,7 @@ jobs:
 
       - name: Upload OpenClaw plugin release baseline artifacts
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
 
       - name: Clean up Docker auth
         if: always()
@@ -5876,7 +5876,7 @@ jobs:
 
       - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts
         if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
 
       - name: Clean up Docker auth
         if: always()
@@ -6230,7 +6230,7 @@ jobs:
             }
       - name: Upload E2E runtime summary
         if: ${{ always() && github.event_name == 'push' }}
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989
         with:
           name: e2e-runtime-summary
           path: ${{ runner.temp }}/e2e-runtime-summary.json

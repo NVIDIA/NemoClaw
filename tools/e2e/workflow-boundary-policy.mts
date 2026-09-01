@@ -14,8 +14,8 @@ export const E2E_ACTION_PROVENANCE = {
   },
   uploadArtifacts: {
     reference:
-      "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57",
-    contentSha256: "8f6f71a0e6d71d85418fa88c2b26a4d601f568bdcaae20aca4085ae423c5044b",
+      "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989",
+    contentSha256: "ca35f05d5d5f1a59bffcab238896e11091aa9505d702a5d8c7f83f8dfe7eeaec",
   },
   dockerAuth: {
     reference:

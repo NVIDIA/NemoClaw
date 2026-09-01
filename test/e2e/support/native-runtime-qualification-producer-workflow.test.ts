@@ -207,7 +207,7 @@ describe("native runtime qualification producer workflow", () => {
     });
     expect(upload.if).toBe("success()");
     expect(upload.uses).toBe(
-      "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57",
+      "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@a9886c7809a222fd413fabf59ccadc0950da3989",
     );
   });
 

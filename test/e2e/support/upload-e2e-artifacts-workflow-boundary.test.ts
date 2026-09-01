@@ -88,6 +88,15 @@ describe("E2E artifact uploads", () => {
     ]);
   });
 
+  it("warns when an E2E artifact path contains no files", () => {
+    const policyErrors = validateActionMutation((action) => {
+      action.runs.steps[0].with!["if-no-files-found"] = "ignore";
+    });
+    expect(policyErrors).toContain(
+      "upload-e2e-artifacts must preserve artifact defaults, hidden-file policy, missing-file behavior, and retention",
+    );
+  });
+
   it("retains E2E artifacts for 14 days", () => {
     const policyErrors = validateActionMutation((action) => {
       action.runs.steps[0].with!["retention-days"] = 7;
