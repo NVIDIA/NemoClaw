@@ -239,6 +239,26 @@ describe("CLI OpenShell provider adapter", () => {
     expect(JSON.stringify(result)).not.toContain(password);
   });
 
+  it("removes terminal control strings from typed failures (#9806)", async () => {
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () =>
+        captured(
+          1,
+          "",
+          "provider rejected \u001b]52;c;osc-payload\u0007\u001bP+dcs-payload\u001b\\request",
+        ),
+    });
+
+    const result = await adapter.listProviders({ target: selectedOpenShellGateway() });
+
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: "command", reason: "failed", message: "provider rejected request" },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/[\u001B\u0090-\u009F]/u);
+    expect(JSON.stringify(result)).not.toContain("payload");
+  });
+
   it("does not expose an imported credential value in a provider failure (#9806)", async () => {
     const storedCredentialValue = "arbitrary-stored-value";
     const adapter = createCliOpenShellProviderAdapter({

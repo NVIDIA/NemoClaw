@@ -139,9 +139,21 @@ export function formatResetOutcome(
 ): { ok: boolean; lines: string[] } {
   const onboardHint = `  Re-run '${CLI_NAME} onboard' to enter a new value.`;
   if (recovery.ok) {
+    const detachedSandboxes = [...new Set(recovery.detachedSandboxes)];
     return {
       ok: true,
-      lines: [`  Removed provider '${key}' from the OpenShell gateway.`, onboardHint],
+      lines: [
+        `  Removed provider '${key}' from the OpenShell gateway.`,
+        onboardHint,
+        ...(detachedSandboxes.length === 0
+          ? []
+          : [
+              "",
+              `  Provider '${key}' was detached from sandbox(es): ${detachedSandboxes.join(", ")} during removal.`,
+              "  After registering the replacement provider, rebuild each detached sandbox:",
+              ...detachedSandboxes.map((sandbox) => `    ${CLI_NAME} ${sandbox} rebuild`),
+            ]),
+      ],
     };
   }
 

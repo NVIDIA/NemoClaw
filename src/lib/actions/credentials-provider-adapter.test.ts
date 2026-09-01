@@ -220,6 +220,37 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(JSON.stringify(result)).not.toContain(output);
   });
 
+  it("does not render terminal control strings from provider failures (#9806)", async () => {
+    vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
+    const adapter = createCliOpenShellProviderAdapter({
+      run: () => ({
+        status: 1,
+        stderr: "provider rejected \u001b]52;c;osc-payload\u0007\u001bP+dcs-payload\u001b\\request",
+      }),
+    });
+
+    const results = [
+      await runCredentialsAddAction(
+        {
+          provider: "custom-provider",
+          type: "generic",
+          credentials: ["CUSTOM_TOKEN"],
+          configPairs: [],
+          fromExisting: false,
+        },
+        { providerAdapter: adapter },
+      ),
+      await runCredentialsListAction("nemoclaw", { providerAdapter: adapter }),
+      await runCredentialsResetAction(
+        { provider: "custom-provider", confirmed: true },
+        { providerAdapter: adapter },
+      ),
+    ];
+
+    expect(JSON.stringify(results)).not.toMatch(/[\u001B\u0090-\u009F]/u);
+    expect(JSON.stringify(results)).not.toContain("payload");
+  });
+
   it.each([
     [
       "authentication",
@@ -334,6 +365,10 @@ describe("credential actions use typed OpenShell provider results", () => {
       sandboxName: "alpha",
       timeoutMs: 30_000,
     });
+    expect(result.outputLines).toContain(
+      "  Provider 'custom-provider' was detached from sandbox(es): alpha during removal.",
+    );
+    expect(result.outputLines).toContain("    nemoclaw alpha rebuild");
   });
 
   it("reports recovery for sandboxes detached before final deletion fails (#9806)", async () => {

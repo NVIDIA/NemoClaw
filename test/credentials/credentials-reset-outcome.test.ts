@@ -25,6 +25,21 @@ describe("formatResetOutcome (#5560)", () => {
     expect(outcome.ok).toBe(true);
     expect(outcome.lines[0]).toContain("Removed provider 'my-assistant-brave-search'");
     expect(outcome.lines.join("\n")).toContain("onboard");
+    expect(outcome.lines.join("\n")).not.toContain("rebuild");
+  });
+
+  it("reports every sandbox detached during a successful removal", () => {
+    const outcome = formatResetOutcome(
+      "my-assistant-brave-search",
+      result({ ok: true, detachedSandboxes: ["alpha", "beta", "alpha"] }),
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.lines).toContain(
+      "  Provider 'my-assistant-brave-search' was detached from sandbox(es): alpha, beta during removal.",
+    );
+    expect(outcome.lines).toContain("    nemoclaw alpha rebuild");
+    expect(outcome.lines).toContain("    nemoclaw beta rebuild");
   });
 
   it("surfaces the still-attached sandboxes with a detach hint when recovery fails", () => {

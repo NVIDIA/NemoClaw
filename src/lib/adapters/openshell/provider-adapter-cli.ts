@@ -52,7 +52,10 @@ export type CliOpenShellProviderAdapterDeps = Readonly<{
 }>;
 
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/u;
-const ANSI_RE = /\x1b\[[0-9;]*m/gu;
+const TERMINAL_OSC_RE = /(?:\x1B\]|\x9D)[\s\S]*?(?:\x07|\x1B\\|\x9C|$)/gu;
+const TERMINAL_STRING_RE = /(?:\x1B[PX^_]|[\x90\x98\x9E\x9F])[\s\S]*?(?:\x1B\\|\x9C|$)/gu;
+const TERMINAL_CSI_RE = /(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~]/gu;
+const TERMINAL_CONTROL_RE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/gu;
 const ATTACHED_TO_SANDBOX_RE =
   /attached\s+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+?)(?=\.\s+[a-z]|["\n]|$)/iu;
 const TOLERATED_DETACH_OUTPUT_RE =
@@ -77,7 +80,10 @@ function bufferOrStringToText(value: string | Buffer | null | undefined): string
 
 function commandOutput(result: CapturedProviderCommandResult): string {
   return `${bufferOrStringToText(result.stderr)}\n${bufferOrStringToText(result.stdout)}`
-    .replace(ANSI_RE, "")
+    .replace(TERMINAL_OSC_RE, "")
+    .replace(TERMINAL_STRING_RE, "")
+    .replace(TERMINAL_CSI_RE, "")
+    .replace(TERMINAL_CONTROL_RE, "")
     .trim();
 }
 
