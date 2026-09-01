@@ -726,14 +726,13 @@ describe("legacy Hermes shields compatibility", () => {
     let harness: ReturnType<typeof createHermesShieldsProviderConsumerHarness>;
     let spies: MockInstance[];
     let transitionSpy: MockInstance;
+    let verifyStateDirMutablePostureSpy: MockInstance;
     let runSpy: MockInstance;
     let supportSpy: MockInstance;
     let lifecycleGateSpy: MockInstance;
     let dockerExecSpy: MockInstance;
     let registrySpy: MockInstance;
     let verifyLockSpy: MockInstance;
-    let preflightStateDirLockSpy: MockInstance;
-    let verifyLockedStateDirPostureSpy: MockInstance;
     let routeSpy: MockInstance;
     let auditSpy: MockInstance;
     let runCaptureSpy: MockInstance;
@@ -758,8 +757,7 @@ describe("legacy Hermes shields compatibility", () => {
         supportSpy,
         transitionSpy,
         verifyLockSpy,
-        preflightStateDirLockSpy,
-        verifyLockedStateDirPostureSpy,
+        verifyStateDirMutablePostureSpy,
       } = harness);
     });
 
@@ -840,139 +838,147 @@ describe("legacy Hermes shields compatibility", () => {
       });
     });
 
-    it.each([
-      "provider:mutable/locked",
-      "verified-mutable",
-      "policy",
-      "provider:locked/locked",
-      "route",
-      "audit",
-    ])(
-      "completes a timed retained unlock once and leaves its retry side effects idempotent [%s]",
-      (event) => {
-        const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
-        const stateDir = statePaths.resolveNemoclawStateDir();
-        const processToken = "d".repeat(32);
-        const snapshotPath = path.join(stateDir, "shields-policy-before-provider-crash.yaml");
-        const timerPath = path.join(stateDir, `shields-timer-${sandbox.name}.json`);
-        const transitionPath = path.join(
-          stateDir,
-          `shields-transition-${sandbox.name}-${processToken}.json`,
-        );
-        fs.mkdirSync(path.join(stateDir, "runtime-provider-lifecycle"), {
-          recursive: true,
-          mode: 0o700,
-        });
-        const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
-        const forwardPolicy = writeBoundForwardPolicy(stateDir, sandbox.name, processToken);
-        fs.writeFileSync(
-          path.join(stateDir, `shields-${sandbox.name}.json`),
-          JSON.stringify({
-            shieldsDown: true,
-            shieldsDownAt: "2026-08-09T00:00:00.000Z",
-            shieldsDownTimeout: 300,
-            shieldsDownReason: "crash retry",
-            shieldsDownPolicy: "permissive",
-            shieldsPolicySnapshotPath: snapshotPath, shieldsPolicySnapshot: snapshotPolicy,
-          }),
-        );
-        fs.writeFileSync(
-          timerPath,
-          JSON.stringify({
-            pid: 4242,
-            sandboxName: sandbox.name,
-            snapshotPath,
-            restoreAt: new Date(Date.now() + 60_000).toISOString(),
-            processToken,
-            timerProcessStartIdentity: "live-timer-start",
-            allowLegacyHermesProtocol: false,
-            agentName: "hermes",
-            configPath: target.configPath,
-            configDir: target.configDir,
-          }),
-        );
-        writeTimerAuthorizationProof(requireSource, sandbox.name);
-        fs.writeFileSync(
-          transitionPath,
-          JSON.stringify({
-            version: 1,
-            phase: "preparing",
-            ownerPid: 4242,
-            ownerStartIdentity: "dead-provider-owner",
-            processToken,
-            sandboxName: sandbox.name,
-            snapshotPath, snapshotPolicy,
-            forwardPolicy,
-          }),
-        );
-        const events: string[] = [];
-        const simulation = createRetainedUnlockSimulation(events, commands);
-        runSpy.mockImplementation(simulation.run);
-        lifecycleGateSpy.mockImplementation(simulation.hasActiveClaim);
-        transitionSpy.mockImplementation(simulation.transition);
-        dockerExecSpy.mockImplementation(simulation.dockerExec);
-        routeSpy.mockImplementation(() => {
-          expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("preparing");
-          events.push("route");
-          return { ok: true, attempts: 1, httpStatus: 200 };
-        });
-        auditSpy.mockImplementation(() => {
-          expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("active");
-          events.push("audit");
-        });
-
-        shields.shieldsDown(sandbox.name, { timeout: "not-a-duration", throwOnError: true });
-
-        expect(
-          transitionSpy.mock.calls.map(([input]) => ({
-            target: (input as { target: string }).target,
-            rollback: (input as { rollback: string }).rollback,
-          })),
-        ).toEqual([
-          { target: "locked", rollback: "locked" },
-          { target: "mutable", rollback: "mutable" },
-          { target: "mutable", rollback: "locked" },
-        ]);
-        expect(simulation.livePosture()).toBe("mutable");
-        expect(simulation.activeClaim()).toBe(false);
+    it("completes a timed retained unlock once and leaves its retry side effects idempotent (#9485)", () => {
+      const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
+      const stateDir = statePaths.resolveNemoclawStateDir();
+      const processToken = "d".repeat(32);
+      const snapshotPath = path.join(stateDir, "shields-policy-before-provider-crash.yaml");
+      const timerPath = path.join(stateDir, `shields-timer-${sandbox.name}.json`);
+      const transitionPath = path.join(
+        stateDir,
+        `shields-transition-${sandbox.name}-${processToken}.json`,
+      );
+      fs.mkdirSync(path.join(stateDir, "runtime-provider-lifecycle"), {
+        recursive: true,
+        mode: 0o700,
+      });
+      const snapshotPolicy = writeBoundPolicySnapshot(snapshotPath);
+      const forwardPolicy = writeBoundForwardPolicy(stateDir, sandbox.name, processToken);
+      fs.writeFileSync(
+        path.join(stateDir, `shields-${sandbox.name}.json`),
+        JSON.stringify({
+          shieldsDown: true,
+          shieldsDownAt: "2026-08-09T00:00:00.000Z",
+          shieldsDownTimeout: 300,
+          shieldsDownReason: "crash retry",
+          shieldsDownPolicy: "permissive",
+          shieldsPolicySnapshotPath: snapshotPath,
+          shieldsPolicySnapshot: snapshotPolicy,
+        }),
+      );
+      fs.writeFileSync(
+        timerPath,
+        JSON.stringify({
+          pid: 4242,
+          sandboxName: sandbox.name,
+          snapshotPath,
+          restoreAt: new Date(Date.now() + 60_000).toISOString(),
+          processToken,
+          timerProcessStartIdentity: "live-timer-start",
+          allowLegacyHermesProtocol: false,
+          agentName: "hermes",
+          configPath: target.configPath,
+          configDir: target.configDir,
+        }),
+      );
+      writeTimerAuthorizationProof(requireSource, sandbox.name);
+      fs.writeFileSync(
+        transitionPath,
+        JSON.stringify({
+          version: 1,
+          phase: "preparing",
+          ownerPid: 4242,
+          ownerStartIdentity: "dead-provider-owner",
+          processToken,
+          sandboxName: sandbox.name,
+          snapshotPath,
+          snapshotPolicy,
+          forwardPolicy,
+        }),
+      );
+      const events: string[] = [];
+      const simulation = createRetainedUnlockSimulation(events, commands);
+      verifyStateDirMutablePostureSpy.mockImplementation(() => {
+        const mutable = simulation.livePosture() === "mutable";
+        mutable && events.push("verified-mutable");
+        return mutable
+          ? []
+          : ["state-dir guard verify-mutable [verification-owner-mismatch] retained lock"];
+      });
+      runSpy.mockImplementation(simulation.run);
+      lifecycleGateSpy.mockImplementation(simulation.hasActiveClaim);
+      transitionSpy.mockImplementation(simulation.transition);
+      dockerExecSpy.mockImplementation(simulation.dockerExec);
+      routeSpy.mockImplementation(() => {
+        expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("preparing");
+        events.push("route");
+        return { ok: true, attempts: 1, httpStatus: 200 };
+      });
+      auditSpy.mockImplementation(() => {
         expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("active");
-        expect(
-          JSON.parse(fs.readFileSync(path.join(stateDir, `shields-${sandbox.name}.json`), "utf-8")),
-        ).toMatchObject({ shieldsDown: true, shieldsPolicySnapshotPath: snapshotPath });
+        events.push("audit");
+      });
 
-        expect(events).toContain(event);
+      shields.shieldsDown(sandbox.name, { timeout: "not-a-duration", throwOnError: true });
 
-        expect(events.indexOf("provider:mutable/locked")).toBeLessThan(
-          events.indexOf("verified-mutable"),
-        );
-        expect(events.indexOf("policy")).toBeLessThan(events.indexOf("provider:locked/locked"));
-        expect(events.indexOf("verified-mutable")).toBeLessThan(events.indexOf("route"));
-        expect(events.indexOf("route")).toBeLessThan(events.indexOf("audit"));
-        expect(routeSpy).toHaveBeenCalledTimes(1);
-        expect(auditSpy).toHaveBeenCalledWith({
-          action: "shields_down",
-          sandbox: sandbox.name,
-          timestamp: "2026-08-09T00:00:00.000Z",
-          timeout_seconds: 300,
-          reason: "crash retry",
-          policy_applied: "permissive",
-          policy_snapshot: snapshotPath,
-        });
-        expect(auditSpy).toHaveBeenCalledTimes(1);
-        expect(transitionSpy.mock.invocationCallOrder[0]).toBeLessThan(
-          dockerExecSpy.mock.invocationCallOrder[0] as number,
-        );
-        expect(commands.some((command) => command.includes(CAPABILITY_PATH))).toBe(false);
-        expect(commands.some((command) => command.includes("--help"))).toBe(false);
+      expect(
+        transitionSpy.mock.calls.map(([input]) => ({
+          target: (input as { target: string }).target,
+          rollback: (input as { rollback: string }).rollback,
+        })),
+      ).toEqual([
+        { target: "locked", rollback: "locked" },
+        { target: "mutable", rollback: "mutable" },
+        { target: "mutable", rollback: "locked" },
+      ]);
+      expect(simulation.livePosture()).toBe("mutable");
+      expect(simulation.activeClaim()).toBe(false);
+      expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("active");
+      expect(
+        JSON.parse(fs.readFileSync(path.join(stateDir, `shields-${sandbox.name}.json`), "utf-8")),
+      ).toMatchObject({ shieldsDown: true, shieldsPolicySnapshotPath: snapshotPath });
 
-        expect(() => shields.shieldsDown(sandbox.name, { throwOnError: true })).toThrow(
-          /already unlocked/u,
-        );
-        expect(routeSpy).toHaveBeenCalledTimes(1);
-        expect(auditSpy).toHaveBeenCalledTimes(1);
-        expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("active");
-      },
-    );
+      expect(events).toEqual(
+        expect.arrayContaining([
+          "provider:mutable/locked",
+          "verified-mutable",
+          "policy",
+          "provider:locked/locked",
+          "route",
+          "audit",
+        ]),
+      );
+
+      expect(events.indexOf("provider:mutable/locked")).toBeLessThan(
+        events.indexOf("verified-mutable"),
+      );
+      expect(events.indexOf("policy")).toBeLessThan(events.indexOf("provider:locked/locked"));
+      expect(events.indexOf("verified-mutable")).toBeLessThan(events.indexOf("route"));
+      expect(events.indexOf("route")).toBeLessThan(events.indexOf("audit"));
+      expect(routeSpy).toHaveBeenCalledTimes(1);
+      expect(auditSpy).toHaveBeenCalledWith({
+        action: "shields_down",
+        sandbox: sandbox.name,
+        timestamp: "2026-08-09T00:00:00.000Z",
+        timeout_seconds: 300,
+        reason: "crash retry",
+        policy_applied: "permissive",
+        policy_snapshot: snapshotPath,
+      });
+      expect(auditSpy).toHaveBeenCalledTimes(1);
+      expect(transitionSpy.mock.invocationCallOrder[0]).toBeLessThan(
+        verifyStateDirMutablePostureSpy.mock.invocationCallOrder[0] as number,
+      );
+      expect(commands.some((command) => command.includes(CAPABILITY_PATH))).toBe(false);
+      expect(commands.some((command) => command.includes("--help"))).toBe(false);
+
+      expect(() => shields.shieldsDown(sandbox.name, { throwOnError: true })).toThrow(
+        /already unlocked/u,
+      );
+      expect(routeSpy).toHaveBeenCalledTimes(1);
+      expect(auditSpy).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(fs.readFileSync(transitionPath, "utf-8")).phase).toBe("active");
+    });
 
     it("completes timed DOWN bookkeeping after provider release removed the durable claim", () => {
       const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
@@ -994,7 +1000,8 @@ describe("legacy Hermes shields compatibility", () => {
           shieldsDownTimeout: 300,
           shieldsDownReason: "post-release crash",
           shieldsDownPolicy: "permissive",
-          shieldsPolicySnapshotPath: snapshotPath, shieldsPolicySnapshot: snapshotPolicy,
+          shieldsPolicySnapshotPath: snapshotPath,
+          shieldsPolicySnapshot: snapshotPolicy,
         }),
       );
       fs.writeFileSync(
@@ -1022,7 +1029,8 @@ describe("legacy Hermes shields compatibility", () => {
           ownerStartIdentity: "dead-post-release-owner",
           processToken,
           sandboxName: sandbox.name,
-          snapshotPath, snapshotPolicy,
+          snapshotPath,
+          snapshotPolicy,
           forwardPolicy,
         }),
       );
@@ -1078,7 +1086,8 @@ describe("legacy Hermes shields compatibility", () => {
             shieldsDownTimeout: 300,
             shieldsDownReason: "invalid forward policy",
             shieldsDownPolicy: "permissive",
-            shieldsPolicySnapshotPath: snapshotPath, shieldsPolicySnapshot: snapshotPolicy,
+            shieldsPolicySnapshotPath: snapshotPath,
+            shieldsPolicySnapshot: snapshotPolicy,
           }),
         );
         const timerPath = path.join(stateDir, `shields-timer-${sandbox.name}.json`);
@@ -1107,7 +1116,8 @@ describe("legacy Hermes shields compatibility", () => {
             ownerStartIdentity: "dead-forward-owner",
             processToken,
             sandboxName: sandbox.name,
-            snapshotPath, snapshotPolicy,
+            snapshotPath,
+            snapshotPolicy,
             forwardPolicy,
           }),
         );
@@ -1171,21 +1181,10 @@ describe("legacy Hermes shields compatibility", () => {
       expect(commands.some((command) => command.includes("--help"))).toBe(false);
     });
 
-    it("does not report clean UP when provider verification finds nested skills or pairing drift", () => {
-      const statePaths = requireSource("../state/paths.js") as typeof import("../state/paths");
-      const stateDir = statePaths.resolveNemoclawStateDir();
-      fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-      fs.writeFileSync(
-        path.join(stateDir, `shields-${sandbox.name}.json`),
-        JSON.stringify({
-          shieldsDown: false,
-          chattrApplied: true,
-          fileHashes: { [target.configPath]: "c".repeat(64) },
-          updatedAt: new Date().toISOString(),
-        }),
-      );
-      verifyLockedStateDirPostureSpy.mockReturnValue([
-        "recursive state lock plan drift under skills/pairing",
+    it("does not report clean mutable-default when recursive skills or pairing posture drifts (#9485)", () => {
+      lifecycleGateSpy.mockReturnValue(false);
+      verifyStateDirMutablePostureSpy.mockReturnValue([
+        "state-dir guard verify-mutable [verification-mode-mismatch] /sandbox/.hermes/skills/pairing/state.json: file mode is 0400, expected 0660",
       ]);
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
         throw new Error(`process exit ${String(code)}`);
@@ -1196,64 +1195,20 @@ describe("legacy Hermes shields compatibility", () => {
 
       const errors = vi.mocked(console.error).mock.calls.flat().map(String).join("\n");
       const logs = vi.mocked(console.log).mock.calls.flat().map(String).join("\n");
-      expect(errors).toContain("recursive state lock plan drift under skills/pairing");
-      expect(errors).toContain("UP (DRIFTED");
-      expect(logs).not.toContain("UP (lockdown active)");
-      expect(transitionSpy).not.toHaveBeenCalled();
-      expect(verifyLockedStateDirPostureSpy).toHaveBeenCalledWith(
-        expect.anything(),
-        target.configDir,
-        expect.objectContaining({
-          readOnlyRoots: expect.arrayContaining(["skills"]),
-          confidentialRoots: expect.arrayContaining(["pairing"]),
-        }),
-      );
-
-      transitionSpy.mockClear();
-      transitionSpy.mockImplementation(
-        createTransitionFailureForPosture(
-          "locked",
-          "recursive state lock plan drift under skills/pairing",
-        ),
-      );
-      vi.mocked(console.log).mockClear();
-      expect(() => shields.shieldsUp(sandbox.name, { throwOnError: true })).toThrow(
-        "recursive state lock plan drift under skills/pairing",
-      );
-      expect(vi.mocked(console.log).mock.calls.flat().map(String).join("\n")).not.toContain(
-        "already locked",
-      );
-      expect(transitionSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ target: "locked", rollback: "locked" }),
-      );
-
-      transitionSpy.mockClear();
-      expect(() => shields.lockAgentConfig(sandbox.name, target, true, false)).toThrow(
-        "recursive state lock plan drift under skills/pairing",
-      );
-      expect(transitionSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ target: "locked", rollback: "locked" }),
-      );
-    });
-
-    it("does not report clean mutable-default when provider verification finds nested skills or pairing drift", () => {
-      preflightStateDirLockSpy.mockReturnValue([
-        "recursive mutable state drift under skills/pairing",
-      ]);
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-        throw new Error(`process exit ${String(code)}`);
-      }) as never);
-      spies.push(exitSpy);
-
-      expect(() => shields.shieldsStatus(sandbox.name)).toThrow("process exit 2");
-
-      const errors = vi.mocked(console.error).mock.calls.flat().map(String).join("\n");
-      const logs = vi.mocked(console.log).mock.calls.flat().map(String).join("\n");
-      expect(errors).toContain("recursive mutable state drift under skills/pairing");
+      expect(errors).toContain("/sandbox/.hermes/skills/pairing/state.json");
       expect(errors).toContain("NOT CONFIGURED (DRIFTED");
       expect(logs).not.toContain("NOT CONFIGURED (default mutable state)");
       expect(transitionSpy).not.toHaveBeenCalled();
-      expect(preflightStateDirLockSpy).toHaveBeenCalledWith(
+    });
+
+    it("reports mutable-default after recursive read-only observation with no provider mutation (#9485)", () => {
+      lifecycleGateSpy.mockReturnValue(false);
+      runCaptureSpy.mockReturnValue(`${sandbox.name}  Provisioning\n`);
+
+      expect(() => shields.shieldsStatus(sandbox.name)).not.toThrow();
+
+      expect(transitionSpy).not.toHaveBeenCalled();
+      expect(verifyStateDirMutablePostureSpy).toHaveBeenCalledWith(
         expect.anything(),
         target.configDir,
         expect.objectContaining({
@@ -1261,17 +1216,11 @@ describe("legacy Hermes shields compatibility", () => {
           confidentialRoots: expect.arrayContaining(["pairing"]),
         }),
         true,
+        [target.configPath, ...(target.sensitiveFiles || [])],
       );
-    });
-    it("keeps read-only provider status independent of sandbox lifecycle phase (#10104)", () => {
-      runCaptureSpy.mockReturnValue(`${sandbox.name}  Provisioning\n`);
-      expect(() => shields.shieldsStatus(sandbox.name)).not.toThrow();
-      expect(transitionSpy).not.toHaveBeenCalled();
-      expect(runCaptureSpy).not.toHaveBeenCalledWith(
-        expect.arrayContaining(["sandbox", "list"]),
-        expect.anything(),
+      expect(vi.mocked(console.log).mock.calls.flat().map(String).join("\n")).toContain(
+        "NOT CONFIGURED (default mutable state)",
       );
-      expect(preflightStateDirLockSpy).toHaveBeenCalled();
     });
 
     it("does not report clean timed DOWN on recursive drift or timer loss during verification", () => {
@@ -1295,7 +1244,8 @@ describe("legacy Hermes shields compatibility", () => {
           shieldsDownTimeout: 300,
           shieldsDownReason: "timed mutable status",
           shieldsDownPolicy: "permissive",
-          shieldsPolicySnapshotPath: snapshotPath, shieldsPolicySnapshot: snapshotPolicy,
+          shieldsPolicySnapshotPath: snapshotPath,
+          shieldsPolicySnapshot: snapshotPolicy,
           updatedAt: new Date().toISOString(),
         }),
       );
@@ -1324,12 +1274,14 @@ describe("legacy Hermes shields compatibility", () => {
           ownerStartIdentity: "timed-status-owner",
           processToken,
           sandboxName: sandbox.name,
-          snapshotPath, snapshotPolicy,
+          snapshotPath,
+          snapshotPolicy,
           forwardPolicy,
         }),
       );
-      preflightStateDirLockSpy.mockReturnValue([
-        "recursive timed state drift under skills/pairing",
+      lifecycleGateSpy.mockReturnValue(false);
+      verifyStateDirMutablePostureSpy.mockReturnValue([
+        `state-dir guard verify-mutable [verification-mode-mismatch] ${target.configPath}: file mode is 0444, expected 0640`,
       ]);
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
         throw new Error(`process exit ${String(code)}`);
@@ -1340,7 +1292,7 @@ describe("legacy Hermes shields compatibility", () => {
 
       const errors = vi.mocked(console.error).mock.calls.flat().map(String).join("\n");
       const logs = vi.mocked(console.log).mock.calls.flat().map(String).join("\n");
-      expect(errors).toContain("recursive timed state drift under skills/pairing");
+      expect(errors).toContain(`${target.configPath}: file mode is 0444, expected 0640`);
       expect(errors).toContain("DOWN (DRIFTED");
       expect(logs).not.toContain("DOWN (temporarily unlocked)");
       expect(transitionSpy).not.toHaveBeenCalled();
@@ -1351,8 +1303,11 @@ describe("legacy Hermes shields compatibility", () => {
       transitionSpy.mockClear();
       vi.mocked(console.error).mockClear();
       vi.mocked(console.log).mockClear();
-      preflightStateDirLockSpy.mockImplementation(() => {
-        fs.rmSync(timerControl.timerAuthorizationProofPath(sandbox.name, processToken));
+      let timerProofRemoved = false;
+      verifyStateDirMutablePostureSpy.mockImplementation(() => {
+        !timerProofRemoved &&
+          fs.rmSync(timerControl.timerAuthorizationProofPath(sandbox.name, processToken));
+        timerProofRemoved = true;
         return [];
       });
 

@@ -85,6 +85,7 @@ export type HermesShieldsProviderConsumerHarness = {
   verifyLockSpy: MockInstance;
   preflightStateDirLockSpy: MockInstance;
   verifyLockedStateDirPostureSpy: MockInstance;
+  verifyStateDirMutablePostureSpy: MockInstance;
   cleanup: () => void;
 };
 
@@ -285,6 +286,9 @@ export function createHermesShieldsProviderConsumerHarness(
   const verifyLockedStateDirPostureSpy = vi
     .spyOn(stateDirLock, "verifyLockedStateDirPosture")
     .mockReturnValue([]);
+  const verifyStateDirMutablePostureSpy = vi
+    .spyOn(stateDirLock, "verifyStateDirMutablePosture")
+    .mockImplementation(() => []);
   const runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
   // #10104: default to an empty `sandbox list` capture (no matching row, so
   // the runtime-provider phase probe resolves to null and fails open) so
@@ -315,6 +319,7 @@ export function createHermesShieldsProviderConsumerHarness(
     verifyLockSpy,
     preflightStateDirLockSpy,
     verifyLockedStateDirPostureSpy,
+    verifyStateDirMutablePostureSpy,
     vi.spyOn(console, "log").mockImplementation(() => undefined),
     vi.spyOn(console, "error").mockImplementation(() => undefined),
     vi.spyOn(console, "warn").mockImplementation(() => undefined),
@@ -400,5 +405,6 @@ export function createHermesShieldsProviderConsumerHarness(
     verifyLockSpy,
     preflightStateDirLockSpy,
     verifyLockedStateDirPostureSpy,
+    verifyStateDirMutablePostureSpy,
   };
 }

@@ -35,7 +35,14 @@ const PLAN_ARRAY_FIELDS = [
 ] as const;
 const PLAN_FIELDS = new Set(["$comment", "version", ...PLAN_ARRAY_FIELDS]);
 
-type GuardAction = "preflight" | "lock" | "unlock" | "verify-lock" | "startup";
+type GuardAction =
+  | "preflight"
+  | "lock"
+  | "unlock"
+  | "verify-lock"
+  | "verify-unlock"
+  | "verify-mutable"
+  | "startup";
 
 type GuardIssue = {
   type: "issue";
@@ -193,6 +200,8 @@ function parseGuardOutput(action: GuardAction, result: PrivilegedExecResult): st
         record.action === "lock" ||
         record.action === "unlock" ||
         record.action === "verify-lock" ||
+        record.action === "verify-unlock" ||
+        record.action === "verify-mutable" ||
         record.action === "startup") &&
       (record.status === "ok" || record.status === "failed") &&
       typeof record.issueCount === "number" &&
@@ -316,6 +325,7 @@ function runHostStateDirGuard(
   action: GuardAction,
   configDir: string,
   plan: AgentStateLockPlan,
+  mutableTopLevelFiles: string[] = [],
 ): string[] {
   let input: string;
   try {
@@ -334,6 +344,7 @@ function runHostStateDirGuard(
     configDir,
     "--plan-json",
     JSON.stringify(plan),
+    ...mutableTopLevelFiles.flatMap((file) => ["--mutable-top-level-file", file]),
   ];
   return parseGuardOutput(action, privileged.run(command, input));
 }
@@ -357,6 +368,24 @@ export function verifyLockedStateDirPosture(
   plan: AgentStateLockPlan,
 ): string[] {
   return runHostStateDirGuard(privileged, "verify-lock", configDir, plan);
+}
+
+// Existing images predate this read-only action, so inject the current trusted
+// host helper while verifying the complete recursive mutable posture.
+export function verifyStateDirMutablePosture(
+  privileged: PrivilegedExec,
+  configDir: string,
+  plan: AgentStateLockPlan,
+  stateLockPlanInImage: boolean,
+  mutableTopLevelFiles: string[] = [],
+): string[] {
+  const compatibilityIssues = stateLockPlanCompatibilityIssues(
+    privileged,
+    plan,
+    stateLockPlanInImage,
+  );
+  if (compatibilityIssues.length > 0) return compatibilityIssues;
+  return runHostStateDirGuard(privileged, "verify-mutable", configDir, plan, mutableTopLevelFiles);
 }
 
 // Apply and independently verify the complete recursive state-dir posture.
