@@ -372,6 +372,15 @@ function checkSandboxExecutableReadiness(
     : "probe_failed";
 }
 
+function persistReadyTerminationTimeoutRecovery(
+  createResult: StreamSandboxCreateResult | null,
+  sandboxId: string | null,
+  persistRecovery: (sandboxIdentityFingerprint: string) => void,
+): void {
+  if (!createResult?.readyTerminationTimedOut || !sandboxId) return;
+  persistRecovery(fingerprintSandboxRecreateValue(sandboxId));
+}
+
 class ManagedBootstrapCreateStreamFailure extends Error {
   constructor(readonly result: Awaited<ReturnType<typeof streamSandboxCreate>>) {
     super("Managed bootstrap held workload did not complete its create stream.");
@@ -461,7 +470,7 @@ export function createSandboxGpuCreateAttemptRunner(
         throw new Error("Verified sandbox creation has no durable recovery evidence owner.");
       }
       const identityEvidence = sandboxIdentityFingerprint
-        ? `Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}. Sandbox '${input.sandboxName}' did not remain visible through owning gateway '${input.gatewayName}' before identity verification completed. `
+        ? `Durable sandbox identity fingerprint: ${sandboxIdentityFingerprint}. NemoClaw stopped before owning-gateway publication and identity verification completed for sandbox '${input.sandboxName}' through gateway '${input.gatewayName}'. `
         : `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. Gateway '${input.gatewayName}'. OpenShell did not return one exact durable sandbox identity for this create attempt. `;
       const message =
         `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${createAttemptNonce}. ` +
@@ -840,6 +849,11 @@ export function createSandboxGpuCreateAttemptRunner(
       createResult = await streamCreate();
     }
     if (createResult && !state.firstCreateOutput) state.firstCreateOutput = createResult.output;
+    persistReadyTerminationTimeoutRecovery(
+      createResult,
+      readyCheckCreatedSandboxId,
+      persistIdentitySettlementRecovery,
+    );
     if (!deferPostCreateEffects) await runtimePatch.exitOnPatchError();
     if (createResult && createResult.status !== 0) {
       const failure = classifySandboxCreateFailure(createResult.output);
