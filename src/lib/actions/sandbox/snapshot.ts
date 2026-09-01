@@ -92,6 +92,7 @@ import {
   createSnapshotCloneLifecycle,
   confirmSandboxRuntimeRestore,
   fingerprintSandboxLiveIdentity,
+  isSnapshotClonePolicyCredentialFree,
   type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
   prepareHostLocalInferenceAuthority,
@@ -395,6 +396,12 @@ async function prepareSnapshotClonePolicy(
     ]);
   }
   const policy = policyRead.value.document;
+  if (!isSnapshotClonePolicyCredentialFree(policy)) {
+    throw new SnapshotCommandError([
+      `Cannot prepare a snapshot clone policy for source sandbox '${srcEntry.name}' because its live OpenShell policy contains a literal credential value.`,
+      "Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the original snapshot restore command.",
+    ]);
+  }
   const policyPath = secureTempFile("nemoclaw-clone-policy", ".yaml");
   try {
     fs.writeFileSync(policyPath, policy, { encoding: "utf8", flag: "wx", mode: 0o600 });

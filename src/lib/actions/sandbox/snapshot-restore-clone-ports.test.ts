@@ -234,6 +234,60 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     },
   );
 
+  it("rejects a literal credential in the live policy before any clone handoff or restore side effect", async () => {
+    f.getSandboxMock.mockImplementation((name) => ({
+      name: name ?? "alpha",
+      agent: "openclaw",
+      imageTag: `nemoclaw-${name}:test`,
+      openshellDriver: "docker",
+      provider: "nvidia-nim",
+      model: "nvidia/model-a",
+      dashboardPort: name === "alpha" ? 18790 : 18791,
+    }));
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "policy get": {
+          status: 0,
+          output: [
+            "version: 1",
+            "network_policies: {}",
+            "process:",
+            "  run_as_user: sandbox",
+            "  environment:",
+            "    SERVICE_API_KEY: opaque-live-policy-credential",
+            "",
+          ].join("\n"),
+        },
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const secureTempFile = vi.spyOn(tempFiles, "secureTempFile");
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    const failure = await runSandboxSnapshot("alpha", {
+      kind: "restore",
+      to: "beta",
+      force: true,
+      yes: true,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      name: "SnapshotCommandError",
+      lines: expect.arrayContaining([
+        "Cannot prepare a snapshot clone policy for source sandbox 'alpha' because its live OpenShell policy contains a literal credential value.",
+      ]),
+    });
+    expect(String((failure as Error).message)).not.toContain("opaque-live-policy-credential");
+    expect(secureTempFile).not.toHaveBeenCalled();
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+    expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+  });
+
   it("passes a single-link mode-0600 clone policy to OpenShell under a permissive umask", async () => {
     let registeredClone: f.SandboxRecord | null = null;
     let observedPolicyPath = "";
