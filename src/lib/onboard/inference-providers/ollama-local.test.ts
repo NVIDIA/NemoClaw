@@ -125,7 +125,7 @@ describe("Ollama local provider sandbox-facing model gate", () => {
     expect(persistResolvedOllamaHost).toHaveBeenCalledOnce();
   });
 
-  it("fails setup when the accepted cleanup route cannot be persisted", async () => {
+  it("fails before provider registration when the cleanup route cannot be staged", async () => {
     const upsertProvider = vi.fn(() => ({ ok: true }));
     const error = vi.fn();
 
@@ -146,12 +146,13 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       ),
     ).rejects.toThrow("exit 1");
 
-    expect(upsertProvider).toHaveBeenCalledOnce();
+    expect(upsertProvider).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("state path is unsafe"));
   });
 
-  it("does not persist a route when provider registration fails", async () => {
-    const persistResolvedOllamaHost = vi.fn();
+  it("restores the prior cleanup route when provider registration fails", async () => {
+    const rollbackPersistedOllamaHost = vi.fn();
+    const persistResolvedOllamaHost = vi.fn(() => rollbackPersistedOllamaHost);
 
     await expect(
       setupOllamaLocalInference(
@@ -167,11 +168,13 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       ),
     ).rejects.toThrow("exit 1");
 
-    expect(persistResolvedOllamaHost).not.toHaveBeenCalled();
+    expect(persistResolvedOllamaHost).toHaveBeenCalledOnce();
+    expect(rollbackPersistedOllamaHost).toHaveBeenCalledOnce();
   });
 
-  it("does not persist a route when route application requests reselection", async () => {
-    const persistResolvedOllamaHost = vi.fn();
+  it("restores the prior cleanup route when route application requests reselection", async () => {
+    const rollbackPersistedOllamaHost = vi.fn();
+    const persistResolvedOllamaHost = vi.fn(() => rollbackPersistedOllamaHost);
 
     await expect(
       setupOllamaLocalInference(
@@ -187,6 +190,7 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       ),
     ).resolves.toEqual({ done: true, result: { retry: "selection" } });
 
-    expect(persistResolvedOllamaHost).not.toHaveBeenCalled();
+    expect(persistResolvedOllamaHost).toHaveBeenCalledOnce();
+    expect(rollbackPersistedOllamaHost).toHaveBeenCalledOnce();
   });
 });

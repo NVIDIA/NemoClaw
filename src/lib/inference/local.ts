@@ -6,6 +6,7 @@
  * health checks, and command generators for vLLM and Ollama.
  */
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
@@ -32,6 +33,8 @@ import { buildSubprocessEnv } from "../subprocess-env";
 
 import {
   readLocalAdapterJsonFile,
+  LOCAL_ADAPTER_HEALTH_MAX_RESPONSE_BYTES,
+  removeLocalAdapterFile,
   resolveSharedLocalAdapterStateRoot,
   writeLocalAdapterJsonFile,
 } from "./local-adapter-lifecycle";
@@ -181,8 +184,14 @@ function ollamaCandidateHosts(wslDetection: WslDetectionOptions = {}): string[] 
 export function findReachableOllamaHost(
   runCaptureImpl?: RunCaptureFn,
   wslDetection: WslDetectionOptions = {},
+  stateRoot: string = resolveSharedLocalAdapterStateRoot(),
 ): string | null {
   if (_resolvedOllamaHost !== null) return _resolvedOllamaHost;
+  const persistedHost = loadPersistedOllamaHost(stateRoot);
+  if (persistedHost) {
+    _resolvedOllamaHost = persistedHost;
+    return persistedHost;
+  }
   const capture = runCaptureImpl ?? runCapture;
   for (const host of ollamaCandidateHosts(wslDetection)) {
     // Explicit timeouts: a blackholed host (e.g., firewalled host.docker.internal)
@@ -211,22 +220,39 @@ export function findReachableOllamaHost(
 
 // Returns the resolved host if a probe has succeeded, otherwise OLLAMA_LOCALHOST.
 // Used by URL-builder helpers that need a string and don't want to re-probe.
-export function getResolvedOllamaHost(): string {
-  return _resolvedOllamaHost ?? OLLAMA_LOCALHOST;
+export function getResolvedOllamaHost(
+  stateRoot: string = resolveSharedLocalAdapterStateRoot(),
+): string {
+  if (_resolvedOllamaHost) return _resolvedOllamaHost;
+  const persistedHost = loadPersistedOllamaHost(stateRoot);
+  if (persistedHost) _resolvedOllamaHost = persistedHost;
+  return persistedHost ?? OLLAMA_LOCALHOST;
 }
 
 /** Persist the accepted local Ollama route for later CLI processes. */
 export function persistResolvedOllamaHost(
   host: string = getResolvedOllamaHost(),
   stateRoot: string = resolveSharedLocalAdapterStateRoot(),
-): void {
+): () => void {
   if (!isSupportedOllamaHost(host)) {
     throw new Error(`Refusing to persist unexpected Ollama host: ${host}`);
   }
-  writeLocalAdapterJsonFile(ollamaHostReceiptPath(stateRoot), {
+  const receiptPath = ollamaHostReceiptPath(stateRoot);
+  const previousHost = loadPersistedOllamaHost(stateRoot);
+  writeLocalAdapterJsonFile(receiptPath, {
     schemaVersion: 1,
     host,
   } satisfies OllamaHostReceipt);
+  return () => {
+    if (previousHost) {
+      writeLocalAdapterJsonFile(receiptPath, {
+        schemaVersion: 1,
+        host: previousHost,
+      } satisfies OllamaHostReceipt);
+    } else {
+      removeLocalAdapterFile(receiptPath);
+    }
+  };
 }
 
 /** Read only the two fixed local Ollama routes NemoClaw can establish. */
@@ -355,6 +381,8 @@ export interface LocalProviderHealthProbeOptions {
   /** Configured runtime model that must be present in the provider inventory. */
   model?: string | null;
   runCurlProbeImpl?: (argv: string[], opts?: CurlProbeOptions) => CurlProbeResult;
+  /** Executes the translated Windows-host Docker probe. Injectable for transport tests. */
+  ollamaSpawnSyncImpl?: NonNullable<CurlProbeOptions["spawnSyncImpl"]>;
   /**
    * Lets callers that perform their own Ollama auth-proxy check avoid the
    * legacy inline proxy subprobe. The inline subprobe is retained for status
@@ -390,6 +418,24 @@ function defaultLoadOllamaProxyToken(): string | null {
 
 function runLocalCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlProbeResult {
   return runCurlProbe(argv, { ...opts, env: buildSubprocessEnv(), replaceEnv: true });
+}
+
+function runOllamaLocalCurlProbe(
+  argv: string[],
+  host: string,
+  opts: CurlProbeOptions = {},
+  spawnSyncImpl: NonNullable<CurlProbeOptions["spawnSyncImpl"]> = spawnSync,
+): CurlProbeResult {
+  return runCurlProbe(argv, {
+    ...opts,
+    env: buildSubprocessEnv(),
+    maxResponseBytes: opts.maxResponseBytes ?? LOCAL_ADAPTER_HEALTH_MAX_RESPONSE_BYTES,
+    replaceEnv: true,
+    spawnSyncImpl: (_command, args, spawnOptions) => {
+      const [executable, ...translatedArgs] = getOllamaApiCommand(args, host);
+      return spawnSyncImpl(executable, translatedArgs, spawnOptions);
+    },
+  });
 }
 
 export interface VllmModelsProbeOptions {
@@ -1051,7 +1097,14 @@ export function probeLocalProviderHealth(
       : getLocalProviderHealthEndpoint(provider);
   if (!endpoint) return null;
 
-  const runCurlProbeImpl = options.runCurlProbeImpl ?? runLocalCurlProbe;
+  const resolvedOllamaHost =
+    provider === "ollama-local" ? getResolvedOllamaHost() : OLLAMA_LOCALHOST;
+  const runCurlProbeImpl =
+    options.runCurlProbeImpl ??
+    (provider === "ollama-local" && resolvedOllamaHost === OLLAMA_HOST_DOCKER_INTERNAL
+      ? (argv: string[], opts?: CurlProbeOptions) =>
+          runOllamaLocalCurlProbe(argv, resolvedOllamaHost, opts, options.ollamaSpawnSyncImpl)
+      : runLocalCurlProbe);
   let result: CurlProbeResult;
   if (managedBinding) {
     result = probeVllmModels(managedValidationBaseUrl!, managedBinding.apiKey, {

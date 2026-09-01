@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,14 +9,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   applyOllamaRuntimeContextWindow,
   CONTAINER_REACHABILITY_IMAGE,
+  findReachableOllamaHost,
   getLocalProviderHealthCheck,
   getOllamaHostForCleanup,
   getOllamaModelOptions,
   getOllamaProbeCommand,
+  getResolvedOllamaHost,
   getOllamaWarmupRequestCommand,
   OLLAMA_HOST_DOCKER_INTERNAL,
   loadPersistedOllamaHost,
   persistResolvedOllamaHost,
+  probeLocalProviderHealth,
   probeOllamaModelCapabilities,
   resetOllamaHostCache,
   resetOllamaRuntimeContextWindowAutoState,
@@ -40,6 +43,98 @@ describe("Windows-host Ollama transport", () => {
       expect(loadPersistedOllamaHost(stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
       expect(getOllamaHostForCleanup(stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
     } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("restores the prior receipt when staged provider setup rolls back", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-rollback-"));
+    try {
+      persistResolvedOllamaHost("127.0.0.1", stateRoot);
+      const rollback = persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
+      expect(loadPersistedOllamaHost(stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+
+      rollback();
+
+      expect(loadPersistedOllamaHost(stateRoot)).toBe("127.0.0.1");
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("restores the persisted route before fresh-process connect discovery", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-connect-"));
+    try {
+      persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
+      resetOllamaHostCache();
+      const capture = vi.fn(() => {
+        throw new Error("fresh-process connect must not probe WSL loopback");
+      });
+
+      expect(findReachableOllamaHost(capture, {}, stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+      expect(capture).not.toHaveBeenCalled();
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an untrusted persisted host", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-invalid-"));
+    try {
+      writeFileSync(
+        join(stateRoot, "ollama-host.json"),
+        JSON.stringify({ schemaVersion: 1, host: "example.com" }),
+      );
+      resetOllamaHostCache();
+
+      expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
+      expect(getResolvedOllamaHost(stateRoot)).toBe("127.0.0.1");
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("probes persisted Windows-host health through Docker Desktop", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-health-"));
+    const calls: Array<{ command: string; args: readonly string[] }> = [];
+    try {
+      persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
+      resetOllamaHostCache();
+      expect(getResolvedOllamaHost(stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+
+      const result = probeLocalProviderHealth("ollama-local", {
+        loadOllamaProxyTokenImpl: () => null,
+        ollamaSpawnSyncImpl: (command, args) => {
+          calls.push({ command, args });
+          const statusOutput = args[args.indexOf("-w") + 1].replace("%{http_code}", "200");
+          const stdout = `${JSON.stringify({ models: [] })}${statusOutput}`;
+          return {
+            pid: 1,
+            output: ["", stdout, ""],
+            stdout,
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        },
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        endpoint: "http://host.docker.internal:11434/api/tags",
+      });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({ command: "docker" });
+      expect(calls[0]?.args).toEqual(
+        expect.arrayContaining([
+          "run",
+          "--rm",
+          CONTAINER_REACHABILITY_IMAGE,
+          "http://host.docker.internal:11434/api/tags",
+        ]),
+      );
+    } finally {
+      resetOllamaHostCache();
       rmSync(stateRoot, { recursive: true, force: true });
     }
   });
