@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { type CommandRunner, HostCliClient } from "../fixtures/clients/index.ts";
@@ -71,6 +71,8 @@ const cloudOpenClawEnvironment: TargetEnvironment = {
   runtime: "docker-running",
   onboarding: "cloud-openclaw",
 };
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("environment phase fixture", () => {
   it("asserts the current repo CLI and required Docker runtime", async () => {
@@ -209,52 +211,39 @@ describe("environment phase fixture", () => {
   });
 
   it("scopes availability probe env instead of inheriting unrelated secrets", async () => {
-    const previousSecret = process.env.NVIDIA_INFERENCE_API_KEY;
-    const previousDockerHost = process.env.DOCKER_HOST;
-    const previousHome = process.env.HOME;
-    const previousPath = process.env.PATH;
-    process.env.NVIDIA_INFERENCE_API_KEY = "must-not-leak";
-    process.env.DOCKER_HOST = "unix:///tmp/e2e-docker.sock";
-    process.env.HOME = "/tmp/e2e-home";
-    process.env.PATH = "/usr/bin";
-    try {
-      const runner = new FakeRunner();
-      runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
-      runner.enqueue(shellResult(0, "Docker is available\n"));
-      const environment = new EnvironmentPhaseFixture(new HostCliClient(runner));
+    vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus");
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "must-not-leak");
+    vi.stubEnv("DOCKER_HOST", "unix:///tmp/e2e-docker.sock");
+    vi.stubEnv("HOME", "/tmp/e2e-home");
+    vi.stubEnv("NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR", "/tmp/e2e-gateway-state");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/tmp/e2e-gateway-tls");
+    vi.stubEnv("PATH", "/usr/bin");
 
-      await environment.assertReady(cloudOpenClawEnvironment);
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+    runner.enqueue(shellResult(0, "Docker is available\n"));
+    const environment = new EnvironmentPhaseFixture(new HostCliClient(runner));
 
-      const cliEnv = runner.calls[0]?.options?.env;
-      const dockerEnv = runner.calls[1]?.options?.env;
-      expect(cliEnv).toMatchObject({ DOCKER_HOST: "unix:///tmp/e2e-docker.sock" });
-      expect(dockerEnv).toMatchObject({ DOCKER_HOST: "unix:///tmp/e2e-docker.sock" });
-      expect(cliEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
-      expect(dockerEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
-      expect(cliEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
-      expect(dockerEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
-    } finally {
-      if (previousSecret === undefined) {
-        delete process.env.NVIDIA_INFERENCE_API_KEY;
-      } else {
-        process.env.NVIDIA_INFERENCE_API_KEY = previousSecret;
-      }
-      if (previousDockerHost === undefined) {
-        delete process.env.DOCKER_HOST;
-      } else {
-        process.env.DOCKER_HOST = previousDockerHost;
-      }
-      if (previousHome === undefined) {
-        delete process.env.HOME;
-      } else {
-        process.env.HOME = previousHome;
-      }
-      if (previousPath === undefined) {
-        delete process.env.PATH;
-      } else {
-        process.env.PATH = previousPath;
-      }
-    }
+    await environment.assertReady(cloudOpenClawEnvironment);
+
+    const cliEnv = runner.calls[0]?.options?.env;
+    const dockerEnv = runner.calls[1]?.options?.env;
+    expect(cliEnv).toMatchObject({
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+      DOCKER_HOST: "unix:///tmp/e2e-docker.sock",
+      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/tmp/e2e-gateway-state",
+      OPENSHELL_LOCAL_TLS_DIR: "/tmp/e2e-gateway-tls",
+    });
+    expect(dockerEnv).toMatchObject({
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+      DOCKER_HOST: "unix:///tmp/e2e-docker.sock",
+      NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: "/tmp/e2e-gateway-state",
+      OPENSHELL_LOCAL_TLS_DIR: "/tmp/e2e-gateway-tls",
+    });
+    expect(cliEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
+    expect(dockerEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
+    expect(cliEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    expect(dockerEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
   });
 
   it("treats launchable install as current first-layer CLI readiness", async () => {

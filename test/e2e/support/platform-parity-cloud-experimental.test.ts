@@ -489,12 +489,12 @@ describe("P0-E cloud-experimental parity guardrails", () => {
           "/bin/bash",
           [
             "-c",
-            'source "$1"; CLI="$2"; SANDBOX_NAME="deepagents-sandbox"; NEMOCLAW_E2E_DCODE_STATUS_ATTEMPTS=3; NEMOCLAW_E2E_DCODE_STATUS_DELAY_SECONDS=0; wait_for_status_after_reonboard',
+            'source ./04-deepagents-code-fresh-reonboard.sh; CLI="$1"; SANDBOX_NAME="deepagents-sandbox"; NEMOCLAW_E2E_DCODE_STATUS_ATTEMPTS=3; NEMOCLAW_E2E_DCODE_STATUS_DELAY_SECONDS=0; wait_for_status_after_reonboard',
             "bash",
-            dcodeFreshReonboardCheck,
             mockCli,
           ],
           {
+            cwd: cloudChecksDir,
             encoding: "utf8",
             env: {
               ...process.env,

@@ -89,6 +89,7 @@
     },
     {
       "live": "test/e2e/live/podman-cpu-lifecycle.test.ts",
+      "liveSources": ["test/e2e/live/podman-cpu-lifecycle-helpers.ts"],
       "fast": [
         "src/lib/adapters/container-engine.test.ts",
         "src/lib/adapters/podman/index.test.ts",
