@@ -417,7 +417,6 @@ describe("inference selection validation", () => {
           skipResponsesProbe: true,
           calibrateTimeouts: true,
           provider: "gemini-api",
-          replyBudget: 256,
         },
       );
       const errorOutput = error.mock.calls.map((args) => args.join(" ")).join("\n");

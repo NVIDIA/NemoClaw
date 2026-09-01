@@ -2,12 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import { useOpenAiValidationTestServers } from "./openai-validation-session.test-helpers";
 import { HARNESS_TMPDIR, withFakeCurlProbe } from "./onboard-probes-curl-harness";
 
-const { probeOpenAiLikeEndpoint, verifyOnboardInferenceSmoke } = require("./onboard-probes");
+const {
+  probeOpenAiLikeEndpoint,
+  probeOpenAiLikeEndpointOptimized,
+  verifyOnboardInferenceSmoke,
+} = require("./onboard-probes");
+
+const listen = useOpenAiValidationTestServers();
+
+const optimizedProbeSessionOptions = {
+  validationTiming: { connectTimeoutSeconds: 1, maxTimeSeconds: 1, source: "standard" },
+  validationSessionOptions: {
+    env: {},
+    lookup: async () => [{ address: "127.0.0.1", family: 4 }],
+    allowPrivateAddressesForTesting: true,
+  },
+};
 
 describe("onboarding inference probe reply budgets", () => {
   it("keeps DeepSeek V4 Pro's model-specific budget on the onboarding probe path", () => {
@@ -43,25 +60,102 @@ printf '200'
     });
   });
 
-  it("passes the Gemini reply budget into optimized onboarding smoke validation", async () => {
-    const provider = "gemini-api";
-    const model = "gemini-2.5-flash";
-    const replyBudget = 256;
-    const optimizedProbe = vi.fn().mockResolvedValue({ ok: true });
+  it("derives the Gemini reply budget at the optimized probe boundary", async () => {
+    let payload: Record<string, unknown> | null = null;
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += String(chunk);
+      });
+      request.on("end", () => {
+        payload = JSON.parse(body) as Record<string, unknown>;
+        response.end('{"choices":[{"message":{"content":"OK"}}]}');
+      });
+    });
+    const port = await listen(server);
+
+    const result = await probeOpenAiLikeEndpointOptimized(
+      `http://provider.example.com:${port}/v1`,
+      "gemini-2.5-flash",
+      "test-key",
+      {
+        skipResponsesProbe: true,
+        provider: "gemini-api",
+        ...optimizedProbeSessionOptions,
+      },
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(payload).toMatchObject({ max_tokens: 256 });
+  });
+
+  it("keeps the ordinary reply budget when no Gemini provider is supplied", async () => {
+    let payload: Record<string, unknown> | null = null;
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += String(chunk);
+      });
+      request.on("end", () => {
+        payload = JSON.parse(body) as Record<string, unknown>;
+        response.end('{"choices":[{"message":{"content":"OK"}}]}');
+      });
+    });
+    const port = await listen(server);
+
+    const result = await probeOpenAiLikeEndpointOptimized(
+      `http://provider.example.com:${port}/v1`,
+      "gpt-4o",
+      "test-key",
+      {
+        skipResponsesProbe: true,
+        provider: "openai",
+        ...optimizedProbeSessionOptions,
+      },
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(payload).toMatchObject({ max_tokens: 16 });
+  });
+
+  it("applies the Gemini reply budget through optimized onboarding smoke validation", async () => {
+    let payload: Record<string, unknown> | null = null;
+    const server = http.createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => {
+        body += String(chunk);
+      });
+      request.on("end", () => {
+        payload = JSON.parse(body) as Record<string, unknown>;
+        response.end('{"choices":[{"message":{"content":"OK"}}]}');
+      });
+    });
+    const port = await listen(server);
     vi.stubEnv("VITEST", "false");
 
     try {
       await verifyOnboardInferenceSmoke(
-        { endpointUrl: "https://inference.example.com/v1", forceOpenAiLike: true, model, provider },
-        { probeOpenAiLikeEndpointOptimized: optimizedProbe },
+        {
+          endpointUrl: `http://provider.example.com:${port}/v1`,
+          forceOpenAiLike: true,
+          model: "gemini-2.5-flash",
+          provider: "gemini-api",
+        },
+        {
+          probeOpenAiLikeEndpointOptimized: (
+            endpointUrl: string,
+            model: string,
+            apiKey: string,
+            options: Record<string, unknown>,
+          ) =>
+            probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKey, {
+              ...options,
+              ...optimizedProbeSessionOptions,
+            }),
+        },
       );
 
-      expect(optimizedProbe).toHaveBeenCalledWith(
-        "https://inference.example.com/v1",
-        model,
-        "",
-        expect.objectContaining({ provider, replyBudget }),
-      );
+      expect(payload).toMatchObject({ model: "gemini-2.5-flash", max_tokens: 256 });
     } finally {
       vi.unstubAllEnvs();
     }
