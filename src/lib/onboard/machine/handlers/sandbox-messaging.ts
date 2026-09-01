@@ -212,23 +212,39 @@ export function filterMessagingPlanForCurrentAgent(
   };
 }
 
+interface PreparedReusablePlan extends SandboxMessagingSelection {
+  readonly changed: boolean;
+}
+
+function prepareReusablePlan<Agent>(
+  plan: SandboxMessagingPlan,
+  agent: Agent,
+): PreparedReusablePlan {
+  const refreshed = refreshCredentialHashesFromEnv(plan);
+  const filtered = filterMessagingPlanForCurrentAgent(refreshed.plan, agent);
+  if (!filtered) {
+    return { plan: null, selectedChannels: [], changed: true };
+  }
+  return {
+    plan: filtered,
+    selectedChannels: getActiveChannelsFromPlan(filtered),
+    changed: refreshed.changed || filtered !== refreshed.plan,
+  };
+}
+
 function selectionFromReusablePlan<Agent>(
   plan: SandboxMessagingPlan,
   agent: Agent,
   writeToEnv: boolean,
   deps: SandboxMessagingDeps<Agent>,
 ): SandboxMessagingSelection {
-  const refreshed = refreshCredentialHashesFromEnv(plan);
-  const filtered = filterMessagingPlanForCurrentAgent(refreshed.plan, agent);
-  if (!filtered) {
+  const prepared = prepareReusablePlan(plan, agent);
+  if (!prepared.plan) {
     deps.clearPlanEnv();
     return { plan: null, selectedChannels: [] };
   }
-  if (writeToEnv || refreshed.changed || filtered !== refreshed.plan) deps.writePlanToEnv(filtered);
-  return {
-    plan: filtered,
-    selectedChannels: getActiveChannelsFromPlan(filtered),
-  };
+  if (writeToEnv || prepared.changed) deps.writePlanToEnv(prepared.plan);
+  return { plan: prepared.plan, selectedChannels: prepared.selectedChannels };
 }
 
 /**
@@ -249,11 +265,7 @@ function channelCredentialLivesAtGateway<Agent>(
   if (providerBindings.length === 0) return false;
   const inspections = providerBindings.map((binding) => ({
     binding,
-    inspection: deps.inspectGatewayCredential(
-      binding.name,
-      binding.type,
-      binding.credentialEnv,
-    ),
+    inspection: deps.inspectGatewayCredential(binding.name, binding.type, binding.credentialEnv),
   }));
   const unresolved = inspections.find(
     ({ inspection }) => inspection.kind === "collision" || inspection.kind === "indeterminate",
@@ -272,6 +284,14 @@ function channelCredentialLivesAtGateway<Agent>(
   return inspections.every(({ inspection }) => inspection.kind === "exact");
 }
 
+function persistMessagingPlan<Agent>(
+  plan: SandboxMessagingPlan | null,
+  deps: Pick<SandboxMessagingDeps<Agent>, "clearPlanEnv" | "writePlanToEnv">,
+): void {
+  if (plan) deps.writePlanToEnv(plan);
+  else deps.clearPlanEnv();
+}
+
 function filterUnconfiguredHostChannelsFromSelection<Agent>(
   selection: SandboxMessagingSelection,
   agent: Agent,
@@ -279,6 +299,7 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
     SandboxMessagingDeps<Agent>,
     "clearPlanEnv" | "inspectGatewayCredential" | "note" | "writePlanToEnv"
   >,
+  persist = true,
 ): SandboxMessagingSelection {
   // A registry plan records the previous selection, not the current host
   // input. Rebuild the host-backed selection so policy reconciliation can
@@ -307,8 +328,7 @@ function filterUnconfiguredHostChannelsFromSelection<Agent>(
     `  No host inputs configure ${[...unconfiguredChannels].join(", ")}; disabling the channel and its network egress.`,
   );
   const plan = disableChannelsInPlan(selection.plan, unconfiguredChannels);
-  if (plan) deps.writePlanToEnv(plan);
-  else deps.clearPlanEnv();
+  if (persist) persistMessagingPlan(plan, deps);
   return {
     plan,
     selectedChannels: selection.selectedChannels.filter(
@@ -437,6 +457,25 @@ async function selectionFromMessagingSetup<Agent>(
   );
 }
 
+/** Probe gateway state before persisting a reusable plan. */
+function selectionFromReconciledReusablePlan<Agent>(
+  plan: SandboxMessagingPlan,
+  agent: Agent,
+  writeToEnv: boolean,
+  deps: Pick<
+    SandboxMessagingDeps<Agent>,
+    "clearPlanEnv" | "inspectGatewayCredential" | "note" | "writePlanToEnv"
+  >,
+): SandboxMessagingSelection {
+  const prepared = prepareReusablePlan(plan, agent);
+  const reusable = { plan: prepared.plan, selectedChannels: prepared.selectedChannels };
+  const reconciled = filterUnconfiguredHostChannelsFromSelection(reusable, agent, deps, false);
+  if (writeToEnv || prepared.changed || reconciled.plan !== prepared.plan) {
+    persistMessagingPlan(reconciled.plan, deps);
+  }
+  return reconciled;
+}
+
 /** Reconcile checkpoint channels against current host inputs before reuse. */
 function selectionFromRecordedChannels<Agent>(
   recordedChannels: string[],
@@ -448,10 +487,24 @@ function selectionFromRecordedChannels<Agent>(
     plan: null,
     selectedChannels: filterChannelNamesForCurrentAgent(recordedChannels, options.agent),
   };
-  if (envPlan) selection = selectionFromReusablePlan(envPlan, options.agent, false, options.deps);
-  else if (registryPlan)
-    selection = selectionFromReusablePlan(registryPlan, options.agent, true, options.deps);
-  selection = filterUnconfiguredHostChannelsFromSelection(selection, options.agent, options.deps);
+  if (registryPlan && !envPlan) {
+    selection = selectionFromReconciledReusablePlan(
+      registryPlan,
+      options.agent,
+      true,
+      options.deps,
+    );
+  } else {
+    if (envPlan) {
+      selection = selectionFromReconciledReusablePlan(envPlan, options.agent, false, options.deps);
+    } else {
+      selection = filterUnconfiguredHostChannelsFromSelection(
+        selection,
+        options.agent,
+        options.deps,
+      );
+    }
+  }
   if (selection.selectedChannels.length > 0) {
     options.deps.note(
       `  [non-interactive] Reusing messaging channel configuration: ${selection.selectedChannels.join(", ")}`,
@@ -484,11 +537,7 @@ async function selectionFromRegistryPlan<Agent>(
     // A lifecycle command owns which channels the operator asked for, but not
     // whether the host still configures them. Onboarding re-reads the host
     // either way, so the same removal check applies here.
-    return filterUnconfiguredHostChannelsFromSelection(
-      selectionFromReusablePlan(registryPlan, options.agent, true, options.deps),
-      options.agent,
-      options.deps,
-    );
+    return selectionFromReconciledReusablePlan(registryPlan, options.agent, true, options.deps);
   }
   const activeChannels = filterChannelNamesForCurrentAgent(
     getActiveChannelsFromPlan(registryPlan),
@@ -512,11 +561,7 @@ async function selectionFromRegistryPlan<Agent>(
   }
   const detectedChannels = channelsForRegistryPlanRefresh(registryPlan, options.agent);
   if (!detectedChannels) {
-    return filterUnconfiguredHostChannelsFromSelection(
-      selectionFromReusablePlan(registryPlan, options.agent, true, options.deps),
-      options.agent,
-      options.deps,
-    );
+    return selectionFromReconciledReusablePlan(registryPlan, options.agent, true, options.deps);
   }
   options.deps.note(
     `  [non-interactive] Detected messaging channel inputs for ${detectedChannels.join(", ")}; refreshing reused sandbox messaging plan.`,
@@ -706,6 +751,23 @@ async function selectionFromCompletedMessagingCheckpoint<Agent>(
   return selection;
 }
 
+async function selectionFromCompletedRegistryCheckpoint<Agent>(
+  registryPlan: SandboxMessagingPlan | null,
+  envPlan: SandboxMessagingPlan | null,
+  options: ReconcileSandboxMessagingOptions<Agent>,
+): Promise<SandboxMessagingSelection> {
+  const filteredPlan = registryPlan
+    ? filterMessagingPlanForCurrentAgent(registryPlan, options.agent)
+    : null;
+  const reconciled = filterUnconfiguredHostChannelsFromSelection(
+    { plan: filteredPlan, selectedChannels: getActiveChannelsFromPlan(filteredPlan) },
+    options.agent,
+    options.deps,
+    false,
+  );
+  return selectionFromCompletedMessagingCheckpoint(envPlan, options, reconciled.plan, false);
+}
+
 async function selectionFromRegistryAuthority<Agent>(
   authority: ReturnType<typeof resolveMessagingPlanAuthority>,
   envPlan: SandboxMessagingPlan | null,
@@ -715,17 +777,7 @@ async function selectionFromRegistryAuthority<Agent>(
   if (authority.source !== "registry") return null;
   const agentName = (options.agent as MessagingAgentLike | null)?.name;
   if ((!agentName || agentName === "openclaw") && options.resume && messagingDecisionCompleted) {
-    const selection = await selectionFromCompletedMessagingCheckpoint(
-      envPlan,
-      options,
-      authority.plan,
-      false,
-    );
-    return filterUnconfiguredHostChannelsFromSelection(
-      selection,
-      options.agent,
-      options.deps,
-    );
+    return selectionFromCompletedRegistryCheckpoint(authority.plan, envPlan, options);
   }
   if (authority.plan) return selectionFromRegistryPlan(authority.plan, options);
   options.deps.clearPlanEnv();

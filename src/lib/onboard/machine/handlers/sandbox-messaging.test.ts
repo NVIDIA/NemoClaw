@@ -16,6 +16,7 @@ import {
 } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { setupMessagingChannels } from "../../messaging-channel-setup";
+import type { GatewayCredentialOnlyProviderInspection } from "../../gateway-provider-metadata";
 import { getActiveChannelsFromPlan } from "../../messaging-plan-session";
 import {
   hasMessagingCredentialDrift,
@@ -379,9 +380,23 @@ function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
       authoritative: false,
       plan: null,
     })),
-    inspectGatewayCredential: vi.fn(() => ({ kind: "missing" as const })),
+    inspectGatewayCredential: vi.fn<
+      (name: string, type: string, credentialEnv: string) => GatewayCredentialOnlyProviderInspection
+    >(() => ({ kind: "missing" })),
     providerMatchesGatewayCredential: vi.fn(() => false),
   };
+}
+
+function registryDeps(plan: SandboxMessagingPlan) {
+  const deps = reconcileDeps([]);
+  deps.getRegistrySandboxMessagingAuthority.mockReturnValue({ authoritative: true, plan });
+  return deps;
+}
+
+function recordedResumeDeps(plan: SandboxMessagingPlan) {
+  const deps = reconcileDeps([plan]);
+  deps.getRecordedMessagingChannelsForResume.mockReturnValue(["discord", "googlechat"]);
+  return deps;
 }
 
 beforeEach(() => {
@@ -536,7 +551,10 @@ describe("reconcileReusedSandboxMessaging", () => {
     );
   });
 
-  it("disables Slack when its app-token gateway credential is missing (#10660)", () => {
+  it.each([
+    ["app-token", "SLACK_APP_TOKEN"],
+    ["bot-token", "SLACK_BOT_TOKEN"],
+  ] as const)("disables Slack when its %s gateway credential is missing (#10660)", (_, missing) => {
     const plan = slackPlan(
       hashCredential("previous-slack-bot-token") ?? "",
       hashCredential("previous-slack-app-token") ?? "",
@@ -544,59 +562,17 @@ describe("reconcileReusedSandboxMessaging", () => {
     vi.stubEnv("SLACK_BOT_TOKEN", "");
     vi.stubEnv("SLACK_APP_TOKEN", "");
     const writePlanToEnv = vi.fn();
-    const inspectGatewayCredential = vi.fn(
-      (_name: string, _type: string, credentialEnv: string) =>
-        credentialEnv === "SLACK_BOT_TOKEN"
-          ? ({ kind: "exact" } as const)
-          : ({ kind: "missing" } as const),
+    const inspectGatewayCredential = vi.fn((_name: string, _type: string, credentialEnv: string) =>
+      credentialEnv === missing ? ({ kind: "missing" } as const) : ({ kind: "exact" } as const),
     );
 
     const result = reconcileReusedSandboxMessaging(
       structuredClone(plan),
       { name: "openclaw" },
-      {
-        clearPlanEnv: vi.fn(),
-        inspectGatewayCredential,
-        note: vi.fn(),
-        writePlanToEnv,
-      },
+      { clearPlanEnv: vi.fn(), inspectGatewayCredential, note: vi.fn(), writePlanToEnv },
       plan,
     );
     const disabledPlan = withChannelDisabled(plan, "slack");
-
-    expect(result).toEqual({ plan: disabledPlan, selectedChannels: [], changed: true });
-    expect(writePlanToEnv).toHaveBeenCalledWith(disabledPlan);
-    expect(inspectGatewayCredential).toHaveBeenCalledTimes(2);
-  });
-
-  it("disables Slack when its bot-token gateway credential is missing (#10660)", () => {
-    const plan = slackPlan(
-      hashCredential("previous-slack-bot-token") ?? "",
-      hashCredential("previous-slack-app-token") ?? "",
-    );
-    vi.stubEnv("SLACK_BOT_TOKEN", "");
-    vi.stubEnv("SLACK_APP_TOKEN", "");
-    const writePlanToEnv = vi.fn();
-    const inspectGatewayCredential = vi.fn(
-      (_name: string, _type: string, credentialEnv: string) =>
-        credentialEnv === "SLACK_APP_TOKEN"
-          ? ({ kind: "exact" } as const)
-          : ({ kind: "missing" } as const),
-    );
-
-    const result = reconcileReusedSandboxMessaging(
-      structuredClone(plan),
-      { name: "openclaw" },
-      {
-        clearPlanEnv: vi.fn(),
-        inspectGatewayCredential,
-        note: vi.fn(),
-        writePlanToEnv,
-      },
-      plan,
-    );
-    const disabledPlan = withChannelDisabled(plan, "slack");
-
     expect(result).toEqual({ plan: disabledPlan, selectedChannels: [], changed: true });
     expect(writePlanToEnv).toHaveBeenCalledWith(disabledPlan);
     expect(inspectGatewayCredential).toHaveBeenCalledTimes(2);
@@ -622,7 +598,9 @@ describe("reconcileReusedSandboxMessaging", () => {
           },
           plan,
         ),
-      ).toThrow(/provider 'alpha-googlechat-bridge'.*sandbox 'alpha'.*No messaging state was changed/u);
+      ).toThrow(
+        /provider 'alpha-googlechat-bridge'.*sandbox 'alpha'.*No messaging state was changed/u,
+      );
       expect(clearPlanEnv).not.toHaveBeenCalled();
       expect(writePlanToEnv).not.toHaveBeenCalled();
     },
@@ -637,11 +615,10 @@ describe("reconcileReusedSandboxMessaging", () => {
     vi.stubEnv("SLACK_APP_TOKEN", "");
     const clearPlanEnv = vi.fn();
     const writePlanToEnv = vi.fn();
-    const inspectGatewayCredential = vi.fn(
-      (_name: string, _type: string, credentialEnv: string) =>
-        credentialEnv === "SLACK_BOT_TOKEN"
-          ? ({ kind: "missing" } as const)
-          : ({ kind: "indeterminate" } as const),
+    const inspectGatewayCredential = vi.fn((_name: string, _type: string, credentialEnv: string) =>
+      credentialEnv === "SLACK_BOT_TOKEN"
+        ? ({ kind: "missing" } as const)
+        : ({ kind: "indeterminate" } as const),
     );
 
     expect(() =>
@@ -794,6 +771,37 @@ describe("reconcileSandboxMessaging plan authority", () => {
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
     expect(result).toEqual({ plan: registryPlan, selectedChannels: ["telegram"] });
   });
+
+  it.each([
+    ["lifecycle selection", false, "add-channel", registryDeps, () => null],
+    ["checkpoint resume", true, "onboard", registryDeps, completedCheckpointSession],
+    ["recorded resume selection", true, "onboard", recordedResumeDeps, () => null],
+  ] as const)(
+    "does not stage a refreshed %s before every gateway probe resolves (#10660)",
+    async (_, resume, workflow, depsFor, sessionFor) => {
+      const discord = discordPlan(hashCredential("previous-discord-token") ?? "");
+      const registryPlan: SandboxMessagingPlan = {
+        ...discord,
+        workflow,
+        channels: [...discord.channels, ...googlechatPlan().channels],
+      };
+      const deps = depsFor(registryPlan);
+      deps.inspectGatewayCredential.mockReturnValue({ kind: "indeterminate" });
+      vi.stubEnv("DISCORD_BOT_TOKEN", "replacement-discord-token");
+      vi.stubEnv("GOOGLECHAT_SERVICE_ACCOUNT", "");
+      await expect(
+        reconcileSandboxMessaging({
+          resume,
+          session: sessionFor(registryPlan),
+          sandboxName: "alpha",
+          agent: { name: "openclaw" },
+          deps,
+        }),
+      ).rejects.toThrow(/No messaging state was changed/u);
+      expect(deps.writePlanToEnv).not.toHaveBeenCalled();
+      expect(deps.clearPlanEnv).not.toHaveBeenCalled();
+    },
+  );
 
   it("omits a removed host-backed channel from fresh registry re-onboarding (#9109)", async () => {
     const registryPlan = discordPlan(hashCredential("previous-discord-token") ?? "");
