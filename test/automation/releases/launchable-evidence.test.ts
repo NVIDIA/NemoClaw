@@ -197,22 +197,24 @@ describe("Launchable evidence inspection", () => {
     expect(boundary.listJobs).not.toHaveBeenCalled();
     expect(boundary.readArtifact).not.toHaveBeenCalled();
   });
-  it.each(["PRESENT", "UNKNOWN"])(
-    "returns cleanup recovery identity for %s status (#10798)",
-    (status) => {
-      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-      const artifact = files({
-        "cleanup.json": JSON.stringify({
-          workspaceName: "workspace",
-          workspaceId: "ws-1",
-          status,
-          verifiedAt: "2026-06-01T01:00:00Z",
-        }),
-      });
-      expect(runCli(["--candidate", SHA], reader(undefined, undefined, artifact))).toBe(1);
-      expect(String(stderr.mock.calls.at(-1)?.[0])).toContain(
-        `workspace=workspace id=ws-1 status=${status} checkedAt=2026-06-01T01:00:00Z`,
-      );
-    },
-  );
+  it.each([
+    ["PRESENT", "2026-06-01T01:00:00Z", "2026-06-01T01:00:00Z"],
+    ["UNKNOWN", "2026-06-01T01:00:00Z", "2026-06-01T01:00:00Z"],
+    ["PRESENT", undefined, "<missing>"],
+    ["UNKNOWN", undefined, "<missing>"],
+  ])("returns cleanup recovery identity for %s status (#10798)", (status, verifiedAt, expected) => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const artifact = files({
+      "cleanup.json": JSON.stringify({
+        workspaceName: "workspace",
+        workspaceId: "ws-1",
+        status,
+        verifiedAt,
+      }),
+    });
+    expect(runCli(["--candidate", SHA], reader(undefined, undefined, artifact))).toBe(1);
+    expect(String(stderr.mock.calls.at(-1)?.[0])).toContain(
+      `workspace=workspace id=ws-1 status=${status} checkedAt=${expected}`,
+    );
+  });
 });

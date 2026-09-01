@@ -177,11 +177,15 @@ export function validateLaunchableEvidence(
   if (cleanup.workspaceName !== name || cleanup.workspaceId !== id)
     fail("cleanup workspace does not match launchable workspace");
   const cleanupStatus = text(cleanup.status, "cleanup.status"),
-    checkedAt = text(cleanup.verifiedAt, "cleanup.verifiedAt");
+    checkedAt =
+      typeof cleanup.verifiedAt === "string" && cleanup.verifiedAt.length > 0
+        ? cleanup.verifiedAt
+        : "<missing>";
   if (cleanupStatus !== "ABSENT")
     fail(
       `cleanup incomplete: workspace=${name} id=${id} status=${cleanupStatus} checkedAt=${checkedAt}`,
     );
+  if (checkedAt === "<missing>") fail("cleanup.verifiedAt must be a nonempty string");
   const verifiedAt = checkedAt;
   if (!UTC.test(verifiedAt) || Number.isNaN(Date.parse(verifiedAt)))
     fail("cleanup.verifiedAt must be an ISO 8601 UTC timestamp");
