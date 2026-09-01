@@ -79,12 +79,7 @@ const PROFILE_JOBS = {
     job: "catalogue-brave-nvidia-inference",
     matrix: "catalogue_brave_nvidia_inference_matrix",
     credentialBoundary: "Brave and NVIDIA inference API keys",
-    secrets: [
-      "BRAVE_API_KEY",
-      "DOCKERHUB_TOKEN",
-      "DOCKERHUB_USERNAME",
-      "NVIDIA_INFERENCE_API_KEY",
-    ],
+    secrets: ["BRAVE_API_KEY", "DOCKERHUB_TOKEN", "DOCKERHUB_USERNAME", "NVIDIA_INFERENCE_API_KEY"],
     githubToken: false,
     maxParallel: 2,
   },
@@ -163,6 +158,7 @@ function validateProfileCallers(errors: string[], workflow: WorkflowRecord): voi
       risk_signal_correlation_id:
         "${{ github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && inputs.correlation_id || '' }}",
       cli_artifact_provenance: "${{ needs.generate-matrix.outputs.cli_artifact_provenance }}",
+      managed_image_catalog: "${{ needs.base-image-publication.outputs.managed_image_catalog }}",
       managed_image_revision: "${{ needs.base-image-publication.outputs.managed_image_revision }}",
       managed_image_receipt: "${{ needs.base-image-publication.outputs.managed_image_receipt }}",
       workload_source: "${{ needs.generate-matrix.outputs.workload_source }}",
@@ -213,6 +209,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     risk_signal_expected_sha: "string",
     risk_signal_correlation_id: "string",
     cli_artifact_provenance: "string",
+    managed_image_catalog: "string",
     managed_image_revision: "string",
     managed_image_receipt: "string",
     workload_source: "string",
@@ -283,6 +280,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   const jobEnv = record(runJob.env);
   const expectedJobEnv = {
     E2E_JOB: "1",
+    NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: "${{ inputs.managed_image_catalog }}",
     E2E_MANAGED_IMAGE_REVISION: "${{ inputs.managed_image_revision }}",
     E2E_TARGET_ID: "${{ inputs.target_id }}",
     E2E_MANAGED_IMAGE_COHORT_RECEIPT: "${{ inputs.managed_image_receipt }}",
@@ -466,11 +464,10 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     cloudflared.shell !== EXECUTION_PLAN_SHELL ||
     !isDeepStrictEqual(record(cloudflared.env), {
       CLOUDFLARED_VERSION: "2026.6.1",
-      CLOUDFLARED_DEB_SHA256:
-        "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
+      CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526",
     }) ||
     !cloudflaredRun.includes(
-      'https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb',
+      "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb",
     ) ||
     !cloudflaredRun.includes("sha256sum -c -") ||
     !cloudflaredRun.includes('dpkg-deb -f "${cloudflared_deb}" Package') ||
@@ -573,8 +570,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
       "${{ inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
     executeEnv.COMPATIBLE_API_KEY !==
       "${{ inputs.compatible_api_key && inputs.trusted_main && secrets.NVIDIA_INFERENCE_API_KEY || '' }}" ||
-    executeEnv.BRAVE_API_KEY !==
-      "${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}" ||
+    executeEnv.BRAVE_API_KEY !== "${{ inputs.trusted_main && secrets.BRAVE_API_KEY || '' }}" ||
     executeEnv.GITHUB_TOKEN !==
       "${{ inputs.github_token && inputs.trusted_main && github.token || '' }}"
   ) {

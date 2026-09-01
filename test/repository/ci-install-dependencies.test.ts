@@ -60,6 +60,7 @@ describe("shared CI dependency installer", () => {
         NPM_CONFIG_CACHE: join(fixture.root, "npm-cache"),
         NPM_TRACE: fixture.trace,
         PATH: fixture.path,
+        RUNNER_TEMP: join(fixture.root, "runner-temp"),
       },
     });
 
