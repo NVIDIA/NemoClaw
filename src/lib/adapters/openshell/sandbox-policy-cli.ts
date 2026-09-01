@@ -9,8 +9,9 @@ import {
   parseSandboxPolicyMetadata,
   type OpenShellPolicyInspection,
 } from "../../policy/merge";
-import { captureOpenshellCommand, stripAnsi } from "./client";
-import { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary } from "./command-argv";
+import { stripAnsi } from "./client";
+import { openshellNotFoundDiagnosticLines } from "./command-argv";
+import * as openshellPolicyRuntime from "./policy-runtime";
 import { type OpenShellSandboxError, type OpenShellSandboxResult } from "./sandbox-observer";
 import {
   type InspectOpenShellSandboxPolicyRequest,
@@ -72,15 +73,16 @@ export type CliOpenShellSandboxPolicyRead = (
 const DEFAULT_POLICY_READ_TIMEOUT_MS = 15_000;
 
 const capturePolicyWithRunner: CapturePolicyCommand = (args, options) => {
-  const executable = tryResolveOpenshellBinary();
-  if (!executable) {
+  try {
+    return openshellPolicyRuntime.captureResolvedOpenshell(args, options);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "OpenShell is unavailable") throw error;
     return {
       status: null,
       output: "",
       error: Object.assign(new Error("OpenShell binary not found"), { code: "ENOENT" }),
     };
   }
-  return captureOpenshellCommand(executable, args, options);
 };
 
 function diagnostic(result: CapturedPolicyCommandResult): string {

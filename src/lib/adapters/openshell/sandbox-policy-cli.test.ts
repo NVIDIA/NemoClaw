@@ -3,12 +3,14 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import * as openshellRuntime from "./runtime";
 import { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
 import {
   type CapturedPolicyCommandResult,
   createCliOpenShellSandboxPolicyRead,
   createCliOpenShellSandboxPolicyReader,
   createSyncCliOpenShellSandboxPolicyReader,
+  readCliOpenShellSandboxPolicy,
 } from "./sandbox-policy-cli";
 
 const POLICY = "version: 1\nnetwork_policies: {}";
@@ -279,6 +281,38 @@ describe("CLI OpenShell sandbox policy reader", () => {
       error: { kind: "timeout", message: "The OpenShell sandbox policy read timed out." },
     });
     expect(JSON.stringify(read)).not.toContain("credential-value");
+  });
+
+  it("maps an unavailable canonical capture boundary to the command diagnostic (#9805)", async () => {
+    const capture = vi
+      .spyOn(openshellRuntime, "captureResolvedOpenshell")
+      .mockImplementation(() => {
+        throw new Error("OpenShell is unavailable");
+      });
+
+    await expect(
+      readCliOpenShellSandboxPolicy({
+        target: namedOpenShellGateway("nemoclaw"),
+        sandboxName: "alpha",
+        scope: "base",
+      }),
+    ).resolves.toMatchObject({
+      result: {
+        ok: false,
+        error: {
+          kind: "command",
+          reason: "failed",
+        },
+      },
+      displayOutput: "",
+    });
+    expect(capture).toHaveBeenCalledWith(["policy", "get", "-g", "nemoclaw", "--base", "alpha"], {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      timeout: 15_000,
+    });
+    capture.mockRestore();
   });
 
   it("classifies a stdout-only failure when stderr is empty (#9805)", async () => {

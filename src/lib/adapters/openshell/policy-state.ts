@@ -18,7 +18,7 @@ import {
   type ActiveGlobalPolicyInspection,
   type OpenShellPolicyInspection,
 } from "../../policy/merge";
-import * as openshellRuntime from "./runtime";
+import * as openshellRuntime from "./policy-runtime";
 import {
   createSyncCliOpenShellSandboxPolicyReader,
   type SyncCapturePolicyCommand,
