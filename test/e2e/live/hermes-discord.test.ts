@@ -12,6 +12,7 @@ import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts"
 import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { requireHermesDiscordRestProof } from "../fixtures/hermes-discord-rest-proof.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -780,19 +781,7 @@ PY`,
     },
   );
   expectExitZero(discordApi, "Hermes Python Discord REST users/@me probe command");
-  const discordApiRows = discordApi.stdout
-    .split(/\r?\n/)
-    .filter((line) => line.trim().startsWith("{"))
-    .map((line) => JSON.parse(line) as { statusCode?: number; error?: string });
-  const discordApiResult = discordApiRows.at(-1) ?? {};
-  expect(
-    discordApiResult.error,
-    `Discord API call failed: ${discordApiResult.error ?? "unknown error"}`,
-  ).toBeUndefined();
-  expect(
-    [200, 401].includes(discordApiResult.statusCode ?? 0),
-    `Unexpected Discord users/@me response (got ${discordApiResult.statusCode}): ${discordApi.stdout}`,
-  ).toBe(true);
+  requireHermesDiscordRestProof(discordApi.stdout);
 
   const bridgeResidue = await sandboxShWithArgs(
     sandbox,
