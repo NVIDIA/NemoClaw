@@ -669,24 +669,25 @@ if [ -n "$match" ]; then printf '%s\n' "$match"; else echo ABSENT; fi`;
   return sandboxOutput(sandbox, probe, artifactName, redactionValues);
 }
 
-async function captureFakeApiProxyDiagnostics(
+async function captureFakeApiContainerDiagnostics(
   host: HostCliClient,
   kind: FakeDockerApiKind,
-  proxyContainer: string,
+  component: "api" | "api-proxy",
+  container: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
 ): Promise<void> {
   await runSecondaryCleanup(async () => {
-    await runHost(host, "docker", ["inspect", "--format", "{{json .State}}", proxyContainer], {
-      artifactName: `diagnose-fake-${kind}-api-proxy-state`,
+    await runHost(host, "docker", ["inspect", "--format", "{{json .State}}", container], {
+      artifactName: `diagnose-fake-${kind}-${component}-state`,
       env,
       redactionValues,
       timeoutMs: 30_000,
     });
   });
   await runSecondaryCleanup(async () => {
-    await runHost(host, "docker", ["logs", "--tail", "100", proxyContainer], {
-      artifactName: `diagnose-fake-${kind}-api-proxy-logs`,
+    await runHost(host, "docker", ["logs", "--tail", "100", container], {
+      artifactName: `diagnose-fake-${kind}-${component}-logs`,
       env,
       redactionValues,
       timeoutMs: 30_000,
@@ -732,9 +733,10 @@ async function requireFakeApiProxyReady(
       : undefined;
   if (ready?.exitCode === 0) return;
 
-  await captureFakeApiProxyDiagnostics(
+  await captureFakeApiContainerDiagnostics(
     host,
     options.kind,
+    "api-proxy",
     options.proxyContainer,
     options.env,
     options.redactionValues,
@@ -898,7 +900,19 @@ export async function startFakeDockerApi(
     }
     await sleep(100);
   }
-  if (!apiReady) throw new Error(`fake ${options.kind} API did not become ready`);
+  if (!apiReady) {
+    await captureFakeApiContainerDiagnostics(
+      host,
+      options.kind,
+      "api",
+      container,
+      options.env,
+      options.redactionValues,
+    );
+    throw new Error(
+      `fake ${options.kind} API ${container} did not become ready; see the redacted API state and log artifacts`,
+    );
+  }
 
   cleanup(`remove ${proxyContainer}`, async () => {
     const remove = await runHost(host, "docker", ["rm", "-f", proxyContainer], {

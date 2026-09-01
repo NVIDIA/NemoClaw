@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -71,6 +71,7 @@ function fakeDockerHost(
   options: {
     publishedAddress?: string;
     networkInspect?: string;
+    apiReady?: boolean;
     proxyRunning?: boolean;
   } = {},
 ): {
@@ -84,12 +85,13 @@ function fakeDockerHost(
   const networkInspect = options.networkInspect ?? OPENSHELL_NETWORK_INSPECT;
   const dockerCommand = (args: string[]) => {
     calls.push([...args]);
-    args
-      .filter((argument) => args[0] === "run" && argument.endsWith(":/tmp/fake"))
-      .forEach((fakeApiMount) => {
-        const fixtureDir = fakeApiMount.slice(0, -":/tmp/fake".length);
-        fs.writeFileSync(path.join(fixtureDir, "port"), "8080");
-      });
+    (options.apiReady === false
+      ? []
+      : args.filter((argument) => args[0] === "run" && argument.endsWith(":/tmp/fake"))
+    ).forEach((fakeApiMount) => {
+      const fixtureDir = fakeApiMount.slice(0, -":/tmp/fake".length);
+      fs.writeFileSync(path.join(fixtureDir, "port"), "8080");
+    });
     return args[0] === "network" && args[1] === "inspect"
       ? successfulCommand(networkInspect)
       : args[0] === "inspect"
@@ -301,6 +303,67 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(calls).toContainEqual(["logs", "--tail", "100", proxyContainer]);
     expect(calls).toContainEqual(["rm", "-f", proxyContainer]);
     expect(calls).toContainEqual(["rm", "-f", apiContainer]);
+    expect(calls).toContainEqual(["network", "rm", network]);
+  });
+
+  it("fails with API diagnostics when the detached API stops before readiness", async () => {
+    vi.useFakeTimers();
+    const { calls, host } = fakeDockerHost({ apiReady: false });
+    const cleanup: CleanupAction[] = [];
+    let failure: unknown;
+
+    try {
+      const start = startFakeDockerApi(
+        host,
+        (name, run) => cleanup.push({ name, run }),
+        {
+          kind: "discord-gateway",
+          imageScript: "fake-discord-gateway-api.cjs",
+          containerPrefix: "fake-discord-gateway",
+          portEnv: "FAKE_API_PORT",
+          portFileEnv: "FAKE_API_PORT_FILE",
+          captureFileEnv: "FAKE_API_CAPTURE_FILE",
+          expectedEnv: {},
+          redactionValues: [],
+          env: {},
+        },
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      await vi.runAllTimersAsync();
+      failure = await start;
+    } finally {
+      vi.useRealTimers();
+      await runCleanup(cleanup);
+    }
+
+    const runCalls = calls.filter((args) => args[0] === "run");
+    expect(runCalls).toHaveLength(1);
+    const apiRun = runCalls[0]!;
+    const apiContainer = apiRun[apiRun.indexOf("--name") + 1]!;
+    const networkCreate = calls.find((args) => args[0] === "network" && args[1] === "create");
+    const network = networkCreate?.at(-1);
+    const stateDiagnostics = ["inspect", "--format", "{{json .State}}", apiContainer];
+    const logDiagnostics = ["logs", "--tail", "100", apiContainer];
+    const removeApi = ["rm", "-f", apiContainer];
+    const stateDiagnosticsIndex = calls.findIndex(
+      (args) => JSON.stringify(args) === JSON.stringify(stateDiagnostics),
+    );
+    const logDiagnosticsIndex = calls.findIndex(
+      (args) => JSON.stringify(args) === JSON.stringify(logDiagnostics),
+    );
+    const removeApiIndex = calls.findIndex(
+      (args) => JSON.stringify(args) === JSON.stringify(removeApi),
+    );
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(apiContainer);
+    expect(calls).toContainEqual(stateDiagnostics);
+    expect(calls).toContainEqual(logDiagnostics);
+    expect(stateDiagnosticsIndex).toBeLessThan(removeApiIndex);
+    expect(logDiagnosticsIndex).toBeLessThan(removeApiIndex);
+    expect(calls).toContainEqual(removeApi);
     expect(calls).toContainEqual(["network", "rm", network]);
   });
 
