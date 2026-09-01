@@ -1,18 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
 import YAML from "yaml";
 
-// Import the tsc-compiled output, not the .cts source: a standalone `node
-// --import tsx` child process (this fixture's execution mode) hits a Node/tsx
-// loader conflict on newer Node versions where Node's own native .cts
-// handling intercepts the file before tsx's transform runs, producing
-// "Cannot use import statement outside a module". Every other consumer in
-// this repo already imports the compiled .cjs for the same reason.
+// Import compiled output. Node native `.cts` handling can intercept the source
+// before tsx transforms it.
 // sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
 import * as policyBoundaryModule from "../../../nemoclaw/dist/shared/openshell-policy-boundary.cjs";
 
@@ -20,25 +14,6 @@ const policyBoundary = (
   "default" in policyBoundaryModule ? policyBoundaryModule.default : policyBoundaryModule
 ) as typeof policyBoundaryModule;
 const { parseOpenShellPolicy } = policyBoundary;
-
-export function bindPolicyEndpointCredential(
-  policyFile: string,
-  providerName: string,
-  host: string,
-  port: number,
-  protocol: string,
-): void {
-  const source = fs.readFileSync(policyFile, "utf8");
-  const updated = policyDocumentWithEndpointCredentialBinding(
-    source,
-    providerName,
-    host,
-    port,
-    protocol,
-  );
-  fs.writeFileSync(policyFile, updated);
-  fs.chmodSync(policyFile, 0o600);
-}
 
 export function policyDocumentWithEndpointCredentialBinding(
   source: string,
@@ -81,16 +56,3 @@ export function policyDocumentWithEndpointCredentialBinding(
   endpoint.credential_binding = binding;
   return YAML.stringify(policy);
 }
-
-function main(): void {
-  const args = process.argv.slice(2);
-  const [policyFile, providerName, host, rawPort, protocol] = args;
-  if (!policyFile || !providerName || !host || !rawPort || !protocol) {
-    throw new Error(
-      "usage: policy-credential-binding <policy-file> <provider> <host> <port> <protocol>",
-    );
-  }
-  bindPolicyEndpointCredential(policyFile, providerName, host, Number(rawPort), protocol);
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

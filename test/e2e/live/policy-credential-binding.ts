@@ -13,7 +13,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { policyDocumentWithEndpointCredentialBinding } from "../fixtures/policy-credential-binding.ts";
 
-const POLICY_BINDING_RECONCILE_ATTEMPTS = 5;
+export const POLICY_BINDING_RECONCILE_ATTEMPTS = 5;
 
 type PolicyCredentialBindingOptions = {
   host: Pick<HostCliClient, "command" | "openshellCommandPath">;
@@ -29,6 +29,24 @@ type PolicyCredentialBindingOptions = {
 
 function policyDocumentsMatch(left: string, right: string): boolean {
   return isDeepStrictEqual(parseOpenShellPolicy(left).policy, parseOpenShellPolicy(right).policy);
+}
+
+function policyDocumentHasRequestedBinding(
+  document: string,
+  options: PolicyCredentialBindingOptions,
+): boolean {
+  try {
+    const boundDocument = policyDocumentWithEndpointCredentialBinding(
+      document,
+      options.providerName,
+      options.endpointHost,
+      Number(options.endpointPort),
+      options.protocol,
+    );
+    return policyDocumentsMatch(boundDocument, document);
+  } catch {
+    return false;
+  }
 }
 
 async function runOpenShell(
@@ -96,8 +114,6 @@ export async function applyPolicyCredentialBinding(
       Number(options.endpointPort),
       options.protocol,
     );
-    let recoveryFailure: Error | null = null;
-
     for (let attempt = 1; attempt <= POLICY_BINDING_RECONCILE_ATTEMPTS; attempt += 1) {
       const currentDocument = await readBasePolicy(options, `attempt-${attempt}-preflight`);
       if (!policyDocumentsMatch(currentDocument, contextDocument)) {
@@ -125,7 +141,6 @@ export async function applyPolicyCredentialBinding(
         if (!requestedIsCurrent) {
           throw new Error("applied policy did not match the requested credential binding");
         }
-        if (recoveryFailure) throw recoveryFailure;
         return;
       }
 
@@ -141,16 +156,33 @@ export async function applyPolicyCredentialBinding(
         requestedDocument,
         externalDocument,
       );
-      contextVersion = observedVersion;
-      contextDocument = observedDocument;
-      if (rebased.conflicts.length > 0) {
-        recoveryFailure ??= new Error(
+      if (
+        rebased.conflicts.length > 0 ||
+        !policyDocumentHasRequestedBinding(rebased.document, options)
+      ) {
+        const recoveryFailure = new Error(
           "sandbox policy changed in the credential-binding fields; restored the external policy and refused the conflicting binding",
         );
-        requestedDocument = externalDocument;
-      } else {
-        requestedDocument = rebased.document;
+        fs.writeFileSync(policyFile, externalDocument, { encoding: "utf8", mode: 0o600 });
+        await runOpenShell(
+          options,
+          ["policy", "set", "--policy", policyFile, "--wait", options.sandboxName],
+          `attempt-${attempt}-conflict-restore-set`,
+        );
+        const restoredDocument = await readBasePolicy(
+          options,
+          `attempt-${attempt}-conflict-restore-readback`,
+        );
+        if (!policyDocumentsMatch(restoredDocument, externalDocument)) {
+          throw new Error(
+            "sandbox policy changed again while restoring a conflicting external policy; refusing the credential binding",
+          );
+        }
+        throw recoveryFailure;
       }
+      contextVersion = observedVersion;
+      contextDocument = observedDocument;
+      requestedDocument = rebased.document;
     }
 
     throw new Error(

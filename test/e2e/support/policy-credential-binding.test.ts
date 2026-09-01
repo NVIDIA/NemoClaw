@@ -11,10 +11,13 @@ import YAML from "yaml";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { requireSuccessfulPolicyBoundaryBuild } from "../fixtures/hermes-discord-policy-boundary-build.ts";
+import { policyDocumentWithEndpointCredentialBinding } from "../fixtures/policy-credential-binding.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
-import { applyPolicyCredentialBinding } from "../live/policy-credential-binding.ts";
+import {
+  applyPolicyCredentialBinding,
+  POLICY_BINDING_RECONCILE_ATTEMPTS,
+} from "../live/policy-credential-binding.ts";
 
-const HELPER = path.resolve(import.meta.dirname, "../fixtures/policy-credential-binding.ts");
 const TYPESCRIPT = path.resolve("node_modules/typescript/bin/tsc");
 const POLICY_BOUNDARY_CONFIG = path.resolve("nemoclaw/tsconfig.shared.json");
 const tempDirs: string[] = [];
@@ -52,6 +55,7 @@ function localCommandHost(
 function fakeOpenShell(
   policy: string,
   overrides: {
+    postRecheckConcurrentPolicies?: string[];
     postRecheckConcurrentPolicy?: string;
     readbackPolicy?: string;
     recheckPolicy?: string;
@@ -70,13 +74,19 @@ function fakeOpenShell(
   const policyVersion = path.join(tempDir, "policy-version");
   const readbackPolicy = path.join(tempDir, "readback-policy.yaml");
   const recheckPolicy = path.join(tempDir, "recheck-policy.yaml");
-  const concurrentPolicy = path.join(tempDir, "concurrent-policy.yaml");
+  const concurrentPolicies = path.join(tempDir, "concurrent-policies");
   const policyRevisions = path.join(tempDir, "revisions");
   fs.writeFileSync(basePolicy, policy);
   fs.writeFileSync(policyVersion, "1\n");
   fs.writeFileSync(readbackPolicy, overrides.readbackPolicy ?? policy);
   fs.writeFileSync(recheckPolicy, overrides.recheckPolicy ?? policy);
-  fs.writeFileSync(concurrentPolicy, overrides.postRecheckConcurrentPolicy ?? policy);
+  fs.mkdirSync(concurrentPolicies);
+  const requestedConcurrentPolicies =
+    overrides.postRecheckConcurrentPolicies ??
+    (overrides.postRecheckConcurrentPolicy ? [overrides.postRecheckConcurrentPolicy] : []);
+  for (const [index, concurrentPolicy] of requestedConcurrentPolicies.entries()) {
+    fs.writeFileSync(path.join(concurrentPolicies, String(index + 1)), concurrentPolicy);
+  }
   fs.mkdirSync(policyRevisions);
   fs.writeFileSync(path.join(policyRevisions, "1"), policy);
   fs.writeFileSync(
@@ -114,12 +124,12 @@ function fakeOpenShell(
       "  policy:set)",
       `    printf 'set\\n' >>"$FAKE_OPENSHELL_CALLS"`,
       `    version=$(cat "$FAKE_OPENSHELL_POLICY_VERSION")`,
-      '    case "${FAKE_OPENSHELL_CONCURRENT_POLICY-}:$version" in',
-      "      ?*:1)",
-      `        version=2`,
-      `        cp "$FAKE_OPENSHELL_CONCURRENT_POLICY" "$FAKE_OPENSHELL_POLICY_REVISIONS/$version"`,
-      "        ;;",
-      "    esac",
+      `    set_count=$(grep -c '^set$' "$FAKE_OPENSHELL_CALLS")`,
+      `    concurrent_policy="$FAKE_OPENSHELL_CONCURRENT_POLICIES/$set_count"`,
+      `    if [[ -f "$concurrent_policy" ]]; then`,
+      `      version=$((version + 1))`,
+      `      cp "$concurrent_policy" "$FAKE_OPENSHELL_POLICY_REVISIONS/$version"`,
+      "    fi",
       `    version=$((version + 1))`,
       `    cp "$4" "$FAKE_OPENSHELL_APPLIED_POLICY"`,
       `    cp "$4" "$FAKE_OPENSHELL_POLICY_REVISIONS/$version"`,
@@ -139,11 +149,9 @@ function fakeOpenShell(
       FAKE_OPENSHELL_APPLIED_POLICY: appliedPolicy,
       FAKE_OPENSHELL_BASE_POLICY: basePolicy,
       FAKE_OPENSHELL_CALLS: callsFile,
+      FAKE_OPENSHELL_CONCURRENT_POLICIES: concurrentPolicies,
       FAKE_OPENSHELL_POLICY_REVISIONS: policyRevisions,
       FAKE_OPENSHELL_POLICY_VERSION: policyVersion,
-      ...(overrides.postRecheckConcurrentPolicy
-        ? { FAKE_OPENSHELL_CONCURRENT_POLICY: concurrentPolicy }
-        : {}),
       ...(overrides.readbackPolicy ? { FAKE_OPENSHELL_READBACK_POLICY: readbackPolicy } : {}),
       ...(overrides.recheckPolicy ? { FAKE_OPENSHELL_RECHECK_POLICY: recheckPolicy } : {}),
     },
@@ -166,38 +174,20 @@ function endpointPolicy(protocols: string[]): string {
   ].join("\n");
 }
 
-function endpointPolicyWithConcurrentEntry(): string {
-  const policy = YAML.parse(endpointPolicy(["rest", "websocket"]));
-  policy.network_policies.concurrent_host_edit = {
+function policyWithConcurrentEntry(source: string, index = 1): string {
+  const policy = YAML.parse(source);
+  policy.network_policies[`concurrent_host_edit_${index}`] = {
     endpoints: [{ host: "concurrent.example.com", port: 443 }],
   };
   return YAML.stringify(policy);
 }
 
-function endpointPolicyWithConflictingBinding(): string {
-  const policy = YAML.parse(endpointPolicy(["rest", "websocket"]));
+function policyWithConflictingBinding(source: string): string {
+  const policy = YAML.parse(source);
   policy.network_policies.fake.endpoints[0].credential_binding = {
     provider: "external-policy-provider",
   };
   return YAML.stringify(policy);
-}
-
-function runBinding(policyFile: string, protocol = "websocket") {
-  return spawnSync(
-    process.execPath,
-    [
-      "--disable-warning=DEP0205",
-      "--import",
-      "tsx",
-      HELPER,
-      policyFile,
-      "e2e-hermes-discord-discord-bridge",
-      "host.docker.internal",
-      "43117",
-      protocol,
-    ],
-    { encoding: "utf8", killSignal: "SIGKILL", timeout: 15_000 },
-  );
 }
 
 describe("binds a credential to exactly one policy endpoint", () => {
@@ -217,11 +207,7 @@ describe("binds a credential to exactly one policy endpoint", () => {
   });
 
   it("strips OpenShell revision metadata before binding the fake Gateway endpoint", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-discord-policy-"));
-    tempDirs.push(tempDir);
-    const policyFile = path.join(tempDir, "policy.yaml");
-    fs.writeFileSync(
-      policyFile,
+    const result = policyDocumentWithEndpointCredentialBinding(
       [
         "Config rev:   15880558010371530494",
         "---",
@@ -236,13 +222,13 @@ describe("binds a credential to exactly one policy endpoint", () => {
         "        port: 443",
         "",
       ].join("\n"),
+      "e2e-hermes-discord-discord-bridge",
+      "host.docker.internal",
+      43117,
+      "websocket",
     );
 
-    const result = runBinding(policyFile);
-
-    expect(result.stderr).toBe("");
-    expect(result.status).toBe(0);
-    expect(YAML.parse(fs.readFileSync(policyFile, "utf8"))).toEqual({
+    expect(YAML.parse(result)).toEqual({
       version: 1,
       network_policies: {
         discord_gateway: {
@@ -258,40 +244,10 @@ describe("binds a credential to exactly one policy endpoint", () => {
         },
       },
     });
-    expect(fs.statSync(policyFile).mode & 0o777).toBe(0o600);
-  });
-
-  it("rejects a missing protocol before choosing among shared endpoints (#10155)", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-policy-"));
-    tempDirs.push(tempDir);
-    const policyFile = path.join(tempDir, "policy.yaml");
-    fs.writeFileSync(policyFile, "version: 1\nnetwork_policies: {}\n");
-
-    const result = spawnSync(
-      process.execPath,
-      [
-        "--disable-warning=DEP0205",
-        "--import",
-        "tsx",
-        HELPER,
-        policyFile,
-        "e2e-hermes-discord-discord-bridge",
-        "host.docker.internal",
-        "43117",
-      ],
-      { encoding: "utf8", killSignal: "SIGKILL", timeout: 15_000 },
-    );
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("<protocol>");
   });
 
   it("binds only the requested protocol when a fake host and port are shared", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-policy-"));
-    tempDirs.push(tempDir);
-    const policyFile = path.join(tempDir, "policy.yaml");
-    fs.writeFileSync(
-      policyFile,
+    const result = policyDocumentWithEndpointCredentialBinding(
       [
         "version: 1",
         "network_policies:",
@@ -305,14 +261,14 @@ describe("binds a credential to exactly one policy endpoint", () => {
         "        protocol: websocket",
         "",
       ].join("\n"),
+      "e2e-hermes-discord-discord-bridge",
+      "host.docker.internal",
+      43117,
+      "websocket",
     );
-
-    const result = runBinding(policyFile, "websocket");
-    const endpoints = YAML.parse(fs.readFileSync(policyFile, "utf8")).network_policies.fake
-      .endpoints as Array<Record<string, unknown>>;
-
-    expect(result.stderr).toBe("");
-    expect(result.status).toBe(0);
+    const endpoints = YAML.parse(result).network_policies.fake.endpoints as Array<
+      Record<string, unknown>
+    >;
     expect(endpoints[0]).not.toHaveProperty("credential_binding");
     expect(endpoints[1]).toHaveProperty("credential_binding", {
       provider: "e2e-hermes-discord-discord-bridge",
@@ -320,9 +276,6 @@ describe("binds a credential to exactly one policy endpoint", () => {
   });
 
   it("rejects duplicate endpoint ownership across network policies", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-messaging-policy-"));
-    tempDirs.push(tempDir);
-    const policyFile = path.join(tempDir, "policy.yaml");
     const source = [
       "version: 1",
       "network_policies:",
@@ -338,15 +291,18 @@ describe("binds a credential to exactly one policy endpoint", () => {
       "        protocol: websocket",
       "",
     ].join("\n");
-    fs.writeFileSync(policyFile, source);
 
-    const result = runBinding(policyFile);
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
+    expect(() =>
+      policyDocumentWithEndpointCredentialBinding(
+        source,
+        "e2e-hermes-discord-discord-bridge",
+        "host.docker.internal",
+        43117,
+        "websocket",
+      ),
+    ).toThrow(
       "fake endpoint host.docker.internal:43117/websocket matches 2 base policy entries; expected exactly one",
     );
-    expect(fs.readFileSync(policyFile, "utf8")).toBe(source);
   });
 
   it.each(["rest", "websocket"] as const)(
@@ -443,8 +399,9 @@ describe("binds a credential to exactly one policy endpoint", () => {
   });
 
   it("preserves an unrelated policy edit that races the final recheck and policy set", async () => {
-    const fake = fakeOpenShell(endpointPolicy(["rest", "websocket"]), {
-      postRecheckConcurrentPolicy: endpointPolicyWithConcurrentEntry(),
+    const basePolicy = endpointPolicy(["rest", "websocket"]);
+    const fake = fakeOpenShell(basePolicy, {
+      postRecheckConcurrentPolicy: policyWithConcurrentEntry(basePolicy),
     });
 
     await applyPolicyCredentialBinding({
@@ -460,15 +417,16 @@ describe("binds a credential to exactly one policy endpoint", () => {
     });
 
     const applied = YAML.parse(fs.readFileSync(fake.appliedPolicy, "utf8"));
-    expect(applied.network_policies).toHaveProperty("concurrent_host_edit");
+    expect(applied.network_policies).toHaveProperty("concurrent_host_edit_1");
     expect(applied.network_policies.fake.endpoints[0]).toHaveProperty("credential_binding", {
       provider: "e2e-policy-provider",
     });
   });
 
   it("restores a conflicting policy edit that races the final recheck and fails closed", async () => {
-    const fake = fakeOpenShell(endpointPolicy(["rest", "websocket"]), {
-      postRecheckConcurrentPolicy: endpointPolicyWithConflictingBinding(),
+    const basePolicy = endpointPolicy(["rest", "websocket"]);
+    const fake = fakeOpenShell(basePolicy, {
+      postRecheckConcurrentPolicy: policyWithConflictingBinding(basePolicy),
     });
 
     await expect(
@@ -489,5 +447,49 @@ describe("binds a credential to exactly one policy endpoint", () => {
     expect(applied.network_policies.fake.endpoints[0]).toHaveProperty("credential_binding", {
       provider: "external-policy-provider",
     });
+  });
+
+  it("restores a conflict on the final reconciliation attempt before failing closed", async () => {
+    const basePolicy = endpointPolicy(["rest", "websocket"]);
+    const requestedPolicy = policyDocumentWithEndpointCredentialBinding(
+      basePolicy,
+      "e2e-policy-provider",
+      "host.docker.internal",
+      43117,
+      "rest",
+    );
+    const requestedAfterFirstRebase = policyWithConcurrentEntry(requestedPolicy, 1);
+    const requestedAfterSecondRebase = policyWithConcurrentEntry(requestedAfterFirstRebase, 2);
+    const requestedAfterThirdRebase = policyWithConcurrentEntry(requestedAfterSecondRebase, 3);
+    const concurrentPolicies = [
+      policyWithConcurrentEntry(basePolicy, 1),
+      policyWithConcurrentEntry(requestedPolicy, 2),
+      policyWithConcurrentEntry(requestedAfterFirstRebase, 3),
+      policyWithConcurrentEntry(requestedAfterSecondRebase, 4),
+      policyWithConflictingBinding(requestedAfterThirdRebase),
+    ];
+    expect(concurrentPolicies).toHaveLength(POLICY_BINDING_RECONCILE_ATTEMPTS);
+    const expectedRestoredPolicy = concurrentPolicies.at(-1)!;
+    const fake = fakeOpenShell(basePolicy, {
+      postRecheckConcurrentPolicies: concurrentPolicies,
+    });
+
+    await expect(
+      applyPolicyCredentialBinding({
+        host: localCommandHost(fake.executable),
+        sandboxName: "e2e-policy-transaction",
+        providerName: "e2e-policy-provider",
+        endpointHost: "host.docker.internal",
+        endpointPort: 43117,
+        protocol: "rest",
+        env: fake.env,
+        redactionValues: [],
+        artifactName: "reject-final-attempt-conflicting-policy-binding",
+      }),
+    ).rejects.toThrow("restored the external policy and refused the conflicting binding");
+
+    expect(YAML.parse(fs.readFileSync(fake.appliedPolicy, "utf8"))).toEqual(
+      YAML.parse(expectedRestoredPolicy),
+    );
   });
 });

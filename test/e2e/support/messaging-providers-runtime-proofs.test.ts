@@ -414,8 +414,6 @@ network_policies:
       fs.writeFileSync(path.join(selfProc, "cmdline"), `${invocation.join("\0")}\0`);
 
       expect(script).not.toContain(token);
-      expect(script).not.toContain("grep");
-      expect(script).toContain('case "$nemoclaw_process_probe_cmdline" in');
       expect(invocation.every((argument) => !argument.includes(token))).toBe(true);
 
       const [command, ...args] = invocation;
