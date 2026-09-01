@@ -7,21 +7,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { dockerfileInstructions } from "../../helpers/dockerfile-run-commands";
-
 const root = path.join(import.meta.dirname, "../../..");
 const dockerfileBase = fs.readFileSync(path.join(root, "agents/hermes/Dockerfile.base"), "utf8");
-const cliAdapter = JSON.parse(
-  fs.readFileSync(path.join(root, "agents/hermes/hermes-cli-adapter-v1.json"), "utf8"),
-);
-const review = fs.readFileSync(
-  path.join(root, "internal/security-reviews/hermes-0.20.6-dependency-review.md"),
-  "utf8",
-);
-const securityDependenciesPatch = fs.readFileSync(
-  path.join(root, "agents/hermes/security-dependencies.patch"),
-  "utf8",
-);
 const hindsightProbeRequirementsPath = path.join(
   root,
   "agents/hermes/hindsight-client-probe-requirements.txt",
