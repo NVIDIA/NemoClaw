@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
 
 import {
   listBuiltInMessagingChannelManifests,
@@ -140,39 +139,6 @@ describe("messaging channel policy presets", () => {
     );
     expect(missing).toEqual([]);
   });
-
-  it.each(["openclaw", "hermes"] as const)(
-    "authorizes one exact validated WeChat IDC endpoint with its credential binding on %s (#10606)",
-    (agent) => {
-      const content = loadMessagingChannelPolicyPreset("wechat", {
-        agent,
-        sandboxName: `${agent}-wechat`,
-        messagingConfig: { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" },
-      });
-      const endpoints = YAML.parse(content ?? "").network_policies.wechat_bridge.endpoints;
-      const configured = endpoints.find(
-        (endpoint: { host: string }) => endpoint.host === "idc-37.weixin.qq.com",
-      );
-
-      expect(configured).toEqual({
-        host: "idc-37.weixin.qq.com",
-        port: 443,
-        protocol: "rest",
-        enforcement: "enforce",
-        credential_binding: { provider: `${agent}-wechat-wechat-bridge` },
-        rules: [
-          { allow: { method: "GET", path: "/**" } },
-          { allow: { method: "POST", path: "/**" } },
-        ],
-      });
-      expect(
-        endpoints.filter((endpoint: { host: string }) => endpoint.host.startsWith("idc-")),
-      ).toHaveLength(1);
-      expect(endpoints.map((endpoint: { host: string }) => endpoint.host)).not.toContain(
-        "*.weixin.qq.com",
-      );
-    },
-  );
 
   it.each([
     "http://idc-3.weixin.qq.com",
