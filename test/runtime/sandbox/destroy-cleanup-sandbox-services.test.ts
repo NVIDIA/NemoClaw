@@ -12,9 +12,15 @@ import { describe, expect, it, vi } from "vitest";
 import type { CleanupSandboxServicesDeps } from "../../../src/lib/actions/sandbox/destroy.js";
 import { cleanupSandboxServices } from "../../../src/lib/actions/sandbox/destroy.js";
 import { ollamaModelRefsMatch } from "../../../src/lib/inference/ollama/model-discovery.js";
+import type { OllamaUnloadResult } from "../../../src/lib/inference/ollama/proxy.js";
 import { SANDBOX_PROVIDER_SUFFIXES } from "../../../src/lib/onboard/sandbox-provider-cleanup.js";
 
 type SandboxLike = { name?: string; model?: string | null; provider?: string | null } | null;
+type StopAllOptions = {
+  sandboxName: string;
+  cleanupOllamaModels?: boolean;
+  unloadOllamaModels?: () => OllamaUnloadResult | void;
+};
 
 function buildDeps(
   sandbox: SandboxLike,
@@ -37,11 +43,11 @@ function buildDeps(
       | "googlechatWebhookTunnelPidDir"
     >
   >;
-  stopAllCalls: Array<{ sandboxName: string; cleanupOllamaModels?: boolean }>;
+  stopAllCalls: StopAllOptions[];
   unloadCalls: number;
   unloadArgs: Array<readonly string[] | undefined>;
 } {
-  const stopAllCalls: Array<{ sandboxName: string; cleanupOllamaModels?: boolean }> = [];
+  const stopAllCalls: StopAllOptions[] = [];
   const target = sandbox
     ? { name: "regression-2717", model: "target-model:latest", ...sandbox }
     : null;
@@ -59,8 +65,9 @@ function buildDeps(
         sandboxes: [...(target ? [target] : []), ...peers] as never,
         defaultSandbox: null,
       })),
-      stopAll: vi.fn((opts: { sandboxName: string; cleanupOllamaModels?: boolean }) => {
+      stopAll: vi.fn((opts: StopAllOptions) => {
         stopAllCalls.push(opts);
+        return opts.cleanupOllamaModels === false ? undefined : opts.unloadOllamaModels?.();
       }),
       unloadOllamaModels: vi.fn((onlyModels?: readonly string[]) => {
         unloadCalls += 1;
@@ -95,14 +102,15 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
 
     expect(harness.deps.stopAll).toHaveBeenCalledTimes(1);
-    expect(harness.stopAllCalls[0]).toEqual({
-      sandboxName: "regression-2717",
-      cleanupOllamaModels: true,
-    });
-    // stopAll() invokes unloadOllamaModels() internally — see services.ts.
-    // cleanupSandboxServices itself must not call it again.
-    expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
-    expect(harness.unloadCalls).toBe(0);
+    expect(harness.stopAllCalls[0]).toEqual(
+      expect.objectContaining({
+        sandboxName: "regression-2717",
+        cleanupOllamaModels: true,
+        unloadOllamaModels: expect.any(Function),
+      }),
+    );
+    expect(harness.deps.unloadOllamaModels).toHaveBeenCalledOnce();
+    expect(harness.unloadCalls).toBe(1);
   });
 
   it("skips host-wide Ollama discovery for a final sandbox with no Ollama ownership", () => {
@@ -111,7 +119,11 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
 
     expect(harness.stopAllCalls).toEqual([
-      { sandboxName: "regression-2717", cleanupOllamaModels: false },
+      expect.objectContaining({
+        sandboxName: "regression-2717",
+        cleanupOllamaModels: false,
+        unloadOllamaModels: expect.any(Function),
+      }),
     ]);
     expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
   });
@@ -123,8 +135,13 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
 
     expect(harness.stopAllCalls).toEqual([
-      { sandboxName: "regression-2717", cleanupOllamaModels: true },
+      expect.objectContaining({
+        sandboxName: "regression-2717",
+        cleanupOllamaModels: true,
+        unloadOllamaModels: expect.any(Function),
+      }),
     ]);
+    expect(harness.deps.unloadOllamaModels).toHaveBeenCalledOnce();
   });
 
   it("holds model ownership while final host-wide cleanup runs", () => {
@@ -138,13 +155,14 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
         ownershipHeld = false;
       }
     });
-    vi.mocked(harness.deps.stopAll).mockImplementation(() => {
+    vi.mocked(harness.deps.unloadOllamaModels).mockImplementation(() => {
       expect(ownershipHeld).toBe(true);
     });
 
     cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
 
     expect(harness.deps.stopAll).toHaveBeenCalledOnce();
+    expect(harness.deps.unloadOllamaModels).toHaveBeenCalledOnce();
     expect(ownershipHeld).toBe(false);
   });
 

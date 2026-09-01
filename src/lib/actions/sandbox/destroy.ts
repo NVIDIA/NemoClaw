@@ -171,6 +171,7 @@ export type CleanupSandboxServicesDeps = {
   stopAll?: (opts: {
     sandboxName: string;
     cleanupOllamaModels?: boolean;
+    unloadOllamaModels?: () => OllamaUnloadResult | void;
   }) => OllamaUnloadResult | void;
   unloadOllamaModels?: (onlyModels?: readonly string[]) => OllamaUnloadResult | void;
   loadPendingOllamaModelCleanup?: (sandboxName: string) => readonly string[];
@@ -239,11 +240,16 @@ export function cleanupSandboxServices(
   const listSandboxes = deps.listSandboxes ?? registry.listSandboxes;
   const stopAll =
     deps.stopAll ??
-    ((opts: { sandboxName: string; cleanupOllamaModels?: boolean }) => {
+    ((opts: {
+      sandboxName: string;
+      cleanupOllamaModels?: boolean;
+      unloadOllamaModels?: () => OllamaUnloadResult | void;
+    }) => {
       const services = require("../../tunnel/services") as {
         stopAll: (opts: {
           sandboxName: string;
           cleanupOllamaModels?: boolean;
+          unloadOllamaModels?: () => OllamaUnloadResult | void;
         }) => OllamaUnloadResult | void;
       };
       return services.stopAll(opts);
@@ -346,7 +352,11 @@ export function cleanupSandboxServices(
       const cleanupOllamaModels = Boolean(
         sandbox?.provider?.includes("ollama") || pending.length > 0,
       );
-      return stopAll({ sandboxName: validatedSandboxName, cleanupOllamaModels });
+      return stopAll({
+        sandboxName: validatedSandboxName,
+        cleanupOllamaModels,
+        unloadOllamaModels: () => unloadOllamaModels(),
+      });
     });
   } else {
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
