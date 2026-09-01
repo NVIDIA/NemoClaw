@@ -11,7 +11,6 @@ const port = Number(rawPort);
 const portFile = process.env.FAKE_DISCORD_MESSAGE_API_PORT_FILE || "";
 const captureFile = process.env.FAKE_DISCORD_MESSAGE_API_CAPTURE_FILE || "";
 const expectedToken = process.env.FAKE_DISCORD_MESSAGE_API_EXPECTED_TOKEN || "";
-const MAX_BODY_BYTES = 1024 * 1024;
 
 if (!Number.isInteger(port) || port < 0 || port > 65_535) {
   throw new Error(
@@ -52,102 +51,36 @@ function writeJson(response: http.ServerResponse, status: number, body: unknown)
   response.end(JSON.stringify(body));
 }
 
-function parseJson(body: string): Record<string, unknown> {
-  try {
-    return JSON.parse(body || "{}") as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-}
-
 const server = http.createServer((request, response) => {
-  const chunks: Buffer[] = [];
-  let bodyBytes = 0;
-  let bodyTooLarge = false;
-  request.on("data", (chunk: Buffer) => {
-    if (bodyTooLarge) return;
-    bodyBytes += chunk.length;
-    if (bodyBytes > MAX_BODY_BYTES) {
-      bodyTooLarge = true;
-      record({
-        event: "request-too-large",
-        method: request.method,
-        path: request.url || "/",
-        bodyBytes,
-      });
-      writeJson(response, 413, { message: "payload too large", code: 413 });
-      request.destroy();
-      return;
-    }
-    chunks.push(chunk);
+  const url = new URL(request.url || "/", "http://fake-discord.local");
+  const token = tokenFromAuthorization(request.headers.authorization);
+  const tokenMatchesExpected = token === expectedToken;
+
+  record({
+    event: "request",
+    method: request.method,
+    path: url.pathname,
+    tokenMatchesExpected,
+    tokenLooksPlaceholder: tokenLooksPlaceholder(token),
+    authorizationPresent: Boolean(request.headers.authorization),
+    authorizationRedacted: true,
   });
 
-  request.on("end", () => {
-    if (bodyTooLarge) return;
-    const body = Buffer.concat(chunks).toString("utf8");
-    const url = new URL(request.url || "/", "http://fake-discord.local");
-    const token = tokenFromAuthorization(request.headers.authorization);
-    const tokenMatchesExpected = token === expectedToken;
-    const messageMatch = /^\/api\/v10\/channels\/([^/]+)\/messages$/u.exec(url.pathname);
-    const channelMatch = /^\/api\/v10\/channels\/([^/]+)$/u.exec(url.pathname);
-    const currentUserMatch = url.pathname === "/api/v10/users/@me";
-    const parsed = parseJson(body);
-    const content = typeof parsed.content === "string" ? parsed.content : "";
+  if (!tokenMatchesExpected) {
+    writeJson(response, 401, { message: "401: Unauthorized", code: 0 });
+    return;
+  }
 
-    record({
-      event: "request",
-      method: request.method,
-      path: url.pathname,
-      tokenMatchesExpected,
-      tokenLooksPlaceholder: tokenLooksPlaceholder(token),
-      authorizationPresent: Boolean(request.headers.authorization),
-      authorizationRedacted: true,
-      bodyRedacted: true,
-      channelId: messageMatch?.[1] || channelMatch?.[1] || "",
-      content,
-      contentLength: content.length,
+  if (request.method === "GET" && url.pathname === "/api/v10/users/@me") {
+    writeJson(response, 200, {
+      id: "420000000000000000",
+      username: "NemoClaw E2E",
+      bot: true,
     });
+    return;
+  }
 
-    if (!tokenMatchesExpected) {
-      writeJson(response, 401, { message: "401: Unauthorized", code: 0 });
-      return;
-    }
-
-    if (request.method === "GET" && currentUserMatch) {
-      writeJson(response, 200, {
-        id: "420000000000000000",
-        username: "NemoClaw E2E",
-        bot: true,
-      });
-      return;
-    }
-
-    if (request.method === "GET" && channelMatch) {
-      writeJson(response, 200, {
-        id: channelMatch[1],
-        type: 0,
-        name: "nemoclaw-e2e",
-      });
-      return;
-    }
-
-    if (request.method === "POST" && messageMatch) {
-      writeJson(response, 200, {
-        id: "420000000000000001",
-        channel_id: messageMatch[1],
-        content,
-        timestamp: new Date().toISOString(),
-        author: {
-          id: "420000000000000000",
-          username: "NemoClaw E2E",
-          bot: true,
-        },
-      });
-      return;
-    }
-
-    writeJson(response, 404, { message: "Unknown Endpoint", code: 10_001 });
-  });
+  writeJson(response, 404, { message: "Unknown Endpoint", code: 10_001 });
 });
 
 server.on("error", (error) => {

@@ -14,7 +14,10 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { hermesDiscordHttpProxyWebSocketUrl } from "./hermes-discord-proxy.ts";
+import {
+  hermesDiscordHttpProxyWebSocketUrl,
+  hermesDiscordNodeHttpProbeSource,
+} from "./hermes-discord-proxy.ts";
 import {
   assertDiscordGatewayCapture,
   type FakeDockerApi,
@@ -693,7 +696,11 @@ PY`,
     const deniedNodeRestProbe = await sandboxShWithArgs(
       sandbox,
       SANDBOX_NAME,
-      `/usr/local/bin/node -e "require('node:http').get('http://${FAKE_DISCORD_HOST}:${fakeRest.port}/api/v10/users/@me',r=>{r.resume();process.exitCode=3}).on('error',()=>{process.exitCode=2})"`,
+      `/usr/local/bin/node -e ${shellQuote(
+        hermesDiscordNodeHttpProbeSource(
+          `http://${FAKE_DISCORD_HOST}:${fakeRest.port}/api/v10/users/@me`,
+        ),
+      )}`,
       [],
       { artifactName: "phase-6-node-rest-denied", redactionValues, timeoutMs: 30_000 },
     );
