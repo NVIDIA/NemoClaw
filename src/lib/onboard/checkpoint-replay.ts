@@ -184,13 +184,31 @@ export function requiredMessagingProviderBindings(
       credential.providerNameTemplate.replaceAll("{sandboxName}", sandboxName),
     ]),
   );
+  const currentProviderCredentialEnvs = new Map<string, Set<string>>();
+  for (const binding of plan.credentialBindings) {
+    const providerName = providerNamesByCredential.get(
+      `${binding.channelId}\0${binding.providerEnvKey}`,
+    );
+    if (providerName !== binding.providerName) continue;
+    const key = `${binding.channelId}\0${binding.providerName}`;
+    const credentialEnvs = currentProviderCredentialEnvs.get(key) ?? new Set<string>();
+    credentialEnvs.add(binding.providerEnvKey);
+    currentProviderCredentialEnvs.set(key, credentialEnvs);
+  }
   const registrationPlan: SandboxMessagingPlan = {
     ...plan,
     credentialBindings: plan.credentialBindings.map((binding) => {
-      const providerName = providerNamesByCredential.get(
+      const currentProviderName = providerNamesByCredential.get(
         `${binding.channelId}\0${binding.providerEnvKey}`,
       );
-      return providerName ? { ...binding, providerName } : binding;
+      if (!currentProviderName || currentProviderName === binding.providerName) return binding;
+      const siblingCredentialEnvs = currentProviderCredentialEnvs.get(
+        `${binding.channelId}\0${binding.providerName}`,
+      );
+      const hasCurrentSibling = [...(siblingCredentialEnvs ?? [])].some(
+        (providerEnvKey) => providerEnvKey !== binding.providerEnvKey,
+      );
+      return hasCurrentSibling ? { ...binding, providerName: currentProviderName } : binding;
     }),
   };
   const bindings = new Map<string, CheckpointProviderBinding>();
