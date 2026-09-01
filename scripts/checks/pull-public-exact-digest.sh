@@ -11,8 +11,8 @@ fi
 
 reference="$1"
 platform="$2"
-max_attempts=5
-retry_delays=(2 4 8 16)
+max_attempts=7
+retry_delays=(2 4 8 16 30 30)
 
 if [[ ! "$reference" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$ ]]; then
   echo "ERROR: public image reference must be an exact lowercase GHCR digest" >&2
