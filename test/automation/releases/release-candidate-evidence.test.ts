@@ -224,6 +224,14 @@ afterEach(() => {
 });
 
 describe("release candidate evidence commands", () => {
+  it("requires canonical Launchable evidence for every candidate", () => {
+    expect(evidence).toContain("## Launchable E2E Evidence");
+    expect(evidence).toContain("Every release candidate requires this evidence.");
+    expect(evidence).toContain("Validate Existing Launchable Evidence");
+    expect(evidence).not.toContain("Optional Launchable E2E Evidence");
+    expect(evidence).not.toContain("Skip unless the maintainer cites Launchable evidence");
+  });
+
   it("uses maintainer-visible coverage instead of an empty-patch receipt", () => {
     expect(evidence).toContain("1. Proceed with the candidate as shown.");
     expect(evidence).toContain("2. Create or update a docs PR for the uncovered range.");

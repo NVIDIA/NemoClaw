@@ -4,7 +4,7 @@
 # Validate Existing Launchable Evidence
 
 Use this read-only procedure when another workflow needs to consume an existing
-`Staging Brev Launchable` result.
+`Exact staging Brev Launchable` result.
 
 ## Inspect the Result
 
@@ -25,7 +25,7 @@ Do not reconstruct the checks manually.
 
 ## What the Inspector Validates
 
-The inspector selects the newest successful `Staging Brev Launchable` job whose
+The inspector selects the newest successful `Exact staging Brev Launchable` job whose
 workflow run meets these conditions:
 
 - `head_sha` equals the candidate SHA;
@@ -76,6 +76,7 @@ Return:
 - full E2E result; and
 - verified cleanup time.
 
-If cleanup is not confirmed, report the workspace. Remove it through the trusted
-Brev boundary, then rotate or revoke every credential exposed to that workspace.
+If cleanup is not confirmed, the error reports the workspace name, ID, status, and check time.
+Use that recovery handoff to remove the workspace through the trusted Brev boundary. Then rotate or
+revoke every credential exposed to that workspace.
 Do not report successful Launchable evidence until absence is confirmed.

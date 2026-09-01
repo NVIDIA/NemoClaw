@@ -158,11 +158,7 @@ describe("Launchable evidence inspection", () => {
     });
     boundary.readArtifact = vi.fn(() => files());
     expect(inspectLaunchableEvidence({ candidate: SHA }, boundary).run.id).toBe(11);
-    expect(boundary.readArtifact).toHaveBeenCalledWith(
-      11,
-      2,
-      `staging-brev-launchable-${SHA}-11-2`,
-    );
+    expect(boundary.readArtifact).toHaveBeenCalledWith(11, `staging-brev-launchable-${SHA}-11-2`);
   });
   it("uses only supported gh run download options (#10798)", () => {
     expect(artifactDownloadArgs(10, "artifact", "/tmp/output")).toEqual([
@@ -178,9 +174,36 @@ describe("Launchable evidence inspection", () => {
     ]);
   });
 
-  it("returns a bounded nonzero CLI failure without network access (#10798)", () => {
+  it("rejects invalid CLI input before reading GitHub (#10798)", () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    expect(runCli(["--candidate", "bad"], reader())).toBe(1);
+    const boundary: EvidenceReader = {
+      listRuns: vi.fn(() => []),
+      listJobs: vi.fn(() => []),
+      readArtifact: vi.fn(() => ({})),
+    };
+    expect(runCli(["--candidate", "bad"], boundary)).toBe(1);
+    expect(String(stderr.mock.calls[0]?.[0])).toContain("lowercase 40-character SHA");
     expect(String(stderr.mock.calls[0]?.[0]).length).toBeLessThan(600);
+    expect(boundary.listRuns).not.toHaveBeenCalled();
+    expect(boundary.listJobs).not.toHaveBeenCalled();
+    expect(boundary.readArtifact).not.toHaveBeenCalled();
   });
+  it.each(["PRESENT", "UNKNOWN"])(
+    "returns cleanup recovery identity for %s status (#10798)",
+    (status) => {
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const artifact = files({
+        "cleanup.json": JSON.stringify({
+          workspaceName: "workspace",
+          workspaceId: "ws-1",
+          status,
+          verifiedAt: "2026-06-01T01:00:00Z",
+        }),
+      });
+      expect(runCli(["--candidate", SHA], reader(undefined, undefined, artifact))).toBe(1);
+      expect(String(stderr.mock.calls.at(-1)?.[0])).toContain(
+        `workspace=workspace id=ws-1 status=${status} checkedAt=2026-06-01T01:00:00Z`,
+      );
+    },
+  );
 });

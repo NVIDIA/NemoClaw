@@ -43,7 +43,7 @@ export interface ArtifactFiles {
 export interface EvidenceReader {
   listRuns(): WorkflowRun[];
   listJobs(runId: number, attempt: number): WorkflowJob[];
-  readArtifact(runId: number, attempt: number, name: string): ArtifactFiles;
+  readArtifact(runId: number, name: string): ArtifactFiles;
 }
 export interface Options {
   candidate: string;
@@ -176,8 +176,13 @@ export function validateLaunchableEvidence(
     id = text(workspace.id, "workspace.id");
   if (cleanup.workspaceName !== name || cleanup.workspaceId !== id)
     fail("cleanup workspace does not match launchable workspace");
-  if (cleanup.status !== "ABSENT") fail("cleanup.status must be ABSENT");
-  const verifiedAt = text(cleanup.verifiedAt, "cleanup.verifiedAt");
+  const cleanupStatus = text(cleanup.status, "cleanup.status"),
+    checkedAt = text(cleanup.verifiedAt, "cleanup.verifiedAt");
+  if (cleanupStatus !== "ABSENT")
+    fail(
+      `cleanup incomplete: workspace=${name} id=${id} status=${cleanupStatus} checkedAt=${checkedAt}`,
+    );
+  const verifiedAt = checkedAt;
   if (!UTC.test(verifiedAt) || Number.isNaN(Date.parse(verifiedAt)))
     fail("cleanup.verifiedAt must be an ISO 8601 UTC timestamp");
   return {
@@ -216,7 +221,7 @@ export function inspectLaunchableEvidence(options: Options, reader: EvidenceRead
     options.candidate,
     selection,
     artifactName,
-    reader.readArtifact(selection.run.id, selection.run.run_attempt, artifactName),
+    reader.readArtifact(selection.run.id, artifactName),
   );
 }
 function gh(args: string[]): unknown {
@@ -267,7 +272,7 @@ export function createGitHubReader(): EvidenceReader {
       );
       return Array.isArray(response.jobs) ? (response.jobs as WorkflowJob[]) : [];
     },
-    readArtifact(runId, _attempt, name) {
+    readArtifact(runId, name) {
       const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-launchable-evidence-"));
       try {
         execFileSync("gh", artifactDownloadArgs(runId, name, directory), {

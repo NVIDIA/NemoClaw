@@ -366,9 +366,9 @@ Record these values:
 - `BASE_IMAGE_RUN_URL`;
 - `BASE_IMAGE_JOB_URL`.
 
-## Optional Launchable E2E Evidence
+## Launchable E2E Evidence
 
-Skip unless the maintainer cites Launchable evidence in the E2E decision. Follow
+Every release candidate requires this evidence. Follow
 [Validate Existing Launchable Evidence](../../nemoclaw-maintainer-e2e/references/launchable-evidence.md)
 and record its canonical handoff in the release brief. Launchable evidence remains operational
 context, not a tag gate.
