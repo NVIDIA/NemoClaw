@@ -691,14 +691,53 @@ async function assertGatewayRecovery(
 }
 
 test(
+  "credentials reset detaches a rebuilt sandbox provider before deletion",
+  {
+    timeout: 45 * 60_000,
+    meta: {
+      e2ePhases: [
+        "confirm Docker and clear the credential provider fixture",
+        "onboard the credential lifecycle sandbox",
+        "add, attach, reset, and remove the credential provider",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, docker, environment, host, progress, sandbox, secrets }) => {
+    const hosted = requireHostedInferenceConfig(secrets);
+
+    await artifacts.target.declare({
+      id: "sandbox-operations",
+      boundary: "repo-cli-openshell-provider-sandbox-attachment",
+      contracts: [
+        "TC-SBX-14 credentials add/list/reset crosses the real OpenShell provider boundary, attaches on rebuild, and detaches before deletion",
+      ],
+    });
+
+    artifacts.addRedactionValues([CREDENTIAL_VALUE]);
+    await docker.requireDocker();
+    await environment.assertReady(ENVIRONMENT);
+    cleanup.trackGateway(host, "nemoclaw", {
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 5 * 60_000,
+    });
+    await host.cleanupSandbox(SANDBOX_A);
+
+    progress.phase("onboard the credential lifecycle sandbox");
+    await onboardSandbox(host, cleanup, SANDBOX_A, "tc-sbx-14-onboard-sandbox", hosted);
+
+    progress.phase("add, attach, reset, and remove the credential provider");
+    await assertCredentialProviderAdapterLifecycle(host, sandbox, cleanup, hosted);
+  },
+);
+
+test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
   {
-    timeout: 55 * 60_000,
+    timeout: 50 * 60_000,
     meta: {
       e2ePhases: [
         "confirm Docker and clear the sandbox operation fixtures",
         "onboard the primary sandbox",
-        "exercise credential provider adapter lifecycle",
         "validate connected shell resource limits",
         "exercise primary CLI inference and logs",
         "exercise terminal registry and process recovery",
@@ -731,7 +770,6 @@ test(
         "TC-SBX-11 sandboxes cannot reach each other by hostname",
         "TC-SBX-12 destroying the non-final sandbox preserves the survivor and final destroy releases the gateway port through the macOS default or explicit non-macOS cleanup",
         "TC-SBX-13 bare connect routes to the default sandbox and enforces login and interactive shell resource limits without startup diagnostics (#2173)",
-        "TC-SBX-14 credentials add/list/reset crosses the real OpenShell provider boundary, attaches on rebuild, and detaches before deletion",
       ],
     });
 
@@ -747,10 +785,6 @@ test(
 
     progress.phase("onboard the primary sandbox");
     await onboardSandbox(host, cleanup, SANDBOX_A, "onboard-sandbox-a", hosted);
-
-    artifacts.addRedactionValues([CREDENTIAL_VALUE]);
-    progress.phase("exercise credential provider adapter lifecycle");
-    await assertCredentialProviderAdapterLifecycle(host, sandbox, cleanup, hosted);
 
     progress.phase("validate connected shell resource limits");
     const connectRlimitSummary = await assertConnectResourceLimits(host);
