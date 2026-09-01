@@ -79,14 +79,9 @@ export function isN1xFastOsRelease(contents: string): boolean {
 
 export function isN1xPciDisplayDevice(
   vendor: string | undefined,
-  device: string | undefined,
   pciClass: string | undefined,
 ): boolean {
-  return (
-    vendor?.toLowerCase() === "0x10de" &&
-    device?.toLowerCase() === "0x2e2a" &&
-    /^0x03[0-9a-f]{4}$/i.test(pciClass ?? "")
-  );
+  return vendor?.toLowerCase() === "0x10de" && /^0x03[0-9a-f]{4}$/i.test(pciClass ?? "");
 }
 
 function readOpenedFile(fileDescriptor: number, maxBytes: number): string {
@@ -120,10 +115,9 @@ function collectN1xPciGpu(
     for (const entry of entries.slice(0, N1X_PCI_SCAN_MAX_DEVICES)) {
       const devicePath = path.join(pciDevicesPath, entry);
       const vendor = readBoundedOptional(readFile, path.join(devicePath, "vendor"));
-      const device = readBoundedOptional(readFile, path.join(devicePath, "device"));
       const pciClass = readBoundedOptional(readFile, path.join(devicePath, "class"));
-      if (isN1xPciDisplayDevice(vendor, device, pciClass)) return true;
-      if (vendor === undefined || device === undefined || pciClass === undefined) {
+      if (isN1xPciDisplayDevice(vendor, pciClass)) return true;
+      if (vendor === undefined || pciClass === undefined) {
         incompleteEvidence = true;
       }
     }
