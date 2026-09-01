@@ -171,7 +171,7 @@ The command supplies the validated CA bundle to the SDK and uses normal TLS host
 <Warning>
   This experimental path does not create, update, delete, or list gateways, workspaces, sandboxes, credentials, or policies.
   It does not establish workspace readiness or support machine authentication or Kubernetes.
-  A failed status request makes no remote change, so correct the endpoint, CA bundle, file metadata, gateway health, or release mismatch before you retry.
+  A failed status request makes no remote change, so correct the endpoint, CA bundle or its file metadata, gateway health, or release mismatch before you retry.
   If status reports that the approved OpenShell SDK is unavailable, restore a NemoClaw installation that includes `@nvidia/openshell-sdk` `0.0.106` before retrying.
 </Warning>
 
