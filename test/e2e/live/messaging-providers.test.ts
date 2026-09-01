@@ -19,8 +19,7 @@ import { assertStockManagedImageReceipt } from "../fixtures/managed-image-receip
 import {
   accountBool,
   accountString,
-  applyRestRewritePolicy,
-  bindRestRewritePolicyCredentials,
+  applyFakeApiPolicy,
   CLI_ENTRYPOINT,
   channelAccount,
   channelEnabled,
@@ -908,7 +907,6 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       slackRestTrafficProof !== undefined && slackWebsocketTrafficProof !== undefined,
       "M-S14: bridge-published proxy carried real REST and WebSocket traffic to fake Slack",
     );
-    await applyRestRewritePolicy(host, fakeSlack, state.env, redactionValues);
     expect(
       fakeSlack.alternatePort,
       "fake Slack API must publish an independent app-token port",
@@ -917,17 +915,27 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       ...fakeSlack,
       port: fakeSlack.alternatePort!,
     };
-    await applyRestRewritePolicy(host, fakeSlackApp, state.env, redactionValues);
-    await bindRestRewritePolicyCredentials(
+    await applyFakeApiPolicy({
       host,
-      [
-        { providerName: `${SANDBOX_NAME}-slack-bridge`, port: fakeSlack.port },
-        { providerName: `${SANDBOX_NAME}-slack-app`, port: fakeSlackApp.port },
+      sandboxName: SANDBOX_NAME,
+      policyHost: "host.openshell.internal",
+      endpoints: [
+        {
+          port: fakeSlack.port,
+          protocol: "rest",
+          providerName: `${SANDBOX_NAME}-slack-bridge`,
+        },
+        {
+          port: fakeSlackApp.port,
+          protocol: "rest",
+          providerName: `${SANDBOX_NAME}-slack-app`,
+        },
       ],
-      "slack",
-      state.env,
+      binaries: ["/usr/local/bin/node", "/usr/bin/node"],
+      artifactName: "apply-slack-fake-api-policy",
+      env: state.env,
       redactionValues,
-    );
+    });
 
     const slackBotPlaceholder = await sandboxOutput(
       sandbox,
@@ -1060,13 +1068,22 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyRestRewritePolicy(
+    await applyFakeApiPolicy({
       host,
-      fakeTelegram,
-      state.env,
+      sandboxName: SANDBOX_NAME,
+      policyHost: "host.openshell.internal",
+      endpoints: [
+        {
+          port: fakeTelegram.port,
+          protocol: "rest",
+          providerName: `${SANDBOX_NAME}-telegram-bridge`,
+        },
+      ],
+      binaries: ["/usr/local/bin/node", "/usr/bin/node"],
+      artifactName: "apply-telegram-fake-api-policy",
+      env: state.env,
       redactionValues,
-      `${SANDBOX_NAME}-telegram-bridge`,
-    );
+    });
     const telegramMockTarget = "42424242";
     const telegramMockText = "NemoClaw OpenClaw Telegram plugin mock E2E";
     const installedTelegramProof = await runInstalledTelegramRuntimeProof(
@@ -1117,13 +1134,22 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       env: state.env,
       redactionValues,
     });
-    await applyRestRewritePolicy(
+    await applyFakeApiPolicy({
       host,
-      fakeWechat,
-      state.env,
+      sandboxName: SANDBOX_NAME,
+      policyHost: "host.openshell.internal",
+      endpoints: [
+        {
+          port: fakeWechat.port,
+          protocol: "rest",
+          providerName: `${SANDBOX_NAME}-wechat-bridge`,
+        },
+      ],
+      binaries: ["/usr/local/bin/node", "/usr/bin/node"],
+      artifactName: "apply-wechat-fake-api-policy",
+      env: state.env,
       redactionValues,
-      `${SANDBOX_NAME}-wechat-bridge`,
-    );
+    });
     const installedWechatProof = await runInstalledWechatRuntimeProof(
       sandbox,
       fakeWechat,

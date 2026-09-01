@@ -152,6 +152,23 @@ export type FakeDockerApi = {
   container: string;
 };
 
+export type FakeApiPolicyEndpoint = {
+  port: string;
+  protocol: "rest" | "websocket";
+  providerName: string;
+};
+
+const FAKE_API_POLICY_PROTOCOL = {
+  rest: {
+    credentialRewrite: "request-body-credential-rewrite",
+    allowMethods: ["GET", "POST"],
+  },
+  websocket: {
+    credentialRewrite: "websocket-credential-rewrite",
+    allowMethods: ["GET", "WEBSOCKET_TEXT"],
+  },
+} as const;
+
 export function outputText(result: CommandOutput): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
@@ -820,10 +837,10 @@ export async function startFakeDockerApi(
     }
   });
 
-  // The fake API receives raw expected credentials. Keep it unpublished and
-  // expose only this credential-free forwarding container on the OpenShell
-  // bridge gateway. That is the host address behind host.openshell.internal;
-  // loopback-only publication is unreachable from the policy gateway.
+  // The fake API receives raw expected credentials. Keep both it and its TCP
+  // forwarder on the internal network, and publish only the forwarder on the
+  // OpenShell bridge gateway. The forwarder carries rewritten credential
+  // traffic, so it must not retain default-bridge egress.
   const proxyStart = await runHost(
     host,
     "docker",
@@ -834,7 +851,7 @@ export async function startFakeDockerApi(
       "--name",
       proxyContainer,
       "--network",
-      "bridge",
+      network,
       ...containerPorts.flatMap((port) => ["-p", `${openshellBridgeAddress}::${String(port)}`]),
       "--read-only",
       "--cap-drop",
@@ -861,19 +878,6 @@ export async function startFakeDockerApi(
   );
   expectExitZero(proxyStart, `start fake ${options.kind} API proxy`);
 
-  const proxyConnect = await runHost(
-    host,
-    "docker",
-    ["network", "connect", network, proxyContainer],
-    {
-      artifactName: `connect-fake-${options.kind}-api-proxy-internal-network`,
-      env: options.env,
-      redactionValues: options.redactionValues,
-      timeoutMs: 30_000,
-    },
-  );
-  expectExitZero(proxyConnect, `connect fake ${options.kind} API proxy to private network`);
-
   const networkInspections = await Promise.all(
     [
       ["api", container],
@@ -891,7 +895,7 @@ export async function startFakeDockerApi(
     })),
   );
   for (const { role, networks } of networkInspections) {
-    const expectedNetworks = role === "api" ? [network] : ["bridge", network];
+    const expectedNetworks = [network];
     if (
       typeof networks !== "object" ||
       networks === null ||
@@ -918,7 +922,7 @@ export async function startFakeDockerApi(
     host,
     proxyContainer,
     "{{json .Config.Env}}",
-    `prove-fake-${options.kind}-api-proxy-credential-free`,
+    `prove-fake-${options.kind}-api-proxy-credential-environment-free`,
     options.env,
     options.redactionValues,
   );
@@ -1000,62 +1004,51 @@ export async function startFakeDockerApi(
   };
 }
 
-export async function applyRestRewritePolicy(
-  host: HostCliClient,
-  api: FakeDockerApi,
-  env: NodeJS.ProcessEnv,
-  redactionValues: string[],
-  providerName?: string,
-): Promise<void> {
-  const result = await runHost(
-    host,
-    "openshell",
-    [
-      "policy",
-      "update",
-      SANDBOX_NAME,
+export async function applyFakeApiPolicy(options: {
+  host: HostCliClient;
+  sandboxName: string;
+  policyHost: string;
+  endpoints: readonly FakeApiPolicyEndpoint[];
+  binaries: readonly string[];
+  artifactName: string;
+  env: NodeJS.ProcessEnv;
+  redactionValues: string[];
+}): Promise<void> {
+  if (options.endpoints.length === 0) throw new Error("at least one fake API endpoint is required");
+  if (options.binaries.length === 0) throw new Error("at least one fake API binary is required");
+
+  const args = ["policy", "update", options.sandboxName];
+  for (const endpoint of options.endpoints) {
+    if (!/^[1-9][0-9]*$/u.test(endpoint.port)) {
+      throw new Error(`invalid fake API policy port ${JSON.stringify(endpoint.port)}`);
+    }
+    const policyProtocol = FAKE_API_POLICY_PROTOCOL[endpoint.protocol];
+    args.push(
       "--add-endpoint",
-      `host.openshell.internal:${api.port}:read-write:rest:enforce:request-body-credential-rewrite,allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:GET:/**`,
-      "--add-allow",
-      `host.openshell.internal:${api.port}:POST:/**`,
-      "--binary",
-      "/usr/local/bin/node",
-      "--binary",
-      "/usr/bin/node",
-      "--wait",
-    ],
+      `${options.policyHost}:${endpoint.port}:read-write:${endpoint.protocol}:enforce:${policyProtocol.credentialRewrite},allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16`,
+    );
+    for (const method of policyProtocol.allowMethods) {
+      args.push("--add-allow", `${options.policyHost}:${endpoint.port}:${method}:/**`);
+    }
+  }
+  for (const binary of options.binaries) args.push("--binary", binary);
+  args.push("--wait");
+
+  const result = await runHost(
+    options.host,
+    options.host.openshellCommandPath,
+    args,
     {
-      artifactName: `apply-${api.kind}-rest-policy`,
-      env,
-      redactionValues,
+      artifactName: options.artifactName,
+      env: options.env,
+      redactionValues: options.redactionValues,
       timeoutMs: 120_000,
     },
   );
-  expectExitZero(result, `apply ${api.kind} fake REST policy`);
-  if (!providerName) return;
-
-  await bindRestRewritePolicyCredentials(
-    host,
-    [{ providerName, port: api.port }],
-    api.kind,
-    env,
-    redactionValues,
-  );
-}
-
-export async function bindRestRewritePolicyCredentials(
-  host: HostCliClient,
-  bindings: readonly { providerName: string; port: string }[],
-  artifactKind: string,
-  env: NodeJS.ProcessEnv,
-  redactionValues: string[],
-): Promise<void> {
-  if (bindings.length === 0) throw new Error("at least one REST credential binding is required");
+  expectExitZero(result, options.artifactName);
 
   const binding = await runHost(
-    host,
+    options.host,
     "bash",
     [
       "-lc",
@@ -1069,26 +1062,26 @@ trap 'rm -f "$policy_file"' EXIT
 "$openshell" policy get --base "$sandbox" >"$policy_file"
 node --import tsx "$helper" "$policy_file" "$@"
 "$openshell" policy set --policy "$policy_file" --wait "$sandbox"`,
-      `bind-fake-${artifactKind}-rest-policy`,
-      host.openshellCommandPath,
-      SANDBOX_NAME,
+      `bind-${options.artifactName}`,
+      options.host.openshellCommandPath,
+      options.sandboxName,
       path.join(REPO_ROOT, "test/e2e/fixtures/policy-credential-binding.ts"),
-      ...bindings.flatMap(({ providerName, port }) => [
+      ...options.endpoints.flatMap(({ providerName, port, protocol }) => [
         providerName,
-        "host.openshell.internal",
+        options.policyHost,
         port,
-        "rest",
+        protocol,
       ]),
     ],
     {
-      artifactName: `apply-${artifactKind}-rest-policy-credential-binding`,
+      artifactName: `${options.artifactName}-credential-binding`,
       cwd: REPO_ROOT,
-      env,
-      redactionValues,
+      env: options.env,
+      redactionValues: options.redactionValues,
       timeoutMs: 120_000,
     },
   );
-  expectExitZero(binding, `bind ${artifactKind} fake REST policy credentials`);
+  expectExitZero(binding, `${options.artifactName} credential binding`);
 }
 
 export function lastJsonLine(

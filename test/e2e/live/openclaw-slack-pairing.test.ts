@@ -5,7 +5,6 @@ import fs from "node:fs";
 
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
-  applyFakePolicy,
   approveAndAssertPairing,
   assertOpenClawStateRoot,
   assertSlackPresetPolicySemantics,
@@ -18,6 +17,7 @@ import {
   startFakeSlackApi,
   writePairingArtifacts,
 } from "./openclaw-pairing-helpers.ts";
+import { applyFakeApiPolicy } from "./messaging-providers-helpers.ts";
 import {
   dockerInfo,
   expectExitZero,
@@ -177,27 +177,26 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     ...fakeSlack,
     port: fakeSlack.alternatePort!,
   };
-  await applyFakePolicy({
+  await applyFakeApiPolicy({
     host,
     sandboxName: SANDBOX_NAME,
-    api: fakeSlack,
-    protocol: "rest",
-    rewrite: "request-body-credential-rewrite",
-    providerName: `${SANDBOX_NAME}-slack-bridge`,
+    policyHost: "host.openshell.internal",
+    endpoints: [
+      {
+        port: fakeSlack.port,
+        protocol: "rest",
+        providerName: `${SANDBOX_NAME}-slack-bridge`,
+      },
+      {
+        port: fakeSlackWebSocket.port,
+        protocol: "websocket",
+        providerName: `${SANDBOX_NAME}-slack-app`,
+      },
+    ],
+    binaries: ["/usr/local/bin/node", "/usr/bin/node"],
     env,
-    redactions,
-    artifactName: "apply-slack-rest-policy",
-  });
-  await applyFakePolicy({
-    host,
-    sandboxName: SANDBOX_NAME,
-    api: fakeSlackWebSocket,
-    protocol: "websocket",
-    rewrite: "websocket-credential-rewrite",
-    providerName: `${SANDBOX_NAME}-slack-app`,
-    env,
-    redactions,
-    artifactName: "apply-slack-websocket-policy",
+    redactionValues: redactions,
+    artifactName: "apply-slack-fake-api-policy",
   });
 
   progress.phase("issue a Slack pairing request");

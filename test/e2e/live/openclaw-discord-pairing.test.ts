@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { assertDiscordGatewayCapture } from "./messaging-providers-helpers.ts";
 import {
-  applyFakePolicy,
+  applyFakeApiPolicy,
+  assertDiscordGatewayCapture,
+} from "./messaging-providers-helpers.ts";
+import {
   approveAndAssertPairing,
   assertOpenClawStateRoot,
   cleanupPairingSandbox,
@@ -132,15 +134,20 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
 
   progress.phase("route Discord Gateway traffic through the managed policy");
   const fakeGateway = await startFakeDiscordGateway(host, cleanup, env, DISCORD_TOKEN, redactions);
-  await applyFakePolicy({
+  await applyFakeApiPolicy({
     host,
     sandboxName: SANDBOX_NAME,
-    api: fakeGateway,
-    protocol: "websocket",
-    rewrite: "websocket-credential-rewrite",
-    providerName: `${SANDBOX_NAME}-discord-bridge`,
+    policyHost: "host.openshell.internal",
+    endpoints: [
+      {
+        port: fakeGateway.port,
+        protocol: "websocket",
+        providerName: `${SANDBOX_NAME}-discord-bridge`,
+      },
+    ],
+    binaries: ["/usr/local/bin/node", "/usr/bin/node"],
     env,
-    redactions,
+    redactionValues: redactions,
     artifactName: "apply-discord-gateway-policy",
   });
   const gatewayProof = await runDiscordGatewayProof({
