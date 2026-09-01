@@ -69,6 +69,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
       .fn()
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider profile not found" })
       .mockReturnValueOnce({ status: 0, stdout: "Imported", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: EXACT_OPENAI_PROFILE, stderr: "" })
       .mockReturnValueOnce({ status: 1, stdout: "", stderr: "provider not found" })
       .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
 
@@ -77,6 +78,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
     expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
       ["provider", "profile", "export", "openai", "--output", "json"],
       ["provider", "profile", "import", "--file", expect.stringMatching(/openai\.yaml$/u)],
+      ["provider", "profile", "export", "openai", "--output", "json"],
       ["provider", "get", "hermes-provider"],
       expect.arrayContaining([
         "provider",

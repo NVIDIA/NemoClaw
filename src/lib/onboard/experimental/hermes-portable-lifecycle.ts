@@ -990,25 +990,28 @@ export function recoverHermesPortableSandboxLifecycle(
       timing,
       createAuthenticatedHealthCapture(qualified.receipt, capture),
     );
-    timing.increment("authenticatedHealth");
-    const initialHealth = timing.measure("authenticatedHealth", () =>
-      observeHermesPortableAuthenticatedHealth(qualified.receipt, transactionContainerDeps),
-    );
-    if (qualified.hasTransactionAuthority) {
-      timing.measure("healthPollCurrentness", () =>
-        assertLifecycleTransactionCurrent(qualified, timing, true),
+    // A container started by this recovery cannot be healthy until its managed startup is launched.
+    if (!startedByRecovery) {
+      timing.increment("authenticatedHealth");
+      const initialHealth = timing.measure("authenticatedHealth", () =>
+        observeHermesPortableAuthenticatedHealth(qualified.receipt, transactionContainerDeps),
       );
-    }
-    if (initialHealth === "ready") {
-      timing.increment("qualification");
-      timing.measure("finalQualification", () =>
-        qualify(sandboxName, context, deps, qualified.snapshot),
-      );
-      const result = wasRunning
-        ? { kind: "already-running" as const }
-        : { kind: "recovered" as const };
-      timing.finish(result.kind);
-      return result;
+      if (qualified.hasTransactionAuthority) {
+        timing.measure("healthPollCurrentness", () =>
+          assertLifecycleTransactionCurrent(qualified, timing, true),
+        );
+      }
+      if (initialHealth === "ready") {
+        timing.increment("qualification");
+        timing.measure("finalQualification", () =>
+          qualify(sandboxName, context, deps, qualified.snapshot),
+        );
+        const result = wasRunning
+          ? { kind: "already-running" as const }
+          : { kind: "recovered" as const };
+        timing.finish(result.kind);
+        return result;
+      }
     }
     if (startedByRecovery) {
       qualified = timing.measure("healthPollCurrentness", () =>
