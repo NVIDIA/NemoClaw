@@ -25,6 +25,8 @@ export interface DeepAgentsConfigCommandResult {
   stdout: string;
   stderr: string;
   configExists: boolean;
+  configIsFifo: boolean;
+  configIsSymlink: boolean;
   config: Record<string, unknown> | null;
   configText: string | null;
   legacyConfigExists: boolean;
@@ -39,6 +41,7 @@ export interface DeepAgentsManagedFixtureOptions {
   directory?: boolean;
   fifo?: boolean;
   mode?: number;
+  swapOnManagedOpen?: "fifo" | "symlink";
   symlink?: boolean;
 }
 
@@ -87,10 +90,35 @@ export function runDeepAgentsConfigCommand(
       fs.symlinkSync(managedSymlinkTarget, configPath);
     }
   }
+  if (managedOptions.swapOnManagedOpen === "symlink") {
+    initializeConfig(managedSymlinkTarget, initialConfig, managedOptions.mode);
+  }
   initializeConfig(legacyConfigPath, initialLegacyConfig);
   if (initialLegacyConfig !== undefined) fs.chmodSync(legacyConfigPath, initialLegacyMode);
   try {
+    const swapOnManagedOpenPrelude = managedOptions.swapOnManagedOpen
+      ? [
+          "import os as _nemoclaw_test_os",
+          `_nemoclaw_test_path = ${JSON.stringify(configPath)}`,
+          `_nemoclaw_test_target = ${JSON.stringify(managedSymlinkTarget)}`,
+          `_nemoclaw_test_swap = ${JSON.stringify(managedOptions.swapOnManagedOpen)}`,
+          "_nemoclaw_test_real_open = _nemoclaw_test_os.open",
+          "_nemoclaw_test_swapped = False",
+          "def _nemoclaw_test_open(path, flags, *args, **kwargs):",
+          "    global _nemoclaw_test_swapped",
+          "    if not _nemoclaw_test_swapped and _nemoclaw_test_os.fspath(path) == _nemoclaw_test_path:",
+          "        _nemoclaw_test_swapped = True",
+          "        _nemoclaw_test_os.unlink(_nemoclaw_test_path)",
+          "        if _nemoclaw_test_swap == 'symlink':",
+          "            _nemoclaw_test_os.symlink(_nemoclaw_test_target, _nemoclaw_test_path)",
+          "        else:",
+          "            _nemoclaw_test_os.mkfifo(_nemoclaw_test_path, 0o600)",
+          "    return _nemoclaw_test_real_open(path, flags, *args, **kwargs)",
+          "_nemoclaw_test_os.open = _nemoclaw_test_open",
+        ].join("\n")
+      : "";
     const fixtureCommand = command
+      .replace("<<'PY'\n", `<<'PY'\n${swapOnManagedOpenPrelude}\n`)
       .replaceAll(DEEPAGENTS_MCP_CONFIG_PATH, configPath)
       .replaceAll("/sandbox/.deepagents/.mcp.json", legacyConfigPath)
       .replaceAll("/opt/venv/bin/python3", "python3")
@@ -102,6 +130,7 @@ export function runDeepAgentsConfigCommand(
     const configExists = fs.existsSync(configPath);
     const legacyConfigExists = fs.existsSync(legacyConfigPath);
     const configIsFifo = configExists && fs.lstatSync(configPath).isFIFO();
+    const configIsSymlink = configExists && fs.lstatSync(configPath).isSymbolicLink();
     const configIsDirectory = configExists && fs.lstatSync(configPath).isDirectory();
     const configText =
       configExists && !configIsFifo && !configIsDirectory
@@ -112,17 +141,25 @@ export function runDeepAgentsConfigCommand(
       ? fs.readFileSync(managedSymlinkTarget, "utf-8")
       : null;
     const legacyConfigText = legacyConfigExists ? fs.readFileSync(legacyConfigPath, "utf-8") : null;
+    const parseConfigText = (text: string | null): Record<string, unknown> | null => {
+      if (!text) return null;
+      try {
+        return JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    };
     return {
       status: result.status,
       stdout: result.stdout,
       stderr: result.stderr,
       configExists,
-      config: configText ? (JSON.parse(configText) as Record<string, unknown>) : null,
+      configIsFifo,
+      configIsSymlink,
+      config: parseConfigText(configText),
       configText,
       legacyConfigExists,
-      legacyConfig: legacyConfigText
-        ? (JSON.parse(legacyConfigText) as Record<string, unknown>)
-        : null,
+      legacyConfig: parseConfigText(legacyConfigText),
       legacyConfigText,
       managedSymlinkTargetExists,
       managedSymlinkTargetText,
