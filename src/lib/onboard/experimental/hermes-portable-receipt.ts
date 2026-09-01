@@ -22,8 +22,8 @@ import {
   type HermesPortablePodmanExecutableAuthority,
 } from "./hermes-portable-podman-authority";
 
-export const HERMES_PORTABLE_RECEIPT_SCHEMA_VERSION = 5 as const;
-export const HERMES_PORTABLE_SUCCESSOR_SCHEMA_VERSION = 6 as const;
+export const HERMES_PORTABLE_RECEIPT_SCHEMA_VERSION = 7 as const;
+export const HERMES_PORTABLE_SUCCESSOR_SCHEMA_VERSION = 8 as const;
 export const HERMES_PORTABLE_RECEIPT_DIRECTORY = "hermes-portable-lifecycle";
 
 const RECEIPT_MODE = 0o600;
@@ -62,10 +62,9 @@ export interface HermesPortableStartupContract {
   readonly stateIdentitySha256: string;
 }
 
-export interface HermesPortablePolicyAuthority {
+export interface HermesPortablePolicySource {
   readonly sourcePath: string;
   readonly sourceSha256: string;
-  readonly intendedSemanticSha256: string;
   readonly sourceIdentity: {
     readonly dev: string;
     readonly ino: string;
@@ -130,15 +129,6 @@ export interface HermesPortableSuccessorReceipt {
   };
   readonly socketAuthority: HermesPortableStableSocketAuthority;
   readonly startup: HermesPortableStartupContract;
-  readonly policy: {
-    readonly sourcePath: string;
-    readonly sourceSha256: string;
-    readonly intendedSemanticSha256: string;
-    readonly size: string;
-    readonly mode: 384;
-    readonly uid: number;
-  };
-  readonly verifiedLivePolicySemanticSha256: string;
   readonly container: HermesPortableContainerAuthority;
 }
 
@@ -166,17 +156,16 @@ interface HermesPortableReceiptCommon {
   readonly podmanExecutableAuthority: HermesPortablePodmanExecutableAuthority;
   readonly socketAuthority: PodmanSocketAuthority;
   readonly startup: HermesPortableStartupContract;
-  readonly policy: HermesPortablePolicyAuthority;
 }
 
 export interface HermesPortablePendingReceipt extends HermesPortableReceiptCommon {
   readonly phase: "pending";
+  readonly policy: HermesPortablePolicySource;
 }
 
 export interface HermesPortableConfiguredReceipt extends HermesPortableReceiptCommon {
   readonly phase: "configuring" | "active";
   readonly previousPhaseSha256: string;
-  readonly verifiedLivePolicySemanticSha256: string;
   readonly container: HermesPortableContainerAuthority;
 }
 
@@ -194,7 +183,7 @@ export interface HermesPortableReceiptSnapshot {
     readonly ino: bigint;
   };
   readonly successor?: HermesPortableSuccessorSnapshot;
-  /** Exact same-predecessor schema-6 publication evidence awaiting reconciliation. */
+  /** Exact same-predecessor schema-8 publication evidence awaiting reconciliation. */
   readonly successorPublicationPending?: true;
 }
 
@@ -312,22 +301,16 @@ function parseStartup(value: unknown): HermesPortableStartupContract {
   return startup as unknown as HermesPortableStartupContract;
 }
 
-function parsePolicy(value: unknown): HermesPortablePolicyAuthority {
+function parsePolicy(value: unknown): HermesPortablePolicySource {
   const policy = record(value);
   const identity = record(policy?.sourceIdentity);
   if (
     !policy ||
-    !exactKeys(policy, [
-      "intendedSemanticSha256",
-      "sourceIdentity",
-      "sourcePath",
-      "sourceSha256",
-    ]) ||
+    !exactKeys(policy, ["sourceIdentity", "sourcePath", "sourceSha256"]) ||
     !identity ||
     !exactKeys(identity, ["ctimeNs", "dev", "ino", "mode", "mtimeNs", "size", "uid"]) ||
     !exactAbsolutePath(policy.sourcePath) ||
     !SHA256.test(String(policy.sourceSha256)) ||
-    !SHA256.test(String(policy.intendedSemanticSha256)) ||
     !DECIMAL.test(String(identity.dev)) ||
     !DECIMAL.test(String(identity.ino)) ||
     !DECIMAL.test(String(identity.size)) ||
@@ -336,9 +319,9 @@ function parsePolicy(value: unknown): HermesPortablePolicyAuthority {
     identity.mode !== RECEIPT_MODE ||
     identity.uid !== currentUid()
   ) {
-    fail("has invalid policy authority");
+    fail("has invalid policy source");
   }
-  return policy as unknown as HermesPortablePolicyAuthority;
+  return policy as unknown as HermesPortablePolicySource;
 }
 
 function parseContainer(
@@ -658,12 +641,11 @@ function parseSuccessorBytes(bytes: Buffer): HermesPortableSuccessorReceipt {
   try {
     value = JSON.parse(UTF8.decode(bytes));
   } catch {
-    fail("schema-6 successor is malformed or is not strict UTF-8");
+    fail("schema-8 successor is malformed or is not strict UTF-8");
   }
   const receipt = record(value);
   const openshell = record(receipt?.openshellExecutableAuthority);
   const podman = record(receipt?.podmanExecutableAuthority);
-  const policy = record(receipt?.policy);
   const runtimeAuthority = parsePortableRuntimeAuthority(receipt?.runtimeAuthority);
   if (
     !receipt ||
@@ -676,7 +658,6 @@ function parseSuccessorBytes(bytes: Buffer): HermesPortableSuccessorReceipt {
       "openshellExecutableAuthority",
       "phase",
       "podmanExecutableAuthority",
-      "policy",
       "predecessorActiveSha256",
       "runtimeAuthority",
       "sandboxName",
@@ -684,7 +665,6 @@ function parseSuccessorBytes(bytes: Buffer): HermesPortableSuccessorReceipt {
       "socketAuthority",
       "startup",
       "transactionId",
-      "verifiedLivePolicySemanticSha256",
     ]) ||
     receipt.schemaVersion !== HERMES_PORTABLE_SUCCESSOR_SCHEMA_VERSION ||
     receipt.phase !== "active" ||
@@ -703,24 +683,9 @@ function parseSuccessorBytes(bytes: Buffer): HermesPortableSuccessorReceipt {
     !podman ||
     !exactKeys(podman, ["executable", "version"]) ||
     podman.version !== HERMES_PORTABLE_PODMAN_VERSION ||
-    !policy ||
-    !exactKeys(policy, [
-      "intendedSemanticSha256",
-      "mode",
-      "size",
-      "sourcePath",
-      "sourceSha256",
-      "uid",
-    ]) ||
-    !exactAbsolutePath(policy.sourcePath) ||
-    !SHA256.test(String(policy.sourceSha256)) ||
-    !SHA256.test(String(policy.intendedSemanticSha256)) ||
-    !DECIMAL.test(String(policy.size)) ||
-    policy.mode !== RECEIPT_MODE ||
-    policy.uid !== currentUid() ||
-    !SHA256.test(String(receipt.verifiedLivePolicySemanticSha256))
+    podman.version !== HERMES_PORTABLE_PODMAN_VERSION
   ) {
-    fail("has invalid schema-6 successor authority");
+    fail("has invalid schema-8 successor authority");
   }
   return {
     schemaVersion: HERMES_PORTABLE_SUCCESSOR_SCHEMA_VERSION,
@@ -743,15 +708,6 @@ function parseSuccessorBytes(bytes: Buffer): HermesPortableSuccessorReceipt {
     },
     socketAuthority: parseStableSocketAuthority(receipt.socketAuthority, runtimeAuthority),
     startup: parseStartup(receipt.startup),
-    policy: {
-      sourcePath: policy.sourcePath as string,
-      sourceSha256: policy.sourceSha256 as string,
-      intendedSemanticSha256: policy.intendedSemanticSha256 as string,
-      size: policy.size as string,
-      mode: RECEIPT_MODE,
-      uid: currentUid(),
-    },
-    verifiedLivePolicySemanticSha256: receipt.verifiedLivePolicySemanticSha256 as string,
     container: parseContainer(receipt.container, "active"),
   };
 }
@@ -774,14 +730,13 @@ function parseReceiptBytes(bytes: Buffer): HermesPortableLifecycleReceipt {
     "openshellExecutableAuthority",
     "podmanExecutableAuthority",
     "phase",
-    "policy",
     "runtimeAuthority",
     "sandboxName",
     "schemaVersion",
     "socketAuthority",
     "startup",
     "transactionId",
-    ...(configured ? ["container", "previousPhaseSha256", "verifiedLivePolicySemanticSha256"] : []),
+    ...(configured ? ["container", "previousPhaseSha256"] : ["policy"]),
   ];
   const authority = parsePortableRuntimeAuthority(receipt?.runtimeAuthority);
   if (
@@ -815,20 +770,15 @@ function parseReceiptBytes(bytes: Buffer): HermesPortableLifecycleReceipt {
     podmanExecutableAuthority: parsePodmanExecutableAuthority(receipt.podmanExecutableAuthority),
     socketAuthority: parseSocketAuthority(receipt.socketAuthority, authority),
     startup: parseStartup(receipt.startup),
-    policy: parsePolicy(receipt.policy),
   };
-  if (phase === "pending") return { ...common, phase };
-  if (
-    !SHA256.test(String(receipt.previousPhaseSha256)) ||
-    !SHA256.test(String(receipt.verifiedLivePolicySemanticSha256))
-  ) {
+  if (phase === "pending") return { ...common, phase, policy: parsePolicy(receipt.policy) };
+  if (!SHA256.test(String(receipt.previousPhaseSha256))) {
     fail("has invalid phase authority");
   }
   return {
     ...common,
     phase,
     previousPhaseSha256: receipt.previousPhaseSha256 as string,
-    verifiedLivePolicySemanticSha256: receipt.verifiedLivePolicySemanticSha256 as string,
     container: parseContainer(receipt.container, phase),
   };
 }
@@ -881,7 +831,7 @@ export function stableHermesPortableSocketAuthority(
 export function createHermesPortableSuccessorReceipt(
   active: HermesPortableReceiptSnapshot & { readonly receipt: HermesPortableConfiguredReceipt },
 ): HermesPortableSuccessorReceipt {
-  if (active.receipt.phase !== "active") fail("schema-6 successor requires active authority");
+  if (active.receipt.phase !== "active") fail("schema-8 successor requires active authority");
   const receipt = active.receipt;
   return {
     schemaVersion: HERMES_PORTABLE_SUCCESSOR_SCHEMA_VERSION,
@@ -908,15 +858,6 @@ export function createHermesPortableSuccessorReceipt(
     },
     socketAuthority: stableHermesPortableSocketAuthority(receipt.socketAuthority),
     startup: receipt.startup,
-    policy: {
-      sourcePath: receipt.policy.sourcePath,
-      sourceSha256: receipt.policy.sourceSha256,
-      intendedSemanticSha256: receipt.policy.intendedSemanticSha256,
-      size: receipt.policy.sourceIdentity.size,
-      mode: receipt.policy.sourceIdentity.mode,
-      uid: receipt.policy.sourceIdentity.uid,
-    },
-    verifiedLivePolicySemanticSha256: receipt.verifiedLivePolicySemanticSha256,
     container: receipt.container,
   };
 }
@@ -925,7 +866,7 @@ function serializeSuccessor(receipt: HermesPortableSuccessorReceipt): Buffer {
   const normalized = parseSuccessorBytes(Buffer.from(`${JSON.stringify(receipt)}\n`, "utf8"));
   const bytes = Buffer.from(`${JSON.stringify(normalized)}\n`, "utf8");
   if (bytes.byteLength > Number(MAX_RECEIPT_BYTES)) {
-    fail("serialized schema-6 successor exceeds the bounded receipt size");
+    fail("serialized schema-8 successor exceeds the bounded receipt size");
   }
   return bytes;
 }
@@ -972,7 +913,7 @@ export function hermesPortablePolicySourcePath(
 
 function policyPublicationTransactionId(entry: string): string | null {
   const match =
-    /^(?:policy\.([a-f0-9-]{36})\.yaml|\.policy\.([a-f0-9-]{36})\.[a-f0-9]{64}\.[a-f0-9]{64}\.next(?:\.cleanup)?)$/u.exec(
+    /^(?:policy\.([a-f0-9-]{36})\.yaml|\.policy\.([a-f0-9-]{36})\.[a-f0-9]{64}\.next(?:\.cleanup)?)$/u.exec(
       entry,
     );
   const transactionId = match?.[1] ?? match?.[2];
@@ -1021,16 +962,8 @@ function stagePath(directory: string, receipt: HermesPortableLifecycleReceipt): 
   );
 }
 
-function policyStagePath(
-  directory: string,
-  transactionId: string,
-  sourceSha256: string,
-  intendedSemanticSha256: string,
-): string {
-  return path.join(
-    directory,
-    `.policy.${transactionId}.${sourceSha256}.${intendedSemanticSha256}.next`,
-  );
+function policyStagePath(directory: string, transactionId: string, sourceSha256: string): string {
+  return path.join(directory, `.policy.${transactionId}.${sourceSha256}.next`);
 }
 
 function cleanupPath(target: string): string {
@@ -1183,12 +1116,7 @@ function readExactFile(
   }
 }
 
-function policyAuthorityFromFile(
-  target: string,
-  file: ExactFile,
-  intendedSemanticSha256: string,
-): HermesPortablePolicyAuthority {
-  if (!SHA256.test(intendedSemanticSha256)) fail("has an invalid intended policy digest");
+function policySourceFromFile(target: string, file: ExactFile): HermesPortablePolicySource {
   try {
     UTF8.decode(file.bytes);
   } catch {
@@ -1197,7 +1125,6 @@ function policyAuthorityFromFile(
   return {
     sourcePath: target,
     sourceSha256: receiptHash(file.bytes),
-    intendedSemanticSha256,
     sourceIdentity: {
       dev: String(file.identity.dev),
       ino: String(file.identity.ino),
@@ -1210,16 +1137,16 @@ function policyAuthorityFromFile(
   };
 }
 
-function samePolicyIdentity(authority: HermesPortablePolicyAuthority, file: ExactFile): boolean {
+function samePolicyIdentity(source: HermesPortablePolicySource, file: ExactFile): boolean {
   return (
-    authority.sourceSha256 === receiptHash(file.bytes) &&
-    authority.sourceIdentity.dev === String(file.identity.dev) &&
-    authority.sourceIdentity.ino === String(file.identity.ino) &&
-    authority.sourceIdentity.size === String(file.identity.size) &&
-    authority.sourceIdentity.mode === RECEIPT_MODE &&
-    authority.sourceIdentity.uid === currentUid() &&
-    authority.sourceIdentity.mtimeNs === String(file.identity.mtimeNs) &&
-    authority.sourceIdentity.ctimeNs === String(file.identity.ctimeNs)
+    source.sourceSha256 === receiptHash(file.bytes) &&
+    source.sourceIdentity.dev === String(file.identity.dev) &&
+    source.sourceIdentity.ino === String(file.identity.ino) &&
+    source.sourceIdentity.size === String(file.identity.size) &&
+    source.sourceIdentity.mode === RECEIPT_MODE &&
+    source.sourceIdentity.uid === currentUid() &&
+    source.sourceIdentity.mtimeNs === String(file.identity.mtimeNs) &&
+    source.sourceIdentity.ctimeNs === String(file.identity.ctimeNs)
   );
 }
 
@@ -1276,12 +1203,10 @@ function assertHermesPortablePolicyPublicationSource(
   }
 }
 
-export function assertHermesPortableDurablePolicyAuthority(
-  authority: HermesPortablePolicyAuthority,
-): Buffer {
-  const file = readExactFile(authority.sourcePath, 1n, MAX_POLICY_BYTES);
-  if (!file || !samePolicyIdentity(authority, file)) {
-    fail("durable policy source disagrees with its receipt authority");
+export function assertHermesPortablePolicySource(source: HermesPortablePolicySource): Buffer {
+  const file = readExactFile(source.sourcePath, 1n, MAX_POLICY_BYTES);
+  if (!file || !samePolicyIdentity(source, file)) {
+    fail("durable policy source disagrees with its receipt");
   }
   try {
     UTF8.decode(file.bytes);
@@ -1291,26 +1216,96 @@ export function assertHermesPortableDurablePolicyAuthority(
   return file.bytes;
 }
 
-export function requalifyHermesPortablePolicyAuthority(authority: HermesPortablePolicyAuthority): {
-  readonly authority: HermesPortablePolicyAuthority;
+/** Retire the bounded create-policy copy and receipt history after OpenShell owns policy. */
+export function retireHermesPortableCreatePolicyState(
+  sandboxName: string,
+  transactionId: string,
+  stateDir: string,
+): HermesPortableReceiptSnapshot & {
+  readonly receipt: HermesPortableConfiguredReceipt;
+  readonly successor: HermesPortableSuccessorSnapshot;
+} {
+  if (!isMcpLifecycleLockHeld(sandboxName, path.join(stateDir, "state"))) {
+    fail(`create-policy retirement requires the sandbox lifecycle lock for '${sandboxName}'`);
+  }
+  const active = readHermesPortableLifecycleReceipt(sandboxName, stateDir);
+  if (
+    !active ||
+    active.receipt.phase !== "active" ||
+    !active.successor ||
+    active.receipt.transactionId !== transactionId
+  ) {
+    fail("create-policy retirement requires policy-free active operating authority");
+  }
+
+  const directory = validateDirectory(path.dirname(active.path));
+  try {
+    revalidateDirectory(directory);
+    const pending = readPhase(directory.path, "pending");
+    const configuring = readPhase(directory.path, "configuring");
+    for (const snapshot of [pending, configuring]) {
+      if (snapshot && snapshot.receipt.transactionId !== transactionId) {
+        fail("create-policy retirement found another transaction generation");
+      }
+    }
+
+    const sourcePath = hermesPortablePolicySourcePath(sandboxName, transactionId, stateDir);
+    const source = readExactFile(sourcePath, 1n, MAX_POLICY_BYTES);
+    if (source) {
+      if (pending?.receipt.phase === "pending") {
+        assertHermesPortablePolicySource(pending.receipt.policy);
+      }
+      fs.unlinkSync(sourcePath);
+    }
+    for (const snapshot of [pending, configuring]) {
+      if (!snapshot) continue;
+      const current = readExactFile(snapshot.path, 1n, MAX_RECEIPT_BYTES);
+      if (
+        !current ||
+        current.identity.dev !== snapshot.identity.dev ||
+        current.identity.ino !== snapshot.identity.ino ||
+        !current.bytes.equals(snapshot.bytes)
+      ) {
+        fail("create-policy receipt history changed before retirement");
+      }
+      fs.unlinkSync(snapshot.path);
+    }
+    fs.fsyncSync(directory.descriptor);
+  } finally {
+    fs.closeSync(directory.descriptor);
+  }
+
+  const compacted = readHermesPortableLifecycleReceipt(sandboxName, stateDir);
+  if (
+    !compacted ||
+    compacted.receipt.phase !== "active" ||
+    !compacted.successor ||
+    compacted.receipt.transactionId !== transactionId
+  ) {
+    fail("policy-free active operating authority could not be requalified after retirement");
+  }
+  return compacted as HermesPortableReceiptSnapshot & {
+    readonly receipt: HermesPortableConfiguredReceipt;
+    readonly successor: HermesPortableSuccessorSnapshot;
+  };
+}
+
+export function requalifyHermesPortablePolicySource(source: HermesPortablePolicySource): {
+  readonly source: HermesPortablePolicySource;
   readonly bytes: Buffer;
 } {
-  const file = readExactFile(authority.sourcePath, 1n, MAX_POLICY_BYTES);
+  const file = readExactFile(source.sourcePath, 1n, MAX_POLICY_BYTES);
   if (
     !file ||
-    authority.sourceSha256 !== receiptHash(file.bytes) ||
-    authority.sourceIdentity.size !== String(file.identity.size) ||
-    authority.sourceIdentity.mode !== RECEIPT_MODE ||
-    authority.sourceIdentity.uid !== currentUid()
+    source.sourceSha256 !== receiptHash(file.bytes) ||
+    source.sourceIdentity.size !== String(file.identity.size) ||
+    source.sourceIdentity.mode !== RECEIPT_MODE ||
+    source.sourceIdentity.uid !== currentUid()
   ) {
-    fail("durable policy source disagrees with its semantic authority");
+    fail("durable policy source disagrees with its semantic digest");
   }
-  const current = policyAuthorityFromFile(
-    authority.sourcePath,
-    file,
-    authority.intendedSemanticSha256,
-  );
-  return { authority: current, bytes: file.bytes };
+  const current = policySourceFromFile(source.sourcePath, file);
+  return { source: current, bytes: file.bytes };
 }
 
 function writeStage(
@@ -1575,10 +1570,9 @@ export function publishHermesPortableDurablePolicySource(input: {
   readonly sandboxName: string;
   readonly transactionId: string;
   readonly stateDir: string;
-  readonly intendedSemanticSha256: string;
   readonly source: HermesPortablePolicyPublicationSource;
   readonly hooks?: HermesPortableReceiptPublicationHooks;
-}): HermesPortablePolicyAuthority {
+}): HermesPortablePolicySource {
   const hooks = input.hooks ?? {};
   const assertLifecycleLock =
     hooks.assertLifecycleLock ??
@@ -1590,7 +1584,7 @@ export function publishHermesPortableDurablePolicySource(input: {
   assertLifecycleLock();
   assertHermesPortablePolicyPublicationSource(input.source);
   if (existingPath(portableDemoReceiptPath(input.sandboxName, input.stateDir))) {
-    fail(`will not reserve policy over OpenClaw authority for '${input.sandboxName}'`);
+    fail(`will not reserve policy over an OpenClaw-owned source for '${input.sandboxName}'`);
   }
   const directory = ensureReceiptDirectory(input.sandboxName, input.stateDir);
   const target = hermesPortablePolicySourcePath(
@@ -1598,12 +1592,7 @@ export function publishHermesPortableDurablePolicySource(input: {
     input.transactionId,
     input.stateDir,
   );
-  const staged = policyStagePath(
-    directory.path,
-    input.transactionId,
-    input.source.sha256,
-    input.intendedSemanticSha256,
-  );
+  const staged = policyStagePath(directory.path, input.transactionId, input.source.sha256);
   const cleanup = cleanupPath(staged);
   try {
     revalidateDirectory(directory);
@@ -1624,7 +1613,7 @@ export function publishHermesPortableDurablePolicySource(input: {
           pendingPublicationTransactionId(entry) !== input.transactionId,
       );
     if (unexpected.length > 0) {
-      fail(`directory contains other policy authority for '${input.sandboxName}'`);
+      fail(`directory contains other policy source for '${input.sandboxName}'`);
     }
     retireInterruptedEmptyStage(
       target,
@@ -1654,12 +1643,13 @@ export function publishHermesPortableDurablePolicySource(input: {
     );
     const reconciled = readExactFile(target, 1n, MAX_POLICY_BYTES);
     if (reconciled) {
-      if (!reconciled.bytes.equals(input.source.bytes)) fail("durable policy has other authority");
+      if (!reconciled.bytes.equals(input.source.bytes))
+        fail("durable policy has different content");
       assertHermesPortablePolicyPublicationSource(input.source);
       fs.fsyncSync(directory.descriptor);
-      return policyAuthorityFromFile(target, reconciled, input.intendedSemanticSha256);
+      return policySourceFromFile(target, reconciled);
     }
-    if (disposition === "complete") fail("completed policy publication has no readable authority");
+    if (disposition === "complete") fail("completed policy publication has no readable source");
     if (disposition === "absent") writeStage(staged, input.source.bytes, hooks);
     revalidateDirectory(directory);
     assertHermesPortablePolicyPublicationSource(input.source);
@@ -1672,7 +1662,7 @@ export function publishHermesPortableDurablePolicySource(input: {
       if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
       const raced = readExactFile(target, 1n, MAX_POLICY_BYTES);
       if (!raced || !raced.bytes.equals(input.source.bytes)) {
-        fail("durable policy publication raced other authority");
+        fail("durable policy publication raced another writer");
       }
     }
     hooks.afterCanonicalLink?.();
@@ -1687,7 +1677,7 @@ export function publishHermesPortableDurablePolicySource(input: {
     if (!published || !published.bytes.equals(input.source.bytes)) {
       fail("durable policy publication did not preserve exact bytes");
     }
-    return policyAuthorityFromFile(target, published, input.intendedSemanticSha256);
+    return policySourceFromFile(target, published);
   } finally {
     fs.closeSync(directory.descriptor);
   }
@@ -1725,7 +1715,7 @@ export function recoverableHermesPortablePolicyTransactionId(
       transactionIds.some((transactionId) => transactionId === null) ||
       new Set(transactionIds).size !== 1
     ) {
-      fail(`directory has ambiguous pre-receipt policy authority for '${sandboxName}'`);
+      fail(`directory has ambiguous pre-receipt policy source for '${sandboxName}'`);
     }
     revalidateDirectory(directory);
     return transactionIds[0]!;
@@ -1736,16 +1726,16 @@ export function recoverableHermesPortablePolicyTransactionId(
 
 function validateReceiptPolicySource(
   directoryPath: string,
-  receipt: HermesPortableLifecycleReceipt,
+  receipt: HermesPortablePendingReceipt,
   semanticOnly = false,
-): HermesPortablePolicyAuthority {
+): HermesPortablePolicySource {
   const expected = path.join(directoryPath, policySourceBasename(receipt.transactionId));
   if (receipt.policy.sourcePath !== expected) fail("policy source path is outside receipt custody");
   if (!semanticOnly) {
-    assertHermesPortableDurablePolicyAuthority(receipt.policy);
+    assertHermesPortablePolicySource(receipt.policy);
     return receipt.policy;
   }
-  return requalifyHermesPortablePolicyAuthority(receipt.policy).authority;
+  return requalifyHermesPortablePolicySource(receipt.policy).source;
 }
 
 function readPhase(
@@ -1790,14 +1780,13 @@ function sameTransaction(
 ): boolean {
   const transactionAuthority = (receipt: HermesPortableLifecycleReceipt) => {
     if (receipt.phase === "pending") {
-      const { phase: _phase, ...common } = receipt;
+      const { phase: _phase, policy: _policy, ...common } = receipt;
       return common;
     }
     const {
       phase: _phase,
       container: _container,
       previousPhaseSha256: _previous,
-      verifiedLivePolicySemanticSha256: _verified,
       ...common
     } = receipt;
     return common;
@@ -1898,22 +1887,28 @@ function readHermesPortableLifecycleReceiptInternal(
     const pending = readPhase(directoryPath, "pending", allowPublicationRecovery);
     const configuring = readPhase(directoryPath, "configuring", allowPublicationRecovery);
     const active = readPhase(directoryPath, "active", allowPublicationRecovery);
-    if (!pending) {
-      if (entries.length > 0) {
+    const successor = hasSuccessor
+      ? readSuccessor(directoryPath, allowSuccessorPublicationRecovery)
+      : null;
+    if (!pending && !active) {
+      if (entries.length > 0)
         fail(`directory contains incomplete or unknown publication evidence for '${sandboxName}'`);
-      }
       revalidateDirectory(directory);
       return null;
     }
+    if (!pending && (!active || !successor)) {
+      fail(`directory contains incomplete or unknown publication evidence for '${sandboxName}'`);
+    }
+    const transactionId = pending?.receipt.transactionId ?? active!.receipt.transactionId;
     const allowedEntries = new Set([
       "active.json",
       "authority.json",
       "configuring.json",
       "pending.json",
-      policySourceBasename(pending.receipt.transactionId),
+      policySourceBasename(transactionId),
     ]);
     const highestPhase = active ? "active" : configuring ? "configuring" : "pending";
-    if (allowPublicationRecovery) {
+    if (allowPublicationRecovery && pending) {
       validateRecoverablePhaseArtifacts(directoryPath, entries, pending, highestPhase);
     }
     if (
@@ -1926,44 +1921,61 @@ function readHermesPortableLifecycleReceiptInternal(
     ) {
       fail(`directory contains incomplete or unknown publication evidence for '${sandboxName}'`);
     }
-    const currentPolicy = validateReceiptPolicySource(
-      directoryPath,
-      pending.receipt,
-      hasSuccessor || semanticPolicyRequalification,
-    );
+    if (pending && !configuring && !active) {
+      validateReceiptPolicySource(
+        directoryPath,
+        pending.receipt as HermesPortablePendingReceipt,
+        hasSuccessor || semanticPolicyRequalification,
+      );
+    }
     revalidateDirectory(directory);
-    if (!configuring && active) fail("phase chain is missing configuring authority");
-    if (pending.receipt.sandboxName !== sandboxName)
-      fail("sandbox identity does not match its path");
+    for (const snapshot of [pending, configuring, active]) {
+      if (snapshot && snapshot.receipt.sandboxName !== sandboxName) {
+        fail("sandbox identity does not match its path");
+      }
+    }
     if (configuring) {
-      if (
-        configuring.receipt.phase !== "configuring" ||
-        configuring.receipt.previousPhaseSha256 !== pending.sha256 ||
-        !sameTransaction(pending.receipt, configuring.receipt)
-      ) {
-        fail("configuring phase does not extend pending authority");
+      if (configuring.receipt.phase !== "configuring") {
+        fail("configuring phase contains invalid authority");
+      }
+      if (pending) {
+        if (
+          configuring.receipt.previousPhaseSha256 !== pending.sha256 ||
+          !sameTransaction(pending.receipt, configuring.receipt)
+        ) {
+          fail("configuring phase does not extend pending authority");
+        }
+      } else if (!active || !successor) {
+        fail("configuring phase has no pending authority");
       }
     }
     if (active) {
-      if (!configuring) fail("active phase has no configuring authority");
-      const configuringReceipt = configuring.receipt;
       const activeReceipt = active.receipt;
-      if (configuringReceipt.phase !== "configuring" || activeReceipt.phase !== "active") {
+      if (activeReceipt.phase !== "active") {
         fail("active phase files contain invalid phase authority");
       }
-      if (
-        activeReceipt.previousPhaseSha256 !== configuring.sha256 ||
-        !sameTransaction(configuringReceipt, activeReceipt) ||
-        activeReceipt.container.containerId !== configuringReceipt.container.containerId ||
-        activeReceipt.container.sandboxId !== configuringReceipt.container.sandboxId ||
-        activeReceipt.container.imageId !== configuringReceipt.container.imageId ||
-        activeReceipt.verifiedLivePolicySemanticSha256 !==
-          configuringReceipt.verifiedLivePolicySemanticSha256
-      ) {
-        fail("active phase does not extend configuring authority");
+      if (configuring) {
+        const configuringReceipt = configuring.receipt;
+        if (configuringReceipt.phase !== "configuring") {
+          fail("configuring phase contains invalid authority");
+        }
+        if (
+          activeReceipt.previousPhaseSha256 !== configuring.sha256 ||
+          !sameTransaction(configuringReceipt, activeReceipt) ||
+          activeReceipt.container.containerId !== configuringReceipt.container.containerId ||
+          activeReceipt.container.sandboxId !== configuringReceipt.container.sandboxId ||
+          activeReceipt.container.imageId !== configuringReceipt.container.imageId
+        ) {
+          fail("active phase does not extend configuring authority");
+        }
+      } else if (!successor) {
+        fail("active phase has no configuring authority");
+      } else if (pending && !sameTransaction(pending.receipt, activeReceipt)) {
+        fail("active phase disagrees with pending transaction history");
       }
     }
     const highest = active ?? configuring ?? pending;
+    if (!highest) fail("lifecycle receipt has no complete authority");
     const successorArtifacts = entries
       .map((entry) => successorPublicationIdentity(entry))
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
@@ -1975,14 +1987,13 @@ function readHermesPortableLifecycleReceiptInternal(
           ({ predecessorActiveSha256 }) => predecessorActiveSha256 !== active.sha256,
         ))
     ) {
-      fail("schema-6 publication recovery evidence disagrees with active authority");
+      fail("schema-8 publication recovery evidence disagrees with active authority");
     }
     if (hasSuccessor) {
-      if (!active || highest.receipt.phase !== "active") {
-        fail("schema-6 successor has no active schema-5 predecessor");
+      if (!active) {
+        fail("schema-8 successor has no active schema-7 predecessor");
       }
-      const successor = readSuccessor(directoryPath, allowSuccessorPublicationRecovery);
-      if (!successor) fail("schema-6 successor authority disappeared");
+      if (!successor) fail("schema-8 successor authority disappeared");
       const expected = createHermesPortableSuccessorReceipt(
         active as HermesPortableReceiptSnapshot & {
           readonly receipt: HermesPortableConfiguredReceipt;
@@ -1992,11 +2003,10 @@ function readHermesPortableLifecycleReceiptInternal(
         successor.receipt.predecessorActiveSha256 !== active.sha256 ||
         !isDeepStrictEqual(successor.receipt, expected)
       ) {
-        fail("schema-6 successor disagrees with its schema-5 predecessor");
+        fail("schema-8 successor disagrees with its schema-7 predecessor");
       }
       return {
         ...active,
-        receipt: { ...active.receipt, policy: currentPolicy },
         successor,
         ...(successorArtifacts.length > 0 ? { successorPublicationPending: true as const } : {}),
       };
@@ -2004,7 +2014,6 @@ function readHermesPortableLifecycleReceiptInternal(
     if (semanticPolicyRequalification && active) {
       return {
         ...active,
-        receipt: { ...active.receipt, policy: currentPolicy },
         ...(successorArtifacts.length > 0 ? { successorPublicationPending: true as const } : {}),
       };
     }
@@ -2024,13 +2033,13 @@ export function readHermesPortableLifecycleReceipt(
   return readHermesPortableLifecycleReceiptInternal(sandboxName, stateDir, false);
 }
 
-/** Read exact schema-5 bytes while permitting only operation-local policy identity drift. */
+/** Read exact schema-7 bytes while permitting only operation-local policy identity drift. */
 export function readHermesPortableLifecycleReceiptForRequalification(
   sandboxName: string,
   stateDir: string,
 ): HermesPortableReceiptSnapshot | null {
   if (!isMcpLifecycleLockHeld(sandboxName, path.join(stateDir, "state"))) {
-    fail(`schema-6 requalification requires the sandbox lifecycle lock for '${sandboxName}'`);
+    fail(`schema-8 requalification requires the sandbox lifecycle lock for '${sandboxName}'`);
   }
   return readHermesPortableLifecycleReceiptInternal(sandboxName, stateDir, false, true, true);
 }
@@ -2043,7 +2052,7 @@ export function readHermesPortableLifecycleReceiptForClassification(
   return readHermesPortableLifecycleReceiptInternal(sandboxName, stateDir, false, false, true);
 }
 
-/** Route a probe toward the host fence without interpreting receipt authority. */
+/** Route a probe toward the host fence without interpreting receipt identity. */
 export function hasHermesPortableReceiptCandidate(sandboxName: string, stateDir: string): boolean {
   try {
     fs.lstatSync(hermesPortableReceiptDirectory(sandboxName, stateDir));
@@ -2054,7 +2063,7 @@ export function hasHermesPortableReceiptCandidate(sandboxName: string, stateDir:
   }
 }
 
-/** Select stable receipt authority while its same-transaction publisher resumes under the lock. */
+/** Select stable receipt identity while its same-transaction publisher resumes under the lock. */
 export function inspectPortableAgentReceiptAuthorityForPublicationRecovery(
   sandboxName: string,
   stateDir: string,
@@ -2077,7 +2086,7 @@ export function inspectPortableAgentReceiptAuthorityForRequalification(
   stateDir: string,
 ): PortableAgentReceiptAuthority {
   if (!isMcpLifecycleLockHeld(sandboxName, path.join(stateDir, "state"))) {
-    fail(`schema-6 requalification requires the sandbox lifecycle lock for '${sandboxName}'`);
+    fail(`schema-8 requalification requires the sandbox lifecycle lock for '${sandboxName}'`);
   }
   const legacyPath = portableDemoReceiptPath(sandboxName, stateDir);
   const openclaw = existingPath(legacyPath);
@@ -2148,7 +2157,7 @@ export function publishHermesPortableLifecycleReceipt(
     const successor = readSuccessor(directory.path);
     if (successor) {
       if (receipt.phase !== "active") {
-        fail("schema-6 successor conflicts with incomplete schema-5 publication");
+        fail("schema-8 successor conflicts with incomplete schema-7 publication");
       }
       const expected = createHermesPortableSuccessorReceipt({
         receipt,
@@ -2158,7 +2167,7 @@ export function publishHermesPortableLifecycleReceipt(
         identity: successor.identity,
       });
       if (!isDeepStrictEqual(successor.receipt, expected)) {
-        fail("schema-6 successor disagrees with the active schema-5 publication");
+        fail("schema-8 successor disagrees with the active schema-7 publication");
       }
     }
     const prior =
@@ -2203,7 +2212,7 @@ export function publishHermesPortableLifecycleReceipt(
     } catch (error) {
       if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
       const raced = readPhase(directory.path, receipt.phase);
-      if (!raced || !raced.bytes.equals(bytes)) fail("phase publication raced other authority");
+      if (!raced || !raced.bytes.equals(bytes)) fail("phase publication raced another writer");
     }
     hooks.afterCanonicalLink?.();
     assertLifecycleLock();
@@ -2218,7 +2227,7 @@ export function publishHermesPortableLifecycleReceipt(
   }
 }
 
-/** Publish the deterministic schema-6 operating authority without replacing schema-5 history. */
+/** Publish policy-free operating authority before retiring policy-bearing create history. */
 export function publishHermesPortableSuccessorReceipt(
   sandboxName: string,
   stateDir: string,
@@ -2232,12 +2241,12 @@ export function publishHermesPortableSuccessorReceipt(
     hooks.assertLifecycleLock ??
     (() => {
       if (!isMcpLifecycleLockHeld(sandboxName, path.join(stateDir, "state"))) {
-        fail(`schema-6 publication requires the sandbox lifecycle lock for '${sandboxName}'`);
+        fail(`schema-8 publication requires the sandbox lifecycle lock for '${sandboxName}'`);
       }
     });
   if (requalification) {
     if (requalification.expected.receipt.sandboxName !== sandboxName) {
-      fail("schema-6 requalification authority names another sandbox");
+      fail("schema-8 requalification authority names another sandbox");
     }
     assertCurrentPortableHostFenceHeld(requalification.expected.receipt.runtimeAuthority.homeDir);
   }
@@ -2247,7 +2256,7 @@ export function publishHermesPortableSuccessorReceipt(
   };
   assertPublicationAuthority();
   if (existingPath(portableDemoReceiptPath(sandboxName, stateDir))) {
-    fail(`will not publish schema-6 authority over OpenClaw authority for '${sandboxName}'`);
+    fail(`will not publish schema-8 authority over OpenClaw authority for '${sandboxName}'`);
   }
   const active = readHermesPortableLifecycleReceiptInternal(
     sandboxName,
@@ -2257,7 +2266,7 @@ export function publishHermesPortableSuccessorReceipt(
     requalification !== undefined,
   );
   if (!active || active.receipt.phase !== "active") {
-    fail("schema-6 publication requires complete active schema-5 authority");
+    fail("schema-8 publication requires complete active schema-7 authority");
   }
   if (
     requalification &&
@@ -2266,10 +2275,9 @@ export function publishHermesPortableSuccessorReceipt(
       active.identity.ino !== requalification.expected.identity.ino ||
       active.sha256 !== requalification.expected.sha256 ||
       !active.bytes.equals(requalification.expected.bytes) ||
-      !isDeepStrictEqual(active.receipt.policy, requalification.expected.receipt.policy) ||
       active.successorPublicationPending !== requalification.expected.successorPublicationPending)
   ) {
-    fail("schema-6 requalification authority changed before publication");
+    fail("schema-8 requalification authority changed before publication");
   }
   const receipt = createHermesPortableSuccessorReceipt(
     active as HermesPortableReceiptSnapshot & {
@@ -2295,7 +2303,7 @@ export function publishHermesPortableSuccessorReceipt(
     ]);
     const unexpected = fs.readdirSync(directory.path).filter((entry) => !allowedEntries.has(entry));
     if (unexpected.length > 0) {
-      fail(`directory contains other schema-6 publication evidence for '${sandboxName}'`);
+      fail(`directory contains other schema-8 publication evidence for '${sandboxName}'`);
     }
     retireInterruptedEmptyStage(target, staged, cleanup, directory, assertPublicationAuthority);
     retireInterruptedExactPrefixStage(
@@ -2310,11 +2318,11 @@ export function publishHermesPortableSuccessorReceipt(
     const disposition = reconcilePublicationArtifacts(target, staged, cleanup, bytes, hooks);
     const reconciled = readSuccessor(directory.path);
     if (reconciled) {
-      if (!reconciled.bytes.equals(bytes)) fail("schema-6 successor has other authority");
+      if (!reconciled.bytes.equals(bytes)) fail("schema-8 successor has other authority");
       fs.fsyncSync(directory.descriptor);
       const current = readHermesPortableLifecycleReceipt(sandboxName, stateDir);
       if (!current?.successor || current.receipt.phase !== "active") {
-        fail("schema-6 successor could not be requalified after reconciliation");
+        fail("schema-8 successor could not be requalified after reconciliation");
       }
       assertPublicationAuthority();
       return current as typeof current & {
@@ -2322,7 +2330,7 @@ export function publishHermesPortableSuccessorReceipt(
         readonly successor: HermesPortableSuccessorSnapshot;
       };
     }
-    if (disposition === "complete") fail("completed schema-6 publication is unreadable");
+    if (disposition === "complete") fail("completed schema-8 publication is unreadable");
     if (disposition === "absent") writeStage(staged, bytes, hooks);
     revalidateDirectory(directory);
     assertPublicationAuthority();
@@ -2333,7 +2341,7 @@ export function publishHermesPortableSuccessorReceipt(
     } catch (error) {
       if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
       const raced = readSuccessor(directory.path);
-      if (!raced || !raced.bytes.equals(bytes)) fail("schema-6 publication raced other authority");
+      if (!raced || !raced.bytes.equals(bytes)) fail("schema-8 publication raced another writer");
     }
     hooks.afterCanonicalLink?.();
     assertPublicationAuthority();
@@ -2344,7 +2352,7 @@ export function publishHermesPortableSuccessorReceipt(
     fs.fsyncSync(directory.descriptor);
     const published = readHermesPortableLifecycleReceipt(sandboxName, stateDir);
     if (!published?.successor || published.receipt.phase !== "active") {
-      fail("schema-6 successor disappeared after publication");
+      fail("schema-8 successor disappeared after publication");
     }
     assertPublicationAuthority();
     return published as typeof published & {
@@ -2367,7 +2375,7 @@ function existingPath(target: string): boolean {
   }
 }
 
-/** Select receipt authority by durable agent identity and reject duplicate ownership. */
+/** Select receipt identity by durable agent identity and reject duplicate ownership. */
 export function inspectPortableAgentReceiptAuthority(
   sandboxName: string,
   stateDir: string,

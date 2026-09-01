@@ -121,19 +121,59 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("created sandbox identity gate", () => {
+  it("keeps fresh-create readiness probes on the owning gateway (#9803)", async () => {
+    const gatewayName = "nemoclaw-18080";
+    const input = createGpuFlowInput();
+    input.gatewayName = gatewayName;
+    const deps = createGpuFlowDeps(gatewayName, true);
+    mocks.streamSandboxCreate.mockImplementationOnce(async (...args) => {
+      expect(args[3].readyCheck()).toBe(true);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+    mocks.waitForCreatedSandboxReadyWithTrace.mockImplementationOnce(async (options) => {
+      expect(options.target).toEqual({ kind: "named", gatewayName });
+      await expect(
+        options.observer.listSandboxes({ target: options.target }),
+      ).resolves.toMatchObject({ ok: true });
+      expect(options.checkReadyIdentity?.()).toBe("ready");
+      return { ready: true, reason: "ready", failurePhase: null };
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list", "-g", gatewayName], {
+      ignoreError: true,
+      timeout: 5_000,
+    });
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", gatewayName, "alpha"],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "exec", "-g", gatewayName, "--name", "alpha", "--", "true"],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
+  });
+
   it("resumes the exact verified sandbox without issuing another create (#9833)", async () => {
     const events: string[] = [];
     const sandboxId = "alpha-sandbox-id";
+    const gatewayName = "nemoclaw-18080";
     const input = noGpuInput();
+    input.gatewayName = gatewayName;
     input.resumeVerifiedCreate = {
       route: "none",
       liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+      createAttemptNonce: "a".repeat(62),
     };
     input.verifyCreatedSandboxBeforeEffects = vi.fn(async (identity) => {
       events.push("verify-created");
       expect(identity).toEqual({
         sandboxId,
         liveIdentityFingerprint: fingerprintSandboxRecreateValue(sandboxId),
+        createAttemptNonce: "a".repeat(62),
         route: "none",
       });
     });
@@ -152,7 +192,7 @@ describe("created sandbox identity gate", () => {
     });
     const deps = createGpuFlowDeps();
     vi.mocked(deps.runOpenshell).mockImplementation((args) =>
-      args.join(" ") === "sandbox get alpha"
+      args.join(" ") === `sandbox get -g ${gatewayName} alpha`
         ? { status: 0, stdout: `Name: alpha\nId: ${sandboxId}\nState: Ready\n`, stderr: "" }
         : { status: 0, stdout: "", stderr: "" },
     );
@@ -167,6 +207,10 @@ describe("created sandbox identity gate", () => {
     });
 
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "get", "-g", gatewayName, "alpha"],
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
+    );
     expect(events).toEqual([
       "verify-created",
       "revalidate:activate managed sandbox network for 'alpha'",
@@ -189,6 +233,7 @@ describe("created sandbox identity gate", () => {
     input.resumeVerifiedCreate = {
       route: "none",
       liveIdentityFingerprint: fingerprintSandboxRecreateValue("expected-id"),
+      createAttemptNonce: "a".repeat(62),
     };
     input.verifyCreatedSandboxBeforeEffects = vi.fn();
     input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
@@ -196,7 +241,7 @@ describe("created sandbox identity gate", () => {
     mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
     const deps = createGpuFlowDeps();
     vi.mocked(deps.runOpenshell).mockImplementation((args) =>
-      args.join(" ") === "sandbox get alpha"
+      args.join(" ") === "sandbox get -g nemoclaw alpha"
         ? { status: 0, stdout: "Name: alpha\nId: replacement-id\nState: Ready\n", stderr: "" }
         : { status: 0, stdout: "", stderr: "" },
     );
@@ -208,6 +253,22 @@ describe("created sandbox identity gate", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
     expect(patch.ensureApplied).not.toHaveBeenCalled();
+  });
+
+  it("refuses a resume checkpoint without durable create-attempt authority (#9833)", async () => {
+    const input = noGpuInput();
+    input.resumeVerifiedCreate = {
+      route: "none",
+      liveIdentityFingerprint: fingerprintSandboxRecreateValue("expected-id"),
+    };
+    const deps = createGpuFlowDeps();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "durable create-attempt authority",
+    );
+
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
   });
 
   it("requires a durable recovery owner for verified create attempts (#9211)", async () => {
@@ -222,7 +283,7 @@ describe("created sandbox identity gate", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
   });
 
-  it("settles the exact created sandbox before post-create effects (#9211)", async () => {
+  it("settles the exact created sandbox before ending the Ready handoff and post-create effects (#9211)", async () => {
     const events: string[] = [];
     let nonce = "";
     const input = noGpuInput();
@@ -232,6 +293,7 @@ describe("created sandbox identity gate", () => {
       expect(identity).toEqual({
         sandboxId: "alpha-sandbox-id",
         liveIdentityFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        createAttemptNonce: expect.stringMatching(/^[0-9a-f]{62}$/u),
         route: "none",
       });
       expect(patch.ensureApplied).not.toHaveBeenCalled();
@@ -255,6 +317,7 @@ describe("created sandbox identity gate", () => {
       expect(nonce).toMatch(/^[0-9a-f]{62}$/u);
       expect(nonce).toHaveLength(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
       expect(nonce.length).toBeLessThanOrEqual(63);
+      expect(options.readyCheck?.()).toBe(false);
       expect(options.readyCheck?.()).toBe(true);
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
@@ -296,8 +359,22 @@ describe("created sandbox identity gate", () => {
         );
       })
       .mockImplementationOnce((args) => {
+        expect(args).not.toContain("--selector");
+        events.push("ready-visible-again");
+        return "alpha Ready";
+      })
+      .mockImplementationOnce((args) => {
         expect(args).toContain("--selector");
         events.push("identity-matched");
+        expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
+        expect(patch.exitOnPatchError).not.toHaveBeenCalled();
+        return sandboxListJson("alpha-sandbox-id", {
+          [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce,
+        });
+      })
+      .mockImplementationOnce((args) => {
+        expect(args).toContain("--selector");
+        events.push("identity-revalidated");
         expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
         expect(patch.exitOnPatchError).not.toHaveBeenCalled();
         return sandboxListJson("alpha-sandbox-id", {
@@ -311,8 +388,9 @@ describe("created sandbox identity gate", () => {
       "create",
       "ready-visible",
       "identity-metadata-pending",
-      "identity-settle",
+      "ready-visible-again",
       "identity-matched",
+      "identity-revalidated",
       "verify-created",
       "revalidate:validate runtime patch for sandbox 'alpha'",
       "runtime-check",
@@ -353,9 +431,10 @@ describe("created sandbox identity gate", () => {
     expect(firstIdentityTimeout as number).toBeGreaterThan(0);
     expect(firstIdentityTimeout as number).toBeLessThanOrEqual(30_000);
     expect(deps.runCaptureOpenshell).not.toHaveBeenCalledWith(
-      ["sandbox", "get", "alpha"],
+      ["sandbox", "get", "-g", "nemoclaw", "alpha"],
       expect.anything(),
     );
+    expect(deps.sleep).not.toHaveBeenCalled();
   });
 
   it("carries Hermes receipt authority from selector settlement through publication lookup (#10423)", async () => {
@@ -430,9 +509,10 @@ describe("created sandbox identity gate", () => {
 
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
 
-    expect(events.slice(0, 5)).toEqual([
+    expect(events.slice(0, 6)).toEqual([
       "create",
       "ready-visible",
+      "selector-settled",
       "selector-settled",
       "publication-get",
       "verify-policy",
@@ -491,7 +571,8 @@ describe("created sandbox identity gate", () => {
       mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
       mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
         nonce = createAttemptNonce(args);
-        expect(options.readyCheck?.()).toBe(true);
+        expect(options.readyCheck).toEqual(expect.any(Function));
+        options.readyCheck?.();
         return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
       });
       const deps = createGpuFlowDeps();
@@ -578,7 +659,7 @@ describe("created sandbox identity gate", () => {
     });
 
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-      "changed identity before policy verification",
+      "changed identity before identity verification completed",
     );
 
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
@@ -587,6 +668,7 @@ describe("created sandbox identity gate", () => {
         `Durable sandbox identity fingerprint: ${fingerprintSandboxRecreateValue("alpha-sandbox-id")}`,
       ),
       fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+      nonce,
     );
     expect(patch.exitOnPatchError).not.toHaveBeenCalled();
     expect(patch.ensureApplied).not.toHaveBeenCalled();
@@ -617,7 +699,7 @@ describe("created sandbox identity gate", () => {
     });
 
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-      "did not become visible through its owning gateway before policy verification",
+      "did not become visible through its owning gateway before identity verification completed",
     );
 
     expect(input.verifyCreatedSandboxBeforeEffects).not.toHaveBeenCalled();
@@ -626,6 +708,7 @@ describe("created sandbox identity gate", () => {
         `Durable sandbox identity fingerprint: ${fingerprintSandboxRecreateValue("alpha-sandbox-id")}`,
       ),
       fingerprintSandboxRecreateValue("alpha-sandbox-id"),
+      nonce,
     );
     expect(patch.exitOnPatchError).not.toHaveBeenCalled();
     expect(patch.ensureApplied).not.toHaveBeenCalled();
@@ -702,6 +785,8 @@ describe("created sandbox identity gate", () => {
           "u",
         ),
       ),
+      undefined,
+      nonce,
     );
     expect(events).toEqual(["persist-recovery", "rejected"]);
     expect(deps.runCaptureOpenshell).toHaveBeenCalledOnce();
@@ -851,6 +936,7 @@ describe("created sandbox identity gate", () => {
         ),
       ),
       fingerprint,
+      nonce,
     );
     expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledBefore(exit);
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
@@ -906,6 +992,8 @@ describe("created sandbox identity gate", () => {
           "u",
         ),
       ),
+      undefined,
+      nonce,
     );
     const output = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(output).toContain(`${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${nonce}`);

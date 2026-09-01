@@ -12,6 +12,7 @@ import {
 } from "./docker-driver-gateway-compat";
 import {
   buildDockerDriverGatewayConfigToml,
+  hasStateScopedSandboxNamespace,
   NEMOCLAW_OPENSHELL_SANDBOX_NAMESPACE_ENV,
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
@@ -34,7 +35,7 @@ export {
   requiredGlibcVersionsForBinary,
   shouldUseContainerizedGateway,
 } from "./docker-driver-gateway-compat";
-export { buildDockerDriverGatewayConfigToml };
+export { buildDockerDriverGatewayConfigToml, hasStateScopedSandboxNamespace };
 
 export type DockerDriverGatewayLaunch = {
   command: string;

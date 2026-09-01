@@ -62,6 +62,7 @@ const makeEntry = (server, addState) => ({
   adapter: "hermes-config",
   url: "https://8.8.8.8/mcp",
   env: ["GITHUB_TOKEN"],
+  allowedIps: ["8.8.8.8"],
   providerName: "provider-" + server,
   providerId,
   policyName: "mcp-bridge-" + server,
@@ -75,19 +76,6 @@ const register = (name, entry) => {
     gatewayName: "nemoclaw",
     ...(entry ? { mcp: { bridges: { [entry.server]: entry } } } : {}),
   });
-  if (entry) {
-    registry.addCustomPolicy(name, {
-      name: entry.policyName,
-      content: bridge.buildMcpBridgePolicyYaml(
-        entry.server,
-        entry.url,
-        "hermes-config",
-        { addresses: ["8.8.8.8"] },
-        entry.providerName,
-      ),
-      sourcePath: "generated:nemoclaw-mcp-bridge",
-    });
-  }
 };
 const messages = [];
 const capture = async (operation) => {
@@ -138,8 +126,11 @@ const capture = async (operation) => {
       freshManifest?: unknown;
     };
     expect(payload.messages).toHaveLength(4);
-    expect(payload.messages.every((message) =>
-        message.includes("has shields up or an unreadable shields posture"))).toBe(true);
+    expect(
+      payload.messages.every((message) =>
+        message.includes("has shields up or an unreadable shields posture"),
+      ),
+    ).toBe(true);
     expect(payload.mutations).toEqual([]);
     expect(payload.freshManifest).toBeUndefined();
   });

@@ -15,12 +15,13 @@ import {
   type StagingHandoff,
 } from "../fixtures/brev-launchable.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import type { SecretStore } from "../fixtures/secrets.ts";
+import { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
 
 const roots: string[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
@@ -86,6 +87,7 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     const root = temporaryRoot();
     const credentialHome = path.join(root, "brev-home");
     vi.stubEnv("HOME", credentialHome);
+    vi.stubEnv("PATH", "/usr/local/bin:/usr/bin:/bin");
     const expected = stagingHandoff();
     const identity = runtimeIdentity(expected);
     const command = vi.fn(ownedExecCommand(`probe\n${JSON.stringify(identity)}`));
@@ -94,6 +96,7 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     await expect(fixture.verifyIdentity(recordedOwnership(), expected)).resolves.toEqual(identity);
     expect(command.mock.calls.find((call) => call[1][0] === "exec")?.[2]?.env).toEqual({
       HOME: credentialHome,
+      PATH: "/usr/local/bin:/usr/bin:/bin",
     });
     expect(
       JSON.parse(fs.readFileSync(path.join(root, "brev-runtime-identity.json"), "utf8")),
@@ -124,6 +127,7 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     const root = temporaryRoot();
     const credentialHome = path.join(root, "brev-home");
     vi.stubEnv("HOME", credentialHome);
+    vi.stubEnv("PATH", "/usr/local/bin:/usr/bin:/bin");
     const lifecycle = lifecycleCommand();
     const command = vi.fn(lifecycle.command);
     const fixture = createFixture(root, command);
@@ -145,9 +149,11 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     ]);
     expect(command.mock.calls.find((call) => call[1][0] === "create")?.[2]?.env).toEqual({
       HOME: credentialHome,
+      PATH: "/usr/local/bin:/usr/bin:/bin",
     });
     expect(command.mock.calls.find((call) => call[1][0] === "delete")?.[2]?.env).toEqual({
       HOME: credentialHome,
+      PATH: "/usr/local/bin:/usr/bin:/bin",
     });
     expect(command.mock.calls.every((call) => call[2]?.env?.HOME === credentialHome)).toBe(true);
     expect(
@@ -288,6 +294,48 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     expect(ownership.id).toBe("owned-id");
   });
 
+  it("records the last failed Brev exec readiness attempt", async () => {
+    vi.useFakeTimers();
+    const root = temporaryRoot();
+    const command = vi.fn(
+      ownedExecCommand(
+        "",
+        1,
+        (attempt) => `${"x".repeat(3 * 1024)}\u0000\nssh unavailable ${attempt} fixture-secret`,
+      ),
+    );
+    const fixture = createFixture(root, command);
+
+    const rejection = expect(fixture.waitForExec(recordedOwnership(), 3)).rejects.toThrow(
+      /timed out after 3 attempts: \[Brev exec diagnostic omitted \d+ earlier characters\] x+ ssh unavailable 3 \[REDACTED\]$/u,
+    );
+    await vi.advanceTimersByTimeAsync(3);
+    await rejection;
+    const evidence = JSON.parse(
+      fs.readFileSync(path.join(root, "brev-exec-readiness-failure.json"), "utf8"),
+    );
+    expect(evidence).toEqual({
+      attempts: 3,
+      lastAttempt: {
+        diagnostic: expect.stringMatching(
+          /^\[Brev exec diagnostic omitted \d+ earlier characters\] x+ ssh unavailable 3 \[REDACTED\]$/u,
+        ),
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+      },
+      workspaceId: "owned-id",
+      workspaceName: "fixture-workspace",
+    });
+    expect(evidence.lastAttempt.diagnostic.length).toBeLessThanOrEqual(2 * 1024 + 80);
+    expect(JSON.stringify(evidence)).not.toContain("fixture-secret");
+    expect(
+      command.mock.calls
+        .filter((call) => call[1][0] === "exec")
+        .every((call) => Number(call[2]?.captureLimitBytes) > 0),
+    ).toBe(true);
+  });
+
   it("refuses a replacement before Brev exec readiness without executing on it", async () => {
     const root = temporaryRoot();
     const lifecycle = replaceableWorkspaceCommand();
@@ -386,6 +434,7 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
     const root = temporaryRoot();
     const credentialHome = path.join(root, "brev-home");
     vi.stubEnv("HOME", credentialHome);
+    vi.stubEnv("PATH", "/usr/local/bin:/usr/bin:/bin");
     let observedScript = "";
     const command = vi.fn(
       async (_binary: string, args: string[], options?: ShellProbeRunOptions) => {
@@ -393,7 +442,11 @@ describe("the Brev Launchable fixture binds staging identity and workspace lifec
           case "ls":
             return workspaceResult("owned-id");
           case "exec": {
-            expect(options?.env).toEqual({ FIXTURE_VALUE: "fixture", HOME: credentialHome });
+            expect(options?.env).toEqual({
+              FIXTURE_VALUE: "fixture",
+              HOME: credentialHome,
+              PATH: "/usr/local/bin:/usr/bin:/bin",
+            });
             observedScript = args[2]?.slice(1) ?? "";
             const descriptor = fs.openSync(observedScript, "r");
             try {
@@ -440,9 +493,9 @@ function createFixture(
   command: (...args: any[]) => Promise<ShellProbeResult>,
 ): BrevLaunchableFixture {
   const host = { command } as unknown as HostCliClient;
-  const secrets = {
-    required: () => "fixture-secret",
-  } as unknown as SecretStore;
+  const secrets = new SecretStore({ NEMOCLAW_IMAGE_DISPATCH_TOKEN: "fixture-secret" }, (note) => {
+    throw new Error(note ?? "test skipped");
+  });
   return new BrevLaunchableFixture({ artifacts: new ArtifactSink(root), host, pollMs: 1, secrets });
 }
 
@@ -486,13 +539,19 @@ function recordedOwnership(): BrevWorkspaceOwnership {
 
 function ownedExecCommand(
   stdout: string,
+  exitCode = 0,
+  stderr: string | ((attempt: number) => string) = "",
 ): (_binary: string, args: string[], _options?: ShellProbeRunOptions) => Promise<ShellProbeResult> {
+  let execAttempts = 0;
   return async (_binary, args, _options) => {
     switch (args[0]) {
       case "ls":
         return workspaceResult("owned-id");
-      case "exec":
-        return result(stdout);
+      case "exec": {
+        execAttempts += 1;
+        const attemptStderr = typeof stderr === "function" ? stderr(execAttempts) : stderr;
+        return { ...result(stdout), exitCode, stderr: attemptStderr };
+      }
       default:
         throw new Error(`unexpected command: ${args.join(" ")}`);
     }

@@ -55,6 +55,10 @@ import {
   validateUploadE2eArtifactsWorkflowBoundary,
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
 import { validateE2eWorkspaceBootstrapBoundary } from "./workspace-bootstrap-workflow-boundary.mts";
+import {
+  type ExternalGatewayHealthWorkflow,
+  validateExternalGatewayHealthWorkflow,
+} from "./external-gateway-health-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -201,6 +205,7 @@ const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "model-router-provider-routed-inference",
 ]);
 const NO_IMAGE_E2E_JOBS = new Set([
+  "external-gateway-health",
   "staging-brev-launchable",
   "staging-brev-launchable-identity",
   SHARED_E2E_JOB_ID,
@@ -698,6 +703,7 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
   "src/lib/adapters/openshell/restore-gateway-pairing.ts",
 ]);
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
+  ["test/e2e/lib/fake-wechat-api.mts", ["messaging-providers"]],
   ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts", ["openclaw-plugin-runtime-exdev"]],
 ]);
 
@@ -1176,7 +1182,9 @@ function validateFreeStandingJobSelector(
 ): void {
   const job = asRecord(jobs[jobName]);
   const expectedNeeds =
-    jobName === "mcp-bridge-dev"
+    jobName === "external-gateway-health"
+      ? ["generate-matrix", "package-openshell-sdk"]
+      : jobName === "mcp-bridge-dev"
       ? ["base-image-publication", "generate-matrix", "openshell-dev-artifact"]
       : [
             "mcp-bridge",
@@ -2098,7 +2106,7 @@ function validateStagingBrevLaunchableIdentityJob(errors: string[], jobs: Workfl
     INSTANCE_NAME: "nclaw-identity-${{ github.run_id }}-${{ github.run_attempt }}",
     E2E_AGENT_RUNTIME: "none",
     E2E_OBSERVABLE_OUTCOME:
-      "Exact staging image boots, passes the SSH access probe, and matches the baked runtime identity",
+      "The staging image boots, passes the SSH access probe, and matches the baked runtime identity",
     E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Brev Launchable host; no inference endpoint",
   };
   if (!isDeepStrictEqual(jobEnv, expectedJobEnv)) {
@@ -2332,7 +2340,7 @@ function validateStagingBrevLaunchableInput(
   }
   const description = stringValue(input.description);
   if (
-    !description.includes("Exact staging Brev Launchable") ||
+    !description.includes("staging Brev Launchable") ||
     !description.includes("jobs and targets are empty") ||
     !description.includes("full E2E run")
   ) {
@@ -2602,6 +2610,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     ...validateOpenShellGatewayAuthContractWorkflow(
       workflow as unknown as OpenShellGatewayAuthContractWorkflow,
     ),
+    ...validateExternalGatewayHealthWorkflow(
+      workflow as unknown as ExternalGatewayHealthWorkflow,
+    ),
   );
   errors.push(...validateE2eOperationsWorkflow(workflow as unknown as OperationsWorkflow));
   errors.push(...validateStandardProfileWorkflowBoundary(workflow));
@@ -2622,7 +2633,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const jobsDescription = stringValue(jobsInput.description);
   if (!jobsDescription.includes("include_staging_brev_launchable")) {
     errors.push(
-      "workflow_dispatch jobs input description must identify how to include Exact staging Brev Launchable",
+      "workflow_dispatch jobs input description must identify how to include staging Brev Launchable",
     );
   }
   if (!jobsDescription.includes("staging-brev-launchable-identity")) {

@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { runInstallerSourced } from "../helpers/installer-express-prompt-harness";
 import { runExpressPromptWithTty } from "../helpers/installer-express-prompt-pty-harness";
+import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "../helpers/installer-sourced-env";
 
 describe("installer N1x Express preview", () => {
   it("offers one single-host managed-vLLM path (#8574)", () => {
@@ -92,6 +93,59 @@ detect_express_platform
     expect(detectN1x(true, true).result.stdout).toBe("N1x");
     expect(detectN1x(true, false).result.stdout).toBe("");
     expect(detectN1x(false, true).result.stdout).toBe("");
+  });
+
+  it.each([
+    ["exact marker", 'NAME="DGX SPARK FASTOS"\nVERSION="1.23.0"\n', "81a4:0:0:644:64:1:2", "file", "DGX Spark"],
+    ["unquoted marker", "NAME=DGX SPARK FASTOS\n", "81a4:0:0:644:64:1:2", "file", ""],
+    ["duplicate marker", 'NAME="DGX SPARK FASTOS"\nNAME="DGX SPARK FASTOS"\n', "81a4:0:0:644:64:1:2", "file", ""],
+    ["unknown marker", 'NAME="OTHER FASTOS"\n', "81a4:0:0:644:64:1:2", "file", ""],
+    ["non-root-owned marker", 'NAME="DGX SPARK FASTOS"\n', "81a4:1000:0:644:64:1:2", "file", ""],
+    ["writable marker", 'NAME="DGX SPARK FASTOS"\n', "81a4:0:0:666:64:1:2", "file", ""],
+    ["oversized marker", 'NAME="DGX SPARK FASTOS"\n'.padEnd(4097, "x"), "81a4:0:0:644:4097:1:2", "file", ""],
+    ["linked marker", 'NAME="DGX SPARK FASTOS"\n', "81a4:0:0:644:64:1:2", "link", ""],
+  ] as const)("routes an OEM FastOS marker only when trusted: %s (#10717)", (_scenario, contents, metadata, markerKind, expected) => {
+    const result = runInstallerSourced(`
+test_marker="$HOME/fastos-release"
+test_target="$HOME/fastos-release-target"
+printf '%s' "$MARKER_CONTENT" >"$test_target"
+if [ "$MARKER_KIND" = "link" ]; then
+  ln -s "$test_target" "$test_marker"
+else
+  cp "$test_target" "$test_marker"
+fi
+function [ {
+  if [[ "$#" -eq 3 && "$1" = "-r" && "$2" = "/sys/class/dmi/id/product_name" && "$3" = "]" ]]; then
+    return 0
+  fi
+  builtin [ "$@"
+}
+cat() {
+  if [[ "$#" -eq 1 && "$1" = "/sys/class/dmi/id/product_name" ]]; then
+    printf "OEM GB10 system"
+    return
+  fi
+  command cat "$@"
+}
+stat() { printf '%s' "$MARKER_METADATA"; }
+is_wsl_host() { return 1; }
+n1x_fastos_release_path() { printf '%s' "$test_marker"; }
+detect_express_platform
+`, { MARKER_CONTENT: contents, MARKER_KIND: markerKind, MARKER_METADATA: metadata });
+
+    expect(result.result.stdout).toBe(expected);
+  });
+
+  it("preserves harness-owned environment paths", () => {
+    const result = runInstallerSourced(
+      `printf '%s\n%s\n%s\n' "$HOME" "$PATH" "$INSTALLER_UNDER_TEST"`,
+      { HOME: "/forbidden", PATH: "/forbidden", INSTALLER_UNDER_TEST: "/forbidden" },
+    );
+
+    expect(result.result.status, result.output).toBe(0);
+    expect(result.result.stdout).toBe(
+      `${result.home}\n${TEST_SYSTEM_PATH}\n${INSTALLER_PAYLOAD}\n`,
+    );
   });
 
   it.each([
