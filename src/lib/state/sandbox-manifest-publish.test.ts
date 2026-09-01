@@ -99,11 +99,19 @@ describe("bounded Hermes operator config handoff", () => {
     const withHandoff = writeHermesOperatorConfigHandoff(published, document);
     const handoffPath = path.join(backupPath, withHandoff.hermesOperatorConfigHandoff!.file);
     expect(readHermesOperatorConfigHandoff(withHandoff)).toBe(document);
-    expect(fs.statSync(handoffPath).mode & 0o777).toBe(0o600);
-
-    fs.appendFileSync(handoffPath, "tampered");
-    expect(readHermesOperatorConfigHandoff(withHandoff)).toBeNull();
-    fs.writeFileSync(handoffPath, document, { mode: 0o600 });
+    const descriptor = fs.openSync(handoffPath, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
+    try {
+      expect(fs.fstatSync(descriptor).mode & 0o777).toBe(0o600);
+      fs.ftruncateSync(descriptor, 0);
+      fs.writeSync(descriptor, `${document}tampered`, 0, "utf8");
+      fs.fsyncSync(descriptor);
+      expect(readHermesOperatorConfigHandoff(withHandoff)).toBeNull();
+      fs.ftruncateSync(descriptor, 0);
+      fs.writeSync(descriptor, document, 0, "utf8");
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
 
     expect(clearHermesOperatorConfigHandoff(withHandoff)).toBe(true);
     expect(fs.existsSync(handoffPath)).toBe(false);

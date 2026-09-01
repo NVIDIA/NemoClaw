@@ -375,16 +375,30 @@ function isSupportedHermesOperatorConfigKey(key: string): boolean {
 
 function readHermesConfigSetKeys(sandboxName: string, auditFile: string = AUDIT_FILE): string[] {
   let text: string;
+  let descriptor: number | null = null;
   try {
-    const stat = fs.statSync(auditFile);
-    if (!stat.isFile()) throw new Error("audit path is not a regular file");
-    if (stat.size > MAX_HERMES_CONFIG_AUDIT_BYTES) {
+    descriptor = fs.openSync(auditFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (!before.isFile()) throw new Error("audit path is not a regular file");
+    if (before.size > BigInt(MAX_HERMES_CONFIG_AUDIT_BYTES)) {
       throw new Error("config audit exceeds the bounded 8 MiB rebuild capture limit");
     }
-    text = fs.readFileSync(auditFile, "utf8");
+    text = fs.readFileSync(descriptor, "utf8");
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs
+    ) {
+      throw new Error("config audit changed during rebuild capture");
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
   }
 
   const keys = new Set<string>();
