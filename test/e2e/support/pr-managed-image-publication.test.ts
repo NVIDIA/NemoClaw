@@ -21,6 +21,7 @@ import {
 import { githubRequest } from "../../../tools/e2e/base-image-publication.mts";
 import {
   assembleManagedImageCatalog,
+  main,
   resolvePrManagedImageCatalog,
   selectManagedImagePublicationRun,
   writeManagedImageCatalog,
@@ -74,6 +75,12 @@ function contractForCohort(
 
 function contract(agent: ManagedImageAgent, index: number): ManagedImageContractV1 {
   return contractForCohort(agent, index, `ghrun-${RUN_ID}-1`);
+}
+
+function contractArchive(agent: ManagedImageAgent, index: number): Buffer {
+  return artifactZip([
+    { name: "contract.json", contents: `${JSON.stringify(contract(agent, index))}\n` },
+  ]);
 }
 
 function treeEntry(entryPath: string, sha: string) {
@@ -167,9 +174,7 @@ function candidateRequest(options: {
   }
   for (const [index, agent] of SHIPPED_MANAGED_IMAGE_AGENTS.entries()) {
     const name = `managed-pr-contract-${artifactRunId}-${artifactRunAttempt}-${agent}`;
-    const archive = artifactZip([
-      { name: "contract.json", contents: `${JSON.stringify(contract(agent, index))}\n` },
-    ]);
+    const archive = contractArchive(agent, index);
     const id = index + 100;
     responses.set(
       `/repos/${CANONICAL_REPOSITORY}/actions/runs/${artifactRunId}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
@@ -230,6 +235,7 @@ function downloadContract(
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -264,6 +270,65 @@ describe("exact PR managed-image publication", () => {
       ),
     );
     expect(fs.statSync(input.outputPath).mode & 0o777).toBe(0o600);
+  });
+
+  it("keeps artifact download evidence out of the machine-readable selection", async () => {
+    const input = resolverInput();
+    const apiRequest = candidateRequest({ imageChanged: true });
+    const artifactResponses = new Map<string, Response>(
+      SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+        const archive = contractArchive(agent, index);
+        return [
+          `/repos/${CANONICAL_REPOSITORY}/actions/artifacts/${index + 100}/zip`,
+          new Response(new Uint8Array(archive), {
+            status: 200,
+            headers: { "content-length": String(archive.length) },
+          }),
+        ] as const;
+      }),
+    );
+    let standardOutput = "";
+    let standardError = "";
+    vi.spyOn(process.stdout, "write").mockImplementation(((chunk: string | Uint8Array) => {
+      standardOutput += chunk.toString();
+      return true;
+    }) as typeof process.stdout.write);
+    vi.spyOn(console, "log").mockImplementation((...values: unknown[]) => {
+      standardOutput += `${values.map(String).join(" ")}\n`;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation(((chunk: string | Uint8Array) => {
+      standardError += chunk.toString();
+      return true;
+    }) as typeof process.stderr.write);
+    vi.spyOn(console, "error").mockImplementation((...values: unknown[]) => {
+      standardError += `${values.map(String).join(" ")}\n`;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (request: string | URL | Request) => {
+        const url = new URL(String(request));
+        return (
+          artifactResponses.get(url.pathname) ??
+          Response.json(await apiRequest(`${url.pathname}${url.search}`))
+        );
+      }),
+    );
+
+    await main([input.outputPath], {
+      BASE_SHA,
+      CANDIDATE_REPOSITORY: CANONICAL_REPOSITORY,
+      CANDIDATE_SHA,
+      GITHUB_TOKEN: "test-token",
+      PR_NUMBER: String(PR_NUMBER),
+    });
+
+    const artifactEvidence = Array.from(
+      { length: SHIPPED_MANAGED_IMAGE_AGENTS.length },
+      () => "artifact-content-read attempt=1 outcome=passed-first-attempt\n",
+    ).join("");
+    expect(standardOutput).toBe("candidate-catalog\n");
+    expect(standardOutput).not.toContain("artifact-content-read");
+    expect(standardError).toBe(artifactEvidence);
   });
 
   it("selects a candidate catalog when only managed-image onboarding runtime changes", async () => {
