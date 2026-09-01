@@ -183,7 +183,7 @@ describe("Hermes 0.19.0 dependency review", () => {
       "grep -Fqx '  - \"hindsight-client==0.6.1\"' /opt/hermes/plugins/memory/hindsight/plugin.yaml",
     );
     expect(dockerfile).toContain(
-      "lazy_deps.LAZY_DEPS['nemoclaw.build-probe'] = ('nemoclaw-lazy-probe==1.0.0',)",
+      "lazy_deps._venv_pip_install(('/tmp/nemoclaw-hindsight-probe/nemoclaw_lazy_probe-1.0.0-py3-none-any.whl',))",
     );
     expect(dockerfileBase).toContain(
       "HERMES_LAZY_INSTALL_TARGET=/tmp/nemoclaw-hindsight-client-probe",
@@ -411,7 +411,7 @@ describe("Hermes 0.19.0 dependency review", () => {
       (instruction) =>
         instruction.keyword === "RUN" &&
         instruction.body.includes(
-          "lazy_deps.ensure('nemoclaw.build-probe', prompt=False)",
+          "lazy_deps._venv_pip_install(('/tmp/nemoclaw-hindsight-probe/nemoclaw_lazy_probe-1.0.0-py3-none-any.whl',))",
         ),
     );
     expect(lazyInstallLayer).toBeDefined();
@@ -468,8 +468,8 @@ describe("Hermes 0.19.0 dependency review", () => {
       `chown -R sandbox:sandbox /sandbox/.hermes/lazy-packages`,
       `HERMES_LAZY_INSTALL_TARGET=/run/nemoclaw/hermes-gateway-lazy-packages`,
       "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups --",
-      "lazy_deps.LAZY_DEPS['nemoclaw.build-probe'] = ('nemoclaw-lazy-probe==1.0.0',)",
-      "lazy_deps.ensure('nemoclaw.build-probe', prompt=False)",
+      "lazy_deps._venv_pip_install(('/tmp/nemoclaw-hindsight-probe/nemoclaw_lazy_probe-1.0.0-py3-none-any.whl',))",
+      "assert result.success, result.stderr or result.stdout",
       "import hermes_bootstrap, nemoclaw_lazy_probe",
       "assert m.version('nemoclaw-lazy-probe') == '1.0.0'",
       "assert pathlib.Path(nemoclaw_lazy_probe.__file__).resolve().is_relative_to(gateway_target)",
@@ -504,7 +504,9 @@ describe("Hermes 0.19.0 dependency review", () => {
       1,
     );
     expect(layer.lastIndexOf("rm -rf /sandbox/.cache")).toBeGreaterThan(
-      layer.indexOf("lazy_deps.ensure('nemoclaw.build-probe', prompt=False)"),
+      layer.indexOf(
+        "lazy_deps._venv_pip_install(('/tmp/nemoclaw-hindsight-probe/nemoclaw_lazy_probe-1.0.0-py3-none-any.whl',))",
+      ),
     );
     expect(layer).not.toContain("https://");
     expect(layer).not.toContain(`test -z "$(find -P /opt/hermes/.venv`);

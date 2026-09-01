@@ -1403,7 +1403,7 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
         HERMES_LAZY_INSTALL_TARGET=/run/nemoclaw/hermes-gateway-lazy-packages \
         /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
-        "from tools import lazy_deps; lazy_deps.LAZY_DEPS['nemoclaw.build-probe'] = ('nemoclaw-lazy-probe==1.0.0',); lazy_deps.ensure('nemoclaw.build-probe', prompt=False)" \
+        "from tools import lazy_deps; result = lazy_deps._venv_pip_install(('/tmp/nemoclaw-hindsight-probe/nemoclaw_lazy_probe-1.0.0-py3-none-any.whl',)); assert result.success, result.stderr or result.stdout" \
     && rm -rf /tmp/nemoclaw-hindsight-probe \
     && /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
         env HERMES_LAZY_INSTALL_TARGET=/run/nemoclaw/hermes-gateway-lazy-packages \
