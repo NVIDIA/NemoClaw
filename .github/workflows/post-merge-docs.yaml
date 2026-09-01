@@ -126,20 +126,11 @@ jobs:
           SANDBOX_NAME: docs-main-review
         run: node --experimental-strip-types --no-warnings "$TRUSTED_CHECKOUT/tools/post-merge-docs/run.mts" execute
 
-      - name: Explain missing independent review report
-        if: ${{ failure() && steps.review.outcome == 'failure' }}
-        env:
-          REVIEW_REPORT: ${{ github.workspace }}/approved/review-report.txt
-        run: |
-          if [[ ! -f "$REVIEW_REPORT" ]]; then
-            echo "::warning title=Documentation rejection report is missing::The independent documentation review failed without producing its rejection report. No documentation patch was published. Inspect the Independently review the candidate step before retrying."
-          fi
-
       - name: Upload the independent review report
         if: ${{ failure() && steps.review.outcome == 'failure' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          if-no-files-found: ignore
+          if-no-files-found: warn
           name: post-merge-docs-review-rejection
           path: ${{ github.workspace }}/approved/review-report.txt
           retention-days: 3
