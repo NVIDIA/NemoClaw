@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,23 +10,45 @@ import {
   parseManagedImageContractV1,
   SHIPPED_MANAGED_IMAGE_AGENTS,
   type ManagedImageContractCatalog,
+  type ManagedImageContractV1,
 } from "../../src/lib/onboard/managed-image/contract.ts";
 import {
   baseImageInputsChanged,
+  collectPaginated,
   githubRequest,
   parseBaseImagePushPaths,
 } from "./base-image-publication.mts";
+import {
+  bindNamedExactArtifact,
+  downloadBoundArtifact,
+  materializeContractArchive,
+  type BoundArtifactIdentity,
+} from "./exact-artifact-download.mts";
 
 const REPOSITORY = "NVIDIA/NemoClaw";
 const BASE_IMAGE_WORKFLOW_PATH = ".github/workflows/base-image.yaml";
+const MANAGED_IMAGE_WORKFLOW_FILE = "managed-images.yaml";
+const MANAGED_IMAGE_WORKFLOW_NAME = "Images / Build, Test, and Publish Managed Images";
+const MANAGED_IMAGE_WORKFLOW_PATH = ".github/workflows/managed-images.yaml";
 const MAX_COMMIT_TREE_ENTRIES = 100_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const TREE_ENTRY_TYPES = new Set(["blob", "commit", "tree"]);
+const TREE_ENTRY_MODES = new Map([
+  ["blob", new Set(["100644", "100755", "120000"])],
+  ["commit", new Set(["160000"])],
+  ["tree", new Set(["040000"])],
+]);
 
 type JsonRecord = Record<string, unknown>;
+type ManagedImageCohort = ManagedImageContractV1["source"]["cohort"];
 
-export type PrManagedImageSource = "local-dockerfile" | "managed-image";
+export type PrManagedImageSelection = "base-cohort" | "candidate-catalog";
+
+export interface ManagedImagePublicationRun {
+  readonly attempt: number;
+  readonly headSha: string;
+  readonly id: number;
+}
 
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -45,9 +68,10 @@ function exactString(value: unknown, expected: string, label: string): void {
   if (value !== expected) throw new Error(`${label} must be ${expected}`);
 }
 
-function assembleManagedImageCatalog(
+export function assembleManagedImageCatalog(
   values: readonly unknown[],
   candidateSha: string,
+  expectedCohort: ManagedImageCohort,
 ): ManagedImageContractCatalog {
   if (!SHA_PATTERN.test(candidateSha)) throw new Error("candidate SHA is invalid");
   if (values.length !== SHIPPED_MANAGED_IMAGE_AGENTS.length) {
@@ -74,20 +98,33 @@ function assembleManagedImageCatalog(
   if (releases.size !== 1 || cohorts.size !== 1) {
     throw new Error("exact PR managed-image contracts do not form one publication cohort");
   }
+  if (!cohorts.has(expectedCohort)) {
+    throw new Error(
+      "exact PR managed-image contracts do not match the selected workflow run cohort",
+    );
+  }
   return Object.fromEntries(
     SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => [agent, byAgent.get(agent)!]),
   );
 }
 
-function writeManagedImageCatalog(
+export function writeManagedImageCatalog(
   contractPaths: readonly string[],
   candidateSha: string,
   outputPath: string,
+  expectedCohort: ManagedImageCohort,
 ): void {
   const contracts = contractPaths.map(
     (contractPath) => JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown,
   );
-  const catalog = assembleManagedImageCatalog(contracts, candidateSha);
+  const catalog = assembleManagedImageCatalog(contracts, candidateSha, expectedCohort);
+  writeValidatedManagedImageCatalog(catalog, outputPath);
+}
+
+function writeValidatedManagedImageCatalog(
+  catalog: ManagedImageContractCatalog,
+  outputPath: string,
+): void {
   fs.mkdirSync(path.dirname(path.resolve(outputPath)), { mode: 0o700, recursive: true });
   fs.writeFileSync(outputPath, `${JSON.stringify(catalog)}\n`, {
     encoding: "utf8",
@@ -128,20 +165,32 @@ async function readCommitTree(
   }
 
   const entries = new Map<string, string>();
+  const paths = new Set<string>();
   for (const value of payload.tree) {
     const entry = record(value, `${label} tree entry`);
-    if (typeof entry.path !== "string" || entry.path.length === 0) {
+    if (
+      typeof entry.path !== "string" ||
+      entry.path.length === 0 ||
+      entry.path.length > 4_096 ||
+      /[\0\r\n]/u.test(entry.path) ||
+      entry.path.startsWith("/") ||
+      entry.path.includes("//") ||
+      entry.path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+    ) {
       throw new Error(`${label} tree entry path is invalid`);
     }
-    if (typeof entry.type !== "string" || !TREE_ENTRY_TYPES.has(entry.type)) {
+    if (paths.has(entry.path)) throw new Error(`${label} commit tree contains duplicate paths`);
+    paths.add(entry.path);
+    const validModes =
+      typeof entry.type === "string" ? TREE_ENTRY_MODES.get(entry.type) : undefined;
+    if (!validModes) {
       throw new Error(`${label} tree entry type is invalid`);
     }
-    if (typeof entry.mode !== "string" || !/^[0-7]{6}$/u.test(entry.mode)) {
+    if (typeof entry.mode !== "string" || !validModes.has(entry.mode)) {
       throw new Error(`${label} tree entry mode is invalid`);
     }
     const entrySha = sha(entry.sha, `${label} tree entry SHA`);
     if (entry.type === "tree") continue;
-    if (entries.has(entry.path)) throw new Error(`${label} commit tree contains duplicate paths`);
     entries.set(entry.path, `${entry.mode}:${entry.type}:${entrySha}`);
   }
   return entries;
@@ -203,12 +252,89 @@ function validatePr(
   );
 }
 
-/** Select the managed-image or local-Dockerfile source for a validated PR. */
-export async function resolvePrManagedImageSource(
+function validateWorkflow(payload: unknown): number {
+  const workflow = record(payload, "managed-image workflow");
+  const id = positiveInteger(workflow.id, "managed-image workflow id");
+  exactString(workflow.name, MANAGED_IMAGE_WORKFLOW_NAME, "managed-image workflow name");
+  exactString(workflow.path, MANAGED_IMAGE_WORKFLOW_PATH, "managed-image workflow path");
+  exactString(workflow.state, "active", "managed-image workflow state");
+  return id;
+}
+
+/** Select one successful exact-candidate managed-image workflow run. */
+export function selectManagedImagePublicationRun(
+  payload: unknown,
+  expected: { readonly headSha: string; readonly prNumber: number; readonly workflowId: number },
+): ManagedImagePublicationRun {
+  if (!SHA_PATTERN.test(expected.headSha)) throw new Error("candidate SHA is invalid");
+  positiveInteger(expected.prNumber, "PR number");
+  positiveInteger(expected.workflowId, "managed-image workflow id");
+  const response = record(payload, "managed-image workflow runs");
+  if (!Array.isArray(response.workflow_runs)) {
+    throw new Error("exact managed-image workflow run listing is invalid");
+  }
+  if (response.total_count !== response.workflow_runs.length) {
+    throw new Error("exact managed-image workflow run listing is incomplete");
+  }
+  if (response.workflow_runs.length === 0) {
+    throw new Error("exact managed-image workflow run is missing or ambiguous");
+  }
+  const successfulRuns: ManagedImagePublicationRun[] = [];
+  const runIds = new Set<number>();
+  for (const rawRun of response.workflow_runs) {
+    const run = record(rawRun, "managed-image workflow run");
+    const id = positiveInteger(run.id, "managed-image workflow run id");
+    const attempt = positiveInteger(run.run_attempt, "managed-image workflow run attempt");
+    if (runIds.has(id)) {
+      throw new Error("exact managed-image workflow run listing contains duplicate runs");
+    }
+    runIds.add(id);
+    if (run.workflow_id !== expected.workflowId) {
+      throw new Error("managed-image workflow run does not match the trusted workflow");
+    }
+    exactString(run.name, MANAGED_IMAGE_WORKFLOW_NAME, "managed-image workflow run name");
+    exactString(run.path, MANAGED_IMAGE_WORKFLOW_PATH, "managed-image workflow run path");
+    exactString(run.event, "pull_request", "managed-image workflow run event");
+    exactString(run.head_sha, expected.headSha, "managed-image workflow run commit");
+    exactString(
+      record(run.repository, "managed-image workflow repository").full_name,
+      REPOSITORY,
+      "managed-image workflow repository",
+    );
+    exactString(
+      record(run.head_repository, "managed-image workflow source repository").full_name,
+      REPOSITORY,
+      "managed-image workflow source repository",
+    );
+    if (
+      !Array.isArray(run.pull_requests) ||
+      run.pull_requests.length !== 1 ||
+      record(run.pull_requests[0], "managed-image workflow pull request").number !==
+        expected.prNumber
+    ) {
+      throw new Error("managed-image workflow run does not match the PR number");
+    }
+    if (run.status === "completed" && run.conclusion === "success") {
+      successfulRuns.push({ attempt, headSha: expected.headSha, id });
+    }
+  }
+  if (successfulRuns.length === 0) {
+    throw new Error(
+      `managed-image workflow for candidate ${expected.headSha} must complete successfully before live E2E`,
+    );
+  }
+  const selectedRun = successfulRuns.sort((left, right) => right.id - left.id)[0];
+  if (!selectedRun) throw new Error("successful managed-image workflow run is missing");
+  return selectedRun;
+}
+
+/** Resolve one exact PR candidate catalog before candidate code executes. */
+export async function resolvePrManagedImageCatalog(
   input: {
     readonly baseSha: string;
     readonly candidateRepository: string;
     readonly candidateSha: string;
+    readonly outputPath: string;
     readonly prNumber: number;
     readonly token: string;
     readonly workflowSource: string;
@@ -217,7 +343,9 @@ export async function resolvePrManagedImageSource(
     githubRequest(apiPath, input.token, {
       additionalRepository: input.candidateRepository,
     }),
-): Promise<PrManagedImageSource> {
+  downloadArtifact: (identity: BoundArtifactIdentity) => Promise<Buffer> = (identity) =>
+    downloadBoundArtifact(identity, input.token),
+): Promise<PrManagedImageSelection> {
   if (!SHA_PATTERN.test(input.baseSha) || !SHA_PATTERN.test(input.candidateSha)) {
     throw new Error("PR base and candidate SHAs are required");
   }
@@ -232,7 +360,52 @@ export async function resolvePrManagedImageSource(
   validatePr(await request(`/repos/${REPOSITORY}/pulls/${input.prNumber}`), input);
   const changedFiles = await readChangedFiles(input, request);
   const patterns = parseBaseImagePushPaths(input.workflowSource);
-  return baseImageInputsChanged(changedFiles, patterns) ? "local-dockerfile" : "managed-image";
+  if (!baseImageInputsChanged(changedFiles, patterns)) return "base-cohort";
+  if (input.candidateRepository !== REPOSITORY) {
+    throw new Error("exact PR managed-image publication requires a branch in NVIDIA/NemoClaw");
+  }
+
+  const workflowId = validateWorkflow(
+    await request(`/repos/${REPOSITORY}/actions/workflows/${MANAGED_IMAGE_WORKFLOW_FILE}`),
+  );
+  const runsPath = `/repos/${REPOSITORY}/actions/workflows/${MANAGED_IMAGE_WORKFLOW_FILE}/runs?event=pull_request&head_sha=${input.candidateSha}&per_page=100`;
+  const run = selectManagedImagePublicationRun(
+    await collectPaginated(request, runsPath, "workflow_runs"),
+    { headSha: input.candidateSha, prNumber: input.prNumber, workflowId },
+  );
+
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-managed-catalog-"));
+  try {
+    const contracts: ManagedImageContractV1[] = [];
+    for (const agent of SHIPPED_MANAGED_IMAGE_AGENTS) {
+      const name = `managed-pr-contract-${run.id}-${run.attempt}-${agent}`;
+      const metadata = await request(
+        `/repos/${REPOSITORY}/actions/runs/${run.id}/artifacts?name=${encodeURIComponent(name)}&per_page=100`,
+      );
+      const identity = bindNamedExactArtifact(
+        metadata,
+        { headSha: run.headSha, runAttempt: run.attempt, runId: run.id },
+        name,
+      );
+      const archive = await downloadArtifact(identity);
+      const contractPath = materializeContractArchive(
+        archive,
+        path.join(temporaryDirectory, agent),
+      );
+      contracts.push(
+        JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown as ManagedImageContractV1,
+      );
+    }
+    const catalog = assembleManagedImageCatalog(
+      contracts,
+      input.candidateSha,
+      `ghrun-${run.id}-${run.attempt}` as const,
+    );
+    writeValidatedManagedImageCatalog(catalog, input.outputPath);
+    return "candidate-catalog";
+  } finally {
+    fs.rmSync(temporaryDirectory, { force: true, recursive: true });
+  }
 }
 
 function requiredInteger(value: string | undefined, label: string): number {
@@ -245,20 +418,28 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     if (argv.length < 4) {
       throw new Error("expected candidate SHA, output path, and managed-image contract paths");
     }
-    writeManagedImageCatalog(argv.slice(3), argv[1], argv[2]);
+    const runId = requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID");
+    const runAttempt = requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT");
+    writeManagedImageCatalog(
+      argv.slice(3),
+      argv[1],
+      argv[2],
+      `ghrun-${runId}-${runAttempt}` as const,
+    );
     console.log("pr-managed-image-catalog outcome=assembled");
     return;
   }
-  if (argv.length !== 1 || argv[0] !== "select-source") throw new Error("expected select-source");
-  const source = await resolvePrManagedImageSource({
+  if (argv.length !== 1) throw new Error("expected one managed-image catalog output path");
+  const selection = await resolvePrManagedImageCatalog({
     baseSha: env.BASE_SHA ?? "",
     candidateRepository: env.CANDIDATE_REPOSITORY ?? "",
     candidateSha: env.CANDIDATE_SHA ?? "",
+    outputPath: argv[0],
     prNumber: requiredInteger(env.PR_NUMBER, "PR_NUMBER"),
     token: env.GITHUB_TOKEN ?? "",
     workflowSource: fs.readFileSync(BASE_IMAGE_WORKFLOW_PATH, "utf8"),
   });
-  process.stdout.write(`${source}\n`);
+  process.stdout.write(`${selection}\n`);
 }
 
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {

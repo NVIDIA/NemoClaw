@@ -44,7 +44,7 @@ const DISCORD_SERVER_IDS = process.env.DISCORD_SERVER_IDS ?? "149159099275359059
 const DISCORD_ALLOWED_IDS = process.env.DISCORD_ALLOWED_IDS ?? "1005536447329222676";
 const DISCORD_REQUIRE_MENTION = process.env.DISCORD_REQUIRE_MENTION ?? "0";
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
-const FAKE_DISCORD_HOST = "host.docker.internal";
+const FAKE_DISCORD_HOST = "host.openshell.internal";
 const HERMES_DISCORD_HTTP_PROXY_GATEWAY_TEMPLATE = hermesDiscordHttpProxyWebSocketUrl(
   "{host}",
   "{port}",
@@ -96,7 +96,6 @@ async function startHermesFakeDiscordGateway(
     imageScript: "fake-discord-gateway.cjs",
     containerPrefix: "nemoclaw-fake-discord-hermes",
     portEnv: "FAKE_DISCORD_GATEWAY_PORT",
-    portFileEnv: "FAKE_DISCORD_GATEWAY_PORT_FILE",
     captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
     expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: token },
     env,

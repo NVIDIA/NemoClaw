@@ -28,7 +28,6 @@ function trustedMarker(
 function n1xFixture(overrides: Parameters<typeof collectN1xIdentity>[0] = {}) {
   const pciFields: Readonly<Record<string, string>> = {
     vendor: "0x10de\n",
-    device: "0x2e2a\n",
     class: "0x030000\n",
   };
   return collectN1xIdentity({
@@ -53,7 +52,7 @@ function unexpectedFixturePath(filePath: string): never {
 }
 
 describe("N1x identity", () => {
-  it("accepts the FastOS marker and NVIDIA display device without pinning FastOS version (#8574)", () => {
+  it("accepts an NVIDIA display device without pinning its PCI device ID (#10076)", () => {
     expect(n1xFixture()).toEqual({
       candidate: true,
       fastOsMarker: true,
@@ -111,10 +110,10 @@ describe("N1x identity", () => {
     });
   });
 
-  it("requires the exact N1x NVIDIA display-class PCI identity (#8574)", () => {
-    expect(isN1xPciDisplayDevice("0x10DE", "0x2E2A", "0x030000")).toBe(true);
-    expect(isN1xPciDisplayDevice("0x10de", "0x2e2b", "0x030000")).toBe(false);
-    expect(isN1xPciDisplayDevice("0x10de", "0x2e2a", "0x020000")).toBe(false);
+  it("requires an NVIDIA display-class PCI identity (#10076)", () => {
+    expect(isN1xPciDisplayDevice("0x10DE", "0x030000")).toBe(true);
+    expect(isN1xPciDisplayDevice("0x1234", "0x030000")).toBe(false);
+    expect(isN1xPciDisplayDevice("0x10de", "0x020000")).toBe(false);
   });
 
   it("opens the marker without following a symbolic link and reads the opened descriptor (#8574)", () => {
