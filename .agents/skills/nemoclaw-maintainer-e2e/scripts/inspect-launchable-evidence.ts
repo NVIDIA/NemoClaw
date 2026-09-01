@@ -238,14 +238,24 @@ export function artifactDownloadArgs(runId: number, name: string, directory: str
   ];
 }
 
+export function workflowRunsFromPages(value: unknown): WorkflowRun[] {
+  if (!Array.isArray(value)) fail("runs response must contain pages");
+  return value.flatMap((page, index) => {
+    const response = record(page, `runs response page ${index + 1}`);
+    return Array.isArray(response.workflow_runs) ? (response.workflow_runs as WorkflowRun[]) : [];
+  });
+}
+
 export function createGitHubReader(): EvidenceReader {
   return {
     listRuns() {
-      const response = record(
-        gh(["api", `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?per_page=100`]),
-        "runs response",
-      );
-      return Array.isArray(response.workflow_runs) ? (response.workflow_runs as WorkflowRun[]) : [];
+      const pages = gh([
+        "api",
+        "--paginate",
+        "--slurp",
+        `repos/${REPOSITORY}/actions/workflows/e2e.yaml/runs?per_page=100`,
+      ]);
+      return workflowRunsFromPages(pages);
     },
     listJobs(runId, attempt) {
       const response = record(

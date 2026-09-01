@@ -6,6 +6,7 @@ import {
   inspectLaunchableEvidence,
   parseOptions,
   runCli,
+  workflowRunsFromPages,
   type ArtifactFiles,
   type EvidenceReader,
   type WorkflowJob,
@@ -67,11 +68,11 @@ const files = (overrides: Partial<ArtifactFiles> = {}): ArtifactFiles => ({
 });
 const reader = (
   runs: WorkflowRun[] = [run()],
-  jobs: Record<number, WorkflowJob[]> = { 10: [job()] },
+  jobs: Record<string, WorkflowJob[]> = { "10:2": [job()] },
   artifact: ArtifactFiles = files(),
 ): EvidenceReader => ({
   listRuns: () => runs,
-  listJobs: (id) => jobs[id] ?? [],
+  listJobs: (id, attempt) => jobs[`${id}:${attempt}`] ?? [],
   readArtifact: () => artifact,
 });
 describe("Launchable evidence inspection", () => {
@@ -106,7 +107,7 @@ describe("Launchable evidence inspection", () => {
     expect(() =>
       inspectLaunchableEvidence(
         { candidate: SHA },
-        reader([run()], { 10: [job(20, { conclusion: "failure" })] }),
+        reader([run()], { "10:2": [job(20, { conclusion: "failure" })] }),
       ),
     ).toThrow("no successful"));
   it("rejects a mismatched workspace (#10798)", () =>
@@ -135,10 +136,25 @@ describe("Launchable evidence inspection", () => {
       inspectLaunchableEvidence({ candidate: SHA }, reader(undefined, undefined, files(change))),
     ).toThrow(),
   );
+  it("merges workflow-run pages before selecting evidence (#10798)", () => {
+    const runs = workflowRunsFromPages([
+      { workflow_runs: [run(9, "2026-07-01T00:00:00Z", { head_sha: IMAGE_SHA })] },
+      { workflow_runs: [run()] },
+    ]);
+    expect(inspectLaunchableEvidence({ candidate: SHA }, reader(runs)).run.id).toBe(10);
+  });
+  it("binds job selection to the workflow attempt (#10798)", () => {
+    expect(() =>
+      inspectLaunchableEvidence(
+        { candidate: SHA },
+        reader([run(10, "2026-06-01T00:00:00Z", { run_attempt: 3 })]),
+      ),
+    ).toThrow("no successful");
+  });
   it("selects the newest successful job and exact artifact (#10798)", () => {
     const boundary = reader([run(10, "2026-01-01T00:00:00Z"), run(11, "2026-06-01T00:00:00Z")], {
-      10: [job(20)],
-      11: [job(21)],
+      "10:2": [job(20)],
+      "11:2": [job(21)],
     });
     boundary.readArtifact = vi.fn(() => files());
     expect(inspectLaunchableEvidence({ candidate: SHA }, boundary).run.id).toBe(11);
