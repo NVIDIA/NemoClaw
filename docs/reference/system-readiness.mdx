@@ -139,7 +139,7 @@ Each capability uses `present`, `absent`, or `unknown`.
 | `host.platform.wsl_docker_desktop` | Docker Desktop integration in WSL. |
 | `host.platform.wsl_native_docker` | Native Docker Engine inside WSL. |
 | `host.platform.wsl_gpu_passthrough` | Docker Desktop GPU passthrough proof. |
-| `host.platform.dgx_spark` | DGX Spark identity on ARM64 with an available NVIDIA GPU. The identity can use a trusted DGX Spark FastOS marker when DMI does not identify the host. |
+| `host.platform.dgx_spark` | DGX Spark identity on ARM64 with an available NVIDIA GPU. |
 | `host.platform.n1x` | N1x identity from the trusted FastOS marker and NVIDIA display PCI device on Linux ARM64 with an available NVIDIA GPU. This capability does not promote the Deferred platform status. |
 | `host.platform.dgx_station` | Qualified DGX Station GB300 identity, Linux ARM64 runtime, Ubuntu 24.04, hardware, and software profile. |
 
@@ -152,11 +152,11 @@ It is `absent` when the proof fails or the host has no NVIDIA GPU, and `unknown`
 The read-only `host probe` command does not pull or start the container-backed WSL GPU proof, so a host that needs that proof reports this capability as `unknown`.
 Onboarding can run the bounded proof only after its current host and gateway readiness checks admit the run.
 
-DGX Spark qualification accepts either a DMI product name that identifies DGX Spark or a trusted FastOS marker.
-For an OEM ARM64 GB10 host whose DMI product name does not identify DGX Spark, `/etc/fastos-release` must be a regular file of 1 through 4,096 bytes that is owned by UID and GID 0, is not a symbolic link, grants no group or world write access, contains no NUL or carriage-return byte, and contains exactly one `NAME="DGX SPARK FASTOS"` line.
-NemoClaw parses the marker as inert text and does not pin its `VERSION` value.
-A matching marker identifies the host as DGX Spark, not N1x.
-The host still requires ARM64 and an available NVIDIA GPU for the `host.platform.dgx_spark` capability to be `present`.
+DGX Spark identity can come from the host product name or a trusted `/etc/fastos-release` marker.
+The marker is a regular file of 1 through 4,096 bytes that is owned by UID and GID 0, is not a symbolic link, and grants no group or world write access.
+It must contain exactly one `NAME="DGX SPARK FASTOS"` line.
+This marker lets NemoClaw recognize a DGX Spark when the firmware product name does not identify it.
+Invalid, ambiguous, unreadable, or untrusted markers do not identify the host as a DGX Spark.
 
 DGX Station qualification fails closed.
 The `host.platform.dgx_station` capability is `present` only when the host runs Linux ARM64 on Ubuntu 24.04, reports an effective NVIDIA GPU, and the product identity, a display-class PCI device with NVIDIA vendor ID (`0x10de`) and GB300 device ID (`0x31c2` or `0x31c3`), and the software profile all qualify.

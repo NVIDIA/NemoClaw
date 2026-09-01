@@ -146,6 +146,7 @@ const TRACE_SOURCE_ASSIGNMENT =
   'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"\n';
 const TRACE_SOURCE_GUARD =
   'if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then\n' +
-  '  echo "::error::Refusing to sanitize unexpected raw trace path" >&2\n' +
+  '  echo "::error title=E2E trace sanitization refused::NEMOCLAW_TRACE_DIR does not match its workflow-owned RUNNER_TEMP path. No raw traces were read or uploaded. Correct the trace path configuration before rerunning." >&2\n' +
+  '  printf \'Expected trace path: %s\\n\' "${expected_trace_dir}" >&2\n' +
   "  exit 1\n" +
   "fi\n";
