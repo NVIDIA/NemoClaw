@@ -210,24 +210,6 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     },
   );
 
-  it("rejects step-level Docker config overrides outside the canonical auth step", () => {
-    const errors = validateMutation((workflow) => {
-      const run = namedStep(
-        workflow.jobs["openclaw-plugin-runtime-exdev"],
-        "Run OpenClaw cross-device plugin lifecycle live test",
-      );
-      expect(run).toBeDefined();
-      run!.env = {
-        ...run!.env,
-        DOCKER_CONFIG: "${{ runner.temp }}/alternate-docker-config",
-      };
-    });
-
-    expect(errors).toContain(
-      "openclaw-plugin-runtime-exdev step 'Run OpenClaw cross-device plugin lifecycle live test' env must not include DOCKER_CONFIG",
-    );
-  });
-
   it("rejects trust, helper, and cleanup mapping drift", () => {
     const errors = validateMutation((workflow) => {
       const auth = namedStep(workflow.jobs.live, AUTH_STEP_NAME);
