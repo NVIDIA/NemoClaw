@@ -346,18 +346,31 @@ export function cleanupSandboxServices(
     // `stopAll()` owns the host-wide unload when this sandbox has an Ollama
     // route or retained cleanup work. Don't probe an unrelated daemon for a
     // sandbox with no Ollama ownership, and don't double-call cleanup here.
-    ollamaCleanup = withOllamaModelOwnershipLock(() => {
-      const sandbox = getSandbox(validatedSandboxName);
-      const pending = loadPendingOllamaModelCleanup(validatedSandboxName);
-      const cleanupOllamaModels = Boolean(
-        sandbox?.provider?.includes("ollama") || pending.length > 0,
-      );
-      return stopAll({
-        sandboxName: validatedSandboxName,
-        cleanupOllamaModels,
-        unloadOllamaModels: () => unloadOllamaModels(),
+    try {
+      ollamaCleanup = withOllamaModelOwnershipLock(() => {
+        const sandbox = getSandbox(validatedSandboxName);
+        const pending = loadPendingOllamaModelCleanup(validatedSandboxName);
+        const cleanupOllamaModels = Boolean(
+          sandbox?.provider?.includes("ollama") || pending.length > 0,
+        );
+        return stopAll({
+          sandboxName: validatedSandboxName,
+          cleanupOllamaModels,
+          unloadOllamaModels: () => unloadOllamaModels(),
+        });
       });
-    });
+    } catch (error) {
+      const detail = (error instanceof Error ? error.message : String(error))
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 300);
+      throw new Error(
+        `Host-service cleanup failed after sandbox '${validatedSandboxName}' was deleted: ${detail || "unknown error"}. ` +
+          `The local registry and cleanup state for '${validatedSandboxName}' were retained for recovery; ` +
+          `restore the reported dependency, then retry \`nemoclaw ${validatedSandboxName} destroy\`.`,
+        { cause: error },
+      );
+    }
   } else {
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
     // models for this sandbox if its provider used Ollama. Without this

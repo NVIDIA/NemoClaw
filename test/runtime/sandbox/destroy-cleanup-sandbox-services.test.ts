@@ -233,13 +233,24 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
 
   it("preserves destroy recovery state when stopAll throws unexpectedly (#10553)", () => {
     const harness = buildDeps({ provider: "ollama-local" });
+    const stopError = new Error(`unexpected cleanup failure ${"detail ".repeat(100)}`);
     vi.mocked(harness.deps.stopAll).mockImplementation(() => {
-      throw new Error("unexpected cleanup failure");
+      throw stopError;
     });
 
-    expect(() =>
-      cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps),
-    ).toThrow("unexpected cleanup failure");
+    let thrown: unknown;
+    try {
+      cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown).toMatchObject({ cause: stopError });
+    expect((thrown as Error).message).toMatch(
+      /sandbox 'regression-2717' was deleted.*local registry and cleanup state.*nemoclaw regression-2717 destroy/,
+    );
+    expect((thrown as Error).message.length).toBeLessThan(700);
     expect(harness.deps.rmSync).not.toHaveBeenCalled();
     expect(harness.deps.runOpenshell).not.toHaveBeenCalled();
   });
