@@ -751,7 +751,10 @@ describe("CLI dispatch", () => {
 
         const output = stderr.join("\n");
         expect(output).toContain("Sandbox setup is still pending: alpha");
-        expect(output).toContain("Wait for onboarding to finish or remove the incomplete sandbox.");
+        expect(output).toContain("Wait for onboarding to finish.");
+        expect(output).toContain(
+          "If onboarding stopped, run 'nemoclaw onboard --resume' after correcting the reported condition.",
+        );
         expect(output).not.toContain("Run 'nemoclaw onboard' to create one.");
       },
       { sandboxNames: ["alpha"], pendingSandboxNames: ["alpha"] },

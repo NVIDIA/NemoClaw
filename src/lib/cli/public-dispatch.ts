@@ -298,7 +298,10 @@ function printSandboxScopeHint(action: string, remainingArgs: readonly string[])
     console.error(`  Run '${CLI_NAME} list' to see all sandboxes.`);
   } else if (pendingNames.length > 0) {
     console.error(`  Sandbox setup is still pending: ${pendingNames.join(", ")}`);
-    console.error("  Wait for onboarding to finish or remove the incomplete sandbox.");
+    console.error("  Wait for onboarding to finish.");
+    console.error(
+      `  If onboarding stopped, run '${CLI_NAME} onboard --resume' after correcting the reported condition.`,
+    );
   } else {
     console.error(`  Run '${CLI_NAME} onboard' to create one.`);
   }
