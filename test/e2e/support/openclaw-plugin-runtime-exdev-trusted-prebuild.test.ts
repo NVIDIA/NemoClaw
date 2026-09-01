@@ -19,6 +19,7 @@ import {
   createOpenShellTrustedImageWrapper,
   createTrustedPluginFixtureDockerfile,
   registerTrustedPluginFixtureImageCleanup,
+  TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR,
   trustedExdevImageRef,
 } from "../live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
 import {
@@ -38,17 +39,17 @@ const DRIVER_CONFIG_JSON = JSON.stringify({
 
 afterEach(() => vi.unstubAllEnvs());
 
-it("makes the runtime plugin fixture readable before the tmpfs copy", () => {
+it("stores the runtime fixture under OpenShell's read-only /usr policy boundary", () => {
   const dockerfile = createTrustedPluginFixtureDockerfile({
     pluginDirName: "weather-plugin",
     source: "FROM scratch AS builder\nFROM ${BASE_IMAGE}\n",
     versionSourceName: "weather-version.ts",
   });
-
-  const install = dockerfile.indexOf("openclaw plugins install /opt/weather-plugin");
-  const readable = dockerfile.indexOf("USER root\nRUN chmod -R a+rX /opt/weather-plugin");
-  expect(install).toBeGreaterThan(-1);
-  expect(readable).toBeGreaterThan(install);
+  expect(TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR).toMatch(/^\/usr\//);
+  expect(dockerfile).toContain(
+    `openclaw plugins install ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}`,
+  );
+  expect(dockerfile).not.toContain("/opt/weather-plugin");
 });
 
 function onboardResult(exitCode: number, stderr = ""): ShellProbeResult {

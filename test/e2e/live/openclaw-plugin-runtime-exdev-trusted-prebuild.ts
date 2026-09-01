@@ -27,6 +27,8 @@ import {
 
 export const DELEGATED_CAPABILITY_COMMENT_PREFIX =
   "# TEST-ONLY delegated-capability marker from validated canonical OpenShell: ";
+export const TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR =
+  "/usr/local/share/nemoclaw-e2e/weather-plugin";
 
 export function createTrustedPluginFixtureDockerfile(options: {
   pluginDirName: string;
@@ -60,22 +62,22 @@ COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
     /opt/weather/package.json \
     /opt/weather/package-lock.json \
     /opt/weather/openclaw.plugin.json \
-    /opt/weather-plugin/
+    ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/
 COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
-    /opt/weather/dist/ /opt/weather-plugin/dist/
+    /opt/weather/dist/ ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/dist/
 COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
-    /opt/weather/node_modules/ /opt/weather-plugin/node_modules/
+    /opt/weather/node_modules/ ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/node_modules/
 
 USER sandbox
-RUN HOME=/sandbox openclaw plugins install /opt/weather-plugin \
+RUN HOME=/sandbox openclaw plugins install ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR} \
     && HOME=/sandbox openclaw plugins enable weather
 
 # Enabling the plugin changes openclaw.json after the managed runtime hashes it.
-# The runtime test copies this fixture into tmpfs after OpenShell starts the sandbox.
+# The runtime test copies this fixture from OpenShell's read-only /usr policy tree
+# into tmpfs after the sandbox starts.
 # hadolint ignore=DL3002
 USER root
-RUN chmod -R a+rX /opt/weather-plugin \
-    && chown sandbox:sandbox /sandbox/.openclaw/openclaw.json \
+RUN chown sandbox:sandbox /sandbox/.openclaw/openclaw.json \
     && chmod 660 /sandbox/.openclaw/openclaw.json \
     && sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
     && chown sandbox:sandbox /sandbox/.openclaw/.config-hash \

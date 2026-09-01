@@ -36,6 +36,7 @@ import {
   createOpenShellTrustedImageWrapper,
   createTrustedPluginFixtureDockerfile,
   registerTrustedPluginFixtureImageCleanup,
+  TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR,
 } from "./openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
 import {
   type OpenShellComponents,
@@ -258,7 +259,7 @@ async function assertWeatherPluginRuntime(
 const crossDevicePluginInstallSource = `set -eu
 rm -rf ${EXDEV_TMPFS_SOURCE}
 mkdir -p ${EXDEV_TMPFS_SOURCE} /sandbox/.openclaw/extensions
-cp -R /opt/weather-plugin/. ${EXDEV_TMPFS_SOURCE}/
+cp -R ${TRUSTED_PLUGIN_FIXTURE_IMAGE_DIR}/. ${EXDEV_TMPFS_SOURCE}/
 source_device=$(stat -c '%d' ${EXDEV_TMPFS_SOURCE})
 target_device=$(stat -c '%d' /sandbox/.openclaw/extensions)
 printf 'source_device=%s target_device=%s\n' "$source_device" "$target_device"
