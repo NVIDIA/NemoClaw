@@ -6,10 +6,23 @@
 Use this read-only procedure when another workflow needs to consume an existing
 `Staging Brev Launchable` result. Do not use it to dispatch a run.
 
-## Bind the Result
+## Inspect the Result
 
-Start with the expected 40-character candidate SHA. Select the newest successful
-`Staging Brev Launchable` job whose workflow run has all of these properties:
+Run the read-only inspector with the expected lowercase 40-character candidate SHA:
+
+```bash
+node --experimental-strip-types --no-warnings \
+  .agents/skills/nemoclaw-maintainer-e2e/scripts/inspect-launchable-evidence.ts \
+  --candidate <candidate-sha>
+```
+
+Use `--repo OWNER/REPO` only when inspecting another repository. The script selects
+the newest eligible job, downloads the exact artifact, validates every binding and
+cleanup receipt, and emits the bounded versioned handoff JSON. A nonzero exit means
+the evidence is not acceptable. Do not reconstruct these checks manually.
+
+The inspector selects the newest successful `Staging Brev Launchable` job whose
+workflow run has all of these properties:
 
 - `head_sha` equals the candidate SHA;
 - `path` is `.github/workflows/e2e.yaml`;

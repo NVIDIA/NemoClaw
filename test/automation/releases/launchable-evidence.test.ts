@@ -1,0 +1,174 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+import { describe, expect, it, vi } from "vitest";
+import {
+  artifactDownloadArgs,
+  inspectLaunchableEvidence,
+  parseOptions,
+  runCli,
+  type ArtifactFiles,
+  type EvidenceReader,
+  type WorkflowJob,
+  type WorkflowRun,
+} from "../../../.agents/skills/nemoclaw-maintainer-e2e/scripts/inspect-launchable-evidence.ts";
+const SHA = "a".repeat(40),
+  IMAGE_SHA = "b".repeat(40);
+const run = (
+  id = 10,
+  created_at = "2026-06-01T00:00:00Z",
+  overrides: Partial<WorkflowRun> = {},
+): WorkflowRun => ({
+  id,
+  run_attempt: 2,
+  head_sha: SHA,
+  head_branch: "main",
+  event: "workflow_dispatch",
+  path: ".github/workflows/e2e.yaml",
+  status: "completed",
+  conclusion: "success",
+  html_url: `https://example.test/runs/${id}`,
+  created_at,
+  ...overrides,
+});
+const job = (id = 20, overrides: Partial<WorkflowJob> = {}): WorkflowJob => ({
+  id,
+  name: "Exact staging Brev Launchable",
+  status: "completed",
+  conclusion: "success",
+  html_url: `https://example.test/jobs/${id}`,
+  ...overrides,
+});
+const files = (overrides: Partial<ArtifactFiles> = {}): ArtifactFiles => ({
+  "launchable-e2e.json": JSON.stringify({
+    candidateSha: SHA,
+    producer: { runId: 30, status: "success" },
+    boot: {
+      bootImage: "registry.test/image@sha256:123",
+      schemaVersion: 1,
+      sourceRepository: "NVIDIA/NemoClaw",
+      sourcePath: "/opt/nemoclaw-image/NemoClaw",
+      repoSha: SHA,
+      provisionSha: SHA,
+      imageRepositorySha: IMAGE_SHA,
+      repoClean: true,
+      runtimeOverrides: false,
+    },
+    workspace: { name: "workspace", id: "ws-1" },
+    fullE2e: "passed",
+  }),
+  "full-e2e.log": "output\nNEMOCLAW_FULL_E2E_PASSED\n",
+  "cleanup.json": JSON.stringify({
+    workspaceName: "workspace",
+    workspaceId: "ws-1",
+    status: "ABSENT",
+    verifiedAt: "2026-06-01T01:00:00Z",
+  }),
+  ...overrides,
+});
+const reader = (
+  runs: WorkflowRun[] = [run()],
+  jobs: Record<number, WorkflowJob[]> = { 10: [job()] },
+  artifact: ArtifactFiles = files(),
+): EvidenceReader => ({
+  listRuns: () => runs,
+  listJobs: (_repo, id) => jobs[id] ?? [],
+  readArtifact: () => artifact,
+});
+describe("Launchable evidence inspection", () => {
+  it("returns a versioned receipt from candidate-bound successful evidence (#10798)", () =>
+    expect(
+      inspectLaunchableEvidence({ candidate: SHA, repo: "NVIDIA/NemoClaw" }, reader()),
+    ).toMatchObject({
+      version: 1,
+      candidate: { sha: SHA },
+      run: { id: 10, attempt: 2 },
+      job: { id: 20 },
+      artifact: { name: `staging-brev-launchable-${SHA}-10-2` },
+      workspace: { name: "workspace", id: "ws-1" },
+      fullE2e: { status: "passed" },
+      cleanup: { status: "ABSENT" },
+    }));
+  it("rejects an invalid candidate before reading GitHub (#10798)", () =>
+    expect(() => parseOptions(["--candidate", "A".repeat(40)])).toThrow(
+      "lowercase 40-character SHA",
+    ));
+  it.each([
+    ["wrong candidate", run(10, "2026-06-01T00:00:00Z", { head_sha: IMAGE_SHA })],
+    ["wrong run", run(10, "2026-06-01T00:00:00Z", { path: ".github/workflows/ci.yaml" })],
+  ])("rejects %s evidence (#10798)", (_label, value) =>
+    expect(() =>
+      inspectLaunchableEvidence({ candidate: SHA, repo: "NVIDIA/NemoClaw" }, reader([value])),
+    ).toThrow("no successful"),
+  );
+  it("rejects non-success jobs (#10798)", () =>
+    expect(() =>
+      inspectLaunchableEvidence(
+        { candidate: SHA, repo: "NVIDIA/NemoClaw" },
+        reader([run()], { 10: [job(20, { conclusion: "failure" })] }),
+      ),
+    ).toThrow("no successful"));
+  it("rejects a mismatched workspace (#10798)", () =>
+    expect(() =>
+      inspectLaunchableEvidence(
+        { candidate: SHA, repo: "NVIDIA/NemoClaw" },
+        reader(
+          undefined,
+          undefined,
+          files({
+            "cleanup.json": JSON.stringify({
+              workspaceName: "other",
+              workspaceId: "ws-1",
+              status: "ABSENT",
+              verifiedAt: "2026-06-01T01:00:00Z",
+            }),
+          }),
+        ),
+      ),
+    ).toThrow("cleanup workspace"));
+  it.each([
+    ["missing sentinel", { "full-e2e.log": "NEMOCLAW_FULL_E2E_PASSED extra\n" }],
+    ["missing file", { "cleanup.json": undefined }],
+  ])("rejects %s (#10798)", (_label, change) =>
+    expect(() =>
+      inspectLaunchableEvidence(
+        { candidate: SHA, repo: "NVIDIA/NemoClaw" },
+        reader(undefined, undefined, files(change)),
+      ),
+    ).toThrow(),
+  );
+  it("selects the newest successful job and exact artifact (#10798)", () => {
+    const boundary = reader([run(10, "2026-01-01T00:00:00Z"), run(11, "2026-06-01T00:00:00Z")], {
+      10: [job(20)],
+      11: [job(21)],
+    });
+    boundary.readArtifact = vi.fn(() => files());
+    expect(
+      inspectLaunchableEvidence({ candidate: SHA, repo: "NVIDIA/NemoClaw" }, boundary).run.id,
+    ).toBe(11);
+    expect(boundary.readArtifact).toHaveBeenCalledWith(
+      "NVIDIA/NemoClaw",
+      11,
+      2,
+      `staging-brev-launchable-${SHA}-11-2`,
+    );
+  });
+  it("uses only supported gh run download options (#10798)", () => {
+    expect(artifactDownloadArgs("NVIDIA/NemoClaw", 10, "artifact", "/tmp/output")).toEqual([
+      "run",
+      "download",
+      "10",
+      "--name",
+      "artifact",
+      "--dir",
+      "/tmp/output",
+      "--repo",
+      "NVIDIA/NemoClaw",
+    ]);
+  });
+
+  it("returns a bounded nonzero CLI failure without network access (#10798)", () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    expect(runCli(["--candidate", "bad"], reader())).toBe(1);
+    expect(String(stderr.mock.calls[0]?.[0]).length).toBeLessThan(600);
+  });
+});
