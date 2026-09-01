@@ -428,13 +428,21 @@ export function assertOnboardHostReadiness(
   options: OnboardHostReadinessOptions,
 ): SystemReadinessReport {
   const now = options.now ?? (() => new Date());
-  const observedAt = options.observedAt;
-  const snapshot = collectHostObservations({
+  const collected = collectHostObservations({
     assess: () => host,
     detectGpu: () => gpu,
     wslDockerDesktopGpuProofPassed: options.wslDockerDesktopGpuProofPassed,
-    now: observedAt ? () => new Date(observedAt) : now,
+    now,
   });
+  // `observedAt` records when the caller began observing the host, before the
+  // assessment it passes in here had run. It is provenance only. Driving the
+  // collection clock with it also stamped `completedAt`, so the reuse window
+  // measured the assessment's own duration and a host slower than the window
+  // aged out facts that had just been gathered successfully. Keep the window
+  // anchored to collection completion, as #9325 established (#10670).
+  const snapshot = options.observedAt
+    ? { ...collected, observedAt: options.observedAt }
+    : collected;
   const readinessReport = projectHostReadiness(snapshot, { ...getBuildIdentity(), now });
   return assertOnboardSystemReadiness(readinessReport, host, options);
 }

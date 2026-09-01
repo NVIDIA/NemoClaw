@@ -410,6 +410,27 @@ describe("report-backed runtime readiness (#7411)", () => {
     expect(optOutExit).not.toHaveBeenCalled();
   });
 
+  it("admits a host collection slower than the reuse window (#10670)", () => {
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const observedAt = "2026-08-31T12:00:00.000Z";
+    const projectedAt = new Date(Date.parse(observedAt) + 45_000);
+
+    const report = assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+      explicitlyOptedOutGpuPassthrough: true,
+      observedAt,
+      now: () => projectedAt,
+      presentAdvisories: false,
+      exitProcess: exit,
+    });
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(report.evidence.map(({ id }) => id)).not.toContain("host.probe.stale");
+    expect(report.provenance.observedAt).toBe(observedAt);
+  });
+
   it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
     "allows Podman only when the portable profile is explicit",
     () => {
