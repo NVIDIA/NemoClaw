@@ -154,6 +154,44 @@ describe("read-only recursive mutable posture observation", () => {
     expect(fs.existsSync(path.join(root, ".openclaw-config-mutation.lock"))).toBe(false);
   });
 
+  it.skipIf(process.platform === "darwin")(
+    "accepts a present private Hermes writable root without mutation (#9485)",
+    () => {
+      const { root, configDir } = fixture();
+      const profilesDir = path.join(configDir, "profiles");
+      const dashboardDir = path.join(profilesDir, "dashboard-home");
+      fs.mkdirSync(dashboardDir, { recursive: true });
+      fs.chmodSync(root, 0o755);
+      fs.chmodSync(configDir, 0o700);
+      fs.chmodSync(profilesDir, 0o2770);
+      fs.chmodSync(dashboardDir, 0o700);
+      const dashboardBefore = fs.lstatSync(dashboardDir);
+
+      const observed = runGuard("verify-mutable", configDir, {
+        NEMOCLAW_TEST_OPENCLAW_TRANSACTION_LOCK: "1",
+      });
+
+      expect(observed.status).toBe(0);
+      expect(observed.lines.at(-1)).toEqual(
+        expect.objectContaining({
+          type: "result",
+          action: "verify-mutable",
+          status: "ok",
+          issueCount: 0,
+        }),
+      );
+      expect(observed.lines).toContainEqual({
+        type: "test-observation",
+        inodeFlagMutationCalls: 0,
+      });
+      expect(fs.lstatSync(dashboardDir)).toMatchObject({
+        ino: dashboardBefore.ino,
+        mode: dashboardBefore.mode,
+      });
+      expect(fs.existsSync(path.join(root, ".openclaw-config-mutation.lock"))).toBe(false);
+    },
+  );
+
   it("reports nested skills and pairing drift without changing either entry (#9485)", () => {
     const { root, configDir } = fixture();
     const skillState = path.join(configDir, "skills", "pairing", "state.json");
