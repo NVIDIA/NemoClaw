@@ -19,6 +19,10 @@ vi.mock("../state/mcp-lifecycle-lock/credential-ownership", () => ({
   withMcpCredentialOwnershipLock: <T>(operation: () => Promise<T> | T) => operation(),
 }));
 
+vi.mock("../gateway-start-guidance", () => ({
+  gatewayStartGuidance: () => "Start the gateway again with `nemoclaw onboard`.",
+}));
+
 function providerAdapter(
   overrides: Partial<OpenShellProviderAdapter> = {},
 ): OpenShellProviderAdapter {
@@ -282,26 +286,26 @@ describe("credential actions use typed OpenShell provider results", () => {
   });
 
   it.each([
-    [
-      "authentication",
-      "OpenShell could not authenticate the provider operation.",
-      false,
-      undefined,
-    ],
-    ["schema", "The OpenShell CLI and gateway provider schemas do not match.", false, undefined],
-    ["timeout", "The OpenShell provider operation timed out.", false, undefined],
-    ["command", "OpenShell rejected the provider query.", false, undefined],
-    ["transport", "OpenShell could not start the provider operation.", false, "process_start"],
+    ["authentication", "OpenShell could not authenticate the provider operation.", null, undefined],
+    ["schema", "The OpenShell CLI and gateway provider schemas do not match.", null, undefined],
+    ["timeout", "The OpenShell provider operation timed out.", null, undefined],
+    ["command", "OpenShell rejected the provider query.", null, undefined],
+    ["transport", "OpenShell could not start the provider operation.", null, "process_start"],
     [
       "transport",
       "The selected OpenShell gateway identity does not match the recorded identity.",
-      false,
+      null,
       "identity_mismatch",
     ],
-    ["transport", "OpenShell could not reach the selected gateway.", true, "unreachable"],
+    [
+      "transport",
+      "OpenShell could not reach the selected gateway.",
+      "Start the gateway again with `nemoclaw onboard`.",
+      "unreachable",
+    ],
   ] as const)(
     "uses the typed %s provider-list failure for recovery guidance (#9806)",
-    async (kind, message, includesStartGuidance, reason) => {
+    async (kind, message, expectedGuidance, reason) => {
       const listProviders: OpenShellProviderAdapter["listProviders"] = async () => ({
         ok: false,
         error:
@@ -318,7 +322,11 @@ describe("credential actions use typed OpenShell provider results", () => {
 
       expect(result.exitCode).toBe(1);
       expect(failure).toContain(message);
-      expect(result.failureLines).toHaveLength(includesStartGuidance ? 3 : 2);
+      expect(result.failureLines).toEqual([
+        "  Could not query OpenShell providers.",
+        `  ${message}`,
+        ...(expectedGuidance ? [`  ${expectedGuidance}`] : []),
+      ]);
     },
   );
 
