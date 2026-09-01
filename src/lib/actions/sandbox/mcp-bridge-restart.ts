@@ -188,6 +188,9 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     writeBridgeEntry(sandboxName, {
       ...entry,
       adapter: (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
+      allowedIps: entry.trustedPrivateHost
+        ? [...(entry.allowedIps ?? [])]
+        : [...target.addresses],
       updatedAt: nowIso(),
     });
     console.log(`  Refreshed MCP server '${name}'.`);

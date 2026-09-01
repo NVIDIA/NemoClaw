@@ -105,7 +105,10 @@ unset GITHUB_MCP_TOKEN
 
 `restart` imports or verifies the endpointless `nemoclaw-mcp-v1` profile, applies the generated policy without a credential binding, updates or reuses the provider, and attaches it. It then applies the endpoint-bound policy, waits for credential readiness, and refreshes the adapter. An ambiguous or failed update is not treated as successful merely because another writer advanced the provider revision.
 
-For a trusted-private entry, restart replays the exact address pins recorded by `mcp add`. It does not resolve that endpoint again or widen its policy from ambient DNS. For a public entry, restart resolves the hostname again and refreshes the generated policy with the current validated public addresses.
+For a trusted-private entry, restart replays the exact address pins recorded by `mcp add`.
+It does not resolve that endpoint again or widen its policy from ambient DNS.
+For a public entry, restart resolves the hostname again and refreshes the generated policy with the current validated public addresses.
+After a successful public restart, NemoClaw records the activated address set as the server's current pins.
 
 The raw value passes only through the OpenShell provider command's process environment and is not added to argv, NemoClaw state, or sandbox config. Revoke the old credential upstream after restart succeeds.
 

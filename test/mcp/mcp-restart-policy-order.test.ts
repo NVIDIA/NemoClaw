@@ -163,12 +163,13 @@ operationPromise.then(
     },
   );
 
-  it("compares bounded provider revision observations on the host during restart", () => {
+  it("compares provider revisions and persists refreshed public pins during restart (#10755)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-revision-"));
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 process.env.MCP_TOKEN = "host-only-secret";
 const registry = require("./src/lib/state/registry.js");
+const dns = require("./src/lib/adapters/dns/resolve.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
@@ -178,6 +179,7 @@ const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
 
 let resourceVersion = 1;
 let registeredProviderGets = 0;
+let activePolicyContent = "";
 const observations = [];
 const proofScripts = [];
 const providerCalls = [];
@@ -185,13 +187,19 @@ const entry = {
   server: "example",
   agent: "openclaw",
   adapter: "mcporter",
-  url: "https://8.8.8.8/mcp",
+  url: "https://mcp.example.com/mcp",
   env: ["MCP_TOKEN"],
+  allowedIps: ["8.8.8.8"],
   providerName: "alpha-mcp-example",
   providerId: "11111111-2222-4333-8444-555555555555",
   policyName: "mcp-bridge-example",
   addedAt: "2026-06-01T00:00:00.000Z",
 };
+
+dns.resolveHostAddresses = async () => [
+  { address: "8.8.8.8" },
+  { address: "1.1.1.1" },
+];
 
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   recovered: true,
@@ -238,8 +246,12 @@ providerCommands.runOpenshellProviderCommand = (args) => {
   }
   return { status: 0, stdout: "", stderr: "" };
 };
-policies.getPresetContentGatewayState = () => "match";
-policies.applyPresetContent = () => true;
+policies.getPresetContentGatewayState = (_sandbox, content) =>
+  content === activePolicyContent ? "match" : "drift";
+policies.applyPresetContent = (_sandbox, _name, content) => {
+  activePolicyContent = content;
+  return true;
+};
 processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] || "";
   const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
@@ -267,7 +279,20 @@ registry.addExtraProvider("foreign-registered");
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.restartMcpBridge("alpha", "example").then(
-  () => process.stdout.write(JSON.stringify({ observations, proofScripts, providerCalls, registeredProviderGets })),
+  () => {
+    const persistedEntry = registry.getSandbox("alpha").mcp.bridges.example;
+    const registeredPolicy = generated.getRegisteredGeneratedPolicy("alpha", persistedEntry);
+    process.stdout.write(JSON.stringify({
+      observations,
+      proofScripts,
+      providerCalls,
+      registeredProviderGets,
+      allowedIps: persistedEntry.allowedIps,
+      activePolicyContent,
+      registeredPolicyContent: registeredPolicy?.content,
+      policyPresence: generated.getPolicyPresence("alpha", persistedEntry),
+    }));
+  },
   (error) => { console.error(error); process.exit(1); },
 );
 `;
@@ -285,6 +310,10 @@ bridge.restartMcpBridge("alpha", "example").then(
       proofScripts: string[];
       providerCalls: string[];
       registeredProviderGets: number;
+      allowedIps: string[];
+      activePolicyContent: string;
+      registeredPolicyContent: string;
+      policyPresence: boolean | null;
     };
     expect(payload.observations).toEqual(["v1", "v3", "v3", "v3", "v3", "v3"]);
     expect(payload.providerCalls).toEqual([
@@ -292,6 +321,9 @@ bridge.restartMcpBridge("alpha", "example").then(
       "provider update alpha-mcp-example",
     ]);
     expect(payload.registeredProviderGets).toBe(1);
+    expect(payload.allowedIps).toEqual(["1.1.1.1", "8.8.8.8"]);
+    expect(payload.registeredPolicyContent).toBe(payload.activePolicyContent);
+    expect(payload.policyPresence).toBe(true);
     expect(payload.proofScripts).toHaveLength(6);
     expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
   });

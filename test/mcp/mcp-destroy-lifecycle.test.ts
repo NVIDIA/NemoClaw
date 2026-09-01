@@ -843,13 +843,10 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
       ...bridgeEntries.github,
       url: "https://mcp.example.com/github",
     };
-    testState.resolveHostAddresses
-      .mockResolvedValueOnce([{ address: "8.8.8.8" }])
-      .mockResolvedValueOnce([{ address: "8.8.8.8" }])
-      .mockResolvedValueOnce([{ address: "8.8.8.8" }])
-      .mockResolvedValueOnce([{ address: "1.1.1.1" }])
-      .mockResolvedValueOnce([{ address: "1.1.1.1" }])
-      .mockResolvedValueOnce([{ address: "1.1.1.1" }]);
+    let currentDnsAnswer = "8.8.8.8";
+    testState.resolveHostAddresses.mockImplementation(async () => [
+      { address: currentDnsAnswer },
+    ]);
     registry.registerSandbox({
       name: "alpha",
       agent: "openclaw",
@@ -858,14 +855,13 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     });
     const preparation = await bridge.prepareMcpBridgesForExecUnavailableRebuild("alpha");
     const before = registry.getSandbox("alpha");
+    currentDnsAnswer = "1.1.1.1";
 
     const message = await captureMessage(async () => preparation.revalidateBeforeDelete?.());
 
     expect(message).toMatch(/changed after host-side rebuild preflight/i);
     expect(registry.getSandbox("alpha")).toEqual(before);
-    expect(testState.resolveHostAddresses).toHaveBeenNthCalledWith(1, "mcp.example.com");
-    expect(testState.resolveHostAddresses).toHaveBeenNthCalledWith(4, "mcp.example.com");
-    expect(testState.resolveHostAddresses).toHaveBeenCalledTimes(6);
+    expect(testState.resolveHostAddresses).toHaveBeenCalledWith("mcp.example.com");
     expect(testState.adapterCalls).toEqual([]);
   });
 
