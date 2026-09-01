@@ -22,7 +22,12 @@ import {
   type OpenShellProviderResult,
 } from "./provider-adapter";
 import type { OpenShellGatewayTarget } from "./sandbox-observer";
-import { scopeGatewayOpenshellArgs } from "./gateway-scope";
+import {
+  assertNoOpenShellGatewayEndpointOverride,
+  OpenShellGatewayEndpointOverrideError,
+  scopeGatewayOpenshellArgs,
+  type OpenShellGatewayEndpointEnvironment,
+} from "./gateway-scope";
 import {
   exportedProviderProfileMatchesContract,
   parseCheckedInProviderProfileContract,
@@ -50,6 +55,7 @@ export type CliOpenShellProviderAdapterDeps = Readonly<{
   run?: RunProviderCommand;
   defaultTimeoutMs?: number;
   readProfileFile?: (profilePath: string) => string;
+  environment?: OpenShellGatewayEndpointEnvironment;
 }>;
 
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/u;
@@ -197,6 +203,20 @@ function scopedArgs(
     : scopeGatewayOpenshellArgs(args, target.gatewayName, gatewayFlagIndex);
 }
 
+function namedGatewayEndpointOverrideError(
+  target: OpenShellGatewayTarget,
+  environment: OpenShellGatewayEndpointEnvironment,
+): OpenShellProviderError | null {
+  if (target.kind !== "named") return null;
+  try {
+    assertNoOpenShellGatewayEndpointOverride(environment);
+    return null;
+  } catch (error) {
+    if (!(error instanceof OpenShellGatewayEndpointOverrideError)) throw error;
+    return { kind: "validation", message: error.message };
+  }
+}
+
 function parseProfileCredentialKeys(output: string, expectedProfileId: string): string[] | null {
   let profile: unknown;
   try {
@@ -227,6 +247,7 @@ export function createCliOpenShellProviderAdapter(
   deps: CliOpenShellProviderAdapterDeps = {},
 ): OpenShellProviderAdapter {
   const run = deps.run ?? runOpenshellProviderCommand;
+  const environment = deps.environment ?? process.env;
   const timeoutFor = (request: OpenShellProviderRequest) =>
     request.timeoutMs ?? deps.defaultTimeoutMs ?? OPENSHELL_OPERATION_TIMEOUT_MS;
   const invoke = (
@@ -245,6 +266,8 @@ export function createCliOpenShellProviderAdapter(
     });
 
   const listProviders: OpenShellProviderAdapter["listProviders"] = async (request) => {
+    const targetError = namedGatewayEndpointOverrideError(request.target, environment);
+    if (targetError) return failure(targetError);
     const result = invoke(["provider", "list", "--names"], request);
     const error = commandError(result);
     if (error) return failure(error);
@@ -259,6 +282,8 @@ export function createCliOpenShellProviderAdapter(
   };
 
   const createProvider: OpenShellProviderAdapter["createProvider"] = async (request) => {
+    const targetError = namedGatewayEndpointOverrideError(request.target, environment);
+    if (targetError) return failure(targetError);
     if (
       (!request.fromExisting && request.credentials.length === 0) ||
       (request.fromExisting && request.credentials.length > 0) ||
@@ -296,6 +321,8 @@ export function createCliOpenShellProviderAdapter(
   const importProviderProfile: OpenShellProviderAdapter["importProviderProfile"] = async (
     request: ImportOpenShellProviderProfileRequest,
   ) => {
+    const targetError = namedGatewayEndpointOverrideError(request.target, environment);
+    if (targetError) return failure(targetError);
     const readProfileFile =
       deps.readProfileFile ?? ((file: string) => fs.readFileSync(file, "utf8"));
     const contract = (() => {
@@ -343,6 +370,8 @@ export function createCliOpenShellProviderAdapter(
   const inspectProviderProfile: OpenShellProviderAdapter["inspectProviderProfile"] = async (
     request: InspectOpenShellProviderProfileRequest,
   ) => {
+    const targetError = namedGatewayEndpointOverrideError(request.target, environment);
+    if (targetError) return failure(targetError);
     const result = invoke(
       ["provider", "profile", "export", request.profileType, "--output", "json"],
       request,
@@ -364,6 +393,8 @@ export function createCliOpenShellProviderAdapter(
   const deleteProvider: OpenShellProviderAdapter["deleteProvider"] = async (
     request: DeleteOpenShellProviderRequest,
   ) => {
+    const targetError = namedGatewayEndpointOverrideError(request.target, environment);
+    if (targetError) return failure(targetError);
     const result = invoke(["provider", "delete", request.providerName], request);
     const error = commandError(result);
     return error ? failure(error) : mutationSuccess();
@@ -372,6 +403,8 @@ export function createCliOpenShellProviderAdapter(
   const detachProvider: OpenShellProviderAdapter["detachProvider"] = async (
     request: DetachOpenShellProviderRequest,
   ) => {
+    const targetError = namedGatewayEndpointOverrideError(request.target, environment);
+    if (targetError) return failure(targetError);
     const result = invoke(
       ["sandbox", "provider", "detach", request.sandboxName, request.providerName],
       request,

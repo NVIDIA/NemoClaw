@@ -4,10 +4,15 @@
 import {
   assertNoExplicitOpenShellGatewayEndpoint,
   assertNoOpenShellGatewayEndpointOverride,
+  OpenShellGatewayEndpointOverrideError,
   type OpenShellGatewayEndpointEnvironment,
 } from "../../openshell-gateway-endpoint-guard";
 
-export { assertNoOpenShellGatewayEndpointOverride, type OpenShellGatewayEndpointEnvironment };
+export {
+  assertNoOpenShellGatewayEndpointOverride,
+  OpenShellGatewayEndpointOverrideError,
+  type OpenShellGatewayEndpointEnvironment,
+};
 
 function inferredGatewayFlagIndex(args: readonly string[]): number | null {
   if (args[0] === "inference" || args[0] === "provider") return 2;

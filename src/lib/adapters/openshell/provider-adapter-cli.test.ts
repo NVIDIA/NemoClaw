@@ -73,6 +73,52 @@ inference_capable: false
 `;
 
 describe("CLI OpenShell provider adapter", () => {
+  it("rejects an ambient endpoint before every named-gateway operation (#9806)", async () => {
+    const run = vi.fn(() => captured(0));
+    const adapter = createCliOpenShellProviderAdapter({
+      run,
+      environment: { OPENSHELL_GATEWAY_ENDPOINT: "https://untrusted.example.test" },
+    });
+    const target = namedOpenShellGateway("nemoclaw-18080");
+    const credentialValue = "host-only-value";
+    const operations = [
+      adapter.listProviders({ target }),
+      adapter.createProvider({
+        target,
+        name: "search-prod",
+        type: "tavily",
+        credentials: [{ name: "TAVILY_API_KEY", value: credentialValue }],
+        config: [],
+        fromExisting: false,
+      }),
+      adapter.importProviderProfile({ target, profilePath: "/unused/profile.yaml" }),
+      adapter.inspectProviderProfile({ target, profileType: "tavily" }),
+      adapter.deleteProvider({ target, providerName: "search-prod" }),
+      adapter.detachProvider({ target, providerName: "search-prod", sandboxName: "alpha" }),
+    ];
+
+    const results = await Promise.all(operations);
+
+    const expectedFailure = {
+      ok: false,
+      error: {
+        kind: "validation",
+        message:
+          "OPENSHELL_GATEWAY_ENDPOINT is set, so OpenShell may bypass the gateway recorded for this sandbox. Unset OPENSHELL_GATEWAY_ENDPOINT and retry.",
+      },
+    };
+    expect(results).toEqual([
+      expectedFailure,
+      expectedFailure,
+      expectedFailure,
+      expectedFailure,
+      expectedFailure,
+      expectedFailure,
+    ]);
+    expect(JSON.stringify(results)).not.toContain(credentialValue);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("targets a named gateway and returns provider names (#9806)", async () => {
     const run = vi.fn(() => captured(0, "zeta\nalpha\n"));
     const adapter = createCliOpenShellProviderAdapter({ run });

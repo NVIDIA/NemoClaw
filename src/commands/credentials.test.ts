@@ -41,6 +41,8 @@ vi.mock("../lib/onboard/gateway-teardown-authority", () => ({
 }));
 
 import { runCredentialsAddAction } from "../lib/actions/credentials-add";
+import { runCredentialsListAction } from "../lib/actions/credentials/list";
+import { runCredentialsResetAction } from "../lib/actions/credentials/reset";
 import CredentialsCommand from "./credentials";
 import CredentialsListCommand from "./credentials/list";
 import CredentialsResetCommand from "./credentials/reset";
@@ -147,6 +149,33 @@ describe("credentials oclif adapter source coverage", () => {
     expect(error.mock.calls.flat().join("\n")).toContain(
       "gateway lifecycle authority could not be revalidated",
     );
+  });
+
+  it("rejects an ambient gateway endpoint before credential provider operations (#9806)", async () => {
+    const credentialValue = "host-only-secret";
+    vi.stubEnv("CUSTOM_TOKEN", credentialValue);
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://untrusted.example.test");
+
+    const add = await runCredentialsAddAction({
+      provider: "custom-provider",
+      type: "generic",
+      credentials: ["CUSTOM_TOKEN"],
+      configPairs: [],
+      fromExisting: false,
+    });
+    const list = await runCredentialsListAction("nemoclaw");
+    const reset = await runCredentialsResetAction({
+      provider: "custom-provider",
+      confirmed: true,
+    });
+
+    expect(add.exitCode).toBe(1);
+    expect(list.exitCode).toBe(1);
+    expect(reset.exitCode).toBe(1);
+    const diagnostics = JSON.stringify([add, list, reset]);
+    expect(diagnostics.match(/OPENSHELL_GATEWAY_ENDPOINT is set/gu)).toHaveLength(3);
+    expect(diagnostics).not.toContain(credentialValue);
+    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
   });
 
   it("rejects a provider credential reserved by managed MCP before gateway mutation (#9388)", async () => {
