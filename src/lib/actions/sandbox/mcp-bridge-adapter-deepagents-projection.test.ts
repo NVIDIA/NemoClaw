@@ -100,6 +100,20 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(fifo.stdout.trim()).toBe("");
     expect(fifo.stderr).toContain("Unsafe managed Deep Agents MCP projection path: FIFO");
 
+    const directory = runDeepAgentsConfigCommand(
+      statusCommand,
+      undefined,
+      "v2",
+      undefined,
+      0o600,
+      { directory: true },
+    );
+    expect(directory.status).toBe(2);
+    expect(directory.stdout.trim()).toBe("");
+    expect(directory.stderr).toContain(
+      "Unsafe managed Deep Agents MCP projection path: non-regular file",
+    );
+
     const danglingSymlink = runDeepAgentsConfigCommand(
       statusCommand,
       undefined,
@@ -113,6 +127,20 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(danglingSymlink.stderr).toContain(
       "Unsafe managed Deep Agents MCP projection path: symbolic link",
     );
+  });
+
+  it("keeps the generic diagnostic for ordinary projection inspection failures (#10754)", () => {
+    const statusCommand = buildDeepAgentsMcpStatusCommand(baseEntry).replace(
+      "            projection_mode = os.stat(config_path, follow_symlinks=False).st_mode",
+      "            raise PermissionError('fixture denied')",
+    );
+    const result = runDeepAgentsConfigCommand(statusCommand, emptyProjection);
+
+    expect(result.status).toBe(2);
+    expect(result.stdout.trim()).toBe("");
+    expect(result.stderr).toContain("Could not inspect managed Deep Agents MCP state");
+    expect(result.stderr).toContain("fixture denied");
+    expect(result.stderr).not.toContain("Traceback");
   });
 
   it.each([
