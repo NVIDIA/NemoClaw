@@ -490,30 +490,35 @@ describe("initial sandbox policy real preset merge", () => {
     expect(JSON.stringify(effective)).not.toContain("{sandboxName}");
   });
 
-  it.each([
-    {
-      agent: "openclaw",
-      path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
-    },
-    { agent: "hermes", path: ["agents", "hermes", "policy-additions.yaml"] },
-  ])(
-    "includes only the captured exact WeChat IDC endpoint at $agent creation (#10606)",
-    ({ agent, path: policyPath }) => {
+  it.each(
+    [
+      {
+        agent: "openclaw",
+        path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"],
+      },
+      { agent: "hermes", path: ["agents", "hermes", "policy-additions.yaml"] },
+    ].flatMap((policyCase) =>
+      ["idc-3.weixin.qq.com", "idc-37.weixin.qq.com"].map((idcHost) => ({
+        ...policyCase,
+        idcHost,
+      })),
+    ),
+  )(
+    "includes only the captured exact WeChat IDC endpoint $idcHost at $agent creation (#10606)",
+    ({ agent, idcHost, path: policyPath }) => {
       const sandboxName = `${agent}-wechat-idc`;
       const effective = readPreparedPolicy(
         prepareInitialSandboxCreatePolicy(repoPath(...policyPath), ["wechat"], {
           agentName: agent,
           sandboxName,
-          messagingConfig: { WECHAT_BASE_URL: "https://idc-37.weixin.qq.com" },
+          messagingConfig: { WECHAT_BASE_URL: `https://${idcHost}` },
         }),
       );
       const endpoints = effective.network_policies?.wechat_bridge?.endpoints ?? [];
-      const configured = endpoints.find(
-        (endpoint) => endpoint.host === "idc-37.weixin.qq.com",
-      );
+      const configured = endpoints.find((endpoint) => endpoint.host === idcHost);
 
       expect(configured).toMatchObject({
-        host: "idc-37.weixin.qq.com",
+        host: idcHost,
         port: 443,
         protocol: "rest",
         enforcement: "enforce",
