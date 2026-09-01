@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import { isErrnoException } from "../core/errno";
+import { shellQuote } from "../core/shell-quote";
 import {
   acquireProcessBoundLockAt,
   releaseProcessBoundLock,
@@ -252,10 +253,6 @@ function sameStat(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
     (key) => left[key as keyof fs.BigIntStats] === right[key as keyof fs.BigIntStats],
   );
 }
-/** Quote one path so the remedy stays runnable when it contains whitespace. */
-function posixShellArgument(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
 
 /**
  * Name the property that makes a portable authority directory unsafe.
@@ -271,16 +268,22 @@ function unsafeAuthorityDirectoryReason(
   permitAnyMode: boolean,
   directory: string,
 ): string | null {
-  if (uid === undefined) return "The current process has no user id.";
-  if (!before.isDirectory()) return "The path is not a directory.";
-  if (named.isSymbolicLink()) return "The path is a symbolic link.";
-  if (!sameStat(before, named)) return "The path changed while it was being read.";
-  if (before.uid !== BigInt(uid)) return "The directory is not owned by the current user.";
+  if (uid === undefined)
+    return "The process cannot identify the current user. Run NemoClaw in a process that reports a current user id.";
+  if (!before.isDirectory())
+    return "The path is not a directory. Use a current-user directory at this path with mode 0700.";
+  if (named.isSymbolicLink())
+    return "The path is a symbolic link. Use a current-user directory at this path with mode 0700; symbolic links are not accepted.";
+  if (!sameStat(before, named))
+    return "The path changed while it was being read. Retry after other processes stop changing this path.";
+  if (before.uid !== BigInt(uid))
+    return "The directory is not owned by the current user. Run NemoClaw as the directory owner, or correct the directory owner before retrying.";
   if (!permitAnyMode && (before.mode & 0o777n) !== 0o700n) {
     const mode = (before.mode & 0o777n).toString(8).padStart(4, "0");
-    return `The directory must be owner-private (mode 0700) but is ${mode}. Run \`chmod 700 ${posixShellArgument(directory)}\`.`;
+    return `The directory must be owner-private (mode 0700) but is ${mode}. Run \`chmod 700 ${shellQuote(directory)}\`.`;
   }
-  if (before.nlink < 1n) return "The directory has no links.";
+  if (before.nlink < 1n)
+    return "The directory must remain linked at this path. Restore a current-user directory with mode 0700, then retry.";
   return null;
 }
 

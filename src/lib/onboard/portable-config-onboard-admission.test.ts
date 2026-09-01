@@ -47,6 +47,19 @@ function makePortableConfigDir(mode: number): string {
   return directory;
 }
 
+function statWith(
+  stat: fs.BigIntStats,
+  overrides: Readonly<Record<PropertyKey, unknown>>,
+): fs.BigIntStats {
+  return new Proxy(stat, {
+    get(target, property) {
+      const value =
+        property in overrides ? overrides[property] : Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
 beforeEach(() => {
   homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-config-admission-"));
   fs.mkdirSync(path.join(homeDir, ".nemoclaw"), { recursive: true, mode: 0o700 });
@@ -103,14 +116,29 @@ describe("ordinary onboarding against an abandoned portable configuration (#1074
     expect(operation).not.toHaveBeenCalled();
   });
 
-  it("finds the host receipt when onboarding uses a gateway-scoped state directory", async () => {
+  it("admits gateway-scoped onboarding when the host has no lifecycle receipt", async () => {
+    makePortableConfigDir(0o755);
+    const gatewayStateDir = path.join(homeDir, ".nemoclaw/gateways/18000");
+    fs.mkdirSync(gatewayStateDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(gatewayStateDir, 0o700);
+    const operation = vi.fn(() => "onboarded");
+
+    await expect(
+      withPortableOnboardRetirementBoundary(boundary(gatewayStateDir), operation, deps),
+    ).resolves.toBe("onboarded");
+    expect(operation).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses gateway-scoped onboarding when the host owns a lifecycle receipt", async () => {
     makePortableConfigDir(0o755);
     writeLifecycleReceipt();
     const gatewayStateDir = path.join(homeDir, ".nemoclaw/gateways/18000");
+    const operation = vi.fn(() => "onboarded");
 
     await expect(
-      withPortableOnboardRetirementBoundary(boundary(gatewayStateDir), () => "onboarded", deps),
+      withPortableOnboardRetirementBoundary(boundary(gatewayStateDir), operation, deps),
     ).rejects.toThrow(/Unsafe portable authority directory/);
+    expect(operation).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -180,6 +208,61 @@ describe("ordinary onboarding against an abandoned portable configuration (#1074
     expect((caught as Error).message).not.toContain("remove");
   });
 
+  it.each([
+    {
+      name: "missing user identity",
+      expected: "Run NemoClaw in a process that reports a current user id.",
+      before: (stat: fs.BigIntStats) => stat,
+      named: (stat: fs.BigIntStats) => stat,
+      uid: undefined,
+    },
+    {
+      name: "non-directory path",
+      expected: "Use a current-user directory at this path with mode 0700.",
+      before: (stat: fs.BigIntStats) => statWith(stat, { isDirectory: () => false }),
+      named: (stat: fs.BigIntStats) => stat,
+      uid: process.getuid?.(),
+    },
+    {
+      name: "symbolic link",
+      expected:
+        "Use a current-user directory at this path with mode 0700; symbolic links are not accepted.",
+      before: (stat: fs.BigIntStats) => stat,
+      named: (stat: fs.BigIntStats) => statWith(stat, { isSymbolicLink: () => true }),
+      uid: process.getuid?.(),
+    },
+    {
+      name: "concurrent path change",
+      expected: "Retry after other processes stop changing this path.",
+      before: (stat: fs.BigIntStats) => stat,
+      named: (stat: fs.BigIntStats) => statWith(stat, { ctimeNs: stat.ctimeNs + 1n }),
+      uid: process.getuid?.(),
+    },
+    {
+      name: "different owner",
+      expected:
+        "Run NemoClaw as the directory owner, or correct the directory owner before retrying.",
+      before: (stat: fs.BigIntStats) => statWith(stat, { uid: stat.uid + 1n }),
+      named: (stat: fs.BigIntStats) => statWith(stat, { uid: stat.uid + 1n }),
+      uid: process.getuid?.(),
+    },
+    {
+      name: "unlinked directory",
+      expected: "Restore a current-user directory with mode 0700, then retry.",
+      before: (stat: fs.BigIntStats) => statWith(stat, { nlink: 0n }),
+      named: (stat: fs.BigIntStats) => statWith(stat, { nlink: 0n }),
+      uid: process.getuid?.(),
+    },
+  ])("gives a safe next step for a $name authority failure", ({ expected, before, named, uid }) => {
+    const directory = path.join(homeDir, ".nemoclaw");
+    const stat = fs.statSync(directory, { bigint: true });
+    vi.spyOn(process, "getuid").mockReturnValue(uid as never);
+    vi.spyOn(fs, "fstatSync").mockReturnValue(before(stat));
+    vi.spyOn(fs, "lstatSync").mockReturnValue(named(stat));
+
+    expect(() => readPortableAuthorityDirectory(directory, true)).toThrow(expected);
+  });
+
   it("inspects the directory after a completed run that owns a lifecycle receipt", async () => {
     makePortableConfigDir(0o755);
     writeLifecycleReceipt();
@@ -189,7 +272,16 @@ describe("ordinary onboarding against an abandoned portable configuration (#1074
     ).rejects.toThrow(/Unsafe portable authority directory/);
   });
 
-  it("finds the host receipt after gateway-scoped onboarding completes", async () => {
+  it("admits completed gateway-scoped onboarding when the host has no lifecycle receipt", async () => {
+    makePortableConfigDir(0o755);
+    const gatewayStateDir = path.join(homeDir, ".nemoclaw/gateways/18000");
+
+    await expect(
+      supersedePortableRetirementAfterCompletedOnboard(boundary(gatewayStateDir), "default", deps),
+    ).resolves.toBeUndefined();
+  });
+
+  it("refuses completed gateway-scoped onboarding when the host owns a lifecycle receipt", async () => {
     makePortableConfigDir(0o755);
     writeLifecycleReceipt();
     const gatewayStateDir = path.join(homeDir, ".nemoclaw/gateways/18000");
