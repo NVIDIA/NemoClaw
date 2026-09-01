@@ -44,6 +44,7 @@ permissions: {}
 concurrency:
   group: pr-review-advisor-global
   cancel-in-progress: false
+  queue: max
 
 jobs:
   discover-specialists:
