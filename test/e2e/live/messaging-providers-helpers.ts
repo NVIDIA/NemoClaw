@@ -43,21 +43,52 @@ export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
 const FAKE_API_IMAGE =
   "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
 const DEFAULT_OPENSHELL_DOCKER_NETWORK = "openshell-docker";
-const FAKE_API_PROXY_SOURCE = String.raw`
+export const FAKE_API_PROXY_READINESS_PORT = 8079;
+export const FAKE_API_PROXY_SOURCE = String.raw`
 const net = require("node:net");
 const upstream = process.env.NEMOCLAW_FAKE_API_UPSTREAM;
-const ports = (process.env.NEMOCLAW_FAKE_API_PROXY_PORTS || "")
+const listenAddress = process.env.NEMOCLAW_FAKE_API_PROXY_LISTEN_ADDRESS || "0.0.0.0";
+const readinessPort = Number(process.env.NEMOCLAW_FAKE_API_PROXY_READINESS_PORT);
+const portMappings = (process.env.NEMOCLAW_FAKE_API_PROXY_PORTS || "")
   .split(",")
   .filter(Boolean)
-  .map(Number);
+  .map((mapping) => mapping.split(":").map(Number));
 
-if (!upstream || ports.length === 0 || ports.some((port) => !Number.isInteger(port))) {
+if (
+  !upstream ||
+  !net.isIPv4(listenAddress) ||
+  !Number.isInteger(readinessPort) ||
+  readinessPort < 1 ||
+  readinessPort > 65535 ||
+  portMappings.length === 0 ||
+  portMappings.some(
+    (mapping) =>
+      mapping.length !== 2 ||
+      mapping.some((port) => !Number.isInteger(port) || port < 1 || port > 65535),
+  )
+) {
   process.exit(2);
 }
 
-for (const port of ports) {
+function upstreamAcceptsConnection(port) {
+  return new Promise((resolve) => {
+    const socket = net.connect(port, upstream);
+    let settled = false;
+    const finish = (ready) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(ready);
+    };
+    socket.setTimeout(500, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+
+const proxyServers = portMappings.map(([listenPort, upstreamPort]) => {
   const server = net.createServer((client) => {
-    const backend = net.connect(port, upstream);
+    const backend = net.connect(upstreamPort, upstream);
     const close = () => {
       client.destroy();
       backend.destroy();
@@ -66,26 +97,44 @@ for (const port of ports) {
     backend.on("error", close);
     client.pipe(backend).pipe(client);
   });
-  server.on("error", () => process.exit(3));
-  server.listen(port, "0.0.0.0");
-}
+  return { listenPort, server };
+});
+
+const readinessServer = net.createServer(async (client) => {
+  const ready = (
+    await Promise.all(portMappings.map(([, upstreamPort]) => upstreamAcceptsConnection(upstreamPort)))
+  ).every(Boolean);
+  ready ? client.end("ready\n") : client.destroy();
+});
+
+Promise.all(
+  proxyServers.map(
+    ({ listenPort, server }) =>
+      new Promise((resolve) => {
+        server.once("error", () => process.exit(3));
+        server.listen(listenPort, listenAddress, resolve);
+      }),
+  ),
+)
+  .then(() => {
+    readinessServer.once("error", () => process.exit(3));
+    readinessServer.listen(readinessPort, listenAddress);
+  })
+  .catch(() => process.exit(3));
 `;
-const FAKE_API_PROXY_READINESS_SOURCE = String.raw`
+export const FAKE_API_PROXY_READINESS_SOURCE = String.raw`
 const net = require("node:net");
 const host = process.argv[1];
-const ports = process.argv.slice(2).map(Number);
+const port = Number(process.argv[2]);
 
-if (
-  !net.isIPv4(host) ||
-  ports.length === 0 ||
-  ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535)
-) {
+if (!net.isIPv4(host) || !Number.isInteger(port) || port < 1 || port > 65535) {
   process.exit(2);
 }
 
-function acceptsConnection(port) {
+function reachesUpstream() {
   return new Promise((resolve) => {
     const socket = net.connect({ host, port });
+    let response = "";
     let settled = false;
     const finish = (ready) => {
       if (settled) return;
@@ -93,8 +142,13 @@ function acceptsConnection(port) {
       socket.destroy();
       resolve(ready);
     };
-    socket.setTimeout(250, () => finish(false));
-    socket.once("connect", () => finish(true));
+    socket.setEncoding("utf8");
+    socket.setTimeout(750, () => finish(false));
+    socket.on("data", (chunk) => {
+      response += chunk;
+      if (response.includes("ready\n")) finish(true);
+    });
+    socket.once("end", () => finish(response.includes("ready\n")));
     socket.once("error", () => finish(false));
   });
 }
@@ -102,10 +156,10 @@ function acceptsConnection(port) {
 (async () => {
   const deadline = Date.now() + 5000;
   do {
-    if ((await Promise.all(ports.map(acceptsConnection))).every(Boolean)) return;
+    if (await reachesUpstream()) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   } while (Date.now() < deadline);
-  console.error("proxy ports did not accept TCP connections before the readiness deadline");
+  console.error("proxy did not connect to the upstream API before the readiness deadline");
   process.exit(3);
 })().catch(() => process.exit(4));
 `;
@@ -701,7 +755,7 @@ async function requireFakeApiProxyReady(
     kind: FakeDockerApiKind;
     proxyContainer: string;
     bridgeAddress: string;
-    publishedPorts: string[];
+    readinessPort: string;
     env: NodeJS.ProcessEnv;
     redactionValues: string[];
   },
@@ -722,7 +776,7 @@ async function requireFakeApiProxyReady(
       ? await runHost(
           host,
           "node",
-          ["-e", FAKE_API_PROXY_READINESS_SOURCE, options.bridgeAddress, ...options.publishedPorts],
+          ["-e", FAKE_API_PROXY_READINESS_SOURCE, options.bridgeAddress, options.readinessPort],
           {
             artifactName: `probe-fake-${options.kind}-api-proxy-readiness`,
             env: options.env,
@@ -770,6 +824,7 @@ export async function startFakeDockerApi(
   const proxyContainer = uniqueContainerName(`${options.containerPrefix}-proxy`);
   const network = uniqueContainerName("nemoclaw-fake-api-network");
   const containerPorts = options.kind === "slack" ? [8080, 8081] : [8080];
+  const proxyPorts = [FAKE_API_PROXY_READINESS_PORT, ...containerPorts];
   fs.writeFileSync(captureFile, "");
   cleanup(`remove ${dir}`, async () => {
     await fs.promises.rm(dir, { recursive: true, force: true });
@@ -937,7 +992,7 @@ export async function startFakeDockerApi(
       proxyContainer,
       "--network",
       "bridge",
-      ...containerPorts.flatMap((port) => ["-p", `${openshellBridgeAddress}::${String(port)}`]),
+      ...proxyPorts.flatMap((port) => ["-p", `${openshellBridgeAddress}::${String(port)}`]),
       "--read-only",
       "--cap-drop",
       "ALL",
@@ -948,7 +1003,9 @@ export async function startFakeDockerApi(
       "-e",
       `NEMOCLAW_FAKE_API_UPSTREAM=${container}`,
       "-e",
-      `NEMOCLAW_FAKE_API_PROXY_PORTS=${containerPorts.join(",")}`,
+      `NEMOCLAW_FAKE_API_PROXY_PORTS=${containerPorts.map((port) => `${String(port)}:${String(port)}`).join(",")}`,
+      "-e",
+      `NEMOCLAW_FAKE_API_PROXY_READINESS_PORT=${String(FAKE_API_PROXY_READINESS_PORT)}`,
       FAKE_API_IMAGE,
       "node",
       "-e",
@@ -1001,14 +1058,15 @@ export async function startFakeDockerApi(
   const publishedRestPort = await publishedPort(8080, `port-fake-${options.kind}-api`);
   const publishedWebsocketPort =
     options.kind === "slack" ? await publishedPort(8081, "port-fake-slack-websocket-api") : "";
+  const publishedReadinessPort = await publishedPort(
+    FAKE_API_PROXY_READINESS_PORT,
+    `port-fake-${options.kind}-api-proxy-readiness`,
+  );
   await requireFakeApiProxyReady(host, {
     kind: options.kind,
     proxyContainer,
     bridgeAddress: openshellBridgeAddress,
-    publishedPorts: [
-      publishedRestPort,
-      ...(options.kind === "slack" ? [publishedWebsocketPort] : []),
-    ],
+    readinessPort: publishedReadinessPort,
     env: options.env,
     redactionValues: options.redactionValues,
   });

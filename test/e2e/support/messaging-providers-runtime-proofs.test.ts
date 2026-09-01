@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
+import net, { type AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -13,6 +16,9 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
+  FAKE_API_PROXY_READINESS_PORT,
+  FAKE_API_PROXY_READINESS_SOURCE,
+  FAKE_API_PROXY_SOURCE,
   isNvidiaEndpointRateLimitFailure,
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
@@ -35,6 +41,7 @@ const OPENSHELL_NETWORK_INSPECT = JSON.stringify([
     IPAM: { Config: [{ Subnet: "172.18.0.0/16", Gateway: OPENSHELL_BRIDGE_ADDRESS }] },
   },
 ]);
+const execFileAsync = promisify(execFile);
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -73,6 +80,7 @@ function fakeDockerHost(
     networkInspect?: string;
     apiReady?: boolean;
     proxyRunning?: boolean;
+    proxyReady?: boolean;
   } = {},
 ): {
   calls: string[][];
@@ -100,7 +108,13 @@ function fakeDockerHost(
           ? successfulCommand("proxy fixture stopped\n")
           : args[0] === "port"
             ? successfulCommand(
-                `${publishedAddress}:${args[2] === "8081/tcp" ? "32101" : "32100"}\n`,
+                `${publishedAddress}:${
+                  args[2] === "8081/tcp"
+                    ? "32101"
+                    : args[2] === `${String(FAKE_API_PROXY_READINESS_PORT)}/tcp`
+                      ? "32079"
+                      : "32100"
+                }\n`,
               )
             : successfulCommand();
   };
@@ -108,7 +122,11 @@ function fakeDockerHost(
     command: async (command: string, args: string[]) => {
       commands.push({ command, args: [...args] });
       expect(["docker", "node"]).toContain(command);
-      return command === "node" ? successfulCommand() : dockerCommand(args);
+      return command === "node"
+        ? options.proxyReady === false
+          ? failedCommand("proxy could not reach the upstream API")
+          : successfulCommand()
+        : dockerCommand(args);
     },
   } as unknown as HostCliClient;
   return { calls, commands, host };
@@ -118,13 +136,53 @@ async function runCleanup(actions: CleanupAction[]): Promise<void> {
   for (let index = actions.length - 1; index >= 0; index -= 1) await actions[index]!.run();
 }
 
+async function listenServer(server: net.Server, host: string): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, host, resolve);
+  });
+  return (server.address() as AddressInfo).port;
+}
+
+async function closeServer(server: net.Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+async function tcpRequest(host: string, port: number, payload: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host, port });
+    let response = "";
+    socket.setEncoding("utf8");
+    socket.setTimeout(5_000, () => socket.destroy(new Error("proxy request timed out")));
+    socket.once("connect", () => socket.write(payload));
+    socket.on("data", (chunk) => {
+      response += chunk;
+    });
+    socket.once("end", () => resolve(response));
+    socket.once("error", reject);
+  });
+}
+
 describe("messaging provider installed-runtime proofs", () => {
   it.each([
-    ["discord-gateway", [`${OPENSHELL_BRIDGE_ADDRESS}::8080`], ["8080/tcp"]],
+    [
+      "discord-gateway",
+      [
+        `${OPENSHELL_BRIDGE_ADDRESS}::${String(FAKE_API_PROXY_READINESS_PORT)}`,
+        `${OPENSHELL_BRIDGE_ADDRESS}::8080`,
+      ],
+      ["8080/tcp", `${String(FAKE_API_PROXY_READINESS_PORT)}/tcp`],
+    ],
     [
       "slack",
-      [`${OPENSHELL_BRIDGE_ADDRESS}::8080`, `${OPENSHELL_BRIDGE_ADDRESS}::8081`],
-      ["8080/tcp", "8081/tcp"],
+      [
+        `${OPENSHELL_BRIDGE_ADDRESS}::${String(FAKE_API_PROXY_READINESS_PORT)}`,
+        `${OPENSHELL_BRIDGE_ADDRESS}::8080`,
+        `${OPENSHELL_BRIDGE_ADDRESS}::8081`,
+      ],
+      ["8080/tcp", "8081/tcp", `${String(FAKE_API_PROXY_READINESS_PORT)}/tcp`],
     ],
   ] as const)(
     "configures an isolated fake %s API proxy on OpenShell-bridge ephemeral ports",
@@ -182,18 +240,15 @@ describe("messaging provider installed-runtime proofs", () => {
         ).toEqual(["--security-opt", "no-new-privileges"]);
         expect(proxyEnv).toEqual([
           `NEMOCLAW_FAKE_API_UPSTREAM=${apiContainer}`,
-          `NEMOCLAW_FAKE_API_PROXY_PORTS=${kind === "slack" ? "8080,8081" : "8080"}`,
+          `NEMOCLAW_FAKE_API_PROXY_PORTS=${kind === "slack" ? "8080:8080,8081:8081" : "8080:8080"}`,
+          `NEMOCLAW_FAKE_API_PROXY_READINESS_PORT=${String(FAKE_API_PROXY_READINESS_PORT)}`,
         ]);
         expect(calls).toContainEqual(["network", "connect", network, proxyContainer]);
         expect(
           calls.filter((args) => args[0] === "port").map((args) => [args[1], args[2]]),
         ).toEqual(expectedPortQueries.map((port) => [proxyContainer, port]));
         expect(proxyContainer).not.toBe(apiContainer);
-        expect(readiness?.args.slice(2)).toEqual([
-          OPENSHELL_BRIDGE_ADDRESS,
-          "32100",
-          ...(kind === "slack" ? ["32101"] : []),
-        ]);
+        expect(readiness?.args.slice(2)).toEqual([OPENSHELL_BRIDGE_ADDRESS, "32079"]);
         expect(api.port).toBe("32100");
         expect(api.alternatePort).toBe(kind === "slack" ? "32101" : undefined);
       } finally {
@@ -201,6 +256,66 @@ describe("messaging provider installed-runtime proofs", () => {
       }
     },
   );
+
+  it("relays both configured ports and proves upstream readiness through the real proxy", async () => {
+    const upstreamAddress = "127.0.0.1";
+    const proxyAddress = "127.0.0.1";
+    const requests: string[] = [];
+    const upstreamServers = ["discord", "slack"].map((label) =>
+      net.createServer((socket) => {
+        socket.setEncoding("utf8");
+        socket.on("data", (payload) => {
+          requests.push(`${label}:${payload}`);
+          socket.end(`${label}:${payload}`);
+        });
+      }),
+    );
+    const upstreamPorts = await Promise.all(
+      upstreamServers.map((server) => listenServer(server, upstreamAddress)),
+    );
+    const portReservations = [net.createServer(), net.createServer(), net.createServer()];
+    const [readinessPort, ...proxyPorts] = await Promise.all(
+      portReservations.map((server) => listenServer(server, proxyAddress)),
+    );
+    await Promise.all(portReservations.map(closeServer));
+    const proxy = spawn(process.execPath, ["-e", FAKE_API_PROXY_SOURCE], {
+      env: {
+        ...process.env,
+        NEMOCLAW_FAKE_API_UPSTREAM: upstreamAddress,
+        NEMOCLAW_FAKE_API_PROXY_LISTEN_ADDRESS: proxyAddress,
+        NEMOCLAW_FAKE_API_PROXY_PORTS: proxyPorts
+          .map((port, index) => `${String(port)}:${String(upstreamPorts[index])}`)
+          .join(","),
+        NEMOCLAW_FAKE_API_PROXY_READINESS_PORT: String(readinessPort),
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let proxyStderr = "";
+    proxy.stderr.setEncoding("utf8");
+    proxy.stderr.on("data", (chunk) => {
+      proxyStderr += chunk;
+    });
+
+    try {
+      await execFileAsync(
+        process.execPath,
+        ["-e", FAKE_API_PROXY_READINESS_SOURCE, proxyAddress, String(readinessPort)],
+        { timeout: 10_000 },
+      );
+      const responses = await Promise.all([
+        tcpRequest(proxyAddress, proxyPorts[0]!, "gateway"),
+        tcpRequest(proxyAddress, proxyPorts[1]!, "websocket"),
+      ]);
+      expect(responses, proxyStderr).toEqual(["discord:gateway", "slack:websocket"]);
+      expect(requests.sort()).toEqual(["discord:gateway", "slack:websocket"]);
+    } finally {
+      proxy.kill("SIGTERM");
+      await (proxy.exitCode === null
+        ? once(proxy, "exit").then(() => undefined)
+        : Promise.resolve());
+      await Promise.all(upstreamServers.map(closeServer));
+    }
+  });
 
   it("rejects a fake API proxy port that Docker publishes beyond the OpenShell bridge", async () => {
     const { host } = fakeDockerHost({ publishedAddress: "0.0.0.0" });
@@ -306,6 +421,47 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(calls).toContainEqual(["network", "rm", network]);
   });
 
+  it("fails with proxy diagnostics when the proxy cannot reach the API", async () => {
+    const { calls, host } = fakeDockerHost({ proxyReady: false });
+    const cleanup: CleanupAction[] = [];
+    let failure: unknown;
+
+    try {
+      await startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
+        kind: "discord-gateway",
+        imageScript: "fake-discord-gateway-api.cjs",
+        containerPrefix: "fake-discord-gateway",
+        portEnv: "FAKE_API_PORT",
+        portFileEnv: "FAKE_API_PORT_FILE",
+        captureFileEnv: "FAKE_API_CAPTURE_FILE",
+        expectedEnv: {},
+        redactionValues: [],
+        env: {},
+      });
+    } catch (error) {
+      failure = error;
+    } finally {
+      await runCleanup(cleanup);
+    }
+
+    const runCalls = calls.filter((args) => args[0] === "run");
+    expect(runCalls).toHaveLength(2);
+    const [apiRun, proxyRun] = runCalls as [string[], string[]];
+    const apiContainer = apiRun[apiRun.indexOf("--name") + 1]!;
+    const proxyContainer = proxyRun[proxyRun.indexOf("--name") + 1]!;
+    const networkCreate = calls.find((args) => args[0] === "network" && args[1] === "create");
+    const network = networkCreate?.at(-1);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(proxyContainer);
+    expect(calls).toContainEqual(["inspect", "--format", "{{.State.Running}}", proxyContainer]);
+    expect(calls).toContainEqual(["inspect", "--format", "{{json .State}}", proxyContainer]);
+    expect(calls).toContainEqual(["logs", "--tail", "100", proxyContainer]);
+    expect(calls).toContainEqual(["rm", "-f", proxyContainer]);
+    expect(calls).toContainEqual(["rm", "-f", apiContainer]);
+    expect(calls).toContainEqual(["network", "rm", network]);
+  });
+
   it("fails with API diagnostics when the detached API stops before readiness", async () => {
     vi.useFakeTimers();
     const { calls, host } = fakeDockerHost({ apiReady: false });
@@ -313,21 +469,17 @@ describe("messaging provider installed-runtime proofs", () => {
     let failure: unknown;
 
     try {
-      const start = startFakeDockerApi(
-        host,
-        (name, run) => cleanup.push({ name, run }),
-        {
-          kind: "discord-gateway",
-          imageScript: "fake-discord-gateway-api.cjs",
-          containerPrefix: "fake-discord-gateway",
-          portEnv: "FAKE_API_PORT",
-          portFileEnv: "FAKE_API_PORT_FILE",
-          captureFileEnv: "FAKE_API_CAPTURE_FILE",
-          expectedEnv: {},
-          redactionValues: [],
-          env: {},
-        },
-      ).then(
+      const start = startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
+        kind: "discord-gateway",
+        imageScript: "fake-discord-gateway-api.cjs",
+        containerPrefix: "fake-discord-gateway",
+        portEnv: "FAKE_API_PORT",
+        portFileEnv: "FAKE_API_PORT_FILE",
+        captureFileEnv: "FAKE_API_CAPTURE_FILE",
+        expectedEnv: {},
+        redactionValues: [],
+        env: {},
+      }).then(
         () => undefined,
         (error: unknown) => error,
       );
@@ -471,7 +623,7 @@ describe("messaging provider installed-runtime proofs", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("reconstructs multi-argument Node source byte-for-byte below the OpenShell limit", () => {
     const source = [
