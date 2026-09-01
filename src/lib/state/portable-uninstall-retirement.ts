@@ -252,6 +252,11 @@ function sameStat(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
     (key) => left[key as keyof fs.BigIntStats] === right[key as keyof fs.BigIntStats],
   );
 }
+/** Quote one path so the remedy stays runnable when it contains whitespace. */
+function posixShellArgument(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 /**
  * Name the property that makes a portable authority directory unsafe.
  *
@@ -273,7 +278,7 @@ function unsafeAuthorityDirectoryReason(
   if (before.uid !== BigInt(uid)) return "The directory is not owned by the current user.";
   if (!permitAnyMode && (before.mode & 0o777n) !== 0o700n) {
     const mode = (before.mode & 0o777n).toString(8).padStart(4, "0");
-    return `The directory must be owner-private (mode 0700) but is ${mode}. Run \`chmod 700 ${directory}\`, or remove it if this host runs no portable install.`;
+    return `The directory must be owner-private (mode 0700) but is ${mode}. Run \`chmod 700 ${posixShellArgument(directory)}\`, or remove it if this host runs no portable install.`;
   }
   if (before.nlink < 1n) return "The directory has no links.";
   return null;

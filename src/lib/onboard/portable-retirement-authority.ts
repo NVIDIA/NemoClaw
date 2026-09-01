@@ -573,14 +573,15 @@ export async function supersedePortableRetirementAfterCompletedOnboard(
 ): Promise<void> {
   const recovery = inspectPortableOnboardSupersession(boundary.homeDir);
   // Same rule as the entry gate, so a completed ordinary onboarding cannot be
-  // failed at its last step by the directory it was already admitted past.
+  // failed at its last step by the directory it was already admitted past, and
+  // a host that gained a lifecycle receipt during the run is still inspected.
   if (recovery === null)
     return rejectUnknownRetirementArtifacts(
       boundary.homeDir,
       recovery,
       true,
       false,
-      expected === "portable",
+      expected === "portable" || ownsPortableLifecycleReceipt(boundary),
     );
   await lockedAuthority(boundary, expected, deps, (authority) =>
     supersedePortableRetirementAfterOnboard(boundary.homeDir, authority),

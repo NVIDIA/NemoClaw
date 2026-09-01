@@ -108,8 +108,31 @@ describe("ordinary onboarding against an abandoned portable configuration (#1074
     await expect(
       withPortableOnboardRetirementBoundary(boundary(), () => "onboarded", deps),
     ).rejects.toThrow(
-      `Unsafe portable authority directory: ${directory}. The directory must be owner-private (mode 0700) but is 0755. Run \`chmod 700 ${directory}\`, or remove it if this host runs no portable install.`,
+      `Unsafe portable authority directory: ${directory}. The directory must be owner-private (mode 0700) but is 0755. Run \`chmod 700 '${directory}'\`, or remove it if this host runs no portable install.`,
     );
+  });
+
+  it("keeps the remedy runnable when the home path contains whitespace", async () => {
+    const spaced = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw portable admission "));
+    homeDir = spaced;
+    fs.mkdirSync(path.join(homeDir, ".nemoclaw"), { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.join(homeDir, ".nemoclaw"), 0o700);
+    const directory = makePortableConfigDir(0o755);
+    writeLifecycleReceipt();
+
+    await expect(
+      withPortableOnboardRetirementBoundary(boundary(), () => "onboarded", deps),
+    ).rejects.toThrow(`chmod 700 '${directory}'`);
+    expect(directory).toContain(" ");
+  });
+
+  it("inspects the directory after a completed run that owns a lifecycle receipt", async () => {
+    makePortableConfigDir(0o755);
+    writeLifecycleReceipt();
+
+    await expect(
+      supersedePortableRetirementAfterCompletedOnboard(boundary(), "default", deps),
+    ).rejects.toThrow(/Unsafe portable authority directory/);
   });
 
   it("still rejects a staged portable-uninstall artifact on a portable host", async () => {
