@@ -52,8 +52,7 @@ export function slashConfigShow(): PluginCommandResult {
     `Profile:     ${config.profile}`,
     `Onboarded:   ${config.onboardedAt}`,
     "",
-    "Configuration can only be modified from the host CLI.",
-    "Use `nemoclaw config get <sandbox>` for the full sandbox config.",
+    "Use `nemoclaw <sandbox> config get` for the full sandbox config.",
   ];
 
   return { text: lines.filter(Boolean).join("\n") };

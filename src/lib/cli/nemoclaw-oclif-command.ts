@@ -99,7 +99,6 @@ export abstract class NemoClawCommand extends Command {
       typeof commandId === "string" &&
       sandboxName &&
       (commandId === "launch" || commandId.startsWith("sandbox:")) &&
-      !portablePolicy?.ownsLifecycleFence &&
       !portablePolicy?.helpRequested
     ) {
       assertHermesPortableCommandSupported(commandId, sandboxName, this.argv);
@@ -123,7 +122,6 @@ export abstract class NemoClawCommand extends Command {
         return super._run<T>();
       });
     }
-    if (portablePolicy?.ownsLifecycleFence) return await super._run<T>();
     const sandboxName = await this.resolveLifecycleSandboxName(portablePolicy);
     if (!sandboxName) return await super._run<T>();
     const allowRemovedImmutabilityStateRecord =
@@ -216,8 +214,7 @@ export abstract class NemoClawCommand extends Command {
     if (
       typeof commandId === "string" &&
       typeof parsedSandboxName === "string" &&
-      (commandId === "launch" || commandId.startsWith("sandbox:")) &&
-      !portablePolicy?.ownsLifecycleFence
+      (commandId === "launch" || commandId.startsWith("sandbox:"))
     ) {
       assertHermesPortableCommandSupported(commandId, parsedSandboxName, this.argv);
     }

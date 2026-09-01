@@ -154,14 +154,6 @@ const MUTABLE_CONFIG_NORMALIZER_WATCHDOG = [
   "15s",
 ] as const;
 const MUTABLE_HERMES_CONFIG_PROBE_TIMEOUT_MS = 20_000;
-const MUTABLE_HERMES_CONFIG_TARGET: AgentConfigTarget = Object.freeze({
-  agentName: "hermes",
-  configDir: "/sandbox/.hermes",
-  configFile: "config.yaml",
-  configPath: "/sandbox/.hermes/config.yaml",
-  format: "yaml",
-  sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
-});
 const MUTABLE_HERMES_CONFIG_PROBE = String.raw`
 import os
 import stat
@@ -312,7 +304,8 @@ export function inspectMutableHermesConfigPerms(
 ): MutableHermesConfigVerification {
   validateName(sandboxName, "sandbox name");
   return withMcpLifecycleLockSync(sandboxName, () => {
-    return verifyMutableHermesConfigForTarget(MUTABLE_HERMES_CONFIG_TARGET, (command) => {
+    const target = resolveAgentConfig(sandboxName);
+    return verifyMutableHermesConfigForTarget(target, (command) => {
       dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, [...command], false, true), {
         stdio: ["ignore", "pipe", "pipe"],
         timeout: MUTABLE_HERMES_CONFIG_PROBE_TIMEOUT_MS,

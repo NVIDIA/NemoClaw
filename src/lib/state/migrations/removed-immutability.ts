@@ -58,10 +58,14 @@ function entryExists(entryPath: string): boolean {
   }
 }
 
-function tokenizedArtifact(entry: string, prefix: string, suffix: ".json" | ".yaml"): boolean {
-  if (!entry.startsWith(prefix) || !entry.endsWith(suffix)) return false;
-  const token = entry.slice(prefix.length, -suffix.length);
-  return /^[0-9a-f]{32}$/u.test(token);
+function isLegacyTopLevelRecoveryEntry(entry: string): boolean {
+  return (
+    entry.startsWith("shields-timer-") ||
+    entry.startsWith("shields-transition-") ||
+    entry.startsWith("shields-external-policy-") ||
+    entry.startsWith("shields-forward-policy-") ||
+    entry.startsWith("policy-snapshot-")
+  );
 }
 
 function legacyProviderRecordSandbox(
@@ -222,35 +226,20 @@ function inspectRemovedImmutabilityMigrationState(
   const stateRecord = entries.includes(stateRecordName)
     ? path.join(stateDir, stateRecordName)
     : null;
-  const recoveryNames = entries.filter(
-    (entry) =>
-      entry === `shields-timer-${sandboxName}.json` ||
-      entry === `shields-transition-lock-${sandboxName}.json` ||
-      entry === `shields-external-policy-${sandboxName}.yaml` ||
-      tokenizedArtifact(entry, `shields-timer-authorization-${sandboxName}-`, ".json") ||
-      tokenizedArtifact(entry, `shields-transition-${sandboxName}-`, ".json") ||
-      tokenizedArtifact(entry, `shields-forward-policy-${sandboxName}-`, ".yaml") ||
-      new RegExp(`^policy-snapshot-${sandboxName}-[0-9a-f]{32}-[0-9a-f]{16}\\.yaml$`, "u").test(
-        entry,
-      ),
-  );
-
-  // Older timer recovery also committed deadline/containment sentinels beside
-  // the generic lifecycle lock. They are keyed by the sandbox-name digest.
-  const lockStem = crypto.createHash("sha256").update(sandboxName).digest("hex");
-  const lockPath = path.join(stateDir, MCP_LIFECYCLE_LOCK_DIRNAME, `${lockStem}.lock`);
-  const nestedRecoveryPaths = [`${lockPath}.deadline`, `${lockPath}.containment`].filter(
-    entryExists,
-  );
+  const recoveryNames = entries.filter(isLegacyTopLevelRecoveryEntry);
+  const nestedRecoveryPaths = inspectLegacyLifecycleSentinels(stateDir);
   const providerLedger = inspectLegacyProviderLedger(stateDir);
+  const providerArtifacts = [...providerLedger.artifactsBySandbox.values()].flat();
 
   return {
     stateRecord,
     recoveryArtifacts: [
-      ...recoveryNames.map((entry) => path.join(stateDir, entry)),
-      ...nestedRecoveryPaths,
-      ...(providerLedger.artifactsBySandbox.get(sandboxName) ?? []),
-      ...providerLedger.ambiguousArtifacts,
+      ...new Set([
+        ...recoveryNames.map((entry) => path.join(stateDir, entry)),
+        ...nestedRecoveryPaths,
+        ...providerArtifacts,
+        ...providerLedger.ambiguousArtifacts,
+      ]),
     ].sort(),
   };
 }
@@ -262,24 +251,27 @@ export function inspectRemovedImmutabilityMigration(
   return inspectRemovedImmutabilityMigrationState(sandboxName, stateDir);
 }
 
-function hasLegacyLifecycleSentinel(stateDir: string): boolean {
+function inspectLegacyLifecycleSentinels(stateDir: string): string[] {
   const root = path.join(stateDir, MCP_LIFECYCLE_LOCK_DIRNAME);
   let rootStat: fs.Stats;
   try {
     rootStat = fs.lstatSync(root);
   } catch (error) {
-    if (isErrnoException(error) && error.code === "ENOENT") return false;
-    return true;
+    if (isErrnoException(error) && error.code === "ENOENT") return [];
+    return [root];
   }
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return true;
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return [root];
   let entries: string[];
   try {
     entries = fs.readdirSync(root);
   } catch {
-    return true;
+    return [root];
   }
-  if (entries.length > MAX_LEGACY_LEDGER_ENTRIES) return true;
-  return entries.some((entry) => /^[0-9a-f]{64}\.lock\.(?:deadline|containment)$/u.test(entry));
+  if (entries.length > MAX_LEGACY_LEDGER_ENTRIES) return [root];
+  return entries
+    .filter((entry) => entry.endsWith(".lock.deadline") || entry.endsWith(".lock.containment"))
+    .map((entry) => path.join(root, entry))
+    .sort();
 }
 
 export function reportRemovedImmutabilityUpgrade(
@@ -302,13 +294,7 @@ export function reportRemovedImmutabilityUpgrade(
   const affectedSandboxes = new Set<string>();
   let hasTopLevelRecoveryState = false;
   for (const entry of entries) {
-    if (
-      entry.startsWith("shields-timer-") ||
-      entry.startsWith("shields-transition-") ||
-      entry.startsWith("shields-external-policy-") ||
-      entry.startsWith("shields-forward-policy-") ||
-      entry.startsWith("policy-snapshot-")
-    ) {
+    if (isLegacyTopLevelRecoveryEntry(entry)) {
       hasTopLevelRecoveryState = true;
       continue;
     }
@@ -323,7 +309,7 @@ export function reportRemovedImmutabilityUpgrade(
   }
   const hasUnattributedRecoveryState =
     hasTopLevelRecoveryState ||
-    hasLegacyLifecycleSentinel(stateDir) ||
+    inspectLegacyLifecycleSentinels(stateDir).length > 0 ||
     providerLedger.ambiguousArtifacts.length > 0 ||
     providerLedger.noticeArtifacts.length > 0;
   const names = [...affectedSandboxes].sort();
@@ -355,7 +341,7 @@ export function enforceRemovedImmutabilityMigrationBoundary(
       [
         `Sandbox '${sandboxName}' still has recovery artifacts from the removed Shields feature: ${artifacts}.`,
         "NemoClaw will not interpret or delete them because an older detached process may still hold mutation authority.",
-        "Stop any older NemoClaw process (or reboot the host) and preserve the listed artifacts for recovery review. For artifacts attributable to this sandbox, create a replacement under a new name and restore only trusted user data; unattributed provider authority must be resolved before any sandbox mutation.",
+        "Stop any older NemoClaw process (or reboot the host), preserve the listed artifacts for recovery review, and resolve them outside NemoClaw before any sandbox mutation. A different requested sandbox name does not make unresolved legacy authority safe.",
       ].join(" "),
     );
   }

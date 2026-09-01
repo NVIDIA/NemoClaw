@@ -20,9 +20,7 @@ Shields has been retired from NemoClaw. The current CLI has no Shields commands,
 
 If the sandbox has only an inert legacy state record, create a trusted snapshot or backup. Then rebuild the affected sandbox before running further mutations.
 
-If NemoClaw reports an old timer, transition, policy snapshot, or runtime-provider recovery artifact attributed to the affected sandbox, stop every older NemoClaw process or reboot the host before continuing. Onboard a current-image replacement under a different, unregistered sandbox name—not the affected sandbox's name—then use the [manual transfer workflow](../state-and-backups/transfer-state-manually) to copy only trusted user data. Operations on the affected sandbox remain blocked while its recovery artifact remains.
-
-If the retirement notice reports unattributed transition or provider recovery state, do not onboard any sandbox yet. Stop every older NemoClaw process or reboot the host, preserve the ambiguous artifacts for recovery review, and resolve their ownership outside NemoClaw before any further sandbox mutation. Because the artifact can belong to a deleted sandbox whose name may be reused, a different requested name does not make onboarding safe.
+If NemoClaw blocks an operation because it found an old timer, transition, policy snapshot, authority-bearing runtime-provider recovery artifact, or ambiguous recovery state, do not onboard or mutate any sandbox yet. Stop every older NemoClaw process or reboot the host, preserve the artifacts for recovery review, and resolve them outside NemoClaw before continuing. These files can represent detached mutation authority that the current CLI deliberately does not interpret. A different requested sandbox name does not make onboarding safe. A notice-only provider intent recorded before mutation authority was granted is preserved for review but does not by itself block lifecycle operations.
 
 Do not use cross-sandbox snapshot restore from the legacy sandbox because that flow preserves the source image. The current CLI deliberately does not interpret, resume, or delete ambiguous legacy recovery state.
 

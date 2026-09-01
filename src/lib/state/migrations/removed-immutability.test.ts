@@ -72,7 +72,7 @@ describe("removed immutability migration boundary", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("has been retired"));
   });
 
-  it("blocks exact timer and transition artifacts without matching another sandbox", () => {
+  it("blocks every requested name while top-level recovery artifacts remain", () => {
     const root = stateDir();
     const token = "a".repeat(32);
     touch(root, "shields-timer-alpha.json");
@@ -86,16 +86,19 @@ describe("removed immutability migration boundary", () => {
     touch(root, `shields-transition-alpha-${token.slice(1)}.json`);
 
     const inspection = inspectRemovedImmutabilityMigration("alpha", root);
-    expect(inspection.recoveryArtifacts).toHaveLength(7);
-    expect(inspection.recoveryArtifacts).not.toEqual(
-      expect.arrayContaining([path.join(root, `shields-transition-alpha-other-${token}.json`)]),
+    expect(inspection.recoveryArtifacts).toHaveLength(9);
+    expect(inspectRemovedImmutabilityMigration("replacement", root).recoveryArtifacts).toEqual(
+      inspection.recoveryArtifacts,
     );
     expect(() => enforceRemovedImmutabilityMigrationBoundary("alpha", { stateDir: root })).toThrow(
-      /older detached process.*replacement under a new name/u,
+      /older detached process.*different requested sandbox name does not make/u,
     );
+    expect(() =>
+      enforceRemovedImmutabilityMigrationBoundary("replacement", { stateDir: root }),
+    ).toThrow(/older detached process.*different requested sandbox name does not make/u);
   });
 
-  it("blocks obsolete deadline and containment sentinels for the exact sandbox digest", () => {
+  it("warns and globally blocks obsolete deadline and containment sentinels", () => {
     const root = stateDir();
     const warn = vi.fn();
     const alphaStem = crypto.createHash("sha256").update("alpha").digest("hex");
@@ -108,7 +111,14 @@ describe("removed immutability migration boundary", () => {
     expect(inspection.recoveryArtifacts).toEqual([
       path.join(root, MCP_LIFECYCLE_LOCK_DIRNAME, `${alphaStem}.lock.containment`),
       path.join(root, MCP_LIFECYCLE_LOCK_DIRNAME, `${alphaStem}.lock.deadline`),
+      path.join(root, MCP_LIFECYCLE_LOCK_DIRNAME, `${betaStem}.lock.deadline`),
     ]);
+    expect(inspectRemovedImmutabilityMigration("new-name", root).recoveryArtifacts).toEqual(
+      inspection.recoveryArtifacts,
+    );
+    expect(() =>
+      enforceRemovedImmutabilityMigrationBoundary("new-name", { stateDir: root }),
+    ).toThrow(/different requested sandbox name does not make/u);
     expect(reportRemovedImmutabilityUpgrade({ stateDir: root, warn })).toEqual({
       affectedSandboxes: [],
       hasUnattributedRecoveryState: true,
@@ -129,7 +139,7 @@ describe("removed immutability migration boundary", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("recovery state also remains"));
   });
 
-  it("maps retired runtime-provider lifecycle authority to its sandbox", () => {
+  it("reports provider ownership but globally blocks retained provider authority", () => {
     const root = stateDir();
     const transactionId = "c".repeat(64);
     const recordPath = path.join("runtime-provider-lifecycle", transactionId, "prepared.json");
@@ -140,11 +150,12 @@ describe("removed immutability migration boundary", () => {
     );
 
     expect(inspectRemovedImmutabilityMigration("alpha", root).recoveryArtifacts).toContain(target);
-    expect(inspectRemovedImmutabilityMigration("beta", root).recoveryArtifacts).not.toContain(
-      target,
-    );
+    expect(inspectRemovedImmutabilityMigration("beta", root).recoveryArtifacts).toContain(target);
     expect(() => enforceRemovedImmutabilityMigrationBoundary("alpha", { stateDir: root })).toThrow(
       /older detached process/u,
+    );
+    expect(() => enforceRemovedImmutabilityMigrationBoundary("beta", { stateDir: root })).toThrow(
+      /different requested sandbox name does not make/u,
     );
   });
 
@@ -158,6 +169,10 @@ describe("removed immutability migration boundary", () => {
     );
     expect(reportRemovedImmutabilityUpgrade({ stateDir: root, warn: vi.fn() })).toMatchObject({
       hasUnattributedRecoveryState: true,
+    });
+    expect(enforceRemovedImmutabilityMigrationBoundary("alpha", { stateDir: root })).toEqual({
+      stateRecord: null,
+      recoveryArtifacts: [],
     });
   });
 
@@ -175,7 +190,7 @@ describe("removed immutability migration boundary", () => {
       );
       expect(() =>
         enforceRemovedImmutabilityMigrationBoundary(sandboxName, { stateDir: root }),
-      ).toThrow(/unattributed provider authority must be resolved before any sandbox mutation/u);
+      ).toThrow(/resolve them outside NemoClaw before any sandbox mutation/u);
     },
   );
 

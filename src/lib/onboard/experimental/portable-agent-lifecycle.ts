@@ -88,7 +88,6 @@ export type HermesPortableCommandPolicy = {
   readonly helpRequested: boolean;
   readonly hostFence: "read" | "deny" | null;
   readonly multiSandboxLifecycle: boolean;
-  readonly ownsLifecycleFence: boolean;
   readonly rawSandboxName: boolean;
 };
 
@@ -107,7 +106,6 @@ export function classifyHermesPortableCommand(
         ? "deny"
         : null,
     multiSandboxLifecycle: MULTI_SANDBOX_LIFECYCLE_COMMANDS.has(commandId),
-    ownsLifecycleFence: false,
     rawSandboxName: RAW_SANDBOX_NAME_COMMANDS.has(commandId),
   };
 }

@@ -847,50 +847,20 @@ prepare_openclaw_config_startup() {
   run_openclaw_config_guard recover --startup-owner || return 1
 }
 
-prepare_openclaw_config_for_write() {
-  local config_file="$1"
-  local hash_file="$2"
-  local config_dir
-  config_dir="$(dirname "$config_file")"
-
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing config override — config directory or file path is a symlink\n' >&2
-    return 1
-  fi
-
+run_openclaw_config_as_owner() {
   if [ "$(id -u)" -eq 0 ]; then
-    chown root:sandbox "$config_dir" || return 1
+    case "${1:-}" in
+      /*) ;;
+      *)
+        printf '[SECURITY] Refusing privileged config I/O dispatch — executable path is not absolute\n' >&2
+        return 1
+        ;;
+    esac
+    /usr/bin/env -i HOME=/sandbox PATH=/usr/local/bin:/usr/bin:/bin \
+      "${STEP_DOWN_PREFIX_SANDBOX[@]}" "$@"
+    return $?
   fi
-  chmod 2770 "$config_dir" || return 1
-  local file
-  for file in "$config_file" "$hash_file"; do
-    [ -e "$file" ] || continue
-    if [ "$(id -u)" -eq 0 ]; then chown root:sandbox "$file" || return 1; fi
-    chmod 660 "$file" || return 1
-  done
-}
-
-restore_openclaw_config_after_write() {
-  local config_file="$1"
-  local hash_file="$2"
-  local config_dir
-  config_dir="$(dirname "$config_file")"
-
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing config override restore — config directory or file path is a symlink\n' >&2
-    return 1
-  fi
-
-  if [ "$(id -u)" -eq 0 ]; then
-    chown sandbox:sandbox "$config_dir" || return 1
-  fi
-  chmod 2770 "$config_dir" || return 1
-  local file
-  for file in "$config_file" "$hash_file"; do
-    [ -e "$file" ] || continue
-    if [ "$(id -u)" -eq 0 ]; then chown sandbox:sandbox "$file" || return 1; fi
-    chmod 660 "$file" || return 1
-  done
+  "$@"
 }
 
 # ── Empty-config recovery and baseline (#3118) ──────────────────
@@ -980,18 +950,19 @@ ensure_mutable_openclaw_config_hash() {
   # aborts with EACCES, so step down to the file's owner for the write.
   # shellcheck disable=SC2016  # positional params are expanded by the inner sh
   if [ "$(id -u)" -eq 0 ]; then
-    if ! "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c '
+    if ! /usr/bin/env -i HOME=/sandbox PATH=/usr/local/bin:/usr/bin:/bin \
+      "${STEP_DOWN_PREFIX_SANDBOX[@]}" /bin/sh -c '
       cd "$1" || exit 1
-      sha256sum openclaw.json >".config-hash" || exit 1
-      chmod 660 ".config-hash" 2>/dev/null || true
+      /usr/bin/sha256sum openclaw.json >".config-hash" || exit 1
+      /usr/bin/chmod 660 ".config-hash" 2>/dev/null || true
     ' _ "$config_dir"; then
       printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
       return 1
     fi
   elif ! sh -c '
     cd "$1" || exit 1
-    sha256sum openclaw.json >".config-hash" || exit 1
-    chmod 660 ".config-hash" 2>/dev/null || true
+    /usr/bin/sha256sum openclaw.json >".config-hash" || exit 1
+    /usr/bin/chmod 660 ".config-hash" 2>/dev/null || true
   ' _ "$config_dir"; then
     printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
     return 1
@@ -1087,15 +1058,16 @@ apply_model_override() {
   [ -n "$max_tokens" ] && printf '[config] Applying max tokens override: %s\n' "$max_tokens" >&2
   [ -n "$reasoning" ] && printf '[config] Applying reasoning override: %s\n' "$reasoning" >&2
 
-  # Config is briefly root-owned so writes still work after CAP_DAC_OVERRIDE is
-  # dropped, then restored to sandbox:sandbox 2770/660.
-  prepare_openclaw_config_for_write "$config_file" "$hash_file"
+  # Pin and normalize the mutable tree before delegating config I/O to its
+  # sandbox owner; root never mutates a sandbox-controlled pathname here.
+  normalize_mutable_config_perms || return 1
   local _write_rc=0
 
-  NEMOCLAW_CONTEXT_WINDOW="$context_window" \
+  run_openclaw_config_as_owner /usr/bin/env \
+    NEMOCLAW_CONTEXT_WINDOW="$context_window" \
     NEMOCLAW_MAX_TOKENS="$max_tokens" \
     NEMOCLAW_REASONING="$reasoning" \
-    python3 - "$config_file" "$model_override" "$api_override" <<'PYOVERRIDE' || _write_rc=$?
+    /usr/bin/python3 -I - "$config_file" "$model_override" "$api_override" <<'PYOVERRIDE' || _write_rc=$?
 import json, os, sys
 
 config_file, model_override, api_override = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -1149,15 +1121,15 @@ PYOVERRIDE
 
   if [ "$_write_rc" -eq 0 ]; then
     # Recompute config hash so integrity check passes on next startup
-    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+    if ensure_mutable_openclaw_config_hash; then
       printf '[SECURITY] Config hash recomputed after model override\n' >&2
     else
       _write_rc=$?
     fi
   fi
 
-  # Always restore ownership/mode, even on write/hash failure (#2653, #2877).
-  restore_openclaw_config_after_write "$config_file" "$hash_file"
+  # Always revalidate and normalize the tree, even on write/hash failure.
+  normalize_mutable_config_perms || _write_rc=$?
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
@@ -1232,7 +1204,8 @@ PYPROBE
 
   local provider_model_ref
   provider_model_ref="$(
-    GATEWAY_MODEL="${gateway_model:-}" python3 - "$config_file" <<'PYRECONCILE_READ'
+    run_openclaw_config_as_owner /usr/bin/env GATEWAY_MODEL="${gateway_model:-}" \
+      /usr/bin/python3 -I - "$config_file" <<'PYRECONCILE_READ'
 import json, os, sys
 
 try:
@@ -1295,10 +1268,11 @@ PYRECONCILE_READ
   printf '[config] Reconciling agent identity with provider model: %s (source=%s, #3175)\n' \
     "$provider_model_ref" "$source_mode" >&2
 
-  prepare_openclaw_config_for_write "$config_file" "$hash_file"
+  normalize_mutable_config_perms || return 1
   local _write_rc=0
 
-  RECONCILE_SOURCE="$source_mode" python3 - "$config_file" "$provider_model_ref" <<'PYRECONCILE_WRITE' || _write_rc=$?
+  run_openclaw_config_as_owner /usr/bin/env RECONCILE_SOURCE="$source_mode" \
+    /usr/bin/python3 -I - "$config_file" "$provider_model_ref" <<'PYRECONCILE_WRITE' || _write_rc=$?
 import json, os, sys
 config_file, provider_model = sys.argv[1], sys.argv[2]
 with open(config_file) as f:
@@ -1328,14 +1302,14 @@ with open(config_file, "w") as f:
 PYRECONCILE_WRITE
 
   if [ "$_write_rc" -eq 0 ]; then
-    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+    if ensure_mutable_openclaw_config_hash; then
       printf '[SECURITY] Config hash recomputed after agent identity reconciliation\n' >&2
     else
       _write_rc=$?
     fi
   fi
 
-  restore_openclaw_config_after_write "$config_file" "$hash_file"
+  normalize_mutable_config_perms || _write_rc=$?
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
@@ -1379,10 +1353,11 @@ apply_cors_override() {
 
   printf '[config] Adding CORS origin: %s\n' "$cors_origin" >&2
 
-  prepare_openclaw_config_for_write "$config_file" "$hash_file"
+  normalize_mutable_config_perms || return 1
   local _write_rc=0
 
-  python3 - "$config_file" "$cors_origin" <<'PYCORS' || _write_rc=$?
+  run_openclaw_config_as_owner /usr/bin/python3 -I - \
+    "$config_file" "$cors_origin" <<'PYCORS' || _write_rc=$?
 import json, sys
 
 config_file, cors_origin = sys.argv[1], sys.argv[2]
@@ -1400,15 +1375,15 @@ with open(config_file, "w") as f:
 PYCORS
 
   if [ "$_write_rc" -eq 0 ]; then
-    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+    if ensure_mutable_openclaw_config_hash; then
       printf '[config] Config hash recomputed after CORS override\n' >&2
     else
       _write_rc=$?
     fi
   fi
 
-  # Always restore ownership/mode, even on write/hash failure (#2653, #2877).
-  restore_openclaw_config_after_write "$config_file" "$hash_file"
+  # Always revalidate and normalize the tree, even on write/hash failure.
+  normalize_mutable_config_perms || _write_rc=$?
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
@@ -1419,7 +1394,10 @@ refresh_openclaw_provider_placeholders() {
 
   local keys
   keys="$(
-    python3 - "$config_file" <<'PYPLACEHOLDERKEYS'
+    run_openclaw_config_as_owner /usr/bin/env \
+      NEMOCLAW_MESSAGING_PLAN_B64="${NEMOCLAW_MESSAGING_PLAN_B64:-}" \
+      NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH="${NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH:-}" \
+      /usr/bin/python3 -I - "$config_file" <<'PYPLACEHOLDERKEYS'
 import base64
 import json
 import os
@@ -1578,18 +1556,55 @@ PYPLACEHOLDERKEYS
       "$_extras_accepted" "$_accepted_extra_keys" >&2
   fi
 
+  # A root-startup environment can contain provider and channel credentials.
+  # Classify them before dropping privileges and pass only non-secret state plus
+  # exact OpenShell placeholders to the sandbox-owned writer. Raw values never
+  # enter the child environment.
+  local _placeholder_runtime_state=""
+  if [ "$(id -u)" -eq 0 ]; then
+    _placeholder_runtime_state="$(
+      NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS="$keys" /usr/bin/python3 -I - <<'PYPLACEHOLDERSTATE'
+import json
+import os
+import re
+
+prefix = "openshell:resolve:env:"
+keys = os.environ.get("NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS", "").split()
+states = {}
+for key in keys:
+    value = os.environ.get(key, "")
+    if not value:
+        states[key] = {"kind": "missing"}
+        continue
+    if not value.startswith(prefix):
+        states[key] = {"kind": "present"}
+        continue
+    suffix = value[len(prefix) :]
+    revision = re.match(r"^v[0-9]+_", suffix)
+    unversioned = suffix[len(revision.group(0)) :] if revision else suffix
+    if unversioned != key:
+        states[key] = {"kind": "placeholder-mismatch"}
+        continue
+    states[key] = {"kind": "placeholder", "value": value}
+print(json.dumps(states, sort_keys=True, separators=(",", ":")))
+PYPLACEHOLDERSTATE
+    )" || return 1
+  fi
+
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
     printf '[SECURITY] Refusing provider placeholder refresh — config or hash path is a symlink\n' >&2
     return 1
   fi
 
-  prepare_openclaw_config_for_write "$config_file" "$hash_file"
+  normalize_mutable_config_perms || return 1
   local _write_rc=0
   local _placeholder_report=""
 
   _placeholder_report="$(
-    NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS="$keys" \
-      python3 - "$config_file" <<'PYPLACEHOLDERS'
+    run_openclaw_config_as_owner /usr/bin/env \
+      NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS="$keys" \
+      NEMOCLAW_PROVIDER_PLACEHOLDER_RUNTIME_STATE="$_placeholder_runtime_state" \
+      /usr/bin/python3 -I - "$config_file" <<'PYPLACEHOLDERS'
 import json
 import os
 import re
@@ -1601,10 +1616,30 @@ alias_marker = "-OPENSHELL-RESOLVE-ENV-"
 keys = os.environ.get("NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS", "").split()
 replacements = {}
 warnings = []
+state_payload = os.environ.get("NEMOCLAW_PROVIDER_PLACEHOLDER_RUNTIME_STATE", "")
+sanitized_runtime = bool(state_payload)
+runtime_states = json.loads(state_payload) if sanitized_runtime else {}
+
+
+def runtime_state(key):
+    if sanitized_runtime:
+        state = runtime_states.get(key)
+        return state if isinstance(state, dict) else {"kind": "missing"}
+    value = os.environ.get(key, "")
+    if not value:
+        return {"kind": "missing", "value": ""}
+    if value.startswith(prefix):
+        suffix = value[len(prefix) :]
+        revision = re.match(r"^v[0-9]+_", suffix)
+        unversioned = suffix[len(revision.group(0)) :] if revision else suffix
+        kind = "placeholder" if unversioned == key else "placeholder-mismatch"
+        return {"kind": kind, "value": value}
+    return {"kind": "present", "value": value}
 
 for key in keys:
-    value = os.environ.get(key, "")
-    if value.startswith(prefix) and value != f"{prefix}{key}":
+    state = runtime_state(key)
+    value = state.get("value", "")
+    if state.get("kind") == "placeholder" and value != f"{prefix}{key}":
         replacements[f"{prefix}{key}"] = (key, value)
 
 with open(config_file, encoding="utf-8") as f:
@@ -1662,17 +1697,18 @@ def walk_for_warnings(value, path):
             for env_key in keys:
                 if not placeholder_suffix_matches_env_key(suffix, env_key):
                     continue
-                env_value = os.environ.get(env_key, "")
+                state = runtime_state(env_key)
+                env_value = state.get("value", "")
                 label = path_label(path)
-                if not env_value:
+                if state.get("kind") == "missing":
                     warnings.append(
                         f"[channels] {label} is an OpenShell placeholder but {env_key} is missing from the runtime environment"
                     )
-                elif not env_value.startswith(prefix):
+                elif state.get("kind") == "present":
                     warnings.append(
                         f"[channels] {label} left unchanged because {env_key} is not an OpenShell placeholder; refusing to write raw credentials to openclaw.json"
                     )
-                elif not placeholder_suffix_matches_env_key(env_value[len(prefix) :], env_key):
+                elif state.get("kind") != "placeholder":
                     warnings.append(
                         f"[channels] {label} placeholder does not match the OpenShell runtime placeholder for {env_key}"
                     )
@@ -1689,11 +1725,12 @@ def walk_for_warnings(value, path):
                 if env_key != alias_env_key:
                     continue
                 label = path_label(path)
-                env_value = os.environ.get(env_key, "")
+                state = runtime_state(env_key)
+                env_value = state.get("value", "")
                 placeholder_re = re.compile(
                     rf"^{re.escape(prefix)}(v[0-9]+_)?{re.escape(env_key)}$"
                 )
-                if not env_value:
+                if state.get("kind") == "missing":
                     warnings.append(
                         f"[channels] {label} expects the {env_key} provider placeholder but it is missing from the runtime environment"
                     )
@@ -1730,7 +1767,7 @@ PYPLACEHOLDERS
     local _refreshed_keys
     _refreshed_keys="$(printf '%s\n' "$_placeholder_report" | sed -n 's/^refreshed=//p' | tail -n 1)"
     if [ -n "$_refreshed_keys" ]; then
-      if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+      if ensure_mutable_openclaw_config_hash; then
         printf '[config] Refreshed provider placeholders from OpenShell runtime env: %s\n' "$_refreshed_keys" >&2
       else
         _write_rc=$?
@@ -1741,7 +1778,7 @@ PYPLACEHOLDERS
     done
   fi
 
-  restore_openclaw_config_after_write "$config_file" "$hash_file"
+  normalize_mutable_config_perms || _write_rc=$?
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
   return 0
 }
@@ -2149,7 +2186,7 @@ PYMESSAGINGSECRETS
 }
 
 _read_gateway_token() {
-  node - <<'NODETOKEN'
+  run_openclaw_config_as_owner /usr/local/bin/node - <<'NODETOKEN'
 const fs = require("fs");
 
 const configPath = "/sandbox/.openclaw/openclaw.json";
@@ -2199,11 +2236,12 @@ ensure_gateway_token() {
   fi
 
   if [ "$(id -u)" -eq 0 ]; then
-    prepare_openclaw_config_for_write "$config_file" "$hash_file"
+    normalize_mutable_config_perms || return 1
   fi
 
   local _write_rc=0
-  node - "$config_file" <<'NODETOKEN' || _write_rc=$?
+  run_openclaw_config_as_owner /usr/local/bin/node - \
+    "$config_file" <<'NODETOKEN' || _write_rc=$?
 const crypto = require("crypto");
 const fs = require("fs");
 const pathModule = require("path");
@@ -2310,11 +2348,11 @@ try {
 NODETOKEN
 
   if [ "$_write_rc" -eq 0 ] && [ -f "$hash_file" ]; then
-    (cd "$(dirname "$config_file")" && sha256sum "$(basename "$config_file")" >"$hash_file") || _write_rc=$?
+    ensure_mutable_openclaw_config_hash || _write_rc=$?
   fi
 
   if [ "$(id -u)" -eq 0 ]; then
-    restore_openclaw_config_after_write "$config_file" "$hash_file" || _write_rc=$?
+    normalize_mutable_config_perms || _write_rc=$?
   fi
 
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
