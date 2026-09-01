@@ -37,6 +37,15 @@ An existing valid provider can remain ready when a host variable is unset becaus
 
 For a trusted private server, status resolves the endpoint without changing managed state. Text output reports `private address pins: match`, `drift`, or `unresolved`. JSON output reports the same value in `trustedPrivateTarget.state` and includes the recorded pins. Status never adds a new address to the policy.
 
+<AgentOnly variant="deepagents">
+
+Before it reads `/sandbox/.deepagents/.nemoclaw-mcp.json`, Deep Agents Code `mcp status` checks the path type without following a symbolic link or opening a FIFO.
+If the path is a symbolic link or FIFO, the command prints `Unsafe managed Deep Agents MCP projection path: symbolic link` or `Unsafe managed Deep Agents MCP projection path: FIFO`, writes no status output, and exits with status `2`.
+This exit status applies only to the unsafe path-type diagnostic.
+Other adapter inspection failures retain their ordinary status behavior.
+
+</AgentOnly>
+
 ## Discover Advertised Tools
 
 Pass `--tools` with one server name to request the server's advertised tool names:

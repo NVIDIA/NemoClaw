@@ -62,6 +62,7 @@ export {
   buildOpenClawMcporterInspectCommand,
   DEFAULT_OPENCLAW_CONFIG_DIR,
   DEEPAGENTS_MCP_CONFIG_PATH,
+  DEEPAGENTS_UNSAFE_MCP_PROJECTION_PREFIX,
   mcporterHeadersMatchExpected,
   openClawMcporterRoot,
 } from "./mcp-bridge-adapter-status";

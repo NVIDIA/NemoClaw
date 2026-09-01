@@ -35,6 +35,7 @@ export interface DeepAgentsConfigCommandResult {
 }
 
 export interface DeepAgentsManagedFixtureOptions {
+  danglingSymlink?: boolean;
   fifo?: boolean;
   mode?: number;
   symlink?: boolean;
@@ -65,16 +66,20 @@ export function runDeepAgentsConfigCommand(
       { mode },
     );
   };
-  const managedInitialPath = managedOptions.symlink ? managedSymlinkTarget : configPath;
+  const managedSymlink = managedOptions.symlink === true || managedOptions.danglingSymlink === true;
+  const managedInitialPath = managedSymlink ? managedSymlinkTarget : configPath;
   if (managedOptions.fifo) {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const fifo = spawnSync("mkfifo", [configPath], { encoding: "utf-8", timeout: 5000 });
     if (fifo.status !== 0) throw new Error(fifo.stderr || "could not create managed fixture FIFO");
     fs.chmodSync(configPath, managedOptions.mode ?? 0o600);
   } else {
-    initializeConfig(managedInitialPath, initialConfig, managedOptions.mode);
-    if (initialConfig !== undefined) fs.chmodSync(managedInitialPath, managedOptions.mode ?? 0o600);
-    if (managedOptions.symlink && initialConfig !== undefined) {
+    if (!managedOptions.danglingSymlink) {
+      initializeConfig(managedInitialPath, initialConfig, managedOptions.mode);
+      if (initialConfig !== undefined)
+        fs.chmodSync(managedInitialPath, managedOptions.mode ?? 0o600);
+    }
+    if (managedSymlink) {
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
       fs.symlinkSync(managedSymlinkTarget, configPath);
     }

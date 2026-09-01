@@ -16,6 +16,8 @@ import {
 // `.mcp.json` discovery is disabled in the managed image so user-authored MCP
 // state can never be layered over the validated registry projection.
 export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.nemoclaw-mcp.json";
+export const DEEPAGENTS_UNSAFE_MCP_PROJECTION_PREFIX =
+  "Unsafe managed Deep Agents MCP projection path";
 export const DEFAULT_OPENCLAW_CONFIG_DIR = "/sandbox/.openclaw";
 export const HERMES_MCP_TRANSACTION_HELPER =
   "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
@@ -258,6 +260,23 @@ export function buildDeepAgentsMcpStatusCommand(
     "    raise SystemExit(2)",
     "is_v2 = runtime_kind == 'v2'",
     "config_path = managed_path if is_v2 else legacy_path",
+    "if is_v2:",
+    "    try:",
+    "        projection_mode = os.stat(config_path, follow_symlinks=False).st_mode",
+    "    except FileNotFoundError:",
+    "        projection_mode = None",
+    "    if projection_mode is not None:",
+    "        if stat.S_ISLNK(projection_mode):",
+    "            projection_kind = 'symbolic link'",
+    "        elif stat.S_ISFIFO(projection_mode):",
+    "            projection_kind = 'FIFO'",
+    "        elif not stat.S_ISREG(projection_mode):",
+    "            projection_kind = 'non-regular file'",
+    "        else:",
+    "            projection_kind = None",
+    "        if projection_kind:",
+    `            print(f'${DEEPAGENTS_UNSAFE_MCP_PROJECTION_PREFIX}: {projection_kind}', file=sys.stderr)`,
+    "            raise SystemExit(2)",
     "try:",
     "    data = read_managed_projection(config_path)[0] if is_v2 else read_legacy_config(config_path)[0]",
     "except FileNotFoundError:",

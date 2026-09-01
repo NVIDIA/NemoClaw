@@ -8,6 +8,7 @@ import {
   buildHermesMcpStatusCommand,
   buildOpenClawMcporterInspectCommand,
   DEFAULT_OPENCLAW_CONFIG_DIR,
+  DEEPAGENTS_UNSAFE_MCP_PROJECTION_PREFIX,
   openClawMcporterRoot,
 } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter, McpBridgeError, type McpBridgeStatus } from "./mcp-bridge-contracts";
@@ -126,13 +127,21 @@ function getAdapterRegistration(
     return { registered: false, detail: output || "not found" };
   }
   const envValues = resolvePersistedCredentialEnvForRedaction(entry.env);
+  const detail = redactBridgeSecretsForDisplay(
+    result.stderr || result.stdout || "not found",
+    entry,
+    envValues,
+  );
+  const normalizedDetail = detail.trim();
+  if (
+    adapter === "deepagents-config" &&
+    normalizedDetail.startsWith(DEEPAGENTS_UNSAFE_MCP_PROJECTION_PREFIX)
+  ) {
+    throw new McpBridgeError(normalizedDetail, 2);
+  }
   return {
     registered: false,
-    detail: redactBridgeSecretsForDisplay(
-      result.stderr || result.stdout || "not found",
-      entry,
-      envValues,
-    ),
+    detail,
   };
 }
 

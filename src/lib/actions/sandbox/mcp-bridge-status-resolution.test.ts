@@ -190,6 +190,64 @@ ${body}
 }
 
 describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
+  it("returns a type-specific failure for unsafe Deep Agents projections (#10754)", () => {
+    const home = createTempHome("nemoclaw-mcp-status-projection-");
+    const { stdout } = runHarness(
+      home,
+      String.raw`
+  const current = registry.getSandbox("alpha");
+  registry.updateSandbox("alpha", {
+    agent: "langchain-deepagents-code",
+    mcp: {
+      bridges: {
+        github: {
+          ...current.mcp.bridges.github,
+          agent: "langchain-deepagents-code",
+          adapter: "deepagents-config",
+        },
+      },
+      managedServerNames: ["github"],
+    },
+  });
+  const outcomes = [];
+  for (const detail of [
+    "Unsafe managed Deep Agents MCP projection path: symbolic link",
+    "Unsafe managed Deep Agents MCP projection path: FIFO",
+  ]) {
+    processRecovery.executeSandboxCommand = () => ({
+      status: 2,
+      stdout: "",
+      stderr: detail + "\n",
+    });
+    logLines.length = 0;
+    errorLines.length = 0;
+    await bridge.dispatchMcpBridgeCommand("alpha", ["status", "github", "--no-probe", "--json"]);
+    outcomes.push({
+      detail,
+      exitCode: process.exitCode ?? 0,
+      stdout: logLines.join("\n"),
+      stderr: errorLines.join("\n"),
+    });
+    process.exitCode = 0;
+  }
+  process.stdout.write(JSON.stringify(outcomes));
+`,
+    );
+    const outcomes = JSON.parse(stdout) as Array<{
+      detail: string;
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+    }>;
+
+    expect(outcomes).toHaveLength(2);
+    outcomes.forEach((outcome) => {
+      expect(outcome.exitCode).toBe(2);
+      expect(outcome.stdout).toBe("");
+      expect(outcome.stderr).toContain(outcome.detail);
+    });
+  });
+
   it("probes by default for a single named server and surfaces the wire failure (#6379)", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-single-");
     const { stdout } = runHarness(
