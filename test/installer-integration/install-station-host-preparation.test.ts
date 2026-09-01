@@ -444,12 +444,6 @@ check_agent_and_inference_conflicts
     expect(diagnostics.result.status, diagnostics.output).toBe(0);
     expect(diagnostics.output).toContain("agent_inference_workloads=none vllm_port=19000 free");
   });
-  it("does not block an active agent owned by another user (#10649)", () => {
-    const body = `ps() { printf '%s 1 1 openshell x\n' "$((EUID+1))"; }; ss() { :; }; check_agent_and_inference_conflicts`;
-    const otherUser = runSourced(STATION_PREPARE, body);
-    expect(otherUser.result.status, otherUser.output).toBe(0);
-    expect(otherUser.output).toContain("agent_inference_workloads=none vllm_port=8000 free");
-  });
   it("blocks vLLM executables and Python modules without exposing model names", () => {
     const active = runSourced(
       STATION_PREPARE,

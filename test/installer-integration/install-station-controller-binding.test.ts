@@ -287,6 +287,8 @@ verify_dual_station_controller_uid_binding 1001 "$config_dir" "$binding_file"
 
   it.each([
     ["direct root", "0", "", "1002", "pid=42 process=openshell"],
+    ["non-root controller", "1001", "", "1001", "pid=42 process=openshell"],
+    ["another non-root user", "1001", "", "1002", ""],
     ["sudo controller", "0", "1001", "1001", "pid=42 process=openshell"],
     ["another sudo user", "0", "1001", "1002", ""],
   ])("scopes agent conflicts for %s", (_case, effectiveUid, sudoUid, ownerUid, expected) => {
