@@ -2,12 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Fake tokens are the default. `TELEGRAM_BOT_TOKEN_REAL`,
- * `DISCORD_BOT_TOKEN_REAL`, `SLACK_BOT_TOKEN_REAL`, and `SLACK_APP_TOKEN_REAL`
- * override the corresponding non-empty standard token variable; each standard
- * variable overrides the fake default. Provider placeholders must not leak into
- * sandbox-visible surfaces, and installed OpenClaw channel runtime exports must
- * drive the hermetic Slack and Telegram send proofs.
+ * Synthetic tokens are mandatory because this scenario routes provider traffic
+ * to fake APIs. Host messaging tokens are ignored. Provider placeholders must
+ * not leak into sandbox-visible surfaces, and installed OpenClaw channel runtime
+ * exports must drive the hermetic Slack, Telegram, and WeChat send proofs.
  */
 
 import fs from "node:fs";
@@ -72,7 +70,7 @@ test(
         "inspect providers placeholders and credential isolation",
         "probe Telegram and Discord policy rewrites",
         "exercise installed Slack, Telegram, and WeChat runtimes",
-        "inspect gateway health and optional live sends",
+        "inspect gateway health after synthetic sends",
       ],
     },
   },
@@ -1223,7 +1221,7 @@ setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
       await skipNote(artifacts, skips, "S2: no Slack-related output in gateway log");
     }
 
-    progress.phase("inspect gateway health and optional live sends");
+    progress.phase("inspect gateway health after synthetic sends");
     const doctor = await runHost(host, "node", [CLI_ENTRYPOINT, SANDBOX_NAME, "doctor", "--json"], {
       artifactName: "doctor-json-messaging-providers",
       env: state.env,
@@ -1251,75 +1249,10 @@ setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
       }
     }
 
-    const telegramRealTarget = nonEmpty(process.env.TELEGRAM_CHAT_ID_E2E);
-    if (nonEmpty(process.env.TELEGRAM_BOT_TOKEN_REAL) && telegramRealTarget) {
-      check(telegramStatus === "200", "M18-real: Telegram getMe returned 200 with real token");
-      const send = await runSandboxShell(
-        sandbox,
-        `OPENCLAW_NO_COLOR=1 openclaw message send --channel telegram --target ${shellQuote(telegramRealTarget)} --message "NemoClaw OpenClaw Telegram plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" --json`,
-        {
-          artifactName: "real-telegram-send-messaging-providers",
-          redactionValues,
-          timeoutMs: 120_000,
-        },
-      );
-      check(
-        send.exitCode === 0,
-        `M19-real: Telegram openclaw message send succeeded (${outputText(send).slice(0, 200)})`,
-      );
-    } else {
-      await skipNote(
-        artifacts,
-        skips,
-        "M18-real/M19-real: complete real Telegram credentials not available; installed runtime fake send covered M19",
-      );
-    }
-
-    const discordRealTarget = nonEmpty(process.env.DISCORD_CHANNEL_ID_E2E);
-    if (nonEmpty(process.env.DISCORD_BOT_TOKEN_REAL) && discordRealTarget) {
-      check(discordStatus === "200", "M20: Discord users/@me returned 200 with real token");
-      const send = await runSandboxShell(
-        sandbox,
-        `OPENCLAW_NO_COLOR=1 openclaw message send --channel discord --target ${shellQuote(`channel:${discordRealTarget}`)} --message "NemoClaw OpenClaw Discord plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" --json`,
-        {
-          artifactName: "real-discord-send-messaging-providers",
-          redactionValues,
-          timeoutMs: 120_000,
-        },
-      );
-      check(
-        send.exitCode === 0,
-        `M21: Discord openclaw message send succeeded (${outputText(send).slice(0, 200)})`,
-      );
-    } else {
-      await skipNote(
-        artifacts,
-        skips,
-        "M20/M21: complete real Discord credentials not available; fake Gateway proof covered provider rewrite",
-      );
-    }
-
-    const slackRealTarget = nonEmpty(process.env.SLACK_CHANNEL_ID_E2E);
-    if (nonEmpty(process.env.SLACK_BOT_TOKEN_REAL) && slackRealTarget) {
-      const send = await runSandboxShell(
-        sandbox,
-        `OPENCLAW_NO_COLOR=1 openclaw message send --channel slack --target ${shellQuote(`channel:${slackRealTarget}`)} --message "NemoClaw OpenClaw Slack plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" --json`,
-        {
-          artifactName: "real-slack-send-messaging-providers",
-          redactionValues,
-          timeoutMs: 120_000,
-        },
-      );
-      check(
-        send.exitCode === 0,
-        `M23: Slack openclaw message send succeeded (${outputText(send).slice(0, 200)})`,
-      );
-    } else {
-      check(
-        slackAuthCapture?.tokenMatchesExpected === true &&
-          slackAppCapture?.tokenMatchesExpected === true,
-        "M22/M23: Slack host mock accepted OpenShell-rewritten bot/app tokens",
-      );
-    }
+    check(
+      slackAuthCapture?.tokenMatchesExpected === true &&
+        slackAppCapture?.tokenMatchesExpected === true,
+      "M22/M23: Slack host mock accepted OpenShell-rewritten synthetic bot/app tokens",
+    );
   },
 );

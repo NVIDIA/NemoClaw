@@ -30,6 +30,7 @@ import {
   rawTokenSurfaceProbe,
   runSecondaryCleanup,
   startFakeDockerApi,
+  SYNTHETIC_FAKE_API_CREDENTIALS,
 } from "../live/messaging-providers-helpers.ts";
 import {
   parseInstalledSlackProof,
@@ -782,7 +783,7 @@ describe("messaging provider installed-runtime proofs", () => {
     const calls: string[][] = [];
     const host = fakeDockerHost(OPENSHELL_BRIDGE_ADDRESS, calls);
     const cleanup: Array<() => Promise<void>> = [];
-    const sentinel = "123456:credential-must-not-enter-docker-argv";
+    const sentinel = "test-fake-credential-must-not-enter-docker-argv";
     let credentialFile = "";
 
     try {
@@ -886,21 +887,62 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(cleanup).toHaveLength(0);
   });
 
-  it("uses a synthetic WeChat token even when the host exports one", () => {
-    const previousToken = process.env.WECHAT_BOT_TOKEN;
-    process.env.WECHAT_BOT_TOKEN = "host-wechat-token-must-not-reach-the-fake-api";
-
+  it("uses synthetic credentials for every fake messaging API despite host tokens", () => {
+    vi.stubEnv("TELEGRAM_BOT_TOKEN_REAL", "host-real-telegram-token");
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "host-telegram-token");
+    vi.stubEnv("DISCORD_BOT_TOKEN_REAL", "host-real-discord-token");
+    vi.stubEnv("DISCORD_BOT_TOKEN", "host-discord-token");
+    vi.stubEnv("SLACK_BOT_TOKEN_REAL", "host-real-slack-bot-token");
+    vi.stubEnv("SLACK_BOT_TOKEN", "host-slack-bot-token");
+    vi.stubEnv("SLACK_APP_TOKEN_REAL", "host-real-slack-app-token");
+    vi.stubEnv("SLACK_APP_TOKEN", "host-slack-app-token");
+    vi.stubEnv("WECHAT_BOT_TOKEN", "host-wechat-token");
     try {
       const fixture = messagingEnv();
-      expect(fixture.tokens.wechat).toBe("test-fake-wechat-token-e2e");
-      expect(fixture.env.WECHAT_BOT_TOKEN).toBe("test-fake-wechat-token-e2e");
+      const expected = SYNTHETIC_FAKE_API_CREDENTIALS.messagingProviders;
+      expect(fixture.tokens).toMatchObject(expected);
+      expect(fixture.env).toMatchObject({
+        TELEGRAM_BOT_TOKEN: expected.telegram,
+        DISCORD_BOT_TOKEN: expected.discord,
+        SLACK_BOT_TOKEN: expected.slackBot,
+        SLACK_APP_TOKEN: expected.slackApp,
+        WECHAT_BOT_TOKEN: expected.wechat,
+        NEMOCLAW_SKIP_TELEGRAM_REACHABILITY: "1",
+        NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION: "1",
+      });
+      expect(SYNTHETIC_FAKE_API_CREDENTIALS).toMatchObject({
+        hermesDiscord: "test-fake-discord-token-hermes-e2e",
+        openClawDiscordPairing: "test-fake-discord-pairing-e2e",
+        openClawSlackPairing: {
+          bot: "xoxb-fake-slack-pairing-e2e",
+          app: "xapp-fake-slack-pairing-e2e",
+        },
+      });
     } finally {
-      Reflect.deleteProperty(process.env, "WECHAT_BOT_TOKEN");
-      Object.assign(
-        process.env,
-        previousToken === undefined ? {} : { WECHAT_BOT_TOKEN: previousToken },
-      );
+      vi.unstubAllEnvs();
     }
+  });
+
+  it("rejects a non-synthetic credential before creating fake API resources", async () => {
+    const calls: string[][] = [];
+    const host = fakeDockerHost(OPENSHELL_BRIDGE_ADDRESS, calls);
+    const cleanup: Array<() => Promise<void>> = [];
+
+    await expect(
+      startFakeDockerApi(host, (_name, run) => cleanup.push(run), {
+        kind: "telegram",
+        imageScript: "fake-telegram-api.cjs",
+        containerPrefix: "fake-telegram-real-credential",
+        portEnv: "FAKE_TELEGRAM_API_PORT",
+        portFileEnv: "FAKE_TELEGRAM_API_PORT_FILE",
+        captureFileEnv: "FAKE_TELEGRAM_API_CAPTURE_FILE",
+        credentialEnv: { FAKE_TELEGRAM_API_EXPECTED_TOKEN: "host-real-telegram-token" },
+        redactionValues: [],
+        env: {},
+      }),
+    ).rejects.toThrow(/credentials must use synthetic values/u);
+    expect(calls).toEqual([["docker", "network", "inspect", "openshell-docker"]]);
+    expect(cleanup).toHaveLength(0);
   });
 
   it("publishes independent fake Slack REST and websocket ports from one fixture", async () => {

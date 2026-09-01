@@ -86,6 +86,22 @@ export type MessagingTokens = {
   extraGithub: string;
 };
 
+export const SYNTHETIC_FAKE_API_CREDENTIALS = Object.freeze({
+  messagingProviders: Object.freeze({
+    telegram: "test-fake-telegram-token-e2e",
+    discord: "test-fake-discord-token-e2e",
+    slackBot: "xoxb-fake-slack-token-e2e",
+    slackApp: "xapp-fake-slack-app-token-e2e",
+    wechat: "test-fake-wechat-token-e2e",
+  }),
+  hermesDiscord: "test-fake-discord-token-hermes-e2e",
+  openClawDiscordPairing: "test-fake-discord-pairing-e2e",
+  openClawSlackPairing: Object.freeze({
+    bot: "xoxb-fake-slack-pairing-e2e",
+    app: "xapp-fake-slack-pairing-e2e",
+  }),
+});
+
 export type MessagingEnv = {
   env: NodeJS.ProcessEnv;
   tokens: MessagingTokens;
@@ -189,10 +205,6 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function isFakeSlackToken(value: string): boolean {
-  return /^(xoxb|xapp)-(fake|test)-/.test(value);
-}
-
 export function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
@@ -253,23 +265,8 @@ export function tokenValues(tokens: MessagingTokens): string[] {
 }
 
 export function messagingEnv(): MessagingEnv {
-  const telegram =
-    nonEmpty(process.env.TELEGRAM_BOT_TOKEN_REAL) ??
-    nonEmpty(process.env.TELEGRAM_BOT_TOKEN) ??
-    "test-fake-telegram-token-e2e";
-  const discord =
-    nonEmpty(process.env.DISCORD_BOT_TOKEN_REAL) ??
-    nonEmpty(process.env.DISCORD_BOT_TOKEN) ??
-    "test-fake-discord-token-e2e";
-  const slackBot =
-    nonEmpty(process.env.SLACK_BOT_TOKEN_REAL) ??
-    nonEmpty(process.env.SLACK_BOT_TOKEN) ??
-    "xoxb-fake-slack-token-e2e";
-  const slackApp =
-    nonEmpty(process.env.SLACK_APP_TOKEN_REAL) ??
-    nonEmpty(process.env.SLACK_APP_TOKEN) ??
-    "xapp-fake-slack-app-token-e2e";
-  const wechat = "test-fake-wechat-token-e2e";
+  const { telegram, discord, slackBot, slackApp, wechat } =
+    SYNTHETIC_FAKE_API_CREDENTIALS.messagingProviders;
   const wechatAccount = nonEmpty(process.env.WECHAT_ACCOUNT_ID) ?? "e2e-fake-account-12345";
   const slackIds = nonEmpty(process.env.SLACK_ALLOWED_USERS) ?? "U0AR85ATALW,U09E2ESLACK";
 
@@ -340,6 +337,8 @@ export function messagingEnv(): MessagingEnv {
     TELEGRAM_BOT_TOKEN_AGENT_A: tokens.extraTelegramA,
     TELEGRAM_BOT_TOKEN_AGENT_B: tokens.extraTelegramB,
     GITHUB_TOKEN: tokens.extraGithub,
+    NEMOCLAW_SKIP_TELEGRAM_REACHABILITY: "1",
+    NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION: "1",
   };
 
   if (telegramAllowlistKey === "TELEGRAM_ALLOWED_IDS") {
@@ -356,22 +355,6 @@ export function messagingEnv(): MessagingEnv {
     env.TELEGRAM_CHAT_ID = telegramIds;
   }
 
-  if (
-    !process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY &&
-    !nonEmpty(process.env.TELEGRAM_BOT_TOKEN_REAL) &&
-    telegram.includes("fake")
-  ) {
-    env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
-  }
-  if (
-    !process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION &&
-    !nonEmpty(process.env.SLACK_BOT_TOKEN_REAL) &&
-    !nonEmpty(process.env.SLACK_APP_TOKEN_REAL) &&
-    (isFakeSlackToken(slackBot) || isFakeSlackToken(slackApp))
-  ) {
-    env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
-  }
-
   return { env, tokens, telegramIds, telegramAllowlistKey, slackIds, wechatAccount };
 }
 
@@ -379,7 +362,7 @@ export async function runSecondaryCleanup(run: () => Promise<unknown>): Promise<
   try {
     await run();
   } catch {
-    // Cleanup and diagnostics should not hide the primary failure.
+    // Ignore best-effort cleanup failures; later setup or assertions report the actionable failure.
   }
 }
 
@@ -740,8 +723,11 @@ export async function startFakeDockerApi(
     fs.mkdirSync(credentialDir, { mode: 0o700 });
     fs.writeFileSync(captureFile, "");
     credentialMounts = Object.entries(options.credentialEnv).map(([key, value], index) => {
-      if (!/^[A-Z][A-Z0-9_]*$/u.test(key) || value.length === 0) {
-        throw new Error(`invalid fake ${options.kind} API credential input`);
+      if (
+        !/^[A-Z][A-Z0-9_]*$/u.test(key) ||
+        !/^(?:test-fake-|xoxb-fake-|xapp-fake-)/u.test(value)
+      ) {
+        throw new Error(`fake ${options.kind} API credentials must use synthetic values`);
       }
       const hostPath = path.join(credentialDir, String(index));
       const containerPath = `/run/nemoclaw-fake-api-credentials/${String(index)}`;
