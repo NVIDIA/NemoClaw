@@ -71,6 +71,8 @@ export interface HostLocalManagedInferenceInput extends HostLocalInferenceEndpoi
   readonly gpuDevices: readonly string[];
   /** Environment variable names forwarded from the current process; values are never persisted. */
   readonly environment?: readonly string[];
+  /** Exact non-secret Ollama daemon context window persisted as managed runtime authority. */
+  readonly ollamaContextLength?: number;
   readonly mounts?: readonly HostLocalInferenceMount[];
   readonly sharedMemory?: string;
   readonly ipc?: "host" | "private";
@@ -83,8 +85,7 @@ export interface HostLocalInferenceLegacyEndpointAuthority {
   readonly networkName: string;
 }
 
-export interface HostLocalInferenceProofEndpointAuthority
-  extends HostLocalInferenceLegacyEndpointAuthority {
+export interface HostLocalInferenceProofEndpointAuthority extends HostLocalInferenceLegacyEndpointAuthority {
   readonly networkId: string;
   readonly networkGatewayIp: string;
   /** Qualified host listener used by Portable sandboxes and provider probes. */
@@ -240,9 +241,15 @@ export function hostLocalInferenceRollbackStatus(
 export type HostLocalInferencePublicationState = "unpublished" | "indeterminate" | "published";
 
 /**
- * Operation-scoped startup transaction. The provider returns this only after
- * Ready, GPU, and real inference proofs pass. Central routing commits the
- * receipt after its own route mutation, or restores the exact prior runtime.
+ * Operation-scoped startup transaction. Central routing validates the
+ * provider before its own route mutation, then commits the receipt or restores
+ * the exact prior runtime.
+ *
+ * The experimental published-resume path may return after starting the exact
+ * receipt-owned runtime but before its Ready and GPU proofs. That interval is
+ * deliberately unpublished and rollback-safe: the caller must validate then
+ * finalize, or roll back. If the caller is interrupted, the next recovery
+ * reconciles the same exact running receipt-owned runtime before publication.
  */
 export interface HostLocalInferencePreparedStartup {
   readonly receipt: HostLocalInferenceReceipt;
@@ -250,10 +257,21 @@ export interface HostLocalInferencePreparedStartup {
   readonly rollbackPriorState: HostLocalInferencePriorRuntimeState;
   /** Durable publication state used to decide whether exact rollback is still safe. */
   publicationState(): HostLocalInferencePublicationState;
-  /** Fresh provider-native proof while rollback is still safe. */
+  /**
+   * Revalidate the prepared runtime while rollback is still safe. Published
+   * recovery may defer semantic provider health to its caller's exact managed
+   * route proof; creation and ordinary recovery retain full provider-native
+   * validation.
+   */
   validateBeforeCommit(): HostLocalInferenceReceipt;
   /** Cross only the external publication boundary after validation succeeds. */
   commit(): HostLocalInferenceReceipt;
+  /**
+   * Finalize an exact published-runtime resume without writing the already
+   * published receipt again. The provider keeps rollback available until the
+   * caller's final published-authority assertion succeeds.
+   */
+  finalizePublishedResume?(assertPublishedAuthority: () => void): HostLocalInferenceReceipt;
   rollback(): HostLocalInferenceStartupRollbackResult;
 }
 
@@ -303,6 +321,8 @@ export interface HostLocalInferenceOperation {
   readonly providerId: string;
   readonly engine: ContainerEngine;
   readonly bindingSha256: string;
+  /** Recheck the pinned executable and endpoint without repeating full provider qualification. */
+  readonly assertTransactionCurrent?: () => void;
   readonly assertAuthority: () => void;
   readonly spawn: HostLocalInferenceCommandSpawner;
   readonly createLlamaCppLifecycle: (
@@ -337,6 +357,29 @@ export interface HostLocalInferenceRuntime {
     receipt: HostLocalInferenceReceipt,
     writer: HostLocalInferenceReceiptWriter,
   ): HostLocalInferencePreparedStartup;
+  /** Reinspect a failed published resume using only exact rollback-safe authority. */
+  inspectPublishedRecoveryRestoration?(
+    receipt: HostLocalInferenceReceipt,
+  ): HostLocalManagedInferenceInspection;
+  /** Reinspect one published recovery through its retained transaction authority. */
+  inspectPublishedRecoveryCurrent?(
+    receipt: HostLocalInferenceReceipt,
+  ): HostLocalManagedInferenceInspection;
+  /**
+   * Admit one exact published runtime for connect recovery through the
+   * operation authority already qualified by the lifecycle owner. This path
+   * returns a detached transaction snapshot and never creates a second
+   * operation or falls back to generic destroy authority.
+   */
+  preparePublishedRecoveryEntry?(
+    receipt: HostLocalInferenceReceipt,
+  ): HostLocalManagedInferenceInspection;
+  /**
+   * Re-prove exact published-runtime authority and GPU identity before the
+   * caller performs its final managed route health proof. This path never
+   * replaces creation-time or explicit deep inference qualification.
+   */
+  validatePublishedResume?(receipt: HostLocalInferenceReceipt): HostLocalInferenceReceipt;
   inspectManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection;
   stopManaged(receipt: HostLocalInferenceReceipt): HostLocalManagedInferenceInspection;
   /**

@@ -40,11 +40,11 @@ This polling is the planned extension, and the correlation module already accept
   Pass `--inventory <file>` to use an explicit `{name, version}` inventory for hermetic offline runs.
   A malformed entry fails the run instead of silently reducing the inventory.
 - Confidence is encoded instead of inferred.
-  Only an exact npm ecosystem, package name, and parseable semantic-version range match yields `confidence: "exact"` and `action: "investigate"`.
+  Only a match on the npm ecosystem, package name, and parseable semantic-version range yields `confidence: "exact"` and `action: "investigate"`.
   Name collisions from non-npm, CPE-derived records and unparseable ranges yield `confidence: "ambiguous"` and `action: "informational"`.
   Ambiguous matches never block or mutate a release.
 - The reviewed npm audit gate in `scripts/audit-reviewed-npm-graph.mts` remains enabled in CI.
-  It is authoritative for exact npm package and version-range decisions.
+  It is authoritative for npm package and version-range decisions.
   The early-warning path triggers only investigation and rescanning.
 
 `scripts/advisory-early-warning-scan.mts` is the CLI over the module.
@@ -140,11 +140,11 @@ The #7338 acceptance criteria classify each finding as a reviewed-mapping delay,
 - `tar` (CVE-2026-59873, GHSA-23hp-3jrh-7fpw): **Unproven because evidence is missing.**
   The June 27 upstream disclosure-to-detection gap is real.
   A July 21 Trivy scan reported vulnerable `tar@7.5.11` and `7.5.15`, and the reviewed record dates to July 20.
-  No comparable pre-review scan was retained, so the exact trigger is unproven.
+  No comparable pre-review scan was retained, so the trigger is unproven.
 
 ### Q2 Ideal Trigger and Current Coverage
 
-The ideal trigger is the earliest public upstream disclosure, evaluated against the exact dependency inventory on a schedule that does not depend on how far any one build progressed.
+The ideal trigger is the earliest public upstream disclosure, evaluated against the dependency inventory on a schedule that does not depend on how far any one build progressed.
 Mapping each demonstrated gap to a mechanism:
 
 - Reviewed-mapping delay (`fast-uri` and plausibly the Jaeger propagator): The correlation path reads unreviewed NVD-sourced records alongside reviewed and malware records from the supplied advisory file.

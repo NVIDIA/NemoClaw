@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../../messaging/provider-profile";
 import {
+  attachProvidersAfterSandboxCreation,
   publishAttachedProvidersBeforeDockerSandboxCreation,
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
@@ -116,6 +117,26 @@ function prepareProviders(
 }
 
 describe("sandbox provider preparation", () => {
+  it("refuses name-addressed deferred provider attachment before mutation (#9833)", () => {
+    expect(() =>
+      attachProvidersAfterSandboxCreation({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        providerNames: ["inference", "alpha-telegram"],
+      }),
+    ).toThrow("OpenShell cannot attach providers to the immutable identity of sandbox 'alpha'");
+  });
+
+  it("allows an empty deferred attachment set without a mutable-name operation (#9833)", () => {
+    expect(() =>
+      attachProvidersAfterSandboxCreation({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        providerNames: [],
+      }),
+    ).not.toThrow();
+  });
+
   it("confirms an exact messaging binding before and after publication (#9875)", () => {
     const harness = createHarness();
 

@@ -119,9 +119,20 @@ describe("nemoclaw-start safe tmp file creation", () => {
   });
 
   it.each([
-    ["root parent after CAP_DAC_OVERRIDE drop", "0", "3|/tmp/auto-pair.log 600 root:root"],
-    ["non-root parent", "998", "2|/tmp/auto-pair.log 600"],
-  ])("creates an auto-pair log for the %s", (_label, uid, expected) => {
+    [
+      "root parent after CAP_DAC_OVERRIDE drop",
+      "0",
+      [
+        "3|/tmp/auto-pair.log 600 root:root",
+        "3|/tmp/nemoclaw-auto-pair-status.json 600 sandbox:sandbox",
+      ],
+    ],
+    [
+      "non-root parent",
+      "998",
+      ["2|/tmp/auto-pair.log 600", "2|/tmp/nemoclaw-auto-pair-status.json 600"],
+    ],
+  ])("creates separate auto-pair log and status files for the %s", (_label, uid, expected) => {
     const prepareAutoPairLog = extractShellFunctionFromSource(src, "prepare_auto_pair_log");
     const result = spawnSync(
       "bash",
@@ -139,7 +150,7 @@ describe("nemoclaw-start safe tmp file creation", () => {
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe(expected);
+    expect(result.stdout.trim().split("\n")).toEqual(expected);
   });
 
   it("creates fixed runtime paths through the safe helper with the requested modes", () => {

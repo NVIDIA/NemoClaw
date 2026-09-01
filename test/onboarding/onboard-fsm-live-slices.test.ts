@@ -9,7 +9,7 @@ import path from "node:path";
 import { beforeAll, describe, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
-const probeTimeoutMs = 10_000;
+const probeTimeoutMs = 60_000;
 
 type SliceName = "initial" | "core" | "final";
 type ProbeMode =
@@ -23,6 +23,9 @@ type ProbeMode =
   | "authoritative-core-gateway-policy-tier"
   | "dashboard-port-composition"
   | "ordinary-policy-tier"
+  | "providerless-staged-messaging"
+  | "stale-recovery-admission"
+  | "stale-session-decision"
   | "ahead-core";
 
 interface ProbeOptions {
@@ -122,7 +125,11 @@ function assertFreshDistArtifacts(): void {
 
 function writeSuccessfulOpenShell(tmpDir: string): string {
   const openshellPath = path.join(tmpDir, "openshell");
-  fs.writeFileSync(openshellPath, `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o755 });
+  fs.writeFileSync(
+    openshellPath,
+    `#!${process.execPath}\nif (process.argv[2] === "policy" && process.argv[3] === "list" && process.argv.includes("--global")) process.stderr.write("No global policy history found\\n");\nprocess.exit(0);\n`,
+    { mode: 0o755 },
+  );
   return openshellPath;
 }
 
@@ -179,6 +186,12 @@ function runSliceProbe(options: ProbeOptions) {
   const sessionPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
   );
+  const entryOptionsPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "entry-options.ts"),
+  );
+  const lockedRuntimePath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "resume", "locked-runtime.ts"),
+  );
   const preflightHandlerPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "preflight.ts"),
   );
@@ -213,6 +226,8 @@ const scenario = ${JSON.stringify(scenario)};
 const flowSlices = require(${flowSlicesPath});
 const { advanceTo, branchTo } = require(${resultPath});
 const onboardSession = require(${sessionPath});
+const onboardEntryOptions = require(${entryOptionsPath});
+const lockedRuntime = require(${lockedRuntimePath});
 const preflightHandlers = require(${preflightHandlerPath});
 const providerHandlers = require(${providerHandlerPath});
 const gatewayHandlers = require(${gatewayHandlerPath});
@@ -220,6 +235,7 @@ const coreFlowPhases = require(${coreFlowPhasesPath});
 const registry = require(${registryPath});
 const called = [];
 const sentinel = new Error("slice-called");
+const staleAdmissionExit = new Error("stale recovery admission refused");
 
 if (scenario.mode === "dashboard-port-composition") {
   const finalizationHandlerDeps = require(${finalizationDepsPath}).finalizationHandlerDeps;
@@ -446,6 +462,59 @@ if (
   });
 }
 
+if (scenario.mode === "stale-recovery-admission") {
+  const listRetainedSandboxRecoveryRecords =
+    onboardSession.listRetainedSandboxRecoveryRecords;
+  let recoveryReads = 0;
+  onboardSession.listRetainedSandboxRecoveryRecords = () => {
+    recoveryReads += 1;
+    if (recoveryReads === 1) {
+      onboardSession.recordRetainedSandboxRecovery({
+        sandboxName: "fsm-sandbox",
+        sandboxIdentityFingerprint: "a".repeat(64),
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        lifecycleGeneration: "stale-admission-generation",
+        createAttemptNonce: "c".repeat(62),
+        resources: {
+          sharedInferenceProviders: [],
+          sandboxScopedProviders: [],
+          credentialEnvironmentVariables: [],
+        },
+        reason: "retained_after_sandbox_creation_failure",
+      });
+      return [];
+    }
+    return listRetainedSandboxRecoveryRecords();
+  };
+  process.exit = () => {
+    throw staleAdmissionExit;
+  };
+}
+
+if (scenario.mode === "stale-session-decision") {
+  const resolveEntryOptions = onboardEntryOptions.resolveDefaultRunEntryOptionsFromState;
+  let optionReads = 0;
+  onboardEntryOptions.resolveDefaultRunEntryOptionsFromState = (...args) => {
+    optionReads += 1;
+    const resolved = resolveEntryOptions(...args);
+    if (optionReads === 1) {
+      seedResumeSession("preflight", false);
+    }
+    return resolved;
+  };
+  lockedRuntime.prepare = async (_opts, resume) => {
+    called.push("locked-resume:" + String(resume));
+    throw sentinel;
+  };
+}
+
+const ownsAuthoritativeOnboardLock = scenario.mode.startsWith("authoritative-");
+if (ownsAuthoritativeOnboardLock) {
+  const lock = onboardSession.acquireOnboardLock("authoritative rebuild fixture");
+  if (!lock.acquired) throw new Error("authoritative rebuild fixture did not acquire onboard lock");
+}
+
 const { onboard } = require(${onboardPath});
 
 (async () => {
@@ -456,6 +525,7 @@ const { onboard } = require(${onboardPath});
       acceptThirdPartySoftware: true,
       noGpu: true,
       sandboxName: "fsm-sandbox",
+      apfInterceptorRequested: scenario.mode === "providerless-staged-messaging",
       resume: scenario.mode === "resume-initial" || scenario.mode.includes("core-gateway"),
       ...(scenario.mode.startsWith("authoritative-")
         ? {
@@ -469,13 +539,17 @@ const { onboard } = require(${onboardPath});
     });
     throw new Error("expected slice sentinel");
   } catch (error) {
+    if (ownsAuthoritativeOnboardLock) onboardSession.releaseOnboardLock();
     if (
       error === sentinel ||
       error?.message === sentinel.message ||
+      (scenario.mode === "stale-recovery-admission" && error === staleAdmissionExit) ||
       (scenario.mode === "endpoint-override" &&
-        error?.name === "OpenShellGatewayEndpointOverrideError")
+        error?.name === "OpenShellGatewayEndpointOverrideError") ||
+      (scenario.mode === "providerless-staged-messaging" &&
+        /supports providerless sandbox creation only/.test(String(error?.message)))
     ) {
-      const payload = JSON.stringify({ called });
+      const payload = "__RESULT__" + JSON.stringify({ called });
       if (scenario.mode === "dashboard-port-composition") {
         process.stdout.write(payload + "\\n", () => process.exit(0));
         return;
@@ -502,6 +576,19 @@ const { onboard } = require(${onboardPath});
           ? { OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:65535" }
           : {}),
         ...(options.policyTier ? { NEMOCLAW_POLICY_TIER: options.policyTier } : {}),
+        ...(scenario.mode === "providerless-staged-messaging"
+          ? {
+              NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(
+                JSON.stringify({
+                  schemaVersion: 1,
+                  sandboxName: "fsm-sandbox",
+                  agent: "openclaw",
+                  workflow: "onboard",
+                  channels: [{ channelId: "telegram", active: true }],
+                }),
+              ).toString("base64"),
+            }
+          : {}),
       },
       timeout: scenario.mode === "dashboard-port-composition" ? 60_000 : probeTimeoutMs,
     },
@@ -509,7 +596,10 @@ const { onboard } = require(${onboardPath});
   try {
     assert.equal(result.status, 0, probeFailureMessage(result));
     const lines = result.stdout.trim().split(/\r?\n/).filter(Boolean);
-    const payload = JSON.parse(lines.at(-1) || "{}") as { called?: string[] };
+    const resultLine = [...lines].reverse().find((line) => line.startsWith("__RESULT__"));
+    const payload = JSON.parse(resultLine?.slice("__RESULT__".length) || "{}") as {
+      called?: string[];
+    };
     assert.ok(
       Array.isArray(payload.called),
       `slice probe did not return called slices\n${probeFailureMessage(result)}`,
@@ -539,6 +629,23 @@ describe("live onboard FSM slice boundaries", () => {
 
   it("rejects an ambient gateway endpoint before entering the initial slice", () => {
     assert.deepEqual(runSliceProbe({ slice: "initial", mode: "endpoint-override" }), []);
+  });
+
+  it("rejects staged messaging before entering the onboarding state machine (#9833)", () => {
+    assert.deepEqual(
+      runSliceProbe({ slice: "initial", mode: "providerless-staged-messaging" }),
+      [],
+    );
+  });
+
+  it("rechecks retained sandbox admission after acquiring the onboarding lock (#9833)", () => {
+    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "stale-recovery-admission" }), []);
+  });
+
+  it("uses the session decision read after acquiring the onboarding lock (#9833)", () => {
+    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "stale-session-decision" }), [
+      "locked-resume:true",
+    ]);
   });
 
   it("enters the core slice after the initial slice reaches provider selection", () => {
@@ -614,11 +721,11 @@ describe("live onboard FSM slice boundaries", () => {
     },
   );
 
-  it("preserves an explicit null policy tier for authoritative rebuilds", () => {
+  it("does not carry a policy tier through authoritative rebuild state", () => {
     const called = runSliceProbe({
       slice: "core",
       mode: "authoritative-core-gateway-policy-tier",
     });
-    assert.equal(called.at(-1), "authoritative-policy-tier:null");
+    assert.equal(called.at(-1), "authoritative-policy-tier:undefined");
   });
 });

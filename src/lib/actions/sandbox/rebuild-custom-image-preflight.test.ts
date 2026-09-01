@@ -316,7 +316,7 @@ describe("preflightRebuildImage", () => {
             isolatedConfig = String(options.env?.DOCKER_CONFIG);
             expect(isolatedConfig).toContain("nemoclaw-wsl-buildkit-docker-config-");
             expect(isolatedConfig).not.toBe(dockerConfig);
-            expect(options.env?.DOCKER_HOST).toBe("unix:///selected-docker.sock");
+            expect(options.env?.DOCKER_HOST).toBeUndefined();
             expect(options.env?.DOCKER_CONTEXT).toBeUndefined();
             expect(options.env?.DOCKER_BUILDKIT).toBe("1");
             expect(
@@ -327,11 +327,10 @@ describe("preflightRebuildImage", () => {
           removeImage: vi.fn(() => ({ status: 0 }) as never),
           env: {
             DOCKER_CONFIG: dockerConfig,
-            DOCKER_CONTEXT: "ambient-remote",
-            DOCKER_HOST: "unix:///selected-docker.sock",
             WSL_DISTRO_NAME: "Ubuntu",
           },
           credentialHelperResponds,
+          dockerContextIsDefault: () => true,
           isWslHost: true,
         }),
       );
@@ -377,8 +376,12 @@ describe("preflightRebuildImage", () => {
         [
           "#!/bin/sh",
           "set -eu",
+          'if [ "$1" = "context" ] && [ "$2" = "show" ]; then',
+          "  printf 'default\\n'",
+          "  exit 0",
+          "fi",
           'if [ "$1" = "build" ]; then',
-          '  [ "$DOCKER_HOST" = "unix:///selected-docker.sock" ]',
+          '  [ -z "${DOCKER_HOST+x}" ]',
           '  [ -z "${DOCKER_CONTEXT+x}" ]',
           '  [ -n "${DOCKER_CONFIG:-}" ]',
           `  [ "$DOCKER_CONFIG" != "${dockerConfig}" ]`,
@@ -389,10 +392,7 @@ describe("preflightRebuildImage", () => {
         ].join("\n"),
         { mode: 0o700 },
       );
-      vi.stubEnv(
-        "PATH",
-        `${executableRoot}${path.delimiter}${String(process.env.PATH ?? "")}`,
-      );
+      vi.stubEnv("PATH", `${executableRoot}${path.delimiter}${String(process.env.PATH ?? "")}`);
 
       try {
         const result = successful(
@@ -410,8 +410,6 @@ describe("preflightRebuildImage", () => {
             })),
             env: {
               DOCKER_CONFIG: dockerConfig,
-              DOCKER_CONTEXT: "ambient-remote",
-              DOCKER_HOST: "unix:///selected-docker.sock",
               WSL_DISTRO_NAME: "Ubuntu",
             },
             isWslHost: true,
@@ -625,7 +623,14 @@ describe("finalizePreparedRebuildImageMessagingPlan", () => {
       const imagePlan = JSON.parse(Buffer.from(encodedPlan ?? "", "base64").toString("utf8")) as {
         agentRender: Array<{ renderId?: string; lines?: string[] }>;
       };
-      expect(imagePlan.agentRender[0]).toMatchObject({
+      // Locate by render id rather than by position: whether a channel
+      // contributes an env render at all depends on its inputs, so the index of
+      // the preserved-home-channels entry is not a contract.
+      expect(
+        imagePlan.agentRender.find(
+          (render) => render.renderId === "hermes-preserved-home-channels",
+        ),
+      ).toMatchObject({
         renderId: "hermes-preserved-home-channels",
         lines: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID=123.456"],
       });

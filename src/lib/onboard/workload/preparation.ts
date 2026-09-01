@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { getBuildIdentity } from "../../core/version";
 import {
   ManagedImageCatalogUnavailableError,
@@ -147,24 +148,16 @@ export function liveE2eManagedImageCatalog(
 }
 
 function readExactManagedImageCatalog(catalogPath: string): ManagedImageContractCatalog {
-  let descriptor: number | null = null;
+  let catalog: OpenRegularFile | null = null;
   try {
-    descriptor = fs.openSync(catalogPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-    const metadata = fs.fstatSync(descriptor);
-    const pathMetadata = fs.lstatSync(catalogPath);
-    if (
-      pathMetadata.isSymbolicLink() ||
-      !metadata.isFile() ||
-      metadata.dev !== pathMetadata.dev ||
-      metadata.ino !== pathMetadata.ino ||
-      metadata.size < 2 ||
-      metadata.size > 64 * 1024
-    ) {
+    catalog = openRegularFileNoFollow(catalogPath);
+    const metadata = catalog.stat();
+    if (metadata.size < 2 || metadata.size > 64 * 1024) {
       throw new SandboxWorkloadPreparationError(
         "managed image catalog file must be a bounded regular file",
       );
     }
-    const parsed: unknown = JSON.parse(fs.readFileSync(descriptor, "utf8"));
+    const parsed: unknown = JSON.parse(catalog.readBytes(64 * 1024).toString("utf8"));
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       throw new SandboxWorkloadPreparationError(
         "managed image catalog file must contain an object",
@@ -182,7 +175,7 @@ function readExactManagedImageCatalog(catalogPath: string): ManagedImageContract
       cause: error,
     });
   } finally {
-    if (descriptor !== null) fs.closeSync(descriptor);
+    catalog?.close();
   }
 }
 
@@ -286,7 +279,7 @@ function requireCompleteManagedImageCatalog(
   }
   if (expectedRevision !== null && cohortRevision !== expectedRevision) {
     throw new SandboxWorkloadPreparationError(
-      "managed image catalog source revision does not match the live E2E candidate revision",
+      "managed image catalog source revision does not match the trusted catalog revision",
     );
   }
   return { release: cohortRelease!, revision: cohortRevision! };
@@ -373,6 +366,22 @@ export async function prepareSandboxWorkloadSource(
     );
   }
 
+  const trustedCatalogRevision = input.expectedCatalogRevision ?? input.catalogRevision ?? null;
+  if (
+    input.expectedCatalogRevision &&
+    input.catalogRevision &&
+    input.expectedCatalogRevision !== input.catalogRevision
+  ) {
+    throw new SandboxWorkloadPreparationError(
+      "managed image catalog has conflicting trusted revision authorities",
+    );
+  }
+  if (trustedCatalogRevision !== null && !/^[0-9a-f]{40}$/u.test(trustedCatalogRevision)) {
+    throw new SandboxWorkloadPreparationError(
+      "managed image catalog trusted revision must be a lowercase 40-character SHA",
+    );
+  }
+
   let release: string;
   try {
     release = normalizeManagedImageRelease(input.version);
@@ -420,9 +429,6 @@ export async function prepareSandboxWorkloadSource(
       acceptedCandidateContract,
     );
   } else {
-    const trustedCatalogRevision = input.catalogPath
-      ? (input.expectedCatalogRevision ?? null)
-      : (input.catalogRevision ?? null);
     const catalogIdentity = requireCompleteManagedImageCatalog(
       catalog,
       release,

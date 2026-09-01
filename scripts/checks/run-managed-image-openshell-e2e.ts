@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveAgent } from "../../src/lib/agent/onboard.ts";
 import { parseOpenShellSandboxId } from "../../src/lib/adapters/openshell/sandbox-identity.ts";
+import { createCliOpenShellSandboxObserverFromRunner } from "../../src/lib/adapters/openshell/sandbox-observer-cli.ts";
 import { isValidName, NAME_ALLOWED_FORMAT } from "../../src/lib/name-validation.ts";
 import {
   type StopHostGatewayResult,
@@ -34,8 +35,8 @@ import {
 import { encodeManagedStartupProfile } from "../../src/lib/onboard/managed-startup/profile.ts";
 import { createManagedStartupRootApplyRequest } from "../../src/lib/onboard/managed-startup/root-apply.ts";
 import type {
-  RuntimeProviderBootstrapSurface,
   RuntimeProviderBundle,
+  RuntimeProviderManagedImageBootstrapSurface,
 } from "../../src/lib/onboard/runtime-provider/contract.ts";
 import { createDockerRuntimeProviderBundle } from "../../src/lib/onboard/runtime-provider/docker.ts";
 import { parseLiveSandboxNames } from "../../src/lib/runtime-recovery.ts";
@@ -67,6 +68,7 @@ import {
 
 const MANAGED_AGENTS = new Set<ShippedManagedImageAgent>(SHIPPED_MANAGED_IMAGE_AGENTS);
 const MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
+const GATEWAY_NAME = "nemoclaw";
 const GATEWAY_PORT = 8080;
 const IMMUTABLE_MANIFEST_REFERENCE_RE = /^([^\s@]+)@(sha256:[a-f0-9]{64})$/u;
 const MANAGED_AGENT_BASE_POLICIES: Record<ShippedManagedImageAgent, readonly string[]> = {
@@ -904,7 +906,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
 
     onboard = resolveManagedImageOnboardModule(await import("../../src/lib/onboard.ts"));
     await onboard.startGatewayForRecovery({
-      gatewayName: "nemoclaw",
+      gatewayName: GATEWAY_NAME,
       gatewayPort: GATEWAY_PORT,
     });
     configureLocalInferenceRoute(onboard, input, process.env);
@@ -1009,7 +1011,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
       ...createDockerRuntimeProviderBundle(),
       bootstrap: createDockerManagedBootstrapSurface("docker"),
     } as RuntimeProviderBundle & {
-      readonly bootstrap: Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
+      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
     };
     let flow: Awaited<ReturnType<typeof runSandboxGpuCreateFlow>> | null = null;
     try {
@@ -1024,6 +1026,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           initialGpuRoute: gpuEnabled ? "native" : "none",
           compatibilityPolicyPath: null,
           dockerDriverGateway: true,
+          gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
           sandboxReadyTimeoutSecs: 240,
           createArgv: launch.createArgv,
@@ -1047,6 +1050,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
         {
           runOpenshell: onboard.runOpenshell,
           runCaptureOpenshell: onboard.runCaptureOpenshell,
+          sandboxObserver: createCliOpenShellSandboxObserverFromRunner(onboard.runOpenshell),
           sleep: onboard.sleepSeconds,
           openshellArgv: onboard.openshellArgv,
           verifyDirectSandboxGpu,
@@ -1096,6 +1100,11 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
     if (!failureInjectionQualified) {
       if (!flow) {
         throw new Error("production managed-bootstrap flow returned no result");
+      }
+      if (flow.origin !== "created") {
+        throw new Error(
+          "production managed-bootstrap flow unexpectedly resumed an existing sandbox",
+        );
       }
       const expectedRoute = gpuEnabled ? "native" : "none";
       if (flow.route !== expectedRoute || flow.createResult.status !== 0) {

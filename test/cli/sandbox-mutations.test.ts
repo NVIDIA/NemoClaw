@@ -5,45 +5,49 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, test as it } from "../helpers/owned-test-resources";
+import {
+  livePolicyMetadata,
+  managedSandboxEntry,
+  SANDBOX_ID,
+} from "../helpers/live-policy-fixture";
 
 import { runWithEnv, runWithInput, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
-function readSandboxPolicies(home: string, sandboxName = "alpha"): string[] {
-  const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
-  const registry = JSON.parse(fs.readFileSync(registryPath, "utf8")) as {
-    sandboxes?: Record<string, { policies?: unknown }>;
-  };
-  const policies = registry.sandboxes?.[sandboxName]?.policies;
-  return Array.isArray(policies)
-    ? policies.filter((policy): policy is string => typeof policy === "string")
-    : [];
+function readOpenShellPolicy(home: string): string {
+  return fs.readFileSync(path.join(home, "applied-policy.yaml"), "utf8");
 }
 
 function writePolicyMutationOpenshellStub(home: string): string {
   const localBin = path.join(home, "bin");
   fs.mkdirSync(localBin, { recursive: true });
   const openshell = path.join(localBin, "openshell");
+  const appliedPolicy = path.join(home, "applied-policy.yaml");
+  fs.writeFileSync(appliedPolicy, "version: 1\nnetwork_policies: {}\n", { mode: 0o600 });
   fs.writeFileSync(
     openshell,
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
+      'if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then',
+      `  printf 'Name: alpha\\nId: ${SANDBOX_ID}\\nPhase: Ready\\n'`,
+      "  exit 0",
+      "fi",
       'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
       '  if [[ " $* " == *" --output json "* ]]; then',
-      '    sandbox="${@: -1}"',
-      '    printf \'{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{}}\\n\' "$sandbox"',
+      `    printf '%s\\n' ${JSON.stringify(livePolicyMetadata("alpha"))}`,
       "    exit 0",
       "  fi",
-      "  cat <<'YAML'",
-      "version: 1",
-      "network_policies:",
-      "  github:",
-      "    name: github",
-      "    host: github.com",
-      "YAML",
+      `  cat ${JSON.stringify(appliedPolicy)}`,
       "  exit 0",
       "fi",
       'if [ "$1" = "policy" ] && [ "$2" = "set" ]; then',
+      '  while [ "$#" -gt 0 ]; do',
+      '    if [ "$1" = "--policy" ]; then',
+      `      cp "$2" ${JSON.stringify(appliedPolicy)}`,
+      "      break",
+      "    fi",
+      "    shift",
+      "  done",
       "  exit 0",
       "fi",
       'printf "unexpected openshell args: %s\\n" "$*" >&2',
@@ -121,7 +125,7 @@ describe("CLI dispatch", () => {
 
   it("keeps public policy-add/remove built-in mutation routes", ({ testHome }) => {
     const { home } = testHome;
-    writeSandboxRegistry(home);
+    writeSandboxRegistry(home, managedSandboxEntry("alpha"));
     const openshell = writePolicyMutationOpenshellStub(home);
 
     const add = runWithEnv(
@@ -132,7 +136,7 @@ describe("CLI dispatch", () => {
     );
     expect(add.code).toBe(0);
     expect(add.out).toContain("Applied preset: github");
-    expect(readSandboxPolicies(home)).toContain("github");
+    expect(readOpenShellPolicy(home)).toContain("github:");
 
     const remove = runWithEnv(
       "alpha policy-remove github -y",
@@ -142,7 +146,7 @@ describe("CLI dispatch", () => {
     );
     expect(remove.code).toBe(0);
     expect(remove.out).toContain("Removed preset: github");
-    expect(readSandboxPolicies(home)).not.toContain("github");
+    expect(readOpenShellPolicy(home)).not.toContain("github:");
   });
 
   it("keeps public policy-add non-interactive missing-preset failure before mutation", ({
@@ -162,7 +166,7 @@ describe("CLI dispatch", () => {
 
     expect(result.code).toBe(1);
     expect(result.out).toContain("Non-interactive mode requires a preset name.");
-    expect(readSandboxPolicies(home)).toEqual([]);
+    expect(readOpenShellPolicy(home)).toBe("version: 1\nnetwork_policies: {}\n");
   });
 
   it("keeps public policy-add missing-preset failure when stdin contains probe output", ({
@@ -184,7 +188,7 @@ describe("CLI dispatch", () => {
     expect(result.code).toBe(1);
     expect(result.out).toContain("Non-interactive mode requires a preset name.");
     expect(result.out).not.toContain("Unknown preset '/usr/bin/dmesg");
-    expect(readSandboxPolicies(home)).toEqual([]);
+    expect(readOpenShellPolicy(home)).toBe("version: 1\nnetwork_policies: {}\n");
   });
 
   it("sandbox channels start rejects a sandbox missing from the registry (#4584)", ({

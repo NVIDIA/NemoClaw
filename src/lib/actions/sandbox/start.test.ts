@@ -222,6 +222,7 @@ describe("startSandbox", () => {
     async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-readiness-"));
       vi.stubEnv("HOME", home);
+      vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
       const listOutputs = ["my-sandbox Error", "my-sandbox Provisioning", "my-sandbox Ready"];
       const listSandboxes = vi.fn<OpenShellSandboxObserver["listSandboxes"]>(async () => {
         const output = listOutputs.shift() ?? "my-sandbox Ready";

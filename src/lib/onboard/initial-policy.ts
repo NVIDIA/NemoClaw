@@ -10,10 +10,6 @@ import { isObjectRecord } from "../core/json-types";
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import * as policies from "../policy";
 import {
-  applyBaselineExclusions,
-  type BaselineExclusionRequest,
-} from "../policy/baseline-exclusion";
-import {
   collectPlatformIdentity,
   type PlatformIdentity,
 } from "../readiness/platform-qualification";
@@ -36,6 +32,8 @@ import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 export type InitialSandboxPolicy = {
   policyPath: string;
   appliedPresets: string[];
+  /** Exact provider names referenced by credential-bound endpoints in this policy. */
+  credentialBindingProviders?: string[];
   sourceBytes?: Buffer;
   cleanup?: () => boolean;
   cleanupExact?: () => boolean;
@@ -324,7 +322,6 @@ type InitialPolicyOptions = {
   agentName?: string | null;
   sandboxName?: string;
   policyTier?: string | null;
-  baselineExclusions?: readonly BaselineExclusionRequest[];
 };
 
 type PolicyMaterializer = (content: string, prefix: string) => InitialSandboxPolicy;
@@ -359,6 +356,32 @@ export function getNetworkPolicyNames(policyContent: string): Set<string> | null
   } catch {
     return null;
   }
+}
+
+export function getCredentialBindingProviders(policyContent: string): string[] {
+  const parsed = YAML.parse(policyContent);
+  if (!isObjectRecord(parsed) || !isObjectRecord(parsed.network_policies)) return [];
+
+  const providers = new Set<string>();
+  for (const policy of Object.values(parsed.network_policies)) {
+    if (!isObjectRecord(policy) || !Array.isArray(policy.endpoints)) continue;
+    for (const endpoint of policy.endpoints) {
+      if (!isObjectRecord(endpoint) || endpoint.credential_binding === undefined) continue;
+      const binding = endpoint.credential_binding;
+      if (
+        !isObjectRecord(binding) ||
+        typeof binding.provider !== "string" ||
+        binding.provider.length === 0 ||
+        binding.provider.trim() !== binding.provider
+      ) {
+        throw new Error(
+          "Cannot prepare sandbox create policy; a credential binding has no exact provider name.",
+        );
+      }
+      providers.add(binding.provider);
+    }
+  }
+  return [...providers];
 }
 
 function filterHermesInactiveMessagingPolicies(
@@ -444,12 +467,16 @@ function resolveInitialSandboxCreatePolicy(
             .every(Boolean)
       : undefined;
   const exactCleanupResult = () => (exactCleanup ? { cleanupExact: buildExactCleanup() } : {});
-  const result = (appliedPresets: string[]): InitialSandboxPolicy => ({
-    ...effectivePolicy,
-    appliedPresets,
-    cleanup: buildCleanup(),
-    ...exactCleanupResult(),
-  });
+  const result = (appliedPresets: string[]): InitialSandboxPolicy => {
+    const credentialBindingProviders = getCredentialBindingProviders(basePolicy);
+    return {
+      ...effectivePolicy,
+      appliedPresets,
+      ...(credentialBindingProviders.length > 0 ? { credentialBindingProviders } : {}),
+      cleanup: buildCleanup(),
+      ...exactCleanupResult(),
+    };
+  };
   const cleanupOnError = () => {
     for (const cleanup of [...cleanupFns].reverse()) {
       try {
@@ -498,21 +525,6 @@ function resolveInitialSandboxCreatePolicy(
       }
     }
 
-    // Replay operator baseline exclusions before presets merge on top. Fails
-    // closed via applyBaselineExclusions when a recorded approval no longer
-    // matches the current baseline, so a changed release forces re-review.
-    const baselineExclusions = options.baselineExclusions ?? [];
-    if (baselineExclusions.length > 0) {
-      const excluded = applyBaselineExclusions(
-        basePolicy,
-        baselineExclusions,
-        policyAgent ?? "openclaw",
-      );
-      if (excluded.excludedKeys.length > 0) {
-        adoptPolicy(excluded.content, "nemoclaw-agent-policy");
-      }
-    }
-
     const basePolicyNames = getNetworkPolicyNames(basePolicy);
     if (basePolicyNames === null) {
       return result([]);
@@ -538,7 +550,7 @@ function resolveInitialSandboxCreatePolicy(
     const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets, {
       agent: policyAgent,
       sandboxName: options.sandboxName,
-      excludedBaselineKeys: baselineExclusions.map((exclusion) => exclusion.key),
+      credentialBoundMessagingChannels: activeMessagingChannels,
     });
     if (mergedPolicy.missingPresets.length > 0) {
       throw new Error(
@@ -598,23 +610,25 @@ export function readHermesPortableInitialPolicySource(basePolicyPath: string): s
   }
   const parentPath = path.dirname(basePolicyPath);
   const parentBefore = fs.lstatSync(parentPath, { bigint: true });
-  const named = fs.lstatSync(basePolicyPath, { bigint: true });
   if (
     !parentBefore.isDirectory() ||
     parentBefore.isSymbolicLink() ||
     (parentBefore.uid !== 0n && parentBefore.uid !== BigInt(uid)) ||
-    !hasSafeHermesPortablePolicySourceMode(parentBefore, uid, gid, 0o775n) ||
-    !named.isFile() ||
-    named.isSymbolicLink()
+    !hasSafeHermesPortablePolicySourceMode(parentBefore, uid, gid, 0o775n)
   ) {
     throw new Error("Hermes portable policy source authority is unsafe.");
   }
-  const descriptor = fs.openSync(
-    basePolicyPath,
-    fs.constants.O_RDONLY |
-      fs.constants.O_NOFOLLOW |
-      (typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0),
-  );
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(
+      basePolicyPath,
+      fs.constants.O_RDONLY |
+        fs.constants.O_NOFOLLOW |
+        (typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0),
+    );
+  } catch {
+    throw new Error("Hermes portable policy source authority is unsafe.");
+  }
   try {
     const before = fs.fstatSync(descriptor, { bigint: true });
     if (
@@ -624,9 +638,7 @@ export function readHermesPortableInitialPolicySource(basePolicyPath: string): s
       (before.uid !== 0n && before.uid !== BigInt(uid)) ||
       !hasSafeHermesPortablePolicySourceMode(before, uid, gid, 0o664n) ||
       before.size < 1n ||
-      before.size > 256n * 1024n ||
-      named.dev !== before.dev ||
-      named.ino !== before.ino
+      before.size > 256n * 1024n
     ) {
       throw new Error("Hermes portable policy source authority is unsafe.");
     }

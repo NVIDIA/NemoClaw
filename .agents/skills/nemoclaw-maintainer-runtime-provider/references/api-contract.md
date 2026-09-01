@@ -23,10 +23,10 @@ surfaces:
 | `lifecycle` | Optional for a candidate. Implements start, started-state verification, stop hooks, and channel-stop transport. |
 | `mutationAuthority` | Optional for a candidate. Lists the state-changing operations that the provider authorizes. |
 | `stateMutation` | Optional for a candidate. Implements the versioned fenced state-mutation transaction. |
-| `bootstrap` | Optional for a candidate. Creates the authority store, runtime lifecycle, and onboarding routing. |
+| `bootstrap` | Optional for a candidate. Binds provider-owned create, readiness, and create-recovery operations for its workload type. |
 | `snapshot` | Optional for a candidate. Implements versioned preflight, capture, restore validation, and restore. |
 | `recovery` | Optional for a candidate. Reconciles one persisted sandbox with its runtime. |
-| `cleanup` | Optional for a candidate. Prepares destroy, plans owned-workload cleanup, and performs exact removal. |
+| `cleanup` | Optional for a candidate. Prepares destroy, plans owned-workload cleanup, and performs removal. |
 | `containerEngine` | Optional for a candidate. Declares operation-scoped engine identities. |
 
 Every surface must exist. An optional unsupported surface must use `supported: false` and include a
@@ -69,7 +69,7 @@ decision. Do not put the provider behavior in generic gateway code.
 
 The workload profile declares the accepted immutable workload identity. `acceptsReceipt()` must
 validate the receipt kind, platform, and contract versions. Do not accept a tag when the active
-contract requires an exact digest.
+contract requires a digest.
 
 A supported host-local inference surface lists unique accepted services. `createOperation()`
 returns a provider-owned `HostLocalInferenceOperation`. Keep credentials out of runtime receipts
@@ -81,9 +81,19 @@ Lifecycle methods return normalized results. `verifyStarted()` must verify the s
 gateway after provider startup. `stop()` executes the supplied `beforeStop` hook at the required
 boundary and reports an already-stopped or stopped state when known.
 
-Bootstrap supplies provider-owned authority storage, create lifecycle, and onboarding routing.
+Bootstrap supplies provider-owned creation, readiness, and create-recovery operations. A
+native-artifact provider must bind its atomic `verifyAndCreate`, `verifyReadiness`, and
+`recoverCreate` operations when it constructs the bundle. The generic caller supplies only the
+bootstrap input and cannot replace these operations.
+
 Each operation must bind the provider ID, persisted sandbox identity, lifecycle generation, and
-provider resource handle to the same runtime resource.
+provider resource handle to the same runtime resource. The provider assigns the deterministic
+handle before mutation. Atomic `verifyAndCreate` must verify the exact artifact and executable
+identities under one stable authority before it creates the resource. Readiness evidence must
+repeat that identity. An unknown create result or a failed readiness check after matching create
+evidence must use the handle for provider-owned, idempotent recovery. Creation evidence that does
+not match the plan cannot authorize plan-only recovery or removal and must report that the resource
+may remain. Separated measurement and creation do not satisfy this contract.
 
 ### Mutation authority and state mutation
 
@@ -114,11 +124,11 @@ provider from a command name, socket, image, or resource name.
 
 Cleanup must:
 
-1. capture exact destroy and workload ownership authority;
+1. capture destroy and workload ownership authority;
 2. detach provider bindings and report every failure;
 3. produce a side-effect-free retain, remove, or block plan;
 4. revalidate the same authority before mutation; and
-5. return the exact engine and immutable reference for removal results.
+5. return the engine and immutable reference for removal results.
 
 Block destructive cleanup when authority is missing, ambiguous, reused, or drifted.
 

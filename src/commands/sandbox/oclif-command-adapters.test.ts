@@ -294,10 +294,15 @@ describe("sandbox oclif command adapters", () => {
     expect(fetchToken).toHaveBeenCalledOnce();
     vi.clearAllMocks();
 
-    vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
+    const authority = {
       kind: "hermes",
       snapshot: { receipt: { phase: "active" } } as never,
-    });
+    } as const;
+    vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue(authority);
+    vi.spyOn(
+      receiptAuthority,
+      "inspectPortableAgentReceiptAuthorityForClassification",
+    ).mockReturnValue(authority);
 
     await expect(SandboxLogsCommand.run(["alpha"], rootDir)).rejects.toThrow(
       "not supported for an experimental Hermes portable sandbox",
@@ -476,7 +481,7 @@ describe("sandbox oclif command adapters", () => {
         processToken: "a".repeat(32),
       }),
     );
-    vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
+    const authority = {
       kind: "hermes",
       snapshot: {
         receipt: {
@@ -486,7 +491,12 @@ describe("sandbox oclif command adapters", () => {
           container: { sandboxId: "sandbox-id" },
         },
       } as never,
-    });
+    } as const;
+    vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue(authority);
+    vi.spyOn(
+      receiptAuthority,
+      "inspectPortableAgentReceiptAuthorityForClassification",
+    ).mockReturnValue(authority);
     const mutation = vi.fn();
     mocks.shieldsDown.mockImplementation(
       (_sandboxName: string, options: { assertCommandAvailable?: () => void }) => {

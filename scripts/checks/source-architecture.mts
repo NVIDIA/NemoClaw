@@ -120,7 +120,7 @@ function sourceFileFor(absPath: string): ts.SourceFile {
     absPath,
     readFileSync(absPath, "utf8"),
     ts.ScriptTarget.Latest,
-    true,
+    false,
     scriptKind,
   );
 }
@@ -214,6 +214,7 @@ function resolveInternalImport(
 ): string | null {
   if (!specifier.startsWith(".")) return null;
   for (const candidate of importCandidates(fromAbsPath, specifier)) {
+    if (sourceFiles.has(candidate)) return candidate;
     if (!existsSync(candidate) || !lstatSync(candidate).isFile()) continue;
     const canonical = realpathSync(candidate);
     if (sourceFiles.has(canonical)) return canonical;
