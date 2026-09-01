@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { readPortableAuthorityDirectory } from "../state/portable-uninstall-retirement";
 import {
   type PortableOnboardRetirementBoundary,
   type PortableRetirementAuthorityDeps,
@@ -21,8 +22,7 @@ const deps: PortableRetirementAuthorityDeps = {
   withLifecycleLock: async (_name, operation) => await operation(),
 };
 
-function boundary(): PortableOnboardRetirementBoundary {
-  const stateDir = path.join(homeDir, ".nemoclaw");
+function boundary(stateDir = path.join(homeDir, ".nemoclaw")): PortableOnboardRetirementBoundary {
   return {
     homeDir,
     registryFile: path.join(stateDir, "registry.json"),
@@ -101,6 +101,16 @@ describe("ordinary onboarding against an abandoned portable configuration (#1074
     ).rejects.toThrow(/Unsafe portable authority directory/);
   });
 
+  it("finds the host receipt when onboarding uses a gateway-scoped state directory", async () => {
+    makePortableConfigDir(0o755);
+    writeLifecycleReceipt();
+    const gatewayStateDir = path.join(homeDir, ".nemoclaw/gateways/18000");
+
+    await expect(
+      withPortableOnboardRetirementBoundary(boundary(gatewayStateDir), () => "onboarded", deps),
+    ).rejects.toThrow(/Unsafe portable authority directory/);
+  });
+
   it("names the failed property and its remedy when the refusal stands", async () => {
     const directory = makePortableConfigDir(0o755);
     writeLifecycleReceipt();
@@ -108,11 +118,12 @@ describe("ordinary onboarding against an abandoned portable configuration (#1074
     await expect(
       withPortableOnboardRetirementBoundary(boundary(), () => "onboarded", deps),
     ).rejects.toThrow(
-      `Unsafe portable authority directory: ${directory}. The directory must be owner-private (mode 0700) but is 0755. Run \`chmod 700 '${directory}'\`, or remove it if this host runs no portable install.`,
+      `Unsafe portable authority directory: ${directory}. The directory must be owner-private (mode 0700) but is 0755. Run \`chmod 700 '${directory}'\`.`,
     );
   });
 
   it("keeps the remedy runnable when the home path contains whitespace", async () => {
+    fs.rmSync(homeDir, { recursive: true, force: true });
     const spaced = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw portable admission "));
     homeDir = spaced;
     fs.mkdirSync(path.join(homeDir, ".nemoclaw"), { recursive: true, mode: 0o700 });
@@ -126,12 +137,42 @@ describe("ordinary onboarding against an abandoned portable configuration (#1074
     expect(directory).toContain(" ");
   });
 
+  it.each([
+    { name: "state", relativePath: ".nemoclaw" },
+    { name: "lifecycle receipt", relativePath: ".nemoclaw/portable-demo-lifecycle" },
+  ])("does not recommend deleting the $name authority directory (#10740)", ({ relativePath }) => {
+    const directory = path.join(homeDir, relativePath);
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    fs.chmodSync(directory, 0o755);
+    let caught: unknown;
+
+    try {
+      readPortableAuthorityDirectory(directory, false);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toContain("chmod 700");
+    expect((caught as Error).message).not.toContain("remove");
+  });
+
   it("inspects the directory after a completed run that owns a lifecycle receipt", async () => {
     makePortableConfigDir(0o755);
     writeLifecycleReceipt();
 
     await expect(
       supersedePortableRetirementAfterCompletedOnboard(boundary(), "default", deps),
+    ).rejects.toThrow(/Unsafe portable authority directory/);
+  });
+
+  it("finds the host receipt after gateway-scoped onboarding completes", async () => {
+    makePortableConfigDir(0o755);
+    writeLifecycleReceipt();
+    const gatewayStateDir = path.join(homeDir, ".nemoclaw/gateways/18000");
+
+    await expect(
+      supersedePortableRetirementAfterCompletedOnboard(boundary(gatewayStateDir), "default", deps),
     ).rejects.toThrow(/Unsafe portable authority directory/);
   });
 

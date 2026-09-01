@@ -302,8 +302,10 @@ function artifactDirectory(homeDir: string, root: "config" | "receipt" | "regist
 /** Report whether this host owns a portable lifecycle receipt. */
 function ownsPortableLifecycleReceipt(boundary: PortableOnboardRetirementBoundary): boolean {
   return (
-    readPortableAuthorityDirectory(path.join(boundary.stateDir, "portable-demo-lifecycle"), false)
-      .entries.length > 0
+    readPortableAuthorityDirectory(
+      path.join(boundary.homeDir, ".nemoclaw/portable-demo-lifecycle"),
+      false,
+    ).entries.length > 0
   );
 }
 
