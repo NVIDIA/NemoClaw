@@ -164,7 +164,7 @@ function reachesUpstream() {
 })().catch(() => process.exit(4));
 `;
 
-// Leave ample headroom beneath OpenShell's strict per-argument ceiling.
+// Keep each source chunk below half of OpenShell's 32,768-byte argument limit.
 const SANDBOX_SOURCE_CHUNK_BYTES = 16_384;
 const SANDBOX_SHELL_BOOTSTRAP = `set -eu; printf '%s' "$@" | base64 -d | sh`;
 
@@ -238,8 +238,7 @@ export type FakeDockerApiKind =
   | "slack"
   | "telegram"
   | "wechat"
-  | "discord-gateway"
-  | "discord-message";
+  | "discord-gateway";
 
 export type FakeDockerApi = {
   kind: FakeDockerApiKind;
@@ -756,6 +755,7 @@ async function requireFakeApiProxyReady(
     proxyContainer: string;
     bridgeAddress: string;
     readinessPort: string;
+    captureDiagnostics: () => Promise<void>;
     env: NodeJS.ProcessEnv;
     redactionValues: string[];
   },
@@ -787,14 +787,7 @@ async function requireFakeApiProxyReady(
       : undefined;
   if (ready?.exitCode === 0) return;
 
-  await captureFakeApiContainerDiagnostics(
-    host,
-    options.kind,
-    "api-proxy",
-    options.proxyContainer,
-    options.env,
-    options.redactionValues,
-  );
+  await options.captureDiagnostics();
   throw new Error(
     `fake ${options.kind} API proxy ${options.proxyContainer} did not become ready; see the redacted proxy state and log artifacts`,
   );
@@ -969,7 +962,21 @@ export async function startFakeDockerApi(
     );
   }
 
+  let proxyDiagnosticsCaptured = false;
+  const captureProxyDiagnostics = async (): Promise<void> => {
+    if (proxyDiagnosticsCaptured) return;
+    proxyDiagnosticsCaptured = true;
+    await captureFakeApiContainerDiagnostics(
+      host,
+      options.kind,
+      "api-proxy",
+      proxyContainer,
+      options.env,
+      options.redactionValues,
+    );
+  };
   cleanup(`remove ${proxyContainer}`, async () => {
+    await captureProxyDiagnostics();
     const remove = await runHost(host, "docker", ["rm", "-f", proxyContainer], {
       artifactName: `cleanup-${proxyContainer}`,
       env: options.env,
@@ -1067,6 +1074,7 @@ export async function startFakeDockerApi(
     proxyContainer,
     bridgeAddress: openshellBridgeAddress,
     readinessPort: publishedReadinessPort,
+    captureDiagnostics: captureProxyDiagnostics,
     env: options.env,
     redactionValues: options.redactionValues,
   });

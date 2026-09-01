@@ -86,11 +86,13 @@ function fakeDockerHost(
   calls: string[][];
   commands: Array<{ command: string; args: string[] }>;
   host: HostCliClient;
+  setProxyRunning: (running: boolean) => void;
 } {
   const calls: string[][] = [];
   const commands: Array<{ command: string; args: string[] }> = [];
   const publishedAddress = options.publishedAddress ?? OPENSHELL_BRIDGE_ADDRESS;
   const networkInspect = options.networkInspect ?? OPENSHELL_NETWORK_INSPECT;
+  let proxyRunning = options.proxyRunning !== false;
   const dockerCommand = (args: string[]) => {
     calls.push([...args]);
     (options.apiReady === false
@@ -103,7 +105,9 @@ function fakeDockerHost(
     return args[0] === "network" && args[1] === "inspect"
       ? successfulCommand(networkInspect)
       : args[0] === "inspect"
-        ? successfulCommand(`${String(options.proxyRunning !== false)}\n`)
+        ? args[2] === "{{json .State}}"
+          ? successfulCommand(`${JSON.stringify({ Running: proxyRunning })}\n`)
+          : successfulCommand(`${String(proxyRunning)}\n`)
         : args[0] === "logs"
           ? successfulCommand("proxy fixture stopped\n")
           : args[0] === "port"
@@ -129,7 +133,14 @@ function fakeDockerHost(
         : dockerCommand(args);
     },
   } as unknown as HostCliClient;
-  return { calls, commands, host };
+  return {
+    calls,
+    commands,
+    host,
+    setProxyRunning: (running) => {
+      proxyRunning = running;
+    },
+  };
 }
 
 async function runCleanup(actions: CleanupAction[]): Promise<void> {
@@ -243,7 +254,9 @@ describe("messaging provider installed-runtime proofs", () => {
           `NEMOCLAW_FAKE_API_PROXY_PORTS=${kind === "slack" ? "8080:8080,8081:8081" : "8080:8080"}`,
           `NEMOCLAW_FAKE_API_PROXY_READINESS_PORT=${String(FAKE_API_PROXY_READINESS_PORT)}`,
         ]);
-        expect(calls).toContainEqual(["network", "connect", network, proxyContainer]);
+        expect(calls.filter((args) => args[0] === "network" && args[1] === "connect")).toEqual([
+          ["network", "connect", network, proxyContainer],
+        ]);
         expect(
           calls.filter((args) => args[0] === "port").map((args) => [args[1], args[2]]),
         ).toEqual(expectedPortQueries.map((port) => [proxyContainer, port]));
@@ -460,6 +473,50 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(calls).toContainEqual(["rm", "-f", proxyContainer]);
     expect(calls).toContainEqual(["rm", "-f", apiContainer]);
     expect(calls).toContainEqual(["network", "rm", network]);
+  });
+
+  it("captures proxy diagnostics before cleanup after a post-readiness stop", async () => {
+    const { calls, host, setProxyRunning } = fakeDockerHost();
+    const cleanup: CleanupAction[] = [];
+
+    try {
+      await startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
+        kind: "discord-gateway",
+        imageScript: "fake-discord-gateway-api.cjs",
+        containerPrefix: "fake-discord-gateway",
+        portEnv: "FAKE_API_PORT",
+        portFileEnv: "FAKE_API_PORT_FILE",
+        captureFileEnv: "FAKE_API_CAPTURE_FILE",
+        expectedEnv: {},
+        redactionValues: [],
+        env: {},
+      });
+      setProxyRunning(false);
+    } finally {
+      await runCleanup(cleanup);
+    }
+
+    const runCalls = calls.filter((args) => args[0] === "run");
+    const proxyRun = runCalls[1]!;
+    const proxyContainer = proxyRun[proxyRun.indexOf("--name") + 1]!;
+    const stateDiagnostics = ["inspect", "--format", "{{json .State}}", proxyContainer];
+    const logDiagnostics = ["logs", "--tail", "100", proxyContainer];
+    const removeProxy = ["rm", "-f", proxyContainer];
+    const stateDiagnosticsIndex = calls.findIndex(
+      (args) => JSON.stringify(args) === JSON.stringify(stateDiagnostics),
+    );
+    const logDiagnosticsIndex = calls.findIndex(
+      (args) => JSON.stringify(args) === JSON.stringify(logDiagnostics),
+    );
+    const removeProxyIndex = calls.findIndex(
+      (args) => JSON.stringify(args) === JSON.stringify(removeProxy),
+    );
+
+    expect(calls).toContainEqual(stateDiagnostics);
+    expect(calls).toContainEqual(logDiagnostics);
+    expect(stateDiagnosticsIndex).toBeLessThan(removeProxyIndex);
+    expect(logDiagnosticsIndex).toBeLessThan(removeProxyIndex);
+    expect(calls).toContainEqual(removeProxy);
   });
 
   it("fails with API diagnostics when the detached API stops before readiness", async () => {
