@@ -60,6 +60,7 @@ describe("final onboard flow runtime boundary", () => {
 
       expect(order).toEqual([
         "openclaw",
+        "agent-forward",
         "policies",
         "disarm",
         "set-default",
@@ -122,7 +123,9 @@ describe("final onboard flow runtime boundary", () => {
       });
 
       expect(order).toEqual([
-        ...(branchState === "openclaw" ? ["openclaw"] : ["agent-setup", "agent-forward"]),
+        ...(branchState === "openclaw"
+          ? ["openclaw", "agent-forward"]
+          : ["agent-setup", "agent-forward"]),
         "policies",
         "disarm",
         "set-default",
@@ -300,6 +303,7 @@ describe("final onboard flow runtime boundary", () => {
 
     expect(order).toEqual([
       "openclaw",
+      "agent-forward",
       "policies",
       "disarm",
       "set-default",
@@ -331,7 +335,7 @@ describe("final onboard flow runtime boundary", () => {
       }),
     ).rejects.toThrow("recording failed");
 
-    expect(order).toEqual(["openclaw", "policies"]);
+    expect(order).toEqual(["openclaw", "agent-forward", "policies"]);
   });
 
   it("keeps rollback armed when a policies prerequisite repair fails", async () => {
@@ -361,7 +365,7 @@ describe("final onboard flow runtime boundary", () => {
       }),
     ).rejects.toThrow("policy repair failed");
 
-    expect(order).toEqual(["openclaw", "policies"]);
+    expect(order).toEqual(["openclaw", "agent-forward", "policies"]);
     expect(afterPoliciesReady).not.toHaveBeenCalled();
     expect(recordRepairEvent).toHaveBeenLastCalledWith("state.repair.failed", {
       state: "policies",
@@ -402,6 +406,7 @@ describe("final onboard flow runtime boundary", () => {
 
     expect(order).toEqual([
       "openclaw",
+      "agent-forward",
       "policies",
       "disarm",
       "set-default",
