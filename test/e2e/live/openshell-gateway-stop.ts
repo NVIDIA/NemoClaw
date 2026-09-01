@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 import { type CommandExitResult, resultText } from "../fixtures/clients/command.ts";
 
-const GATEWAY_ABSENT_DIAGNOSTIC = /No gateway metadata found/i;
+const GATEWAY_ABSENT_DIAGNOSTIC = /^No gateway metadata found(?: for nemoclaw)?[.!]?$/i;
 
 export function assertOpenShellGatewayStopResult(result: CommandExitResult): void {
   const diagnostic = resultText(result);

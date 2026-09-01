@@ -22,9 +22,12 @@ describe("OpenShell gateway stop result", () => {
     ).not.toThrow();
   });
 
-  it("rejects another failure with its diagnostic", () => {
-    expect(() =>
-      assertOpenShellGatewayStopResult({ exitCode: 1, stdout: "", stderr: "permission denied" }),
-    ).toThrow("permission denied");
-  });
+  it.each(["permission denied", "No gateway metadata found for nemoclaw; permission denied"])(
+    "rejects another failure with its diagnostic: %s",
+    (diagnostic) => {
+      expect(() =>
+        assertOpenShellGatewayStopResult({ exitCode: 1, stdout: "", stderr: diagnostic }),
+      ).toThrow(diagnostic);
+    },
+  );
 });
