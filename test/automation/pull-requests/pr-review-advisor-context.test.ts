@@ -14,7 +14,7 @@ import {
   type OpenPrOverlap,
 } from "../../../tools/pr-review-advisor/github-context.mts";
 import { buildSystemPrompt } from "../../../tools/pr-review-advisor/trusted-guidance.mts";
-import { ROOT } from "../../helpers/pr-review-advisor-test-fixtures.ts";
+const ROOT = path.resolve(import.meta.dirname, "../../..");
 
 describe("PR review advisor", () => {
   afterEach(() => {

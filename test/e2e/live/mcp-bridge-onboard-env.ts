@@ -17,6 +17,7 @@ const MCP_BRIDGE_QUALIFICATION_ENV_KEYS = [
   "E2E_MANAGED_IMAGE_COHORT_RECEIPT",
   "NEMOCLAW_E2E_EXPECTED_SHA",
   "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG",
+  "NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON",
   "NEMOCLAW_RUN_LIVE_E2E",
   "OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
 ] as const;
@@ -48,7 +49,9 @@ export function assertMcpBridgeManagedImageReceipt(options: {
 }): void {
   const environment = options.environment ?? process.env;
   const selectedRevision = environment.E2E_MANAGED_IMAGE_REVISION?.trim();
-  const exactCandidateCatalog = environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim();
+  const exactCandidateCatalog =
+    environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG?.trim() ||
+    environment.NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON?.trim();
   if (!selectedRevision && !exactCandidateCatalog) return;
 
   const expectedRevision = selectedRevision ?? environment.NEMOCLAW_E2E_EXPECTED_SHA?.trim() ?? "";
