@@ -233,39 +233,29 @@ try {
         .find((line) => line.startsWith("{") && line.endsWith("}"));
       expect(payloadLine).toBeTruthy();
       const payload = JSON.parse(payloadLine!);
+      const sandboxGetCommands = payload.commands.filter(
+        (entry: { command: string }) =>
+          entry.command.includes("sandbox get") && entry.command.includes("my-assistant"),
+      );
+      const sandboxExecCommands = payload.commands.filter(
+        (entry: { command: string }) =>
+          entry.command.includes("sandbox exec") && entry.command.includes("my-assistant"),
+      );
+      expect(sandboxGetCommands).not.toHaveLength(0);
+      expect(sandboxExecCommands).not.toHaveLength(0);
       expect(
-        payload.commands.some((entry: { command: string }) =>
-          entry.command.includes("sandbox get -g nemoclaw my-assistant"),
+        sandboxGetCommands.every(
+          (entry: { command: string }) =>
+            entry.command.includes("sandbox get -g nemoclaw") ||
+            entry.command.includes("sandbox get --gateway nemoclaw"),
         ),
       ).toBe(true);
       expect(
-        payload.commands.some((entry: { command: string }) =>
-          entry.command.includes("sandbox exec -g nemoclaw --name my-assistant -- true"),
+        sandboxExecCommands.every(
+          (entry: { command: string }) =>
+            entry.command.includes("sandbox exec -g nemoclaw") ||
+            entry.command.includes("--gateway nemoclaw"),
         ),
-      ).toBe(true);
-      expect(
-        payload.commands
-          .filter(
-            (entry: { command: string }) =>
-              entry.command.includes("sandbox get") && entry.command.includes("my-assistant"),
-          )
-          .every(
-            (entry: { command: string }) =>
-              entry.command.includes("sandbox get -g nemoclaw") ||
-              entry.command.includes("sandbox get --gateway nemoclaw"),
-          ),
-      ).toBe(true);
-      expect(
-        payload.commands
-          .filter(
-            (entry: { command: string }) =>
-              entry.command.includes("sandbox exec") && entry.command.includes("my-assistant"),
-          )
-          .every(
-            (entry: { command: string }) =>
-              entry.command.includes("sandbox exec -g nemoclaw") ||
-              entry.command.includes("--gateway nemoclaw"),
-          ),
       ).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

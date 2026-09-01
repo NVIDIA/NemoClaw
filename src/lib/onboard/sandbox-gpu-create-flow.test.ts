@@ -1260,7 +1260,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     expect(mocks.streamSandboxCreate.mock.calls.flat()).not.toContain("-lc");
   });
 
-  it("discloses the compatibility container-swap confinement tradeoff and native-only opt-out", async () => {
+  it("discloses the compatibility container-swap tradeoff and fallback authorization", async () => {
     failNativeCreate();
     const deps = createDeps();
 
