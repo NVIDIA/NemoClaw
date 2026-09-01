@@ -7,6 +7,9 @@ import path from "node:path";
 
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
+  CONTAINER_REACHABILITY_IMAGE,
+} from "../../../src/lib/adapters/http/container-curl-probe.ts";
+import {
   assertExitZero,
   type CommandRunner,
   GatewayClient,
@@ -77,6 +80,12 @@ class FakeRunner implements CommandRunner {
 }
 
 describe("E2E fixture clients", () => {
+  it("pins the live container reachability client by digest", () => {
+    expect(CONTAINER_REACHABILITY_IMAGE).toBe(
+      "docker.io/curlimages/curl@sha256:fcff5cf7a4b895da7bd2933c914938db2b05d2113fa0d6c55b6d29930408f661",
+    );
+  });
+
   it.each([
     "a2345678901234567890",
     "e2e--sandbox",
