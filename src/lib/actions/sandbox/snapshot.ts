@@ -42,7 +42,11 @@ import {
 } from "../../onboard/gateway-binding";
 import { findAvailableHermesApiPort, HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
-import { cleanupTempDir, secureTempFile } from "../../onboard/temp-files";
+import {
+  cleanupTempDir,
+  createExactTempFileCleanup,
+  secureTempFile,
+} from "../../onboard/temp-files";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -384,18 +388,24 @@ async function prepareSnapshotClonePolicy(
     scope: "base",
   });
   if (!policyRead.ok) {
-    throw new Error(`Cannot read the live OpenShell policy for '${srcEntry.name}'.`);
+    throw new SnapshotCommandError([
+      `Cannot read the live OpenShell policy for source sandbox '${srcEntry.name}'.`,
+      policyRead.error.message,
+      "Restore access to the source sandbox's OpenShell gateway, then retry the original snapshot restore command.",
+    ]);
   }
   const policy = policyRead.value.document;
   const policyPath = secureTempFile("nemoclaw-clone-policy", ".yaml");
-  fs.writeFileSync(policyPath, policy, { mode: 0o600 });
-  return {
-    policyPath,
-    cleanup: () => {
-      cleanupTempDir(policyPath, "nemoclaw-clone-policy");
-      return true;
-    },
-  };
+  try {
+    fs.writeFileSync(policyPath, policy, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    return {
+      policyPath,
+      cleanup: createExactTempFileCleanup(policyPath, "nemoclaw-clone-policy"),
+    };
+  } catch (error) {
+    cleanupTempDir(policyPath, "nemoclaw-clone-policy");
+    throw error;
+  }
 }
 
 // Used by `snapshot restore --to <dst>` when dst does not exist yet: reuses
@@ -1420,7 +1430,12 @@ async function runSnapshotRestoreUnlocked(
           dstHermesApiPort,
         );
       } finally {
-        clonePolicy.cleanup?.();
+        if (clonePolicy.cleanup && !clonePolicy.cleanup()) {
+          throw new SnapshotCommandError([
+            "Could not securely remove the temporary clone policy.",
+            "Inspect the task-owned temporary directory before retrying the snapshot restore command.",
+          ]);
+        }
       }
     };
     // Lock order is both sandbox names (sorted by the outer caller), host

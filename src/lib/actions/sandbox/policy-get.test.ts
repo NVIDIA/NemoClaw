@@ -146,9 +146,7 @@ describe("getSandboxPolicy", () => {
       result: {
         ok: true as const,
         value: {
-          scope: "base" as const,
           document: "version: 1\nnetwork_policies: {}",
-          reportedRevision: 7,
           appliedRevision: 7,
         },
       },
@@ -175,9 +173,7 @@ describe("getSandboxPolicy", () => {
       result: {
         ok: true as const,
         value: {
-          scope: "base" as const,
           document: "version: 1\nnetwork_policies: {}",
-          reportedRevision: 7,
           appliedRevision: 7,
         },
       },

@@ -53,9 +53,7 @@ describe("CLI OpenShell sandbox policy reader", () => {
     ).resolves.toEqual({
       ok: true,
       value: {
-        scope: "base",
         document: POLICY,
-        reportedRevision: 4,
         appliedRevision: 3,
       },
     });
@@ -87,9 +85,7 @@ describe("CLI OpenShell sandbox policy reader", () => {
     expect(read).toEqual({
       ok: true,
       value: {
-        scope: "effective",
         document: "version: 1\nnetwork_policies:\n  _provider_nvidia: {}",
-        reportedRevision: 9,
         appliedRevision: 9,
       },
     });
@@ -115,7 +111,7 @@ describe("CLI OpenShell sandbox policy reader", () => {
 
     expect(read).toMatchObject({
       ok: true,
-      value: { document: POLICY, reportedRevision: 6, appliedRevision: 5 },
+      value: { document: POLICY, appliedRevision: 5 },
     });
   });
 
@@ -131,7 +127,7 @@ describe("CLI OpenShell sandbox policy reader", () => {
 
     expect(read).toMatchObject({
       ok: true,
-      value: { reportedRevision: null, appliedRevision: null },
+      value: { appliedRevision: null },
     });
   });
 

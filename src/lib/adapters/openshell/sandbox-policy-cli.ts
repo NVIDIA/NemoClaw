@@ -144,15 +144,14 @@ function metadataSection(output: string): string {
   return separator ? output.slice(0, separator.index) : "";
 }
 
-function metadataRevision(metadata: string, field: "Active" | "Version"): number | null {
-  const raw = metadata.match(new RegExp(`^${field}:\\s*(\\d+)\\s*$`, "imu"))?.[1];
+function activeRevision(metadata: string): number | null {
+  const raw = metadata.match(/^Active:\s*(\d+)\s*$/imu)?.[1];
   if (!raw) return null;
   const revision = Number.parseInt(raw, 10);
   return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
 }
 
 function parsePolicyRead(
-  request: ReadOpenShellSandboxPolicyRequest,
   displayOutput: string,
 ): OpenShellSandboxResult<OpenShellSandboxPolicyRead> {
   try {
@@ -162,10 +161,8 @@ function parsePolicyRead(
     return {
       ok: true,
       value: {
-        scope: request.scope,
         document: parsed.yamlBody,
-        reportedRevision: metadataRevision(metadata, "Version"),
-        appliedRevision: metadataRevision(metadata, "Active"),
+        appliedRevision: activeRevision(metadata),
       },
     };
   } catch {
@@ -196,7 +193,7 @@ function capturedPolicyRead(
   if (commandFailure) {
     return { result: { ok: false, error: commandFailure }, displayOutput: "" };
   }
-  return { result: parsePolicyRead(request, displayOutput), displayOutput };
+  return { result: parsePolicyRead(displayOutput), displayOutput };
 }
 
 export function createCliOpenShellSandboxPolicyRead(

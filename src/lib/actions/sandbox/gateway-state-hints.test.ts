@@ -181,35 +181,71 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     },
   );
 
-  it("rejects a ready sandbox when its live effective policy cannot be observed", async () => {
-    captureOpenshellSpy
-      .mockReturnValueOnce({
-        status: 0,
-        output: "Sandbox:\n  Name: instance-a\nPolicy:\n  stale: true\n  Phase: Ready",
-      })
-      .mockReturnValueOnce({
-        status: 1,
-        output: "authentication failed credential-value",
+  it.each([
+    {
+      label: "authentication",
+      result: { status: 1, output: "authentication failed credential-value" },
+      expected: "Restore authentication for the sandbox's OpenShell gateway",
+    },
+    {
+      label: "unreachable gateway",
+      result: { status: 1, output: "connection refused credential-value" },
+      expected: "Verify the gateway with `openshell status`, recover its availability",
+    },
+    {
+      label: "timeout",
+      result: {
+        status: null,
+        output: "credential-value",
+        error: Object.assign(new Error("credential-value"), { code: "ETIMEDOUT" }),
+      },
+      expected: "Verify the gateway with `openshell status`, recover its availability",
+    },
+    {
+      label: "gateway identity mismatch",
+      result: { status: 1, output: "handshake verification failed credential-value" },
+      expected: "Verify the sandbox's recorded gateway identity with `openshell status`",
+    },
+    {
+      label: "schema mismatch",
+      result: { status: 1, output: "invalid wire type credential-value" },
+      expected: "Update the OpenShell CLI and gateway to compatible versions",
+    },
+    {
+      label: "command failure",
+      result: { status: 1, output: "unknown policy failure credential-value" },
+      expected: "Inspect `openshell status`, correct the policy-read failure",
+    },
+  ])(
+    "rejects a ready sandbox with actionable $label policy-read recovery",
+    async ({ result, expected }) => {
+      captureOpenshellSpy
+        .mockReturnValueOnce({
+          status: 0,
+          output: "Sandbox:\n  Name: instance-a\nPolicy:\n  stale: true\n  Phase: Ready",
+        })
+        .mockReturnValueOnce(result);
+      const lines: string[] = [];
+      vi.spyOn(console, "error").mockImplementation((line = "") => {
+        lines.push(String(line));
       });
-    const lines: string[] = [];
-    vi.spyOn(console, "error").mockImplementation((line = "") => {
-      lines.push(String(line));
-    });
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit(${code ?? 0})`);
-    }) as never);
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+        throw new Error(`process.exit(${code ?? 0})`);
+      }) as never);
 
-    await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
-      "process.exit(1)",
-    );
+      await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
+        "process.exit(1)",
+      );
 
-    const output = lines.join("\n");
-    expect(output).toContain("Live effective policy was not observed.");
-    expect(output).toContain("OpenShell could not authenticate the sandbox policy read.");
-    expect(output).toContain("nemoclaw instance-a policy get");
-    expect(output).not.toContain("credential-value");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
+      const output = lines.join("\n");
+      expect(output).toContain("Live effective policy was not observed.");
+      expect(output).toContain(expected);
+      expect(output).toContain("nemoclaw instance-a status");
+      expect(output).not.toContain("nemoclaw instance-a policy get");
+      expect(output).not.toContain("credential-value");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    },
+  );
 
   it("classifies a failed post-recovery handshake as identity drift", async () => {
     recoverNamedGatewayRuntimeSpy.mockResolvedValue({ recovered: true, via: "start" });

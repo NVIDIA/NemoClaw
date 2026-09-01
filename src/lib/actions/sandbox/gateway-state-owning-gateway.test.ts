@@ -137,7 +137,9 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
     });
     expect(result.output).toContain("Live effective policy was not observed.");
     expect(result.output).toContain("OpenShell could not reach the selected gateway.");
-    expect(result.output).toContain("nemoclaw beta policy get");
+    expect(result.output).toContain("Verify the gateway with `openshell status`");
+    expect(result.output).toContain("nemoclaw beta status");
+    expect(result.output).not.toContain("nemoclaw beta policy get");
     expect(result.output).toContain("Phase: Ready");
     expect(result.output).not.toContain("schema-stub");
   });

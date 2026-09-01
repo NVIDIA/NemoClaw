@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -129,6 +131,143 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     expect(f.lifecycleMock.events).not.toContain("delete");
     expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "authentication failure",
+      policyResult: { status: 1, output: "authentication failed credential-value" },
+      expected: "OpenShell could not authenticate the sandbox policy read.",
+    },
+    {
+      label: "timeout",
+      policyResult: {
+        status: null,
+        output: "credential-value",
+        error: Object.assign(new Error("credential-value"), { code: "ETIMEDOUT" }),
+      },
+      expected: "The OpenShell sandbox policy read timed out.",
+    },
+    {
+      label: "schema mismatch",
+      policyResult: { status: 1, output: "invalid wire type credential-value" },
+      expected: "The OpenShell CLI and gateway policy schemas do not match.",
+    },
+    {
+      label: "gateway identity mismatch",
+      policyResult: { status: 1, output: "handshake verification failed credential-value" },
+      expected: "The selected OpenShell gateway identity does not match the recorded identity.",
+    },
+    {
+      label: "unreachable gateway",
+      policyResult: { status: 1, output: "connection refused credential-value" },
+      expected: "OpenShell could not reach the selected gateway.",
+    },
+    {
+      label: "command failure",
+      policyResult: { status: 1, output: "unknown failure credential-value" },
+      expected: "The OpenShell sandbox policy read failed.",
+    },
+  ] satisfies readonly {
+    label: string;
+    policyResult: f.OpenshellCaptureResult;
+    expected: string;
+  }[])(
+    "keeps a --force destination when the source policy read has a $label",
+    async ({ policyResult, expected }) => {
+      f.getSandboxMock.mockImplementation((name) => ({
+        name: name ?? "alpha",
+        agent: "openclaw",
+        imageTag: `nemoclaw-${name}:test`,
+        openshellDriver: "docker",
+        provider: "nvidia-nim",
+        model: "nvidia/model-a",
+        dashboardPort: name === "alpha" ? 18790 : 18791,
+      }));
+      f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+      f.captureOpenshellMock.mockImplementation((args) =>
+        f.openshellResponses(args, {
+          "policy get": policyResult,
+          "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+          "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+        }),
+      );
+      f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+      const { runSandboxSnapshot } = await import("./snapshot");
+
+      const failure = await runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+        force: true,
+        yes: true,
+      }).catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({
+        name: "SnapshotCommandError",
+        lines: expect.arrayContaining([
+          "Cannot read the live OpenShell policy for source sandbox 'alpha'.",
+          expected,
+        ]),
+      });
+      expect(String((failure as Error).message)).toContain(
+        "retry the original snapshot restore command",
+      );
+      expect(String((failure as Error).message)).not.toContain("credential-value");
+      expect(f.lifecycleMock.events).not.toContain("delete");
+      expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+      expect(f.registerSandboxMock).not.toHaveBeenCalled();
+      expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("passes a single-link mode-0600 clone policy to OpenShell under a permissive umask", async () => {
+    let registeredClone: f.SandboxRecord | null = null;
+    let observedPolicyPath = "";
+    let observedMode = 0;
+    let observedLinks = 0;
+    f.registerSandboxMock.mockImplementation(
+      (entry) => (registeredClone = entry as f.SandboxRecord),
+    );
+    f.getSandboxMock.mockImplementation((name) =>
+      name === "alpha"
+        ? {
+            name: "alpha",
+            agent: "openclaw",
+            imageTag: "nemoclaw-alpha:test",
+            openshellDriver: "docker",
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
+            dashboardPort: 18790,
+          }
+        : registeredClone,
+    );
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.streamSandboxCreateMock.mockImplementation(async (_command, args) => {
+      observedPolicyPath = String(args[args.indexOf("--policy") + 1]);
+      const stats = fs.statSync(observedPolicyPath);
+      observedMode = stats.mode & 0o777;
+      observedLinks = stats.nlink;
+      return { status: 0, output: "", sawProgress: false, forcedReady: false };
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+    const previousUmask = process.umask(0o000);
+    try {
+      await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+    } finally {
+      process.umask(previousUmask);
+    }
+
+    expect(observedMode).toBe(0o600);
+    expect(observedLinks).toBe(1);
+    expect(observedPolicyPath).not.toBe("");
+    expect(fs.existsSync(observedPolicyPath)).toBe(false);
   });
 
   it("gives a Hermes clone its own API port instead of the source's (#8543)", async () => {

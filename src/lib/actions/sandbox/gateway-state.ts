@@ -335,16 +335,12 @@ export function mergeLivePolicyIntoSandboxOutput(
     return output;
   }
 
-  const rewrittenYaml =
-    appliedRevision !== null && /^version:\s*\d+/m.test(trimmedYaml)
-      ? trimmedYaml.replace(/^version:\s*\d+/m, `version: ${String(appliedRevision)}`)
-      : trimmedYaml;
-
-  const indented = rewrittenYaml
+  const indented = trimmedYaml
     .split("\n")
     .map((line: string) => (line ? `  ${line}` : line))
     .join("\n");
-  return `${before}\n\n${indented}${suffix}\n`;
+  const revision = appliedRevision === null ? "" : `\n  Applied revision: ${appliedRevision}`;
+  return `${before}${revision}\n\n${indented}${suffix}\n`;
 }
 
 function sandboxPolicyOutputSections(
@@ -382,9 +378,25 @@ function markLivePolicyObservationFailed(
     "",
     "  Live effective policy was not observed.",
     `  Warning: ${error.message}`,
-    `  Check \`openshell status\`, then retry \`${CLI_NAME} ${sandboxName} status\` or inspect the base policy with \`${CLI_NAME} ${sandboxName} policy get\`.${sections?.suffix ?? ""}`,
+    `  ${policyObservationRecovery(error, sandboxName)}${sections?.suffix ?? ""}`,
     "",
   ].join("\n");
+}
+
+function policyObservationRecovery(error: OpenShellSandboxError, sandboxName: string): string {
+  if (error.kind === "authentication") {
+    return `Restore authentication for the sandbox's OpenShell gateway, then retry \`${CLI_NAME} ${sandboxName} status\`.`;
+  }
+  if (error.kind === "timeout" || (error.kind === "transport" && error.reason === "unreachable")) {
+    return `Verify the gateway with \`openshell status\`, recover its availability, then retry \`${CLI_NAME} ${sandboxName} status\`.`;
+  }
+  if (error.kind === "transport") {
+    return `Verify the sandbox's recorded gateway identity with \`openshell status\`, restore the expected gateway, then retry \`${CLI_NAME} ${sandboxName} status\`.`;
+  }
+  if (error.kind === "schema") {
+    return `Update the OpenShell CLI and gateway to compatible versions, then retry \`${CLI_NAME} ${sandboxName} status\`.`;
+  }
+  return `Inspect \`openshell status\`, correct the policy-read failure, then retry \`${CLI_NAME} ${sandboxName} status\`.`;
 }
 
 function policyObservationFailureState(

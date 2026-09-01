@@ -7,9 +7,7 @@ import type { OpenShellGatewayTarget, OpenShellSandboxResult } from "./sandbox-o
 export type OpenShellSandboxPolicyScope = "base" | "effective";
 
 export type OpenShellSandboxPolicyRead = Readonly<{
-  scope: OpenShellSandboxPolicyScope;
   document: string;
-  reportedRevision: number | null;
   appliedRevision: number | null;
 }>;
 

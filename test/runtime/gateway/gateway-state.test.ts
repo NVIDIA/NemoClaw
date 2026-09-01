@@ -454,7 +454,7 @@ describe("shouldSelectNamedGatewayForReuse", () => {
 describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
   const sandboxOutput = "Sandbox:\n  Id: abc\n  Phase: Ready\n\nPolicy:\n  schema-stub";
 
-  it("rewrites the YAML version line to the gateway active version", () => {
+  it("preserves the YAML schema version and labels the applied revision", () => {
     const livePolicy = [
       "Version:      5",
       "Hash:         738a54c8520a",
@@ -471,8 +471,8 @@ describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
       livePolicy.split("---\n")[1] ?? "",
       6,
     );
-    expect(merged).toContain("  version: 6");
-    expect(merged).not.toContain("  version: 1");
+    expect(merged).toContain("  Applied revision: 6");
+    expect(merged).toContain("  version: 1");
     expect(merged).not.toContain("  version: 5");
   });
 
@@ -511,7 +511,7 @@ describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
     expect(merged).toBe(sandboxOutput);
   });
 
-  it("rewrites version when metadata and separator are ANSI-wrapped", () => {
+  it("preserves the schema version when metadata and separator are ANSI-wrapped", () => {
     const livePolicy = [
       "\x1b[1mVersion:\x1b[0m      5",
       "\x1b[1mActive:\x1b[0m       6",
@@ -526,7 +526,7 @@ describe("mergeLivePolicyIntoSandboxOutput (#1961)", () => {
       livePolicy.split("\x1b[2m---\x1b[0m\n")[1] ?? "",
       6,
     );
-    expect(merged).toContain("  version: 6");
-    expect(merged).not.toContain("  version: 1");
+    expect(merged).toContain("  Applied revision: 6");
+    expect(merged).toContain("  version: 1");
   });
 });
