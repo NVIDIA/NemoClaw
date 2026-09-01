@@ -12,6 +12,7 @@ import YAML from "yaml";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import { assertCleanupPassed, CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
@@ -19,6 +20,7 @@ import {
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
+  precleanMessagingProviderResources,
   REPO_ROOT,
   slackCredentialBindingEvidence,
   startFakeDockerApi,
@@ -133,6 +135,29 @@ function fakeDockerHost(publishedAddress = "127.0.0.1"): HostCliClient {
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("fails preclean on a denied resource cleanup instead of continuing", async () => {
+    const calls: string[] = [];
+    const host: Pick<HostCliClient, "cleanupGatewayRegistration" | "cleanupSandbox"> = {
+      cleanupSandbox: async (_name, options) => {
+        calls.push(String(options?.artifactName));
+        throw new Error("permission denied while destroying retained sandbox");
+      },
+      cleanupGatewayRegistration: async (_name, options) => {
+        calls.push(String(options?.artifactName));
+      },
+    };
+    const sandbox: Pick<SandboxClient, "cleanupSandbox"> = {
+      cleanupSandbox: async (_name, options) => {
+        calls.push(String(options?.artifactName));
+      },
+    };
+
+    await expect(
+      precleanMessagingProviderResources(host, sandbox, { env: {}, redactionValues: [] }),
+    ).rejects.toThrow("permission denied while destroying retained sandbox");
+    expect(calls).toEqual(["preclean-nemoclaw-destroy-messaging-providers"]);
+  });
+
   it("accepts Slack bot and app credential bindings and rejects policies without them", () => {
     const legacyPolicy = `
 network_policies:

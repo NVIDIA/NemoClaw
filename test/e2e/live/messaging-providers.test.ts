@@ -34,12 +34,12 @@ import {
   outputText,
   pluginEnabled,
   policyTextHasHost,
+  precleanMessagingProviderResources,
   REBUILD_TIMEOUT_MS,
   rawTokenSurfaceProbe,
   readOpenClawConfig,
   runHost,
   runSandboxShell,
-  runSecondaryCleanup,
   runSlackApiRequest,
   SANDBOX_NAME,
   sandboxOutput,
@@ -117,30 +117,7 @@ test(
       timeoutMs: 15 * 60_000,
     });
 
-    await runSecondaryCleanup(() =>
-      runHost(host, "node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "preclean-nemoclaw-destroy-messaging-providers",
-        env: state.env,
-        redactionValues,
-        timeoutMs: 15 * 60_000,
-      }),
-    );
-    await runSecondaryCleanup(() =>
-      runHost(host, "openshell", ["sandbox", "delete", SANDBOX_NAME], {
-        artifactName: "preclean-openshell-sandbox-delete-messaging-providers",
-        env: state.env,
-        redactionValues,
-        timeoutMs: 120_000,
-      }),
-    );
-    await runSecondaryCleanup(() =>
-      runHost(host, "openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
-        artifactName: "preclean-openshell-gateway-destroy-messaging-providers",
-        env: state.env,
-        redactionValues,
-        timeoutMs: 120_000,
-      }),
-    );
+    await precleanMessagingProviderResources(host, sandbox, { env: state.env, redactionValues });
 
     const dockerInfo = await runHost(host, "docker", ["info"], {
       artifactName: "prereq-docker-info-messaging-providers",

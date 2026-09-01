@@ -275,7 +275,7 @@ describe("live OpenShell policy mutations", () => {
     );
   });
 
-  it("restores a later policy after another external edit races recovery", () => {
+  it("restores the latest external policy when an edit races recovery", () => {
     livePolicy = YAML.stringify({
       version: 1,
       network_policies: {
@@ -347,9 +347,7 @@ describe("live OpenShell policy mutations", () => {
     ).toBe(false);
     expect(writes).toBe(4);
     expect(YAML.parse(livePolicy)).toEqual(YAML.parse(concurrentRevision));
-    expect(YAML.parse(livePolicy).network_policies).toHaveProperty(
-      "latest_external_recovery_edit",
-    );
+    expect(YAML.parse(livePolicy).network_policies).toHaveProperty("latest_external_recovery_edit");
     expect(YAML.parse(livePolicy).network_policies.fake.endpoints[0]).not.toHaveProperty(
       "credential_binding",
     );
