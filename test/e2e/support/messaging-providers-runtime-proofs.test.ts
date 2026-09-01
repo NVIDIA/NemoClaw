@@ -21,7 +21,7 @@ import {
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
-  precleanMessagingProviderResources,
+  precleanMessagingResources,
   REPO_ROOT,
   slackCredentialBindingEvidence,
   startFakeDockerApi,
@@ -47,6 +47,45 @@ type SyntheticSlackEndpoint = {
   credential_binding?: { provider: string };
   rules: Array<{ allow: { method: string; path: string } }>;
 };
+
+const PRECLEAN_DENIAL_CASES: Array<[string, string, string, string, string[]]> = [
+  [
+    "messaging provider",
+    "nemoclaw",
+    "e2e-messaging-providers",
+    "preclean-messaging-providers",
+    ["nemoclaw"],
+  ],
+  [
+    "messaging provider",
+    "openshell-sandbox",
+    "e2e-messaging-providers",
+    "preclean-messaging-providers",
+    ["nemoclaw", "openshell-sandbox"],
+  ],
+  [
+    "messaging provider",
+    "openshell-gateway",
+    "e2e-messaging-providers",
+    "preclean-messaging-providers",
+    ["nemoclaw", "openshell-sandbox", "openshell-gateway"],
+  ],
+  ["Hermes Discord", "nemoclaw", "e2e-hermes-discord", "preclean-hermes-discord", ["nemoclaw"]],
+  [
+    "Hermes Discord",
+    "openshell-sandbox",
+    "e2e-hermes-discord",
+    "preclean-hermes-discord",
+    ["nemoclaw", "openshell-sandbox"],
+  ],
+  [
+    "Hermes Discord",
+    "openshell-gateway",
+    "e2e-hermes-discord",
+    "preclean-hermes-discord",
+    ["nemoclaw", "openshell-sandbox", "openshell-gateway"],
+  ],
+];
 
 const SYNTHETIC_SLACK_ENDPOINTS: readonly SyntheticSlackEndpoint[] = [
   {
@@ -158,28 +197,54 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it("fails preclean on a denied resource cleanup instead of continuing", async () => {
-    const calls: string[] = [];
-    const host: Pick<HostCliClient, "cleanupGatewayRegistration" | "cleanupSandbox"> = {
-      cleanupSandbox: async (_name, options) => {
-        calls.push(String(options?.artifactName));
-        throw new Error("permission denied while destroying retained sandbox");
-      },
-      cleanupGatewayRegistration: async (_name, options) => {
-        calls.push(String(options?.artifactName));
-      },
-    };
-    const sandbox: Pick<SandboxClient, "cleanupSandbox"> = {
-      cleanupSandbox: async (_name, options) => {
-        calls.push(String(options?.artifactName));
-      },
-    };
+  it.each(PRECLEAN_DENIAL_CASES)(
+    "stops the %s scenario before installation when %s cleanup is denied",
+    async (scenario, deniedStage, sandboxName, artifactPrefix, expectedStages) => {
+      const calls: string[] = [];
+      const allowed = async (): Promise<void> => undefined;
+      const outcomes = new Map<string, () => Promise<void>>([
+        [
+          deniedStage,
+          async () => Promise.reject(new Error(`permission denied during ${deniedStage} cleanup`)),
+        ],
+      ]);
+      const record = async (stage: string, name: string, artifactName: unknown): Promise<void> => {
+        calls.push(`${stage}:${name}:${String(artifactName)}`);
+        await (outcomes.get(stage) ?? allowed)();
+      };
+      const host: Pick<HostCliClient, "cleanupGatewayRegistration" | "cleanupSandbox"> = {
+        cleanupSandbox: async (name, options) => record("nemoclaw", name, options?.artifactName),
+        cleanupGatewayRegistration: async (name, options) =>
+          record("openshell-gateway", name, options?.artifactName),
+      };
+      const sandbox: Pick<SandboxClient, "cleanupSandbox"> = {
+        cleanupSandbox: async (name, options) =>
+          record("openshell-sandbox", name, options?.artifactName),
+      };
+      const expectedByStage: Record<string, string> = {
+        nemoclaw: `nemoclaw:${sandboxName}:${artifactPrefix}-nemoclaw-destroy`,
+        "openshell-sandbox": `openshell-sandbox:${sandboxName}:${artifactPrefix}-openshell-sandbox-delete`,
+        "openshell-gateway": `openshell-gateway:nemoclaw:${artifactPrefix}-openshell-gateway-destroy`,
+      };
+      let installAttempted = false;
 
-    await expect(
-      precleanMessagingProviderResources(host, sandbox, { env: {}, redactionValues: [] }),
-    ).rejects.toThrow("permission denied while destroying retained sandbox");
-    expect(calls).toEqual(["preclean-nemoclaw-destroy-messaging-providers"]);
-  });
+      await expect(
+        (async () => {
+          await precleanMessagingResources(host, sandbox, {
+            sandboxName,
+            artifactPrefix,
+            env: {},
+            redactionValues: [],
+          });
+          installAttempted = true;
+        })(),
+        `${scenario} cleanup should fail closed`,
+      ).rejects.toThrow(`permission denied during ${deniedStage} cleanup`);
+
+      expect(calls).toEqual(expectedStages.map((stage) => expectedByStage[stage]));
+      expect(installAttempted).toBe(false);
+    },
+  );
 
   it("accepts Slack bot and app credential bindings and rejects policies without them", () => {
     const legacyPolicy = `

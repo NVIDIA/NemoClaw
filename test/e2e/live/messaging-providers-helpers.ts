@@ -365,28 +365,30 @@ export async function runSecondaryCleanup(run: () => Promise<unknown>): Promise<
   }
 }
 
-export async function precleanMessagingProviderResources(
+export async function precleanMessagingResources(
   host: Pick<HostCliClient, "cleanupGatewayRegistration" | "cleanupSandbox">,
   sandbox: Pick<SandboxClient, "cleanupSandbox">,
   options: {
+    sandboxName: string;
+    artifactPrefix: string;
     env: NodeJS.ProcessEnv;
     redactionValues: string[];
   },
 ): Promise<void> {
-  await host.cleanupSandbox(SANDBOX_NAME, {
-    artifactName: "preclean-nemoclaw-destroy-messaging-providers",
+  await host.cleanupSandbox(options.sandboxName, {
+    artifactName: `${options.artifactPrefix}-nemoclaw-destroy`,
     env: options.env,
     redactionValues: options.redactionValues,
     timeoutMs: 15 * 60_000,
   });
-  await sandbox.cleanupSandbox(SANDBOX_NAME, {
-    artifactName: "preclean-openshell-sandbox-delete-messaging-providers",
+  await sandbox.cleanupSandbox(options.sandboxName, {
+    artifactName: `${options.artifactPrefix}-openshell-sandbox-delete`,
     env: options.env,
     redactionValues: options.redactionValues,
     timeoutMs: 120_000,
   });
   await host.cleanupGatewayRegistration("nemoclaw", {
-    artifactName: "preclean-openshell-gateway-destroy-messaging-providers",
+    artifactName: `${options.artifactPrefix}-openshell-gateway-destroy`,
     env: options.env,
     redactionValues: options.redactionValues,
     timeoutMs: 120_000,

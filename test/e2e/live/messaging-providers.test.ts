@@ -35,7 +35,7 @@ import {
   outputText,
   pluginEnabled,
   policyTextHasHost,
-  precleanMessagingProviderResources,
+  precleanMessagingResources,
   REBUILD_TIMEOUT_MS,
   rawTokenSurfaceProbe,
   readOpenClawConfig,
@@ -118,7 +118,12 @@ test(
       timeoutMs: 15 * 60_000,
     });
 
-    await precleanMessagingProviderResources(host, sandbox, { env: state.env, redactionValues });
+    await precleanMessagingResources(host, sandbox, {
+      sandboxName: SANDBOX_NAME,
+      artifactPrefix: "preclean-messaging-providers",
+      env: state.env,
+      redactionValues,
+    });
 
     const dockerInfo = await runHost(host, "docker", ["info"], {
       artifactName: "prereq-docker-info-messaging-providers",
