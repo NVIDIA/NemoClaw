@@ -242,29 +242,75 @@ drop_capabilities /usr/local/bin/nemoclaw-start "$@"
 NEMOCLAW_CMD=("$@")
 NEMOCLAW_RUNTIME_STATE_MUTATION_RETRY_ARGV=("${NEMOCLAW_CMD[@]}")
 
-_chat_ui_url_port() {
-  [ -n "${CHAT_UI_URL:-}" ] || return 1
+_chat_ui_url_dashboard_settings() {
+  [ -n "${CHAT_UI_URL:-}" ] || return 2
   python3 - "$CHAT_UI_URL" <<'PYPORT'
+import ipaddress
 import re
 import sys
 from urllib.parse import urlparse
 
 raw_url = sys.argv[1]
-if raw_url and not re.match(r"^[a-z][a-z0-9+.-]*://", raw_url, re.IGNORECASE):
-    raw_url = f"http://{raw_url}"
 try:
-    port = urlparse(raw_url).port
+    parsed = urlparse(raw_url)
+    host = parsed.hostname
+    port = parsed.port
 except ValueError:
     sys.exit(1)
-if port is None or port < 1024 or port > 65535:
+
+if (
+    parsed.scheme.lower() not in {"http", "https"}
+    or not re.match(r"^[a-z][a-z0-9+.-]*://", raw_url, re.IGNORECASE)
+    or not parsed.netloc
+    or not host
+    or parsed.username is not None
+    or parsed.password is not None
+):
     sys.exit(1)
-print(port)
+
+host = host.lower().rstrip(".")
+if not host:
+    sys.exit(1)
+
+external_host = host
+if host == "localhost":
+    external_host = ""
+else:
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        if address.is_loopback:
+            external_host = ""
+        elif address.is_unspecified:
+            sys.exit(1)
+
+if external_host and parsed.scheme.lower() != "https":
+    sys.exit(1)
+
+dashboard_port = port if port is not None and 1024 <= port <= 65535 else ""
+print(f"{dashboard_port}|{external_host}")
 PYPORT
 }
 
+HERMES_DASHBOARD_EXTERNAL_HOST=""
+_chat_ui_port=""
+if [ -n "${CHAT_UI_URL:-}" ]; then
+  if _chat_ui_settings="$(_chat_ui_url_dashboard_settings)"; then
+    _chat_ui_port="${_chat_ui_settings%%|*}"
+    HERMES_DASHBOARD_EXTERNAL_HOST="${_chat_ui_settings#*|}"
+  else
+    printf '%s\n' \
+      '[SECURITY] Invalid CHAT_UI_URL for the Hermes dashboard. Use an HTTPS external URL without credentials or an HTTP(S) loopback URL. Set CHAT_UI_URL and rerun onboarding before starting the sandbox.' >&2
+    exit 1
+  fi
+fi
+unset _chat_ui_settings
+
 _dashboard_port_raw="${NEMOCLAW_DASHBOARD_PORT:-}"
 if [ -z "$_dashboard_port_raw" ]; then
-  if _chat_ui_port="$(_chat_ui_url_port)"; then
+  if [ -n "$_chat_ui_port" ]; then
     _dashboard_port="$_chat_ui_port"
   else
     _dashboard_port=18789
@@ -1732,15 +1778,37 @@ seed_hermes_dashboard_config() {
   fi
 }
 
+launch_hermes_dashboard_process() {
+  local service_user="${1:-current}"
+  local HERMES_HOME="${HERMES_DASHBOARD_HOME}"
+  local GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}"
+  local NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env"
+  local _NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST="${HERMES_DASHBOARD_EXTERNAL_HOST}"
+  export HERMES_HOME GATEWAY_HEALTH_URL NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV \
+    _NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST
+
+  case "$service_user" in
+    current)
+      nohup "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" >/tmp/dashboard.log 2>&1 &
+      ;;
+    sandbox)
+      nohup "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c \
+        'umask 0077; exec "$@" >/tmp/dashboard.log 2>&1' \
+        sh "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" &
+      ;;
+    *)
+      echo "[dashboard] ERROR: invalid dashboard service user" >&2
+      return 1
+      ;;
+  esac
+  DASHBOARD_PID=$!
+}
+
 start_hermes_dashboard_current_user() {
   build_hermes_dashboard_args || return 1
   prepare_hermes_dashboard_home "" || return 1
   prepare_restricted_log /tmp/dashboard.log "" 600 || return 1
-  HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
-    GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
-    NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env" \
-    nohup "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" >/tmp/dashboard.log 2>&1 &
-  DASHBOARD_PID=$!
+  launch_hermes_dashboard_process current || return 1
   echo "[gateway] hermes dashboard launched (pid $DASHBOARD_PID)" >&2
   if ! hermes_capture_tracked_role dashboard "$DASHBOARD_PID" current "$DASHBOARD_INTERNAL_PORT"; then
     hermes_fatal_unproven_child dashboard "$DASHBOARD_PID"
@@ -1755,11 +1823,7 @@ start_hermes_dashboard_sandbox_user() {
   build_hermes_dashboard_args || return 1
   prepare_hermes_dashboard_home sandbox:sandbox || return 1
   prepare_restricted_log /tmp/dashboard.log sandbox:sandbox 600 || return 1
-  HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
-    GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
-    NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env" \
-    nohup "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c 'umask 0077; exec "$@" >/tmp/dashboard.log 2>&1' sh "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" &
-  DASHBOARD_PID=$!
+  launch_hermes_dashboard_process sandbox || return 1
   echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
   if ! hermes_capture_tracked_role dashboard "$DASHBOARD_PID" sandbox "$DASHBOARD_INTERNAL_PORT"; then
     hermes_fatal_unproven_child dashboard "$DASHBOARD_PID"
