@@ -81,6 +81,7 @@ describe("createSandboxReadyWaiter", () => {
       isLinuxDockerDriverGatewayEnabled: () => true,
       now: () => 0,
       sleep,
+      now: () => 0,
     });
 
     await expect(waitForSandboxReady(NAME, 2, 3)).resolves.toEqual({
