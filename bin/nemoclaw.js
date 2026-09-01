@@ -55,20 +55,15 @@ function handleTopLevelError(error) {
   }
 }
 
-// An interrupted install or upgrade leaves `dist/` — or a dependency it needs —
-// missing, so loading the compiled CLI below fails with MODULE_NOT_FOUND. The
-// redacting fallback in handleTopLevelError reduces that to "Command failed.",
-// which names neither the half-finished install nor the one step that repairs
-// it, so every state-inspection command looks like an unexplained breakage
-// (#10372). Report the state instead. The missing module is deliberately not
-// echoed: an untrusted path in the message is what that fallback redacts.
+// MODULE_NOT_FOUND can indicate an incomplete install. Do not echo its untrusted path.
 function reportIncompleteInstall() {
   process.exitCode = 1;
   try {
     process.stderr.write(
       "Error: NemoClaw's compiled CLI is missing or incomplete, so no command can run.\n" +
         "  An install or upgrade did not finish.\n" +
-        "  Rerun the installer command you used to install NemoClaw; it resumes and recovers existing sandboxes.\n",
+        "  Rerun the installer command that you used to install NemoClaw to finish the installation.\n" +
+        "  The installer attempts to recover existing sandboxes. Follow any recovery guidance that it reports.\n",
     );
   } catch {
     // The diagnostic sink itself failed; there is nothing left to report safely.

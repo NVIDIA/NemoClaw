@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const cliPath = JSON.stringify(path.join(REPO_ROOT, "bin", "nemoclaw.js"));
+const nemohermesPath = JSON.stringify(path.join(REPO_ROOT, "bin", "nemohermes.js"));
 const dispatchPath = JSON.stringify(
   path.join(REPO_ROOT, "dist", "lib", "cli", "public-dispatch.js"),
 );
@@ -108,13 +109,13 @@ require(cliPath);`,
 // An interrupted install or upgrade leaves the compiled entrypoint unresolvable.
 // Reproduce that shape rather than deleting `dist/`, which the rest of this
 // lane needs.
-function runWithMissingCompiledCli(): SpawnSyncReturns<string> {
+function runWithMissingCompiledCli(launcherPath = cliPath): SpawnSyncReturns<string> {
   return spawnSync(
     process.execPath,
     [
       "--eval",
       `const Module = require("node:module");
-const cliPath = ${cliPath};
+const cliPath = ${launcherPath};
 const mainPath = ${mainPath};
 const originalLoad = Module._load;
 Module._load = function(request, parent, isMain) {
@@ -192,8 +193,20 @@ describe("compiled CLI top-level errors", () => {
     expect(result.stderr.split(/\r?\n/).filter(Boolean)).toEqual([
       "Error: NemoClaw's compiled CLI is missing or incomplete, so no command can run.",
       "  An install or upgrade did not finish.",
-      "  Rerun the installer command you used to install NemoClaw; it resumes and recovers existing sandboxes.",
+      "  Rerun the installer command that you used to install NemoClaw to finish the installation.",
+      "  The installer attempts to recover existing sandboxes. Follow any recovery guidance that it reports.",
     ]);
+  });
+
+  it("reports an unfinished install through the Hermes launcher (#10372)", () => {
+    const result = runWithMissingCompiledCli(nemohermesPath);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("An install or upgrade did not finish.");
+    expect(result.stderr).toContain("The installer attempts to recover existing sandboxes.");
+    expect(result.stderr).not.toContain("dist");
+    expect(result.stderr).not.toContain("Cannot find module");
   });
 
   it("keeps the unresolved module path out of the unfinished-install report (#10372)", () => {
