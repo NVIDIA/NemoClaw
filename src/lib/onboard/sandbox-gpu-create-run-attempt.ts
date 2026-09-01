@@ -22,7 +22,6 @@ import { printSandboxCreateRecoveryHints } from "../build-context";
 import { streamSandboxCreate, type StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
 import { redact, redactFullWithUrls } from "../security/redact";
-import { isSandboxReady } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
@@ -55,6 +54,7 @@ import {
 } from "./sandbox-recreate-probe";
 import type { CreatedSandboxReadyIdentityCheck } from "./sandbox-readiness-tracing";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
+import { createReadinessWaitOptions, runReadinessWait } from "./readiness-wait";
 import { addTraceEvent } from "./tracing";
 
 type NativeRuntimeSnapshot = ManagedBootstrapRuntimeSnapshot;
@@ -250,10 +250,7 @@ function normalizedOpenShellCommandOutput(result: OpenShellCommandResult): strin
 }
 
 function boundedPublicationDiagnostic(value: string): string {
-  return redactCreatedSandboxFailureDiagnostic(
-    value,
-    CREATED_SANDBOX_PUBLICATION_DIAGNOSTIC_LIMIT,
-  );
+  return redactCreatedSandboxFailureDiagnostic(value, CREATED_SANDBOX_PUBLICATION_DIAGNOSTIC_LIMIT);
 }
 
 function publicationFailureDiagnostic(result: OpenShellCommandResult): string {
@@ -536,54 +533,61 @@ function waitForCreatedOpenShellSandboxPublication(
   deps: SandboxGpuCreateFlowDeps,
   deadline: PostCreateReadinessDeadline,
 ): void {
-  const published = sandboxReadinessTracing.waitForCreatedSandboxPublication({
+  const waitOptions = createReadinessWaitOptions({
     budgetMs: remainingPostCreateReadinessMs(deadline),
-    pollIntervalMs: CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_MS,
+    initialIntervalMs: CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_MS,
+    maxIntervalMs: CREATED_SANDBOX_PUBLICATION_POLL_INTERVAL_MS,
     now: deadline.now,
-    sleep: deps.sleep,
-    probe: (getRemainingMs) => {
-      const result = deps.runOpenshell(
-        ["sandbox", "get", "-g", input.gatewayName, input.sandboxName],
-        {
-          ignoreError: true,
-          suppressOutput: true,
-          timeout: Math.min(SANDBOX_READY_PROBE_TIMEOUT_MS, getRemainingMs()),
-          killSignal: "SIGKILL",
-        },
-      );
-      if (result.status === 0 && !result.error) {
-        const publishedSandboxId = parseOpenShellSandboxId(String(result.stdout ?? ""));
-        if (!publishedSandboxId) {
-          throw new Error(
-            `OpenShell returned no exact durable ID for created sandbox '${input.sandboxName}'.`,
-          );
-        }
-        if (publishedSandboxId !== sandboxId) {
-          throw new Error(
-            `Created sandbox '${input.sandboxName}' changed identity before identity verification completed.`,
-          );
-        }
-        return true;
-      }
-      const output = normalizedOpenShellCommandOutput(result);
-      const failedCleanly =
-        !result.error &&
-        result.status !== null &&
-        !("signal" in result && result.signal) &&
-        result.status !== 0;
-      if (
-        failedCleanly &&
-        (OPENSHELL_SANDBOX_NOT_READY.test(output) ||
-          isExplicitMissingSandboxGatewayOutput(output, input.sandboxName))
-      ) {
-        return false;
-      }
-      const diagnostic = publicationFailureDiagnostic(result);
-      throw new Error(
-        `OpenShell could not verify publication of created sandbox '${input.sandboxName}'${diagnostic ? `: ${diagnostic}` : "."}`,
-      );
-    },
+    sleep: (milliseconds) => deps.sleep(milliseconds / 1_000),
   });
+  const deadlineMs = waitOptions?.deadlineMs;
+  const now = waitOptions?.now;
+  const published =
+    waitOptions && deadlineMs !== undefined && now
+      ? runReadinessWait(() => {
+          const getRemainingMs = () => Math.max(1, deadlineMs - now());
+          const result = deps.runOpenshell(
+            ["sandbox", "get", "-g", input.gatewayName, input.sandboxName],
+            {
+              ignoreError: true,
+              suppressOutput: true,
+              timeout: Math.min(SANDBOX_READY_PROBE_TIMEOUT_MS, getRemainingMs()),
+              killSignal: "SIGKILL",
+            },
+          );
+          if (result.status === 0 && !result.error) {
+            const publishedSandboxId = parseOpenShellSandboxId(String(result.stdout ?? ""));
+            if (!publishedSandboxId) {
+              throw new Error(
+                `OpenShell returned no exact durable ID for created sandbox '${input.sandboxName}'.`,
+              );
+            }
+            if (publishedSandboxId !== sandboxId) {
+              throw new Error(
+                `Created sandbox '${input.sandboxName}' changed identity before identity verification completed.`,
+              );
+            }
+            return true;
+          }
+          const output = normalizedOpenShellCommandOutput(result);
+          const failedCleanly =
+            !result.error &&
+            result.status !== null &&
+            !("signal" in result && result.signal) &&
+            result.status !== 0;
+          if (
+            failedCleanly &&
+            (OPENSHELL_SANDBOX_NOT_READY.test(output) ||
+              isExplicitMissingSandboxGatewayOutput(output, input.sandboxName))
+          ) {
+            return false;
+          }
+          const diagnostic = publicationFailureDiagnostic(result);
+          throw new Error(
+            `OpenShell could not verify publication of created sandbox '${input.sandboxName}'${diagnostic ? `: ${diagnostic}` : "."}`,
+          );
+        }, waitOptions)
+      : false;
   if (!published) {
     throw new Error(
       `Created sandbox '${input.sandboxName}' did not become visible through its owning gateway before identity verification completed.`,
@@ -913,7 +917,7 @@ export function createSandboxGpuCreateAttemptRunner(
                 ignoreError: true,
                 timeout: SANDBOX_READY_PROBE_TIMEOUT_MS,
               });
-              const ready = isSandboxReady(list, input.sandboxName);
+              const ready = deps.isSandboxReady(list, input.sandboxName);
               if (!ready || !createAttemptNonce) return ready;
               const observation = observeCreatedOpenShellSandboxId(
                 {

@@ -1263,6 +1263,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       hasSandboxGpuDrift,
       inferenceConfig,
       inspectSandboxForCreate,
+      isSandboxReady,
       isLinuxDockerDriverGatewayEnabled,
       isNonInteractive,
       isRecreateSandbox,
@@ -2601,6 +2602,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               ),
               sleep: sleepSeconds,
               openshellArgv,
+              isSandboxReady,
               verifyDirectSandboxGpu: createGpuVerifier,
             },
           );

@@ -15,12 +15,13 @@ import {
   createCliOpenShellSandboxObserver,
   type CliOpenShellSandboxObserverDeps,
 } from "../adapters/openshell/sandbox-observer-cli";
-import { waitUntil, waitUntilAsync } from "../core/wait";
+import { waitUntilAsync } from "../core/wait";
 import { envInt } from "./env";
 import {
   createReadinessWaitOptions,
   formatReadinessDeadline,
   getLegacyPollDeadlineBudgetMs,
+  runReadinessWait,
 } from "./readiness-wait";
 import { addTraceEvent, withDashboardReadinessTrace, withSandboxReadinessTrace } from "./tracing";
 
@@ -128,27 +129,6 @@ export interface SandboxReadyWaitOptions extends SandboxReadyWaitDeps {
   sandboxName: string;
   attempts: number;
   delaySeconds: number;
-}
-
-/** Wait for one created-sandbox publication condition inside a shared bounded deadline. */
-export function waitForCreatedSandboxPublication(options: {
-  budgetMs: number;
-  pollIntervalMs: number;
-  probe: (getRemainingMs: () => number) => boolean;
-  sleep: (seconds: number) => void;
-  now?: () => number;
-}): boolean {
-  const waitOptions = createReadinessWaitOptions({
-    budgetMs: options.budgetMs,
-    initialIntervalMs: options.pollIntervalMs,
-    maxIntervalMs: options.pollIntervalMs,
-    now: options.now,
-    sleep: (milliseconds) => options.sleep(milliseconds / 1_000),
-  });
-  const deadlineMs = waitOptions?.deadlineMs;
-  const now = waitOptions?.now;
-  if (!waitOptions || deadlineMs === undefined || !now) return false;
-  return waitUntil(() => options.probe(() => Math.max(1, deadlineMs - now())), waitOptions);
 }
 
 export async function observeOpenShellSandbox(
@@ -671,7 +651,7 @@ export function waitForDashboardReadyWithTrace(options: {
     }
     const ready =
       waitOptions !== null &&
-      waitUntil(() => {
+      runReadinessWait(() => {
         attempt += 1;
         const readyOutput = runCaptureOpenshell(
           [

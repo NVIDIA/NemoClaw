@@ -21,9 +21,7 @@ import {
   isHermesPortableLifecycleMode,
 } from "./experimental/hermes-portable-onboarding";
 import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
-import {
-  buildHermesPortableOnboardingCommandAuthority,
-} from "./experimental/portable-agent-lifecycle";
+import { buildHermesPortableOnboardingCommandAuthority } from "./experimental/portable-agent-lifecycle";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import {
   createManagedBootstrapIdentity,
@@ -242,6 +240,7 @@ export interface SandboxGpuCreateFlowDeps {
   /** Production callers use a monotonic clock; tests may inject post-create deadline time. */
   publicationNow?: () => number;
   openshellArgv(args: string[]): string[];
+  isSandboxReady(output: string, sandboxName: string): boolean;
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
   printCreateFailureDiagnostics?: (
     sandboxName: string,
@@ -358,129 +357,131 @@ export async function runSandboxGpuCreateFlow(
         }
       : deps,
   );
-  const gpuCreateOutcome = await (input.resumeVerifiedCreate
-    ? attemptRunner.runAttempt(input.resumeVerifiedCreate.route)
-    : sandboxGpuCreateAttempt.executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
-      runAttempt: attemptRunner.runAttempt,
-      captureNativeFailure: (failure) => {
-        const routeAdapter = adaptDockerGpuRouteForPatch(failure.route);
-        const diagnostics = collectDockerGpuPatchDiagnostics(
-          input.sandboxName,
-          {
-            error: failure.error,
-            additionalSummaryLines: routeAdapter.additionalSummaryLines,
+  const gpuCreateOutcome = await (
+    input.resumeVerifiedCreate
+      ? attemptRunner.runAttempt(input.resumeVerifiedCreate.route)
+      : sandboxGpuCreateAttempt.executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
+          runAttempt: attemptRunner.runAttempt,
+          captureNativeFailure: (failure) => {
+            const routeAdapter = adaptDockerGpuRouteForPatch(failure.route);
+            const diagnostics = collectDockerGpuPatchDiagnostics(
+              input.sandboxName,
+              {
+                error: failure.error,
+                additionalSummaryLines: routeAdapter.additionalSummaryLines,
+              },
+              { runCaptureOpenshell: deps.runCaptureOpenshell },
+            );
+            if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
           },
-          { runCaptureOpenshell: deps.runCaptureOpenshell },
-        );
-        if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
-      },
-      cleanupNativeFailure: (failure) => {
-        if (input.requirePolicylessCreate) {
-          return refuseApfMutableNameFallbackCleanup(input.sandboxName);
-        }
-        return sandboxGpuCreateAttempt.cleanupNativeGpuFailureForFallback(
-          input.sandboxName,
-          failure,
-          {
-            runOpenshell: deps.runOpenshell,
-            sleep: deps.sleep,
+          cleanupNativeFailure: (failure) => {
+            if (input.requirePolicylessCreate) {
+              return refuseApfMutableNameFallbackCleanup(input.sandboxName);
+            }
+            return sandboxGpuCreateAttempt.cleanupNativeGpuFailureForFallback(
+              input.sandboxName,
+              failure,
+              {
+                runOpenshell: deps.runOpenshell,
+                sleep: deps.sleep,
+              },
+            );
           },
-        );
-      },
-      prepareCompatibilityAttempt: async () => {
-        if (!input.compatibilityPolicyPath) {
-          throw new Error("Compatibility retry policy was not materialized.");
-        }
-        const nativeRuntimeSnapshot = attemptRunner.state.nativeRuntimeSnapshot;
-        if (attemptRunner.managedRouting) {
-          const managedBootstrap = input.managedBootstrap;
-          if (!managedBootstrap) {
-            throw new Error("Managed compatibility routing is missing bootstrap authority.");
-          }
-          const bootstrapIdentity = createManagedBootstrapIdentity();
-          const heldWorkloadArgv = [
-            ...renderManagedBootstrapHeldCommand(
-              managedBootstrap.request,
-              bootstrapIdentity,
-              managedBootstrap.intendedWorkloadArgv,
-            ),
-          ];
-          const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
-            createArgs: managedBootstrapCreateArgs(input.prebuild.createArgs, bootstrapIdentity),
-            currentRegistryImageRef: registryImageRef,
-            managedImageReference: `${managedBootstrap.image.repository}@${managedBootstrap.image.manifestDigest}`,
-            prebuildImageId: input.prebuild.imageId,
-            allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
-            compatibilityPolicyPath: input.compatibilityPolicyPath,
-            startupCommand: heldWorkloadArgv,
-            runtimeSnapshot: nativeRuntimeSnapshot,
-          });
-          attemptRunner.state.compatibilityArgv = [...prepared.createArgv];
-          attemptRunner.state.compatibilityBootstrapIdentity = bootstrapIdentity;
-          attemptRunner.state.compatibilityHeldWorkloadArgv = heldWorkloadArgv;
-          registryImageRef = prepared.registryImageRef;
-        } else {
-          const prebuildImageId = input.prebuild.imageId;
-          const imageId =
-            nativeRuntimeSnapshot?.imageId ??
-            (prebuildImageId && isImmutableDockerImageId(prebuildImageId)
-              ? prebuildImageId.toLowerCase()
-              : null);
-          if (
-            !registryImageRef &&
-            nativeRuntimeSnapshot?.bookkeepingImageRef &&
-            !isImmutableDockerImageId(nativeRuntimeSnapshot.bookkeepingImageRef)
-          ) {
-            registryImageRef = nativeRuntimeSnapshot.bookkeepingImageRef;
-          }
-          const compatibilityArgs = renderCompatibilityFallbackCreateArgs(
-            input.prebuild.createArgs,
-            {
-              imageRef: imageId,
-              allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
-              compatibilityPolicyPath: input.compatibilityPolicyPath,
-            },
-          );
-          attemptRunner.state.compatibilityArgv = deps.openshellArgv([
-            "sandbox",
-            "create",
-            ...compatibilityArgs,
-            "--",
-            ...input.sandboxStartupCommand,
-          ]);
-        }
-        if (attemptRunner.state.compatibilityArgv.length === 0) {
-          throw new Error("Compatibility sandbox create executable is missing.");
-        }
-      },
-      activateCompatibilityAttempt: async () => {
-        if (!input.managedBootstrap) {
-          await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
-            input.provider,
-            input.sandboxGpuConfig,
-            {
-              dockerDriverGateway: input.dockerDriverGateway,
-              selectedRoute: "compatibility",
-              gatewayPort: input.gatewayPort,
-              log: console.log,
-            },
-          );
-        }
-        input.sandboxGpuConfig.sandboxGpuProof = null;
-      },
-      traceEvent: addTraceEvent,
-      }))
-    .catch((error: unknown) => {
-      if (error instanceof ManagedBootstrapRecoveryBlockedError) {
-        exitForManagedBootstrapRecovery(error);
-      }
-      throw error;
-    });
+          prepareCompatibilityAttempt: async () => {
+            if (!input.compatibilityPolicyPath) {
+              throw new Error("Compatibility retry policy was not materialized.");
+            }
+            const nativeRuntimeSnapshot = attemptRunner.state.nativeRuntimeSnapshot;
+            if (attemptRunner.managedRouting) {
+              const managedBootstrap = input.managedBootstrap;
+              if (!managedBootstrap) {
+                throw new Error("Managed compatibility routing is missing bootstrap authority.");
+              }
+              const bootstrapIdentity = createManagedBootstrapIdentity();
+              const heldWorkloadArgv = [
+                ...renderManagedBootstrapHeldCommand(
+                  managedBootstrap.request,
+                  bootstrapIdentity,
+                  managedBootstrap.intendedWorkloadArgv,
+                ),
+              ];
+              const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
+                createArgs: managedBootstrapCreateArgs(
+                  input.prebuild.createArgs,
+                  bootstrapIdentity,
+                ),
+                currentRegistryImageRef: registryImageRef,
+                managedImageReference: `${managedBootstrap.image.repository}@${managedBootstrap.image.manifestDigest}`,
+                prebuildImageId: input.prebuild.imageId,
+                allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
+                compatibilityPolicyPath: input.compatibilityPolicyPath,
+                startupCommand: heldWorkloadArgv,
+                runtimeSnapshot: nativeRuntimeSnapshot,
+              });
+              attemptRunner.state.compatibilityArgv = [...prepared.createArgv];
+              attemptRunner.state.compatibilityBootstrapIdentity = bootstrapIdentity;
+              attemptRunner.state.compatibilityHeldWorkloadArgv = heldWorkloadArgv;
+              registryImageRef = prepared.registryImageRef;
+            } else {
+              const prebuildImageId = input.prebuild.imageId;
+              const imageId =
+                nativeRuntimeSnapshot?.imageId ??
+                (prebuildImageId && isImmutableDockerImageId(prebuildImageId)
+                  ? prebuildImageId.toLowerCase()
+                  : null);
+              if (
+                !registryImageRef &&
+                nativeRuntimeSnapshot?.bookkeepingImageRef &&
+                !isImmutableDockerImageId(nativeRuntimeSnapshot.bookkeepingImageRef)
+              ) {
+                registryImageRef = nativeRuntimeSnapshot.bookkeepingImageRef;
+              }
+              const compatibilityArgs = renderCompatibilityFallbackCreateArgs(
+                input.prebuild.createArgs,
+                {
+                  imageRef: imageId,
+                  allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
+                  compatibilityPolicyPath: input.compatibilityPolicyPath,
+                },
+              );
+              attemptRunner.state.compatibilityArgv = deps.openshellArgv([
+                "sandbox",
+                "create",
+                ...compatibilityArgs,
+                "--",
+                ...input.sandboxStartupCommand,
+              ]);
+            }
+            if (attemptRunner.state.compatibilityArgv.length === 0) {
+              throw new Error("Compatibility sandbox create executable is missing.");
+            }
+          },
+          activateCompatibilityAttempt: async () => {
+            if (!input.managedBootstrap) {
+              await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
+                input.provider,
+                input.sandboxGpuConfig,
+                {
+                  dockerDriverGateway: input.dockerDriverGateway,
+                  selectedRoute: "compatibility",
+                  gatewayPort: input.gatewayPort,
+                  log: console.log,
+                },
+              );
+            }
+            input.sandboxGpuConfig.sandboxGpuProof = null;
+          },
+          traceEvent: addTraceEvent,
+        })
+  ).catch((error: unknown) => {
+    if (error instanceof ManagedBootstrapRecoveryBlockedError) {
+      exitForManagedBootstrapRecovery(error);
+    }
+    throw error;
+  });
   if (!gpuCreateOutcome.ok) {
     const preparationRefused =
-      "preparationRefused" in gpuCreateOutcome
-        ? gpuCreateOutcome.preparationRefused
-        : undefined;
+      "preparationRefused" in gpuCreateOutcome ? gpuCreateOutcome.preparationRefused : undefined;
     const cleanupRefused =
       "cleanupRefused" in gpuCreateOutcome ? gpuCreateOutcome.cleanupRefused : undefined;
     const nativeCleanupHandoff =

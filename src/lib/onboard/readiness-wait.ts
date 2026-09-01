@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { WaitUntilOptions } from "../core/wait";
+import { waitUntil, type WaitUntilOptions } from "../core/wait";
 
 const DEFAULT_INITIAL_INTERVAL_MS = 250;
 const DEFAULT_MAX_INTERVAL_MS = 2_000;
@@ -76,6 +76,10 @@ export function createReadinessWaitOptions(options: {
     ...common,
     deadlineMs: startedAt + budgetMs,
   };
+}
+
+export function runReadinessWait(condition: () => boolean, options: WaitUntilOptions): boolean {
+  return waitUntil(condition, options);
 }
 
 export function formatReadinessDeadline(budgetMs: number): string {
