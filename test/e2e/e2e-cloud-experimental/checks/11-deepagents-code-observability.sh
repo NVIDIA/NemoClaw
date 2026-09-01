@@ -238,7 +238,7 @@ NODE
 
 marker_output="$(observability_marker_value)" || fail "managed observability marker is absent"
 [ "$marker_output" = "1" ] || fail "managed observability marker has an unexpected value"
-pass "host registry, live policy, and sandbox marker agree on enabled observability"
+pass "host feature intent, live OpenShell policy, and sandbox marker agree on enabled observability"
 
 allowed_output="$(sandbox_python_probe POST \
   "$OTLP_TRACE_URL" \

@@ -110,14 +110,12 @@ function makeExistingDestEnv(
           model: "test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,
-          policies: [],
         },
         dst: {
           name: "dst",
           model: "test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,
-          policies: [],
           ...(destinationGatewayName
             ? {
                 gatewayName: destinationGatewayName,
@@ -163,6 +161,10 @@ function makeExistingDestEnv(
       `printf '%s\\n' "$*" >> ${JSON.stringify(osLog)}`,
       `ACTIVE_GATEWAY=${JSON.stringify(activeGateway)}`,
       `DELETED_DESTINATION=${JSON.stringify(deletedDestination)}`,
+      'if [ "$1 $2" = "policy get" ]; then',
+      "  printf 'version: 1\\nnetwork_policies: {}\\n'",
+      "  exit 0",
+      "fi",
       'if [ "$1" = "gateway" ] && [ "$2" = "select" ]; then',
       destinationGatewayName && opts.destinationGatewaySelectSucceeds === false
         ? `  if [ "$3" = ${JSON.stringify(destinationGatewayName)} ]; then echo "select failed" >&2; exit 17; fi`
@@ -224,7 +226,14 @@ function makeExistingDestEnv(
     { mode: 0o755 },
   );
 
-  return { env: { HOME: home, PATH: `${localBin}:${process.env.PATH ?? ""}` }, osLog };
+  return {
+    env: {
+      HOME: home,
+      NEMOCLAW_OPENSHELL_BIN: path.join(localBin, "openshell"),
+      PATH: `${localBin}:${process.env.PATH ?? ""}`,
+    },
+    osLog,
+  };
 }
 
 describe("snapshot restore --to existing destination (#3756)", () => {

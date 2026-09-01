@@ -49,7 +49,6 @@ describe("agent parity across sandbox inventory surfaces", () => {
             model: "test-model",
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
             agent: null,
           },
         },

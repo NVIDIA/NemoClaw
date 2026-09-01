@@ -213,10 +213,13 @@ function verifyAuthority(
     throw new Error("Completed onboarding registry authority is incomplete");
   const portableStateRoot = path.join(boundary.homeDir, ".nemoclaw");
   const receiptDirectory = path.join(portableStateRoot, "portable-demo-lifecycle");
-  const configDirectory = readPortableAuthorityDirectory(
-    path.join(boundary.homeDir, ".config/nemoclaw/portable"),
-    expected === "portable",
-  );
+  const inspectConfig = expected === "portable" || recovery !== null;
+  const configDirectory = inspectConfig
+    ? readPortableAuthorityDirectory(
+        path.join(boundary.homeDir, ".config/nemoclaw/portable"),
+        expected === "portable",
+      )
+    : null;
   const receiptDirectoryBefore = readPortableAuthorityDirectory(
     receiptDirectory,
     expected === "portable",
@@ -243,11 +246,12 @@ function verifyAuthority(
   const receiptEntries = receiptDirectoryBefore.entries.filter(
     (entry) => !receiptArtifacts.has(entry),
   );
-  const configEntries = configDirectory.entries.filter((entry) => !configArtifacts.has(entry));
+  const configEntries =
+    configDirectory?.entries.filter((entry) => !configArtifacts.has(entry)) ?? [];
   if (expected === "default") {
     if (checkpoint.runtimeAuthority.kind !== "unset" || receiptEntries.length || receipts.length)
       throw new Error("Completed ordinary onboarding has portable receipt authority");
-    if (configEntries.length)
+    if (recovery !== null && configEntries.length)
       throw new Error("Completed ordinary onboarding has portable configuration authority");
   } else {
     const basename = `${createHash("sha256").update(sandboxName).digest("hex")}.json`;
@@ -284,7 +288,7 @@ function verifyAuthority(
     )
       throw new Error("Completed portable onboarding authority is incomplete");
   }
-  rejectUnknownRetirementArtifacts(boundary.homeDir, recovery);
+  rejectUnknownRetirementArtifacts(boundary.homeDir, recovery, true, false, inspectConfig);
 }
 
 function artifactDirectory(homeDir: string, root: "config" | "receipt" | "registry"): string {
@@ -295,11 +299,22 @@ function artifactDirectory(homeDir: string, root: "config" | "receipt" | "regist
       : path.join(homeDir, ".nemoclaw");
 }
 
+/** Report whether this host owns a portable lifecycle receipt. */
+function ownsPortableLifecycleReceipt(boundary: PortableOnboardRetirementBoundary): boolean {
+  return (
+    readPortableAuthorityDirectory(
+      path.join(boundary.homeDir, ".nemoclaw/portable-demo-lifecycle"),
+      false,
+    ).entries.length > 0
+  );
+}
+
 function rejectUnknownRetirementArtifacts(
   homeDir: string,
   recovery: PortableRetirementRecovery | null,
   required = true,
   permitAnyMode = false,
+  inspectConfig = true,
 ): void {
   const directories = new Map<string, Set<string>>([
     [path.join(homeDir, ".nemoclaw"), new Set(PORTABLE_RETIREMENT_STATE_ENTRIES)],
@@ -309,6 +324,7 @@ function rejectUnknownRetirementArtifacts(
   for (const artifact of recovery?.artifacts ?? [])
     directories.get(artifactDirectory(homeDir, artifact.root))!.add(artifact.basename);
   for (const [directory, allowed] of directories) {
+    if (!inspectConfig && directory === path.join(homeDir, ".config/nemoclaw/portable")) continue;
     if (
       readPortableAuthorityDirectory(
         directory,
@@ -450,7 +466,20 @@ async function recover(
     );
     return;
   }
-  rejectUnknownRetirementArtifacts(boundary.homeDir, recovery, recovery !== null);
+  // A host that owns no portable lifecycle resource has no portable authority
+  // to protect, so an abandoned `~/.config/nemoclaw/portable` must not gate an
+  // ordinary onboarding. `admission()` already draws that line for the same
+  // directory, and `hasPortableUninstallAuthority` draws it for uninstall
+  // (#10545). Onboarding is the last path that inspected it unconditionally,
+  // which refused every run on a host where an empty directory survived at an
+  // ordinary umask (#10740).
+  rejectUnknownRetirementArtifacts(
+    boundary.homeDir,
+    recovery,
+    recovery !== null,
+    false,
+    recovery !== null || ownsPortableLifecycleReceipt(boundary),
+  );
   if (!recovery) return;
   await resumeBeforeOnboard(boundary, recovery, deps);
   const completed = inspectPortableRetirementRecovery(boundary.homeDir);
@@ -471,12 +500,11 @@ async function recover(
  * - A missing state directory.
  * - A portable configuration directory abandoned by an earlier run.
  *
- * Ordinary uninstall then removes the state directory and the portable
- * configuration directory when they exist. That answer still refuses an unknown
- * portable uninstall artifact. It still requires mode 0700 on the state
- * directory and on the receipt directory, because only the leftover check reads
- * a directory whose mode NemoClaw never set. Every read refuses a directory
- * whose entries it cannot list, through a symlink, an owner other than the
+ * Ordinary uninstall preserves an ambient portable configuration directory and
+ * removes the remaining NemoClaw configuration. That answer still refuses an
+ * unknown portable uninstall artifact in lifecycle state. It still requires mode
+ * 0700 on the state directory and receipt directory. Every authority read refuses
+ * a directory whose entries it cannot list, a symlink, an owner other than the
  * current user, or an entry count above the cap.
  */
 export function hasPortableUninstallAuthority(
@@ -490,7 +518,7 @@ export function hasPortableUninstallAuthority(
   );
   const recovery = inspectPortableRetirementRecovery(boundary.homeDir);
   if (!recovery && !receiptDirectory.entries.length) {
-    rejectUnknownRetirementArtifacts(boundary.homeDir, null, false, true);
+    rejectUnknownRetirementArtifacts(boundary.homeDir, null, false, true, false);
     const sessionBytes = readPortableAuthoritySnapshot(boundary.sessionFile);
     if (sessionBytes) {
       const raw = strictJson(sessionBytes, "Onboarding session");
@@ -546,7 +574,17 @@ export async function supersedePortableRetirementAfterCompletedOnboard(
   deps: PortableRetirementAuthorityDeps,
 ): Promise<void> {
   const recovery = inspectPortableOnboardSupersession(boundary.homeDir);
-  if (recovery === null) return rejectUnknownRetirementArtifacts(boundary.homeDir, recovery);
+  // Same rule as the entry gate, so a completed ordinary onboarding cannot be
+  // failed at its last step by the directory it was already admitted past, and
+  // a host that gained a lifecycle receipt during the run is still inspected.
+  if (recovery === null)
+    return rejectUnknownRetirementArtifacts(
+      boundary.homeDir,
+      recovery,
+      true,
+      false,
+      expected === "portable" || ownsPortableLifecycleReceipt(boundary),
+    );
   await lockedAuthority(boundary, expected, deps, (authority) =>
     supersedePortableRetirementAfterOnboard(boundary.homeDir, authority),
   );

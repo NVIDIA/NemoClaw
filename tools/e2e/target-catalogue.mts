@@ -215,6 +215,32 @@ const nonInteractive = {
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
 } as const;
 
+// Keep every checked-in input copied by the Pi Dockerfiles in the PR selection boundary.
+// test/e2e/support/pi-agent-qualification-events.test.ts verifies this list against the
+// real Dockerfiles so a new COPY instruction cannot silently reuse a stale image receipt.
+const PI_IMAGE_SOURCE_OWNING_PATHS = [
+  ".dockerignore",
+  "agents/pi/",
+  "nemoclaw-blueprint/",
+  "scripts/lib/bundled-npm-package.mts",
+  "scripts/lib/entrypoint-env-wrapper.sh",
+  "scripts/lib/patch-bundled-npm-ip-address.mts",
+  "scripts/lib/reviewed-npm-archive.mts",
+  "scripts/lib/sandbox-rlimits.sh",
+  "scripts/managed-bootstrap-entrypoint.c",
+  "scripts/managed-bootstrap-trampoline.sh",
+  "scripts/managed-startup-hold.sh",
+  "scripts/patch-bundled-npm-brace-expansion.mts",
+  "scripts/patch-bundled-npm-tar.mts",
+  "scripts/security/build-native-security-packages.sh",
+  "scripts/security/build-perl-security-packages.sh",
+  "scripts/security/patches/libssh2-1.11.1-cve-2026.patch",
+  "scripts/security/patches/perl-5.44.0-net-ping-capability-tests.patch",
+  "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch",
+  "scripts/upgrade-bundled-npm.mts",
+  "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
+] as const;
+
 function commonEgressTarget(options: {
   displayName: string;
   environment?: Readonly<Record<string, string>>;
@@ -723,7 +749,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     },
   }),
   target("gpu-e2e", {
-    displayName: "Inference: routes an agent turn through GPU Ollama",
+    displayName: "Inference: validates OpenClaw and Hermes turns through GPU Ollama",
     agentRuntime: "openclaw",
     environmentOrInferenceEndpoint: "NVIDIA GPU runner; local Ollama",
     profile: "standard",
@@ -732,9 +758,9 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     installMode: "authenticated",
     restoreCli: true,
     exposeCliBin: true,
+    owningPaths: ["test/e2e/live/hermes-cli-adapter-live.ts"],
     environment: {
       ...nonInteractive,
-      E2E_LLAMA_CPP_DEDICATED_LANE: "1",
       NEMOCLAW_MODEL: "qwen3.5:9b",
       NEMOCLAW_PROVIDER: "ollama",
       NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400",
@@ -1165,7 +1191,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     runner: "ubuntu-24.04",
     shard: "linux-amd64",
     owningPaths: [
-      "agents/pi/",
+      ...PI_IMAGE_SOURCE_OWNING_PATHS,
       "ci/pi-agent-qualification-v1-linux-amd64.json",
       "src/lib/agent/candidate-authority.ts",
       "src/lib/agent/candidate.ts",
@@ -1199,7 +1225,7 @@ export const E2E_TARGET_CATALOGUE: readonly E2eCatalogueTarget[] = [
     runner: "ubuntu-24.04-arm",
     shard: "linux-arm64",
     owningPaths: [
-      "agents/pi/",
+      ...PI_IMAGE_SOURCE_OWNING_PATHS,
       "ci/pi-agent-qualification-v1-linux-arm64.json",
       "src/lib/agent/candidate-authority.ts",
       "src/lib/agent/candidate.ts",

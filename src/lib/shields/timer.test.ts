@@ -6,7 +6,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ManagedMcpPolicyOmission } from "../actions/sandbox/mcp-bridge-policy";
 import {
   beginCommittedMcpLifecycleContainmentSync,
   getMcpLifecycleLockPath,
@@ -14,16 +13,13 @@ import {
 } from "../state/mcp-lifecycle-lock";
 
 const shieldsIndexMock = vi.hoisted(() => ({
-  applyShieldsPolicySnapshot: vi.fn(
-    (): {
-      status: number;
-      managedMcpOmissions?: ManagedMcpPolicyOmission[];
-    } => ({ status: 0 }),
-  ),
+  applyShieldsPolicySnapshot: vi.fn((): { status: number } => ({ status: 0 })),
   completeAutoRestoreTransition: vi.fn(() => true),
+  hermesProviderLockConfirmation: vi.fn() as unknown,
   lockAgentConfig: vi.fn() as unknown,
   prepareAutoRestoreTransitionTakeover: vi.fn(),
   resolvePersistedAutoRestoreTarget: vi.fn() as unknown,
+  resolveHermesShieldsProtocol: vi.fn() as unknown,
 }));
 
 const PROCESS_TOKEN = "a".repeat(32);
@@ -36,12 +32,18 @@ interface TimerTestOptions {
 vi.mock("./index", () => ({
   applyShieldsPolicySnapshot: shieldsIndexMock.applyShieldsPolicySnapshot,
   completeAutoRestoreTransition: shieldsIndexMock.completeAutoRestoreTransition,
+  get hermesProviderLockConfirmation() {
+    return shieldsIndexMock.hermesProviderLockConfirmation;
+  },
   get lockAgentConfig() {
     return shieldsIndexMock.lockAgentConfig;
   },
   prepareAutoRestoreTransitionTakeover: shieldsIndexMock.prepareAutoRestoreTransitionTakeover,
   get resolvePersistedAutoRestoreTarget() {
     return shieldsIndexMock.resolvePersistedAutoRestoreTarget;
+  },
+  get resolveHermesShieldsProtocol() {
+    return shieldsIndexMock.resolveHermesShieldsProtocol;
   },
 }));
 
@@ -52,7 +54,9 @@ describe("shields timer authorization", () => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "shields-timer-"));
     vi.stubEnv("HOME", tmpHome);
     shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementation(() => ({ status: 0 }));
+    shieldsIndexMock.hermesProviderLockConfirmation = vi.fn(() => undefined);
     shieldsIndexMock.lockAgentConfig = vi.fn();
+    shieldsIndexMock.resolveHermesShieldsProtocol = vi.fn(() => "sealed-plan-v1");
     shieldsIndexMock.resolvePersistedAutoRestoreTarget = vi.fn(
       (
         _sandboxName: string,
@@ -474,12 +478,10 @@ describe("shields timer authorization", () => {
       expect(fs.existsSync(deadlinePath)).toBe(true);
       return {
         status: 17,
-        managedMcpOmissions: [{ server: "beta", reason: "incomplete add" }],
       };
     });
     shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValueOnce({
       status: 0,
-      managedMcpOmissions: [],
     });
     const args = timer.parseTimerArgs([
       sandboxName,
@@ -606,12 +608,12 @@ describe("shields timer authorization", () => {
 
     const originalRename = fs.renameSync.bind(fs);
     const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((source, destination) => {
-      originalRename(source, destination);
       String(source) === markerPath &&
         fs.writeFileSync(markerPath, JSON.stringify(replacementMarker));
+      originalRename(source, destination);
     });
     try {
-      expect(timer.cleanupOwnedTimerMarker(args!)).toBe(true);
+      expect(timer.cleanupOwnedTimerMarker(args!)).toBe(false);
     } finally {
       renameSpy.mockRestore();
     }
@@ -726,7 +728,6 @@ describe("shields timer authorization", () => {
       });
       return {
         status: 0,
-        managedMcpOmissions: [{ server: "beta", reason: "incomplete add" }],
       };
     });
 
@@ -762,7 +763,6 @@ describe("shields timer authorization", () => {
     ).toContainEqual(
       expect.objectContaining({
         action: "shields_auto_restore",
-        warning: "Auto-restore omitted 1 unproven managed MCP policy entries",
       }),
     );
   });
@@ -1079,14 +1079,16 @@ describe("shields timer authorization", () => {
     expect(fs.existsSync(markerPath)).toBe(true);
   });
 
-  it("persists chattrApplied and fileHashes from the auto-restore lock result", async () => {
+  it("persists the Hermes lock result after one runtime provider state mutation and read-only confirmation (#10155)", async () => {
     const stateDir = path.join(tmpHome, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
 
     const sandboxName = "alpha";
-    const configPath = "/sandbox/.openclaw/openclaw.json";
-    const configDir = "/sandbox/.openclaw";
+    const agentName = "hermes";
+    const configPath = "/sandbox/.hermes/config.yaml";
+    const configDir = "/sandbox/.hermes";
     const sensitiveHashPath = `${configDir}/.config-hash`;
+    const sensitiveEnvPath = `${configDir}/.env`;
     const snapshotPath = path.join(stateDir, "snapshot.yaml");
     const restoreAtIso = new Date(Date.now() + 60_000).toISOString();
     const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
@@ -1101,20 +1103,32 @@ describe("shields timer authorization", () => {
         snapshotPath,
         restoreAt: restoreAtIso,
         processToken: PROCESS_TOKEN,
+        agentName,
       }),
     );
 
     const sealedHashes = {
       [configPath]: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
       [sensitiveHashPath]: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+      [sensitiveEnvPath]: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
     };
 
     const lockMock = vi.fn(() => ({
+      chattrApplied: false,
+      fileHashes: { [configPath]: "0".repeat(64) },
+    }));
+    const confirmMock = vi.fn(() => ({
       chattrApplied: true,
       fileHashes: sealedHashes,
     }));
     const indexModule = await import("./index");
     (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
+    (
+      indexModule.resolveHermesShieldsProtocol as ReturnType<typeof vi.fn>
+    ).mockReturnValue("provider-state-mutation-v2");
+    (
+      indexModule.hermesProviderLockConfirmation as ReturnType<typeof vi.fn>
+    ).mockReturnValue(confirmMock);
 
     const timer = await import("./timer");
     const args = timer.parseTimerArgs([
@@ -1124,6 +1138,10 @@ describe("shields timer authorization", () => {
       configPath,
       configDir,
       PROCESS_TOKEN,
+      "0",
+      "",
+      "",
+      agentName,
     ]);
     expect(args).not.toBeNull();
 
@@ -1137,10 +1155,11 @@ describe("shields timer authorization", () => {
       snapshotPath,
       { deadlineAuthoritative: true, transitionProcessToken: PROCESS_TOKEN },
     );
-    // #4663: relockAndReconfirm applies then re-confirms after the settle
-    // window (0ms under test), so lockAgentConfig is invoked twice for a clean
-    // lock.
-    expect(lockMock).toHaveBeenCalledTimes(2);
+    expect(lockMock).toHaveBeenCalledTimes(1);
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+    expect(lockMock.mock.invocationCallOrder[0]).toBeLessThan(
+      confirmMock.mock.invocationCallOrder[0]!,
+    );
     expect(updatedState.shieldsDown).toBe(false);
     expect(updatedState.chattrApplied).toBe(true);
     expect(updatedState.fileHashes).toEqual(sealedHashes);
@@ -1214,8 +1233,22 @@ describe("shields timer authorization", () => {
     );
     expect(exitCode).toBe(0);
     expect(lockMock).toHaveBeenCalledTimes(2);
-    expect(lockMock).toHaveBeenNthCalledWith(1, sandboxName, fallbackTarget, false, false);
-    expect(lockMock).toHaveBeenNthCalledWith(2, sandboxName, fallbackTarget, false, false);
+    expect(lockMock).toHaveBeenNthCalledWith(
+      1,
+      sandboxName,
+      fallbackTarget,
+      false,
+      false,
+      "sealed-plan-v1",
+    );
+    expect(lockMock).toHaveBeenNthCalledWith(
+      2,
+      sandboxName,
+      fallbackTarget,
+      false,
+      false,
+      "sealed-plan-v1",
+    );
     expect(fs.existsSync(markerPath)).toBe(false);
   });
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/** Exact shipped files admitted by the schema-5 Hermes Dockerfile COPY contract. */
+/** Exact shipped files admitted by the schema-7 Hermes Dockerfile COPY contract. */
 export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/build-mcp-digest.py", mode: "100644" },
   { path: "agents/hermes/config/build-env.ts", mode: "100644" },
@@ -15,6 +15,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "agents/hermes/config/write-config.ts", mode: "100644" },
   { path: "agents/hermes/config/yaml.ts", mode: "100644" },
   { path: "agents/hermes/cron-restore-control.py", mode: "100644" },
+  { path: "agents/hermes/dashboard-external-host.patch", mode: "100644" },
   { path: "agents/hermes/Dockerfile", mode: "100644" },
   { path: "agents/hermes/finalize-tirith-marker.py", mode: "100755" },
   { path: "agents/hermes/generate-config.ts", mode: "100644" },
@@ -143,6 +144,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "scripts/patch-bundled-npm-tar.mts", mode: "100755" },
   { path: "scripts/runtime_state_mutation_hermes_publisher.py", mode: "100755" },
   { path: "scripts/runtime-state-mutation-control.py", mode: "100755" },
+  { path: "scripts/runtime-state-mutation-transport-broker.py", mode: "100755" },
   { path: "scripts/runtime-state-mutation-startup-gate.py", mode: "100755" },
   { path: "scripts/state-dir-guard.py", mode: "100755" },
   {
@@ -151,6 +153,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   },
   { path: "src/lib/hermes-managed-route.ts", mode: "100644" },
   { path: "src/lib/messaging/AGENTS.md", mode: "100644" },
+  { path: "src/lib/messaging/applier/agent-config-remove.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/agent-config.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/build/messaging-build-applier.mts", mode: "100755" },
   { path: "src/lib/messaging/applier/conflict-detection-entry.test.ts", mode: "100644" },
@@ -333,6 +336,14 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/channels/wechat/qr.test.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/wechat/qr.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/wechat/rendered-config-parser.ts", mode: "100644" },
+  {
+    path: "src/lib/messaging/channels/wechat/runtime/wechat-account-placeholder.test.ts",
+    mode: "100644",
+  },
+  {
+    path: "src/lib/messaging/channels/wechat/runtime/wechat-account-placeholder.ts",
+    mode: "100644",
+  },
   { path: "src/lib/messaging/channels/wechat/runtime/wechat-diagnostics.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/wechat/template-resolver.ts", mode: "100644" },
   { path: "src/lib/messaging/channels/whatsapp/hooks/index.ts", mode: "100644" },
@@ -370,6 +381,10 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/compiler/manifest-compiler.ts", mode: "100644" },
   { path: "src/lib/messaging/compiler/types.ts", mode: "100644" },
   { path: "src/lib/messaging/compiler/workflow-planner-hermes-slack.test.ts", mode: "100644" },
+  {
+    path: "src/lib/messaging/compiler/workflow-planner-removal-tombstone.test.ts",
+    mode: "100644",
+  },
   { path: "src/lib/messaging/compiler/workflow-planner.test.ts", mode: "100644" },
   { path: "src/lib/messaging/compiler/workflow-planner.ts", mode: "100644" },
   { path: "src/lib/messaging/diagnostics.test.ts", mode: "100644" },

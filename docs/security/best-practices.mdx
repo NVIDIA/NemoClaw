@@ -235,7 +235,7 @@ Review the preset's YAML file before applying to understand the endpoints, metho
 <AgentOnly variant="openclaw">
 If the OpenClaw baseline includes `npm_registry`, that route remains GET-only until the `npm` preset is active.
 Adding that preset temporarily gives the overlapping baseline route the same L4 transport while preserving its `openclaw`-only binary scope.
-Removing the preset restores the exact reviewed GET-only baseline entry.
+Removing the preset restores the reviewed GET-only baseline entry.
 If you excluded `npm_registry`, adding or removing `npm` preserves that exclusion and does not recreate the baseline route.
 When no exclusion exists, NemoClaw refuses the npm change if the live baseline differs from the reviewed GET-only entry or compatibility overlay.
 The preset separately grants that registry transport to its listed npm, Yarn, and Node executables.
@@ -277,7 +277,7 @@ The raw `TAVILY_API_KEY` is not written into the managed Deep Agents configurati
 </AgentOnly>
 
 The `tavily` preset restricts agent egress to the maintained Python and Node.js paths used by the supported agents.
-Its exact curl paths are used only by onboarding's post-create verifier.
+Its curl paths are used only by onboarding's post-create verifier.
 Do not replace these paths with a broad `/**` binary rule.
 Broader binary access would let unrelated sandbox processes send data to Tavily through the same allowed endpoint.
 
@@ -328,17 +328,22 @@ Review the data policies of any cloud provider you use.
 
 ### Experimental Providers
 
-The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM on eligible hosts other than N1x and generic Linux managed vLLM install/start.
+The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM on eligible hosts other than native N1x FASTOS and generic Linux managed vLLM install/start.
 DGX Spark and DGX Station managed vLLM entries appear by default.
-N1x omits local NVIDIA NIM, and N1x Express offers only the Deferred managed-vLLM preview.
-N1x remains outside the supported-platform set because its physical NemoClaw Express E2E validation is incomplete.
-After NemoClaw qualifies the N1x identity, you must provide explicit managed-vLLM preview intent before onboarding can use this path.
-On hosts other than N1x, an already-running vLLM server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` also appears in the menu without a flag because selecting it is an explicit user action.
+Native N1x FASTOS omits local NVIDIA NIM and offers only the Deferred managed-vLLM preview.
+Native N1x FASTOS remains outside the supported-platform set because its physical NemoClaw Express E2E validation is incomplete.
+After NemoClaw qualifies the native N1x identity, you must provide explicit managed-vLLM preview intent before onboarding can use this path.
+A qualifying Windows WSL N1x host uses managed llama.cpp through Windows Express.
+The installer uses local Docker Desktop, Arm64, the Windows N1x product identity, and at least 48,000 MiB of GPU memory as preliminary selection conditions.
+Onboarding also requires the default local Docker context, at least 48,000 MiB of Docker memory, driver version `580.65.06` or later, Docker storage and runtime readiness, NVIDIA GPU integration, and a successful Docker Desktop GPU passthrough proof.
+Onboarding stops managed selection when any required readiness check fails.
+Other Windows WSL hosts retain Windows-host or WSL-local Ollama.
+On hosts other than native N1x FASTOS, an already-running vLLM server on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` also appears in the menu without a flag because selecting it is an explicit user action.
 
 | Aspect | Detail |
 |---|---|
-| Default | Local NVIDIA NIM and generic Linux managed vLLM install/start are hidden. DGX Spark and DGX Station managed vLLM entries are offered by default. On hosts other than N1x, already-running vLLM on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` is offered when detected. |
-| What you can change | On eligible hosts other than N1x, set `NEMOCLAW_EXPERIMENTAL=1` before onboarding to surface Local NIM and generic Linux managed vLLM. To request only the managed vLLM path non-interactively, set `NEMOCLAW_PROVIDER=install-vllm`. |
+| Default | Local NVIDIA NIM and generic Linux managed vLLM install/start are hidden. DGX Spark and DGX Station managed vLLM entries are offered by default. On hosts other than native N1x FASTOS, already-running vLLM on `localhost:${NEMOCLAW_VLLM_PORT:-8000}` is offered when detected. Qualifying Windows WSL N1x Express runs use managed llama.cpp. |
+| What you can change | On eligible hosts other than native N1x FASTOS, set `NEMOCLAW_EXPERIMENTAL=1` before onboarding to surface Local NIM and generic Linux managed vLLM. To request only the managed vLLM path non-interactively, set `NEMOCLAW_PROVIDER=install-vllm`. |
 | Risk if selected | NemoClaw has not fully validated these providers. NIM requires a NIM-capable GPU. The managed vLLM path pulls a container image and starts it on a supported NVIDIA GPU host. Misconfiguration can cause failed inference or unexpected behavior. |
 | Recommendation | Use experimental providers only for evaluation. Do not rely on them for always-on assistants. |
 
@@ -406,7 +411,7 @@ The following patterns weaken security without providing meaningful benefit.
 | Limitation | Impact | Mitigation |
 |-----------|--------|------------|
 | Bypassing managed gateway paths | Network policy and inference auth are not enforced when an agent runtime is launched outside the NemoClaw-managed gateway path. | Use NemoClaw-managed sandbox entrypoints for production workflows. |
-| Same-UID lifecycle control in the OpenShell-managed topology | The root controller authenticates the host action, verifies a stable process shape, pidfd-targets the exact observed child, and proves replacement health. It cannot establish malicious process provenance when the supervisor, gateway, and agent share the sandbox UID. Mutable config also has managed cold-start trust and time-of-check/time-of-use limits unless it is root-owned and locked. | Use a direct root-entrypoint deployment when UID isolation and the root restart seal are required. Lock managed config before treating the strict hash as a trust anchor, and recreate a sandbox after suspected same-UID compromise. |
+| Same-UID lifecycle control in the OpenShell-managed topology | The root controller authenticates the host action, verifies a stable process shape, pidfd-targets the observed child, and proves replacement health. It cannot establish malicious process provenance when the supervisor, gateway, and agent share the sandbox UID. Mutable config also has managed cold-start trust and time-of-check/time-of-use limits unless it is root-owned and locked. | Use a direct root-entrypoint deployment when UID isolation and the root restart seal are required. Lock managed config before treating the strict hash as a trust anchor, and recreate a sandbox after suspected same-UID compromise. |
 | Direct filesystem writes bypass application-layer scanners | Application-layer scanners can intercept agent tool calls, not arbitrary raw filesystem writes (e.g., `echo secret > file`). | Landlock restricts writable paths. Application-layer scanning is defense-in-depth, not a filesystem-level control. |
 | Base64/hex-encoded secrets are not detected | Content-based regex scanning cannot detect encoded or obfuscated secrets. | Use environment variables or credential stores instead of writing secrets to files. |
 

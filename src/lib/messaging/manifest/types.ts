@@ -39,6 +39,8 @@ export interface ChannelManifest {
   readonly auth: ChannelAuthSpec;
   readonly inputs: readonly ChannelInputSpec[];
   readonly credentials: readonly ChannelCredentialSpec[];
+  /** Agent config-relative durable state directories cleared during channel removal. */
+  readonly state?: Partial<Record<MessagingAgentId, readonly string[]>>;
   /** Policy presets needed when this channel is active. */
   readonly policyPresets?: readonly ChannelPolicyPresetReference[];
   readonly render: readonly ChannelRenderSpec[];
@@ -161,8 +163,9 @@ export interface ChannelHostForwardSpec {
 }
 
 /** Agent-runtime metadata consumed by shared runtime setup and diagnostics. */
-export interface ChannelRuntimeByAgentSpec
-  extends Partial<Record<MessagingAgentId, ChannelRuntimeSpec>> {
+export interface ChannelRuntimeByAgentSpec extends Partial<
+  Record<MessagingAgentId, ChannelRuntimeSpec>
+> {
   readonly openclaw?: ChannelOpenClawRuntimeSpec;
   readonly hermes?: ChannelRuntimeSpec;
 }
@@ -199,7 +202,10 @@ export interface ChannelRuntimeNodePreloadSpec {
 }
 
 export interface ChannelRuntimeEnvAliasSpec {
+  /** Provider environment key populated by OpenShell. */
   readonly envKey: string;
+  /** Agent-native environment key that receives the runtime provider placeholder. */
+  readonly targetEnvKey?: string;
   readonly match: string;
   readonly value: string;
   readonly message?: string;
@@ -319,6 +325,8 @@ export interface SandboxMessagingChannelPlan {
   readonly selected: boolean;
   readonly configured: boolean;
   readonly disabled: boolean;
+  /** Exact command-owned removal transaction retained until post-restore config cleanup succeeds. */
+  readonly pendingRemoval?: boolean;
   readonly inputs: readonly SandboxMessagingInputReference[];
   readonly hostForward?: SandboxMessagingHostForwardPlan;
   readonly hooks: readonly SandboxMessagingHookReferencePlan[];
