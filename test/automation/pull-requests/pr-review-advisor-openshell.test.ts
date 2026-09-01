@@ -810,7 +810,7 @@ describe("PR review advisor OpenShell wrapper", () => {
     }
   });
 
-  it("prepares specialist diff evidence before the worktree becomes read-only", async () => {
+  it("prepares specialist diff evidence and its mountpoint before the worktree becomes read-only", async () => {
     const env = advisorEnvironment();
     const workdir = env.ADVISOR_WORKDIR as string;
     fs.rmSync(path.join(workdir, ".git"), { recursive: true });
@@ -857,9 +857,23 @@ describe("PR review advisor OpenShell wrapper", () => {
     );
     expect(fs.readFileSync(diffPath, "utf8")).toContain("+changed");
     expect(fs.statSync(diffPath).mode & 0o777).toBe(0o444);
-    expect(fs.existsSync(path.join(workdir, ".pr-review-advisor-context"))).toBe(false);
+    const mountpoint = path.join(workdir, ".pr-review-advisor-context");
+    expect(fs.lstatSync(mountpoint).isDirectory()).toBe(true);
+    expect(fs.readdirSync(mountpoint)).toEqual([]);
+    expect(fs.statSync(mountpoint).mode & 0o777).toBe(0o555);
     fs.chmodSync(path.dirname(diffPath), 0o700);
     fs.chmodSync(diffPath, 0o600);
+  });
+
+  it("fails closed when review content occupies the specialist mountpoint", async () => {
+    const env = advisorEnvironment();
+    const mountpoint = path.join(env.ADVISOR_WORKDIR as string, ".pr-review-advisor-context");
+    fs.writeFileSync(mountpoint, "review content\n");
+
+    await expect(prepareAdvisorSandboxInputs(env)).rejects.toThrow(
+      "Advisor specialist mountpoint must be an empty directory",
+    );
+    expect(fs.readFileSync(mountpoint, "utf8")).toBe("review content\n");
   });
 
   it("requires repository metadata before placing immutable-boundary proof files", async () => {

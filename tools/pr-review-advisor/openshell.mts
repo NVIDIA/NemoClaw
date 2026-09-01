@@ -38,6 +38,7 @@ const ADVISOR_BOUNDARY_PROOF_SOURCE_NAME = "source";
 const ADVISOR_BOUNDARY_PROOF_TARGET_NAME = "target";
 const ADVISOR_CONTEXT_FILE_NAME = "github-context.json";
 const ADVISOR_SPECIALIST_CONTEXT_DIRECTORY_NAME = "specialist";
+const ADVISOR_WORKDIR_CONTEXT_DIRECTORY_NAME = `.${ADVISOR_CONTEXT_DIRECTORY_NAME}`;
 const SANDBOX_ADVISOR_DIR = "/advisor";
 const SANDBOX_WORKDIR = "/pr-workdir";
 const SANDBOX_GIT_DIR = `${SANDBOX_WORKDIR}/.git`;
@@ -45,7 +46,7 @@ const SANDBOX_CONTEXT_DIR = `/${ADVISOR_CONTEXT_DIRECTORY_NAME}`;
 const SANDBOX_RUNTIME_DIR = `/sandbox/${ADVISOR_RUNTIME_DIRECTORY_NAME}`;
 const SANDBOX_TOOLS_DIR = `/${ADVISOR_TOOLS_DIRECTORY_NAME}`;
 const SANDBOX_CONTEXT_PATH = `${SANDBOX_CONTEXT_DIR}/${ADVISOR_CONTEXT_FILE_NAME}`;
-const SANDBOX_SPECIALIST_CONTEXT_DIR = `${SANDBOX_WORKDIR}/.${ADVISOR_CONTEXT_DIRECTORY_NAME}`;
+const SANDBOX_SPECIALIST_CONTEXT_DIR = `${SANDBOX_WORKDIR}/${ADVISOR_WORKDIR_CONTEXT_DIRECTORY_NAME}`;
 const ADVISOR_RUNTIME_TMPFS_BYTES = 512 * 1024 * 1024;
 const SANDBOX_API_KEY = "unused";
 const DEFAULT_SANDBOX_TIMEOUT_SECONDS = 2100;
@@ -63,6 +64,19 @@ function runnerDirectory(env: NodeJS.ProcessEnv, name: string): string {
 function resetDirectory(directory: string): void {
   fs.rmSync(directory, { recursive: true, force: true });
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+}
+
+function prepareEmptyReadOnlyMountpoint(directory: string): void {
+  try {
+    const stat = fs.lstatSync(directory);
+    if (!stat.isDirectory() || fs.readdirSync(directory).length !== 0) {
+      throw new Error("Advisor specialist mountpoint must be an empty directory");
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    fs.mkdirSync(directory, { mode: 0o555 });
+  }
+  fs.chmodSync(directory, 0o555);
 }
 
 function createBoundaryProof(directory: string, relativeProofDirectory: string): void {
@@ -209,6 +223,7 @@ export async function prepareAdvisorSandboxInputs(
   const toolsDirectory = runnerDirectory(env, ADVISOR_TOOLS_DIRECTORY_NAME);
   requireGitMetadataDirectory(advisorDirectory, "ADVISOR_DIR");
   requireGitMetadataDirectory(advisorWorkdir, "ADVISOR_WORKDIR");
+  prepareEmptyReadOnlyMountpoint(path.join(advisorWorkdir, ADVISOR_WORKDIR_CONTEXT_DIRECTORY_NAME));
   resetDirectory(contextDirectory);
   resetDirectory(toolsDirectory);
 
