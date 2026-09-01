@@ -66,6 +66,49 @@ type RuntimeBridge = {
 };
 type OpenshellCall = { args: string[]; opts?: RuntimeBridgeRunOptions };
 
+const TAVILY_PROFILE_EXPORT = JSON.stringify({
+  id: "tavily",
+  credentials: [
+    {
+      name: "api_key",
+      env_vars: ["TAVILY_API_KEY"],
+      required: true,
+      auth_style: "bearer",
+      header_name: "authorization",
+      query_param: "",
+    },
+  ],
+  endpoints: [
+    {
+      host: "api.tavily.com",
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+      request_body_credential_rewrite: true,
+      rules: [
+        { allow: { method: "POST", path: "/search" } },
+        { allow: { method: "POST", path: "/extract" } },
+      ],
+    },
+  ],
+  binaries: [
+    "/opt/venv/bin/python3*",
+    "/usr/local/bin/node",
+    "/usr/bin/node",
+    "/usr/local/bin/curl",
+    "/usr/bin/curl",
+  ],
+  inference_capable: false,
+});
+
+function tavilyProfileCommandResult(args: string[]): SpawnLikeResult | null {
+  return args.includes("profile")
+    ? args.includes("export")
+      ? { status: 0, stdout: TAVILY_PROFILE_EXPORT }
+      : { status: 0, stdout: "" }
+    : null;
+}
+
 function loadCommands(): CredentialsCommandClasses {
   for (const modulePath of Object.values(COMMAND_PATHS)) {
     delete require.cache[modulePath];
@@ -351,7 +394,7 @@ describe("credentials oclif commands", () => {
     const calls = installRuntimeBridge({
       runOpenshell: (args, opts) => {
         calls.push({ args, opts });
-        return { status: 0, stdout: "" };
+        return tavilyProfileCommandResult(args) ?? { status: 0, stdout: "" };
       },
       recordExtraProvider: (name) => {
         extraProviderCalls.push(name);
@@ -383,6 +426,17 @@ describe("credentials oclif commands", () => {
           },
         },
         {
+          args: ["provider", "profile", "export", "tavily", "--output", "json"],
+          opts: {
+            env: expect.any(Object),
+            ignoreError: true,
+            replaceEnv: true,
+            stdio: ["ignore", "pipe", "pipe"],
+            suppressOutput: true,
+            timeout: 30_000,
+          },
+        },
+        {
           args: [
             "provider",
             "create",
@@ -403,9 +457,10 @@ describe("credentials oclif commands", () => {
         },
       ]);
       expect(calls[0]?.opts?.env?.TAVILY_API_KEY).toBeUndefined();
-      expect(calls[1]?.opts?.env?.UNRELATED_API_KEY).toBeUndefined();
-      expect(calls[1]?.opts?.env?.TAVILY_API_KEY).toBe("tvly-test-12345");
-      expect(calls[1]?.args).not.toContain("tvly-test-12345");
+      expect(calls[1]?.opts?.env?.TAVILY_API_KEY).toBeUndefined();
+      expect(calls[2]?.opts?.env?.UNRELATED_API_KEY).toBeUndefined();
+      expect(calls[2]?.opts?.env?.TAVILY_API_KEY).toBe("tvly-test-12345");
+      expect(calls[2]?.args).not.toContain("tvly-test-12345");
       expect(extraProviderCalls).toEqual(["tavily-search"]);
       expect(output.stdout).toContain("Registered provider 'tavily-search'");
       expect(output.stdout).toContain("rebuild");
@@ -425,8 +480,7 @@ describe("credentials oclif commands", () => {
       return { status: 1, stderr: "gateway unavailable" };
     };
     installRuntimeBridge({
-      runOpenshell: (args) =>
-        args.includes("profile") ? { status: 0, stdout: "" } : rejectGatewayCall(),
+      runOpenshell: (args) => tavilyProfileCommandResult(args) ?? rejectGatewayCall(),
       recordExtraProvider: (name) => {
         lifecycleCalls.push(`record:${name}`);
         const sizeBefore = extraProviders.size;
@@ -471,12 +525,10 @@ describe("credentials oclif commands", () => {
     const leakedTavilyValue = `tvly-${"leaked-secret"}-9999`;
     installRuntimeBridge({
       runOpenshell: (args) =>
-        args.includes("profile")
-          ? { status: 0, stdout: "" }
-          : {
-              status: 1,
-              stderr: `auth failed: TAVILY_API_KEY=${leakedTavilyValue} rejected`,
-            },
+        tavilyProfileCommandResult(args) ?? {
+          status: 1,
+          stderr: `auth failed: TAVILY_API_KEY=${leakedTavilyValue} rejected`,
+        },
     });
     const { CredentialsAddCommand } = loadCommands();
 
@@ -506,9 +558,10 @@ describe("credentials oclif commands", () => {
     process.env.TAVILY_API_KEY = "tvly-test-12345";
     installRuntimeBridge({
       runOpenshell: (args) =>
-        args.includes("profile")
-          ? { status: 0, stdout: "" }
-          : { status: 1, stderr: "provider 'tavily-search' already exists" },
+        tavilyProfileCommandResult(args) ?? {
+          status: 1,
+          stderr: "provider 'tavily-search' already exists",
+        },
     });
     const { CredentialsAddCommand } = loadCommands();
 
