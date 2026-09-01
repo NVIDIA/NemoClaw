@@ -3,6 +3,7 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { isIPv4 } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -41,6 +42,7 @@ export const LIVE_TIMEOUT_MS = 90 * 60_000;
 export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
 const FAKE_API_IMAGE =
   "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
+const DEFAULT_OPENSHELL_DOCKER_NETWORK = "openshell-docker";
 const FAKE_API_PROXY_SOURCE = String.raw`
 const net = require("node:net");
 const upstream = process.env.NEMOCLAW_FAKE_API_UPSTREAM;
@@ -656,6 +658,46 @@ export async function startFakeDockerApi(
   const containerPorts = options.kind === "slack" ? [8080, 8081] : [8080];
   fs.writeFileSync(captureFile, "");
 
+  const openshellNetwork =
+    options.env.OPENSHELL_DOCKER_NETWORK_NAME ??
+    process.env.OPENSHELL_DOCKER_NETWORK_NAME ??
+    DEFAULT_OPENSHELL_DOCKER_NETWORK;
+  const openshellNetworkInspect = await runHost(
+    host,
+    "docker",
+    ["network", "inspect", openshellNetwork],
+    {
+      artifactName: `inspect-fake-${options.kind}-openshell-network`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  expectExitZero(openshellNetworkInspect, "inspect OpenShell Docker network");
+  let openshellNetworkRecords: unknown;
+  try {
+    openshellNetworkRecords = JSON.parse(openshellNetworkInspect.stdout);
+  } catch {
+    throw new Error("OpenShell Docker network inspection returned invalid JSON");
+  }
+  const openshellBridgeAddress =
+    Array.isArray(openshellNetworkRecords) && openshellNetworkRecords.length === 1
+      ? (
+          openshellNetworkRecords[0] as {
+            Driver?: unknown;
+            IPAM?: { Config?: Array<{ Gateway?: unknown }> };
+          }
+        ).IPAM?.Config?.find((entry) => typeof entry.Gateway === "string" && isIPv4(entry.Gateway))
+          ?.Gateway
+      : undefined;
+  if (
+    (openshellNetworkRecords as Array<{ Driver?: unknown }> | undefined)?.[0]?.Driver !==
+      "bridge" ||
+    typeof openshellBridgeAddress !== "string"
+  ) {
+    throw new Error("OpenShell Docker network has no IPv4 bridge gateway");
+  }
+
   const networkCreate = await runHost(
     host,
     "docker",
@@ -772,7 +814,7 @@ export async function startFakeDockerApi(
       proxyContainer,
       "--network",
       "bridge",
-      ...containerPorts.flatMap((port) => ["-p", `127.0.0.1::${String(port)}`]),
+      ...containerPorts.flatMap((port) => ["-p", `${openshellBridgeAddress}::${String(port)}`]),
       "--read-only",
       "--cap-drop",
       "ALL",
@@ -824,11 +866,13 @@ export async function startFakeDockerApi(
       },
     );
     expectExitZero(result, `read fake ${options.kind} API proxy port`);
-    const hostPort = result.stdout.trim().match(/^127\.0\.0\.1:(\d+)$/u)?.[1];
-    if (!hostPort) {
-      throw new Error(`fake ${options.kind} API proxy port did not bind only to 127.0.0.1`);
+    const published = result.stdout.trim().match(/^(\d+\.\d+\.\d+\.\d+):(\d+)$/u);
+    if (published?.[1] !== openshellBridgeAddress || !published[2]) {
+      throw new Error(
+        `fake ${options.kind} API proxy port did not bind only to the OpenShell bridge`,
+      );
     }
-    return hostPort;
+    return published[2];
   };
 
   const publishedRestPort = await publishedPort(8080, `port-fake-${options.kind}-api`);

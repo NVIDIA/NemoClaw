@@ -28,6 +28,13 @@ import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-ru
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
 const FAKE_WECHAT_API = path.resolve(import.meta.dirname, "../lib/fake-wechat-api.mts");
+const OPENSHELL_BRIDGE_ADDRESS = "172.18.0.1";
+const OPENSHELL_NETWORK_INSPECT = JSON.stringify([
+  {
+    Driver: "bridge",
+    IPAM: { Config: [{ Subnet: "172.18.0.0/16", Gateway: OPENSHELL_BRIDGE_ADDRESS }] },
+  },
+]);
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 5_000;
@@ -56,7 +63,7 @@ function successfulCommand(stdout = "") {
   };
 }
 
-function fakeDockerHost(publishedAddress = "127.0.0.1"): {
+function fakeDockerHost(publishedAddress = OPENSHELL_BRIDGE_ADDRESS): {
   calls: string[][];
   host: HostCliClient;
 } {
@@ -71,9 +78,11 @@ function fakeDockerHost(publishedAddress = "127.0.0.1"): {
           const fixtureDir = fakeApiMount.slice(0, -":/tmp/fake".length);
           fs.writeFileSync(path.join(fixtureDir, "port"), "8080");
         });
-      return args[0] === "port"
-        ? successfulCommand(`${publishedAddress}:${args[2] === "8081/tcp" ? "32101" : "32100"}\n`)
-        : successfulCommand();
+      return args[0] === "network" && args[1] === "inspect"
+        ? successfulCommand(OPENSHELL_NETWORK_INSPECT)
+        : args[0] === "port"
+          ? successfulCommand(`${publishedAddress}:${args[2] === "8081/tcp" ? "32101" : "32100"}\n`)
+          : successfulCommand();
     },
   } as unknown as HostCliClient;
   return { calls, host };
@@ -85,10 +94,14 @@ async function runCleanup(actions: CleanupAction[]): Promise<void> {
 
 describe("messaging provider installed-runtime proofs", () => {
   it.each([
-    ["discord-gateway", ["127.0.0.1::8080"], ["8080/tcp"]],
-    ["slack", ["127.0.0.1::8080", "127.0.0.1::8081"], ["8080/tcp", "8081/tcp"]],
+    ["discord-gateway", [`${OPENSHELL_BRIDGE_ADDRESS}::8080`], ["8080/tcp"]],
+    [
+      "slack",
+      [`${OPENSHELL_BRIDGE_ADDRESS}::8080`, `${OPENSHELL_BRIDGE_ADDRESS}::8081`],
+      ["8080/tcp", "8081/tcp"],
+    ],
   ] as const)(
-    "proxies the isolated fake %s API through loopback-only ephemeral ports",
+    "proxies the isolated fake %s API through OpenShell-bridge ephemeral ports",
     async (kind, expectedPublications, expectedPortQueries) => {
       const { calls, host } = fakeDockerHost();
       const cleanup: CleanupAction[] = [];
@@ -118,6 +131,7 @@ describe("messaging provider installed-runtime proofs", () => {
           argument === "-p" ? [proxyRun[index + 1]] : [],
         );
 
+        expect(calls).toContainEqual(["network", "inspect", "openshell-docker"]);
         expect(createdNetwork.slice(0, -1)).toEqual(["network", "create", "--internal"]);
         expect(apiRun).toEqual(expect.arrayContaining(["--network", network]));
         expect(apiRun).not.toContain("-p");
@@ -137,7 +151,7 @@ describe("messaging provider installed-runtime proofs", () => {
     },
   );
 
-  it("rejects a fake API proxy port that Docker publishes beyond loopback", async () => {
+  it("rejects a fake API proxy port that Docker publishes beyond the OpenShell bridge", async () => {
     const { host } = fakeDockerHost("0.0.0.0");
     const cleanup: CleanupAction[] = [];
 
@@ -154,7 +168,7 @@ describe("messaging provider installed-runtime proofs", () => {
           redactionValues: [],
           env: {},
         }),
-      ).rejects.toThrow(/did not bind only to 127\.0\.0\.1/u);
+      ).rejects.toThrow(/did not bind only to the OpenShell bridge/u);
     } finally {
       await runCleanup(cleanup);
     }

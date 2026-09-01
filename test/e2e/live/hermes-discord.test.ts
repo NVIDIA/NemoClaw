@@ -40,7 +40,7 @@ const DISCORD_SERVER_IDS = process.env.DISCORD_SERVER_IDS ?? "149159099275359059
 const DISCORD_ALLOWED_IDS = process.env.DISCORD_ALLOWED_IDS ?? "1005536447329222676";
 const DISCORD_REQUIRE_MENTION = process.env.DISCORD_REQUIRE_MENTION ?? "0";
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
-const FAKE_DISCORD_HOST = "host.docker.internal";
+const FAKE_DISCORD_HOST = "host.openshell.internal";
 const HERMES_DISCORD_HTTP_PROXY_GATEWAY_TEMPLATE = hermesDiscordHttpProxyWebSocketUrl(
   "{host}",
   "{port}",
@@ -267,7 +267,7 @@ results = []
 
 async def main():
     port = int(os.environ["FAKE_DISCORD_GATEWAY_CLIENT_PORT"])
-    host = os.environ.get("FAKE_DISCORD_GATEWAY_CLIENT_HOST", "host.docker.internal")
+    host = os.environ.get("FAKE_DISCORD_GATEWAY_CLIENT_HOST", "host.openshell.internal")
     token = read_env_token()
     client = discord.Client(intents=discord.Intents.none())
     setup = getattr(client, "_async_setup_hook", None)
