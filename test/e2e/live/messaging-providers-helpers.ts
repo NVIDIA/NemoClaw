@@ -20,7 +20,6 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
-import { parseBridgeTopology } from "../fixtures/host-mock-firewall.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -43,8 +42,33 @@ export const LIVE_TIMEOUT_MS = 90 * 60_000;
 export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
 const FAKE_API_IMAGE =
   "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
-const DEFAULT_OPENSHELL_DOCKER_NETWORK = "openshell-docker";
-const DOCKER_NETWORK_NAME_PATTERN = /^[a-zA-Z0-9_.-]{1,128}$/;
+const FAKE_API_PROXY_SOURCE = String.raw`
+const net = require("node:net");
+const upstream = process.env.NEMOCLAW_FAKE_API_UPSTREAM;
+const ports = (process.env.NEMOCLAW_FAKE_API_PROXY_PORTS || "")
+  .split(",")
+  .filter(Boolean)
+  .map(Number);
+
+if (!upstream || ports.length === 0 || ports.some((port) => !Number.isInteger(port))) {
+  process.exit(2);
+}
+
+for (const port of ports) {
+  const server = net.createServer((client) => {
+    const backend = net.connect(port, upstream);
+    const close = () => {
+      client.destroy();
+      backend.destroy();
+    };
+    client.on("error", close);
+    backend.on("error", close);
+    client.pipe(backend).pipe(client);
+  });
+  server.on("error", () => process.exit(3));
+  server.listen(port, "0.0.0.0");
+}
+`;
 
 // Leave ample headroom beneath OpenShell's strict per-argument ceiling.
 const SANDBOX_SOURCE_CHUNK_BYTES = 16_384;
@@ -116,8 +140,15 @@ export function assertDiscordGatewayCapture(captureFile: string, expectedToken: 
   expect(identify?.tokenLooksPlaceholder, "Discord placeholder leaked").toBe(false);
 }
 
+export type FakeDockerApiKind =
+  | "slack"
+  | "telegram"
+  | "wechat"
+  | "discord-gateway"
+  | "discord-message";
+
 export type FakeDockerApi = {
-  kind: string;
+  kind: FakeDockerApiKind;
   port: string;
   alternatePort?: string;
   dir: string;
@@ -641,7 +672,7 @@ export async function startFakeDockerApi(
   host: HostCliClient,
   cleanup: (name: string, run: () => Promise<void>) => void,
   options: {
-    kind: "slack" | "telegram" | "wechat" | "discord-gateway" | "discord-message";
+    kind: FakeDockerApiKind;
     imageScript: string;
     nodeArgs?: readonly string[];
     containerPrefix: string;
@@ -658,31 +689,10 @@ export async function startFakeDockerApi(
   const portFile = path.join(dir, "port");
   const captureFile = path.join(dir, "capture.jsonl");
   const container = uniqueContainerName(options.containerPrefix);
-  const proxy = uniqueContainerName(`${options.containerPrefix}-proxy`);
-  const network = uniqueContainerName("nemoclaw-fake-api-internal");
-  const proxyNetwork = uniqueContainerName("nemoclaw-fake-api-proxy");
+  const proxyContainer = uniqueContainerName(`${options.containerPrefix}-proxy`);
+  const network = uniqueContainerName("nemoclaw-fake-api-network");
+  const containerPorts = options.kind === "slack" ? [8080, 8081] : [8080];
   fs.writeFileSync(captureFile, "");
-
-  const openShellNetwork =
-    options.env.OPENSHELL_DOCKER_NETWORK_NAME?.trim() || DEFAULT_OPENSHELL_DOCKER_NETWORK;
-  if (!DOCKER_NETWORK_NAME_PATTERN.test(openShellNetwork)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-    throw new Error(`OpenShell Docker network name is invalid: ${openShellNetwork}`);
-  }
-  const networkInspect = await runHost(host, "docker", ["network", "inspect", openShellNetwork], {
-    artifactName: `inspect-fake-${options.kind}-api-openshell-network`,
-    env: options.env,
-    redactionValues: options.redactionValues,
-    timeoutMs: 30_000,
-  });
-  let gatewayIp: string;
-  try {
-    expectExitZero(networkInspect, "inspect OpenShell Docker network for fake API proxy");
-    ({ gatewayIp } = parseBridgeTopology(networkInspect.stdout));
-  } catch (error) {
-    fs.rmSync(dir, { recursive: true, force: true });
-    throw error;
-  }
 
   const networkCreate = await runHost(
     host,
@@ -713,43 +723,6 @@ export async function startFakeDockerApi(
     }
   });
 
-  const proxyNetworkCreate = await runHost(
-    host,
-    "docker",
-    [
-      "network",
-      "create",
-      "--driver",
-      "bridge",
-      "--opt",
-      "com.docker.network.bridge.enable_ip_masquerade=false",
-      proxyNetwork,
-    ],
-    {
-      artifactName: `create-fake-${options.kind}-api-proxy-network`,
-      env: options.env,
-      redactionValues: options.redactionValues,
-      timeoutMs: 30_000,
-    },
-  );
-  try {
-    expectExitZero(proxyNetworkCreate, `create fake ${options.kind} API proxy network`);
-  } catch (error) {
-    fs.rmSync(dir, { recursive: true, force: true });
-    throw error;
-  }
-  cleanup(`remove ${proxyNetwork}`, async () => {
-    const remove = await runHost(host, "docker", ["network", "rm", proxyNetwork], {
-      artifactName: `cleanup-${proxyNetwork}`,
-      env: options.env,
-      redactionValues: options.redactionValues,
-      timeoutMs: 60_000,
-    });
-    if (remove.exitCode !== 0 && !/No such network:/iu.test(resultText(remove))) {
-      expectExitZero(remove, `remove fake ${options.kind} API proxy network ${proxyNetwork}`);
-    }
-  });
-
   const dockerArgs = [
     "run",
     "-d",
@@ -765,9 +738,7 @@ export async function startFakeDockerApi(
     "-e",
     `${options.captureFileEnv}=/tmp/fake/capture.jsonl`,
   ];
-  if (options.kind === "slack") {
-    dockerArgs.push("-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
-  }
+  if (options.kind === "slack") dockerArgs.push("-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
   for (const [key, value] of Object.entries(options.expectedEnv)) {
     dockerArgs.push("-e", `${key}=${value}`);
   }
@@ -806,136 +777,140 @@ export async function startFakeDockerApi(
   });
   expectExitZero(start, `start fake ${options.kind} API`);
 
-  cleanup(`remove ${proxy}`, async () => {
-    const remove = await runHost(host, "docker", ["rm", "-f", proxy], {
-      artifactName: `cleanup-${proxy}`,
+  let apiReady = false;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (fs.existsSync(portFile) && fs.statSync(portFile).size > 0) {
+      apiReady = true;
+      break;
+    }
+    await sleep(100);
+  }
+  if (!apiReady) throw new Error(`fake ${options.kind} API did not become ready`);
+
+  cleanup(`remove ${proxyContainer}`, async () => {
+    const remove = await runHost(host, "docker", ["rm", "-f", proxyContainer], {
+      artifactName: `cleanup-${proxyContainer}`,
       env: options.env,
       redactionValues: options.redactionValues,
       timeoutMs: 60_000,
     });
     if (remove.exitCode !== 0 && !/No such container:/iu.test(resultText(remove))) {
-      expectExitZero(remove, `remove fake ${options.kind} API proxy container ${proxy}`);
+      expectExitZero(remove, `remove fake ${options.kind} API proxy ${proxyContainer}`);
     }
   });
-  const proxyPorts = options.kind === "slack" ? "8080,8081" : "8080";
-  const proxyArgs = [
-    "create",
-    "--rm",
-    "--name",
-    proxy,
-    "--network",
-    proxyNetwork,
-    "-p",
-    `${gatewayIp}:0:8080`,
-  ];
-  if (options.kind === "slack") proxyArgs.push("-p", `${gatewayIp}:0:8081`);
-  proxyArgs.push(
-    "-e",
-    `NEMOCLAW_FAKE_API_PROXY_TARGET=${container}`,
-    "-e",
-    `NEMOCLAW_FAKE_API_PROXY_PORTS=${proxyPorts}`,
-    "-v",
-    `${FAKE_LIB_DIR}:/opt/nemoclaw-e2e:ro`,
-    FAKE_API_IMAGE,
-    "node",
-    "--experimental-strip-types",
-    "/opt/nemoclaw-e2e/fake-api-port-proxy.mts",
+
+  const proxyStart = await runHost(
+    host,
+    "docker",
+    [
+      "run",
+      "-d",
+      "--rm",
+      "--name",
+      proxyContainer,
+      "--network",
+      "bridge",
+      ...containerPorts.flatMap((port) => ["-p", `127.0.0.1::${String(port)}`]),
+      "--read-only",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges",
+      "--pids-limit",
+      "32",
+      "-e",
+      `NEMOCLAW_FAKE_API_UPSTREAM=${container}`,
+      "-e",
+      `NEMOCLAW_FAKE_API_PROXY_PORTS=${containerPorts.join(",")}`,
+      FAKE_API_IMAGE,
+      "node",
+      "-e",
+      FAKE_API_PROXY_SOURCE,
+    ],
+    {
+      artifactName: `start-fake-${options.kind}-api-proxy`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 120_000,
+    },
   );
-  const proxyCreate = await runHost(host, "docker", proxyArgs, {
-    artifactName: `create-fake-${options.kind}-api-proxy`,
-    env: options.env,
-    redactionValues: options.redactionValues,
-    timeoutMs: 120_000,
-  });
-  expectExitZero(proxyCreate, `create fake ${options.kind} API proxy`);
-  const proxyConnect = await runHost(host, "docker", ["network", "connect", network, proxy], {
-    artifactName: `connect-fake-${options.kind}-api-proxy`,
-    env: options.env,
-    redactionValues: options.redactionValues,
-    timeoutMs: 30_000,
-  });
-  expectExitZero(proxyConnect, `connect fake ${options.kind} API proxy to internal network`);
-  const proxyStart = await runHost(host, "docker", ["start", proxy], {
-    artifactName: `start-fake-${options.kind}-api-proxy`,
-    env: options.env,
-    redactionValues: options.redactionValues,
-    timeoutMs: 30_000,
-  });
   expectExitZero(proxyStart, `start fake ${options.kind} API proxy`);
 
-  let trafficFailure = "published ports were unavailable";
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (fs.existsSync(portFile) && fs.statSync(portFile).size > 0) {
-      const restPort = await runHost(host, "docker", ["port", proxy, "8080/tcp"], {
-        artifactName: `port-fake-${options.kind}-api`,
+  const proxyConnect = await runHost(
+    host,
+    "docker",
+    ["network", "connect", network, proxyContainer],
+    {
+      artifactName: `connect-fake-${options.kind}-api-proxy`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  expectExitZero(proxyConnect, `connect fake ${options.kind} API proxy`);
+
+  const publishedPort = async (containerPort: number, artifactName: string): Promise<string> => {
+    const result = await runHost(
+      host,
+      "docker",
+      ["port", proxyContainer, `${String(containerPort)}/tcp`],
+      {
+        artifactName,
         env: options.env,
         redactionValues: options.redactionValues,
         timeoutMs: 30_000,
-      });
-      if (restPort.exitCode !== 0) {
-        trafficFailure = `REST port lookup failed with exit ${restPort.exitCode ?? "unknown"}`;
-        break;
-      }
-      const publishedRestPort = restPort.stdout.trim().split(":").at(-1)?.trim() ?? "";
-      let publishedWebsocketPort = "";
-      if (options.kind === "slack") {
-        const websocketPort = await runHost(host, "docker", ["port", proxy, "8081/tcp"], {
-          artifactName: "port-fake-slack-websocket-api",
-          env: options.env,
-          redactionValues: options.redactionValues,
-          timeoutMs: 30_000,
-        });
-        if (websocketPort.exitCode !== 0) {
-          trafficFailure = `WebSocket port lookup failed with exit ${websocketPort.exitCode ?? "unknown"}`;
-          break;
-        }
-        publishedWebsocketPort = websocketPort.stdout.trim().split(":").at(-1)?.trim() ?? "";
-      }
-      if (publishedRestPort && (options.kind !== "slack" || publishedWebsocketPort)) {
-        const traffic = await runHost(
-          host,
-          "node",
-          [
-            "--experimental-strip-types",
-            FAKE_API_PORT_TRAFFIC,
-            gatewayIp,
-            publishedRestPort,
-            ...(options.kind === "slack" ? [publishedWebsocketPort] : []),
-          ],
-          {
-            artifactName: `prove-fake-${options.kind}-api-proxy-traffic`,
-            env: options.env,
-            redactionValues: options.redactionValues,
-            timeoutMs: 15_000,
-          },
-        );
-        if (traffic.exitCode === 0) {
-          return {
-            kind: options.kind,
-            port: publishedRestPort,
-            ...(options.kind === "slack" ? { alternatePort: publishedWebsocketPort } : {}),
-            dir,
-            captureFile,
-            container,
-          };
-        }
-        trafficFailure = `proxy traffic check failed with exit ${traffic.exitCode ?? "unknown"}`;
-        break;
-      }
+      },
+    );
+    expectExitZero(result, `read fake ${options.kind} API proxy port`);
+    const hostPort = result.stdout.trim().match(/^127\.0\.0\.1:(\d+)$/u)?.[1];
+    if (!hostPort) {
+      throw new Error(`fake ${options.kind} API proxy port did not bind only to 127.0.0.1`);
     }
-    await sleep(100);
+    return hostPort;
+  };
+
+  const publishedRestPort = await publishedPort(8080, `port-fake-${options.kind}-api`);
+  const publishedWebsocketPort =
+    options.kind === "slack" ? await publishedPort(8081, "port-fake-slack-websocket-api") : "";
+  const traffic = await runHost(
+    host,
+    "node",
+    [
+      "--experimental-strip-types",
+      FAKE_API_PORT_TRAFFIC,
+      "127.0.0.1",
+      publishedRestPort,
+      ...(options.kind === "slack" ? [publishedWebsocketPort] : []),
+    ],
+    {
+      artifactName: `prove-fake-${options.kind}-api-proxy-traffic`,
+      env: options.env,
+      redactionValues: options.redactionValues,
+      timeoutMs: 15_000,
+    },
+  );
+  if (traffic.exitCode !== 0) {
+    await collectFakeApiStartupDiagnostics(host, {
+      kind: options.kind,
+      proxy: proxyContainer,
+      container,
+      env: options.env,
+      redactionValues: options.redactionValues,
+    });
+    throw new Error(
+      `fake ${options.kind} API proxy ${proxyContainer} did not carry traffic to API container ${container}: ` +
+        `traffic check failed with exit ${traffic.exitCode ?? "unknown"}`,
+    );
   }
 
-  await collectFakeApiStartupDiagnostics(host, {
+  return {
     kind: options.kind,
-    proxy,
+    port: publishedRestPort,
+    ...(options.kind === "slack" ? { alternatePort: publishedWebsocketPort } : {}),
+    dir,
+    captureFile,
     container,
-    env: options.env,
-    redactionValues: options.redactionValues,
-  });
-  throw new Error(
-    `fake ${options.kind} API proxy ${proxy} did not carry traffic to API container ${container}: ${trafficFailure}`,
-  );
+  };
 }
 
 export async function applyRestRewritePolicy(

@@ -402,11 +402,12 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
         ([options]) => options.stableReadyPolls,
       ),
     ).toEqual([2, 2]);
-
     vi.mocked(deps.runCaptureOpenshell).mockClear();
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], READY_CHECK_OPTIONS);
-
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw"],
+      READY_CHECK_OPTIONS,
+    );
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
     );
@@ -417,7 +418,6 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     prepareNetwork.mockClear();
     mocks.streamSandboxCreate.mockClear();
     mockExit();
-
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
     expect(prepareNetwork).not.toHaveBeenCalled();
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
@@ -432,6 +432,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
 
   it("reports the terminal phase when an incomplete managed create cannot become ready (#9819)", async () => {
     const input = createInput();
+    input.gatewayName = "nemoclaw-18080";
     const bootstrapIdentity = "e".repeat(64);
     input.managedBootstrap = {
       bootstrapIdentity,
@@ -472,11 +473,14 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       reason: "terminal_failure_phase",
       failurePhase: "Failed",
     });
-
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
       "Sandbox 'alpha' entered Failed phase before it became ready (waited up to 60s).",
     );
-    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledOnce();
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: { kind: "named", gatewayName: input.gatewayName },
+      }),
+    );
   });
 });
 describe("runSandboxGpuCreateFlow proof authorization", () => {
@@ -617,10 +621,12 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
       expect(args[3].readyCheck()).toBe(true);
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
     });
-
     const result = await runSandboxGpuCreateFlow(createInput(), deps);
     expect(result).toMatchObject({ route: "native" });
-    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], READY_CHECK_OPTIONS);
+    expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "list", "-g", "nemoclaw"],
+      READY_CHECK_OPTIONS,
+    );
   });
 
   it("defers restart-safe no-GPU recreation until the create process exits (#8720)", async () => {
@@ -707,9 +713,9 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
-        ["sandbox get alpha", [readySandboxGetResult(), readySandboxGetResult()]],
+        ["sandbox get -g nemoclaw alpha", [readySandboxGetResult(), readySandboxGetResult()]],
         [
-          "sandbox exec --name alpha -- true",
+          "sandbox exec -g nemoclaw --name alpha -- true",
           [{ status: 1, stdout: "", stderr: "permission denied" }],
         ],
       ]),
@@ -760,11 +766,11 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     vi.mocked(deps.runOpenshell).mockImplementation(
       createSequencedOpenShellRunner([
         [
-          "sandbox get alpha",
+          "sandbox get -g nemoclaw alpha",
           [readySandboxGetResult(), readySandboxGetResult(), readySandboxGetResult()],
         ],
         [
-          "sandbox exec --name alpha -- true",
+          "sandbox exec -g nemoclaw --name alpha -- true",
           [
             {
               status: 1,
@@ -791,7 +797,9 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     expect(
       vi
         .mocked(deps.runOpenshell)
-        .mock.calls.filter(([args]) => args.join(" ") === "sandbox exec --name alpha -- true"),
+        .mock.calls.filter(
+          ([args]) => args.join(" ") === "sandbox exec -g nemoclaw --name alpha -- true",
+        ),
     ).toHaveLength(2);
     expect(patch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
     expect(deps.runOpenshell).not.toHaveBeenCalledWith(
