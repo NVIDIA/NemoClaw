@@ -2022,16 +2022,17 @@ The 180-second default can be exceeded after the create command returns when:
 - The in-sandbox agent, policy, or model runtime needs longer to become executable.
 - A managed runtime commit needs longer to re-register the same sandbox as executable `Ready`.
 
-Raise the budget before re-running onboard:
+For a post-create readiness failure, complete the retained-sandbox identity-bound cleanup above before you retry the same sandbox name.
+If that cleanup remains unresolved, use a different explicit sandbox name for a separate onboarding run.
+
+After identity-bound cleanup succeeds, raise the budget and rerun onboarding:
 
 ```bash
 export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
-$$nemoclaw onboard
+$$nemoclaw onboard --name <sandbox-name>
 ```
 
 The variable accepts seconds and sets the shared post-create readiness deadline.
-For a post-create readiness failure, NemoClaw preserves the sandbox and does not delete it by mutable name.
-Follow the retained-sandbox recovery procedure above.
 NemoClaw removes the recovery state only after identity-bound cleanup succeeds.
 
 <AgentOnly variant="openclaw">

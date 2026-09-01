@@ -56,7 +56,10 @@ import {
   isExplicitMissingSandboxGatewayOutput,
   SANDBOX_RECREATE_PROBE_TIMEOUT_MS,
 } from "./sandbox-recreate-probe";
-import type { CreatedSandboxReadyIdentityCheck } from "./sandbox-readiness-tracing";
+import type {
+  CreatedSandboxReadinessResult,
+  CreatedSandboxReadyIdentityCheck,
+} from "./sandbox-readiness-tracing";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
 import { addTraceEvent } from "./tracing";
 
@@ -434,6 +437,22 @@ function persistIdentitySettlementRecoveryEvidence(options: {
       "  NemoClaw could not save the retained sandbox recovery record for this create attempt. Preserve the terminal output for an OpenShell administrator.",
     persistenceFailureMessage:
       "NemoClaw could not save the retained sandbox recovery record for this create attempt.",
+  });
+}
+
+function persistPostVerificationReadinessRecovery(options: {
+  readonly input: SandboxGpuCreateFlowInput;
+  readonly createAttemptNonce: string | null;
+  readonly verifiedIdentity: CreatedSandboxIdentity | null;
+  readonly readiness: CreatedSandboxReadinessResult;
+}): void {
+  if (!options.verifiedIdentity) return;
+  const { input } = options;
+  persistCreateAttemptRecovery({
+    input,
+    createAttemptNonce: options.createAttemptNonce,
+    detail: `Post-verification readiness detail: ${boundedPublicationDiagnostic(sandboxReadinessTracing.formatCreatedSandboxReadinessFailureMessage(input.sandboxName, options.readiness, input.sandboxReadyTimeoutSecs).trim())}`,
+    sandboxIdentityFingerprint: options.verifiedIdentity.liveIdentityFingerprint,
   });
 }
 
@@ -1317,12 +1336,6 @@ export function createSandboxGpuCreateAttemptRunner(
       now: requirePostCreateReadinessDeadline().now,
     });
     if (!readiness.ready) {
-      console.error("");
-      sandboxReadinessTracing.printReadinessFailure(
-        readiness,
-        input.sandboxName,
-        input.sandboxReadyTimeoutSecs,
-      );
       const canClassifyNativeReadiness =
         route === "native" &&
         input.gpuRoutePlan === "native-with-fallback" &&
@@ -1358,6 +1371,18 @@ export function createSandboxGpuCreateAttemptRunner(
           ...nativeCleanup,
         } as const;
       }
+      persistPostVerificationReadinessRecovery({
+        input,
+        createAttemptNonce,
+        verifiedIdentity: state.verifiedCreatedSandboxIdentity,
+        readiness,
+      });
+      console.error("");
+      sandboxReadinessTracing.printReadinessFailure(
+        readiness,
+        input.sandboxName,
+        input.sandboxReadyTimeoutSecs,
+      );
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       printCreateFailureDiagnostics(input.sandboxName, {
         backupPath: input.restoreBackupPath,

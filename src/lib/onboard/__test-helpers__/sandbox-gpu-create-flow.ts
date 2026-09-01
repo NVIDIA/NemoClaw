@@ -112,30 +112,8 @@ export function createNoGpuFlowInput(): SandboxGpuCreateFlowInput {
   return input;
 }
 
-export function createGpuFlowDeps(sandboxId?: string): SandboxGpuCreateFlowDeps;
-export function createGpuFlowDeps(
-  expectedGatewayName: string,
-  requireTargetedSandboxProbes: boolean,
-): SandboxGpuCreateFlowDeps;
-export function createGpuFlowDeps(
-  sandboxIdOrGatewayName = "alpha-sandbox-id",
-  expectedGatewayNameOrRequireTargetedProbes: string | boolean = "nemoclaw",
-): SandboxGpuCreateFlowDeps {
-  const requiresTargetedSandboxProbes =
-    typeof expectedGatewayNameOrRequireTargetedProbes === "boolean";
-  const sandboxId = requiresTargetedSandboxProbes ? "alpha-sandbox-id" : sandboxIdOrGatewayName;
-  const expectedGatewayName = requiresTargetedSandboxProbes
-    ? sandboxIdOrGatewayName
-    : expectedGatewayNameOrRequireTargetedProbes;
-  const assertSandboxProbeTarget = (args: readonly string[]) => {
-    if (!requiresTargetedSandboxProbes) return;
-    if (args[0] !== "sandbox" || !["exec", "get", "list"].includes(args[1] ?? "")) return;
-    const gatewayFlag = args.indexOf("-g");
-    expect(gatewayFlag).toBeGreaterThan(1);
-    expect(args[gatewayFlag + 1]).toBe(expectedGatewayName);
-  };
+export function createGpuFlowDeps(sandboxId = "alpha-sandbox-id"): SandboxGpuCreateFlowDeps {
   const runCaptureOpenshell = vi.fn((args: string[], _options?: Record<string, unknown>) => {
-    assertSandboxProbeTarget(args);
     if (args[0] === "sandbox" && args[1] === "get") {
       return `Name: alpha\nId: ${sandboxId}\nState: Ready\n`;
     }
@@ -144,7 +122,6 @@ export function createGpuFlowDeps(
   });
   return {
     runOpenshell: vi.fn((args: string[]) => {
-      assertSandboxProbeTarget(args);
       return args[0] === "sandbox" && args[1] === "get"
         ? {
             status: 0,

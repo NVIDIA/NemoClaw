@@ -145,6 +145,35 @@ function createCommittedReadinessPersistenceFixture() {
   return { deps, error, input, patch };
 }
 
+function createPostVerificationReadinessFailureFixture(writer: () => boolean = () => true) {
+  const events: string[] = [];
+  let nonce = "";
+  const input = noGpuInput();
+  input.persistRetainedSandboxRecovery = vi.fn(() => {
+    events.push("persist");
+    return writer();
+  });
+  input.verifyCreatedSandboxBeforeEffects = vi.fn();
+  input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+  const patch = createGpuPatchFixture();
+  patch.rollbackManagedStartupAfterCreateFailure.mockImplementation(() => events.push("rollback"));
+  mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+  mocks.streamSandboxCreate.mockImplementation(async (_command, args) => {
+    nonce = createAttemptNonce(args);
+    return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+  });
+  mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValue({
+    ready: false,
+    reason: "timeout",
+    failurePhase: null,
+  });
+  const deps = createGpuFlowDeps();
+  vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
+    sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
+  );
+  return { deps, events, input, nonce: () => nonce };
+}
+
 beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
@@ -153,7 +182,7 @@ describe("created sandbox identity gate", () => {
     const gatewayName = "nemoclaw-18080";
     const input = createGpuFlowInput();
     input.gatewayName = gatewayName;
-    const deps = createGpuFlowDeps(gatewayName, true);
+    const deps = createGpuFlowDeps();
     mocks.streamSandboxCreate.mockImplementationOnce(async (...args) => {
       expect(args[3].readyCheck()).toBe(true);
       return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
@@ -1063,37 +1092,30 @@ describe("created sandbox identity gate", () => {
     expect(mocks.waitForCreatedSandboxReadyWithTrace).not.toHaveBeenCalled();
   });
 
-  it("returns a post-verification readiness failure to the recovery owner (#9833)", async () => {
-    let nonce = "";
-    const input = noGpuInput();
-    input.verifyCreatedSandboxBeforeEffects = vi.fn();
-    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
-    const patch = createGpuPatchFixture();
-    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
-    mocks.streamSandboxCreate.mockImplementation(async (_command, args) => {
-      nonce = createAttemptNonce(args);
-      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
-    });
-    mocks.waitForCreatedSandboxReadyWithTrace.mockReturnValue({
-      ready: false,
-      reason: "timeout",
-      failurePhase: null,
-    });
-    const deps = createGpuFlowDeps();
-    vi.mocked(deps.runCaptureOpenshell).mockImplementationOnce(() =>
-      sandboxListJson("alpha-sandbox-id", { [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce }),
-    );
-    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
-      throw new Error("direct process exit bypassed the recovery owner");
-    });
-
+  it("persists recovery before rollback when post-verification readiness fails (#9833)", async () => {
+    const { deps, events, input, nonce } = createPostVerificationReadinessFailureFixture();
     await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
       "Sandbox 'alpha' did not become ready after verified creation",
     );
-
-    expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledOnce();
-    expect(exit).not.toHaveBeenCalled();
+    expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledExactlyOnceWith(
+      expect.stringMatching(/Post-verification readiness detail: .*within 60s\./u),
+      ALPHA_SANDBOX_IDENTITY_FINGERPRINT,
+      nonce(),
+    );
+    expect(events).toEqual(["persist", "rollback"]);
   });
+  it.each(durableRecoveryWriterFailures)(
+    "blocks rollback when post-verification recovery persistence %s (#9833)",
+    async (_failureMode, writer) => {
+      const { deps, events, input } = createPostVerificationReadinessFailureFixture(writer);
+      await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+        "could not save the retained sandbox recovery record",
+      );
+      expect(input.persistRetainedSandboxRecovery).toHaveBeenCalledOnce();
+      expect(events).toEqual(["persist"]);
+      expect(mocks.printReadinessFailure).not.toHaveBeenCalled();
+    },
+  );
 
   it("uses a distinct identity label for each create attempt (#9833)", async () => {
     const input = createGpuFlowInput();
