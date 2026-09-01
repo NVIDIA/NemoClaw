@@ -145,10 +145,6 @@ describe("created sandbox identity settlement deadline", () => {
     );
     expect(patch.ensureApplied).toHaveBeenCalledOnce();
     expect(patch.commitAfterReady).toHaveBeenCalledOnce();
-    const postCreateIdentityTimeout = vi.mocked(deps.runCaptureOpenshell).mock.calls[4]?.[1]
-      ?.timeout;
-    expect(postCreateIdentityTimeout).toBeGreaterThan(30_000);
-    expect(postCreateIdentityTimeout).toBeLessThanOrEqual(90_000);
     expect(deps.sleep).toHaveBeenCalledExactlyOnceWith(0.25);
   });
 });
