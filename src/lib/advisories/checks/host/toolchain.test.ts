@@ -60,9 +60,12 @@ describe("host toolchain advisories (#3213)", () => {
     );
 
     const hint = result.advisories.find(({ id }) => id === "headless_remote_hint");
-    expect(hint?.reason).toBe(
-      "Headless hosts often need explicit remote UI handling if you want browser access.",
-    );
+    expect(hint).toMatchObject({
+      reason: "Headless hosts often need explicit remote UI handling if you want browser access.",
+      commands: [
+        "Prefer SSH port forwarding for remote browser access. If the dashboard needs an external origin, set `CHAT_UI_URL` to its HTTPS URL before onboarding.",
+      ],
+    });
   });
 
   it("preserves the WSL Docker short-circuit", () => {

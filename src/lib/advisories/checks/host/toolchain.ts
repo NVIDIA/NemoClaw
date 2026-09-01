@@ -52,7 +52,9 @@ export const reviewHeadlessUiSettings: AdvisoryCheck<HostAssessment> = {
       title: "Review remote/headless UI settings",
       kind: "info",
       reason: "Headless hosts often need explicit remote UI handling if you want browser access.",
-      commands: ["Set `CHAT_UI_URL` when remote browser access matters."],
+      commands: [
+        "Prefer SSH port forwarding for remote browser access. If the dashboard needs an external origin, set `CHAT_UI_URL` to its HTTPS URL before onboarding.",
+      ],
     });
   },
 };
