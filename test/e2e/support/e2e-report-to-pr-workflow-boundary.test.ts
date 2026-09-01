@@ -630,6 +630,36 @@ it("warns when empty selectors produce no E2E results", async () => {
   expect(body).toContain("**Requested targets:** `mcp-bridge-dev`");
 });
 
+it("preserves a matrix-planning failure in a selective report", () => {
+  const report = renderE2eReport({
+    needs: { "generate-matrix": { result: "failure" } },
+    env: { TEST_MATRIX: "[]", JOB_TARGETS: "mcp-bridge-dev" },
+    apiJobs: [],
+    apiJobsLoaded: true,
+    context: REPORT_CONTEXT,
+  });
+
+  expect(report.body).toContain(`| [generate-matrix](${RUN_URL}) | ❌ failure | — |`);
+  expect(report.body).toContain("❌ Some tests failed");
+  expect(report.body).not.toContain("No E2E results reported");
+});
+
+it("distinguishes unavailable job data from no reported results", async () => {
+  const { body, warning } = await executeReport({
+    testMatrix: [],
+    jobs: "",
+    targets: "mcp-bridge-dev",
+    needs: { "generate-matrix": { result: "success" } },
+    paginateError: new Error("API unavailable"),
+  });
+
+  expect(warning).toHaveBeenCalledWith(
+    "Could not load per-test results; reporting them as unknown: API unavailable",
+  );
+  expect(body).toContain("⚠️ E2E results unavailable");
+  expect(body).not.toContain("No E2E results reported");
+});
+
 it("reports matrix children by test ID without fabricating a missing child result", async () => {
   const { body, setFailed, warning } = await executeReport({
     apiJobs: [

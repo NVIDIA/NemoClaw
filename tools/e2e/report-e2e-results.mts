@@ -337,21 +337,20 @@ export function renderE2eReport(input: {
   const missingRequestedTestIds = selectorValidationPassed
     ? requestedTestIds.filter((testId) => !allEntries.some(([name]) => name === testId))
     : [];
+  const isSelectiveReportEntry = ([name, { result }]: [string, ReportEntry]) =>
+    result !== "skipped" &&
+    (name !== "generate-matrix" || result === "failure" || result === "cancelled");
   const selectedEntries =
     requestedTestIds.length > 0
       ? allEntries.filter(([name]) => requestedTestIdSet.has(name))
       : selectiveDispatch
-        ? allEntries.filter(
-            ([name, { result }]) => result !== "skipped" && name !== "generate-matrix",
-          )
+        ? allEntries.filter(isSelectiveReportEntry)
         : allEntries;
   const reportedEntries =
     selectedEntries.length > 0
       ? selectedEntries
       : selectiveDispatch
-        ? allEntries.filter(
-            ([name, { result }]) => result !== "skipped" && name !== "generate-matrix",
-          )
+        ? allEntries.filter(isSelectiveReportEntry)
         : allEntries;
   const rows = reportedEntries.map(([name, { jobUrl, result, wallClockRange }]) => {
     const label = result === "failure" ? `[${name}](${jobUrl ?? runUrl})` : name;
@@ -369,7 +368,9 @@ export function renderE2eReport(input: {
   const unknown = ran.filter(([, v]) => v.result === "unknown");
   const sharedJobAggregateFailed = sharedJobAggregateResult === "failure";
   const sharedJobAggregateCancelled = sharedJobAggregateResult === "cancelled";
-  const noResultsReported = reportedEntries.length === 0 && missingRequestedTestIds.length === 0;
+  const noResultEntries = reportedEntries.length === 0 && missingRequestedTestIds.length === 0;
+  const resultsUnavailable = !apiJobsLoaded && noResultEntries;
+  const noResultsReported = apiJobsLoaded && noResultEntries;
   if (noResultsReported) {
     warnings.push(
       "No E2E target reported a result. The check remains successful but provides no affirmative E2E qualification evidence.",
@@ -390,7 +391,9 @@ export function renderE2eReport(input: {
           ? "⚠️ Some tests cancelled — partial pass"
           : unknown.length > 0
             ? "⚠️ Per-test results incomplete"
-            : noResultsReported
+            : resultsUnavailable
+              ? "⚠️ E2E results unavailable"
+              : noResultsReported
               ? "⚠️ No E2E results reported"
               : skipped.length > 0 && passed.length === 0
                 ? "⚠️ No selected tests ran"
