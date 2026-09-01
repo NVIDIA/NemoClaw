@@ -296,9 +296,39 @@ bridge.restartMcpBridge("alpha", "example").then(
     expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
   });
 
-  it("refuses to report a refresh when the host exports no credential (#10750)", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-credential-"));
-    const script = String.raw`
+  it.each([
+    {
+      title: "refuses a hostless restart whose stored credential is not verified",
+      probe: {
+        ok: null,
+        httpStatus: 401,
+        controlHttpStatus: 401,
+        detail:
+          "the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401)",
+      },
+      expectedPayload: {
+        outcome: "rejected",
+        message:
+          "MCP server 'example' cannot reuse its stored credential: the placeholder probe and the unresolvable control probe were rejected identically (HTTP 401). Export host environment variable 'MCP_TOKEN' and run `nemoclaw alpha mcp restart example` to replace it.",
+        exitCode: 1,
+        policyApplyCalls: 0,
+        providerCalls: [],
+      },
+    },
+    {
+      title: "reuses a stored credential that verifies on the wire",
+      probe: { ok: true, httpStatus: 200, controlHttpStatus: 401 },
+      expectedPayload: {
+        outcome: "refreshed",
+        policyApplyCalls: 2,
+        providerCalls: ["provider update alpha-mcp-example"],
+      },
+    },
+  ])(
+    "$title (#10750)",
+    ({ probe, expectedPayload }) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-credential-"));
+      const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 delete process.env.MCP_TOKEN;
 const registry = require("./src/lib/state/registry.js");
@@ -307,6 +337,7 @@ const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/on
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const bridgeStatus = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
 
 let policyApplyCalls = 0;
 let resourceVersion = 1;
@@ -368,6 +399,7 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => ({
   stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "registered\n",
   stderr: "",
 });
+bridgeStatus.statusMcpBridge = async () => [{ provider: { credentialResolution: ${JSON.stringify(probe)} } }];
 
 registry.registerSandbox({
   name: "alpha",
@@ -377,39 +409,40 @@ registry.registerSandbox({
 });
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+const report = (payload) => {
+  process.stdout.write(JSON.stringify(payload), () => process.exit(0));
+};
 bridge.restartMcpBridge("alpha", "example").then(
-  () => process.exit(9),
+  () => {
+    report({
+      outcome: "refreshed",
+      policyApplyCalls,
+      providerCalls,
+    });
+  },
   (error) => {
-    process.stdout.write(JSON.stringify({
+    report({
+      outcome: "rejected",
       message: error instanceof Error ? error.message : String(error),
       exitCode: error && error.exitCode,
       policyApplyCalls,
       providerCalls,
-    }));
+    });
   },
 );
 `;
-    const result = spawnSync(process.execPath, ["-e", script], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
-      timeout: 30_000,
-    });
-    fs.rmSync(home, { recursive: true, force: true });
+      const result = spawnSync(process.execPath, ["-e", script], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
+        timeout: 60_000,
+      });
+      fs.rmSync(home, { recursive: true, force: true });
 
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as {
-      message: string;
-      exitCode: number;
-      policyApplyCalls: number;
-      providerCalls: string[];
-    };
-    expect(payload.message).toContain(
-      "MCP server 'example' cannot be refreshed: host environment variable 'MCP_TOKEN' is unset or empty",
-    );
-    expect(payload.message).toContain("nemoclaw alpha mcp restart example");
-    expect(payload.exitCode).toBe(1);
-    expect(payload.policyApplyCalls).toBe(0);
-    expect(payload.providerCalls).toEqual([]);
-  });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as object;
+      expect(payload).toEqual(expectedPayload);
+    },
+    75_000,
+  );
 });
