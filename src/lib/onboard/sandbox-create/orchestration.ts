@@ -1163,7 +1163,6 @@ function readHermesPortableLifecycleGeneration(input: {
 }
 
 export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrchestrationRuntime) {
-  const postCreateRecoveryRetryOwner = installPostCreateRecoveryRetryOwner();
   return async function createSandboxWithBaseImageResolution(
     baseImageResolutionContext: import("../base-image-resolution-flow").BaseImageResolutionContext,
     portableRuntimeContext: PortableOnboardRuntimeContext | null,
@@ -1192,6 +1191,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     runVerifiedSandboxCreateEffects: import("../types").VerifiedSandboxCreateEffects | null = null,
     preparedBuildContext: PreparedSandboxBuildContext | null = null,
   ) {
+    const postCreateRecoveryRetryOwner = installPostCreateRecoveryRetryOwner();
     const portableRuntimeAuthority = portableRuntimeContext?.authority ?? null;
     const {
       DASHBOARD_PORT,
@@ -2757,6 +2757,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sandboxName,
         gatewayName: GATEWAY_NAME,
         lifecycleGeneration: createdSandboxLifecycle.generation,
+        sandboxReadyTimeoutSecs,
         portableRuntime: portableRuntimeContext,
         createArgv,
         createPolicyPath: initialSandboxPolicy.policyPath,

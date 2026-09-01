@@ -13,6 +13,7 @@ import {
   assertApfCreateIntent,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
+  createSandboxWithBaseImageResolution,
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
   hasManagedMcpRebuildHandoff,
   installPostCreateRecoveryRetryOwner,
@@ -418,6 +419,54 @@ describe("retained create recovery persistence", () => {
       expect(recordRecovery).toHaveBeenCalledTimes(2);
     },
   );
+
+  it("installs independent recovery retry owners for two operations from one factory (#10652)", async () => {
+    const exitHandlers: Array<() => void> = [];
+    const captureExitHandler = ((event: string | symbol, handler: (...args: unknown[]) => void) => {
+      event === "exit" && exitHandlers.push(handler as () => void);
+      return process;
+    }) as typeof process.on;
+    const processOn = vi.spyOn(process, "on").mockImplementation(captureExitHandler);
+    const createSandbox = createSandboxWithBaseImageResolution({} as never) as unknown as (
+      ...args: unknown[]
+    ) => Promise<unknown>;
+
+    try {
+      await expect(createSandbox()).rejects.toThrow();
+      await expect(createSandbox()).rejects.toThrow();
+    } finally {
+      processOn.mockRestore();
+    }
+
+    expect(exitHandlers).toHaveLength(2);
+    expect(exitHandlers[0]).not.toBe(exitHandlers[1]);
+  });
+
+  it("retries both failed writers held by independent operation owners (#10652)", () => {
+    const exitHandlers: Array<() => void> = [];
+    const owners = [0, 1].map(() =>
+      installPostCreateRecoveryRetryOwner({
+        log: vi.fn(),
+        registerExitHandler: (handler) => exitHandlers.push(handler),
+      }),
+    );
+    const writers = [0, 1].map((index) =>
+      vi
+        .fn()
+        .mockImplementationOnce(() => {
+          throw new Error(`operation ${index + 1} recovery write failed`);
+        })
+        .mockImplementationOnce(() => undefined),
+    );
+
+    expect(() => owners[0]?.record(writers[0]!)).toThrow(/operation 1/u);
+    expect(() => owners[1]?.record(writers[1]!)).toThrow(/operation 2/u);
+    expect(writers.map((writer) => writer.mock.calls.length)).toEqual([1, 1]);
+
+    exitHandlers.forEach((handler) => handler());
+
+    expect(writers.map((writer) => writer.mock.calls.length)).toEqual([2, 2]);
+  });
 });
 
 describe("APF create policy selection", () => {

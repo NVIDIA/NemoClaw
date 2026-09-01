@@ -258,6 +258,7 @@ describe("Hermes portable installer admission", testTimeoutOptions(60_000), () =
         sandboxName,
         gatewayName,
         lifecycleGeneration,
+        sandboxReadyTimeoutSecs: 180,
         runtimeAuthority,
         openshellExecutableAuthority: hermesPortableTestOpenShellAuthority(),
         stateDir,

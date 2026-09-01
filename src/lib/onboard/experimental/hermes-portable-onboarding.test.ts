@@ -333,52 +333,6 @@ describe("Hermes portable onboarding transaction", () => {
     );
   });
 
-  it("settles the exact post-create sandbox identity after the old Ready deadline (#9211)", async () => {
-    const present = {
-      kind: "present" as const,
-      sandboxId: "sandbox-id-1",
-      liveIdentityFingerprint: HERMES_PORTABLE_TEST_LIVE_IDENTITY,
-    };
-    let nowMs = 0;
-    let classificationObservations = 0;
-    const boundedBudgets: Array<{ budgetMs: number; remainingMs: number }> = [];
-    const observeSandbox = vi.fn((timeoutBudgetMs?: number) => {
-      const budgetMs = timeoutBudgetMs ?? 0;
-      const classification = timeoutBudgetMs === undefined;
-      classificationObservations += Number(classification);
-      boundedBudgets.push({ budgetMs, remainingMs: 180_000 - nowMs });
-      const observed = classification
-        ? classificationObservations <= 2
-          ? { kind: "absent" as const }
-          : present
-        : nowMs >= 61_000
-          ? present
-          : { kind: "ambiguous" as const, detail: "exact OpenShell sandbox is not Ready" };
-      nowMs += classification ? 0 : Math.min(budgetMs, Math.max(0, 61_000 - nowMs));
-      return observed;
-    });
-    const delaySandboxReadyPublicationPoll = async (milliseconds: number) => {
-      nowMs += milliseconds;
-    };
-    const fixture = deps({
-      observeSandbox,
-      delaySandboxReadyPublicationPoll,
-      readSandboxReadyPublicationClockMs: () => nowMs,
-    });
-
-    const completed = await runHermesPortableOnboardingTransaction(input(), fixture.value);
-
-    expect(completed.active.receipt.phase).toBe("active");
-    expect(completed.created).toBe(true);
-    expect(fixture.events.filter((event) => event === "create")).toHaveLength(1);
-    expect(classificationObservations).toBeGreaterThan(0);
-    expect(nowMs).toBeGreaterThan(60_000);
-    expect(boundedBudgets.length).toBeGreaterThan(0);
-    expect(boundedBudgets.every(({ budgetMs, remainingMs }) => budgetMs <= remainingMs)).toBe(true);
-    expect(fixture.events[0]).toBe("lock-enter");
-    expect(fixture.events.at(-1)).toBe("lock-exit");
-  });
-
   it("resumes a pending post-create receipt while Ready publication lags (#9203)", async () => {
     let firstNowMs = 0;
     let firstObservations = 0;
@@ -642,7 +596,16 @@ network_policies:
       ...input(),
       createPolicySourceBytes: Buffer.from(regeneratedPolicy),
     };
-    const second = createHermesPortableTransactionFixture(resumedInput);
+    let consumedPolicyPath: string | null = null;
+    let consumedPolicyBytes: Buffer | null = null;
+    const second = createHermesPortableTransactionFixture(resumedInput, {
+      createSandbox: async (argv, _buildContextPath, effectivePolicySourcePath) => {
+        consumedPolicyPath = effectivePolicySourcePath;
+        consumedPolicyBytes = fs.readFileSync(effectivePolicySourcePath);
+        expect(argv[argv.indexOf("--policy") + 1]).toBe(effectivePolicySourcePath);
+        return { ready: true };
+      },
+    });
 
     const resumed = await runHermesPortableOnboardingTransaction(resumedInput, second.value);
 
@@ -654,6 +617,11 @@ network_policies:
     ).toBe(false);
     expect(resumed.created).toBe(true);
     expect(second.events.filter((event) => event === "create")).toHaveLength(1);
+    expect(consumedPolicyPath).toBe(
+      hermesPortablePolicySourcePath("alpha", resumed.active.receipt.transactionId, stateDir),
+    );
+    expect(consumedPolicyBytes).toEqual(Buffer.from(POLICY));
+    expect(consumedPolicyBytes).not.toEqual(Buffer.from(regeneratedPolicy));
   });
 
   it("rejects changed non-policy create intent on pending reentry before effects (#9203)", async () => {

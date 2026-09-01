@@ -109,6 +109,7 @@ export interface HermesPortableOnboardingInput {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly lifecycleGeneration: string;
+  readonly sandboxReadyTimeoutSecs: number;
   readonly runtimeAuthority: CheckpointPortableRuntimeAuthority;
   readonly openshellExecutableAuthority: HermesPortableOpenShellExecutableAuthority;
   readonly stateDir: string;
@@ -705,10 +706,6 @@ function parseHermesPortableSandboxJson(
 }
 
 const HERMES_PORTABLE_READY_PUBLICATION_POLL_INTERVAL_MS = 1_000;
-const HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_MS = 180_000;
-const HERMES_PORTABLE_READY_PUBLICATION_MAX_POLLS = Math.ceil(
-  HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_MS / HERMES_PORTABLE_READY_PUBLICATION_POLL_INTERVAL_MS,
-);
 const HERMES_PORTABLE_NOT_READY_DETAIL = "exact OpenShell sandbox is not Ready";
 const HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_DETAIL =
   "exact OpenShell sandbox Ready publication exceeded its total deadline";
@@ -791,13 +788,16 @@ async function settleCreatedHermesPortableSandboxReadyPublication(
   observeSandbox: (timeoutBudgetMs?: number) => HermesPortableSandboxObservation,
   delayPoll: (milliseconds: number) => Promise<void>,
   readClockMs: () => number,
+  timeoutMs: number,
 ): Promise<HermesPortableSandboxObservation> {
-  const deadlineMs = readClockMs() + HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_MS;
+  const boundedTimeoutMs = Math.max(1, Math.round(timeoutMs));
+  const maxPolls = Math.ceil(boundedTimeoutMs / HERMES_PORTABLE_READY_PUBLICATION_POLL_INTERVAL_MS);
+  const deadlineMs = readClockMs() + boundedTimeoutMs;
   let observation: HermesPortableSandboxObservation = {
     kind: "ambiguous",
     detail: HERMES_PORTABLE_READY_PUBLICATION_TIMEOUT_DETAIL,
   };
-  for (let poll = 0; poll <= HERMES_PORTABLE_READY_PUBLICATION_MAX_POLLS; poll += 1) {
+  for (let poll = 0; poll <= maxPolls; poll += 1) {
     const observationBudgetMs = Math.floor(deadlineMs - readClockMs());
     if (observationBudgetMs < 1) return observation;
     observation = observeSandbox(observationBudgetMs);
@@ -807,7 +807,7 @@ async function settleCreatedHermesPortableSandboxReadyPublication(
     ) {
       return observation;
     }
-    if (poll === HERMES_PORTABLE_READY_PUBLICATION_MAX_POLLS) return observation;
+    if (poll === maxPolls) return observation;
     const delayBudgetMs = Math.floor(deadlineMs - readClockMs());
     if (delayBudgetMs < 1) return observation;
     await delayPoll(Math.min(HERMES_PORTABLE_READY_PUBLICATION_POLL_INTERVAL_MS, delayBudgetMs));
@@ -1083,6 +1083,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
   deps: HermesPortableOnboardingDeps<T>,
 ): Promise<HermesPortableOnboardingResult<T>> {
   return await deps.withLifecycleLock(input.sandboxName, async () => {
+    const readyPublicationTimeoutMs = input.sandboxReadyTimeoutSecs * 1_000;
     assertHermesPortableUninstallCompleteForOnboarding(input.stateDir);
     const assertOpenShellExecutableAuthority = (): void =>
       deps.assertOpenShellExecutableAuthority(input.openshellExecutableAuthority);
@@ -1429,6 +1430,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
           observeSandbox,
           deps.delaySandboxReadyPublicationPoll ?? delayHermesPortableReadyPublicationPoll,
           deps.readSandboxReadyPublicationClockMs ?? performance.now.bind(performance),
+          readyPublicationTimeoutMs,
         );
       }
       if (observation.kind === "ambiguous")
@@ -1470,6 +1472,7 @@ export async function runHermesPortableOnboardingTransaction<T>(
           observeSandbox,
           deps.delaySandboxReadyPublicationPoll ?? delayHermesPortableReadyPublicationPoll,
           deps.readSandboxReadyPublicationClockMs ?? performance.now.bind(performance),
+          readyPublicationTimeoutMs,
         );
         buildContext.assertCurrent();
         input.buildContext.assertCurrentSource();
@@ -1617,6 +1620,7 @@ export interface HermesPortableOnboardingFromOnboardInput<T> {
   readonly sandboxName: string;
   readonly gatewayName: string;
   readonly lifecycleGeneration: string;
+  readonly sandboxReadyTimeoutSecs: number;
   readonly portableRuntime: PortableOnboardRuntimeContext;
   readonly createArgv: readonly string[];
   readonly createPolicyPath: string;
@@ -1679,6 +1683,7 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
     sandboxName,
     gatewayName,
     lifecycleGeneration,
+    sandboxReadyTimeoutSecs,
     portableRuntime,
     createArgv,
     createPolicyPath,
@@ -1738,6 +1743,7 @@ export async function runHermesPortableOnboardingFromOnboard<T>(
       sandboxName,
       gatewayName,
       lifecycleGeneration,
+      sandboxReadyTimeoutSecs,
       runtimeAuthority,
       openshellExecutableAuthority,
       stateDir: defaultPortableDemoStateDir(process.env),

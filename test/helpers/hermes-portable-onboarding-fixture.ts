@@ -204,6 +204,7 @@ export function createHermesPortableTestInput(stateDir: string, policyPath: stri
     sandboxName: "alpha",
     gatewayName: "nemoclaw",
     lifecycleGeneration: "generation-1",
+    sandboxReadyTimeoutSecs: 180,
     stateDir,
     createPolicyPath: policyPath,
     createArgv: [
