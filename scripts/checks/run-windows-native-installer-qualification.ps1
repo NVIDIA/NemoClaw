@@ -3,7 +3,7 @@
 
 <#
 .SYNOPSIS
-    Qualify the no-WSL native Windows installer against OpenShell PR #2721.
+    Qualify the no-WSL native Windows installer against NVIDIA/OpenShell#2721.
 
 .DESCRIPTION
     Verifies exact candidate and OpenShell source authority before executing the
@@ -233,30 +233,61 @@ namespace NemoClaw.WindowsQualification
     }
 }
 
-function Test-RestrictedInstallerBoundary {
-    $childProcessDenied = $false
+function Invoke-ChildSideEffectProbe {
+    param([Parameter(Mandatory)][string]$SentinelPath)
+
+    $escapedPath = $SentinelPath.Replace("'", "''")
+    $command = "[IO.File]::WriteAllText('$escapedPath', 'child-executed', [Text.UTF8Encoding]::new(`$false))"
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+    $child = $null
+    $startError = $null
+    $exitCode = $null
     try {
         $childParameters = @{
-            FilePath = $env:ComSpec
-            ArgumentList = @('/d', '/c', 'exit', '0')
+            FilePath = (Join-Path $PSHOME 'powershell.exe')
+            ArgumentList = @('-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', $encodedCommand)
             Wait = $true
             PassThru = $true
             ErrorAction = 'Stop'
         }
         $child = Start-Process @childParameters
-        if ($child) {
+        if ($null -ne $child) {
+            $exitCode = $child.ExitCode
             $child.Dispose()
+            $child = $null
         }
     } catch {
-        $childProcessDenied = $true
+        $startError = $_.Exception.Message
+    } finally {
+        if ($null -ne $child) {
+            $child.Dispose()
+        }
     }
-    if (-not $childProcessDenied) {
-        Fail-Qualification 'The installer qualification Job Object allowed a child process.'
+
+    return [pscustomobject]@{
+        exitCode = $exitCode
+        sideEffectObserved = Test-Path -LiteralPath $SentinelPath -PathType Leaf
+        startRejected = $null -ne $startError
+    }
+}
+
+function Test-RestrictedInstallerBoundary {
+    param([Parameter(Mandatory)][string]$SentinelPath)
+
+    $probe = Invoke-ChildSideEffectProbe -SentinelPath $SentinelPath
+    if ($probe.sideEffectObserved) {
+        [IO.File]::Delete($SentinelPath)
+        Fail-Qualification 'The installer qualification Job Object allowed a child side effect.'
+    }
+    if (-not $probe.startRejected -and $probe.exitCode -eq 0) {
+        Fail-Qualification 'The installer qualification Job Object allowed a successful child process.'
     }
 
     return [pscustomobject]@{
         jobActiveProcessLimit = 1
-        childProcessDenied = $true
+        childCreationRejected = $probe.startRejected
+        childExitCode = $probe.exitCode
+        childSideEffectAbsent = $true
     }
 }
 
@@ -310,6 +341,57 @@ function Assert-BoundedFile {
     }
 }
 
+function Assert-Arm64PortableExecutable {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    $stream = [IO.File]::OpenRead($Path)
+    $reader = [IO.BinaryReader]::new($stream)
+    try {
+        if ($reader.ReadUInt16() -ne 0x5A4D) {
+            Fail-Qualification "$Label is not a Windows PE executable."
+        }
+        $stream.Position = 0x3C
+        $peOffset = $reader.ReadInt32()
+        if ($peOffset -lt 0x40 -or $peOffset -gt ($stream.Length - 6)) {
+            Fail-Qualification "$Label has an invalid PE header offset."
+        }
+        $stream.Position = $peOffset
+        if ($reader.ReadUInt32() -ne 0x00004550) {
+            Fail-Qualification "$Label has an invalid PE signature."
+        }
+        if ($reader.ReadUInt16() -ne 0xAA64) {
+            Fail-Qualification "$Label is not an ARM64 Windows executable."
+        }
+    } finally {
+        $reader.Dispose()
+        $stream.Dispose()
+    }
+}
+
+function Invoke-NativeVersionProbe {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    Assert-Arm64PortableExecutable -Path $Path -Label $Label
+    $output = @(& $Path --version 2>&1)
+    $exitCode = $LASTEXITCODE
+    $outputText = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+    if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($outputText) -or $outputText.Length -gt 4096) {
+        Fail-Qualification "$Label did not complete a bounded native --version probe."
+    }
+    return [pscustomobject]@{
+        file = Split-Path -Leaf $Path
+        sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+        exitCode = $exitCode
+        output = $outputText
+    }
+}
+
 function Assert-InstalledDistribution {
     param(
         [Parameter(Mandatory)][string]$VersionRoot,
@@ -353,7 +435,7 @@ if ($CandidateSha -cnotmatch $script:ShaPattern -or $OpenShellSha -cnotmatch $sc
     Fail-Qualification 'Candidate and OpenShell revisions must be lowercase 40-character commit SHAs.'
 }
 if ($OpenShellSha -cne $script:TrustedOpenShellRevision) {
-    Fail-Qualification 'OpenShell revision must match PR #2721 merge commit.'
+    Fail-Qualification 'OpenShell revision must match NVIDIA/OpenShell#2721 merge commit.'
 }
 if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -cne 'Arm64') {
     Fail-Qualification 'Windows native installer qualification requires a native ARM64 runner.'
@@ -396,6 +478,18 @@ $installRoot = Join-Path $qualificationRoot 'install'
 $receiptStage = Join-Path $artifactParent ('.' + $artifactName + '.' + [guid]::NewGuid().ToString('N'))
 $restrictedBoundary = $null
 $restrictedBoundaryEvidence = $null
+$childProbeControl = $null
+$nativeBinaryEvidence = $null
+$hostPlatformEvidence = [pscustomobject]@{
+    receiptVersion = 1
+    osDescription = [Runtime.InteropServices.RuntimeInformation]::OSDescription
+    osVersion = [Environment]::OSVersion.Version.ToString()
+    osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+    powershellVersion = $PSVersionTable.PSVersion.ToString()
+    runnerName = $env:RUNNER_NAME
+    runnerArchitecture = $env:RUNNER_ARCH
+}
 [IO.Directory]::CreateDirectory($payloadRoot) | Out-Null
 [IO.Directory]::CreateDirectory($receiptStage) | Out-Null
 
@@ -405,7 +499,7 @@ try {
     foreach ($fileName in @('openshell.exe', 'openshell-gateway.exe')) {
         $source = Join-Path $releaseRoot $fileName
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-            Fail-Qualification "OpenShell PR #2721 build output is missing: $fileName"
+            Fail-Qualification "NVIDIA/OpenShell#2721 build output is missing: $fileName"
         }
         $payloadRelative = "bin\$fileName"
         $payloadPath = Join-Path $payloadRoot $payloadRelative
@@ -450,8 +544,20 @@ try {
     }
     $expectedOpenShellSha256 = $expectedOpenShellEntry[0].sha256
 
+    $nativeBinaryEvidence = @(
+        Invoke-NativeVersionProbe -Path (Join-Path $payloadRoot 'bin\openshell.exe') -Label 'OpenShell CLI'
+        Invoke-NativeVersionProbe -Path (Join-Path $payloadRoot 'bin\openshell-gateway.exe') -Label 'OpenShell gateway'
+    )
+    $controlSentinel = Join-Path $qualificationRoot 'child-control.txt'
+    $childProbeControl = Invoke-ChildSideEffectProbe -SentinelPath $controlSentinel
+    if ($childProbeControl.startRejected -or $childProbeControl.exitCode -ne 0 -or
+        -not $childProbeControl.sideEffectObserved) {
+        Fail-Qualification 'The child side-effect control probe did not execute before restriction.'
+    }
+    [IO.File]::Delete($controlSentinel)
+
     $restrictedBoundary = Enter-RestrictedInstallerBoundary
-    $restrictedBoundaryEvidence = Test-RestrictedInstallerBoundary
+    $restrictedBoundaryEvidence = Test-RestrictedInstallerBoundary -SentinelPath (Join-Path $qualificationRoot 'child-restricted.txt')
     $preExecution = Assert-ProhibitedProcessesAbsent -Phase 'pre-execution'
     $volumeRootRejected = $false
     try {
@@ -482,6 +588,11 @@ try {
         Phase = 'Initial install'
     }
     Assert-InstalledDistribution @initialDistributionParameters
+    foreach ($installedExecutable in @('openshell.exe', 'openshell-gateway.exe')) {
+        Assert-Arm64PortableExecutable `
+            -Path (Join-Path $installReceipt.versionRoot "bin\$installedExecutable") `
+            -Label "Installed $installedExecutable"
+    }
     $untrackedPath = Join-Path $installReceipt.versionRoot 'bin\untracked-qualification.txt'
     [IO.File]::WriteAllText($untrackedPath, 'untracked', [Text.UTF8Encoding]::new($false))
     $untrackedInstallRejected = $false
@@ -629,9 +740,15 @@ try {
     })
     Write-JsonFile -Path (Join-Path $receiptStage 'process-absence.json') -Value ([pscustomobject]@{
         receiptVersion = 1
+        calibratedChildProbe = $childProbeControl
         restrictedExecution = $restrictedBoundaryEvidence
         preExecution = $preExecution
         postExecution = $postExecution
+    })
+    Write-JsonFile -Path (Join-Path $receiptStage 'host-platform.json') -Value $hostPlatformEvidence
+    Write-JsonFile -Path (Join-Path $receiptStage 'native-binary-smoke.json') -Value ([pscustomobject]@{
+        receiptVersion = 1
+        executions = $nativeBinaryEvidence
     })
     Write-JsonFile -Path (Join-Path $receiptStage 'uninstall-receipt.json') -Value $uninstallReceipt
 

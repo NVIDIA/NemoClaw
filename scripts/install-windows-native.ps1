@@ -7,7 +7,7 @@
 
 .DESCRIPTION
     Installs, repairs, or removes an exact Windows OpenShell distribution built
-    from NVIDIA/OpenShell PR #2721. The installer is deliberately file-only: it
+    from NVIDIA/OpenShell#2721. The installer is deliberately file-only: it
     does not start a process, install a service, select a runtime provider, or
     activate native Windows support. A later slice can consume the receipt after
     the corresponding lifecycle and activation gates pass.
@@ -214,7 +214,7 @@ function Read-DistributionManifest {
     if ($manifest.openshell.repository -cne $script:TrustedOpenShellRepository -or
         $manifest.openshell.pullRequest -ne $script:TrustedOpenShellPullRequest -or
         $manifest.openshell.revision -cne $script:TrustedOpenShellRevision) {
-        Fail-NativeWindowsInstall 'OpenShell authority does not match the pinned PR #2721 distribution.'
+        Fail-NativeWindowsInstall 'OpenShell authority does not match the pinned NVIDIA/OpenShell#2721 distribution.'
     }
 
     if ($manifest.files -isnot [Array] -or $manifest.files.Count -lt 2 -or $manifest.files.Count -gt 8) {

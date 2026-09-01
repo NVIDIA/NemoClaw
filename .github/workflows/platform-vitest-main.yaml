@@ -242,7 +242,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NVIDIA/OpenShell
-          ref: bcd517bbe08cc80860c9be57699390cd32e8445f # PR #2721 merge commit
+          ref: bcd517bbe08cc80860c9be57699390cd32e8445f # NVIDIA/OpenShell#2721 merge commit
           path: openshell
           fetch-depth: 1
           persist-credentials: false
