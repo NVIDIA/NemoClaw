@@ -270,27 +270,38 @@ function printGlobalStatusScopeHint(sandboxName: string, args: readonly string[]
   process.exit(2);
 }
 
-/** Name the gateway that owns a sandbox the selected gateway's registry cannot see (#10656). */
+/** Name every gateway that owns a sandbox the selected gateway's registry cannot see (#10656). */
 function printForeignGatewaySandbox(
   sandboxName: string,
   action: string,
   owner: ForeignGatewaySandbox,
 ): never {
+  const { owners } = owner;
   console.error(
-    `  Sandbox '${sandboxName}' is registered on a different ${CLI_DISPLAY_NAME} gateway.`,
+    owners.length === 1
+      ? `  Sandbox '${sandboxName}' is registered on a different ${CLI_DISPLAY_NAME} gateway.`
+      : `  Sandbox '${sandboxName}' is registered on ${String(owners.length)} other ${CLI_DISPLAY_NAME} gateways.`,
   );
   console.error("");
-  console.error(`  Owning gateway: ${owner.gatewayName} (port ${String(owner.gatewayPort)})`);
-  console.error(`  Owning registry: ${owner.registryFile}`);
+  for (const entry of owners) {
+    console.error(`  Owning gateway: ${entry.gatewayName} (port ${String(entry.gatewayPort)})`);
+    console.error(`  Owning registry: ${entry.registryFile}`);
+  }
   console.error(
     `  Selected gateway: ${owner.selectedGatewayName} (port ${String(owner.selectedGatewayPort)})`,
   );
   console.error("");
   console.error(`  Every command reads the state root that NEMOCLAW_GATEWAY_PORT selects.`);
-  console.error("  Rerun against the owning gateway:");
   console.error(
-    `    NEMOCLAW_GATEWAY_PORT=${String(owner.gatewayPort)} ${CLI_NAME} ${sandboxName} ${action}`,
+    owners.length === 1
+      ? "  Rerun against the owning gateway:"
+      : "  Rerun against the gateway you meant:",
   );
+  for (const entry of owners) {
+    console.error(
+      `    NEMOCLAW_GATEWAY_PORT=${String(entry.gatewayPort)} ${CLI_NAME} ${sandboxName} ${action}`,
+    );
+  }
   process.exit(1);
 }
 

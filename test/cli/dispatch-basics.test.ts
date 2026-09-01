@@ -771,9 +771,13 @@ describe("CLI dispatch", () => {
 
 describe("multi-gateway sandbox ownership (#10656)", () => {
   const owner = {
-    gatewayName: "nemoclaw-8990",
-    gatewayPort: 8990,
-    registryFile: "/home/qa/.nemoclaw/gateways/8990/sandboxes.json",
+    owners: [
+      {
+        gatewayName: "nemoclaw-8990",
+        gatewayPort: 8990,
+        registryFile: "/home/qa/.nemoclaw/gateways/8990/sandboxes.json",
+      },
+    ],
     selectedGatewayName: "nemoclaw",
     selectedGatewayPort: 8080,
   };
@@ -803,6 +807,41 @@ describe("multi-gateway sandbox ownership (#10656)", () => {
       );
     },
   );
+
+  it("names every gateway when more than one claims the sandbox", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, stderr }) => {
+        await expect(dispatchCli(["failure-a", "status"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(output).toContain("Sandbox 'failure-a' is registered on 2 other NemoClaw gateways.");
+        expect(output).toContain("Owning gateway: nemoclaw-8990 (port 8990)");
+        expect(output).toContain("Owning gateway: nemoclaw-9000 (port 9000)");
+        expect(output).toContain("NEMOCLAW_GATEWAY_PORT=8990 nemoclaw failure-a status");
+        expect(output).toContain("NEMOCLAW_GATEWAY_PORT=9000 nemoclaw failure-a status");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      {
+        sandboxNames: ["healthy-b"],
+        foreignGatewaySandbox: {
+          owners: [
+            {
+              gatewayName: "nemoclaw-8990",
+              gatewayPort: 8990,
+              registryFile: "/home/qa/.nemoclaw/gateways/8990/sandboxes.json",
+            },
+            {
+              gatewayName: "nemoclaw-9000",
+              gatewayPort: 9000,
+              registryFile: "/home/qa/.nemoclaw/gateways/9000/sandboxes.json",
+            },
+          ],
+          selectedGatewayName: "nemoclaw",
+          selectedGatewayPort: 8080,
+        },
+      },
+    );
+  });
 
   it("keeps the unknown-sandbox message when no other gateway owns the name", async () => {
     await withDirectPublicDispatch(

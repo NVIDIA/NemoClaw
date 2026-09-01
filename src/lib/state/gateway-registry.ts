@@ -253,10 +253,15 @@ export function listHostGatewayRegistryEntries(home: string): HostGatewayRegistr
   return result;
 }
 
-export interface ForeignGatewaySandbox {
+export interface ForeignGatewayOwner {
   gatewayName: string;
   gatewayPort: number;
   registryFile: string;
+}
+
+export interface ForeignGatewaySandbox {
+  /** Every other gateway root claiming the name, ascending by port. */
+  owners: ForeignGatewayOwner[];
   selectedGatewayName: string;
   selectedGatewayPort: number;
 }
@@ -287,15 +292,22 @@ export function findForeignGatewaySandbox(
   } catch {
     return null;
   }
-  const owner = hostEntries.find(
-    (candidate) =>
-      candidate.entry.name === sandboxName && candidate.gatewayPort !== selectedGatewayPort,
-  );
-  if (!owner) return null;
+  // Nothing enforces host-wide sandbox-name uniqueness, so two gateway roots can
+  // each register the name. Report every claimant: naming one would send a
+  // rerun command to an arbitrary gateway, chosen only by port order.
+  const owners = hostEntries
+    .filter(
+      (candidate) =>
+        candidate.entry.name === sandboxName && candidate.gatewayPort !== selectedGatewayPort,
+    )
+    .map((candidate) => ({
+      gatewayName: resolveGatewayName(candidate.gatewayPort),
+      gatewayPort: candidate.gatewayPort,
+      registryFile: candidate.registryFile,
+    }));
+  if (owners.length === 0) return null;
   return {
-    gatewayName: resolveGatewayName(owner.gatewayPort),
-    gatewayPort: owner.gatewayPort,
-    registryFile: owner.registryFile,
+    owners,
     selectedGatewayName: resolveGatewayName(selectedGatewayPort),
     selectedGatewayPort,
   };

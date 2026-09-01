@@ -153,9 +153,13 @@ describe("foreign gateway sandbox lookup (#10656)", () => {
     const home = twoGatewayHome(ownedBySibling);
     try {
       expect(findForeignGatewaySandbox("failure-a", 8080, home)).toEqual({
-        gatewayName: "nemoclaw-8990",
-        gatewayPort: 8990,
-        registryFile: path.join(home, ".nemoclaw", "gateways", "8990", "sandboxes.json"),
+        owners: [
+          {
+            gatewayName: "nemoclaw-8990",
+            gatewayPort: 8990,
+            registryFile: path.join(home, ".nemoclaw", "gateways", "8990", "sandboxes.json"),
+          },
+        ],
         selectedGatewayName: "nemoclaw",
         selectedGatewayPort: 8080,
       });
@@ -168,6 +172,40 @@ describe("foreign gateway sandbox lookup (#10656)", () => {
     const home = twoGatewayHome(ownedBySibling);
     try {
       expect(findForeignGatewaySandbox("healthy-b", 8080, home)).toBeNull();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // Nothing enforces host-wide sandbox-name uniqueness, so a lookup that named
+  // only the lowest-numbered port would send the rerun command to an arbitrary
+  // gateway.
+  it("reports every gateway that claims the same sandbox name", () => {
+    const home = twoGatewayHome(ownedBySibling);
+    const second = path.join(home, ".nemoclaw", "gateways", "9000");
+    fs.mkdirSync(second, { recursive: true });
+    fs.writeFileSync(
+      path.join(second, "sandboxes.json"),
+      JSON.stringify({
+        defaultSandbox: "failure-a",
+        sandboxes: {
+          "failure-a": { name: "failure-a", gatewayName: "nemoclaw-9000", gatewayPort: 9000 },
+        },
+      }),
+    );
+    try {
+      expect(findForeignGatewaySandbox("failure-a", 8080, home)?.owners).toEqual([
+        {
+          gatewayName: "nemoclaw-8990",
+          gatewayPort: 8990,
+          registryFile: path.join(home, ".nemoclaw", "gateways", "8990", "sandboxes.json"),
+        },
+        {
+          gatewayName: "nemoclaw-9000",
+          gatewayPort: 9000,
+          registryFile: path.join(home, ".nemoclaw", "gateways", "9000", "sandboxes.json"),
+        },
+      ]);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
