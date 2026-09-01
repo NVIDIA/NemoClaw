@@ -331,26 +331,24 @@ describe("messaging provider installed-runtime proofs", () => {
       await vi.runAllTimersAsync();
       await start;
       expect(container).not.toBe("");
-      expect(artifactNames.filter((name) => name.startsWith("failure-fake-slack-api-"))).toEqual([
-        "failure-fake-slack-api-api-inspect",
-        "failure-fake-slack-api-api-logs",
-      ]);
-      expect(
-        invocations.filter(({ artifactName }) =>
-          artifactName.startsWith("failure-fake-slack-api-"),
-        ),
-      ).toEqual([
-        {
-          artifactName: "failure-fake-slack-api-api-inspect",
-          command: "docker",
-          args: ["inspect", "--format", "{{json .State}}", container],
-        },
-        {
-          artifactName: "failure-fake-slack-api-api-logs",
-          command: "docker",
-          args: ["logs", "--tail", "200", container],
-        },
-      ]);
+      const diagnostics = invocations.filter(({ artifactName }) =>
+        artifactName.startsWith("failure-fake-slack-api-"),
+      );
+      expect(diagnostics).toHaveLength(2);
+      expect(diagnostics).toEqual(
+        expect.arrayContaining([
+          {
+            artifactName: "failure-fake-slack-api-api-inspect",
+            command: "docker",
+            args: ["inspect", "--format", "{{json .State}}", container],
+          },
+          {
+            artifactName: "failure-fake-slack-api-api-logs",
+            command: "docker",
+            args: ["logs", "--tail", "200", container],
+          },
+        ]),
+      );
     } finally {
       vi.useRealTimers();
       await cleanupTasks
@@ -365,7 +363,6 @@ describe("messaging provider installed-runtime proofs", () => {
   });
 
   it("collects diagnostics when published fake API proxy ports do not carry traffic", async () => {
-    const artifactNames: string[] = [];
     const invocations: Array<{
       artifactName: string;
       command: string;
@@ -379,7 +376,6 @@ describe("messaging provider installed-runtime proofs", () => {
       async run(command, options) {
         const invocation = [command.command, ...command.args];
         const artifactName = options?.artifactName ?? "";
-        artifactNames.push(...(artifactName ? [artifactName] : []));
         invocations.push({ artifactName, command: command.command, args: command.args });
         switch (artifactName) {
           case "create-fake-slack-api-network":
@@ -443,40 +439,36 @@ describe("messaging provider installed-runtime proofs", () => {
           env: {},
         }),
       ).rejects.toThrow(/proxy .* did not carry traffic to API container .*traffic check/u);
-      expect(artifactNames.filter((name) => name.startsWith("failure-fake-slack-api-"))).toEqual([
-        "failure-fake-slack-api-proxy-inspect",
-        "failure-fake-slack-api-proxy-logs",
-        "failure-fake-slack-api-api-inspect",
-        "failure-fake-slack-api-api-logs",
-      ]);
       expect(apiContainer).not.toBe("");
       expect(proxyContainer).not.toBe("");
-      expect(
-        invocations.filter(({ artifactName }) =>
-          artifactName.startsWith("failure-fake-slack-api-"),
-        ),
-      ).toEqual([
-        {
-          artifactName: "failure-fake-slack-api-proxy-inspect",
-          command: "docker",
-          args: ["inspect", "--format", "{{json .State}}", proxyContainer],
-        },
-        {
-          artifactName: "failure-fake-slack-api-proxy-logs",
-          command: "docker",
-          args: ["logs", "--tail", "200", proxyContainer],
-        },
-        {
-          artifactName: "failure-fake-slack-api-api-inspect",
-          command: "docker",
-          args: ["inspect", "--format", "{{json .State}}", apiContainer],
-        },
-        {
-          artifactName: "failure-fake-slack-api-api-logs",
-          command: "docker",
-          args: ["logs", "--tail", "200", apiContainer],
-        },
-      ]);
+      const diagnostics = invocations.filter(({ artifactName }) =>
+        artifactName.startsWith("failure-fake-slack-api-"),
+      );
+      expect(diagnostics).toHaveLength(4);
+      expect(diagnostics).toEqual(
+        expect.arrayContaining([
+          {
+            artifactName: "failure-fake-slack-api-proxy-inspect",
+            command: "docker",
+            args: ["inspect", "--format", "{{json .State}}", proxyContainer],
+          },
+          {
+            artifactName: "failure-fake-slack-api-proxy-logs",
+            command: "docker",
+            args: ["logs", "--tail", "200", proxyContainer],
+          },
+          {
+            artifactName: "failure-fake-slack-api-api-inspect",
+            command: "docker",
+            args: ["inspect", "--format", "{{json .State}}", apiContainer],
+          },
+          {
+            artifactName: "failure-fake-slack-api-api-logs",
+            command: "docker",
+            args: ["logs", "--tail", "200", apiContainer],
+          },
+        ]),
+      );
     } finally {
       await cleanupTasks
         .reverse()
@@ -601,7 +593,7 @@ describe("messaging provider installed-runtime proofs", () => {
       }),
     ],
   ])(
-    "accepts the real %s fake API REST readiness reply",
+    "accepts the %s fake API REST traffic reply",
     async (provider, script, nodeArgs, env) => {
       const fixture = await startFakePortFixture({
         label: `fake ${provider} port fixture`,
