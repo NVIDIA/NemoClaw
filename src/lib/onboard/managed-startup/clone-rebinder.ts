@@ -10,6 +10,7 @@ import { isValidName } from "../../name-validation";
 import { DEFAULT_TOOL_DISCLOSURE } from "../../tool-disclosure";
 import { resolveManagedStartupInferenceRoute } from "../inference-route";
 import { validateManagedStartupCorporateCaTransport } from "./application";
+import { isLoopbackDashboardUrl } from "./dashboard-url";
 import {
   decodeManagedStartupProfile,
   encodeManagedStartupProfile,
@@ -110,6 +111,10 @@ function urlAtPort(raw: string, port: number): string {
   }
   parsed.port = String(port);
   return parsed.toString();
+}
+
+function browserUrlAtPort(raw: string, port: number): string {
+  return isLoopbackDashboardUrl(raw) ? urlAtPort(raw, port) : raw;
 }
 
 function requireCurrentString(value: unknown, label: string): string {
@@ -278,7 +283,7 @@ function currentSourceDashboard(
       url: urlAtPort(profile.dashboard.url, publicPort),
       ...(profile.dashboard.browserUrl === undefined
         ? {}
-        : { browserUrl: urlAtPort(profile.dashboard.browserUrl, publicPort) }),
+        : { browserUrl: browserUrlAtPort(profile.dashboard.browserUrl, publicPort) }),
       publicPort,
       internalPort,
       tuiEnabled: current.hermesDashboardTui === true,
@@ -388,7 +393,7 @@ function destinationDashboard(
         url: urlAtPort(dashboard.url, destinationDashboardPort),
         ...(dashboard.browserUrl === undefined
           ? {}
-          : { browserUrl: urlAtPort(dashboard.browserUrl, destinationDashboardPort) }),
+          : { browserUrl: browserUrlAtPort(dashboard.browserUrl, destinationDashboardPort) }),
       };
     }
     const port = requireDestinationPort(destinationDashboardPort, profile.agent);
@@ -397,7 +402,7 @@ function destinationDashboard(
       url: urlAtPort(dashboard.url, port),
       ...(dashboard.browserUrl === undefined
         ? {}
-        : { browserUrl: urlAtPort(dashboard.browserUrl, port) }),
+        : { browserUrl: browserUrlAtPort(dashboard.browserUrl, port) }),
       publicPort: port,
     };
   }

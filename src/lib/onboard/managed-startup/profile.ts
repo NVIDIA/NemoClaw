@@ -7,6 +7,7 @@ import { TextDecoder } from "node:util";
 import { listMessagingCredentialEnvAssignments } from "../../messaging/channels/metadata.ts";
 import { authorizeMessagingManagedStartupFields } from "../../messaging/managed-startup-placeholders.ts";
 import { isValidDcodeUpstreamProvider } from "./dcode-upstream-provider.ts";
+import { isLoopbackDashboardUrl } from "./dashboard-url.ts";
 
 /**
  * Versioned, bounded schema for managed-image startup intent.
@@ -1495,16 +1496,6 @@ function requireManagedProxyHost(value: unknown, where: string): string {
   return host;
 }
 
-function isLoopbackUrl(value: string): boolean {
-  const hostname = new URL(value).hostname.toLowerCase();
-  return (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname === "[::1]"
-  );
-}
-
 function configuredDashboardPort(value: string): number {
   const explicit = new URL(value).port;
   return explicit === "" ? 18_789 : Number(explicit);
@@ -1867,7 +1858,8 @@ function validateDashboard(
       "dashboard.bindAddress",
     );
     const wslExposure = requireBoolean(dashboard.wslExposure, "dashboard.wslExposure");
-    const hasRemoteExposure = !isLoopbackUrl(url) || bindAddress === "0.0.0.0" || wslExposure;
+    const hasRemoteExposure =
+      !isLoopbackDashboardUrl(url) || bindAddress === "0.0.0.0" || wslExposure;
     if ((mode === "remote") !== hasRemoteExposure) {
       invalid("OpenClaw dashboard.mode must reflect its URL, bind address, and WSL exposure");
     }
@@ -1896,7 +1888,7 @@ function validateDashboard(
       "dashboard.mode",
     );
     const url = requireHttpUrl(dashboard.url, "dashboard.url");
-    if (!isLoopbackUrl(url)) {
+    if (!isLoopbackDashboardUrl(url)) {
       invalid("Hermes dashboard.url must remain loopback; OpenShell owns the host forward");
     }
     const browserUrl =
@@ -1905,7 +1897,7 @@ function validateDashboard(
         : requireHttpUrl(dashboard.browserUrl, "dashboard.browserUrl");
     if (
       browserUrl !== undefined &&
-      !isLoopbackUrl(browserUrl) &&
+      !isLoopbackDashboardUrl(browserUrl) &&
       new URL(browserUrl).protocol !== "https:"
     ) {
       invalid("Hermes dashboard.browserUrl must use HTTPS unless it is loopback");
@@ -1941,7 +1933,11 @@ function validateDashboard(
     if (configuredDashboardPort(url) !== publicPort) {
       invalid("Hermes dashboard.publicPort must match dashboard.url");
     }
-    if (browserUrl !== undefined && configuredDashboardPort(browserUrl) !== publicPort) {
+    if (
+      browserUrl !== undefined &&
+      isLoopbackDashboardUrl(browserUrl) &&
+      configuredDashboardPort(browserUrl) !== publicPort
+    ) {
       invalid("Hermes dashboard.publicPort must match dashboard.browserUrl");
     }
     return {

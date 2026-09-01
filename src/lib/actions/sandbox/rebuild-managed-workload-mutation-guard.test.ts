@@ -151,7 +151,7 @@ describe("managed workload rebuild mutation guard", () => {
       { readonly agent: "hermes" }
     >;
     expect(previousDashboard.agent).toBe("hermes");
-    const browserUrl = "https://hermes.example.test:18789/dashboard";
+    const browserUrl = "https://secure-link.example/dashboard";
     const catalogHandoff = {
       agent: "hermes",
       previousProfile: {
@@ -223,13 +223,13 @@ describe("managed workload rebuild mutation guard", () => {
 
     expect(prepared.replacementProfile.profile.dashboard).toMatchObject({
       agent: "hermes",
-      browserUrl: "https://hermes.example.test:29443/dashboard",
+      browserUrl,
       publicPort: 29_443,
       url: "http://127.0.0.1:29443",
     });
     expect(
       mapManagedStartupProfileToAgentEnvironment(prepared.replacementProfile.profile, {})
         .runtimeEnvironment.CHAT_UI_URL,
-    ).toBe("https://hermes.example.test:29443/dashboard");
+    ).toBe(browserUrl);
   });
 });

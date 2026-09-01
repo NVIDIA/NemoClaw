@@ -6,6 +6,7 @@ import type { SandboxMessagingPlan } from "../../../messaging";
 import { shouldManageDashboardForAgent } from "../../../onboard/dashboard-runtime";
 import { resolveHermesDashboardOnboardState } from "../../../onboard/hermes-dashboard";
 import { resolveManagedStartupInferenceRoute } from "../../../onboard/inference-route";
+import { isLoopbackDashboardUrl } from "../../../onboard/managed-startup/dashboard-url";
 import {
   type ManagedWorkloadRebuildCatalogHandoff,
   type ManagedWorkloadRebuildHandoff,
@@ -55,6 +56,10 @@ function dashboardUrlAtPort(raw: string, port: number): string {
   return url.toString();
 }
 
+function dashboardBrowserUrlAtPort(raw: string, port: number): string {
+  return isLoopbackDashboardUrl(raw) ? dashboardUrlAtPort(raw, port) : raw;
+}
+
 /** Render the exact replacement profile while the old managed workload remains authoritative. */
 export function prepareManagedRebuildProfileHandoff(input: {
   readonly catalogHandoff: ManagedWorkloadRebuildCatalogHandoff;
@@ -91,7 +96,7 @@ export function prepareManagedRebuildProfileHandoff(input: {
   const chatUiUrl = manageDashboard
     ? previousHermesBrowserUrl === undefined
       ? `http://127.0.0.1:${String(effectiveDashboardPort)}`
-      : dashboardUrlAtPort(previousHermesBrowserUrl, effectiveDashboardPort)
+      : dashboardBrowserUrlAtPort(previousHermesBrowserUrl, effectiveDashboardPort)
     : "";
   const inference = managedRebuildProfileDependencies.resolveManagedStartupInferenceRoute(
     agent,
