@@ -8,7 +8,7 @@ model-backed analysis in OpenShell sandboxes from trusted GitHub Actions jobs an
 read-only data. It posts a sticky comment that links to the complete specialist reviews in the
 workflow run.
 
-It runs seven independent specialist reviews on every pull request:
+For each configured pull-request event, it runs seven independent specialist reviews:
 
 - **Customer value and behavior** checks accepted scope, observable results, contracts, compatibility, and data integrity.
 - **Security and built-in quality** checks authority, sensitive data, isolation, supply-chain trust, and fail-closed controls.
@@ -31,7 +31,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 3. Runs model analysis inside OpenShell. The sandbox receives neither a GitHub token nor the upstream model credential.
 4. Runs one required Pi session for each valid Markdown prompt in `tools/pr-review-advisor/specialists`. Each specialist reads repository evidence and records a native session trace.
 5. Each specialist publishes its complete Markdown review as the job summary and uploads the Markdown and native session trace as one artifact.
-6. After every specialist completes successfully, one publisher posts a sticky comment that links to the workflow run. A failed specialist keeps the workflow failed and suppresses publication.
+6. After every specialist completes successfully, one publisher attempts to post a sticky comment that links to the workflow run. A failed specialist keeps the workflow failed and suppresses publication.
 
 `investigate-turn.mts` owns the specialist turn contract, including its prompt and tool configuration. `trusted-guidance.mts` owns the system prompt and checked-in review guidance. `turn-context.mts` and the context modules build bounded deterministic evidence. `run-specialist.mts` composes these modules and writes each specialist's Markdown review and native session trace.
 

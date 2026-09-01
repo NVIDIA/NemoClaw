@@ -11,7 +11,7 @@ Determine whether the change prevents unsafe work at the boundary where it origi
 
 ## Review method
 
-Apply the trusted security rubric. Follow authority and data across each affected boundary. Inspect the first boundary that can reject an unsafe state.
+Apply the trusted security rubric. Follow authority and data across each affected boundary. Inspect the first boundary that can reject an unsafe state. Evaluate every applicable security property independently; one rejecting boundary does not end analysis of later affected boundaries.
 
 ## Own
 

@@ -63,6 +63,20 @@ describe("PR review advisor specialist prompts", () => {
     ]);
   });
 
+  it("preserves evidence and multi-boundary security review gates", () => {
+    const prompts = new Map(ADVISOR_SPECIALISTS.map(({ interest, prompt }) => [interest, prompt]));
+
+    expect(prompts.get("operability-recovery")).toContain(
+      "Repository evidence shows that the change introduces or worsens a state",
+    );
+    expect(prompts.get("security-built-in-quality")).toContain(
+      "Evaluate every applicable security property independently",
+    );
+    expect(prompts.get("security-built-in-quality")).toContain(
+      "one rejecting boundary does not end analysis of later affected boundaries",
+    );
+  });
+
   it("writes readable diff evidence in the prepared advisor context", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "specialist-context-"));
     onTestFinished(() => fs.rmSync(directory, { recursive: true, force: true }));

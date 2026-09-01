@@ -32,4 +32,4 @@ Preserve flow. Expose waiting, rework, excess work in progress, hidden inventory
 
 ## Report a finding when
 
-The system can become stuck, leak or orphan resources, hide the cause or affected object, repeat an unsafe operation, wait without a bound, or leave partial work without reconciliation. Name the operational state, effect, and smallest reliable recovery change.
+Repository evidence shows that the change introduces or worsens a state that can become stuck, leak or orphan resources, hide the cause or affected object, repeat an unsafe operation, wait without a bound, or leave partial work without reconciliation. Name the operational state, effect, and smallest reliable recovery change. Distinguish a defect from missing evidence. State material uncertainty without requiring exhaustive proof.
