@@ -5,6 +5,12 @@ name: CI / Platform Compatibility
 
 on:
   workflow_dispatch:
+    inputs:
+      run_windows_native_installer:
+        description: Build and qualify the no-WSL ARM64 Windows candidate installer
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - main
@@ -217,6 +223,72 @@ jobs:
             /tmp/nemoclaw-e2e-*.log
             ${{ github.workspace }}/e2e-artifacts/live
           if-no-files-found: ignore
+          retention-days: 14
+
+  windows-native-installer:
+    name: Windows native installer candidate (ARM64, no WSL)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_windows_native_installer }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 120
+    steps:
+      - name: Check out the NemoClaw candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: candidate
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check out the pinned OpenShell Windows candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/OpenShell
+          ref: bcd517bbe08cc80860c9be57699390cd32e8445f # PR #2721 merge commit
+          path: openshell
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pinned Rust for the OpenShell ARM64 build
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.95.0
+          target: aarch64-pc-windows-msvc
+          cache: false
+          rustflags: ""
+
+      - name: Build the pinned OpenShell PR distribution
+        working-directory: openshell
+        shell: powershell
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          & .\tasks\scripts\windows-msvc.ps1 check aarch64-pc-windows-msvc
+          & .\tasks\scripts\windows-msvc.ps1 build aarch64-pc-windows-msvc
+          & .\tasks\scripts\windows-msvc.ps1 artifacts aarch64-pc-windows-msvc
+
+      - name: Qualify install, repair, uninstall, and no-WSL process boundaries
+        shell: powershell
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
+          $openshell = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\openshell")
+          $installer = Join-Path $candidate 'scripts\install-windows-native.ps1'
+          $installerSha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          & "$candidate\scripts\checks\run-windows-native-installer-qualification.ps1" `
+            -CandidateCheckout $candidate `
+            -CandidateSha $env:GITHUB_SHA `
+            -InstallerSha256 $installerSha256 `
+            -OpenShellCheckout $openshell `
+            -OpenShellSha bcd517bbe08cc80860c9be57699390cd32e8445f `
+            -ArtifactDirectory "$env:RUNNER_TEMP\windows-native-installer-receipts"
+
+      - name: Upload Windows native installer qualification receipts
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-native-installer-${{ github.sha }}
+          path: ${{ runner.temp }}/windows-native-installer-receipts/
+          if-no-files-found: error
           retention-days: 14
 
   wsl-vitest:
