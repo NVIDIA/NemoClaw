@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import YAML from "yaml";
 
 import { HERMES_DISCORD_TEST_TIMEOUT_MS } from "../../../tools/e2e/hermes-timeout-contract.mts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -26,7 +27,6 @@ import {
   expectExitZero,
   phase6Env,
   resultText,
-  sandboxNode,
   sandboxSh,
   sandboxShWithArgs,
   shellQuote,
@@ -153,10 +153,6 @@ async function applyHermesFakeDiscordPolicy(options: {
       "--add-allow",
       `${FAKE_DISCORD_HOST}:${options.api.port}:WEBSOCKET_TEXT:/**`,
       "--binary",
-      "/usr/local/bin/node",
-      "--binary",
-      "/usr/bin/node",
-      "--binary",
       "/usr/local/bin/python3",
       "--binary",
       "/usr/bin/python3",
@@ -200,6 +196,61 @@ node --import tsx "$6" "$policy_file" "$3" "$4" "$5" websocket
     },
   );
   expectExitZero(binding, "bind Hermes fake Discord Gateway credential");
+}
+
+type DiscordPolicy = {
+  binaries?: Array<{ path?: string }>;
+  endpoints?: Array<{ host?: string; port?: number }>;
+};
+
+function expectPythonOnlyDiscordPolicy(policy: DiscordPolicy | undefined, label: string): void {
+  expect(policy, label).toBeDefined();
+  const binaries = (policy?.binaries ?? []).map((binary) => binary.path);
+  expect(binaries).toContain("/opt/hermes/.venv/bin/python");
+  expect(binaries).not.toContain("/usr/local/bin/node");
+  expect(binaries).not.toContain("/usr/bin/node");
+}
+
+async function assertHermesDiscordPythonOnlyPolicy(options: {
+  host: HostCliClient;
+  sandboxName: string;
+  api: FakeDockerApi;
+  env: NodeJS.ProcessEnv;
+  redactions: string[];
+}): Promise<void> {
+  const result = await options.host.command(
+    options.host.openshellCommandPath,
+    ["policy", "get", "--base", options.sandboxName],
+    {
+      artifactName: "hermes-discord-python-only-policy",
+      env: options.env,
+      redactionValues: options.redactions,
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(result, "read Hermes Discord live policy");
+
+  const documents = YAML.parseAllDocuments(result.stdout).map((document) => document.toJS());
+  const policyDocument = documents.find(
+    (document): document is { network_policies: Record<string, DiscordPolicy> } =>
+      typeof document === "object" &&
+      document !== null &&
+      "network_policies" in document &&
+      typeof document.network_policies === "object" &&
+      document.network_policies !== null,
+  );
+  expect(policyDocument, "live policy document").toBeDefined();
+
+  const networkPolicies = policyDocument?.network_policies ?? {};
+  const productionDiscord = networkPolicies.discord;
+  const fakeDiscord = Object.values(networkPolicies).find((policy) =>
+    policy.endpoints?.some(
+      (endpoint) =>
+        endpoint.host === FAKE_DISCORD_HOST && endpoint.port === Number(options.api.port),
+    ),
+  );
+  expectPythonOnlyDiscordPolicy(productionDiscord, "production Hermes Discord policy");
+  expectPythonOnlyDiscordPolicy(fakeDiscord, "fake Hermes Discord policy");
 }
 
 const HERMES_DISCORD_PYTHON_GATEWAY_PROOF = String.raw`
@@ -619,6 +670,13 @@ PY`,
     env,
     redactions: redactionValues,
   });
+  await assertHermesDiscordPythonOnlyPolicy({
+    host,
+    sandboxName: SANDBOX_NAME,
+    api: fakeGateway,
+    env,
+    redactions: redactionValues,
+  });
 
   const nativeGateway = await runHermesPythonDiscordGatewayProof(
     sandbox,
@@ -683,38 +741,45 @@ PY`,
   expectExitZero(filesystemSurface, "sandbox filesystem token isolation");
   expect(filesystemSurface.stdout.trim()).toBe("ABSENT");
 
-  const discordApi = await sandboxNode(
+  const discordApi = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
-    `
-import https from "node:https";
-const token = process.env.DISCORD_BOT_TOKEN ?? "";
-if (!/^openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN$/.test(token)) {
-  console.log(JSON.stringify({ error: "invalid_token_placeholder" }));
-  process.exit(0);
-}
-const req = https.request({
-  hostname: "discord.com",
-  path: "/api/v10/users/@me",
-  method: "GET",
-  headers: { Authorization: "Bot " + token },
-}, (res) => {
-  let body = "";
-  res.on("data", (d) => { body += d; });
-  res.on("end", () => console.log(JSON.stringify({ statusCode: res.statusCode, body: body.slice(0, 200) })));
-});
-req.on("error", (error) => console.log(JSON.stringify({ error: error.message })));
-req.setTimeout(20000, () => { req.destroy(); console.log(JSON.stringify({ error: "timeout" })); });
-req.end();
-`,
-    {},
+    `/opt/hermes/.venv/bin/python - <<'PY'
+import json
+import os
+import re
+import socket
+import urllib.error
+import urllib.request
+
+token = os.environ.get("DISCORD_BOT_TOKEN", "")
+if not re.fullmatch(r"openshell:resolve:env:v[1-9][0-9]*_DISCORD_BOT_TOKEN", token):
+    print(json.dumps({"error": "invalid_token_placeholder"}))
+    raise SystemExit(0)
+
+request = urllib.request.Request(
+    "https://discord.com/api/v10/users/@me",
+    headers={"Authorization": f"Bot {token}"},
+    method="GET",
+)
+try:
+    with urllib.request.urlopen(request, timeout=20) as response:
+        print(json.dumps({"statusCode": response.status}))
+except urllib.error.HTTPError as error:
+    print(json.dumps({"statusCode": error.code}))
+except (TimeoutError, socket.timeout):
+    print(json.dumps({"error": "timeout"}))
+except Exception as error:
+    print(json.dumps({"error": str(error)}))
+PY`,
+    [],
     {
       artifactName: "phase-6-discord-users-me",
       redactionValues,
       timeoutMs: 30_000,
     },
   );
-  expectExitZero(discordApi, "Discord REST users/@me probe command");
+  expectExitZero(discordApi, "Hermes Python Discord REST users/@me probe command");
   const discordApiRows = discordApi.stdout
     .split(/\r?\n/)
     .filter((line) => line.trim().startsWith("{"))

@@ -67,6 +67,9 @@ export interface ChannelPolicyPresetSpec {
   readonly agentPolicyKeys?: Partial<Record<MessagingAgentId, readonly string[]>>;
   readonly requiredAtCreate?: boolean;
   readonly validationWarningLines?: readonly string[];
+  readonly validationWarningLinesByAgent?: Partial<
+    Record<MessagingAgentId, readonly string[]>
+  >;
 }
 
 /** How a channel obtains credential or session material. */

@@ -189,8 +189,22 @@ describe("built-in messaging channel metadata", () => {
       "teams",
     ]);
     expect(getMessagingPolicyPresetValidationWarnings().discord).toContain(
-      "https://discord.com/api/v10/gateway or validate the configured",
+      "The agent-specific gateway probe prints 200 on success. A transport error",
     );
+    const openClawDiscordWarning = getMessagingPolicyPresetValidationWarnings({
+      agent: "openclaw",
+    }).discord;
+    expect(openClawDiscordWarning).toContain("OpenClaw validation uses its Node runtime:");
+    expect(openClawDiscordWarning).not.toContain(
+      "Hermes validation uses its virtual-environment Python runtime:",
+    );
+    const hermesDiscordWarning = getMessagingPolicyPresetValidationWarnings({
+      agent: "hermes",
+    }).discord;
+    expect(hermesDiscordWarning).toContain(
+      "Hermes validation uses its virtual-environment Python runtime:",
+    );
+    expect(hermesDiscordWarning).not.toContain("OpenClaw validation uses its Node runtime:");
     expect(listOpenClawManagedChannelNames()).toEqual([
       "telegram",
       "discord",

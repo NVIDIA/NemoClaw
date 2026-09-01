@@ -129,16 +129,35 @@ describe("policies", () => {
       expect(policies.getPresetValidationWarning("wechat")).toContain("WeChat");
     });
 
-    it("adds Discord validation guidance for agent runtime probes instead of curl or DNS-only checks", () => {
-      const warning = policies.getPresetValidationWarning("discord");
+    it.each([
+      {
+        agent: "openclaw" as const,
+        expectedLabel: "OpenClaw validation uses its Node runtime",
+        expectedCommand: "node -e",
+        absentCommand: "/opt/hermes/.venv/bin/python",
+      },
+      {
+        agent: "hermes" as const,
+        expectedLabel: "Hermes validation uses its virtual-environment Python runtime",
+        expectedCommand: "/opt/hermes/.venv/bin/python -c",
+        absentCommand: "node -e",
+      },
+    ])(
+      "adds $agent-specific Discord validation guidance for proxy-visible runtime checks",
+      ({ agent, expectedLabel, expectedCommand, absentCommand }) => {
+        const warning = policies.getPresetValidationWarning("discord", { agent });
 
-      expect(warning).toContain("curl");
-      expect(warning).toContain("preset binary allowlist");
-      expect(warning).toContain("configured agent runtime");
-      expect(warning).not.toContain("Node HTTPS");
-      expect(warning).toContain("https://discord.com/api/v10/gateway");
-      expect(warning).toContain('dns.resolve("gateway.discord.gg")');
-    });
+        expect(warning).toContain("curl");
+        expect(warning).toContain("preset binary allowlist");
+        expect(warning).not.toContain("Node HTTPS");
+        expect(warning).toContain("https://discord.com/api/v10/gateway");
+        expect(warning).toContain('dns.resolve("gateway.discord.gg")');
+        expect(warning).toContain("prints 200 on success");
+        expect(warning).toContain(expectedLabel);
+        expect(warning).toContain(expectedCommand);
+        expect(warning).not.toContain(absentCommand);
+      },
+    );
 
     it("adds Jira validation guidance that makes blocked versus redirected curl observable", () => {
       const warning = policies.getPresetValidationWarning("jira");
