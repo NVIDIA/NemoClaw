@@ -164,6 +164,11 @@ Endpoint paths cannot contain percent escapes, backslashes, semicolons, or OpenS
 Endpoint URLs cannot use port `0`.
 
 NemoClaw resolves hostnames before registration and pins the validated addresses in the generated policy.
+If a public hostname's first DNS response contains one address, NemoClaw takes two more validated snapshots and pins the sorted union from all three responses.
+If the first public response contains multiple addresses, NemoClaw uses that response without another lookup.
+NemoClaw rejects a public preflight if either additional snapshot is unresolved or contains a private, special-use, or otherwise disallowed address.
+Explicitly trusted private targets use one DNS lookup and retain exact host-bound address pins.
+These preflight lookups do not refresh `allowed_ips` during a live connection or replace address pins with hostname-only trust.
 Public endpoints need no trusted-private declaration.
 Private endpoints require a trust declaration and can use only RFC1918, CGNAT, or IPv6 unique local addresses.
 Supply the declaration with `--trusted-private-host` or the generic `NEMOCLAW_TRUSTED_PRIVATE_HOSTS` environment variable.
@@ -172,7 +177,8 @@ OpenShell re-resolves the hostname for each new connection, requires every curre
 
 A DNS change to a private, special-use, or otherwise unpinned address fails closed instead of widening the route.
 
-Cloudflare Quick Tunnels and other endpoints with rotating address sets are not durable managed MCP deployments.
+DNS rotation beyond the addresses observed during public preflight remains unpinned.
+Cloudflare Quick Tunnels and other endpoints that change beyond that set are not durable managed MCP deployments.
 A named tunnel can stabilize the hostname without stabilizing its address set.
 Use stable private DNS and a routed private HTTPS endpoint when you operate the MCP server locally.
 

@@ -845,6 +845,10 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     };
     testState.resolveHostAddresses
       .mockResolvedValueOnce([{ address: "8.8.8.8" }])
+      .mockResolvedValueOnce([{ address: "8.8.8.8" }])
+      .mockResolvedValueOnce([{ address: "8.8.8.8" }])
+      .mockResolvedValueOnce([{ address: "1.1.1.1" }])
+      .mockResolvedValueOnce([{ address: "1.1.1.1" }])
       .mockResolvedValueOnce([{ address: "1.1.1.1" }]);
     registry.registerSandbox({
       name: "alpha",
@@ -860,7 +864,8 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
     expect(message).toMatch(/changed after host-side rebuild preflight/i);
     expect(registry.getSandbox("alpha")).toEqual(before);
     expect(testState.resolveHostAddresses).toHaveBeenNthCalledWith(1, "mcp.example.com");
-    expect(testState.resolveHostAddresses).toHaveBeenNthCalledWith(2, "mcp.example.com");
+    expect(testState.resolveHostAddresses).toHaveBeenNthCalledWith(4, "mcp.example.com");
+    expect(testState.resolveHostAddresses).toHaveBeenCalledTimes(6);
     expect(testState.adapterCalls).toEqual([]);
   });
 

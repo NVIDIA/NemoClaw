@@ -27,6 +27,38 @@ describe("MCP URL target validation", () => {
       await expect(
         preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
       ).resolves.toEqual({ addresses: ["2606:4700:4700::1111", "8.8.8.8"] });
+      expect(lookup).toHaveBeenCalledOnce();
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("pins each address observed across a rotating public DNS answer (#10755)", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
+      .mockResolvedValueOnce([{ address: "1.1.1.1", family: 4 }] as never)
+      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never);
+    try {
+      await expect(
+        preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
+      ).resolves.toEqual({ addresses: ["1.1.1.1", "8.8.8.8"] });
+      expect(lookup).toHaveBeenCalledTimes(3);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("rejects a private address discovered in a later public DNS snapshot (#10755)", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValueOnce([{ address: "8.8.8.8", family: 4 }] as never)
+      .mockResolvedValueOnce([{ address: "127.0.0.1", family: 4 }] as never);
+    try {
+      await expect(
+        preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
+      ).rejects.toThrow(/resolves to private, local, or special-use address '127\.0\.0\.1'/);
+      expect(lookup).toHaveBeenCalledTimes(2);
     } finally {
       lookup.mockRestore();
     }
@@ -86,6 +118,7 @@ describe("MCP URL target validation", () => {
         }),
         trustedPrivateHost: "mcp.corp.example",
       });
+      expect(lookup).toHaveBeenCalledOnce();
     } finally {
       lookup.mockRestore();
     }

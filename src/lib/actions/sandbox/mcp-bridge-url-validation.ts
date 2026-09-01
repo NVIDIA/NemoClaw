@@ -28,6 +28,7 @@ const MCP_PATH_CREDENTIAL_PATTERNS = TOKEN_PREFIX_PATTERNS.map(
   (pattern) => new RegExp(pattern.source.replaceAll("\\b", ""), pattern.flags.replace("g", "")),
 );
 const MCP_DNS_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const MCP_PUBLIC_DNS_ROTATION_SNAPSHOTS = 3;
 
 function validateCanonicalMcpDnsHostname(hostname: string): void {
   if (hostname.length > 253 || hostname.split(".").some((label) => !MCP_DNS_LABEL_RE.test(label))) {
@@ -247,14 +248,33 @@ export async function preflightMcpServerUrlResolvedTarget(
   const normalizedTrustedHosts = (options.trustedPrivateHosts ?? []).map((host) =>
     normalizeTrustedPrivateHost(host),
   );
+  const normalizedHostname = normalizeTrustedPrivateHost(parsed.hostname);
+  const explicitTrust = normalizedTrustedHosts.includes(normalizedHostname);
   if (isBlockedMcpUrlTargetHost(parsed.hostname)) {
     validateMcpServerUrlTarget(parsed, normalizedTrustedHosts);
   }
-  const result = await assertEndpointResolvesPublic(
-    parsed.toString(),
-    async (hostname) => resolveHostAddresses(hostname),
-    { trustedPrivateHosts: normalizedTrustedHosts },
-  );
+  const resolveSnapshot = () =>
+    assertEndpointResolvesPublic(
+      parsed.toString(),
+      async (hostname) => resolveHostAddresses(hostname),
+      { trustedPrivateHosts: normalizedTrustedHosts },
+    );
+  const snapshots = [];
+  let result = await resolveSnapshot();
+  if (result.ok) {
+    snapshots.push(result);
+    // Some system resolvers return one member of a rotating public answer set
+    // even with `all: true`. Two additional snapshots capture the reported
+    // A/B rotation and confirm the wraparound without changing private-host
+    // admission or refreshing policy during a live connection.
+    if (!explicitTrust && result.addresses?.length === 1) {
+      for (let attempt = 1; attempt < MCP_PUBLIC_DNS_ROTATION_SNAPSHOTS; attempt += 1) {
+        result = await resolveSnapshot();
+        if (!result.ok) break;
+        snapshots.push(result);
+      }
+    }
+  }
   if (!result.ok) {
     if (result.reasonCode === "private-answer" && result.offendingAddress) {
       const guidance = isLoopbackHostname(result.offendingAddress)
@@ -275,7 +295,10 @@ export async function preflightMcpServerUrlResolvedTarget(
   const literalAddress = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(parsed.hostname)
     ? parsed.hostname
     : undefined;
-  const addresses = [...new Set(result.addresses?.length ? result.addresses : [literalAddress])]
+  const resolvedAddresses = snapshots.flatMap((snapshot) => snapshot.addresses ?? []);
+  const addresses = [
+    ...new Set(resolvedAddresses.length > 0 ? resolvedAddresses : [literalAddress]),
+  ]
     .filter((address): address is string => !!address)
     .map((address) => address.toLowerCase())
     .sort();
@@ -286,8 +309,6 @@ export async function preflightMcpServerUrlResolvedTarget(
       "unresolved",
     );
   }
-  const normalizedHostname = normalizeTrustedPrivateHost(parsed.hostname);
-  const explicitTrust = normalizedTrustedHosts.includes(normalizedHostname);
   if (result.trustedPrivateEndpoint) {
     try {
       const authority = assertTrustedPrivateEndpointCapability(
