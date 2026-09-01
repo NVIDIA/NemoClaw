@@ -31,7 +31,7 @@ function mockProcess(): MockProcess {
   Object.defineProperties(proc, {
     stderr: { value: stderr },
     stdout: { value: stdout },
-    kill: { value: vi.fn() },
+    kill: { value: vi.fn(() => true) },
     unref: { value: vi.fn() },
   });
   return proc;
@@ -363,7 +363,8 @@ describe("Hugging Face model acquisition", () => {
   it("aborts a stalled download instead of waiting forever (#10346)", async () => {
     vi.useFakeTimers();
     const proc = mockProcess();
-    dockerSpawn.mockReturnValue(proc);
+    const cleanupProc = mockProcess();
+    dockerSpawn.mockReturnValueOnce(proc).mockReturnValueOnce(cleanupProc);
     const events = observer();
     const resultPromise = acquireHuggingFaceModel(request(), events);
 
@@ -379,8 +380,10 @@ describe("Hugging Face model acquisition", () => {
 
     // Then output stops entirely for the full stall window.
     await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    cleanupProc.emit("exit", 0);
+    proc.emit("exit", 137);
 
-    expect(proc.kill).toHaveBeenCalledTimes(1);
+    expect(dockerSpawn).toHaveBeenCalledTimes(2);
     await expect(resultPromise).resolves.toEqual({
       ok: false,
       reason: expect.stringContaining("hf download stalled"),
@@ -399,47 +402,55 @@ describe("Hugging Face model acquisition", () => {
     vi.useFakeTimers();
     vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", "1");
     const proc = mockProcess();
-    dockerSpawn.mockReturnValue(proc);
+    const cleanupProc = mockProcess();
+    dockerSpawn.mockReturnValueOnce(proc).mockReturnValueOnce(cleanupProc);
     const events = observer();
     const resultPromise = acquireHuggingFaceModel(request(), events);
 
     await vi.advanceTimersByTimeAsync(999);
-    expect(proc.kill).not.toHaveBeenCalled();
-
     proc.stdout.emit("data", Buffer.from("Downloading: 1%\n"));
     await vi.advanceTimersByTimeAsync(999);
-    expect(proc.kill).not.toHaveBeenCalled();
+    expect(dockerSpawn).toHaveBeenCalledTimes(1);
 
-    proc.kill.mockImplementationOnce(() => {
-      proc.emit("exit", 0);
-      return true;
-    });
     await vi.advanceTimersByTimeAsync(1);
+    expect(dockerSpawn).toHaveBeenCalledTimes(2);
+    const downloadArgv = dockerSpawn.mock.calls[0]?.[0] as string[];
+    const containerName = downloadArgv[downloadArgv.indexOf("--name") + 1];
+    expect(dockerSpawn.mock.calls[1]).toEqual([
+      ["rm", "--force", containerName],
+      { env: { DOCKER_HOST: "ssh://spark.example.test" }, stdio: "ignore" },
+    ]);
+    cleanupProc.emit("exit", 0);
+    proc.emit("exit", 137);
 
-    expect(proc.kill).toHaveBeenCalledWith("SIGTERM");
     await expect(resultPromise).resolves.toEqual({
       ok: false,
       reason: "hf download stalled: no output for 1s",
     });
     expect(events.logLine).not.toHaveBeenCalledWith(expect.stringContaining("still running"));
     expect(events.logLine).not.toHaveBeenCalledWith("Model download complete");
-
-    proc.stdout.emit("data", Buffer.from("late output\n"));
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(proc.kill).toHaveBeenCalledTimes(1);
+    expect(cleanupProc.unref).toHaveBeenCalledOnce();
+    expect(proc.stdout.destroy).toHaveBeenCalledOnce();
+    expect(proc.stderr.destroy).toHaveBeenCalledOnce();
+    expect(proc.unref).toHaveBeenCalledOnce();
     vi.unstubAllEnvs();
   });
 
-  it("reports when bounded cleanup cannot confirm a stalled download exited (#10346)", async () => {
+  it("reports the named container and recovery command when removal is unconfirmed (#10346)", async () => {
     vi.useFakeTimers();
     vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", "1");
     const proc = mockProcess();
-    Object.defineProperty(proc, "pid", { value: 4242 });
-    proc.kill.mockReturnValue(true);
-    dockerSpawn.mockReturnValue(proc);
+    const cleanupProc = mockProcess();
+    dockerSpawn.mockReturnValueOnce(proc).mockReturnValueOnce(cleanupProc);
     const resultPromise = acquireHuggingFaceModel(request(), observer());
 
     await vi.advanceTimersByTimeAsync(1_000);
+    const downloadArgv = dockerSpawn.mock.calls[0]?.[0] as string[];
+    const containerName = downloadArgv[downloadArgv.indexOf("--name") + 1];
+    expect(dockerSpawn.mock.calls[1]).toEqual([
+      ["rm", "--force", containerName],
+      { env: { DOCKER_HOST: "ssh://spark.example.test" }, stdio: "ignore" },
+    ]);
     let settled = false;
     void resultPromise.then(() => {
       settled = true;
@@ -447,23 +458,18 @@ describe("Hugging Face model acquisition", () => {
     await Promise.resolve();
     expect(settled).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(proc.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
-    expect(proc.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
-    expect(settled).toBe(false);
-
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(cleanupProc.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(cleanupProc.unref).toHaveBeenCalledOnce();
     await expect(resultPromise).resolves.toEqual({
       ok: false,
-      reason: expect.stringContaining("cleanup could not confirm Docker process 4242 exited"),
+      reason: `hf download stalled: no output for 1s; cleanup unconfirmed for container ${containerName} on the configured Docker endpoint; run docker rm --force ${containerName} with the same Docker context`,
     });
-    expect(proc.stdout.destroy).toHaveBeenCalledOnce();
-    expect(proc.stderr.destroy).toHaveBeenCalledOnce();
-    expect(proc.unref).toHaveBeenCalledOnce();
     vi.unstubAllEnvs();
   });
 
   it.each([
+    ["exceeds the Node.js timer limit", "2147483.648"],
     ["scales past the representable range", "1e308"],
     ["floors to a zero-millisecond window", "0.0001"],
   ])(
@@ -472,7 +478,8 @@ describe("Hugging Face model acquisition", () => {
       vi.useFakeTimers();
       vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", configured);
       const proc = mockProcess();
-      dockerSpawn.mockReturnValue(proc);
+      const cleanupProc = mockProcess();
+      dockerSpawn.mockReturnValueOnce(proc).mockReturnValueOnce(cleanupProc);
       const events = observer();
       const resultPromise = acquireHuggingFaceModel(request(), events);
 
@@ -482,8 +489,10 @@ describe("Hugging Face model acquisition", () => {
       expect(proc.kill).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(570_000);
+      cleanupProc.emit("exit", 0);
+      proc.emit("exit", 137);
 
-      expect(proc.kill).toHaveBeenCalledTimes(1);
+      expect(dockerSpawn).toHaveBeenCalledTimes(2);
       await expect(resultPromise).resolves.toEqual({
         ok: false,
         reason: expect.stringContaining("hf download stalled"),

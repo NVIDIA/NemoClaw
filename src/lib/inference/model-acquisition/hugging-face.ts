@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
@@ -12,6 +13,8 @@ const HF_RATE_LIMIT_PATTERN = /\b429\b|too many requests|rate[\s_-]*limit/i;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS = 10 * 60 * 1000;
 const MODEL_DOWNLOAD_STALL_TIMEOUT_ENV = "NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT";
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const CONTAINER_CLEANUP_TIMEOUT_MS = 10_000;
 const HF_DOWNLOAD_CACHE_CONTAINER_DIR = "/tmp/nemoclaw-huggingface";
 const HF_REPOSITORY_ID_MAX_LENGTH = 96;
 const HF_PENDING_OUTPUT_MAX_CHARS = 64 * 1024;
@@ -144,6 +147,7 @@ function repositoryArg(repository: string): string {
 
 export function buildHuggingFaceModelDownloadArgv(
   request: HuggingFaceModelAcquisitionRequest,
+  containerName?: string,
 ): string[] {
   const credentialEnv = request.credentialEnv ?? process.env;
   return [
@@ -151,6 +155,7 @@ export function buildHuggingFaceModelDownloadArgv(
     "-t",
     "--rm",
     "--pull=never",
+    ...(containerName ? ["--name", containerName] : []),
     ...hostUserDockerArgs(request.userIdentity),
     "--entrypoint",
     "hf",
@@ -183,7 +188,9 @@ function modelDownloadStallTimeoutMs(env: NodeJS.ProcessEnv = process.env): numb
   // Infinity` never holds, and a zero window aborts a healthy download at
   // once — so treat both as unusable and keep the default.
   const timeoutMs = Math.floor(seconds * 1000);
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMER_DELAY_MS) {
+    return DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS;
+  }
   return timeoutMs;
 }
 
@@ -258,9 +265,10 @@ export function acquireHuggingFaceModel(
   return new Promise((resolve) => {
     const credentialEnv = request.credentialEnv ?? process.env;
     const tokenValue = pickHfTokenEntry(credentialEnv)?.value ?? null;
+    const containerName = `nemoclaw-hf-download-${randomUUID()}`;
     let argv: string[];
     try {
-      argv = buildHuggingFaceModelDownloadArgv(request);
+      argv = buildHuggingFaceModelDownloadArgv(request, containerName);
     } catch (err) {
       resolve({
         ok: false,
@@ -325,15 +333,10 @@ export function acquireHuggingFaceModel(
           `Model download stalled: no output for ${formatElapsed(idleMs)}; aborting`,
         );
         finalizeOutputDecoders();
-        void terminateStalledDownload().then((terminated) => {
-          const cleanup = terminated
+        void cleanupStalledDownload().then(({ containerRemoved, clientExited }) => {
+          const cleanup = containerRemoved && clientExited
             ? ""
-            : `; cleanup could not confirm Docker process ${String(proc.pid ?? "unknown")} exited`;
-          if (!terminated) {
-            proc.stdout?.destroy();
-            proc.stderr?.destroy();
-            proc.unref();
-          }
+            : `; cleanup unconfirmed for container ${containerName} on the configured Docker endpoint; run docker rm --force ${containerName} with the same Docker context`;
           done({
             ok: false,
             reason: `hf download stalled: no output for ${formatElapsed(idleMs)}${cleanup}`,
@@ -345,35 +348,80 @@ export function acquireHuggingFaceModel(
 
     scheduleStallTimeout();
 
-    function terminateStalledDownload(): Promise<boolean> {
+    async function cleanupStalledDownload(): Promise<{
+      containerRemoved: boolean;
+      clientExited: boolean;
+    }> {
+      const [containerRemoved, clientExited] = await Promise.all([
+        removeStalledContainer(),
+        terminateDownloadClient(),
+      ]);
+      proc.stdout?.destroy();
+      proc.stderr?.destroy();
+      proc.unref();
+      return { containerRemoved, clientExited };
+    }
+
+    function removeStalledContainer(): Promise<boolean> {
+      return new Promise((resolveRemoval) => {
+        let cleanupProc: ReturnType<typeof spawn>;
+        try {
+          cleanupProc = request.spawnDocker(["rm", "--force", containerName], {
+            env: { ...request.dockerEnv },
+            stdio: "ignore",
+          });
+        } catch {
+          resolveRemoval(false);
+          return;
+        }
+        let settled = false;
+        const cleanupTimer = setTimeout(() => {
+          cleanupProc.kill("SIGKILL");
+          finish(false);
+        }, CONTAINER_CLEANUP_TIMEOUT_MS);
+        cleanupTimer.unref?.();
+        const finish = (removed: boolean): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(cleanupTimer);
+          cleanupProc.removeAllListeners();
+          cleanupProc.unref();
+          resolveRemoval(removed);
+        };
+        cleanupProc.once("error", () => finish(false));
+        cleanupProc.once("exit", (code) => finish(code === 0));
+      });
+    }
+
+    function terminateDownloadClient(): Promise<boolean> {
       return new Promise((resolveTermination) => {
+        let settled = false;
         let forceTimer: NodeJS.Timeout | undefined;
         let terminalTimer: NodeJS.Timeout | undefined;
-        let terminationSettled = false;
-        const settled = (terminated: boolean): void => {
-          if (terminationSettled) return;
-          terminationSettled = true;
+        const finish = (exited: boolean): void => {
+          if (settled) return;
+          settled = true;
           if (forceTimer !== undefined) clearTimeout(forceTimer);
           if (terminalTimer !== undefined) clearTimeout(terminalTimer);
           proc.off("error", failed);
           proc.off("exit", confirmed);
-          resolveTermination(terminated);
+          resolveTermination(exited);
         };
-        const confirmed = (): void => settled(true);
-        const failed = (): void => settled(false);
+        const failed = (): void => finish(false);
+        const confirmed = (): void => finish(true);
+        proc.once("error", failed);
+        proc.once("exit", confirmed);
         forceTimer = setTimeout(() => {
           if (!proc.kill("SIGKILL")) {
-            settled(false);
+            finish(false);
             return;
           }
-          if (terminationSettled) return;
-          terminalTimer = setTimeout(() => settled(false), 5_000);
+          if (settled) return;
+          terminalTimer = setTimeout(() => finish(false), 5_000);
           terminalTimer.unref?.();
         }, 5_000);
         forceTimer.unref?.();
-        proc.once("error", failed);
-        proc.once("exit", confirmed);
-        if (!proc.kill("SIGTERM")) settled(false);
+        if (!proc.kill("SIGTERM")) finish(false);
       });
     }
 
