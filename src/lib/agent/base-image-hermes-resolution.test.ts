@@ -148,6 +148,56 @@ describe("Hermes base-image resolver integration", () => {
     );
   }, 15_000);
 
+  it("stops before a release fallback when the tracked Hermes base fails qualification (#10826)", () => {
+    const versionRef = "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:v0.0.118";
+    const fallbackDigest = `sha256:${"c".repeat(64)}`;
+    const fallbackRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${fallbackDigest}`;
+    vi.stubEnv("NEMOCLAW_SANDBOX_BASE_VERSION_TAG", "v0.0.118");
+
+    const inspectStatusByRef = new Map([
+      [trackedRef, 0],
+      [versionRef, 0],
+      [fallbackRef, 0],
+    ]);
+    const inspectOutputByKey = new Map([
+      [`{{json .RepoDigests}}\0${versionRef}`, JSON.stringify([fallbackRef])],
+      [
+        `{{json .}}\0${fallbackRef}`,
+        JSON.stringify({
+          Architecture: "arm64",
+          Id: imageId,
+          Os: "linux",
+          RepoDigests: [fallbackRef],
+        }),
+      ],
+    ]);
+    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
+      status: inspectStatusByRef.get(ref) ?? 1,
+    }));
+    dockerMocks.imageInspectFormat.mockImplementation((format: string, ref: string) =>
+      (inspectOutputByKey.get(`${format}\0${ref}`) ?? "").trim(),
+    );
+    const captureByEntrypointAndRef = new Map([
+      [`/opt/hermes/.venv/bin/python\0${trackedRef}`, ""],
+      [`/opt/hermes/.venv/bin/python\0${fallbackRef}`, "nemoclaw-hermes-mcp-runtime-ok"],
+      [`/bin/sh\0${fallbackRef}`, "nemoclaw-security-inventory-ok"],
+    ]);
+    dockerMocks.capture.mockImplementation((args: string[]) => {
+      const entrypointIndex = args.indexOf("--entrypoint");
+      return (
+        captureByEntrypointAndRef.get(
+          `${args[entrypointIndex + 1]}\0${args[entrypointIndex + 2]}`,
+        ) ?? ""
+      );
+    });
+
+    expect(() => stageHermesSandbox()).toThrow(
+      `Hermes Agent sandbox base image '${trackedRef}' is required but could not be pulled or did not pass the required MCP Streamable HTTP and ACP runtimes and the immutable security package inventory. No compatible local base image could be produced.`,
+    );
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(versionRef, expect.anything());
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
   it("rejects an explicit platform digest override without pinned provenance", () => {
     vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", platformRef);
 
