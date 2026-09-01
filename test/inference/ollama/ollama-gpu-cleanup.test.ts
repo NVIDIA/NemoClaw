@@ -158,6 +158,22 @@ describe("Ollama GPU cleanup", () => {
     );
   });
 
+  it("retains cleanup recovery when no local Ollama endpoint is reachable", () => {
+    const result = unloadOllamaModelsImpl(["llama3.2:1b"], {
+      getResolvedOllamaHost: () => null,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      outcome: "discovery-failed",
+      endpoint: "http://127.0.0.1:11434",
+      selectedModels: ["llama3.2:1b"],
+      discoveries: [],
+      requests: [],
+      message: "No reachable local Ollama endpoint was found for cleanup",
+    });
+  });
+
   it("isolates Docker credentials for discovery, release, and verification", () => {
     const calls: SpawnCall[] = [];
     const cleanup = vi.fn(() => ({ ok: true as const }));
