@@ -29,7 +29,6 @@ import {
   runE2eWorkflowPlanCli,
   selectedWorkflowJobs,
   validateE2eWorkflowPlan,
-  withoutCredentialedCatalogueProfiles,
   withoutUnavailableOptionalCredentialTargets,
   writeE2eWorkflowPlanCiOutput,
 } from "../../../tools/e2e/workflow-plan.mts";
@@ -69,12 +68,6 @@ function expectedCiOutput(plan: ReturnType<typeof buildE2eWorkflowPlan>): string
     `release_required_jobs=${JSON.stringify(releaseRequiredWorkflowJobs())}`,
     "",
   ].join("\n");
-}
-
-function prCandidatePlan(
-  plan: ReturnType<typeof buildE2eWorkflowPlan>,
-): ReturnType<typeof buildE2eWorkflowPlan> {
-  return withoutCredentialedCatalogueProfiles(plan);
 }
 
 function expectExplicitCatalogueCoverage(): void {

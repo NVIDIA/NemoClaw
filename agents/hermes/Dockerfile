@@ -123,6 +123,7 @@ COPY agents/hermes/managed_policy.py /usr/local/lib/nemoclaw/managed_policy.py
 COPY agents/hermes/patch-langfuse-credentials.mts /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts
 COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py
 COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
+COPY agents/hermes/normalize-lazy-package-permissions.py /usr/local/lib/nemoclaw/normalize-hermes-lazy-package-permissions.py
 COPY agents/hermes/finalize-tirith-marker.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py
 COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py
 COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py
@@ -487,7 +488,7 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-star
     && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/hermes-cron-restore-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.106.json \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/hermes-cron-restore-control.py \
     && chmod 500 /usr/local/lib/nemoclaw/managed-gateway-control.py \
-    && chmod 444 /usr/local/lib/nemoclaw/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/managed_policy.py \
+    && chmod 444 /usr/local/lib/nemoclaw/corporate-ca-runtime.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/managed_policy.py /usr/local/lib/nemoclaw/normalize-hermes-lazy-package-permissions.py \
     && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
     && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.106.json \
     && /opt/hermes/.venv/bin/python3 -I -c 'import runpy, yaml; assert yaml.safe_load("ready: true")["ready"] is True; runpy.run_path("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", run_name="nemoclaw_runtime_config_guard_probe")' \
@@ -1253,6 +1254,13 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
         /opt/hermes/.venv/bin/python -I -c \
         "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)" \
     && rm -rf /tmp/nemoclaw-hindsight-probe \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        env HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
+        /opt/hermes/.venv/bin/python -I \
+        /usr/local/lib/nemoclaw/normalize-hermes-lazy-package-permissions.py \
+        /sandbox/.hermes/lazy-packages \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages/hindsight_client)" = "sandbox:sandbox 750" \
+    && test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages/hindsight_client/__init__.py)" = "sandbox:sandbox 640" \
     && HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
         /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         /opt/hermes/.venv/bin/python -I -c \
@@ -1261,6 +1269,15 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
         env HERMES_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages \
         /opt/hermes/.venv/bin/python -I -c \
         "from tools.lazy_deps import activate_durable_lazy_target; activate_durable_lazy_target(); import hindsight_client; from pathlib import Path; assert hindsight_client.NEMOCLAW_BUILD_PROBE_FIXTURE is True; assert Path(hindsight_client.__file__).resolve().is_relative_to(Path('/sandbox/.hermes/lazy-packages').resolve())" \
+    && if /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
+        sh -c ': >> /sandbox/.hermes/lazy-packages/hindsight_client/__init__.py' 2>/dev/null; then \
+        echo "ERROR: gateway can modify installed Hermes lazy packages" >&2; exit 1; \
+    fi \
+    && if /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- \
+        sh -c ': > /sandbox/.hermes/lazy-packages/.nemoclaw-gateway-write-probe' 2>/dev/null; then \
+        echo "ERROR: gateway can modify sandbox-owned Hermes lazy packages" >&2; exit 1; \
+    fi \
+    && test ! -e /sandbox/.hermes/lazy-packages/.nemoclaw-gateway-write-probe \
     && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
         sh -c ': > /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-write-probe' \
     && test -f /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-write-probe \
@@ -1411,6 +1428,7 @@ RUN check_metadata() { \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py 'root:root 755' \
+    && check_metadata /usr/local/lib/nemoclaw/normalize-hermes-lazy-package-permissions.py 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/managed_policy.py 'root:root 444' \
     && check_metadata /usr/local/share/nemoclaw/hermes-managed-policy.json 'root:root 444' \
     && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \

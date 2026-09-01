@@ -458,13 +458,11 @@ async function rebuildSandboxUnlocked(
         });
         const postRestoreVerification = await runRebuildPostRestorePhase({
           sandboxName,
-          sandboxEntry,
           targetAgentName: rebuildAgent || "openclaw",
           messagingPlan,
           backupManifest: recoveryBackup,
           mcpEntries: Object.values(sandboxEntry.mcp?.bridges ?? {}),
           restoreSucceeded: restored.restoreSucceeded,
-          staleRecovery: false,
           preparedBackupRecovery: true,
           versionCheck,
           log,
@@ -658,14 +656,12 @@ async function rebuildSandboxUnlocked(
         : restore();
       const postRestoreVerification = await runRebuildPostRestorePhase({
         sandboxName,
-        sandboxEntry,
         targetAgentName: rebuildAgent || "openclaw",
         messagingPlan,
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
         restoreSucceeded: restored.restoreSucceeded,
         hermesCronRestoreIdentity,
-        staleRecovery,
         preparedBackupRecovery,
         versionCheck,
         log,

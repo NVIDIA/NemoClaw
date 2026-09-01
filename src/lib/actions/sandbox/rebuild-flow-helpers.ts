@@ -30,6 +30,7 @@ import {
   printSandboxListFailureWithRecoveryContext,
 } from "../../openshell-sandbox-list";
 import {
+  formatBuildFailureDiagnostics,
   parseContentAddressedSandboxBaseImageId,
   type SandboxBaseImageResolutionMetadata,
   type TrustedLocalBaseImageOverride,
@@ -390,13 +391,14 @@ export function ensureRebuildAgentBaseImage(
         : {}),
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const safeMessage =
+      formatBuildFailureDiagnostics({ error: err }) || "Agent base image preparation failed.";
     console.error("");
     console.error(`  ${_RD}Rebuild preflight failed:${R} agent base image could not be built.`);
-    console.error(`  ${message}`);
+    console.error(`  ${safeMessage}`);
     console.error("");
     console.error("  Sandbox is untouched — no data was lost.");
-    bail(message);
+    bail(safeMessage);
     return { ok: false, imageRef: null, overrideEnvVar: null };
   }
 }
@@ -457,8 +459,7 @@ export function backupSandboxStateForRebuild(
   );
   if (!backup.success) {
     console.error("  Failed to back up sandbox state.");
-    const allStateDirsFailed =
-      backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
+    const allStateDirsFailed = backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
     if (allStateDirsFailed && backup.backedUpFiles.length > 0) {
       const dirCount = backup.failedDirs.length;
       const fileCount = backup.backedUpFiles.length;

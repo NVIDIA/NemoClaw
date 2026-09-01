@@ -44,10 +44,6 @@ function preservingBase(site: string): DiscoveredPolicyRead {
   return { site, view: "base", failureHandling: "error-preserving" };
 }
 
-function ignoredBase(site: string): DiscoveredPolicyRead {
-  return { site, view: "base", failureHandling: "ignore-error" };
-}
-
 function unclassifiedBase(site: string): DiscoveredPolicyRead {
   return { site, view: "base", failureHandling: "unclassified" };
 }

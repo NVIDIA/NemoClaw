@@ -31,6 +31,10 @@ const securityDependenciesPatch = fs.readFileSync(
   path.join(root, "agents", "hermes", "security-dependencies.patch"),
   "utf8",
 );
+const lazyPermissionsNormalizer = fs.readFileSync(
+  path.join(root, "agents", "hermes", "normalize-lazy-package-permissions.py"),
+  "utf8",
+);
 const hindsightProbeRequirementsPath = path.join(
   root,
   "agents",
@@ -197,9 +201,7 @@ describe("Hermes 0.19.0 dependency review", () => {
         /tmp/nemoclaw-hindsight-client-probe-requirements.txt \\
         /sandbox/.hermes/lazy-packages \\
     && install -d -o sandbox -g sandbox -m 0750 /sandbox/.hermes/lazy-packages`);
-    expect(dockerfileBase).toContain(
-      "chmod 0555 /tmp/nemoclaw-hindsight-client-artifacts",
-    );
+    expect(dockerfileBase).toContain("chmod 0555 /tmp/nemoclaw-hindsight-client-artifacts");
     expect(dockerfileBase).toContain("import hindsight_client, importlib.metadata as m");
     const compatibilityLayer = dockerfileInstructions(dockerfileBase).find(
       (instruction) =>
@@ -216,8 +218,12 @@ describe("Hermes 0.19.0 dependency review", () => {
       compatibilityInstall.indexOf("import hindsight_client"),
     );
     expect(dockerfile).not.toContain("state-dir-guard.py");
+    expect(dockerfile).toContain(
+      "COPY agents/hermes/normalize-lazy-package-permissions.py /usr/local/lib/nemoclaw/normalize-hermes-lazy-package-permissions.py",
+    );
     expect(dockerfile).toContain("--reuid=gateway --regid=gateway --init-groups");
     expect(dockerfile).not.toContain("locked Hermes lazy packages");
+    expect(dockerfile).toContain("gateway can modify sandbox-owned Hermes lazy packages");
     expect(dockerfile).toContain(
       `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"`,
     );
@@ -405,6 +411,18 @@ describe("Hermes 0.19.0 dependency review", () => {
       `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages)" = "sandbox:sandbox 750"`,
       `test -z "$(find /sandbox/.hermes/lazy-packages -mindepth 1 -print -quit)"`,
       "from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)",
+      "/usr/local/lib/nemoclaw/normalize-hermes-lazy-package-permissions.py",
+      `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages/hindsight_client)" = "sandbox:sandbox 750"`,
+      `test "$(stat -c '%U:%G %a' /sandbox/.hermes/lazy-packages/hindsight_client/__init__.py)" = "sandbox:sandbox 640"`,
+      "assert m.version('hindsight-client') == '0.6.1'",
+      "assert hindsight_client.NEMOCLAW_BUILD_PROBE_FIXTURE is True",
+      "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups --",
+      "activate_durable_lazy_target(); import hindsight_client; from pathlib",
+      "gateway can modify installed Hermes lazy packages",
+      "gateway can modify sandbox-owned Hermes lazy packages",
+      `test ! -e /sandbox/.hermes/lazy-packages/.nemoclaw-gateway-write-probe`,
+      `sh -c ': > /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-write-probe'`,
+      `test -f /sandbox/.hermes/lazy-packages/.nemoclaw-sandbox-write-probe`,
     ];
     let previousIndex = -1;
     orderedContracts.forEach((contract) => {
@@ -421,15 +439,24 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(layer).toContain("UV_FIND_LINKS=/tmp/nemoclaw-hindsight-probe");
     expect(layer).toContain("UV_OFFLINE=1");
     expect(layer).toContain("NEMOCLAW_BUILD_PROBE_FIXTURE");
-    expect(
-      layer.match(/chmod u=rwx,g=rx,o=,g-s \/sandbox\/\.hermes\/lazy-packages/g),
-    ).toHaveLength(2);
+    expect(layer.match(/chmod u=rwx,g=rx,o=,g-s \/sandbox\/\.hermes\/lazy-packages/g)).toHaveLength(
+      2,
+    );
     expect(layer.lastIndexOf("rm -rf /sandbox/.cache")).toBeGreaterThan(
       layer.indexOf("from tools.lazy_deps import ensure; ensure('memory.hindsight', prompt=False)"),
     );
     expect(layer).not.toContain("https://");
     expect(layer).not.toContain(`test -z "$(find -P /opt/hermes/.venv`);
     expect(layer).not.toContain(`printf ''`);
+    expect(layer).not.toContain("state-dir-guard");
+
+    expect(lazyPermissionsNormalizer).toContain("refusing privileged permission normalization");
+    expect(lazyPermissionsNormalizer).toContain("os.O_NOFOLLOW");
+    expect(lazyPermissionsNormalizer).toContain("dir_fd=directory_fd");
+    expect(lazyPermissionsNormalizer).toContain("os.fchmod");
+    expect(lazyPermissionsNormalizer).toContain("hardlinked file");
+    expect(lazyPermissionsNormalizer).not.toContain("os.walk");
+    expect(lazyPermissionsNormalizer).not.toContain("shutil");
 
     const activeUser = instructions
       .filter(

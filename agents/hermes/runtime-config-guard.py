@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import copy
 import errno
 import fcntl
 import grp
@@ -24,7 +23,6 @@ import struct
 import subprocess
 import sys
 import tempfile
-import time
 from dataclasses import dataclass, field
 
 import yaml
@@ -69,7 +67,6 @@ DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS = frozenset(
     {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}
 )
 _DIRECTORY_FSYNC_WARNING_EMITTED = False
-_DIRECTORY_METADATA_FSYNC_WARNING_EMITTED = False
 INSTALLED_RUNTIME_CONFIG_GUARD = (
     "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
 )

@@ -60,9 +60,11 @@
     },
     {
       "live": "test/e2e/live/managed-image-activation-e2e.test.ts",
+      "liveSources": ["test/e2e/live/managed-image-activation-e2e-helpers.ts"],
       "fast": [
         "src/lib/onboard/command.test.ts",
         "src/lib/onboard/sandbox-workload-preparation.test.ts",
+        "test/e2e/support/managed-image-activation-diagnostics.test.ts",
         "test/inference/managed/managed-image-publication-workflow.test.ts",
         "test/onboarding/onboard-managed-image-buildless-e2e.test.ts"
       ]
@@ -473,7 +475,10 @@
     },
     {
       "live": "test/e2e/live/hermes-e2e.test.ts",
-      "liveSources": ["test/e2e/live/hermes-cli-adapter-live.ts"],
+      "liveSources": [
+        "test/e2e/live/hermes-cli-adapter-live.ts",
+        "test/e2e/live/hermes-e2e-phases.ts"
+      ],
       "fast": [
         "test/e2e/support/managed-image-cohort-contract.test.ts",
         "test/e2e/support/managed-image-receipt.test.ts",
@@ -529,6 +534,8 @@
       "live": "test/e2e/live/mcp-bridge.test.ts",
       "liveSources": [
         "test/e2e/live/mcp-bridge-cleanup.ts",
+        "test/e2e/live/mcp-bridge-hermes-lifecycle.ts",
+        "test/e2e/live/mcp-bridge-phases.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts"

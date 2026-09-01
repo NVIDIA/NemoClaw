@@ -126,9 +126,11 @@ describe("rebuild destroy phase", () => {
         ? { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" }
         : { status: 0, stdout: "", stderr: "" },
     );
-    mocks.waitUntil.mockImplementation(
-      (condition: () => boolean) => condition() || condition() || condition(),
-    );
+    mocks.waitUntil.mockImplementation((condition: () => boolean) => {
+      const secondAttempt = () => condition();
+      const thirdAttempt = () => condition();
+      return condition() || secondAttempt() || thirdAttempt();
+    });
   });
 
   afterEach(() => {

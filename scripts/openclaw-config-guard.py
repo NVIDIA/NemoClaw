@@ -1040,18 +1040,6 @@ def _openshell_supervised_nonroot_start_is_live(
     )
 
 
-def _openshell_supervised_nonroot_start_is_absent(
-    expected_root_uid: int,
-    expected_sandbox_uid: int,
-) -> bool:
-    """Return whether a stable OpenShell supervisor has no start child."""
-
-    census = _openshell_supervised_nonroot_start_census(
-        expected_root_uid, expected_sandbox_uid
-    )
-    return census is not None and census[0] == 0
-
-
 def _pid1_effective_uid() -> int | None:
     """Read PID 1's effective UID from a pinned procfs descriptor."""
 
@@ -1347,13 +1335,8 @@ def _revoke_startup_ready(identity: Identity) -> None:
 
 def _validate_action_readiness(
     action: Action, startup_owner: bool, identity: Identity
-) -> bool:
-    """Authorize ``action`` and report whether only the failed-startup path allowed it.
-
-    A ``True`` result is provisional: it rests on a live procfs census taken
-    before the mutation mutex, so the caller must reconfirm it under the mutex
-    with ``_reconfirm_startup_failure_recovery`` before any effect.
-    """
+) -> None:
+    """Authorize ``action`` against the current startup topology and lease."""
 
     startup_action = action in {"revoke-startup-ready", "publish-startup-ready"}
     if startup_action:
@@ -1363,7 +1346,7 @@ def _validate_action_readiness(
                 STARTUP_READY_PATH,
                 f"{action} is restricted to the PID 1 startup transaction",
             )
-        return False
+        return
     installed_current = os.path.realpath(__file__) == os.path.realpath(
         INSTALLED_HELPER_PATH
     )
@@ -1372,7 +1355,7 @@ def _validate_action_readiness(
         # A source helper injected into an older image, and the local unit
         # harness, retain their explicit compatibility path. Current images
         # use the installed helper and authenticate a namespace remap below.
-        return False
+        return
     protocol_active, startup_ready = _startup_lease_state(identity)
     if not pid1_is_nemoclaw_start and not protocol_active:
         if (
@@ -1389,7 +1372,7 @@ def _validate_action_readiness(
             # and NSpid evidence selects the same two topologies. They cannot
             # publish root-owned readiness markers, so authenticate the stable
             # supervisor/child pair while refusing stale or malformed markers.
-            return False
+            return
         # The early return above leaves `installed_current` true here.
         raise GuardError(
             "startup-not-ready",
@@ -1400,7 +1383,7 @@ def _validate_action_readiness(
     # image explicitly opts in. The trusted installed helper requires the
     # protocol from its very first exec, closing the pre-revoke boot race.
     if not installed_current and not protocol_active:
-        return False
+        return
     if installed_current and not protocol_active:
         # The supported --user sandbox entrypoint cannot create a root-owned
         # readiness capability. It also explicitly disables gateway privilege
@@ -1410,7 +1393,7 @@ def _validate_action_readiness(
         # capability opts even a non-root PID 1 into the strict lease below.
         pid1_euid = _pid1_effective_uid()
         if pid1_euid is not None and pid1_euid != identity.root_uid:
-            return False
+            return
     early_recover = action == "recover" and not startup_ready
     if early_recover:
         if not startup_owner or os.getppid() != 1:
@@ -1419,7 +1402,7 @@ def _validate_action_readiness(
                 STARTUP_READY_PATH,
                 f"{action} is restricted to the PID 1 startup transaction",
             )
-        return False
+        return
     if action in {
         "write-config",
         "seal-restart",
@@ -1430,7 +1413,8 @@ def _validate_action_readiness(
             STARTUP_READY_PATH,
             "OpenClaw startup is not ready for host config mutations",
         )
-    return False
+    return
+
 
 def _write_secondary_journal(record: dict[str, object], identity: Identity) -> None:
     payload = json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -3037,81 +3021,6 @@ def _verify_file(
         )
 
 
-def _restore_originals(
-    opened: OpenConfig,
-    snapshots: tuple[FileSnapshot, ...],
-    identity: Identity,
-) -> list[str]:
-    errors: list[str] = []
-    for snapshot in snapshots:
-        try:
-            current = _snapshot_file(opened, snapshot.name)
-            _replace_from_snapshot(
-                opened,
-                current,
-                snapshot.uid,
-                snapshot.gid,
-                snapshot.mode,
-                snapshot.inode_flags,
-                replacement_data=snapshot.data,
-                replacement_atime_ns=snapshot.atime_ns,
-                replacement_mtime_ns=snapshot.mtime_ns,
-                replacement_xattrs=snapshot.xattrs,
-            )
-        except Exception as exc:  # Best-effort rollback; force-lock follows.
-            errors.append(f"{snapshot.name}: {exc}")
-    try:
-        _set_dir(
-            opened.config_fd,
-            opened.config_stat.st_uid,
-            opened.config_stat.st_gid,
-            stat.S_IMODE(opened.config_stat.st_mode),
-            0o500,
-        )
-        _set_dir(
-            opened.parent_fd,
-            opened.parent_stat.st_uid,
-            opened.parent_stat.st_gid,
-            stat.S_IMODE(opened.parent_stat.st_mode),
-            0o555,
-        )
-    except OSError as exc:
-        errors.append(f"directory metadata: {exc}")
-    if errors:
-        try:
-            for name in CONFIG_FILES:
-                fd, _st = _open_checked_file(opened, name)
-                try:
-                    inode_flags = _get_inode_flags(fd)
-                    if inode_flags is not None:
-                        _set_inode_flags(
-                            fd, inode_flags & ~(FS_IMMUTABLE_FL | FS_APPEND_FL)
-                        )
-                    os.fchown(fd, identity.root_uid, identity.root_gid)
-                    os.fchmod(fd, 0o444)
-                    os.fsync(fd)
-                finally:
-                    os.close(fd)
-            _set_dir(
-                opened.config_fd,
-                identity.root_uid,
-                identity.root_gid,
-                0o755,
-                0o500,
-            )
-            _set_dir(
-                opened.parent_fd,
-                identity.root_uid,
-                identity.sandbox_gid,
-                0o1775,
-                0o555,
-            )
-        except Exception as exc:
-            errors.append(f"fail-closed lock: {exc}")
-    return errors
-
-
-
 def _preflight_restart(opened: OpenConfig, identity: Identity) -> None:
     _assert_config_binding(opened)
     if not _is_mutable_dir_posture(opened, identity):
@@ -3843,9 +3752,9 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         recovery: str | None = None
+        new_digest: str | None = None
         if action == "preflight-restart":
             _preflight_restart(opened, identity)
-            new_digest = None
         elif action == "seal-restart":
             _seal_restart(
                 opened,

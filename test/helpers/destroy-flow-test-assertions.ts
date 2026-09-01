@@ -4,11 +4,7 @@
 import { expect, type MockInstance } from "vitest";
 
 import { classifyDestroySandboxPresence } from "../../src/lib/actions/sandbox/destroy-presence";
-import {
-  createDestroyHarness,
-  type DestroyHarness,
-  sandboxListJson,
-} from "./destroy-flow-test-harness";
+import { type DestroyHarness, sandboxListJson } from "./destroy-flow-test-harness";
 
 export function expectStrictSandboxPresenceClassification(): void {
   expect(

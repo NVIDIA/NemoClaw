@@ -16,6 +16,7 @@ import {
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
   hasManagedMcpRebuildHandoff,
   installPostCreateRecoveryRetryOwner,
+  isFreshRemovedImmutabilityCreateTarget,
   persistPostCreateRecovery,
   persistRetainedSandboxRecoveryMessage,
   readManagedDcodeCreateSelectionDrift,
@@ -27,12 +28,74 @@ import {
   runWithPostCreateRecovery,
 } from "./orchestration";
 
+const ROUTE_SELECTION = {
+  provider: "ollama-local",
+  model: "qwen3:4b",
+  endpointUrl: "http://127.0.0.1:11434/v1",
+  endpointSource: null,
+  credentialEnv: null,
+  preferredInferenceApi: "openai-completions",
+  compatibleEndpointReasoning: null,
+  compatibleEndpointReasoningEffort: null,
+  nimContainer: null,
+} as const;
+
 const UNVERIFIED_RECOVERY_CONTEXT = {
   gatewayName: "nemoclaw",
   gatewayPort: 8080,
   lifecycleGeneration: "generation-1",
   createAttemptNonce: "a".repeat(62),
 } as const;
+
+describe("removed-immutability replacement admission", () => {
+  const authority = { sessionId: "session-owner", selection: ROUTE_SELECTION } as const;
+  const routeReservation = {
+    name: "alpha",
+    gatewayName: "nemoclaw",
+    reservationSessionId: authority.sessionId,
+    pendingRouteReservation: true as const,
+    provider: ROUTE_SELECTION.provider,
+    model: ROUTE_SELECTION.model,
+    endpointUrl: ROUTE_SELECTION.endpointUrl,
+    endpointSource: ROUTE_SELECTION.endpointSource,
+    credentialEnv: ROUTE_SELECTION.credentialEnv,
+    preferredInferenceApi: ROUTE_SELECTION.preferredInferenceApi,
+  };
+
+  it("admits only an absent row or the current session's exact route-only reservation", () => {
+    expect(
+      isFreshRemovedImmutabilityCreateTarget({
+        authority: null,
+        entry: null,
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+      }),
+    ).toBe(true);
+    expect(
+      isFreshRemovedImmutabilityCreateTarget({
+        authority,
+        entry: routeReservation,
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["foreign session", { ...routeReservation, reservationSessionId: "session-other" }],
+    ["published sandbox", { ...routeReservation, pendingRouteReservation: undefined }],
+    ["sandbox authority", { ...routeReservation, imageTag: "nemoclaw-alpha:test" }],
+  ])("rejects %s as fresh replacement authority", (_case, entry) => {
+    expect(
+      isFreshRemovedImmutabilityCreateTarget({
+        authority,
+        entry: entry as SandboxEntry,
+        gatewayName: "nemoclaw",
+        sandboxName: "alpha",
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("created Hermes credential environment reconciliation", () => {
   const plan = { agent: "hermes" } as never;

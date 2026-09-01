@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
-import type { AgentDefinition } from "../agent/definition-types";
-import type { SandboxEntry } from "../state/registry/types";
 
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 const SANDBOX_CONFIG_ROOT = "/sandbox/";
@@ -42,35 +40,6 @@ function defaultDependencies(): AgentConfigDependencies {
   const registry = require("../state/registry");
   const agentDefs = require("../agent/defs");
   return { getSandbox: registry.getSandbox, loadAgent: agentDefs.loadAgent };
-}
-
-export interface RegisteredSandboxAgentAuthority {
-  readonly sandbox: SandboxEntry;
-  readonly agent: AgentDefinition;
-}
-
-/** Resolve one exact registry entry together with its current manifest authority. */
-export function resolveRegisteredSandboxAgentAuthority(
-  sandboxName: string,
-): RegisteredSandboxAgentAuthority {
-  const registry: typeof import("../state/registry") = require("../state/registry");
-  const sandbox = registry.getSandbox(sandboxName);
-  if (!sandbox || sandbox.name !== sandboxName || !sandbox.agent) {
-    throw new Error(`Sandbox '${sandboxName}' has no exact registered agent-definition authority`);
-  }
-  const agent = resolveCurrentAgentDefinition(sandbox.agent);
-  if (agent.name !== sandbox.agent) {
-    throw new Error(
-      `Sandbox '${sandboxName}' agent-definition authority changed during resolution`,
-    );
-  }
-  return Object.freeze({ sandbox, agent });
-}
-
-/** Load the current manifest without exposing the high-fan-in definition facade. */
-export function resolveCurrentAgentDefinition(agentName: string): AgentDefinition {
-  const agentDefs: typeof import("../agent/defs") = require("../agent/defs");
-  return agentDefs.loadAgent(agentName);
 }
 
 function requireCanonicalConfigDir(value: string): string {

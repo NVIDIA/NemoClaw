@@ -22,13 +22,6 @@ const BASE_POLICY_PATH = new URL(
 );
 const HERMES_POLICY_PATH = new URL("../../agents/hermes/policy-additions.yaml", import.meta.url);
 
-type Blueprint = {
-  digest?: string;
-  components?: {
-    sandbox?: { image?: string | null };
-  };
-};
-
 type Rule = { allow?: { method?: string; path?: string } };
 type Endpoint = {
   host?: string;
@@ -47,10 +40,6 @@ type PolicyEntry = {
 type SandboxPolicy = {
   network_policies?: Record<string, PolicyEntry>;
 };
-
-function loadYaml<T>(path: URL): T {
-  return YAML.parse(readFileSync(path, "utf-8"));
-}
 
 function parseEffectivePolicy(policy: string): SandboxPolicy {
   return YAML.parse(policy) as SandboxPolicy;
@@ -81,8 +70,6 @@ function binaries(policy: SandboxPolicy, policyName: string): string[] {
 function allEndpoints(policy: SandboxPolicy): Endpoint[] {
   return Object.values(policy.network_policies ?? {}).flatMap((entry) => entry.endpoints ?? []);
 }
-
-
 
 describe("effective sandbox policy behavior", () => {
   it("keeps default OpenClaw egress least-privilege after create-policy preparation", () => {

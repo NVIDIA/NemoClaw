@@ -93,6 +93,12 @@ describe("removed immutability migration boundary", () => {
     expect(() => enforceRemovedImmutabilityMigrationBoundary("alpha", { stateDir: root })).toThrow(
       /older detached process.*replacement under a new name/u,
     );
+    expect(() =>
+      enforceRemovedImmutabilityMigrationBoundary("alpha", {
+        stateDir: root,
+        allowUnattributedProviderArtifactsForNewSandbox: true,
+      }),
+    ).toThrow(/older detached process/u);
   });
 
   it("blocks obsolete deadline and containment sentinels for the exact sandbox digest", () => {
@@ -137,6 +143,12 @@ describe("removed immutability migration boundary", () => {
     expect(inspectRemovedImmutabilityMigration("beta", root).recoveryArtifacts).not.toContain(
       target,
     );
+    expect(() =>
+      enforceRemovedImmutabilityMigrationBoundary("alpha", {
+        stateDir: root,
+        allowUnattributedProviderArtifactsForNewSandbox: true,
+      }),
+    ).toThrow(/older detached process/u);
   });
 
   it("announces an unattributed provider intent without assigning it to a new name", () => {
@@ -152,7 +164,7 @@ describe("removed immutability migration boundary", () => {
     });
   });
 
-  it("blocks malformed provider authority for every sandbox", () => {
+  it("preserves malformed provider authority while admitting a fresh replacement name", () => {
     const root = stateDir();
     const malformed = touch(
       root,
@@ -165,6 +177,12 @@ describe("removed immutability migration boundary", () => {
     expect(() =>
       enforceRemovedImmutabilityMigrationBoundary("new-sandbox", { stateDir: root }),
     ).toThrow(/older detached process/u);
+    expect(
+      enforceRemovedImmutabilityMigrationBoundary("new-sandbox", {
+        stateDir: root,
+        allowUnattributedProviderArtifactsForNewSandbox: true,
+      }),
+    ).toEqual({ stateRecord: null, recoveryArtifacts: [malformed] });
   });
 
   it("retires the exact inert record only under the sandbox lifecycle lock", async () => {

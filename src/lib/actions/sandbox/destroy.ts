@@ -596,7 +596,6 @@ async function destroySandboxUnlocked(
   let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
   destroyPreflight = abortPreparedCleanupOnError(() =>
     prepareSandboxDestroy(sandboxName, {
-      force: normalized.force === true,
       retainedRecoveryGatewayName: retainedRecoveryAuthority?.gatewayName,
     }),
   );

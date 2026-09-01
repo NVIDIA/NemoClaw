@@ -148,14 +148,6 @@ function encodeRuntimeSetupPlan(
   ).toString("base64");
 }
 
-function nonRootFallbackBlock(src: string): string {
-  const start = src.indexOf("# ── Non-root fallback");
-  const end = src.indexOf("# ── Root path", start);
-  expect(start).toBeGreaterThan(-1);
-  expect(end).toBeGreaterThan(start);
-  return `${extractShellFunctionFromSource(src, "_nemoclaw_capture_epoch_realtime")}\n${src.slice(start, end)}`;
-}
-
 function startScriptHeredoc(src: string, marker: string): string {
   const match = src.match(new RegExp(`<<'${marker}'[^\\n]*\\n([\\s\\S]*?)\\n${marker}`));
   if (match) return match[1];
@@ -215,35 +207,6 @@ _nemoclaw_test_time = lambda: _nemoclaw_test_clock[0]
 def _nemoclaw_test_sleep(seconds): _nemoclaw_test_clock.__setitem__(0, _nemoclaw_test_clock[0] + min(max(float(seconds), 0), 0.25))
 `,
     );
-}
-
-function runEmbeddedPreload(
-  script: string,
-  argv1: string,
-  argv2: string,
-  title = "node",
-): ReturnType<typeof spawnSync> {
-  return spawnSync(
-    process.execPath,
-    [
-      "-e",
-      `process.env.OPENSHELL_SANDBOX = '1';
-process.title = ${JSON.stringify(title)};
-process.argv[1] = ${JSON.stringify(argv1)};
-process.argv[2] = ${JSON.stringify(argv2)};
-${script}`,
-    ],
-    { encoding: "utf-8" },
-  );
-}
-
-function startScriptLine(src: string, needle: string): string {
-  const start = src.indexOf(needle);
-  if (start === -1) {
-    throw new Error(`Expected line containing ${needle} in scripts/nemoclaw-start.sh`);
-  }
-  const end = src.indexOf("\n", start);
-  return src.slice(start, end === -1 ? undefined : end);
 }
 
 describe("nemoclaw-start non-root fallback", () => {

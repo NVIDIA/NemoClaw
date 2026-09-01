@@ -264,10 +264,7 @@ export async function stopModelRouterForDestroyedSandbox(
 
 export function prepareSandboxDestroy(
   sandboxName: string,
-  {
-    force = false,
-    retainedRecoveryGatewayName,
-  }: { force?: boolean; retainedRecoveryGatewayName?: string } = {},
+  { retainedRecoveryGatewayName }: { retainedRecoveryGatewayName?: string } = {},
 ): SandboxDestroyPreflight {
   const sandbox = registry.getSandbox(sandboxName);
   console.log(`  Deleting sandbox '${sandboxName}'...`);

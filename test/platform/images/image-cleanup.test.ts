@@ -4,8 +4,6 @@
 // Verify that sandbox lifecycle operations clean up host-side Docker images.
 // See: https://github.com/NVIDIA/NemoClaw/issues/2086
 
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { help as renderRootHelp } from "../../../src/lib/actions/root-help";
@@ -294,13 +292,11 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
     });
   });
 
-
   it("state-dir helper resolves ~/.nemoclaw/state from a single shared helper", () => {
     const resolved = resolveNemoclawStateDir("/tmp/example-home");
     expect(resolved).toBe(path.join("/tmp/example-home", ".nemoclaw", "state"));
   });
 });
-
 
 describe("image cleanup: gc command exists (#2086)", () => {
   it("gc is a global command", () => {

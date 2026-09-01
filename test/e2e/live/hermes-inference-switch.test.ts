@@ -32,7 +32,6 @@ import {
   maybeAssertPidStable,
   mockAnthropicSwitchEnabled,
   PROXY_FORBIDDEN_MARKERS,
-  PROXY_RESOLUTION_MODEL,
   PROXY_RESOLUTION_PROVIDER,
   parseHermesModelBlock,
   parseInferenceRoute,

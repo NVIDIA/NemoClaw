@@ -290,18 +290,6 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       },
     };
     let lockedDestination = destination;
-    const destinationAtLock = new Map<string, typeof destination>([
-      [
-        "delete snapshot restore destination",
-        {
-          ...destination,
-          workload: {
-            ...destination.workload,
-            reference: "nemoclaw-beta:changed-owner",
-          },
-        },
-      ],
-    ]);
     f.getSandboxMock.mockImplementation((name) =>
       name === "alpha"
         ? {

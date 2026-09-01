@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { resolveSandboxContainerOwner } from "../domain/sandbox/container-owner";

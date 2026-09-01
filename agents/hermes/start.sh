@@ -403,6 +403,7 @@ prepare_hermes_lazy_dependencies() {
 
   "${installer[@]}" '
 import os
+import runpy
 from pathlib import Path
 
 import yaml
@@ -423,6 +424,11 @@ from tools.lazy_deps import activate_durable_lazy_target, ensure
 activate_durable_lazy_target()
 try:
     ensure("memory.hindsight", prompt=False)
+    normalizer = runpy.run_path(
+        "/usr/local/lib/nemoclaw/normalize-hermes-lazy-package-permissions.py",
+        run_name="nemoclaw_hermes_lazy_package_permissions",
+    )["normalize_lazy_package_permissions"]
+    normalizer(Path(os.environ["HERMES_LAZY_INSTALL_TARGET"]))
 except Exception as exc:
     raise SystemExit(
         "[SECURITY] Unable to prepare the approved Hindsight dependency "

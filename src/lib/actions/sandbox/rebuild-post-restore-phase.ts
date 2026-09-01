@@ -17,7 +17,6 @@ import {
   verifyFinalMutableOpenClawConfigHash,
 } from "./rebuild-config-hash";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
-import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
   type HermesCronRestoreIdentity,
@@ -76,14 +75,12 @@ function bailAfterHermesCronRestoreFailure(
 
 export interface RebuildPostRestorePhaseInput {
   sandboxName: string;
-  sandboxEntry: RebuildSandboxEntry;
   targetAgentName: string;
   messagingPlan: SandboxMessagingPlan | null;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
   restoreSucceeded: boolean;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
-  staleRecovery: boolean;
   preparedBackupRecovery: boolean;
   versionCheck: ReturnType<typeof sandboxVersion.checkAgentVersion>;
   log: RebuildLog;
@@ -94,16 +91,11 @@ export interface RebuildPostRestoreVerification {
   readonly mutableConfigPermissionsVerified: boolean;
 }
 
-function printHermesApiTokenChangeNotice(
-  sandboxName: string,
-  targetAgentName: string,
-): void {
+function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: string): void {
   if (targetAgentName !== "hermes") {
     return;
   }
-  console.log(
-    `    ${YW}\u26a0${R} Hermes API bearer token changed during rebuild.`,
-  );
+  console.log(`    ${YW}\u26a0${R} Hermes API bearer token changed during rebuild.`);
   console.log(
     `    Retrieve the new token with \`${CLI_NAME} ${sandboxName} gateway-token --quiet\`.`,
   );
@@ -120,14 +112,12 @@ export async function runRebuildPostRestorePhase(
 ): Promise<RebuildPostRestoreVerification | undefined> {
   const {
     sandboxName,
-    sandboxEntry: sb,
     targetAgentName,
     messagingPlan,
     backupManifest,
     mcpEntries,
     restoreSucceeded,
     hermesCronRestoreIdentity,
-    staleRecovery,
     preparedBackupRecovery,
     versionCheck,
     log,
@@ -155,9 +145,7 @@ export async function runRebuildPostRestorePhase(
         bail,
       );
     }
-    bail(
-      "Recreated sandbox agent identity did not match the authoritative rebuild target.",
-    );
+    bail("Recreated sandbox agent identity did not match the authoritative rebuild target.");
     return;
   }
   const agentDef = loadAgent(targetAgentName);
@@ -170,9 +158,7 @@ export async function runRebuildPostRestorePhase(
   let effectiveMessagingPlan = messagingPlan;
 
   if (targetAgentName === "openclaw") {
-    log(
-      "Running openclaw doctor --fix inside sandbox for post-upgrade structure repair",
-    );
+    log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
     const doctorResult = executeSandboxExecCommand(
       sandboxName,
       "openclaw doctor --fix",
@@ -181,12 +167,8 @@ export async function runRebuildPostRestorePhase(
     );
     log(`doctor --fix: exit=${doctorResult?.status ?? "unverified"}`);
     if (doctorResult === null) {
-      console.log(
-        `  ${D}Post-upgrade structure repair completion was not verified${R}`,
-      );
-      bail(
-        "OpenClaw post-upgrade structure repair completion was not verified after rebuild.",
-      );
+      console.log(`  ${D}Post-upgrade structure repair completion was not verified${R}`);
+      bail("OpenClaw post-upgrade structure repair completion was not verified after rebuild.");
       return;
     }
     if (doctorResult.status !== 0) {
@@ -203,25 +185,17 @@ export async function runRebuildPostRestorePhase(
     reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log);
 
     try {
-      await reapplyMessagingManifestAfterOpenClawDoctor(
-        sandboxName,
-        messagingPlan,
-        log,
-      );
+      await reapplyMessagingManifestAfterOpenClawDoctor(sandboxName, messagingPlan, log);
     } catch (error) {
       log(
         `Messaging manifest reapply failed: ${error instanceof Error ? error.message : String(error)}`,
       );
-      console.error(
-        `  ${YW}\u26a0${R} Messaging manifest config reapply failed after doctor.`,
-      );
+      console.error(`  ${YW}\u26a0${R} Messaging manifest config reapply failed after doctor.`);
       bail("OpenClaw messaging manifest config reapply failed during rebuild.");
       return;
     }
 
-    log(
-      "Restoring mutable OpenClaw config permissions after post-restore config writes",
-    );
+    log("Restoring mutable OpenClaw config permissions after post-restore config writes");
     let permRepair: ReturnType<typeof repairMutableConfigPerms> | null = null;
     try {
       permRepair = repairMutableConfigPerms(sandboxName);
@@ -251,10 +225,7 @@ export async function runRebuildPostRestorePhase(
       effectiveMessagingPlan,
       log,
     );
-    if (
-      finalizedMessagingPlan !== effectiveMessagingPlan &&
-      finalizedMessagingPlan
-    ) {
+    if (finalizedMessagingPlan !== effectiveMessagingPlan && finalizedMessagingPlan) {
       if (
         !registry.updateSandbox(sandboxName, {
           messaging: { schemaVersion: 1, plan: finalizedMessagingPlan },
@@ -281,17 +252,12 @@ export async function runRebuildPostRestorePhase(
     sandboxName,
     targetAgentName,
   );
-  const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(
-    sandboxName,
-    mcpEntries,
-  ));
+  const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(sandboxName, mcpEntries));
   if (targetAgentName === "openclaw" && mcpBridgeRestoreUnverified) {
     mutableConfigHashRefreshUnverified = true;
   } else if (targetAgentName === "openclaw") {
     log("Refreshing mutable OpenClaw config hash after MCP restoration");
-    if (
-      !refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log)
-    ) {
+    if (!refreshMutableOpenClawConfigHashAfterPostRestoreWrites(sandboxName, log)) {
       mutableConfigHashRefreshUnverified = true;
     } else if (!verifyFinalMutableOpenClawConfigHash(sandboxName, log)) {
       finalMutableConfigHashUnverified = true;
@@ -313,8 +279,7 @@ export async function runRebuildPostRestorePhase(
         replacementIdentity: undefined,
       };
   const hermesGatewayRestoreState = hermesGatewayVerification.state;
-  const hermesGatewayRestoreUnverified =
-    hermesGatewayRestoreState === "unverified";
+  const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
   if (hermesCronRestoreIdentity) {
     const replacementIdentity = hermesGatewayVerification.replacementIdentity;
     if (
@@ -328,9 +293,7 @@ export async function runRebuildPostRestorePhase(
         "  Hermes cron dispatch remains drained because the replacement gateway was not verified.",
         "Hermes cron restore validation failed; dispatch was not re-enabled.",
         bail,
-        mcpBridgeRestoreUnverified
-          ? () => printMcpRestoreRecovery(sandboxName, true)
-          : undefined,
+        mcpBridgeRestoreUnverified ? () => printMcpRestoreRecovery(sandboxName, true) : undefined,
       );
     }
     if (mcpBridgeRestoreUnverified) {
@@ -351,8 +314,7 @@ export async function runRebuildPostRestorePhase(
         replacementIdentity,
       );
     } catch (error) {
-      const errorDetail =
-        error instanceof Error ? error.message : String(error);
+      const errorDetail = error instanceof Error ? error.message : String(error);
       if (isHermesCronRestoreDrainMarkerRollbackFailure(error)) {
         return bailAfterHermesCronRestoreFailure(
           sandboxName,
@@ -375,22 +337,16 @@ export async function runRebuildPostRestorePhase(
     );
   }
   if (hermesGatewayRestoreState === "healthy") {
-    console.log(
-      `  ${G}\u2713${R} Hermes gateway restarted and verified after state restore`,
-    );
+    console.log(`  ${G}\u2713${R} Hermes gateway restarted and verified after state restore`);
   } else if (hermesGatewayRestoreState === "recovered") {
-    console.log(
-      `  ${G}\u2713${R} Hermes gateway recovered after state restore`,
-    );
+    console.log(`  ${G}\u2713${R} Hermes gateway recovered after state restore`);
   }
   registry.updateSandbox(sandboxName, {
     agentVersion: agentDef.expectedVersion || null,
   });
   log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
 
-  if (
-    !ensureMessagingHostForwardAfterRebuild(sandboxName, effectiveMessagingPlan)
-  ) {
+  if (!ensureMessagingHostForwardAfterRebuild(sandboxName, effectiveMessagingPlan)) {
     messagingHostForwardUnverified = true;
   }
   if (
@@ -415,9 +371,7 @@ export async function runRebuildPostRestorePhase(
   if (postRestoreComplete) {
     console.log(`  ${G}✓${R} Sandbox '${sandboxName}' rebuild completed`);
     if (versionCheck.expectedVersion) {
-      console.log(
-        `    Now running: ${rebuiltAgentName} v${versionCheck.expectedVersion}`,
-      );
+      console.log(`    Now running: ${rebuiltAgentName} v${versionCheck.expectedVersion}`);
     }
   } else {
     console.log(
@@ -438,10 +392,7 @@ export async function runRebuildPostRestorePhase(
         `    Mutable OpenClaw config hash was not refreshed \u2014 restart the sandbox or re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
       );
     }
-    if (
-      finalMutableConfigHashUnverified &&
-      !mutableConfigHashRefreshUnverified
-    ) {
+    if (finalMutableConfigHashUnverified && !mutableConfigHashRefreshUnverified) {
       console.log(
         `    Final OpenClaw configuration hash verification failed after post-restore finalization \u2014 restart the sandbox or re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
       );
@@ -458,9 +409,7 @@ export async function runRebuildPostRestorePhase(
     console.error(
       `  State recovery remains incomplete. Correct the restore error, then run \`${CLI_NAME} ${sandboxName} rebuild\` again.`,
     );
-    bail(
-      `State restore remained incomplete after rebuilding '${sandboxName}'.`,
-    );
+    bail(`State restore remained incomplete after rebuilding '${sandboxName}'.`);
     return;
   }
   if (

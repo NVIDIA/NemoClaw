@@ -27,6 +27,10 @@ export interface RemovedImmutabilityMigrationInspection {
   readonly recoveryArtifacts: readonly string[];
 }
 
+interface RemovedImmutabilityMigrationDetail extends RemovedImmutabilityMigrationInspection {
+  readonly unattributedProviderArtifacts: readonly string[];
+}
+
 export interface RemovedImmutabilityUpgradeNotice {
   readonly affectedSandboxes: readonly string[];
   readonly hasUnattributedRecoveryState: boolean;
@@ -192,20 +196,30 @@ function inspectLegacyProviderLedger(stateDir: string): LegacyProviderLedgerInsp
   return { artifactsBySandbox, ambiguousArtifacts, noticeArtifacts };
 }
 
-export function inspectRemovedImmutabilityMigration(
+function inspectRemovedImmutabilityMigrationDetail(
   sandboxName: string,
   stateDir = resolveNemoclawStateDir(),
-): RemovedImmutabilityMigrationInspection {
+): RemovedImmutabilityMigrationDetail {
   // Command parsing owns the user-facing name error. Avoid deriving filesystem
   // keys from an invalid value if this preflight runs before normal validation.
-  if (!isValidName(sandboxName)) return { stateRecord: null, recoveryArtifacts: [] };
+  if (!isValidName(sandboxName)) {
+    return {
+      stateRecord: null,
+      recoveryArtifacts: [],
+      unattributedProviderArtifacts: [],
+    };
+  }
 
   let entries: string[];
   try {
     entries = fs.readdirSync(stateDir);
   } catch (error) {
     if (isErrnoException(error) && error.code === "ENOENT") {
-      return { stateRecord: null, recoveryArtifacts: [] };
+      return {
+        stateRecord: null,
+        recoveryArtifacts: [],
+        unattributedProviderArtifacts: [],
+      };
     }
     throw error;
   }
@@ -236,15 +250,26 @@ export function inspectRemovedImmutabilityMigration(
   );
   const providerLedger = inspectLegacyProviderLedger(stateDir);
 
+  const unattributedProviderArtifacts = [...providerLedger.ambiguousArtifacts].sort();
   return {
     stateRecord,
     recoveryArtifacts: [
       ...recoveryNames.map((entry) => path.join(stateDir, entry)),
       ...nestedRecoveryPaths,
       ...(providerLedger.artifactsBySandbox.get(sandboxName) ?? []),
-      ...providerLedger.ambiguousArtifacts,
+      ...unattributedProviderArtifacts,
     ].sort(),
+    unattributedProviderArtifacts,
   };
+}
+
+export function inspectRemovedImmutabilityMigration(
+  sandboxName: string,
+  stateDir = resolveNemoclawStateDir(),
+): RemovedImmutabilityMigrationInspection {
+  const { unattributedProviderArtifacts: _unattributedProviderArtifacts, ...inspection } =
+    inspectRemovedImmutabilityMigrationDetail(sandboxName, stateDir);
+  return inspection;
 }
 
 export function reportRemovedImmutabilityUpgrade(
@@ -306,13 +331,27 @@ export function reportRemovedImmutabilityUpgrade(
 export function enforceRemovedImmutabilityMigrationBoundary(
   sandboxName: string,
   options: {
+    /**
+     * A fresh, unregistered replacement does not mutate an older sandbox or
+     * the preserved provider ledger. The caller must still reject every
+     * artifact attributable to the requested name.
+     */
+    readonly allowUnattributedProviderArtifactsForNewSandbox?: boolean;
     readonly allowStateRecord?: boolean;
     readonly stateDir?: string;
   } = {},
 ): RemovedImmutabilityMigrationInspection {
-  const inspection = inspectRemovedImmutabilityMigration(sandboxName, options.stateDir);
-  if (inspection.recoveryArtifacts.length > 0) {
-    const artifacts = inspection.recoveryArtifacts
+  const detail = inspectRemovedImmutabilityMigrationDetail(sandboxName, options.stateDir);
+  const unattributedProviderArtifacts = new Set(detail.unattributedProviderArtifacts);
+  const blockingRecoveryArtifacts = options.allowUnattributedProviderArtifactsForNewSandbox
+    ? detail.recoveryArtifacts.filter((artifact) => !unattributedProviderArtifacts.has(artifact))
+    : detail.recoveryArtifacts;
+  const inspection: RemovedImmutabilityMigrationInspection = {
+    stateRecord: detail.stateRecord,
+    recoveryArtifacts: detail.recoveryArtifacts,
+  };
+  if (blockingRecoveryArtifacts.length > 0) {
+    const artifacts = blockingRecoveryArtifacts
       .map((artifact) => path.relative(options.stateDir ?? resolveNemoclawStateDir(), artifact))
       .join(", ");
     throw new Error(

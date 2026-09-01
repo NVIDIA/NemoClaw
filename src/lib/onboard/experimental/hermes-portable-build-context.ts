@@ -41,6 +41,7 @@ const LOCAL_COPY_SOURCES = [
   "agents/hermes/image-build-probes.py",
   "agents/hermes/managed_policy.py",
   "agents/hermes/mcp-config-transaction.py",
+  "agents/hermes/normalize-lazy-package-permissions.py",
   "agents/hermes/patch-cron-execution-runtime.py",
   "agents/hermes/patch-cron-restore-drain.py",
   "agents/hermes/patch-discord-recovery-permissions.py",

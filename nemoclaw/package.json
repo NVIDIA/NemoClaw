@@ -19,7 +19,7 @@
     }
   },
   "scripts": {
-    "build": "npm run prune:retired-plugin && tsc",
+    "build": "npm run clean && tsc",
     "dev": "tsc --watch",
     "test": "vitest run --config vitest.config.ts",
     "lint": "oxlint src && oxlint --config ../oxlint.type-aware.config.ts src",
@@ -28,8 +28,7 @@
     "format:check": "npm --prefix .. run format:check",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "check": "npm run lint && npm run format:check && npm run typecheck",
-    "clean": "rm -rf dist/",
-    "prune:retired-plugin": "node --experimental-strip-types --no-warnings ../scripts/lib/prune-retired-build-artifacts.mts plugin"
+    "clean": "rm -rf dist/"
   },
   "dependencies": {
     "execa": "^9.6.1",

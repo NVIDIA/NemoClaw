@@ -113,9 +113,6 @@ function fakeAgent(name: "openclaw" | "hermes" = "openclaw"): AgentDefinition {
     get policyAdditionsPath() {
       return null;
     },
-    get policyPermissivePath() {
-      return null;
-    },
     get pluginDir() {
       return null;
     },

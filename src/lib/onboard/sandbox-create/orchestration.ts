@@ -21,6 +21,7 @@ import { RESTRICTED_TIER_NAME } from "../policy-tier-suppression";
 import type { BackupResult } from "../../state/sandbox";
 import type { RetainedSandboxRecoveryContext, Session } from "../../state/onboard-session";
 import type { SandboxEntry, SandboxMcpState } from "../../state/registry";
+import { classifySandboxInferenceRouteReservation } from "../../state/registry/route-reservation";
 import type {
   PendingSandboxCreateIdentity,
   QualifiedPendingSandboxCreateReservation,
@@ -59,6 +60,28 @@ import {
   validateAttachedMessagingProvidersBeforeSandboxCreation,
 } from "./provider-publication";
 import { materializeRebuildPolicyHandoff } from "./rebuild-policy-handoff";
+
+export function isFreshRemovedImmutabilityCreateTarget(input: {
+  readonly authority: InferenceRouteReservationAuthority | null;
+  readonly entry: SandboxEntry | null;
+  readonly gatewayName: string;
+  readonly sandboxName: string;
+}): boolean {
+  if (!input.entry) return true;
+  if (!input.authority?.sessionId) return false;
+  return (
+    classifySandboxInferenceRouteReservation(
+      {
+        sandboxName: input.sandboxName,
+        gatewayName: input.gatewayName,
+        sessionId: input.authority.sessionId,
+        selection: input.authority.selection,
+      },
+      input.entry,
+    ).kind === "owned"
+  );
+}
+
 function cancelRecoveryIdentity(
   liveExists: boolean,
   requireVerifiedCreateBoundary: () => VerifiedSandboxCreateBoundary,
@@ -1315,7 +1338,19 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
       "sandbox name",
     );
-    enforceRemovedImmutabilityMigrationBoundary(sandboxName);
+    const removedImmutabilityCreateEntry = registry.getSandbox(sandboxName);
+    enforceRemovedImmutabilityMigrationBoundary(sandboxName, {
+      // A distinct unregistered replacement cannot be the target of an older
+      // per-sandbox artifact. A route-only row is admitted only when its exact
+      // current onboarding session and route still qualify. Preserve global
+      // provider evidence while allowing documented recovery to make progress.
+      allowUnattributedProviderArtifactsForNewSandbox: isFreshRemovedImmutabilityCreateTarget({
+        authority: inferenceRouteReservationAuthority,
+        entry: removedImmutabilityCreateEntry,
+        gatewayName: GATEWAY_NAME,
+        sandboxName,
+      }),
+    });
     preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
     const effectiveAgent = sandboxAgent.getEffectiveSandboxAgent(agent);
     const requestedAgentName = getRequestedSandboxAgentName(effectiveAgent);

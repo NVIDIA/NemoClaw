@@ -29,7 +29,6 @@ import {
   listMessagingChannelPolicyPresets,
   listMessagingPolicyPresetMetadata,
   loadMessagingChannelPolicyPreset,
-  materializeMessagingPolicySandboxName,
 } from "../messaging/channels";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
@@ -720,10 +719,7 @@ export function inspectPolicyMutationContext(
  * Read the round-trippable base policy through the sandbox's recorded gateway.
  * Destructive lifecycle callers use this instead of the ambient CLI gateway.
  */
-export function captureRecordedSandboxBasePolicy(
-  sandboxName: string,
-  operation: string,
-): string {
+export function captureRecordedSandboxBasePolicy(sandboxName: string, operation: string): string {
   return inspectLivePolicyBoundary(sandboxName, operation).basePolicyDocument;
 }
 
@@ -752,29 +748,6 @@ export function recheckPolicyMutationContext(
     );
   }
   return current;
-}
-
-/** Reject a final OpenShell policy refusal without exposing raw diagnostics. */
-export function rejectFinalPolicySetResult(
-  result: ReturnType<typeof run>,
-  operation: string,
-): void {
-  const captured = result as ReturnType<typeof run> & {
-    error?: Error;
-    stderr?: string | Buffer | null;
-  };
-  const outcome = classifyPolicySetResult({
-    status: typeof captured.status === "number" ? captured.status : null,
-    ...(captured.error ? { error: captured.error } : {}),
-    stderr: Buffer.isBuffer(captured.stderr)
-      ? captured.stderr.toString("utf8")
-      : (captured.stderr ?? null),
-  });
-  if (outcome.kind === "rejected") {
-    throw new PolicyObservationError(
-      `Refusing to ${operation}: OpenShell rejected the policy change: ${redact(outcome.message)}`,
-    );
-  }
 }
 
 function reportPolicyObservationFailure(error: unknown): false {
@@ -871,41 +844,6 @@ function policySetFailure(
   );
 }
 
-export function verifyAppliedPolicyDocument(
-  sandboxName: string,
-  desiredPolicyDocument: string,
-  previous: PolicyMutationContext,
-): void {
-  const readback = inspectPolicyDocumentReadback(sandboxName, desiredPolicyDocument, previous);
-  if (readback === "unavailable") {
-    throw new PolicyObservationError(
-      `NemoClaw applied the sandbox policy for '${sandboxName}', but could not verify the resulting base policy. The policy update is incomplete.`,
-    );
-  }
-  if (readback === "different") {
-    throw new PolicyObservationError(
-      `NemoClaw applied the sandbox policy for '${sandboxName}', but the resulting base policy did not match the requested policy. The policy update is incomplete.`,
-    );
-  }
-}
-
-function inspectPolicyDocumentReadback(
-  sandboxName: string,
-  desiredPolicyDocument: string,
-  previous: PolicyMutationContext,
-): "matched" | "different" | "unavailable" {
-  try {
-    return policyDocumentsMatch(
-      captureSandboxBasePolicy(sandboxName, previous.gatewayName),
-      desiredPolicyDocument,
-    )
-      ? "matched"
-      : "different";
-  } catch {
-    return "unavailable";
-  }
-}
-
 const POLICY_RECONCILE_ATTEMPTS = 5;
 const MISSING_POLICY_VALUE = Symbol("missing-policy-value");
 type MergePolicyValue = PolicyValue | typeof MISSING_POLICY_VALUE;
@@ -941,15 +879,11 @@ function mergeConcurrentPolicyValue(
     ]);
     for (const key of keys) {
       const value = mergeConcurrentPolicyValue(
-        Object.prototype.hasOwnProperty.call(original, key)
-          ? original[key]
-          : MISSING_POLICY_VALUE,
+        Object.prototype.hasOwnProperty.call(original, key) ? original[key] : MISSING_POLICY_VALUE,
         Object.prototype.hasOwnProperty.call(requested, key)
           ? requested[key]
           : MISSING_POLICY_VALUE,
-        Object.prototype.hasOwnProperty.call(external, key)
-          ? external[key]
-          : MISSING_POLICY_VALUE,
+        Object.prototype.hasOwnProperty.call(external, key) ? external[key] : MISSING_POLICY_VALUE,
         [...pathSegments, key],
         conflicts,
       );
@@ -970,11 +904,7 @@ function rebasePolicyDocumentOntoConcurrentEdit(
   const original = YAML.parse(originalDocument) as PolicyValue;
   const requested = YAML.parse(requestedDocument) as PolicyValue;
   const external = YAML.parse(externalDocument) as PolicyValue;
-  if (
-    !isPolicyDocument(original) ||
-    !isPolicyDocument(requested) ||
-    !isPolicyDocument(external)
-  ) {
+  if (!isPolicyDocument(original) || !isPolicyDocument(requested) || !isPolicyDocument(external)) {
     throw new PolicyObservationError(
       "OpenShell returned an invalid policy revision while NemoClaw reconciled a concurrent policy edit.",
     );
@@ -1088,11 +1018,7 @@ export function setPolicyDocument(
     let externalDocument: string;
     try {
       externalDocument = requestedIsCurrent
-        ? captureSandboxBasePolicyRevision(
-            sandboxName,
-            context.gatewayName,
-            observedVersion - 1,
-          )
+        ? captureSandboxBasePolicyRevision(sandboxName, context.gatewayName, observedVersion - 1)
         : observedDocument;
       const rebased = rebasePolicyDocumentOntoConcurrentEdit(
         originalDocument,
@@ -1883,7 +1809,7 @@ function removePreset(
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Refusing to remove npm policy compatibility: ${message}`);
+      console.error(`  Refusing to remove npm policy compatibility: ${redact(message)}`);
       return false;
     }
   }
@@ -2395,7 +2321,7 @@ function applyPresetContent(
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Refusing to apply npm policy compatibility: ${message}`);
+      console.error(`  Refusing to apply npm policy compatibility: ${redact(message)}`);
       return false;
     }
   }
@@ -2573,7 +2499,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Refusing to apply npm policy compatibility: ${message}`);
+      console.error(`  Refusing to apply npm policy compatibility: ${redact(message)}`);
       return false;
     }
   }
@@ -2889,7 +2815,6 @@ async function selectFromList(
   }
   return item.name;
 }
-
 
 export type { ExternalPolicyPreset };
 export {

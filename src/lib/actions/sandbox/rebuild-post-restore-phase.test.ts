@@ -108,7 +108,6 @@ describe("rebuild post-restore phase", () => {
     return {
       sandboxName: "alpha",
       targetAgentName: agentName,
-      sandboxEntry: {} as never,
       messagingPlan: null,
       backupManifest: null,
       mcpEntries: [],
@@ -117,7 +116,6 @@ describe("rebuild post-restore phase", () => {
       finalBuiltinPresets: [],
       failedPresetRemovals: [],
       policyPresetReconciliationVerified: true,
-      staleRecovery: false,
       preparedBackupRecovery: false,
       versionCheck: { expectedVersion: null } as never,
       log: vi.fn(),
