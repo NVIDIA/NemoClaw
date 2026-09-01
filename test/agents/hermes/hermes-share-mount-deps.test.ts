@@ -15,12 +15,6 @@ import {
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
-const HERMES_PROFILE_POLICY_PATCHER = path.join(
-  ROOT,
-  "agents",
-  "hermes",
-  "patch-profile-policy-defaults.py",
-);
 const HERMES_ARCHIVE_HELPER = path.join(
   ROOT,
   "scripts",
@@ -93,14 +87,6 @@ function extractAgentBrowserCacheBlock(dockerfile: string): string {
   expect(warmStart).toBeGreaterThanOrEqual(0);
   expect(runtimeGuard).toBeGreaterThan(warmStart);
   return dockerfile.slice(warmStart, runtimeGuard);
-}
-
-function extractAgentBrowserCacheCommands(dockerfile: string): string {
-  return extractAgentBrowserCacheBlock(dockerfile)
-    .replace(/^RUN\s+/, "")
-    .replace(/\nRUN\s+(?:--network=none\s+)?/gu, " &&\n")
-    .replace(/\\\n/g, " ")
-    .trim();
 }
 
 function expectReadableVenvBeforeSandboxProbe(dockerfile: string): void {

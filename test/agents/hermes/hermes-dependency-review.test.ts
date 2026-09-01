@@ -11,9 +11,6 @@ import { dockerfileInstructions } from "../../helpers/dockerfile-run-commands";
 
 const root = path.join(import.meta.dirname, "../../..");
 const dockerfileBase = fs.readFileSync(path.join(root, "agents/hermes/Dockerfile.base"), "utf8");
-const dockerfile = fs.readFileSync(path.join(root, "agents/hermes/Dockerfile"), "utf8");
-const config = fs.readFileSync(path.join(root, "agents/hermes/config/managed-policy.ts"), "utf8");
-const manifest = fs.readFileSync(path.join(root, "agents/hermes/manifest.yaml"), "utf8");
 const cliAdapter = JSON.parse(
   fs.readFileSync(path.join(root, "agents/hermes/hermes-cli-adapter-v1.json"), "utf8"),
 );
@@ -21,20 +18,9 @@ const review = fs.readFileSync(
   path.join(root, "internal/security-reviews/hermes-0.20.6-dependency-review.md"),
   "utf8",
 );
-const targetBaseImage =
-  "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:378c7a2586261dc6ab2c36fb58f4874dde7c91587afb1efd1923227092d62ec1";
-const targetBaseSource = "13574de0d24ffc535c996951b6d91e13bb4e1405";
-const targetBaseContractSha256 =
-  "0aed2feac82586b19fae3108d199449e2c1363b6ffa36403a7a082491d67bbbc";
 const securityDependenciesPatch = fs.readFileSync(
   path.join(root, "agents/hermes/security-dependencies.patch"),
   "utf8",
-);
-const agentBrowserLock = JSON.parse(
-  fs.readFileSync(
-    path.join(root, "agents/hermes/agent-browser-runtime/package-lock.json"),
-    "utf8",
-  ),
 );
 const hindsightProbeRequirementsPath = path.join(
   root,
