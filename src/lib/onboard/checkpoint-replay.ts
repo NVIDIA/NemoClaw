@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { listMessagingCredentialMetadata } from "../messaging/channels/metadata";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { MESSAGING_CREDENTIAL_PROVIDER_TYPE } from "../messaging/provider-profile";
 import { getActiveChannelIdsFromPlan } from "../messaging/plan-validation";
@@ -176,8 +177,24 @@ export function requiredMessagingProviderBindings(
   sandboxName: string,
   plan: SandboxMessagingPlan | null,
 ): CheckpointProviderBinding[] {
+  if (!plan) return [];
+  const providerNamesByCredential = new Map(
+    listMessagingCredentialMetadata({ agent: plan.agent }).map((credential) => [
+      `${credential.channelId}\0${credential.providerEnvKey}`,
+      credential.providerNameTemplate.replaceAll("{sandboxName}", sandboxName),
+    ]),
+  );
+  const registrationPlan: SandboxMessagingPlan = {
+    ...plan,
+    credentialBindings: plan.credentialBindings.map((binding) => {
+      const providerName = providerNamesByCredential.get(
+        `${binding.channelId}\0${binding.providerEnvKey}`,
+      );
+      return providerName ? { ...binding, providerName } : binding;
+    }),
+  };
   const bindings = new Map<string, CheckpointProviderBinding>();
-  for (const binding of collectRequiredMessagingProviderBindings(sandboxName, plan)) {
+  for (const binding of collectRequiredMessagingProviderBindings(sandboxName, registrationPlan)) {
     bindings.set(binding.name, binding);
   }
   return [...bindings.values()];

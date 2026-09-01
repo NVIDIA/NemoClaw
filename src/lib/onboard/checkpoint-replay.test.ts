@@ -379,7 +379,7 @@ describe("requiredMessagingProviderBindings", () => {
     ]);
   });
 
-  it("filters provider bindings to one active messaging channel", () => {
+  it("uses every credential and current provider identity for one active channel (#10660)", () => {
     const plan: SandboxMessagingPlan = {
       schemaVersion: 1,
       sandboxName: "alpha",
@@ -458,6 +458,23 @@ describe("requiredMessagingProviderBindings", () => {
         credentialEnv: "SLACK_APP_TOKEN",
       },
     ]);
+    expect(requiredMessagingProviderBindings("alpha", plan)).toEqual([
+      {
+        name: "alpha-telegram-bridge",
+        type: "nemoclaw-mcp-v1",
+        credentialEnv: "TELEGRAM_BOT_TOKEN",
+      },
+      {
+        name: "alpha-slack-bridge",
+        type: "nemoclaw-mcp-v1",
+        credentialEnv: "SLACK_BOT_TOKEN",
+      },
+      {
+        name: "alpha-slack-app",
+        type: "nemoclaw-mcp-v1",
+        credentialEnv: "SLACK_APP_TOKEN",
+      },
+    ]);
   });
 });
 
@@ -514,19 +531,20 @@ describe("crash-then-resume matrix proves at-most-once destructive create (#6228
     "post_verify",
   ] as const;
 
-  it.each(
-    states,
-  )("crash at %s: reuse a surviving sandbox, recreate under the same identity when it is gone", (state) => {
-    const cp = checkpoint({
-      machineState: state,
-      effectGroups: { sandbox_create: { completedAt: ISO, fingerprint: "fp" } },
-    });
-    expect(planSandboxCreateReplay(cp, { liveSandboxExists: true }).action).toBe("reuse");
-    expect(planSandboxCreateReplay(cp, { liveSandboxExists: false })).toEqual({
-      action: "create",
-      identity: { name: "my-sandbox", agent: "openclaw" },
-    });
-  });
+  it.each(states)(
+    "crash at %s: reuse a surviving sandbox, recreate under the same identity when it is gone",
+    (state) => {
+      const cp = checkpoint({
+        machineState: state,
+        effectGroups: { sandbox_create: { completedAt: ISO, fingerprint: "fp" } },
+      });
+      expect(planSandboxCreateReplay(cp, { liveSandboxExists: true }).action).toBe("reuse");
+      expect(planSandboxCreateReplay(cp, { liveSandboxExists: false })).toEqual({
+        action: "create",
+        identity: { name: "my-sandbox", agent: "openclaw" },
+      });
+    },
+  );
 });
 
 describe("revalidateCheckpointBindings fails closed without leaking values (#6228)", () => {
