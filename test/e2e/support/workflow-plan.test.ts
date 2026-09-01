@@ -248,8 +248,9 @@ describe("E2E workflow plan", () => {
         }),
         expect.objectContaining({
           id: "network-policy",
-          host_packages: "expect",
+          host_packages: "",
           install_non_interactive: true,
+          timeout_minutes: 45,
         }),
         expect.objectContaining({
           id: "openclaw-tui-chat-correlation",
