@@ -97,8 +97,10 @@ Only a maintainer with access to the repository's Brev organization may perform 
    ambiguous, or differs by name or ID, prohibit deletion and escalate the handoff to the Brev
    organization owner.
 4. When deletion is permitted, run `brev delete <reported-workspace-name>`. Refresh and read
-   `brev ls --json` until two consecutive successful inventories contain no row with either the
-   reported name or ID. Do not retry deletion after the single request.
+   `brev ls --json` every 15 seconds for at most 10 minutes, stopping after two consecutive successful
+   inventories contain no row with either the reported name or ID. Do not retry deletion after the
+   single request. If the deadline expires, record cleanup as unresolved with the last inventory
+   result and escalate to the Brev organization owner.
 5. Record the run URL, attempt, job URL, artifact name, candidate SHA, workspace name and ID, deletion
    decision, both final inventory check times, and final state in the release or incident handoff.
 6. Rotate or revoke `NVIDIA_INFERENCE_API_KEY`, which candidate code in the guest could read. Rotate

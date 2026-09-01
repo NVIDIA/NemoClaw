@@ -218,6 +218,21 @@ describe("Launchable evidence inspection", () => {
       `run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=workspace id=ws-1 status=${status} checkedAt=${expected}`,
     );
   });
+  it("preserves recovery identity when ABSENT lacks verifiedAt (#10798)", () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const artifact = files({
+      "cleanup.json": JSON.stringify({
+        workspaceName: "workspace",
+        workspaceId: "ws-1",
+        status: "ABSENT",
+        checkedAt: "2026-06-01T01:00:00Z",
+      }),
+    });
+    expect(runCli(["--candidate", SHA], reader(undefined, undefined, artifact))).toBe(1);
+    expect(String(stderr.mock.calls.at(-1)?.[0])).toContain(
+      `run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=workspace id=ws-1 status=ABSENT checkedAt=2026-06-01T01:00:00Z`,
+    );
+  });
   it.each([
     [undefined, "record is missing or malformed"],
     ["not json", "record is missing or malformed"],

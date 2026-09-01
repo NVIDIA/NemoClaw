@@ -24,7 +24,7 @@ checks.
 Push runs select change-relevant E2E and publish `Relevant E2E`; they do not always run the full
 suite. Only a full manual run publishes `Release qualification`. That aggregate reports the full
 suite; it does not decide whether a tag can proceed. A generic E2E request does not authorize
-`Staging Brev Launchable`.
+`Exact staging Brev Launchable`.
 
 Use `.github/workflows/e2e.yaml` from trusted `main` for GitHub runs. Do not substitute local live
 E2E unless the maintainer explicitly requests local execution. Do not load a dispatch reference for
@@ -32,7 +32,7 @@ a release inspection unless the maintainer requests a new run.
 
 ## Staging Brev Launchable Boundary
 
-`Staging Brev Launchable` runs only for a trusted manual dispatch against `main`. Launchable
+`Exact staging Brev Launchable` runs only for a trusted manual dispatch against `main`. Launchable
 mode selects only that job. Full mode adds it to the default E2E selection. The trusted workflow
 requires repository `maintain` or `admin` permission before the job's source checkout.
 
@@ -44,7 +44,7 @@ results before it succeeds:
 - hosted and sandbox inference through the preinstalled full E2E suite; and
 - Brev workspace deletion and confirmed absence.
 
-`Staging Brev Launchable` reads these credentials from repository Actions secrets:
+`Exact staging Brev Launchable` reads these credentials from repository Actions secrets:
 
 - `BREV_API_KEY` authenticates the trusted host-side Brev CLI for workspace operations in the
   organization identified by `BREV_ORG_ID`. Candidate code does not receive this API key.
@@ -88,13 +88,13 @@ gh run list --repo NVIDIA/NemoClaw --workflow e2e.yaml \
   --jq 'map(select(.displayTitle | startswith("E2E full main"))) | first'
 ```
 
-Inspect `Release qualification`, `Staging Brev Launchable`, and every other job that is not
+Inspect `Release qualification`, `Exact staging Brev Launchable`, and every other job that is not
 successful:
 
 ```bash
 gh run view <run-id> --attempt <attempt> --repo NVIDIA/NemoClaw \
   --json jobs --jq '[.jobs[] |
-    select(.name == "Release qualification" or .name == "Staging Brev Launchable" or
+    select(.name == "Release qualification" or .name == "Exact staging Brev Launchable" or
       .status != "completed" or
       (.conclusion != null and .conclusion != "success")) |
     {name,status,conclusion,startedAt,completedAt,url}]'
