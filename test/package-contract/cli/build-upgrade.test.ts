@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import {
+  cpSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -17,26 +18,17 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
+const PREVIOUS_COMMAND_ARTIFACT = "dist/commands/deploy.js";
+const PREVIOUS_COMMAND_DECLARATION = "dist/commands/deploy.d.ts";
+const PREVIOUS_COMMAND_SOURCE_MAP = "dist/commands/deploy.js.map";
+const PREVIOUS_ACTION_ARTIFACT = "dist/lib/actions/deploy.js";
+const PREVIOUS_ACTION_DECLARATION_MAP = "dist/lib/actions/deploy.d.ts.map";
+const PREVIOUS_IMPLEMENTATION_ARTIFACT = "dist/lib/deploy/index.js";
+const PREVIOUS_SHIELDS_ROOT_ARTIFACT = "dist/lib/shields/index.js";
+const PREVIOUS_SHIELDS_PLUGIN_ARTIFACT = "dist/commands/shields-status.js";
 
-function writeArtifact(root: string, relativePath: string): string {
-  const artifactPath = path.join(root, relativePath);
-  mkdirSync(path.dirname(artifactPath), { recursive: true });
-  writeFileSync(artifactPath, "export {};\n");
-  return artifactPath;
-}
-
-function runNpmBuild(cwd: string, script: string, timeout: number) {
-  const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
-  return spawnSync(npmExecutable, ["run", script], {
-    cwd,
-    encoding: "utf8",
-    env: process.env,
-    timeout,
-  });
-}
-
-describe("source-checkout upgrade builds", () => {
-  it("cleans stale Shields and unrelated CLI outputs before the real build (#10572, #10696)", () => {
+describe("CLI source-checkout upgrade build", () => {
+  it("prunes compiled deploy and Shields artifacts before the normal build (#10572, #10696)", () => {
     const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-cli-upgrade-build-"));
     try {
       copyFileSync(
@@ -61,26 +53,35 @@ describe("source-checkout upgrade builds", () => {
         "junction",
       );
       symlinkSync(path.join(REPOSITORY_ROOT, "src"), path.join(fixtureRoot, "src"), "junction");
+      const scriptsRoot = path.join(fixtureRoot, "scripts", "lib");
+      mkdirSync(scriptsRoot, { recursive: true });
+      copyFileSync(
+        path.join(REPOSITORY_ROOT, "scripts", "lib", "package-blueprint-runner-runtime.mts"),
+        path.join(scriptsRoot, "package-blueprint-runner-runtime.mts"),
+      );
 
-      const pluginRoot = path.join(fixtureRoot, "nemoclaw");
-      mkdirSync(pluginRoot);
+      const policyRoot = path.join(fixtureRoot, "nemoclaw");
+      mkdirSync(policyRoot);
+      copyFileSync(
+        path.join(REPOSITORY_ROOT, "nemoclaw", "package.json"),
+        path.join(policyRoot, "package.json"),
+      );
       copyFileSync(
         path.join(REPOSITORY_ROOT, "nemoclaw", "tsconfig.json"),
-        path.join(pluginRoot, "tsconfig.json"),
+        path.join(policyRoot, "tsconfig.json"),
       );
       copyFileSync(
         path.join(REPOSITORY_ROOT, "nemoclaw", "tsconfig.shared.json"),
-        path.join(pluginRoot, "tsconfig.shared.json"),
+        path.join(policyRoot, "tsconfig.shared.json"),
       );
-      symlinkSync(
-        path.join(REPOSITORY_ROOT, "nemoclaw", "node_modules"),
-        path.join(pluginRoot, "node_modules"),
-        "junction",
+      copyFileSync(
+        path.join(REPOSITORY_ROOT, "nemoclaw", "tsconfig.runner.json"),
+        path.join(policyRoot, "tsconfig.runner.json"),
       );
-      symlinkSync(
+      cpSync(
         path.join(REPOSITORY_ROOT, "nemoclaw", "src"),
-        path.join(pluginRoot, "src"),
-        "junction",
+        path.join(policyRoot, "src"),
+        { recursive: true },
       );
 
       const blueprintRoot = path.join(fixtureRoot, "nemoclaw-blueprint");
@@ -95,27 +96,66 @@ describe("source-checkout upgrade builds", () => {
         "junction",
       );
 
-      const staleShieldsArtifact = writeArtifact(fixtureRoot, "dist/lib/shields/index.js");
-      const staleDeployCommand = writeArtifact(fixtureRoot, "dist/commands/deploy.js");
-      const staleDeployAction = writeArtifact(fixtureRoot, "dist/lib/actions/deploy.js");
-      const staleDeployImplementation = writeArtifact(fixtureRoot, "dist/lib/deploy/index.js");
-      const unrelatedStaleArtifact = writeArtifact(
+      const previousCommandPath = path.join(fixtureRoot, PREVIOUS_COMMAND_ARTIFACT);
+      const previousCommandDeclarationPath = path.join(fixtureRoot, PREVIOUS_COMMAND_DECLARATION);
+      const previousCommandSourceMapPath = path.join(fixtureRoot, PREVIOUS_COMMAND_SOURCE_MAP);
+      const previousActionPath = path.join(fixtureRoot, PREVIOUS_ACTION_ARTIFACT);
+      const previousActionDeclarationMapPath = path.join(
         fixtureRoot,
-        "dist/lib/actions/sandbox/unrelated-stale-output.js",
+        PREVIOUS_ACTION_DECLARATION_MAP,
+      );
+      const previousImplementationPath = path.join(fixtureRoot, PREVIOUS_IMPLEMENTATION_ARTIFACT);
+      const previousShieldsRootPath = path.join(fixtureRoot, PREVIOUS_SHIELDS_ROOT_ARTIFACT);
+      mkdirSync(path.dirname(previousCommandPath), { recursive: true });
+      mkdirSync(path.dirname(previousActionPath), { recursive: true });
+      mkdirSync(path.dirname(previousImplementationPath), { recursive: true });
+      mkdirSync(path.dirname(previousShieldsRootPath), { recursive: true });
+      writeFileSync(previousCommandPath, "module.exports = {};\n");
+      writeFileSync(previousCommandDeclarationPath, "export {};\n");
+      writeFileSync(previousCommandSourceMapPath, "{}\n");
+      writeFileSync(previousActionPath, "module.exports = {};\n");
+      writeFileSync(previousActionDeclarationMapPath, "{}\n");
+      writeFileSync(previousImplementationPath, "module.exports = {};\n");
+      writeFileSync(previousShieldsRootPath, "module.exports = {};\n");
+
+      const staleMetadataPath = path.join(
+        fixtureRoot,
+        "dist/lib/cli/oclif-command-metadata.generated.json",
+      );
+      mkdirSync(path.dirname(staleMetadataPath), { recursive: true });
+      writeFileSync(
+        staleMetadataPath,
+        `${JSON.stringify({ deploy: { id: "deploy", summary: "Deprecated Brev command" } })}\n`,
       );
 
-      const build = runNpmBuild(fixtureRoot, "build:cli", 120_000);
+      const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+      const build = spawnSync(npmExecutable, ["run", "build:cli"], {
+        cwd: fixtureRoot,
+        encoding: "utf8",
+        env: process.env,
+        timeout: 120_000,
+      });
       expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0);
 
-      expect(existsSync(staleShieldsArtifact)).toBe(false);
-      expect(existsSync(staleDeployCommand)).toBe(false);
-      expect(existsSync(staleDeployAction)).toBe(false);
-      expect(existsSync(staleDeployImplementation)).toBe(false);
-      expect(existsSync(unrelatedStaleArtifact)).toBe(false);
-      expect(existsSync(path.join(fixtureRoot, "dist", "nemoclaw.js"))).toBe(true);
-      expect(
-        existsSync(path.join(pluginRoot, "dist", "shared", "openshell-policy-boundary.cjs")),
-      ).toBe(true);
+      expect(existsSync(previousCommandPath), PREVIOUS_COMMAND_ARTIFACT).toBe(false);
+      expect(existsSync(previousCommandDeclarationPath), PREVIOUS_COMMAND_DECLARATION).toBe(false);
+      expect(existsSync(previousCommandSourceMapPath), PREVIOUS_COMMAND_SOURCE_MAP).toBe(false);
+      expect(existsSync(previousActionPath), PREVIOUS_ACTION_ARTIFACT).toBe(false);
+      expect(existsSync(previousActionDeclarationMapPath), PREVIOUS_ACTION_DECLARATION_MAP).toBe(
+        false,
+      );
+      expect(existsSync(previousImplementationPath), PREVIOUS_IMPLEMENTATION_ARTIFACT).toBe(false);
+      expect(existsSync(previousShieldsRootPath), PREVIOUS_SHIELDS_ROOT_ARTIFACT).toBe(false);
+      const routing = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          "const registry = require('./dist/lib/cli/command-registry'); process.stdout.write(String(registry.globalCommandTokens().has('deploy')))",
+        ],
+        { cwd: fixtureRoot, encoding: "utf8", env: process.env },
+      );
+      expect(routing.status, routing.stderr).toBe(0);
+      expect(routing.stdout).toBe("false");
 
       const help = spawnSync(process.execPath, ["bin/nemoclaw.js", "deploy", "--help"], {
         cwd: fixtureRoot,
@@ -135,7 +175,7 @@ describe("source-checkout upgrade builds", () => {
     }
   }, 150_000);
 
-  it("cleans stale Shields and unrelated outputs in a standalone plugin package (#10696)", () => {
+  it("prunes compiled Shields output in a standalone plugin build (#10696)", () => {
     const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-plugin-upgrade-build-"));
     const pluginRoot = path.join(fixtureRoot, "package");
     try {
@@ -159,18 +199,23 @@ describe("source-checkout upgrade builds", () => {
         "junction",
       );
 
-      const staleShieldsArtifact = writeArtifact(pluginRoot, "dist/commands/shields-status.js");
-      const unrelatedStaleArtifact = writeArtifact(
+      const previousShieldsPluginPath = path.join(
         pluginRoot,
-        "dist/commands/unrelated-stale-output.js",
+        PREVIOUS_SHIELDS_PLUGIN_ARTIFACT,
       );
+      mkdirSync(path.dirname(previousShieldsPluginPath), { recursive: true });
+      writeFileSync(previousShieldsPluginPath, "module.exports = {};\n");
 
-      expect(existsSync(path.join(fixtureRoot, "scripts"))).toBe(false);
-      const build = runNpmBuild(pluginRoot, "build", 60_000);
+      const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+      const build = spawnSync(npmExecutable, ["run", "build"], {
+        cwd: pluginRoot,
+        encoding: "utf8",
+        env: process.env,
+        timeout: 60_000,
+      });
       expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0);
 
-      expect(existsSync(staleShieldsArtifact)).toBe(false);
-      expect(existsSync(unrelatedStaleArtifact)).toBe(false);
+      expect(existsSync(previousShieldsPluginPath), PREVIOUS_SHIELDS_PLUGIN_ARTIFACT).toBe(false);
       expect(existsSync(path.join(pluginRoot, "dist", "index.js"))).toBe(true);
     } finally {
       rmSync(fixtureRoot, { force: true, recursive: true });

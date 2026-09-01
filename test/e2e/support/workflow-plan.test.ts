@@ -93,7 +93,7 @@ describe("E2E workflow plan", () => {
       catalogue: E2E_TARGET_CATALOGUE.length,
       "typed-registry": 4,
       "shared-e2e": 2,
-      "retained-workflow": 19,
+      "retained-workflow": 18,
       staging: 1,
     });
     expect(plan.coverageMatrix.filter((row) => row.unresolvedReason !== "")).toEqual([

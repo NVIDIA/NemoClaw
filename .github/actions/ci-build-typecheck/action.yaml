@@ -9,6 +9,8 @@ runs:
   steps:
     - name: Verify compiled package contracts
       shell: bash
+      env:
+        NPM_CONFIG_CACHE: ${{ runner.temp }}/npm
       run: npx vitest run --project package-contract
 
     - name: Typecheck CLI + tests

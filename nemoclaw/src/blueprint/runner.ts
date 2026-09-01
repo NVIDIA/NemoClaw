@@ -37,9 +37,17 @@ import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
 import * as importedOpenShellGatewayEndpointBoundary from "../shared/openshell-gateway-endpoint-boundary.cjs";
 import * as importedOpenShellExternalTargetBoundary from "../shared/openshell-external-target-boundary.cjs";
+import * as importedOpenShellObservationBoundary from "../shared/openshell-observation-boundary.cjs";
 import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
 import * as importedSandboxName from "../shared/sandbox-name.cjs";
-import type { SanitizedExternalOpenShellTargetPlan } from "../shared/openshell-external-target-boundary.cjs";
+import type {
+  OpenShellCompatibilityRange,
+  SanitizedExternalOpenShellTargetPlan,
+} from "../shared/openshell-external-target-boundary.cjs";
+import type {
+  ExternalOpenShellGatewayStatus,
+  OpenShellGatewayHealthObserver,
+} from "../shared/openshell-observation-boundary.cjs";
 import {
   attachRuntimeIdentity,
   buildRuntimeIdentityPlan,
@@ -87,9 +95,17 @@ const sourceOrGeneratedOpenShellExternalTargetBoundary =
   importedOpenShellExternalTargetBoundary as typeof importedOpenShellExternalTargetBoundary & {
     default?: typeof importedOpenShellExternalTargetBoundary;
   };
-const { buildSanitizedExternalOpenShellTargetPlan } =
+const { buildSanitizedExternalOpenShellTargetPlan, withExternalOpenShellTargetCa } =
   sourceOrGeneratedOpenShellExternalTargetBoundary.default ??
   sourceOrGeneratedOpenShellExternalTargetBoundary;
+
+const sourceOrGeneratedOpenShellObservationBoundary =
+  importedOpenShellObservationBoundary as typeof importedOpenShellObservationBoundary & {
+    default?: typeof importedOpenShellObservationBoundary;
+  };
+const { observeExternalOpenShellGatewayHealth } =
+  sourceOrGeneratedOpenShellObservationBoundary.default ??
+  sourceOrGeneratedOpenShellObservationBoundary;
 
 // sourceOfTruth: nemoclaw/src/shared/sandbox-name.cts
 const sourceOrGeneratedSandboxName = importedSandboxName as typeof importedSandboxName & {
@@ -99,6 +115,8 @@ const { assertValidName, assertValidProviderName, isValidName } =
   sourceOrGeneratedSandboxName.default ?? sourceOrGeneratedSandboxName;
 
 type Action = "plan" | "apply" | "status" | "reconcile" | "rollback";
+
+type ExternalOpenShellTargetStatus = ExternalOpenShellGatewayStatus & Readonly<{ run_id: string }>;
 
 type RollbackPlanSource = {
   sandbox_name?: unknown;
@@ -151,6 +169,17 @@ const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "
 const REST_PROTOCOLS = new Set(["rest"]);
 const ENDPOINT_ENFORCEMENT_MODES = new Set(["enforce", "audit"]);
 const ENDPOINT_TLS_MODES = new Set(["terminate", "passthrough", "skip"]);
+const BLUEPRINT_KEYS = new Set([
+  "version",
+  "min_openshell_version",
+  "max_openshell_version",
+  "min_openclaw_version",
+  "digest",
+  "profiles",
+  "description",
+  "openshell_target",
+  "components",
+]);
 const MISSING_PROVIDER_INSPECTION_PATTERN =
   /(?:\bprovider\b[^\r\n]*\b(?:not found|does not exist)\b|\b(?:not found|does not exist)\b[^\r\n]*\bprovider\b|\bunknown provider\b)/i;
 const POLICY_INSPECTION_MAX_BYTES = 1024 * 1024;
@@ -336,7 +365,7 @@ function isInferenceProfile(value: unknown): value is InferenceProfile {
 }
 
 function isBlueprint(value: unknown): value is Blueprint {
-  if (!isPlainObject(value)) {
+  if (!isPlainObject(value) || !Object.keys(value).every((key) => BLUEPRINT_KEYS.has(key))) {
     return false;
   }
 
@@ -591,10 +620,7 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
 }
 
 function blueprintBasePoliciesMatch(left: string, right: string): boolean {
-  return isDeepStrictEqual(
-    parseOpenShellPolicy(left).policy,
-    parseOpenShellPolicy(right).policy,
-  );
+  return isDeepStrictEqual(parseOpenShellPolicy(left).policy, parseOpenShellPolicy(right).policy);
 }
 
 function assertNoConflictingBlueprintPolicyChange(
@@ -640,12 +666,17 @@ export function loadBlueprint(): Blueprint {
   try {
     content = readFileSync(bpFile, "utf-8");
   } catch {
-    throw new Error(`blueprint.yaml not found at ${bpFile}`);
+    throw new Error("blueprint.yaml not found");
   }
-  const parsed: unknown = YAML.parse(content);
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(content);
+  } catch {
+    throw new Error("blueprint.yaml contains invalid YAML");
+  }
   if (!isBlueprint(parsed)) {
     throw new Error(
-      `blueprint.yaml at ${bpFile} must contain a YAML mapping with valid nested component shapes`,
+      "blueprint.yaml must contain a YAML mapping with valid nested component shapes",
     );
   }
   return parsed;
@@ -1357,29 +1388,11 @@ export function actionExternalOpenShellTargetPlan(
   blueprint: Blueprint,
   options?: { dryRun?: boolean },
 ): ExternalOpenShellTargetRunPlan {
-  if (blueprint.openshell_target === undefined) {
-    throw new Error("blueprint does not declare an external OpenShell target");
-  }
-  if (
-    blueprint.min_openshell_version === undefined ||
-    blueprint.max_openshell_version === undefined
-  ) {
-    throw new Error(
-      "External OpenShell target planning requires blueprint min_openshell_version and max_openshell_version.",
-    );
-  }
-  for (const field of ["components", "profiles", "min_openclaw_version"] as const) {
-    if (blueprint[field] !== undefined) {
-      throw new Error(`External OpenShell target planning does not accept '${field}'.`);
-    }
-  }
+  const { target, compatibility } = validateExternalOpenShellTargetBlueprint(blueprint, "planning");
 
+  const targetPlan = buildSanitizedExternalOpenShellTargetPlan(target, compatibility);
   const rid = emitRunId();
   progress(10, "Validating external OpenShell target");
-  const targetPlan = buildSanitizedExternalOpenShellTargetPlan(blueprint.openshell_target, {
-    minVersion: blueprint.min_openshell_version,
-    maxVersion: blueprint.max_openshell_version,
-  });
   const plan: ExternalOpenShellTargetRunPlan = {
     run_id: rid,
     openshell_target: targetPlan,
@@ -1388,6 +1401,66 @@ export function actionExternalOpenShellTargetPlan(
   progress(100, "External target plan complete");
   log(JSON.stringify(plan, null, 2));
   return plan;
+}
+
+function validateExternalOpenShellTargetBlueprint(
+  blueprint: Blueprint,
+  action: "planning" | "status",
+): Readonly<{ target: unknown; compatibility: OpenShellCompatibilityRange }> {
+  if (blueprint.openshell_target === undefined) {
+    throw new Error("blueprint does not declare an external OpenShell target");
+  }
+  if (blueprint.version === undefined || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(blueprint.version)) {
+    throw new Error(
+      `External OpenShell target ${action} requires blueprint version in X.Y.Z format.`,
+    );
+  }
+  if (
+    blueprint.min_openshell_version === undefined ||
+    blueprint.max_openshell_version === undefined
+  ) {
+    throw new Error(
+      `External OpenShell target ${action} requires blueprint min_openshell_version and max_openshell_version.`,
+    );
+  }
+  for (const field of ["components", "profiles", "min_openclaw_version"] as const) {
+    if (blueprint[field] !== undefined) {
+      throw new Error(`External OpenShell target ${action} does not accept '${field}'.`);
+    }
+  }
+  return {
+    target: blueprint.openshell_target,
+    compatibility: {
+      minVersion: blueprint.min_openshell_version,
+      maxVersion: blueprint.max_openshell_version,
+    },
+  };
+}
+
+export async function actionExternalOpenShellTargetStatus(
+  blueprint: Blueprint,
+  observer: OpenShellGatewayHealthObserver,
+): Promise<ExternalOpenShellTargetStatus> {
+  const { target, compatibility } = validateExternalOpenShellTargetBlueprint(blueprint, "status");
+
+  const observation = await withExternalOpenShellTargetCa(
+    target,
+    compatibility,
+    async (target, caContents) => {
+      const rid = emitRunId();
+      progress(10, "Validating external OpenShell target");
+      const observed = await observeExternalOpenShellGatewayHealth(observer, {
+        target,
+        caBundle: caContents,
+        timeoutMs: 5_000,
+      });
+      if (!observed.ok) throw new Error(observed.error.message);
+      return Object.freeze({ run_id: rid, ...observed.value });
+    },
+  );
+  progress(100, "External target status complete");
+  log(JSON.stringify(observation, null, 2));
+  return observation;
 }
 
 export async function actionApply(
@@ -1920,6 +1993,7 @@ export async function actionRollback(rid: string): Promise<void> {
 export async function main(
   argv: string[] = process.argv.slice(2),
   options: {
+    gatewayHealthObserver?: OpenShellGatewayHealthObserver;
     snapshotCommand?: SnapshotCommandOptions;
     /** Code-only conformance-test seam. No CLI flag or environment input populates this policy. */
     runtimeIdentityProfilePolicy?: RuntimeIdentityProfilePolicy;
@@ -1933,6 +2007,7 @@ export async function main(
   let runId: string | undefined;
   let dryRun = false;
   let endpointUrl: string | undefined;
+  let externalTargetStatus = false;
 
   function requireValue(flag: string, i: number): string {
     if (i >= argv.length) throw new Error(`${flag} requires a value`);
@@ -1944,9 +2019,7 @@ export async function main(
       actionSnapshots(argv.slice(1), options.snapshotCommand);
       return;
     }
-    throw new Error(
-      `Unknown action '${rawAction ?? "(missing)"}'. Use: plan, apply, status, reconcile, rollback, snapshots`,
-    );
+    throw new Error("Unknown action. Use: plan, apply, status, reconcile, rollback, snapshots");
   }
 
   for (let i = 1; i < argv.length; i++) {
@@ -1967,7 +2040,14 @@ export async function main(
       case "--endpoint-url":
         endpointUrl = requireValue("--endpoint-url", ++i);
         break;
+      case "--external-target":
+        externalTargetStatus = true;
+        break;
     }
+  }
+
+  if (externalTargetStatus && action !== "status") {
+    throw new Error("--external-target is accepted only with status");
   }
 
   switch (action) {
@@ -2000,7 +2080,20 @@ export async function main(
       break;
     }
     case "status":
-      actionStatus(runId);
+      if (externalTargetStatus) {
+        if (runId !== undefined) {
+          throw new Error("--external-target and --run-id cannot be used together");
+        }
+        if (profileProvided || planPath !== undefined || dryRun || endpointUrl !== undefined) {
+          throw new Error("External target status does not accept managed-run options");
+        }
+        if (options.gatewayHealthObserver === undefined) {
+          throw new Error("The external OpenShell gateway observer is unavailable.");
+        }
+        await actionExternalOpenShellTargetStatus(loadBlueprint(), options.gatewayHealthObserver);
+      } else {
+        actionStatus(runId);
+      }
       break;
     case "reconcile":
       if (!runId) {
