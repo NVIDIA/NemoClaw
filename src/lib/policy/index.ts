@@ -907,8 +907,6 @@ function inspectPolicyDocumentReadback(
 }
 
 const POLICY_RECONCILE_ATTEMPTS = 5;
-const POLICY_RECOVERY_ATTEMPTS = 5;
-const POLICY_FINAL_RECOVERY_SUBMISSIONS = 1;
 const MISSING_POLICY_VALUE = Symbol("missing-policy-value");
 type MergePolicyValue = PolicyValue | typeof MISSING_POLICY_VALUE;
 
@@ -991,10 +989,6 @@ function rebasePolicyDocumentOntoConcurrentEdit(
   return { document: YAML.stringify(merged), conflicts };
 }
 
-function effectivePolicyInspectionCommand(sandboxName: string, gatewayName: string): string {
-  return `openshell policy get -g ${gatewayName} --full ${sandboxName}`;
-}
-
 /**
  * Apply a composed policy document while optionally keeping control in the
  * caller on failure. Lifecycle code that owns compensating actions must use
@@ -1012,7 +1006,6 @@ export function setPolicyDocument(
     gatewayName?: string;
     operation?: string;
     context?: PolicyMutationContext;
-    reconciledDocumentIsAcceptable?: (document: string) => boolean;
   } = {},
 ): boolean {
   const operation = options.operation ?? "set the sandbox policy";
@@ -1029,20 +1022,8 @@ export function setPolicyDocument(
 
   let requestedDocument = policyDocument;
   let recoveryOnly = false;
-  let reconciliationAttempts = 0;
-  let recoveryAttempts = 0;
-  const inspectEffectivePolicy = effectivePolicyInspectionCommand(
-    sandboxName,
-    context.gatewayName,
-  );
 
-  // The ordinary bound can end immediately after readback discovers the newest
-  // external revision. Reserve one final submission so that document is
-  // restored and read back instead of leaving the preceding recovery document
-  // active.
-  const submissionAttempts =
-    POLICY_RECONCILE_ATTEMPTS + POLICY_RECOVERY_ATTEMPTS + 2 + POLICY_FINAL_RECOVERY_SUBMISSIONS;
-  for (let attempt = 1; attempt <= submissionAttempts; attempt += 1) {
+  for (let attempt = 1; attempt <= POLICY_RECONCILE_ATTEMPTS; attempt += 1) {
     if (attempt > 1) {
       try {
         context = recheckPolicyMutationContext(sandboxName, operation, context);
@@ -1089,14 +1070,7 @@ export function setPolicyDocument(
     const concurrentRevision = observedVersion > originalVersion + 1;
 
     if (!concurrentRevision) {
-      if (requestedIsCurrent) {
-        if (!recoveryOnly) return true;
-        console.error(
-          `  The latest external policy was restored for sandbox '${sandboxName}'. ` +
-            `This update did not apply. Run \`${inspectEffectivePolicy}\` to inspect the effective policy, then rerun the command.`,
-        );
-        return false;
-      }
+      if (requestedIsCurrent) return !recoveryOnly;
       if (outcome.kind === "ambiguous") {
         console.error(
           `  Could not confirm the policy update for sandbox '${sandboxName}': ${redact(outcome.detail)}. ` +
@@ -1120,53 +1094,18 @@ export function setPolicyDocument(
             observedVersion - 1,
           )
         : observedDocument;
-      if (recoveryOnly) {
-        if (!requestedIsCurrent) {
-          console.error(
-            `  The external policy changed again while NemoClaw restored sandbox '${sandboxName}'. ` +
-              `The latest external policy remains active, and this update did not apply. Run \`${inspectEffectivePolicy}\` to inspect the effective policy, then rerun the command.`,
-          );
-          return false;
-        }
-        context = observed;
-        recoveryAttempts += 1;
-        requestedDocument = externalDocument;
-        console.error(
-          `  The external policy changed again while NemoClaw restored sandbox '${sandboxName}'. ` +
-            "The latest external revision is being restored.",
-        );
-        continue;
-      }
       const rebased = rebasePolicyDocumentOntoConcurrentEdit(
         originalDocument,
         requestedDocument,
         externalDocument,
       );
       context = observed;
-      reconciliationAttempts += 1;
-      let reconciledDocumentIsAcceptable = rebased.conflicts.length === 0;
-      if (reconciledDocumentIsAcceptable && options.reconciledDocumentIsAcceptable) {
-        try {
-          reconciledDocumentIsAcceptable = options.reconciledDocumentIsAcceptable(
-            rebased.document,
-          );
-        } catch {
-          reconciledDocumentIsAcceptable = false;
-        }
-      }
-      if (!reconciledDocumentIsAcceptable) {
+      if (rebased.conflicts.length > 0) {
         recoveryOnly = true;
         requestedDocument = externalDocument;
         console.error(
           `  The current OpenShell policy changed in the same fields while NemoClaw prepared ${operation}. ` +
-            `NemoClaw is restoring the latest external policy, and this update will not apply. After the command finishes, run \`${inspectEffectivePolicy}\` to inspect the effective policy. Then rerun the command against that policy.`,
-        );
-      } else if (reconciliationAttempts > POLICY_RECONCILE_ATTEMPTS) {
-        recoveryOnly = true;
-        requestedDocument = externalDocument;
-        console.error(
-          `  Refusing to ${operation}: the current OpenShell policy kept changing while NemoClaw reconciled the requested update. ` +
-            `NemoClaw is restoring the latest external policy, and this update will not apply. After the command finishes, run \`${inspectEffectivePolicy}\` to inspect the effective policy. Then rerun the command against that policy.`,
+            "The external policy is being restored; rerun the command against the current policy.",
         );
       } else {
         requestedDocument = rebased.document;
@@ -1179,8 +1118,7 @@ export function setPolicyDocument(
   }
 
   console.error(
-    `  Could not confirm ${operation}: the current OpenShell policy remained unstable after ${String(recoveryAttempts)} recovery attempt(s). ` +
-      `Run \`${inspectEffectivePolicy}\` to inspect the effective policy, then rerun the command.`,
+    `  Refusing to ${operation}: the current OpenShell policy kept changing while NemoClaw reconciled the requested update. Rerun the command against the current policy.`,
   );
   if (options.nonFatal) return false;
   process.exit(1);

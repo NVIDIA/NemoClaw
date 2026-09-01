@@ -176,7 +176,7 @@ describe("Vitest opaque-input watch triggers", () => {
     "maps each policy compiler input to its spawned fixture contract [%s] (#10016)",
     (inputPath) => {
       expect(triggeredBy(inputPath)).toEqual([
-        "test/e2e/support/policy-credential-binding.test.ts",
+        "test/e2e/support/hermes-discord-policy-binding.test.ts",
       ]);
     },
   );
