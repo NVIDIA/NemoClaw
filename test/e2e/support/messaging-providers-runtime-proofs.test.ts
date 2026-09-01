@@ -458,9 +458,18 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it("relays both configured ports and proves upstream readiness through the real proxy", async () => {
+  it("relays both ports without inheriting host credentials and proves upstream readiness", async () => {
     const upstreamAddress = "127.0.0.1";
     const proxyAddress = "127.0.0.1";
+    const inheritedCredentialName = "NEMOCLAW_FAKE_API_PROXY_TEST_CREDENTIAL";
+    const previousCredential = process.env[inheritedCredentialName];
+    const restoreCredential =
+      previousCredential === undefined
+        ? () => delete process.env[inheritedCredentialName]
+        : () => {
+            process.env[inheritedCredentialName] = previousCredential;
+          };
+    process.env[inheritedCredentialName] = "must-not-reach-the-proxy-child";
     const requests: string[] = [];
     const upstreamServers = ["discord", "slack"].map((label) =>
       net.createServer((socket) => {
@@ -479,9 +488,9 @@ describe("messaging provider installed-runtime proofs", () => {
       portReservations.map((server) => listenServer(server, proxyAddress)),
     );
     await Promise.all(portReservations.map(closeServer));
-    const proxy = spawn(process.execPath, ["-e", FAKE_API_PROXY_SOURCE], {
+    const credentialGuardSource = `Object.hasOwn(process.env, ${JSON.stringify(inheritedCredentialName)}) && (() => { throw new Error("proxy child inherited host credential"); })();\n`;
+    const proxy = spawn(process.execPath, ["-e", credentialGuardSource + FAKE_API_PROXY_SOURCE], {
       env: {
-        ...process.env,
         NEMOCLAW_FAKE_API_UPSTREAM: upstreamAddress,
         NEMOCLAW_FAKE_API_PROXY_LISTEN_ADDRESS: proxyAddress,
         NEMOCLAW_FAKE_API_PROXY_PORTS: proxyPorts
@@ -516,6 +525,7 @@ describe("messaging provider installed-runtime proofs", () => {
       expect(responses, proxyStderr).toEqual(["discord:gateway", "slack:websocket"]);
       expect(requests.sort()).toEqual(["discord:gateway", "slack:websocket"]);
     } finally {
+      restoreCredential();
       proxy.kill("SIGTERM");
       await (proxy.exitCode === null
         ? once(proxy, "exit").then(() => undefined)
