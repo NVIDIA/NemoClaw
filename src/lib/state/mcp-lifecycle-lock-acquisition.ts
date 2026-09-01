@@ -83,7 +83,7 @@ export interface McpLifecycleDeadlineFenceSyncOptions extends McpLifecycleLockOp
   onContainment?: (details: McpLifecycleDeadlineContainment) => void;
   /** Return operator guidance instead of waiting when durable containment already exists. */
   throwOnCommittedContainment?: boolean;
-  /** Retire only the exact stale gates left after a proven completed auto-restore. */
+  /** Retire exact stale gates bound to proven timer authority before or after auto-restore. */
   completedAutoRestoreRecovery?: {
     ownerPid: number;
     assertAuthority: () => void;
@@ -112,6 +112,8 @@ export interface McpLifecycleLockOptions {
    * synchronous acquisition never enter on that generation (NVIDIA/NemoClaw#10066).
    */
   recoverAbandonedExpiredTimer?: boolean;
+  /** Report the bounded asynchronous wait before abandoned timer recovery. */
+  onAbandonedTimerRecoveryWait?: (details: { timeoutMs: number }) => void;
 }
 
 interface HeldLockLease {
@@ -346,9 +348,11 @@ function isExactStaleCompletedAutoRestoreOwner(
   );
 }
 
+// Shared by pre-restore takeover and post-restore artifact cleanup, so this
+// lower-level diagnostic intentionally names the common timer-bound recovery.
 function refuseCompletedAutoRestoreRecovery(lockPath: string, reason: string): never {
   throw durableMcpLifecycleContainmentFailure(
-    new Error(`Completed auto-restore cleanup stayed fail-closed: ${reason}`),
+    new Error(`Timer-bound auto-restore recovery stayed fail-closed: ${reason}`),
     lockPath,
   );
 }
@@ -380,12 +384,18 @@ function recoverCompletedAutoRestoreGatesSync(
         observation,
         sandboxName,
         takeoverToken,
-        recovery.ownerPid,
+        label === "deadline" ||
+          containment?.owner?.containedGeneration?.target !== "main" ||
+          typeof containment.owner.containedGeneration.ownerPid !== "number"
+          ? recovery.ownerPid
+          : containment.owner.containedGeneration.ownerPid,
       )
     ) {
       refuseCompletedAutoRestoreRecovery(
         lockPath,
-        `the ${label} generation is not the exact stale timer owner`,
+        label === "deadline"
+          ? "the deadline generation is not the exact stale timer owner"
+          : "the main generation is not an exact stale timer-bound owner",
       );
     }
   }
@@ -416,17 +426,17 @@ function recoverCompletedAutoRestoreGatesSync(
         "the containment record protects a stale-lock reaper",
       );
     }
-    if (structuredGeneration && structuredGeneration.ownerPid !== recovery.ownerPid) {
-      refuseCompletedAutoRestoreRecovery(
-        lockPath,
-        "the contained lifecycle owner does not match the abandoned timer",
-      );
-    }
     const target = contained.target === "main" ? main : deadline;
     if (structuredGeneration && !target) {
       refuseCompletedAutoRestoreRecovery(
         lockPath,
         `the structured containment has no remaining ${contained.target} generation to verify`,
+      );
+    }
+    if (structuredGeneration && structuredGeneration.ownerPid !== target?.owner?.pid) {
+      refuseCompletedAutoRestoreRecovery(
+        lockPath,
+        `the contained lifecycle owner does not match the protected ${contained.target} generation`,
       );
     }
     if (!structuredGeneration && contained.target === "deadline" && !target) {
@@ -561,17 +571,24 @@ async function waitForAbandonedTimerRecoveryToken(
     corruptLockGraceMs,
     monotonicNow,
   );
+  const lockPath = getMcpLifecycleLockPath(sandboxName, options.stateDir);
+  let waitReported = false;
   for (;;) {
     if (monotonicNow() >= deadline) throw abandonedTimerRecoveryTimeoutError(sandboxName);
+    const containment = await readMcpLifecycleLockObservation(committedContainmentPath(lockPath));
+    if (containment) throw committedContainmentActiveError(sandboxName, lockPath, containment);
     const now = Date.now();
     if (!isShieldsTimerDeadlineExpired(sandboxName, options.stateDir, now)) return undefined;
+    if (!isShieldsTimerDeadlineAbandoned(sandboxName, options.stateDir, now)) return undefined;
+    if (!waitReported) {
+      options.onAbandonedTimerRecoveryWait?.({ timeoutMs });
+      waitReported = true;
+    }
     const aged = trackAbandonedTimerDeadline.agedSnapshot(now);
     if (aged) {
       const token = confirmAbandonedTimerRecoveryToken(sandboxName, options.stateDir, aged);
       if (token) return token;
       trackAbandonedTimerDeadline.reset();
-    } else if (!isShieldsTimerDeadlineAbandoned(sandboxName, options.stateDir, now)) {
-      return undefined;
     }
     await sleep(pollIntervalMs);
   }
@@ -580,8 +597,13 @@ async function waitForAbandonedTimerRecoveryToken(
 function deadlineFenceOptionsFromLock(
   options: McpLifecycleLockOptions & { stateDir: string },
 ): McpLifecycleDeadlineFenceOptions {
-  const { recoverAbandonedExpiredTimer: _recover, monotonicNow: _testClock, ...rest } = options;
-  return rest;
+  const {
+    recoverAbandonedExpiredTimer: _recover,
+    onAbandonedTimerRecoveryWait: _wait,
+    monotonicNow: _testClock,
+    ...rest
+  } = options;
+  return { ...rest, throwOnCommittedContainment: true };
 }
 
 async function tryReapStaleMainLock(

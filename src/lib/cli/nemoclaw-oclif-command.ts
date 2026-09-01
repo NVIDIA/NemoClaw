@@ -107,14 +107,14 @@ export abstract class NemoClawCommand extends Command {
     if (portablePolicy?.ownsLifecycleFence) return await super._run<T>();
     const sandboxName = await this.resolveLifecycleSandboxName(portablePolicy);
     if (!sandboxName) return await super._run<T>();
-    const recoverCompletedAutoRestore = async () => {
+    const recoverAutoRestore = async () => {
       if (hasShieldsTimerRecoveryArtifact(sandboxName, resolveShieldsStateDir())) {
-        const { recoverCompletedAutoRestoreBeforeCommand } = await import("../shields");
-        recoverCompletedAutoRestoreBeforeCommand(sandboxName);
+        const { recoverAutoRestoreBeforeCommand } = await import("../shields");
+        recoverAutoRestoreBeforeCommand(sandboxName);
       }
     };
     if (this.isInteractiveConnect(commandId)) {
-      await recoverCompletedAutoRestore();
+      await recoverAutoRestore();
       return await super._run<T>();
     }
     const runLocked = () => {
@@ -124,10 +124,14 @@ export abstract class NemoClawCommand extends Command {
       return super._run<T>();
     };
     const runWithLifecycleFence = async () => {
-      await recoverCompletedAutoRestore();
+      await recoverAutoRestore();
       return await (commandId === "sandbox:destroy"
         ? withMcpLifecycleLock(sandboxName, runLocked, {
             recoverAbandonedExpiredTimer: true,
+            onAbandonedTimerRecoveryWait: ({ timeoutMs }) =>
+              log.info(
+                `Waiting for abandoned timer recovery (up to ${String(Math.ceil(timeoutMs / 1_000))}s)...`,
+              ),
           })
         : withMcpLifecycleLock(sandboxName, runLocked));
     };

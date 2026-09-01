@@ -672,7 +672,7 @@ describe("MCP lifecycle lock acquisition", () => {
           assertAuthority: vi.fn(),
         },
       }),
-    ).toThrow("main generation is not the exact stale timer owner");
+    ).toThrow("main generation is not an exact stale timer-bound owner");
 
     expect(operation).not.toHaveBeenCalled();
     expect(fs.existsSync(lockPath)).toBe(true);

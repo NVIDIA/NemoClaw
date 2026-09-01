@@ -2072,6 +2072,16 @@ function recoverCompletedAutoRestoreBeforeCommand(
   );
 }
 
+function recoverAutoRestoreBeforeCommand(sandboxName: string): boolean {
+  if (recoverCompletedAutoRestoreBeforeCommand(sandboxName)) return true;
+  if (!inspectExpiredAutoRestoreMarker(sandboxName)) return false;
+  return withExpiredAutoRestoreDeadlineFence(
+    sandboxName,
+    "recover expired auto-restore before command",
+    () => true,
+  );
+}
+
 function inspectExpiredAutoRestoreTakeover(
   sandboxName: string,
   marker = inspectExpiredAutoRestoreMarker(sandboxName),
@@ -2339,6 +2349,10 @@ function withExpiredAutoRestoreDeadlineFence<T>(
     {
       stateDir: STATE_DIR,
       throwOnCommittedContainment: true,
+      completedAutoRestoreRecovery: {
+        ownerPid: marker.pid,
+        assertAuthority: assertTakeoverAuthority,
+      },
       onContainment: ({ kind, ownerPid, reason }) => {
         if (kind === "verified-live-wait") {
           appendAuditEntryBestEffort({
@@ -6449,6 +6463,7 @@ export {
   MAX_TIMEOUT_SECONDS,
   parseDuration,
   prepareAutoRestoreTransitionTakeover,
+  recoverAutoRestoreBeforeCommand,
   recoverCompletedAutoRestoreBeforeCommand,
   repairMutableConfigPerms,
   resolvePersistedAutoRestoreTarget,

@@ -538,6 +538,7 @@ describe("NemoClawCommand", () => {
   });
 
   it("recovers sandbox:destroy through the abandoned-timer deadline fence (#10066)", async () => {
+    const info = vi.spyOn(log, "info");
     vi.spyOn(receiptAuthority, "inspectPortableAgentReceiptAuthority").mockReturnValue({
       kind: "none",
     });
@@ -570,8 +571,12 @@ describe("NemoClawCommand", () => {
     expect(lock).toHaveBeenCalledWith(
       "alpha",
       expect.any(Function),
-      expect.objectContaining({ recoverAbandonedExpiredTimer: true }),
+      expect.objectContaining({
+        recoverAbandonedExpiredTimer: true,
+        onAbandonedTimerRecoveryWait: expect.any(Function),
+      }),
     );
+    expect(info).toHaveBeenCalledWith("Waiting for abandoned timer recovery (up to 5s)...");
     expect(ParsedUnsupportedSandboxCommand.ran).toBe(true);
     const lockPath = getMcpLifecycleLockPath("alpha", stateDir);
     expect(fs.existsSync(lockPath)).toBe(false);
