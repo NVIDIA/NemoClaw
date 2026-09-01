@@ -3,19 +3,21 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "View the Active Inference Route"
 sidebar-title: "View the Active Route"
-description: "Inspect the provider and model on the live NemoClaw-managed OpenShell inference route."
-description-agent: "Shows the live inference provider and model. Use when checking the active route before or after an inference change."
-keywords: ["nemoclaw inference get", "active inference provider", "active inference model"]
+description: "Inspect the provider and model on the live NemoClaw-managed OpenShell inference route and the persisted URL for a compatible custom endpoint."
+description-agent: "Shows the live inference provider and model, plus the persisted URL for a compatible custom endpoint. Use when checking or reproducing the active route."
+keywords:
+  ["nemoclaw inference get", "active inference provider", "active inference model", "compatible endpoint URL"]
 content:
   type: "how_to"
 ---
 
 Use the NemoClaw CLI to read the provider and model on the live OpenShell inference route.
+For a compatible custom provider, the command also reports its persisted endpoint URL when the matching registry metadata is safe and unambiguous.
 This command reports configuration state and does not authenticate a model request.
 
 ## Read the Live Route
 
-Run the direct route command when you only need the active provider and model.
+Run the direct route command when you need the active provider, model, and applicable custom endpoint URL.
 The direct form reads the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
 
 ```bash
@@ -44,6 +46,27 @@ Expected output:
 }
 ```
 
+For `compatible-endpoint` and `compatible-anthropic-endpoint`, the text output adds `Endpoint` when every matching registry row for the selected gateway records the same credential-free HTTP(S) URL.
+The JSON output adds `endpointUrl` under the same condition.
+For example:
+
+```text
+Provider: compatible-endpoint
+Model:    custom-model
+Endpoint: https://inference.example.com/v1
+```
+
+```json
+{
+  "provider": "compatible-endpoint",
+  "model": "custom-model",
+  "endpointUrl": "https://inference.example.com/v1"
+}
+```
+
+Managed providers keep the existing provider-and-model output.
+NemoClaw omits the endpoint when registry metadata is absent, conflicting, invalid, or contains userinfo, a query, a fragment, or control characters.
+
 The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.
 Run `$$nemoclaw onboard` to configure one.
 For lookup failures, the error names the gateway without rendering command output.
@@ -61,6 +84,7 @@ $$nemoclaw <name> inference get
 
 `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
 When that registry contains the named sandbox, the command resolves its recorded gateway and reads that gateway-wide route.
+For a compatible custom provider, the named sandbox's registry row supplies the endpoint URL.
 The command does not search registries for other gateway ports.
 OpenShell exposes one inference route to every sandbox registered on the same gateway.
 

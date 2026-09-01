@@ -20,9 +20,11 @@ function createDeps(
   log: ReturnType<typeof vi.fn>;
   captureOpenshell: ReturnType<typeof vi.fn>;
   getSandboxTargetGatewayName: ReturnType<typeof vi.fn>;
+  listSandboxes: ReturnType<typeof vi.fn>;
 } {
   const captureOpenshell = vi.fn(() => ({ status, output }));
   const getSandboxTargetGatewayName = vi.fn(() => "nemoclaw");
+  const listSandboxes = vi.fn(() => []);
   const log = vi.fn();
   return {
     captureOpenshell: captureOpenshell as unknown as InferenceGetDeps["captureOpenshell"] &
@@ -30,8 +32,25 @@ function createDeps(
     getSandboxTargetGatewayName:
       getSandboxTargetGatewayName as unknown as InferenceGetDeps["getSandboxTargetGatewayName"] &
         ReturnType<typeof vi.fn>,
+    listSandboxes: listSandboxes as unknown as InferenceGetDeps["listSandboxes"] &
+      ReturnType<typeof vi.fn>,
     log: log as unknown as InferenceGetDeps["log"] & ReturnType<typeof vi.fn>,
   };
+}
+
+function recordRoute(
+  deps: ReturnType<typeof createDeps>,
+  route: { endpointUrl: string; model?: string; name?: string; provider: string },
+): void {
+  const name = route.name ?? "custom";
+  deps.listSandboxes.mockReturnValue([
+    {
+      name,
+      provider: route.provider,
+      model: route.model ?? "custom/model",
+      endpointUrl: route.endpointUrl,
+    },
+  ]);
 }
 
 describe("runInferenceGet", () => {
@@ -62,6 +81,84 @@ describe("runInferenceGet", () => {
       provider: "openai-api",
       model: "gpt-5.4",
     });
+  });
+
+  it("prints the persisted compatible endpoint in human-readable output (#10784)", async () => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+    );
+    recordRoute(deps, {
+      provider: "compatible-endpoint",
+      endpointUrl: "https://inference.example.test/v1",
+    });
+
+    await expect(runInferenceGet({ sandboxName: "custom" }, deps)).resolves.toEqual({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: "https://inference.example.test/v1",
+    });
+    expect(deps.log.mock.calls.map(([line]) => line)).toEqual([
+      "Provider: compatible-endpoint",
+      "Model:    custom/model",
+      "Endpoint: https://inference.example.test/v1",
+    ]);
+  });
+
+  it.each(["compatible-endpoint", "compatible-anthropic-endpoint"])(
+    "includes the persisted endpoint in JSON output for %s (#10784)",
+    async (provider) => {
+      const deps = createDeps(
+        `Gateway inference:\n  Provider: ${provider}\n  Model: custom/model\n`,
+      );
+      recordRoute(deps, {
+        provider,
+        endpointUrl: "https://inference.example.test/v1",
+      });
+
+      await runInferenceGet({ json: true }, deps);
+
+      expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({
+        provider,
+        model: "custom/model",
+        endpointUrl: "https://inference.example.test/v1",
+      });
+    },
+  );
+
+  it("omits a persisted endpoint for a managed provider (#10784)", async () => {
+    const deps = createDeps("Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/model\n");
+    recordRoute(deps, {
+      name: "managed",
+      provider: "nvidia-prod",
+      model: "nvidia/model",
+      endpointUrl: "https://managed.example.test/v1",
+    });
+
+    await expect(runInferenceGet({ json: true }, deps)).resolves.toEqual({
+      provider: "nvidia-prod",
+      model: "nvidia/model",
+    });
+    expect(JSON.parse(deps.log.mock.calls[0][0])).toEqual({
+      provider: "nvidia-prod",
+      model: "nvidia/model",
+    });
+    expect(deps.listSandboxes).not.toHaveBeenCalled();
+  });
+
+  it("omits a credential-bearing compatible endpoint (#10784)", async () => {
+    const deps = createDeps(
+      "Gateway inference:\n  Provider: compatible-endpoint\n  Model: custom/model\n",
+    );
+    recordRoute(deps, {
+      provider: "compatible-endpoint",
+      endpointUrl: "https://operator:secret@inference.example.test/v1?token=secret",
+    });
+
+    await expect(runInferenceGet({ json: true, sandboxName: "custom" }, deps)).resolves.toEqual({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+    });
+    expect(deps.log.mock.calls[0][0]).not.toContain("secret");
   });
 
   it("queries the gateway recorded for the sandbox (#10671)", async () => {

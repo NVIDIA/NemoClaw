@@ -4,8 +4,13 @@
 import { captureOpenshell } from "../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { sanitizeRouteValueForDisplay } from "../inference/config";
+import { safePersistedCompatibleEndpointUrl } from "../inference/gateway-route-compatibility";
 import { getLiveGatewayInference } from "../inference/live";
-import { getSandboxTargetGatewayName } from "./sandbox/gateway-target";
+import {
+  getPersistedSandboxTargetGatewayName,
+  getSandboxTargetGatewayName,
+  listPersistedSandboxTargets,
+} from "./sandbox/gateway-target";
 
 export interface InferenceGetOptions {
   cliName?: string;
@@ -17,11 +22,13 @@ export interface InferenceGetOptions {
 export interface InferenceGetResult {
   provider: string | null;
   model: string | null;
+  endpointUrl?: string;
 }
 
 export interface InferenceGetDeps {
   captureOpenshell: typeof captureOpenshell;
   getSandboxTargetGatewayName: typeof getSandboxTargetGatewayName;
+  listSandboxes: typeof listPersistedSandboxTargets;
   log: (message?: string) => void;
 }
 
@@ -39,8 +46,47 @@ function defaultDeps(): InferenceGetDeps {
   return {
     captureOpenshell,
     getSandboxTargetGatewayName,
+    listSandboxes: listPersistedSandboxTargets,
     log: console.log,
   };
+}
+
+const COMPATIBLE_CUSTOM_PROVIDERS = new Set([
+  "compatible-endpoint",
+  "compatible-anthropic-endpoint",
+]);
+
+function getPersistedEndpointUrl(
+  provider: string | null,
+  gatewayName: string,
+  sandboxName: string | undefined,
+  deps: InferenceGetDeps,
+): string | null {
+  if (!provider || !COMPATIBLE_CUSTOM_PROVIDERS.has(provider)) return null;
+
+  let sandboxes: ReturnType<InferenceGetDeps["listSandboxes"]>;
+  try {
+    sandboxes = deps.listSandboxes();
+  } catch {
+    return null;
+  }
+
+  const matchingEndpoints: Array<string | null> = [];
+  for (const sandbox of sandboxes) {
+    if (sandboxName && sandbox.name !== sandboxName) continue;
+    if (sandbox.provider !== provider) continue;
+    try {
+      if (getPersistedSandboxTargetGatewayName(sandbox) !== gatewayName) continue;
+    } catch {
+      continue;
+    }
+    matchingEndpoints.push(safePersistedCompatibleEndpointUrl(sandbox.endpointUrl));
+  }
+
+  const endpointUrl = matchingEndpoints[0];
+  return endpointUrl && matchingEndpoints.every((candidate) => candidate === endpointUrl)
+    ? endpointUrl
+    : null;
 }
 
 export async function runInferenceGet(
@@ -70,9 +116,16 @@ export async function runInferenceGet(
     );
   }
 
-  const payload = {
+  const endpointUrl = getPersistedEndpointUrl(
+    result.inference.provider,
+    gatewayName,
+    options.sandboxName,
+    deps,
+  );
+  const payload: InferenceGetResult = {
     provider: result.inference.provider,
     model: result.inference.model,
+    ...(endpointUrl ? { endpointUrl } : {}),
   };
   if (!options.quiet) {
     if (options.json) {
@@ -80,6 +133,9 @@ export async function runInferenceGet(
     } else {
       deps.log(`Provider: ${formatRouteValueForDisplay(payload.provider)}`);
       deps.log(`Model:    ${formatRouteValueForDisplay(payload.model)}`);
+      if (payload.endpointUrl) {
+        deps.log(`Endpoint: ${formatRouteValueForDisplay(payload.endpointUrl)}`);
+      }
     }
   }
 

@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { canonicalEndpoint, type EndpointFlavor } from "../core/url-utils";
+import {
+  canonicalEndpoint,
+  type EndpointFlavor,
+  unsafeEndpointUrlViolation,
+} from "../core/url-utils";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import {
   isPublishedSandboxRegistration,
@@ -98,6 +102,13 @@ function configuredRoute(route: GatewayInferenceRoute): { provider: string; mode
 
 function endpointFlavor(provider: string): EndpointFlavor {
   return provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai";
+}
+
+export function safePersistedCompatibleEndpointUrl(
+  value: string | null | undefined,
+): string | null {
+  if (typeof value !== "string" || unsafeEndpointUrlViolation(value)) return null;
+  return value.trim() || null;
 }
 
 function normalizedInferenceApi(value: unknown): string | null {

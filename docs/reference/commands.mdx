@@ -3070,6 +3070,7 @@ When at least one sandbox is registered and the named NemoClaw gateway is unreac
 ### `$$nemoclaw inference get`
 
 Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway that `NEMOCLAW_GATEWAY_PORT` selects.
+For a compatible custom provider, also show the persisted endpoint URL when the selected gateway's matching registry metadata is safe and unambiguous.
 Use this command when you want the direct runtime route without the rest of the sandbox status output.
 It is also available in sandbox-first form as `$$nemoclaw <name> inference get`.
 
@@ -3077,6 +3078,11 @@ It is also available in sandbox-first form as `$$nemoclaw <name> inference get`.
 $$nemoclaw inference get
 $$nemoclaw inference get --json
 ```
+
+Text output adds `Endpoint` for `compatible-endpoint` and `compatible-anthropic-endpoint` under that condition.
+JSON output adds `endpointUrl` under the same condition.
+Managed providers keep the existing provider-and-model output.
+NemoClaw omits a persisted URL that contains userinfo, a query, a fragment, or control characters.
 
 For the sandbox-first grammar, `NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
 When that registry contains `<name>`, the command resolves the sandbox's recorded gateway and reads that gateway's live route.

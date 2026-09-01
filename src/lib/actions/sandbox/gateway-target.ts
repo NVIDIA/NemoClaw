@@ -13,6 +13,10 @@ export function getKnownSandboxTarget(sandboxName: string): registry.SandboxEntr
   return registry.getSandbox(sandboxName);
 }
 
+export function listPersistedSandboxTargets(): registry.SandboxEntry[] {
+  return registry.listSandboxes().sandboxes;
+}
+
 export function getKnownSandboxTargetGatewayName(sandboxName = ""): string | null {
   const sb = sandboxName ? getKnownSandboxTarget(sandboxName) : null;
   return sb ? resolveSandboxGatewayName(sb) : null;
