@@ -253,6 +253,33 @@ function sameStat(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
   );
 }
 /**
+ * Name the property that makes a portable authority directory unsafe.
+ *
+ * One message covered all six conditions, so an operator could not tell which
+ * check failed or how to correct it. The mode check is the one an ordinary
+ * `mkdir -p` reaches, so it carries its own remedy (#10740).
+ */
+function unsafeAuthorityDirectoryReason(
+  before: fs.BigIntStats,
+  named: fs.BigIntStats,
+  uid: number | undefined,
+  permitAnyMode: boolean,
+  directory: string,
+): string | null {
+  if (uid === undefined) return "The current process has no user id.";
+  if (!before.isDirectory()) return "The path is not a directory.";
+  if (named.isSymbolicLink()) return "The path is a symbolic link.";
+  if (!sameStat(before, named)) return "The path changed while it was being read.";
+  if (before.uid !== BigInt(uid)) return "The directory is not owned by the current user.";
+  if (!permitAnyMode && (before.mode & 0o777n) !== 0o700n) {
+    const mode = (before.mode & 0o777n).toString(8).padStart(4, "0");
+    return `The directory must be owner-private (mode 0700) but is ${mode}. Run \`chmod 700 ${directory}\`, or remove it if this host runs no portable install.`;
+  }
+  if (before.nlink < 1n) return "The directory has no links.";
+  return null;
+}
+
+/**
  * Read one portable authority directory.
  *
  * `permitAnyMode` is for the uninstall leftover check alone, which reads a
@@ -274,16 +301,8 @@ export function readPortableAuthorityDirectory(
     const before = fs.fstatSync(descriptor, { bigint: true });
     const named = fs.lstatSync(directory, { bigint: true });
     const uid = process.getuid?.();
-    if (
-      uid === undefined ||
-      !before.isDirectory() ||
-      named.isSymbolicLink() ||
-      !sameStat(before, named) ||
-      before.uid !== BigInt(uid) ||
-      (!permitAnyMode && (before.mode & 0o777n) !== 0o700n) ||
-      before.nlink < 1n
-    )
-      throw new Error(`Unsafe portable authority directory: ${directory}`);
+    const reason = unsafeAuthorityDirectoryReason(before, named, uid, permitAnyMode, directory);
+    if (reason) throw new Error(`Unsafe portable authority directory: ${directory}. ${reason}`);
     const entries = fs.readdirSync(directory).sort();
     if (entries.length > MAX_DIRECTORY_ENTRIES)
       throw new Error(`Portable authority directory has too many entries: ${directory}`);
