@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  openClawAgentResponseRecord,
+  parseOpenClawJsonDocuments,
+} from "../../../src/lib/openclaw/agent-json-provenance.ts";
 import { sandboxCommandEnvironment } from "../fixtures/environment-profiles.ts";
+import { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 
 export interface SnapshotInferenceFixture {
   apiKey: string;
@@ -13,6 +18,7 @@ export type SnapshotGatewayProbeClassification =
   | "authenticated"
   | "command-failure"
   | "empty-output"
+  | "invalid-response"
   | "embedded-fallback"
   | "gateway-connect-failure"
   | "scope-upgrade-pending"
@@ -61,6 +67,18 @@ const SNAPSHOT_GATEWAY_PROBE_REJECTIONS: ReadonlyArray<{
   },
 ];
 
+function isSuccessfulSnapshotGatewayResponse(raw: string): boolean {
+  const documents = parseOpenClawJsonDocuments(raw);
+  for (let index = documents.length - 1; index >= 0; index -= 1) {
+    const document = documents[index];
+    if (!openClawAgentResponseRecord(document)) continue;
+    const envelope = document as Record<string, unknown>;
+    if (Object.hasOwn(envelope, "status") && envelope.status !== "ok") return false;
+    return parseOpenClawAgentText(JSON.stringify(document) ?? "").trim().length > 0;
+  }
+  return false;
+}
+
 export function classifySnapshotGatewayProbe(result: {
   exitCode: number | null;
   stdout: string;
@@ -71,7 +89,7 @@ export function classifySnapshotGatewayProbe(result: {
   if (rejection) return rejection.classification;
   if (result.exitCode !== 0) return "command-failure";
   if (!output.trim()) return "empty-output";
-  return "authenticated";
+  return isSuccessfulSnapshotGatewayResponse(result.stdout) ? "authenticated" : "invalid-response";
 }
 export function classifySnapshotRestoreResult(result: {
   exitCode: number | null;

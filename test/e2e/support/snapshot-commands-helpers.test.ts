@@ -98,9 +98,34 @@ describe("snapshot commands live env helper", () => {
 
 describe("snapshot restored-gateway probe classification", () => {
   it.each([
-    [{ exitCode: 0, stdout: '{"ok":true}', stderr: "" }, "authenticated"],
+    [
+      {
+        exitCode: 0,
+        stdout: '{"status":"ok","result":{"payloads":[{"text":"pong"}],"meta":{}}}',
+        stderr: "",
+      },
+      "authenticated",
+    ],
+    [
+      {
+        exitCode: 0,
+        stdout: '{"payloads":[{"text":"pong"}],"meta":{}}',
+        stderr: "",
+      },
+      "authenticated",
+    ],
     [{ exitCode: 1, stdout: "", stderr: "opaque command failure" }, "command-failure"],
     [{ exitCode: 0, stdout: "", stderr: "" }, "empty-output"],
+    [{ exitCode: 0, stdout: "not authenticated secret-output", stderr: "" }, "invalid-response"],
+    [
+      {
+        exitCode: 0,
+        stdout:
+          '{"status":"error","result":{"payloads":[{"text":"secret-output"}],"meta":{}}}',
+        stderr: "",
+      },
+      "invalid-response",
+    ],
     [{ exitCode: 0, stdout: "EMBEDDED FALLBACK secret-output", stderr: "" }, "embedded-fallback"],
     [
       { exitCode: 1, stdout: "", stderr: "gateway connect failed token=secret-output" },
