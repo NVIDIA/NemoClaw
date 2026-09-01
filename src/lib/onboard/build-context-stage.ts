@@ -114,6 +114,19 @@ export function stageCreateSandboxBuildContext(
         cleanupBuildCtx: createCleanupBuildContext(build.buildCtx),
       };
     }
+    const defaultDockerfile = path.join(input.root, "Dockerfile");
+    if (!input.agent && isSameFile(fromResolved, defaultDockerfile)) {
+      log(`  Using trusted OpenClaw Dockerfile: ${fromResolved}`);
+      log("  Staging the repository root as the managed OpenClaw build context.");
+      build = (input.stageDefaultSandboxBuildContext ?? stageOptimizedSandboxBuildContext)(
+        input.root,
+      );
+      return {
+        ...build,
+        origin: "generated",
+        cleanupBuildCtx: createCleanupBuildContext(build.buildCtx),
+      };
+    }
     const buildContextDir = path.dirname(fromResolved);
     if (isInsideIgnoredCustomBuildContextPath(buildContextDir)) {
       error(`  Custom Dockerfile is inside an ignored build-context path: ${buildContextDir}`);
