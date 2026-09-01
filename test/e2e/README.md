@@ -277,8 +277,10 @@ npx tsx tools/e2e/credential-free-tests.mts
 OpenShell target work in issue #9872. The trusted workflow downloads and
 verifies the exact OpenShell SDK archive with package-read permission. The
 candidate job receives the archive but no package credential. It calls a local
-OpenShell 0.0.106 gateway over HTTPS with an explicit CA. The target does not
-read an authentication file or make an authenticated gateway call.
+OpenShell 0.0.106 gateway over HTTPS with an explicit CA. The target confirms
+that its configured authentication file path does not exist before and after
+the health request. A successful request proves that public health does not
+require a credential read or make an authenticated gateway call.
 
 Use `jobs=external-gateway-health` for the manual pull request E2E run. The
 target records the expected release, reported release, public health status,

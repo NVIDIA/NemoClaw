@@ -24,7 +24,7 @@
       "src/lib/messaging/channels/index.ts": 25,
       "src/lib/onboard/gateway-binding.ts": 53,
       "src/lib/runner.ts": 85,
-      "src/lib/security/redact.ts": 54,
+      "src/lib/security/redact.ts": 55,
       "src/lib/state/mcp-lifecycle-lock.ts": 21,
       "src/lib/state/onboard-session.ts": 35,
       "src/lib/state/registry.ts": 97,

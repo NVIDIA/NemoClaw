@@ -15,6 +15,7 @@ import { catalogueTarget, E2E_TARGET_CATALOGUE } from "./target-catalogue.mts";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const DEFAULT_ADVISOR_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
+const CLI_ARTIFACT_PACKAGE_SCRIPT = "scripts/e2e/package-cli-artifact.sh";
 const META_JOBS = new Set([
   "package-openshell-sdk",
   "native-runtime-qualification-podman-toolchain",
@@ -343,15 +344,21 @@ function validateManualPrDispatch(errors: string[], workflow: OperationsWorkflow
 
   const packageCli = packageIndex >= 0 ? steps[packageIndex] : {};
   const packageSource = String(packageCli.run ?? "");
+  const packageScriptSource = readFileSync(join(REPO_ROOT, CLI_ARTIFACT_PACKAGE_SCRIPT), "utf8");
   if (
     packageIndex <= prepareIndex ||
     packageCli.env?.MANAGED_IMAGE_CATALOG !==
       "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog }}" ||
     packageCli.env?.MANAGED_IMAGE_CATALOG_SHA256 !==
       "${{ steps.resolve_pr_managed_image_catalog.outputs.catalog_sha256 }}" ||
-    !packageSource.includes('managed_catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"') ||
-    !packageSource.includes("trusted PR managed-image catalog changed after authentication") ||
-    !packageSource.includes("packaged PR managed-image catalog does not match trusted output")
+    packageSource !== CLI_ARTIFACT_PACKAGE_SCRIPT ||
+    !packageScriptSource.includes(
+      'managed_catalog="${RUNNER_TEMP}/pr-managed-image-catalog.json"',
+    ) ||
+    !packageScriptSource.includes(
+      "trusted PR managed-image catalog changed after authentication",
+    ) ||
+    !packageScriptSource.includes("packaged PR managed-image catalog does not match trusted output")
   ) {
     errors.push("Manual PR managed-image catalog must be sealed into the CLI artifact");
   }
