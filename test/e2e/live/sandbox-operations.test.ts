@@ -193,6 +193,81 @@ async function execInSandbox(
   });
 }
 
+function credentialBoundaryProbeScript(): string {
+  const encodedFixture = Buffer.from(CREDENTIAL_VALUE, "utf8").toString("base64");
+  return `python3 - ${shellQuote(encodedFixture)} <<'PY'
+from pathlib import Path
+import base64
+import os
+import sys
+
+secret = base64.b64decode(sys.argv[1], validate=True)
+
+def contains_secret(path):
+    try:
+        return secret in Path(path).read_bytes()
+    except OSError:
+        return False
+
+environment = b"\\0".join(
+    f"{key}={value}".encode("utf-8", errors="surrogateescape")
+    for key, value in os.environ.items()
+)
+if secret in environment:
+    raise SystemExit(98)
+
+managed_config_files = 0
+for root_text in ("/sandbox/.openclaw", "/etc/nemoclaw", "/tmp"):
+    root = Path(root_text)
+    if not root.exists():
+        continue
+    for path in root.rglob("*"):
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
+                continue
+        except OSError:
+            continue
+        if root_text != "/tmp":
+            managed_config_files += 1
+        if contains_secret(path):
+            raise SystemExit(98)
+
+agent_environment_inspected = False
+for process in Path("/proc").iterdir():
+    if not process.name.isdigit():
+        continue
+    try:
+        command = (process / "cmdline").read_bytes()
+    except OSError:
+        continue
+    if b"openclaw" not in command.lower():
+        continue
+    try:
+        agent_environment = (process / "environ").read_bytes()
+    except OSError:
+        continue
+    agent_environment_inspected = True
+    if secret in command or secret in agent_environment:
+        raise SystemExit(98)
+
+if managed_config_files == 0 or not agent_environment_inspected:
+    raise SystemExit(97)
+PY`;
+}
+
+async function assertCredentialRemainsOutsideSandbox(sandbox: SandboxClient): Promise<void> {
+  const probe = await execInSandbox(
+    sandbox,
+    SANDBOX_A,
+    credentialBoundaryProbeScript(),
+    "tc-sbx-14-sandbox-credential-boundary",
+  );
+  expect(
+    probe.exitCode,
+    "credential fixture must remain absent from sandbox environment and managed runtime configuration",
+  ).toBe(0);
+}
+
 async function assertAgentCanAnswer(
   host: HostCliClient,
   sandboxName: string,
@@ -633,7 +708,7 @@ test(
       id: "sandbox-operations",
       boundary: "repo-cli-openshell-provider-sandbox-attachment",
       contracts: [
-        "TC-SBX-14 credentials add/list/reset crosses the real OpenShell provider boundary, attaches on rebuild, and removes the attachment and provider",
+        "TC-SBX-14 credentials add/list/reset crosses the real OpenShell provider boundary, keeps the credential outside the rebuilt sandbox, and removes the attachment and provider",
       ],
     });
 
@@ -702,6 +777,7 @@ test(
       artifactName: "tc-sbx-14-provider-attached-after-rebuild",
       env: buildAvailabilityProbeEnv(),
     });
+    await assertCredentialRemainsOutsideSandbox(sandbox);
 
     const reset = await resetCredentialProvider(host, "tc-sbx-14-credentials-reset-attached");
     expect(resultText(reset)).toContain(`Removed provider '${CREDENTIAL_PROVIDER}'`);
