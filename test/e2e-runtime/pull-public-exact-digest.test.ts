@@ -12,14 +12,7 @@ const repoRoot = path.resolve(import.meta.dirname, "../..");
 const puller = path.join(repoRoot, "scripts/checks/pull-public-exact-digest.sh");
 const reference = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox@sha256:${"a".repeat(64)}`;
 
-type Scenario =
-  | "anonymous-denied-exhausted"
-  | "anonymous-denied-then-success"
-  | "exhausted"
-  | "near-match"
-  | "success"
-  | "terminal"
-  | "transient-then-success";
+type Scenario = "exit-one-exhausted" | "exit-one-then-success" | "success" | "terminal";
 
 function runPuller(scenario: Scenario, candidateReference = reference) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-pull-"));
@@ -41,21 +34,19 @@ printf '%s\n' "$count" >"$COUNT_FILE"
 printf '%s\n' "$DOCKER_CONFIG" >>"$CONFIG_LOG"
 [ -z "\${DOCKER_AUTH_CONFIG+x}" ] || exit 91
 [ "$*" = "pull --platform linux/amd64 $EXPECTED_REFERENCE" ] || exit 90
-if [ "$SCENARIO" = "anonymous-denied-exhausted" ] || { [ "$SCENARIO" = "anonymous-denied-then-success" ] && [ "$count" -eq 1 ]; }; then
-  echo "denied: permission_denied" >&2
-  exit 44
-fi
 if [ "$SCENARIO" = "terminal" ]; then
   echo "unexpected Docker daemon failure" >&2
   exit 41
 fi
-if [ "$SCENARIO" = "near-match" ]; then
-  echo "ERROR: $EXPECTED_REFERENCE: not found while resolving manifest" >&2
-  exit 43
-fi
-if [ "$SCENARIO" = "exhausted" ] || { [ "$SCENARIO" = "transient-then-success" ] && [ "$count" -eq 1 ]; }; then
-  echo "ERROR: $EXPECTED_REFERENCE: not found" >&2
-  exit 42
+if [ "$SCENARIO" = "exit-one-exhausted" ] || { [ "$SCENARIO" = "exit-one-then-success" ] && [ "$count" -eq 1 ]; }; then
+  case "$count" in
+    1) echo "Error response from daemon: Head registry manifest: denied" >&2 ;;
+    2) echo "denied: permission_denied" >&2 ;;
+    3) echo "manifest unknown while the public package propagates" >&2 ;;
+    4) echo "unexpected status from anonymous HEAD request" >&2 ;;
+    *) echo "failed to resolve exact digest from anonymous GHCR" >&2 ;;
+  esac
+  exit 1
 fi
 echo "pulled $EXPECTED_REFERENCE"
 `,
@@ -112,8 +103,8 @@ describe("pull-public-exact-digest", () => {
     expect(result.stdout).toContain("outcome=passed-first-attempt attempt=1/5");
   });
 
-  it("retries the exact transient GHCR not-found result and removes anonymous state", () => {
-    const result = runPuller("transient-then-success");
+  it("retries an anonymous Docker exit 1 without depending on its raw error shape", () => {
+    const result = runPuller("exit-one-then-success");
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.count).toBe(2);
@@ -121,28 +112,13 @@ describe("pull-public-exact-digest", () => {
     expect(new Set(result.configs).size).toBe(1);
     expect(result.configsWereRemoved).toBe(true);
     expect(result.stderr).toContain(
-      "outcome=transient-external attempt=1/5 failure=not-found retry-in=2s",
+      "outcome=transient-external attempt=1/5 failure=anonymous-unavailable retry-in=2s",
     );
     expect(result.stdout).toContain("outcome=passed-after-retry attempt=2/5");
-    expect(result.stdout + result.stderr).not.toContain(`${reference}: not found`);
+    expect(result.stdout + result.stderr).not.toContain("Head registry manifest: denied");
   });
 
-  it("retries the exact transient anonymous GHCR denial", () => {
-    const result = runPuller("anonymous-denied-then-success");
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.count).toBe(2);
-    expect(result.sleeps).toEqual(["2"]);
-    expect(new Set(result.configs).size).toBe(1);
-    expect(result.configsWereRemoved).toBe(true);
-    expect(result.stderr).toContain(
-      "outcome=transient-external attempt=1/5 failure=anonymous-denied retry-in=2s",
-    );
-    expect(result.stdout).toContain("outcome=passed-after-retry attempt=2/5");
-    expect(result.stdout + result.stderr).not.toContain("permission_denied");
-  });
-
-  it("does not retry a non-exact Docker error", () => {
+  it("does not retry a non-1 Docker exit", () => {
     const result = runPuller("terminal");
 
     expect(result.status).toBe(41);
@@ -153,37 +129,18 @@ describe("pull-public-exact-digest", () => {
     expect(result.stderr).not.toContain("unexpected Docker daemon failure");
   });
 
-  it("does not retry a near-match Docker not-found error", () => {
-    const result = runPuller("near-match");
+  it("fails after the bounded anonymous-unavailable retry schedule is exhausted", () => {
+    const result = runPuller("exit-one-exhausted");
 
-    expect(result.status).toBe(43);
-    expect(result.count).toBe(1);
-    expect(result.sleeps).toEqual([]);
-    expect(result.configsWereRemoved).toBe(true);
-    expect(result.stderr).toContain("outcome=failed-no-retry attempt=1/5 docker-exit=43");
-    expect(result.stderr).not.toContain("while resolving manifest");
-  });
-
-  it("fails after the bounded retry schedule is exhausted", () => {
-    const result = runPuller("exhausted");
-
-    expect(result.status).toBe(42);
-    expect(result.count).toBe(5);
-    expect(result.sleeps).toEqual(["2", "4", "8", "16"]);
-    expect(result.configsWereRemoved).toBe(true);
-    expect(result.stderr).toContain("outcome=exhausted attempt=5/5 failure=not-found");
-  });
-
-  it("fails after the bounded anonymous-denied retry schedule is exhausted", () => {
-    const result = runPuller("anonymous-denied-exhausted");
-
-    expect(result.status).toBe(44);
+    expect(result.status).toBe(1);
     expect(result.count).toBe(5);
     expect(result.sleeps).toEqual(["2", "4", "8", "16"]);
     expect(new Set(result.configs).size).toBe(1);
     expect(result.configsWereRemoved).toBe(true);
-    expect(result.stderr).toContain("outcome=exhausted attempt=5/5 failure=anonymous-denied");
+    expect(result.stderr).toContain("outcome=exhausted attempt=5/5 failure=anonymous-unavailable");
     expect(result.stderr).not.toContain("permission_denied");
+    expect(result.stderr).not.toContain("manifest unknown");
+    expect(result.stderr).not.toContain("anonymous HEAD request");
   });
 
   it("rejects a mutable or non-GHCR reference before Docker runs", () => {
