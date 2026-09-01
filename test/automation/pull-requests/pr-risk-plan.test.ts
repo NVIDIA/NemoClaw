@@ -369,6 +369,17 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiredJobs).toEqual([]);
   });
 
+  it("maps trusted prebuild helper changes to the EXDEV job (#10517)", () => {
+    const changedFile = "test/e2e/live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
+
+    expect(focusedE2eJobsForChangedFiles([changedFile])).toEqual([
+      {
+        id: "openclaw-plugin-runtime-exdev",
+        matchedFiles: [changedFile],
+      },
+    ]);
+  });
+
   it("maps a shared gateway live test to every catalogue fixture (#7921)", () => {
     const changedFiles = ["test/e2e/live/openshell-gateway-upgrade.test.ts"];
     const focusedE2eJobs = catalogueTargetsForChangedFiles(changedFiles).map((target) => ({
