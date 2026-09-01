@@ -39,6 +39,24 @@ export function bindPolicyEndpointCredential(
   protocol: string,
 ): void {
   const source = fs.readFileSync(policyFile, "utf8");
+  const updated = policyDocumentWithEndpointCredentialBinding(
+    source,
+    providerName,
+    host,
+    port,
+    protocol,
+  );
+  fs.writeFileSync(policyFile, updated);
+  fs.chmodSync(policyFile, 0o600);
+}
+
+export function policyDocumentWithEndpointCredentialBinding(
+  source: string,
+  providerName: string,
+  host: string,
+  port: number,
+  protocol: string,
+): string {
   const policy = parseOpenShellPolicy(source).policy;
   const endpoints = Object.values(policy.network_policies ?? {}).flatMap((entry) => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
@@ -60,10 +78,18 @@ export function bindPolicyEndpointCredential(
     );
   }
   const endpoint = matchingEndpoints[0]!;
+  const binding = { provider: providerName };
+  if (
+    Object.hasOwn(endpoint, "credential_binding") &&
+    !isDeepStrictEqual(endpoint.credential_binding, binding)
+  ) {
+    throw new Error(
+      `fake endpoint ${host}:${port}/${protocol} already has a conflicting credential binding`,
+    );
+  }
 
-  endpoint.credential_binding = { provider: providerName };
-  fs.writeFileSync(policyFile, YAML.stringify(policy));
-  fs.chmodSync(policyFile, 0o600);
+  endpoint.credential_binding = binding;
+  return YAML.stringify(policy);
 }
 
 function main(): void {

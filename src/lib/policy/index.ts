@@ -962,7 +962,7 @@ function mergeConcurrentPolicyValue(
   return clonePolicyMergeValue(external);
 }
 
-function rebasePolicyDocumentOntoConcurrentEdit(
+export function rebasePolicyDocumentOntoConcurrentEdit(
   originalDocument: string,
   requestedDocument: string,
   externalDocument: string,

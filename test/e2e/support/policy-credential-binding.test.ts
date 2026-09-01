@@ -51,7 +51,11 @@ function localCommandHost(
 
 function fakeOpenShell(
   policy: string,
-  overrides: { readbackPolicy?: string; recheckPolicy?: string } = {},
+  overrides: {
+    postRecheckConcurrentPolicy?: string;
+    readbackPolicy?: string;
+    recheckPolicy?: string;
+  } = {},
 ): {
   appliedPolicy: string;
   callsFile: string;
@@ -64,11 +68,18 @@ function fakeOpenShell(
   const basePolicy = path.join(tempDir, "base-policy.yaml");
   const appliedPolicy = path.join(tempDir, "applied-policy.yaml");
   const callsFile = path.join(tempDir, "calls");
+  const policyVersion = path.join(tempDir, "policy-version");
   const readbackPolicy = path.join(tempDir, "readback-policy.yaml");
   const recheckPolicy = path.join(tempDir, "recheck-policy.yaml");
+  const concurrentPolicy = path.join(tempDir, "concurrent-policy.yaml");
+  const policyRevisions = path.join(tempDir, "revisions");
   fs.writeFileSync(basePolicy, policy);
+  fs.writeFileSync(policyVersion, "1\n");
   fs.writeFileSync(readbackPolicy, overrides.readbackPolicy ?? policy);
   fs.writeFileSync(recheckPolicy, overrides.recheckPolicy ?? policy);
+  fs.writeFileSync(concurrentPolicy, overrides.postRecheckConcurrentPolicy ?? policy);
+  fs.mkdirSync(policyRevisions);
+  fs.writeFileSync(path.join(policyRevisions, "1"), policy);
   fs.writeFileSync(
     executable,
     [
@@ -76,18 +87,44 @@ function fakeOpenShell(
       "set -eu",
       'case "${1-}:${2-}" in',
       "  policy:get)",
-      `    printf 'get\\n' >>"$FAKE_OPENSHELL_CALLS"`,
-      `    get_count=$(grep -c '^get$' "$FAKE_OPENSHELL_CALLS")`,
-      `    case "$get_count" in`,
-      '      2) source="${FAKE_OPENSHELL_RECHECK_POLICY:-$FAKE_OPENSHELL_BASE_POLICY}" ;;',
-      '      3) source="${FAKE_OPENSHELL_READBACK_POLICY:-$FAKE_OPENSHELL_APPLIED_POLICY}" ;;',
-      `      *) source="$FAKE_OPENSHELL_BASE_POLICY" ;;`,
-      `    esac`,
-      `    cat "$source"`,
+      '    case " $* " in',
+      '      *" --full "*)',
+      `        printf 'metadata\\n' >>"$FAKE_OPENSHELL_CALLS"`,
+      `        version=$(cat "$FAKE_OPENSHELL_POLICY_VERSION")`,
+      '        sandbox="${!#}"',
+      `        printf '{"scope":"sandbox","sandbox":"%s","status":"effective","policy_source":"sandbox","policy":{},"hash":"sha256:fake-%s","active_version":%s}\\n' "$sandbox" "$version" "$version"`,
+      "        ;;",
+      '      *" --rev "*)',
+      `        printf 'revision\\n' >>"$FAKE_OPENSHELL_CALLS"`,
+      `        revision="$4"`,
+      `        cat "$FAKE_OPENSHELL_POLICY_REVISIONS/$revision"`,
+      "        ;;",
+      "      *)",
+      `        printf 'get\\n' >>"$FAKE_OPENSHELL_CALLS"`,
+      `        get_count=$(grep -c '^get$' "$FAKE_OPENSHELL_CALLS")`,
+      `        case "$get_count" in`,
+      `          1) source="$FAKE_OPENSHELL_BASE_POLICY" ;;`,
+      '          2) source="${FAKE_OPENSHELL_RECHECK_POLICY:-$FAKE_OPENSHELL_BASE_POLICY}" ;;',
+      '          3) source="${FAKE_OPENSHELL_READBACK_POLICY:-$FAKE_OPENSHELL_APPLIED_POLICY}" ;;',
+      '          *) source="${FAKE_OPENSHELL_APPLIED_POLICY:-$FAKE_OPENSHELL_BASE_POLICY}" ;;',
+      `        esac`,
+      `        cat "$source"`,
+      "        ;;",
+      "    esac",
       "    ;;",
       "  policy:set)",
       `    printf 'set\\n' >>"$FAKE_OPENSHELL_CALLS"`,
+      `    version=$(cat "$FAKE_OPENSHELL_POLICY_VERSION")`,
+      '    case "${FAKE_OPENSHELL_CONCURRENT_POLICY-}:$version" in',
+      "      ?*:1)",
+      `        version=2`,
+      `        cp "$FAKE_OPENSHELL_CONCURRENT_POLICY" "$FAKE_OPENSHELL_POLICY_REVISIONS/$version"`,
+      "        ;;",
+      "    esac",
+      `    version=$((version + 1))`,
       `    cp "$4" "$FAKE_OPENSHELL_APPLIED_POLICY"`,
+      `    cp "$4" "$FAKE_OPENSHELL_POLICY_REVISIONS/$version"`,
+      `    printf '%s\\n' "$version" >"$FAKE_OPENSHELL_POLICY_VERSION"`,
       "    ;;",
       "  *)",
       "    exit 64",
@@ -104,6 +141,11 @@ function fakeOpenShell(
       FAKE_OPENSHELL_APPLIED_POLICY: appliedPolicy,
       FAKE_OPENSHELL_BASE_POLICY: basePolicy,
       FAKE_OPENSHELL_CALLS: callsFile,
+      FAKE_OPENSHELL_POLICY_REVISIONS: policyRevisions,
+      FAKE_OPENSHELL_POLICY_VERSION: policyVersion,
+      ...(overrides.postRecheckConcurrentPolicy
+        ? { FAKE_OPENSHELL_CONCURRENT_POLICY: concurrentPolicy }
+        : {}),
       ...(overrides.readbackPolicy ? { FAKE_OPENSHELL_READBACK_POLICY: readbackPolicy } : {}),
       ...(overrides.recheckPolicy ? { FAKE_OPENSHELL_RECHECK_POLICY: recheckPolicy } : {}),
     },
@@ -124,6 +166,22 @@ function endpointPolicy(protocols: string[]): string {
     ]),
     "",
   ].join("\n");
+}
+
+function endpointPolicyWithConcurrentEntry(): string {
+  const policy = YAML.parse(endpointPolicy(["rest", "websocket"]));
+  policy.network_policies.concurrent_host_edit = {
+    endpoints: [{ host: "concurrent.example.com", port: 443 }],
+  };
+  return YAML.stringify(policy);
+}
+
+function endpointPolicyWithConflictingBinding(): string {
+  const policy = YAML.parse(endpointPolicy(["rest", "websocket"]));
+  policy.network_policies.fake.endpoints[0].credential_binding = {
+    provider: "external-policy-provider",
+  };
+  return YAML.stringify(policy);
 }
 
 function runBinding(policyFile: string, protocol = "websocket") {
@@ -311,9 +369,11 @@ describe("binds a credential to exactly one policy endpoint", () => {
       });
 
       expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual([
+        "metadata",
         "get",
         "get",
         "set",
+        "metadata",
         "get",
       ]);
       const endpoints = YAML.parse(fs.readFileSync(fake.appliedPolicy, "utf8")).network_policies
@@ -345,7 +405,7 @@ describe("binds a credential to exactly one policy endpoint", () => {
       }),
     ).rejects.toThrow("matches 2 base policy entries; expected exactly one");
 
-    expect(fs.readFileSync(fake.callsFile, "utf8").trim()).toBe("get");
+    expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual(["metadata", "get"]);
     expect(fs.existsSync(fake.appliedPolicy)).toBe(false);
   });
 
@@ -368,7 +428,11 @@ describe("binds a credential to exactly one policy endpoint", () => {
       }),
     ).rejects.toThrow("sandbox base policy changed while preparing the credential binding");
 
-    expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual(["get", "get"]);
+    expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual([
+      "metadata",
+      "get",
+      "get",
+    ]);
     expect(fs.existsSync(fake.appliedPolicy)).toBe(false);
   });
 
@@ -392,35 +456,74 @@ describe("binds a credential to exactly one policy endpoint", () => {
     ).rejects.toThrow("applied policy did not match the requested credential binding");
 
     expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual([
+      "metadata",
       "get",
       "get",
       "set",
+      "metadata",
       "get",
     ]);
   });
 
-  it("maps the shared live transaction to every credential-binding consumer", () => {
-    const manifest = JSON.parse(
-      fs.readFileSync(path.resolve(import.meta.dirname, "../mock-parity.json"), "utf8"),
-    ) as {
-      entries: Array<{ fast?: string[]; live: string; liveSources?: string[] }>;
-    };
-    const consumers = [
-      "test/e2e/live/hermes-discord.test.ts",
-      "test/e2e/live/messaging-providers.test.ts",
-      "test/e2e/live/openclaw-discord-pairing.test.ts",
-      "test/e2e/live/openclaw-slack-pairing.test.ts",
-    ];
+  it("preserves an unrelated policy edit that races the final recheck and policy set", async () => {
+    const fake = fakeOpenShell(endpointPolicy(["rest", "websocket"]), {
+      postRecheckConcurrentPolicy: endpointPolicyWithConcurrentEntry(),
+    });
 
-    expect(
-      consumers.map((live) => {
-        const entry = manifest.entries.find((candidate) => candidate.live === live);
-        return {
-          fast: entry?.fast?.includes("test/e2e/support/policy-credential-binding.test.ts"),
-          live,
-          source: entry?.liveSources?.includes("test/e2e/live/policy-credential-binding.ts"),
-        };
+    await applyPolicyCredentialBinding({
+      host: localCommandHost(fake.executable),
+      sandboxName: "e2e-policy-transaction",
+      providerName: "e2e-policy-provider",
+      endpointHost: "host.docker.internal",
+      endpointPort: 43117,
+      protocol: "rest",
+      env: fake.env,
+      redactionValues: [],
+      artifactName: "bind-policy-after-concurrent-edit",
+    });
+
+    const applied = YAML.parse(fs.readFileSync(fake.appliedPolicy, "utf8"));
+    expect(applied.network_policies).toHaveProperty("concurrent_host_edit");
+    expect(applied.network_policies.fake.endpoints[0]).toHaveProperty("credential_binding", {
+      provider: "e2e-policy-provider",
+    });
+    expect(fs.readFileSync(fake.callsFile, "utf8").trim().split("\n")).toEqual([
+      "metadata",
+      "get",
+      "get",
+      "set",
+      "metadata",
+      "get",
+      "revision",
+      "get",
+      "set",
+      "metadata",
+      "get",
+    ]);
+  });
+
+  it("restores a conflicting policy edit that races the final recheck and fails closed", async () => {
+    const fake = fakeOpenShell(endpointPolicy(["rest", "websocket"]), {
+      postRecheckConcurrentPolicy: endpointPolicyWithConflictingBinding(),
+    });
+
+    await expect(
+      applyPolicyCredentialBinding({
+        host: localCommandHost(fake.executable),
+        sandboxName: "e2e-policy-transaction",
+        providerName: "e2e-policy-provider",
+        endpointHost: "host.docker.internal",
+        endpointPort: 43117,
+        protocol: "rest",
+        env: fake.env,
+        redactionValues: [],
+        artifactName: "reject-conflicting-concurrent-policy-binding",
       }),
-    ).toEqual(consumers.map((live) => ({ fast: true, live, source: true })));
+    ).rejects.toThrow("restored the external policy and refused the conflicting binding");
+
+    const applied = YAML.parse(fs.readFileSync(fake.appliedPolicy, "utf8"));
+    expect(applied.network_policies.fake.endpoints[0]).toHaveProperty("credential_binding", {
+      provider: "external-policy-provider",
+    });
   });
 });
