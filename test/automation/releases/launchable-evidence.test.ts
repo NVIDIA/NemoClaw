@@ -215,7 +215,7 @@ describe("Launchable evidence inspection", () => {
     });
     expect(runCli(["--candidate", SHA], reader(undefined, undefined, artifact))).toBe(1);
     expect(String(stderr.mock.calls.at(-1)?.[0])).toContain(
-      `workspace=workspace id=ws-1 status=${status} checkedAt=${expected}`,
+      `run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=workspace id=ws-1 status=${status} checkedAt=${expected}`,
     );
   });
   it.each([
@@ -230,7 +230,7 @@ describe("Launchable evidence inspection", () => {
       ),
     ).toBe(1);
     expect(String(stderr.mock.calls.at(-1)?.[0])).toContain(
-      `cleanup ${reason}: workspace=workspace id=ws-1 status=<missing> checkedAt=<missing>`,
+      `cleanup ${reason}: run=10 attempt=2 job=20 artifact=staging-brev-launchable-${SHA}-10-2 workspace=workspace id=ws-1 status=<missing> checkedAt=<missing>`,
     );
   });
 });

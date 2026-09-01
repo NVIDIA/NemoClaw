@@ -76,9 +76,33 @@ Return:
 - full E2E result; and
 - verified cleanup time.
 
-If cleanup is not confirmed, the error reports the workspace name, ID, status, and check time.
-Report that recovery handoff and stop. Do not remove the workspace unless the recovery procedure
-validates workflow ownership. Rotate or revoke `NVIDIA_INFERENCE_API_KEY`, which candidate code in
-the guest could read. Rotate or revoke the host-side `BREV_API_KEY` and
-`NEMOCLAW_IMAGE_DISPATCH_TOKEN` if the trusted host boundary was compromised.
-Do not report successful Launchable evidence until absence is confirmed.
+If cleanup is not confirmed, the error reports the run, attempt, job, artifact, workspace name and ID,
+status, and check time. Follow the recovery procedure below. Do not report successful Launchable
+evidence until absence is confirmed.
+
+## Recover Incomplete Cleanup
+
+Only a maintainer with access to the repository's Brev organization may perform this procedure.
+
+1. Open the reported run in `NVIDIA/NemoClaw`. Confirm that its workflow is `E2E`, its event is
+   `workflow_dispatch`, its branch is `main`, and the reported attempt contains job
+   `Exact staging Brev Launchable`.
+2. Download the reported artifact from that run attempt. Its name must be
+   `staging-brev-launchable-<candidate>-<run-id>-<attempt>`. In `launchable-e2e.json`, require
+   `candidateSha` to equal the candidate and require `workspace.name` and `workspace.id` to equal
+   the reported values. The workspace name must also equal `nclaw-e2e-<run-id>-<attempt>`.
+3. Authenticate the Brev CLI to the repository's Brev organization through the maintainer-approved
+   credential path. Run `brev ls --json`. Permit deletion only when exactly one row has both the
+   reported name and ID. If the row is absent, skip deletion. If the inventory is unavailable,
+   ambiguous, or differs by name or ID, prohibit deletion and escalate the handoff to the Brev
+   organization owner.
+4. When deletion is permitted, run `brev delete <reported-workspace-name>`. Refresh and read
+   `brev ls --json` until two consecutive successful inventories contain no row with either the
+   reported name or ID. Do not retry deletion after the single request.
+5. Record the run URL, attempt, job URL, artifact name, candidate SHA, workspace name and ID, deletion
+   decision, both final inventory check times, and final state in the release or incident handoff.
+6. Rotate or revoke `NVIDIA_INFERENCE_API_KEY`, which candidate code in the guest could read. Rotate
+   or revoke the host-side `BREV_API_KEY` and `NEMOCLAW_IMAGE_DISPATCH_TOKEN` only if the trusted
+   host boundary was compromised.
+
+A missing or malformed artifact never authorizes deletion.

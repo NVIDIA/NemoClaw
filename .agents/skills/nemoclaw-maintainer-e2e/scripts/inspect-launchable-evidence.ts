@@ -174,7 +174,9 @@ export function validateLaunchableEvidence(
   const name = text(workspace.name, "workspace.name"),
     id = text(workspace.id, "workspace.id"),
     recovery = (reason: string, status = "<missing>", checkedAt = "<missing>"): never =>
-      fail(`cleanup ${reason}: workspace=${name} id=${id} status=${status} checkedAt=${checkedAt}`);
+      fail(
+        `cleanup ${reason}: run=${selection.run.id} attempt=${selection.run.run_attempt} job=${selection.job.id} artifact=${artifactName} workspace=${name} id=${id} status=${status} checkedAt=${checkedAt}`,
+      );
   let cleanup: JsonRecord;
   try {
     cleanup = json(files["cleanup.json"], "cleanup.json");
