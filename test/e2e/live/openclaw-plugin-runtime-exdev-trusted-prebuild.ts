@@ -18,7 +18,7 @@ import {
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../../../src/lib/sandbox/build-context.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
-import { resultText, shellQuote } from "../fixtures/clients/command.ts";
+import { assertExitZero, resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   createOpenShellDriverConfigTestWrapper,
@@ -154,6 +154,26 @@ export function registerTrustedPluginFixtureImageCleanup(options: {
       images.push({ imageRef, version });
     },
   };
+}
+
+export function registerTrustedPluginFixtureGatewayCleanup(options: {
+  cleanup: CleanupRegistry;
+  environment: NodeJS.ProcessEnv;
+  host: Pick<HostCliClient, "command">;
+  openshellPath: string;
+}): void {
+  options.cleanup.add("destroy trusted EXDEV fixture gateway nemoclaw", async () => {
+    const result = await options.host.command(
+      options.openshellPath,
+      ["gateway", "destroy", "-g", "nemoclaw"],
+      {
+        artifactName: "cleanup-trusted-exdev-gateway-nemoclaw",
+        env: options.environment,
+        timeoutMs: 60_000,
+      },
+    );
+    assertExitZero(result, "destroy trusted EXDEV fixture gateway nemoclaw");
+  });
 }
 
 export function acceptTrustedPluginFixturePrebuild(options: {

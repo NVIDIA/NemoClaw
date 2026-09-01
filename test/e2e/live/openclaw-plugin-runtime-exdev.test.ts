@@ -28,6 +28,7 @@ import { assertOpenShellGatewayStopResult } from "./openshell-gateway-stop.ts";
 import {
   buildTrustedPluginFixtureImage,
   createOpenShellTrustedImageWrapper,
+  registerTrustedPluginFixtureGatewayCleanup,
   registerTrustedPluginFixtureImageCleanup,
 } from "./openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
 import {
@@ -456,6 +457,12 @@ test(
       host,
       path.join(REPO_ROOT, "scripts", "install-openshell.sh"),
     );
+    registerTrustedPluginFixtureGatewayCleanup({
+      cleanup,
+      environment: liveEnv(),
+      host,
+      openshellPath: openshell.cli,
+    });
     const openshellWrapper = createOpenShellTrustedImageWrapper({
       driverConfigJson: EXDEV_TMPFS_DRIVER_CONFIG,
       realOpenshellPath: openshell.cli,
