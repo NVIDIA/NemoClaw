@@ -19,6 +19,7 @@ import {
   type RuntimeProviderWorkloadCleanupResult,
   requireRuntimeProviderDestructiveCleanupAuthority,
 } from "./runtime-provider/access";
+import { cliName } from "./branding";
 import type { SandboxCreateIntent } from "./types";
 
 const ORDERED_PHASES: readonly CheckpointSandboxRecreatePhase[] = [
@@ -45,6 +46,28 @@ export type ReplacedSandboxSourceEntry = Omit<SandboxEntry, "workload"> & {
         readonly shared: boolean;
       };
 };
+
+/** Format recovery detail without authorizing mutable-name deletion or an unsafe retry. */
+export function formatRetainedSandboxRecoveryDetail(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly sandboxIdentityFingerprint: string | null;
+}): string {
+  if (!input.sandboxIdentityFingerprint) {
+    return (
+      `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. Gateway '${input.gatewayName}'. ` +
+      "OpenShell did not return one exact durable sandbox identity for this create attempt. " +
+      "Do not delete a sandbox by mutable name; preserve it until an OpenShell administrator resolves the create-attempt label to one sandbox."
+    );
+  }
+  return (
+    `NemoClaw stopped before owning-gateway publication and identity verification completed for sandbox '${input.sandboxName}' through gateway '${input.gatewayName}'. ` +
+    `Do not delete the sandbox by mutable name. Run '${cliName()} ${input.sandboxName} destroy'. ` +
+    "If OpenShell reports the sandbox present, the command removes nothing and preserves the recovery record. " +
+    "Give the create-attempt label to an OpenShell administrator for identity-bound removal. " +
+    `After OpenShell confirms removal, run '${cliName()} ${input.sandboxName} destroy --yes' to reconcile the recovery record.`
+  );
+}
 
 interface ReplacedSandboxWorkloadCleanupDeps {
   readonly runtimeProviders?: RuntimeProviderBundleRegistry;

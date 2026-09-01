@@ -38,6 +38,7 @@ vi.mock("../../core/version", () => ({
   getVersion: () => "v0.0.0",
 }));
 
+import { mapManagedStartupProfileToAgentEnvironment } from "../managed-startup/agent-environment";
 import {
   createManagedHermesStateVolumeOnboardLifecycle,
   createManagedWorkloadOnboardRuntime,
@@ -182,6 +183,78 @@ describe("managed workload onboard orchestration", () => {
         agentName: "hermes",
       }),
     ).toBe(false);
+  });
+
+  it("keeps the Hermes browser URL separate from its loopback managed forward", () => {
+    const runtime = createManagedWorkloadOnboardRuntime(
+      {
+        computePlan: { driverName: "docker" },
+        managedWorkloadRebuild: null,
+        tempManagedRuntime: false,
+        stockManagedRuntime: true,
+        tempManagedRuntimeCatalog: null,
+        agentName: "hermes",
+        legacyDockerfilePath: "agents/hermes/Dockerfile",
+        customDockerfilePath: null,
+        rootDir: releaseRoot,
+        model: "moonshotai/kimi-k2.6",
+        provider: "nvidia",
+        preferredInferenceApi: null,
+        endpointUrl: null,
+        startupProfile: {
+          chatUiUrl: "https://hermes.example.test:19189",
+          effectiveDashboardPort: 19_189,
+          manageDashboard: true,
+          dashboardBindAddress: undefined,
+          wslExposure: false,
+          hermesDashboardState: {
+            config: {
+              enabled: true,
+              port: 19_189,
+              internalPort: 29_189,
+              tuiEnabled: false,
+            },
+            enabled: true,
+          },
+          webSearch: null,
+          toolDisclosure: "progressive",
+          hermesToolGateways: [],
+          messagingPlan: null,
+          dcodeAutoApprovalMode: "disabled",
+          observabilityEnabled: false,
+          environment: {},
+        },
+        note: vi.fn(),
+        fallbackBuildEstimate: () => null,
+      } as unknown as Parameters<typeof createManagedWorkloadOnboardRuntime>[0],
+      {
+        resolveAgentInferenceApi: vi.fn(() => "openai-completions"),
+        getSandboxInferenceConfig: vi.fn(() => ({
+          providerKey: "inference",
+          inferenceBaseUrl: "https://inference.local/v1",
+          inferenceApi: "openai-completions",
+          primaryModelRef: "inference/moonshotai/kimi-k2.6",
+          inferenceCompat: {},
+        })),
+      },
+    );
+
+    const built = runtime.ensurePreparedProfile({
+      source: { kind: "managed-image" },
+    } as never);
+
+    expect(built?.profile.dashboard).toEqual({
+      agent: "hermes",
+      mode: "loopback-forwarded",
+      url: "http://127.0.0.1:19189",
+      browserUrl: "https://hermes.example.test:19189",
+      publicPort: 19_189,
+      internalPort: 29_189,
+      tuiEnabled: false,
+    });
+    expect(
+      mapManagedStartupProfileToAgentEnvironment(built!.profile).runtimeEnvironment.CHAT_UI_URL,
+    ).toBe("https://hermes.example.test:19189");
   });
 
   it("uses the Dockerfile when the stock managed-image catalog is unavailable", async () => {

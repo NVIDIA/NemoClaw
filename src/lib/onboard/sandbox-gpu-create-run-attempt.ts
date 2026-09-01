@@ -47,7 +47,10 @@ import type {
   SandboxGpuCreateFlowDeps,
   SandboxGpuCreateFlowInput,
 } from "./sandbox-gpu-create-flow";
-import { fingerprintSandboxRecreateValue } from "./sandbox-recreate-transaction";
+import {
+  fingerprintSandboxRecreateValue,
+  formatRetainedSandboxRecoveryDetail,
+} from "./sandbox-recreate-transaction";
 import * as sandboxGpuPreflight from "./sandbox-gpu-preflight";
 import {
   isExplicitMissingSandboxGatewayOutput,
@@ -377,6 +380,8 @@ function persistCreateAttemptRecovery(options: {
   readonly createAttemptNonce: string | null;
   readonly detail: string;
   readonly sandboxIdentityFingerprint?: string;
+  readonly persistenceFailureDiagnostic?: string;
+  readonly persistenceFailureMessage?: string;
 }): void {
   const { input, createAttemptNonce, detail, sandboxIdentityFingerprint } = options;
   if (!createAttemptNonce) {
@@ -397,6 +402,12 @@ function persistCreateAttemptRecovery(options: {
     message,
     createAttemptNonce,
     ...(sandboxIdentityFingerprint ? { sandboxIdentityFingerprint } : {}),
+    ...(options.persistenceFailureDiagnostic
+      ? { persistenceFailureDiagnostic: options.persistenceFailureDiagnostic }
+      : {}),
+    ...(options.persistenceFailureMessage
+      ? { persistenceFailureMessage: options.persistenceFailureMessage }
+      : {}),
   });
 }
 
@@ -407,17 +418,22 @@ function persistIdentitySettlementRecoveryEvidence(options: {
   readonly failureDiagnostic?: string;
 }): void {
   const { input, createAttemptNonce, sandboxIdentityFingerprint } = options;
-  const identityEvidence = sandboxIdentityFingerprint
-    ? `Sandbox '${input.sandboxName}' did not remain visible through owning gateway '${input.gatewayName}' before identity verification completed. `
-    : `Sandbox '${input.sandboxName}' reached Ready before OpenShell returned one exact durable create identity. Gateway '${input.gatewayName}'. OpenShell did not return one exact durable sandbox identity for this create attempt. `;
+  const identityEvidence = formatRetainedSandboxRecoveryDetail({
+    sandboxName: input.sandboxName,
+    gatewayName: input.gatewayName,
+    sandboxIdentityFingerprint,
+  });
   persistCreateAttemptRecovery({
     input,
     createAttemptNonce,
     detail:
-      identityEvidence +
-      (options.failureDiagnostic ? `OpenShell detail: ${options.failureDiagnostic}. ` : "") +
-      "Do not delete a sandbox by mutable name; preserve it until an OpenShell administrator resolves the create-attempt label to one sandbox.",
+      `${identityEvidence} ` +
+      (options.failureDiagnostic ? `OpenShell detail: ${options.failureDiagnostic}.` : ""),
     sandboxIdentityFingerprint: sandboxIdentityFingerprint ?? undefined,
+    persistenceFailureDiagnostic:
+      "  NemoClaw could not save the retained sandbox recovery record for this create attempt. Preserve the terminal output for an OpenShell administrator.",
+    persistenceFailureMessage:
+      "NemoClaw could not save the retained sandbox recovery record for this create attempt.",
   });
 }
 
@@ -908,8 +924,8 @@ export function createSandboxGpuCreateAttemptRunner(
       }
       return sandboxId;
     };
-    const streamCreate = () =>
-      streamSandboxCreateWithPublicImageCredentialIsolation(
+    const streamCreate = async () => {
+      const createResult = await streamSandboxCreateWithPublicImageCredentialIsolation(
         managedBootstrap != null,
         input.sandboxName,
         input.sandboxEnv,
@@ -947,7 +963,9 @@ export function createSandboxGpuCreateAttemptRunner(
                 return failReadyCheckCreatedIdentity("selector-identity-changed");
               }
               readyCheckCreatedSandboxId = observation.sandboxId;
-              return observation.state === "matched";
+              // End only the create-client handoff. Strict metadata settlement still
+              // runs before any post-create effect.
+              return true;
             },
             ...(deferPostCreateEffects
               ? {}
@@ -970,6 +988,22 @@ export function createSandboxGpuCreateAttemptRunner(
                 : undefined,
           }),
       );
+      if (createResult.readyTerminationTimedOut) {
+        if (createAttemptNonce) {
+          persistIdentitySettlementRecovery(
+            readyCheckCreatedSandboxId
+              ? fingerprintSandboxRecreateValue(readyCheckCreatedSandboxId)
+              : null,
+          );
+        }
+        throw new Error(
+          createAttemptNonce
+            ? `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw retained the sandbox and blocked post-create effects. Follow the retained recovery action above.`
+            : `OpenShell create client did not exit after Ready for sandbox '${input.sandboxName}'. NemoClaw blocked post-create effects. No create-attempt identity was available for retained recovery. Preserve the sandbox for identity-bound OpenShell administrator recovery; do not delete it by mutable name.`,
+        );
+      }
+      return createResult;
+    };
     let createResult: Awaited<ReturnType<typeof streamSandboxCreate>> | null = null;
     let resumedSandboxId: string | null = null;
     let verifiedCreatedSandboxId: string | null = null;
