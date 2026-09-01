@@ -27,6 +27,7 @@ import {
   OpenShellGatewayServiceEnvironmentError,
   type PackageManagedDockerDriverGatewayOptions,
   startPackageManagedDockerDriverGateway,
+  startOpenShellGatewayUserService,
   stopOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
 import {
@@ -406,6 +407,7 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
   if (gatewayPort !== DEFAULT_GATEWAY_PORT) return Promise.resolve(false);
   assertDockerDriverGatewayAuthConfigSafe(gatewayEnv);
   const effectiveHome = home ?? optionsWithEnv.env?.HOME ?? os.homedir();
+  const startService = options.startOpenShellGatewayUserService ?? startOpenShellGatewayUserService;
   return startPackageManagedDockerDriverGateway({
     ...options,
     hasOpenShellGatewayUserService:
@@ -427,6 +429,12 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
         throw new OpenShellGatewayServiceEnvironmentError(error);
       }
     },
+    startOpenShellGatewayUserService: (serviceOptions) =>
+      startService({
+        ...serviceOptions,
+        env,
+        home: effectiveHome,
+      }),
     stopOpenShellGatewayUserService:
       options.stopOpenShellGatewayUserService ??
       (() => stopOpenShellGatewayUserService({ env, home: effectiveHome })),
