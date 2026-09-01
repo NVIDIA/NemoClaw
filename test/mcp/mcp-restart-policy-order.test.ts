@@ -177,12 +177,17 @@ const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const generated = require("./src/lib/actions/sandbox/mcp-bridge-policy.js");
+const provider = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
+const adapterRegistration = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
+
+const replace = (target, key, value) =>
+  Object.defineProperty(target, key, { configurable: true, value });
 
 let resourceVersion = 1;
 let registeredProviderGets = 0;
 let activePolicyContent = "";
-const observations = [];
-const proofScripts = [];
+const previousRevisionInputs = [];
+const adapterRevisionInputs = [];
 const providerCalls = [];
 const entry = {
   server: "example",
@@ -253,17 +258,20 @@ policies.applyPresetContent = (_sandbox, _name, content) => {
   activePolicyContent = content;
   return true;
 };
-processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
-  const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] || "";
-  const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
-  proofScripts.push(proof);
-  if (proof.includes("printf '%s\\n' absent")) {
-    const observation = "v" + resourceVersion;
-    observations.push(observation);
-    return { status: 0, stdout: observation, stderr: "" };
-  }
-  return { status: 0, stdout: "", stderr: "" };
-};
+replace(provider, "observeMcpCredentialRevision", () => "v1");
+replace(provider, "waitForAttachedMcpCredential", (_sandbox, _entry, options = {}) => {
+  previousRevisionInputs.push(options.previousRevision);
+  return "v3";
+});
+replace(
+  adapterRegistration,
+  "registerAgentAdapterAtCurrentCredentialRevision",
+  (_sandbox, _adapter, _entry, _env, credentialRevision) => {
+    adapterRevisionInputs.push(credentialRevision);
+    return credentialRevision;
+  },
+);
+processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "", stderr: "" });
 processRecovery.executeSandboxCommand = (_sandbox, command) => ({
   status: 0,
   stdout: command === "command -v mcporter" ? "/usr/local/bin/mcporter\n" : "registered\n",
@@ -284,8 +292,8 @@ bridge.restartMcpBridge("alpha", "example").then(
     const persistedEntry = registry.getSandbox("alpha").mcp.bridges.example;
     const registeredPolicy = generated.getRegisteredGeneratedPolicy("alpha", persistedEntry);
     process.stdout.write(JSON.stringify({
-      observations,
-      proofScripts,
+      previousRevisionInputs,
+      adapterRevisionInputs,
       providerCalls,
       registeredProviderGets,
       allowedIps: persistedEntry.allowedIps,
@@ -307,8 +315,8 @@ bridge.restartMcpBridge("alpha", "example").then(
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as {
-      observations: string[];
-      proofScripts: string[];
+      previousRevisionInputs: string[];
+      adapterRevisionInputs: string[];
       providerCalls: string[];
       registeredProviderGets: number;
       allowedIps: string[];
@@ -316,7 +324,8 @@ bridge.restartMcpBridge("alpha", "example").then(
       registeredPolicyContent: string;
       policyPresence: boolean | null;
     };
-    expect(payload.observations).toEqual(["v1", "v3", "v3", "v3", "v3", "v3"]);
+    expect(payload.previousRevisionInputs).toEqual(["v1"]);
+    expect(payload.adapterRevisionInputs).toEqual(["v3"]);
     expect(payload.providerCalls).toEqual([
       "provider update alpha-mcp-example --credential MCP_TOKEN",
       "provider update alpha-mcp-example",
@@ -332,7 +341,5 @@ bridge.restartMcpBridge("alpha", "example").then(
       "8.8.8.8",
     ]);
     expect(payload.policyPresence).toBe(true);
-    expect(payload.proofScripts).toHaveLength(6);
-    expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
   });
 });

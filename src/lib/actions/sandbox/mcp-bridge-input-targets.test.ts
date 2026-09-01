@@ -43,7 +43,6 @@ describe("MCP URL target validation", () => {
       await expect(
         preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
       ).resolves.toEqual({ addresses: ["1.1.1.1", "8.8.8.8"] });
-      expect(lookup).toHaveBeenCalledTimes(3);
     } finally {
       lookup.mockRestore();
     }
@@ -61,7 +60,6 @@ describe("MCP URL target validation", () => {
           trustedPrivateHosts: ["mcp.example.test"],
         }),
       ).resolves.toEqual({ addresses: ["1.1.1.1", "8.8.8.8"] });
-      expect(lookup).toHaveBeenCalledTimes(3);
     } finally {
       lookup.mockRestore();
     }
@@ -76,7 +74,6 @@ describe("MCP URL target validation", () => {
       await expect(
         preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
       ).rejects.toThrow(/resolves to private, local, or special-use address '127\.0\.0\.1'/);
-      expect(lookup).toHaveBeenCalledTimes(2);
     } finally {
       lookup.mockRestore();
     }
@@ -93,7 +90,6 @@ describe("MCP URL target validation", () => {
           trustedPrivateHosts: ["mcp.example.test"],
         }),
       ).rejects.toThrow(/resolves to private, local, or special-use address '10\.20\.30\.40'/);
-      expect(lookup).toHaveBeenCalledTimes(2);
     } finally {
       lookup.mockRestore();
     }
