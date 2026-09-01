@@ -309,7 +309,9 @@ function assertVllmGpuProviderSelection(
   const message =
     selected.key === "vllm"
       ? `vLLM is already running on localhost:${deps.vllmPort}, so --vllm-gpu-device cannot change its GPU. ` +
-        `Omit --vllm-gpu-device to reuse that server. To select a different GPU, stop the existing server, then rerun managed onboarding.`
+        `Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm to reuse that server. ` +
+        `To select a different GPU, stop the server only if no other gateway or distributed deployment uses it. ` +
+        `Otherwise, keep it running and set NEMOCLAW_VLLM_PORT to an unused port before rerunning managed onboarding.`
       : `--vllm-gpu-device applies only when NemoClaw installs managed vLLM; ` +
         `the selected provider is '${selected.key}'.`;
   deps.error(`  ${message}`);
@@ -619,12 +621,12 @@ function vllmPortConflictMessage(
   hasGpuSelection: boolean,
 ): string {
   if (platform === "n1x") {
-    return `The N1x Deferred preview requires managed vLLM, but vLLM is already running on localhost:${port}. Stop the existing server, then rerun with NEMOCLAW_PROVIDER=install-vllm.`;
+    return `The N1x Deferred preview requires managed vLLM, but vLLM is already running on localhost:${port}. Stop the server only if no other gateway or distributed deployment uses it. Otherwise, keep it running and set NEMOCLAW_VLLM_PORT to an unused port. Then rerun with NEMOCLAW_PROVIDER=install-vllm.`;
   }
   const reuseAction = hasGpuSelection
-    ? "Omit --vllm-gpu-device and select Local vLLM to reuse it."
-    : "Select Local vLLM to reuse it.";
-  return `vLLM is already running on localhost:${port}. ${reuseAction} To change its GPU or port, stop the existing server before rerunning managed onboarding.`;
+    ? "Omit --vllm-gpu-device and rerun with NEMOCLAW_PROVIDER=vllm to reuse it."
+    : "Rerun with NEMOCLAW_PROVIDER=vllm to reuse it.";
+  return `vLLM is already running on localhost:${port}. ${reuseAction} To change its GPU or port, stop the server only if no other gateway or distributed deployment uses it. Otherwise, keep it running and set NEMOCLAW_VLLM_PORT to an unused port before rerunning managed onboarding.`;
 }
 
 /**
