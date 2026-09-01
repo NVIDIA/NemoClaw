@@ -90,6 +90,55 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     );
     expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
   });
+
+  it("retires removed Shields state after a complete DCode terminal-agent rebuild", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }, { ok: true }],
+    });
+    configureDcodeSession(harness);
+    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
+      stateRecord: "/tmp/shields-alpha.json",
+      recoveryArtifacts: [],
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.retireRemovedImmutabilityStateRecordSpy).toHaveBeenCalledWith(
+      "alpha",
+      "mutable-rebuild",
+    );
+  });
+
+  it("retains removed Shields state when a DCode terminal-agent restore fails", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }, { ok: true }],
+      restoreSandboxState: () => ({
+        success: false,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: ["state"],
+        failedFiles: [],
+      }),
+    });
+    configureDcodeSession(harness);
+    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
+      stateRecord: "/tmp/shields-alpha.json",
+      recoveryArtifacts: [],
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow(/State restore remained incomplete/u);
+
+    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
+  });
+
   it("rolls back managed MCP mutation when DCode inputs drift during MCP preparation (#6195)", async () => {
     const detached = { server: "search", providerName: "mcp-search" };
     const scrubbed = { server: "filesystem", adapter: "deepagents-config" };

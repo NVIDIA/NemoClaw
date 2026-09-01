@@ -279,6 +279,46 @@ describe("rebuildSandbox flow: lifecycle", () => {
     ).not.toHaveBeenCalled();
   });
 
+  it("retires removed Shields state after a complete Pi terminal-agent rebuild", async () => {
+    const harness = createRebuildFlowHarness({ sandboxEntry: { agent: "pi" } });
+    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
+      stateRecord: "/tmp/shields-alpha.json",
+      recoveryArtifacts: [],
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.retireRemovedImmutabilityStateRecordSpy).toHaveBeenCalledWith(
+      "alpha",
+      "mutable-rebuild",
+    );
+  });
+
+  it("retains removed Shields state when a Pi terminal-agent restore fails", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: { agent: "pi" },
+      restoreSandboxState: () => ({
+        success: false,
+        restoredDirs: [],
+        restoredFiles: [],
+        failedDirs: ["state"],
+        failedFiles: [],
+      }),
+    });
+    harness.enforceRemovedImmutabilityMigrationBoundarySpy.mockReturnValue({
+      stateRecord: "/tmp/shields-alpha.json",
+      recoveryArtifacts: [],
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow(/State restore remained incomplete/u);
+
+    expect(harness.retireRemovedImmutabilityStateRecordSpy).not.toHaveBeenCalled();
+  });
+
   it("does not report rebuild success when inner onboarding returns a failure code (#10394)", async ({
     onTestFinished,
   }) => {

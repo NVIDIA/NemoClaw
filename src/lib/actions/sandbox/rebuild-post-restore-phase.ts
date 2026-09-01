@@ -376,7 +376,7 @@ export async function runRebuildPostRestorePhase(
   }
 
   console.log("");
-  const postRestoreComplete = postRestoreCompleted({
+  const genericPostRestoreComplete = postRestoreCompleted({
     hermesGatewayRestoreUnverified,
     messagingHostForwardUnverified,
     mcpBridgeRestoreUnverified,
@@ -385,6 +385,16 @@ export async function runRebuildPostRestorePhase(
     mutablePermsRepairUnverified,
     restoreSucceeded,
   });
+  if (agentDef.runtime?.kind === "terminal" && genericPostRestoreComplete) {
+    // Terminal-agent config is materialized by the exact replacement image,
+    // outside the restored user-state contract. Exact recreated identity plus
+    // successful restore and generic post-restore checks therefore prove that
+    // an older locked config posture did not cross the rebuild boundary.
+    mutableConfigPermissionsVerified = true;
+    log(`Verified the rebuilt ${targetAgentName} terminal-agent mutable posture`);
+  }
+  const postRestoreComplete =
+    genericPostRestoreComplete && mutableConfigPermissionsVerified;
   if (postRestoreComplete) {
     console.log(`  ${G}✓${R} Sandbox '${sandboxName}' rebuild completed`);
     if (versionCheck.expectedVersion) {

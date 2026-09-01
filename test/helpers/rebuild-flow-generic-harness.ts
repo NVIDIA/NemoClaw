@@ -87,11 +87,22 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     policyAdditionsPath = path.join(policyDir, "policy-additions.yaml");
     fs.writeFileSync(policyAdditionsPath, overrides.agentPolicyAdditionsContent);
   }
+  const agentName =
+    typeof overrides.sandboxEntry?.agent === "string" ? overrides.sandboxEntry.agent : "openclaw";
+  const runtimeKindByAgent: Record<string, "gateway" | "terminal"> = {
+    openclaw: "gateway",
+    hermes: "gateway",
+    "langchain-deepagents-code": "terminal",
+    deepagents: "terminal",
+    "deepagents-code": "terminal",
+    pi: "terminal",
+    nemocua: "terminal",
+  };
   const agentDef = {
-    name:
-      typeof overrides.sandboxEntry?.agent === "string" ? overrides.sandboxEntry.agent : "openclaw",
+    name: agentName,
     expectedVersion: "0.2.0",
     policyAdditionsPath,
+    runtime: { kind: runtimeKindByAgent[agentName] },
   };
   const resolveGatewayAuthority = ({
     gatewayName,

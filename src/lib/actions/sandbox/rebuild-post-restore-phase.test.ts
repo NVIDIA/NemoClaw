@@ -16,7 +16,13 @@ import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
 import * as sessionModels from "./reconcile-session-models";
 
 describe("rebuild post-restore phase", () => {
-  let agentName: "openclaw" | "hermes";
+  const runtimeKindByAgent = {
+    openclaw: "gateway",
+    hermes: "gateway",
+    "langchain-deepagents-code": "terminal",
+    pi: "terminal",
+  } as const;
+  let agentName: keyof typeof runtimeKindByAgent;
   let order: string[];
 
   beforeEach(() => {
@@ -29,7 +35,12 @@ describe("rebuild post-restore phase", () => {
     );
     vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("test agent");
     vi.spyOn(agentDefs, "loadAgent").mockImplementation(
-      () => ({ name: agentName, expectedVersion: null }) as never,
+      () =>
+        ({
+          name: agentName,
+          expectedVersion: null,
+          runtime: { kind: runtimeKindByAgent[agentName] },
+        }) as never,
     );
     vi.spyOn(processRecovery, "executeSandboxExecCommand").mockImplementation(() => {
       order.push("doctor");
@@ -57,10 +68,10 @@ describe("rebuild post-restore phase", () => {
       return true;
     });
     vi.spyOn(mutableConfigPerms, "repairMutableConfigPerms").mockReturnValue({
-      applied: false,
-      reason: "agent does not use this contract",
-      skipReason: "agent",
-    } as never);
+      applied: true,
+      verified: true,
+      errors: [],
+    });
     vi.spyOn(mutableConfigPerms, "inspectMutableHermesConfigPerms").mockReturnValue({
       verified: true,
       errors: [],
@@ -304,6 +315,18 @@ describe("rebuild post-restore phase", () => {
       "Hermes mutable config posture was not verified: config.yaml remains read-only",
     );
   });
+
+  it.each(["langchain-deepagents-code", "pi"] as const)(
+    "proves the rebuilt %s terminal-agent posture from exact generic completion",
+    async (terminalAgent) => {
+      agentName = terminalAgent;
+
+      const verification = await runRebuildPostRestorePhase(input());
+
+      expect(verification).toEqual({ mutableConfigPermissionsVerified: true });
+      expect(mutableConfigPerms.inspectMutableHermesConfigPerms).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps cron dispatch blocked through replacement health verification (#8472)", async () => {
     agentName = "hermes";
