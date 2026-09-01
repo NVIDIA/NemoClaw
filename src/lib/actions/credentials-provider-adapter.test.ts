@@ -84,13 +84,10 @@ describe("credential actions use typed OpenShell provider results", () => {
         provider: "custom-provider",
         type: "openai",
         credentials: ["CUSTOM_TOKEN"],
-        configPairs: ["OPENAI_BASE_URL=https://api.openai.com/v1"],
+        configPairs: ["OPENAI_BASE_URL=https://93.184.216.34/v1"],
         fromExisting: false,
       },
-      {
-        providerAdapter: adapter,
-        resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
-      },
+      { providerAdapter: adapter },
     );
 
     expect(result.exitCode).toBe(0);
@@ -99,7 +96,7 @@ describe("credential actions use typed OpenShell provider results", () => {
       name: "custom-provider",
       type: "openai",
       credentials: [{ name: "CUSTOM_TOKEN", value: "credential-value" }],
-      config: [{ key: "OPENAI_BASE_URL", value: "https://api.openai.com/v1" }],
+      config: [{ key: "OPENAI_BASE_URL", value: "https://93.184.216.34/v1" }],
       fromExisting: false,
       timeoutMs: 30_000,
     });
@@ -112,7 +109,6 @@ describe("credential actions use typed OpenShell provider results", () => {
   ])("rejects an OpenAI base URL targeting a %s (#9806)", async (_case, baseUrl) => {
     vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
     const adapter = providerAdapter();
-    const resolveEndpointHost = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
 
     const result = await runCredentialsAddAction(
       {
@@ -122,7 +118,7 @@ describe("credential actions use typed OpenShell provider results", () => {
         configPairs: [`OPENAI_BASE_URL=${baseUrl}`],
         fromExisting: false,
       },
-      { providerAdapter: adapter, resolveEndpointHost },
+      { providerAdapter: adapter },
     );
 
     expect(result.exitCode).toBe(1);
@@ -133,13 +129,11 @@ describe("credential actions use typed OpenShell provider results", () => {
     expect(JSON.stringify(result)).not.toContain("host-only-value");
     expect(adapter.importProviderProfile).not.toHaveBeenCalled();
     expect(adapter.createProvider).not.toHaveBeenCalled();
-    expect(resolveEndpointHost).not.toHaveBeenCalled();
   });
 
-  it("rejects an OpenAI base URL whose hostname resolves to a private address (#9806)", async () => {
+  it("rejects a DNS OpenAI base URL before a later resolution can rebind (#9806)", async () => {
     vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
     const adapter = providerAdapter();
-    const resolveEndpointHost = vi.fn(async () => [{ address: "10.0.0.8", family: 4 }]);
 
     const result = await runCredentialsAddAction(
       {
@@ -149,18 +143,17 @@ describe("credential actions use typed OpenShell provider results", () => {
         configPairs: ["OPENAI_BASE_URL=https://public-looking.example/v1"],
         fromExisting: false,
       },
-      { providerAdapter: adapter, resolveEndpointHost },
+      { providerAdapter: adapter },
     );
 
     expect(result.exitCode).toBe(1);
     expect(result.failureLines[0]).toBe(
-      "  --config 'OPENAI_BASE_URL' failed endpoint security validation.",
+      "  --config 'OPENAI_BASE_URL' accepts only a public IP-literal URL.",
     );
-    expect(result.failureLines.join("\n")).toContain(
-      'endpoint host "public-looking.example" resolves to private/internal address "10.0.0.8"',
+    expect(result.failureLines).toContain(
+      "  DNS hostnames are not supported because OpenShell cannot enforce admission-time address pins for this credential-bearing path.",
     );
     expect(JSON.stringify(result)).not.toContain("host-only-value");
-    expect(resolveEndpointHost).toHaveBeenCalledWith("public-looking.example", { all: true });
     expect(adapter.importProviderProfile).not.toHaveBeenCalled();
     expect(adapter.createProvider).not.toHaveBeenCalled();
   });

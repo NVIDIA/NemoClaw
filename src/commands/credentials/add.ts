@@ -40,7 +40,7 @@ export default class CredentialsAddCommand extends NemoClawCommand {
     }),
     config: Flags.string({
       description:
-        "Typed non-secret provider configuration. Supported: OPENAI_BASE_URL=<http(s)://host/path> with --type openai. Repeatable.",
+        "Typed non-secret provider configuration. Supported: OPENAI_BASE_URL=<http(s)://public-IP/path> with --type openai. Use onboarding for hostname-based endpoints. Repeatable.",
       multiple: true,
     }),
     "from-existing": Flags.boolean({

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { isIP } from "node:net";
 import path from "node:path";
 import { createCliOpenShellProviderAdapter } from "../adapters/openshell/provider-adapter-cli";
 import type {
@@ -16,11 +17,8 @@ import {
   recoverCredentialGatewayTargetOrExit,
 } from "../credentials/command-support";
 import { gatewayStartGuidance } from "../gateway-start-guidance";
-import {
-  assertEndpointResolvesPublic,
-  type EndpointDnsLookupFn,
-} from "../security/trusted-private-endpoint";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
+import { assertEndpointResolvesPublic } from "../security/trusted-private-endpoint";
 import { withMcpCredentialOwnershipLock } from "../state/mcp-lifecycle-lock/credential-ownership";
 import { ROOT } from "../state/paths";
 import {
@@ -45,7 +43,6 @@ export type CredentialsAddResult = {
 
 export type CredentialsAddDeps = Readonly<{
   providerAdapter?: OpenShellProviderAdapter;
-  resolveEndpointHost?: EndpointDnsLookupFn;
 }>;
 
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/;
@@ -89,7 +86,7 @@ function typedProviderConfigFailure(type: string, key: string, value: string): s
   if (type.toLowerCase() !== "openai" || key !== "OPENAI_BASE_URL") {
     return [
       `  --config '${key}' is not a supported non-secret setting for provider type '${type}'.`,
-      "  Supported: --type openai with --config OPENAI_BASE_URL=<http(s)://host/path>.",
+      "  Supported: --type openai with --config OPENAI_BASE_URL=<http(s)://public-IP/path>.",
       "  Use --from-existing for provider configuration already stored by OpenShell.",
     ];
   }
@@ -119,12 +116,22 @@ function typedProviderConfigFailure(type: string, key: string, value: string): s
 
 async function providerConfigEndpointFailure(
   config: readonly { key: string; value: string }[],
-  resolveEndpointHost?: EndpointDnsLookupFn,
 ): Promise<string[] | null> {
   const baseUrl = config.find((entry) => entry.key === "OPENAI_BASE_URL")?.value;
   if (!baseUrl) return null;
 
-  const preflight = await assertEndpointResolvesPublic(baseUrl, resolveEndpointHost);
+  const hostname = new URL(baseUrl).hostname;
+  const bareHostname =
+    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  if (isIP(bareHostname) === 0) {
+    return [
+      "  --config 'OPENAI_BASE_URL' accepts only a public IP-literal URL.",
+      "  DNS hostnames are not supported because OpenShell cannot enforce admission-time address pins for this credential-bearing path.",
+      `  Configure a hostname-based endpoint through '${CLI_NAME} onboard' so NemoClaw can preserve its address pins.`,
+    ];
+  }
+
+  const preflight = await assertEndpointResolvesPublic(baseUrl);
   if (preflight.ok) return null;
 
   return [
@@ -341,7 +348,7 @@ export async function runCredentialsAddAction(
     config.push({ key, value });
   }
 
-  const endpointFailure = await providerConfigEndpointFailure(config, deps.resolveEndpointHost);
+  const endpointFailure = await providerConfigEndpointFailure(config);
   if (endpointFailure) return fail(endpointFailure);
 
   const managedMcpReservations = listManagedMcpCredentialReservations();

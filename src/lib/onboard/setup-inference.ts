@@ -41,7 +41,7 @@ import {
   upsertRoutedProvider as upsertRoutedInferenceProvider,
 } from "./routed-inference";
 
-export { assertNoOpenShellGatewayEndpointOverride, scopeGatewayOpenshellArgs };
+export { assertNoOpenShellGatewayEndpointOverride };
 
 export function createProviderReviewDeps(
   updateSession: (mutator: (session: Session) => Session | void) => Session | Promise<Session>,
@@ -558,9 +558,7 @@ export function createSetupInference(
     hermesToolGateways: string[] = [],
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
-    const revalidateSandboxIdentity = sandboxName
-      ? options.revalidateSandboxIdentity
-      : undefined;
+    const revalidateSandboxIdentity = sandboxName ? options.revalidateSandboxIdentity : undefined;
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
@@ -1127,13 +1125,7 @@ export function createSetupInference(
         /* An unreadable registry skips GPU release; it must not fail onboarding. */
       }
       const result = await mutateGatewayRoute();
-      releaseSupersededOllamaModel(
-        previousSandbox,
-        model,
-        result,
-        deps,
-        revalidateSandboxIdentity,
-      );
+      releaseSupersededOllamaModel(previousSandbox, model, result, deps, revalidateSandboxIdentity);
       if (shouldLogSuccessfulRoute && "ok" in result) {
         deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
       }
