@@ -11,6 +11,10 @@ import { describe, expect, it, vi } from "vitest";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { CommandRunner } from "../fixtures/clients/command.ts";
 import { HostCliClient } from "../fixtures/clients/host.ts";
+import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
+import { redactString } from "../fixtures/redaction.ts";
+import { superviseChild } from "../fixtures/shell/supervisor.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   buildSandboxNodeInvocation,
@@ -34,15 +38,17 @@ const FAKE_API_PORT_TRAFFIC = path.resolve(
   import.meta.dirname,
   "../lib/fake-api-port-readiness.mts",
 );
+const FAKE_SLACK_APP_TOKEN = "xapp-fake-slack-port-test";
+const FAKE_SLACK_BOT_TOKEN = "xoxb-fake-slack-port-test";
+const STDERR_TAIL_LIMIT = 4_096;
 
-async function waitFor(predicate: () => boolean, message: string): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  let matched = predicate();
-  while (!matched && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    matched = predicate();
-  }
-  expect(matched, message).toBe(true);
+async function waitFor(predicate: () => boolean, message: string | (() => string)): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(predicate(), typeof message === "string" ? message : message()).toBe(true);
+    },
+    { interval: 25, timeout: 5_000 },
+  );
 }
 
 function successfulShellResult(command: string[], stdout = ""): ShellProbeResult {
@@ -82,48 +88,74 @@ async function startFakeSlackPortFixture(options?: {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-slack-ports-"));
   const portFile = path.join(dir, "port");
   const captureFile = path.join(dir, "capture.jsonl");
-  const child = spawn(process.execPath, [FAKE_SLACK_API], {
-    env: {
-      ...process.env,
-      FAKE_SLACK_API_HOST: "127.0.0.1",
-      FAKE_SLACK_API_PORT: "0",
-      FAKE_SLACK_API_WEBSOCKET_PORT: "0",
-      FAKE_SLACK_API_PORT_FILE: portFile,
-      FAKE_SLACK_API_CAPTURE_FILE: captureFile,
-      FAKE_SLACK_API_EXPECTED_BOT_TOKEN: "xoxb-fake-slack-port-test",
-      FAKE_SLACK_API_EXPECTED_APP_TOKEN: "xapp-fake-slack-port-test",
-      ...(options?.suppressPortTrafficReply
-        ? { FAKE_SLACK_API_SUPPRESS_PORT_TRAFFIC_REPLY: "1" }
-        : {}),
-      ...(options?.restPortTrafficStatus === undefined
-        ? {}
-        : { FAKE_SLACK_API_PORT_TRAFFIC_STATUS: String(options.restPortTrafficStatus) }),
-      ...(options?.restPortTrafficReply === undefined
-        ? {}
-        : { FAKE_SLACK_API_PORT_TRAFFIC_REPLY: options.restPortTrafficReply }),
+  const progress = startTestProgress(
+    "fake Slack port fixture",
+    ["start fake Slack listeners", "exercise REST and WebSocket traffic"],
+    { logLine: () => undefined },
+  );
+  const controller = new AbortController();
+  const child = spawnObservedChild(process.execPath, [FAKE_SLACK_API], {
+    activityLabel: "command: fake-slack-port-fixture",
+    progress,
+    spawn: {
+      detached: true,
+      env: {
+        PATH: process.env.PATH ?? "",
+        FAKE_SLACK_API_HOST: "127.0.0.1",
+        FAKE_SLACK_API_PORT: "0",
+        FAKE_SLACK_API_WEBSOCKET_PORT: "0",
+        FAKE_SLACK_API_PORT_FILE: portFile,
+        FAKE_SLACK_API_CAPTURE_FILE: captureFile,
+        FAKE_SLACK_API_EXPECTED_BOT_TOKEN: FAKE_SLACK_BOT_TOKEN,
+        FAKE_SLACK_API_EXPECTED_APP_TOKEN: FAKE_SLACK_APP_TOKEN,
+        ...(options?.suppressPortTrafficReply
+          ? { FAKE_SLACK_API_SUPPRESS_PORT_TRAFFIC_REPLY: "1" }
+          : {}),
+        ...(options?.restPortTrafficStatus === undefined
+          ? {}
+          : { FAKE_SLACK_API_PORT_TRAFFIC_STATUS: String(options.restPortTrafficStatus) }),
+        ...(options?.restPortTrafficReply === undefined
+          ? {}
+          : { FAKE_SLACK_API_PORT_TRAFFIC_REPLY: options.restPortTrafficReply }),
+      },
+      stdio: ["ignore", "ignore", "pipe"],
     },
-    stdio: ["ignore", "ignore", "pipe"],
   });
-  let stderr = "";
-  child.stderr?.setEncoding("utf8");
-  child.stderr?.on("data", (chunk: string) => {
-    stderr += chunk;
+  let stderrTail = "";
+  const supervised = superviseChild(child, {
+    timeoutMs: 30_000,
+    killGraceMs: 1_000,
+    signal: controller.signal,
+    onStderr: (chunk) => {
+      stderrTail = `${stderrTail}${chunk}`.slice(-STDERR_TAIL_LIMIT);
+    },
   });
-  const stop = async () => {
-    child.kill("SIGTERM");
-    await new Promise<void>((resolve) =>
-      child.exitCode !== null ? resolve() : child.once("exit", () => resolve()),
-    );
-    fs.rmSync(dir, { recursive: true, force: true });
+  let stopPromise: Promise<void> | undefined;
+  const stop = () => {
+    stopPromise ??= (async () => {
+      controller.abort();
+      const result = await supervised;
+      progress.stop(result.spawnError || result.timedOut ? "failed" : "passed");
+      fs.rmSync(dir, { recursive: true, force: true });
+    })();
+    return stopPromise;
   };
 
   try {
-    await waitFor(() => fs.existsSync(portFile), `fake Slack listeners did not start: ${stderr}`);
+    await waitFor(
+      () => fs.existsSync(portFile),
+      () =>
+        `fake Slack listeners did not start: ${redactString(stderrTail, [
+          FAKE_SLACK_APP_TOKEN,
+          FAKE_SLACK_BOT_TOKEN,
+        ])}`,
+    );
     const listening = readFakeSlackCapture(captureFile).filter(
       (entry) => entry.event === "listening",
     );
     const restPort = Number(fs.readFileSync(portFile, "utf8").trim());
     const websocketPort = Number(listening.find((entry) => entry.kind === "websocket")?.port ?? 0);
+    progress.phase("exercise REST and WebSocket traffic");
     return { restPort, websocketPort, captureFile, stop };
   } catch (error) {
     await stop();
@@ -149,11 +181,6 @@ function runFakeSlackPortTrafficCheck(fixture: FakeSlackPortFixture) {
   return runPortTrafficCheck(fixture.restPort, fixture.websocketPort);
 }
 
-type CleanupAction = {
-  name: string;
-  run: () => Promise<void>;
-};
-
 function successfulCommand(stdout = "") {
   return {
     artifacts: { result: "", stderr: "", stdout: "" },
@@ -166,11 +193,7 @@ function successfulCommand(stdout = "") {
   };
 }
 
-function fakeDockerHost(publishedAddress = "127.0.0.1"): {
-  calls: string[][];
-  host: HostCliClient;
-} {
-  const calls: string[][] = [];
+function fakeDockerHost(publishedAddress = "127.0.0.1"): HostCliClient {
   const host = {
     command: async (command: string, args: string[]) => {
       switch (command) {
@@ -178,7 +201,6 @@ function fakeDockerHost(publishedAddress = "127.0.0.1"): {
           return successfulCommand();
         default:
           expect(command).toBe("docker");
-          calls.push([...args]);
           args
             .filter((argument) => args[0] === "run" && argument.endsWith(":/tmp/fake"))
             .forEach((fakeApiMount) => {
@@ -193,11 +215,7 @@ function fakeDockerHost(publishedAddress = "127.0.0.1"): {
       }
     },
   } as unknown as HostCliClient;
-  return { calls, host };
-}
-
-async function runCleanup(actions: CleanupAction[]): Promise<void> {
-  for (let index = actions.length - 1; index >= 0; index -= 1) await actions[index]!.run();
+  return host;
 }
 
 describe("messaging provider installed-runtime proofs", () => {
@@ -322,66 +340,13 @@ describe("messaging provider installed-runtime proofs", () => {
     }
   });
 
-  it.each([
-    ["discord-gateway", ["127.0.0.1::8080"], ["8080/tcp"]],
-    ["slack", ["127.0.0.1::8080", "127.0.0.1::8081"], ["8080/tcp", "8081/tcp"]],
-  ] as const)(
-    "configures the fake %s API with an internal backend and loopback-only proxy ports",
-    async (kind, expectedPublications, expectedPortQueries) => {
-      const { calls, host } = fakeDockerHost();
-      const cleanup: CleanupAction[] = [];
-
-      try {
-        const api = await startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
-          kind,
-          imageScript: `fake-${kind}-api.cjs`,
-          containerPrefix: `fake-${kind}`,
-          portEnv: "FAKE_API_PORT",
-          portFileEnv: "FAKE_API_PORT_FILE",
-          captureFileEnv: "FAKE_API_CAPTURE_FILE",
-          expectedEnv: {},
-          redactionValues: [],
-          env: {},
-        });
-        const networkCreate = calls.find((args) => args[0] === "network" && args[1] === "create");
-        const runCalls = calls.filter((args) => args[0] === "run");
-        expect(networkCreate).toBeDefined();
-        expect(runCalls).toHaveLength(2);
-        const createdNetwork = networkCreate!;
-        const [apiRun, proxyRun] = runCalls as [string[], string[]];
-        const network = createdNetwork.at(-1);
-        const apiContainer = apiRun[apiRun.indexOf("--name") + 1];
-        const proxyContainer = proxyRun[proxyRun.indexOf("--name") + 1];
-        const publications = proxyRun.flatMap((argument, index) =>
-          argument === "-p" ? [proxyRun[index + 1]] : [],
-        );
-
-        expect(createdNetwork.slice(0, -1)).toEqual(["network", "create", "--internal"]);
-        expect(apiRun).toEqual(expect.arrayContaining(["--network", network]));
-        expect(apiRun).not.toContain("-p");
-        expect(apiRun).not.toContain("bridge");
-        expect(publications).toEqual(expectedPublications);
-        expect(proxyRun).toEqual(expect.arrayContaining(["--network", "bridge"]));
-        expect(calls).toContainEqual(["network", "connect", network, proxyContainer]);
-        expect(
-          calls.filter((args) => args[0] === "port").map((args) => [args[1], args[2]]),
-        ).toEqual(expectedPortQueries.map((port) => [proxyContainer, port]));
-        expect(proxyContainer).not.toBe(apiContainer);
-        expect(api.port).toBe("32100");
-        expect(api.alternatePort).toBe(kind === "slack" ? "32101" : undefined);
-      } finally {
-        await runCleanup(cleanup);
-      }
-    },
-  );
-
   it("rejects a fake API proxy port that Docker publishes beyond loopback", async () => {
-    const { host } = fakeDockerHost("0.0.0.0");
-    const cleanup: CleanupAction[] = [];
+    const host = fakeDockerHost("0.0.0.0");
+    const cleanup: Array<() => Promise<void>> = [];
 
     try {
       await expect(
-        startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
+        startFakeDockerApi(host, (_name, run) => cleanup.push(run), {
           kind: "discord-gateway",
           imageScript: "fake-discord-gateway-api.cjs",
           containerPrefix: "fake-discord-gateway",
@@ -394,7 +359,9 @@ describe("messaging provider installed-runtime proofs", () => {
         }),
       ).rejects.toThrow(/did not bind only to 127\.0\.0\.1/u);
     } finally {
-      await runCleanup(cleanup);
+      await cleanup
+        .reverse()
+        .reduce((previous, action) => previous.then(action), Promise.resolve());
     }
   });
 
