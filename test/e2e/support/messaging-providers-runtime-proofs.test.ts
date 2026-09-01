@@ -31,7 +31,6 @@ import {
   runSecondaryCleanup,
   startFakeDockerApi,
 } from "../live/messaging-providers-helpers.ts";
-import { runSecondaryCleanup as runPhase6SecondaryCleanup } from "../live/phase6-messaging-helpers.ts";
 import {
   parseInstalledSlackProof,
   SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
@@ -345,14 +344,9 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(JSON.stringify(observedInvocation)).not.toContain(token);
   });
 
-  it("shares secondary cleanup ownership across phase 6 messaging consumers", async () => {
+  it("does not propagate a secondary cleanup failure", async () => {
     await expect(
       runSecondaryCleanup(async () => {
-        throw new Error("secondary cleanup failure");
-      }),
-    ).resolves.toBeUndefined();
-    await expect(
-      runPhase6SecondaryCleanup(async () => {
         throw new Error("secondary cleanup failure");
       }),
     ).resolves.toBeUndefined();

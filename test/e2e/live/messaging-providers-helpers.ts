@@ -845,9 +845,10 @@ export async function startFakeDockerApi(
     }
   });
 
-  // The fake API receives raw expected credentials. Keep both it and its TCP
-  // forwarder on the internal network, and publish only the forwarder on the
-  // OpenShell bridge gateway. The forwarder carries rewritten credential
+  // Docker does not expose a usable `-p` mapping for the credential-bearing API
+  // on this internal network, which is the regression this helper covers. Keep
+  // both it and its TCP forwarder on that network, and publish only the forwarder
+  // on the OpenShell bridge gateway. The forwarder carries rewritten credential
   // traffic, so it must not retain default-bridge egress.
   const proxyStart = await runHost(
     host,
