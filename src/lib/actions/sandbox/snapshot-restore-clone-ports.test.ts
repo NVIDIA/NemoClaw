@@ -114,10 +114,11 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
       "--name",
       "beta",
     ]);
-    expect(f.captureOpenshellMock).toHaveBeenCalledWith(
-      ["policy", "get", "-g", "nemoclaw-18080", "--base", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
-    );
+    expect(f.readSandboxPolicyMock).toHaveBeenCalledWith({
+      target: { kind: "named", gatewayName: "nemoclaw-18080" },
+      sandboxName: "alpha",
+      scope: "base",
+    });
     const environmentCommand = parseEnvironmentCommand(createArgs);
     expect(environmentCommand.command).toBe("nemoclaw-start");
     expect(environmentCommand.environment).toMatchObject({
@@ -170,6 +171,64 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      "unavailable",
+      { kind: "command" as const, reason: "failed" as const, message: "OpenShell is unavailable" },
+    ],
+    [
+      "malformed",
+      { kind: "schema" as const, message: "OpenShell returned an invalid policy document" },
+    ],
+  ])(
+    "stops before clone side effects when the typed policy read is %s",
+    async (_condition, policyReadError) => {
+      f.getSandboxMock.mockImplementation((name) =>
+        name === "alpha"
+          ? {
+              name: "alpha",
+              agent: "openclaw",
+              imageTag: "nemoclaw-alpha:test",
+              openshellDriver: "docker",
+              provider: "nvidia-nim",
+              model: "nvidia/model-a",
+              dashboardPort: 18790,
+              gatewayName: "nemoclaw-18080",
+              gatewayPort: 18080,
+            }
+          : null,
+      );
+      f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+      f.captureOpenshellMock.mockImplementation((args) =>
+        f.openshellResponses(args, {
+          "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+          "sandbox list": { status: 0, output: "alpha Ready\n" },
+        }),
+      );
+      f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+      f.readSandboxPolicyMock.mockReturnValue({ ok: false, error: policyReadError });
+      const secureTempFile = vi.spyOn(tempFiles, "secureTempFile");
+      const { runSandboxSnapshot } = await import("./snapshot");
+
+      const failure = await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" }).catch(
+        (error: unknown) => error,
+      );
+
+      expect(failure).toMatchObject({
+        name: "SnapshotCommandError",
+        lines: expect.arrayContaining([
+          "Cannot read the live OpenShell policy for source sandbox 'alpha'.",
+          policyReadError.message,
+        ]),
+      });
+      expect(secureTempFile).not.toHaveBeenCalled();
+      expect(f.lifecycleMock.events).not.toContain("delete");
+      expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+      expect(f.registerSandboxMock).not.toHaveBeenCalled();
+      expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects a literal credential in the live policy before any clone handoff or restore side effect", async () => {
     const credential = "opaque-url-credential";
     f.getSandboxMock.mockImplementation((name) => ({
@@ -182,19 +241,22 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
       dashboardPort: name === "alpha" ? 18790 : 18791,
     }));
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.readSandboxPolicyMock.mockReturnValue({
+      ok: true,
+      value: {
+        document: [
+          "version: 1",
+          "network_policies:",
+          "  protected_api:",
+          "    endpoints:",
+          `      - host: https://operator:${credential}@api.example`,
+          "",
+        ].join("\n"),
+        appliedRevision: null,
+      },
+    });
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
-        "policy get": {
-          status: 0,
-          output: [
-            "version: 1",
-            "network_policies:",
-            "  protected_api:",
-            "    endpoints:",
-            `      - host: https://operator:${credential}@api.example`,
-            "",
-          ].join("\n"),
-        },
         "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
         "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
       }),
@@ -227,10 +289,15 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
   it("refreshes the source policy after deleting a --force destination and before clone creation", async () => {
     const initialPolicy = "version: 1\nnetwork_policies:\n  initial: {}\n";
     const latestPolicy = "version: 1\nnetwork_policies:\n  host_edit: {}\n";
-    const policyRead = vi
-      .fn<() => f.OpenshellCaptureResult>()
-      .mockReturnValueOnce({ status: 0, output: initialPolicy })
-      .mockReturnValue({ status: 0, output: latestPolicy });
+    f.readSandboxPolicyMock
+      .mockReturnValueOnce({
+        ok: true,
+        value: { document: initialPolicy, appliedRevision: null },
+      })
+      .mockReturnValue({
+        ok: true,
+        value: { document: latestPolicy, appliedRevision: null },
+      });
     let createdPolicy = "";
     f.getSandboxMock.mockImplementation((name) => ({
       name: name ?? "alpha",
@@ -243,12 +310,10 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     }));
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
     f.captureOpenshellMock.mockImplementation((args) =>
-      `${args[0] ?? ""} ${args[1] ?? ""}` === "policy get"
-        ? policyRead()
-        : f.openshellResponses(args, {
-            "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
-            "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
-          }),
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
     );
     f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
     f.streamSandboxCreateMock.mockImplementation(async (_command, args) => {
@@ -265,8 +330,8 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     });
 
     expect(f.lifecycleMock.events).toContain("delete");
-    expect(policyRead).toHaveBeenCalledTimes(2);
-    expect(createdPolicy).toBe(latestPolicy.trim());
+    expect(f.readSandboxPolicyMock).toHaveBeenCalledTimes(2);
+    expect(createdPolicy.trim()).toBe(latestPolicy.trim());
     expect(createdPolicy).not.toContain("initial");
   });
 

@@ -44,23 +44,22 @@ const {
   withPrivilegedSandboxExecutionLease,
 }: typeof import("../sandbox/privileged-exec") = require("../sandbox/privileged-exec");
 const {
-  verifyAppliedPolicyDocument,
+  confirmAppliedPolicySetSubmission: confirmAppliedShieldsPolicySetSubmission,
   resolvePermissivePolicyPath,
   inspectPolicyMutationContext,
   isPolicyObservationError,
   recheckPolicyMutationContext,
-  rejectFinalPolicySetSubmission: rejectFinalShieldsPolicySetSubmission,
   formatOpenShellPolicyRecoveryAction,
 } = require("../policy");
 const {
-  createSyncCliOpenShellSandboxPolicyReader,
   namedOpenShellGateway,
+  syncCliOpenShellSandboxPolicyReader,
   syncCliOpenShellSandboxPolicyWriter,
 }: typeof import("../adapters/openshell/sandbox-policy-cli") = require("../adapters/openshell/sandbox-policy-cli");
-const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
 const {
   buildOpenshellCommand,
 }: typeof import("../adapters/openshell/command-argv") = require("../adapters/openshell/command-argv");
+const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
 const {
   timerMarkerPath,
   readTimerMarker,
@@ -169,21 +168,7 @@ function assertShieldsPolicyMutationContext(
 }
 
 function readShieldsBasePolicy(sandboxName: string, gatewayName: string) {
-  return createSyncCliOpenShellSandboxPolicyReader({
-    capture: (args: string[]) => {
-      try {
-        const output = runCapture(buildOpenshellCommand(args));
-        return { status: 0, output, stdout: output, stderr: "" };
-      } catch (error) {
-        return {
-          status: null,
-          output: "",
-          stderr: "",
-          error: error instanceof Error ? error : new Error(String(error)),
-        };
-      }
-    },
-  }).readSandboxPolicy({
+  return syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
     target: namedOpenShellGateway(gatewayName),
     sandboxName,
     scope: "base",
@@ -4485,9 +4470,14 @@ function applyShieldsPolicySnapshot(
       sandboxName,
       policyPath: stagedPath,
     });
-    rejectFinalShieldsPolicySetSubmission(result, "restore the Shields policy snapshot");
-    if (result.status === 0) verifyAppliedPolicyDocument(sandboxName, restoredPolicy, context);
-    return result;
+    confirmAppliedShieldsPolicySetSubmission(
+      result,
+      sandboxName,
+      restoredPolicy,
+      context,
+      "restore the Shields policy snapshot",
+    );
+    return { outcome: { kind: "applied" }, status: 0 };
   } finally {
     cleanupTempDir(stagedPath, "nemoclaw-shields-restore");
   }
@@ -4929,11 +4919,13 @@ function applyRecoveredShieldsDownForwardPolicy(
     sandboxName,
     policyPath,
   });
-  rejectFinalShieldsPolicySetSubmission(result, "reapply the interrupted Shields down policy");
-  if (result.status !== 0) {
-    throw new Error("Interrupted Shields down forward policy could not be reapplied");
-  }
-  verifyAppliedPolicyDocument(sandboxName, fs.readFileSync(policyPath, "utf-8"), policyContext);
+  confirmAppliedShieldsPolicySetSubmission(
+    result,
+    sandboxName,
+    fs.readFileSync(policyPath, "utf-8"),
+    policyContext,
+    "reapply the interrupted Shields down policy",
+  );
   requireShieldsDownForwardPolicy(completion.authority);
   assertRecoveredShieldsDownAuthority(sandboxName, completion, completion.authority.phase);
 }
@@ -5572,12 +5564,18 @@ function shieldsDownWithoutHostLock(
   }
   let policyObservationFailure: unknown = null;
   try {
-    rejectFinalShieldsPolicySetSubmission(policySetResult, "apply the Shields down policy");
+    confirmAppliedShieldsPolicySetSubmission(
+      policySetResult,
+      sandboxName,
+      appliedPolicyDocument,
+      policyContext,
+      "apply the Shields down policy",
+    );
   } catch (error) {
     if (!isPolicyObservationError(error)) throw error;
     policyObservationFailure = error;
   }
-  if (policySetResult.status !== 0) {
+  if (policySetResult.outcome.kind === "rejected") {
     // The permissive policy was rejected before it applied — for example,
     // OpenShell refuses a live Landlock change on a sandbox whose policy is
     // sealed at startup (Deep Agents). Nothing was weakened: configuration is
@@ -5634,7 +5632,12 @@ function shieldsDownWithoutHostLock(
     if (policyObservationFailure !== null) throw policyObservationFailure;
     return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
   }
-  if (policyObservationFailure !== null) throw policyObservationFailure;
+  if (policyObservationFailure !== null) {
+    console.error(
+      `  ERROR: OpenShell did not confirm the ${policyName} policy; the scheduled auto-restore and Shields recovery transaction remain authoritative.`,
+    );
+    throw policyObservationFailure;
+  }
 
   // 2b. Return config to default mutable state.
   //     OpenClaw uses sandbox:sandbox 0660/2770 here so the gateway UID, which
@@ -5642,7 +5645,6 @@ function shieldsDownWithoutHostLock(
   console.log(`  Unlocking ${target.agentName} config (${target.configPath})...`);
   let inferenceRouteConvergenceFailed = false;
   try {
-    verifyAppliedPolicyDocument(sandboxName, appliedPolicyDocument, policyContext);
     if (transition && timerAuthority) {
       assertFreshShieldsDownAuthority(sandboxName, timerAuthority, transition, "preparing");
     }

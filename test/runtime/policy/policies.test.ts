@@ -28,9 +28,9 @@ const policies = requireForTest(
 const resolveOpenshellModule = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "resolve.ts"),
 ) as { resolveOpenshell: (...args: unknown[]) => string | null };
-const policyStateModule = requireForTest(
-  path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "policy-state.ts"),
-) as typeof import("../../../src/lib/adapters/openshell/policy-state");
+const sandboxIdentityModule = requireForTest(
+  path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "sandbox-identity-cli.ts"),
+) as typeof import("../../../src/lib/adapters/openshell/sandbox-identity-cli");
 const policyReaderModule = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "sandbox-policy-cli.ts"),
 ) as typeof import("../../../src/lib/adapters/openshell/sandbox-policy-cli");
@@ -62,7 +62,7 @@ describe("policies", () => {
         policyIdentity: { hash: POLICY_HASH, activeVersion: POLICY_VERSION },
       },
     });
-    vi.spyOn(policyStateModule, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
+    vi.spyOn(sandboxIdentityModule, "inspectOpenShellSandboxIdentityFingerprint").mockReturnValue(
       SANDBOX_IDENTITY,
     );
   });

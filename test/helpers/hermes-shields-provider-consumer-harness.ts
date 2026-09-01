@@ -8,7 +8,11 @@ import path from "node:path";
 
 import { type MockInstance, vi } from "vitest";
 import type { SandboxEntry } from "../../src/lib/state/registry";
-import { bindTypedPolicyWriter, livePolicyMutationContext } from "./shields-flow-harness";
+import {
+  bindTypedPolicyReader,
+  bindTypedPolicyWriter,
+  livePolicyMutationContext,
+} from "./shields-flow-harness";
 
 const INDEX_MODULE = "./index.js";
 export const HERMES_PROVIDER_CAPABILITY_PATH =
@@ -297,6 +301,7 @@ export function createHermesShieldsProviderConsumerHarness(
       undefined,
       ["policy", "set"],
     ),
+    bindTypedPolicyReader(policyAdapter, () => "version: 1\nnetwork_policies:\n  test: {}\n"),
     vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(livePolicyMutationContext),

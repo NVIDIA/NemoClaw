@@ -318,15 +318,15 @@ If `rebuild` stops after recording the journal, rerun the command with the same 
 - It accepts an existing replacement only when its live identity and sandbox registry generation match the journal.
 
 <Warning title="Recover an Unsafe Retained Policy Handoff">
-Do not retry rebuild when a retained policy handoff contains a literal credential. Keep the backup and handoff for recovery. Restore or select the recorded gateway and confirm `openshell status` is healthy. Only then destroy the failed sandbox and confirm OpenShell reports it deleted:
+Do not retry rebuild when a retained policy handoff contains a literal credential. Recover any required data from the backup before deletion, and keep the backup and handoff until that recovery is complete. Restore or select the recorded gateway and confirm `openshell status` is healthy. Only then use the ordinary fail-closed destroy flow and confirm OpenShell reports the sandbox deleted:
 
 ```bash
 openshell gateway select <recorded-gateway>
 openshell status
-$$nemoclaw <sandbox-name> destroy --force
+$$nemoclaw <sandbox-name> destroy --yes
 ```
 
-If deletion is unconfirmed, preserve the recovery state and restore gateway access. After confirmed deletion, run `$$nemoclaw onboard --name <new-sandbox-name>`. Do not discard the retained handoff before retiring the failed state.
+Do not use `--force` for this recovery. If deletion is unconfirmed, preserve the local recovery state and restore gateway access. After confirmed deletion, run `$$nemoclaw onboard --name <new-sandbox-name>`. When required data recovery and old-sandbox deletion are both complete, remove only the credential-bearing handoff at the exact path printed by the failed rebuild, for example `rm -- <retained-policy-handoff-path>`. Keep the remaining backup until it is no longer needed.
 </Warning>
 
 A mount-free journal written before NemoClaw bound host-mount identity remains resumable. An older journal for a rebuild with one or more host mounts stops as incompatible, even when the visible mount settings are unchanged, because it cannot prove the original host source identity. Preserve the live sandbox, onboarding session, printed backup, exact error, and the sandbox name, gateway, and journal phase from the `Journaled replacement` diagnostic. Do not change the target settings, edit the session, or delete the same-name sandbox. Ask a NemoClaw maintainer to review that retained recovery state before taking another recovery action.

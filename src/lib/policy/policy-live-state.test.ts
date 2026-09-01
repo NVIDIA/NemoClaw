@@ -5,6 +5,11 @@ import fs from "node:fs";
 import YAML from "yaml";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type {
+  OpenShellSandboxPolicySetSubmission,
+  SetOpenShellSandboxPolicyRequest,
+} from "../adapters/openshell/sandbox-policy";
+import { classifyCliOpenShellSandboxPolicySetResult } from "../adapters/openshell/sandbox-policy-cli";
 import { digestBaselineEntry } from "./baseline-exclusion";
 
 const mocks = vi.hoisted(() => ({
@@ -15,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   resolveOpenshell: vi.fn(),
   run: vi.fn(),
   runCapture: vi.fn(),
+  setSandboxPolicy:
+    vi.fn<(request: SetOpenShellSandboxPolicyRequest) => OpenShellSandboxPolicySetSubmission>(),
 }));
 
 vi.mock("../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
@@ -23,6 +30,9 @@ vi.mock("../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
     inspectSandboxPolicy: mocks.inspectSandboxPolicy,
     readSandboxPolicy: mocks.readSandboxPolicy,
     readSandboxPolicyRevision: mocks.readSandboxPolicyRevision,
+  },
+  syncCliOpenShellSandboxPolicyWriter: {
+    setSandboxPolicy: mocks.setSandboxPolicy,
   },
 }));
 vi.mock("../adapters/openshell/resolve", async (importOriginal) => ({
@@ -42,6 +52,7 @@ vi.mock("../state/registry", async (importOriginal) => ({
 import {
   applyPresetContent,
   applyPresets,
+  confirmAppliedPolicySetSubmission,
   excludeBaselineEntry,
   inspectPolicyMutationContext,
   removePreset,
@@ -82,6 +93,36 @@ describe("live OpenShell policy mutations", () => {
     }));
     mocks.runCapture.mockImplementation(() => livePolicy);
     mocks.resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
+    mocks.setSandboxPolicy.mockImplementation((request) => {
+      const result = mocks.run([
+        "openshell",
+        "policy",
+        "set",
+        ...(request.target.kind === "named" ? ["-g", request.target.gatewayName] : []),
+        "--policy",
+        request.policyPath,
+        request.sandboxName,
+      ]) as {
+        status?: number | null;
+        stderr?: string | Buffer | null;
+        error?: Error | null;
+      };
+      const status = typeof result.status === "number" ? result.status : null;
+      return {
+        outcome: classifyCliOpenShellSandboxPolicySetResult({
+          status,
+          ...(result.error ? { error: result.error } : {}),
+          ...(result.stderr === null || result.stderr === undefined
+            ? {}
+            : {
+                stderr: Buffer.isBuffer(result.stderr)
+                  ? result.stderr.toString("utf8")
+                  : result.stderr,
+              }),
+        }),
+        status,
+      };
+    });
     mocks.run.mockImplementation((command: readonly string[]) => {
       const policyIndex = command.indexOf("--policy");
       livePolicy = fs.readFileSync(command[policyIndex + 1] as string, "utf8");
@@ -99,6 +140,38 @@ describe("live OpenShell policy mutations", () => {
     expect(inspectPolicyMutationContext(sandboxName, "inspect policy")).not.toHaveProperty(
       "authority",
     );
+  });
+
+  it("confirms an ambiguous submission when authoritative readback matches", () => {
+    const context = inspectPolicyMutationContext(sandboxName, "prepare policy confirmation");
+
+    expect(() =>
+      confirmAppliedPolicySetSubmission(
+        { outcome: { kind: "ambiguous", detail: "response stream reset" }, status: 3 },
+        sandboxName,
+        livePolicy,
+        context,
+        "apply the requested policy",
+      ),
+    ).not.toThrow();
+  });
+
+  it("leaves an ambiguous submission unconfirmed when readback is unavailable", () => {
+    const context = inspectPolicyMutationContext(sandboxName, "prepare policy confirmation");
+    mocks.readSandboxPolicy.mockReturnValue({
+      ok: false,
+      error: { kind: "timeout", message: "OpenShell policy read timed out" },
+    });
+
+    expect(() =>
+      confirmAppliedPolicySetSubmission(
+        { outcome: { kind: "ambiguous", detail: "response stream reset" }, status: 3 },
+        sandboxName,
+        livePolicy,
+        context,
+        "apply the requested policy",
+      ),
+    ).toThrow("could not verify the resulting base policy");
   });
 
   it("preserves an out-of-band host entry while adding and removing a preset", () => {
@@ -131,7 +204,10 @@ describe("live OpenShell policy mutations", () => {
       return policyInspection({
         policySource: "sandbox",
         effectivePolicy: policy,
-        policyIdentity: { hash: `sha256:live-${String(observations)}`, activeVersion: observations },
+        policyIdentity: {
+          hash: `sha256:live-${String(observations)}`,
+          activeVersion: observations,
+        },
       });
     });
 

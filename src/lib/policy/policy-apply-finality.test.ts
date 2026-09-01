@@ -11,6 +11,11 @@ import {
   managedSandboxEntry,
   SANDBOX_IDENTITY,
 } from "../../../test/helpers/live-policy-fixture";
+import type {
+  OpenShellSandboxPolicySetSubmission,
+  SetOpenShellSandboxPolicyRequest,
+} from "../adapters/openshell/sandbox-policy";
+import { classifyCliOpenShellSandboxPolicySetResult } from "../adapters/openshell/sandbox-policy-cli";
 
 const {
   getSandbox,
@@ -19,6 +24,7 @@ const {
   readSandboxPolicy,
   resolveOpenshell,
   run,
+  setSandboxPolicy,
   updateSandbox,
 } = vi.hoisted(() => ({
   getSandbox: vi.fn(),
@@ -27,11 +33,13 @@ const {
   readSandboxPolicy: vi.fn(),
   resolveOpenshell: vi.fn(),
   run: vi.fn(),
+  setSandboxPolicy:
+    vi.fn<(request: SetOpenShellSandboxPolicyRequest) => OpenShellSandboxPolicySetSubmission>(),
   updateSandbox: vi.fn(),
 }));
 
-vi.mock("../adapters/openshell/policy-state", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../adapters/openshell/policy-state")>()),
+vi.mock("../adapters/openshell/sandbox-identity-cli", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/openshell/sandbox-identity-cli")>()),
   inspectOpenShellSandboxIdentityFingerprint,
 }));
 
@@ -42,6 +50,7 @@ vi.mock("../adapters/openshell/sandbox-policy-cli", async (importOriginal) => ({
     readSandboxPolicy,
     readSandboxPolicyRevision: vi.fn(),
   },
+  syncCliOpenShellSandboxPolicyWriter: { setSandboxPolicy },
 }));
 
 vi.mock("../runner", async (importOriginal) => ({
@@ -133,6 +142,40 @@ function policySetResult(stderr: string): SpawnSyncReturns<string | Buffer> {
   };
 }
 
+function bindPolicySetSubmission(): void {
+  setSandboxPolicy.mockReset();
+  setSandboxPolicy.mockImplementation((request) => {
+    const result = run([
+      "openshell",
+      "policy",
+      "set",
+      ...(request.target.kind === "named" ? ["-g", request.target.gatewayName] : []),
+      "--policy",
+      request.policyPath,
+      request.sandboxName,
+    ]) as {
+      status?: number | null;
+      stderr?: string | Buffer | null;
+      error?: Error | null;
+    };
+    const status = typeof result.status === "number" ? result.status : null;
+    return {
+      outcome: classifyCliOpenShellSandboxPolicySetResult({
+        status,
+        ...(result.error ? { error: result.error } : {}),
+        ...(result.stderr === null || result.stderr === undefined
+          ? {}
+          : {
+              stderr: Buffer.isBuffer(result.stderr)
+                ? result.stderr.toString("utf8")
+                : result.stderr,
+            }),
+      }),
+      status,
+    };
+  });
+}
+
 function reportedText(): string {
   return vi
     .mocked(console.error)
@@ -168,6 +211,7 @@ describe("applyPresets finality when openshell rejects the composed policy", () 
     inspectSandboxPolicy.mockReset();
     updateSandbox.mockReset();
     resolveOpenshell.mockReset();
+    bindPolicySetSubmission();
 
     resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
     inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
@@ -247,6 +291,7 @@ describe("single-preset mutations when openshell rejects the composed policy", (
     inspectSandboxPolicy.mockReset();
     updateSandbox.mockReset();
     resolveOpenshell.mockReset();
+    bindPolicySetSubmission();
 
     resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
     inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
@@ -302,6 +347,7 @@ describe("applyPresets temporary policy material under local I/O failure", () =>
     inspectSandboxPolicy.mockReset();
     updateSandbox.mockReset();
     resolveOpenshell.mockReset();
+    bindPolicySetSubmission();
 
     resolveOpenshell.mockReturnValue("/usr/local/bin/openshell");
     inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);

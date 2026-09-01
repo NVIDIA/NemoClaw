@@ -161,13 +161,20 @@ export function runRebuildBackupPhase(
     );
   }
   const retainedHandoff = backupManifest?.rebuildPolicyHandoff;
-  if (retainedPolicy && !isSandboxPolicyCredentialFree(retainedPolicy)) {
+  if (
+    retainedPolicy &&
+    backupManifest &&
+    retainedHandoff &&
+    !isSandboxPolicyCredentialFree(retainedPolicy)
+  ) {
+    const retainedHandoffPath = path.join(backupManifest.backupPath, retainedHandoff.file);
     return input.bail(
       `The retained rebuild policy handoff for sandbox '${input.sandboxName}' contains a literal credential value and cannot restore the deleted sandbox. Recovery:\n` +
-        `  1. Keep the backup and policy handoff for manual data recovery.\n` +
+        `  1. Recover any required data from the backup before deletion. Keep the backup and policy handoff until that recovery is complete.\n` +
         `  2. Restore access to recorded gateway '${input.gatewayName}', select it with \`openshell gateway select ${input.gatewayName}\`, and confirm \`openshell status\` is healthy.\n` +
-        `  3. Only then run \`nemoclaw ${input.sandboxName} destroy --force\` and confirm OpenShell reports the sandbox deleted. If deletion is unconfirmed, preserve the recovery state and restore gateway access before retrying cleanup.\n` +
-        "  4. Create a fresh sandbox under a new name by replacing `<new-sandbox>` in `nemoclaw onboard --name <new-sandbox>`. Do not discard the handoff and retry rebuild.",
+        `  3. Only then run \`nemoclaw ${input.sandboxName} destroy --yes\` and confirm OpenShell reports the sandbox deleted. Do not use \`--force\` for this recovery. If deletion is unconfirmed, preserve the recovery state and restore gateway access before retrying cleanup.\n` +
+        "  4. Create a fresh sandbox under a new name by replacing `<new-sandbox>` in `nemoclaw onboard --name <new-sandbox>`. Do not retry rebuild with the unsafe handoff.\n" +
+        `  5. After required data is recovered and old-sandbox deletion is confirmed, remove the credential-bearing policy handoff at '${retainedHandoffPath}'. Keep the remaining backup until it is no longer needed.`,
     );
   }
   if (retainedPolicy && backupManifest && retainedHandoff) {

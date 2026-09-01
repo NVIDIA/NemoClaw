@@ -18,14 +18,16 @@ const {
   inspectSandboxPolicy,
   readSandboxPolicy,
 } = vi.hoisted(() => ({
-    getSandbox: vi.fn(),
-    inspectOpenShellSandboxIdentityFingerprint: vi.fn(),
-    inspectSandboxPolicy: vi.fn(),
-    readSandboxPolicy: vi.fn(),
-  }));
+  getSandbox: vi.fn(),
+  inspectOpenShellSandboxIdentityFingerprint: vi.fn(),
+  inspectSandboxPolicy: vi.fn(),
+  readSandboxPolicy: vi.fn(),
+}));
 
-vi.mock("../../../src/lib/adapters/openshell/policy-state", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../../src/lib/adapters/openshell/policy-state")>()),
+vi.mock("../../../src/lib/adapters/openshell/sandbox-identity-cli", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../src/lib/adapters/openshell/sandbox-identity-cli")
+  >()),
   inspectOpenShellSandboxIdentityFingerprint,
 }));
 

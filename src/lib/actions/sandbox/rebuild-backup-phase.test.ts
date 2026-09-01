@@ -71,7 +71,10 @@ describe("rebuild policy handoff", () => {
     mocks.captureRecordedSandboxBasePolicy.mockReturnValue(
       "version: 1\nnetwork_policies:\n  host_changed: {}\n",
     );
-    const result = runRebuildBackupPhase(input(), vi.fn(() => null));
+    const result = runRebuildBackupPhase(
+      input(),
+      vi.fn(() => null),
+    );
 
     expect(result?.policySourcePath).toBe(policyPath);
     expect(fs.readFileSync(policyPath, "utf8")).toContain("host_changed");
@@ -97,9 +100,7 @@ describe("rebuild policy handoff", () => {
     );
     const backup = vi.fn(() => null);
 
-    expect(() =>
-      runRebuildBackupPhase(input(), backup),
-    ).toThrow(
+    expect(() => runRebuildBackupPhase(input(), backup)).toThrow(
       "Cannot prepare a rebuild policy handoff for sandbox 'alpha' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.",
     );
     expect(backup).not.toHaveBeenCalled();
@@ -108,7 +109,10 @@ describe("rebuild policy handoff", () => {
 
   it("never reconstructs a missing live policy from NemoClaw state", () => {
     expect(() =>
-      runRebuildBackupPhase(input({ staleRecovery: true }), vi.fn(() => null)),
+      runRebuildBackupPhase(
+        input({ staleRecovery: true }),
+        vi.fn(() => null),
+      ),
     ).toThrow(/will not reconstruct policy from NemoClaw state/);
   });
 
@@ -142,24 +146,29 @@ describe("rebuild policy handoff", () => {
 
     let refusal: Error | null = null;
     try {
-      runRebuildBackupPhase(
-        input({ staleRecovery: true, preparedRecoveryManifest }),
-        vi.fn(),
-      );
+      runRebuildBackupPhase(input({ staleRecovery: true, preparedRecoveryManifest }), vi.fn());
     } catch (error) {
       refusal = error as Error;
     }
 
     expect(refusal?.message).toContain(
-      "Only then run `nemoclaw alpha destroy --force` and confirm OpenShell reports the sandbox deleted",
+      "Only then run `nemoclaw alpha destroy --yes` and confirm OpenShell reports the sandbox deleted",
     );
+    expect(refusal?.message).toContain("Do not use `--force` for this recovery");
+    expect(refusal?.message).not.toContain("destroy --force");
     expect(refusal?.message).toContain(
       "If deletion is unconfirmed, preserve the recovery state and restore gateway access",
     );
     expect(refusal?.message).toContain(
       "Create a fresh sandbox under a new name by replacing `<new-sandbox>` in `nemoclaw onboard --name <new-sandbox>`",
     );
-    expect(refusal?.message).toContain("Do not discard the handoff and retry rebuild");
+    expect(refusal?.message).toContain("Do not retry rebuild with the unsafe handoff");
+    expect(refusal?.message).toContain(
+      `After required data is recovered and old-sandbox deletion is confirmed, remove the credential-bearing policy handoff at '${path.join(
+        backupPath,
+        preparedRecoveryManifest.rebuildPolicyHandoff!.file,
+      )}'`,
+    );
     expect(
       fs.existsSync(path.join(backupPath, preparedRecoveryManifest.rebuildPolicyHandoff!.file)),
     ).toBe(true);

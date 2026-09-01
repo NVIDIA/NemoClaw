@@ -25,6 +25,7 @@ import {
   formatOpenShellPolicyRecoveryAction,
   PolicyObservationError,
 } from "../adapters/openshell/policy-state";
+export { isPolicyObservationError } from "../adapters/openshell/policy-state";
 import { loadAgent, requireAgentPolicyAdditionsPath } from "../agent/defs";
 import { CLI_NAME } from "../cli/branding";
 import {
@@ -764,6 +765,18 @@ export function rejectFinalPolicySetSubmission(
       `Refusing to ${operation}: OpenShell rejected the policy change: ${redact(outcome.message)}`,
     );
   }
+}
+
+/** Confirm a policy submission through authoritative live readback. */
+export function confirmAppliedPolicySetSubmission(
+  submission: OpenShellSandboxPolicySetSubmission,
+  sandboxName: string,
+  desiredPolicyDocument: string,
+  previous: PolicyMutationContext,
+  operation: string,
+): void {
+  rejectFinalPolicySetSubmission(submission, operation);
+  verifyAppliedPolicyDocument(sandboxName, desiredPolicyDocument, previous);
 }
 
 function reportPolicyObservationFailure(error: unknown): false {

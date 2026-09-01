@@ -26,12 +26,17 @@ export const livePolicyMutationContext = {
 
 export function bindLivePolicyMutationContext(
   policy: typeof import("../../src/lib/policy"),
+  policyAdapter?: typeof import("../../src/lib/adapters/openshell/sandbox-policy-cli"),
 ): MockInstance[] {
   return [
+    ...(policyAdapter
+      ? [bindTypedPolicyReader(policyAdapter, () => livePolicyMutationContext.basePolicyDocument)]
+      : []),
     vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(livePolicyMutationContext),
     vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined),
+    vi.spyOn(policy, "confirmAppliedPolicySetSubmission").mockImplementation(() => undefined),
   ];
 }
 
@@ -92,7 +97,11 @@ export type ShieldsFlowHarnessOptions = {
     kill: () => boolean;
   };
   livePolicyYaml?: string;
-  run?: (cmd: unknown) => { status: number };
+  run?: (cmd: unknown) => {
+    status: number | null;
+    stderr?: string | Buffer | null;
+    error?: Error | null;
+  };
   sandboxEntry?: SandboxEntry;
   sandboxName?: string;
   timerAuthorityRevokedSequence?: readonly boolean[];
@@ -261,6 +270,18 @@ export function bindTypedPolicyWriter(
     });
 }
 
+export function bindTypedPolicyReader(
+  adapter: typeof import("../../src/lib/adapters/openshell/sandbox-policy-cli"),
+  readDocument: () => string,
+): MockInstance {
+  return vi
+    .spyOn(adapter.syncCliOpenShellSandboxPolicyReader, "readSandboxPolicy")
+    .mockImplementation(() => ({
+      ok: true,
+      value: { document: readDocument(), appliedRevision: null },
+    }));
+}
+
 export function createShieldsFlowHarness(
   requireDist: NodeRequire,
   tmpDir: string,
@@ -403,6 +424,9 @@ export function createShieldsFlowHarness(
     (command, runOptions) => runner.run(command, runOptions),
     policySetBodies,
   );
+  bindTypedPolicyReader(policyAdapter, () =>
+    String(runner.runCapture(["policy", "get", "-g", "nemoclaw", "--base", sandboxName])),
+  );
   vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw));
   vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(
     path.join(tmpDir, "permissive.yaml"),
@@ -450,8 +474,9 @@ export function createShieldsFlowHarness(
     .spyOn(policy, "inspectPolicyMutationContext")
     .mockImplementation(policyMutationAuthority);
   vi.spyOn(policy, "recheckPolicyMutationContext").mockImplementation(policyMutationAuthority);
+  vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined);
   const policyVerificationSpy = vi
-    .spyOn(policy, "verifyAppliedPolicyDocument")
+    .spyOn(policy, "confirmAppliedPolicySetSubmission")
     .mockImplementation(() => undefined);
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: [{ name: options.sandboxName ?? "openclaw", agent: resolvedAgentConfig.agentName }],

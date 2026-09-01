@@ -134,10 +134,15 @@ describe("shields command flow", () => {
     },
   );
 
-  it("restores restrictive policy when policy verification fails (#9833)", () => {
-    const harness = createHarness();
+  it("retains recovery authority when the applied Shields policy cannot be confirmed", () => {
+    const policyState = requireDist(
+      "../adapters/openshell/policy-state.js",
+    ) as typeof import("../adapters/openshell/policy-state.js");
+    const harness = createHarness({
+      run: () => ({ status: 1, stderr: "openshell: response stream reset" }),
+    });
     harness.policyVerificationSpy.mockImplementationOnce(() => {
-      throw new Error("policy verification failed");
+      throw new policyState.PolicyObservationError("policy verification failed");
     });
 
     expect(() =>
@@ -150,16 +155,45 @@ describe("shields command flow", () => {
 
     expect(harness.policySetBodies.map((body) => YAML.parse(body).network_policies)).toEqual([
       { test: {} },
-      { test: {} },
     ]);
-    expect(harness.getOpenClawPosture()).toBe("mutable");
+    expect(harness.policyVerificationSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: expect.objectContaining({ kind: "ambiguous" }) }),
+      "openclaw",
+      expect.any(String),
+      expect.objectContaining({ gatewayName: "nemoclaw" }),
+      "apply the Shields down policy",
+    );
     expect(harness.auditSpy).not.toHaveBeenCalled();
     const stateFiles = fs.readdirSync(path.join(tmpDir, ".nemoclaw", "state"));
-    expect(
-      stateFiles.filter((name) =>
-        /^(shields-openclaw|shields-timer-|shields-transition-openclaw)/u.test(name),
-      ),
-    ).toEqual([]);
+    expect(stateFiles).toContain("shields-openclaw.json");
+    expect(stateFiles).toContain("shields-timer-openclaw.json");
+    expect(stateFiles.some((name) => name.startsWith("shields-transition-openclaw-"))).toBe(true);
+    expect(harness.logSpy).not.toHaveBeenCalledWith(expect.stringContaining("Unlocking"));
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "scheduled auto-restore and Shields recovery transaction remain authoritative",
+    );
+  });
+
+  it("continues Shields down after authoritative finality accepts an ambiguous write", () => {
+    const harness = createHarness({
+      run: () => ({ status: 1, stderr: "openshell: response stream reset" }),
+    });
+
+    harness.shieldsDown("openclaw", {
+      timeout: "5m",
+      reason: "ambiguous write readback coverage",
+      throwOnError: true,
+    });
+
+    expect(harness.policyVerificationSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: expect.objectContaining({ kind: "ambiguous" }) }),
+      "openclaw",
+      expect.any(String),
+      expect.objectContaining({ gatewayName: "nemoclaw" }),
+      "apply the Shields down policy",
+    );
+    expect(harness.isShieldsDown("openclaw")).toBe(true);
+    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain("Config unlocked for openclaw");
   });
 
   it("shieldsDown preserves exact live OpenShell policy without shadow ownership state (#7952)", () => {
@@ -239,7 +273,9 @@ describe("shields command flow", () => {
     expect(alphaState.shieldsPolicySnapshotPath).not.toBe(
       reusedAlphaState.shieldsPolicySnapshotPath,
     );
-    expect(fs.readFileSync(alphaState.shieldsPolicySnapshotPath, "utf-8")).toBe(alphaPolicy.trim());
+    expect(fs.readFileSync(alphaState.shieldsPolicySnapshotPath, "utf-8").trim()).toBe(
+      alphaPolicy.trim(),
+    );
     expect(
       fs
         .readdirSync(stateDir)

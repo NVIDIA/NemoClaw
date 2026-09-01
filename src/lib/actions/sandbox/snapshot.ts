@@ -6,8 +6,8 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { dockerCapture } from "../../adapters/docker";
 import {
-  createSyncCliOpenShellSandboxPolicyReader,
   namedOpenShellGateway,
+  syncCliOpenShellSandboxPolicyReader,
 } from "../../adapters/openshell/sandbox-policy-cli";
 import {
   captureOpenshell,
@@ -385,9 +385,7 @@ async function prepareSnapshotClonePolicy(
   cleanup?: () => boolean;
 }> {
   const gatewayName = resolveSandboxGatewayName(srcEntry);
-  const policyRead = createSyncCliOpenShellSandboxPolicyReader({
-    capture: (args, options) => captureOpenshell(args, options),
-  }).readSandboxPolicy({
+  const policyRead = syncCliOpenShellSandboxPolicyReader.readSandboxPolicy({
     target: namedOpenShellGateway(gatewayName),
     sandboxName: srcEntry.name,
     scope: "base",
