@@ -667,7 +667,9 @@ describe("authenticated MCP sandbox destroy lifecycle", () => {
 
     expect(message).toMatch(/changed its MCP gateway authority.*different target/i);
     expect(message).toContain("NemoClaw did not delete the original sandbox");
-    expect(message).toContain("Retry after the recorded OpenShell gateway is stable");
+    expect(message).toContain(
+      "Confirm the recorded OpenShell gateway is healthy and its gateway name, workspace, and TLS authority match the sandbox's recorded target, then retry",
+    );
     expect(registry.getSandbox("alpha")).toEqual(before);
     expect(testState.calls).toEqual([]);
     expect(testState.adapterCalls).toEqual([]);

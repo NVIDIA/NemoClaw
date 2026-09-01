@@ -3,16 +3,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { setProviderCommandRuntimeHooksForTest } from "../../adapters/openshell/provider-command";
 import type { McpBridgeEntry } from "../../state/registry";
 
 const mocks = vi.hoisted(() => ({
   getSandboxOrThrow: vi.fn(),
   isShieldsDown: vi.fn(),
-  runOpenshellProviderCommand: vi.fn(),
-}));
-
-vi.mock("../../adapters/openshell/provider-command", () => ({
-  runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
+  runOpenshell: vi.fn(),
 }));
 
 vi.mock("../../shields", () => ({
@@ -51,14 +48,16 @@ describe("Hermes MCP recovery guidance", () => {
       name: "alpha",
     });
     mocks.isShieldsDown.mockReset().mockReturnValue(true);
-    mocks.runOpenshellProviderCommand.mockReset().mockReturnValue({
+    mocks.runOpenshell.mockReset().mockReturnValue({
       status: 1,
       stdout: "",
       stderr: "Hermes gateway is not running under the managed service lifecycle",
     });
+    setProviderCommandRuntimeHooksForTest({ runOpenshell: mocks.runOpenshell });
   });
 
   afterEach(() => {
+    setProviderCommandRuntimeHooksForTest({});
     vi.unstubAllEnvs();
   });
 
@@ -72,12 +71,23 @@ describe("Hermes MCP recovery guidance", () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "ambient-gateway");
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://ambient.invalid");
     vi.stubEnv("OPENSHELL_GATEWAY_INSECURE", "true");
+    vi.stubEnv("OPENSHELL_LOCAL_TLS_DIR", "/ambient/tls");
+    vi.stubEnv("OPENSHELL_TOKEN", "ambient-token");
     vi.stubEnv("OPENSHELL_WORKSPACE", "ambient-workspace");
-    mocks.runOpenshellProviderCommand.mockImplementation((_args, options) => {
-      expect(options?.runtimeSelection).toEqual({
-        gatewayName: "nemoclaw-8091",
-        workspace: "default",
-      });
+    mocks.runOpenshell.mockImplementation((_args, options) => {
+      expect(options).toEqual(
+        expect.objectContaining({
+          env: expect.objectContaining({
+            OPENSHELL_GATEWAY: "nemoclaw-8091",
+            OPENSHELL_WORKSPACE: "default",
+          }),
+          replaceEnv: true,
+        }),
+      );
+      expect(options?.env).not.toHaveProperty("OPENSHELL_GATEWAY_ENDPOINT");
+      expect(options?.env).not.toHaveProperty("OPENSHELL_GATEWAY_INSECURE");
+      expect(options?.env).not.toHaveProperty("OPENSHELL_LOCAL_TLS_DIR");
+      expect(options?.env).not.toHaveProperty("OPENSHELL_TOKEN");
       return {
         status: 0,
         stdout: JSON.stringify({ changed: true, ok: true, reloaded: true }),
@@ -89,6 +99,6 @@ describe("Hermes MCP recovery guidance", () => {
       assertHermesMcpMutationRuntimeCapability("alpha", runtimeSelection),
     ).not.toThrow();
     expect(() => unregisterHermesAdapter("alpha", entry, runtimeSelection)).not.toThrow();
-    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledTimes(2);
+    expect(mocks.runOpenshell).toHaveBeenCalledTimes(2);
   });
 });

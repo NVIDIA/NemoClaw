@@ -144,7 +144,7 @@ async function inspectReadOnlyRecoveryState(
       currentRuntimeSelection.localTlsDir !== expectedRuntimeSelection.localTlsDir)
   ) {
     throw new McpBridgeError(
-      `Sandbox '${sandboxName}' changed its MCP gateway authority before host-side rebuild recovery could inspect providers. Refusing to continue on a different target. NemoClaw did not delete the original sandbox. Retry after the recorded OpenShell gateway is stable.`,
+      `Sandbox '${sandboxName}' changed its MCP gateway authority before host-side rebuild recovery could inspect providers. Refusing to continue on a different target. NemoClaw did not delete the original sandbox. Confirm the recorded OpenShell gateway is healthy and its gateway name, workspace, and TLS authority match the sandbox's recorded target, then retry.`,
     );
   }
   const providerRuntimeSelection = expectedRuntimeSelection ?? currentRuntimeSelection;
@@ -187,8 +187,8 @@ function assertValidationSnapshotCurrent(
   if (drifted || targetChanged) {
     throw new McpBridgeError(
       drifted
-        ? `MCP server '${drifted.server}' changed after host-side rebuild preflight. Refusing to delete the still-live sandbox; retry after its target and provider state are stable.`
-        : `Sandbox MCP gateway authority changed after host-side rebuild preflight. Refusing to delete the still-live sandbox; retry after its gateway state is stable.`,
+        ? `MCP server '${drifted.server}' changed after host-side rebuild preflight. NemoClaw did not delete the original sandbox. Confirm the recorded OpenShell gateway is healthy and the MCP target and provider identity match the sandbox registry, then retry.`
+        : `Sandbox MCP gateway authority changed after host-side rebuild preflight. NemoClaw did not delete the original sandbox. Confirm the recorded OpenShell gateway is healthy and its gateway name, workspace, and TLS authority match the sandbox's recorded target, then retry.`,
     );
   }
 }

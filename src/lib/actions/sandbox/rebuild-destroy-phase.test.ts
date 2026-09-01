@@ -382,7 +382,7 @@ describe("rebuild destroy phase", () => {
         onDeleted: vi.fn(),
       }),
     ).rejects.toThrow(
-      "Rebuild delete target does not match the frozen OpenShell target. NemoClaw did not delete the original sandbox. Retry after the recorded OpenShell gateway is stable.",
+      "Rebuild delete target does not match the frozen OpenShell target. NemoClaw did not delete the original sandbox. Confirm the recorded OpenShell gateway is healthy and its gateway name, workspace, and TLS authority match the original sandbox, then retry.",
     );
 
     expectNoSandboxDelete(mocks.runOpenshell);

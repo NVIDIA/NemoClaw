@@ -368,8 +368,8 @@ export async function runRebuildDestroyPhase(
     relockShieldsIfNeeded(true);
     bail(
       mcpRecoveryFailure
-        ? `Rebuild delete target does not match the frozen OpenShell target. NemoClaw did not delete the original sandbox. MCP provider recovery also failed: ${mcpRecoveryFailure}. Retry after the recorded OpenShell gateway is stable.`
-        : "Rebuild delete target does not match the frozen OpenShell target. NemoClaw did not delete the original sandbox. Retry after the recorded OpenShell gateway is stable.",
+        ? `Rebuild delete target does not match the frozen OpenShell target. NemoClaw did not delete the original sandbox. MCP provider recovery also failed: ${mcpRecoveryFailure}. Confirm the recorded OpenShell gateway is healthy and its gateway name, workspace, and TLS authority match the original sandbox, then retry.`
+        : "Rebuild delete target does not match the frozen OpenShell target. NemoClaw did not delete the original sandbox. Confirm the recorded OpenShell gateway is healthy and its gateway name, workspace, and TLS authority match the original sandbox, then retry.",
     );
     return null;
   }
