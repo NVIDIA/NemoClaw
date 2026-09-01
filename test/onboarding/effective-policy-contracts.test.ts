@@ -603,6 +603,18 @@ describe("effective built-in policy contracts", () => {
     expect(github).not.toHaveProperty("protocol");
     expect(github).not.toHaveProperty("tls");
 
+    const rawGithub = requireEndpoint(brew, "raw.githubusercontent.com");
+    expect(rawGithub).toMatchObject({
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+    });
+    expect(rawGithub).not.toHaveProperty("access");
+    expect(rules(rawGithub)).toEqual([
+      { method: "GET", path: "/**" },
+      { method: "HEAD", path: "/**" },
+    ]);
+
     (brew.endpoints ?? []).filter(
       (candidate) => !["github.com", "raw.githubusercontent.com"].includes(candidate.host ?? ""),
     ).forEach((endpoint) => {

@@ -165,6 +165,55 @@ async function curlStatus(
   return text(result).trim();
 }
 
+async function expectRawGithubPostDeniedLocally(
+  sandbox: SandboxClient,
+  artifactName: string,
+): Promise<void> {
+  const probe = await sandboxBash(
+    sandbox,
+    String.raw`
+set -euo pipefail
+raw_url=https://raw.githubusercontent.com/Homebrew/brew/HEAD/README.md
+post_body="$(mktemp)"
+trap 'rm -f "$post_body"' EXIT
+post_status="$(curl -sS -o "$post_body" -w "%{http_code}" --connect-timeout 10 --max-time 30 -X POST "$raw_url")"
+if [ "$post_status" != 403 ]; then
+  printf 'RAW_GITHUB_POST_BAD_%s\n' "$post_status"
+  head -c 300 "$post_body" || true
+  exit 1
+fi
+if ! node - "$post_body" <<'NEMOCLAW_RAW_GITHUB_POLICY_DENIAL'
+const fs = require("node:fs");
+const body = fs.readFileSync(process.argv[2], "utf8");
+let payload;
+try {
+  payload = JSON.parse(body);
+} catch {
+  process.exit(1);
+}
+const detail = typeof payload.detail === "string" ? payload.detail : "";
+if (
+  payload.error !== "policy_denied" ||
+  !/\bPOST\b.*raw\.githubusercontent\.com(?::443)?/iu.test(detail) ||
+  /<html/iu.test(body)
+) {
+  process.exit(1);
+}
+NEMOCLAW_RAW_GITHUB_POLICY_DENIAL
+then
+  printf 'RAW_GITHUB_POST_BAD_BODY\n'
+  head -c 300 "$post_body" || true
+  exit 1
+fi
+printf 'RAW_GITHUB_POST_DENIED_LOCAL_403\n'
+`,
+    { artifactName },
+  );
+
+  expect(probe.exitCode, text(probe)).toBe(0);
+  expect(text(probe)).toContain("RAW_GITHUB_POST_DENIED_LOCAL_403");
+}
+
 async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promise<void> {
   const install = await sandboxBash(
     sandbox,
@@ -754,6 +803,8 @@ test(
     expect(brewGitDenied.exitCode, brewGitDeniedText).not.toBe(0);
     expect(brewGitDeniedText).toMatch(/\b403\b|denied|forbidden/i);
 
+    await expectRawGithubPostDeniedLocally(sandbox, "tc-net-11-brew-raw-github-post-denial");
+
     const brewProbe = await sandboxBash(
       sandbox,
       String.raw`
@@ -775,40 +826,6 @@ raw_url=https://raw.githubusercontent.com/Homebrew/brew/HEAD/README.md
 check_status raw "$raw_url"
 check_status raw_head "$raw_url" --head
 check_status ghcr https://ghcr.io/v2/
-post_body="$(mktemp)"
-trap 'rm -f "$post_body"' EXIT
-post_status="$(curl -sS -o "$post_body" -w "%{http_code}" --connect-timeout 10 --max-time 30 -X POST "$raw_url")"
-if [ "$post_status" != 403 ]; then
-  printf 'BREW_ENDPOINT_raw_POST_BAD_%s\n' "$post_status"
-  head -c 300 "$post_body" || true
-  exit 1
-fi
-if ! node - "$post_body" <<'NEMOCLAW_BREW_POLICY_DENIAL'
-const fs = require("node:fs");
-const body = fs.readFileSync(process.argv[2], "utf8");
-let payload;
-try {
-  payload = JSON.parse(body);
-} catch {
-  process.exit(1);
-}
-const detail = typeof payload.detail === "string" ? payload.detail : "";
-if (
-  payload.error !== "policy_denied" ||
-  !/\bPOST\b.*raw\.githubusercontent\.com(?::443)?/iu.test(detail) ||
-  /<html/iu.test(body)
-) {
-  process.exit(1);
-}
-NEMOCLAW_BREW_POLICY_DENIAL
-then
-  printf 'BREW_ENDPOINT_raw_POST_BAD_BODY\n'
-  head -c 300 "$post_body" || true
-  exit 1
-fi
-printf 'BREW_ENDPOINT_raw_POST_DENIED_LOCAL_403\n'
-rm -f "$post_body"
-trap - EXIT
 command -v brew
 brew --prefix
 brew install --quiet hello
@@ -821,7 +838,6 @@ hello
     expect(brewText).toContain("BREW_ENDPOINT_formulae_OK_");
     expect(brewText).toContain("BREW_ENDPOINT_raw_OK_");
     expect(brewText).toContain("BREW_ENDPOINT_raw_head_OK_");
-    expect(brewText).toContain("BREW_ENDPOINT_raw_POST_DENIED_LOCAL_403");
     expect(brewText).toContain("BREW_ENDPOINT_ghcr_OK_");
     expect(brewText).toContain("/usr/local/bin/brew");
     expect(brewText).toContain("/home/linuxbrew/.linuxbrew");
@@ -1108,6 +1124,10 @@ printf '\n'
     );
     expect(permissiveApply.exitCode, text(permissiveApply)).toBe(0);
     await sleep(POLICY_SETTLE_MS);
+    await expectRawGithubPostDeniedLocally(
+      sandbox,
+      "tc-net-06-permissive-raw-github-post-denial",
+    );
     const npmPing = await sandboxBash(sandbox, "npm ping 2>&1 && echo NPM_OK || echo NPM_FAIL", {
       artifactName: "tc-net-06-npm-ping-permissive",
     });

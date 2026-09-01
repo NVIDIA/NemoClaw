@@ -662,6 +662,51 @@ describe("initial sandbox policy real preset merge", () => {
     },
   );
 
+  it.each([
+    {
+      label: "permissive OpenClaw blueprint policy",
+      path: ["nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"],
+      agent: "openclaw",
+    },
+    {
+      label: "permissive OpenClaw agent policy",
+      path: ["agents", "openclaw", "policy-permissive.yaml"],
+      agent: "openclaw",
+    },
+    {
+      label: "permissive Hermes policy",
+      path: ["agents", "hermes", "policy-permissive.yaml"],
+      agent: "hermes",
+    },
+  ] as const)(
+    "keeps raw GitHub read-only in the prepared $label (#10380)",
+    (policyCase) => {
+      const effective = readPreparedPolicy(
+        prepareInitialSandboxCreatePolicy(repoPath(...policyCase.path), [], {
+          agentName: policyCase.agent,
+        }),
+      );
+      const rawGithub = effective.network_policies?.brew?.endpoints?.find(
+        (endpoint) => endpoint.host === "raw.githubusercontent.com",
+      );
+
+      expect(rawGithub, policyCase.path.join("/")).toMatchObject({
+        host: "raw.githubusercontent.com",
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+      });
+      expect(rawGithub, policyCase.path.join("/")).not.toHaveProperty("access");
+      expect(
+        rawGithub?.rules?.map((rule) => rule.allow),
+        policyCase.path.join("/"),
+      ).toEqual([
+        { method: "GET", path: "/**" },
+        { method: "HEAD", path: "/**" },
+      ]);
+    },
+  );
+
   it("keeps the Restricted OpenClaw npm baseline inspected and GET-only (#8497)", () => {
     const baselinePath = repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
     const reviewed = YAML.parse(fs.readFileSync(baselinePath, "utf-8")) as PolicyDocument;
