@@ -525,7 +525,7 @@ describe("effective built-in policy contracts", () => {
     });
   });
 
-  it("denies Node.js egress in the Hermes Discord preset (#10655)", () => {
+  it("omits Node.js from the composed Hermes Discord policy (#10655)", () => {
     const effective = composePresets(["discord"], "hermes");
     const discord = requireNetworkPolicy(effective, "discord");
 

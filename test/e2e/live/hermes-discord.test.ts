@@ -713,6 +713,24 @@ PY`,
     redactions: redactionValues,
   });
 
+  const restCaptureBeforeNodeProbe = fs.existsSync(fakeRest.captureFile)
+    ? fs.readFileSync(fakeRest.captureFile, "utf8")
+    : "";
+  const deniedNodeRestProbe = await sandboxShWithArgs(
+    sandbox,
+    SANDBOX_NAME,
+    `/usr/local/bin/node -e "require('node:http').get('http://host.docker.internal:${shellQuote(fakeRest.port)}/api/v10/users/@me',r=>{r.resume();process.exitCode=3}).on('error',()=>{process.exitCode=2})"`,
+    [],
+    { artifactName: "phase-6-node-rest-denied", redactionValues, timeoutMs: 30_000 },
+  );
+  expect(deniedNodeRestProbe.exitCode, "Node.js must be denied by the Hermes Discord policy").not.toBe(0);
+  const restCaptureAfterNodeProbe = fs.existsSync(fakeRest.captureFile)
+    ? fs.readFileSync(fakeRest.captureFile, "utf8")
+    : "";
+  expect(restCaptureAfterNodeProbe, "denied Node.js probe reached fake Discord REST API").toBe(
+    restCaptureBeforeNodeProbe,
+  );
+
   const nativeGateway = await runHermesPythonDiscordGatewayProof(
     sandbox,
     fakeGateway.port,
