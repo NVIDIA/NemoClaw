@@ -678,6 +678,64 @@ describe("created sandbox identity gate", () => {
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
   });
 
+  it("allows identity-bound post-create effects after the former 30-second cap (#10652)", async () => {
+    let nonce = "";
+    let nowMs = 0;
+    const input = noGpuInput();
+    input.sandboxReadyTimeoutSecs = 90;
+    input.verifyCreatedSandboxBeforeEffects = vi.fn();
+    input.revalidateVerifiedSandboxBeforeEffect = vi.fn();
+
+    const patch = createGpuPatchFixture();
+    mocks.createDockerGpuSandboxCreatePatch.mockReturnValue(patch);
+    mocks.streamSandboxCreate.mockImplementation(async (_command, args, _env, options) => {
+      nonce = createAttemptNonce(args);
+      expect(nonce).toMatch(/^[0-9a-f]{62}$/u);
+      expect(nonce).toHaveLength(NEMOCLAW_CREATE_ATTEMPT_NONCE_HEX_LENGTH);
+      expect(options.readyCheck?.()).toBe(true);
+      return { status: 0, output: "Created sandbox: alpha", sawProgress: true };
+    });
+
+    const deps = createGpuFlowDeps();
+    deps.publicationNow = () => nowMs;
+    vi.mocked(deps.sleep).mockImplementation((seconds) => {
+      nowMs += seconds * 1_000;
+    });
+    deps.installPortableDemoLifecycle = vi.fn(() => "generation-1");
+    const identityLabels = () => ({ [NEMOCLAW_CREATE_ATTEMPT_LABEL]: nonce });
+    const pendingMetadata = {
+      resource_version: null,
+      created_at: null,
+      phase: null,
+      current_policy_version: null,
+    };
+    vi.mocked(deps.runCaptureOpenshell)
+      .mockReturnValueOnce("alpha Ready")
+      .mockImplementationOnce(() =>
+        sandboxListJson("alpha-sandbox-id", identityLabels(), pendingMetadata),
+      )
+      .mockImplementationOnce(() => {
+        nowMs += 31_000;
+        return sandboxListJson("alpha-sandbox-id", identityLabels(), pendingMetadata);
+      })
+      .mockImplementationOnce(() => sandboxListJson("alpha-sandbox-id", identityLabels()));
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
+
+    expect(input.verifyCreatedSandboxBeforeEffects).toHaveBeenCalledExactlyOnceWith({
+      sandboxId: "alpha-sandbox-id",
+      liveIdentityFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      createAttemptNonce: nonce,
+      route: "none",
+    });
+    expect(input.revalidateVerifiedSandboxBeforeEffect).toHaveBeenCalledWith(
+      "apply runtime patch for sandbox 'alpha'",
+    );
+    expect(patch.ensureApplied).toHaveBeenCalledOnce();
+    expect(patch.commitAfterReady).toHaveBeenCalledOnce();
+    expect(deps.sleep).toHaveBeenCalledExactlyOnceWith(0.25);
+  });
+
   it("carries Hermes receipt authority from selector settlement through publication lookup (#10423)", async () => {
     const events: string[] = [];
     let nonce = "";
