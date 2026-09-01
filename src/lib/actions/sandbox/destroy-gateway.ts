@@ -13,7 +13,7 @@ import { DASHBOARD_PORT } from "../../core/ports";
 import { stopOpenShellGatewayUserService } from "../../onboard/docker-driver-gateway-service";
 import {
   resolveGatewayPortFromName,
-  resolveGatewayStateDirName,
+  resolveGatewayStateDirForPort,
 } from "../../onboard/gateway-binding";
 import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
@@ -54,19 +54,13 @@ export interface CleanupGatewayDeps {
 function resolvePerGatewayState(gatewayName: string): { port: number; stateDir: string } | null {
   const port = resolveGatewayPortFromName(gatewayName);
   if (port === null) return null;
-  const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
-  if (configured && configured.trim()) {
-    return { port, stateDir: path.resolve(configured.trim()) };
-  }
   return {
     port,
-    stateDir: path.join(
-      os.homedir(),
-      ".local",
-      "state",
-      "nemoclaw",
-      resolveGatewayStateDirName(port),
-    ),
+    stateDir: resolveGatewayStateDirForPort({
+      configured: process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR,
+      home: os.homedir(),
+      port,
+    }),
   };
 }
 

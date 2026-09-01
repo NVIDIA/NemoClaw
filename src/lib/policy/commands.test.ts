@@ -3,15 +3,16 @@
 
 import { describe, expect, it } from "vitest";
 
-const {
+import {
   buildGlobalPolicyGetFullJsonArgs,
   buildGlobalPolicyListArgs,
   buildPolicyGetArgs,
   buildPolicyGetCommand,
   buildPolicyGetFullCommand,
   buildPolicyGetFullJsonArgs,
+  buildPolicyGetRevisionArgs,
   buildPolicySetCommand,
-} = require("./commands.js") as typeof import("./commands.js");
+} from "./commands";
 
 describe("OpenShell policy command builders", () => {
   it("keeps every sandbox policy operation in an argv-only command", () => {
@@ -32,12 +33,22 @@ describe("OpenShell policy command builders", () => {
     ]);
   });
 
-  it("pins policy authority reads to the selected gateway", () => {
+  it("pins policy requirements reads to the selected gateway", () => {
     expect(buildPolicyGetArgs("alpha", "nemoclaw")).toEqual([
       "policy",
       "get",
       "-g",
       "nemoclaw",
+      "--base",
+      "alpha",
+    ]);
+    expect(buildPolicyGetRevisionArgs("alpha", "nemoclaw", 7)).toEqual([
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--rev",
+      "7",
       "--base",
       "alpha",
     ]);

@@ -7,8 +7,8 @@
 
 NemoClaw v0.0.87 adds bounded DGX Station factory-image qualification paths, fixes Station post-reboot resume, makes managed Deep Agents Code startup restart-safe, and improves rebuild recovery, managed vLLM storage checks, sandbox backups, and strict-provider compatibility.
 
-- DGX Station Express recognizes the exact April 2026 NVIDIA Colossus BaseOS and June 2026 NVIDIA AI Developer Tools GB300 factory profiles for qualification.
-  The installer preserves each factory kernel, driver, Docker, and NVIDIA Container Toolkit stack, applies only the bounded access or runtime preparation required by that exact profile, and rejects identity, package, service, GPU, or runtime drift.
+- DGX Station Express recognizes the April 2026 NVIDIA Colossus BaseOS and June 2026 NVIDIA AI Developer Tools GB300 factory profiles for qualification.
+  The installer preserves each factory kernel, driver, Docker, and NVIDIA Container Toolkit stack, applies only the bounded access or runtime preparation required by that profile, and rejects identity, package, service, GPU, or runtime drift.
   DGX Station remains Deferred while physical qualification continues.
   For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation) and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
 - Station Express adds the temporary `--force-station-install` flag for a genuine DGX Station GB300 whose release metadata is not recognized.
@@ -40,14 +40,14 @@ NemoClaw v0.0.87 adds bounded DGX Station factory-image qualification paths, fix
 NemoClaw v0.0.86 enables the Station express recipe on qualified stock DGX OS GB300 systems, makes interrupted Station setup resumable, and fixes model validation, managed vLLM cache checks, sandbox builds, and upgrade guidance.
 
 - DGX Station GB300 express setup now accepts stock DGX OS `7.2.0`, `7.4.0`, and `7.5.0` when strict Station, GB300, release-marker, driver, ECC, Docker, CDI, and GPU-container checks pass.
-  Direct-GPU sandboxes receive only the exact read-only GPU, CPU, memory, NUMA, and NVIDIA module-initialization sysfs paths required for CUDA instead of broad `/sys` access.
+  Direct-GPU sandboxes receive only the read-only GPU, CPU, memory, NUMA, and NVIDIA module-initialization sysfs paths required for CUDA instead of broad `/sys` access.
   A clean physical DGX OS `7.5.0` validation completed with local Nemotron Ultra inference, sandbox CUDA, and Hermes file-tool use; DGX Station support remains Deferred pending broader qualification.
   For more information, refer to [Prerequisites](/user-guide/openclaw/get-started/prerequisites), the [NemoClaw Quickstart](/user-guide/openclaw/get-started/quickstart), and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
 - Interrupted Station Express setup now persists its validated, secret-free provider, model, sandbox, and interaction choices.
   `nemoclaw onboard --resume` restores those choices and retries the failed managed-vLLM step, while successful onboarding and `--fresh` retire stale Express intent and installer reboot receipts.
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
 - Managed vLLM cache preflight now checks only the Hugging Face cache paths used by the selected model.
-  Root-owned artifacts from an unrelated model no longer block a model switch, and repair guidance identifies the exact unwritable path.
+  Root-owned artifacts from an unrelated model no longer block a model switch, and repair guidance identifies the unwritable path.
   For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
 - Manual Google Gemini model IDs are validated against Google's native model catalog before the existing OpenAI-compatible chat-completions probe.
   Catalog results with or without the `models/` prefix are normalized, non-chat models are filtered out, and API credentials remain outside process arguments.

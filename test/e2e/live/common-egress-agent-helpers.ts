@@ -8,7 +8,6 @@
 // classification without gating on NEMOCLAW_RUN_LIVE_E2E=1.
 
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-export { parseOpenClawAgentText } from "../fixtures/openclaw-agent-output.ts";
 import {
   runBoundedRetry,
   type BoundedRetryResult,

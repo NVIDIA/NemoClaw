@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { type CaptureOpenshellResult, stripAnsi } from "../../adapters/openshell/client";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
+import { resolveDockerDriverGatewayStateDir } from "../../onboard/host-gateway-process";
 import type { SandboxEntry } from "../../state/registry";
 
 const GVPROXY_DNS = "192.168.127.1";
@@ -45,10 +46,12 @@ export function shouldApplyVmDnsMonkeypatch(
   return platform === "darwin" || env.NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH === "1";
 }
 
-function dockerDriverGatewayStateDir(env: NodeJS.ProcessEnv, homeDir: string): string {
-  const configured = env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
-  if (configured && configured.trim()) return path.resolve(configured.trim());
-  return path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
+function dockerDriverGatewayStateDir(
+  env: NodeJS.ProcessEnv,
+  homeDir: string,
+  gatewayPort?: number | null,
+): string {
+  return resolveDockerDriverGatewayStateDir(env, homeDir, gatewayPort ?? undefined);
 }
 
 export function parseSandboxIdFromGetOutput(output: string): string | null {
@@ -271,13 +274,13 @@ function buildGuestInitPatch(
 
 export function applyOpenShellVmDnsMonkeypatch(
   sandboxName: string,
-  entry: Pick<SandboxEntry, "openshellDriver"> | null | undefined,
+  entry: Pick<SandboxEntry, "gatewayPort" | "openshellDriver"> | null | undefined,
   deps: {
     capture?: CaptureFn;
     env?: NodeJS.ProcessEnv;
     homeDir?: string;
     platform?: NodeJS.Platform;
-    revalidatePolicyAuthority?: (operation: string) => void;
+    revalidateSandboxIdentity?: (operation: string) => void;
     stateDir?: string;
   } = {},
 ): VmDnsMonkeypatchResult {
@@ -298,7 +301,9 @@ export function applyOpenShellVmDnsMonkeypatch(
     return fail("could not resolve OpenShell sandbox id");
   }
 
-  const stateDir = deps.stateDir ?? dockerDriverGatewayStateDir(env, deps.homeDir ?? os.homedir());
+  const stateDir =
+    deps.stateDir ??
+    dockerDriverGatewayStateDir(env, deps.homeDir ?? os.homedir(), entry?.gatewayPort);
   const stateDirPath = path.resolve(stateDir);
   const stateDirReal = realpathIfPresent(stateDirPath);
   if (!stateDirReal) {
@@ -307,12 +312,12 @@ export function applyOpenShellVmDnsMonkeypatch(
 
   let changed = false;
   let rootfsContext: string | undefined;
-  let policyAuthorityError: unknown;
-  const revalidatePolicyAuthority = (operation: string): void => {
+  let policyObservationError: unknown;
+  const revalidateSandboxIdentity = (operation: string): void => {
     try {
-      deps.revalidatePolicyAuthority?.(operation);
+      deps.revalidateSandboxIdentity?.(operation);
     } catch (error) {
-      policyAuthorityError = error;
+      policyObservationError = error;
       throw error;
     }
   };
@@ -363,13 +368,13 @@ export function applyOpenShellVmDnsMonkeypatch(
     const currentResolver = readTextFileIfPresent(resolvConf.path) ?? "";
     const desiredResolver = normalizeResolver(currentResolver);
     if (currentResolver !== desiredResolver) {
-      revalidatePolicyAuthority(`write VM resolver for sandbox '${sandboxName}'`);
+      revalidateSandboxIdentity(`write VM resolver for sandbox '${sandboxName}'`);
       fs.writeFileSync(resolvConf.path, desiredResolver);
       changed = true;
     }
 
     if (initPatch.changed && initPatch.content !== undefined) {
-      revalidatePolicyAuthority(`write VM init script for sandbox '${sandboxName}'`);
+      revalidateSandboxIdentity(`write VM init script for sandbox '${sandboxName}'`);
       fs.writeFileSync(initScript.path, initPatch.content);
       changed = true;
     }
@@ -383,7 +388,7 @@ export function applyOpenShellVmDnsMonkeypatch(
       );
     }
 
-    revalidatePolicyAuthority(`report successful VM DNS repair for sandbox '${sandboxName}'`);
+    revalidateSandboxIdentity(`report successful VM DNS repair for sandbox '${sandboxName}'`);
 
     return {
       attempted: true,
@@ -393,7 +398,7 @@ export function applyOpenShellVmDnsMonkeypatch(
       status: changed ? "applied" : "already-present",
     };
   } catch (error) {
-    if (error === policyAuthorityError) throw error;
+    if (error === policyObservationError) throw error;
     return {
       attempted: true,
       changed,

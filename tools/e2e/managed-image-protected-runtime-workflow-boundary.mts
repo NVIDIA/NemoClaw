@@ -271,7 +271,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     platform: "linux/amd64",
   });
 
-  const bases = requireStep(errors, workflowSteps, "Resolve exact amd64 runtime base images");
+  const bases = requireStep(errors, workflowSteps, "Resolve digest-pinned amd64 runtime base images");
   requireValues(errors, `${JOB_ID} runtime base env`, record(bases?.env), {
     DCODE_BASE_REF: "${{ needs.base-image-publication.outputs.dcode_base_ref }}",
   });
@@ -382,7 +382,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Prepare E2E workspace",
     "Validate protected runtime activation contract",
     "Resolve reviewed Hermes runtime base image",
-    "Resolve exact amd64 runtime base images",
+    "Resolve digest-pinned amd64 runtime base images",
     "Start isolated protected runtime registry",
     "Build exact all-agent protected runtime images",
     "Install OpenShell CLI",

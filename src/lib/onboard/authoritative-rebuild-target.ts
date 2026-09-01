@@ -16,18 +16,16 @@ import type { OnboardOptions } from "./types";
 export type AuthoritativeOnboardGatewayBinding = { name: string; port: number };
 
 export function authoritativeRebuildSandboxFlowOptions(
-  opts: Pick<OnboardOptions, "authoritativeResumeConfig" | "policyTier" | "rebuildPolicyPresets">,
+  opts: Pick<OnboardOptions, "authoritativeResumeConfig" | "rebuildPolicySourcePath">,
 ): {
   authoritativeResumeConfig: boolean;
-  authoritativePolicyTier?: string | null;
-  rebuildPolicyPresets?: readonly string[];
+  rebuildPolicySourcePath?: string;
 } {
   if (opts.authoritativeResumeConfig !== true) return { authoritativeResumeConfig: false };
   return {
     authoritativeResumeConfig: true,
-    authoritativePolicyTier: opts.policyTier ?? null,
-    ...(Array.isArray(opts.rebuildPolicyPresets)
-      ? { rebuildPolicyPresets: [...opts.rebuildPolicyPresets] }
+    ...(opts.rebuildPolicySourcePath
+      ? { rebuildPolicySourcePath: opts.rebuildPolicySourcePath }
       : {}),
   };
 }
