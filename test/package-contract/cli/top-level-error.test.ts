@@ -117,11 +117,43 @@ function runWithMissingCompiledCli(launcherPath = cliPath): SpawnSyncReturns<str
       `const Module = require("node:module");
 const cliPath = ${launcherPath};
 const mainPath = ${mainPath};
+const originalResolveFilename = Module._resolveFilename;
+Module._resolveFilename = function(request, parent, isMain, options) {
+  const resolved = originalResolveFilename.apply(this, arguments);
+  if (resolved === mainPath) {
+    const error = new Error("Cannot find module '" + mainPath + "'");
+    error.code = "MODULE_NOT_FOUND";
+    throw error;
+  }
+  return resolved;
+};
+require(cliPath);`,
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        NEMOCLAW_LOG_LEVEL: "info",
+        NEMOCLAW_DEBUG: "0",
+      },
+    },
+  );
+}
+
+function runWithMissingCompiledDependency(): SpawnSyncReturns<string> {
+  return spawnSync(
+    process.execPath,
+    [
+      "--eval",
+      `const Module = require("node:module");
+const cliPath = ${cliPath};
+const mainPath = ${mainPath};
 const originalLoad = Module._load;
 Module._load = function(request, parent, isMain) {
   const resolved = Module._resolveFilename(request, parent, isMain);
   if (resolved === mainPath) {
-    const error = new Error("Cannot find module '" + mainPath + "'");
+    const error = new Error("Cannot find module '/private/nemoclaw-secret-dependency'");
     error.code = "MODULE_NOT_FOUND";
     throw error;
   }
@@ -207,5 +239,19 @@ describe("compiled CLI top-level errors", () => {
     expect(result.stderr).toContain("The installer attempts to recover existing sandboxes.");
     expect(result.stderr).not.toContain("dist");
     expect(result.stderr).not.toContain("Cannot find module");
+  });
+
+  it("does not report an unfinished install for a missing compiled dependency (#10372)", () => {
+    const result = runWithMissingCompiledDependency();
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "Error: NemoClaw's compiled CLI could not start because a required module is unavailable. " +
+        "Rerun the installer command that you used to install NemoClaw; if the problem continues, report the startup failure.\n",
+    );
+    expect(result.stderr).not.toContain("/private/nemoclaw-secret-dependency");
+    expect(result.stderr).not.toContain("Cannot find module");
+    expect(result.stderr).not.toContain("An install or upgrade did not finish.");
   });
 });
