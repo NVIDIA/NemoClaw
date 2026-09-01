@@ -5651,37 +5651,6 @@ jobs:
         with:
           enabled: ${{ matrix.runtime_provider == 'podman' && 'true' || 'false' }}
 
-      - name: Materialize cloud-onboard managed-image catalog
-        if: ${{ needs.base-image-publication.outputs.managed_image_catalog != '' }}
-        env:
-          MANAGED_IMAGE_CATALOG: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          catalog_path="${RUNNER_TEMP}/e2e-managed-image-catalog.json"
-          jq -e '
-            type == "object" and length > 0 and
-            all(.[];
-              (.source.revision | type == "string" and test("^[0-9a-f]{40}$")) and
-              (.source.release | type == "string" and length > 0) and
-              (.source.cohort | type == "string" and length > 0)
-            ) and
-            ([.[].source.revision] | unique | length) == 1 and
-            ([.[].source.release] | unique | length) == 1 and
-            ([.[].source.cohort] | unique | length) == 1
-          ' <<<"$MANAGED_IMAGE_CATALOG" >/dev/null || {
-            echo "::error::managed-image catalog does not contain one exact publication identity" >&2
-            exit 1
-          }
-          catalog_revision="$(jq -er '[.[].source.revision] | unique | .[0]' <<<"$MANAGED_IMAGE_CATALOG")"
-          jq -c . <<<"$MANAGED_IMAGE_CATALOG" >"$catalog_path"
-          [[ -s "$catalog_path" && ! -L "$catalog_path" ]] || {
-            echo "::error::temporary managed-image catalog is invalid" >&2
-            exit 1
-          }
-          printf 'NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG=%s\n' "$catalog_path" >>"$GITHUB_ENV"
-          printf 'NEMOCLAW_E2E_MANAGED_IMAGE_REVISION=%s\n' "$catalog_revision" >>"$GITHUB_ENV"
-
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 

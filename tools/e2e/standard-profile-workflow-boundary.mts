@@ -316,7 +316,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     "Restore exact-commit CLI artifact",
     "Prepare native Podman E2E runtime",
     "Stage immutable stopped-state cleanup helper",
-    "Materialize temporary managed-image catalog",
     "Install reviewed cloudflared",
     "Add swap for Hermes image rebuild",
     "Initialize runner comparison telemetry",
@@ -511,31 +510,6 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
   ) {
     errors.push("standard E2E profile must stage the immutable stopped-state helper once");
   }
-  const managedCatalog = requireStep(
-    errors,
-    workflowSteps,
-    "Materialize temporary managed-image catalog",
-  );
-  const managedCatalogRun = String(managedCatalog?.run ?? "");
-  if (
-    managedCatalog?.if !== "${{ inputs.managed_image_catalog != '' }}" ||
-    managedCatalog.shell !== EXECUTION_PLAN_SHELL ||
-    !isDeepStrictEqual(record(managedCatalog.env), {
-      MANAGED_IMAGE_CATALOG: "${{ inputs.managed_image_catalog }}",
-    }) ||
-    !managedCatalogRun.includes("[.[].source.revision] | unique | length") ||
-    !managedCatalogRun.includes("[.[].source.release] | unique | length") ||
-    !managedCatalogRun.includes("[.[].source.cohort] | unique | length") ||
-    !managedCatalogRun.includes(
-      "managed-image catalog does not contain one exact publication identity",
-    ) ||
-    !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG") ||
-    !managedCatalogRun.includes("NEMOCLAW_E2E_MANAGED_IMAGE_REVISION") ||
-    workflowSteps.indexOf(managedCatalog ?? {}) !==
-      workflowSteps.indexOf(stoppedStateHelper ?? {}) + 1
-  ) {
-    errors.push("standard E2E profile must materialize the exact-candidate managed-image catalog");
-  }
   const cloudflared = requireStep(errors, workflowSteps, "Install reviewed cloudflared");
   const cloudflaredRun = String(cloudflared?.run ?? "");
   if (
@@ -552,7 +526,7 @@ function validateProfileWorkflow(errors: string[], profile: WorkflowRecord): voi
     !cloudflaredRun.includes('dpkg-deb -f "${cloudflared_deb}" Package') ||
     !cloudflaredRun.includes('"${architecture}" != "amd64"') ||
     cloudflaredRun.includes("command -v cloudflared") ||
-    workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(managedCatalog ?? {}) + 1
+    workflowSteps.indexOf(cloudflared ?? {}) !== workflowSteps.indexOf(stoppedStateHelper ?? {}) + 1
   ) {
     errors.push("standard E2E profile must install only the reviewed cloudflared package");
   }

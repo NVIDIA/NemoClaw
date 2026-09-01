@@ -836,6 +836,13 @@ export function validateBaseImagePublicationGate(workflow: OperationsWorkflow): 
     errors.push("cloud-onboard must use the exact PR managed-image catalog");
   }
   if (
+    (cloudOnboard.steps ?? []).some(
+      (step) => step.name === "Materialize cloud-onboard managed-image catalog",
+    )
+  ) {
+    errors.push("cloud-onboard must not duplicate the exact inline managed-image catalog");
+  }
+  if (
     live.env?.E2E_MANAGED_IMAGE_REVISION !==
     "${{ needs.base-image-publication.outputs.managed_image_revision }}"
   ) {
