@@ -3638,9 +3638,9 @@ non-interactive, disables Express selection, and sets this value automatically w
 `--local-model-runtime=vllm`. | | `NEMOCLAW_LOCAL_MODEL_RUNTIME` | `vllm` | Selects the fixed vLLM
 local model profile. Requires `NEMOCLAW_ENABLE_LOCAL_MODEL_PROFILE=1`; direct onboarding also
 requires `NEMOCLAW_NON_INTERACTIVE=1`. The hosted installer sets this value from
-`--local-model-runtime=vllm`. | | `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model ID |
+`--local-model-runtime=vllm`. | | `NEMOCLAW_VLLM_MODEL` | registry slug, Hugging Face model ID, or registered served model name |
 Selects the model the managed-vLLM install path serves and remains authoritative during DGX Station
-installer setup. Slugs and full model IDs are case-insensitive. Recognized slugs: `qwen3.6-27b`,
+installer setup. Slugs, full model IDs, and registered served model names are case-insensitive. Recognized slugs: `qwen3.6-27b`,
 `qwen3.6-35b-a3b-nvfp4`, `muse-glimmer-30b`, `nemotron-3.5-lightning-30b`, `nemotron-3-nano-4b`,
 `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. The `muse-glimmer-30b`
 and `nemotron-3.5-lightning-30b` profiles are Experimental on DGX Spark and Linux x86_64 with a
