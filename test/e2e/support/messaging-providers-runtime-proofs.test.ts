@@ -27,8 +27,10 @@ import {
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
   rawTokenSurfaceProbe,
+  runSecondaryCleanup,
   startFakeDockerApi,
 } from "../live/messaging-providers-helpers.ts";
+import { runSecondaryCleanup as runPhase6SecondaryCleanup } from "../live/phase6-messaging-helpers.ts";
 import {
   parseInstalledSlackProof,
   SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
@@ -344,6 +346,15 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(observedSandbox).toBe("e2e-hermes-discord");
     expect(observedArtifact).toBe("hermes-raw-token-env");
     expect(JSON.stringify(observedInvocation)).not.toContain(token);
+  });
+
+  it("shares secondary cleanup ownership across phase 6 messaging consumers", async () => {
+    expect(runPhase6SecondaryCleanup).toBe(runSecondaryCleanup);
+    await expect(
+      runPhase6SecondaryCleanup(async () => {
+        throw new Error("secondary cleanup failure");
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("produces mixed REST and WebSocket policy state through a synthetic consumer", async () => {
