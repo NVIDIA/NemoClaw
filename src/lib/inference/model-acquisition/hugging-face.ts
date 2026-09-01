@@ -2,14 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
-import { redactFull } from "../../security/redact";
+import { redactFull, redactFullWithUrls } from "../../security/redact";
 
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 const HF_RATE_LIMIT_PATTERN = /\b429\b|too many requests|rate[\s_-]*limit/i;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
+const DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS = 10 * 60 * 1000;
+const MODEL_DOWNLOAD_STALL_TIMEOUT_ENV = "NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT";
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const CONTAINER_CLEANUP_TIMEOUT_MS = 10_000;
 const HF_DOWNLOAD_CACHE_CONTAINER_DIR = "/tmp/nemoclaw-huggingface";
 const HF_REPOSITORY_ID_MAX_LENGTH = 96;
 const HF_PENDING_OUTPUT_MAX_CHARS = 64 * 1024;
@@ -142,6 +147,7 @@ function repositoryArg(repository: string): string {
 
 export function buildHuggingFaceModelDownloadArgv(
   request: HuggingFaceModelAcquisitionRequest,
+  containerName?: string,
 ): string[] {
   const credentialEnv = request.credentialEnv ?? process.env;
   return [
@@ -149,6 +155,7 @@ export function buildHuggingFaceModelDownloadArgv(
     "-t",
     "--rm",
     "--pull=never",
+    ...(containerName ? ["--name", containerName] : []),
     ...hostUserDockerArgs(request.userIdentity),
     "--entrypoint",
     "hf",
@@ -163,6 +170,37 @@ export function buildHuggingFaceModelDownloadArgv(
     ...exactFilenameArgs(request.filename),
     ...(request.revision ? ["--revision", request.revision] : []),
   ];
+}
+
+/**
+ * How long the download may run with zero new hf output before NemoClaw
+ * treats it as stalled and aborts, rather than waiting indefinitely for an
+ * external wrapper timeout to kill the process (#10346).
+ */
+function modelDownloadStallTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env[MODEL_DOWNLOAD_STALL_TIMEOUT_ENV];
+  if (typeof raw !== "string" || raw.trim() === "") return DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS;
+  const seconds = Number(raw.trim());
+  if (!Number.isFinite(seconds) || seconds <= 0) return DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS;
+  // A finite `seconds` can still leave the representable range once scaled to
+  // milliseconds, and a sub-millisecond value floors to zero. Either result
+  // would disable the abort this timeout exists to enforce — `idleMs >=
+  // Infinity` never holds, and a zero window aborts a healthy download at
+  // once — so treat both as unusable and keep the default.
+  const timeoutMs = Math.floor(seconds * 1000);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_TIMER_DELAY_MS) {
+    return DEFAULT_MODEL_DOWNLOAD_STALL_TIMEOUT_MS;
+  }
+  return timeoutMs;
+}
+
+function dockerEndpointIdentity(env: Readonly<Record<string, string>>): string {
+  const dockerContext = env.DOCKER_CONTEXT?.trim();
+  if (dockerContext) return `Docker context ${redactFull(dockerContext)}`;
+  const dockerHost = env.DOCKER_HOST?.trim();
+  return dockerHost
+    ? `Docker host ${redactFullWithUrls(dockerHost)}`
+    : "the default Docker endpoint";
 }
 
 function formatElapsed(ms: number): string {
@@ -236,9 +274,10 @@ export function acquireHuggingFaceModel(
   return new Promise((resolve) => {
     const credentialEnv = request.credentialEnv ?? process.env;
     const tokenValue = pickHfTokenEntry(credentialEnv)?.value ?? null;
+    const containerName = `nemoclaw-hf-download-${randomUUID()}`;
     let argv: string[];
     try {
-      argv = buildHuggingFaceModelDownloadArgv(request);
+      argv = buildHuggingFaceModelDownloadArgv(request, containerName);
     } catch (err) {
       resolve({
         ok: false,
@@ -272,27 +311,134 @@ export function acquireHuggingFaceModel(
     const suppressedOutputStreams = new Set<NodeJS.WriteStream>();
     let reportedOutputSuppression = false;
     let resolved = false;
+    let stallCleanupInProgress = false;
     let decodersFinalized = false;
     const start = Date.now();
     let lastOutputAt = start;
     let lastOutputEndedCleanly = true;
+    const stallTimeoutMs = modelDownloadStallTimeoutMs();
     const heartbeat = setInterval(() => {
       const now = Date.now();
-      if (now - lastOutputAt >= MODEL_DOWNLOAD_HEARTBEAT_MS) {
-        if (!lastOutputEndedCleanly) process.stdout.write("\n");
-        observer.logLine(
-          `Model download still running (${formatElapsed(now - start)} elapsed; no new output)`,
-        );
-        lastOutputAt = now;
-        lastOutputEndedCleanly = true;
-      }
+      if (now - lastOutputAt < MODEL_DOWNLOAD_HEARTBEAT_MS) return;
+      if (!lastOutputEndedCleanly) process.stdout.write("\n");
+      observer.logLine(
+        `Model download still running (${formatElapsed(now - start)} elapsed; no new output)`,
+      );
+      lastOutputEndedCleanly = true;
     }, MODEL_DOWNLOAD_HEARTBEAT_MS);
     heartbeat.unref?.();
+
+    let stallTimer: ReturnType<typeof setTimeout>;
+
+    function scheduleStallTimeout(): void {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        if (resolved || stallCleanupInProgress) return;
+        stallCleanupInProgress = true;
+        clearInterval(heartbeat);
+        const idleMs = Date.now() - lastOutputAt;
+        if (!lastOutputEndedCleanly) process.stdout.write("\n");
+        observer.logLine(
+          `Model download stalled: no output for ${formatElapsed(idleMs)}; aborting`,
+        );
+        finalizeOutputDecoders();
+        void cleanupStalledDownload().then(({ containerRemoved, clientExited }) => {
+          const cleanup = containerRemoved && clientExited
+            ? ""
+            : `; cleanup unconfirmed for container ${containerName} on Docker endpoint ${dockerEndpointIdentity(request.dockerEnv)}; select that endpoint, run docker rm --force ${containerName}, and resume onboarding only after removal is confirmed`;
+          done({
+            ok: false,
+            reason: `hf download stalled: no output for ${formatElapsed(idleMs)}${cleanup}`,
+          });
+        });
+      }, stallTimeoutMs);
+      stallTimer.unref?.();
+    }
+
+    scheduleStallTimeout();
+
+    async function cleanupStalledDownload(): Promise<{
+      containerRemoved: boolean;
+      clientExited: boolean;
+    }> {
+      const [containerRemoved, clientExited] = await Promise.all([
+        removeStalledContainer(),
+        terminateDownloadClient(),
+      ]);
+      proc.stdout?.destroy();
+      proc.stderr?.destroy();
+      proc.unref();
+      return { containerRemoved, clientExited };
+    }
+
+    function removeStalledContainer(): Promise<boolean> {
+      return new Promise((resolveRemoval) => {
+        let cleanupProc: ReturnType<typeof spawn>;
+        try {
+          cleanupProc = request.spawnDocker(["rm", "--force", containerName], {
+            env: { ...request.dockerEnv },
+            stdio: "ignore",
+          });
+        } catch {
+          resolveRemoval(false);
+          return;
+        }
+        let settled = false;
+        const cleanupTimer = setTimeout(() => {
+          cleanupProc.kill("SIGKILL");
+          finish(false);
+        }, CONTAINER_CLEANUP_TIMEOUT_MS);
+        cleanupTimer.unref?.();
+        const finish = (removed: boolean): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(cleanupTimer);
+          cleanupProc.removeAllListeners();
+          cleanupProc.unref();
+          resolveRemoval(removed);
+        };
+        cleanupProc.once("error", () => finish(false));
+        cleanupProc.once("exit", (code) => finish(code === 0));
+      });
+    }
+
+    function terminateDownloadClient(): Promise<boolean> {
+      return new Promise((resolveTermination) => {
+        let settled = false;
+        let forceTimer: NodeJS.Timeout | undefined;
+        let terminalTimer: NodeJS.Timeout | undefined;
+        const finish = (exited: boolean): void => {
+          if (settled) return;
+          settled = true;
+          if (forceTimer !== undefined) clearTimeout(forceTimer);
+          if (terminalTimer !== undefined) clearTimeout(terminalTimer);
+          proc.off("error", failed);
+          proc.off("exit", confirmed);
+          resolveTermination(exited);
+        };
+        const failed = (): void => finish(false);
+        const confirmed = (): void => finish(true);
+        proc.once("error", failed);
+        proc.once("exit", confirmed);
+        forceTimer = setTimeout(() => {
+          if (!proc.kill("SIGKILL")) {
+            finish(false);
+            return;
+          }
+          if (settled) return;
+          terminalTimer = setTimeout(() => finish(false), 5_000);
+          terminalTimer.unref?.();
+        }, 5_000);
+        forceTimer.unref?.();
+        if (!proc.kill("SIGTERM")) finish(false);
+      });
+    }
 
     function done(result: HuggingFaceModelAcquisitionResult): void {
       if (resolved) return;
       resolved = true;
       clearInterval(heartbeat);
+      clearTimeout(stallTimer);
       resolve(result);
     }
 
@@ -357,7 +503,9 @@ export function acquireHuggingFaceModel(
     }
 
     function onChunk(buf: Buffer, state: (typeof outputDecoders)[number]): void {
+      if (resolved || stallCleanupInProgress) return;
       lastOutputAt = Date.now();
+      scheduleStallTimeout();
       const text = state.decoder.write(buf);
       queueOutput(text, state.stream);
     }
@@ -366,12 +514,13 @@ export function acquireHuggingFaceModel(
     proc.stderr?.on("data", (buf: Buffer) => onChunk(buf, outputDecoders[1]));
 
     proc.on("error", (err: Error) => {
+      if (stallCleanupInProgress) return;
       finalizeOutputDecoders();
       done({ ok: false, reason: `spawn error: ${err.message}` });
     });
 
     proc.on("exit", (code: number | null) => {
-      if (resolved) return;
+      if (resolved || stallCleanupInProgress) return;
       finalizeOutputDecoders();
       if (code === 0) {
         if (!lastOutputEndedCleanly) process.stdout.write("\n");

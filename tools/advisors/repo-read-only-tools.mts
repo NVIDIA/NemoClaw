@@ -53,10 +53,9 @@ function serializedToolResultBytes(result: AgentToolResult<unknown>): number {
 }
 
 /**
- * Keep native Pi tool-result session records readable by the synthesis advisor.
- * Pi's default 50 KiB truncation details repeat the visible content, and JSON escaping
- * can expand it again. Bound the serialized result instead of assuming raw text bytes
- * predict the eventual JSONL line size.
+ * Bound native Pi tool-result session records. Pi's default truncation details repeat
+ * visible content, and JSON escaping can expand it. Bound the serialized result instead
+ * of estimating its size from raw text.
  */
 function boundAdvisorToolResult<T>(
   result: AgentToolResult<T>,
