@@ -8,9 +8,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   __test,
+  clearHermesOperatorConfigHandoff,
   clearRebuildPolicyHandoff,
+  readHermesOperatorConfigHandoff,
   readRebuildPolicyHandoff,
   type RebuildManifest,
+  writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "./sandbox.js";
 
@@ -85,6 +88,54 @@ describe("rebuild manifest publication", () => {
   });
 });
 
+describe("bounded Hermes operator config handoff", () => {
+  it("binds private exact content and removes recovery authority after success", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-handoff-"));
+    tempDirs.push(backupPath);
+    const published = { ...manifest(backupPath), agentType: "hermes" };
+    __test.writeManifest(backupPath, published);
+    const document = '{"version":1,"sandboxName":"alpha","entries":[],"droppedKeys":[]}\n';
+
+    const withHandoff = writeHermesOperatorConfigHandoff(published, document);
+    const handoffPath = path.join(backupPath, withHandoff.hermesOperatorConfigHandoff!.file);
+    expect(readHermesOperatorConfigHandoff(withHandoff)).toBe(document);
+    expect(fs.statSync(handoffPath).mode & 0o777).toBe(0o600);
+
+    fs.appendFileSync(handoffPath, "tampered");
+    expect(readHermesOperatorConfigHandoff(withHandoff)).toBeNull();
+    fs.writeFileSync(handoffPath, document, { mode: 0o600 });
+
+    expect(clearHermesOperatorConfigHandoff(withHandoff)).toBe(true);
+    expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(withHandoff).not.toHaveProperty("hermesOperatorConfigHandoff");
+  });
+
+  it("retains retired cleanup identity after deletion fails and removes it on retry", () => {
+    const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-cleanup-"));
+    tempDirs.push(backupPath);
+    const published = { ...manifest(backupPath), agentType: "hermes" };
+    __test.writeManifest(backupPath, published);
+    const document = '{"version":1,"sandboxName":"alpha","entries":[],"droppedKeys":[]}\n';
+    const withHandoff = writeHermesOperatorConfigHandoff(published, document);
+    const handoffPath = path.join(backupPath, withHandoff.hermesOperatorConfigHandoff!.file);
+
+    expect(
+      clearHermesOperatorConfigHandoff(withHandoff, {
+        remove: vi.fn(() => {
+          throw new Error("injected deletion failure");
+        }),
+      }),
+    ).toBe(false);
+    expect(withHandoff.hermesOperatorConfigHandoff).toMatchObject({ retired: true });
+    expect(readHermesOperatorConfigHandoff(withHandoff)).toBeNull();
+    expect(fs.existsSync(handoffPath)).toBe(true);
+
+    expect(clearHermesOperatorConfigHandoff(withHandoff)).toBe(true);
+    expect(fs.existsSync(handoffPath)).toBe(false);
+    expect(withHandoff).not.toHaveProperty("hermesOperatorConfigHandoff");
+  });
+});
+
 describe("bounded rebuild policy handoff", () => {
   it("binds exact content, rejects tampering, and retires manifest authority before cleanup", () => {
     const backupPath = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-handoff-"));
@@ -122,10 +173,7 @@ describe("bounded rebuild policy handoff", () => {
     tempDirs.push(backupPath);
     const published = manifest(backupPath);
     __test.writeManifest(backupPath, published);
-    const withHandoff = writeRebuildPolicyHandoff(
-      published,
-      "version: 1\nnetwork_policies: {}\n",
-    );
+    const withHandoff = writeRebuildPolicyHandoff(published, "version: 1\nnetwork_policies: {}\n");
     const handoffPath = path.join(backupPath, withHandoff.rebuildPolicyHandoff!.file);
 
     expect(

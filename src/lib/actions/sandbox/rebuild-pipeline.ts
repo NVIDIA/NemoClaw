@@ -19,14 +19,20 @@ import * as onboardSession from "../../state/onboard-session";
 import { load as loadRegistry, REGISTRY_FILE } from "../../state/registry/persistence";
 import {
   captureRebuildPolicySource,
+  clearHermesOperatorConfigHandoff,
   clearRebuildPolicyHandoff,
   type RebuildBackupManifest,
   runRebuildBackupPhase,
+  writeHermesOperatorConfigHandoff,
   writeRebuildPolicyHandoff,
 } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
-import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
+import {
+  captureHermesOperatorConfigSnapshot,
+  REBUILD_HERMES_DASHBOARD_ENV_KEYS,
+  serializeHermesOperatorConfigSnapshot,
+} from "./rebuild-durable-config";
 import {
   disposeRebuildAgentBaseImagePreflight,
   removeStaleRebuildDockerOrphan,
@@ -289,6 +295,30 @@ async function rebuildSandboxUnlocked(
         }
       };
 
+      if (
+        rebuildAgent === "hermes" &&
+        backup.backupManifest?.agentType === "hermes" &&
+        !backup.backupManifest.hermesOperatorConfigHandoff &&
+        !preparedBackupRecovery &&
+        !staleRecovery
+      ) {
+        try {
+          const operatorConfig = captureHermesOperatorConfigSnapshot(sandboxName);
+          backup.backupManifest = writeHermesOperatorConfigHandoff(
+            backup.backupManifest,
+            serializeHermesOperatorConfigSnapshot(operatorConfig),
+          );
+          rebuildPolicyHandoffManifest = backup.backupManifest;
+          log(
+            `Captured Hermes operator config: restorable=${operatorConfig.entries.map((entry) => entry.key).join(",") || "none"}; managed=${operatorConfig.droppedKeys.join(",") || "none"}`,
+          );
+        } catch (error) {
+          return bail(
+            `Hermes operator configuration could not be captured before rebuild: ${rebuildFailureDetail(error)}`,
+          );
+        }
+      }
+
       // Validate the completed backup artifact produced above, not the mutable live
       // tree. This gate therefore follows backup creation and precedes every
       // destructive rebuild phase.
@@ -407,6 +437,15 @@ async function rebuildSandboxUnlocked(
           );
         }
         if (
+          backup.backupManifest?.hermesOperatorConfigHandoff &&
+          backup.backupManifest.backupPath !== recoveryBackup.backupPath &&
+          !clearHermesOperatorConfigHandoff(backup.backupManifest)
+        ) {
+          return bail(
+            "The unused current-run Hermes operator config handoff could not be retired during recovery.",
+          );
+        }
+        if (
           backup.backupManifest?.rebuildPolicyHandoff &&
           backup.backupManifest.backupPath !== recoveryBackup.backupPath &&
           !clearRebuildPolicyHandoff(backup.backupManifest)
@@ -466,6 +505,7 @@ async function rebuildSandboxUnlocked(
           backupManifest: recoveryBackup,
           mcpEntries: Object.values(sandboxEntry.mcp?.bridges ?? {}),
           restoreSucceeded: restored.restoreSucceeded,
+          hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
           staleRecovery: false,
           recoveryRecreate: true,
           preparedBackupRecovery: true,
@@ -475,6 +515,12 @@ async function rebuildSandboxUnlocked(
           log,
           bail,
         });
+        if (
+          recoveryBackup.hermesOperatorConfigHandoff &&
+          !clearHermesOperatorConfigHandoff(recoveryBackup)
+        ) {
+          return bail("The Hermes operator config handoff could not be retired after recovery.");
+        }
         if (recoveryBackup.rebuildPolicyHandoff && !clearRebuildPolicyHandoff(recoveryBackup)) {
           return bail("The bounded rebuild policy handoff could not be retired after recovery.");
         }
@@ -574,11 +620,7 @@ async function rebuildSandboxUnlocked(
               };
         },
         cleanupDockerOrphanAfterDelete: () =>
-          removeStaleRebuildDockerOrphan(
-            sandboxName,
-            sandboxEntry.openshellDriver,
-            log,
-          ),
+          removeStaleRebuildDockerOrphan(sandboxName, sandboxEntry.openshellDriver, log),
         onDeleted: () => {
           sandboxStillExists = false;
           retainPolicyHandoffForRecovery = true;
@@ -673,6 +715,7 @@ async function rebuildSandboxUnlocked(
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,
         restoreSucceeded: restored.restoreSucceeded,
+        hermesOperatorConfigRestore: restored.hermesOperatorConfigRestore,
         hermesCronRestoreIdentity,
         staleRecovery,
         recoveryRecreate,
@@ -684,6 +727,12 @@ async function rebuildSandboxUnlocked(
         bail,
       });
       if (backup.backupManifest) {
+        if (
+          backup.backupManifest.hermesOperatorConfigHandoff &&
+          !clearHermesOperatorConfigHandoff(backup.backupManifest)
+        ) {
+          return bail("The Hermes operator config handoff could not be retired after rebuild.");
+        }
         if (
           backup.backupManifest.rebuildPolicyHandoff &&
           !clearRebuildPolicyHandoff(backup.backupManifest)

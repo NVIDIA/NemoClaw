@@ -531,14 +531,17 @@ def _normalized_routing(gateway: dict, routing_keys: list[str], policy: dict) ->
 
 def _managed_policy_sections(gateway: dict, policy: dict) -> dict:
     config = policy["config"]
-    section_names = {path.split(".", 1)[0] for path in policy["managed_paths"]}
-    for section_name in section_names:
-        if not _same_json_value(gateway.get(section_name), config.get(section_name)):
-            raise InvalidDashboardSeedDocumentError("gateway policy does not match managed policy")
-
     sections: dict = {}
     for dotted_path in policy["managed_paths"]:
         expected = policy_value(config, dotted_path)
+        try:
+            actual = policy_value(gateway, dotted_path)
+        except ManagedPolicyError as exc:
+            raise InvalidDashboardSeedDocumentError(
+                "gateway policy does not match managed policy"
+            ) from exc
+        if not _same_json_value(actual, expected):
+            raise InvalidDashboardSeedDocumentError("gateway policy does not match managed policy")
         _set_policy_value(sections, dotted_path, deepcopy(expected))
     expected_web = policy["config"].get("web")
     gateway_web = gateway.get("web")

@@ -17,6 +17,7 @@ import {
   verifyFinalMutableOpenClawConfigHash,
 } from "./rebuild-config-hash";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
+import type { HermesOperatorConfigRestoreReport } from "./rebuild-durable-config";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import {
   completeHermesCronRestoreAfterGatewayReplacement,
@@ -82,6 +83,7 @@ export interface RebuildPostRestorePhaseInput {
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
   restoreSucceeded: boolean;
+  hermesOperatorConfigRestore?: HermesOperatorConfigRestoreReport;
   hermesCronRestoreIdentity?: HermesCronRestoreIdentity;
   staleRecovery: boolean;
   recoveryRecreate: boolean;
@@ -91,6 +93,17 @@ export interface RebuildPostRestorePhaseInput {
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   log: RebuildLog;
   bail: RebuildBail;
+}
+
+export function printHermesOperatorConfigRestoreReport(
+  targetAgentName: string,
+  report: HermesOperatorConfigRestoreReport | undefined,
+): void {
+  if (targetAgentName !== "hermes") return;
+  const restored = report?.restoredKeys.join(", ") || "none";
+  const dropped = report?.droppedKeys.join(", ") || "none";
+  console.log(`    Restored Hermes operator config keys: ${restored}`);
+  console.log(`    Dropped Hermes operator config keys: ${dropped}`);
 }
 
 function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: string): void {
@@ -121,6 +134,7 @@ export async function runRebuildPostRestorePhase(
     backupManifest,
     mcpEntries,
     restoreSucceeded,
+    hermesOperatorConfigRestore,
     hermesCronRestoreIdentity,
     staleRecovery,
     recoveryRecreate,
@@ -422,6 +436,7 @@ export async function runRebuildPostRestorePhase(
     printHermesGatewayRestoreRecovery(sandboxName, hermesGatewayRestoreState);
     printMcpRestoreRecovery(sandboxName, mcpBridgeRestoreUnverified);
   }
+  printHermesOperatorConfigRestoreReport(targetAgentName, hermesOperatorConfigRestore);
   if (recoveryRecreate && staleSandboxWasLocked) {
     console.log(
       `    ${YW}\u26a0${R} Shields were previously enabled but the recreated sandbox starts unlocked \u2014 run \`${CLI_NAME} ${sandboxName} shields up\` to restore lockdown.`,

@@ -138,6 +138,13 @@ export interface RebuildManifest {
     /** Cleanup-only identity; retired handoffs cannot be consumed for recovery. */
     retired?: boolean;
   };
+  /** Digest-bound Hermes operator config retained only while rebuild recovery is possible. */
+  hermesOperatorConfigHandoff?: {
+    file: string;
+    sha256: string;
+    /** Cleanup-only identity; retired handoffs cannot be consumed for recovery. */
+    retired?: boolean;
+  };
   /** Allowlisted non-secret environment assignments captured for image recreation. */
   preservedEnv?: PreservedEnvFile[];
   /**
@@ -402,6 +409,16 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
           value.rebuildPolicyHandoff.retired === true) &&
         value.rebuildPolicyHandoff.file ===
           `rebuild-policy-handoff.${value.rebuildPolicyHandoff.sha256}.yaml`)) &&
+    (value.hermesOperatorConfigHandoff === undefined ||
+      (value.agentType === "hermes" &&
+        isObjectRecord(value.hermesOperatorConfigHandoff) &&
+        typeof value.hermesOperatorConfigHandoff.file === "string" &&
+        typeof value.hermesOperatorConfigHandoff.sha256 === "string" &&
+        /^[a-f0-9]{64}$/.test(value.hermesOperatorConfigHandoff.sha256) &&
+        (value.hermesOperatorConfigHandoff.retired === undefined ||
+          value.hermesOperatorConfigHandoff.retired === true) &&
+        value.hermesOperatorConfigHandoff.file ===
+          `hermes-operator-config-handoff.${value.hermesOperatorConfigHandoff.sha256}.json`)) &&
     (value.preservedEnv === undefined ||
       (value.agentType === "hermes" &&
         validatePreservedEnvFiles(value.preservedEnv, HERMES_PRESERVED_ENV_INVENTORY))) &&
@@ -2520,7 +2537,7 @@ function writeManifest(
 
 export const __test = { writeManifest };
 
-function readBoundRebuildPolicyHandoff(filePath: string): string | null {
+function readBoundRebuildHandoff(filePath: string): string | null {
   let descriptor: number | null = null;
   try {
     descriptor = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -2562,7 +2579,7 @@ export function writeRebuildPolicyHandoff(
       created = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const existing = readBoundRebuildPolicyHandoff(filePath);
+      const existing = readBoundRebuildHandoff(filePath);
       if (existing !== policyDocument) {
         throw new Error("Existing rebuild policy handoff does not match its content identity");
       }
@@ -2592,7 +2609,7 @@ export function writeRebuildPolicyHandoff(
 export function readRebuildPolicyHandoff(manifest: RebuildManifest): string | null {
   const handoff = manifest.rebuildPolicyHandoff;
   if (!handoff || handoff.retired === true) return null;
-  const content = readBoundRebuildPolicyHandoff(path.join(manifest.backupPath, handoff.file));
+  const content = readBoundRebuildHandoff(path.join(manifest.backupPath, handoff.file));
   if (content === null) return null;
   return createHash("sha256").update(content).digest("hex") === handoff.sha256 ? content : null;
 }
@@ -2631,6 +2648,103 @@ export function clearRebuildPolicyHandoff(
     return false;
   }
   delete manifest.rebuildPolicyHandoff;
+  return true;
+}
+
+/** Publish or replace the transaction-bound Hermes operator config beside its rebuild backup. */
+export function writeHermesOperatorConfigHandoff(
+  manifest: RebuildManifest,
+  document: string,
+): RebuildManifest {
+  if (manifest.agentType !== "hermes") {
+    throw new Error("Hermes operator config handoff requires a Hermes rebuild manifest");
+  }
+  if (!document.trim()) throw new Error("Cannot persist an empty Hermes operator config handoff");
+  if (Buffer.byteLength(document, "utf8") > 8 * 1024 * 1024) {
+    throw new Error("Hermes operator config handoff exceeds the bounded 8 MiB limit");
+  }
+  const sha256 = createHash("sha256").update(document).digest("hex");
+  const file = `hermes-operator-config-handoff.${sha256}.json`;
+  const filePath = path.join(manifest.backupPath, file);
+  let created = false;
+  let published = false;
+  try {
+    try {
+      writeFileSync(filePath, document, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      created = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = readBoundRebuildHandoff(filePath);
+      if (existing !== document) {
+        throw new Error(
+          "Existing Hermes operator config handoff does not match its content identity",
+        );
+      }
+    }
+    const next = {
+      ...manifest,
+      hermesOperatorConfigHandoff: { file, sha256 },
+    };
+    writeManifest(manifest.backupPath, next);
+    const previousFile = manifest.hermesOperatorConfigHandoff?.file;
+    Object.assign(manifest, next);
+    published = true;
+    if (previousFile && previousFile !== file) {
+      rmSync(path.join(manifest.backupPath, previousFile), { force: true });
+    }
+    return next;
+  } catch (error) {
+    if (created && !published) rmSync(filePath, { force: true });
+    throw error;
+  }
+}
+
+/** Read Hermes operator config only when its exact published digest still matches. */
+export function readHermesOperatorConfigHandoff(manifest: RebuildManifest): string | null {
+  const handoff = manifest.hermesOperatorConfigHandoff;
+  if (!handoff || handoff.retired === true) return null;
+  const content = readBoundRebuildHandoff(path.join(manifest.backupPath, handoff.file));
+  if (content === null) return null;
+  return createHash("sha256").update(content).digest("hex") === handoff.sha256 ? content : null;
+}
+
+/** Retire recovery authority, then delete the Hermes operator config handoff. */
+export function clearHermesOperatorConfigHandoff(
+  manifest: RebuildManifest,
+  ops: {
+    write?: typeof writeManifest;
+    remove?: typeof rmSync;
+  } = {},
+): boolean {
+  const handoff = manifest.hermesOperatorConfigHandoff;
+  if (!handoff) return true;
+  const write = ops.write ?? writeManifest;
+  const remove = ops.remove ?? rmSync;
+  if (handoff.retired !== true) {
+    const retired = {
+      ...manifest,
+      hermesOperatorConfigHandoff: { ...handoff, retired: true as const },
+    };
+    try {
+      write(manifest.backupPath, retired);
+    } catch {
+      return false;
+    }
+    Object.assign(manifest, retired);
+  }
+  try {
+    remove(path.join(manifest.backupPath, handoff.file), { force: true });
+  } catch {
+    return false;
+  }
+  const cleared = { ...manifest };
+  delete cleared.hermesOperatorConfigHandoff;
+  try {
+    write(manifest.backupPath, cleared);
+  } catch {
+    return false;
+  }
+  delete manifest.hermesOperatorConfigHandoff;
   return true;
 }
 
