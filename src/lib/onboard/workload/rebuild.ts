@@ -199,6 +199,7 @@ export async function prepareManagedWorkloadRebuildHandoff(
         policy: "require-managed",
         ...(liveCatalog
           ? {
+              ...(liveCatalog.catalog ? { catalog: liveCatalog.catalog } : {}),
               catalogPath: liveCatalog.path,
               expectedCatalogRevision: liveCatalog.revision,
             }

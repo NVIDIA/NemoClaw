@@ -163,7 +163,8 @@ jobs:
       dcode_base_ref: ${{ steps.validate_dcode_base.outputs.base_ref }}
       managed_image_receipt: ${{ steps.validate_managed_cohort.outputs.receipt }}
       managed_image_revision: ${{ steps.validate_managed_cohort.outputs.revision }}
-      workload_source: ${{ steps.select_pr_source.outputs.workload_source || 'managed-image' }}
+      managed_image_catalog: ${{ steps.select_pr_source.outputs.catalog }}
+      workload_source: managed-image
     permissions:
       actions: read
       contents: read
@@ -218,7 +219,7 @@ jobs:
           node-version: 22
 
       - id: select_pr_source
-        name: Select PR workload source
+        name: Resolve exact PR managed-image publication
         if: ${{ inputs.pr_number != '' }}
         env:
           BASE_SHA: ${{ inputs.base_sha }}
@@ -229,12 +230,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          workload_source="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts select-source)"
-          case "$workload_source" in
-            managed-image|local-dockerfile) ;;
-            *) echo "::error::PR workload source is invalid" >&2; exit 1 ;;
+          catalog_path="${RUNNER_TEMP}/pr-managed-image-catalog.json"
+          rm -f -- "$catalog_path"
+          selection="$(node --experimental-strip-types --no-warnings tools/e2e/pr-managed-image-publication.mts "$catalog_path")"
+          case "$selection" in
+            base-cohort)
+              [[ ! -e "$catalog_path" && ! -L "$catalog_path" ]] || {
+                echo "::error::base-cohort selection produced a candidate catalog" >&2
+                exit 1
+              }
+              ;;
+            candidate-catalog)
+              [[ -f "$catalog_path" && ! -L "$catalog_path" && -s "$catalog_path" ]] || {
+                echo "::error::exact PR managed-image catalog is invalid" >&2
+                exit 1
+              }
+              catalog="$(jq -ce . "$catalog_path")"
+              (( ${#catalog} <= 65536 )) || {
+                echo "::error::exact PR managed-image catalog exceeds the output limit" >&2
+                exit 1
+              }
+              printf 'catalog=%s\n' "$catalog" >>"$GITHUB_OUTPUT"
+              echo "::notice::Jetson dispatch is unavailable because the exact PR managed-image catalog qualifies linux/amd64 only."
+              ;;
+            *) echo "::error::PR managed-image selection is invalid" >&2; exit 1 ;;
           esac
-          printf 'workload_source=%s\n' "$workload_source" >>"$GITHUB_OUTPUT"
+          printf 'selection=%s\n' "$selection" >>"$GITHUB_OUTPUT"
 
       - id: publication
         name: Select base and optional managed-image publication
@@ -242,8 +263,8 @@ jobs:
           EXPECTED_SHA: ${{ steps.publication_mode.outputs.expected_sha }}
           GITHUB_TOKEN: ${{ github.token }}
           PUBLICATION_HISTORY_ALLOW_NON_HEAD: ${{ steps.publication_mode.outputs.allow_non_head }}
-          REQUIRE_MANAGED_IMAGE_PUBLICATION: ${{ steps.select_pr_source.outputs.workload_source == 'local-dockerfile' && '0' || '1' }}
-          SELECT_NEAREST_SUCCESSFUL_PUBLICATION: ${{ steps.select_pr_source.outputs.workload_source == 'local-dockerfile' && '0' || steps.publication_mode.outputs.select_nearest_successful }}
+          REQUIRE_MANAGED_IMAGE_PUBLICATION: ${{ steps.select_pr_source.outputs.selection == 'candidate-catalog' && '0' || '1' }}
+          SELECT_NEAREST_SUCCESSFUL_PUBLICATION: ${{ steps.select_pr_source.outputs.selection == 'candidate-catalog' && '0' || steps.publication_mode.outputs.select_nearest_successful }}
         shell: bash
         run: |
           set -euo pipefail
@@ -273,7 +294,7 @@ jobs:
 
       - id: download_managed_cohort
         name: Download immutable managed-image cohort contract
-        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.workload_source == 'managed-image' }}
+        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PUBLICATION_ARTIFACT_KIND: managed-image-cohort
@@ -284,7 +305,7 @@ jobs:
 
       - id: validate_managed_cohort
         name: Validate immutable managed-image cohort contract
-        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.workload_source == 'managed-image' }}
+        if: ${{ inputs.pr_number == '' || steps.select_pr_source.outputs.selection == 'base-cohort' }}
         env:
           PUBLICATION_HEAD_SHA: ${{ steps.publication.outputs.head_sha }}
           PUBLICATION_RUN_ATTEMPT: ${{ steps.publication.outputs.run_attempt }}
@@ -358,8 +379,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == refs/heads/* ]] || {
-            echo "::error::Manual PR E2E must be dispatched from this repository branch" >&2
+          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || {
+            echo "::error::Manual PR E2E must be dispatched from trusted main" >&2
             exit 1
           }
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer" >&2; exit 1; }
@@ -725,7 +746,7 @@ jobs:
           if [[ "$WORKFLOW_REPOSITORY" == "NVIDIA/NemoClaw" &&
                 "$NVIDIA_OWNED" == "true" &&
                 "$EVENT_NAME" == "workflow_dispatch" &&
-                "$REF" == refs/heads/* &&
+                "$REF" == "refs/heads/main" &&
                 "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ &&
                 "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ &&
                 "$EXPECTED_WORKFLOW_SHA" == "$WORKFLOW_SHA" &&
@@ -748,114 +769,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$CANDIDATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
-            { echo "::error::candidate repository is invalid"; exit 1; }
-          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]] ||
-            { echo "::error::candidate SHA must be a lowercase 40-character SHA"; exit 1; }
-          [[ "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]] ||
-            { echo "::error::workflow SHA must be a lowercase 40-character SHA"; exit 1; }
-          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]] ||
-            { echo "::error::checked-out commit does not match the artifact candidate SHA"; exit 1; }
-          [[ "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ && "$RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
-            { echo "::error::workflow run identity is invalid"; exit 1; }
-          for required_file in dist/nemoclaw.js dist/build-identity.json; do
-            [[ -f "$required_file" && ! -L "$required_file" && -s "$required_file" ]] ||
-              { echo "::error::candidate CLI build output is missing or is not a nonempty regular file: $required_file"; exit 1; }
-          done
-          for boundary in \
-            openshell-policy-boundary.cjs \
-            sandbox-name.cjs \
-            snapshot-sanitizer-boundary.cjs; do
-            boundary_path="nemoclaw/dist/shared/$boundary"
-            [[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]] ||
-              { echo "::error::candidate CLI build shared module is missing or is not a nonempty regular file: $boundary"; exit 1; }
-          done
-
-          jq -e --arg candidateSha "$CANDIDATE_SHA" '
-            type == "object" and
-            (keys | sort) == ["nemoclawVersion", "sourceRevision"] and
-            (.nemoclawVersion | strings | length > 0) and
-            .sourceRevision == $candidateSha
-          ' dist/build-identity.json >/dev/null ||
-            { echo "::error::candidate CLI build identity does not match the candidate commit SHA"; exit 1; }
-
-          artifact_catalog="dist/e2e-managed-image-catalog.json"
-          [[ ! -e "$artifact_catalog" && ! -L "$artifact_catalog" ]] || {
-            echo "::error::candidate build created the managed-image catalog path" >&2
-            exit 1
-          }
-
-          artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
-          install -d -m 0700 "$artifact_dir"
-          payload="$artifact_dir/nemoclaw-cli.tar"
-          manifest="$artifact_dir/manifest.json"
-          tar \
-            --sort=name \
-            --mtime=@0 \
-            --owner=0 \
-            --group=0 \
-            --numeric-owner \
-            -cf "$payload" \
-            dist \
-            nemoclaw/dist/shared
-          payload_sha256="$(sha256sum "$payload" | awk '{print $1}')"
-          source_tree="$(git rev-parse 'HEAD^{tree}')"
-          lockfile_sha256="$(sha256sum package-lock.json | awk '{print $1}')"
-          node_version="$(node --version)"
-          npm_version="$(npm --version)"
-          artifact_name="nemoclaw-cli-${CANDIDATE_SHA}-${payload_sha256}"
-
-          jq -n \
-            --arg artifactName "$artifact_name" \
-            --arg buildCommand "npm run build:cli" \
-            --arg candidateRepository "$CANDIDATE_REPOSITORY" \
-            --arg candidateSha "$CANDIDATE_SHA" \
-            --arg lockfileSha256 "$lockfile_sha256" \
-            --arg nodeVersion "$node_version" \
-            --arg npmVersion "$npm_version" \
-            --arg payloadFile "nemoclaw-cli.tar" \
-            --arg payloadSha256 "$payload_sha256" \
-            --arg runAttempt "$RUN_ATTEMPT" \
-            --arg runId "$RUN_ID" \
-            --arg runnerArch "$RUNNER_ARCH" \
-            --arg runnerOs "$RUNNER_OS" \
-            --arg sourceTree "$source_tree" \
-            --arg workflowSha "$WORKFLOW_SHA" \
-            '{
-              kind: "nemoclaw-e2e-cli-artifact-v1",
-              artifactName: $artifactName,
-              candidate: {
-                repository: $candidateRepository,
-                sha: $candidateSha,
-                sourceTree: $sourceTree,
-                lockfileSha256: $lockfileSha256
-              },
-              workflow: {
-                sha: $workflowSha,
-                runId: $runId,
-                runAttempt: $runAttempt
-              },
-              toolchain: {
-                node: $nodeVersion,
-                npm: $npmVersion,
-                runnerOs: $runnerOs,
-                runnerArch: $runnerArch
-              },
-              build: {
-                command: $buildCommand,
-                sourceRevision: $candidateSha
-              },
-              payload: {
-                file: $payloadFile,
-                sha256: $payloadSha256
-              }
-            }' >"$manifest"
-          chmod 0600 "$manifest" "$payload"
-          printf 'artifact_name=%s\n' "$artifact_name" >>"$GITHUB_OUTPUT"
-          printf 'candidate_sha=%s\n' "$CANDIDATE_SHA" >>"$GITHUB_OUTPUT"
-          printf 'payload_sha256=%s\n' "$payload_sha256" >>"$GITHUB_OUTPUT"
+        run: scripts/e2e/package-cli-artifact.sh
 
       - id: upload_cli_artifact
         name: Publish content-addressed CLI artifact
@@ -2783,6 +2697,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF: ${{ needs.generate-matrix.outputs.workload_source == 'managed-image' && needs.base-image-publication.outputs.dcode_base_ref || '' }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -3078,6 +2993,7 @@ jobs:
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: no provider credential
       target_id: ${{ matrix.target_id }}
@@ -3120,6 +3036,7 @@ jobs:
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: NVIDIA API key
       target_id: ${{ matrix.target_id }}
@@ -3163,6 +3080,7 @@ jobs:
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: NVIDIA inference API key
       target_id: ${{ matrix.target_id }}
@@ -3206,6 +3124,7 @@ jobs:
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: GitHub read token
       target_id: ${{ matrix.target_id }}
@@ -3249,6 +3168,7 @@ jobs:
       cli_artifact_provenance: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       managed_image_revision: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       managed_image_receipt: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
+      managed_image_catalog: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       workload_source: ${{ needs.generate-matrix.outputs.workload_source }}
       credential_boundary: Brave and NVIDIA inference API keys
       target_id: ${{ matrix.target_id }}
@@ -3364,12 +3284,13 @@ jobs:
       E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "external-gateway-health"
       E2E_AGENT_RUNTIME: "none"
-      E2E_OBSERVABLE_OUTCOME: "The reviewed SDK observes exact public gateway health over explicit HTTPS and CA"
+      E2E_OBSERVABLE_OUTCOME: "The exact Blueprint Runner observes public gateway health over explicit HTTPS and CA"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu host with OpenShell 0.0.106; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/external-gateway-health
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.106"
+      NEMOCLAW_E2E_REQUIRE_EXECUTED_TEST: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -3446,6 +3367,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge"
       E2E_OBSERVABLE_OUTCOME: "Stable OpenShell MCP bridge reaches tools and inference"
@@ -3781,6 +3703,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "openshell-credential-generation-window"
       E2E_AGENT_RUNTIME: "openclaw"
@@ -3956,6 +3879,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge-dev"
       E2E_OBSERVABLE_OUTCOME: "Development OpenShell MCP bridge reaches tools and inference"
@@ -5127,6 +5051,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-e2e"
       E2E_AGENT_RUNTIME: "hermes"
@@ -5237,6 +5162,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-gpu-startup"
       E2E_AGENT_RUNTIME: "hermes"
@@ -5498,7 +5424,7 @@ jobs:
 
   jetson-nvmap-gpu:
     needs: [base-image-publication, generate-matrix]
-    if: ${{ always() && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}
+    if: ${{ always() && needs['base-image-publication'].result == 'success' && needs['base-image-publication'].outputs.managed_image_revision != '' && needs['generate-matrix'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}
     concurrency:
       group: jetson-nvmap-gpu-dispatch
       cancel-in-progress: false
@@ -5544,6 +5470,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "cloud-onboard"
       E2E_AGENT_RUNTIME: "openclaw"
@@ -5675,6 +5602,7 @@ jobs:
       E2E_MANAGED_IMAGE_REVISION: ${{ needs.base-image-publication.outputs.managed_image_revision }}
       E2E_MANAGED_IMAGE_COHORT_RECEIPT: ${{ needs.base-image-publication.outputs.managed_image_receipt }}
       E2E_WORKLOAD_SOURCE: ${{ needs.generate-matrix.outputs.workload_source }}
+      NEMOCLAW_E2E_MANAGED_IMAGE_CATALOG_JSON: ${{ needs.base-image-publication.outputs.managed_image_catalog }}
       E2E_JOB: "1"
       E2E_TARGET_ID: "messaging-providers"
       E2E_AGENT_RUNTIME: "openclaw"
@@ -5736,94 +5664,22 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  openclaw-plugin-runtime-exdev-release:
-    needs: generate-matrix
-    if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-plugin-runtime-exdev-release') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    timeout-minutes: 55
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "openclaw-plugin-runtime-exdev-release"
-      E2E_AGENT_RUNTIME: "openclaw"
-      E2E_OBSERVABLE_OUTCOME: "Release baseline plugin runtime survives the EXDEV boundary"
-      E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; release baseline package; no inference endpoint"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev-release
-      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-oc-exdev-rel"
-      OPENSHELL_GATEWAY: "nemoclaw"
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ inputs.checkout_repository || github.repository }}
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - *dockerhub-auth
-
-      - name: Pre-pull release-matched Docker Hub builder image
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker pull node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d
-
-      - name: Remove Docker auth before release-pinned fixture
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
-
-      - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@813ca162c2867a34ba3692ad60dba73f3282baea
-        with:
-          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
-
-      - name: Run OpenClaw custom-plugin release baseline live test
-        run: |
-          set -euo pipefail
-          test -n "${DOCKER_CONFIG:-}"
-          test ! -e "${DOCKER_CONFIG}"
-          test -z "${DOCKERHUB_USERNAME:-}"
-          test -z "${DOCKERHUB_TOKEN:-}"
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
-            npx tsx tools/e2e/live-vitest-invocation.mts run \
-              --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
-              --selector release-baseline
-
-      - name: Upload OpenClaw plugin release baseline artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: bash .github/scripts/docker-auth-cleanup.sh
-
-  # Main-push current-lifecycle coverage for #6108 / #3513 / #3127. This
-  # proves restart/rebuild persistence and target-side runtime-dependency
-  # replacement across devices without waiting for the release baseline.
+  # Main-push current-lifecycle coverage for #6108. This proves a custom plugin
+  # installs across devices and remains usable after restart and recreation.
   openclaw-plugin-runtime-exdev:
     needs: generate-matrix
     if: ${{ contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'openclaw-plugin-runtime-exdev') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Two bounded 25-minute onboards plus the 20-minute rebuild and 15-minute
-    # Vitest buffer need 85 minutes; allow 20 more for setup and teardown.
-    timeout-minutes: 105
+    # Two bounded 25-minute onboarding operations plus the 15-minute Vitest
+    # buffer need 65 minutes; allow 20 more for setup and teardown.
+    timeout-minutes: 85
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openclaw-plugin-runtime-exdev"
       E2E_AGENT_RUNTIME: "openclaw"
-      E2E_OBSERVABLE_OUTCOME: "Current plugin lifecycle rebuild and dependencies survive the EXDEV boundary"
+      E2E_OBSERVABLE_OUTCOME: "OpenClaw installs the custom plugin across devices; plugin behavior survives restart and recreation"
       E2E_ENVIRONMENT_OR_INFERENCE_ENDPOINT: "Ubuntu; current package; no inference endpoint"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
@@ -5842,13 +5698,13 @@ jobs:
 
       - *dockerhub-auth
 
-      - name: Pre-pull release-matched Docker Hub builder image
+      - name: Pre-pull current-checkout Docker Hub builder image
         shell: bash
         run: |
           set -euo pipefail
           docker pull node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c
 
-      - name: Remove Docker auth before release-pinned fixture
+      - name: Remove Docker auth before current-checkout fixture
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3
 
@@ -5862,7 +5718,7 @@ jobs:
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
-      - name: Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test
+      - name: Run OpenClaw cross-device plugin lifecycle live test
         run: |
           set -euo pipefail
           test -n "${DOCKER_CONFIG:-}"
@@ -5874,7 +5730,7 @@ jobs:
               --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
               --selector current-lifecycle
 
-      - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts
+      - name: Upload OpenClaw cross-device plugin lifecycle artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
@@ -5918,7 +5774,6 @@ jobs:
         messaging-providers,
         jetson-nvmap-gpu,
         cloud-onboard,
-        openclaw-plugin-runtime-exdev-release,
         openclaw-plugin-runtime-exdev,
         native-runtime-qualification-producer,
         native-runtime-qualification-producer-aggregate,
