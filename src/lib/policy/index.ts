@@ -413,7 +413,7 @@ function loadPresetForSandbox(
   }
   if (isMessagingChannelPolicyPreset(presetName)) return null;
 
-  const builtinPresetContent = loadCentralPreset(presetName);
+  const builtinPresetContent = loadCentralPreset(presetName, { reportMissing: false });
   if (!builtinPresetContent) return liveCustomPresetContent(sandboxName, presetName);
   const resolvedPresetContent =
     loadAgentPresetContent(sandboxName, presetName, builtinPresetContent) || builtinPresetContent;
