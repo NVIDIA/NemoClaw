@@ -4541,11 +4541,12 @@ n1x_fastos_release_metadata_is_trusted() {
 
 n1x_fastos_release_contents_are_valid() {
   local contents=${1:-}
+  local expected_name=${2:-'N1x FASTOS'}
   local line="" name_count=0
   [[ "$contents" != *$'\r'* ]] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
-      'NAME="N1x FASTOS"') ((name_count += 1)) ;;
+      "NAME=\"${expected_name}\"") ((name_count += 1)) ;;
       NAME=*) return 1 ;;
     esac
   done <<<"$contents"
@@ -4564,6 +4565,11 @@ n1x_opened_fastos_release_has_nul() {
 }
 
 n1x_fastos_release_is_trusted() {
+  fastos_release_is_trusted_for_name 'N1x FASTOS'
+}
+
+fastos_release_is_trusted_for_name() {
+  local expected_name=${1:?expected FastOS marker name is required}
   local marker="" before="" opened="" after="" contents=""
   marker="$(n1x_fastos_release_path)"
   [ -e "$marker" ] && [ ! -L "$marker" ] || return 1
@@ -4606,19 +4612,22 @@ n1x_fastos_release_is_trusted() {
   contents="$(head -c $((N1X_FASTOS_RELEASE_MAX_BYTES + 1)) <&9)"
   exec 9<&-
   [ "${#contents}" -le "$N1X_FASTOS_RELEASE_MAX_BYTES" ] || return 1
-  n1x_fastos_release_contents_are_valid "$contents"
+  n1x_fastos_release_contents_are_valid "$contents" "$expected_name"
+}
+
+spark_fastos_release_is_trusted() {
+  fastos_release_is_trusted_for_name 'DGX SPARK FASTOS'
 }
 
 n1x_pci_identity_is_valid() {
-  local vendor="" device="" pci_class=""
+  local vendor="" pci_class=""
   vendor="$(printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]')"
-  device="$(printf "%s" "${2:-}" | tr '[:upper:]' '[:lower:]')"
-  pci_class="$(printf "%s" "${3:-}" | tr '[:upper:]' '[:lower:]')"
-  [[ "$vendor" = "0x10de" && "$device" = "0x2e2a" && "$pci_class" =~ ^0x03[0-9a-f]{4}$ ]]
+  pci_class="$(printf "%s" "${2:-}" | tr '[:upper:]' '[:lower:]')"
+  [[ "$vendor" = "0x10de" && "$pci_class" =~ ^0x03[0-9a-f]{4}$ ]]
 }
 
 n1x_has_pci_gpu() {
-  local pci_root="" pci_device="" vendor="" device="" pci_class="" scanned=0
+  local pci_root="" pci_device="" vendor="" pci_class="" scanned=0
   pci_root="$(n1x_pci_devices_path)"
   [ -d "$pci_root" ] || return 1
   for pci_device in "$pci_root"/*; do
@@ -4626,15 +4635,13 @@ n1x_has_pci_gpu() {
     ((scanned += 1))
     [ "$scanned" -le 256 ] || return 1
     vendor="$(head -c 65 "$pci_device/vendor" 2>/dev/null)" || continue
-    device="$(head -c 65 "$pci_device/device" 2>/dev/null)" || continue
     pci_class="$(head -c 65 "$pci_device/class" 2>/dev/null)" || continue
-    if [ "${#vendor}" -gt 64 ] || [ "${#device}" -gt 64 ] || [ "${#pci_class}" -gt 64 ]; then
+    if [ "${#vendor}" -gt 64 ] || [ "${#pci_class}" -gt 64 ]; then
       continue
     fi
     vendor="${vendor//[[:space:]]/}"
-    device="${device//[[:space:]]/}"
     pci_class="${pci_class//[[:space:]]/}"
-    n1x_pci_identity_is_valid "$vendor" "$device" "$pci_class" && return 0
+    n1x_pci_identity_is_valid "$vendor" "$pci_class" && return 0
   done
   return 1
 }
@@ -4666,6 +4673,10 @@ detect_express_platform() {
       return
       ;;
   esac
+  if spark_fastos_release_is_trusted; then
+    printf "DGX Spark"
+    return
+  fi
   if is_station_gb300_product "$model"; then
     release_state="$(classify_dgx_station_release)"
     case "$release_state" in
