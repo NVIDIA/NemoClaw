@@ -1094,7 +1094,7 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha");
+    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", { force: false });
   });
 
   it("does not require mutable Hermes config for absent-sandbox cleanup", async () => {

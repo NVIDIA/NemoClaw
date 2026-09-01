@@ -122,6 +122,8 @@ export interface RebuildManifest {
   backedUpDirs?: string[];
   /** Declared directories that could not be backed up. Absent on older manifests. */
   failedBackupDirs?: string[];
+  /** False when the retained files are incomplete and must not be selected for restore. */
+  backupComplete?: boolean;
   stateFiles?: StateFileSpec[];
   /** Single config/state directory */
   dir: string;
@@ -377,6 +379,7 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     (value.backedUpDirs === undefined || isBackedUpDirArray(value.backedUpDirs, value.stateDirs)) &&
     (value.failedBackupDirs === undefined ||
       isBackedUpDirArray(value.failedBackupDirs, value.stateDirs)) &&
+    (value.backupComplete === undefined || typeof value.backupComplete === "boolean") &&
     typeof dir === "string" &&
     (value.openclawImagePluginInstalls === undefined ||
       parseOpenClawImagePluginInstalls(value.openclawImagePluginInstalls, dir).ok) &&
@@ -804,27 +807,6 @@ export function sanitizeBackupDirectory(
       },
     );
   }
-}
-
-export interface IncompleteSnapshotRemoval {
-  readonly removed: boolean;
-  readonly error?: string;
-}
-
-export function removeIncompleteSnapshot(
-  backupPath: string,
-  overrides: Partial<Pick<BackupSanitizationOperations, "removeBackup" | "backupExists">> = {},
-): IncompleteSnapshotRemoval {
-  const operations = { ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS, ...overrides };
-  try {
-    operations.removeBackup(backupPath);
-  } catch (error) {
-    return { removed: false, error: error instanceof Error ? error.message : String(error) };
-  }
-  if (operations.backupExists(backupPath)) {
-    return { removed: false, error: "the snapshot directory still exists after removal" };
-  }
-  return { removed: true };
 }
 
 // ── Logging ────────────────────────────────────────────────────────
@@ -1435,6 +1417,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       : {}),
     stateDirs,
     failedBackupDirs: [],
+    backupComplete: false,
     stateFiles,
     dir,
     backupPath,
@@ -1464,6 +1447,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         error: publicationError,
       };
     }
+    manifest.backupComplete = true;
     writeManifest(backupPath, manifest);
     return { success: true, manifest, backedUpDirs, failedDirs, backedUpFiles, failedFiles };
   }
@@ -1847,6 +1831,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   manifest.failedBackupDirs = failedDirs.filter((failedDir) =>
     manifest.stateDirs.includes(failedDir),
   );
+  manifest.backupComplete = failedDirs.length === 0 && failedFiles.length === 0;
 
   const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
   if (publicationError) {
@@ -2710,6 +2695,17 @@ export type RebuildRecoveryManifestValidation =
   | { ok: true; manifest: RebuildManifest }
   | { ok: false; reason: string };
 
+function legacyStateFilesArePresent(backupPath: string, manifest: RebuildManifest): boolean {
+  if (manifest.backupComplete !== undefined) return true;
+  return (manifest.stateFiles ?? []).every((spec) => {
+    try {
+      return lstatSync(path.join(backupPath, spec.path)).isFile();
+    } catch {
+      return false;
+    }
+  });
+}
+
 /**
  * Remove one completed rebuild backup without allowing a caller-controlled
  * path to escape the sandbox's timestamped backup directory.
@@ -2842,8 +2838,16 @@ export function listBackups(sandboxName: string): SnapshotEntry[] {
 
   const manifests: RebuildManifest[] = [];
   for (const entry of rawEntries) {
-    const m = readManifest(path.join(dir, entry.name));
-    if (m) manifests.push(m);
+    const backupPath = path.join(dir, entry.name);
+    const m = readManifest(backupPath);
+    if (
+      m &&
+      m.backupComplete !== false &&
+      (m.failedBackupDirs?.length ?? 0) === 0 &&
+      legacyStateFilesArePresent(backupPath, m)
+    ) {
+      manifests.push(m);
+    }
   }
 
   // Assign version numbers by timestamp-ascending position (v1 = oldest).

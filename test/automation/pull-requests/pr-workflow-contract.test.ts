@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
   type CompositeAction,
@@ -60,6 +61,7 @@ type TypeScriptConfig = {
 
 const sharedActionPaths = {
   staticChecks: "./.github/actions/ci-static-checks",
+  compileArtifacts: "./.github/actions/ci-compile-artifacts",
   buildTypecheck: "./.github/actions/ci-build-typecheck",
   cliCoverageShard: "./.github/actions/ci-cli-coverage-shard",
   cliCoverageMerge: "./.github/actions/ci-cli-coverage-merge",
@@ -69,6 +71,7 @@ const sharedActionPaths = {
 
 const trustedPrActionPaths = {
   staticChecks: "./.trusted-ci-actions/.github/actions/ci-static-checks",
+  compileArtifacts: "./.trusted-ci-actions/.github/actions/ci-compile-artifacts",
   buildTypecheck: "./.trusted-ci-actions/.github/actions/ci-build-typecheck",
   cliCoverageShard: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard",
   cliCoverageMerge: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge",
@@ -81,6 +84,7 @@ const trustedSetupNodeAction = "actions/setup-node@820762786026740c76f36085b0efc
 const trustedActionDirs = [
   ".github/actions/ci-static-checks",
   ".github/actions/ci-build-typecheck",
+  ".github/actions/ci-compile-artifacts",
   ".github/actions/ci-cli-coverage-shard",
   ".github/actions/ci-cli-coverage-merge",
   ".github/actions/ci-plugin-coverage",
@@ -462,6 +466,9 @@ describe("pull request and main workflow contracts", () => {
   ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
+    compileArtifacts: readYaml<CompositeAction>(
+      ".github/actions/ci-compile-artifacts/action.yaml",
+    ),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
     cliCoverageShard: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
@@ -480,6 +487,39 @@ describe("pull request and main workflow contracts", () => {
     ["main", mainWorkflow],
   ] as const)("keeps the %s CLI coverage shard budget aligned", (_workflowName, workflow) => {
     expect(workflow.jobs["cli-test-shards"]?.["timeout-minutes"]).toBe(cliShardTimeoutMinutes);
+  });
+
+  // source-shape-contract: security -- Credential-free workflow structure prevents pull request code from receiving Hugging Face or checkout credentials
+  it("verifies changed Hugging Face catalog references without credentials", () => {
+    const job = prWorkflow.jobs["hugging-face-models"];
+    const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
+    const filters = YAML.parse(String(filterStep?.with?.filters ?? "")) as Record<
+      string,
+      string[]
+    >;
+    const huggingFaceModelFilters = filters.hugging_face_models ?? [];
+
+    expect(
+      huggingFaceModelFilters.some((pattern) =>
+        pattern.includes("src/lib/inference/serving/catalog-loader.ts"),
+      ),
+    ).toBe(true);
+    expect(
+      huggingFaceModelFilters.some((pattern) =>
+        pattern.includes("src/lib/inference/serving/generate-catalog.ts"),
+      ),
+    ).toBe(true);
+    expect(job.needs).toBe("changes");
+    expect(job.if).toBe("needs.changes.outputs.hugging_face_models == 'true'");
+    expect(stepUses(job)).toEqual([trustedCheckoutAction, trustedSetupNodeAction]);
+    expect(requiredWorkflowStep(job, "Checkout").with?.["persist-credentials"]).toBe(false);
+    expect(requiredWorkflowStep(job, "Install dependencies").run).toBe(
+      "npm ci --ignore-scripts",
+    );
+    expect(requiredWorkflowStep(job, "Verify Hugging Face model references").run).toBe(
+      "npm run catalog:verify-hugging-face",
+    );
+    expect(JSON.stringify(job)).not.toMatch(/HF_TOKEN|HUGGING_FACE_HUB_TOKEN|secrets\./u);
   });
 
   // source-shape-contract: security -- Pull request jobs must never receive the GitHub Packages credential
@@ -502,6 +542,7 @@ describe("pull request and main workflow contracts", () => {
       ["build-typecheck", "read"],
       ["cli-test-shards", "read"],
       ["cli-tests", "read"],
+      ["compile-artifacts", "read"],
       ["installer-integration", "read"],
       ["plugin-tests", "read"],
       ["static-checks", "read"],
@@ -512,7 +553,7 @@ describe("pull request and main workflow contracts", () => {
   it("provides the package token only to trusted main dependency installation", () => {
     const actions = [
       sharedActions.staticChecks,
-      sharedActions.buildTypecheck,
+      sharedActions.compileArtifacts,
       sharedActions.cliCoverageMerge,
       sharedActions.installerIntegration,
       sharedActions.cliCoverageShard,
@@ -1004,7 +1045,6 @@ describe("pull request and main workflow contracts", () => {
       });
 
       expect(validShard.status).toBe(0);
-      expect(readFileSync(output, "utf8")).toContain("upload_build_artifact=false");
       expect(invalidShard.status).not.toBe(0);
       expect(invalidShard.stdout).toContain("Invalid CLI shard");
       expect(invalidRange.status).not.toBe(0);
@@ -1018,11 +1058,6 @@ describe("pull request and main workflow contracts", () => {
   });
 
   const coverageEntrypointCases = [
-    {
-      action: sharedActions.cliCoverageShard,
-      step: "Build CLI for coverage shard",
-      stem: "scripts/check-dist-sourcemaps",
-    },
     {
       action: sharedActions.cliCoverageMerge,
       step: "Verify compiled CLI artifact",
@@ -1170,6 +1205,8 @@ describe("pull request and main workflow contracts", () => {
       CLI_TESTS_RESULT: "success",
       CODE_CHANGED: "true",
       DOCS_ONLY_RESULT: "skipped",
+      HF_MODELS_CHANGED: "true",
+      HF_MODELS_RESULT: "success",
       INSTALLER_INTEGRATION_RESULT: "success",
       OPEN_SHELL_SDK_PACKAGE_RESULT: "success",
       PLUGIN_TESTS_RESULT: "success",
@@ -1194,12 +1231,14 @@ describe("pull request and main workflow contracts", () => {
       prGate,
       {
         ...successfulCode,
+        HF_MODELS_RESULT: "failure",
         PLUGIN_TESTS_RESULT: "cancelled",
         STATIC_RESULT: "failure",
       },
       workflowJobListing([
         workflowJob(201, "static-checks", "failure"),
         workflowJob(202, "plugin-tests", "cancelled"),
+        workflowJob(203, "hugging-face-models", "failure"),
       ]),
     );
     const docsOnlySuccess = runWorkflowShellStep(prGate, {
@@ -1208,6 +1247,8 @@ describe("pull request and main workflow contracts", () => {
       CLI_TESTS_RESULT: "skipped",
       CODE_CHANGED: "false",
       DOCS_ONLY_RESULT: "success",
+      HF_MODELS_CHANGED: "false",
+      HF_MODELS_RESULT: "skipped",
       INSTALLER_INTEGRATION_RESULT: "skipped",
       OPEN_SHELL_SDK_PACKAGE_RESULT: "skipped",
       PLUGIN_TESTS_RESULT: "skipped",
@@ -1244,6 +1285,10 @@ describe("pull request and main workflow contracts", () => {
     expect(codeFailure.stdout).toContain("plugin-tests failed");
     expect(codeFailure.stdout).toContain(
       "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/202",
+    );
+    expect(codeFailure.stdout).toContain("hugging-face-models failed");
+    expect(codeFailure.stdout).toContain(
+      "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/203",
     );
     expect(docsOnlySuccess.status).toBe(0);
     expect(mainSuccess.status).toBe(0);

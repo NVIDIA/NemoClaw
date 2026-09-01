@@ -22,7 +22,7 @@ import {
   type ManagedLlamaCppSelectionChoice,
   type ManagedLlamaCppSelectionResult,
   listManagedLlamaCppSelectionChoices,
-  resolveManagedLlamaCppSelection,
+  resolveManagedLlamaCppSelectionForGpu,
 } from "../inference/llama-cpp/managed-selection";
 import { getOllamaContextWindowFloorForAgent } from "../inference/ollama-runtime-context";
 import {
@@ -170,7 +170,10 @@ export interface SetupNimFlowDeps {
   exitProcess(code: number): never;
   abortNonInteractive(message: string): never;
   localModelProfileIntegration?: ReturnType<typeof createLocalModelProfileIntegration>;
-  resolveManagedLlamaCppSelection?(env?: NodeJS.ProcessEnv): ManagedLlamaCppSelectionResult;
+  resolveManagedLlamaCppSelection?(
+    env?: NodeJS.ProcessEnv,
+    gpu?: SetupNimGpu,
+  ): ManagedLlamaCppSelectionResult;
   listManagedLlamaCppSelectionChoices?(): readonly ManagedLlamaCppSelectionChoice[];
   installManagedLlamaCpp?: typeof installManagedLlamaCpp;
   handleRemoteProviderSelection(
@@ -426,9 +429,12 @@ function prepareEndpointProviderPolicyRoute(
 function resolveManagedLlamaCppSafely(
   deps: SetupNimFlowDeps,
   env?: NodeJS.ProcessEnv,
+  gpu: SetupNimGpu = null,
 ): ManagedLlamaCppSelectionResult {
   try {
-    return (deps.resolveManagedLlamaCppSelection ?? resolveManagedLlamaCppSelection)(env);
+    return deps.resolveManagedLlamaCppSelection
+      ? deps.resolveManagedLlamaCppSelection(env, gpu)
+      : resolveManagedLlamaCppSelectionForGpu(env, gpu);
   } catch (error) {
     return {
       kind: "rejected",
@@ -483,13 +489,14 @@ function buildManagedLlamaCppOptions(input: {
 
 function prepareManagedLlamaCppMenu(input: {
   deps: SetupNimFlowDeps;
-  platform: InferenceProviderHostGpu["platform"] | undefined;
+  gpu: SetupNimGpu;
   requestedProvider: string | null;
 }): {
   resolution: ManagedLlamaCppSelectionResult | null;
   options: ProviderMenuChoice[];
 } {
-  const { deps, platform, requestedProvider } = input;
+  const { deps, gpu, requestedProvider } = input;
+  const platform = gpu?.platform;
   const candidate = platform === "spark" || requestedProvider === "install-llama-cpp";
   const resolution = candidate
     ? resolveManagedLlamaCppSafely(
@@ -497,6 +504,7 @@ function prepareManagedLlamaCppMenu(input: {
         !deps.isNonInteractive() && !requestedProvider
           ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: "" }
           : undefined,
+        gpu,
       )
     : null;
   return {
@@ -507,15 +515,16 @@ function prepareManagedLlamaCppMenu(input: {
 
 function resolveSelectedManagedLlamaCpp(input: {
   deps: SetupNimFlowDeps;
+  gpu: SetupNimGpu;
   selectedFromInteractiveMenu: boolean;
   selectedRecipeId: string | undefined;
 }): ManagedLlamaCppSelectionResult {
-  const { deps, selectedFromInteractiveMenu, selectedRecipeId } = input;
+  const { deps, gpu, selectedFromInteractiveMenu, selectedRecipeId } = input;
   const env =
     selectedFromInteractiveMenu && selectedRecipeId
       ? { ...process.env, [LLAMA_CPP_RECIPE_ENV]: selectedRecipeId }
       : undefined;
-  return resolveManagedLlamaCppSafely(deps, env);
+  return resolveManagedLlamaCppSafely(deps, env, gpu);
 }
 
 async function runDedicatedLocalModelProfile(input: {
@@ -642,6 +651,23 @@ function requestedManagedVllmModel(
   return requested?.servedModelId ?? requested?.id ?? null;
 }
 
+/** Preserve explicit route intent while converting a known catalog alias to its served name. */
+function requestedManagedVllmRouteModel(input: {
+  requestedModel: string | null;
+  selectVllmModelFromEnv: SetupNimFlowDeps["selectVllmModelFromEnv"];
+}): string | null {
+  if (!input.requestedModel) return requestedManagedVllmModel(input.selectVllmModelFromEnv);
+  if (!input.selectVllmModelFromEnv) return input.requestedModel;
+  try {
+    const catalogModel = input.selectVllmModelFromEnv({
+      NEMOCLAW_VLLM_MODEL: input.requestedModel,
+    });
+    return catalogModel?.servedModelId ?? catalogModel?.id ?? input.requestedModel;
+  } catch {
+    return input.requestedModel;
+  }
+}
+
 function resolveInitialVllmSelectionModel(input: {
   preparedState: SetupNimSelectionState | null;
   requestedProvider: string | null;
@@ -651,10 +677,9 @@ function resolveInitialVllmSelectionModel(input: {
 }): SetupNimSelectionState["model"] {
   return (
     input.preparedState?.model ??
-    input.requestedModel ??
     (input.preparedState === null && input.requestedProvider === "install-vllm"
-      ? requestedManagedVllmModel(input.selectVllmModelFromEnv)
-      : null) ??
+      ? requestedManagedVllmRouteModel(input)
+      : input.requestedModel) ??
     input.recoveredModel
   );
 }
@@ -901,7 +926,7 @@ export function createSetupNim(
     const agentProviderOptions = deps.getAgentInferenceProviderOptions(agent);
     const { options: managedLlamaCppOptions } = prepareManagedLlamaCppMenu({
       deps,
-      platform: gpu?.platform,
+      gpu,
       requestedProvider,
     });
 
@@ -1086,6 +1111,7 @@ export function createSetupNim(
           const selectedRecipeId = selected.managedLlamaCppRecipeId;
           const resolved = resolveSelectedManagedLlamaCpp({
             deps,
+            gpu,
             selectedFromInteractiveMenu,
             selectedRecipeId,
           });
