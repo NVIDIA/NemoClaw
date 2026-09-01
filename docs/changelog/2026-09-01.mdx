@@ -1,0 +1,41 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.118
+
+NemoClaw v0.0.118 adds headless package boundaries for Hermes lifecycle planning and credential-free external OpenShell gateway health checks.
+It improves fail-closed sandbox destruction, rebuild, onboarding, Shields, inference, and Hermes recovery.
+It also broadens Deferred N1x detection and gives N1x managed vLLM a dedicated serving profile.
+
+- The new `nemoclaw/lifecycle` package export supports deterministic Hermes 0.19.0 lifecycle planning and read-only agent observation with OpenShell 0.0.106.
+  Callers provide the observation capability; the package does not own transport, authentication, persistence, or mutation.
+  The Blueprint Runner can also check a configured external OpenShell gateway through the pinned SDK without credentials or mutation.
+  Related changes: [PR #10703](https://github.com/NVIDIA/NemoClaw/pull/10703) and [PR #10618](https://github.com/NVIDIA/NemoClaw/pull/10618).
+- OpenClaw sandbox destruction now detects Shields-locked Mcporter configuration before mutation and provides recovery guidance.
+  `destroy --force` can continue only for retained OpenClaw Mcporter entries, while Hermes and ordinary MCP mutations remain fail-closed.
+  Related change: [PR #10483](https://github.com/NVIDIA/NemoClaw/pull/10483).
+- Rebuild now stops before deleting the original sandbox when any declared state directory or file cannot be preserved, including with `--force`.
+  When cleanup fails, NemoClaw retains the incomplete snapshot at the reported path.
+  It excludes the snapshot from `snapshot list` and restore selection.
+  The directory can contain unsanitized credentials. Keep it owner-only.
+  Do not restore, copy, share, or edit it.
+  Repair access to the original sandbox state.
+  Remove the retained directory only after you verify that the original sandbox or a complete snapshot contains every required state item.
+  Confirm that the reported path is absent. Then rerun the operation.
+  A failed nested onboarding result no longer proceeds to restore or report success.
+  Related changes: [PR #10686](https://github.com/NVIDIA/NemoClaw/pull/10686) and [PR #10590](https://github.com/NVIDIA/NemoClaw/pull/10590).
+- Fresh onboarding now ends the OpenShell create handoff after receiving a validated durable sandbox ID, then settles and verifies identity before post-create effects.
+  This prevents affected WSL2 ARM OpenClaw sandboxes from moving from Ready to Error while publication metadata is still settling.
+  Related change: [PR #10789](https://github.com/NVIDIA/NemoClaw/pull/10789).
+- Hermes stopped-sandbox recovery reuses verified lifecycle and inference state. It still rolls back failures and performs final readiness qualification.
+  Hermes dashboards behind a reverse proxy also accept the hostname from a validated HTTPS `CHAT_UI_URL` for HTTP and WebSocket requests while remaining bound to loopback.
+  Related changes: [PR #10641](https://github.com/NVIDIA/NemoClaw/pull/10641) and [PR #10687](https://github.com/NVIDIA/NemoClaw/pull/10687).
+- Inference status now queries the selected gateway instead of implicitly using the default gateway. Hugging Face model downloads with no output abort after a bounded stall timeout.
+  Related changes: [PR #10698](https://github.com/NVIDIA/NemoClaw/pull/10698) and [PR #10352](https://github.com/NVIDIA/NemoClaw/pull/10352).
+- Shields status for Hermes now remains read-only instead of repairing mutable state during observation.
+  Related change: [PR #10710](https://github.com/NVIDIA/NemoClaw/pull/10710).
+- Deferred N1x preview detection now accepts NVIDIA display-class GPUs without requiring one PCI device ID and recognizes OEM DGX Spark FastOS identity.
+  N1x managed vLLM uses a dedicated Qwen3.6 35B NVFP4 serving profile with a physically exercised memory, context, concurrency, and batching envelope; N1x remains Deferred pending complete Express end-to-end validation.
+  Related changes: [PR #10099](https://github.com/NVIDIA/NemoClaw/pull/10099), [PR #10721](https://github.com/NVIDIA/NemoClaw/pull/10721), and [PR #10625](https://github.com/NVIDIA/NemoClaw/pull/10625).
