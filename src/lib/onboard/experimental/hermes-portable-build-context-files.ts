@@ -175,6 +175,7 @@ export const HERMES_PORTABLE_BUILD_CONTEXT_FILES = [
   { path: "src/lib/messaging/applier/index.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/openclaw-plugin-allow.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/openclaw-plugin-allow.ts", mode: "100644" },
+  { path: "src/lib/messaging/applier/openshell-provider.test.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/openshell-provider.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/plan-filter.ts", mode: "100644" },
   { path: "src/lib/messaging/applier/policy.ts", mode: "100644" },
