@@ -17,24 +17,13 @@ const DOCKER_HUB_CLEANUP_ACTION =
 
 const JOB_CONTRACTS = [
   {
-    jobName: "openclaw-plugin-runtime-exdev-release",
-    timeoutMinutes: 55,
-    artifactId: "openclaw-plugin-runtime-exdev-release",
-    sandboxName: "e2e-oc-exdev-rel",
-    selector: "release-baseline",
-    runName: "Run OpenClaw custom-plugin release baseline live test",
-    uploadName: "Upload OpenClaw plugin release baseline artifacts",
-    builderImage:
-      "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d",
-  },
-  {
     jobName: "openclaw-plugin-runtime-exdev",
-    timeoutMinutes: 105,
+    timeoutMinutes: 85,
     artifactId: "openclaw-plugin-runtime-exdev",
     sandboxName: "e2e-oc-exdev",
     selector: "current-lifecycle",
-    runName: "Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test",
-    uploadName: "Upload OpenClaw plugin runtime-deps EXDEV artifacts",
+    runName: "Run OpenClaw cross-device plugin lifecycle live test",
+    uploadName: "Upload OpenClaw cross-device plugin lifecycle artifacts",
     builderImage:
       "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",
   },
@@ -186,11 +175,11 @@ export function validateOpenClawPluginRuntimeExdevWorkflow(
       errors.push(`${jobName} must use the reviewed prepare-e2e action`);
     }
 
-    const prePull = findStep(job, "Pre-pull release-matched Docker Hub builder image");
+    const prePull = findStep(job, "Pre-pull current-checkout Docker Hub builder image");
     requireRunContains(errors, jobName, prePull, `docker pull ${builderImage}`);
-    const revoke = findStep(job, "Remove Docker auth before release-pinned fixture");
+    const revoke = findStep(job, "Remove Docker auth before current-checkout fixture");
     if (revoke.if !== "always()") {
-      errors.push(`${jobName} must always revoke Docker auth before the release-pinned fixture`);
+      errors.push(`${jobName} must always revoke Docker auth before the current-checkout fixture`);
     }
     if (
       revoke.uses !== DOCKER_HUB_CLEANUP_ACTION ||
@@ -226,14 +215,14 @@ export function validateOpenClawPluginRuntimeExdevWorkflow(
       errors,
       jobName,
       steps,
-      "Pre-pull release-matched Docker Hub builder image",
-      "Remove Docker auth before release-pinned fixture",
+      "Pre-pull current-checkout Docker Hub builder image",
+      "Remove Docker auth before current-checkout fixture",
     );
     requireStepOrder(
       errors,
       jobName,
       steps,
-      "Remove Docker auth before release-pinned fixture",
+      "Remove Docker auth before current-checkout fixture",
       "Prepare E2E workspace",
     );
     requireStepOrder(errors, jobName, steps, "Prepare E2E workspace", runName);
@@ -243,14 +232,14 @@ export function validateOpenClawPluginRuntimeExdevWorkflow(
       jobName,
       steps,
       "Authenticate to Docker Hub",
-      "Pre-pull release-matched Docker Hub builder image",
+      "Pre-pull current-checkout Docker Hub builder image",
     );
     requireAdjacentSteps(
       errors,
       jobName,
       steps,
-      "Pre-pull release-matched Docker Hub builder image",
-      "Remove Docker auth before release-pinned fixture",
+      "Pre-pull current-checkout Docker Hub builder image",
+      "Remove Docker auth before current-checkout fixture",
     );
   }
 

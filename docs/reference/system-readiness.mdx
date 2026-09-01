@@ -139,7 +139,7 @@ Each capability uses `present`, `absent`, or `unknown`.
 | `host.platform.wsl_docker_desktop` | Docker Desktop integration in WSL. |
 | `host.platform.wsl_native_docker` | Native Docker Engine inside WSL. |
 | `host.platform.wsl_gpu_passthrough` | Docker Desktop GPU passthrough proof. |
-| `host.platform.dgx_spark` | DGX Spark identity on ARM64 with an available NVIDIA GPU. |
+| `host.platform.dgx_spark` | DGX Spark identity from a product name or trusted FastOS marker on ARM64 with an available NVIDIA GPU. |
 | `host.platform.n1x` | N1x identity from the trusted FastOS marker and NVIDIA display PCI device on Linux ARM64 with an available NVIDIA GPU. This capability does not promote the Deferred platform status. |
 | `host.platform.dgx_station` | Qualified DGX Station GB300 identity, Linux ARM64 runtime, Ubuntu 24.04, hardware, and software profile. |
 
@@ -152,9 +152,11 @@ It is `absent` when the proof fails or the host has no NVIDIA GPU, and `unknown`
 The read-only `host probe` command does not pull or start the container-backed WSL GPU proof, so a host that needs that proof reports this capability as `unknown`.
 Onboarding can run the bounded proof only after its current host and gateway readiness checks admit the run.
 
-For an OEM host whose DMI product name does not identify DGX Spark, a trusted `/etc/fastos-release` marker with exactly one `NAME="DGX SPARK FASTOS"` line identifies the host as DGX Spark.
-The marker must be a regular, non-symbolic file of 1 through 4,096 bytes, owned by UID and GID 0, and not writable by group or other users.
-This detection does not establish hardware qualification for an OEM system.
+NemoClaw can also identify an OEM DGX Spark host from `/etc/fastos-release` when the product name does not identify the host.
+The marker must be a regular file of 1 through 4,096 bytes, owned by UID and GID 0, not a symbolic link, and not writable by group or other users.
+It must contain exactly one `NAME="DGX SPARK FASTOS"` line and no NUL or carriage-return byte.
+NemoClaw parses the marker as inert text and does not pin its `VERSION` value.
+A matching marker classifies the host as DGX Spark; the normal ARM64 and available NVIDIA GPU requirements still apply.
 
 DGX Station qualification fails closed.
 The `host.platform.dgx_station` capability is `present` only when the host runs Linux ARM64 on Ubuntu 24.04, reports an effective NVIDIA GPU, and the product identity, a display-class PCI device with NVIDIA vendor ID (`0x10de`) and GB300 device ID (`0x31c2` or `0x31c3`), and the software profile all qualify.
