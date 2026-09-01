@@ -546,7 +546,7 @@ describe("Hermes portable lifecycle", () => {
             sleep: (milliseconds) => {
               now += milliseconds;
             },
-            recoveryTiming: { onComplete: evidence },
+            recoveryTiming: { now: () => now, onComplete: evidence },
           }),
         { stateDir: path.join(stateDir, "state") },
       ),
@@ -563,9 +563,9 @@ describe("Hermes portable lifecycle", () => {
         result: "failed",
       }),
     );
-    const recorded = evidence.mock.calls[0]?.[0];
-    expect(recorded.authenticatedHealthCount).toBeGreaterThan(1);
-    expect(recorded.transactionCurrentnessCount).toBeGreaterThan(1);
+    expect(evidence.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ authenticatedHealthSleepMs: 90_000 }),
+    );
   });
 
   it("rejects live sandbox rebind before the name-addressed startup launch (#10423)", () => {
