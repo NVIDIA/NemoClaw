@@ -78,7 +78,6 @@ function fakeDockerHost(
   options: {
     publishedAddress?: string;
     networkInspect?: string;
-    apiReady?: boolean;
     proxyRunning?: boolean;
     proxyReady?: boolean;
   } = {},
@@ -95,13 +94,6 @@ function fakeDockerHost(
   let proxyRunning = options.proxyRunning !== false;
   const dockerCommand = (args: string[]) => {
     calls.push([...args]);
-    (options.apiReady === false
-      ? []
-      : args.filter((argument) => args[0] === "run" && argument.endsWith(":/tmp/fake"))
-    ).forEach((fakeApiMount) => {
-      const fixtureDir = fakeApiMount.slice(0, -":/tmp/fake".length);
-      fs.writeFileSync(path.join(fixtureDir, "port"), "8080");
-    });
     return args[0] === "network" && args[1] === "inspect"
       ? successfulCommand(networkInspect)
       : args[0] === "inspect"
@@ -207,7 +199,6 @@ describe("messaging provider installed-runtime proofs", () => {
           imageScript: `fake-${kind}-api.cjs`,
           containerPrefix: `fake-${kind}`,
           portEnv: "FAKE_API_PORT",
-          portFileEnv: "FAKE_API_PORT_FILE",
           captureFileEnv: "FAKE_API_CAPTURE_FILE",
           expectedEnv: {},
           redactionValues: [],
@@ -347,7 +338,6 @@ describe("messaging provider installed-runtime proofs", () => {
           imageScript: "fake-discord-gateway-api.cjs",
           containerPrefix: "fake-discord-gateway",
           portEnv: "FAKE_API_PORT",
-          portFileEnv: "FAKE_API_PORT_FILE",
           captureFileEnv: "FAKE_API_CAPTURE_FILE",
           expectedEnv: {},
           redactionValues: [],
@@ -382,7 +372,6 @@ describe("messaging provider installed-runtime proofs", () => {
           imageScript: "fake-discord-gateway-api.cjs",
           containerPrefix: "fake-discord-gateway",
           portEnv: "FAKE_API_PORT",
-          portFileEnv: "FAKE_API_PORT_FILE",
           captureFileEnv: "FAKE_API_CAPTURE_FILE",
           expectedEnv: {},
           redactionValues: [],
@@ -411,7 +400,6 @@ describe("messaging provider installed-runtime proofs", () => {
         imageScript: "fake-discord-gateway-api.cjs",
         containerPrefix: "fake-discord-gateway",
         portEnv: "FAKE_API_PORT",
-        portFileEnv: "FAKE_API_PORT_FILE",
         captureFileEnv: "FAKE_API_CAPTURE_FILE",
         expectedEnv: {},
         redactionValues: [],
@@ -440,7 +428,7 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(calls).toContainEqual(["network", "rm", network]);
   });
 
-  it("fails with proxy diagnostics when the proxy cannot reach the API", async () => {
+  it("fails with API and proxy diagnostics when the proxy cannot reach the API", async () => {
     const { calls, host } = fakeDockerHost({ proxyReady: false });
     const cleanup: CleanupAction[] = [];
     let failure: unknown;
@@ -451,7 +439,6 @@ describe("messaging provider installed-runtime proofs", () => {
         imageScript: "fake-discord-gateway-api.cjs",
         containerPrefix: "fake-discord-gateway",
         portEnv: "FAKE_API_PORT",
-        portFileEnv: "FAKE_API_PORT_FILE",
         captureFileEnv: "FAKE_API_CAPTURE_FILE",
         expectedEnv: {},
         redactionValues: [],
@@ -499,7 +486,6 @@ describe("messaging provider installed-runtime proofs", () => {
         imageScript: "fake-discord-gateway-api.cjs",
         containerPrefix: "fake-discord-gateway",
         portEnv: "FAKE_API_PORT",
-        portFileEnv: "FAKE_API_PORT_FILE",
         captureFileEnv: "FAKE_API_CAPTURE_FILE",
         expectedEnv: {},
         redactionValues: [],
@@ -531,63 +517,6 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(stateDiagnosticsIndex).toBeLessThan(removeProxyIndex);
     expect(logDiagnosticsIndex).toBeLessThan(removeProxyIndex);
     expect(calls).toContainEqual(removeProxy);
-  });
-
-  it("fails with API diagnostics when the detached API stops before readiness", async () => {
-    vi.useFakeTimers();
-    const { calls, host } = fakeDockerHost({ apiReady: false });
-    const cleanup: CleanupAction[] = [];
-    let failure: unknown;
-
-    try {
-      const start = startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
-        kind: "discord-gateway",
-        imageScript: "fake-discord-gateway-api.cjs",
-        containerPrefix: "fake-discord-gateway",
-        portEnv: "FAKE_API_PORT",
-        portFileEnv: "FAKE_API_PORT_FILE",
-        captureFileEnv: "FAKE_API_CAPTURE_FILE",
-        expectedEnv: {},
-        redactionValues: [],
-        env: {},
-      }).then(
-        () => undefined,
-        (error: unknown) => error,
-      );
-      await vi.runAllTimersAsync();
-      failure = await start;
-    } finally {
-      vi.useRealTimers();
-      await runCleanup(cleanup);
-    }
-
-    const runCalls = calls.filter((args) => args[0] === "run");
-    expect(runCalls).toHaveLength(1);
-    const apiRun = runCalls[0]!;
-    const apiContainer = apiRun[apiRun.indexOf("--name") + 1]!;
-    const networkCreate = calls.find((args) => args[0] === "network" && args[1] === "create");
-    const network = networkCreate?.at(-1);
-    const stateDiagnostics = ["inspect", "--format", "{{json .State}}", apiContainer];
-    const logDiagnostics = ["logs", "--tail", "100", apiContainer];
-    const removeApi = ["rm", "-f", apiContainer];
-    const stateDiagnosticsIndex = calls.findIndex(
-      (args) => JSON.stringify(args) === JSON.stringify(stateDiagnostics),
-    );
-    const logDiagnosticsIndex = calls.findIndex(
-      (args) => JSON.stringify(args) === JSON.stringify(logDiagnostics),
-    );
-    const removeApiIndex = calls.findIndex(
-      (args) => JSON.stringify(args) === JSON.stringify(removeApi),
-    );
-
-    expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toContain(apiContainer);
-    expect(calls).toContainEqual(stateDiagnostics);
-    expect(calls).toContainEqual(logDiagnostics);
-    expect(stateDiagnosticsIndex).toBeLessThan(removeApiIndex);
-    expect(logDiagnosticsIndex).toBeLessThan(removeApiIndex);
-    expect(calls).toContainEqual(removeApi);
-    expect(calls).toContainEqual(["network", "rm", network]);
   });
 
   it("uses a synthetic WeChat token even when the host exports one", () => {

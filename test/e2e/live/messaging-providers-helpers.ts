@@ -155,7 +155,7 @@ function reachesUpstream() {
 }
 
 (async () => {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + 10000;
   do {
     if (await reachesUpstream()) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -803,7 +803,6 @@ export async function startFakeDockerApi(
     nodeArgs?: readonly string[];
     containerPrefix: string;
     portEnv: string;
-    portFileEnv: string;
     captureFileEnv: string;
     expectedEnv: Record<string, string>;
     redactionValues: string[];
@@ -812,7 +811,6 @@ export async function startFakeDockerApi(
 ): Promise<FakeDockerApi> {
   fs.mkdirSync(path.join(REPO_ROOT, ".tmp"), { recursive: true });
   const dir = fs.mkdtempSync(path.join(REPO_ROOT, ".tmp", `fake-${options.kind}.`));
-  const portFile = path.join(dir, "port");
   const captureFile = path.join(dir, "capture.jsonl");
   const container = uniqueContainerName(options.containerPrefix);
   const proxyContainer = uniqueContainerName(`${options.containerPrefix}-proxy`);
@@ -902,8 +900,6 @@ export async function startFakeDockerApi(
     "-e",
     `${options.portEnv}=8080`,
     "-e",
-    `${options.portFileEnv}=/tmp/fake/port`,
-    "-e",
     `${options.captureFileEnv}=/tmp/fake/capture.jsonl`,
   ];
   if (options.kind === "slack") dockerArgs.push("-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
@@ -954,21 +950,6 @@ export async function startFakeDockerApi(
     timeoutMs: 120_000,
   });
   expectExitZero(start, `start fake ${options.kind} API`);
-
-  let apiReady = false;
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (fs.existsSync(portFile) && fs.statSync(portFile).size > 0) {
-      apiReady = true;
-      break;
-    }
-    await sleep(100);
-  }
-  if (!apiReady) {
-    await captureApiDiagnostics();
-    throw new Error(
-      `fake ${options.kind} API ${container} did not become ready; see the redacted API state and log artifacts`,
-    );
-  }
 
   let proxyDiagnosticsCaptured = false;
   const captureProxyDiagnostics = async (): Promise<void> => {
