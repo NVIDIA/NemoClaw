@@ -108,6 +108,20 @@ function hermesInput(
   };
 }
 
+function hermesInputWithBrowserUrl(browserUrl: string): ManagedStartupProfileBuilderInput {
+  return hermesInput({
+    dashboard: {
+      agent: "hermes",
+      mode: "disabled",
+      url: "http://127.0.0.1:18789",
+      browserUrl,
+      publicPort: null,
+      internalPort: null,
+      tuiEnabled: false,
+    },
+  });
+}
+
 function dcodeInput(
   overrides: Partial<ManagedStartupProfileBuilderInput> = {},
 ): ManagedStartupProfileBuilderInput {
@@ -537,6 +551,22 @@ describe("buildManagedStartupProfile", () => {
     });
     expect(decodeManagedStartupProfile(built.encodedProfile)).toEqual(built.profile);
   });
+
+  it("rejects an external HTTP Hermes browser URL before persisting the profile", () => {
+    expect(() =>
+      buildManagedStartupProfile(
+        hermesInputWithBrowserUrl("http://hermes.example.test:18789"),
+      ),
+    ).toThrow(/must use HTTPS unless it is loopback/);
+  });
+
+  it.each(["https://hermes.example.test:18789", "http://127.0.0.1:18789"])(
+    "accepts the Hermes browser URL %s at the durable profile boundary",
+    (browserUrl) => {
+      expect(buildManagedStartupProfile(hermesInputWithBrowserUrl(browserUrl)).profile.dashboard)
+        .toMatchObject({ agent: "hermes", browserUrl });
+    },
+  );
 
   it("builds DCode with its direct upstream, approval, and observability contract", () => {
     const built = buildManagedStartupProfile(

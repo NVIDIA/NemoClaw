@@ -1903,6 +1903,13 @@ function validateDashboard(
       dashboard.browserUrl === undefined
         ? undefined
         : requireHttpUrl(dashboard.browserUrl, "dashboard.browserUrl");
+    if (
+      browserUrl !== undefined &&
+      !isLoopbackUrl(browserUrl) &&
+      new URL(browserUrl).protocol !== "https:"
+    ) {
+      invalid("Hermes dashboard.browserUrl must use HTTPS unless it is loopback");
+    }
     if (mode === "disabled") {
       if (
         dashboard.publicPort !== null ||
