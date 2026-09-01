@@ -790,7 +790,7 @@ async function requireFakeApiProxyReady(
 
   await options.captureDiagnostics();
   throw new Error(
-    `fake ${options.kind} API proxy ${options.proxyContainer} did not become ready; see the redacted proxy state and log artifacts`,
+    `fake ${options.kind} API proxy ${options.proxyContainer} did not become ready; attempted to capture redacted proxy and API diagnostics`,
   );
 }
 
