@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- *
- * Preserves the high-value provider/config/redaction contracts: fake tokens by
- * default, _REAL secrets opt in to real sends, provider placeholders must not
- * leak into sandbox-visible surfaces, and installed OpenClaw channel runtime
- * exports must drive the hermetic Slack and Telegram send proofs.
+ * Fake tokens are the default. `_REAL` Telegram, Discord, and Slack tokens take
+ * precedence; non-empty standard token variables for those providers are also
+ * used. Provider placeholders must not leak into sandbox-visible surfaces, and
+ * installed OpenClaw channel runtime exports must drive the hermetic Slack and
+ * Telegram send proofs.
  */
 
 import fs from "node:fs";
