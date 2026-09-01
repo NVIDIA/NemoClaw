@@ -27,6 +27,7 @@ import { parseJsonFromText } from "./json-envelope.ts";
 import {
   buildTrustedPluginFixtureImage,
   createOpenShellTrustedImageWrapper,
+  createTrustedPluginFixtureDockerfile,
   registerTrustedPluginFixtureImageCleanup,
 } from "./openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
 import {
@@ -40,7 +41,6 @@ import {
 // boundary, and prove it survives restart and recreation.
 
 const WEATHER_FIXTURE_DIR = path.join(REPO_ROOT, "test/e2e/fixtures/plugins/weather");
-const TOOL_DISCLOSURE_ENV_REFERENCE = "${NEMOCLAW_TOOL_DISCLOSURE}";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-oc-exdev";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
 const PROBE_TIMEOUT_MS = 60_000;
@@ -185,59 +185,20 @@ function writeCustomPluginVersion(
 function createCustomPluginDockerfile(context: CustomPluginBuildContext): void {
   const sourceDockerfile = path.join(context.sourceRoot, "Dockerfile");
   const source = fs.readFileSync(sourceDockerfile, "utf8");
-  const runtimeAnchor = "FROM ${BASE_IMAGE}\n";
-  const runtime = source.replace(runtimeAnchor, "FROM ${BASE_IMAGE} AS nemoclaw-runtime\n");
-  const pluginDirName = path.basename(context.pluginDirPath);
-  const versionSourceName = path.basename(context.versionSourcePath);
-  const extension = String.raw`
-
-# Build the deterministic custom-plugin fixture used by this live contract.
-FROM builder AS weather-plugin-builder
-WORKDIR /opt/weather
-COPY ${pluginDirName}/package.json ${pluginDirName}/package-lock.json ${pluginDirName}/tsconfig.json ./
-RUN npm ci --ignore-scripts --no-audit --no-fund
-COPY ${pluginDirName}/openclaw.plugin.json ./
-COPY ${pluginDirName}/src/ ./src/
-COPY ${versionSourceName} ./src/version.ts
-RUN npm run build \
-    && npm prune --omit=dev --omit=peer --ignore-scripts --no-audit --no-fund
-
-# Extend the completed managed runtime so its entrypoint, health check, config
-# generation, and permissions remain the source of truth.
-FROM nemoclaw-runtime AS weather-runtime
-ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
-ENV NEMOCLAW_TOOL_DISCLOSURE=${TOOL_DISCLOSURE_ENV_REFERENCE}
-COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
-    /opt/weather/package.json \
-    /opt/weather/package-lock.json \
-    /opt/weather/openclaw.plugin.json \
-    /opt/weather-plugin/
-COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
-    /opt/weather/dist/ /opt/weather-plugin/dist/
-COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
-    /opt/weather/node_modules/ /opt/weather-plugin/node_modules/
-
-USER sandbox
-RUN HOME=/sandbox openclaw plugins install /opt/weather-plugin \
-    && HOME=/sandbox openclaw plugins enable weather
-
-# Enabling the plugin changes openclaw.json after the managed runtime hashes it.
-# The runtime test copies this fixture into tmpfs after OpenShell starts the sandbox.
-# hadolint ignore=DL3002
-USER root
-RUN chmod -R a+rX /opt/weather-plugin \
-    && chown sandbox:sandbox /sandbox/.openclaw/openclaw.json \
-    && chmod 660 /sandbox/.openclaw/openclaw.json \
-    && sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
-    && chown sandbox:sandbox /sandbox/.openclaw/.config-hash \
-    && chmod 660 /sandbox/.openclaw/.config-hash
-`;
   stageWeatherPluginFixture(context);
   writeCustomPluginVersion(context.versionSourcePath, "v1", true);
-  fs.writeFileSync(context.dockerfilePath, runtime.trimEnd() + extension, {
-    encoding: "utf8",
-    flag: "wx",
-  });
+  fs.writeFileSync(
+    context.dockerfilePath,
+    createTrustedPluginFixtureDockerfile({
+      pluginDirName: path.basename(context.pluginDirPath),
+      source,
+      versionSourceName: path.basename(context.versionSourcePath),
+    }),
+    {
+      encoding: "utf8",
+      flag: "wx",
+    },
+  );
 }
 
 type GatewayToolInvocation = {

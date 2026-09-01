@@ -17,6 +17,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   acceptTrustedPluginFixturePrebuild,
   createOpenShellTrustedImageWrapper,
+  createTrustedPluginFixtureDockerfile,
   registerTrustedPluginFixtureImageCleanup,
   trustedExdevImageRef,
 } from "../live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
@@ -32,6 +33,19 @@ const DRIVER_CONFIG_JSON = JSON.stringify({
 });
 
 afterEach(() => vi.unstubAllEnvs());
+
+it("makes the runtime plugin fixture readable before the tmpfs copy", () => {
+  const dockerfile = createTrustedPluginFixtureDockerfile({
+    pluginDirName: "weather-plugin",
+    source: "FROM scratch AS builder\nFROM ${BASE_IMAGE}\n",
+    versionSourceName: "weather-version.ts",
+  });
+
+  const install = dockerfile.indexOf("openclaw plugins install /opt/weather-plugin");
+  const readable = dockerfile.indexOf("USER root\nRUN chmod -R a+rX /opt/weather-plugin");
+  expect(install).toBeGreaterThan(-1);
+  expect(readable).toBeGreaterThan(install);
+});
 
 function createWrapperFixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-wrapper-test-"));

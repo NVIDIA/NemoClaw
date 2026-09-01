@@ -28,6 +28,62 @@ import {
 export const DELEGATED_CAPABILITY_COMMENT_PREFIX =
   "# TEST-ONLY delegated-capability marker from validated canonical OpenShell: ";
 
+export function createTrustedPluginFixtureDockerfile(options: {
+  pluginDirName: string;
+  source: string;
+  versionSourceName: string;
+}): string {
+  const runtimeAnchor = "FROM ${BASE_IMAGE}\n";
+  const runtime = options.source.replace(
+    runtimeAnchor,
+    "FROM ${BASE_IMAGE} AS nemoclaw-runtime\n",
+  );
+  const extension = String.raw`
+
+# Build the deterministic custom-plugin fixture used by this live contract.
+FROM builder AS weather-plugin-builder
+WORKDIR /opt/weather
+COPY ${options.pluginDirName}/package.json ${options.pluginDirName}/package-lock.json ${options.pluginDirName}/tsconfig.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY ${options.pluginDirName}/openclaw.plugin.json ./
+COPY ${options.pluginDirName}/src/ ./src/
+COPY ${options.versionSourceName} ./src/version.ts
+RUN npm run build \
+    && npm prune --omit=dev --omit=peer --ignore-scripts --no-audit --no-fund
+
+# Extend the completed managed runtime so its entrypoint, health check, config
+# generation, and permissions remain the source of truth.
+FROM nemoclaw-runtime AS weather-runtime
+ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
+ENV NEMOCLAW_TOOL_DISCLOSURE=${"${NEMOCLAW_TOOL_DISCLOSURE}"}
+COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
+    /opt/weather/package.json \
+    /opt/weather/package-lock.json \
+    /opt/weather/openclaw.plugin.json \
+    /opt/weather-plugin/
+COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
+    /opt/weather/dist/ /opt/weather-plugin/dist/
+COPY --from=weather-plugin-builder --chown=sandbox:sandbox \
+    /opt/weather/node_modules/ /opt/weather-plugin/node_modules/
+
+USER sandbox
+RUN HOME=/sandbox openclaw plugins install /opt/weather-plugin \
+    && HOME=/sandbox openclaw plugins enable weather
+
+# Enabling the plugin changes openclaw.json after the managed runtime hashes it.
+# The runtime test copies this fixture into tmpfs after OpenShell starts the sandbox.
+# hadolint ignore=DL3002
+USER root
+RUN chmod -R a+rX /opt/weather-plugin \
+    && chown sandbox:sandbox /sandbox/.openclaw/openclaw.json \
+    && chmod 660 /sandbox/.openclaw/openclaw.json \
+    && sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \
+    && chown sandbox:sandbox /sandbox/.openclaw/.config-hash \
+    && chmod 660 /sandbox/.openclaw/.config-hash
+`;
+  return runtime.trimEnd() + extension;
+}
+
 const TRUSTED_EXDEV_IMAGE_REF_PATTERN = new RegExp(
   `^${LOCAL_SANDBOX_IMAGE_REPO}:[a-z0-9_][a-z0-9_.-]{0,127}$`,
 );
