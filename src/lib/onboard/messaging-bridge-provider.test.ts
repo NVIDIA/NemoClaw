@@ -93,33 +93,6 @@ const DISCORD_PROFILE_DOC = {
   inference_capable: false,
 };
 
-function refreshingProfileDoc(profile: MessagingBridgeProfile) {
-  return {
-    id: profile.profileId,
-    credentials: [
-      {
-        name: "access_token",
-        env_vars: [profile.credentialKey],
-        required: true,
-        auth_style: "bearer",
-        header_name: "Authorization",
-        query_param: "",
-        refresh: {
-          strategy: profile.strategy,
-          scopes: profile.scopes,
-          material: [
-            { name: "client_email", required: true },
-            { name: "private_key", required: true, secret: true },
-          ],
-        },
-      },
-    ],
-    endpoints: [{ host: "chat.googleapis.com", port: 443 }],
-    binaries: [profile.agent === "hermes" ? "/opt/hermes/.venv/bin/python" : "/usr/local/bin/node"],
-    inference_capable: false,
-  };
-}
-
 const STATIC_DEF = {
   name: "sbx-discord-bridge",
   providerType: DISCORD_PROFILE.profileId,
@@ -461,9 +434,9 @@ describe("configureMessagingBridgeRefreshes", () => {
     expect(result.ok).toBe(false);
     // Six probes at a minute each cross the five-minute deadline well before
     // the fifty-attempt cap.
-    expect(runOpenshell.mock.calls.filter((call) => call[0][2] === "status").length).toBeLessThan(
-      10,
-    );
+    expect(
+      runOpenshell.mock.calls.filter((call) => call[0][2] === "status").length,
+    ).toBeLessThan(10);
   });
 
   it("bounds each status probe with a command timeout", () => {
@@ -516,19 +489,11 @@ describe("ensureMessagingBridgeProfiles", () => {
   });
 
   it("imports the profile from its co-located path when not yet registered", () => {
-    const profileDoc = refreshingProfileDoc(GC_PROFILE);
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1 })
-      .mockReturnValueOnce({ status: 0 })
-      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(profileDoc) });
+    const runOpenshell = vi.fn((args: string[], _opts: unknown) =>
+      args.includes("export") ? { status: 1 } : { status: 0 },
+    );
     const exit = vi.fn(() => undefined as never);
-    ensureMessagingBridgeProfiles([BRIDGE_DEF], {
-      ...baseDeps(),
-      readFileSync: () => YAML.stringify(profileDoc),
-      runOpenshell,
-      exit,
-    });
+    ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
     const importCall = runOpenshell.mock.calls.find((call) => call[0].includes("import"));
     expect(importCall?.[0].slice(0, 4)).toEqual(["provider", "profile", "import", "--file"]);
     expect(importCall?.[0]).toContain(GC_PROFILE.profilePath);
@@ -538,18 +503,9 @@ describe("ensureMessagingBridgeProfiles", () => {
   it("skips the import when the profile is already registered", () => {
     // A fresh onboard registers bridge providers twice; the second pass must not
     // re-import and trigger OpenShell's "already exists / import failed" output.
-    const profileDoc = refreshingProfileDoc(GC_PROFILE);
-    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
-      status: 0,
-      stdout: JSON.stringify(profileDoc),
-    }));
+    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({ status: 0 }));
     const exit = vi.fn(() => undefined as never);
-    ensureMessagingBridgeProfiles([BRIDGE_DEF], {
-      ...baseDeps(),
-      readFileSync: () => YAML.stringify(profileDoc),
-      runOpenshell,
-      exit,
-    });
+    ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
     expect(runOpenshell.mock.calls.some((call) => call[0].includes("import"))).toBe(false);
     const exportCall = runOpenshell.mock.calls.find((call) => call[0].includes("export"));
     expect(exportCall?.[0]).toEqual([
@@ -648,152 +604,10 @@ describe("ensureMessagingBridgeProfiles", () => {
   });
 
   it("tolerates an already-registered profile without exiting", () => {
-    const profileDoc = refreshingProfileDoc(GC_PROFILE);
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1 })
-      .mockReturnValueOnce({ status: 1, stderr: "profile already exists" })
-      .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(profileDoc) });
+    const runOpenshell = vi.fn(() => ({ status: 1, stderr: "profile already exists" }));
     const exit = vi.fn(() => undefined as never);
-    ensureMessagingBridgeProfiles([BRIDGE_DEF], {
-      ...baseDeps(),
-      readFileSync: () => YAML.stringify(profileDoc),
-      runOpenshell,
-      exit,
-    });
+    ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
     expect(exit).not.toHaveBeenCalled();
-  });
-
-  const refreshingProfileMismatchCases = [GC_PROFILE, GC_HERMES_PROFILE].flatMap((profile) => {
-    const expected = refreshingProfileDoc(profile);
-    return [
-      [
-        "additional endpoint",
-        profile.profileId,
-        profile,
-        expected,
-        { ...expected, endpoints: [...expected.endpoints, { host: "example.test", port: 443 }] },
-      ],
-      [
-        "additional binary",
-        profile.profileId,
-        profile,
-        expected,
-        { ...expected, binaries: [...expected.binaries, "/usr/bin/curl"] },
-      ],
-      [
-        "additional credential",
-        profile.profileId,
-        profile,
-        expected,
-        {
-          ...expected,
-          credentials: [
-            ...expected.credentials,
-            {
-              name: "unexpected",
-              env_vars: ["UNEXPECTED_TOKEN"],
-              required: true,
-              auth_style: "bearer",
-              header_name: "Authorization",
-              query_param: "",
-            },
-          ],
-        },
-      ],
-      [
-        "modified refresh configuration",
-        profile.profileId,
-        profile,
-        expected,
-        {
-          ...expected,
-          credentials: [
-            {
-              ...expected.credentials[0],
-              refresh: {
-                ...expected.credentials[0].refresh,
-                strategy: "client-credentials",
-              },
-            },
-          ],
-        },
-      ],
-    ] as const;
-  });
-
-  it.each(refreshingProfileMismatchCases)(
-    "rejects %s in the existing %s profile before provider or refresh setup",
-    (_drift, _profileId, profile, expected, exported) => {
-      const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
-        status: 0,
-        stdout: JSON.stringify(exported),
-      }));
-      const exit = vi.fn(() => undefined as never);
-
-      ensureMessagingBridgeProfiles(
-        [
-          {
-            name: `sbx-${profile.profileId}`,
-            providerType: profile.profileId,
-            token: MESSAGING_BRIDGE_PENDING_VALUE,
-          },
-        ],
-        {
-          ...baseDeps(),
-          profiles: [profile],
-          readFileSync: () => YAML.stringify(expected),
-          runOpenshell,
-          exit,
-        },
-      );
-
-      expect(exit).toHaveBeenCalledWith(1);
-      expect(runOpenshell.mock.calls.some((call) => call[0].includes("import"))).toBe(false);
-      expect(
-        runOpenshell.mock.calls.some(
-          (call) => call[0][0] === "provider" && ["create", "refresh"].includes(call[0][1]),
-        ),
-      ).toBe(false);
-    },
-  );
-
-  it("rejects an unreadable registered profile after a successful import", () => {
-    const profileDoc = refreshingProfileDoc(GC_PROFILE);
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1 })
-      .mockReturnValueOnce({ status: 0 })
-      .mockReturnValueOnce({ status: 1, stderr: "profile export unavailable" });
-    const exit = vi.fn(() => undefined as never);
-
-    ensureMessagingBridgeProfiles([BRIDGE_DEF], {
-      ...baseDeps(),
-      readFileSync: () => YAML.stringify(profileDoc),
-      runOpenshell,
-      exit,
-    });
-
-    expect(exit).toHaveBeenCalledWith(1);
-    expect(runOpenshell).toHaveBeenCalledTimes(3);
-  });
-
-  it("rejects a malformed checked-in profile before provider or refresh setup", () => {
-    const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({
-      status: 0,
-      stdout: JSON.stringify(refreshingProfileDoc(GC_PROFILE)),
-    }));
-    const exit = vi.fn(() => undefined as never);
-
-    ensureMessagingBridgeProfiles([BRIDGE_DEF], {
-      ...baseDeps(),
-      readFileSync: () => "not: [valid",
-      runOpenshell,
-      exit,
-    });
-
-    expect(exit).toHaveBeenCalledWith(1);
-    expect(runOpenshell).toHaveBeenCalledTimes(1);
   });
 
   it("exits when profile import fails for another reason", () => {
