@@ -555,7 +555,19 @@ NEMOCLAW_SANDBOX_NAME=my-assistant \
 
 Use `llama-cpp.muse-glimmer-30b.spark-single.v1` to select the Meta Muse Glimmer recipe explicitly.
 
-Do not set `NEMOCLAW_MODEL` for the managed llama.cpp path. For prerequisites, external traffic, verification, and recovery, refer to [Install Managed llama.cpp on DGX Spark](../inference/local-inference/choose-local-inference-server#install-managed-llamacpp-on-dgx-spark).
+On a qualifying Windows WSL N1x host, Windows Express selects the explicit Experimental managed Qwen 3.6 recipe.
+Before selection, unset `DOCKER_HOST` and select Docker's `default` context.
+Onboarding also requires local Docker Desktop, Arm64, N1x product identity, at least 48,000 MiB of Docker and GPU memory, driver version `580.65.06` or later, NVIDIA integration, and successful Docker Desktop GPU passthrough.
+Select that recipe non-interactively with these values:
+
+```bash
+NEMOCLAW_PROVIDER=install-llama-cpp \
+NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1 \
+NEMOCLAW_SANDBOX_NAME=my-assistant \
+  $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
+Do not set `NEMOCLAW_MODEL` for the managed llama.cpp path. For prerequisites, external traffic, verification, and recovery, refer to [Set Up llama.cpp](../inference/local-inference/set-up-llama-cpp).
 
 After provider selection, the wizard reviews the provider, model, credential state, and sandbox name before registering inference. The interactive review offers these actions:
 
