@@ -11,6 +11,9 @@
     does not start a process, install a service, select a runtime provider, or
     activate native Windows support. A later slice can consume the receipt after
     the corresponding lifecycle and activation gates pass.
+
+    If repair emits repair-recovery.json, run this script with -Action Recover
+    and the same -ManifestPath, -PayloadRoot, and -InstallRoot values.
 #>
 
 [CmdletBinding()]
@@ -24,9 +27,7 @@ param(
 
     [string]$InstallRoot = (Join-Path
         ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData))
-        'NVIDIA\NemoClaw\native-candidate'),
-
-    [switch]$Json
+        'NVIDIA\NemoClaw\native-candidate')
 )
 
 Set-StrictMode -Version Latest
@@ -126,9 +127,34 @@ function Resolve-InstallRoot {
     if ([string]::IsNullOrWhiteSpace($Path) -or $Path -notmatch '^[A-Za-z]:\\') {
         Fail-NativeWindowsInstall 'InstallRoot must be an absolute local-drive Windows path.'
     }
-    $resolved = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $absolute = [IO.Path]::GetFullPath($Path)
+    if ($absolute.TrimEnd('\') -ceq [IO.Path]::GetPathRoot($absolute).TrimEnd('\')) {
+        Fail-NativeWindowsInstall 'InstallRoot must not be a drive root.'
+    }
+    $resolved = $absolute.TrimEnd('\')
     Assert-NoReparsePoint -Path $resolved -Label 'InstallRoot'
     return $resolved
+}
+
+function Enter-InstallerLock {
+    param([Parameter(Mandatory)][string]$Root)
+
+    $parent = Split-Path -Parent $Root
+    [IO.Directory]::CreateDirectory($parent) | Out-Null
+    Assert-NoReparsePoint -Path $parent -Label 'InstallRoot parent'
+    $lockPath = Join-Path $parent ('.' + (Split-Path -Leaf $Root) + '.native-installer.lock')
+    try {
+        return [IO.File]::Open(
+            $lockPath,
+            [IO.FileMode]::OpenOrCreate,
+            [IO.FileAccess]::ReadWrite,
+            [IO.FileShare]::None,
+            1,
+            [IO.FileOptions]::DeleteOnClose
+        )
+    } catch [IO.IOException] {
+        Fail-NativeWindowsInstall "Another installer operation owns $Root. Wait for it to finish, then retry."
+    }
 }
 
 function Resolve-SafeRelativePath {
@@ -460,6 +486,39 @@ function Publish-Distribution {
     }
 }
 
+function Write-InstallReceipt {
+    param(
+        [Parameter(Mandatory)]$Distribution,
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$VersionRoot
+    )
+
+    $receiptPath = Join-Path $Root $script:ReceiptFileName
+    $installedFiles = @($Distribution.Files | ForEach-Object {
+        [pscustomobject]@{
+            path = $_.Destination
+            sha256 = $_.Sha256
+        }
+    })
+    $receipt = [pscustomobject]@{
+        receiptVersion = 1
+        classification = 'qualification-only'
+        platform = 'windows'
+        architecture = $Distribution.Architecture
+        openshell = [pscustomobject]@{
+            repository = $script:TrustedOpenShellRepository
+            pullRequest = $script:TrustedOpenShellPullRequest
+            revision = $script:TrustedOpenShellRevision
+        }
+        manifestSha256 = $Distribution.ManifestSha256
+        installerSha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        installRoot = $Root
+        versionRoot = $VersionRoot
+        files = $installedFiles
+    }
+    Write-JsonAtomic -Path $receiptPath -Value $receipt
+}
+
 function Invoke-InstallOrRepair {
     param([Parameter(Mandatory)][bool]$Repair)
 
@@ -473,35 +532,8 @@ function Invoke-InstallOrRepair {
     }
     $distribution = Read-DistributionManifest -Path $ManifestPath -Root $PayloadRoot
     $versionRoot = Publish-Distribution -Distribution $distribution -Root $root -Repair $Repair
-    $receiptPath = Join-Path $root $script:ReceiptFileName
-    $installedFiles = @($distribution.Files | ForEach-Object {
-        [pscustomobject]@{
-            path = $_.Destination
-            sha256 = $_.Sha256
-        }
-    })
-    $receipt = [pscustomobject]@{
-        receiptVersion = 1
-        classification = 'qualification-only'
-        platform = 'windows'
-        architecture = $distribution.Architecture
-        openshell = [pscustomobject]@{
-            repository = $script:TrustedOpenShellRepository
-            pullRequest = $script:TrustedOpenShellPullRequest
-            revision = $script:TrustedOpenShellRevision
-        }
-        manifestSha256 = $distribution.ManifestSha256
-        installerSha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        installRoot = $root
-        versionRoot = $versionRoot
-        files = $installedFiles
-    }
-    Write-JsonAtomic -Path $receiptPath -Value $receipt
-    if ($Json) {
-        Write-Output ($receipt | ConvertTo-Json -Depth 12 -Compress)
-    } else {
-        Write-Host "Native Windows candidate distribution installed at $versionRoot"
-    }
+    Write-InstallReceipt -Distribution $distribution -Root $root -VersionRoot $versionRoot
+    Write-Host "Native Windows candidate distribution installed at $versionRoot"
 }
 
 function Resolve-RecoveryAuxiliaryPath {
@@ -575,14 +607,43 @@ function Invoke-Recover {
     }
     $replacementRoot = Resolve-RecoveryAuxiliaryPath @replacementParameters
 
-    foreach ($ownedDirectory in (@($recordedVersionRoot, $backupRoot, $replacementRoot) | Select-Object -Unique)) {
-        if ($ownedDirectory -and (Test-Path -LiteralPath $ownedDirectory -PathType Container)) {
-            Assert-NoReparsePoint -Path $ownedDirectory -Label 'Recorded recovery directory'
-            [IO.Directory]::Delete($ownedDirectory, $true)
+    if ($backupRoot -and (Test-Path -LiteralPath $backupRoot -PathType Container)) {
+        Assert-NoReparsePoint -Path $backupRoot -Label 'Recovery backup root'
+        if (Test-Path -LiteralPath $recordedVersionRoot -PathType Container) {
+            if (-not $replacementRoot) {
+                $replacementRoot = Join-Path $root ('.replacement-' + [guid]::NewGuid().ToString('N'))
+                $recordParameters = @{
+                    Path = $recoveryPath
+                    Action = 'restore-prior-version-and-remove-replacement'
+                    Root = $root
+                    VersionRoot = $recordedVersionRoot
+                    BackupRoot = $backupRoot
+                    FailedReplacementRoot = $replacementRoot
+                    PublishError = [string]$recovery.publishError
+                    RollbackError = [string]$recovery.rollbackError
+                }
+                Write-RepairRecoveryRecord @recordParameters
+            }
+            if (Test-Path -LiteralPath $replacementRoot) {
+                Fail-NativeWindowsInstall "Recover retained both a current version and replacement. Recovery authority remains at $recoveryPath"
+            }
+            [IO.Directory]::Move($recordedVersionRoot, $replacementRoot)
         }
+        [IO.Directory]::Move($backupRoot, $recordedVersionRoot)
+    }
+    if (-not (Test-Path -LiteralPath $recordedVersionRoot -PathType Container)) {
+        Fail-NativeWindowsInstall "Recover has no prior version to restore. Recovery authority remains at $recoveryPath"
+    }
+    Assert-NoReparsePoint -Path $recordedVersionRoot -Label 'Recovered prior version root'
+
+    $publishedVersionRoot = Publish-Distribution -Distribution $distribution -Root $root -Repair $true
+    Write-InstallReceipt -Distribution $distribution -Root $root -VersionRoot $publishedVersionRoot
+    if ($replacementRoot -and (Test-Path -LiteralPath $replacementRoot -PathType Container)) {
+        Assert-NoReparsePoint -Path $replacementRoot -Label 'Recovery replacement root'
+        [IO.Directory]::Delete($replacementRoot, $true)
     }
     [IO.File]::Delete($recoveryPath)
-    Invoke-InstallOrRepair -Repair $false
+    Write-Host "Recovered and republished the native Windows candidate distribution at $publishedVersionRoot"
 }
 
 function Invoke-Uninstall {
@@ -640,23 +701,18 @@ function Invoke-Uninstall {
         @(Get-ChildItem -LiteralPath $root -Force).Count -eq 0) {
         [IO.Directory]::Delete($root)
     }
-    $result = [pscustomobject]@{
-        receiptVersion = 1
-        action = 'uninstall'
-        classification = 'qualification-only'
-        removedVersionRoot = $versionRoot
-        finalAbsence = -not (Test-Path -LiteralPath $versionRoot)
-    }
-    if ($Json) {
-        Write-Output ($result | ConvertTo-Json -Depth 4 -Compress)
-    } else {
-        Write-Host "Removed native Windows candidate distribution from $versionRoot"
-    }
+    Write-Host "Removed native Windows candidate distribution from $versionRoot"
 }
 
-switch ($Action) {
-    'Install' { Invoke-InstallOrRepair -Repair $false }
-    'Repair' { Invoke-InstallOrRepair -Repair $true }
-    'Recover' { Invoke-Recover }
-    'Uninstall' { Invoke-Uninstall }
+$operationRoot = Resolve-InstallRoot -Path $InstallRoot
+$installerLock = Enter-InstallerLock -Root $operationRoot
+try {
+    switch ($Action) {
+        'Install' { Invoke-InstallOrRepair -Repair $false }
+        'Repair' { Invoke-InstallOrRepair -Repair $true }
+        'Recover' { Invoke-Recover }
+        'Uninstall' { Invoke-Uninstall }
+    }
+} finally {
+    $installerLock.Dispose()
 }

@@ -316,6 +316,45 @@ function Assert-BoundedFile {
     }
 }
 
+function Assert-InstalledDistribution {
+    param(
+        [Parameter(Mandatory)][string]$VersionRoot,
+        [Parameter(Mandatory)][Array]$Entries,
+        [Parameter(Mandatory)][string]$Phase
+    )
+
+    $expectedFiles = @($Entries | ForEach-Object { $_.destination.ToLowerInvariant() } | Sort-Object)
+    $expectedDirectories = @()
+    foreach ($entry in $Entries) {
+        $segments = @($entry.destination.Split('\'))
+        for ($index = 1; $index -lt $segments.Count; $index++) {
+            $expectedDirectories += ($segments[0..($index - 1)] -join '\').ToLowerInvariant()
+        }
+        $target = Join-Path $VersionRoot $entry.destination
+        if (-not (Test-Path -LiteralPath $target -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.sha256) {
+            Fail-Qualification "$Phase distribution file is missing or has the wrong digest: $($entry.destination)"
+        }
+    }
+    $observed = @(Get-ChildItem -LiteralPath $VersionRoot -Recurse -Force)
+    foreach ($item in $observed) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            Fail-Qualification "$Phase distribution contains a reparse point."
+        }
+    }
+    $observedFiles = @($observed | Where-Object { -not $_.PSIsContainer } | ForEach-Object {
+        $_.FullName.Substring($VersionRoot.Length + 1).ToLowerInvariant()
+    } | Sort-Object)
+    $observedDirectories = @($observed | Where-Object { $_.PSIsContainer } | ForEach-Object {
+        $_.FullName.Substring($VersionRoot.Length + 1).ToLowerInvariant()
+    } | Sort-Object -Unique)
+    $expectedDirectories = @($expectedDirectories | Sort-Object -Unique)
+    if (@(Compare-Object $expectedFiles $observedFiles).Count -ne 0 -or
+        @(Compare-Object $expectedDirectories $observedDirectories).Count -ne 0) {
+        Fail-Qualification "$Phase distribution contains an unexpected file or directory."
+    }
+}
+
 if ($CandidateSha -cnotmatch $script:ShaPattern -or $OpenShellSha -cnotmatch $script:ShaPattern) {
     Fail-Qualification 'Candidate and OpenShell revisions must be lowercase 40-character commit SHAs.'
 }
@@ -424,21 +463,35 @@ try {
     $restrictedBoundary = Enter-RestrictedInstallerBoundary
     $restrictedBoundaryEvidence = Test-RestrictedInstallerBoundary
     $preExecution = Assert-ProhibitedProcessesAbsent -Phase 'pre-execution'
+    $volumeRootRejected = $false
+    try {
+        & $installer -Action Uninstall -InstallRoot ([IO.Path]::GetPathRoot($installRoot)) | Out-Null
+    } catch {
+        $volumeRootRejected = $true
+    }
+    if (-not $volumeRootRejected) {
+        Fail-Qualification 'Installer accepted a drive root as InstallRoot.'
+    }
     $installParameters = @{
         Action = 'Install'
         ManifestPath = $manifestPath
         PayloadRoot = $payloadRoot
         InstallRoot = $installRoot
-        Json = $true
     }
-    $installOutput = & $installer @installParameters
+    & $installer @installParameters
     $installReceiptPath = Join-Path $installRoot 'install-receipt.json'
     if (-not (Test-Path -LiteralPath $installReceiptPath -PathType Leaf)) {
         Fail-Qualification 'Candidate installer did not publish an install receipt.'
     }
     [IO.File]::Copy($installReceiptPath, (Join-Path $receiptStage 'install-receipt.json'), $false)
 
-    $installReceipt = $installOutput | Select-Object -Last 1 | ConvertFrom-Json
+    $installReceipt = Get-Content -LiteralPath $installReceiptPath -Raw | ConvertFrom-Json
+    $initialDistributionParameters = @{
+        VersionRoot = $installReceipt.versionRoot
+        Entries = $distributionEntries
+        Phase = 'Initial install'
+    }
+    Assert-InstalledDistribution @initialDistributionParameters
     $untrackedPath = Join-Path $installReceipt.versionRoot 'bin\untracked-qualification.txt'
     [IO.File]::WriteAllText($untrackedPath, 'untracked', [Text.UTF8Encoding]::new($false))
     $untrackedInstallRejected = $false
@@ -457,7 +510,28 @@ try {
         ManifestPath = $manifestPath
         PayloadRoot = $payloadRoot
         InstallRoot = $installRoot
-        Json = $true
+    }
+
+    $lockPath = Join-Path (Split-Path -Parent $installRoot) ('.' + (Split-Path -Leaf $installRoot) + '.native-installer.lock')
+    $heldLock = [IO.File]::Open(
+        $lockPath,
+        [IO.FileMode]::OpenOrCreate,
+        [IO.FileAccess]::ReadWrite,
+        [IO.FileShare]::None
+    )
+    $overlappingRepairRejected = $false
+    try {
+        try {
+            & $installer @repairParameters | Out-Null
+        } catch {
+            $overlappingRepairRejected = $true
+        }
+    } finally {
+        $heldLock.Dispose()
+        [IO.File]::Delete($lockPath)
+    }
+    if (-not $overlappingRepairRejected) {
+        Fail-Qualification 'Installer lock allowed an overlapping repair operation.'
     }
     & $installer @repairParameters | Out-Null
     [IO.File]::Copy($installReceiptPath, (Join-Path $receiptStage 'repair-receipt.json'), $false)
@@ -466,6 +540,7 @@ try {
         (Get-FileHash -LiteralPath (Join-Path $repairedReceipt.versionRoot 'bin\openshell.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedOpenShellSha256) {
         Fail-Qualification 'Repair did not restore the OpenShell CLI digest.'
     }
+    Assert-InstalledDistribution -VersionRoot $repairedReceipt.versionRoot -Entries $distributionEntries -Phase 'Repair'
 
     $recoveryBackupRoot = Join-Path $installRoot ('.backup-' + [guid]::NewGuid().ToString('N'))
     $recoveryReplacementRoot = Join-Path $installRoot ('.replacement-' + [guid]::NewGuid().ToString('N'))
@@ -498,7 +573,6 @@ try {
         ManifestPath = $manifestPath
         PayloadRoot = $payloadRoot
         InstallRoot = $installRoot
-        Json = $true
     }
     & $installer @recoverParameters | Out-Null
     if ((Test-Path -LiteralPath $recoveryAuthorityPath) -or
@@ -509,10 +583,16 @@ try {
     }
     [IO.File]::Copy($installReceiptPath, (Join-Path $receiptStage 'recovery-receipt.json'), $false)
 
-    $uninstallOutput = & $installer -Action Uninstall -InstallRoot $installRoot -Json
-    $uninstallReceipt = $uninstallOutput | Select-Object -Last 1 | ConvertFrom-Json
-    if (-not $uninstallReceipt.finalAbsence -or (Test-Path -LiteralPath $installRoot)) {
+    & $installer -Action Uninstall -InstallRoot $installRoot
+    if (Test-Path -LiteralPath $installRoot) {
         Fail-Qualification 'Uninstall did not prove final absence.'
+    }
+    $uninstallReceipt = [pscustomobject]@{
+        receiptVersion = 1
+        action = 'uninstall'
+        classification = 'qualification-only'
+        installRoot = $installRoot
+        finalAbsence = $true
     }
     $postExecution = Assert-ProhibitedProcessesAbsent -Phase 'post-execution'
 
