@@ -301,18 +301,8 @@ export function acquireHuggingFaceModel(
     const stallTimeoutMs = modelDownloadStallTimeoutMs();
     const heartbeat = setInterval(() => {
       const now = Date.now();
-      const idleMs = now - lastOutputAt;
-      if (idleMs < MODEL_DOWNLOAD_HEARTBEAT_MS) return;
+      if (now - lastOutputAt < MODEL_DOWNLOAD_HEARTBEAT_MS) return;
       if (!lastOutputEndedCleanly) process.stdout.write("\n");
-      if (idleMs >= stallTimeoutMs) {
-        observer.logLine(
-          `Model download stalled: no output for ${formatElapsed(idleMs)}; aborting`,
-        );
-        proc.kill();
-        finalizeOutputDecoders();
-        done({ ok: false, reason: `hf download stalled: no output for ${formatElapsed(idleMs)}` });
-        return;
-      }
       observer.logLine(
         `Model download still running (${formatElapsed(now - start)} elapsed; no new output)`,
       );
@@ -320,10 +310,34 @@ export function acquireHuggingFaceModel(
     }, MODEL_DOWNLOAD_HEARTBEAT_MS);
     heartbeat.unref?.();
 
+    let stallTimer: ReturnType<typeof setTimeout>;
+
+    function scheduleStallTimeout(): void {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        if (resolved) return;
+        const idleMs = Date.now() - lastOutputAt;
+        if (!lastOutputEndedCleanly) process.stdout.write("\n");
+        observer.logLine(
+          `Model download stalled: no output for ${formatElapsed(idleMs)}; aborting`,
+        );
+        finalizeOutputDecoders();
+        done({
+          ok: false,
+          reason: `hf download stalled: no output for ${formatElapsed(idleMs)}`,
+        });
+        proc.kill();
+      }, stallTimeoutMs);
+      stallTimer.unref?.();
+    }
+
+    scheduleStallTimeout();
+
     function done(result: HuggingFaceModelAcquisitionResult): void {
       if (resolved) return;
       resolved = true;
       clearInterval(heartbeat);
+      clearTimeout(stallTimer);
       resolve(result);
     }
 
@@ -388,7 +402,9 @@ export function acquireHuggingFaceModel(
     }
 
     function onChunk(buf: Buffer, state: (typeof outputDecoders)[number]): void {
+      if (resolved) return;
       lastOutputAt = Date.now();
+      scheduleStallTimeout();
       const text = state.decoder.write(buf);
       queueOutput(text, state.stream);
     }

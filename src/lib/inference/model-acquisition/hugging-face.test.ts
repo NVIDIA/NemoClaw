@@ -363,10 +363,14 @@ describe("Hugging Face model acquisition", () => {
     const events = observer();
     const resultPromise = acquireHuggingFaceModel(request(), events);
 
-    // Real progress keeps the download alive through several heartbeat ticks.
-    await vi.advanceTimersByTimeAsync(30_000);
+    // Heartbeats keep their fixed cadence while real progress resets only the stall deadline.
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(events.logLine).not.toHaveBeenCalledWith(expect.stringContaining("still running"));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(events.logLine).toHaveBeenCalledWith(expect.stringContaining("still running"));
     proc.stdout.emit("data", Buffer.from("Downloading (incomplete total...): 10%\n"));
     await vi.advanceTimersByTimeAsync(30_000);
+    expect(events.logLine).toHaveBeenCalledTimes(3);
     expect(proc.kill).not.toHaveBeenCalled();
 
     // Then output stops entirely for the full stall window.
@@ -387,21 +391,35 @@ describe("Hugging Face model acquisition", () => {
     });
   });
 
-  it("honors NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT for a shorter stall window (#10346)", async () => {
+  it("honors NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT below the heartbeat interval (#10346)", async () => {
     vi.useFakeTimers();
-    vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", "90");
+    vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", "1");
     const proc = mockProcess();
     dockerSpawn.mockReturnValue(proc);
     const events = observer();
     const resultPromise = acquireHuggingFaceModel(request(), events);
 
-    await vi.advanceTimersByTimeAsync(90_000);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(proc.kill).not.toHaveBeenCalled();
+
+    proc.stdout.emit("data", Buffer.from("Downloading: 1%\n"));
+    await vi.advanceTimersByTimeAsync(999);
+    expect(proc.kill).not.toHaveBeenCalled();
+
+    proc.kill.mockImplementationOnce(() => proc.emit("exit", 0));
+    await vi.advanceTimersByTimeAsync(1);
 
     expect(proc.kill).toHaveBeenCalledTimes(1);
     await expect(resultPromise).resolves.toEqual({
       ok: false,
-      reason: expect.stringContaining("hf download stalled"),
+      reason: "hf download stalled: no output for 1s",
     });
+    expect(events.logLine).not.toHaveBeenCalledWith(expect.stringContaining("still running"));
+    expect(events.logLine).not.toHaveBeenCalledWith("Model download complete");
+
+    proc.stdout.emit("data", Buffer.from("late output\n"));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(proc.kill).toHaveBeenCalledTimes(1);
     vi.unstubAllEnvs();
   });
 
