@@ -12,7 +12,6 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
-import path from "node:path";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 

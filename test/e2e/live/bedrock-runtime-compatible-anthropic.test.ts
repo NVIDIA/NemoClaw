@@ -11,7 +11,6 @@ import os from "node:os";
 import path from "node:path";
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   cleanupAcquiredResource,
   cleanupExistingPath,

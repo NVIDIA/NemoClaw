@@ -115,10 +115,6 @@ for container_id in $container_ids; do
 done
 `;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function versionGte(actual: string, minimum: string): boolean {
   const actualParts = actual.split(".").map((part) => Number.parseInt(part, 10));
   const minimumParts = minimum.split(".").map((part) => Number.parseInt(part, 10));

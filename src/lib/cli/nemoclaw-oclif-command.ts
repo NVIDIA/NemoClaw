@@ -208,8 +208,6 @@ export abstract class NemoClawCommand extends Command {
     this.lifecycleParserOutput = null;
 
     const commandId = this.id;
-    const portablePolicy =
-      typeof commandId === "string" ? classifyHermesPortableCommand(commandId, this.argv) : null;
     const parsedSandboxName = (parsed.args as Record<string, unknown>).sandboxName;
     if (
       typeof commandId === "string" &&

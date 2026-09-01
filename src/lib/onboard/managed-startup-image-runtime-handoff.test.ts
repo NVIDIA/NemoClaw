@@ -399,25 +399,18 @@ describe("managed startup image runtime handoff and descriptor integrity", () =>
       mapped.configurationEnvironment,
       mapped.applicationRuntime,
     );
-    const validator = path.join(
-      process.cwd(),
-      "agents",
-      "hermes",
-      "validate-env-secret-boundary.py",
-    );
     const validated = spawnSync(
-      "bash",
+      "/bin/bash",
       [
         "--noprofile",
         "--norc",
         "-c",
-        `${script}exec python3 -I "$1" runtime-env`,
-        "hermes-managed-supervisor-environment",
-        validator,
+        `${script}exec /usr/bin/python3 -I agents/hermes/validate-env-secret-boundary.py runtime-env`,
       ],
       {
+        cwd: path.resolve(import.meta.dirname, "../../.."),
         encoding: "utf8",
-        env: { PATH: process.env.PATH ?? "" },
+        env: { PATH: "/usr/bin:/bin" },
         timeout: 5000,
       },
     );

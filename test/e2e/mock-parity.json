@@ -37,7 +37,8 @@
       "fast": [
         "src/lib/inference/llama-cpp/managed-selection.test.ts",
         "src/lib/inference/llama-cpp/managed-installer.test.ts",
-        "src/lib/onboard/setup-nim-flow.test.ts"
+        "src/lib/onboard/setup-nim-flow.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts"
       ]
     },
     {
@@ -260,13 +261,17 @@
       "live": "test/e2e/live/openclaw-tui-chat-correlation.test.ts",
       "fast": [
         "test/e2e/support/openclaw-tui-ref-fidelity.test.ts",
-        "test/e2e/support/openclaw-tui-run-classification.test.ts"
+        "test/e2e/support/openclaw-tui-run-classification.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
       "liveSources": ["test/e2e/live/dashboard-connect-handoff.ts"],
-      "fast": ["test/e2e/support/dashboard-connect-handoff.test.ts"]
+      "fast": [
+        "test/e2e/support/dashboard-connect-handoff.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
@@ -315,7 +320,10 @@
     },
     {
       "live": "test/e2e/live/onboard-policy-preset-sequencing.test.ts",
-      "fast": ["test/e2e/support/onboard-interactive-pty.test.ts"]
+      "fast": [
+        "test/e2e/support/onboard-interactive-pty.test.ts",
+        "test/e2e/support/onboard-timeout-contract.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
@@ -429,6 +437,7 @@
     },
     {
       "live": "test/e2e/live/device-auth-health.test.ts",
+      "liveSources": ["test/e2e/live/device-auth-health-helpers.ts"],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -472,6 +481,7 @@
     },
     {
       "live": "test/e2e/live/hermes-discord.test.ts",
+      "liveSources": ["test/e2e/live/phase6-messaging-helpers.ts"],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
@@ -500,6 +510,7 @@
     },
     {
       "live": "test/e2e/live/hermes-inference-switch.test.ts",
+      "liveSources": ["test/e2e/live/hermes-inference-switch-helpers.ts"],
       "fast": [
         "src/lib/actions/inference-set-compatible-provider.test.ts",
         "test/e2e/support/compatible-anthropic-switch.test.ts",
@@ -617,6 +628,7 @@
     },
     {
       "live": "test/e2e/live/openclaw-discord-pairing.test.ts",
+      "liveSources": ["test/e2e/live/phase6-messaging-helpers.ts"],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
@@ -655,6 +667,7 @@
     },
     {
       "live": "test/e2e/live/openclaw-slack-pairing.test.ts",
+      "liveSources": ["test/e2e/live/phase6-messaging-helpers.ts"],
       "fast": [
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
@@ -753,6 +766,7 @@
     },
     {
       "live": "test/e2e/live/telegram-injection.test.ts",
+      "liveSources": ["test/e2e/live/phase6-messaging-helpers.ts"],
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -771,7 +785,8 @@
         "test/e2e/live/channels-stop-start-config-state.ts",
         "test/e2e/live/channels-stop-start-googlechat-proof.ts",
         "test/e2e/live/channels-stop-start-helpers.ts",
-        "test/e2e/live/channels-stop-start-plan-state.ts"
+        "test/e2e/live/channels-stop-start-plan-state.ts",
+        "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
         "test/channels/channels-add-bridge-lifecycle.test.ts",
@@ -809,7 +824,8 @@
       "liveSources": [
         "test/e2e/live/hermes-slack-credential-transport.ts",
         "test/e2e/live/hermes-slack-e2e-helpers.ts",
-        "test/e2e/live/hermes-slack-proof.ts"
+        "test/e2e/live/hermes-slack-proof.ts",
+        "test/e2e/live/phase6-messaging-helpers.ts"
       ],
       "fast": [
         "test/e2e/support/hermes-slack-cleanup.test.ts",
@@ -832,6 +848,10 @@
     },
     {
       "live": "test/e2e/live/registry-targets.test.ts",
+      "liveSources": [
+        "test/e2e/live/cloud-experimental-checks.ts",
+        "test/e2e/live/dcode-base-image-runtime-evidence.ts"
+      ],
       "fast": [
         "test/e2e/support/e2e-matrix.test.ts",
         "test/e2e/support/e2e-phase-onboarding.test.ts",
@@ -854,6 +874,7 @@
     },
     {
       "live": "test/e2e/live/tunnel-lifecycle.test.ts",
+      "liveSources": ["test/e2e/live/tunnel-lifecycle-helpers.ts"],
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",

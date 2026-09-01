@@ -9,8 +9,6 @@
  * intentionally probes the runtime helper rather than the scheduler surface.
  */
 
-import path from "node:path";
-
 import { execTimeout, testTimeout } from "../../helpers/timeouts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";

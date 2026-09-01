@@ -27,7 +27,7 @@ import {
   cloudExperimentalCheckTimeoutMs,
 } from "../live/cloud-experimental-checks.ts";
 
-const cloudChecksDir = path.join(process.cwd(), "test/e2e/e2e-cloud-experimental/checks");
+const cloudChecksDir = path.resolve(import.meta.dirname, "../e2e-cloud-experimental/checks");
 const dcodeTavilyCheck = path.join(cloudChecksDir, "09-deepagents-code-tavily-opt-in.sh");
 const dcodeApprovalCheck = path.join(cloudChecksDir, "12-deepagents-code-thread-auto-approval.sh");
 const dcodeApprovalMainEntrypoint = `if [[ "\${BASH_SOURCE[0]}" == "$0" ]]; then

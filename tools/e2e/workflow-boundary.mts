@@ -256,22 +256,6 @@ const CATALOGUE_ROUTED_JOB_NAMES = [
 ] as const;
 const CATALOGUE_RUNNER_EXPRESSION =
   "${{ matrix.runner_key != '' && fromJSON(needs.generate-matrix.outputs.runner_routing)[matrix.runner_key] || matrix.runner }}";
-const COMMON_EGRESS_AGENT_SCENARIO_MATRIX = {
-  include: [
-    {
-      scenario: "openclaw-balanced-weather",
-      selector: "^common-egress.+C1.+$",
-    },
-    {
-      scenario: "openclaw-open-reference",
-      selector: "^common-egress.+C2.+$",
-    },
-    {
-      scenario: "hermes-open-reference",
-      selector: "^common-egress.+C3.+$",
-    },
-  ],
-} as const;
 const ROUTED_JOB_NAMES = new Set([
   ...Object.keys(ROUTED_JOB_RUNNER_EXPRESSIONS),
   ...Object.keys(MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS),
@@ -890,35 +874,6 @@ function requireJobStep(
   return step;
 }
 
-function requireDockerEngineRebuilds(
-  errors: string[],
-  jobName: string,
-  jobEnv: WorkflowRecord,
-  steps: readonly WorkflowStep[],
-): void {
-  const hasSeparateCacheBuilder = steps.some((step) => {
-    const uses = stringValue(step.uses);
-    return (
-      uses.startsWith("docker/setup-buildx-action@") || uses.startsWith("docker/build-push-action@")
-    );
-  });
-  const routesBuildsAwayFromDocker = steps.some((step) => {
-    const run = stringValue(step.run);
-    return (
-      Object.hasOwn(asRecord(step.env), "BUILDX_BUILDER") ||
-      /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
-      /docker\s+buildx\s+use(?:\s|$)/u.test(run)
-    );
-  });
-  if (
-    Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
-    hasSeparateCacheBuilder ||
-    routesBuildsAwayFromDocker
-  ) {
-    errors.push(`${jobName} must keep rebuild builds on the Docker engine cache`);
-  }
-}
-
 function requireRunContains(
   errors: string[],
   step: WorkflowStep | undefined,
@@ -1411,15 +1366,6 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   );
   requireRunContains(errors, runVitest, `--tags-filter=${CREDENTIAL_FREE_TEST_TAG}`);
   requireRunContains(errors, runVitest, "--reporter=test/e2e/risk-signal-reporter.ts");
-}
-
-function requireNoDockerHubAuthInRun(errors: string[], owner: string, runScript: string): void {
-  if (!runScript) return;
-  const usesDockerLogin = /\bdocker\s+login\b/i.test(runScript);
-  const referencesSecret = /\bsecrets\.[A-Za-z0-9_]+\b|\$\{\{\s*secrets\.[^}]+\}\}/.test(runScript);
-  if (usesDockerLogin || referencesSecret) {
-    errors.push(`${owner} run script must not use docker login or inline secret interpolation`);
-  }
 }
 
 function requireCanonicalDockerHubAuthRun(

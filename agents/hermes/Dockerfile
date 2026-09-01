@@ -250,6 +250,7 @@ COPY --from=hermes-npm-patch-payload / /
 # A published base can lag the source patches in Dockerfile.base. Apply only
 # the required final-image hunks, then verify the source contracts in one layer
 # so the already-deep Hermes image remains importable by Docker.
+# hadolint ignore=DL4006
 RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_cli/memory_setup.py; then \
         git -C /opt/hermes apply --check \
             --include=hermes_cli/memory_setup.py \
@@ -279,14 +280,8 @@ RUN if ! grep -Fq 'ensure("memory.hindsight", prompt=False)' /opt/hermes/hermes_
     fi \
     && grep -Fqx '_NEMOCLAW_DASHBOARD_EXTERNAL_HOST_ENV = "_NEMOCLAW_HERMES_DASHBOARD_EXTERNAL_HOST"' /opt/hermes/hermes_cli/web_server.py \
     && grep -Fq 'if external_host and host_only == external_host:' /opt/hermes/hermes_cli/web_server.py \
-    && rm /scripts/hermes-dashboard-external-host.patch
-
-# The final Hermes image owns the shipped dependency boundary independently of
-# base freshness. Reassert the idempotent npm-private node-tar fix from the
-# locked cache seed so protected rebuilds remain network-disabled.
-COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /tmp/nemoclaw-bundled-npm-tar.tgz
-# hadolint ignore=DL4006
-RUN printf '%s  %s\n' "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /scripts/hermes-runtime-boundaries.patch | sha256sum -c - \
+    && rm /scripts/hermes-dashboard-external-host.patch \
+    && printf '%s  %s\n' "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /scripts/hermes-runtime-boundaries.patch | sha256sum -c - \
     && if ! grep -Fq 'def nemoclaw_managed_gateway_plugins_only()' /opt/hermes/hermes_constants.py; then \
         git -C /opt/hermes apply --check \
             --include=hermes_constants.py \
@@ -314,8 +309,13 @@ RUN printf '%s  %s\n' "$NEMOCLAW_HERMES_RUNTIME_BOUNDARIES_PATCH_SHA256" /script
     && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/memory/__init__.py \
     && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/plugins/cron_providers/__init__.py \
     && grep -Fq 'nemoclaw_managed_gateway_plugins_only' /opt/hermes/providers/__init__.py \
-    && rm /scripts/hermes-runtime-boundaries.patch \
-    && node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    && rm /scripts/hermes-runtime-boundaries.patch
+
+# The final Hermes image owns the shipped dependency boundary independently of
+# base freshness. Reassert the idempotent npm-private node-tar fix from the
+# locked cache seed so protected rebuilds remain network-disabled.
+COPY tools/mcp-tool-discovery-runtime/npm-cache-seed/tar-7.5.21.tgz /tmp/nemoclaw-bundled-npm-tar.tgz
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
       --npm-root /usr/local/lib/node_modules/npm \
       --archive /tmp/nemoclaw-bundled-npm-tar.tgz
 
@@ -450,7 +450,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=bd57c76c87a4e42ab98687b5a80e765c6f239363d18458c4bcec6de0764eeba6
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=92a7c1ce58d800210843b9aa632a0df7ff5e0837b71c8dac95ce62a9588eeef0
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -674,7 +674,7 @@ RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-session-list-previe
 # `sqlite3.OperationalError: unable to open database file` (#8301). Inserting
 # PRAGMA temp_store=MEMORY before PRAGMA foreign_keys=ON ensures FK processing
 # uses in-memory storage. Docker execution permits the file-based storage path.
-ARG NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256=d583ad1095ec3baf25f1721f88795f5d9916b3ac8840172144037e4061c5dc24
+ARG NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256=1eff38472fa25f915bfc1d8d5168cbb3f1600a0e322f88b18974d01a8a4f713f
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
@@ -1438,11 +1438,13 @@ RUN /opt/hermes/.venv/bin/python -I -m ensurepip --upgrade --default-pip \
     && test "$(stat -c '%U:%G %a' /sandbox/.hermes)" = "sandbox:sandbox 3770"
 
 # Prove the session and cron ledger contracts across the real image identities.
-# Gateway creates state.db plus its WAL/SHM sidecars in the writable runtime
-# boundary; the patched SessionDB normalizes only those fixed files to 0660, so
-# sandbox can list and append a session. The scheduler then creates its separate
-# WAL-backed ledger, sandbox online-copies it, and gateway reopens the restored
-# replacement. Keep both sequences in one RUN to stay below Docker's layer cap.
+# Gateway creates state.db in the writable runtime boundary. When the filesystem
+# supports WAL, SQLite also creates WAL/SHM sidecars; otherwise Hermes explicitly
+# falls back to DELETE mode. The patched SessionDB normalizes only the fixed files
+# SQLite selected to 0660, so sandbox can list and append the session in either
+# mode. The scheduler then creates its separate WAL-backed ledger, sandbox
+# online-copies it, and gateway reopens the restored replacement. Keep both
+# sequences in one RUN to stay below Docker's layer cap.
 RUN test "$(stat -c '%U:%G %a' /sandbox/.hermes/runtime)" = "gateway:sandbox 2770" \
     && test "$(readlink /sandbox/.hermes/state.db)" = "runtime/state.db" \
     && test ! -e /sandbox/.hermes/runtime/state.db \

@@ -806,7 +806,7 @@ PY`,
       "bash",
       [
         "-lc",
-        'test ! -f "$HOME/.nemoclaw/sandboxes.json" || ! grep -Fq "\\\"${SANDBOX_NAME}\\\"" "$HOME/.nemoclaw/sandboxes.json"',
+        `test ! -f "$HOME/.nemoclaw/sandboxes.json" || ! grep -Fq ${shellQuote(JSON.stringify(SANDBOX_NAME))} "$HOME/.nemoclaw/sandboxes.json"`,
       ],
       {
         artifactName: "phase-7-registry-removed",

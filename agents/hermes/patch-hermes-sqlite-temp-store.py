@@ -36,8 +36,10 @@ Source-of-truth note for this localized Hermes runtime patch:
     checks for the inserted PRAGMA after patching. The image-build
     `session-delete` behavior test covers the temp store. The image's
     `session-state-create` and `session-state-reopen` probes execute the patched
-    SessionDB as gateway then sandbox and require exact state.db/WAL/SHM metadata
-    plus a persisted cross-identity append.
+    SessionDB as gateway then sandbox and require exact state.db metadata plus a
+    persisted cross-identity append. They require exact WAL/SHM metadata when
+    SQLite retains WAL mode and require those sidecars absent when Hermes'
+    `apply_wal_with_fallback` selects DELETE mode on a WAL-incompatible filesystem.
   - Removal condition: delete this patch when the pinned Hermes runtime natively
     sets `PRAGMA temp_store=MEMORY` (or equivalent) in `SessionDB.__init__`.
 """
