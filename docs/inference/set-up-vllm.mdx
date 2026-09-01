@@ -416,7 +416,7 @@ NemoClaw requires all of this N1x identity evidence:
 - The host runs Linux on `arm64`.
 - `/etc/fastos-release` is a regular file of 1 through 4,096 bytes that is owned by UID 0 and GID 0.
 - The marker is not a symbolic link, grants no group or world write access, and contains exactly one `NAME="N1x FASTOS"` line.
-- A display-class PCI device has NVIDIA vendor ID `10de` and device ID `2e2a`.
+- A display-class PCI device has NVIDIA vendor ID `10de`.
 
 NemoClaw parses `/etc/fastos-release` as inert text and does not source it.
 The classifier does not pin a FastOS version, kernel version, driver version, firmware version, or GPU UUID.
