@@ -886,12 +886,12 @@ export function assertFailedSandboxOwnerCleanupRetention(
   expectedSandboxId: string,
   env: NodeJS.ProcessEnv,
 ): void {
-  const get = onboard.runOpenshell(["sandbox", "get", input.sandbox], {
+  const get = onboard.runOpenshell(["sandbox", "get", "-g", GATEWAY_NAME, input.sandbox], {
     ignoreError: true,
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const list = onboard.runOpenshell(["sandbox", "list"], {
+  const list = onboard.runOpenshell(["sandbox", "list", "-g", GATEWAY_NAME], {
     ignoreError: true,
     env,
     stdio: ["ignore", "pipe", "pipe"],

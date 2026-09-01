@@ -476,6 +476,16 @@ describe("protected managed-image runtime contract", () => {
         {},
       ),
     ).not.toThrow();
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "get", "-g", "nemoclaw", VALID_SANDBOX],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "list", "-g", "nemoclaw"],
+      expect.objectContaining({ ignoreError: true }),
+    );
   });
 
   it("rejects a containing sandbox name and an exact name mentioned only in stderr", () => {
@@ -514,7 +524,51 @@ describe("protected managed-image runtime contract", () => {
     expect(assertion).toThrow("exact OpenShell owner-cleanup state");
     expect(runOpenshell).toHaveBeenNthCalledWith(
       2,
-      ["sandbox", "list"],
+      ["sandbox", "list", "-g", "nemoclaw"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("rejects foreign-gateway rollback retention evidence (#10652)", () => {
+    const expectedSandboxId = "sandbox-id-123";
+    const input = parseManagedImageOpenShellE2eInputs([
+      "--agent",
+      "openclaw",
+      "--image",
+      IMAGE,
+      "--sandbox",
+      VALID_SANDBOX,
+    ]);
+    const valid = { status: 0, stdout: `Id: ${expectedSandboxId}\n`, stderr: "" };
+    const missing = { status: 1, stdout: "", stderr: "sandbox not found" };
+    const responses = new Map([
+      [JSON.stringify(["sandbox", "get", VALID_SANDBOX]), valid],
+      [JSON.stringify(["sandbox", "list"]), {
+        status: 0,
+        stdout: `NAME STATUS\n${VALID_SANDBOX} Ready\n`,
+        stderr: "",
+      }],
+    ]);
+    const runOpenshell = vi.fn(
+      (argv: readonly string[]) => responses.get(JSON.stringify(argv)) ?? missing,
+    );
+
+    expect(() =>
+      assertFailedSandboxOwnerCleanupRetention(
+        { runOpenshell } as never,
+        input,
+        expectedSandboxId,
+        {},
+      ),
+    ).toThrow("exact OpenShell owner-cleanup state");
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["sandbox", "get", "-g", "nemoclaw", VALID_SANDBOX],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["sandbox", "list", "-g", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
   });

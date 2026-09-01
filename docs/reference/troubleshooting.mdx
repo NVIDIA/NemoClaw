@@ -2007,8 +2007,8 @@ For a newly created OpenClaw or Hermes sandbox, `Ready` is not the final accepta
 If onboarding reports that the managed runtime commit completed but the same sandbox did not return to executable `Ready`, stop before retrying.
 NemoClaw keeps the sandbox, prints its create-attempt label and a one-way durable identity fingerprint, and does not start dashboard forwarding.
 It saves that evidence in the retained recovery record when persistence succeeds.
-Do not delete the sandbox by its mutable name.
-When NemoClaw confirms that it saved the record and the record contains a durable identity fingerprint, run `$$nemoclaw <sandbox-name> destroy` and follow [Recover a retained sandbox](commands#recover-a-retained-sandbox) for the result-specific recovery steps.
+Do not use OpenShell mutable-name deletion.
+When NemoClaw confirms that it saved the record and the record contains a durable identity fingerprint, run `$$nemoclaw <sandbox-name> destroy`; NemoClaw verifies the retained sandbox identity before cleanup. Follow [Recover a retained sandbox](commands#recover-a-retained-sandbox) for the result-specific recovery steps.
 If the saved record has no durable identity fingerprint, preserve the terminal output and give the create-attempt label to an OpenShell administrator so they can identify and remove the exact sandbox.
 If NemoClaw reports that it could not save the record, preserve the terminal output and ask an OpenShell administrator to identify the exact sandbox from gateway or controller evidence; the recovery-only session remains blocked until NemoClaw can save the durable recovery record.
 

@@ -12,15 +12,15 @@ import { type GatewayRecoveryDeps, startGatewayForRecovery } from "./gateway-rec
 // actually sleeps. Tests get deterministic deadline expiration without any
 // real wall-clock waits or global timer state.
 //
-// `advance` is exposed so a test can also advance the clock from inside a
-// mocked probe. This is how the timeout test proves the loop is truly
-// deadline-driven: if each probe advances the clock, then a maxAttempts=N
-// cap would exit at a different observable count than a pure deadline
-// would, so the assertions can only be satisfied by the deadline path.
+// `advance` is exposed so a test can also account for time spent inside a
+// mocked probe. `elapsedMs` lets the timeout test observe that the complete
+// configured deadline was consumed without depending on an internal call
+// count or the number of OpenShell observations in one recovery probe.
 function makeVirtualClock(startMs = 1_000_000_000_000) {
   let now = startMs;
   return {
     now: () => now,
+    elapsedMs: () => now - startMs,
     advance: (seconds: number) => {
       now += Math.max(0, seconds) * 1000;
     },
@@ -100,52 +100,31 @@ describe("gateway recovery", () => {
   });
 
   it("polls until the configured recovery deadline and reports it in the timeout (#3768)", async () => {
-    // #3768: prove the loop is DEADLINE-driven, not just attempt-capped.
-    // Design: with count=10 and interval=1s the wait budget is 10s. Make
-    // each subprocess-probe advance the clock by ~1s so probes are the
-    // primary time-consumer, then sleeps at 1s add another second per
-    // iteration. Under a pure deadline: iterations run until ~2s per
-    // iteration cumulatively hits 10s -> ~5 probes. Under a hidden
-    // maxAttempts=count cap, the loop would exit at exactly 10 probes
-    // (attempt cap hits first because probes and sleeps take equal time),
-    // which is a different observable count from the deadline path. The
-    // strict upper bound `probeCount < 10` therefore only passes when the
-    // deadline (not an attempt cap) terminates the loop.
+    // #3768: prove the loop consumes its configured wall-clock deadline.
+    // Account for one second of work only when the externally visible
+    // status probe begins; the other OpenShell observations remain free to
+    // change without changing this test's oracle.
     vi.stubEnv("NEMOCLAW_HEALTH_POLL_COUNT", "10");
     vi.stubEnv("NEMOCLAW_HEALTH_POLL_INTERVAL", "1");
     const clock = makeVirtualClock();
-    // Only advance the clock ONCE per probe iteration (three subprocess
-    // calls per probe): status is the first call, gateway-info-g the
-    // second, gateway-info the third. Use a modulo counter so the test
-    // body stays linear (per repo growth guardrail on if statements in
-    // changed test files).
-    let mockCallIndex = 0;
-    const advanceOnStatusCall = (index: number) => (index % 3 === 0 ? clock.advance(1) : undefined);
+    const statusProbe = vi.fn(() => {
+      clock.advance(1);
+      return "Disconnected";
+    });
     const deps = createDeps({
       sleepSeconds: clock.sleeper,
       now: clock.now,
-      runCaptureOpenshell: vi.fn(() => {
-        advanceOnStatusCall(mockCallIndex);
-        mockCallIndex += 1;
-        return "Disconnected";
-      }),
+      runCaptureOpenshell: vi.fn((argv) =>
+        argv[0] === "status" ? statusProbe() : "Disconnected",
+      ),
     });
 
     await expect(startGatewayForRecovery({ gatewayPort: 8091 }, deps)).rejects.toThrow(
       "configured 10s recovery deadline (1s poll interval)",
     );
 
-    const runCaptureCalls = (deps.runCaptureOpenshell as ReturnType<typeof vi.fn>).mock.calls
-      .length;
-    const probeCount = runCaptureCalls / 3;
-    // The deadline (not an attempt cap) MUST have terminated the loop:
-    // probe advances 1s + sleep advances 1s = 2s per iteration, so under
-    // a 10s budget the loop runs ~5 iterations and cannot reach the 10
-    // attempts a hidden attempt cap would permit.
-    expect(probeCount).toBeGreaterThan(0);
-    expect(probeCount).toBeLessThan(10);
-    // Sleeps happen after every probe except the last one (deadline check
-    // after the final probe short-circuits before an extra sleep).
+    expect(statusProbe).toHaveBeenCalled();
+    expect(clock.elapsedMs()).toBe(10_000);
     expect(clock.sleeper).toHaveBeenCalled();
     expect(clock.sleeper).toHaveBeenNthCalledWith(1, 0.25);
     expect(clock.sleeper.mock.calls.every(([s]) => s <= 1)).toBe(true);
