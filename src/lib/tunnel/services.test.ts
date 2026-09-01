@@ -616,7 +616,7 @@ describe("stopAll", () => {
     expect(cleanup.mock.invocationCallOrder[0]).toBeLessThan(stoppedCallOrder ?? 0);
   });
 
-  it("returns and reports Ollama cleanup failure instead of suppressing it", () => {
+  it("reports Ollama cleanup failure and retains its recovery route", () => {
     const failure = {
       ok: false as const,
       outcome: "discovery-failed" as const,
@@ -628,11 +628,10 @@ describe("stopAll", () => {
     };
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const result = stopAll({ pidDir, unloadOllamaModels: () => failure });
+    stopAll({ pidDir, unloadOllamaModels: () => failure });
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     logSpy.mockRestore();
 
-    expect(result).toBe(failure);
     expect(output).toContain("Ollama model cleanup failed at http://host.docker.internal:11434");
     expect(output).toContain("saved local route was retained");
   });

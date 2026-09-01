@@ -494,7 +494,7 @@ export function showStatus(opts: ServiceOptions = {}): void {
   }
 }
 
-export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
+export function stopAll(opts: ServiceOptions = {}): void {
   // Resolve the target sandbox once and reuse it for in-sandbox and host-side cleanup.
   const rawSandboxName =
     opts.sandboxName ??
@@ -525,19 +525,15 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
     warn("Hint: run 'nemoclaw stop' with a registered sandbox or set NEMOCLAW_SANDBOX_NAME.");
   }
 
-  let ollamaCleanup: OllamaUnloadResult | undefined;
-  let ollamaCleanupError: unknown;
   try {
     const unloadOllamaModels = opts.unloadOllamaModels ?? unloadDefaultOllamaModels;
     const cleanup = unloadOllamaModels();
-    if (cleanup) ollamaCleanup = cleanup;
     if (cleanup && !cleanup.ok) {
       warn(
         `Ollama model cleanup failed at ${cleanup.endpoint} (${cleanup.outcome}: ${cleanup.message ?? "no detail"}). The saved local route was retained; repair Ollama and retry this command.`,
       );
     }
   } catch (error) {
-    ollamaCleanupError = error;
     warn(
       `Ollama model cleanup failed unexpectedly: ${error instanceof Error ? error.message : String(error)}. Retry this command after repairing Ollama.`,
     );
@@ -574,19 +570,15 @@ export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
       "Hint: rerun with NEMOCLAW_GATEWAY_PORT=<port> to release that gateway, or 'openshell gateway list' to find it.",
     );
     info("Host services stopped; managed gateway not released.");
-    if (ollamaCleanupError) throw ollamaCleanupError;
-    return ollamaCleanup;
+    return;
   }
 
   if (gatewayOutcome === "unconfirmed") {
     info("Host services stopped; managed gateway release was not confirmed.");
-    if (ollamaCleanupError) throw ollamaCleanupError;
-    return ollamaCleanup;
+    return;
   }
 
   info("All services stopped.");
-  if (ollamaCleanupError) throw ollamaCleanupError;
-  return ollamaCleanup;
 }
 
 /**

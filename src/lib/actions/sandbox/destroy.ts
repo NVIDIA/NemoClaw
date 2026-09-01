@@ -22,7 +22,6 @@ import {
   revokeHttpsPinRuntimeAdapterRoute,
 } from "../../inference/https-pin-runtime-adapter";
 import { prepareManagedLlamaCppRuntimeCleanupForSandbox } from "../../inference/local-model-profile/cleanup";
-import type { OllamaUnloadResult } from "../../inference/ollama/proxy";
 import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   normalizeRuntimeProviderIdentity,
@@ -166,8 +165,8 @@ type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status
 
 export type CleanupSandboxServicesDeps = {
   getSandbox?: typeof registry.getSandbox;
-  stopAll?: (opts: { sandboxName: string }) => OllamaUnloadResult | void;
-  unloadOllamaModels?: () => OllamaUnloadResult | void;
+  stopAll?: (opts: { sandboxName: string }) => void;
+  unloadOllamaModels?: () => void;
   runOpenshell?: RunOpenshell;
   rmSync?: typeof fs.rmSync;
   stopGooglechatWebhookTunnel?: (sandboxName: string) => string;
@@ -228,17 +227,17 @@ export function cleanupSandboxServices(
     deps.stopAll ??
     ((opts: { sandboxName: string }) => {
       const services = require("../../tunnel/services") as {
-        stopAll: (opts: { sandboxName: string }) => OllamaUnloadResult | void;
+        stopAll: (opts: { sandboxName: string }) => void;
       };
-      return services.stopAll(opts);
+      services.stopAll(opts);
     });
   const unloadOllamaModels =
     deps.unloadOllamaModels ??
     (() => {
       const { unloadOllamaModels: unload } = require("../../inference/ollama/proxy") as {
-        unloadOllamaModels: () => OllamaUnloadResult;
+        unloadOllamaModels: () => void;
       };
-      return unload();
+      unload();
     });
   const runOpenshell =
     deps.runOpenshell ??
@@ -290,28 +289,14 @@ export function cleanupSandboxServices(
   if (stopHostServices) {
     // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
     // see src/lib/tunnel/services.ts. Don't double-call here.
-    const cleanup = stopAll({ sandboxName: validatedSandboxName });
-    if (cleanup && !cleanup.ok) {
-      throw new Error(
-        `Sandbox host services stopped, but Ollama model cleanup failed at ${cleanup.endpoint} ` +
-          `(${cleanup.outcome}: ${cleanup.message ?? "no detail"}). The saved local route was ` +
-          "retained; repair Ollama and retry destroy.",
-      );
-    }
+    stopAll({ sandboxName: validatedSandboxName });
   } else {
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
     // models for this sandbox if its provider used Ollama. Without this
     // branch a single-sandbox destroy would leave models loaded on the GPU.
     const sb = getSandbox(validatedSandboxName);
     if (sb?.provider?.includes("ollama")) {
-      const cleanup = unloadOllamaModels();
-      if (cleanup && !cleanup.ok) {
-        throw new Error(
-          `Sandbox resources were removed, but Ollama model cleanup failed at ${cleanup.endpoint} ` +
-            `(${cleanup.outcome}: ${cleanup.message ?? "no detail"}). The saved local route was ` +
-            "retained; repair Ollama and retry destroy.",
-        );
-      }
+      unloadOllamaModels();
     }
   }
 
