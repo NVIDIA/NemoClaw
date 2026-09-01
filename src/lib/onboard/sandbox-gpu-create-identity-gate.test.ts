@@ -531,8 +531,8 @@ describe("created sandbox identity gate", () => {
   });
 
   it.each([
-    ["returns false", () => false],
-    ["throws", () => {
+    ["returns false", (): boolean => false],
+    ["throws", (): boolean => {
       throw new Error("recovery writer failed");
     }],
   ] as const)(
