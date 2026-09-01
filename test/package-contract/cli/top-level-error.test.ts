@@ -208,11 +208,4 @@ describe("compiled CLI top-level errors", () => {
     expect(result.stderr).not.toContain("dist");
     expect(result.stderr).not.toContain("Cannot find module");
   });
-
-  it("keeps the unresolved module path out of the unfinished-install report (#10372)", () => {
-    const result = runWithMissingCompiledCli();
-
-    expect(result.stderr).not.toContain("dist");
-    expect(result.stderr).not.toContain("Cannot find module");
-  });
 });
