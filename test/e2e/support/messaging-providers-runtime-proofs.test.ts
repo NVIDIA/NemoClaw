@@ -16,6 +16,7 @@ import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
+  countJsonLines,
   isNvidiaEndpointRateLimitFailure,
   messagingEnv,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
@@ -135,6 +136,28 @@ function fakeDockerHost(publishedAddress = "127.0.0.1"): HostCliClient {
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("counts only matching upstream capture rows", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-captures-"));
+    const captureFile = path.join(dir, "capture.jsonl");
+    const isSlackAuthCapture = (row: Record<string, unknown>): boolean =>
+      row.event === "request" && row.path === "/api/auth.test";
+
+    try {
+      fs.writeFileSync(
+        captureFile,
+        [
+          JSON.stringify({ event: "ready" }),
+          JSON.stringify({ event: "request", path: "/api/auth.test" }),
+          JSON.stringify({ event: "request", path: "/api/apps.connections.open" }),
+        ].join("\n"),
+      );
+
+      expect(countJsonLines(captureFile, isSlackAuthCapture)).toBe(1);
+    } finally {
+      fs.rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   it("fails preclean on a denied resource cleanup instead of continuing", async () => {
     const calls: string[] = [];
     const host: Pick<HostCliClient, "cleanupGatewayRegistration" | "cleanupSandbox"> = {

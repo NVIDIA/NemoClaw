@@ -975,19 +975,28 @@ export async function applyRestRewritePolicy(
   });
 }
 
-export function lastJsonLine(
-  file: string,
-  predicate: (row: Record<string, unknown>) => boolean,
-): Record<string, unknown> | undefined {
-  if (!fs.existsSync(file)) return undefined;
+function readJsonLines(file: string): Record<string, unknown>[] {
+  if (!fs.existsSync(file)) return [];
   return fs
     .readFileSync(file, "utf8")
     .trim()
     .split(/\n+/)
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>)
-    .filter(predicate)
-    .at(-1);
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+export function countJsonLines(
+  file: string,
+  predicate: (row: Record<string, unknown>) => boolean,
+): number {
+  return readJsonLines(file).filter(predicate).length;
+}
+
+export function lastJsonLine(
+  file: string,
+  predicate: (row: Record<string, unknown>) => boolean,
+): Record<string, unknown> | undefined {
+  return readJsonLines(file).filter(predicate).at(-1);
 }
 
 export async function runSlackApiRequest(

@@ -22,6 +22,7 @@ import {
   channelAccount,
   channelEnabled,
   check,
+  countJsonLines,
   countCsv,
   expectExitZero,
   INSTALL_TIMEOUT_MS,
@@ -924,10 +925,9 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       /^200\b/.test(slackAuth) && /invalid_auth|not_authed|ok":true/.test(slackAuth),
       `M-S15: Slack auth.test exercised revision-scoped placeholder rewrite (${slackAuth.slice(0, 200)})`,
     );
-    const slackAuthCapture = lastJsonLine(
-      fakeSlack.captureFile,
-      (row) => row.event === "request" && row.path === "/api/auth.test",
-    );
+    const isSlackAuthCapture = (row: Record<string, unknown>): boolean =>
+      row.event === "request" && row.path === "/api/auth.test";
+    const slackAuthCapture = lastJsonLine(fakeSlack.captureFile, isSlackAuthCapture);
     check(
       slackAuthCapture?.tokenMatchesExpected === true &&
         slackAuthCapture.bodyMatchesExpected === true &&
@@ -936,18 +936,33 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
         slackAuthCapture.body === undefined,
       "M-S15a: fake Slack saw host-side bot token without raw capture leakage",
     );
+    const slackAuthCaptureCountBeforeUnset = countJsonLines(
+      fakeSlack.captureFile,
+      isSlackAuthCapture,
+    );
 
+    const unsetSlackPlaceholder = "openshell:resolve:env:DEFINITELY_NOT_SET_XYZ";
     const slackUnset = await runSlackApiRequest(
       sandbox,
       fakeSlack.port,
       "/api/auth.test",
-      "Bearer openshell:resolve:env:DEFINITELY_NOT_SET_XYZ",
+      `Bearer ${unsetSlackPlaceholder}`,
       redactionValues,
     );
     check(
       isUnresolvedPlaceholderRejection(slackUnset) ||
         /ERROR:.*(socket hang up|ECONNRESET|EPIPE|hang up|reset)/i.test(slackUnset),
       `M-S15c: unset-var failed closed before upstream exposure (${slackUnset.slice(0, 200)})`,
+    );
+    const slackAuthCaptureAfterUnset = lastJsonLine(fakeSlack.captureFile, isSlackAuthCapture);
+    const slackCaptureTextAfterUnset = fs.readFileSync(fakeSlack.captureFile, "utf8");
+    check(
+      countJsonLines(fakeSlack.captureFile, isSlackAuthCapture) ===
+        slackAuthCaptureCountBeforeUnset &&
+        slackAuthCaptureAfterUnset?.tokenMatchesExpected === true &&
+        slackAuthCaptureAfterUnset.tokenLooksPlaceholder !== true &&
+        !slackCaptureTextAfterUnset.includes(unsetSlackPlaceholder),
+      "M-S15d: unset Slack placeholder produced no upstream capture",
     );
 
     const slackApp = await runSlackApiRequest(
