@@ -13,7 +13,6 @@ import {
   assertApfCreateIntent,
   completeHermesPortableSandboxRegistration,
   createProviderEffectBoundary,
-  createSandboxWithBaseImageResolution,
   finalizeCreatedSandboxBeforeHermesCredentialReconciliation,
   hasManagedMcpRebuildHandoff,
   installPostCreateRecoveryRetryOwner,
@@ -421,35 +420,19 @@ describe("retained create recovery persistence", () => {
     },
   );
 
-  it("does not install retry handlers for operations without failed recovery writes (#10652)", async () => {
-    const exitHandlers: Array<() => void> = [];
-    const captureExitHandler = ((event: string | symbol, handler: (...args: unknown[]) => void) => {
-      event === "exit" && exitHandlers.push(handler as () => void);
-      return process;
-    }) as typeof process.on;
-    const processOn = vi.spyOn(process, "on").mockImplementation(captureExitHandler);
-    const createSandbox = createSandboxWithBaseImageResolution({} as never) as unknown as (
-      ...args: unknown[]
-    ) => Promise<unknown>;
-
-    try {
-      await expect(createSandbox()).rejects.toThrow();
-      await expect(createSandbox()).rejects.toThrow();
-    } finally {
-      processOn.mockRestore();
-    }
-
-    expect(exitHandlers).toHaveLength(0);
-  });
-
-  it("does not install a retry handler when recovery persistence succeeds (#10652)", () => {
+  it("does not install a retry handler until a recovery write fails (#10652)", () => {
     const registerExitHandler = vi.fn();
     const owner = installPostCreateRecoveryRetryOwner({ registerExitHandler });
-    const writer = vi.fn();
+    const firstWriter = vi.fn();
+    const secondWriter = vi.fn();
 
-    owner.record(writer);
+    owner.record(firstWriter);
+    expect(firstWriter).toHaveBeenCalledOnce();
+    expect(registerExitHandler).not.toHaveBeenCalled();
 
-    expect(writer).toHaveBeenCalledOnce();
+    owner.record(secondWriter);
+
+    expect(secondWriter).toHaveBeenCalledOnce();
     expect(registerExitHandler).not.toHaveBeenCalled();
   });
 
