@@ -310,11 +310,17 @@ describe("messaging provider installed-runtime proofs", () => {
     });
 
     try {
-      await execFileAsync(
-        process.execPath,
-        ["-e", FAKE_API_PROXY_READINESS_SOURCE, proxyAddress, String(readinessPort)],
-        { timeout: 10_000 },
-      );
+      try {
+        await execFileAsync(
+          process.execPath,
+          ["-e", FAKE_API_PROXY_READINESS_SOURCE, proxyAddress, String(readinessPort)],
+          { timeout: 10_000 },
+        );
+      } catch (error) {
+        throw new Error(
+          `proxy readiness probe failed: ${error instanceof Error ? error.message : String(error)}; proxy stderr: ${proxyStderr}`,
+        );
+      }
       const responses = await Promise.all([
         tcpRequest(proxyAddress, proxyPorts[0]!, "gateway"),
         tcpRequest(proxyAddress, proxyPorts[1]!, "websocket"),
@@ -464,12 +470,16 @@ describe("messaging provider installed-runtime proofs", () => {
     const proxyContainer = proxyRun[proxyRun.indexOf("--name") + 1]!;
     const networkCreate = calls.find((args) => args[0] === "network" && args[1] === "create");
     const network = networkCreate?.at(-1);
+    const stateDiagnostics = ["inspect", "--format", "{{json .State}}", proxyContainer];
+    const logDiagnostics = ["logs", "--tail", "100", proxyContainer];
+    const countCalls = (expected: string[]): number =>
+      calls.filter((args) => JSON.stringify(args) === JSON.stringify(expected)).length;
 
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain(proxyContainer);
     expect(calls).toContainEqual(["inspect", "--format", "{{.State.Running}}", proxyContainer]);
-    expect(calls).toContainEqual(["inspect", "--format", "{{json .State}}", proxyContainer]);
-    expect(calls).toContainEqual(["logs", "--tail", "100", proxyContainer]);
+    expect(countCalls(stateDiagnostics)).toBe(1);
+    expect(countCalls(logDiagnostics)).toBe(1);
     expect(calls).toContainEqual(["rm", "-f", proxyContainer]);
     expect(calls).toContainEqual(["rm", "-f", apiContainer]);
     expect(calls).toContainEqual(["network", "rm", network]);
