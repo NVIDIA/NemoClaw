@@ -639,6 +639,7 @@ function Invoke-Recover {
     $replacementRoot = Resolve-RecoveryAuxiliaryPath @replacementParameters
 
     if ($recovery.action -ceq 'remove-retained-backup') {
+        Assert-NoReparsePoint -Path $recordedVersionRoot -Label 'Published recovery version root'
         if (-not (Test-Path -LiteralPath $recordedVersionRoot -PathType Container) -or
             -not (Test-InstalledFiles -VersionRoot $recordedVersionRoot -Files $distribution.Files)) {
             Fail-NativeWindowsInstall "Recover cannot verify the published version. Recovery authority remains at $recoveryPath"

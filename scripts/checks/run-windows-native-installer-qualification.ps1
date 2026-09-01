@@ -33,6 +33,8 @@ $script:TrustedOpenShellRevision = 'bcd517bbe08cc80860c9be57699390cd32e8445f'
 $script:ShaPattern = '^[a-f0-9]{40}$'
 $script:MaxJsonBytes = 16384
 $script:MaxInstallerBytes = 524288
+$script:ProcessAuditSettleMilliseconds = 3000
+$script:NativeProbeTimeoutMilliseconds = 30000
 
 function Fail-Qualification {
     param([Parameter(Mandatory)][string]$Message)
@@ -54,6 +56,28 @@ function Resolve-PlainDirectory {
         Fail-Qualification "$Label must not be a reparse point."
     }
     return $resolved
+}
+
+function Assert-NoReparsePath {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    $candidate = [IO.Path]::GetFullPath($Path)
+    while ($candidate) {
+        if (Test-Path -LiteralPath $candidate) {
+            $item = Get-Item -LiteralPath $candidate -Force
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                Fail-Qualification "$Label must not contain a reparse point."
+            }
+        }
+        $parent = [IO.Directory]::GetParent($candidate)
+        if ($null -eq $parent) {
+            break
+        }
+        $candidate = $parent.FullName
+    }
 }
 
 function Invoke-Git {
@@ -187,14 +211,14 @@ function Receive-ProcessStartAudit {
 
     Start-Sleep -Milliseconds $SettleMilliseconds
     $records = @()
-    foreach ($event in @(Get-Event -SourceIdentifier $Audit.sourceIdentifier -ErrorAction SilentlyContinue)) {
-        $processEvent = $event.SourceEventArgs.NewEvent
+    foreach ($auditEvent in @(Get-Event -SourceIdentifier $Audit.sourceIdentifier -ErrorAction SilentlyContinue)) {
+        $processEvent = $auditEvent.SourceEventArgs.NewEvent
         $records += [pscustomobject]@{
             processId = [int]$processEvent.ProcessID
             parentProcessId = [int]$processEvent.ParentProcessID
             processName = [string]$processEvent.ProcessName
         }
-        Remove-Event -EventIdentifier $event.EventIdentifier
+        Remove-Event -EventIdentifier $auditEvent.EventIdentifier
     }
     return @($records)
 }
@@ -220,8 +244,8 @@ function Get-AuditedDescendantStarts {
 function Stop-ProcessStartAudit {
     param([Parameter(Mandatory)]$Audit)
 
-    foreach ($event in @(Get-Event -SourceIdentifier $Audit.sourceIdentifier -ErrorAction SilentlyContinue)) {
-        Remove-Event -EventIdentifier $event.EventIdentifier
+    foreach ($auditEvent in @(Get-Event -SourceIdentifier $Audit.sourceIdentifier -ErrorAction SilentlyContinue)) {
+        Remove-Event -EventIdentifier $auditEvent.EventIdentifier
     }
     Unregister-Event -SourceIdentifier $Audit.sourceIdentifier -ErrorAction SilentlyContinue
 }
@@ -304,9 +328,43 @@ function Invoke-NativeVersionProbe {
     )
 
     Assert-Arm64PortableExecutable -Path $Path -Label $Label
-    $output = @(& $Path --version 2>&1)
-    $exitCode = $LASTEXITCODE
-    $outputText = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
+    $stdoutPath = Join-Path $env:RUNNER_TEMP ('.native-version-' + [guid]::NewGuid().ToString('N') + '.stdout')
+    $stderrPath = Join-Path $env:RUNNER_TEMP ('.native-version-' + [guid]::NewGuid().ToString('N') + '.stderr')
+    $process = $null
+    try {
+        $process = Start-Process `
+            -FilePath $Path `
+            -ArgumentList @('--version') `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath `
+            -PassThru `
+            -ErrorAction Stop
+        if (-not $process.WaitForExit($script:NativeProbeTimeoutMilliseconds)) {
+            $process.Kill()
+            $process.WaitForExit()
+            Fail-Qualification "$Label exceeded the native --version timeout."
+        }
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
+        $stdout = if (Test-Path -LiteralPath $stdoutPath -PathType Leaf) {
+            [IO.File]::ReadAllText($stdoutPath)
+        } else { '' }
+        $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) {
+            [IO.File]::ReadAllText($stderrPath)
+        } else { '' }
+        $outputText = (@($stdout.Trim(), $stderr.Trim()) | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        }) -join [Environment]::NewLine
+    } finally {
+        if ($null -ne $process) {
+            $process.Dispose()
+        }
+        foreach ($redirectPath in @($stdoutPath, $stderrPath)) {
+            if (Test-Path -LiteralPath $redirectPath -PathType Leaf) {
+                [IO.File]::Delete($redirectPath)
+            }
+        }
+    }
     if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($outputText) -or $outputText.Length -gt 4096) {
         Fail-Qualification "$Label did not complete a bounded native --version probe."
     }
@@ -318,6 +376,27 @@ function Invoke-NativeVersionProbe {
     }
 }
 
+function Resolve-ReceiptVersionRoot {
+    param(
+        [Parameter(Mandatory)]$Receipt,
+        [Parameter(Mandatory)][string]$ExpectedRoot,
+        [Parameter(Mandatory)][string]$Phase
+    )
+
+    if ($Receipt.versionRoot -isnot [string] -or [string]::IsNullOrWhiteSpace($Receipt.versionRoot)) {
+        Fail-Qualification "$Phase receipt has no version root."
+    }
+    $resolved = [IO.Path]::GetFullPath([string]$Receipt.versionRoot).TrimEnd('\')
+    if ($resolved -cne $ExpectedRoot) {
+        Fail-Qualification "$Phase receipt version root does not match the independently derived install root."
+    }
+    if (-not (Test-Path -LiteralPath $resolved -PathType Container)) {
+        Fail-Qualification "$Phase receipt version root is missing."
+    }
+    Assert-NoReparsePath -Path $resolved -Label "$Phase receipt version root"
+    return $resolved
+}
+
 function Assert-InstalledDistribution {
     param(
         [Parameter(Mandatory)][string]$VersionRoot,
@@ -325,6 +404,11 @@ function Assert-InstalledDistribution {
         [Parameter(Mandatory)][string]$Phase
     )
 
+    $VersionRoot = [IO.Path]::GetFullPath($VersionRoot).TrimEnd('\')
+    if (-not (Test-Path -LiteralPath $VersionRoot -PathType Container)) {
+        Fail-Qualification "$Phase distribution root is missing."
+    }
+    Assert-NoReparsePath -Path $VersionRoot -Label "$Phase distribution root"
     $expectedFiles = @($Entries | ForEach-Object { $_.destination.ToLowerInvariant() } | Sort-Object)
     $expectedDirectories = @()
     foreach ($entry in $Entries) {
@@ -381,12 +465,12 @@ $openShellCheckoutParameters = @{
     Label = 'OpenShell checkout'
 }
 $openShellRoot = Assert-Checkout @openShellCheckoutParameters
-$installer = Join-Path $candidateRoot 'scripts\install-windows-native.ps1'
+$installerSource = Join-Path $candidateRoot 'scripts\install-windows-native.ps1'
 $committedInstallerParameters = @{
     Checkout = $candidateRoot
     Revision = $CandidateSha
     RelativePath = 'scripts/install-windows-native.ps1'
-    FilePath = $installer
+    FilePath = $installerSource
 }
 Assert-CommittedFile @committedInstallerParameters
 
@@ -419,6 +503,11 @@ $hostPlatformEvidence = [pscustomobject]@{
 }
 [IO.Directory]::CreateDirectory($payloadRoot) | Out-Null
 [IO.Directory]::CreateDirectory($receiptStage) | Out-Null
+$installer = Join-Path $qualificationRoot 'install-windows-native.ps1'
+[IO.File]::Copy($installerSource, $installer, $false)
+$installerItem = Get-Item -LiteralPath $installer -Force
+$installerItem.IsReadOnly = $true
+$validatedInstallerSha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
 
 try {
     $releaseRoot = Join-Path $openShellRoot 'target\aarch64-pc-windows-msvc\release'
@@ -470,6 +559,10 @@ try {
         Fail-Qualification 'Qualification payload has no unique OpenShell CLI digest.'
     }
     $expectedOpenShellSha256 = $expectedOpenShellEntry[0].sha256
+    $expectedVersionName = "openshell-pr$($script:TrustedOpenShellPullRequest)-$($script:TrustedOpenShellRevision.Substring(0, 12))-arm64"
+    $expectedVersionRoot = [IO.Path]::GetFullPath(
+        (Join-Path (Join-Path $installRoot 'versions') $expectedVersionName)
+    ).TrimEnd('\')
 
     $nativeBinaryEvidence = @(
         Invoke-NativeVersionProbe -Path (Join-Path $payloadRoot 'bin\openshell.exe') -Label 'OpenShell CLI'
@@ -482,7 +575,9 @@ try {
         -not $childProbeControl.sideEffectObserved) {
         Fail-Qualification 'The child side-effect control probe did not execute before installer qualification.'
     }
-    $controlAuditRecords = @(Receive-ProcessStartAudit -Audit $processAudit -SettleMilliseconds 3000)
+    $controlAuditRecords = @(
+        Receive-ProcessStartAudit -Audit $processAudit -SettleMilliseconds $script:ProcessAuditSettleMilliseconds
+    )
     $controlDescendantStarts = @(Get-AuditedDescendantStarts -Records $controlAuditRecords -RootProcessId $PID)
     if (@($controlDescendantStarts | Where-Object {
         $_.processId -eq $childProbeControl.processId
@@ -515,18 +610,22 @@ try {
     [IO.File]::Copy($installReceiptPath, (Join-Path $receiptStage 'install-receipt.json'), $false)
 
     $installReceipt = Get-Content -LiteralPath $installReceiptPath -Raw | ConvertFrom-Json
+    $initialVersionRoot = Resolve-ReceiptVersionRoot `
+        -Receipt $installReceipt `
+        -ExpectedRoot $expectedVersionRoot `
+        -Phase 'Initial install'
     $initialDistributionParameters = @{
-        VersionRoot = $installReceipt.versionRoot
+        VersionRoot = $initialVersionRoot
         Entries = $distributionEntries
         Phase = 'Initial install'
     }
     Assert-InstalledDistribution @initialDistributionParameters
     foreach ($installedExecutable in @('openshell.exe', 'openshell-gateway.exe')) {
         Assert-Arm64PortableExecutable `
-            -Path (Join-Path $installReceipt.versionRoot "bin\$installedExecutable") `
+            -Path (Join-Path $initialVersionRoot "bin\$installedExecutable") `
             -Label "Installed $installedExecutable"
     }
-    $untrackedPath = Join-Path $installReceipt.versionRoot 'bin\untracked-qualification.txt'
+    $untrackedPath = Join-Path $initialVersionRoot 'bin\untracked-qualification.txt'
     [IO.File]::WriteAllText($untrackedPath, 'untracked', [Text.UTF8Encoding]::new($false))
     $untrackedInstallRejected = $false
     try {
@@ -537,7 +636,7 @@ try {
     if (-not $untrackedInstallRejected) {
         Fail-Qualification 'Install accepted an untracked file inside the owned version root.'
     }
-    $driftTarget = Join-Path $installReceipt.versionRoot 'bin\openshell.exe'
+    $driftTarget = Join-Path $initialVersionRoot 'bin\openshell.exe'
     [IO.File]::AppendAllText($driftTarget, 'qualification-drift', [Text.UTF8Encoding]::new($false))
     $repairParameters = @{
         Action = 'Repair'
@@ -570,15 +669,19 @@ try {
     & $installer @repairParameters | Out-Null
     [IO.File]::Copy($installReceiptPath, (Join-Path $receiptStage 'repair-receipt.json'), $false)
     $repairedReceipt = Get-Content -LiteralPath $installReceiptPath -Raw | ConvertFrom-Json
+    $repairedVersionRoot = Resolve-ReceiptVersionRoot `
+        -Receipt $repairedReceipt `
+        -ExpectedRoot $expectedVersionRoot `
+        -Phase 'Repair'
     if ((Test-Path -LiteralPath $untrackedPath) -or
-        (Get-FileHash -LiteralPath (Join-Path $repairedReceipt.versionRoot 'bin\openshell.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedOpenShellSha256) {
+        (Get-FileHash -LiteralPath (Join-Path $repairedVersionRoot 'bin\openshell.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedOpenShellSha256) {
         Fail-Qualification 'Repair did not restore the OpenShell CLI digest.'
     }
-    Assert-InstalledDistribution -VersionRoot $repairedReceipt.versionRoot -Entries $distributionEntries -Phase 'Repair'
+    Assert-InstalledDistribution -VersionRoot $repairedVersionRoot -Entries $distributionEntries -Phase 'Repair'
 
     $recoveryBackupRoot = Join-Path $installRoot ('.backup-' + [guid]::NewGuid().ToString('N'))
     $recoveryReplacementRoot = Join-Path $installRoot ('.replacement-' + [guid]::NewGuid().ToString('N'))
-    [IO.Directory]::Move($repairedReceipt.versionRoot, $recoveryBackupRoot)
+    [IO.Directory]::Move($repairedVersionRoot, $recoveryBackupRoot)
     [IO.Directory]::CreateDirectory($recoveryReplacementRoot) | Out-Null
     [IO.File]::WriteAllText(
         (Join-Path $recoveryReplacementRoot 'incomplete.txt'),
@@ -596,7 +699,7 @@ try {
             revision = $script:TrustedOpenShellRevision
         }
         action = 'restore-prior-version-and-remove-replacement'
-        versionRoot = $repairedReceipt.versionRoot
+        versionRoot = $repairedVersionRoot
         backupRoot = $recoveryBackupRoot
         failedReplacementRoot = $recoveryReplacementRoot
         operationError = 'qualification fixture'
@@ -609,16 +712,29 @@ try {
         InstallRoot = $installRoot
     }
     & $installer @recoverParameters | Out-Null
+    $recoveredReceipt = Get-Content -LiteralPath $installReceiptPath -Raw | ConvertFrom-Json
+    $recoveredVersionRoot = Resolve-ReceiptVersionRoot `
+        -Receipt $recoveredReceipt `
+        -ExpectedRoot $expectedVersionRoot `
+        -Phase 'Recover with replacement root'
     if ((Test-Path -LiteralPath $recoveryAuthorityPath) -or
         (Test-Path -LiteralPath $recoveryBackupRoot) -or
         (Test-Path -LiteralPath $recoveryReplacementRoot) -or
-        (Get-FileHash -LiteralPath (Join-Path $repairedReceipt.versionRoot 'bin\openshell.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedOpenShellSha256) {
+        (Get-FileHash -LiteralPath (Join-Path $recoveredVersionRoot 'bin\openshell.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedOpenShellSha256) {
         Fail-Qualification 'Recover did not publish one clean pinned distribution.'
     }
+    Assert-InstalledDistribution `
+        -VersionRoot $recoveredVersionRoot `
+        -Entries $distributionEntries `
+        -Phase 'Recover with replacement root'
 
     $nullReplacementReceipt = Get-Content -LiteralPath $installReceiptPath -Raw | ConvertFrom-Json
+    $nullReplacementVersionRoot = Resolve-ReceiptVersionRoot `
+        -Receipt $nullReplacementReceipt `
+        -ExpectedRoot $expectedVersionRoot `
+        -Phase 'Pre-null recovery'
     $nullReplacementBackupRoot = Join-Path $installRoot ('.backup-' + [guid]::NewGuid().ToString('N'))
-    [IO.Directory]::Move($nullReplacementReceipt.versionRoot, $nullReplacementBackupRoot)
+    [IO.Directory]::Move($nullReplacementVersionRoot, $nullReplacementBackupRoot)
     Write-JsonFile -Path $recoveryAuthorityPath -Value ([pscustomobject]@{
         receiptVersion = 1
         classification = 'qualification-only'
@@ -629,18 +745,27 @@ try {
             revision = $script:TrustedOpenShellRevision
         }
         action = 'restore-prior-version'
-        versionRoot = $nullReplacementReceipt.versionRoot
+        versionRoot = $nullReplacementVersionRoot
         backupRoot = $nullReplacementBackupRoot
         failedReplacementRoot = $null
         operationError = 'qualification null-replacement fixture'
         rollbackError = 'qualification null-replacement fixture'
     })
     & $installer @recoverParameters | Out-Null
+    $nullRecoveredReceipt = Get-Content -LiteralPath $installReceiptPath -Raw | ConvertFrom-Json
+    $nullRecoveredVersionRoot = Resolve-ReceiptVersionRoot `
+        -Receipt $nullRecoveredReceipt `
+        -ExpectedRoot $expectedVersionRoot `
+        -Phase 'Recover with null replacement root'
     if ((Test-Path -LiteralPath $recoveryAuthorityPath) -or
         (Test-Path -LiteralPath $nullReplacementBackupRoot) -or
-        (Get-FileHash -LiteralPath (Join-Path $nullReplacementReceipt.versionRoot 'bin\openshell.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedOpenShellSha256) {
+        (Get-FileHash -LiteralPath (Join-Path $nullRecoveredVersionRoot 'bin\openshell.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedOpenShellSha256) {
         Fail-Qualification 'Recover did not handle a null replacement root.'
     }
+    Assert-InstalledDistribution `
+        -VersionRoot $nullRecoveredVersionRoot `
+        -Entries $distributionEntries `
+        -Phase 'Recover with null replacement root'
     [IO.File]::Copy($installReceiptPath, (Join-Path $receiptStage 'recovery-receipt.json'), $false)
 
     & $installer -Action Uninstall -InstallRoot $installRoot
@@ -663,20 +788,25 @@ try {
         $newNames = @($newProhibitedProcesses | ForEach-Object { $_.processName } | Sort-Object -Unique) -join ', '
         Fail-Qualification "A new prohibited WSL or Docker process appeared during installer qualification: $newNames"
     }
-    $installerAuditRecords = @(Receive-ProcessStartAudit -Audit $processAudit -SettleMilliseconds 1000)
+    $installerAuditRecords = @(
+        Receive-ProcessStartAudit -Audit $processAudit -SettleMilliseconds $script:ProcessAuditSettleMilliseconds
+    )
     $installerDescendantStarts = @(Get-AuditedDescendantStarts -Records $installerAuditRecords -RootProcessId $PID)
     if ($installerDescendantStarts.Count -ne 0) {
         $startedNames = @($installerDescendantStarts | ForEach-Object { $_.processName } | Sort-Object -Unique) -join ', '
         Fail-Qualification "The file-only installer started a descendant process: $startedNames"
     }
 
+    if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant() -cne $validatedInstallerSha256) {
+        Fail-Qualification 'The staged installer bytes changed during qualification.'
+    }
     [IO.File]::Copy($installer, (Join-Path $receiptStage 'install-windows-native.ps1'), $false)
     [IO.File]::Copy($manifestPath, (Join-Path $receiptStage 'distribution-manifest.json'), $false)
     Write-JsonFile -Path (Join-Path $receiptStage 'candidate-source.json') -Value ([pscustomobject]@{
         receiptVersion = 1
         repository = $script:CanonicalNemoClawRepository
         revision = $CandidateSha
-        installerSha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+        installerSha256 = $validatedInstallerSha256
     })
     Write-JsonFile -Path (Join-Path $receiptStage 'openshell-source.json') -Value ([pscustomobject]@{
         receiptVersion = 1
@@ -714,6 +844,9 @@ try {
     }
     if ($receiptStage -and (Test-Path -LiteralPath $receiptStage -PathType Container)) {
         [IO.Directory]::Delete($receiptStage, $true)
+    }
+    if (Test-Path -LiteralPath $installer -PathType Leaf) {
+        (Get-Item -LiteralPath $installer -Force).IsReadOnly = $false
     }
     if (Test-Path -LiteralPath $qualificationRoot -PathType Container) {
         [IO.Directory]::Delete($qualificationRoot, $true)
