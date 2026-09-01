@@ -432,7 +432,7 @@ describe("PR review advisor specialist lifecycle", () => {
     await command;
 
     expect(calls).toEqual(["create", "cancel", "sandbox", "gateway", "listeners", "restore"]);
-    expect(sandboxNames).toEqual([expect.stringMatching(/^pr-adv-[A-Za-z0-9_-]{12}$/u), sandboxNames[0], sandboxNames[0]]);
+    expect(sandboxNames).toEqual([expect.stringMatching(/^pr-adv-[a-f0-9]{12}$/u), sandboxNames[0], sandboxNames[0]]);
     expect(restore).toHaveBeenCalledWith("SIGTERM");
     expect(stderr).not.toHaveBeenCalled();
     expect(calls).not.toContain("download");
@@ -482,7 +482,7 @@ describe("PR review advisor specialist lifecycle", () => {
     await command;
 
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("execution cleanup"));
-    expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/sandbox pr-adv-[A-Za-z0-9_-]{12}/u));
+    expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/sandbox pr-adv-[a-f0-9]{12}/u));
     expect(stderr).not.toHaveBeenCalledWith(expect.stringContaining(credential));
     expect(events).toEqual(["diagnostic", "restore"]);
     expect(restore).toHaveBeenCalledWith("SIGHUP");
