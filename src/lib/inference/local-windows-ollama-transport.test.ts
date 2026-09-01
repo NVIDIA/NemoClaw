@@ -8,14 +8,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   applyOllamaRuntimeContextWindow,
+  clearPersistedOllamaHostIfUnused,
   CONTAINER_REACHABILITY_IMAGE,
   findReachableOllamaHost,
   getLocalProviderHealthCheck,
   getOllamaHostForCleanup,
   getOllamaModelOptions,
-  getOllamaProbeCommand,
   getResolvedOllamaHost,
-  getOllamaWarmupRequestCommand,
   OLLAMA_HOST_DOCKER_INTERNAL,
   loadPersistedOllamaHost,
   persistResolvedOllamaHost,
@@ -25,6 +24,7 @@ import {
   resetOllamaRuntimeContextWindowAutoState,
   setResolvedOllamaHost,
   validateLocalProvider,
+  validateOllamaModel,
 } from "./local";
 
 describe("Windows-host Ollama transport", () => {
@@ -62,17 +62,50 @@ describe("Windows-host Ollama transport", () => {
     }
   });
 
-  it("restores the persisted route before fresh-process connect discovery", () => {
+  it("retires the final persisted route after Ollama ownership ends", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-retire-"));
+    try {
+      persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
+
+      expect(clearPersistedOllamaHostIfUnused(["nvidia-prod"], stateRoot)).toBe(true);
+      expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
+      expect(getOllamaHostForCleanup(stateRoot)).toBe("127.0.0.1");
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("retains the persisted route while another Ollama sandbox owns it", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-retain-"));
+    try {
+      persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
+
+      expect(clearPersistedOllamaHostIfUnused(["ollama-local"], stateRoot)).toBe(false);
+      expect(loadPersistedOllamaHost(stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("re-probes a stale persisted route before fresh-process connect discovery", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "nemoclaw-ollama-host-connect-"));
     try {
       persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
       resetOllamaHostCache();
-      const capture = vi.fn(() => {
-        throw new Error("fresh-process connect must not probe WSL loopback");
-      });
+      const capture = vi.fn((command: readonly string[]) =>
+        command.includes("http://127.0.0.1:11434/api/tags") ? JSON.stringify({ models: [] }) : "",
+      );
 
-      expect(findReachableOllamaHost(capture, {}, stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
-      expect(capture).not.toHaveBeenCalled();
+      expect(findReachableOllamaHost(capture, { isWsl: true }, stateRoot)).toBe("127.0.0.1");
+      expect(capture).toHaveBeenCalledTimes(2);
+      expect(capture.mock.calls[0]?.[0]).toEqual(
+        expect.arrayContaining(["docker", "run", "http://host.docker.internal:11434/api/tags"]),
+      );
+      expect(capture.mock.calls[1]?.[0]).toEqual(
+        expect.arrayContaining(["curl", "http://127.0.0.1:11434/api/tags"]),
+      );
+      expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
+      expect(getResolvedOllamaHost()).toBe("127.0.0.1");
     } finally {
       rmSync(stateRoot, { recursive: true, force: true });
     }
@@ -88,7 +121,7 @@ describe("Windows-host Ollama transport", () => {
       resetOllamaHostCache();
 
       expect(loadPersistedOllamaHost(stateRoot)).toBeNull();
-      expect(getResolvedOllamaHost(stateRoot)).toBe("127.0.0.1");
+      expect(getOllamaHostForCleanup(stateRoot)).toBe("127.0.0.1");
     } finally {
       rmSync(stateRoot, { recursive: true, force: true });
     }
@@ -100,9 +133,10 @@ describe("Windows-host Ollama transport", () => {
     try {
       persistResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL, stateRoot);
       resetOllamaHostCache();
-      expect(getResolvedOllamaHost(stateRoot)).toBe(OLLAMA_HOST_DOCKER_INTERNAL);
+      setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
 
       const result = probeLocalProviderHealth("ollama-local", {
+        findReachableOllamaHostImpl: () => OLLAMA_HOST_DOCKER_INTERNAL,
         loadOllamaProxyTokenImpl: () => null,
         ollamaRunCaptureExImpl: (command) => {
           calls.push(command);
@@ -157,40 +191,37 @@ describe("Windows-host Ollama transport", () => {
     );
   });
 
-  it("builds warm-up and validation requests for Docker Desktop (#10553)", () => {
+  it("validates a Windows-host model through Docker Desktop (#10553)", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const capture = vi.fn((command: readonly string[]) =>
+      command.includes("http://host.docker.internal:11434/api/show")
+        ? JSON.stringify({ capabilities: ["tools"] })
+        : "",
+    );
+    const captureEx = vi.fn((command: readonly string[]) => ({
+      stdout:
+        command[0] === "docker" &&
+        command.includes("http://host.docker.internal:11434/api/generate")
+          ? JSON.stringify({ done: true, response: "ready" })
+          : "",
+      stderr: "",
+      exitCode: command[0] === "docker" ? 0 : 7,
+      timedOut: false,
+    }));
 
-    expect(getOllamaWarmupRequestCommand("qwen3.5:9b")).toEqual([
-      "docker",
-      "run",
-      "--rm",
-      CONTAINER_REACHABILITY_IMAGE,
-      "-s",
-      "--connect-timeout",
-      "10",
-      "--max-time",
-      "120",
-      "http://host.docker.internal:11434/api/generate",
-      "-H",
-      "Content-Type: application/json",
-      "-d",
-      expect.stringContaining('"model":"qwen3.5:9b"'),
-    ]);
-
-    expect(getOllamaProbeCommand("qwen3.5:9b")).toEqual([
-      "docker",
-      "run",
-      "--rm",
-      CONTAINER_REACHABILITY_IMAGE,
-      "-sS",
-      "--max-time",
-      "120",
-      "-H",
-      "Content-Type: application/json",
-      "-d",
-      expect.stringContaining('"model":"qwen3.5:9b"'),
-      "http://host.docker.internal:11434/api/generate",
-    ]);
+    expect(validateOllamaModel("qwen3.5:9b", capture, () => false, captureEx)).toEqual({
+      ok: true,
+    });
+    expect(captureEx).toHaveBeenCalledOnce();
+    expect(captureEx.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining([
+        "docker",
+        "run",
+        "--rm",
+        CONTAINER_REACHABILITY_IMAGE,
+        "http://host.docker.internal:11434/api/generate",
+      ]),
+    );
   });
 
   it("validates health and container reachability through Docker Desktop (#10553)", () => {

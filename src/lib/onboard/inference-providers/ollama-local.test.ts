@@ -1,11 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  getOllamaWarmupCommand,
+  OLLAMA_HOST_DOCKER_INTERNAL,
+  resetOllamaHostCache,
+  setResolvedOllamaHost,
+} from "../../inference/local";
 import { setupOllamaLocalInference } from "./ollama-local";
 import type { OllamaDeps } from "./types";
 
 const CREDENTIAL_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
+
+afterEach(() => resetOllamaHostCache());
 
 const SANDBOX_ENDPOINT_MISMATCH =
   "Selected Ollama model 'llama3.2:1b' answers on http://127.0.0.1:11434, but the daemon the " +
@@ -74,7 +82,7 @@ describe("Ollama local provider sandbox-facing model gate", () => {
 
   it("blocks even when every host-side check passes (#9454)", async () => {
     const validateOllamaModelWithToolsOverride = vi.fn(() => ({ ok: true }));
-    const run = vi.fn(() => ({ status: 0 }));
+    const run = vi.fn<OllamaDeps["run"]>((_command) => ({ status: 0 }));
 
     await expect(
       setupOllamaLocalInference(
@@ -123,6 +131,39 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       { [CREDENTIAL_ENV]: "ollama" },
     );
     expect(persistResolvedOllamaHost).toHaveBeenCalledOnce();
+  });
+
+  it("dispatches Windows-host warm-up through Docker Desktop", async () => {
+    setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
+    const runCommands: unknown[] = [];
+    const run = vi.fn((command: unknown) => {
+      runCommands.push(command);
+      return { status: 0 };
+    });
+
+    await expect(
+      setupOllamaLocalInference(
+        { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
+        deps({
+          getOllamaWarmupCommand,
+          run,
+          localInference: {
+            validateOllamaModelWithToolsOverride: () => ({ ok: true }),
+            validateSandboxFacingOllamaModel: () => ({ ok: true }),
+            persistResolvedOllamaHost: vi.fn(),
+          },
+        }),
+      ),
+    ).resolves.toEqual({ done: false });
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(runCommands[0]).toEqual([
+      "bash",
+      "-c",
+      expect.stringMatching(
+        /docker.*curlimages\/curl:8\.10\.1.*host\.docker\.internal:11434\/api\/generate/,
+      ),
+    ]);
   });
 
   it("fails before provider registration when the cleanup route cannot be staged", async () => {

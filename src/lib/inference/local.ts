@@ -186,45 +186,43 @@ export function findReachableOllamaHost(
 ): string | null {
   if (_resolvedOllamaHost !== null) return _resolvedOllamaHost;
   const persistedHost = loadPersistedOllamaHost(stateRoot);
-  if (persistedHost) {
-    _resolvedOllamaHost = persistedHost;
-    return persistedHost;
-  }
   const capture = runCaptureImpl ?? runCapture;
-  for (const host of ollamaCandidateHosts(wslDetection)) {
+  const candidates = [
+    ...(persistedHost ? [persistedHost] : []),
+    ...ollamaCandidateHosts(wslDetection).filter((host) => host !== persistedHost),
+  ];
+  for (const host of candidates) {
     // Explicit timeouts: a blackholed host (e.g., firewalled host.docker.internal)
     // would otherwise stall the synchronous onboard probe for the OS connect
     // timeout (~75-130s on Linux). Matches the convention used in
     // getLocalProviderHealthStatus probes.
     const result = capture(
-      [
-        "curl",
+      getOllamaApiCommand(
+        [
         "-sf",
         "--connect-timeout",
         "3",
         "--max-time",
         "5",
         `http://${host}:${OLLAMA_PORT}/api/tags`,
-      ],
+        ],
+        host,
+      ),
       { ignoreError: true },
     );
     if (result) {
       _resolvedOllamaHost = host;
       return host;
     }
+    if (host === persistedHost) clearPersistedOllamaHost(stateRoot);
   }
   return null;
 }
 
 // Returns the resolved host if a probe has succeeded, otherwise OLLAMA_LOCALHOST.
 // Used by URL-builder helpers that need a string and don't want to re-probe.
-export function getResolvedOllamaHost(
-  stateRoot: string = resolveSharedLocalAdapterStateRoot(),
-): string {
-  if (_resolvedOllamaHost) return _resolvedOllamaHost;
-  const persistedHost = loadPersistedOllamaHost(stateRoot);
-  if (persistedHost) _resolvedOllamaHost = persistedHost;
-  return persistedHost ?? OLLAMA_LOCALHOST;
+export function getResolvedOllamaHost(): string {
+  return _resolvedOllamaHost ?? OLLAMA_LOCALHOST;
 }
 
 /** Persist the accepted local Ollama route for later CLI processes. */
@@ -259,6 +257,22 @@ export function loadPersistedOllamaHost(
 ): typeof OLLAMA_LOCALHOST | typeof OLLAMA_HOST_DOCKER_INTERNAL | null {
   const receipt = readLocalAdapterJsonFile(ollamaHostReceiptPath(stateRoot));
   return receipt?.schemaVersion === 1 && isSupportedOllamaHost(receipt.host) ? receipt.host : null;
+}
+
+export function clearPersistedOllamaHost(
+  stateRoot: string = resolveSharedLocalAdapterStateRoot(),
+): void {
+  removeLocalAdapterFile(ollamaHostReceiptPath(stateRoot));
+  _resolvedOllamaHost = null;
+}
+
+export function clearPersistedOllamaHostIfUnused(
+  providers: readonly (string | null | undefined)[],
+  stateRoot: string = resolveSharedLocalAdapterStateRoot(),
+): boolean {
+  if (providers.some((provider) => provider?.includes("ollama"))) return false;
+  clearPersistedOllamaHost(stateRoot);
+  return true;
 }
 
 /** Resolve cleanup transport after process-local onboarding state is gone. */
@@ -381,6 +395,7 @@ export interface LocalProviderHealthProbeOptions {
   runCurlProbeImpl?: (argv: string[], opts?: CurlProbeOptions) => CurlProbeResult;
   /** Executes the translated Windows-host Docker probe. Injectable for transport tests. */
   ollamaRunCaptureExImpl?: RunCaptureExFn;
+  findReachableOllamaHostImpl?: () => string | null;
   /**
    * Lets callers that perform their own Ollama auth-proxy check avoid the
    * legacy inline proxy subprobe. The inline subprobe is retained for status
@@ -1056,6 +1071,9 @@ export function probeLocalProviderHealth(
 ): LocalProviderHealthStatus | null {
   const providerLabel = getLocalProviderLabel(provider);
   if (!providerLabel) return null;
+  if (provider === "ollama-local") {
+    (options.findReachableOllamaHostImpl ?? findReachableOllamaHost)();
+  }
 
   let managedState: ManagedVllmProviderState = { kind: "absent" };
   if (provider === "vllm-local") {

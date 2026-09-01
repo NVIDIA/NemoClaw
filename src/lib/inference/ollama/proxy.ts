@@ -30,14 +30,16 @@ const { ensurePulledOllamaModel }: typeof import("./model-discovery") =
 const { ollamaModelRefsMatch }: typeof import("./model-discovery") = require("./model-discovery");
 const {
   getBootstrapOllamaModelOptions,
+  findReachableOllamaHost,
+  clearPersistedOllamaHostIfUnused,
   getOllamaApiCommand,
-  getOllamaHostForCleanup,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
   getResolvedOllamaHost,
   loadPersistedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
   probeOllamaModelCapabilities,
+  persistResolvedOllamaHost,
   selectDefaultOllamaModel,
   validateOllamaModel,
 } = require("../local");
@@ -1484,15 +1486,34 @@ function unloadOllamaModels(
   onlyModels?: readonly string[],
   options: OllamaUnloadOptions = {},
 ): OllamaUnloadResult {
-  const releaseHost = options.getResolvedOllamaHost
-    ? options.getResolvedOllamaHost()
-    : getOllamaHostForCleanup(options.ollamaHostStateRoot);
-  const releaseEndpoint = buildLocalOllamaEndpoint(() => releaseHost);
+  const requestedModels = onlyModels?.map((model) => model.trim()).filter(Boolean) ?? [];
+  let selectedModels: readonly string[] | null = onlyModels?.length ? requestedModels : null;
+  let releaseHost: string | null;
+  if (options.getResolvedOllamaHost) {
+    releaseHost = options.getResolvedOllamaHost();
+  } else {
+    const persistedHost = loadPersistedOllamaHost(options.ollamaHostStateRoot);
+    releaseHost =
+      persistedHost ??
+      findReachableOllamaHost(undefined, {}, options.ollamaHostStateRoot);
+    if (releaseHost && !persistedHost) {
+      persistResolvedOllamaHost(releaseHost, options.ollamaHostStateRoot);
+    }
+  }
+  if (!releaseHost) {
+    return {
+      ok: true,
+      outcome: "not-resident",
+      endpoint: buildLocalOllamaEndpoint(),
+      selectedModels: selectedModels ?? [],
+      discoveries: [],
+      requests: [],
+    };
+  }
+  const releaseEndpoint = buildLocalOllamaEndpoint(() => releaseHost!);
   const spawnSyncImpl = options.spawnSync ?? spawnSync;
   const sleepImpl = options.sleep ?? defaultReleaseSleep;
   const maxAttempts = Math.max(1, options.maxAttempts ?? OLLAMA_RELEASE_MAX_ATTEMPTS);
-  const requestedModels = onlyModels?.map((model) => model.trim()).filter(Boolean) ?? [];
-  let selectedModels: readonly string[] | null = onlyModels?.length ? requestedModels : null;
   const discoveries: OllamaModelDiscoveryEvidence[] = [];
   const requests: OllamaUnloadRequestEvidence[] = [];
   let lastMatchedModels: readonly string[] = [];
@@ -1649,16 +1670,12 @@ function unloadOllamaModels(
   };
 }
 
-function hasPersistedOllamaRoute(): boolean {
-  return loadPersistedOllamaHost() !== null;
-}
-
 export {
   checkOllamaModelToolSupport,
   ensureOllamaAuthProxy,
+  clearPersistedOllamaHostIfUnused,
   getOllamaProxyToken,
   getOllamaPullTimeoutMs,
-  hasPersistedOllamaRoute,
   isProxyHealthy,
   killStaleProxy,
   noAuthProxy,

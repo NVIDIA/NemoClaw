@@ -256,6 +256,7 @@ export type OllamaDeps = CommonDeps & {
     ): { ok: boolean; message?: string };
     validateSandboxFacingOllamaModel(model: string): { ok: boolean; message?: string };
     persistResolvedOllamaHost?(): (() => void) | void;
+    clearPersistedOllamaHostIfUnused?(providers: readonly (string | null | undefined)[]): boolean;
   };
   /** Exact provider-owned proof used instead of legacy host warmup/probes. */
   providerOwnedInferenceProof?: {

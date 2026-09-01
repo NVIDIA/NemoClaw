@@ -20,7 +20,6 @@ import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding"
 import { isObjectRecord } from "../core/json-types";
 import { DASHBOARD_PORT } from "../core/ports";
 import {
-  hasPersistedOllamaRoute as hasDefaultPersistedOllamaRoute,
   unloadOllamaModels as unloadDefaultOllamaModels,
   type OllamaUnloadResult,
 } from "../inference/ollama/proxy";
@@ -50,8 +49,6 @@ export interface ServiceOptions {
   processControl?: ProcessControl;
   /** Injectable Ollama model cleanup for tests. */
   unloadOllamaModels?: () => OllamaUnloadResult | void;
-  /** Whether an accepted Ollama route makes cleanup part of this stop contract. */
-  hasPersistedOllamaRoute?: () => boolean;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
   cloudflareTunnelToken?: string;
   /** Also release the managed host gateway port (legacy full-stop only). */
@@ -528,20 +525,18 @@ export function stopAll(opts: ServiceOptions = {}): void {
     warn("Hint: run 'nemoclaw stop' with a registered sandbox or set NEMOCLAW_SANDBOX_NAME.");
   }
 
-  const ollamaCleanupExpected =
-    opts.hasPersistedOllamaRoute?.() ?? hasDefaultPersistedOllamaRoute();
   let ollamaCleanupIncomplete = false;
   try {
     const unloadOllamaModels = opts.unloadOllamaModels ?? unloadDefaultOllamaModels;
     const cleanup = unloadOllamaModels();
     if (cleanup && !cleanup.ok) {
-      ollamaCleanupIncomplete = ollamaCleanupExpected;
+      ollamaCleanupIncomplete = true;
       warn(
         `Ollama model cleanup failed at ${cleanup.endpoint} (${cleanup.outcome}: ${cleanup.message ?? "no detail"}). The saved local route was retained; repair Ollama and retry this command.`,
       );
     }
   } catch (error) {
-    ollamaCleanupIncomplete = ollamaCleanupExpected;
+    ollamaCleanupIncomplete = true;
     warn(
       `Ollama model cleanup failed unexpectedly: ${error instanceof Error ? error.message : String(error)}. Retry this command after repairing Ollama.`,
     );

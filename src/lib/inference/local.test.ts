@@ -176,10 +176,11 @@ describe("local inference helpers", () => {
       "http://127.0.0.1:11434/api/tags",
       "http://host.docker.internal:11434/api/tags",
     ]);
-    expect(commands.map((command) => command.slice(2, 6))).toEqual([
-      ["--connect-timeout", "3", "--max-time", "5"],
-      ["--connect-timeout", "3", "--max-time", "5"],
-    ]);
+    expect(commands.map((command) => command[0])).toEqual(["curl", "docker"]);
+    expect(commands[0]).toEqual(expect.arrayContaining(["--connect-timeout", "3", "--max-time", "5"]));
+    expect(commands[1]).toEqual(
+      expect.arrayContaining([CONTAINER_REACHABILITY_IMAGE, "--connect-timeout", "3", "--max-time", "5"]),
+    );
   });
 
   it("returns the expected base URL for vllm-local", () => {

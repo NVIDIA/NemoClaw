@@ -1018,6 +1018,9 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
     sandboxes: (typeof priorEntry)[];
     unloadOllamaModels: (onlyModels: readonly string[]) => void;
     applyLocalInferenceRoute?: () => Promise<boolean>;
+    clearPersistedOllamaHostIfUnused?: (
+      providers: readonly (string | null | undefined)[],
+    ) => boolean;
   }) {
     return createDirectSetupInferenceHarness({
       runOpenshell: (args) =>
@@ -1034,6 +1037,15 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
         getSandbox: options.getSandbox,
         listSandboxes: () => ({ sandboxes: options.sandboxes, defaultSandbox: null }),
         unloadOllamaModels: options.unloadOllamaModels,
+        ...(options.clearPersistedOllamaHostIfUnused
+          ? {
+              localInference: {
+                validateOllamaModelWithToolsOverride: () => ({ ok: true }),
+                validateSandboxFacingOllamaModel: () => ({ ok: true }),
+                clearPersistedOllamaHostIfUnused: options.clearPersistedOllamaHostIfUnused,
+              },
+            }
+          : {}),
       },
     });
   }
@@ -1052,6 +1064,22 @@ describe("re-onboard Ollama GPU release (#9110)", () => {
       warn.mockRestore();
     }
     expect(unloadOllamaModels).toHaveBeenCalledWith(["llama3"]);
+  });
+
+  it("retires the final Ollama route receipt after switching providers", async () => {
+    const clearPersistedOllamaHostIfUnused = vi.fn(() => true);
+    const harness = releaseHarness({
+      getSandbox: () => priorEntry,
+      sandboxes: [{ ...priorEntry, provider: "vllm-local", model: "vllm-model" }],
+      unloadOllamaModels: vi.fn(),
+      clearPersistedOllamaHostIfUnused,
+    });
+
+    await expect(harness.setupInference("test-box", "vllm-model", "vllm-local")).resolves.toEqual({
+      ok: true,
+    });
+
+    expect(clearPersistedOllamaHostIfUnused).toHaveBeenCalledWith(["vllm-local"]);
   });
 
   it("keeps the successful route when the superseded model unload fails (#9110)", async () => {

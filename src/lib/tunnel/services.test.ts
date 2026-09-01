@@ -628,11 +628,7 @@ describe("stopAll", () => {
     };
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    stopAll({
-      pidDir,
-      unloadOllamaModels: () => failure,
-      hasPersistedOllamaRoute: () => true,
-    });
+    stopAll({ pidDir, unloadOllamaModels: () => failure });
     const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     logSpy.mockRestore();
 

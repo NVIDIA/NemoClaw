@@ -466,6 +466,15 @@ export function removeSandboxRegistryEntryWithReceipt(
   return removeSandboxWithReceipt(sandboxName);
 }
 
+export function retireFinalOllamaRouteAfterSandboxRemoval(
+  removedSandbox: Pick<registry.SandboxEntry, "provider"> | null,
+  remainingSandboxes: readonly Pick<registry.SandboxEntry, "provider">[],
+  clearIfUnused: (providers: readonly (string | null | undefined)[]) => boolean,
+): boolean {
+  if (!removedSandbox?.provider?.includes("ollama")) return false;
+  return clearIfUnused(remainingSandboxes.map(({ provider }) => provider));
+}
+
 function defaultDestroyWarn(message: string): void {
   console.warn(`  ${YW}⚠${R} ${message}`);
 }
@@ -956,6 +965,25 @@ async function destroySandboxUnlocked(
       console.warn(
         `  ${YW}⚠${R} Failed to retire portable lifecycle authority for '${sandboxName}': ${redactDestroyError(error)}`,
       );
+    }
+    if (sandbox?.provider?.includes("ollama")) {
+      try {
+        const remainingSandboxes = registry.listSandboxes().sandboxes;
+        const { clearPersistedOllamaHostIfUnused } = require("../../inference/ollama/proxy") as {
+          clearPersistedOllamaHostIfUnused(
+            providers: readonly (string | null | undefined)[],
+          ): boolean;
+        };
+        retireFinalOllamaRouteAfterSandboxRemoval(
+          sandbox,
+          remainingSandboxes,
+          clearPersistedOllamaHostIfUnused,
+        );
+      } catch (error) {
+        console.warn(
+          `  ${YW}⚠${R} Failed to retire the final local Ollama route receipt: ${redactDestroyError(error)}`,
+        );
+      }
     }
   }
   if (deleteSucceededOrAlreadyGone && removed && priorHttpsPinRouteId) {

@@ -546,6 +546,7 @@ export type SetupInference = (
  */
 function releaseSupersededOllamaModel(
   previous: OllamaModelHolder | null,
+  nextProvider: string,
   nextModel: string,
   result: SetupInferenceResult,
   deps: SetupInferenceDeps,
@@ -560,14 +561,23 @@ function releaseSupersededOllamaModel(
     withOwnershipLock(() => {
       const peers = deps.listSandboxes?.().sandboxes ?? [];
       const superseded = supersededOllamaModel(previous, nextModel, peers);
-      if (!superseded) return;
+      const retireRoute =
+        !!previous.provider?.includes("ollama") &&
+        !nextProvider.includes("ollama") &&
+        !peers.some((peer) => peer.provider?.includes("ollama"));
+      if (!superseded && !retireRoute) return;
       try {
         revalidateSandboxIdentity?.("release the superseded Ollama model");
       } catch (error) {
         authorityRefusal = error;
         return;
       }
-      deps.unloadOllamaModels?.([superseded]);
+      if (superseded) deps.unloadOllamaModels?.([superseded]);
+      if (retireRoute) {
+        deps.localInference.clearPersistedOllamaHostIfUnused?.(
+          peers.map((peer) => peer.provider),
+        );
+      }
     });
   } catch {
     /* Best-effort: a failed unload must not fail an onboarding that already committed its route. */
@@ -1162,6 +1172,7 @@ export function createSetupInference(
       const result = await mutateGatewayRoute();
       releaseSupersededOllamaModel(
         previousSandbox,
+        provider,
         model,
         result,
         deps,
