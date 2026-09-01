@@ -46,7 +46,11 @@ jobs: {}
 `;
 const temporaryDirectories: string[] = [];
 
-function contract(agent: ManagedImageAgent, index: number): ManagedImageContractV1 {
+function contractForCohort(
+  agent: ManagedImageAgent,
+  index: number,
+  cohort: ManagedImageContractV1["source"]["cohort"],
+): ManagedImageContractV1 {
   const image = MANAGED_IMAGE_REPOSITORIES[agent];
   const digest = `sha256:${String(index + 1).repeat(64)}` as const;
   return {
@@ -60,11 +64,15 @@ function contract(agent: ManagedImageAgent, index: number): ManagedImageContract
       repository: MANAGED_IMAGE_SOURCE_REPOSITORY,
       revision: CANDIDATE_SHA,
       release: "v0.0.110",
-      cohort: `ghrun-${RUN_ID}-1`,
+      cohort,
     },
     startupProfileContractVersion: MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
     capabilityContractVersion: MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   };
+}
+
+function contract(agent: ManagedImageAgent, index: number): ManagedImageContractV1 {
+  return contractForCohort(agent, index, `ghrun-${RUN_ID}-1`);
 }
 
 function treeEntry(entryPath: string, sha: string) {
@@ -199,13 +207,19 @@ function resolverInput(candidateRepository = CANONICAL_REPOSITORY) {
   };
 }
 
-function downloadContract(identity: { readonly name: string }): Promise<Buffer> {
+function downloadContract(
+  identity: { readonly name: string },
+  cohort: ManagedImageContractV1["source"]["cohort"] = `ghrun-${RUN_ID}-1`,
+): Promise<Buffer> {
   const index = SHIPPED_MANAGED_IMAGE_AGENTS.findIndex((agent) => identity.name.endsWith(agent));
   expect(index, "artifact identity must name one shipped agent").toBeGreaterThanOrEqual(0);
   const agent = SHIPPED_MANAGED_IMAGE_AGENTS[index]!;
   return Promise.resolve(
     artifactZip([
-      { name: "contract.json", contents: `${JSON.stringify(contract(agent, index))}\n` },
+      {
+        name: "contract.json",
+        contents: `${JSON.stringify(contractForCohort(agent, index, cohort))}\n`,
+      },
     ]),
   );
 }
@@ -263,7 +277,12 @@ describe("exact PR managed-image publication", () => {
       return contractPath;
     });
     const assembledPath = path.join(assemblyRoot, "assembled", "catalog.json");
-    writeManagedImageCatalog(contractPaths, CANDIDATE_SHA, assembledPath);
+    writeManagedImageCatalog(
+      contractPaths,
+      CANDIDATE_SHA,
+      assembledPath,
+      `ghrun-${RUN_ID}-1`,
+    );
 
     expect(fs.readFileSync(assembledPath)).toEqual(fs.readFileSync(input.outputPath));
     expect(fs.statSync(assembledPath).mode & 0o777).toBe(0o600);
@@ -315,7 +334,9 @@ describe("exact PR managed-image publication", () => {
     );
 
     await expect(
-      resolvePrManagedImageCatalog(resolverInput(), request, downloadContract),
+      resolvePrManagedImageCatalog(resolverInput(), request, (identity) =>
+        downloadContract(identity, `ghrun-${laterRunId}-2`),
+      ),
     ).resolves.toBe("candidate-catalog");
     expect(request).toHaveBeenCalledWith(
       expect.stringContaining(`/actions/runs/${laterRunId}/artifacts`),
@@ -323,6 +344,23 @@ describe("exact PR managed-image publication", () => {
     expect(request).not.toHaveBeenCalledWith(
       expect.stringContaining(`/actions/runs/${RUN_ID}/artifacts`),
     );
+  });
+
+  it("rejects candidate contracts from another workflow run cohort", async () => {
+    const laterRunId = RUN_ID + 10;
+
+    await expect(
+      resolvePrManagedImageCatalog(
+        resolverInput(),
+        candidateRequest({
+          artifactRunAttempt: 2,
+          artifactRunId: laterRunId,
+          imageChanged: true,
+          run: workflowRun({ id: laterRunId, run_attempt: 2 }),
+        }),
+        downloadContract,
+      ),
+    ).rejects.toThrow("do not match the selected workflow run cohort");
   });
 
   it("rejects missing or ambiguous exact-candidate Images runs", async () => {
@@ -409,7 +447,11 @@ describe("exact PR managed-image publication", () => {
     };
 
     expect(() =>
-      assembleManagedImageCatalog([substituted, ...contracts.slice(1)], CANDIDATE_SHA),
+      assembleManagedImageCatalog(
+        [substituted, ...contracts.slice(1)],
+        CANDIDATE_SHA,
+        `ghrun-${RUN_ID}-1`,
+      ),
     ).toThrow("do not match the candidate commit");
   });
 

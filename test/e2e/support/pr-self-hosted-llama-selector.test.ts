@@ -167,7 +167,7 @@ describe("generic NVIDIA GPU PR selection", () => {
     expect(publication?.run).toContain("export GITHUB_REF=refs/heads/main");
     expect(publication?.run).toContain('export GITHUB_SHA="$EXPECTED_SHA"');
     expect(publication?.run).toContain(
-      "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 300 --poll-seconds 30",
+      "node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30",
     );
 
     expect(value.jobs["llama-cpp-generic-gpu"]?.env?.E2E_MANAGED_IMAGE_REVISION).toBe(

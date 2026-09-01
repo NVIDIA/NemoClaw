@@ -60,6 +60,7 @@ const PR_MANAGED_IMAGE_RESOLVER_SCRIPT =
     "      exit 1",
     "    }",
     '    printf \'catalog=%s\\n\' "$catalog" >>"$GITHUB_OUTPUT"',
+    '    echo "::notice::Jetson dispatch is unavailable because the exact PR managed-image catalog qualifies linux/amd64 only."',
     "    ;;",
     '  *) echo "::error::PR managed-image selection is invalid" >&2; exit 1 ;;',
     "esac",

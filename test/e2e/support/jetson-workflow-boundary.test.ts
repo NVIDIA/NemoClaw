@@ -45,6 +45,22 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     );
   });
 
+  it("rejects Jetson dispatch without an ARM-qualified managed-image revision", () => {
+    const errors = validateWorkflowMutation((workflow) => {
+      const job = (workflow.jobs as Record<string, unknown>)["jetson-nvmap-gpu"] as {
+        if?: string;
+      };
+      job.if = job.if?.replace(
+        " && needs['base-image-publication'].outputs.managed_image_revision != ''",
+        "",
+      );
+    });
+
+    expect(errors).toContain(
+      "jetson-nvmap-gpu job must run on trusted main pushes and require opt-in plus an ARM-qualified managed-image revision for manual selections",
+    );
+  });
+
   it("keeps manual Jetson dispatch disabled by default (#8142)", () => {
     const inputErrors = validateWorkflowMutation((workflow) => {
       const triggers = (workflow.on ?? workflow[true as unknown as string]) as {
@@ -76,7 +92,7 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     });
 
     expect(errors).toContain(
-      "jetson-nvmap-gpu job must run on trusted main pushes and require opt-in for same-repository manual selections",
+      "jetson-nvmap-gpu job must run on trusted main pushes and require opt-in plus an ARM-qualified managed-image revision for manual selections",
     );
   });
 
@@ -89,7 +105,7 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     });
 
     expect(errors).toContain(
-      "jetson-nvmap-gpu job must run on trusted main pushes and require opt-in for same-repository manual selections",
+      "jetson-nvmap-gpu job must run on trusted main pushes and require opt-in plus an ARM-qualified managed-image revision for manual selections",
     );
   });
 

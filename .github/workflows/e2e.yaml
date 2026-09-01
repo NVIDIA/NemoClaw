@@ -251,6 +251,7 @@ jobs:
                 exit 1
               }
               printf 'catalog=%s\n' "$catalog" >>"$GITHUB_OUTPUT"
+              echo "::notice::Jetson dispatch is unavailable because the exact PR managed-image catalog qualifies linux/amd64 only."
               ;;
             *) echo "::error::PR managed-image selection is invalid" >&2; exit 1 ;;
           esac
@@ -5423,7 +5424,7 @@ jobs:
 
   jetson-nvmap-gpu:
     needs: [base-image-publication, generate-matrix]
-    if: ${{ always() && needs['base-image-publication'].result == 'success' && needs['generate-matrix'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}
+    if: ${{ always() && needs['base-image-publication'].result == 'success' && needs['base-image-publication'].outputs.managed_image_revision != '' && needs['generate-matrix'].result == 'success' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.allow_jetson_dispatch && (inputs.checkout_repository == '' || inputs.checkout_repository == github.repository) && ((inputs.jobs == '' && inputs.targets == '') || contains(fromJSON(needs.generate-matrix.outputs.selected_jobs), 'jetson-nvmap-gpu')))) }}
     concurrency:
       group: jetson-nvmap-gpu-dispatch
       cancel-in-progress: false

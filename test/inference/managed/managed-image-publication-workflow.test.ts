@@ -84,6 +84,16 @@ function managedPrOpenClawMcpDiscovery(workflow: Workflow): Job {
   return required(workflow.jobs?.["pr-openclaw-mcp-discovery"], "missing exact PR MCP gate");
 }
 
+function expectCorrelationIdentity(run: string | undefined): void {
+  const source = required(run, "managed-image workflow is missing its correlation binding");
+  expect(source).toContain("randomUUID()");
+  expect(source).toContain(
+    '[[ "$correlation_id" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]',
+  );
+  expect(source).toContain("printf 'NEMOCLAW_E2E_CORRELATION_ID=%s\\n'");
+  expect(source).toContain('>> "$GITHUB_ENV"');
+}
+
 describe("complete managed-image publication workflow", () => {
   it("rejects managed package paths redirected outside node_modules", () => {
     const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-plugin-"));
@@ -629,7 +639,7 @@ describe("complete managed-image publication workflow", () => {
     expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
     );
-    expect(step(activation, "Bind E2E correlation identity").run).toContain("randomUUID()");
+    expectCorrelationIdentity(step(activation, "Bind E2E correlation identity").run);
     expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
       /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
@@ -681,7 +691,7 @@ describe("complete managed-image publication workflow", () => {
     expect(step(discovery, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
     );
-    expect(step(discovery, "Bind E2E correlation identity").run).toContain("randomUUID()");
+    expectCorrelationIdentity(step(discovery, "Bind E2E correlation identity").run);
     const assemble = step(discovery, "Assemble exact all-agent MCP catalog").run ?? "";
     expect(assemble).toMatch(
       /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,

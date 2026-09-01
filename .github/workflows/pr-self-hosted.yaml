@@ -122,7 +122,7 @@ jobs:
           set -euo pipefail
           export GITHUB_REF=refs/heads/main
           export GITHUB_SHA="$EXPECTED_SHA"
-          node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 300 --poll-seconds 30
+          node --experimental-strip-types --no-warnings tools/e2e/base-image-publication.mts --wait-seconds 3000 --poll-seconds 30
 
   llama-cpp-generic-gpu:
     name: llama.cpp on generic NVIDIA GPU

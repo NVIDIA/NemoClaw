@@ -39,6 +39,7 @@ const TREE_ENTRY_MODES = new Map([
 ]);
 
 type JsonRecord = Record<string, unknown>;
+type ManagedImageCohort = ManagedImageContractV1["source"]["cohort"];
 
 export type PrManagedImageSelection = "base-cohort" | "candidate-catalog";
 
@@ -69,6 +70,7 @@ function exactString(value: unknown, expected: string, label: string): void {
 export function assembleManagedImageCatalog(
   values: readonly unknown[],
   candidateSha: string,
+  expectedCohort: ManagedImageCohort,
 ): ManagedImageContractCatalog {
   if (!SHA_PATTERN.test(candidateSha)) throw new Error("candidate SHA is invalid");
   if (values.length !== SHIPPED_MANAGED_IMAGE_AGENTS.length) {
@@ -95,6 +97,11 @@ export function assembleManagedImageCatalog(
   if (releases.size !== 1 || cohorts.size !== 1) {
     throw new Error("exact PR managed-image contracts do not form one publication cohort");
   }
+  if (!cohorts.has(expectedCohort)) {
+    throw new Error(
+      "exact PR managed-image contracts do not match the selected workflow run cohort",
+    );
+  }
   return Object.fromEntries(
     SHIPPED_MANAGED_IMAGE_AGENTS.map((agent) => [agent, byAgent.get(agent)!]),
   );
@@ -104,11 +111,12 @@ export function writeManagedImageCatalog(
   contractPaths: readonly string[],
   candidateSha: string,
   outputPath: string,
+  expectedCohort: ManagedImageCohort,
 ): void {
   const contracts = contractPaths.map(
     (contractPath) => JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown,
   );
-  const catalog = assembleManagedImageCatalog(contracts, candidateSha);
+  const catalog = assembleManagedImageCatalog(contracts, candidateSha, expectedCohort);
   writeValidatedManagedImageCatalog(catalog, outputPath);
 }
 
@@ -388,7 +396,11 @@ export async function resolvePrManagedImageCatalog(
         JSON.parse(fs.readFileSync(contractPath, "utf8")) as unknown as ManagedImageContractV1,
       );
     }
-    const catalog = assembleManagedImageCatalog(contracts, input.candidateSha);
+    const catalog = assembleManagedImageCatalog(
+      contracts,
+      input.candidateSha,
+      `ghrun-${run.id}-${run.attempt}` as const,
+    );
     writeValidatedManagedImageCatalog(catalog, input.outputPath);
     return "candidate-catalog";
   } finally {
@@ -406,7 +418,14 @@ export async function main(argv = process.argv.slice(2), env = process.env): Pro
     if (argv.length < 4) {
       throw new Error("expected candidate SHA, output path, and managed-image contract paths");
     }
-    writeManagedImageCatalog(argv.slice(3), argv[1], argv[2]);
+    const runId = requiredInteger(env.GITHUB_RUN_ID, "GITHUB_RUN_ID");
+    const runAttempt = requiredInteger(env.GITHUB_RUN_ATTEMPT, "GITHUB_RUN_ATTEMPT");
+    writeManagedImageCatalog(
+      argv.slice(3),
+      argv[1],
+      argv[2],
+      `ghrun-${runId}-${runAttempt}` as const,
+    );
     console.log("pr-managed-image-catalog outcome=assembled");
     return;
   }

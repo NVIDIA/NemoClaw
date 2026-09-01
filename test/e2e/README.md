@@ -113,6 +113,8 @@ Unchanged runs pass the selected base revision and complete cohort receipt to ev
 Changed-input runs pass the authenticated candidate catalog separately to those consumers.
 The candidate CLI artifact cannot contain the catalog.
 The GitHub token remains available only to the trusted planner and is not included in the candidate CLI artifact.
+The candidate catalog qualifies `linux/amd64` only, so a changed-input manual PR run does not dispatch the Jetson target.
+The trusted publication job reports this exclusion before the Jetson job is skipped.
 
 The same-repository `Images / Build, Test, and Publish Managed Images` PR workflow also runs the
 OpenClaw managed-image MCP discovery and lifecycle scope in two independent matrix jobs. Each job
