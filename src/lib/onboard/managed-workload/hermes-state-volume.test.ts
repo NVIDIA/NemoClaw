@@ -35,8 +35,6 @@ describe("managed Hermes state volume", () => {
     });
 
     expect(scope).toMatchObject({
-      reused: false,
-      volumeName: "nemoclaw-hermes-state-v1-alpha",
       mount: {
         type: "volume",
         source: "nemoclaw-hermes-state-v1-alpha",
@@ -90,8 +88,7 @@ describe("managed Hermes state volume", () => {
       registerExitCleanup,
     });
 
-    expect(first?.volumeName).toBe(second?.volumeName);
-    expect(second?.reused).toBe(true);
+    expect(first?.mount.source).toBe(second?.mount.source);
     expect(registerExitCleanup).not.toHaveBeenCalled();
     expect(reused.calls.some((args) => args[0] === "create")).toBe(false);
     expect(second?.cleanupIncompleteCreate()).toEqual({ status: "not-applicable" });
@@ -116,7 +113,6 @@ describe("managed Hermes state volume", () => {
         { runDocker: retry.runDocker as never },
       ),
     ).toMatchObject({
-      reused: true,
       recoveryDescriptor: null,
     });
   });

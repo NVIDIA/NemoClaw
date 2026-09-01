@@ -64,8 +64,6 @@ export type ManagedHermesStateVolumeDeps = {
 
 export type ManagedHermesStateVolumeScope = {
   readonly mount: ManagedHermesStateVolumeMount;
-  readonly reused: boolean;
-  readonly volumeName: string;
   readonly recoveryDescriptor: {
     readonly name: string;
     readonly createAttemptNonce: string;
@@ -327,8 +325,6 @@ export function prepareManagedHermesStateVolume(
       target: MANAGED_HERMES_STATE_ROOT,
       read_only: false,
     }),
-    reused: !created,
-    volumeName,
     recoveryDescriptor: created
       ? Object.freeze({ name: volumeName, createAttemptNonce: context.createAttemptNonce })
       : null,
