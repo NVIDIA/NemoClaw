@@ -58,8 +58,7 @@ const TERMINAL_CSI_RE = /(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~]/gu;
 const TERMINAL_CONTROL_RE = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/gu;
 const ATTACHED_TO_SANDBOX_RE =
   /attached\s+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+?)(?=\.\s+[a-z]|["\n]|$)/iu;
-const TOLERATED_DETACH_OUTPUT_RE =
-  /\bNotAttached\b|\bnot\s+attached\b|provider[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/iu;
+const TOLERATED_DETACH_OUTPUT_RE = /\bNotAttached\b|\bnot\s+attached\b/iu;
 
 function success<T>(value: T): OpenShellProviderResult<T> {
   return { ok: true, value };

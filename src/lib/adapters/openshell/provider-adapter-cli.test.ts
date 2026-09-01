@@ -588,8 +588,8 @@ describe("CLI OpenShell provider adapter", () => {
     );
   });
 
-  it.each(["NotAttached", "provider search-prod NotFound", "provider search-prod not found"])(
-    "treats a stale detach result as already absent: %s (#9806)",
+  it.each(["NotAttached", "provider search-prod is not attached"])(
+    "treats an idempotent detach result as already detached: %s (#9806)",
     async (diagnostic) => {
       const adapter = createCliOpenShellProviderAdapter({
         run: () => captured(1, "", diagnostic),
@@ -602,6 +602,26 @@ describe("CLI OpenShell provider adapter", () => {
           sandboxName: "alpha",
         }),
       ).resolves.toEqual({ ok: true });
+    },
+  );
+
+  it.each(["provider search-prod NotFound", "provider search-prod not found"])(
+    "does not report a missing provider as detached: %s (#9806)",
+    async (diagnostic) => {
+      const adapter = createCliOpenShellProviderAdapter({
+        run: () => captured(1, "", diagnostic),
+      });
+
+      await expect(
+        adapter.detachProvider({
+          target: selectedOpenShellGateway(),
+          providerName: "search-prod",
+          sandboxName: "alpha",
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        error: { kind: "command", reason: "not_found", message: diagnostic },
+      });
     },
   );
 
