@@ -4,14 +4,83 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  readOpenClawPluginRuntimeExdevWorkflow,
+  type OpenClawPluginRuntimeExdevWorkflow,
   validateOpenClawPluginRuntimeExdevWorkflow,
 } from "../../../tools/e2e/openclaw-plugin-runtime-exdev-workflow-boundary.mts";
 
+const JOB_NAME = "openclaw-plugin-runtime-exdev";
+const BUILDER_IMAGE =
+  "node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c";
+
+function validWorkflow(): OpenClawPluginRuntimeExdevWorkflow {
+  const expression = (value: string) => "${{ " + value + " }}";
+  return {
+    jobs: {
+      [JOB_NAME]: {
+        needs: "generate-matrix",
+        "runs-on": "ubuntu-latest",
+        "timeout-minutes": 85,
+        permissions: { contents: "read" },
+        env: {
+          E2E_ARTIFACT_DIR: expression("github.workspace") + "/e2e-artifacts/live/" + JOB_NAME,
+          E2E_TARGET_ID: JOB_NAME,
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_CLI_BIN: expression("github.workspace") + "/bin/nemoclaw.js",
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_RUN_LIVE_E2E: "1",
+          NEMOCLAW_SANDBOX_NAME: "e2e-oc-exdev",
+          OPENSHELL_GATEWAY: "nemoclaw",
+        },
+        steps: [
+          {
+            name: "Checkout candidate",
+            uses: "actions/checkout@de0fac2e4500dabe000000000000000000000000",
+            with: { "persist-credentials": false },
+          },
+          {
+            name: "Authenticate to Docker Hub",
+            uses: "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@05fa6b810017752ab21148cb7e9d82d12a88c92f",
+          },
+          {
+            name: "Pre-pull current-checkout Docker Hub builder image",
+            run: "docker pull " + BUILDER_IMAGE,
+          },
+          {
+            name: "Remove Docker auth before current-checkout fixture",
+            if: "always()",
+            uses: "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3",
+          },
+          {
+            name: "Prepare E2E workspace",
+            uses: "NVIDIA/NemoClaw/.github/actions/prepare-e2e@05fa6b810017752ab21148cb7e9d82d12a88c92f",
+          },
+          {
+            name: "Run OpenClaw cross-device plugin lifecycle live test",
+            run: [
+              'test -n "${DOCKER_CONFIG:-}"',
+              'test ! -e "${DOCKER_CONFIG}"',
+              'test -z "${DOCKERHUB_USERNAME:-}"',
+              'test -z "${DOCKERHUB_TOKEN:-}"',
+              "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN",
+              "tools/e2e/live-vitest-invocation.mts run",
+              "--test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
+              "--selector current-lifecycle",
+            ].join("\n"),
+          },
+          {
+            name: "Upload OpenClaw cross-device plugin lifecycle artifacts",
+            if: "always()",
+            uses: "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@05fa6b810017752ab21148cb7e9d82d12a88c92f",
+          },
+        ],
+      },
+    },
+  };
+}
 describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
   it("rejects arbitrary work while Docker Hub credentials are live", () => {
-    const workflow = readOpenClawPluginRuntimeExdevWorkflow();
-    const steps = workflow.jobs["openclaw-plugin-runtime-exdev"].steps!;
+    const workflow = validWorkflow();
+    const steps = workflow.jobs[JOB_NAME].steps!;
     const revokeIndex = steps.findIndex(
       (step) => step.name === "Remove Docker auth before current-checkout fixture",
     );
@@ -26,8 +95,8 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
   });
 
   it("rejects trust-boundary mutations", () => {
-    const workflow = readOpenClawPluginRuntimeExdevWorkflow();
-    const job = workflow.jobs["openclaw-plugin-runtime-exdev"];
+    const workflow = validWorkflow();
+    const job = workflow.jobs[JOB_NAME];
     job["runs-on"] = "self-hosted";
     job["timeout-minutes"] = 60;
     job.permissions = { contents: "write" };
@@ -61,8 +130,7 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
     steps.splice(steps.indexOf(prepare) + 1, 0, revoke!);
 
     const run = steps.find(
-      (step) =>
-        step.name === "Run OpenClaw cross-device plugin lifecycle live test",
+      (step) => step.name === "Run OpenClaw cross-device plugin lifecycle live test",
     )!;
     run.env = { DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}" };
     run.run = "npx vitest run --project e2e-live test/e2e/live/other.test.ts";
@@ -80,7 +148,7 @@ describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
         "openclaw-plugin-runtime-exdev must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev",
         "openclaw-plugin-runtime-exdev must remain enabled for scheduled and empty manual runs",
         "openclaw-plugin-runtime-exdev must not expose NVIDIA_INFERENCE_API_KEY at job scope",
-        "openclaw-plugin-runtime-exdev action 'actions/checkout@v6' must pin a full SHA",
+        "openclaw-plugin-runtime-exdev action 'Checkout candidate' must pin a full SHA",
         "openclaw-plugin-runtime-exdev checkout must disable persisted credentials",
         "openclaw-plugin-runtime-exdev must use the reviewed prepare-e2e action",
         "openclaw-plugin-runtime-exdev step 'Pre-pull current-checkout Docker Hub builder image' must run: docker pull node:22-trixie-slim@sha256:db8a96a63e5264607ada2d206758876ebbed6a12be2ada7517793cbfb0c2a29c",

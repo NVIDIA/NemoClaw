@@ -28,7 +28,6 @@ import {
   buildTrustedPluginFixtureImage,
   createOpenShellTrustedImageWrapper,
   registerTrustedPluginFixtureImageCleanup,
-  withEnabledLocalBaseImageBuild,
 } from "./openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
 import {
   type OpenShellComponents,
@@ -467,12 +466,23 @@ test(
     );
 
     progress.phase("build and onboard plugin v1");
-    const baseImageResolution = withEnabledLocalBaseImageBuild(() =>
-      pullAndResolveBaseImageDigest({
+    const previousLocalBaseImageBuild = process.env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD;
+    process.env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD = "1";
+    let baseImageResolution;
+    try {
+      baseImageResolution = pullAndResolveBaseImageDigest({
         forceRefresh: true,
         requireOpenshellSandboxAbi: true,
-      }),
-    );
+      });
+    } finally {
+      Reflect.deleteProperty(process.env, "NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD");
+      Object.assign(
+        process.env,
+        previousLocalBaseImageBuild === undefined
+          ? {}
+          : { NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: previousLocalBaseImageBuild },
+      );
+    }
     assert(
       baseImageResolution,
       "current CLI must resolve an OpenShell-compatible sandbox base image",

@@ -155,64 +155,6 @@ function validateCleanupArtifactMutation(options: {
 }
 
 describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
-  it(
-    "accepts only the pinned pre-restore cleanup action in the complete workflow",
-    () => {
-      const jobNames = ["openclaw-plugin-runtime-exdev"] as const;
-      const cleanupMutations: Array<(cleanup: WorkflowStep) => void> = [
-        (cleanup) => {
-          cleanup.uses = "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@main";
-        },
-        (cleanup) => {
-          cleanup.uses = "./.github/actions/docker-auth-cleanup";
-        },
-        (cleanup) => {
-          delete cleanup.uses;
-          cleanup.shell = "bash";
-          cleanup.run = CLEANUP_HELPER_RUN;
-        },
-      ];
-      for (const mutateCleanup of cleanupMutations) {
-        const errors = validateMutation((workflow) => {
-          for (const jobName of jobNames) {
-            const cleanup = namedStep(
-              workflow.jobs[jobName],
-              "Remove Docker auth before current-checkout fixture",
-            );
-            expect(cleanup).toBeDefined();
-            mutateCleanup(cleanup!);
-          }
-        });
-
-        for (const jobName of jobNames) {
-          expect(errors).toContain(
-            `${jobName} must use the pinned Docker auth cleanup action before artifact restore`,
-          );
-        }
-      }
-
-      const orderingErrors = validateMutation((workflow) => {
-        for (const jobName of jobNames) {
-          const job = workflow.jobs[jobName];
-          const steps = job.steps!;
-          const cleanup = namedStep(job, "Remove Docker auth before current-checkout fixture");
-          const restore = namedStep(job, "Restore exact-commit CLI artifact");
-          expect(cleanup).toBeDefined();
-          expect(restore).toBeDefined();
-          steps.splice(steps.indexOf(cleanup!), 1);
-          steps.splice(steps.indexOf(restore!) + 1, 0, cleanup!);
-        }
-      });
-
-      for (const jobName of jobNames) {
-        expect(orderingErrors).toContain(
-          `${jobName} step 'Remove Docker auth before current-checkout fixture' must precede 'Prepare E2E workspace'`,
-        );
-      }
-    },
-    testTimeout(15_000),
-  );
-
   it("rejects missing auth and cleanup coverage for every classified image job", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);

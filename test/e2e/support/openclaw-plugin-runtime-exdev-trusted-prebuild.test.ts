@@ -19,7 +19,6 @@ import {
   createOpenShellTrustedImageWrapper,
   registerTrustedPluginFixtureImageCleanup,
   trustedExdevImageRef,
-  withEnabledLocalBaseImageBuild,
 } from "../live/openclaw-plugin-runtime-exdev-trusted-prebuild.ts";
 import {
   resolveOpenShellSiblingComponents,
@@ -39,7 +38,8 @@ function createWrapperFixture() {
   const delegate = path.join(directory, "real-openshell");
   const gateway = path.join(directory, "openshell-gateway");
   const sandbox = path.join(directory, "openshell-sandbox");
-  const executableSource = "#!/bin/sh\nif [ \"${1:-}\" = \"--version\" ]; then echo 'openshell 0.0.106'; exit 0; fi\nprintf '%s\\n' \"$@\"\n";
+  const executableSource =
+    '#!/bin/sh\nif [ "${1:-}" = "--version" ]; then echo \'openshell 0.0.106\'; exit 0; fi\nprintf \'%s\\n\' "$@"\n';
   for (const executable of [delegate, gateway]) {
     fs.writeFileSync(executable, executableSource, { encoding: "utf8", mode: 0o700 });
   }
@@ -175,21 +175,6 @@ describe("trusted EXDEV OpenShell wrapper", () => {
     }
     expect(fs.existsSync(fixture.wrapper.directory)).toBe(false);
   });
-});
-
-it("limits the local base-image build setting to one operation", () => {
-  vi.stubEnv("NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD", "0");
-
-  expect(withEnabledLocalBaseImageBuild(() => process.env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD)).toBe(
-    "1",
-  );
-  expect(process.env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD).toBe("0");
-  expect(() =>
-    withEnabledLocalBaseImageBuild(() => {
-      throw new Error("base-image build failed");
-    }),
-  ).toThrow("base-image build failed");
-  expect(process.env.NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD).toBe("0");
 });
 
 function commandResult(exitCode = 0, stderr = ""): ShellProbeResult {
