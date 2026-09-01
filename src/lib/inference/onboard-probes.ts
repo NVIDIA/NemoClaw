@@ -1139,7 +1139,14 @@ export async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKe
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
   const validationTiming = resolveOpenAiLikeValidationTiming(baseUrl, options);
-  const sessionProbeOptions = validationTiming ? { ...options, validationTiming } : options;
+  const replyBudget =
+    options.replyBudget ??
+    (options.provider === "gemini-api" ? resolveProbeReplyTokens(options.provider) : undefined);
+  const sessionProbeOptions = {
+    ...options,
+    ...(validationTiming ? { validationTiming } : {}),
+    ...(replyBudget !== undefined ? { replyBudget } : {}),
+  };
   const result = await probeOpenAiLikeEndpointWithValidationSession(
     endpointUrl,
     model,
@@ -1287,9 +1294,7 @@ export async function verifyOnboardInferenceSmoke(options: any, dependencies: an
     useNvidiaEndpointProbePayload: usesNvidiaEndpointProbePayload(options.provider),
     pinnedAddresses: options.pinnedAddresses,
     trustedPrivateCapability: options.trustedPrivateCapability,
-    ...(options.provider === "gemini-api"
-      ? { provider: options.provider, replyBudget: resolveProbeReplyTokens(options.provider) }
-      : {}),
+    provider: options.provider,
   });
 
   if (probe.ok) {
