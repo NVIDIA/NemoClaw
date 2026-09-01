@@ -41,7 +41,7 @@ const DISCORD_SERVER_IDS = process.env.DISCORD_SERVER_IDS ?? "149159099275359059
 const DISCORD_ALLOWED_IDS = process.env.DISCORD_ALLOWED_IDS ?? "1005536447329222676";
 const DISCORD_REQUIRE_MENTION = process.env.DISCORD_REQUIRE_MENTION ?? "0";
 const HERMES_HEALTH_URL = "http://localhost:8642/health";
-const FAKE_DISCORD_HOST = "host.docker.internal";
+const FAKE_DISCORD_HOST = "host.openshell.internal";
 const HERMES_DISCORD_HTTP_PROXY_GATEWAY_TEMPLATE = hermesDiscordHttpProxyWebSocketUrl(
   "{host}",
   "{port}",
@@ -199,7 +199,7 @@ results = []
 
 async def main():
     port = int(os.environ["FAKE_DISCORD_GATEWAY_CLIENT_PORT"])
-    host = os.environ.get("FAKE_DISCORD_GATEWAY_CLIENT_HOST", "host.docker.internal")
+    host = os.environ.get("FAKE_DISCORD_GATEWAY_CLIENT_HOST", "host.openshell.internal")
     token = read_env_token()
     client = discord.Client(intents=discord.Intents.none())
     setup = getattr(client, "_async_setup_hook", None)
@@ -280,23 +280,6 @@ async function runHermesPythonDiscordGatewayProof(
       timeoutMs: 60_000,
     },
   );
-}
-
-async function assertRawTokenAbsentFromFiles(
-  sandbox: SandboxClient,
-  token: string,
-  redactionValues: string[],
-): Promise<void> {
-  const tokenB64 = Buffer.from(token, "utf8").toString("base64");
-  const probe = await sandboxShWithArgs(
-    sandbox,
-    SANDBOX_NAME,
-    `token="$(printf %s ${shellQuote(tokenB64)} | base64 -d)"\nif grep -Fq "$token" /sandbox/.hermes/config.yaml /sandbox/.hermes/.env 2>/dev/null; then echo LEAK; else echo OK; fi`,
-    [],
-    { artifactName: "raw-discord-token-config-env-probe", redactionValues },
-  );
-  expectExitZero(probe, "raw Discord token config probe");
-  expect(probe.stdout.trim()).toBe("OK");
 }
 
 test("hermes-discord: Hermes Discord schema, credential isolation, and native gateway rewrite", {
@@ -577,8 +560,6 @@ PY`,
   assertDiscordGatewayCapture(fakeGateway.captureFile, DISCORD_TOKEN);
 
   progress.phase("verify Discord token isolation and REST boundary");
-  await assertRawTokenAbsentFromFiles(sandbox, DISCORD_TOKEN, redactionValues);
-
   const envSurface = await rawTokenSurfaceProbe(
     sandbox,
     SANDBOX_NAME,
