@@ -16,6 +16,7 @@ import {
 import { getDockerGpuSupervisorReconnectTimeoutSecs } from "../../onboard/docker-gpu-supervisor-reconnect";
 import { recreateOpenShellDockerSandboxWithStartupCommand } from "../../onboard/docker-startup-command-patch";
 import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
+import { readManagedWorkloadAuthority } from "../../onboard/workload/authority";
 import { resolveDirectSandboxContainer } from "../../sandbox/privileged-exec";
 import { redact, redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
@@ -47,6 +48,7 @@ export type ManagedSupervisorRelaunch = {
 export type ManagedSupervisorRelaunchDeps = {
   getSandbox?: typeof registry.getSandbox;
   getSessionAgent?: typeof agentRuntime.getSessionAgent;
+  readManagedWorkloadAuthority?: typeof readManagedWorkloadAuthority;
   resolveDashboardPort?: typeof resolveSandboxDashboardPort;
   resolveContainer?: typeof resolveDirectSandboxContainer;
   inspectContainer?: (containerId: string) => DockerContainerInspect;
@@ -96,8 +98,17 @@ function reconstructSupervisorLaunchCommand(
   const manageDashboard = shouldManageDashboardForAgent(agent);
   const resolveDashboardPort = deps.resolveDashboardPort ?? resolveSandboxDashboardPort;
   const dashboardPort = String(resolveDashboardPort(sandboxName));
-  const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : "";
   const hermesDashboardEnabled = entry.hermesDashboardEnabled === true;
+  const loopbackDashboardUrl = `http://127.0.0.1:${dashboardPort}`;
+  let chatUiUrl = manageDashboard ? loopbackDashboardUrl : "";
+  if (persistedAgent === "hermes" && manageDashboard && hermesDashboardEnabled) {
+    const readWorkloadAuthority =
+      deps.readManagedWorkloadAuthority ?? readManagedWorkloadAuthority;
+    const profile = readWorkloadAuthority(entry)?.profile;
+    chatUiUrl =
+      (profile?.dashboard.agent === "hermes" ? profile.dashboard.browserUrl : undefined) ??
+      loopbackDashboardUrl;
+  }
   const { envArgs } = buildSandboxRuntimeEnvArgs({
     agent,
     chatUiUrl,
