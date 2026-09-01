@@ -11,10 +11,10 @@ fi
 
 reference="$1"
 platform="$2"
-# Observed GHCR publication remained anonymously unavailable through +288s
-# and became readable by about +344s. Keep retries bounded by both wall time and count.
-max_attempts=20
-deadline_seconds=600
+# Observed GHCR publication remained anonymously unavailable through +600s
+# and all 127 manifest, configuration, and layer HEADs returned 200 by about +654s.
+max_attempts=30
+deadline_seconds=900
 
 if [[ ! "$reference" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$ ]]; then
   echo "ERROR: public image reference must be an exact lowercase GHCR digest" >&2
