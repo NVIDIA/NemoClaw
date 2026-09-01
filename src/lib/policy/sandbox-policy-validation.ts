@@ -3,10 +3,12 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import type { AnySchemaObject, ErrorObject, ValidateFunction } from "ajv";
 import Ajv from "ajv/dist/2020.js";
 
+import { stripCredentials } from "../security/credential-filter";
 import { parseOpenShellPolicy } from "./merge";
 
 const PACKAGE_ROOT = path.resolve(__dirname, "..", "..", "..");
@@ -17,6 +19,12 @@ const MAX_SCHEMA_ERROR_MESSAGE_CHARS = 120;
 const MAX_SCHEMA_ERROR_SUMMARY_CHARS = 500;
 
 let cachedSandboxPolicyValidator: ValidateFunction<unknown> | null = null;
+
+/** Prove a live policy can cross a credential-free host handoff. */
+export function isSandboxPolicyCredentialFree(content: string): boolean {
+  const policy = parseOpenShellPolicy(content).policy;
+  return isDeepStrictEqual(stripCredentials(policy), policy);
+}
 
 function loadSandboxPolicyValidator(): ValidateFunction<unknown> {
   if (cachedSandboxPolicyValidator) return cachedSandboxPolicyValidator;

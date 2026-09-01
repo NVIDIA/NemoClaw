@@ -92,7 +92,7 @@ import {
   createSnapshotCloneLifecycle,
   confirmSandboxRuntimeRestore,
   fingerprintSandboxLiveIdentity,
-  isSnapshotClonePolicyCredentialFree,
+  isSandboxPolicyCredentialFree,
   type PreparedHostLocalInferenceAuthority,
   type PreparedSandboxRuntimeRestore,
   prepareHostLocalInferenceAuthority,
@@ -396,7 +396,7 @@ async function prepareSnapshotClonePolicy(
     ]);
   }
   const policy = policyRead.value.document;
-  if (!isSnapshotClonePolicyCredentialFree(policy)) {
+  if (!isSandboxPolicyCredentialFree(policy)) {
     throw new SnapshotCommandError([
       `Cannot prepare a snapshot clone policy for source sandbox '${srcEntry.name}' because its live OpenShell policy contains a literal credential value.`,
       "Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the original snapshot restore command.",

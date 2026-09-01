@@ -20,6 +20,7 @@
 // timer-bound lock tests before this facade can shrink safely.
 
 import { run, runCapture, validateName } from "../runner";
+import type { OpenShellSandboxError } from "../adapters/openshell/sandbox-observer";
 
 const fs = require("fs");
 const path = require("path");
@@ -48,6 +49,7 @@ const {
   rejectFinalPolicySetResult: rejectFinalShieldsPolicySetResult,
 } = require("../policy");
 const {
+  formatOpenShellPolicyRecoveryAction,
   readSandboxPolicyWithCapture,
 }: typeof import("../adapters/openshell/policy-state") = require("../adapters/openshell/policy-state");
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
@@ -161,8 +163,8 @@ function assertShieldsPolicyMutationContext(
     : inspectPolicyMutationContext(sandboxName, operation);
 }
 
-function captureShieldsBasePolicy(sandboxName: string, gatewayName: string): string | null {
-  const result = readSandboxPolicyWithCapture({
+function readShieldsBasePolicy(sandboxName: string, gatewayName: string) {
+  return readSandboxPolicyWithCapture({
     capture: (args: string[]) => {
       try {
         const output = runCapture(buildOpenshellCommand(args));
@@ -180,7 +182,27 @@ function captureShieldsBasePolicy(sandboxName: string, gatewayName: string): str
     sandboxName,
     scope: "base",
   });
+}
+
+function captureShieldsBasePolicy(sandboxName: string, gatewayName: string): string | null {
+  const result = readShieldsBasePolicy(sandboxName, gatewayName);
   return result.ok ? result.value.document : null;
+}
+
+function shieldsPolicyReadFailureMessage(
+  sandboxName: string,
+  gatewayName: string,
+  error: OpenShellSandboxError,
+): string {
+  return [
+    `Cannot read the current OpenShell policy for Shields restore for sandbox '${sandboxName}' through recorded gateway '${gatewayName}'.`,
+    error.message,
+    formatOpenShellPolicyRecoveryAction(
+      error,
+      `${CLI_NAME} ${sandboxName} shields up`,
+      gatewayName,
+    ),
+  ].join(" ");
 }
 
 const STATE_DIR = resolveShieldsStateDir();
@@ -4339,6 +4361,8 @@ interface ShieldsPolicySnapshotRestoreOptions {
   deadlineAuthoritative?: boolean;
   expiredTimerRecovery?: boolean;
   buildPolicySet?: typeof buildPolicySetCommand;
+  inspectPolicyContext?: typeof inspectPolicyMutationContext;
+  readBasePolicy?: typeof readShieldsBasePolicy;
   runPolicySet?: typeof run;
 }
 
@@ -4414,9 +4438,20 @@ function applyShieldsPolicySnapshot(
     }
   }
 
-  const context = inspectPolicyMutationContext(sandboxName, "restore the Shields policy snapshot");
-  const livePolicy = captureShieldsBasePolicy(sandboxName, context.gatewayName);
-  if (!livePolicy) throw new Error("Cannot read the current OpenShell policy for Shields restore");
+  const context = (options.inspectPolicyContext ?? inspectPolicyMutationContext)(
+    sandboxName,
+    "restore the Shields policy snapshot",
+  );
+  const livePolicyRead = (options.readBasePolicy ?? readShieldsBasePolicy)(
+    sandboxName,
+    context.gatewayName,
+  );
+  if (!livePolicyRead.ok) {
+    throw new Error(
+      shieldsPolicyReadFailureMessage(sandboxName, context.gatewayName, livePolicyRead.error),
+    );
+  }
+  const livePolicy = livePolicyRead.value.document;
   const snapshotBinding = transition?.snapshotPolicy ?? state.shieldsPolicySnapshot;
   if (!snapshotBinding) {
     throw new Error("Shields recovery has no bound restrictive policy snapshot");

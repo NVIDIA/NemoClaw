@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -137,6 +138,52 @@ export function managedMcpSandbox(
       ),
     },
   };
+}
+
+export function writeBoundPolicySnapshot(
+  snapshotPath: string,
+  content = "version: 1\nnetwork_policies:\n  test: {}\n",
+) {
+  fs.writeFileSync(snapshotPath, content, { mode: 0o600 });
+  fs.chmodSync(snapshotPath, 0o600);
+  const metadata = fs.statSync(snapshotPath);
+  return {
+    schemaVersion: 1 as const,
+    path: snapshotPath,
+    sha256: createHash("sha256").update(content).digest("hex"),
+    size: Buffer.byteLength(content),
+    mode: 0o600,
+    uid: metadata.uid,
+    gid: metadata.gid,
+    nlink: 1 as const,
+  };
+}
+
+export function writeActivePolicyTransition(
+  stateDir: string,
+  sandboxName: string,
+  processToken: string,
+  snapshotPath: string,
+  snapshotPolicy: ReturnType<typeof writeBoundPolicySnapshot>,
+): void {
+  const forwardPolicy = writeBoundPolicySnapshot(
+    path.join(stateDir, `policy-forward-${processToken.slice(0, 8)}.yaml`),
+  );
+  fs.writeFileSync(
+    path.join(stateDir, `shields-transition-${sandboxName}-${processToken}.json`),
+    JSON.stringify({
+      version: 1,
+      phase: "active",
+      ownerPid: 2_147_483_647,
+      ownerStartIdentity: "test-timer-owner",
+      processToken,
+      sandboxName,
+      snapshotPath,
+      snapshotPolicy,
+      forwardPolicy,
+    }),
+    { mode: 0o600 },
+  );
 }
 
 export function writeShieldsTimerAuthorizationProof(

@@ -11,7 +11,10 @@ import {
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
 export { getNamedGatewayLifecycleState };
-import { gatewayStartGuidance } from "../../gateway-start-guidance";
+import {
+  formatOpenShellPolicyRecoveryAction,
+  gatewayStartGuidance,
+} from "../../gateway-start-guidance";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES } from "../../state/gateway";
 export { isTerminalSandboxPhase, TERMINAL_SANDBOX_PHASES };
@@ -391,20 +394,12 @@ export function policyObservationRecoveryAction(
   gatewayName?: string,
   retryAction: "status" | "launch" = "status",
 ): string {
-  const retryCommand = `${CLI_NAME} ${sandboxName} ${retryAction}`;
-  if (error.kind === "authentication") {
-    return `Restore authentication for the sandbox's OpenShell gateway, then retry \`${retryCommand}\`.`;
-  }
-  if (error.kind === "timeout" || (error.kind === "transport" && error.reason === "unreachable")) {
-    return `Verify the gateway with \`openshell status\`. ${gatewayStartGuidance(gatewayName)} Then retry \`${retryCommand}\`.`;
-  }
-  if (error.kind === "transport") {
-    return `Verify the sandbox's recorded gateway identity with \`openshell status\`, restore the expected gateway, then retry \`${retryCommand}\`.`;
-  }
-  if (error.kind === "schema") {
-    return `Update the OpenShell CLI and gateway to compatible versions, then retry \`${retryCommand}\`.`;
-  }
-  return `Inspect \`openshell status\`, correct the policy-read failure, then retry \`${retryCommand}\`.`;
+  return formatOpenShellPolicyRecoveryAction(
+    error,
+    `${CLI_NAME} ${sandboxName} ${retryAction}`,
+    gatewayName,
+    gatewayStartGuidance(gatewayName),
+  );
 }
 
 function policyObservationFailureState(

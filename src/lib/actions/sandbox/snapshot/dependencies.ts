@@ -1,14 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isDeepStrictEqual } from "node:util";
-
 import type { RuntimeProviderBundle } from "../../../onboard/runtime-provider/contract";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../../onboard/runtime-provider/current";
 import { requireRuntimeProviderBundleForSandbox } from "../../../onboard/runtime-provider/registry";
 import { assertHermesPortableCommandUnavailable } from "../../../onboard/experimental/portable-agent-lifecycle";
-import { parseOpenShellPolicy } from "../../../policy/merge";
-import { stripCredentials } from "../../../security/credential-filter";
+export { isSandboxPolicyCredentialFree } from "../../../policy/sandbox-policy-validation";
 import type { SandboxEntry } from "../../../state/registry/types";
 
 export {
@@ -62,12 +59,6 @@ export function requireCurrentSnapshotRuntimeProvider(
   sandbox: SandboxEntry,
 ): RuntimeProviderBundle {
   return requireRuntimeProviderBundleForSandbox(sandbox, CURRENT_RUNTIME_PROVIDER_BUNDLES);
-}
-
-/** Prove a live policy can cross the credential-free snapshot clone handoff. */
-export function isSnapshotClonePolicyCredentialFree(policy: string): boolean {
-  const parsed = parseOpenShellPolicy(policy).policy;
-  return isDeepStrictEqual(stripCredentials(parsed), parsed);
 }
 
 export function assertSandboxSnapshotCommandAvailable(

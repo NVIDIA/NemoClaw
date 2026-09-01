@@ -74,6 +74,43 @@ describe("rebuild policy handoff", () => {
     });
   });
 
+  it("rejects a literal credential before creating a rebuild policy handoff", () => {
+    mocks.getSandboxPolicy.mockReturnValue({
+      yaml: [
+        "version: 1",
+        "network_policies: {}",
+        "process:",
+        "  environment:",
+        "    SERVICE_API_KEY: opaque-live-policy-credential",
+        "",
+      ].join("\n"),
+    });
+    const backup = vi.fn(() => null);
+
+    expect(() =>
+      runRebuildBackupPhase(
+        {
+          sandboxName: "alpha",
+          sandboxEntry: { name: "alpha" },
+          staleRecovery: false,
+          preparedRecoveryManifest: null,
+          messagingPlan: null,
+          webSearchConfig: null,
+          log: vi.fn(),
+          bail: (message): never => {
+            throw new Error(message);
+          },
+          relockShieldsIfNeeded: vi.fn(() => true),
+        },
+        backup,
+      ),
+    ).toThrow(
+      "Cannot prepare a rebuild policy handoff for sandbox 'alpha' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.",
+    );
+    expect(backup).toHaveBeenCalledOnce();
+    expect(mocks.secureTempFile).not.toHaveBeenCalled();
+  });
+
   it("never reconstructs a missing live policy from NemoClaw state", () => {
     expect(() =>
       runRebuildBackupPhase(

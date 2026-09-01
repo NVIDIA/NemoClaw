@@ -16,6 +16,7 @@ import {
   type OpenShellPolicyInspection,
 } from "../../policy/merge";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
+export { formatOpenShellPolicyRecoveryAction } from "../../gateway-start-guidance";
 import * as openshellRuntime from "./runtime";
 import {
   createSyncCliOpenShellSandboxPolicyReader,

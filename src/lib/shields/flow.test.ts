@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -15,6 +14,8 @@ import {
   managedMcpPolicy,
   managedMcpSandbox,
   type ShieldsFlowHarnessOptions,
+  writeActivePolicyTransition,
+  writeBoundPolicySnapshot,
   writeShieldsTimerAuthorizationProof,
 } from "../../../test/helpers/shields-flow-harness";
 
@@ -28,52 +29,6 @@ const currentProcessStartIdentity = (
 
 function createHarness(options: ShieldsFlowHarnessOptions = {}) {
   return createShieldsFlowHarness(requireDist, tmpDir, options);
-}
-
-function writeBoundPolicySnapshot(
-  snapshotPath: string,
-  content = "version: 1\nnetwork_policies:\n  test: {}\n",
-) {
-  fs.writeFileSync(snapshotPath, content, { mode: 0o600 });
-  fs.chmodSync(snapshotPath, 0o600);
-  const metadata = fs.statSync(snapshotPath);
-  return {
-    schemaVersion: 1 as const,
-    path: snapshotPath,
-    sha256: createHash("sha256").update(content).digest("hex"),
-    size: Buffer.byteLength(content),
-    mode: 0o600,
-    uid: metadata.uid,
-    gid: metadata.gid,
-    nlink: 1 as const,
-  };
-}
-
-function writeActivePolicyTransition(
-  stateDir: string,
-  sandboxName: string,
-  processToken: string,
-  snapshotPath: string,
-  snapshotPolicy: ReturnType<typeof writeBoundPolicySnapshot>,
-): void {
-  const forwardPolicy = writeBoundPolicySnapshot(
-    path.join(stateDir, `policy-forward-${processToken.slice(0, 8)}.yaml`),
-  );
-  fs.writeFileSync(
-    path.join(stateDir, `shields-transition-${sandboxName}-${processToken}.json`),
-    JSON.stringify({
-      version: 1,
-      phase: "active",
-      ownerPid: 2_147_483_647,
-      ownerStartIdentity: "test-timer-owner",
-      processToken,
-      sandboxName,
-      snapshotPath,
-      snapshotPolicy,
-      forwardPolicy,
-    }),
-    { mode: 0o600 },
-  );
 }
 
 const timerAuthorityFixtures: ReadonlyArray<readonly [string, (markerPath: string) => void]> = [

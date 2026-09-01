@@ -16,6 +16,7 @@ import {
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import * as policyGet from "./policy-get";
+import { isSandboxPolicyCredentialFree } from "../../policy/sandbox-policy-validation";
 
 export { clearRebuildPolicyHandoff, writeRebuildPolicyHandoff } from "../../state/sandbox";
 
@@ -61,6 +62,11 @@ export function captureRebuildPolicySource(
     recordedGatewayOperation: "capture the live policy before sandbox replacement",
   }).yaml;
   if (!policy) return null;
+  if (!isSandboxPolicyCredentialFree(policy)) {
+    throw new Error(
+      `Cannot prepare a rebuild policy handoff for sandbox '${sandboxName}' because its live OpenShell policy contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, then retry the rebuild.`,
+    );
+  }
   const resolvedPolicySourcePath =
     policySourcePath ?? secureTempFile("nemoclaw-rebuild-policy", ".yaml");
   fs.writeFileSync(resolvedPolicySourcePath, policy, { mode: 0o600 });
@@ -121,6 +127,11 @@ export function runRebuildBackupPhase(
     );
   }
   const retainedHandoff = backupManifest?.rebuildPolicyHandoff;
+  if (retainedPolicy && !isSandboxPolicyCredentialFree(retainedPolicy)) {
+    return input.bail(
+      `The retained rebuild policy handoff for sandbox '${input.sandboxName}' contains a literal credential value. Replace literal credentials with supported OpenShell credential bindings or resolver placeholders, discard the unsafe recovery handoff, then retry the rebuild.`,
+    );
+  }
   const policySourcePath =
     retainedPolicy && backupManifest && retainedHandoff
       ? fs.realpathSync(path.join(backupManifest.backupPath, retainedHandoff.file))
