@@ -29,7 +29,7 @@ Do not report the production defect when the test correctly exposes it. Do not r
 
 ## Review principles
 
-Apply poka-yoke and fast feedback. Detect defects at the nearest stable boundary. Prefer the smallest proof that prevents escape. Remove repeated inspection that adds no distinct evidence.
+Detect defects at the nearest stable boundary and provide fast feedback. Prefer the smallest proof that prevents escape. Remove repeated inspection that adds no distinct evidence.
 
 ## Report a finding when
 

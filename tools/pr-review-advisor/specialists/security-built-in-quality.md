@@ -27,7 +27,7 @@ Do not report general dependency reuse, non-security recovery, ordinary correctn
 
 ## Review principles
 
-Apply jidoka. Stop work when required trust evidence is missing. Prefer validation before authority or mutation. Contain defects at their source instead of relying on downstream inspection.
+Stop work when required trust evidence is missing. Prefer validation before authority or mutation. Contain defects at their source instead of relying on downstream inspection.
 
 ## Report a finding when
 

@@ -28,7 +28,7 @@ Do not report a wrong product result, a security defect, test-oracle quality, op
 
 ## Review principles
 
-Apply standardized work, pull, and kaizen. Remove overprocessing, duplicate ownership, unnecessary handoffs, and speculative machinery. Do not move complexity to another file or surface.
+Remove overprocessing, duplicate ownership, unnecessary handoffs, and speculative machinery. Do not move complexity to another file or surface.
 
 ## Report a finding when
 

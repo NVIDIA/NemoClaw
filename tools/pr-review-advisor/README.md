@@ -10,7 +10,7 @@ workflow run.
 
 For each configured pull-request event, it runs every specialist prompt in `tools/pr-review-advisor/specialists`. Each prompt owns a distinct review concern and defines its purpose, method, scope, exclusions, review principles, and finding threshold.
 
-The specialists inspect the actual value path, prevent defects at their source, reduce waiting and rework, and recommend the smallest direct correction. They run independently and publish separate reports. The advisor does not add a selection, aggregation, or summarization stage.
+Specialists inspect their assigned concern and recommend the smallest direct correction. They run independently and publish separate reports. The advisor does not select, aggregate, or summarize their findings.
 
 It intentionally does not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
 
