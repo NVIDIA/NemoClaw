@@ -274,12 +274,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
           $openshell = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\openshell")
-          $installer = Join-Path $candidate 'scripts\install-windows-native.ps1'
-          $installerSha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
           & "$candidate\scripts\checks\run-windows-native-installer-qualification.ps1" `
             -CandidateCheckout $candidate `
             -CandidateSha $env:GITHUB_SHA `
-            -InstallerSha256 $installerSha256 `
             -OpenShellCheckout $openshell `
             -OpenShellSha bcd517bbe08cc80860c9be57699390cd32e8445f `
             -ArtifactDirectory "$env:RUNNER_TEMP\windows-native-installer-receipts"

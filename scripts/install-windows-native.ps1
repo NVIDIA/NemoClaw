@@ -25,9 +25,7 @@ param(
 
     [string]$PayloadRoot,
 
-    [string]$InstallRoot = (Join-Path
-        ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData))
-        'NVIDIA\NemoClaw\native-candidate')
+    [string]$InstallRoot = (Join-Path -Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) -ChildPath 'NVIDIA\NemoClaw\native-candidate')
 )
 
 Set-StrictMode -Version Latest
@@ -360,10 +358,16 @@ function Write-RepairRecoveryRecord {
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][string]$VersionRoot,
         [Parameter(Mandatory)][string]$BackupRoot,
-        [AllowNull()][string]$FailedReplacementRoot,
-        [Parameter(Mandatory)][string]$PublishError,
+        [AllowNull()][object]$FailedReplacementRoot,
+        [Parameter(Mandatory)][string]$OperationError,
         [Parameter(Mandatory)][string]$RollbackError
     )
+
+    $normalizedReplacementRoot = if ([string]::IsNullOrWhiteSpace([string]$FailedReplacementRoot)) {
+        $null
+    } else {
+        [string]$FailedReplacementRoot
+    }
 
     Write-JsonAtomic -Path $Path -Value ([pscustomobject]@{
         receiptVersion = 1
@@ -377,8 +381,8 @@ function Write-RepairRecoveryRecord {
         action = $Action
         versionRoot = $VersionRoot
         backupRoot = $BackupRoot
-        failedReplacementRoot = $FailedReplacementRoot
-        publishError = $PublishError
+        failedReplacementRoot = $normalizedReplacementRoot
+        operationError = $OperationError
         rollbackError = $RollbackError
     })
 }
@@ -439,7 +443,7 @@ function Publish-Distribution {
                         VersionRoot = $versionRoot
                         BackupRoot = $backupRoot
                         FailedReplacementRoot = $null
-                        PublishError = $publishError
+                        OperationError = $publishError
                         RollbackError = $_.Exception.Message
                     }
                     Write-RepairRecoveryRecord @recoveryParameters
@@ -456,15 +460,28 @@ function Publish-Distribution {
                     [IO.Directory]::Move($backupRoot, $versionRoot)
                     [IO.Directory]::Delete($failedReplacementRoot, $true)
                 } catch {
+                    $rollbackError = $_.Exception.Message
+                    $recoveryAction = 'restore-prior-version-and-remove-replacement'
+                    $recordedReplacementRoot = $failedReplacementRoot
+                    if (-not (Test-Path -LiteralPath $versionRoot) -and
+                        (Test-Path -LiteralPath $failedReplacementRoot -PathType Container)) {
+                        try {
+                            [IO.Directory]::Move($failedReplacementRoot, $versionRoot)
+                            $recoveryAction = 'remove-retained-backup'
+                            $recordedReplacementRoot = $null
+                        } catch {
+                            $rollbackError = "$rollbackError; published-version restore failed: $($_.Exception.Message)"
+                        }
+                    }
                     $recoveryParameters = @{
                         Path = $recoveryPath
-                        Action = 'restore-prior-version-and-remove-replacement'
+                        Action = $recoveryAction
                         Root = $Root
                         VersionRoot = $versionRoot
                         BackupRoot = $backupRoot
-                        FailedReplacementRoot = $failedReplacementRoot
-                        PublishError = $cleanupError
-                        RollbackError = $_.Exception.Message
+                        FailedReplacementRoot = $recordedReplacementRoot
+                        OperationError = $cleanupError
+                        RollbackError = $rollbackError
                     }
                     Write-RepairRecoveryRecord @recoveryParameters
                     Fail-NativeWindowsInstall "Repair backup cleanup and rollback failed. Run Recover with the same manifest, payload, and install root. Recovery authority: $recoveryPath"
@@ -544,7 +561,7 @@ function Resolve-RecoveryAuxiliaryPath {
         [Parameter(Mandatory)][string]$Label
     )
 
-    if ($null -eq $Value) {
+    if ($null -eq $Value -or ($Value -is [string] -and [string]::IsNullOrWhiteSpace($Value))) {
         return $null
     }
     if ($Value -isnot [string]) {
@@ -572,14 +589,18 @@ function Invoke-Recover {
     }
     Assert-ExactProperties -Value $recovery -Properties @(
         'action', 'backupRoot', 'classification', 'failedReplacementRoot', 'installRoot',
-        'openshell', 'publishError', 'receiptVersion', 'rollbackError', 'versionRoot'
+        'openshell', 'operationError', 'receiptVersion', 'rollbackError', 'versionRoot'
     ) -Label 'Repair recovery authority'
     Assert-ExactProperties -Value $recovery.openshell -Properties @(
         'pullRequest', 'repository', 'revision'
     ) -Label 'Recovery OpenShell authority'
     if ($recovery.receiptVersion -ne 1 -or $recovery.classification -cne 'qualification-only' -or
         $recovery.installRoot -cne $root -or
-        $recovery.action -cnotin @('restore-prior-version', 'restore-prior-version-and-remove-replacement') -or
+        $recovery.action -cnotin @(
+            'remove-retained-backup',
+            'restore-prior-version',
+            'restore-prior-version-and-remove-replacement'
+        ) -or
         $recovery.openshell.repository -cne $script:TrustedOpenShellRepository -or
         $recovery.openshell.pullRequest -ne $script:TrustedOpenShellPullRequest -or
         $recovery.openshell.revision -cne $script:TrustedOpenShellRevision) {
@@ -607,6 +628,25 @@ function Invoke-Recover {
     }
     $replacementRoot = Resolve-RecoveryAuxiliaryPath @replacementParameters
 
+    if ($recovery.action -ceq 'remove-retained-backup') {
+        if (-not (Test-Path -LiteralPath $recordedVersionRoot -PathType Container) -or
+            -not (Test-InstalledFiles -VersionRoot $recordedVersionRoot -Files $distribution.Files)) {
+            Fail-NativeWindowsInstall "Recover cannot verify the published version. Recovery authority remains at $recoveryPath"
+        }
+        if ($backupRoot -and (Test-Path -LiteralPath $backupRoot -PathType Container)) {
+            Assert-NoReparsePoint -Path $backupRoot -Label 'Retained recovery backup root'
+            [IO.Directory]::Delete($backupRoot, $true)
+        }
+        if ($replacementRoot -and (Test-Path -LiteralPath $replacementRoot -PathType Container)) {
+            Assert-NoReparsePoint -Path $replacementRoot -Label 'Retained recovery replacement root'
+            [IO.Directory]::Delete($replacementRoot, $true)
+        }
+        Write-InstallReceipt -Distribution $distribution -Root $root -VersionRoot $recordedVersionRoot
+        [IO.File]::Delete($recoveryPath)
+        Write-Host "Recovered the native Windows candidate distribution at $recordedVersionRoot"
+        return
+    }
+
     if ($backupRoot -and (Test-Path -LiteralPath $backupRoot -PathType Container)) {
         Assert-NoReparsePoint -Path $backupRoot -Label 'Recovery backup root'
         if (Test-Path -LiteralPath $recordedVersionRoot -PathType Container) {
@@ -619,7 +659,7 @@ function Invoke-Recover {
                     VersionRoot = $recordedVersionRoot
                     BackupRoot = $backupRoot
                     FailedReplacementRoot = $replacementRoot
-                    PublishError = [string]$recovery.publishError
+                    OperationError = [string]$recovery.operationError
                     RollbackError = [string]$recovery.rollbackError
                 }
                 Write-RepairRecoveryRecord @recordParameters

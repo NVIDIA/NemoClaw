@@ -16,7 +16,6 @@
 param(
     [Parameter(Mandatory)][string]$CandidateCheckout,
     [Parameter(Mandatory)][string]$CandidateSha,
-    [Parameter(Mandatory)][string]$InstallerSha256,
     [Parameter(Mandatory)][string]$OpenShellCheckout,
     [Parameter(Mandatory)][string]$OpenShellSha,
     [Parameter(Mandatory)][string]$ArtifactDirectory
@@ -30,7 +29,6 @@ $script:CanonicalOpenShellRepository = 'https://github.com/NVIDIA/OpenShell.git'
 $script:TrustedOpenShellPullRequest = 2721
 $script:TrustedOpenShellRevision = 'bcd517bbe08cc80860c9be57699390cd32e8445f'
 $script:ShaPattern = '^[a-f0-9]{40}$'
-$script:Sha256Pattern = '^[a-f0-9]{64}$'
 $script:MaxJsonBytes = 16384
 $script:MaxInstallerBytes = 524288
 
@@ -113,8 +111,7 @@ function Assert-CommittedFile {
         [Parameter(Mandatory)][string]$Checkout,
         [Parameter(Mandatory)][string]$Revision,
         [Parameter(Mandatory)][string]$RelativePath,
-        [Parameter(Mandatory)][string]$FilePath,
-        [Parameter(Mandatory)][string]$ExpectedSha256
+        [Parameter(Mandatory)][string]$FilePath
     )
 
     if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
@@ -128,9 +125,6 @@ function Assert-CommittedFile {
     )).Output
     if ($workingBlob -cne $committedBlob) {
         Fail-Qualification "Candidate file bytes do not match the candidate commit: $RelativePath"
-    }
-    if ((Get-FileHash -LiteralPath $FilePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedSha256) {
-        Fail-Qualification "Candidate file SHA-256 does not match the trusted plan: $RelativePath"
     }
 }
 
@@ -358,9 +352,6 @@ function Assert-InstalledDistribution {
 if ($CandidateSha -cnotmatch $script:ShaPattern -or $OpenShellSha -cnotmatch $script:ShaPattern) {
     Fail-Qualification 'Candidate and OpenShell revisions must be lowercase 40-character commit SHAs.'
 }
-if ($InstallerSha256 -cnotmatch $script:Sha256Pattern) {
-    Fail-Qualification 'Installer digest must be a lowercase SHA-256 value.'
-}
 if ($OpenShellSha -cne $script:TrustedOpenShellRevision) {
     Fail-Qualification 'OpenShell revision must match PR #2721 merge commit.'
 }
@@ -388,7 +379,6 @@ $committedInstallerParameters = @{
     Revision = $CandidateSha
     RelativePath = 'scripts/install-windows-native.ps1'
     FilePath = $installer
-    ExpectedSha256 = $InstallerSha256
 }
 Assert-CommittedFile @committedInstallerParameters
 
@@ -565,7 +555,7 @@ try {
         versionRoot = $repairedReceipt.versionRoot
         backupRoot = $recoveryBackupRoot
         failedReplacementRoot = $recoveryReplacementRoot
-        publishError = 'qualification fixture'
+        operationError = 'qualification fixture'
         rollbackError = 'qualification fixture'
     })
     $recoverParameters = @{
@@ -580,6 +570,32 @@ try {
         (Test-Path -LiteralPath $recoveryReplacementRoot) -or
         (Get-FileHash -LiteralPath (Join-Path $repairedReceipt.versionRoot 'bin\openshell.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedOpenShellSha256) {
         Fail-Qualification 'Recover did not publish one clean pinned distribution.'
+    }
+
+    $nullReplacementReceipt = Get-Content -LiteralPath $installReceiptPath -Raw | ConvertFrom-Json
+    $nullReplacementBackupRoot = Join-Path $installRoot ('.backup-' + [guid]::NewGuid().ToString('N'))
+    [IO.Directory]::Move($nullReplacementReceipt.versionRoot, $nullReplacementBackupRoot)
+    Write-JsonFile -Path $recoveryAuthorityPath -Value ([pscustomobject]@{
+        receiptVersion = 1
+        classification = 'qualification-only'
+        installRoot = $installRoot
+        openshell = [pscustomobject]@{
+            repository = $script:CanonicalOpenShellRepository
+            pullRequest = $script:TrustedOpenShellPullRequest
+            revision = $script:TrustedOpenShellRevision
+        }
+        action = 'restore-prior-version'
+        versionRoot = $nullReplacementReceipt.versionRoot
+        backupRoot = $nullReplacementBackupRoot
+        failedReplacementRoot = $null
+        operationError = 'qualification null-replacement fixture'
+        rollbackError = 'qualification null-replacement fixture'
+    })
+    & $installer @recoverParameters | Out-Null
+    if ((Test-Path -LiteralPath $recoveryAuthorityPath) -or
+        (Test-Path -LiteralPath $nullReplacementBackupRoot) -or
+        (Get-FileHash -LiteralPath (Join-Path $nullReplacementReceipt.versionRoot 'bin\openshell.exe') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedOpenShellSha256) {
+        Fail-Qualification 'Recover did not handle a null replacement root.'
     }
     [IO.File]::Copy($installReceiptPath, (Join-Path $receiptStage 'recovery-receipt.json'), $false)
 
@@ -602,7 +618,7 @@ try {
         receiptVersion = 1
         repository = $script:CanonicalNemoClawRepository
         revision = $CandidateSha
-        installerSha256 = $InstallerSha256
+        installerSha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
     })
     Write-JsonFile -Path (Join-Path $receiptStage 'openshell-source.json') -Value ([pscustomobject]@{
         receiptVersion = 1
