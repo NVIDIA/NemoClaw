@@ -664,7 +664,9 @@ export function createSandboxGpuCreateAttemptRunner(
                 return failReadyCheckCreatedIdentity("selector-identity-changed");
               }
               readyCheckCreatedSandboxId = observation.sandboxId;
-              return observation.state === "matched";
+              // End only the create-client handoff. Strict metadata settlement still
+              // runs before any post-create effect.
+              return true;
             },
             ...(deferPostCreateEffects
               ? {}
