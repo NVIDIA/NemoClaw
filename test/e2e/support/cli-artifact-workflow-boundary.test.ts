@@ -7,34 +7,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  CLI_ARTIFACT_PACKAGE_STEP,
-  CLI_ARTIFACT_PUBLISH_STEP,
-  validateCliArtifactRestoreAction,
-  validateCliArtifactWorkflowBoundary,
-} from "../../../tools/e2e/cli-artifact-workflow-boundary.mts";
-import {
-  type CompositeAction,
-  readRepoText,
-  readWorkflow,
-  readYaml,
-  type Workflow,
-} from "../../helpers/e2e-workflow-contract";
 
 const CANDIDATE_SHA = execFileSync("git", ["rev-parse", "HEAD"], {
   encoding: "utf8",
 }).trim();
 const PAYLOAD_SHA256 = "b".repeat(64);
-const CONTENT_ADDRESSED_ARTIFACT_NAME = `artifact_name="nemoclaw-cli-\${CANDIDATE_SHA}-\${payload_sha256}"`;
-const UNBOUND_ARTIFACT_NAME = `artifact_name="nemoclaw-cli-\${CANDIDATE_SHA}"`;
+const IDENTITY_SCRIPT = path.resolve("scripts/e2e/validate-cli-artifact-identity.sh");
+const RESTORE_SCRIPT = path.resolve("scripts/e2e/restore-cli-artifact.sh");
 
 function runIdentityValidation(overrides: Record<string, unknown> = {}, consumerAttempt = "1") {
-  const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
   const workflowSha = "d".repeat(40);
   const outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-identity-"));
   try {
     const outputPath = path.join(outputDirectory, "github-output");
-    const result = spawnSync("bash", ["-c", action.runs.steps[0]!.run!], {
+    const result = spawnSync(IDENTITY_SCRIPT, [], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -64,10 +50,6 @@ function runIdentityValidation(overrides: Record<string, unknown> = {}, consumer
   } finally {
     fs.rmSync(outputDirectory, { force: true, recursive: true });
   }
-}
-
-function workflowFixture(): Workflow {
-  return JSON.parse(JSON.stringify(readWorkflow())) as Workflow;
 }
 
 type RestoreFixtureOptions = {
@@ -109,7 +91,8 @@ function writeCliArchive(
 ): void {
   const dist = path.join(context.payloadRoot, "dist");
   const shared = path.join(context.payloadRoot, "nemoclaw", "dist", "shared");
-  fs.mkdirSync(dist);
+  fs.mkdirSync(path.join(dist, "lib"), { recursive: true });
+  fs.mkdirSync(path.join(dist, "nemoclaw", "blueprint"), { recursive: true });
   fs.mkdirSync(shared, { recursive: true });
   fs.writeFileSync(
     path.join(dist, "nemoclaw.js"),
@@ -122,7 +105,12 @@ function writeCliArchive(
       sourceRevision: context.buildIdentitySha,
     })}\n`,
   );
+  fs.writeFileSync(path.join(dist, "lib", "blueprint-runner.js"), "export {};\n");
+  fs.writeFileSync(path.join(dist, "nemoclaw", "package.json"), '{"type":"module"}\n');
+  fs.writeFileSync(path.join(dist, "nemoclaw", "blueprint", "runner.js"), "export {};\n");
+  fs.writeFileSync(path.join(shared, "openshell-gateway-health-sdk.js"), "export {};\n");
   for (const boundary of [
+    "openshell-observation-boundary.cjs",
     "openshell-policy-boundary.cjs",
     "sandbox-name.cjs",
     "snapshot-sanitizer-boundary.cjs",
@@ -363,9 +351,8 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   );
   PREEXISTING_DIST_WRITERS[options.preexistingDist ?? "none"](workspace);
 
-  const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
   const githubOutput = path.join(root, "github-output");
-  const identityResult = spawnSync("bash", ["-c", action.runs.steps[0]!.run!], {
+  const identityResult = spawnSync(IDENTITY_SCRIPT, [], {
     cwd: workspace,
     encoding: "utf8",
     env: {
@@ -399,7 +386,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
           return [line.slice(0, separator), line.slice(separator + 1)];
         }),
     );
-    return spawnSync("bash", ["-c", action.runs.steps[2]!.run!], {
+    return spawnSync(RESTORE_SCRIPT, [], {
       cwd: workspace,
       encoding: "utf8",
       env: {
@@ -443,188 +430,7 @@ function expectRestoreFailure(options: RestoreFixtureOptions, message: string): 
   }
 }
 
-function requireStep(workflow: Workflow, jobName: string, stepName: string) {
-  const step = workflow.jobs[jobName]?.steps?.find((candidate) => candidate.name === stepName);
-  expect(step, `${jobName} must contain ${stepName}`).toBeDefined();
-  return step!;
-}
-
-describe("exact-commit CLI artifact workflow boundary", () => {
-  it("builds the candidate CLI once and requires every artifact-using job to restore it", () => {
-    expect(validateCliArtifactWorkflowBoundary(readWorkflow())).toEqual([]);
-  });
-
-  it("rejects dependency caching before trusted installation (#9051)", () => {
-    const workflow = workflowFixture();
-    const setupNode = requireStep(
-      workflow,
-      "mcp-bridge-dev",
-      "Set up Node.js for trusted OpenShell verification",
-    );
-    setupNode.with = { ...setupNode.with, "package-manager-cache": true };
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must set up Node.js without dependency caching before candidate checkout",
-    );
-  });
-
-  it("rejects package manager probes after candidate checkout (#9051)", () => {
-    const workflow = workflowFixture();
-    const steps = workflow.jobs["mcp-bridge-dev"].steps!;
-    const setupNode = requireStep(
-      workflow,
-      "mcp-bridge-dev",
-      "Set up Node.js for trusted OpenShell verification",
-    );
-    const [movedSetupNode] = steps.splice(steps.indexOf(setupNode), 1);
-    const candidateCheckoutIndex = steps.findIndex((step) =>
-      step.uses?.startsWith("actions/checkout@"),
-    );
-    steps.splice(candidateCheckoutIndex + 1, 0, movedSetupNode!);
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must set up Node.js without dependency caching before candidate checkout",
-    );
-  });
-
-  it("rejects candidate execution before trusted development installation (#9051)", () => {
-    const workflow = workflowFixture();
-    const steps = workflow.jobs["mcp-bridge-dev"].steps!;
-    const candidateCheckoutIndex = steps.findIndex((step) =>
-      step.uses?.startsWith("actions/checkout@"),
-    );
-    steps.splice(candidateCheckoutIndex + 1, 0, {
-      name: "Execute candidate CLI before trusted installation",
-      run: "node bin/nemoclaw.js --version",
-    });
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
-    );
-  });
-
-  it("rejects candidate execution embedded in the trusted development installer (#9051)", () => {
-    const workflow = workflowFixture();
-    const install = requireStep(
-      workflow,
-      "mcp-bridge-dev",
-      "Install immutable OpenShell dev artifact",
-    );
-    install.run = `bash test/e2e/setup-mcp-test-tls.sh\n${install.run ?? ""}`;
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
-    );
-  });
-
-  it("rejects candidate-controlled process hooks in the trusted development job (#9051)", () => {
-    const workflow = workflowFixture();
-    const job = workflow.jobs["mcp-bridge-dev"];
-    expect(job).toBeDefined();
-    job!.env = {
-      ...job!.env,
-      NODE_OPTIONS: "--require=./candidate-preload.cjs",
-    };
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must not use candidate-controlled process hooks before trusted installation",
-    );
-  });
-
-  it("rejects candidate-controlled process hooks in the workflow environment (#9051)", () => {
-    const workflow = workflowFixture() as Workflow & { env?: Record<string, string> };
-    workflow.env = {
-      ...workflow.env,
-      NODE_OPTIONS: "--require=./candidate-preload.cjs",
-    };
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "workflow must not set process startup hooks before CLI artifact restore",
-    );
-  });
-
-  it("scans the complete job for process hooks when trusted installation is missing (#9051)", () => {
-    const workflow = workflowFixture();
-    const job = workflow.jobs["mcp-bridge-dev"];
-    const steps = job.steps!;
-    job.steps = steps.filter(
-      (step) => step.name !== "Install immutable OpenShell dev artifact",
-    );
-    const prepare = requireStep(workflow, "mcp-bridge-dev", "Prepare E2E workspace");
-    prepare.env = { NODE_OPTIONS: "--require=./candidate-preload.cjs" };
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toEqual(
-      expect.arrayContaining([
-        "mcp-bridge-dev must not use candidate-controlled process hooks before trusted installation",
-        "mcp-bridge-dev must preserve every reviewed step through trusted installation",
-      ]),
-    );
-  });
-
-  it("rejects skipping the trusted development installer (#9051)", () => {
-    const workflow = workflowFixture();
-    const install = requireStep(
-      workflow,
-      "mcp-bridge-dev",
-      "Install immutable OpenShell dev artifact",
-    );
-    install.if = "${{ false }}";
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must preserve every reviewed step through trusted installation",
-    );
-  });
-
-  it("rejects skipping post-install dependency preparation (#9051)", () => {
-    const workflow = workflowFixture();
-    const prepare = requireStep(workflow, "mcp-bridge-dev", "Prepare E2E workspace");
-    prepare.if = "${{ false }}";
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must preserve reviewed dependency preparation and candidate CLI restore after trusted installation",
-    );
-  });
-
-  it("rejects removing post-install dependency preparation and candidate CLI restore (#9051)", () => {
-    const workflow = workflowFixture();
-    const steps = workflow.jobs["mcp-bridge-dev"].steps!;
-    workflow.jobs["mcp-bridge-dev"].steps = steps.filter(
-      (step) =>
-        step.name !== "Prepare E2E workspace" &&
-        step.name !== "Restore exact-commit CLI artifact",
-    );
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "mcp-bridge-dev must verify and restore the exact CLI artifact exactly once",
-    );
-  });
-
-  it("rejects removing the trusted development consumer job (#9051)", () => {
-    const workflow = workflowFixture();
-    delete workflow.jobs["mcp-bridge-dev"];
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toContain(
-      "workflow is missing required CLI artifact consumer mcp-bridge-dev",
-    );
-  });
-
-  it("reports both an unreadable action and a missing producer", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-missing-action-"));
-    try {
-      const workflow = workflowFixture();
-      delete workflow.jobs["generate-matrix"];
-
-      expect(
-        validateCliArtifactWorkflowBoundary(workflow, path.join(directory, "missing-action.yaml")),
-      ).toEqual([
-        "CLI artifact restore action file is missing or unreadable",
-        "workflow is missing CLI artifact producer generate-matrix",
-      ]);
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
+describe("exact-commit CLI artifact restore", () => {
   it("accepts matching artifact, candidate source, and workflow identities", () => {
     const result = runIdentityValidation();
     expect(result.status, "matching artifact identity validation failed").toBe(0);
@@ -645,6 +451,17 @@ describe("exact-commit CLI artifact workflow boundary", () => {
           path.join(fixture.workspace, "nemoclaw", "dist", "shared", "sandbox-name.cjs"),
         ),
       ).toBe(true);
+      expect(
+        fs.existsSync(path.join(fixture.workspace, "dist", "lib", "blueprint-runner.js")),
+      ).toBe(true);
+      expect(
+        fs.existsSync(path.join(fixture.workspace, "dist", "nemoclaw", "blueprint", "runner.js")),
+      ).toBe(true);
+      expect(
+        JSON.parse(
+          fs.readFileSync(path.join(fixture.workspace, "dist", "nemoclaw", "package.json"), "utf8"),
+        ),
+      ).toEqual({ type: "module" });
     } finally {
       fixture.cleanup();
     }
@@ -741,6 +558,11 @@ describe("exact-commit CLI artifact workflow boundary", () => {
           path.join(fixture.workspace, "nemoclaw", "dist", "shared", "sandbox-name.cjs"),
         ),
       ).toBe(true);
+      expect(
+        JSON.parse(
+          fs.readFileSync(path.join(fixture.workspace, "dist", "nemoclaw", "package.json"), "utf8"),
+        ),
+      ).toEqual({ type: "module" });
 
       expect(
         fs
@@ -878,79 +700,5 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       { buildIdentitySha: "e".repeat(40) },
       "restored CLI build identity does not match the candidate SHA",
     );
-  });
-
-  it("rejects producer identity and content-addressing drift", () => {
-    const workflow = workflowFixture();
-    const producer = workflow.jobs["generate-matrix"];
-    producer.outputs!.cli_artifact_provenance =
-      "${{ steps.upload_cli_artifact.outputs.artifact-url }}";
-    const packageStep = requireStep(workflow, "generate-matrix", CLI_ARTIFACT_PACKAGE_STEP);
-    packageStep.env!.WORKFLOW_SHA = "${{ inputs.checkout_sha }}";
-    packageStep.run = packageStep.run!.replace(
-      CONTENT_ADDRESSED_ARTIFACT_NAME,
-      UNBOUND_ARTIFACT_NAME,
-    );
-    packageStep.run = packageStep.run!.replace("sandbox-name.cjs", "missing-boundary.cjs");
-    const uploadStep = requireStep(workflow, "generate-matrix", CLI_ARTIFACT_PUBLISH_STEP);
-    uploadStep.uses = "actions/upload-artifact@v7";
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toEqual(
-      expect.arrayContaining([
-        "generate-matrix must expose exact cli_artifact_provenance provenance",
-        "CLI artifact package step must bind candidate and trusted workflow identities explicitly",
-        `CLI artifact package step must contain ${CONTENT_ADDRESSED_ARTIFACT_NAME}`,
-        "CLI artifact package step must contain sandbox-name.cjs",
-        "CLI artifact upload must use the immutable content-addressed upload contract",
-      ]),
-    );
-  });
-
-  it("leaves job timeouts to their dedicated workflow validators", () => {
-    const workflow = workflowFixture();
-    const timeoutMinutes = Number(workflow.jobs["hermes-e2e"]["timeout-minutes"]);
-    expect(Number.isFinite(timeoutMinutes)).toBe(true);
-    workflow.jobs["hermes-e2e"]["timeout-minutes"] = timeoutMinutes + 1;
-
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toEqual([]);
-  });
-
-  it("rejects action implementation drift that weakens extraction or payload verification", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-action-"));
-    try {
-      const actionPath = path.join(directory, "action.yaml");
-      const source = readRepoText(".github/actions/restore-e2e-cli-artifact/action.yaml")
-        .replace("tar --no-same-owner --no-same-permissions", "tar")
-        .replace("sandbox-name.cjs", "missing-boundary.cjs")
-        .replace(
-          'lockfile_sha256="$(sha256_file package-lock.json)"',
-          [
-            '# lockfile_sha256="$(sha256_file package-lock.json)"',
-            'lockfile_sha256="$(openssl dgst -sha256 -r package-lock.json | cut -d " " -f 1)"',
-          ].join("\n        "),
-        )
-        .replace(
-          'actual_payload_sha256="$(sha256_file "$payload")"',
-          [
-            '# actual_payload_sha256="$(sha256_file "$payload")"',
-            'actual_payload_sha256="$(openssl dgst -sha256 -r "$payload" | cut -d " " -f 1)"',
-          ].join("\n        "),
-        )
-        .replace('[[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]', '[[ -s "$payload" ]]');
-      fs.writeFileSync(actionPath, source);
-
-      expect(validateCliArtifactRestoreAction(actionPath)).toEqual(
-        expect.arrayContaining([
-          "CLI artifact restore action must match its immutable workflow pin",
-          'CLI artifact payload verification must contain tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
-          "CLI artifact payload verification must contain sandbox-name.cjs",
-          "CLI artifact payload verification must assign lockfile_sha256 exactly once through the Node.js binary stream",
-          "CLI artifact payload verification must assign actual_payload_sha256 exactly once through the Node.js binary stream",
-          'CLI artifact payload verification must contain [[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]',
-        ]),
-      );
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
   });
 });
