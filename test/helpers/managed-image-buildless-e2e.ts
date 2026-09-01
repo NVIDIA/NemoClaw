@@ -839,12 +839,14 @@ function assertManagedLaunch(
   } else {
     expect(
       result.payload.runnerCommands.some((command) =>
-        command.includes(`sandbox get ${bootstrapRequest?.sandboxName}`),
+        command.includes(`sandbox get -g nemoclaw ${bootstrapRequest?.sandboxName}`),
       ),
     ).toBe(true);
     expect(
       result.payload.runnerCommands.some((command) =>
-        command.includes(`sandbox exec --name ${bootstrapRequest?.sandboxName} -- true`),
+        command.includes(
+          `sandbox exec -g nemoclaw --name ${bootstrapRequest?.sandboxName} -- true`,
+        ),
       ),
     ).toBe(true);
   }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
+import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
 import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
@@ -292,6 +293,7 @@ export function refuseApfMutableNameFallbackCleanup(sandboxName: string) {
 export interface SandboxGpuCreateFlowDeps {
   runOpenshell: RunOpenshell;
   runCaptureOpenshell: RunCaptureOpenshell;
+  sandboxObserver: OpenShellSandboxObserver;
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
