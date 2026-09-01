@@ -7,7 +7,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { useOpenAiValidationTestServers } from "./openai-validation-session.test-helpers";
-import { HARNESS_TMPDIR, withFakeCurlProbe } from "./onboard-probes-curl-harness";
+import { HARNESS_COUNTER, HARNESS_TMPDIR, withFakeCurlProbe } from "./onboard-probes-curl-harness";
 
 const {
   probeOpenAiLikeEndpoint,
@@ -27,6 +27,58 @@ const optimizedProbeSessionOptions = {
 };
 
 describe("onboarding inference probe reply budgets", () => {
+  it("preserves the Gemini reply budget on doubled-timeout chat-completions retry", () => {
+    const script = `#!/usr/bin/env bash
+outfile=""
+payload=""
+n=$(cat "${HARNESS_COUNTER}")
+n=$((n + 1))
+echo "$n" > "${HARNESS_COUNTER}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    -d) payload="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$payload" > "${HARNESS_TMPDIR}/gemini-retry-request-$n.json"
+if [ "$n" -eq 1 ]; then
+  if [ -n "$outfile" ]; then
+    : > "$outfile"
+  fi
+  printf '000'
+  exit 28
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`;
+    withFakeCurlProbe({ script, dirPrefix: "nemoclaw-gemini-retry-budget-" }, ({ tmpDir, counter }) => {
+      const result = probeOpenAiLikeEndpoint(
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        "gemini-2.5-flash",
+        "test-key",
+        { skipResponsesProbe: true, provider: "gemini-api" },
+      );
+
+      expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+      expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+      const initialPayload = JSON.parse(
+        fs.readFileSync(path.join(tmpDir, "gemini-retry-request-1.json"), "utf8"),
+      );
+      const retryPayload = JSON.parse(
+        fs.readFileSync(path.join(tmpDir, "gemini-retry-request-2.json"), "utf8"),
+      );
+      expect(initialPayload).toMatchObject({ max_tokens: 256 });
+      expect(retryPayload).toMatchObject({ max_tokens: 256 });
+    });
+  });
+
   it("keeps DeepSeek V4 Pro's model-specific budget on the onboarding probe path", () => {
     const script = `#!/usr/bin/env bash
 outfile=""
