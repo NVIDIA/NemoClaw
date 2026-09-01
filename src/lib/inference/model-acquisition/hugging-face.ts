@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
-import { redactFull } from "../../security/redact";
+import { redactFull, redactFullWithUrls } from "../../security/redact";
 
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 const HF_RATE_LIMIT_PATTERN = /\b429\b|too many requests|rate[\s_-]*limit/i;
@@ -194,6 +194,15 @@ function modelDownloadStallTimeoutMs(env: NodeJS.ProcessEnv = process.env): numb
   return timeoutMs;
 }
 
+function dockerEndpointIdentity(env: Readonly<Record<string, string>>): string {
+  const dockerContext = env.DOCKER_CONTEXT?.trim();
+  if (dockerContext) return `Docker context ${redactFull(dockerContext)}`;
+  const dockerHost = env.DOCKER_HOST?.trim();
+  return dockerHost
+    ? `Docker host ${redactFullWithUrls(dockerHost)}`
+    : "the default Docker endpoint";
+}
+
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -336,7 +345,7 @@ export function acquireHuggingFaceModel(
         void cleanupStalledDownload().then(({ containerRemoved, clientExited }) => {
           const cleanup = containerRemoved && clientExited
             ? ""
-            : `; cleanup unconfirmed for container ${containerName} on the configured Docker endpoint; run docker rm --force ${containerName} with the same Docker context`;
+            : `; cleanup unconfirmed for container ${containerName} on Docker endpoint ${dockerEndpointIdentity(request.dockerEnv)}; select that endpoint, run docker rm --force ${containerName}, and resume onboarding only after removal is confirmed`;
           done({
             ok: false,
             reason: `hf download stalled: no output for ${formatElapsed(idleMs)}${cleanup}`,

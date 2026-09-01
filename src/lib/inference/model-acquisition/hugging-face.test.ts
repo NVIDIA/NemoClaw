@@ -57,6 +57,14 @@ function observer(): HuggingFaceModelAcquisitionObserver {
   return { logLine: vi.fn(), onRateLimit: vi.fn() };
 }
 
+function forcedRemoveCall(): ReturnType<typeof dockerSpawn>["mock"]["calls"][number] {
+  const call = dockerSpawn.mock.calls.find(([args]) =>
+    Array.isArray(args) && args[0] === "rm" && args[1] === "--force",
+  );
+  expect(call).toBeDefined();
+  return call as ReturnType<typeof dockerSpawn>["mock"]["calls"][number];
+}
+
 describe("Hugging Face model acquisition", () => {
   let stdoutWrite: ReturnType<typeof vi.spyOn>;
   let stderrWrite: ReturnType<typeof vi.spyOn>;
@@ -375,7 +383,7 @@ describe("Hugging Face model acquisition", () => {
     expect(events.logLine).toHaveBeenCalledWith(expect.stringContaining("still running"));
     proc.stdout.emit("data", Buffer.from("Downloading (incomplete total...): 10%\n"));
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(events.logLine).toHaveBeenCalledTimes(3);
+    expect(events.logLine).toHaveBeenCalledWith(expect.stringContaining("still running"));
     expect(proc.kill).not.toHaveBeenCalled();
 
     // Then output stops entirely for the full stall window.
@@ -413,10 +421,10 @@ describe("Hugging Face model acquisition", () => {
     expect(dockerSpawn).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(1);
-    expect(dockerSpawn).toHaveBeenCalledTimes(2);
-    const downloadArgv = dockerSpawn.mock.calls[0]?.[0] as string[];
+    const downloadCall = dockerSpawn.mock.calls.find(([args]) => Array.isArray(args) && args[0] === "run");
+    const downloadArgv = downloadCall?.[0] as string[];
     const containerName = downloadArgv[downloadArgv.indexOf("--name") + 1];
-    expect(dockerSpawn.mock.calls[1]).toEqual([
+    expect(forcedRemoveCall()).toEqual([
       ["rm", "--force", containerName],
       { env: { DOCKER_HOST: "ssh://spark.example.test" }, stdio: "ignore" },
     ]);
@@ -442,14 +450,18 @@ describe("Hugging Face model acquisition", () => {
     const proc = mockProcess();
     const cleanupProc = mockProcess();
     dockerSpawn.mockReturnValueOnce(proc).mockReturnValueOnce(cleanupProc);
-    const resultPromise = acquireHuggingFaceModel(request(), observer());
+    const resultPromise = acquireHuggingFaceModel(
+      request({ dockerEnv: { DOCKER_HOST: "ssh://operator:secret@spark.example.test" } }),
+      observer(),
+    );
 
     await vi.advanceTimersByTimeAsync(1_000);
-    const downloadArgv = dockerSpawn.mock.calls[0]?.[0] as string[];
+    const downloadCall = dockerSpawn.mock.calls.find(([args]) => Array.isArray(args) && args[0] === "run");
+    const downloadArgv = downloadCall?.[0] as string[];
     const containerName = downloadArgv[downloadArgv.indexOf("--name") + 1];
-    expect(dockerSpawn.mock.calls[1]).toEqual([
+    expect(forcedRemoveCall()).toEqual([
       ["rm", "--force", containerName],
-      { env: { DOCKER_HOST: "ssh://spark.example.test" }, stdio: "ignore" },
+      { env: { DOCKER_HOST: "ssh://operator:secret@spark.example.test" }, stdio: "ignore" },
     ]);
     let settled = false;
     void resultPromise.then(() => {
@@ -463,7 +475,44 @@ describe("Hugging Face model acquisition", () => {
     expect(cleanupProc.unref).toHaveBeenCalledOnce();
     await expect(resultPromise).resolves.toEqual({
       ok: false,
-      reason: `hf download stalled: no output for 1s; cleanup unconfirmed for container ${containerName} on the configured Docker endpoint; run docker rm --force ${containerName} with the same Docker context`,
+      reason: `hf download stalled: no output for 1s; cleanup unconfirmed for container ${containerName} on Docker endpoint Docker host ssh://spark.example.test; select that endpoint, run docker rm --force ${containerName}, and resume onboarding only after removal is confirmed`,
+    });
+    vi.unstubAllEnvs();
+  });
+
+  it("reports Docker context precedence for manual cleanup without exposing the host (#10346)", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("NEMOCLAW_HF_DOWNLOAD_STALL_TIMEOUT", "1");
+    const proc = mockProcess();
+    const cleanupProc = mockProcess();
+    dockerSpawn.mockReturnValueOnce(proc).mockReturnValueOnce(cleanupProc);
+    const resultPromise = acquireHuggingFaceModel(
+      request({
+        dockerEnv: {
+          DOCKER_CONTEXT: "remote-builder",
+          DOCKER_HOST: "ssh://operator:secret@ignored.example.test",
+        },
+      }),
+      observer(),
+    );
+
+    await vi.advanceTimersByTimeAsync(11_000);
+    proc.emit("exit", 137);
+    const result = await resultPromise;
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining("Docker context remote-builder"),
+    });
+    expect(result).toEqual({ ok: false, reason: expect.any(String) });
+    const reason = "reason" in result ? result.reason : "";
+    expect(reason).not.toContain("ignored.example.test");
+    expect(reason).not.toContain("secret");
+    expect(forcedRemoveCall()[1]).toEqual({
+      env: {
+        DOCKER_CONTEXT: "remote-builder",
+        DOCKER_HOST: "ssh://operator:secret@ignored.example.test",
+      },
+      stdio: "ignore",
     });
     vi.unstubAllEnvs();
   });
