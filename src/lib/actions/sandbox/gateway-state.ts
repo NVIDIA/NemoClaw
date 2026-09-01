@@ -1001,20 +1001,25 @@ export async function ensureLiveSandboxOrExit(
     selectOwningGateway,
   });
   if (lookup.state === "present") {
+    const phase = lookup.phase ?? null;
+    // A policy read can fail because the Docker-backed gateway is unavailable.
+    // Preserve the more specific host-runtime diagnosis even for probe-only
+    // callers that otherwise allow a non-ready sandbox phase (#4428).
+    if (
+      phase &&
+      phase !== "Ready" &&
+      phase !== "Running" &&
+      !isTerminalSandboxPhase(phase) &&
+      isDockerRuntimeDown(sandboxName)
+    ) {
+      printDockerRuntimeDownGuidance(sandboxName);
+      exit(1);
+    }
     if (lookup.policyObservationError) {
       console.error(lookup.output);
       exit(1);
     }
-    const phase = lookup.phase ?? null;
     if (!allowNonReadyPhase && phase && phase !== "Ready" && phase !== "Running") {
-      // Don't steer toward rebuild when the host Docker daemon is down: the
-      // sandbox is fine and recreating it cannot succeed until Docker is back
-      // (#4428). Terminal phases (Failed/Error/...) are settled failures and
-      // keep the rebuild guidance so a genuine failure is never masked.
-      if (!isTerminalSandboxPhase(phase) && isDockerRuntimeDown(sandboxName)) {
-        printDockerRuntimeDownGuidance(sandboxName);
-        exit(1);
-      }
       const dockerRuntime = getSandboxDockerRuntime(sandboxName);
       if (dockerRuntime.containerName && !dockerRuntime.running && !dockerRuntime.paused) {
         console.error(`  Sandbox '${sandboxName}' is stopped.`);
