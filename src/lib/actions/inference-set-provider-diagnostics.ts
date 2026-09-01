@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
+import {
+  assertNoOpenShellGatewayEndpointOverride,
+  scopeGatewayOpenshellArgs,
+} from "../adapters/openshell/gateway-scope";
 import { parseCliOpenShellProviderNames } from "../adapters/openshell/provider-command";
 import { classifyGatewayProviderNames } from "../credentials/provider-list";
 import {
@@ -21,10 +25,13 @@ interface ProviderDiagnosticDeps {
 }
 
 export function queryRegisteredGatewayProviders(
+  gatewayName: string,
   deps: ProviderDiagnosticDeps,
 ): string[] | undefined {
   try {
-    const result = deps.captureOpenshell(["provider", "list", "--names"], {
+    assertNoOpenShellGatewayEndpointOverride();
+    const args = scopeGatewayOpenshellArgs(["provider", "list", "--names"], gatewayName);
+    const result = deps.captureOpenshell(args, {
       ignoreError: true,
       maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
       timeout: OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS,
@@ -47,6 +54,7 @@ export function queryRegisteredGatewayProviders(
 export function buildInferenceSetFailure(
   setResult: CaptureOpenshellResult,
   provider: string,
+  gatewayName: string,
   deps: ProviderDiagnosticDeps,
 ): { exitCode: number; message: string } {
   const stderr = typeof setResult.stderr === "string" ? setResult.stderr : "";
@@ -58,7 +66,9 @@ export function buildInferenceSetFailure(
     message: buildOpenshellInferenceSetFailureMessage({
       exitCode,
       providerNotFound,
-      registeredProviders: providerNotFound ? queryRegisteredGatewayProviders(deps) : undefined,
+      registeredProviders: providerNotFound
+        ? queryRegisteredGatewayProviders(gatewayName, deps)
+        : undefined,
       stderr,
       stdout,
     }),

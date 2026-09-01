@@ -1148,7 +1148,12 @@ async function runInferenceSetWithoutHostLock(
       setResult = setInferenceRoute();
     }
     if (setResult.status !== 0) {
-      const failure = buildInferenceSetFailure(setResult, provider, deps);
+      const failure = buildInferenceSetFailure(
+        setResult,
+        provider,
+        preparedRoute.gatewayName,
+        deps,
+      );
       throw new InferenceSetError(failure.message, failure.exitCode);
     }
     appliedInferenceSelection = true;

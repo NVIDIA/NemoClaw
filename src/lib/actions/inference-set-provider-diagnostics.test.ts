@@ -16,16 +16,36 @@ describe("inference set provider diagnostics", () => {
     }));
     const log = vi.fn();
 
-    expect(queryRegisteredGatewayProviders({ captureOpenshell, log })).toEqual([
+    expect(queryRegisteredGatewayProviders("nemoclaw", { captureOpenshell, log })).toEqual([
       "anthropic-prod",
       "nvidia-prod",
     ]);
-    expect(captureOpenshell).toHaveBeenCalledWith(["provider", "list", "--names"], {
-      ignoreError: true,
-      maxBuffer: 64 * 1024,
-      timeout: 5_000,
-    });
+    expect(captureOpenshell).toHaveBeenCalledWith(
+      ["provider", "list", "-g", "nemoclaw", "--names"],
+      {
+        ignoreError: true,
+        maxBuffer: 64 * 1024,
+        timeout: 5_000,
+      },
+    );
     expect(log).not.toHaveBeenCalled();
+  });
+
+  it("omits inventory without invoking OpenShell when an endpoint override is set (#9806)", () => {
+    const captureOpenshell = vi.fn(() => ({ status: 0, output: "ambient-provider" }));
+    const log = vi.fn();
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://untrusted.example.test");
+
+    try {
+      expect(
+        queryRegisteredGatewayProviders("nemoclaw", { captureOpenshell, log }),
+      ).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(captureOpenshell).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(STATIC_WARNING);
   });
 
   it("partitions empty and messaging-only provider output", () => {
@@ -76,7 +96,7 @@ describe("inference set provider diagnostics", () => {
     const captureOpenshell = vi.fn(capture);
     const log = vi.fn();
 
-    expect(queryRegisteredGatewayProviders({ captureOpenshell, log })).toBeUndefined();
+    expect(queryRegisteredGatewayProviders("nemoclaw", { captureOpenshell, log })).toBeUndefined();
     expect(log).toHaveBeenCalledWith(STATIC_WARNING);
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining("query-secret"));
   });

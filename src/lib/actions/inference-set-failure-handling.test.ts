@@ -187,7 +187,7 @@ describe("runInferenceSet failure handling", () => {
     expect(message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
     expect(deps.calls.captureOpenshell).toHaveBeenNthCalledWith(
       2,
-      ["provider", "list", "--names"],
+      ["provider", "list", "-g", "nemoclaw", "--names"],
       { ignoreError: true, maxBuffer: 64 * 1024, timeout: 5_000 },
     );
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
