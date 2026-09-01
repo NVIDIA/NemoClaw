@@ -335,7 +335,7 @@ describe("local inference helpers", () => {
     expect(result.message).toMatch(/not an Ollama networking failure/);
     expect(result.message).not.toMatch(/Docker container reachability check failed/);
     expect(result.message).not.toMatch(/sandbox uses a different network path/);
-    expect(result.diagnostic).toMatch(/DOCKER_CONFIG=\$\(mktemp -d\) docker pull curlimages\/curl/);
+    expect(result.diagnostic).toContain(CONTAINER_REACHABILITY_IMAGE);
     expect(result.diagnostic).toMatch(/credential helper/);
     expect(result.diagnostic).toMatch(/onboard --resume/);
   });
@@ -354,7 +354,7 @@ describe("local inference helpers", () => {
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/Docker image-pull failure/);
     expect(result.message).toMatch(/not a vLLM networking failure/);
-    expect(result.diagnostic).toMatch(/docker pull curlimages\/curl/);
+    expect(result.diagnostic).toContain(`docker pull ${CONTAINER_REACHABILITY_IMAGE}`);
   });
 
   it("keeps the runtime-failure report when the probe image is present locally (#9308)", () => {
