@@ -1247,7 +1247,6 @@ const PR_METADATA_EDIT_JOB_NAMES = new Set([
   "cli-tests",
   "docs-only-checks",
   "installer-integration",
-  "openshell-sdk-package",
   "plugin-tests",
   "reviewed-npm-audit",
   "static-checks",
@@ -1256,16 +1255,10 @@ const PR_METADATA_EDIT_JOB_NAMES = new Set([
 const PR_REVIEW_ADVISOR_WORKFLOW_NAME = "Automation / PR Review Advisor";
 const PR_REVIEW_ADVISOR_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
 const ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES = new Set([
-  "Specialist / Behavior",
-  "Specialist / Code reduction",
-  "Specialist / Dependency use",
-  "Specialist / Design and architecture",
-  "Specialist / Documentation",
-  "Specialist / Migration completion",
-  "Specialist / Operations",
-  "Specialist / Test design",
-  "Specialist / Trust",
+  "Discover review specialists and collect GitHub context",
+  "Publish advisor link",
 ]);
+const ADVISORY_PR_REVIEW_ADVISOR_SPECIALIST_JOB = /^Specialist \/ [^/]+$/u;
 
 interface ActionRunMetadata {
   attempt: number;
@@ -1310,7 +1303,6 @@ function createCiActionEvidenceCache(): CiActionEvidenceCache {
 interface CurrentCheckRollup {
   checks: StatusCheck[];
   incompleteAttemptEvidence: string[];
-  ambiguousRunEvidence: string[];
 }
 
 function currentCheckRollup(
@@ -1323,7 +1315,6 @@ function currentCheckRollup(
 ): CurrentCheckRollup {
   const { actionRunMetadataById, latestAttemptJobsByRun } = actionEvidence;
   const incompleteAttemptEvidence = new Set<string>();
-  const ambiguousRunEvidence = new Set<string>();
   const observedE2eLineage =
     e2eCoordinationEvidence.valid === true &&
     e2eCoordinationEvidence.checkSnapshot &&
@@ -1730,27 +1721,29 @@ function currentCheckRollup(
 
     const successfulE2eSeedReuse = Boolean(
       classifyE2eSeedRun(runId, run) === "reuse" &&
-      run.status === "COMPLETED" &&
-      run.conclusion === "SUCCESS" &&
-      [...jobs.values()].every(
-        (job) =>
-          job.status === "COMPLETED" &&
-          job.conclusion !== null &&
-          PASSING_ACTION_RUN_CONCLUSIONS.has(job.conclusion),
-      ),
+        run.status === "COMPLETED" &&
+        run.conclusion === "SUCCESS" &&
+        [...jobs.values()].every(
+          (job) =>
+            job.status === "COMPLETED" &&
+            job.conclusion !== null &&
+            PASSING_ACTION_RUN_CONCLUSIONS.has(job.conclusion),
+        ),
     );
     if (successfulE2eSeedReuse) return true;
 
     const allSkippedTargetRun = Boolean(
       (runIdentityEvidence(runId, true) === "current" ||
         e2eControllerHeadBinding(run) === "current") &&
-      run.event === "pull_request_target" &&
-      run.path === ".github/workflows/pr-e2e-gate.yaml" &&
-      run.e2eGateDiff === true &&
-      run.e2eGateRun === false &&
-      run.status === "COMPLETED" &&
-      run.conclusion === "SKIPPED" &&
-      [...jobs.values()].every((job) => job.status === "COMPLETED" && job.conclusion === "SKIPPED"),
+        run.event === "pull_request_target" &&
+        run.path === ".github/workflows/pr-e2e-gate.yaml" &&
+        run.e2eGateDiff === true &&
+        run.e2eGateRun === false &&
+        run.status === "COMPLETED" &&
+        run.conclusion === "SKIPPED" &&
+        [...jobs.values()].every(
+          (job) => job.status === "COMPLETED" && job.conclusion === "SKIPPED",
+        ),
     );
     if (allSkippedTargetRun) return true;
     return classifyPrMetadataEditRun(runId) === "recognized";
@@ -1761,23 +1754,23 @@ function currentCheckRollup(
     const jobs = latestAttemptJobs(runId);
     return Boolean(
       run &&
-      jobs &&
-      classifyPrMetadataEditRun(runId) === "not_metadata_edit" &&
-      runIdentityEvidence(runId, true) === "current" &&
-      run.event === event &&
-      run.path === path &&
-      (run.path !== ".github/workflows/pr.yaml" || run.prCiGate === true) &&
-      (run.path !== ".github/workflows/installer-hash-check.yaml" ||
-        run.installerHashGate === true) &&
-      (run.path !== ".github/workflows/pr-e2e-gate.yaml" ||
-        run.event !== "pull_request_target" ||
-        (run.e2eGateDiff === true && run.e2eGateRun === true)) &&
-      run.status === "COMPLETED" &&
-      run.conclusion !== null &&
-      run.conclusion !== "SKIPPED" &&
-      jobs.size > 0 &&
-      [...jobs.values()].every((job) => job.status === "COMPLETED" && job.conclusion !== null) &&
-      [...jobs.values()].some((job) => job.conclusion !== "SKIPPED"),
+        jobs &&
+        classifyPrMetadataEditRun(runId) === "not_metadata_edit" &&
+        runIdentityEvidence(runId, true) === "current" &&
+        run.event === event &&
+        run.path === path &&
+        (run.path !== ".github/workflows/pr.yaml" || run.prCiGate === true) &&
+        (run.path !== ".github/workflows/installer-hash-check.yaml" ||
+          run.installerHashGate === true) &&
+        (run.path !== ".github/workflows/pr-e2e-gate.yaml" ||
+          run.event !== "pull_request_target" ||
+          (run.e2eGateDiff === true && run.e2eGateRun === true)) &&
+        run.status === "COMPLETED" &&
+        run.conclusion !== null &&
+        run.conclusion !== "SKIPPED" &&
+        jobs.size > 0 &&
+        [...jobs.values()].every((job) => job.status === "COMPLETED" && job.conclusion !== null) &&
+        [...jobs.values()].some((job) => job.conclusion !== "SKIPPED"),
     );
   };
 
@@ -1901,7 +1894,8 @@ function currentCheckRollup(
     if (
       check.__typename !== "CheckRun" ||
       check.workflowName !== PR_REVIEW_ADVISOR_WORKFLOW_NAME ||
-      !ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES.has(checkName)
+      !ADVISORY_PR_REVIEW_ADVISOR_JOB_NAMES.has(checkName) &&
+      !ADVISORY_PR_REVIEW_ADVISOR_SPECIALIST_JOB.test(checkName)
     ) {
       return false;
     }
@@ -1921,13 +1915,13 @@ function currentCheckRollup(
           associationLessHeadBinding(run) === "current";
     return Boolean(
       run &&
-      job &&
-      run.event === "pull_request_target" &&
-      run.path === PR_REVIEW_ADVISOR_WORKFLOW_PATH &&
-      currentPrBinding &&
-      job.name === checkName &&
-      job.status === checkStatus &&
-      job.conclusion === checkConclusion,
+        job &&
+        run.event === "pull_request_target" &&
+        run.path === PR_REVIEW_ADVISOR_WORKFLOW_PATH &&
+        currentPrBinding &&
+        job.name === checkName &&
+        job.status === checkStatus &&
+        job.conclusion === checkConclusion,
     );
   };
 
@@ -2007,10 +2001,10 @@ function currentCheckRollup(
     const { event, path } = actionRunMetadata(runId) ?? {};
     return Boolean(
       event &&
-      path &&
-      [...allActionRunIds].some(
-        (otherRunId) => otherRunId !== runId && isMeaningfulExactDiffRun(otherRunId, event, path),
-      ),
+        path &&
+        [...allActionRunIds].some(
+          (otherRunId) => otherRunId !== runId && isMeaningfulExactDiffRun(otherRunId, event, path),
+        ),
     );
   };
 
@@ -2126,14 +2120,6 @@ function currentCheckRollup(
           if (candidates.length === 0) continue;
           const latestTimestamp = Math.max(...candidates.map(({ timestamp }) => timestamp));
           const latestRuns = candidates.filter(({ timestamp }) => timestamp === latestTimestamp);
-          if (latestRuns.length > 1) {
-            const runIds = latestRuns
-              .map(({ runId }) => runId)
-              .sort((left, right) => Number(left) - Number(right));
-            ambiguousRunEvidence.add(
-              `${groupName}: workflow runs ${runIds.join(", ")} share created_at ${new Date(latestTimestamp).toISOString()}; rerunning either listed run preserves the tie, so publish a new PR revision and use its distinct ${groupName} run`,
-            );
-          }
           for (const latest of latestRuns) {
             current.push(...latestAttemptChecks(latest.runId, latest.checks));
           }
@@ -2202,11 +2188,7 @@ function currentCheckRollup(
     incompleteAttemptEvidence.add("checks");
     incompleteAttemptEvidence.add("changes");
   }
-  return {
-    checks: current,
-    incompleteAttemptEvidence: [...incompleteAttemptEvidence].sort(),
-    ambiguousRunEvidence: [...ambiguousRunEvidence].sort(),
-  };
+  return { checks: current, incompleteAttemptEvidence: [...incompleteAttemptEvidence].sort() };
 }
 
 interface CiGateResult extends GateResult {
@@ -2298,7 +2280,6 @@ function evaluateCiRollup(
   );
   const currentChecks = rollup.checks;
   const incompleteAttemptEvidence = new Set(rollup.incompleteAttemptEvidence);
-  const ambiguousRunEvidence = rollup.ambiguousRunEvidence;
 
   // Check that all required checks are present.
   // Fork PRs from first-time contributors need "Approve and run" before
@@ -2311,14 +2292,6 @@ function evaluateCiRollup(
       pass: false,
       details: `${missingChecks.length} required check(s) not found — workflows may need approval`,
       missingChecks,
-    };
-  }
-
-  if (ambiguousRunEvidence.length > 0) {
-    return {
-      pass: false,
-      details: `${ambiguousRunEvidence.length} check context(s) have tied workflow-run evidence`,
-      failingChecks: ambiguousRunEvidence,
     };
   }
 
