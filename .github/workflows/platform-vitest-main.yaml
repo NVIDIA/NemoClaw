@@ -252,7 +252,10 @@ jobs:
         with:
           toolchain: 1.95.0
           target: aarch64-pc-windows-msvc
-          cache: false
+          cache: true
+          cache-bin: false
+          cache-on-failure: true
+          rust-src-dir: openshell
           rustflags: ""
 
       - name: Build the pinned OpenShell PR distribution
