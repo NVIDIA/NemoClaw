@@ -10,6 +10,7 @@ import { LLAMA_CPP_RECIPE_ENV } from "./contract";
 import {
   listManagedLlamaCppSelectionChoices,
   resolveManagedLlamaCppSelection,
+  resolveManagedLlamaCppSelectionForGpu,
 } from "./managed-selection";
 
 const RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
@@ -72,6 +73,47 @@ function fixture(presetId = SPARK_PRESET_ID) {
   const preset = catalog.presets.find(({ metadata }) => metadata.id === presetId);
   expect(preset, "Shipped managed llama.cpp preset is missing.").toBeDefined();
   return { catalog, preset: preset!, report: readinessReport(preset!) };
+}
+
+function n1xCollectionOptions() {
+  const now = new Date();
+  return {
+    now: () => now,
+    architecture: "arm64",
+    assess: () => ({
+      platform: "linux" as const,
+      isWsl: true,
+      runtime: "docker-desktop" as const,
+      dockerInstalled: true,
+      dockerRunning: true,
+      dockerReachable: true,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "v2",
+      dockerDefaultCgroupnsMode: "private",
+      dockerStorageDriver: "overlay2",
+      dockerUsesContainerdSnapshotter: false,
+      dockerCpus: 12,
+      dockerMemTotalBytes: 64 * 1024 ** 3,
+      isContainerRuntimeUnderProvisioned: false,
+      hasNestedOverlayConflict: false,
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: true,
+      dockerCdiSpecDirs: ["/etc/cdi"],
+      cdiNvidiaGpuSpecMissing: false,
+      cdiNvidiaGpuSpecStale: false,
+      cdiNvidiaGpuSpecNeedsRepair: false,
+      nvidiaContainerToolkitInstalled: true,
+      notes: [],
+    }),
+    collectPlatformIdentity: () => ({
+      productName: "RTX Spark N1X",
+      n1xWslProduct: true,
+    }),
+    detectNvidiaDriverVersion: () => "580.65.06",
+  };
 }
 
 function withSyntheticRecipe(
@@ -192,6 +234,48 @@ describe("managed llama.cpp selection", () => {
         preset: { metadata: { id: N1X_WSL_PRESET_ID } },
       },
     });
+  });
+
+  it("selects N1x WSL through the real preflight-proof readiness wrapper (#10102)", () => {
+    const { catalog } = fixture(N1X_WSL_PRESET_ID);
+    const gpu = {
+      type: "nvidia",
+      count: 1,
+      totalMemoryMB: 49_088,
+      perGpuMB: 49_088,
+      nimCapable: true,
+      wslDockerDesktopGpuProofPassed: true,
+    };
+
+    expect(
+      resolveManagedLlamaCppSelectionForGpu(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        gpu,
+        catalog,
+        n1xCollectionOptions(),
+      ),
+    ).toMatchObject({ kind: "selected" });
+  });
+
+  it("rejects N1x WSL when the real readiness wrapper receives failed GPU proof (#10102)", () => {
+    const { catalog } = fixture(N1X_WSL_PRESET_ID);
+    const gpu = {
+      type: "nvidia",
+      count: 1,
+      totalMemoryMB: 49_088,
+      perGpuMB: 49_088,
+      nimCapable: true,
+      wslDockerDesktopGpuProofPassed: false,
+    };
+
+    expect(
+      resolveManagedLlamaCppSelectionForGpu(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        gpu,
+        catalog,
+        n1xCollectionOptions(),
+      ),
+    ).toMatchObject({ kind: "rejected" });
   });
 
   it("rejects the N1x WSL recipe without Docker Desktop GPU proof (#10102)", () => {

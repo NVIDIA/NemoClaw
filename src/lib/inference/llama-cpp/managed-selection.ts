@@ -4,7 +4,10 @@
 import os from "node:os";
 
 import { getBuildIdentity } from "../../core/version";
-import { createHostReadinessReport } from "../../readiness/host";
+import {
+  type CollectHostObservationsOptions,
+  createHostReadinessReport,
+} from "../../readiness/host";
 import type { SystemReadinessReport } from "../../readiness/types";
 import type { GpuDetection } from "../nim";
 import {
@@ -216,8 +219,13 @@ export function resolveManagedLlamaCppSelectionForGpu(
   env: NodeJS.ProcessEnv | undefined,
   gpu: GpuDetection | null,
   catalog: CompiledManagedInferenceCatalog = loadManagedInferenceCatalog(),
+  collectionOptions: Omit<
+    CollectHostObservationsOptions,
+    "detectGpu" | "wslDockerDesktopGpuProofPassed"
+  > = {},
 ): ManagedLlamaCppSelectionResult {
   const report = createHostReadinessReport(getBuildIdentity(), {
+    ...collectionOptions,
     ...(gpu ? { detectGpu: () => gpu } : {}),
     ...(gpu?.wslDockerDesktopGpuProofPassed === undefined
       ? {}

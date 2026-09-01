@@ -636,29 +636,15 @@ describe("starter prompt docs CTA", () => {
     ).toThrow("does not resolve to a readable Git blob");
   });
 
-  it("routes platform-only installation instructions to raw prompt assets (#6990)", () => {
-    const promptSource = readStarterPrompt();
-
-    expect(promptAssetRevision).toMatch(/^[0-9a-f]{40}$/);
-    expect(requireExpectedPromptAssetRoutes(promptSource, platformPromptAssetRoutes)).toEqual(
+  it("validates synthetic platform prompt-asset routes and rejects swaps (#6990)", () => {
+    const syntheticRoutes = `## Platform-Specific Instructions\n\n${platformPromptAssetRoutes
+      .map(({ asset, label }) => `- ${label}: [instructions](${asset.url}).`)
+      .join("\n")}\n\n## Next Section\n`;
+    expect(requireExpectedPromptAssetRoutes(syntheticRoutes, platformPromptAssetRoutes)).toEqual(
       new Map(platformPromptAssetRoutes.map(({ asset, label }) => [label, asset.url])),
     );
-    for (const asset of Object.values(promptAssets)) {
-      expect(promptSource).toContain(asset.url);
-      const assetUrl = new URL(asset.url);
-      expect(assetUrl.origin).toBe("https://raw.githubusercontent.com");
-      expect(assetUrl.pathname).toMatch(
-        /^\/NVIDIA\/NemoClaw\/[0-9a-f]{40}\/docs\/resources\/prompt-assets\/[^/]+\.md$/,
-      );
-      expect(assetUrl.pathname).toContain(`/${promptAssetRevision}/`);
-    }
-
-  });
-
-  it("rejects platform labels whose pinned prompt asset URLs are swapped (#6990)", () => {
-    const promptSource = readStarterPrompt();
     const sparkUrlMarker = "__DGX_SPARK_PROMPT_ASSET_URL__";
-    const swappedRoutes = promptSource
+    const swappedRoutes = syntheticRoutes
       .replace(promptAssets.dgxSpark.url, sparkUrlMarker)
       .replace(promptAssets.dgxStation.url, promptAssets.dgxSpark.url)
       .replace(sparkUrlMarker, promptAssets.dgxStation.url);

@@ -146,7 +146,7 @@ sys.exit(exit_code)
         `timeout() { shift; "$@"; }\n` +
         `powershell.exe() { printf 'RTX Spark N1X\\r\\n'; }\n` +
         `nvidia-smi() { printf '49088\\n'; }\n` +
-        `express_wsl_can_use_windows_host_ollama() { return 0; }\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
         `describe_express_install "Windows WSL"\n` +
         `activate_express_install "Windows WSL"\n` +
         `printf 'PROVIDER=%s RECIPE=%s\\n' "$NEMOCLAW_PROVIDER" "$NEMOCLAW_LLAMACPP_RECIPE"\n`,
@@ -159,6 +159,21 @@ sys.exit(exit_code)
     expect(output).toContain("Hugging Face authentication is optional");
     expect(output).toContain("HTTP 429");
     expect(output).toContain("export HF_TOKEN=<read-token>");
+  });
+
+  it("rejects managed N1x WSL selection for a remote Docker target (#10102)", () => {
+    const { result, output } = runInstallerSourced(
+      `export DOCKER_HOST=tcp://10.0.0.5:2375\n` +
+        `uname() { printf 'aarch64\\n'; }\n` +
+        `timeout() { shift; "$@"; }\n` +
+        `powershell.exe() { printf 'RTX Spark N1X\\r\\n'; }\n` +
+        `nvidia-smi() { printf '49088\\n'; }\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s RECIPE=%s\\n' "$NEMOCLAW_PROVIDER" "\${NEMOCLAW_LLAMACPP_RECIPE:-}"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-ollama RECIPE=");
   });
 
   it.each([
