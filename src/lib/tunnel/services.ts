@@ -494,7 +494,7 @@ export function showStatus(opts: ServiceOptions = {}): void {
   }
 }
 
-export function stopAll(opts: ServiceOptions = {}): void {
+export function stopAll(opts: ServiceOptions = {}): OllamaUnloadResult | void {
   // Resolve the target sandbox once and reuse it for in-sandbox and host-side cleanup.
   const rawSandboxName =
     opts.sandboxName ??
@@ -526,9 +526,11 @@ export function stopAll(opts: ServiceOptions = {}): void {
   }
 
   let ollamaCleanupIncomplete = false;
+  let ollamaCleanup: OllamaUnloadResult | undefined;
   try {
     const unloadOllamaModels = opts.unloadOllamaModels ?? unloadDefaultOllamaModels;
     const cleanup = unloadOllamaModels();
+    if (cleanup) ollamaCleanup = cleanup;
     if (cleanup && !cleanup.ok) {
       ollamaCleanupIncomplete = true;
       warn(
@@ -573,12 +575,12 @@ export function stopAll(opts: ServiceOptions = {}): void {
       "Hint: rerun with NEMOCLAW_GATEWAY_PORT=<port> to release that gateway, or 'openshell gateway list' to find it.",
     );
     info("Host services stopped; managed gateway not released.");
-    return;
+    return ollamaCleanup;
   }
 
   if (gatewayOutcome === "unconfirmed") {
     info("Host services stopped; managed gateway release was not confirmed.");
-    return;
+    return ollamaCleanup;
   }
 
   if (ollamaCleanupIncomplete) {
@@ -586,6 +588,7 @@ export function stopAll(opts: ServiceOptions = {}): void {
   } else {
     info("All services stopped.");
   }
+  return ollamaCleanup;
 }
 
 /**

@@ -56,6 +56,16 @@ function buildDeps(sandbox: SandboxLike): {
 }
 
 describe("cleanupSandboxServices Ollama unload (#2717)", () => {
+  const cleanupFailure = {
+    ok: false as const,
+    outcome: "discovery-failed" as const,
+    endpoint: "http://host.docker.internal:11434",
+    selectedModels: [],
+    discoveries: [],
+    requests: [],
+    message: "could not connect",
+  };
+
   it("delegates GPU unload to stopAll() exactly once when stopHostServices=true", () => {
     const harness = buildDeps({ provider: "ollama-local" });
 
@@ -77,6 +87,26 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     expect(harness.deps.stopAll).not.toHaveBeenCalled();
     expect(harness.deps.unloadOllamaModels).toHaveBeenCalledTimes(1);
     expect(harness.unloadCalls).toBe(1);
+  });
+
+  it("preserves destroy recovery state when stopAll cannot release Ollama", () => {
+    const harness = buildDeps({ provider: "ollama-local" });
+    vi.mocked(harness.deps.stopAll).mockReturnValue(cleanupFailure);
+
+    expect(() =>
+      cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps),
+    ).toThrow(/saved route were retained.*retry destroy/);
+    expect(harness.deps.rmSync).not.toHaveBeenCalled();
+  });
+
+  it("preserves destroy recovery state when scoped Ollama release fails", () => {
+    const harness = buildDeps({ provider: "ollama-local" });
+    vi.mocked(harness.deps.unloadOllamaModels).mockReturnValue(cleanupFailure);
+
+    expect(() =>
+      cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps),
+    ).toThrow(/saved route were retained.*retry destroy/);
+    expect(harness.deps.rmSync).not.toHaveBeenCalled();
   });
 
   it("skips unloadOllamaModels() entirely for non-Ollama providers", () => {

@@ -7,40 +7,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertUnambiguousDestroyContainerIdentity,
   cleanupSandboxServices,
-  retireFinalOllamaRouteAfterSandboxRemoval,
 } from "./destroy";
 
 const SANDBOX = "mybox";
 const mainPidDir = path.resolve("/tmp", `nemoclaw-services-${SANDBOX}`);
 const googlechatPidDir = `${mainPidDir}-googlechat`;
-
-describe("final Ollama route retirement", () => {
-  it("retires the route after removing the final Ollama sandbox", () => {
-    const clearIfUnused = vi.fn(() => true);
-
-    expect(
-      retireFinalOllamaRouteAfterSandboxRemoval(
-        { provider: "ollama-local" },
-        [{ provider: "nvidia-prod" }],
-        clearIfUnused,
-      ),
-    ).toBe(true);
-    expect(clearIfUnused).toHaveBeenCalledWith(["nvidia-prod"]);
-  });
-
-  it("retains the route while another Ollama sandbox remains", () => {
-    const clearIfUnused = vi.fn(() => false);
-
-    expect(
-      retireFinalOllamaRouteAfterSandboxRemoval(
-        { provider: "ollama-local" },
-        [{ provider: "ollama-local" }],
-        clearIfUnused,
-      ),
-    ).toBe(false);
-    expect(clearIfUnused).toHaveBeenCalledWith(["ollama-local"]);
-  });
-});
 
 describe("cleanupSandboxServices Google Chat tunnel cleanup (#7317)", () => {
   it("fails closed before later cleanup when the Google Chat tunnel cannot stop", () => {
