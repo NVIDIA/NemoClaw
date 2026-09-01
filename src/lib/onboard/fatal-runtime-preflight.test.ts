@@ -456,6 +456,38 @@ describe("report-backed runtime readiness (#7411)", () => {
     );
   });
 
+  it.each([
+    ["an invalid observation start", "not-a-timestamp", "2026-08-31T12:00:00.000Z"],
+    [
+      "a clock step backward during collection",
+      "2026-08-31T12:00:30.000Z",
+      "2026-08-31T12:00:00.000Z",
+    ],
+  ])(
+    "rejects %s even when the completion time is current (#10670)",
+    (_case, observedAt, collectedAt) => {
+      const exit = vi.fn((_code: number): never => {
+        throw new Error("exit");
+      });
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      expect(() =>
+        assertOnboardHostReadiness(hostWithRuntime("docker"), null, {
+          explicitlyOptedOutGpuPassthrough: true,
+          observedAt,
+          collectedAt,
+          now: () => new Date(collectedAt),
+          exitProcess: exit,
+        }),
+      ).toThrow("exit");
+
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(error.mock.calls.map(([line]) => line).join("\n")).toContain(
+        "Host collection timestamps are invalid or out of order.",
+      );
+    },
+  );
+
   it("names the host evidence behind an unconfirmed capability list (#10670)", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const exit = vi.fn((_code: number): never => {
@@ -519,6 +551,38 @@ describe("report-backed runtime readiness (#7411)", () => {
 });
 
 describe("runFatalOnboardRuntimePreflight", () => {
+  it("does not charge fresh onboarding for its host and GPU probes (#10670)", () => {
+    const startedAt = Date.parse("2026-08-31T12:00:00.000Z");
+    let currentTime = startedAt;
+    const exit = vi.fn((_code: number): never => {
+      throw new Error("exit");
+    });
+
+    const result = runFatalOnboardRuntimePreflight(
+      { noGpu: true },
+      {
+        nonInteractive: true,
+        now: () => new Date(currentTime),
+        assessHost: () => {
+          currentTime += 10_000;
+          return hostWithRuntime("docker");
+        },
+        detectGpu: () => {
+          currentTime += 35_000;
+          return null;
+        },
+        warnIfHostProxyMissesLoopback: vi.fn(),
+        assertDockerBridgeAndContainerDnsHealthy: vi.fn(),
+        validateSandboxGpuPreflight: vi.fn(),
+        exitProcess: exit,
+      },
+    );
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(result.readinessReport.evidence.map(({ id }) => id)).not.toContain("host.probe.stale");
+    expect(result.readinessReport.provenance.observedAt).toBe(new Date(startedAt).toISOString());
+  });
+
   it.each([
     ["the CLI disable flag", { sandboxGpu: "disable" as const }, {}],
     ["the environment CPU-only mode", {}, { NEMOCLAW_SANDBOX_GPU: "0" }],

@@ -411,30 +411,47 @@ describe("handlePreflightState", () => {
     session.steps.preflight.status = "complete";
     const startedAt = Date.parse("2026-08-07T12:00:00.000Z");
     let currentTime = startedAt;
-    const stamps: { observedAt?: string; collectedAt?: string }[] = [];
+    const stamps: { observedAt?: string; collectedAt?: string; admittedAt: number }[] = [];
     const harness = createDeps({
       now: () => new Date(currentTime),
       assessHost: () => {
-        currentTime += 30_001;
+        currentTime += 20_000;
         return { cdiNvidiaGpuSpecMissing: false };
+      },
+      detectGpuForReadiness: () => {
+        currentTime += 10_001;
+        return { type: "nvidia" } as Gpu;
+      },
+      detectGpu: () => {
+        currentTime += 10_001;
+        return { type: "nvidia" } as Gpu;
       },
       assertGatewayReadiness: async () => {
         currentTime += 45_000;
       },
       assertOnboardHostReadiness: (_host, _gpu, options) => {
-        stamps.push({ observedAt: options.observedAt, collectedAt: options.collectedAt });
+        stamps.push({
+          observedAt: options.observedAt,
+          collectedAt: options.collectedAt,
+          admittedAt: currentTime,
+        });
       },
     });
 
     await handlePreflightState({ ...baseOptions(harness.deps, session), resume: true });
 
-    const [first] = stamps;
+    const [first, second] = stamps;
+    expect(stamps).toHaveLength(2);
     expect(first?.observedAt).toBe("2026-08-07T12:00:00.000Z");
     // The host probes ran for longer than the reuse window. Their duration is
     // provenance, not age: `collectedAt` closes the collection after them.
     expect(Date.parse(first?.collectedAt ?? "")).toBe(startedAt + 30_001);
     // The gateway wait falls after that stamp, so the window still charges it.
-    expect(currentTime - Date.parse(first?.collectedAt ?? "")).toBeGreaterThanOrEqual(45_000);
+    expect((first?.admittedAt ?? 0) - Date.parse(first?.collectedAt ?? "")).toBe(45_000);
+    expect(Date.parse(second?.collectedAt ?? "") - Date.parse(second?.observedAt ?? "")).toBe(
+      30_001,
+    );
+    expect((second?.admittedAt ?? 0) - Date.parse(second?.collectedAt ?? "")).toBe(45_000);
   });
 
   it("restores saved sandbox GPU intent only when resume has no explicit override", async () => {
