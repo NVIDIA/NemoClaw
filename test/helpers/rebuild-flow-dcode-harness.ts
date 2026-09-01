@@ -727,6 +727,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(mutableConfigPerms, "repairMutableConfigPerms").mockImplementation(
     overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
   );
+  vi.spyOn(mutableConfigPerms, "inspectMutableHermesConfigPerms").mockReturnValue({
+    verified: true,
+    errors: [],
+  });
   const messagingRebuildPlanSpy = vi
     .spyOn(messaging.MessagingWorkflowPlanner.prototype, "buildRebuildPlanFromSandboxEntry")
     .mockImplementation(overrides.buildMessagingRebuildPlan ?? (() => null));
