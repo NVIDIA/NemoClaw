@@ -138,14 +138,26 @@ type FakeDockerObservationOverrides = {
   readonly publishedAddress?: string;
 };
 
+type FakeDockerHost = HostCliClient & {
+  readonly calls: string[][];
+  readonly envFiles: Array<{ path: string; source: string }>;
+};
+
 function fakeDockerHost(
   overrides: FakeDockerObservationOverrides = {},
-): HostCliClient & { readonly calls: string[][] } {
+): FakeDockerHost {
   const calls: string[][] = [];
+  const envFiles: Array<{ path: string; source: string }> = [];
   const host = {
     command: async (command: string, args: string[]) => {
       expect(command).toBe("docker");
       calls.push([...args]);
+      (args[0] === "run" ? [args] : []).forEach((runArgs) => {
+        const envFileIndex = runArgs.indexOf("--env-file");
+        expect(envFileIndex).toBeGreaterThan(0);
+        const envFile = runArgs[envFileIndex + 1]!;
+        envFiles.push({ path: envFile, source: fs.readFileSync(envFile, "utf8") });
+      });
       args
         .filter((argument) => args[0] === "run" && argument.endsWith(":/tmp/fake"))
         .forEach((fakeApiMount) => {
@@ -191,9 +203,7 @@ function fakeDockerHost(
       return (responses[`${String(args[0])}:${String(args[1])}`] ?? successfulCommand)();
     },
   };
-  return Object.assign(host, { calls }) as unknown as HostCliClient & {
-    readonly calls: string[][];
-  };
+  return Object.assign(host, { calls, envFiles }) as unknown as FakeDockerHost;
 }
 
 async function runCleanup(actions: CleanupAction[]): Promise<void> {
@@ -650,6 +660,45 @@ network_policies:
       }
     },
   );
+
+  it("keeps a fake API expected credential out of Docker argv and removes its env file", async () => {
+    const sentinel = "xoxb-nemoclaw-docker-argv-secret";
+    const encoded = Buffer.from(sentinel, "utf8").toString("base64");
+    const host = fakeDockerHost();
+    const cleanup: CleanupAction[] = [];
+    let envFile = "";
+
+    try {
+      const api = await startFakeDockerApi(
+        host,
+        (name, run) => cleanup.push({ name, run }),
+        {
+          kind: "discord-gateway",
+          imageScript: "fake-discord-gateway-api.cjs",
+          containerPrefix: "fake-discord-gateway",
+          portEnv: "FAKE_API_PORT",
+          portFileEnv: "FAKE_API_PORT_FILE",
+          captureFileEnv: "FAKE_API_CAPTURE_FILE",
+          expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: sentinel },
+          redactionValues: [sentinel],
+          env: {},
+        },
+      );
+      const dockerArgv = JSON.stringify(host.calls);
+      expect(dockerArgv).not.toContain(sentinel);
+      expect(dockerArgv).not.toContain(encoded);
+      expect(api.port).toBe("32100");
+      expect(host.envFiles).toHaveLength(1);
+      expect(host.envFiles[0]?.source).toBe(`FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN=${sentinel}`);
+      envFile = host.envFiles[0]!.path;
+      expect(envFile).not.toBe("");
+      expect(fs.statSync(envFile).mode & 0o777).toBe(0o600);
+    } finally {
+      await runCleanup(cleanup);
+    }
+
+    expect(fs.existsSync(envFile)).toBe(false);
+  });
 
   it("rejects a fake API port that Docker publishes beyond loopback", async () => {
     const host = fakeDockerHost({ publishedAddress: "0.0.0.0" });

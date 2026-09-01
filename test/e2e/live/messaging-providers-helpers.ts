@@ -802,6 +802,17 @@ function requireLoopbackDockerPorts(
   return published;
 }
 
+function dockerEnvFileSource(values: Record<string, string>): string {
+  return Object.entries(values)
+    .map(([key, value]) => {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || /[\0\r\n]/u.test(value)) {
+        throw new Error("fake API expected environment contains an invalid entry");
+      }
+      return `${key}=${value}`;
+    })
+    .join("\n");
+}
+
 export async function startFakeDockerApi(
   host: HostCliClient,
   cleanup: (name: string, run: () => Promise<void>) => void,
@@ -819,13 +830,33 @@ export async function startFakeDockerApi(
   },
 ): Promise<FakeDockerApi> {
   fs.mkdirSync(path.join(REPO_ROOT, ".tmp"), { recursive: true });
-  const dir = fs.mkdtempSync(path.join(REPO_ROOT, ".tmp", `fake-${options.kind}.`));
+  const expectedEnvSource = dockerEnvFileSource(options.expectedEnv);
+  const credentialDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-api-env."));
+  let dir: string;
+  try {
+    dir = fs.mkdtempSync(path.join(REPO_ROOT, ".tmp", `fake-${options.kind}.`));
+  } catch (error) {
+    fs.rmSync(credentialDir, { recursive: true, force: true });
+    throw error;
+  }
   const portFile = path.join(dir, "port");
   const captureFile = path.join(dir, "capture.jsonl");
+  const expectedEnvFile = path.join(credentialDir, "expected.env");
   const container = uniqueContainerName(options.containerPrefix);
   const network = uniqueContainerName("nemoclaw-fake-api-network");
   const containerPorts = options.kind === "slack" ? [8080, 8081] : [8080];
-  fs.writeFileSync(captureFile, "");
+  try {
+    fs.writeFileSync(captureFile, "");
+    fs.writeFileSync(expectedEnvFile, expectedEnvSource, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch (error) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(credentialDir, { recursive: true, force: true });
+    throw error;
+  }
 
   const networkCreate = await runHost(
     host,
@@ -842,6 +873,7 @@ export async function startFakeDockerApi(
     expectExitZero(networkCreate, `create fake ${options.kind} API network`);
   } catch (error) {
     fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(credentialDir, { recursive: true, force: true });
     throw error;
   }
   cleanup(`remove ${network}`, async () => {
@@ -868,6 +900,7 @@ export async function startFakeDockerApi(
       }
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(credentialDir, { recursive: true, force: true });
     }
   });
 
@@ -903,6 +936,8 @@ export async function startFakeDockerApi(
     "no-new-privileges",
     "--pids-limit",
     "32",
+    "--env-file",
+    expectedEnvFile,
     "-e",
     `${options.portEnv}=8080`,
     "-e",
@@ -911,9 +946,6 @@ export async function startFakeDockerApi(
     `${options.captureFileEnv}=/tmp/fake/capture.jsonl`,
   ];
   if (options.kind === "slack") dockerArgs.push("-e", "FAKE_SLACK_API_WEBSOCKET_PORT=8081");
-  for (const [key, value] of Object.entries(options.expectedEnv)) {
-    dockerArgs.push("-e", `${key}=${value}`);
-  }
   dockerArgs.push(
     "-v",
     `${dir}:/tmp/fake`,
@@ -1142,7 +1174,10 @@ export const DISCORD_GATEWAY_CLIENT_SOURCE = String.raw`
 import crypto from "node:crypto";
 import net from "node:net";
 
-const host = "host.openshell.internal";
+const host = process.env.FAKE_DISCORD_GATEWAY_HOST || "host.openshell.internal";
+if (host !== "host.openshell.internal" && host !== "127.0.0.1") {
+  throw new Error("Discord Gateway proof host is invalid");
+}
 const port = Number(process.env.FAKE_DISCORD_GATEWAY_PORT);
 function resolveIdentifyToken() {
   const mode = process.env.FAKE_DISCORD_IDENTIFY_MODE || "explicit";

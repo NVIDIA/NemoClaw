@@ -136,16 +136,6 @@ async function sendDiscordIdentify(port: number, token: string): Promise<void> {
   });
 }
 
-function localDiscordGatewayClientSource(): string {
-  const remoteHost = 'const host = "host.openshell.internal";';
-  const localHost = 'const host = "127.0.0.1";';
-  const source = DISCORD_GATEWAY_CLIENT_SOURCE.replace(remoteHost, localHost);
-  expect(source, "Discord Gateway client host declaration changed").not.toBe(
-    DISCORD_GATEWAY_CLIENT_SOURCE,
-  );
-  return source;
-}
-
 describe("OpenClaw Discord pairing helper contracts", () => {
   it("sends an absolute-form fake Slack WebSocket upgrade through the proxy", async () => {
     const targetPort = 4443;
@@ -410,12 +400,13 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       );
       const port = await waitForPort(portFile);
       const result = spawnSync(process.execPath, ["--input-type=module"], {
-        input: localDiscordGatewayClientSource(),
+        input: DISCORD_GATEWAY_CLIENT_SOURCE,
         encoding: "utf8",
         env: {
           ...process.env,
           DISCORD_BOT_TOKEN: REVISIONED_DISCORD_PLACEHOLDER,
           FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env",
+          FAKE_DISCORD_GATEWAY_HOST: "127.0.0.1",
           FAKE_DISCORD_GATEWAY_PORT: String(port),
           HTTP_PROXY: "",
           http_proxy: "",
@@ -450,12 +441,13 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     { name: "raw token", value: "raw-discord-token" },
   ])("rejects a $name Discord proof credential before network access (#10155)", ({ value }) => {
     const result = spawnSync(process.execPath, ["--input-type=module"], {
-      input: localDiscordGatewayClientSource(),
+      input: DISCORD_GATEWAY_CLIENT_SOURCE,
       encoding: "utf8",
       env: {
         ...process.env,
         DISCORD_BOT_TOKEN: value,
         FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env",
+        FAKE_DISCORD_GATEWAY_HOST: "127.0.0.1",
         FAKE_DISCORD_GATEWAY_PORT: "12345",
         HTTP_PROXY: "",
         http_proxy: "",

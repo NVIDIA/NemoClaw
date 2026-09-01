@@ -9,16 +9,7 @@ import {
   captureRecordedSandboxBasePolicy,
   setPolicyDocument,
 } from "../../../src/lib/policy/index.ts";
-
-// Import the tsc-compiled output because standalone `node --import tsx`
-// execution conflicts with Node's native .cts handling on newer releases.
-// sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
-import * as policyBoundaryModule from "../../../nemoclaw/dist/shared/openshell-policy-boundary.cjs";
-
-const policyBoundary = (
-  "default" in policyBoundaryModule ? policyBoundaryModule.default : policyBoundaryModule
-) as typeof policyBoundaryModule;
-const { parseOpenShellPolicy } = policyBoundary;
+import { parseOpenShellPolicy } from "../../../src/lib/policy/merge.ts";
 
 type CredentialRewrite = "request-body-credential-rewrite" | "websocket-credential-rewrite";
 
