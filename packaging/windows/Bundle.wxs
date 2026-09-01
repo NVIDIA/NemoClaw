@@ -1,0 +1,24 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<Wix
+  xmlns="http://wixtoolset.org/schemas/v4/wxs"
+  xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle
+    Name="NemoClaw Native Windows Candidate Setup"
+    Manufacturer="NVIDIA Corporation"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="1BA739B8-B632-4A8C-BB02-95058CC3A960"
+    AboutUrl="https://github.com/NVIDIA/NemoClaw"
+    Copyright="Copyright (c) 2026 NVIDIA Corporation and affiliates">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication
+        Theme="rtfLicense"
+        LicenseFile="$(var.SourceRoot)\packaging\windows\License.rtf"
+        SuppressOptionsUI="yes"
+        SuppressRepair="no" />
+    </BootstrapperApplication>
+    <Chain>
+      <MsiPackage Id="NemoClawArm64Msi" SourceFile="$(var.NemoClaw.TargetPath)" Compressed="yes" Vital="yes" />
+    </Chain>
+  </Bundle>
+</Wix>

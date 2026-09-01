@@ -1,0 +1,25 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>arm64</InstallerPlatform>
+    <OutputName>NemoClaw-$(ProductVersion)-windows-arm64</OutputName>
+    <OutputPath>$(PackageOutputRoot)</OutputPath>
+    <IntermediateOutputPath>$(PackageIntermediateRoot)\msi\</IntermediateOutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);PayloadRoot=$(PayloadRoot);SourceRoot=$(SourceRoot)</DefineConstants>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Product.wxs" />
+  </ItemGroup>
+  <Target Name="ValidateNemoClawPackageInputs" BeforeTargets="Build">
+    <Error Condition="'$(ProductVersion)' == ''" Text="ProductVersion is required." />
+    <Error Condition="'$(PayloadRoot)' == ''" Text="PayloadRoot is required." />
+    <Error Condition="'$(SourceRoot)' == ''" Text="SourceRoot is required." />
+    <Error Condition="!Exists('$(PayloadRoot)\openshell.exe')" Text="The ARM64 openshell.exe payload is missing." />
+    <Error Condition="!Exists('$(PayloadRoot)\openshell-gateway.exe')" Text="The ARM64 openshell-gateway.exe payload is missing." />
+  </Target>
+</Project>

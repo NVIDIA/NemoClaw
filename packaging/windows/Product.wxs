@@ -1,0 +1,69 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="NemoClaw Native Windows Candidate"
+    Manufacturer="NVIDIA Corporation"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="52718EC2-AD6D-4A84-9FBF-3D73C9B11864"
+    Language="1033"
+    Scope="perMachine"
+    InstallerVersion="500"
+    Compressed="yes">
+
+    <SummaryInformation
+      Description="NemoClaw native Windows ARM64 candidate payload"
+      Manufacturer="NVIDIA Corporation" />
+    <MajorUpgrade
+      AllowSameVersionUpgrades="yes"
+      DowngradeErrorMessage="A newer NemoClaw native Windows candidate is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Property Id="ARPCOMMENTS" Value="Preview package for native Windows ARM64 qualification. Real MXC execution and production support are not included." />
+    <Property Id="ARPCONTACT" Value="NVIDIA Corporation" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/NVIDIA/NemoClaw" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="NvidiaFolder" Name="NVIDIA">
+        <Directory Id="INSTALLFOLDER" Name="NemoClaw">
+          <Directory Id="BinFolder" Name="bin">
+            <Component Id="OpenShellCliComponent" Guid="AEA61E95-77ED-470E-91FD-23DA63AC1530" Bitness="always64">
+              <File Id="OpenShellCliFile" Source="$(var.PayloadRoot)\openshell.exe" Name="openshell.exe" KeyPath="yes" Checksum="yes" />
+            </Component>
+            <Component Id="OpenShellGatewayComponent" Guid="33BDACFC-626F-49B0-80FF-07C320921DDB" Bitness="always64">
+              <File Id="OpenShellGatewayFile" Source="$(var.PayloadRoot)\openshell-gateway.exe" Name="openshell-gateway.exe" KeyPath="yes" Checksum="yes" />
+            </Component>
+            <Component Id="MachinePathComponent" Guid="4A428913-FB6B-4710-9573-5CCF0E3E4686" Bitness="always64">
+              <RegistryValue
+                Root="HKLM"
+                Key="Software\NVIDIA Corporation\NemoClaw Native Windows Candidate"
+                Name="InstallBin"
+                Type="string"
+                Value="[BinFolder]"
+                KeyPath="yes" />
+              <Environment
+                Id="NemoClawMachinePath"
+                Name="PATH"
+                Action="set"
+                Part="last"
+                System="yes"
+                Permanent="no"
+                Value="[BinFolder]" />
+            </Component>
+          </Directory>
+          <Component Id="CandidateNoticeComponent" Guid="86901E24-BC0C-47D6-B7B1-873065505CD9" Bitness="always64">
+            <File Id="CandidateNoticeFile" Source="$(var.SourceRoot)\packaging\windows\NATIVE-PREVIEW.txt" Name="NATIVE-PREVIEW.txt" KeyPath="yes" />
+            <File Id="LicenseFile" Source="$(var.SourceRoot)\LICENSE" Name="LICENSE.txt" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Complete" Title="NemoClaw Native Windows Candidate" Level="1">
+      <ComponentRef Id="OpenShellCliComponent" />
+      <ComponentRef Id="OpenShellGatewayComponent" />
+      <ComponentRef Id="MachinePathComponent" />
+      <ComponentRef Id="CandidateNoticeComponent" />
+    </Feature>
+  </Package>
+</Wix>

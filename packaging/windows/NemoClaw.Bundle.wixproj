@@ -1,0 +1,22 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputType>Bundle</OutputType>
+    <InstallerPlatform>arm64</InstallerPlatform>
+    <OutputName>NemoClawSetup-$(ProductVersion)-windows-arm64</OutputName>
+    <OutputPath>$(PackageOutputRoot)</OutputPath>
+    <IntermediateOutputPath>$(PackageIntermediateRoot)\bundle\</IntermediateOutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DefineConstants>$(DefineConstants);ProductVersion=$(ProductVersion);SourceRoot=$(SourceRoot)</DefineConstants>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Bundle.wxs" />
+    <ProjectReference Include="NemoClaw.wixproj">
+      <AdditionalProperties>ProductVersion=$(ProductVersion);PayloadRoot=$(PayloadRoot);SourceRoot=$(SourceRoot);PackageOutputRoot=$(PackageOutputRoot);PackageIntermediateRoot=$(PackageIntermediateRoot)</AdditionalProperties>
+    </ProjectReference>
+    <PackageReference Include="WixToolset.BootstrapperApplications.wixext" Version="5.0.2" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

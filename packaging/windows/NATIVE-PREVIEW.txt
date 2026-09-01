@@ -1,0 +1,13 @@
+NemoClaw Native Windows Candidate Preview
+
+This package contains native Windows ARM64 builds of openshell.exe and
+openshell-gateway.exe from NVIDIA/OpenShell#2721 merge commit
+bcd517bbe08cc80860c9be57699390cd32e8445f.
+
+This candidate does not include wxc-exec.exe, real MXC sandbox execution,
+gateway service registration, NemoClaw CLI or onboarding, local inference,
+or a production support claim. Mutable runtime state must remain outside this
+MSI-owned installation directory.
+
+PR qualification artifacts are unsigned. Production use remains gated on
+Authenticode signing of the payload executables, MSI, and setup executable.

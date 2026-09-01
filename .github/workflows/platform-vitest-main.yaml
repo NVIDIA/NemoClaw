@@ -262,6 +262,11 @@ jobs:
           rust-src-dir: openshell
           rustflags: ""
 
+      - name: Set up pinned .NET SDK for WiX
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 8.0.419
+
       - name: Build the pinned NVIDIA/OpenShell#2721 candidate
         working-directory: openshell
         shell: powershell
@@ -292,6 +297,53 @@ jobs:
           name: windows-native-installer-${{ github.sha }}
           path: ${{ runner.temp }}/windows-native-installer-receipts/
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Build ARM64 MSI and setup executable
+        id: windows-package
+        shell: powershell
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
+          $openshell = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\openshell")
+          $version = [string](Get-Content -LiteralPath "$candidate\package.json" -Raw | ConvertFrom-Json).version
+          $packageRoot = [IO.Path]::GetFullPath("$env:RUNNER_TEMP\nemoclaw-windows-package")
+          & "$candidate\scripts\checks\build-windows-native-package.ps1" `
+            -ProductVersion $version `
+            -PayloadRoot "$openshell\target\aarch64-pc-windows-msvc\release" `
+            -OutputDirectory $packageRoot
+          $referenceReceipts = Join-Path $packageRoot 'reference-qualification'
+          [IO.Directory]::CreateDirectory($referenceReceipts) | Out-Null
+          Copy-Item `
+            -Path "$env:RUNNER_TEMP\windows-native-installer-receipts\*" `
+            -Destination $referenceReceipts `
+            -Recurse
+          "product_version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "package_root=$packageRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Qualify MSI and setup executable
+        shell: powershell
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $candidate = [IO.Path]::GetFullPath("$env:GITHUB_WORKSPACE\candidate")
+          $version = '${{ steps.windows-package.outputs.product_version }}'
+          $packageRoot = '${{ steps.windows-package.outputs.package_root }}'
+          & "$candidate\scripts\checks\run-windows-native-package-qualification.ps1" `
+            -ProductVersion $version `
+            -MsiPath "$packageRoot\NemoClaw-$version-windows-arm64.msi" `
+            -SetupPath "$packageRoot\NemoClawSetup-$version-windows-arm64.exe" `
+            -PackageManifestPath "$packageRoot\package-manifest.json" `
+            -ArtifactDirectory "$packageRoot\qualification"
+
+      - name: Upload downloadable Windows native package
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nemoclaw-native-windows-package-${{ github.sha }}
+          path: ${{ steps.windows-package.outputs.package_root }}/
+          if-no-files-found: warn
           retention-days: 14
 
   wsl-vitest:

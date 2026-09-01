@@ -328,17 +328,21 @@ function Invoke-NativeVersionProbe {
     )
 
     Assert-Arm64PortableExecutable -Path $Path -Label $Label
-    $stdoutPath = Join-Path $env:RUNNER_TEMP ('.native-version-' + [guid]::NewGuid().ToString('N') + '.stdout')
-    $stderrPath = Join-Path $env:RUNNER_TEMP ('.native-version-' + [guid]::NewGuid().ToString('N') + '.stderr')
-    $process = $null
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $Path
+    $startInfo.Arguments = '--version'
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
     try {
-        $process = Start-Process `
-            -FilePath $Path `
-            -ArgumentList @('--version') `
-            -RedirectStandardOutput $stdoutPath `
-            -RedirectStandardError $stderrPath `
-            -PassThru `
-            -ErrorAction Stop
+        if (-not $process.Start()) {
+            Fail-Qualification "$Label could not start its native --version probe."
+        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit($script:NativeProbeTimeoutMilliseconds)) {
             $process.Kill()
             $process.WaitForExit()
@@ -346,24 +350,13 @@ function Invoke-NativeVersionProbe {
         }
         $process.WaitForExit()
         $exitCode = $process.ExitCode
-        $stdout = if (Test-Path -LiteralPath $stdoutPath -PathType Leaf) {
-            [IO.File]::ReadAllText($stdoutPath)
-        } else { '' }
-        $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) {
-            [IO.File]::ReadAllText($stderrPath)
-        } else { '' }
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
         $outputText = (@($stdout.Trim(), $stderr.Trim()) | Where-Object {
             -not [string]::IsNullOrWhiteSpace($_)
         }) -join [Environment]::NewLine
     } finally {
-        if ($null -ne $process) {
-            $process.Dispose()
-        }
-        foreach ($redirectPath in @($stdoutPath, $stderrPath)) {
-            if (Test-Path -LiteralPath $redirectPath -PathType Leaf) {
-                [IO.File]::Delete($redirectPath)
-            }
-        }
+        $process.Dispose()
     }
     if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($outputText) -or $outputText.Length -gt 4096) {
         Fail-Qualification "$Label did not complete a bounded native --version probe."
