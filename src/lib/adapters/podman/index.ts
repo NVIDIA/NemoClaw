@@ -91,7 +91,7 @@ export interface PodmanManagedVolumeRootReceipt {
   readonly inode: string;
   readonly uid: number;
   readonly gid: number;
-  readonly mode: 0o755 | 0o1775 | 0o3770;
+  readonly mode: number;
 }
 
 /** Podman engine whose exact socket and executable authority can be revalidated on demand. */
@@ -109,7 +109,7 @@ export interface PodmanBoundContainerEngine extends PodmanContainerEngine {
     readonly path: string;
     readonly uid: number;
     readonly gid: number;
-    readonly mode: 0o755 | 0o1775 | 0o3770;
+    readonly mode: number;
   }) => PodmanManagedVolumeRootReceipt;
 }
 
@@ -285,7 +285,7 @@ export function createPodmanContainerEngine(
     readonly path: string;
     readonly uid: number;
     readonly gid: number;
-    readonly mode: 0o755 | 0o1775 | 0o3770;
+    readonly mode: number;
   }): PodmanManagedVolumeRootReceipt => {
     if (options.operation !== "managed-bootstrap") {
       throw new Error("Podman volume-root preparation requires managed-bootstrap authority.");
@@ -305,7 +305,10 @@ export function createPodmanContainerEngine(
       !Number.isSafeInteger(input.gid) ||
       input.gid < 1 ||
       input.gid > 2_147_483_647 ||
-      (input.mode !== 0o755 && input.mode !== 0o1775 && input.mode !== 0o3770)
+      !Number.isSafeInteger(input.mode) ||
+      input.mode < 0 ||
+      input.mode > 0o7777 ||
+      (input.mode & 0o002) !== 0
     ) {
       throw new Error("Podman managed volume root metadata is invalid.");
     }

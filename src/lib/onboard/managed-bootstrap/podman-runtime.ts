@@ -1982,12 +1982,7 @@ export function createPodmanManagedBootstrapAdapter(
           capture(options.engine, ["volume", ...args], "state-volume inspection", 15_000).stdout,
         ...(prepareStateRoot
           ? {
-              prepareRoot: (input) => {
-                if (input.mode !== 0o1775 && input.mode !== 0o3770) {
-                  throw new Error("Managed bootstrap Podman state-root mode is unsupported.");
-                }
-                return prepareStateRoot({ ...input, mode: input.mode });
-              },
+              prepareRoot: (input) => prepareStateRoot(input),
             }
           : {}),
       });

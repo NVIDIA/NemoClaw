@@ -287,15 +287,15 @@ describe("Podman container engine command adapter", () => {
         path: directory,
         uid: 1000,
         gid: 1000,
-        mode: 0o3770,
+        mode: 0o2770,
       }),
-    ).toMatchObject({ path: directory, uid: 1000, gid: 1000, mode: 0o3770 });
+    ).toMatchObject({ path: directory, uid: 1000, gid: 1000, mode: 0o2770 });
     expect(capture).toHaveBeenCalledOnce();
     expect(JSON.parse(capture.mock.calls[0]?.[1].at(-1) ?? "{}")).toMatchObject({
       path: directory,
       uid: 1000,
       gid: 1000,
-      mode: 0o3770,
+      mode: 0o2770,
     });
   });
 
