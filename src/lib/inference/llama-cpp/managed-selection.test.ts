@@ -214,6 +214,31 @@ describe("managed llama.cpp selection", () => {
     ).toMatchObject({ kind: "rejected" });
   });
 
+  it("rejects the N1x WSL recipe without canonical N1x identity (#10102)", () => {
+    const { catalog, report } = fixture(N1X_WSL_PRESET_ID);
+    const withoutN1xIdentity = {
+      ...report,
+      capabilities: report.capabilities.map((capability) =>
+        capability.id === "host.platform.n1x_wsl"
+          ? { ...capability, state: "absent" as const }
+          : capability,
+      ),
+      qualifications: report.qualifications.map((qualification) =>
+        qualification.id === "host.platform.n1x_wsl"
+          ? { ...qualification, status: "unqualified" as const }
+          : qualification,
+      ),
+    };
+
+    expect(
+      resolveManagedLlamaCppSelection(
+        { [LLAMA_CPP_RECIPE_ENV]: N1X_WSL_RECIPE_ID },
+        catalog,
+        withoutN1xIdentity,
+      ),
+    ).toMatchObject({ kind: "rejected" });
+  });
+
   it("selects the highest-priority compatible managed llama.cpp recipe", () => {
     const { catalog, report } = fixture();
     const synthetic = withSyntheticRecipe(catalog, 550);

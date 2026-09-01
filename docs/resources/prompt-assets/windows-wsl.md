@@ -8,7 +8,9 @@
 Use these instructions only after official detection identifies Windows WSL.
 
 Offer the maintained Windows Express path before the normal provider menu.
-Explain that Express keeps the selected agent, uses Windows-host Ollama with its memory-aware default model, leaves optional setup at its defaults, and installs or starts Ollama and downloads the model when needed.
+Explain that Express keeps the selected agent, selects the admitted local inference profile, and leaves optional setup at its defaults.
+For a qualifying N1x WSL host, Express uses managed llama.cpp with Qwen 3.6 35B-A3B and downloads a pinned 20.4 GB GGUF file.
+For other Windows WSL hosts, Express uses Windows-host Ollama with its memory-aware default model.
 Include the third-party-software notice, then ask: "Run Express install with these settings?"
 Choices:
 
@@ -17,8 +19,9 @@ Choices:
 
 If Express is selected:
 
-- Set `NEMOCLAW_PROVIDER=install-windows-ollama`.
-- Leave `NEMOCLAW_MODEL` unset so the installed release chooses its memory-aware Ollama model.
+- When the installer confirms local Docker Desktop, Arm64, the N1x Windows product identity, and at least 48,000 MiB of GPU memory, set `NEMOCLAW_PROVIDER=install-llama-cpp` and `NEMOCLAW_LLAMACPP_RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1`.
+- For managed llama.cpp, explain that Hugging Face authentication is optional, anonymous downloads can return HTTP 429, and `HF_TOKEN` supplies a read token to the temporary downloader.
+- Otherwise, set `NEMOCLAW_PROVIDER=install-windows-ollama` and leave `NEMOCLAW_MODEL` unset so the installed release chooses its memory-aware Ollama model.
 - Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.
 - Set `NEMOCLAW_NON_INTERACTIVE=1`, `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`, `NEMOCLAW_YES=1`, and `NEMOCLAW_POLICY_MODE=suggested`.
 - Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` when Express is accepted.

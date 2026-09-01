@@ -147,6 +147,7 @@ sys.exit(exit_code)
         `powershell.exe() { printf 'RTX Spark N1X\\r\\n'; }\n` +
         `nvidia-smi() { printf '49088\\n'; }\n` +
         `express_wsl_can_use_windows_host_ollama() { return 0; }\n` +
+        `describe_express_install "Windows WSL"\n` +
         `activate_express_install "Windows WSL"\n` +
         `printf 'PROVIDER=%s RECIPE=%s\\n' "$NEMOCLAW_PROVIDER" "$NEMOCLAW_LLAMACPP_RECIPE"\n`,
     );
@@ -154,6 +155,10 @@ sys.exit(exit_code)
     expect(output).toContain(
       "PROVIDER=install-llama-cpp RECIPE=llama-cpp.qwen3-6-35b-a3b.n1x-wsl.v1",
     );
+    expect(output).toContain("pinned 20.4 GB GGUF file");
+    expect(output).toContain("Hugging Face authentication is optional");
+    expect(output).toContain("HTTP 429");
+    expect(output).toContain("export HF_TOKEN=<read-token>");
   });
 
   it.each([

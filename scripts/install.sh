@@ -6050,7 +6050,9 @@ describe_express_install() {
       ;;
     "Windows WSL")
       if express_wsl_can_use_n1x_managed_llama_cpp; then
+        show_hf_authentication="1"
         inference_summary="managed Qwen 3.6 35B with llama.cpp on N1x WSL"
+        inference_disclosure="Managed llama.cpp downloads a pinned 20.4 GB GGUF file before it starts the loopback-only authenticated server."
       elif express_wsl_can_use_windows_host_ollama; then
         inference_summary="Windows-host Ollama through host.docker.internal"
       elif express_wsl_docker_context_needs_node; then

@@ -744,6 +744,11 @@ describe("starter prompt docs CTA", () => {
     expect(stationSource).toContain("Run the installer only in a secure interactive terminal");
     expect(stationSource).toContain("Keep each official confirmation visible");
     expect(stationSource).toContain("third-party-software notice");
+    expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-llama-cpp");
+    expect(windowsSource).toContain("NEMOCLAW_LLAMACPP_RECIPE");
+    expect(windowsSource).toContain("pinned 20.4 GB GGUF file");
+    expect(windowsSource).toContain("HTTP 429");
+    expect(windowsSource).toContain("HF_TOKEN");
     expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
     expect(windowsSource).toContain("Do not start a second Ollama service on the same port.");
   });

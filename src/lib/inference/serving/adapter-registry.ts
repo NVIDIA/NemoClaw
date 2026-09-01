@@ -927,6 +927,7 @@ const SERVING_READINESS_REGISTRY: ServingCatalogRegistries["readiness"] =
     ["host.platform.supported", "capability"],
     ["host.platform.wsl_docker_desktop", "capability"],
     ["host.platform.wsl_gpu_passthrough", "capability"],
+    ["host.platform.n1x_wsl", new Set(["qualification", "capability"] as const)],
     ["host.docker.available", "capability"],
     ["host.docker.daemon_reachable", "capability"],
     ["host.docker.runtime_supported", "capability"],
