@@ -16,6 +16,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { precleanHermesDiscordResources } from "./hermes-discord-cleanup.ts";
 import { hermesDiscordHttpProxyWebSocketUrl } from "./hermes-discord-proxy.ts";
 import {
   assertDiscordGatewayCapture,
@@ -81,39 +82,6 @@ function redactions(apiKey: string): string[] {
 
 function normalizedCsv(value: string): string {
   return value.replace(/\s+/g, "");
-}
-
-async function precleanHermesDiscord(
-  host: HostCliClient,
-  sandboxName: string,
-  env: NodeJS.ProcessEnv,
-  redactionValues: string[],
-  prefix: string,
-): Promise<void> {
-  await bestEffortLifecycleCleanup(() =>
-    host.command("nemoclaw", [sandboxName, "destroy", "--yes"], {
-      artifactName: `${prefix}-nemoclaw-destroy`,
-      env,
-      redactionValues,
-      timeoutMs: 15 * 60_000,
-    }),
-  );
-  await bestEffortLifecycleCleanup(() =>
-    host.command(host.openshellCommandPath, ["sandbox", "delete", sandboxName], {
-      artifactName: `${prefix}-openshell-sandbox-delete`,
-      env,
-      redactionValues,
-      timeoutMs: 120_000,
-    }),
-  );
-  await bestEffortLifecycleCleanup(() =>
-    host.command(host.openshellCommandPath, ["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: `${prefix}-openshell-gateway-destroy`,
-      env,
-      redactionValues,
-      timeoutMs: 120_000,
-    }),
-  );
 }
 
 async function startHermesFakeDiscordGateway(
@@ -438,13 +406,12 @@ test(
       );
     });
 
-    await precleanHermesDiscord(
-      host,
-      SANDBOX_NAME,
+    await precleanHermesDiscordResources(host, sandbox, {
+      sandboxName: SANDBOX_NAME,
       env,
       redactionValues,
-      "preclean-hermes-discord",
-    );
+      prefix: "preclean-hermes-discord",
+    });
 
     const docker = await dockerInfo(host, env);
     expectExitZero(docker, "Docker is running");
