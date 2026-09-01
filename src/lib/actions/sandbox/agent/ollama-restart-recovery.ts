@@ -18,20 +18,21 @@ import { buildValidatedCurlCommandArgs } from "../../../adapters/http/curl-args"
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../../../core/ports";
 import {
   describeModelInventory,
+  createOllamaApiCapture,
   getOllamaApiCommand,
   getResolvedOllamaHost,
   ollamaInventoryContainsModel,
   OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_LOCALHOST,
   probeOllamaEndpointInventory,
+  type RunCaptureFn,
   type RunCaptureExFn,
 } from "../../../inference/local";
 import {
   type OllamaRuntimeModelStatus,
-  type OllamaRuntimeRunCaptureFn,
   probeOllamaRuntimeModelStatus,
 } from "../../../inference/ollama-runtime-context";
-import { runCapture, runCaptureEx } from "../../../runner";
+import { runCaptureEx } from "../../../runner";
 
 export interface OllamaRestartRecoveryRoute {
   provider?: string | null;
@@ -43,15 +44,12 @@ export interface OllamaRestartRecoveryDeps {
   probeRuntimeModelStatus?: (
     model: string,
     getOllamaHost: () => string,
-    runCaptureImpl?: OllamaRuntimeRunCaptureFn,
+    runCaptureImpl?: RunCaptureFn,
   ) => OllamaRuntimeModelStatus;
-  probeModelInventory?: (
-    host: string,
-    runCaptureImpl?: OllamaRuntimeRunCaptureFn,
-  ) => string[] | null;
+  probeModelInventory?: (host: string, runCaptureImpl?: RunCaptureFn) => string[] | null;
   runCaptureExImpl?: RunCaptureExFn;
   getOllamaHost?: () => string;
-  runCaptureImpl?: OllamaRuntimeRunCaptureFn;
+  runCaptureImpl?: RunCaptureFn;
 }
 
 export type OllamaRestartRecoveryFailureReason =
@@ -168,16 +166,6 @@ function buildWarmCommand(model: string, hostname: string): string[] {
   );
 }
 
-function createRawOllamaCapture(
-  hostname: string,
-  capture: OllamaRuntimeRunCaptureFn,
-): OllamaRuntimeRunCaptureFn {
-  return (command, options) => {
-    const [executable, ...args] = command;
-    return capture(executable === "curl" ? getOllamaApiCommand(args, hostname) : command, options);
-  };
-}
-
 function validateWarmResponse(stdout: string): "ok" | "ollama-error" | "invalid-response" {
   try {
     const parsed = JSON.parse(stdout) as {
@@ -220,7 +208,7 @@ export function maybeWarmOllamaAfterDaemonRestart(
   const getOllamaHost = deps.getOllamaHost ?? getResolvedOllamaHost;
   const rawHost = resolveRawOllamaHost(route.endpointUrl, getOllamaHost);
   const probe = deps.probeRuntimeModelStatus ?? probeOllamaRuntimeModelStatus;
-  const rawCapture = createRawOllamaCapture(rawHost, deps.runCaptureImpl ?? runCapture);
+  const rawCapture = createOllamaApiCapture(deps.runCaptureImpl, rawHost);
   let status: OllamaRuntimeModelStatus;
   try {
     status = probe(model, () => rawHost, rawCapture);

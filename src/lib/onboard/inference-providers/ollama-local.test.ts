@@ -125,7 +125,7 @@ describe("Ollama local provider sandbox-facing model gate", () => {
     expect(persistResolvedOllamaHost).toHaveBeenCalledOnce();
   });
 
-  it("fails before recording the provider when the cleanup route cannot be persisted", async () => {
+  it("fails setup when the accepted cleanup route cannot be persisted", async () => {
     const upsertProvider = vi.fn(() => ({ ok: true }));
     const error = vi.fn();
 
@@ -146,7 +146,47 @@ describe("Ollama local provider sandbox-facing model gate", () => {
       ),
     ).rejects.toThrow("exit 1");
 
-    expect(upsertProvider).not.toHaveBeenCalled();
+    expect(upsertProvider).toHaveBeenCalledOnce();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("state path is unsafe"));
+  });
+
+  it("does not persist a route when provider registration fails", async () => {
+    const persistResolvedOllamaHost = vi.fn();
+
+    await expect(
+      setupOllamaLocalInference(
+        { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
+        deps({
+          upsertProvider: () => ({ ok: false, status: 1, message: "provider rejected" }),
+          localInference: {
+            validateOllamaModelWithToolsOverride: () => ({ ok: true }),
+            validateSandboxFacingOllamaModel: () => ({ ok: true }),
+            persistResolvedOllamaHost,
+          },
+        }),
+      ),
+    ).rejects.toThrow("exit 1");
+
+    expect(persistResolvedOllamaHost).not.toHaveBeenCalled();
+  });
+
+  it("does not persist a route when route application requests reselection", async () => {
+    const persistResolvedOllamaHost = vi.fn();
+
+    await expect(
+      setupOllamaLocalInference(
+        { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
+        deps({
+          applyLocalInferenceRoute: async () => true,
+          localInference: {
+            validateOllamaModelWithToolsOverride: () => ({ ok: true }),
+            validateSandboxFacingOllamaModel: () => ({ ok: true }),
+            persistResolvedOllamaHost,
+          },
+        }),
+      ),
+    ).resolves.toEqual({ done: true, result: { retry: "selection" } });
+
+    expect(persistResolvedOllamaHost).not.toHaveBeenCalled();
   });
 });

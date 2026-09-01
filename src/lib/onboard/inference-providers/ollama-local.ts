@@ -78,16 +78,6 @@ export async function setupOllamaLocalInference(
     error(`  ${sandboxModel.message}`);
     return exitProcess(1);
   }
-  try {
-    localInference.persistResolvedOllamaHost?.();
-  } catch (persistError) {
-    error(
-      `  Could not record the selected local Ollama route for later stop/destroy cleanup: ${
-        persistError instanceof Error ? persistError.message : String(persistError)
-      }`,
-    );
-    return exitProcess(1);
-  }
   const baseUrl = getLocalProviderBaseUrl(provider);
   let ollamaCredential = "ollama";
   if (frontOllamaWithProxy) {
@@ -143,6 +133,16 @@ export async function setupOllamaLocalInference(
       error(`  ${probe.message}`);
       return exitProcess(1);
     }
+  }
+  try {
+    localInference.persistResolvedOllamaHost?.();
+  } catch (persistError) {
+    error(
+      `  Could not record the accepted local Ollama route for later stop/destroy cleanup: ${
+        persistError instanceof Error ? persistError.message : String(persistError)
+      }`,
+    );
+    return exitProcess(1);
   }
   // Do not mutate ~/.nemoclaw/credentials.json here: local Ollama now uses
   // OLLAMA_PROXY_CREDENTIAL_ENV, so any saved OPENAI_API_KEY remains available

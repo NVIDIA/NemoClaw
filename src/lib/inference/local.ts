@@ -254,11 +254,14 @@ export function getOllamaApiCommand(
     : ["curl", ...curlArgs];
 }
 
-function createOllamaApiCapture(runCaptureImpl?: RunCaptureFn): RunCaptureFn {
+export function createOllamaApiCapture(
+  runCaptureImpl?: RunCaptureFn,
+  host: string = getResolvedOllamaHost(),
+): RunCaptureFn {
   const capture = runCaptureImpl ?? runCapture;
   return (command, options) => {
     const [executable, ...args] = command;
-    return capture(executable === "curl" ? getOllamaApiCommand(args) : command, options);
+    return capture(executable === "curl" ? getOllamaApiCommand(args, host) : command, options);
   };
 }
 
