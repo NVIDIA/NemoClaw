@@ -20,7 +20,9 @@ Shields has been retired from NemoClaw. The current CLI has no Shields commands,
 
 If the sandbox has only an inert legacy state record, create a trusted snapshot or backup. Then rebuild the affected sandbox before running further mutations.
 
-If NemoClaw blocks an operation because it found an old timer, transition, policy snapshot, authority-bearing runtime-provider recovery artifact, or ambiguous recovery state, do not onboard or mutate any sandbox yet. These files can represent detached mutation authority that the current CLI deliberately does not interpret. A different requested sandbox name does not make onboarding safe. A notice-only provider intent recorded before mutation authority was granted is preserved for review but does not by itself block lifecycle operations.
+If NemoClaw blocks an operation because it found an old timer, transition, policy snapshot, authority-bearing runtime-provider recovery artifact, or ambiguous recovery state, do not onboard or mutate any sandbox yet. These files can represent detached mutation authority that the current CLI deliberately does not interpret. A different requested sandbox name does not make onboarding safe.
+
+A notice-only provider intent recorded before mutation authority was granted is preserved for review but does not by itself block lifecycle operations. The retirement notice prints each exact absolute notice-only path and labels it nonblocking. A notice-only path is not part of the quarantine inventory unless a later blocking error explicitly lists that same path.
 
 Use the active state directory and exact blocking paths printed in the error as the complete quarantine inventory. A provider path can name a whole lifecycle transaction directory; treat the whole printed path as one unit.
 

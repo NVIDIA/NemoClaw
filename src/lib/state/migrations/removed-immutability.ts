@@ -284,7 +284,7 @@ export function reportRemovedImmutabilityUpgrade(
     readonly warn?: (message: string) => void;
   } = {},
 ): RemovedImmutabilityUpgradeNotice {
-  const stateDir = options.stateDir ?? resolveNemoclawStateDir();
+  const stateDir = path.resolve(options.stateDir ?? resolveNemoclawStateDir());
   let entries: string[];
   try {
     entries = fs.readdirSync(stateDir);
@@ -311,19 +311,31 @@ export function reportRemovedImmutabilityUpgrade(
   for (const sandboxName of providerLedger.artifactsBySandbox.keys()) {
     affectedSandboxes.add(sandboxName);
   }
-  const hasUnattributedRecoveryState =
+  const noticeOnlyArtifacts = [
+    ...new Set(providerLedger.noticeArtifacts.map((artifact) => path.resolve(artifact))),
+  ].sort();
+  const hasBlockingUnattributedRecoveryState =
     hasTopLevelRecoveryState ||
     inspectLegacyLifecycleSentinels(stateDir).length > 0 ||
-    providerLedger.ambiguousArtifacts.length > 0 ||
-    providerLedger.noticeArtifacts.length > 0;
+    providerLedger.ambiguousArtifacts.length > 0;
+  const hasUnattributedRecoveryState =
+    hasBlockingUnattributedRecoveryState || noticeOnlyArtifacts.length > 0;
   const names = [...affectedSandboxes].sort();
   if (names.length > 0 || hasUnattributedRecoveryState) {
     const affected = names.length > 0 ? ` Affected sandbox records: ${names.join(", ")}.` : "";
-    const unresolved = hasUnattributedRecoveryState
+    const unresolved = hasBlockingUnattributedRecoveryState
       ? " Unattributed transition or provider recovery state also remains."
       : "";
+    const noticeOnly =
+      noticeOnlyArtifacts.length > 0
+        ? ` Nonblocking retired provider intent paths retained for review: ${noticeOnlyArtifacts.map((artifact) => JSON.stringify(artifact)).join(", ")}. These notice-only paths did not establish mutation authority and do not block lifecycle operations.`
+        : "";
+    const recovery =
+      names.length > 0 || hasBlockingUnattributedRecoveryState
+        ? " Back up trusted user data and rebuild or recreate affected sandboxes with the current version."
+        : "";
     (options.warn ?? console.warn)(
-      `Shields has been retired from NemoClaw. This release has no Shields commands or supported Shields posture.${affected}${unresolved} Back up trusted user data and rebuild or recreate affected sandboxes with the current version.`,
+      `Shields has been retired from NemoClaw. This release has no Shields commands or supported Shields posture.${affected}${unresolved}${noticeOnly}${recovery}`,
     );
   }
   return { affectedSandboxes: names, hasUnattributedRecoveryState };

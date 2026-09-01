@@ -189,17 +189,31 @@ describe("removed immutability migration boundary", () => {
     });
   });
 
-  it("announces an unattributed provider intent without assigning it to a new name", () => {
+  it("announces every unattributed provider intent without assigning them to a new name", () => {
     const root = stateDir();
-    const transactionDir = path.join("runtime-provider-lifecycle", "d".repeat(64));
-    touch(root, path.join(transactionDir, "state-mutation-intent.json"));
+    const firstTransactionDir = path.join("runtime-provider-lifecycle", "d".repeat(64));
+    const secondTransactionDir = path.join("runtime-provider-lifecycle", "f".repeat(64));
+    touch(root, path.join(firstTransactionDir, "state-mutation-intent.json"));
+    touch(root, path.join(secondTransactionDir, "state-mutation-intent.json"));
+    const firstNoticePath = path.join(root, firstTransactionDir);
+    const secondNoticePath = path.join(root, secondTransactionDir);
+    const warn = vi.fn();
 
-    expect(inspectRemovedImmutabilityMigration("alpha", root).recoveryArtifacts).not.toContain(
-      path.join(root, transactionDir),
-    );
-    expect(reportRemovedImmutabilityUpgrade({ stateDir: root, warn: vi.fn() })).toMatchObject({
+    const recoveryArtifacts = inspectRemovedImmutabilityMigration("alpha", root).recoveryArtifacts;
+    expect(recoveryArtifacts).not.toContain(firstNoticePath);
+    expect(recoveryArtifacts).not.toContain(secondNoticePath);
+    expect(reportRemovedImmutabilityUpgrade({ stateDir: root, warn })).toMatchObject({
       hasUnattributedRecoveryState: true,
     });
+    expect(warn).toHaveBeenCalledOnce();
+    const warning = String(warn.mock.calls[0]?.[0]);
+    expect(warning).toContain("Nonblocking retired provider intent paths retained for review:");
+    expect(warning).toContain(JSON.stringify(firstNoticePath));
+    expect(warning).toContain(JSON.stringify(secondNoticePath));
+    expect(warning).toContain("did not establish mutation authority");
+    expect(warning).toContain("do not block lifecycle operations");
+    expect(warning).not.toContain("quarantine");
+    expect(warning).not.toContain("rebuild or recreate");
     expect(enforceRemovedImmutabilityMigrationBoundary("alpha", { stateDir: root })).toEqual({
       stateRecord: null,
       recoveryArtifacts: [],

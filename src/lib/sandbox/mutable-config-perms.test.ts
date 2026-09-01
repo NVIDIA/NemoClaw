@@ -12,7 +12,6 @@ import {
   dirSatisfiesMutableContract,
   fileSatisfiesMutableContract,
   inspectMutableConfigPermsForTarget,
-  mutableHermesConfigProbeCommand,
   parseStatModeOwner,
   repairMutableConfigPermsForTarget,
   verifyMutableHermesConfigForTarget,
@@ -171,6 +170,7 @@ describe("mutable OpenClaw config permissions", () => {
     const configPath = path.join(configDir, "config.yaml");
     const hashPath = path.join(configDir, ".config-hash");
     const envPath = path.join(configDir, ".env");
+    const commandShim = path.join(root, "run-privileged-command.sh");
     fs.mkdirSync(configDir, { mode: 0o700 });
     fs.chmodSync(configDir, 0o3770);
     fs.writeFileSync(configPath, "fixture\n", { mode: 0o640 });
@@ -179,37 +179,59 @@ describe("mutable OpenClaw config permissions", () => {
     fs.chmodSync(configPath, 0o640);
     fs.chmodSync(hashPath, 0o640);
     fs.chmodSync(envPath, 0o640);
+    fs.writeFileSync(
+      commandShim,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "shift",
+        'while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done',
+        '[ "${1:-}" = "--" ]',
+        "shift",
+        'exec "$@"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
 
-    const command = mutableHermesConfigProbeCommand({
+    const fixtureTarget: AgentConfigTarget = {
       ...hermesTarget,
       configDir,
       configPath,
       sensitiveFiles: [hashPath, envPath],
-    });
-    const script = command[8]!;
+    };
     const runProbe = () =>
-      spawnSync(process.env.PYTHON || "python3", ["-I", "-c", script, ...command.slice(9)], {
-        encoding: "utf8",
+      verifyMutableHermesConfigForTarget(fixtureTarget, (command) => {
+        const result = spawnSync(commandShim, [...command], {
+          encoding: "utf8",
+        });
+        expect(result.error).toBeUndefined();
+        expect(result.status, result.stderr).toBe(0);
       });
 
     try {
       const valid = runProbe();
-      expect(valid.status, valid.stderr).toBe(0);
+      expect(valid).toEqual({ verified: true, errors: [] });
       expect(
         fs.readdirSync(configDir).some((entry) => entry.startsWith(".nemoclaw-mutable-posture-")),
       ).toBe(false);
 
       fs.chmodSync(configPath, 0o440);
       const readOnly = runProbe();
-      expect(readOnly.status).not.toBe(0);
-      expect(readOnly.stderr).toContain("PermissionError");
+      expect(readOnly.verified).toBe(false);
+      expect(readOnly.errors.join("\n")).toContain("PermissionError");
+      expect(
+        fs.readdirSync(configDir).some((entry) => entry.startsWith(".nemoclaw-mutable-posture-")),
+      ).toBe(false);
 
       fs.chmodSync(configPath, 0o640);
       fs.rmSync(envPath);
       fs.symlinkSync(configPath, envPath);
       const linked = runProbe();
-      expect(linked.status).not.toBe(0);
-      expect(linked.stderr).toMatch(/(?:ELOOP|Too many levels of symbolic links)/u);
+      expect(linked.verified).toBe(false);
+      expect(linked.errors.join("\n")).toMatch(/(?:ELOOP|Too many levels of symbolic links)/u);
+      expect(
+        fs.readdirSync(configDir).some((entry) => entry.startsWith(".nemoclaw-mutable-posture-")),
+      ).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
