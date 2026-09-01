@@ -34,6 +34,7 @@ import { parseInstalledWechatProof } from "../live/messaging-providers-wechat-ru
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
 const FAKE_SLACK_API = path.resolve(import.meta.dirname, "../lib/fake-slack-api.cjs");
 const FAKE_WECHAT_API = path.resolve(import.meta.dirname, "../lib/fake-wechat-api.mts");
+const FAKE_DISCORD_GATEWAY = path.resolve(import.meta.dirname, "../lib/fake-discord-gateway.cjs");
 const FAKE_API_PORT_TRAFFIC = path.resolve(
   import.meta.dirname,
   "../lib/fake-api-port-readiness.mts",
@@ -71,6 +72,13 @@ type FakeSlackPortFixture = {
   stop: () => Promise<void>;
 };
 
+type FakePortFixture = {
+  restPort: number;
+  websocketPort?: number;
+  captureFile: string;
+  stop: () => Promise<void>;
+};
+
 function readFakeSlackCapture(captureFile: string): Array<Record<string, unknown>> {
   return fs
     .readFileSync(captureFile, "utf8")
@@ -80,47 +88,39 @@ function readFakeSlackCapture(captureFile: string): Array<Record<string, unknown
     .map((line) => JSON.parse(line));
 }
 
-async function startFakeSlackPortFixture(options?: {
-  suppressPortTrafficReply?: boolean;
-  restPortTrafficStatus?: number;
-  restPortTrafficReply?: string;
-}): Promise<FakeSlackPortFixture> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-slack-ports-"));
+async function startFakePortFixture(options: {
+  label: string;
+  script: string;
+  nodeArgs?: string[];
+  env: (portFile: string, captureFile: string) => NodeJS.ProcessEnv;
+  redactionValues?: string[];
+  websocketPort?: (captureFile: string) => number;
+}): Promise<FakePortFixture> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-api-ports-"));
   const portFile = path.join(dir, "port");
   const captureFile = path.join(dir, "capture.jsonl");
   const progress = startTestProgress(
-    "fake Slack port fixture",
-    ["start fake Slack listeners", "exercise REST and WebSocket traffic"],
+    options.label,
+    ["start fake API listeners", "exercise port traffic"],
     { logLine: () => undefined },
   );
   const controller = new AbortController();
-  const child = spawnObservedChild(process.execPath, [FAKE_SLACK_API], {
-    activityLabel: "command: fake-slack-port-fixture",
-    progress,
-    spawn: {
-      detached: true,
-      env: {
-        PATH: process.env.PATH ?? "",
-        FAKE_SLACK_API_HOST: "127.0.0.1",
-        FAKE_SLACK_API_PORT: "0",
-        FAKE_SLACK_API_WEBSOCKET_PORT: "0",
-        FAKE_SLACK_API_PORT_FILE: portFile,
-        FAKE_SLACK_API_CAPTURE_FILE: captureFile,
-        FAKE_SLACK_API_EXPECTED_BOT_TOKEN: FAKE_SLACK_BOT_TOKEN,
-        FAKE_SLACK_API_EXPECTED_APP_TOKEN: FAKE_SLACK_APP_TOKEN,
-        ...(options?.suppressPortTrafficReply
-          ? { FAKE_SLACK_API_SUPPRESS_PORT_TRAFFIC_REPLY: "1" }
-          : {}),
-        ...(options?.restPortTrafficStatus === undefined
-          ? {}
-          : { FAKE_SLACK_API_PORT_TRAFFIC_STATUS: String(options.restPortTrafficStatus) }),
-        ...(options?.restPortTrafficReply === undefined
-          ? {}
-          : { FAKE_SLACK_API_PORT_TRAFFIC_REPLY: options.restPortTrafficReply }),
+  const child = spawnObservedChild(
+    process.execPath,
+    [...(options.nodeArgs ?? []), options.script],
+    {
+      activityLabel: `command: ${options.label}`,
+      progress,
+      spawn: {
+        detached: true,
+        env: {
+          PATH: process.env.PATH ?? "",
+          ...options.env(portFile, captureFile),
+        },
+        stdio: ["ignore", "ignore", "pipe"],
       },
-      stdio: ["ignore", "ignore", "pipe"],
     },
-  });
+  );
   let stderrTail = "";
   const supervised = superviseChild(child, {
     timeoutMs: 30_000,
@@ -145,22 +145,53 @@ async function startFakeSlackPortFixture(options?: {
     await waitFor(
       () => fs.existsSync(portFile),
       () =>
-        `fake Slack listeners did not start: ${redactString(stderrTail, [
-          FAKE_SLACK_APP_TOKEN,
-          FAKE_SLACK_BOT_TOKEN,
-        ])}`,
+        `${options.label} did not start: ${redactString(stderrTail, options.redactionValues ?? [])}`,
     );
-    const listening = readFakeSlackCapture(captureFile).filter(
-      (entry) => entry.event === "listening",
-    );
-    const restPort = Number(fs.readFileSync(portFile, "utf8").trim());
-    const websocketPort = Number(listening.find((entry) => entry.kind === "websocket")?.port ?? 0);
-    progress.phase("exercise REST and WebSocket traffic");
+    const restPort = parseRuntimeProofPort(fs.readFileSync(portFile, "utf8").trim());
+    const websocketPort = options.websocketPort?.(captureFile);
+    progress.phase("exercise port traffic");
     return { restPort, websocketPort, captureFile, stop };
   } catch (error) {
     await stop();
     throw error;
   }
+}
+
+async function startFakeSlackPortFixture(options?: {
+  suppressPortTrafficReply?: boolean;
+  restPortTrafficStatus?: number;
+  restPortTrafficReply?: string;
+}): Promise<FakeSlackPortFixture> {
+  const fixture = await startFakePortFixture({
+    label: "fake Slack port fixture",
+    script: FAKE_SLACK_API,
+    redactionValues: [FAKE_SLACK_APP_TOKEN, FAKE_SLACK_BOT_TOKEN],
+    env: (portFile, captureFile) => ({
+      FAKE_SLACK_API_HOST: "127.0.0.1",
+      FAKE_SLACK_API_PORT: "0",
+      FAKE_SLACK_API_WEBSOCKET_PORT: "0",
+      FAKE_SLACK_API_PORT_FILE: portFile,
+      FAKE_SLACK_API_CAPTURE_FILE: captureFile,
+      FAKE_SLACK_API_EXPECTED_BOT_TOKEN: FAKE_SLACK_BOT_TOKEN,
+      FAKE_SLACK_API_EXPECTED_APP_TOKEN: FAKE_SLACK_APP_TOKEN,
+      ...(options?.suppressPortTrafficReply
+        ? { FAKE_SLACK_API_SUPPRESS_PORT_TRAFFIC_REPLY: "1" }
+        : {}),
+      ...(options?.restPortTrafficStatus === undefined
+        ? {}
+        : { FAKE_SLACK_API_PORT_TRAFFIC_STATUS: String(options.restPortTrafficStatus) }),
+      ...(options?.restPortTrafficReply === undefined
+        ? {}
+        : { FAKE_SLACK_API_PORT_TRAFFIC_REPLY: options.restPortTrafficReply }),
+    }),
+    websocketPort: (captureFile) =>
+      Number(
+        readFakeSlackCapture(captureFile).find((entry) => entry.kind === "websocket")?.port ?? 0,
+      ),
+  });
+  const websocketPort = fixture.websocketPort;
+  expect(websocketPort).toBeGreaterThan(0);
+  return { ...fixture, websocketPort: websocketPort as number };
 }
 
 function runPortTrafficCheck(restPort: number, websocketPort?: number) {
@@ -222,6 +253,11 @@ describe("messaging provider installed-runtime proofs", () => {
   it("collects API diagnostics when the fake container does not become ready", async () => {
     vi.useFakeTimers();
     const artifactNames: string[] = [];
+    const invocations: Array<{
+      artifactName: string;
+      command: string;
+      args: readonly string[];
+    }> = [];
     const cleanupTasks: Array<() => Promise<void>> = [];
     let container = "";
     const runner: CommandRunner = {
@@ -229,6 +265,7 @@ describe("messaging provider installed-runtime proofs", () => {
         const invocation = [command.command, ...command.args];
         const artifactName = options?.artifactName ?? "";
         artifactNames.push(...(artifactName ? [artifactName] : []));
+        invocations.push({ artifactName, command: command.command, args: command.args });
         switch (artifactName) {
           case "start-fake-slack-api":
             container = invocation[invocation.indexOf("--name") + 1] ?? "";
@@ -265,6 +302,22 @@ describe("messaging provider installed-runtime proofs", () => {
         "failure-fake-slack-api-api-inspect",
         "failure-fake-slack-api-api-logs",
       ]);
+      expect(
+        invocations.filter(({ artifactName }) =>
+          artifactName.startsWith("failure-fake-slack-api-"),
+        ),
+      ).toEqual([
+        {
+          artifactName: "failure-fake-slack-api-api-inspect",
+          command: "docker",
+          args: ["inspect", "--format", "{{json .State}}", container],
+        },
+        {
+          artifactName: "failure-fake-slack-api-api-logs",
+          command: "docker",
+          args: ["logs", "--tail", "200", container],
+        },
+      ]);
     } finally {
       vi.useRealTimers();
       await cleanupTasks
@@ -280,20 +333,32 @@ describe("messaging provider installed-runtime proofs", () => {
 
   it("collects diagnostics when published fake API proxy ports do not carry traffic", async () => {
     const artifactNames: string[] = [];
+    const invocations: Array<{
+      artifactName: string;
+      command: string;
+      args: readonly string[];
+    }> = [];
     const cleanupTasks: Array<() => Promise<void>> = [];
+    let apiContainer = "";
+    let proxyContainer = "";
     const runner: CommandRunner = {
       async run(command, options) {
         const invocation = [command.command, ...command.args];
         const artifactName = options?.artifactName ?? "";
         artifactNames.push(...(artifactName ? [artifactName] : []));
+        invocations.push({ artifactName, command: command.command, args: command.args });
         switch (artifactName) {
           case "start-fake-slack-api": {
+            apiContainer = invocation[invocation.indexOf("--name") + 1] ?? "";
             const mountSuffix = ":/tmp/fake";
             const mount = invocation.find((argument) => argument.endsWith(mountSuffix));
             expect(mount).toBeDefined();
             fs.writeFileSync(path.join(mount!.slice(0, -mountSuffix.length), "port"), "8080\n");
             return successfulShellResult(invocation);
           }
+          case "start-fake-slack-api-proxy":
+            proxyContainer = invocation[invocation.indexOf("--name") + 1] ?? "";
+            return successfulShellResult(invocation);
           case "port-fake-slack-api":
             return successfulShellResult(invocation, "127.0.0.1:41080\n");
           case "port-fake-slack-websocket-api":
@@ -332,6 +397,34 @@ describe("messaging provider installed-runtime proofs", () => {
         "failure-fake-slack-api-proxy-logs",
         "failure-fake-slack-api-api-inspect",
         "failure-fake-slack-api-api-logs",
+      ]);
+      expect(apiContainer).not.toBe("");
+      expect(proxyContainer).not.toBe("");
+      expect(
+        invocations.filter(({ artifactName }) =>
+          artifactName.startsWith("failure-fake-slack-api-"),
+        ),
+      ).toEqual([
+        {
+          artifactName: "failure-fake-slack-api-proxy-inspect",
+          command: "docker",
+          args: ["inspect", "--format", "{{json .State}}", proxyContainer],
+        },
+        {
+          artifactName: "failure-fake-slack-api-proxy-logs",
+          command: "docker",
+          args: ["logs", "--tail", "200", proxyContainer],
+        },
+        {
+          artifactName: "failure-fake-slack-api-api-inspect",
+          command: "docker",
+          args: ["inspect", "--format", "{{json .State}}", apiContainer],
+        },
+        {
+          artifactName: "failure-fake-slack-api-api-logs",
+          command: "docker",
+          args: ["logs", "--tail", "200", apiContainer],
+        },
       ]);
     } finally {
       await cleanupTasks
@@ -416,6 +509,79 @@ describe("messaging provider installed-runtime proofs", () => {
       await fixture.stop();
     }
   }, 25_000);
+
+  it.each([
+    [
+      "Discord",
+      FAKE_DISCORD_GATEWAY,
+      [] as string[],
+      (portFile: string, captureFile: string) => ({
+        FAKE_DISCORD_GATEWAY_HOST: "127.0.0.1",
+        FAKE_DISCORD_GATEWAY_PORT: "0",
+        FAKE_DISCORD_GATEWAY_PORT_FILE: portFile,
+        FAKE_DISCORD_GATEWAY_CAPTURE_FILE: captureFile,
+        FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: "fake-discord-readiness-token",
+      }),
+    ],
+    [
+      "Telegram",
+      FAKE_TELEGRAM_API,
+      [] as string[],
+      (portFile: string, captureFile: string) => ({
+        FAKE_TELEGRAM_API_HOST: "127.0.0.1",
+        FAKE_TELEGRAM_API_PORT: "0",
+        FAKE_TELEGRAM_API_PORT_FILE: portFile,
+        FAKE_TELEGRAM_API_CAPTURE_FILE: captureFile,
+        FAKE_TELEGRAM_API_EXPECTED_TOKEN: "fake-telegram-readiness-token",
+      }),
+    ],
+    [
+      "WeChat",
+      FAKE_WECHAT_API,
+      ["--experimental-strip-types"],
+      (portFile: string, captureFile: string) => ({
+        FAKE_WECHAT_API_HOST: "127.0.0.1",
+        FAKE_WECHAT_API_PORT: "0",
+        FAKE_WECHAT_API_PORT_FILE: portFile,
+        FAKE_WECHAT_API_CAPTURE_FILE: captureFile,
+        FAKE_WECHAT_API_EXPECTED_TOKEN: "fake-wechat-readiness-token",
+        FAKE_WECHAT_API_EXPECTED_TARGET: "readiness-user@im.wechat",
+        FAKE_WECHAT_API_EXPECTED_TEXT: "readiness proof",
+      }),
+    ],
+  ])(
+    "accepts the real %s fake API REST readiness reply",
+    async (provider, script, nodeArgs, env) => {
+      const fixture = await startFakePortFixture({
+        label: `fake ${provider} port fixture`,
+        script,
+        nodeArgs,
+        env,
+      });
+
+      try {
+        const trafficCheck = runPortTrafficCheck(fixture.restPort);
+        expect(trafficCheck.status, trafficCheck.stderr).toBe(0);
+      } finally {
+        await fixture.stop();
+      }
+    },
+    15_000,
+  );
+
+  it("rejects an invalid reply through the generic REST-only traffic probe", async () => {
+    const fixture = await startFakeSlackPortFixture({
+      restPortTrafficReply: "unexpected_reply",
+    });
+
+    try {
+      const trafficCheck = runPortTrafficCheck(fixture.restPort);
+      expect(trafficCheck.status).toBe(1);
+      expect(trafficCheck.stderr).toContain("REST port traffic reply was not recognized");
+    } finally {
+      await fixture.stop();
+    }
+  }, 15_000);
 
   it.each([
     ["an HTTP error", 502, "nemoclaw_port_traffic_reply", "HTTP 502"],
