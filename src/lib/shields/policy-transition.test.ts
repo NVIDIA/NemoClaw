@@ -849,7 +849,23 @@ describe("shields-down rollback flow", () => {
     ).toThrow("Cannot revoke stale auto-restore timer authority for openclaw");
 
     expect(harness.getOpenClawPosture()).toBe("locked");
-    expect(harness.runCaptureSpy).not.toHaveBeenCalled();
+    expect(harness.runCaptureSpy).toHaveBeenCalledTimes(2);
+    expect(harness.runCaptureSpy).toHaveBeenNthCalledWith(1, [
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--base",
+      "openclaw",
+    ]);
+    expect(harness.runCaptureSpy).toHaveBeenNthCalledWith(2, [
+      "policy",
+      "get",
+      "-g",
+      "nemoclaw",
+      "--base",
+      "openclaw",
+    ]);
     expect(harness.runSpy).not.toHaveBeenCalled();
     expect(harness.auditSpy).not.toHaveBeenCalled();
     expect(fork).not.toHaveBeenCalled();
