@@ -34,7 +34,7 @@ import {
   createReadinessWaitOptions,
   formatReadinessDeadline,
   getLegacyPollDeadlineBudgetMs,
-} from "./readiness-wait";
+} from "../core/readiness-wait";
 
 export type StartGatewayForRecoveryOptions = {
   gatewayName?: string;

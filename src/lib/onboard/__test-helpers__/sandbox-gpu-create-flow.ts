@@ -113,6 +113,7 @@ export function createGpuFlowDeps(
     sleep: vi.fn(),
     openshellArgv: vi.fn((args: string[]) => ["openshell", ...args]),
     isSandboxReady,
+    printCreateRecoveryHints: vi.fn(),
     verifyDirectSandboxGpu: vi.fn(() => VERIFIED_GPU_PROOF),
   };
 }

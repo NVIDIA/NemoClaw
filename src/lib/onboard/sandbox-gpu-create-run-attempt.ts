@@ -18,7 +18,8 @@ import {
   resolveOpenShellSandboxId,
   settleCreatedOpenShellSandboxId,
 } from "../adapters/openshell/sandbox-identity";
-import { printSandboxCreateRecoveryHints } from "../build-context";
+import { createReadinessWaitOptions } from "../core/readiness-wait";
+import { waitUntil } from "../core/wait";
 import { streamSandboxCreate, type StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
 import { redact, redactFullWithUrls } from "../security/redact";
@@ -54,7 +55,6 @@ import {
 } from "./sandbox-recreate-probe";
 import type { CreatedSandboxReadyIdentityCheck } from "./sandbox-readiness-tracing";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
-import { createReadinessWaitOptions, runReadinessWait } from "./readiness-wait";
 import { addTraceEvent } from "./tracing";
 
 type NativeRuntimeSnapshot = ManagedBootstrapRuntimeSnapshot;
@@ -112,6 +112,10 @@ function reportSandboxCreateFailure(options: {
     sandboxName: string,
     options: { backupPath: string | null },
   ) => void;
+  readonly printCreateRecoveryHints: (
+    output: string,
+    options: { readonly createArgs: readonly string[] },
+  ) => void;
 }): never {
   const redactedCreateOutput = redact(options.createOutput);
   console.error("");
@@ -124,7 +128,7 @@ function reportSandboxCreateFailure(options: {
     backupPath: options.restoreBackupPath,
   });
   console.error("  Try:  openshell sandbox list        # check gateway state");
-  printSandboxCreateRecoveryHints(redactedCreateOutput, { createArgs: options.createArgs });
+  options.printCreateRecoveryHints(redactedCreateOutput, { createArgs: options.createArgs });
   return process.exit(options.createStatus === 0 ? 1 : options.createStatus);
 }
 
@@ -544,7 +548,7 @@ function waitForCreatedOpenShellSandboxPublication(
   const now = waitOptions?.now;
   const published =
     waitOptions && deadlineMs !== undefined && now
-      ? runReadinessWait(() => {
+      ? waitUntil(() => {
           const getRemainingMs = () => Math.max(1, deadlineMs - now());
           const result = deps.runOpenshell(
             ["sandbox", "get", "-g", input.gatewayName, input.sandboxName],
@@ -1189,6 +1193,7 @@ export function createSandboxGpuCreateAttemptRunner(
           restoreBackupPath: input.restoreBackupPath,
           createArgs: input.prebuild.createArgs,
           printCreateFailureDiagnostics,
+          printCreateRecoveryHints: deps.printCreateRecoveryHints,
         });
       }
     }

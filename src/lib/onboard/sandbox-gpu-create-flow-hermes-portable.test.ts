@@ -48,11 +48,7 @@ import {
   resetGpuFlowMocks,
   setupGpuFlowMocks,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
-import {
-  cleanupSandboxCreateSource,
-  runSandboxGpuCreateFlow,
-  type SandboxGpuCreateFlowInput,
-} from "./sandbox-gpu-create-flow";
+import { runSandboxGpuCreateFlow, type SandboxGpuCreateFlowInput } from "./sandbox-gpu-create-flow";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 
 const PORTABLE_RUNTIME_AUTHORITY: CheckpointPortableRuntimeAuthority = {
@@ -70,45 +66,6 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("Hermes portable sandbox create flow", () => {
-  it("releases exit cleanup ownership only after successful retirement (#9203)", () => {
-    const cleanup = vi.fn(() => true);
-    process.on("exit", cleanup);
-    try {
-      expect(cleanupSandboxCreateSource(cleanup)).toBe(true);
-      expect(process.listeners("exit")).not.toContain(cleanup);
-    } finally {
-      process.removeListener("exit", cleanup);
-    }
-  });
-
-  it("preserves exit cleanup ownership when retirement is incomplete (#9203)", () => {
-    const cleanup = vi.fn(() => false);
-    process.on("exit", cleanup);
-    try {
-      expect(cleanupSandboxCreateSource(cleanup)).toBe(false);
-      expect(process.listeners("exit")).toContain(cleanup);
-    } finally {
-      process.removeListener("exit", cleanup);
-    }
-  });
-
-  it("requires and uses exact source cleanup for Hermes portable custody (#9203)", () => {
-    const cleanup = vi.fn(() => true);
-    const exactCleanup = vi.fn(() => true);
-    process.on("exit", cleanup);
-    try {
-      expect(cleanupSandboxCreateSource(cleanup, { exactCleanup, requireExact: true })).toBe(true);
-      expect(exactCleanup).toHaveBeenCalledOnce();
-      expect(cleanup).not.toHaveBeenCalled();
-      expect(process.listeners("exit")).not.toContain(cleanup);
-      expect(() => cleanupSandboxCreateSource(cleanup, { requireExact: true })).toThrow(
-        "has no exact cleanup authority",
-      );
-    } finally {
-      process.removeListener("exit", cleanup);
-    }
-  });
-
   it("keeps non-OpenClaw portable creation on the existing runtime patch (#9068)", async () => {
     const input = createInput();
     input.hostEnv = { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" };

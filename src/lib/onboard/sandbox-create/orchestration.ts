@@ -1282,6 +1282,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       path,
       planRegisteredExtraProviders,
       preparedDcodeRebuild,
+      printSandboxCreateRecoveryHints,
       promptValidatedSandboxName,
       promptYesNoOrDefault,
       providerExistsInGateway,
@@ -2603,6 +2604,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
               sleep: sleepSeconds,
               openshellArgv,
               isSandboxReady,
+              printCreateRecoveryHints: printSandboxCreateRecoveryHints,
               verifyDirectSandboxGpu: createGpuVerifier,
             },
           );
@@ -2623,13 +2625,16 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     let initialCreateSourceCleanupCompleted = false;
     const cleanupInitialCreateSource = (): boolean => {
       if (initialCreateSourceCleanupCompleted) return true;
-      initialCreateSourceCleanupCompleted = sandboxGpuCreateFlow.cleanupSandboxCreateSource(
-        initialSandboxPolicy.cleanup,
-        {
-          exactCleanup: initialSandboxPolicy.cleanupExact,
-          requireExact: agentCreateInput.hermesPortableLifecycle,
-        },
-      );
+      const cleanup = initialSandboxPolicy.cleanup;
+      const exactCleanup = initialSandboxPolicy.cleanupExact;
+      if (agentCreateInput.hermesPortableLifecycle && cleanup && !exactCleanup) {
+        throw new Error("Hermes portable temporary policy source has no exact cleanup authority.");
+      }
+      const selectedCleanup = exactCleanup ?? cleanup;
+      initialCreateSourceCleanupCompleted = selectedCleanup?.() ?? true;
+      if (initialCreateSourceCleanupCompleted && cleanup) {
+        process.removeListener("exit", cleanup);
+      }
       return initialCreateSourceCleanupCompleted;
     };
     const cleanupSandboxCreateSources = (): void => {

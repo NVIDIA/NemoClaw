@@ -3,12 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { waitUntil } from "../core/wait";
 import {
   createReadinessWaitOptions,
   formatReadinessDeadline,
   getLegacyPollDeadlineBudgetMs,
 } from "./readiness-wait";
+import { waitUntil } from "./wait";
 
 describe("readiness deadline options", () => {
   it("starts fast, backs off to the cap, and consumes the full deadline", () => {

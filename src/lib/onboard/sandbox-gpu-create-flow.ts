@@ -57,21 +57,6 @@ import { addTraceEvent } from "./tracing";
 
 export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 
-/** Release the exit cleanup listener only after its exact create source was retired. */
-export function cleanupSandboxCreateSource(
-  cleanup: (() => boolean) | undefined,
-  options: { readonly exactCleanup?: () => boolean; readonly requireExact?: boolean } = {},
-): boolean {
-  if (options.requireExact && cleanup && !options.exactCleanup) {
-    throw new Error("Hermes portable temporary policy source has no exact cleanup authority.");
-  }
-  const selected = options.exactCleanup ?? cleanup;
-  if (!selected) return true;
-  const completed = selected();
-  if (completed && cleanup) process.removeListener("exit", cleanup);
-  return completed;
-}
-
 export function resolvePortableLifecycleMode(
   agent: AgentDefinition | null,
   env: NodeJS.ProcessEnv = process.env,
@@ -242,6 +227,10 @@ export interface SandboxGpuCreateFlowDeps {
   openshellArgv(args: string[]): string[];
   isSandboxReady(output: string, sandboxName: string): boolean;
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
+  printCreateRecoveryHints(
+    output: string,
+    options: { readonly createArgs: readonly string[] },
+  ): void;
   printCreateFailureDiagnostics?: (
     sandboxName: string,
     options: { readonly backupPath?: string | null },

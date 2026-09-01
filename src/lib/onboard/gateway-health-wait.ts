@@ -3,7 +3,7 @@
 
 import { type WaitUntilOptions, waitUntilAsync } from "../core/wait";
 import { envInt } from "./env";
-import { createReadinessWaitOptions, getLegacyPollDeadlineBudgetMs } from "./readiness-wait";
+import { createReadinessWaitOptions, getLegacyPollDeadlineBudgetMs } from "../core/readiness-wait";
 
 type RunCaptureOpenshell = (args: string[], opts?: { ignoreError?: boolean }) => string;
 

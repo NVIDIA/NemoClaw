@@ -161,6 +161,7 @@ describe("protected managed-image runtime contract", () => {
     "runOpenshell",
     "runCaptureOpenshell",
     "isSandboxReady",
+    "printSandboxCreateRecoveryHints",
     "sleepSeconds",
     "startGatewayForRecovery",
   ] as const)(
@@ -177,6 +178,7 @@ describe("protected managed-image runtime contract", () => {
           openshellArgv: () => [],
           runCaptureOpenshell: () => "",
           isSandboxReady: () => false,
+          printSandboxCreateRecoveryHints: () => undefined,
           sleepSeconds: () => undefined,
           startGatewayForRecovery: async () => undefined,
         },

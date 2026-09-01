@@ -162,6 +162,10 @@ type OnboardModule = {
   runOpenshell(args: string[], opts?: Record<string, unknown>): ReturnType<typeof commandResult>;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string;
   isSandboxReady(output: string, sandboxName: string): boolean;
+  printSandboxCreateRecoveryHints(
+    output: string,
+    options: { readonly createArgs: readonly string[] },
+  ): void;
   sleepSeconds(seconds: number): void;
   startGatewayForRecovery(options: { gatewayName: string; gatewayPort: number }): Promise<void>;
 };
@@ -171,6 +175,7 @@ const REQUIRED_ONBOARD_OPERATIONS = [
   "runOpenshell",
   "runCaptureOpenshell",
   "isSandboxReady",
+  "printSandboxCreateRecoveryHints",
   "sleepSeconds",
   "startGatewayForRecovery",
 ] as const satisfies readonly (keyof OnboardModule)[];
@@ -1056,6 +1061,7 @@ async function run<T extends ManagedImageOpenShellE2eLocalInferenceEvidence = ne
           sleep: onboard.sleepSeconds,
           openshellArgv: onboard.openshellArgv,
           isSandboxReady: onboard.isSandboxReady,
+          printCreateRecoveryHints: onboard.printSandboxCreateRecoveryHints,
           verifyDirectSandboxGpu,
           ...(input.failureInjection
             ? {

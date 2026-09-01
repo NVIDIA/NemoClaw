@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createReadinessWaitOptions, runReadinessWait } from "../onboard/readiness-wait";
+import { createReadinessWaitOptions } from "../core/readiness-wait";
+import { waitUntil } from "../core/wait";
 
 export function waitForAgentGatewayReady(options: {
   timeoutSeconds: number;
@@ -15,5 +16,5 @@ export function waitForAgentGatewayReady(options: {
     now: options.now,
     sleep: (ms) => options.sleepSeconds(ms / 1000),
   });
-  return waitOptions !== null && runReadinessWait(options.probe, waitOptions);
+  return waitOptions !== null && waitUntil(options.probe, waitOptions);
 }

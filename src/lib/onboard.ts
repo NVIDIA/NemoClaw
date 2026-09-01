@@ -1588,6 +1588,7 @@ const sandboxCreateOrchestrationRuntime = {
   path,
   planRegisteredExtraProviders,
   preparedDcodeRebuild,
+  printSandboxCreateRecoveryHints,
   promptValidatedSandboxName,
   promptYesNoOrDefault,
   providerExistsInGateway,

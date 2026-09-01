@@ -15,14 +15,13 @@ import {
   createCliOpenShellSandboxObserver,
   type CliOpenShellSandboxObserverDeps,
 } from "../adapters/openshell/sandbox-observer-cli";
-import { waitUntilAsync } from "../core/wait";
-import { envInt } from "./env";
 import {
   createReadinessWaitOptions,
   formatReadinessDeadline,
   getLegacyPollDeadlineBudgetMs,
-  runReadinessWait,
-} from "./readiness-wait";
+} from "../core/readiness-wait";
+import { waitUntil, waitUntilAsync } from "../core/wait";
+import { envInt } from "./env";
 import { addTraceEvent, withDashboardReadinessTrace, withSandboxReadinessTrace } from "./tracing";
 
 type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string;
@@ -651,7 +650,7 @@ export function waitForDashboardReadyWithTrace(options: {
     }
     const ready =
       waitOptions !== null &&
-      runReadinessWait(() => {
+      waitUntil(() => {
         attempt += 1;
         const readyOutput = runCaptureOpenshell(
           [
