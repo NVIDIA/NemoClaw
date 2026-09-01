@@ -290,6 +290,34 @@ describe("Hermes Portable registry recovery", () => {
     expect(harness.calls.some((args) => args[0] === "start" || args[0] === "stop")).toBe(false);
   });
 
+  it("uses retained transaction fences without another network or registry inspection", () => {
+    const harness = createRegistryHarness(true);
+    const assertEngineCurrent = vi.fn();
+    const assertCallerCurrent = vi.fn();
+    const transactionEngineCurrent = vi.fn();
+    const transactionCallerCurrent = vi.fn();
+    const prepared = preparePortableRegistryRecovery(
+      harness.engine as never,
+      harness.expectedAuthoritySha256,
+      assertEngineCurrent,
+      assertCallerCurrent,
+      {},
+      {
+        assertEngineCurrent: transactionEngineCurrent,
+        assertCallerCurrent: transactionCallerCurrent,
+      },
+    );
+    const before = harness.calls.length;
+
+    prepared.assertRetainedCurrent();
+
+    expect(transactionCallerCurrent).toHaveBeenCalledOnce();
+    expect(transactionEngineCurrent).toHaveBeenCalledOnce();
+    expect(assertCallerCurrent).toHaveBeenCalledOnce();
+    expect(assertEngineCurrent).toHaveBeenCalledOnce();
+    expect(harness.calls).toHaveLength(before);
+  });
+
   it("rejects canonical authority drift against the independently fixed receipt digest", () => {
     const harness = createRegistryHarness(true);
     expect(harness.expectedAuthoritySha256).toBe(EXPECTED_AUTHORITY_SHA256);

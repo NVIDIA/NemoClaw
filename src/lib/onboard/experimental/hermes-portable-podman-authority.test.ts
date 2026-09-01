@@ -15,6 +15,7 @@ import {
   captureHermesPortablePodmanExecutableAuthority,
   captureHermesPortablePodmanExecutableFileAuthority,
   createHermesPortablePodmanCommandAuthority,
+  createHermesPortablePodmanInferenceInspectionAuthority,
   type HermesPortablePodmanAuthorityDeps,
 } from "./hermes-portable-podman-authority";
 
@@ -231,6 +232,74 @@ describe("Hermes portable Podman executable and endpoint authority", () => {
       ),
     ).toEqual(recorded);
     expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("binds one inference inspection without repeating Podman version or info", () => {
+    const generation = { executableInode: 10n, parentInode: 20n };
+    const capture = successfulCapture();
+    const deps = authorityDeps(capture, executableDeps(generation));
+    const runtime = runtimeAuthority();
+    const sourceEnv = { PATH: "/usr/bin", HOME: "/home/test" };
+    const recorded = captureHermesPortablePodmanExecutableAuthority(
+      socketAuthority(),
+      runtime,
+      sourceEnv,
+      deps,
+    );
+    capture.mockClear();
+
+    const inspection = createHermesPortablePodmanInferenceInspectionAuthority(
+      recorded,
+      socketAuthority(),
+      runtime,
+      sourceEnv,
+      deps,
+    );
+    inspection.assertTransactionCurrent();
+    expect(capture).not.toHaveBeenCalled();
+
+    expect(inspection.engine.capture(["container", "inspect", "a".repeat(64)]).status).toBe(0);
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture.mock.calls[0]?.[1]).toEqual([
+      "--url",
+      `unix://${runtime.socketPath}`,
+      "container",
+      "inspect",
+      "a".repeat(64),
+    ]);
+  });
+
+  it("checks transaction currentness without repeating the Podman behavior matrix", () => {
+    const generation = { executableInode: 10n, parentInode: 20n };
+    const capture = successfulCapture();
+    const deps = authorityDeps(capture, executableDeps(generation));
+    const runtime = runtimeAuthority();
+    const socket = socketAuthority();
+    const sourceEnv = { PATH: "/usr/bin", HOME: "/home/test" };
+    const authority = captureHermesPortablePodmanExecutableAuthority(
+      socket,
+      runtime,
+      sourceEnv,
+      deps,
+    );
+    const command = createHermesPortablePodmanCommandAuthority(
+      authority,
+      socket,
+      runtime,
+      sourceEnv,
+      deps,
+    );
+    capture.mockClear();
+
+    command.assertTransactionCurrent();
+
+    expect(capture).not.toHaveBeenCalled();
+    generation.executableInode = 11n;
+    expect(() => command.assertTransactionCurrent()).toThrow("changed after it was qualified");
+    expect(capture).not.toHaveBeenCalled();
+    generation.executableInode = 10n;
+    command.assertCurrent();
+    expect(capture).toHaveBeenCalled();
   });
 
   it.each([

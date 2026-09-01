@@ -244,11 +244,10 @@ describe("platform readiness qualification (#7410)", () => {
     expect(result.findings.map(({ id }) => id)).toContain("host.platform.dgx_spark_unqualified");
   });
 
-  it("collects and qualifies the accepted N1x identity boundary (#8574)", () => {
+  it("qualifies N1x without pinning its GPU PCI device ID (#10076)", () => {
     const identityFiles: Readonly<Record<string, string>> = {
       product_name: "SKU 1\n",
       vendor: "0x10de\n",
-      device: "0x2e2a\n",
       class: "0x030000\n",
     };
     const identity = collectPlatformIdentity({
@@ -287,6 +286,28 @@ describe("platform readiness qualification (#7410)", () => {
       n1xFastOsMarker: true,
       n1xPciGpu: true,
     });
+  });
+
+  it("classifies a trusted OEM DGX Spark FastOS marker as Spark rather than failed N1x (#10717)", () => {
+    const identityFiles = new Map([["/fixtures/product_name", "OEM GB10 system\n"]]);
+    const identity = collectPlatformIdentity({
+      productNamePath: "/fixtures/product_name",
+      fastOsReleasePath: "/fixtures/fastos-release",
+      pciDevicesPath: "/fixtures/pci",
+      readFile: (filePath) => identityFiles.get(filePath) ?? unexpectedFixturePath(filePath),
+      readdir: () => [],
+      openFile: () => 19,
+      statFileDescriptor: () => trustedMarkerStat({ size: 116 }),
+      readFileDescriptor: () => 'NAME="DGX SPARK FASTOS"\nVERSION="1.23.0"\n',
+      closeFileDescriptor: () => undefined,
+    });
+    const result = projectPlatformQualification(
+      input({ architecture: "arm64", hasNvidiaGpu: true, ...identity }),
+    );
+
+    expect(identity).toEqual({ nvidiaPlatform: "spark", productName: "OEM GB10 system" });
+    expect(qualification(result, "host.platform.dgx_spark")).toBe("qualified");
+    expect(result.findings.map(({ id }) => id)).not.toContain("host.platform.n1x_unqualified");
   });
 
   it.each([
@@ -760,9 +781,21 @@ describe("platform readiness qualification (#7410)", () => {
   it("bounds firmware identity before publishing it", () => {
     const identity = collectPlatformIdentity({
       productNamePath: "/fixtures/product_name",
-      readFile: () => "NVIDIA DGX Spark".padEnd(5000, "x"),
+      readFile: (filePath) =>
+        new Map([["/fixtures/product_name", "NVIDIA DGX Spark".padEnd(5000, "x")]]).get(
+          filePath,
+        ) ?? unexpectedFixturePath(filePath),
+      openFile: () => 17,
+      statFileDescriptor: () => trustedMarkerStat({ uid: 1000 }),
+      closeFileDescriptor: () => undefined,
     });
 
-    expect(identity).toEqual({ nvidiaPlatform: undefined, productName: undefined });
+    expect(identity).toEqual({
+      nvidiaPlatform: undefined,
+      productName: undefined,
+      n1xCandidate: true,
+      n1xFastOsMarker: false,
+      n1xPciGpu: undefined,
+    });
   });
 });

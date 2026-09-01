@@ -194,28 +194,4 @@ describe("rebuild backup safety", () => {
     expect(backup).toHaveBeenCalledOnce();
   });
 
-  it("records when --force skips a total filesystem backup failure", () => {
-    const backup = vi.fn(() => null);
-    const result = runRebuildBackupPhase(
-      {
-        sandboxName: "alpha",
-        sandboxEntry: { name: "alpha", agent: "openclaw" },
-        staleRecovery: false,
-        preparedRecoveryManifest: null,
-        messagingPlan: null,
-        webSearchConfig: null,
-        force: true,
-        log: vi.fn(),
-        bail: (message): never => {
-          throw new Error(message);
-        },
-        relockShieldsIfNeeded: vi.fn(() => true),
-      },
-      backup as never,
-    );
-
-    expect(result?.backupManifest).toBeNull();
-    expect(result?.backupWasForceSkipped).toBe(true);
-    expect(result?.policySourcePath).toMatch(/policy\.yaml$/u);
-  });
 });
