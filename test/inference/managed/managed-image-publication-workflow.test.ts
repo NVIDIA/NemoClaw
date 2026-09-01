@@ -596,6 +596,13 @@ describe("complete managed-image publication workflow", () => {
     expect(exportContractRun).toContain('--arg release "$RELEASE"');
     expect(exportContractRun).not.toContain("git describe --tags");
     expect(exportContractRun).toContain("revision: $revision");
+    expect(uploadContract.with).toMatchObject({
+      name: "managed-pr-contract-${{ github.run_id }}-${{ matrix.agent }}",
+      path: "${{ runner.temp }}/managed-pr-contract/contract.json",
+      "if-no-files-found": "error",
+      overwrite: true,
+      "retention-days": 1,
+    });
     expect(JSON.stringify(prBuilder).match(/secrets\.GITHUB_TOKEN/gu)).toHaveLength(1);
     expect(JSON.stringify(prBuilder)).not.toContain("github.token");
   });
@@ -625,6 +632,11 @@ describe("complete managed-image publication workflow", () => {
     expect(step(activation, "Checkout exact PR head").with?.ref).toBe(
       "${{ github.event.pull_request.head.sha }}",
     );
+    expect(step(activation, "Download exact published all-agent contracts").with).toMatchObject({
+      pattern: "managed-pr-contract-${{ github.run_id }}-*",
+      path: "${{ runner.temp }}/managed-pr-contracts",
+      "merge-multiple": false,
+    });
     expect(step(activation, "Assemble exact all-agent activation catalog").run).toMatch(
       /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,
     );
@@ -677,6 +689,11 @@ describe("complete managed-image publication workflow", () => {
       "${{ github.event.pull_request.head.sha }}",
     );
     expect(step(discovery, "Bind E2E correlation identity").run).toContain("randomUUID()");
+    expect(step(discovery, "Download exact published all-agent contracts").with).toMatchObject({
+      pattern: "managed-pr-contract-${{ github.run_id }}-*",
+      path: "${{ runner.temp }}/managed-pr-contracts",
+      "merge-multiple": false,
+    });
     const assemble = step(discovery, "Assemble exact all-agent MCP catalog").run ?? "";
     expect(assemble).toMatch(
       /npm ci --ignore-scripts[\s\S]*pr-managed-image-publication\.mts assemble[\s\S]*"\$CANDIDATE_SHA"[\s\S]*"\$\{contracts\[@\]\}"/u,

@@ -1,10 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  MANAGED_IMAGE_REPOSITORIES,
+  SHIPPED_MANAGED_IMAGE_AGENTS,
+} from "../../../src/lib/onboard/managed-image/contract.ts";
 import { githubRequest } from "../../../tools/e2e/base-image-publication.mts";
-import { resolvePrManagedImageSource } from "../../../tools/e2e/pr-managed-image-publication.mts";
+import {
+  main,
+  resolvePrManagedImageSource,
+} from "../../../tools/e2e/pr-managed-image-publication.mts";
 
 const BASE_SHA = "b".repeat(40);
 const CANDIDATE_SHA = "a".repeat(40);
@@ -76,6 +87,51 @@ function selectorInput(candidateRepository: string) {
   };
 }
 
+async function assemblePrManagedImageCatalog(
+  cohorts: readonly string[],
+  env: NodeJS.ProcessEnv = {},
+): Promise<Record<string, unknown>> {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-managed-contracts-"));
+  const output = path.join(root, "catalog.json");
+  try {
+    const contractPaths = SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+      const contractRoot = path.join(root, agent);
+      const contractPath = path.join(contractRoot, "contract.json");
+      const digest = `sha256:${(index + 1).toString(16).padStart(64, "0")}`;
+      const image = MANAGED_IMAGE_REPOSITORIES[agent];
+      fs.mkdirSync(contractRoot);
+      fs.writeFileSync(
+        contractPath,
+        `${JSON.stringify({
+          contractVersion: 1,
+          agent,
+          platform: "linux/amd64",
+          image,
+          digest,
+          reference: `${image}@${digest}`,
+          source: {
+            repository: CANONICAL_REPOSITORY,
+            revision: CANDIDATE_SHA,
+            release: "v0.0.1",
+            cohort: cohorts[index],
+          },
+          startupProfileContractVersion: 1,
+          capabilityContractVersion: 1,
+        })}\n`,
+      );
+      return contractPath;
+    });
+    await main(["assemble", CANDIDATE_SHA, output, ...contractPaths], {
+      GITHUB_RUN_ATTEMPT: "2",
+      GITHUB_RUN_ID: "7001",
+      ...env,
+    });
+    return JSON.parse(fs.readFileSync(output, "utf8")) as Record<string, unknown>;
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -115,5 +171,25 @@ describe("PR managed-image source selection", () => {
         },
       }),
     ).rejects.toThrow("GitHub API path must stay within an allowed repository");
+  });
+});
+
+describe("PR managed-image contract restoration", () => {
+  it("restores one earlier producer attempt for a failed-job rerun", async () => {
+    const catalog = await assemblePrManagedImageCatalog([
+      "ghrun-7001-1",
+      "ghrun-7001-1",
+      "ghrun-7001-1",
+    ]);
+
+    expect(Object.keys(catalog)).toEqual([...SHIPPED_MANAGED_IMAGE_AGENTS]);
+  });
+
+  it.each([
+    ["mixed attempts", ["ghrun-7001-1", "ghrun-7001-1", "ghrun-7001-2"], "one publication cohort"],
+    ["another run", ["ghrun-7000-1", "ghrun-7000-1", "ghrun-7000-1"], "producer run"],
+    ["a future attempt", ["ghrun-7001-3", "ghrun-7001-3", "ghrun-7001-3"], "producer attempt"],
+  ])("rejects contracts from %s", async (_case, cohorts, message) => {
+    await expect(assemblePrManagedImageCatalog(cohorts)).rejects.toThrow(message);
   });
 });
