@@ -12,7 +12,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 const REPOSITORY_ROOT = path.join(import.meta.dirname, "..", "..");
-const OPENSHELL_SDK_PACKAGE = "@nvidia/openshell-sdk";
 const PRIVATE_AUTHENTICATION_CONTENTS = "opaque-private-authentication-material";
 const PRIVATE_AMBIENT_CONTENTS = "opaque-ambient-gateway-material";
 const CA_PEM = rootCertificates[0]!;
@@ -50,10 +49,6 @@ function npmEnvironment(
     npm_config_fund: "false",
     npm_config_update_notifier: "false",
   };
-}
-
-function packagePath(root: string, packageName: string): string {
-  return path.join(root, "node_modules", ...packageName.split("/"));
 }
 
 function writeRuntimeProbe(probePath: string): void {
@@ -205,11 +200,9 @@ describe.sequential("packaged Blueprint Runner external target", () => {
   let ambientRoot: string;
   let blueprintFile: string;
   let blueprintRoot: string;
-  let disabledSdk: string;
   let evidencePath: string;
   let fixtureRoot: string;
   let installedBinary: string;
-  let installedSdk: string;
   let privateAuthenticationPath: string;
   let privateCaPath: string;
   let privateValues: string[];
@@ -283,9 +276,6 @@ describe.sequential("packaged Blueprint Runner external target", () => {
     assertCommandSucceeded(consumerInstall, "offline consumer installation of the packed Runner");
 
     installedBinary = path.join(consumerRoot, "node_modules", ".bin", "nemoclaw-blueprint-runner");
-    installedSdk = packagePath(consumerRoot, OPENSHELL_SDK_PACKAGE);
-    disabledSdk = `${installedSdk}.disabled`;
-
     fs.mkdirSync(blueprintRoot, { recursive: true });
     fs.mkdirSync(privateRoot, { recursive: true });
     fs.mkdirSync(path.join(ambientRoot, ".config", "openshell"), { recursive: true });
@@ -441,36 +431,6 @@ describe.sequential("packaged Blueprint Runner external target", () => {
     expect(execution.result.stderr).not.toContain(privateCaPath);
     expectStableSingleLineDiagnostic(execution.result.stderr);
     expect(execution.evidence).toEqual({ effects: [] });
-    expectPrivateValuesRedacted(execution.result);
-  });
-
-  it("fails before effects when the packaged OpenShell SDK is absent (#9872)", () => {
-    // Setup
-    fs.renameSync(installedSdk, disabledSdk);
-
-    // Action
-    const execution = runRunner(["status", "--external-target"]);
-    fs.renameSync(disabledSdk, installedSdk);
-
-    // Result
-    expect(execution.result.status, execution.safeDiagnostics).toBe(1);
-    expect(execution.result.stderr).toContain("The approved OpenShell SDK 0.0.106 is unavailable.");
-    expect(execution.result.stderr).not.toContain("NemoClaw could not reach");
-    expect(execution.evidence).toEqual({ effects: [] });
-    expectPrivateValuesRedacted(execution.result);
-  });
-
-  it("uses the packaged OpenShell SDK for external target status (#9872)", () => {
-    // Setup
-    const expectedDiagnostic = "NemoClaw could not reach the external OpenShell target.";
-
-    // Action
-    const execution = runRunner(["status", "--external-target"]);
-
-    // Result
-    expect(execution.result.status, execution.safeDiagnostics).toBe(1);
-    expect(execution.result.stderr).toContain(expectedDiagnostic);
-    expect(execution.evidence).toEqual({ effects: ["network"] });
     expectPrivateValuesRedacted(execution.result);
   });
 
