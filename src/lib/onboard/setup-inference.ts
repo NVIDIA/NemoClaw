@@ -27,10 +27,10 @@ import {
   withOllamaModelOwnershipLock,
 } from "../inference/ollama/proxy";
 import {
-  assertNoExplicitOpenShellGatewayEndpoint,
   assertNoOpenShellGatewayEndpointOverride,
+  scopeGatewayOpenshellArgs,
   type OpenShellGatewayEndpointEnvironment,
-} from "../openshell-gateway-endpoint-guard";
+} from "../adapters/openshell/gateway-scope";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
@@ -239,39 +239,6 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   error: (message: string) => void;
   exitProcess: (code: number) => never;
 };
-
-export function scopeGatewayOpenshellArgs(args: string[], gatewayName: string): string[] {
-  if (!gatewayName) throw new Error("OpenShell gateway name is required.");
-  assertNoExplicitOpenShellGatewayEndpoint(args);
-  if (args[0] === "gateway" && args[1] === "select") {
-    throw new Error("Gateway-scoped OpenShell operations must not change the selected gateway.");
-  }
-  const providerCommand = args[0] === "inference" || args[0] === "provider";
-  const sandboxCommand = args[0] === "sandbox" && typeof args[1] === "string";
-  const sandboxProviderCommand = sandboxCommand && args[1] === "provider";
-  if (!providerCommand && !sandboxCommand) return [...args];
-  const gatewayFlagIndex = sandboxProviderCommand ? 3 : 2;
-  const separatorIndex = args.indexOf("--");
-  const optionEnd = separatorIndex === -1 ? args.length : separatorIndex;
-  const gatewayTargets = args.slice(0, optionEnd).flatMap((value, index) => {
-    if (index < gatewayFlagIndex) return [];
-    if (value === "-g" || value === "--gateway") return [args[index + 1] ?? ""];
-    return value.startsWith("--gateway=") ? [value.slice("--gateway=".length)] : [];
-  });
-  if (gatewayTargets.length > 1) {
-    throw new Error("OpenShell command contains multiple gateway targets.");
-  }
-  const existingGatewayName = gatewayTargets[0];
-  if (existingGatewayName !== undefined) {
-    if (existingGatewayName !== gatewayName) {
-      throw new Error(
-        `OpenShell command targets gateway '${existingGatewayName}' instead of '${gatewayName}'.`,
-      );
-    }
-    return [...args];
-  }
-  return [...args.slice(0, gatewayFlagIndex), "-g", gatewayName, ...args.slice(gatewayFlagIndex)];
-}
 
 export function createGatewayScopedOpenshellRunner<Rest extends unknown[], Result>(
   runOpenshell: (args: string[], ...rest: Rest) => Result,
@@ -591,9 +558,7 @@ export function createSetupInference(
     hermesToolGateways: string[] = [],
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
-    const revalidateSandboxIdentity = sandboxName
-      ? options.revalidateSandboxIdentity
-      : undefined;
+    const revalidateSandboxIdentity = sandboxName ? options.revalidateSandboxIdentity : undefined;
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
@@ -1160,13 +1125,7 @@ export function createSetupInference(
         /* An unreadable registry skips GPU release; it must not fail onboarding. */
       }
       const result = await mutateGatewayRoute();
-      releaseSupersededOllamaModel(
-        previousSandbox,
-        model,
-        result,
-        deps,
-        revalidateSandboxIdentity,
-      );
+      releaseSupersededOllamaModel(previousSandbox, model, result, deps, revalidateSandboxIdentity);
       if (shouldLogSuccessfulRoute && "ok" in result) {
         deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
       }
