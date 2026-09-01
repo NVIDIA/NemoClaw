@@ -124,7 +124,13 @@ describe("Ollama GPU cleanup", () => {
       expect(calls).toHaveLength(3);
       calls.forEach(({ command, args }) => {
         expect(command).toBe("docker");
-        expect(args).toEqual(expect.arrayContaining(["run", "--rm", "curlimages/curl:8.10.1"]));
+        expect(args).toEqual(
+          expect.arrayContaining([
+            "run",
+            "--rm",
+            "docker.io/curlimages/curl@sha256:fcff5cf7a4b895da7bd2933c914938db2b05d2113fa0d6c55b6d29930408f661",
+          ]),
+        );
       });
     } finally {
       resetOllamaHostCache();
@@ -151,7 +157,13 @@ describe("Ollama GPU cleanup", () => {
           "http://host.docker.internal:11434/api/ps",
         ]);
         dockerCalls.forEach(({ args }) => {
-          expect(args).toEqual(expect.arrayContaining(["run", "--rm", "curlimages/curl:8.10.1"]));
+          expect(args).toEqual(
+            expect.arrayContaining([
+              "run",
+              "--rm",
+              "docker.io/curlimages/curl@sha256:fcff5cf7a4b895da7bd2933c914938db2b05d2113fa0d6c55b6d29930408f661",
+            ]),
+          );
         });
       },
       "host.docker.internal",

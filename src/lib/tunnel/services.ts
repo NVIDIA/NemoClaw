@@ -52,7 +52,7 @@ export interface ServiceOptions {
   unloadOllamaModels?: () => OllamaUnloadResult | void;
   /** Whether this scoped stop owns Ollama models that require cleanup. Defaults to true. */
   cleanupOllamaModels?: boolean;
-  /** Injectable retirement of sandbox-scoped Ollama cleanup recovery. */
+  /** Clears pending Ollama cleanup recovery after this sandbox's models unload. */
   clearPendingOllamaModelCleanup?: (sandboxName: string) => void;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
   cloudflareTunnelToken?: string;

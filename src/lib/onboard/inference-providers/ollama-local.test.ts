@@ -58,6 +58,7 @@ function deps(overrides: OllamaDepsOverrides = {}): OllamaDeps {
     localInference: {
       validateOllamaModelWithToolsOverride: () => ({ ok: true }),
       validateSandboxFacingOllamaModel: () => ({ ok: true }),
+      runOllamaWarmup: vi.fn(),
       persistResolvedOllamaHost: () => () => {},
       ...localInference,
     },

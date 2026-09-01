@@ -255,7 +255,7 @@ export type OllamaDeps = CommonDeps & {
       allowToolsIncompatible: boolean,
     ): { ok: boolean; message?: string };
     validateSandboxFacingOllamaModel(model: string): { ok: boolean; message?: string };
-    runOllamaWarmup?(model: string, runImpl: RunFn): void;
+    runOllamaWarmup(model: string, runImpl: RunFn): void;
     loadPendingOllamaModelCleanup?(sandboxName: string): readonly string[];
     persistPendingOllamaModelCleanup?(sandboxName: string, models: readonly string[]): void;
     clearPendingOllamaModelCleanup?(sandboxName: string, releasedModels?: readonly string[]): void;

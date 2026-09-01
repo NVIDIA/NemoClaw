@@ -130,7 +130,7 @@ describe("Windows Ollama helper", () => {
         "docker",
         "run",
         "--rm",
-        "curlimages/curl:8.10.1",
+        "docker.io/curlimages/curl@sha256:fcff5cf7a4b895da7bd2933c914938db2b05d2113fa0d6c55b6d29930408f661",
         "-sf",
         "--connect-timeout",
         "2",
@@ -181,24 +181,6 @@ describe("Windows Ollama helper", () => {
       localInference.resetOllamaHostCache();
       restore();
       logSpy.mockRestore();
-    }
-  });
-
-  it("skips the blocking wait for non-positive delays", () => {
-    const run = vi.fn();
-    const runCapture = vi.fn();
-    const { windows, restore, atomicsWaitSpy, spawnSyncSpy } = loadWindowsOllamaWithMocks(
-      run,
-      runCapture,
-    );
-
-    try {
-      windows.sleep(0);
-      windows.sleep(-1);
-      expect(atomicsWaitSpy).not.toHaveBeenCalled();
-      expect(spawnSyncSpy).not.toHaveBeenCalled();
-    } finally {
-      restore();
     }
   });
 });

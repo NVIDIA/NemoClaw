@@ -102,7 +102,11 @@ pullOllamaModel("qwen3.5:9b")
     expect(payload.ok).toBe(true);
     expect(payload.captured.cmd).toBe("docker");
     expect(payload.captured.args).toEqual(
-      expect.arrayContaining(["run", "--rm", "curlimages/curl:8.10.1"]),
+      expect.arrayContaining([
+        "run",
+        "--rm",
+        "docker.io/curlimages/curl@sha256:fcff5cf7a4b895da7bd2933c914938db2b05d2113fa0d6c55b6d29930408f661",
+      ]),
     );
     const maxTimeIndex = payload.captured.args.indexOf("--max-time");
     expect(maxTimeIndex).toBeGreaterThanOrEqual(0);
