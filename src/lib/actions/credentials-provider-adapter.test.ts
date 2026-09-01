@@ -87,7 +87,10 @@ describe("credential actions use typed OpenShell provider results", () => {
         configPairs: ["OPENAI_BASE_URL=https://api.openai.com/v1"],
         fromExisting: false,
       },
-      { providerAdapter: adapter },
+      {
+        providerAdapter: adapter,
+        resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
+      },
     );
 
     expect(result.exitCode).toBe(0);
@@ -101,6 +104,65 @@ describe("credential actions use typed OpenShell provider results", () => {
       timeoutMs: 30_000,
     });
     expect(JSON.stringify(result)).not.toContain("credential-value");
+  });
+
+  it.each([
+    ["loopback IP literal", "http://127.0.0.1/v1"],
+    ["link-local metadata IP literal", "http://169.254.169.254/latest"],
+  ])("rejects an OpenAI base URL targeting a %s (#9806)", async (_case, baseUrl) => {
+    vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
+    const adapter = providerAdapter();
+    const resolveEndpointHost = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "custom-provider",
+        type: "openai",
+        credentials: ["CUSTOM_TOKEN"],
+        configPairs: [`OPENAI_BASE_URL=${baseUrl}`],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter, resolveEndpointHost },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines[0]).toBe(
+      "  --config 'OPENAI_BASE_URL' failed endpoint security validation.",
+    );
+    expect(result.failureLines.join("\n")).toMatch(/private\/internal address/u);
+    expect(JSON.stringify(result)).not.toContain("host-only-value");
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(adapter.createProvider).not.toHaveBeenCalled();
+    expect(resolveEndpointHost).not.toHaveBeenCalled();
+  });
+
+  it("rejects an OpenAI base URL whose hostname resolves to a private address (#9806)", async () => {
+    vi.stubEnv("CUSTOM_TOKEN", "host-only-value");
+    const adapter = providerAdapter();
+    const resolveEndpointHost = vi.fn(async () => [{ address: "10.0.0.8", family: 4 }]);
+
+    const result = await runCredentialsAddAction(
+      {
+        provider: "custom-provider",
+        type: "openai",
+        credentials: ["CUSTOM_TOKEN"],
+        configPairs: ["OPENAI_BASE_URL=https://public-looking.example/v1"],
+        fromExisting: false,
+      },
+      { providerAdapter: adapter, resolveEndpointHost },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.failureLines[0]).toBe(
+      "  --config 'OPENAI_BASE_URL' failed endpoint security validation.",
+    );
+    expect(result.failureLines.join("\n")).toContain(
+      'endpoint host "public-looking.example" resolves to private/internal address "10.0.0.8"',
+    );
+    expect(JSON.stringify(result)).not.toContain("host-only-value");
+    expect(resolveEndpointHost).toHaveBeenCalledWith("public-looking.example", { all: true });
+    expect(adapter.importProviderProfile).not.toHaveBeenCalled();
+    expect(adapter.createProvider).not.toHaveBeenCalled();
   });
 
   it("rejects an untyped config value before provider creation (#9806)", async () => {

@@ -16,6 +16,10 @@ import {
   recoverCredentialGatewayTargetOrExit,
 } from "../credentials/command-support";
 import { gatewayStartGuidance } from "../gateway-start-guidance";
+import {
+  assertEndpointResolvesPublic,
+  type EndpointDnsLookupFn,
+} from "../security/trusted-private-endpoint";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
 import { withMcpCredentialOwnershipLock } from "../state/mcp-lifecycle-lock/credential-ownership";
 import { ROOT } from "../state/paths";
@@ -41,6 +45,7 @@ export type CredentialsAddResult = {
 
 export type CredentialsAddDeps = Readonly<{
   providerAdapter?: OpenShellProviderAdapter;
+  resolveEndpointHost?: EndpointDnsLookupFn;
 }>;
 
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/;
@@ -110,6 +115,23 @@ function typedProviderConfigFailure(type: string, key: string, value: string): s
     ];
   }
   return null;
+}
+
+async function providerConfigEndpointFailure(
+  config: readonly { key: string; value: string }[],
+  resolveEndpointHost?: EndpointDnsLookupFn,
+): Promise<string[] | null> {
+  const baseUrl = config.find((entry) => entry.key === "OPENAI_BASE_URL")?.value;
+  if (!baseUrl) return null;
+
+  const preflight = await assertEndpointResolvesPublic(baseUrl, resolveEndpointHost);
+  if (preflight.ok) return null;
+
+  return [
+    "  --config 'OPENAI_BASE_URL' failed endpoint security validation.",
+    `  ${preflight.reason ?? "The endpoint is not safe to use."}`,
+    `  Use a routable public endpoint, or configure a trusted private inference endpoint through '${CLI_NAME} onboard' so NemoClaw can preserve its trust and address pins.`,
+  ];
 }
 
 function bundledProviderProfile(type: string): { profileType: string; profilePath: string } | null {
@@ -318,6 +340,9 @@ export async function runCredentialsAddAction(
     configKeys.add(key);
     config.push({ key, value });
   }
+
+  const endpointFailure = await providerConfigEndpointFailure(config, deps.resolveEndpointHost);
+  if (endpointFailure) return fail(endpointFailure);
 
   const managedMcpReservations = listManagedMcpCredentialReservations();
   const explicitCollision = managedMcpCollisionFailure(
