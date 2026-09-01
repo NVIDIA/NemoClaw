@@ -73,6 +73,45 @@ const HERMES_WRAPPER_FOCUSED_JOBS = [
   "security-posture",
 ];
 const HERMES_WRAPPER_REQUIRED_JOBS = [...HERMES_MANAGED_POLICY_REQUIRED_JOBS, "mcp-bridge"];
+const SHARED_MESSAGING_RUNTIME_E2E_JOBS = [
+  "channels-add-remove",
+  "channels-stop-start",
+  "hermes-discord",
+  "messaging-providers",
+  "openclaw-discord-pairing",
+  "openclaw-slack-pairing",
+];
+const HERMES_MESSAGING_RUNTIME_E2E_JOBS = [
+  "channels-stop-start",
+  "hermes-discord",
+  "messaging-providers",
+];
+const OPENCLAW_MESSAGING_RUNTIME_E2E_JOBS = [
+  "channels-stop-start",
+  "messaging-providers",
+  "openclaw-discord-pairing",
+  "openclaw-slack-pairing",
+];
+const HERMES_START_FOCUSED_JOBS = [
+  "bedrock-runtime-compatible-anthropic",
+  "channels-stop-start",
+  "dashboard-remote-bind",
+  "hermes-discord",
+  "hermes-e2e",
+  "hermes-inference-switch",
+  "hermes-shields-config",
+  "messaging-providers",
+  "security-posture",
+];
+const HERMES_START_REQUIRED_JOBS = [
+  ...HERMES_SANDBOX_BOUNDARY_JOBS,
+  "bedrock-runtime-compatible-anthropic",
+  "channels-stop-start",
+  "dashboard-remote-bind",
+  "hermes-discord",
+  "hermes-shields-config",
+  "messaging-providers",
+];
 const HERMES_MANAGED_POLICY_FILES = [
   "agents/hermes/config/managed-policy.ts",
   "agents/hermes/hermes-wrapper.py",
@@ -108,7 +147,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(19);
+    expect(first.version).toBe(20);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -315,12 +354,16 @@ describe("deterministic PR risk plan", () => {
       const isWrapper = changedFile === "agents/hermes/hermes-wrapper.py";
       const expectedFocusedJobs = isWrapper
         ? HERMES_WRAPPER_FOCUSED_JOBS
-        : HERMES_MANAGED_POLICY_JOBS;
+        : changedFile === "agents/hermes/start.sh"
+          ? HERMES_START_FOCUSED_JOBS
+          : HERMES_MANAGED_POLICY_JOBS;
       const expectedRequiredJobs = isWrapper
         ? HERMES_WRAPPER_REQUIRED_JOBS
         : changedFile === "src/lib/hermes-managed-route.ts"
           ? HERMES_MANAGED_POLICY_JOBS
-          : HERMES_MANAGED_POLICY_REQUIRED_JOBS;
+          : changedFile === "agents/hermes/start.sh"
+            ? HERMES_START_REQUIRED_JOBS
+            : HERMES_MANAGED_POLICY_REQUIRED_JOBS;
 
       const focusedFamily = result.families.find((family) => family.id === "focused-e2e");
       expect(focusedFamily).toEqual(
@@ -358,6 +401,69 @@ describe("deterministic PR risk plan", () => {
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(HERMES_WRAPPER_REQUIRED_JOBS);
   });
+
+  it.each([
+    "src/lib/messaging/applier/openshell-provider.ts",
+    "src/lib/onboard/credential-provider-registration.ts",
+    "src/lib/onboard/messaging-policy-presets.ts",
+  ])("selects the full messaging runtime proof set for %s (#10153)", (changedFile) => {
+    const result = plan(changedFile);
+    const focusedFamily = result.families.find((family) => family.id === "focused-e2e");
+
+    expect(focusedFamily?.matchedFiles).toContain(changedFile);
+    expect(focusedFamily?.requiredJobs).toEqual(
+      expect.arrayContaining(SHARED_MESSAGING_RUNTIME_E2E_JOBS),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining(SHARED_MESSAGING_RUNTIME_E2E_JOBS),
+    );
+  });
+
+  it("selects OpenClaw pairing and restart proofs for OpenClaw startup changes (#10153)", () => {
+    const changedFile = "scripts/nemoclaw-start.sh";
+    const result = plan(changedFile);
+    const focusedFamily = result.families.find((family) => family.id === "focused-e2e");
+
+    expect(focusedFamily?.matchedFiles).toEqual([changedFile]);
+    expect(focusedFamily?.requiredJobs).toEqual(
+      expect.arrayContaining([...OPENCLAW_MESSAGING_RUNTIME_E2E_JOBS, "shields-config"]),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining([...OPENCLAW_MESSAGING_RUNTIME_E2E_JOBS, "shields-config"]),
+    );
+  });
+
+  it.each([
+    "scripts/runtime-state-mutation-control.py",
+    "src/lib/onboard/runtime-provider/docker-state-mutation.ts",
+    "src/lib/shields/relock-reconfirm.ts",
+  ])("selects both Shields runtime proofs for %s (#10155)", (changedFile) => {
+    const result = plan(changedFile);
+    const focusedFamily = result.families.find((family) => family.id === "focused-e2e");
+
+    expect(focusedFamily?.matchedFiles).toContain(changedFile);
+    expect(focusedFamily?.requiredJobs).toEqual(
+      expect.arrayContaining(["hermes-shields-config", "shields-config"]),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining(["hermes-shields-config", "shields-config"]),
+    );
+  });
+
+  it("selects Hermes Shields and messaging proofs for the shared Hermes runtime guard (#10155)", () => {
+    const changedFile = "agents/hermes/runtime-config-guard.py";
+    const result = plan(changedFile);
+    const focusedFamily = result.families.find((family) => family.id === "focused-e2e");
+
+    expect(focusedFamily?.matchedFiles).toEqual([changedFile]);
+    expect(focusedFamily?.requiredJobs).toEqual(
+      expect.arrayContaining([...HERMES_MESSAGING_RUNTIME_E2E_JOBS, "hermes-shields-config"]),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining([...HERMES_MESSAGING_RUNTIME_E2E_JOBS, "hermes-shields-config"]),
+    );
+  });
+
   it("leaves E2E support-only changes in the fast e2e-support project (#7921)", () => {
     const changedFiles = ["test/e2e/support/workflow-plan.test.ts"];
     const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
@@ -997,11 +1103,15 @@ describe("deterministic PR risk plan", () => {
       "channels-add-remove",
       "channels-stop-start",
       "full-e2e",
+      "hermes-discord",
       "hermes-e2e",
       "inference-routing",
+      "messaging-providers",
       "network-policy",
       "onboard-repair",
       "onboard-resume",
+      "openclaw-discord-pairing",
+      "openclaw-slack-pairing",
       "rebuild-openclaw",
       "state-backup-restore",
     ]);
