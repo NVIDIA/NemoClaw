@@ -15,12 +15,13 @@ import {
 import { buildOpenShellSubprocessEnv, resolveOpenshellBinaryOrNull } from "./resolve-shared";
 import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
-export { createCliOpenShellSandboxPolicyReader, namedOpenShellGateway } from "./sandbox-policy-cli";
-export type { OpenShellSandboxPolicyReader } from "./sandbox-policy-cli";
-
 type CommandArgs = string[];
 
-export { buildOpenShellSubprocessEnv, OPENSHELL_OPERATION_TIMEOUT_MS };
+export {
+  buildOpenShellSubprocessEnv,
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+};
 export { classifyManagedGatewayEndpointBinding } from "./client";
 export { runCaptureEx } from "../../runner";
 

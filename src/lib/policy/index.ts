@@ -85,8 +85,6 @@ const PERSONAL_OPEN_INTERNET_PORTS = new Set([80, 443]);
 
 const MAX_PRESET_FILE_BYTES = 10_000_000;
 
-export { readSandboxPolicyWithCapture };
-
 type PresetInfo = {
   file: string;
   name: string;

@@ -50,19 +50,19 @@ import {
   type OpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
 import {
+  createCliOpenShellSandboxPolicyReader,
+  type OpenShellSandboxPolicyReader,
+} from "../../adapters/openshell/sandbox-policy-cli";
+import {
   captureOpenshell,
   captureOpenshellForStatus,
   captureResolvedOpenshell,
-  createCliOpenShellSandboxPolicyReader,
   getOpenshellBinary,
   getStatusProbeTimeoutMs,
-  runOpenshell,
-  type OpenShellSandboxPolicyReader,
-} from "../../adapters/openshell/runtime";
-import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
-} from "../../adapters/openshell/timeouts";
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import { D, G, R } from "../../cli/terminal-style";
 import {
   type DockerDriverRecoveryResult,

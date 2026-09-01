@@ -66,17 +66,9 @@ The machine still cannot resume inside gateway startup, an individual credential
 
 ## Onboarding policy authority
 
-Onboarding binds policy authority after gateway setup and before provider, credential, service, registry, or sandbox changes. Empty global policy history establishes no observed owner. NemoClaw ownership begins only after an exact sandbox creation receipt binds the created identity and effective policy. An active global policy means an external owner manages it. Missing, malformed, unavailable, or contradictory OpenShell metadata stops onboarding.
+Onboarding may apply an initial policy as a convenience, but OpenShell owns and stores the sandbox policy. Policy-dependent operations read the current live policy through the sandbox's recorded gateway.
 
-The session records the decision before later effects. A live sandbox must agree with both the saved session and registry entry. Onboarding rechecks that agreement before each policy-dependent change and after the created sandbox reaches Ready.
-
-NemoClaw-managed onboarding keeps the existing policy creation and attribution behavior. Externally managed onboarding verifies that the effective policy contains every requirement for the selected agent, provider, messaging channels, observability, GPU mode, and web search setup. It does not pass a policy file, export `OPENSHELL_SANDBOX_POLICY`, change policy, or record NemoClaw policy attribution.
-
-After a post-create authority failure, NemoClaw retains the durable sandbox identity fingerprint when available and reports the exact create-attempt label when available. While OpenShell reports the sandbox present, recovery refuses automatic deletion because OpenShell deletion accepts only a mutable sandbox name. When a create-attempt label is available, the operator gives it to an administrator for identity-bound removal. Without a label, the operator preserves the terminal output and asks the administrator to identify the exact sandbox from gateway or controller evidence.
-
-After OpenShell confirms absence, `destroy` verifies the retained immutable runtime identity. For Docker-backed sandboxes, it accepts multiple managed containers only when every immutable sandbox ID has the retained fingerprint. It snapshots the matching container IDs, revalidates the set, removes only remaining members, and verifies their absence without issuing a mutable-name delete. A foreign container, changed identity, failed probe, ambiguous record, or changed recovery authority stops cleanup.
-
-Recovery completion releases the matching recovery-only session before retiring the exact independent record. Either write failure leaves the record available for retry. A record without an immutable fingerprint remains fail-closed for the affected sandbox name; mutable-name absence cannot retire it, and this flow accepts no administrator-supplied identity authority. Rebuild and same-name onboarding remain blocked, but `nemoclaw onboard --name <new-name>` starts an unrelated sandbox. `--fresh` alone does not clear the record or permit reuse of the retained name. The command reference owns the detailed operator procedure.
+Completed onboarding stores no policy authority, receipt, copy, hash, version, preset list, or desired tier. Incomplete operations retain only the bounded transaction data required for recovery and cleanup.
 
 ## Effect-order flows
 

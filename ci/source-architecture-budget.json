@@ -9,7 +9,7 @@
       "src/lib/adapters/openshell/client.ts": 21,
       "src/lib/adapters/openshell/resolve.ts": 27,
       "src/lib/adapters/openshell/runtime.ts": 55,
-      "src/lib/adapters/openshell/timeouts.ts": 38,
+      "src/lib/adapters/openshell/timeouts.ts": 37,
       "src/lib/agent/defs.ts": 33,
       "src/lib/cli/branding.ts": 85,
       "src/lib/cli/nemoclaw-oclif-command.ts": 106,

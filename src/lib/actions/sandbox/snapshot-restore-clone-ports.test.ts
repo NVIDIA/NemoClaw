@@ -12,6 +12,7 @@ import {
   HERMES_DASHBOARD_TUI_ENV,
 } from "../../hermes-dashboard";
 import { HERMES_API_PORT_ENV } from "../../onboard/hermes-api-port";
+import * as tempFiles from "../../onboard/temp-files";
 import { resolveRebuildHermesDashboardEnv } from "./rebuild-durable-config";
 import * as f from "./snapshot-restore-test-fixture";
 
@@ -268,6 +269,69 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
     expect(observedLinks).toBe(1);
     expect(observedPolicyPath).not.toBe("");
     expect(fs.existsSync(observedPolicyPath)).toBe(false);
+  });
+
+  it("reports non-destructive recovery when clone policy cleanup fails after registration", async () => {
+    let registeredClone: f.SandboxRecord | null = null;
+    let observedPolicyPath = "";
+    f.registerSandboxMock.mockImplementation(
+      (entry) => (registeredClone = entry as f.SandboxRecord),
+    );
+    f.getSandboxMock.mockImplementation((name) =>
+      name === "alpha"
+        ? {
+            name: "alpha",
+            agent: "openclaw",
+            imageTag: "nemoclaw-alpha:test",
+            openshellDriver: "docker",
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
+            dashboardPort: 18790,
+          }
+        : registeredClone,
+    );
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.streamSandboxCreateMock.mockImplementation(async (_command, args) => {
+      observedPolicyPath = String(args[args.indexOf("--policy") + 1]);
+      return { status: 0, output: "", sawProgress: false, forcedReady: false };
+    });
+    vi.spyOn(tempFiles, "createExactTempFileCleanup").mockReturnValue(() => false);
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    try {
+      const failure = await runSandboxSnapshot("alpha", {
+        kind: "restore",
+        to: "beta",
+      }).catch((error: unknown) => error);
+
+      expect(f.registerSandboxMock).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "beta" }),
+        undefined,
+        { pending: true },
+      );
+      expect(failure).toMatchObject({
+        name: "SnapshotCommandError",
+        lines: expect.arrayContaining([
+          "Temporary clone policy cleanup failed after 'beta' was created.",
+          "Destination 'beta' remains registered. Snapshot state was not restored.",
+          expect.stringContaining("already-created destination 'beta'"),
+          expect.stringContaining("explicitly destroy 'beta'"),
+        ]),
+      });
+      expect(String((failure as Error).message)).not.toContain(
+        "retrying the snapshot restore command",
+      );
+      expect(f.restoreSandboxStateMock).not.toHaveBeenCalled();
+    } finally {
+      tempFiles.cleanupTempDir(observedPolicyPath, "nemoclaw-clone-policy");
+    }
   });
 
   it("gives a Hermes clone its own API port instead of the source's (#8543)", async () => {

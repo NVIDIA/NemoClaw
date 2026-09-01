@@ -44,17 +44,16 @@ const {
   resolvePermissivePolicyPath,
   inspectPolicyMutationContext,
   isPolicyObservationError,
-  readSandboxPolicyWithCapture,
   recheckPolicyMutationContext,
   rejectFinalPolicySetResult: rejectFinalShieldsPolicySetResult,
 } = require("../policy");
+const {
+  readSandboxPolicyWithCapture,
+}: typeof import("../adapters/openshell/policy-state") = require("../adapters/openshell/policy-state");
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
 const {
   buildOpenshellCommand,
 }: typeof import("../adapters/openshell/command-argv") = require("../adapters/openshell/command-argv");
-const {
-  parseLiveSandboxEntries,
-}: typeof import("../runtime-recovery") = require("../runtime-recovery");
 const {
   timerMarkerPath,
   readTimerMarker,
@@ -139,6 +138,8 @@ const {
   HERMES_RUNTIME_STATE_MUTATION_CAPABILITY_PATH,
   hermesRuntimeProviderPhaseBlocksMutation,
   hasActiveHermesRuntimeProviderStateMutation,
+  HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS,
+  parseHermesRuntimeProviderSandboxPhase,
   runHermesRuntimeProviderStateMutation,
   supportsHermesRuntimeProviderStateMutation,
 }: typeof import("./hermes-runtime-state-mutation") = require("./hermes-runtime-state-mutation");
@@ -221,7 +222,6 @@ const HERMES_CONFIG_GUARD_TIMEOUT_MS = 11 * 60 * 1000;
 // in-container broker never starts, so the docker-state-mutation round trip
 // stalls until DOCKER_STATE_MUTATION_GUARD_TIMEOUT_MS (15min). Probe
 // OpenShell's own Phase first with a short, fail-open bound.
-const HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS = 30_000;
 const HERMES_RUNTIME_PROVIDER_RELEASE_READY_TIMEOUT_MS = 60_000;
 const HERMES_RUNTIME_PROVIDER_RELEASE_READY_POLL_MS = 250;
 const HERMES_RUNTIME_PROVIDER_MCP_RESTART_TIMEOUT_MS = 12 * 60_000;
@@ -1386,9 +1386,7 @@ function probeHermesRuntimeProviderSandboxPhase(sandboxName: string): string | n
       ignoreError: true,
       timeout: HERMES_RUNTIME_PROVIDER_PHASE_PROBE_TIMEOUT_MS,
     });
-    return (
-      parseLiveSandboxEntries(output).find((entry) => entry.name === sandboxName)?.phase ?? null
-    );
+    return parseHermesRuntimeProviderSandboxPhase(sandboxName, output);
   } catch {
     return null;
   }

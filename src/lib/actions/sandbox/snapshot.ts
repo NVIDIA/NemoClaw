@@ -1406,6 +1406,7 @@ async function runSnapshotRestoreUnlocked(
       const dstHermesApiPort = allocateCloneHermesApiPort(targetSandbox, lockedSourceEntry);
       const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
       const clonePolicy = await prepareSnapshotClonePolicy(lockedSourceEntry, targetSandbox);
+      let cloneCreatedAndRegistered = false;
       try {
         if (targetExists) {
           if (targetEntry) {
@@ -1429,8 +1430,17 @@ async function runSnapshotRestoreUnlocked(
           dashboardEnvArgs,
           dstHermesApiPort,
         );
+        cloneCreatedAndRegistered = true;
       } finally {
         if (clonePolicy.cleanup && !clonePolicy.cleanup()) {
+          if (cloneCreatedAndRegistered) {
+            throw new SnapshotCommandError([
+              `Temporary clone policy cleanup failed after '${targetSandbox}' was created.`,
+              `Destination '${targetSandbox}' remains registered. Snapshot state was not restored.`,
+              "Inspect and remove the task-owned temporary policy file before continuing.",
+              `Then rerun the restore against the already-created destination '${targetSandbox}' so NemoClaw can reconcile it and continue, or explicitly destroy '${targetSandbox}' before starting a new restore.`,
+            ]);
+          }
           throw new SnapshotCommandError([
             "Could not securely remove the temporary clone policy.",
             "Inspect the task-owned temporary directory before retrying the snapshot restore command.",
