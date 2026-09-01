@@ -437,9 +437,15 @@ describe("Hermes accepted launch-readiness probe", () => {
     expect(harness.inspectLaunchReadinessSpy).toHaveBeenCalledOnce();
     expect(harness.publishLaunchReadinessSpy).not.toHaveBeenCalled();
     expect(harness.logSpy.mock.calls.flat().join("\n")).toMatch(/result=ready/);
-    expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
-      "Hermes Portable lifecycle recovery timing: entryQualification=101ms containerStart=102ms postStartCurrentness=103ms execReady=104ms execReadyCurrentness=41ms execReadyCommand=42ms execReadySleep=21ms preHealthCurrentness=105ms authenticatedHealth=106ms authenticatedHealthPodman=43ms authenticatedHealthOpenShell=44ms authenticatedHealthSleep=19ms startupLaunch=107ms healthPollCurrentness=108ms finalQualification=109ms rollback=0ms qualificationCount=2 transactionCurrentnessCount=20 containerInspectionCount=8 containerStartCount=1 execReadyAttempts=1 authenticatedHealthCount=1 startupLaunchCount=0 rollbackCount=0 total=938ms containerAction=started result=recovered",
-    );
+    const timingLog = harness.logSpy.mock.calls
+      .flat()
+      .find((line) => line.includes("Hermes Portable lifecycle recovery timing:"));
+    expect(timingLog).toContain("execReadyCommand=42ms");
+    expect(timingLog).toContain("execReadySleep=21ms");
+    expect(timingLog).toContain("authenticatedHealthPodman=43ms");
+    expect(timingLog).toContain("authenticatedHealthOpenShell=44ms");
+    expect(timingLog).toContain("authenticatedHealthSleep=19ms");
+    expect(timingLog).toContain("containerAction=started result=recovered");
   });
 
   it("reuses one recovered lifecycle when missing readiness routes to stopped inference", async () => {

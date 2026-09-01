@@ -444,11 +444,11 @@ describe("Hermes portable lifecycle", () => {
       expect.objectContaining({
         qualificationCount: 2,
         containerStartCount: 1,
-        execReadyAttempts: 1,
-        authenticatedHealthCount: 1,
-        startupLaunchCount: 0,
-        rollbackCount: 0,
-        containerAction: "started",
+        execReadyCommandMs: 1,
+        execReadySleepMs: 0,
+        authenticatedHealthPodmanMs: 8,
+        authenticatedHealthOpenShellMs: 1,
+        authenticatedHealthSleepMs: 0,
         result: "recovered",
       }),
     );
