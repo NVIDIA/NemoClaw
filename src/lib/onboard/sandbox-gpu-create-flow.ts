@@ -578,7 +578,8 @@ export async function runSandboxGpuCreateFlow(
           `APF sandbox '${input.sandboxName}' may have been retained after native GPU fallback stopped. ` +
           `Gateway '${input.gatewayName}'. ${identityGuidance} ` +
           "Do not delete a sandbox by mutable name; use an identity-bound administrator recovery procedure.";
-        let persisted = false;
+        console.error(`  ${message}`);
+        let persisted: boolean;
         try {
           persisted = evidence.liveIdentityFingerprint
             ? persistRetainedSandboxRecovery(
@@ -587,13 +588,21 @@ export async function runSandboxGpuCreateFlow(
                 evidence.createAttemptNonce,
               )
             : persistRetainedSandboxRecovery(message, undefined, evidence.createAttemptNonce);
-        } catch {
-          persisted = false;
+        } catch (error) {
+          console.error(
+            "  APF recovery is blocked because NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
+          );
+          throw new Error(
+            "The APF recovery-only session remains blocked until its durable recovery record can be saved.",
+            { cause: error },
+          );
         }
-        console.error(`  ${message}`);
         if (!persisted) {
           console.error(
             "  APF recovery is blocked because NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
+          );
+          throw new Error(
+            "The APF recovery-only session remains blocked until its durable recovery record can be saved.",
           );
         }
       }
