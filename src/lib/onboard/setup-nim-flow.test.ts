@@ -898,6 +898,50 @@ describe("createSetupNim", () => {
     expect(result).toMatchObject({ provider: "vllm" });
   });
 
+  it("normalizes a catalog model alias before reusing managed vLLM", async () => {
+    const servedModel = "nvidia-nemotron-3.5-lightning-30b-a3b-nvfp4";
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+      expect(state.model).toBe(servedModel);
+      state.provider = "vllm";
+      state.endpointUrl = "http://127.0.0.1:8000/v1";
+      state.credentialEnv = null;
+      state.preferredInferenceApi = "openai-completions";
+      return "selected";
+    });
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-vllm",
+        getNonInteractiveModel: () => "nemotron-3.5-lightning-30b",
+        selectVllmModelFromEnv: () => ({
+          id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+          servedModelId: servedModel,
+        }),
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmRunning: true,
+            vllmProfile: { name: "DGX Spark" } as VllmProfile,
+            vllmEntries: [{ key: "vllm", label: "Local vLLM (localhost:8000) — running" }],
+          }),
+        handleVllmSelection,
+      }),
+    );
+
+    await setupNim(
+      { platform: "spark" } as unknown as Parameters<typeof setupNim>[0],
+      null,
+      null,
+      true,
+      null,
+      "nemoclaw",
+    );
+
+    expect(handleVllmSelection).toHaveBeenCalledWith(
+      expect.objectContaining({ model: servedModel }),
+      expect.objectContaining({ managedInstall: false }),
+    );
+  });
+
   it("does not extend the Spark automatic default to DGX Station (#7293)", async () => {
     const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
       async ({ selected }, state) => {
