@@ -218,12 +218,12 @@ async function startFakeDiscordApi(
 ) {
   return startFakeDockerApi(host, (name, run) => cleanup.push({ name, run }), {
     kind: "discord-gateway",
-    imageScript: "fake-discord-gateway-api.cjs",
+    imageScript: "fake-discord-gateway.cjs",
     containerPrefix: "fake-discord-gateway",
-    portEnv: "FAKE_API_PORT",
-    captureFileEnv: "FAKE_API_CAPTURE_FILE",
-    expectedEnv: {},
-    redactionValues: [],
+    portEnv: "FAKE_DISCORD_GATEWAY_PORT",
+    captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
+    expectedEnv: { FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: "fixture-discord-token" },
+    redactionValues: ["fixture-discord-token"],
     env: {},
   });
 }
