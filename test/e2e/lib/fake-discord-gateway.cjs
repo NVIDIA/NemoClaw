@@ -13,6 +13,8 @@ const port = Number(process.env.FAKE_DISCORD_GATEWAY_PORT || "0");
 const portFile = process.env.FAKE_DISCORD_GATEWAY_PORT_FILE || "";
 const captureFile = process.env.FAKE_DISCORD_GATEWAY_CAPTURE_FILE || "";
 const expectedToken = process.env.FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN || "";
+const PORT_TRAFFIC_REQUEST_LINE = "GET /__nemoclaw_e2e_port_traffic HTTP/1.1";
+const PORT_TRAFFIC_REPLY = JSON.stringify({ type: "nemoclaw_port_traffic_reply" });
 
 if (require.main === module && !expectedToken) {
   console.error("FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN is required");
@@ -173,6 +175,19 @@ const server = net.createServer((socket) => {
         .split("\r\n")
         .find((line) => line.toLowerCase().startsWith("sec-websocket-key:"));
       const key = keyLine ? keyLine.slice(keyLine.indexOf(":") + 1).trim() : "";
+      if (requestLine === PORT_TRAFFIC_REQUEST_LINE) {
+        socket.end(
+          [
+            "HTTP/1.1 200 OK",
+            "Content-Type: application/json",
+            `Content-Length: ${Buffer.byteLength(PORT_TRAFFIC_REPLY)}`,
+            "Connection: close",
+            "",
+            PORT_TRAFFIC_REPLY,
+          ].join("\r\n"),
+        );
+        return;
+      }
       if (!key) {
         socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
         return;

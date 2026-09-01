@@ -76,6 +76,8 @@ function readFakeSlackCapture(captureFile: string): Array<Record<string, unknown
 
 async function startFakeSlackPortFixture(options?: {
   suppressPortTrafficReply?: boolean;
+  restPortTrafficStatus?: number;
+  restPortTrafficReply?: string;
 }): Promise<FakeSlackPortFixture> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-slack-ports-"));
   const portFile = path.join(dir, "port");
@@ -93,6 +95,12 @@ async function startFakeSlackPortFixture(options?: {
       ...(options?.suppressPortTrafficReply
         ? { FAKE_SLACK_API_SUPPRESS_PORT_TRAFFIC_REPLY: "1" }
         : {}),
+      ...(options?.restPortTrafficStatus === undefined
+        ? {}
+        : { FAKE_SLACK_API_PORT_TRAFFIC_STATUS: String(options.restPortTrafficStatus) }),
+      ...(options?.restPortTrafficReply === undefined
+        ? {}
+        : { FAKE_SLACK_API_PORT_TRAFFIC_REPLY: options.restPortTrafficReply }),
     },
     stdio: ["ignore", "ignore", "pipe"],
   });
@@ -123,18 +131,22 @@ async function startFakeSlackPortFixture(options?: {
   }
 }
 
-function runFakeSlackPortTrafficCheck(fixture: FakeSlackPortFixture) {
+function runPortTrafficCheck(restPort: number, websocketPort?: number) {
   return spawnSync(
     process.execPath,
     [
       "--experimental-strip-types",
       FAKE_API_PORT_TRAFFIC,
       "127.0.0.1",
-      String(fixture.restPort),
-      String(fixture.websocketPort),
+      String(restPort),
+      ...(websocketPort === undefined ? [] : [String(websocketPort)]),
     ],
     { encoding: "utf8", timeout: 15_000 },
   );
+}
+
+function runFakeSlackPortTrafficCheck(fixture: FakeSlackPortFixture) {
+  return runPortTrafficCheck(fixture.restPort, fixture.websocketPort);
 }
 
 type CleanupAction = {
@@ -437,6 +449,28 @@ describe("messaging provider installed-runtime proofs", () => {
       await fixture.stop();
     }
   }, 25_000);
+
+  it.each([
+    ["an HTTP error", 502, "nemoclaw_port_traffic_reply", "HTTP 502"],
+    ["an invalid sentinel", 200, "unexpected_reply", "not recognized"],
+  ] as const)(
+    "rejects %s from the REST port traffic probe",
+    async (_case, status, reply, error) => {
+      const fixture = await startFakeSlackPortFixture({
+        restPortTrafficStatus: status,
+        restPortTrafficReply: reply,
+      });
+
+      try {
+        const trafficCheck = runFakeSlackPortTrafficCheck(fixture);
+        expect(trafficCheck.status).toBe(1);
+        expect(trafficCheck.stderr).toContain(error);
+      } finally {
+        await fixture.stop();
+      }
+    },
+    15_000,
+  );
 
   it("rejects a fake Slack websocket that upgrades without a port traffic reply", async () => {
     const fixture = await startFakeSlackPortFixture({ suppressPortTrafficReply: true });

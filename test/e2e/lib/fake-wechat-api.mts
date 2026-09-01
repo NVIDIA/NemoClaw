@@ -14,6 +14,8 @@ const expectedToken = process.env.FAKE_WECHAT_API_EXPECTED_TOKEN || "";
 const expectedTarget = process.env.FAKE_WECHAT_API_EXPECTED_TARGET || "";
 const expectedText = process.env.FAKE_WECHAT_API_EXPECTED_TEXT || "";
 const MAX_BODY_BYTES = 1024 * 1024;
+const PORT_TRAFFIC_PATH = "/__nemoclaw_e2e_port_traffic";
+const PORT_TRAFFIC_REPLY = "nemoclaw_port_traffic_reply";
 
 if (!Number.isInteger(port) || port < 0 || port > 65_535) {
   throw new Error(
@@ -61,6 +63,10 @@ const server = http.createServer((request, response) => {
 
   request.on("end", () => {
     if (bodyTooLarge) return;
+    if (request.method === "GET" && request.url === PORT_TRAFFIC_PATH) {
+      writeJson(response, 200, { type: PORT_TRAFFIC_REPLY });
+      return;
+    }
     const authorization = String(request.headers.authorization || "");
     const token = authorization.match(/^Bearer (.+)$/u)?.[1] ?? "";
     let body: Record<string, unknown> = {};

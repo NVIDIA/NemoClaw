@@ -14,9 +14,13 @@ const portFile = process.env.FAKE_TELEGRAM_API_PORT_FILE || "";
 const captureFile = process.env.FAKE_TELEGRAM_API_CAPTURE_FILE || "";
 const expectedToken = process.env.FAKE_TELEGRAM_API_EXPECTED_TOKEN || "";
 const MAX_BODY_BYTES = 1024 * 1024;
+const PORT_TRAFFIC_PATH = "/__nemoclaw_e2e_port_traffic";
+const PORT_TRAFFIC_REPLY = "nemoclaw_port_traffic_reply";
 
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
-  console.error(`FAKE_TELEGRAM_API_PORT must be an integer between 0 and 65535 (received: ${rawPort})`);
+  console.error(
+    `FAKE_TELEGRAM_API_PORT must be an integer between 0 and 65535 (received: ${rawPort})`,
+  );
   process.exit(2);
 }
 
@@ -105,6 +109,11 @@ const server = http.createServer((req, res) => {
       text: fields.text ? String(fields.text) : "",
       textLength: fields.text ? String(fields.text).length : 0,
     });
+
+    if (url.pathname === PORT_TRAFFIC_PATH) {
+      writeJson(res, 200, { type: PORT_TRAFFIC_REPLY });
+      return;
+    }
 
     if (!match) {
       writeJson(res, 404, { ok: false, error_code: 404, description: "not found" });

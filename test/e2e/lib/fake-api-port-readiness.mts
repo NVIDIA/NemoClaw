@@ -26,17 +26,32 @@ async function probeHttp(host: string, port: number): Promise<void> {
   const response = await fetch(`http://${urlHost(host)}:${port}/__nemoclaw_e2e_port_traffic`, {
     signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
   });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`REST port traffic returned HTTP ${response.status}`);
+  }
   const reader = response.body?.getReader();
-  if (!reader) return;
+  if (!reader) throw new Error("REST port traffic reply had no body");
   let replyBytes = 0;
+  const chunks: Uint8Array[] = [];
   for (;;) {
     const { done, value } = await reader.read();
-    if (done) return;
+    if (done) break;
     replyBytes += value.byteLength;
     if (replyBytes > MAX_REPLY_BYTES) {
       await reader.cancel();
       throw new Error("REST port traffic reply exceeded 8192 bytes");
     }
+    chunks.push(value);
+  }
+  let reply: { type?: unknown };
+  try {
+    reply = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { type?: unknown };
+  } catch {
+    throw new Error("REST port traffic reply was not valid JSON");
+  }
+  if (reply?.type !== PORT_TRAFFIC_REPLY) {
+    throw new Error("REST port traffic reply was not recognized");
   }
 }
 

@@ -709,6 +709,8 @@ const FAKE_DOCKER_API_CONSUMER_JOBS = [
   "openclaw-slack-pairing",
 ] as const;
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
+  ["test/e2e/lib/fake-discord-gateway.cjs", ["hermes-discord", "openclaw-discord-pairing"]],
+  ["test/e2e/lib/fake-telegram-api.cjs", ["messaging-providers"]],
   ["test/e2e/lib/fake-wechat-api.mts", ["messaging-providers"]],
   ["test/e2e/lib/fake-slack-api.cjs", ["messaging-providers", "openclaw-slack-pairing"]],
   ["test/e2e/lib/fake-api-port-readiness.mts", FAKE_DOCKER_API_CONSUMER_JOBS],

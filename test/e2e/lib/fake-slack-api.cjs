@@ -21,11 +21,17 @@ const socketUserId = process.env.FAKE_SLACK_API_SOCKET_USER_ID || "U3730E2E";
 const socketChannelId = process.env.FAKE_SLACK_API_SOCKET_CHANNEL_ID || "D3730E2E";
 const socketTeamId = process.env.FAKE_SLACK_API_SOCKET_TEAM_ID || "T3730E2E";
 const suppressPortTrafficReply = process.env.FAKE_SLACK_API_SUPPRESS_PORT_TRAFFIC_REPLY === "1";
+const portTrafficStatus = Number(process.env.FAKE_SLACK_API_PORT_TRAFFIC_STATUS || "200");
+const portTrafficReply =
+  process.env.FAKE_SLACK_API_PORT_TRAFFIC_REPLY || "nemoclaw_port_traffic_reply";
 const MAX_BODY_BYTES = 1024 * 1024;
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const PORT_TRAFFIC_PATH = "/__nemoclaw_e2e_port_traffic";
 
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
-  console.error(`FAKE_SLACK_API_PORT must be an integer between 0 and 65535 (received: ${rawPort})`);
+  console.error(
+    `FAKE_SLACK_API_PORT must be an integer between 0 and 65535 (received: ${rawPort})`,
+  );
   process.exit(2);
 }
 
@@ -42,7 +48,14 @@ if (port !== 0 && websocketPort === port) {
 }
 
 if (!expectedBotToken || !expectedAppToken) {
-  console.error("FAKE_SLACK_API_EXPECTED_BOT_TOKEN and FAKE_SLACK_API_EXPECTED_APP_TOKEN are required");
+  console.error(
+    "FAKE_SLACK_API_EXPECTED_BOT_TOKEN and FAKE_SLACK_API_EXPECTED_APP_TOKEN are required",
+  );
+  process.exit(2);
+}
+
+if (!Number.isInteger(portTrafficStatus) || portTrafficStatus < 100 || portTrafficStatus > 599) {
+  console.error("FAKE_SLACK_API_PORT_TRAFFIC_STATUS must be an integer between 100 and 599");
   process.exit(2);
 }
 
@@ -231,6 +244,12 @@ function handleRequest(req, res) {
           }
         : {}),
     });
+
+    if (pathname === PORT_TRAFFIC_PATH) {
+      res.writeHead(portTrafficStatus, { "content-type": "application/json" });
+      res.end(JSON.stringify({ type: portTrafficReply }));
+      return;
+    }
 
     const response = slackResponseFor(pathname, authAccepted, { channel, text, threadTs });
     res.writeHead(response.status, {
