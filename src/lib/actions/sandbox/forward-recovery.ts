@@ -241,13 +241,23 @@ export function teardownSandboxDashboardForward(
     if (authority && controller) {
       try {
         if (controller.stopAll(authority) > 0) {
-          return [...ports].every(
-            (port) => !(deps.isLocalForwardReachable ?? isLocalForwardReachable)(port),
-          );
+          const isReachable = deps.isLocalForwardReachable ?? isLocalForwardReachable;
+          const unreleasedPorts = [...ports].filter((port) => isReachable(port));
+          if (unreleasedPorts.length > 0) {
+            console.error(
+              `  ForwardTcp cleanup did not release registered host port(s): ${unreleasedPorts.join(", ")}.`,
+            );
+          }
+          return unreleasedPorts.length === 0;
         }
-      } catch {
+      } catch (error) {
         // Teardown is best-effort; retain ambiguous receipts for a later
         // identity-bound recovery instead of signaling an unproven PID.
+        console.error(
+          `  ForwardTcp receipt/process cleanup did not complete: ${
+            error instanceof Error ? error.message : "unknown process-control failure"
+          }`,
+        );
         return false;
       }
     }
