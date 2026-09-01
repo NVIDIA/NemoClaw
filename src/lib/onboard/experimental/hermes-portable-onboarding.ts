@@ -354,7 +354,7 @@ function scopeHermesPortableReadyExecArgs(
   return null;
 }
 
-/** Route create readiness and failed-create cleanup through exact schema-7 authority. */
+/** Route create readiness through exact schema-7 authority. */
 export function createHermesPortableReadyRunner(
   sandboxName: string,
   gatewayName: string,
@@ -365,10 +365,7 @@ export function createHermesPortableReadyRunner(
       scopeHermesPortableCreatedIdentityArgs(args, gatewayName) ??
       scopeHermesPortableReadyGetArgs(args, sandboxName, gatewayName) ??
       scopeHermesPortableReadyListArgs(args, gatewayName) ??
-      scopeHermesPortableReadyExecArgs(args, sandboxName, gatewayName) ??
-      (args[0] === "sandbox" && args[1] === "delete" && args.length === 3 && args[2] === sandboxName
-        ? ["sandbox", "delete", "-g", gatewayName, args[2]!]
-        : null);
+      scopeHermesPortableReadyExecArgs(args, sandboxName, gatewayName);
     if (!scoped) fail("create lifecycle attempted an unsupported OpenShell command");
     return capture(scoped);
   };

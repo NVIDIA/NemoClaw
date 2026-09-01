@@ -401,7 +401,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       mocks.waitForCreatedSandboxReadyWithTrace.mock.calls.map(
         ([options]) => options.stableReadyPolls,
       ),
-    ).toEqual([2, 2]);
+    ).toEqual([2, 2, 2]);
     vi.mocked(deps.runCaptureOpenshell).mockClear();
     await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({ route: "none" });
     expect(deps.runCaptureOpenshell).toHaveBeenCalledWith(
