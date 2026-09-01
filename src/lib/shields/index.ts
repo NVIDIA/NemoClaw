@@ -41,7 +41,6 @@ const {
 const {
   buildPolicySetCommand,
   verifyAppliedPolicyDocument,
-  parseCurrentPolicy,
   resolvePermissivePolicyPath,
   inspectPolicyMutationContext,
   isPolicyObservationError,

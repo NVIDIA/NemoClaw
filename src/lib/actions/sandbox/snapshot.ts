@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { dockerCapture } from "../../adapters/docker";
+import { readSandboxPolicyWithCapture } from "../../adapters/openshell/policy-state";
 import {
   captureOpenshell,
   getOpenshellBinary,
@@ -376,7 +377,7 @@ async function prepareSnapshotClonePolicy(
   cleanup?: () => boolean;
 }> {
   const gatewayName = resolveSandboxGatewayName(srcEntry);
-  const policyRead = policies.readSandboxPolicyWithCapture({
+  const policyRead = readSandboxPolicyWithCapture({
     capture: (args, options) => captureOpenshell(args, options),
     gatewayName,
     sandboxName: srcEntry.name,
