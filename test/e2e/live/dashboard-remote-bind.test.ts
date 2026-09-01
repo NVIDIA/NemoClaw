@@ -41,7 +41,7 @@ runDashboardRemoteBindTest(
       e2ePhases: [
         "validate dashboard prerequisites",
         "install and onboard dashboard sandbox",
-        "restart dashboard with remote binding",
+        "stop sandbox and restart dashboard with remote binding",
         "verify all-interface dashboard forward",
         "audit exposed dashboard controls",
       ],
@@ -153,7 +153,14 @@ runDashboardRemoteBindTest(
     expect(cliProbe.stdout).toContain("nemoclaw");
     expect(cliProbe.stdout).toContain("openshell");
 
-    progress.phase("restart dashboard with remote binding");
+    progress.phase("stop sandbox and restart dashboard with remote binding");
+    const stop = await host.nemoclaw([sandboxName, "stop"], {
+      artifactName: "dashboard-remote-bind-stop-before-rebind",
+      env: testEnv(),
+      redactionValues,
+      timeoutMs: 120_000,
+    });
+    expect(stop.exitCode, `Sandbox stop failed before remote rebind\n${resultText(stop)}`).toBe(0);
     expect(teardownSandboxDashboardForward(sandboxName)).toBe(true);
 
     const connect = await runDashboardConnectUntilForwardHandoff({
