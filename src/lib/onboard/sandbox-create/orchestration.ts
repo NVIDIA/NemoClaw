@@ -29,6 +29,14 @@ import type { HermesAuthMethod } from "../hermes-auth";
 import type { PreparedSandboxBuildContext } from "../build-context-stage";
 import type { DcodeSelectionDriftReader } from "../dcode-selection-drift";
 import { assertProviderlessInterceptorEnvironment } from "../entry-options";
+import {
+  createHermesPortableReadyCapture,
+  createHermesPortableReadyRunner,
+  defaultHermesPortableStateDir,
+  runHermesPortableOnboardingFromOnboard,
+  shouldManageHermesPortableDashboard,
+} from "../experimental/hermes-portable-onboarding";
+import { inspectPortableAgentReceiptAuthorityForClassification } from "../experimental/hermes-portable-receipt";
 import type {
   ManagedHermesStateVolumeCleanupResult,
   ManagedHermesStateVolumeContext,
@@ -1149,6 +1157,22 @@ type PortableAgentReceiptGenerationObservation =
       readonly lifecycleGeneration: string;
     };
 
+function inspectPortableAgentReceiptGeneration(
+  sandboxName: string,
+): PortableAgentReceiptGenerationObservation {
+  const authority = inspectPortableAgentReceiptAuthorityForClassification(
+    sandboxName,
+    defaultHermesPortableStateDir(process.env),
+  );
+  if (authority.kind === "none") return { kind: "absent" };
+  if (authority.kind === "openclaw") return { kind: "openclaw" };
+  return {
+    kind: "hermes",
+    gatewayName: authority.snapshot.receipt.gatewayName,
+    lifecycleGeneration: authority.snapshot.receipt.lifecycleGeneration,
+  };
+}
+
 function readHermesPortableLifecycleGeneration(input: {
   readonly enabled: boolean;
   readonly sandboxName: string;
@@ -1351,7 +1375,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
     );
     const resolvedCreateIntent = preparedCreateIntent.intent;
     const messagingCapabilities = preparedCreateIntent.messagingCapabilities;
-    const manageDashboard = sandboxGpuCreateFlow.shouldManageHermesPortableDashboard(
+    const manageDashboard = shouldManageHermesPortableDashboard(
       dashboardRuntime.shouldManageDashboardForAgent(agent),
       agent,
     );
@@ -2220,7 +2244,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       enabled: agentCreateInput.hermesPortableLifecycle,
       sandboxName,
       gatewayName: GATEWAY_NAME,
-      inspect: sandboxGpuCreateFlow.inspectPortableAgentReceiptDisposition,
+      inspect: inspectPortableAgentReceiptGeneration,
     });
     const createdSandboxLifecycle = sandboxRecreateTransaction.createCreatedSandboxLifecycle(
       recreateRuntime,
@@ -2429,8 +2453,8 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
       );
     const runCreateFlow = async (
       attemptCreateArgv: string[],
-      hermesPortableReadyCapture?: import("../sandbox-gpu-create-flow").HermesPortableReadyCapture,
-      hermesPortableReadyRunner?: import("../sandbox-gpu-create-flow").HermesPortableReadyRunner,
+      hermesPortableReadyCapture?: ReturnType<typeof createHermesPortableReadyCapture>,
+      hermesPortableReadyRunner?: ReturnType<typeof createHermesPortableReadyRunner>,
       createWorkingDirectory?: string,
       effectivePolicySourcePath?: string,
       runDeferredProviderEffects?: (context: VerifiedSandboxCreateEffectsContext) => Promise<void>,
@@ -2751,7 +2775,7 @@ export function createSandboxWithBaseImageResolution(runtime: SandboxCreateOrche
         sessionId: inferenceRouteReservationAuthority.sessionId,
         selection: inferenceRouteReservationAuthority.selection,
       };
-      await sandboxGpuCreateFlow.runHermesPortableOnboardingFromOnboard<
+      await runHermesPortableOnboardingFromOnboard<
         import("../sandbox-gpu-create-flow").SandboxGpuCreateFlowResult
       >({
         sandboxName,

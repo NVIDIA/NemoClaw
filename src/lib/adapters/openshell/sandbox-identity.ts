@@ -316,10 +316,7 @@ export function settleCreatedOpenShellSandboxId(input: {
   }
   const now = input.now ?? (() => performance.now());
   const startedAt = now();
-  const timeoutMs = Math.min(
-    CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS,
-    input.timeoutMs ?? CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS,
-  );
+  const timeoutMs = input.timeoutMs ?? CREATED_IDENTITY_SETTLEMENT_TIMEOUT_MS;
   const deadlineMs = startedAt + timeoutMs;
 
   if (

@@ -341,6 +341,37 @@ describe("OpenShell sandbox identity reading", () => {
     expect(sleep).toHaveBeenCalledExactlyOnceWith(250);
   });
 
+  it("honors a caller-supplied identity settlement deadline beyond the default (#10652)", () => {
+    let nowMs = 0;
+    const sleep = vi.fn((milliseconds: number) => {
+      nowMs += milliseconds;
+    });
+    const runCaptureOpenshell = vi
+      .fn<(args: string[], options?: Record<string, unknown>) => string>()
+      .mockImplementationOnce(() => {
+        nowMs += 31_000;
+        return "[]";
+      })
+      .mockReturnValueOnce(sandboxListJson());
+
+    expect(
+      settleCreatedOpenShellSandboxId({
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        createAttemptNonce: CREATE_ATTEMPT_NONCE,
+        runCaptureOpenshell,
+        now: () => nowMs,
+        timeoutMs: 60_000,
+        sleep,
+      }),
+    ).toBe("sandbox-alpha");
+
+    expect(runCaptureOpenshell.mock.calls.map(([, options]) => options?.timeout)).toEqual([
+      60_000, 28_750,
+    ]);
+    expect(sleep).toHaveBeenCalledExactlyOnceWith(250);
+  });
+
   it("settles one exact nonce identity while its publication metadata becomes complete (#10423)", () => {
     let nowMs = 0;
     const sleep = vi.fn((milliseconds: number) => {

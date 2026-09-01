@@ -17,24 +17,12 @@ import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 import {
-  classifyHermesPortableRegistry,
   createHermesPortableChildEnvironment,
-  createHermesPortableContainerDeps,
-  createHermesPortableOpenShellCapture,
-  createHermesPortableReadyCapture,
-  createHermesPortableReadyRunner,
-  defaultHermesPortableStateDir,
   isHermesPortableLifecycleMode,
-  observeHermesPortableSandbox,
-  runHermesPortableOnboardingFromOnboard,
-  runHermesPortableOnboardingTransaction,
-  shouldManageHermesPortableDashboard,
 } from "./experimental/hermes-portable-onboarding";
 import { installPortableDemoSandboxLifecycle } from "./experimental/portable-demo-lifecycle";
 import {
-  buildHermesPortableCommandAuthority,
   buildHermesPortableOnboardingCommandAuthority,
-  inspectPortableAgentReceiptDisposition,
 } from "./experimental/portable-agent-lifecycle";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import {
@@ -70,23 +58,6 @@ import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import { addTraceEvent } from "./tracing";
 
 export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
-export {
-  classifyHermesPortableRegistry,
-  createHermesPortableChildEnvironment,
-  createHermesPortableContainerDeps,
-  createHermesPortableOpenShellCapture,
-  createHermesPortableReadyCapture,
-  createHermesPortableReadyRunner,
-  defaultHermesPortableStateDir,
-  observeHermesPortableSandbox,
-  runHermesPortableOnboardingFromOnboard,
-  runHermesPortableOnboardingTransaction,
-  shouldManageHermesPortableDashboard,
-  buildHermesPortableCommandAuthority,
-  inspectPortableAgentReceiptDisposition,
-};
-export type HermesPortableReadyCapture = ReturnType<typeof createHermesPortableReadyCapture>;
-export type HermesPortableReadyRunner = ReturnType<typeof createHermesPortableReadyRunner>;
 
 /** Release the exit cleanup listener only after its exact create source was retired. */
 export function cleanupSandboxCreateSource(
