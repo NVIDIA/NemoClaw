@@ -134,14 +134,24 @@ export function runDeepAgentsConfigCommand(
         `runtime_kind = "${runtimeKind}"  # NEMOCLAW_DEEPAGENTS_RUNTIME_TEST_ANCHOR`,
       );
     const result = spawnSync("bash", ["-c", fixtureCommand], { encoding: "utf-8", timeout: 5000 });
-    const configExists = fs.existsSync(configPath);
+    let configStat: fs.Stats | null = null;
+    try {
+      configStat = fs.lstatSync(configPath);
+    } catch {
+      // A missing projection has no path type to report.
+    }
+    const configExists = configStat !== null;
     const legacyConfigExists = fs.existsSync(legacyConfigPath);
-    const configIsFifo = configExists && fs.lstatSync(configPath).isFIFO();
-    const configIsSocket = configExists && fs.lstatSync(configPath).isSocket();
-    const configIsSymlink = configExists && fs.lstatSync(configPath).isSymbolicLink();
-    const configIsDirectory = configExists && fs.lstatSync(configPath).isDirectory();
+    const configIsFifo = configStat?.isFIFO() === true;
+    const configIsSocket = configStat?.isSocket() === true;
+    const configIsSymlink = configStat?.isSymbolicLink() === true;
+    const configIsDirectory = configStat?.isDirectory() === true;
     const configText =
-      configExists && !configIsFifo && !configIsSocket && !configIsDirectory
+      configExists &&
+      !configIsFifo &&
+      !configIsSocket &&
+      !configIsSymlink &&
+      !configIsDirectory
         ? fs.readFileSync(configPath, "utf-8")
         : null;
     const managedSymlinkTargetExists = fs.existsSync(managedSymlinkTarget);
