@@ -476,6 +476,7 @@
         "src/lib/onboard/messaging-policy-presets.test.ts",
         "test/channels/channels-add-preset.test.ts",
         "test/e2e/support/hermes-discord-policy-binding.test.ts",
+        "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/onboarding/onboard-preset-diff.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -618,10 +619,12 @@
     },
     {
       "live": "test/e2e/live/openclaw-discord-pairing.test.ts",
+      "liveSources": ["test/e2e/live/openclaw-pairing-helpers.ts"],
       "fast": [
         "src/lib/messaging/channels/discord/credential-injection.test.ts",
         "src/lib/onboard/messaging-policy-presets.test.ts",
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
+        "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -656,9 +659,11 @@
     },
     {
       "live": "test/e2e/live/openclaw-slack-pairing.test.ts",
+      "liveSources": ["test/e2e/live/openclaw-pairing-helpers.ts"],
       "fast": [
         "src/lib/onboard/sandbox-create-plan.test.ts",
         "test/e2e/support/openclaw-discord-pairing-helpers.test.ts",
+        "test/e2e/support/messaging-providers-runtime-proofs.test.ts",
         "test/onboarding/onboard-messaging.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
