@@ -39,13 +39,13 @@ const {
   withPrivilegedSandboxExecutionLease,
 }: typeof import("../sandbox/privileged-exec") = require("../sandbox/privileged-exec");
 const {
-  buildPolicyGetCommand,
   buildPolicySetCommand,
   verifyAppliedPolicyDocument,
   parseCurrentPolicy,
   resolvePermissivePolicyPath,
   inspectPolicyMutationContext,
   isPolicyObservationError,
+  readSandboxPolicyWithCapture,
   recheckPolicyMutationContext,
   rejectFinalPolicySetResult: rejectFinalShieldsPolicySetResult,
 } = require("../policy");
@@ -158,6 +158,28 @@ function assertShieldsPolicyMutationContext(
   return recorded
     ? recheckPolicyMutationContext(sandboxName, operation, recorded)
     : inspectPolicyMutationContext(sandboxName, operation);
+}
+
+function captureShieldsBasePolicy(sandboxName: string, gatewayName: string): string | null {
+  const result = readSandboxPolicyWithCapture({
+    capture: (args: string[]) => {
+      try {
+        const output = runCapture(buildOpenshellCommand(args));
+        return { status: 0, output, stdout: output, stderr: "" };
+      } catch (error) {
+        return {
+          status: null,
+          output: "",
+          stderr: "",
+          error: error instanceof Error ? error : new Error(String(error)),
+        };
+      }
+    },
+    gatewayName,
+    sandboxName,
+    scope: "base",
+  });
+  return result.ok ? result.value.document : null;
 }
 
 const STATE_DIR = resolveShieldsStateDir();
@@ -4427,8 +4449,7 @@ function applyShieldsPolicySnapshot(
   }
 
   const context = inspectPolicyMutationContext(sandboxName, "restore the Shields policy snapshot");
-  const rawLive = runCapture(buildPolicyGetCommand(sandboxName, context.gatewayName));
-  const livePolicy = parseCurrentPolicy(rawLive);
+  const livePolicy = captureShieldsBasePolicy(sandboxName, context.gatewayName);
   if (!livePolicy) throw new Error("Cannot read the current OpenShell policy for Shields restore");
   const snapshotBinding = transition?.snapshotPolicy ?? state.shieldsPolicySnapshot;
   if (!snapshotBinding) {
@@ -5311,7 +5332,13 @@ function shieldsDownWithoutHostLock(
     return failShieldsCommand(`Config is already unlocked for ${sandboxName}`, opts.throwOnError);
   }
 
-  const policyContext = assertShieldsPolicyMutationContext(sandboxName, "lower Shields");
+  let policyContext: PolicyMutationContext;
+  try {
+    policyContext = assertShieldsPolicyMutationContext(sandboxName, "lower Shields");
+  } catch {
+    console.error("  Cannot capture current policy. Is the sandbox running?");
+    return failShieldsCommand("Cannot capture current policy", opts.throwOnError);
+  }
 
   // Resolve the old-image compatibility contract before touching timers,
   // host state, policy, or sandbox files. A transport failure or an
@@ -5355,19 +5382,12 @@ function shieldsDownWithoutHostLock(
 
   // 1. Capture current policy snapshot
   console.log("  Capturing current policy snapshot...");
-  let rawPolicy: string;
-  try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName, policyContext.gatewayName));
-  } catch {
-    rawPolicy = "";
-  }
-  assertShieldsPolicyMutationContext(sandboxName, "continue lowering Shields", policyContext);
-
-  const policyYaml = parseCurrentPolicy(rawPolicy);
+  const policyYaml = captureShieldsBasePolicy(sandboxName, policyContext.gatewayName);
   if (!policyYaml) {
     console.error("  Cannot capture current policy. Is the sandbox running?");
     return failShieldsCommand("Cannot capture current policy", opts.throwOnError);
   }
+  assertShieldsPolicyMutationContext(sandboxName, "continue lowering Shields", policyContext);
 
   assertShieldsPolicyMutationContext(
     sandboxName,

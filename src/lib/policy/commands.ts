@@ -19,16 +19,6 @@ export function buildPolicySetCommand(
   ]);
 }
 
-/** Read the round-trippable base policy before a mutation. */
-export function buildPolicyGetCommand(sandboxName: string, gatewayName?: string): string[] {
-  return buildOpenshellCommand(buildPolicyGetArgs(sandboxName, gatewayName));
-}
-
-/** Read the round-trippable base policy before a mutation without selecting a binary. */
-export function buildPolicyGetArgs(sandboxName: string, gatewayName?: string): string[] {
-  return ["policy", "get", ...policyGatewayArgs(gatewayName), "--base", sandboxName];
-}
-
 /** Read one stored base-policy revision for concurrent-write reconciliation. */
 export function buildPolicyGetRevisionArgs(
   sandboxName: string,
@@ -44,17 +34,6 @@ export function buildPolicyGetRevisionArgs(
     "--base",
     sandboxName,
   ];
-}
-
-/** Read the effective policy for status and other diagnostics. */
-export function buildPolicyGetFullCommand(sandboxName: string, gatewayName?: string): string[] {
-  return buildOpenshellCommand([
-    "policy",
-    "get",
-    ...policyGatewayArgs(gatewayName),
-    "--full",
-    sandboxName,
-  ]);
 }
 
 function policyGatewayArgs(gatewayName?: string): string[] {

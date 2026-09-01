@@ -7,6 +7,23 @@ import YAML from "yaml";
 
 export type OpenShellPolicyMapping = Record<string, unknown>;
 
+export type OpenShellSandboxPolicyReadScope = "base" | "effective";
+
+/** Build one sandbox policy read without selecting an OpenShell executable. */
+export function buildOpenShellSandboxPolicyReadArgs(input: {
+  readonly sandboxName: string;
+  readonly gatewayName?: string;
+  readonly scope: OpenShellSandboxPolicyReadScope;
+}): string[] {
+  return [
+    "policy",
+    "get",
+    ...(input.gatewayName ? ["-g", input.gatewayName] : []),
+    input.scope === "base" ? "--base" : "--full",
+    input.sandboxName,
+  ];
+}
+
 export type ValidatedOpenShellPolicyMapping = OpenShellPolicyMapping & {
   readonly version?: number;
   readonly network_policies?: OpenShellPolicyMapping;
@@ -162,8 +179,7 @@ function policyValueContains(observed: unknown, required: unknown): boolean {
     return (
       isMapping(observed) &&
       Object.entries(required).every(
-        ([key, value]) =>
-          Object.hasOwn(observed, key) && policyValueContains(observed[key], value),
+        ([key, value]) => Object.hasOwn(observed, key) && policyValueContains(observed[key], value),
       )
     );
   }

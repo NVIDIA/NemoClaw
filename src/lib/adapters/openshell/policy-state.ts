@@ -10,7 +10,6 @@ import {
 import {
   buildGlobalPolicyGetFullJsonArgs,
   buildGlobalPolicyListArgs,
-  buildPolicyGetArgs,
   buildPolicyGetFullJsonArgs,
   buildPolicyGetRevisionArgs,
 } from "../../policy/commands";
@@ -24,6 +23,11 @@ import {
   parseSandboxPolicyMetadata,
 } from "../../policy/merge";
 import * as openshellRuntime from "./runtime";
+import {
+  createSyncCliOpenShellSandboxPolicyReader,
+  type SyncCapturePolicyCommand,
+} from "./sandbox-policy-cli";
+import { namedOpenShellGateway } from "./sandbox-observer";
 import { fingerprintOpenShellSandboxLiveIdentity } from "./sandbox-identity";
 const POLICY_STATE_CAPTURE_MAX_BYTES = 1024 * 1024;
 const POLICY_STATE_CAPTURE_TIMEOUT_MS = 30_000;
@@ -93,6 +97,7 @@ function captureBoundedOpenShell(
   args: string[],
   subject: "sandbox" | "global" | "gateway",
   runtimeSelection?: { readonly gatewayName?: string },
+  timeoutMs = POLICY_STATE_CAPTURE_TIMEOUT_MS,
 ): ReturnType<typeof openshellRuntime.captureResolvedOpenshell> {
   const env = openshellRuntime.buildOpenShellSubprocessEnv();
   if (runtimeSelection !== undefined) {
@@ -111,11 +116,46 @@ function captureBoundedOpenShell(
       includeStreams: true,
       maxBuffer: POLICY_STATE_CAPTURE_MAX_BYTES,
       replaceEnv: true,
-      timeout: POLICY_STATE_CAPTURE_TIMEOUT_MS,
+      timeout: timeoutMs,
     });
   } catch {
     failInspection(subject, "the policy query could not run");
   }
+}
+
+/** Read one policy document through the canonical synchronous CLI boundary. */
+export function readSandboxPolicyWithCapture(input: {
+  readonly capture: SyncCapturePolicyCommand;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly scope: "base" | "effective";
+  readonly timeoutMs?: number;
+}): ReturnType<
+  ReturnType<typeof createSyncCliOpenShellSandboxPolicyReader>["readSandboxPolicy"]
+> {
+  const sandboxName = validatePolicyName(input.sandboxName, "sandbox name");
+  const gatewayName = validatePolicyName(input.gatewayName, "gateway name");
+  return createSyncCliOpenShellSandboxPolicyReader({ capture: input.capture }).readSandboxPolicy({
+    target: namedOpenShellGateway(gatewayName),
+    sandboxName,
+    scope: input.scope,
+    ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+  });
+}
+
+function captureSandboxPolicyDocument(input: {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly scope: "base" | "effective";
+  readonly timeoutMs?: number;
+}): string {
+  const result = readSandboxPolicyWithCapture({
+    ...input,
+    capture: (args, options) =>
+      captureBoundedOpenShell(args, "sandbox", { gatewayName: input.gatewayName }, options.timeout),
+  });
+  if (!result.ok) failInspection("sandbox", result.error.message);
+  return result.value.document;
 }
 
 function capturePolicyCommand(
@@ -210,20 +250,21 @@ export function inspectActiveGlobalPolicy({
 
 /** Read one sandbox base policy through the same bounded OpenShell adapter. */
 export function captureSandboxBasePolicy(sandboxName: string, gatewayName: string): string {
-  const validatedGatewayName = validatePolicyName(gatewayName, "gateway name");
-  const raw = capturePolicyRead(
-    buildPolicyGetArgs(validatePolicyName(sandboxName, "sandbox name"), validatedGatewayName),
-    "sandbox",
-    { gatewayName: validatedGatewayName },
-  );
-  try {
-    return parseOpenShellPolicy(raw).yamlBody;
-  } catch (error) {
-    failInspection(
-      "sandbox",
-      error instanceof Error ? error.message : "OpenShell returned invalid base policy output",
-    );
-  }
+  return captureSandboxPolicyDocument({ sandboxName, gatewayName, scope: "base" });
+}
+
+/** Read one effective sandbox policy through the shared typed CLI boundary. */
+export function captureSandboxEffectivePolicy(
+  sandboxName: string,
+  gatewayName: string,
+  timeoutMs?: number,
+): string {
+  return captureSandboxPolicyDocument({
+    sandboxName,
+    gatewayName,
+    scope: "effective",
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  });
 }
 
 /** Read one immutable base-policy revision through the selected gateway. */

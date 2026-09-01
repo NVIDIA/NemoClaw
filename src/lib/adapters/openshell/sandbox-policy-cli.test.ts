@@ -8,6 +8,7 @@ import {
   type CapturedPolicyCommandResult,
   createCliOpenShellSandboxPolicyRead,
   createCliOpenShellSandboxPolicyReader,
+  createSyncCliOpenShellSandboxPolicyReader,
 } from "./sandbox-policy-cli";
 
 const POLICY = "version: 1\nnetwork_policies: {}";
@@ -21,6 +22,23 @@ function result(overrides: Partial<CapturedPolicyCommandResult> = {}): CapturedP
 }
 
 describe("CLI OpenShell sandbox policy reader", () => {
+  it("supports synchronous transactional policy reads through the same boundary", () => {
+    const capture = vi.fn(() => result());
+    const reader = createSyncCliOpenShellSandboxPolicyReader({ capture });
+
+    expect(
+      reader.readSandboxPolicy({
+        target: namedOpenShellGateway("nemoclaw"),
+        sandboxName: "alpha",
+        scope: "base",
+      }),
+    ).toMatchObject({ ok: true, value: { document: POLICY } });
+    expect(capture).toHaveBeenCalledWith(
+      ["policy", "get", "-g", "nemoclaw", "--base", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
   it("maps a named-gateway base read to exact CLI arguments (#9805)", async () => {
     const capture = vi.fn(() => result());
     const reader = createCliOpenShellSandboxPolicyReader({ capture });

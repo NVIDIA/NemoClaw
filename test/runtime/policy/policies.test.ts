@@ -549,14 +549,6 @@ exit 1
         "--wait",
         "my-assistant",
       ]);
-      expect(policies.buildPolicyGetCommand("my-assistant", "nemoclaw-18080").slice(1)).toEqual([
-        "policy",
-        "get",
-        "-g",
-        "nemoclaw-18080",
-        "--base",
-        "my-assistant",
-      ]);
     });
 
     it("uses the resolved openshell binary for every policy command", () => {
@@ -574,20 +566,6 @@ exit 1
           "--wait",
           "my-assistant",
         ]);
-        expect(policies.buildPolicyGetCommand("my-assistant")).toEqual([
-          resolved,
-          "policy",
-          "get",
-          "--base",
-          "my-assistant",
-        ]);
-        expect(policies.buildPolicyGetFullCommand("my-assistant")).toEqual([
-          resolved,
-          "policy",
-          "get",
-          "--full",
-          "my-assistant",
-        ]);
       } finally {
         resolveSpy.mockRestore();
       }
@@ -596,7 +574,7 @@ exit 1
 
   // Regression for issue #4224: when openshell is installed at ~/.local/bin/openshell
   // (the installer's user-local location) but PATH from a non-interactive shell does
-  // not include ~/.local/bin/, buildPolicySetCommand / buildPolicyGetCommand must
+  // not include ~/.local/bin/, buildPolicySetCommand must
   // resolve openshell to an absolute path so spawnSync does not raise ENOENT.
   describe("spawnSync openshell ENOENT in non-interactive shells (#4224)", () => {
     let tmpHome: string;
@@ -647,12 +625,6 @@ exit 1
         "--wait",
         "my-assistant",
       ]);
-    });
-
-    it("buildPolicyGetCommand resolves openshell to ~/.local/bin/openshell when PATH lacks it", () => {
-      const cmd = policies.buildPolicyGetCommand("my-assistant");
-      expect(cmd[0]).toBe(fakeOpenshell);
-      expect(cmd).toEqual([fakeOpenshell, "policy", "get", "--base", "my-assistant"]);
     });
 
     it("assertOpenshellResolvable emits a diagnostic listing every checked location and exits nonzero when openshell cannot be resolved", () => {

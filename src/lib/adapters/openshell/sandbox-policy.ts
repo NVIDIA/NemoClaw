@@ -26,3 +26,10 @@ export interface OpenShellSandboxPolicyReader {
     request: ReadOpenShellSandboxPolicyRequest,
   ): Promise<OpenShellSandboxResult<OpenShellSandboxPolicyRead>>;
 }
+
+/** Synchronous policy reads for existing transactional mutation paths. */
+export interface SyncOpenShellSandboxPolicyReader {
+  readSandboxPolicy(
+    request: ReadOpenShellSandboxPolicyRequest,
+  ): OpenShellSandboxResult<OpenShellSandboxPolicyRead>;
+}

@@ -96,6 +96,8 @@ export type SandboxGatewayState = {
   recoveryVia?: string | null;
   observationErrorKind?: OpenShellSandboxErrorKind;
   transportReason?: OpenShellSandboxTransportReason;
+  /** Policy observation failed after sandbox presence and phase were confirmed. */
+  policyObservationError?: OpenShellSandboxError;
   gatewayRecoveryFailed?: boolean;
   /**
    * True when active Docker-driver sandbox recovery (#4423 part 2)
@@ -317,23 +319,10 @@ export function mergeLivePolicyIntoSandboxOutput(
   policyDocument: string,
   appliedRevision: number | null = null,
 ): string {
-  const rawLines = String(output).split("\n");
-  const cleanLines = stripOpenShellCliAnsi(String(output)).split("\n");
-  const policyLineIdx = cleanLines.findIndex((line: string) => line.trim() === "Policy:");
-  if (policyLineIdx === -1) return output;
+  const sections = sandboxPolicyOutputSections(output);
+  if (!sections) return output;
 
-  const before = rawLines.slice(0, policyLineIdx + 1).join("\n");
-  const suffixLineIdx = cleanLines.findIndex(
-    (line, index) =>
-      index > policyLineIdx &&
-      /^\s*(?:Id|Name|Phase|Resource version|Labels|Annotations|Policy source|Revision):(?:\s|$)/u.test(
-        line,
-      ),
-  );
-  const suffix =
-    suffixLineIdx === -1
-      ? ""
-      : `\n${rawLines.slice(suffixLineIdx).join("\n").replace(/\n+$/u, "")}`;
+  const { before, suffix } = sections;
   const cleanPolicyDocument = stripOpenShellCliAnsi(policyDocument);
   const delimIdx = cleanPolicyDocument.search(/^---\s*$/m);
   const yamlPart =
@@ -356,6 +345,60 @@ export function mergeLivePolicyIntoSandboxOutput(
     .map((line: string) => (line ? `  ${line}` : line))
     .join("\n");
   return `${before}\n\n${indented}${suffix}\n`;
+}
+
+function sandboxPolicyOutputSections(
+  output: string,
+): { readonly before: string; readonly suffix: string } | null {
+  const rawLines = String(output).split("\n");
+  const cleanLines = stripOpenShellCliAnsi(String(output)).split("\n");
+  const policyLineIdx = cleanLines.findIndex((line: string) => line.trim() === "Policy:");
+  if (policyLineIdx === -1) return null;
+
+  const before = rawLines.slice(0, policyLineIdx + 1).join("\n");
+  const suffixLineIdx = cleanLines.findIndex(
+    (line, index) =>
+      index > policyLineIdx &&
+      /^\s*(?:Id|Name|Phase|Resource version|Labels|Annotations|Policy source|Revision):(?:\s|$)/u.test(
+        line,
+      ),
+  );
+  const suffix =
+    suffixLineIdx === -1
+      ? ""
+      : `\n${rawLines.slice(suffixLineIdx).join("\n").replace(/\n+$/u, "")}`;
+  return { before, suffix };
+}
+
+function markLivePolicyObservationFailed(
+  output: string,
+  sandboxName: string,
+  error: OpenShellSandboxError,
+): string {
+  const sections = sandboxPolicyOutputSections(output);
+  const before = sections?.before ?? `${String(output).replace(/\n+$/u, "")}\n\nPolicy:`;
+  return [
+    before,
+    "",
+    "  Live effective policy was not observed.",
+    `  Warning: ${error.message}`,
+    `  Check \`openshell status\`, then retry \`${CLI_NAME} ${sandboxName} status\` or inspect the base policy with \`${CLI_NAME} ${sandboxName} policy get\`.${sections?.suffix ?? ""}`,
+    "",
+  ].join("\n");
+}
+
+function policyObservationFailureState(
+  output: string,
+  phase: string | null,
+  sandboxName: string,
+  error: OpenShellSandboxError,
+): SandboxGatewayState {
+  return {
+    state: "present",
+    output: markLivePolicyObservationFailed(output, sandboxName, error),
+    phase,
+    policyObservationError: error,
+  };
 }
 
 /** Query sandbox presence and return its output with the live enforced policy. */
@@ -432,7 +475,6 @@ export async function getSandboxGatewayState(
   // Preserve the current CLI-formatted status display without putting it in
   // the transport-neutral observation contract. Presence and phase decisions
   // do not parse this text.
-  let output = observed.displayOutput;
   if (lookup.value.state === "present") {
     const livePolicy = await readPolicy({
       target: sandboxObservationTarget(gatewayName),
@@ -440,14 +482,23 @@ export async function getSandboxGatewayState(
       scope: "effective",
       timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
     });
-    if (livePolicy.ok) {
-      output = mergeLivePolicyIntoSandboxOutput(
-        output,
-        livePolicy.value.document,
-        livePolicy.value.appliedRevision,
+    if (!livePolicy.ok) {
+      return policyObservationFailureState(
+        observed.displayOutput,
+        lookup.value.sandbox.phase,
+        sandboxName,
+        livePolicy.error,
       );
     }
-    return { state: "present", output, phase: lookup.value.sandbox.phase };
+    return {
+      state: "present",
+      output: mergeLivePolicyIntoSandboxOutput(
+        observed.displayOutput,
+        livePolicy.value.document,
+        livePolicy.value.appliedRevision,
+      ),
+      phase: lookup.value.sandbox.phase,
+    };
   }
   return { state: "unknown_error", output: "OpenShell returned an unknown sandbox state." };
 }
@@ -500,7 +551,6 @@ export async function getSandboxGatewayStateForStatus(
   // Preserve the current CLI-formatted status display without putting it in
   // the transport-neutral observation contract. Presence and phase decisions
   // do not parse this text.
-  let output = observed.displayOutput;
   if (lookup.value.state === "present") {
     const livePolicy = await readPolicy({
       target: sandboxObservationTarget(gatewayName),
@@ -508,14 +558,23 @@ export async function getSandboxGatewayStateForStatus(
       scope: "effective",
       timeoutMs,
     });
-    if (livePolicy.ok) {
-      output = mergeLivePolicyIntoSandboxOutput(
-        output,
-        livePolicy.value.document,
-        livePolicy.value.appliedRevision,
+    if (!livePolicy.ok) {
+      return policyObservationFailureState(
+        observed.displayOutput,
+        lookup.value.sandbox.phase,
+        sandboxName,
+        livePolicy.error,
       );
     }
-    return { state: "present", output, phase: lookup.value.sandbox.phase };
+    return {
+      state: "present",
+      output: mergeLivePolicyIntoSandboxOutput(
+        observed.displayOutput,
+        livePolicy.value.document,
+        livePolicy.value.appliedRevision,
+      ),
+      phase: lookup.value.sandbox.phase,
+    };
   }
   return { state: "unknown_error", output: "OpenShell returned an unknown sandbox state." };
 }

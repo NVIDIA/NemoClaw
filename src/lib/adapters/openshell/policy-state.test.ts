@@ -9,6 +9,7 @@ import {
   assertOpenShellGatewayPortBinding,
   captureSandboxBasePolicy,
   captureSandboxBasePolicyRevision,
+  captureSandboxEffectivePolicy,
   inspectActiveGlobalPolicy,
   inspectSandboxPolicy,
   isPolicyObservationError,
@@ -83,6 +84,20 @@ describe("OpenShell policy observation", () => {
       ) as never,
     );
     expect(captureSandboxBasePolicy("alpha", "nemoclaw")).toBe("version: 1\nnetwork_policies: {}");
+  });
+
+  it("reads effective policy with the caller's bounded timeout", () => {
+    const spy = vi
+      .spyOn(openshellRuntime, "captureResolvedOpenshell")
+      .mockReturnValue(capture("Version: 3\n---\nversion: 1\nnetwork_policies: {}\n") as never);
+
+    expect(captureSandboxEffectivePolicy("alpha", "nemoclaw", 2_500)).toBe(
+      "version: 1\nnetwork_policies: {}",
+    );
+    expect(spy).toHaveBeenCalledWith(
+      ["policy", "get", "-g", "nemoclaw", "--full", "alpha"],
+      expect.objectContaining({ timeout: 2_500 }),
+    );
   });
 
   it("reads an immutable base-policy revision through the selected gateway", () => {

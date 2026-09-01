@@ -68,6 +68,7 @@ const sourceOrGeneratedOpenShellPolicyBoundary =
   };
 const {
   assertPolicyRequirementContainment,
+  buildOpenShellSandboxPolicyReadArgs,
   classifyOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyMetadata,
   parseOpenShellPolicy,
@@ -591,10 +592,7 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
 }
 
 function blueprintBasePoliciesMatch(left: string, right: string): boolean {
-  return isDeepStrictEqual(
-    parseOpenShellPolicy(left).policy,
-    parseOpenShellPolicy(right).policy,
-  );
+  return isDeepStrictEqual(parseOpenShellPolicy(left).policy, parseOpenShellPolicy(right).policy);
 }
 
 function assertNoConflictingBlueprintPolicyChange(
@@ -839,7 +837,14 @@ function blueprintPolicyRequirementsSatisfied(
 async function readBlueprintBasePolicy(gatewayName: string, sandboxName: string): Promise<string> {
   return (
     await runBlueprintInspectionCommand(
-      ["openshell", "policy", "get", "-g", gatewayName, "--base", sandboxName],
+      [
+        "openshell",
+        ...buildOpenShellSandboxPolicyReadArgs({
+          sandboxName,
+          gatewayName,
+          scope: "base",
+        }),
+      ],
       gatewayName,
       { kind: "state", subject: "policy" },
     )

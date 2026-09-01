@@ -284,7 +284,7 @@ describe("shields command flow", () => {
     expect(alphaState.shieldsPolicySnapshotPath).not.toBe(
       reusedAlphaState.shieldsPolicySnapshotPath,
     );
-    expect(fs.readFileSync(alphaState.shieldsPolicySnapshotPath, "utf-8")).toBe(alphaPolicy);
+    expect(fs.readFileSync(alphaState.shieldsPolicySnapshotPath, "utf-8")).toBe(alphaPolicy.trim());
     expect(
       fs
         .readdirSync(stateDir)

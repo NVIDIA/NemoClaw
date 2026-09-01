@@ -43,7 +43,6 @@ import { findAvailableHermesApiPort, HERMES_API_PORT_ENV } from "../../onboard/h
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import { cleanupTempDir, secureTempFile } from "../../onboard/temp-files";
 import * as policies from "../../policy";
-import { buildPolicyGetArgs } from "../../policy/commands";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
@@ -377,9 +376,16 @@ async function prepareSnapshotClonePolicy(
   cleanup?: () => boolean;
 }> {
   const gatewayName = resolveSandboxGatewayName(srcEntry);
-  const raw = captureOpenshell(buildPolicyGetArgs(srcEntry.name, gatewayName)).output;
-  const policy = policies.parseCurrentPolicy(raw);
-  if (!policy) throw new Error(`Cannot read the live OpenShell policy for '${srcEntry.name}'.`);
+  const policyRead = policies.readSandboxPolicyWithCapture({
+    capture: (args, options) => captureOpenshell(args, options),
+    gatewayName,
+    sandboxName: srcEntry.name,
+    scope: "base",
+  });
+  if (!policyRead.ok) {
+    throw new Error(`Cannot read the live OpenShell policy for '${srcEntry.name}'.`);
+  }
+  const policy = policyRead.value.document;
   const policyPath = secureTempFile("nemoclaw-clone-policy", ".yaml");
   fs.writeFileSync(policyPath, policy, { mode: 0o600 });
   return {

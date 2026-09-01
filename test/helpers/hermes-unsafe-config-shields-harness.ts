@@ -271,25 +271,14 @@ export function createHermesUnsafeConfigHarness(
       auditSpy = vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
       errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies:\n  test: {}\n");
-      vi.spyOn(policy, "buildPolicyGetCommand").mockImplementation((name: unknown) => [
-        "policy",
-        "get",
-        String(name),
-      ]);
       vi.spyOn(policy, "buildPolicySetCommand").mockImplementation(
         (file: unknown, name: unknown) => ["policy", "set", String(file), String(name)],
       );
       vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw));
       vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(permissivePolicyPath);
-      vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(
-        livePolicyMutationContext,
-      );
-      vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(
-        livePolicyMutationContext,
-      );
-      vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(
-        livePolicyMutationContext,
-      );
+      vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext);
+      vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(livePolicyMutationContext);
+      vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(livePolicyMutationContext);
       vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined);
       vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue(hermesTarget);
       vi.spyOn(registry, "getSandbox").mockImplementation((name: unknown) => ({

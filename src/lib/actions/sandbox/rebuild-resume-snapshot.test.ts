@@ -70,9 +70,9 @@ describe("rebuild resume snapshot repair", () => {
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     spies.push(
-      vi.spyOn(rebuildRecreateJournal, "recordRebuildRecoveryBackup").mockImplementation(
-        () => undefined,
-      ),
+      vi
+        .spyOn(rebuildRecreateJournal, "recordRebuildRecoveryBackup")
+        .mockImplementation(() => undefined),
     );
 
     session = onboardSession.createSession({
@@ -255,7 +255,7 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(policyGet, "getSandboxPolicy").mockReturnValue({
         raw: "version: 1\nnetwork_policies: {}\n",
         yaml: "version: 1\nnetwork_policies: {}\n",
-      }),
+      } as never),
       vi
         .spyOn(rebuildOnboardDependencies, "onboard")
         .mockImplementation(async (options: unknown) => {

@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 
+import { readSandboxPolicyWithCapture } from "../../adapters/openshell/policy-state";
 import type { AgentDefinition } from "../../agent/defs";
 import { log } from "../../cli/logger";
 import {
@@ -652,12 +653,18 @@ function validateLivePolicy(
   gatewayName: string,
   deps: LaunchReadinessDeps,
 ): void {
-  const result = (
-    deps.capture ?? ((args) => captureLaunchReadiness(args, { maxBuffer: LIVE_POLICY_MAX_BYTES }))
-  )(["policy", "get", "-g", gatewayName, "--full", sandboxName]);
-  if (result.status !== 0 || !result.output?.trim()) throw new LaunchReadinessEvidenceError();
+  const capture =
+    deps.capture ??
+    ((args: string[]) => captureLaunchReadiness(args, { maxBuffer: LIVE_POLICY_MAX_BYTES }));
+  const result = readSandboxPolicyWithCapture({
+    capture: (args) => capture(args),
+    gatewayName,
+    sandboxName,
+    scope: "effective",
+  });
+  if (!result.ok) throw new LaunchReadinessEvidenceError();
   try {
-    parseAndValidateSandboxPolicy(result.output);
+    parseAndValidateSandboxPolicy(result.value.document);
   } catch {
     throw new LaunchReadinessEvidenceError();
   }
@@ -1187,9 +1194,7 @@ export async function settlePortableOpenClawPairing(
         );
         runProducer(sandboxName, target.gatewayName);
       }
-      revalidateSandboxIdentity?.(
-        `approve Portable OpenClaw pairing for sandbox '${sandboxName}'`,
-      );
+      revalidateSandboxIdentity?.(`approve Portable OpenClaw pairing for sandbox '${sandboxName}'`);
       runApproval(sandboxName, target.gatewayName, first.deviceIdentitySha256);
 
       const finalDeadline = Math.min(

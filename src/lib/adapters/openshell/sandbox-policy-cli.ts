@@ -1,14 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { parseOpenShellPolicy } from "../../policy/merge";
-import { captureOpenshellCommand } from "./client";
+import { buildOpenShellSandboxPolicyReadArgs, parseOpenShellPolicy } from "../../policy/merge";
+import { captureOpenshellCommand, stripAnsi } from "./client";
 import { openshellNotFoundDiagnosticLines, tryResolveOpenshellBinary } from "./command-argv";
 import { type OpenShellSandboxError, type OpenShellSandboxResult } from "./sandbox-observer";
 import {
   type OpenShellSandboxPolicyRead,
   type OpenShellSandboxPolicyReader,
   type ReadOpenShellSandboxPolicyRequest,
+  type SyncOpenShellSandboxPolicyReader,
 } from "./sandbox-policy";
 
 export { namedOpenShellGateway, selectedOpenShellGateway } from "./sandbox-observer";
@@ -32,8 +33,23 @@ export type CapturePolicyCommand = (
   },
 ) => CapturedPolicyCommandResult | Promise<CapturedPolicyCommandResult>;
 
+export type SyncCapturePolicyCommand = (
+  args: string[],
+  options: {
+    ignoreError: true;
+    includeStderr: true;
+    includeStreams: true;
+    timeout: number;
+  },
+) => CapturedPolicyCommandResult;
+
 export type CliOpenShellSandboxPolicyReaderDeps = Readonly<{
   capture: CapturePolicyCommand;
+  defaultTimeoutMs?: number;
+}>;
+
+export type SyncCliOpenShellSandboxPolicyReaderDeps = Readonly<{
+  capture: SyncCapturePolicyCommand;
   defaultTimeoutMs?: number;
 }>;
 
@@ -46,7 +62,6 @@ export type CliOpenShellSandboxPolicyRead = (
   request: ReadOpenShellSandboxPolicyRequest,
 ) => Promise<CliOpenShellSandboxPolicyReadResult>;
 
-const ANSI_RE = /\x1b\[[0-9;]*m/gu;
 const DEFAULT_POLICY_READ_TIMEOUT_MS = 15_000;
 
 const capturePolicyWithRunner: CapturePolicyCommand = (args, options) => {
@@ -60,10 +75,6 @@ const capturePolicyWithRunner: CapturePolicyCommand = (args, options) => {
   }
   return captureOpenshellCommand(executable, args, options);
 };
-
-function stripAnsi(value = ""): string {
-  return String(value).replace(ANSI_RE, "");
-}
 
 function diagnostic(result: CapturedPolicyCommandResult): string {
   return stripAnsi(result.stderr?.trim() ? result.stderr : (result.output ?? ""));
@@ -168,28 +179,37 @@ function parsePolicyRead(
   }
 }
 
+function policyReadArgs(request: ReadOpenShellSandboxPolicyRequest): string[] {
+  return buildOpenShellSandboxPolicyReadArgs({
+    sandboxName: request.sandboxName,
+    ...(request.target.kind === "named" ? { gatewayName: request.target.gatewayName } : {}),
+    scope: request.scope,
+  });
+}
+
+function capturedPolicyRead(
+  request: ReadOpenShellSandboxPolicyRequest,
+  captured: CapturedPolicyCommandResult,
+): CliOpenShellSandboxPolicyReadResult {
+  const displayOutput = (captured.stdout ?? captured.output ?? "").trim();
+  const commandFailure = classifyCommandFailure(captured);
+  if (commandFailure) {
+    return { result: { ok: false, error: commandFailure }, displayOutput: "" };
+  }
+  return { result: parsePolicyRead(request, displayOutput), displayOutput };
+}
+
 export function createCliOpenShellSandboxPolicyRead(
   deps: CliOpenShellSandboxPolicyReaderDeps,
 ): CliOpenShellSandboxPolicyRead {
   return async (request) => {
-    const targetArgs = request.target.kind === "named" ? ["-g", request.target.gatewayName] : [];
-    const captured = await deps.capture(
-      request.scope === "base"
-        ? ["policy", "get", ...targetArgs, "--base", request.sandboxName]
-        : ["policy", "get", ...targetArgs, "--full", request.sandboxName],
-      {
-        ignoreError: true,
-        includeStderr: true,
-        includeStreams: true,
-        timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? DEFAULT_POLICY_READ_TIMEOUT_MS,
-      },
-    );
-    const displayOutput = (captured.stdout ?? captured.output ?? "").trim();
-    const commandFailure = classifyCommandFailure(captured);
-    if (commandFailure) {
-      return { result: { ok: false, error: commandFailure }, displayOutput: "" };
-    }
-    return { result: parsePolicyRead(request, displayOutput), displayOutput };
+    const captured = await deps.capture(policyReadArgs(request), {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? DEFAULT_POLICY_READ_TIMEOUT_MS,
+    });
+    return capturedPolicyRead(request, captured);
   };
 }
 
@@ -199,6 +219,24 @@ export function createCliOpenShellSandboxPolicyReader(
   const read = createCliOpenShellSandboxPolicyRead(deps);
   return {
     readSandboxPolicy: async (request) => (await read(request)).result,
+  };
+}
+
+/** Create a synchronous typed reader for existing transactional callers. */
+export function createSyncCliOpenShellSandboxPolicyReader(
+  deps: SyncCliOpenShellSandboxPolicyReaderDeps,
+): SyncOpenShellSandboxPolicyReader {
+  return {
+    readSandboxPolicy: (request) =>
+      capturedPolicyRead(
+        request,
+        deps.capture(policyReadArgs(request), {
+          ignoreError: true,
+          includeStderr: true,
+          includeStreams: true,
+          timeout: request.timeoutMs ?? deps.defaultTimeoutMs ?? DEFAULT_POLICY_READ_TIMEOUT_MS,
+        }),
+      ).result,
   };
 }
 

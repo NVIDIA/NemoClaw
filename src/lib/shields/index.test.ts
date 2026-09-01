@@ -21,7 +21,6 @@ vi.mock("../runner", () => ({
 }));
 
 vi.mock("../policy", () => ({
-  buildPolicyGetCommand: vi.fn((name) => ["openshell", "policy", "get", "--base", name]),
   buildPolicySetCommand: vi.fn((file, name) => [
     "openshell",
     "policy",

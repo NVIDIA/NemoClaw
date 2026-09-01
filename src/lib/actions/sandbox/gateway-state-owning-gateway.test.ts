@@ -96,6 +96,52 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
     );
   });
 
+  it.each([
+    ["sandbox state", getSandboxGatewayState],
+    ["sandbox status", getSandboxGatewayStateForStatus],
+  ])("preserves a failed effective-policy observation for %s", async (_label, getState) => {
+    vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
+    const lookupSandbox = vi.fn(async () => ({
+      result: {
+        ok: true as const,
+        value: {
+          state: "present" as const,
+          sandbox: {
+            name: "beta",
+            phase: "Ready",
+            readiness: "ready" as const,
+          },
+        },
+      },
+      displayOutput: [
+        "Sandbox:",
+        "  Name: beta",
+        "Policy:",
+        "  schema-stub: true",
+        "  Phase: Ready",
+      ].join("\n"),
+    }));
+    const policyError = {
+      kind: "transport" as const,
+      reason: "unreachable" as const,
+      message: "OpenShell could not reach the selected gateway.",
+    };
+    const readPolicy = vi.fn(async () => ({ ok: false as const, error: policyError }));
+
+    const result = await getState("beta", "nemoclaw-8091", lookupSandbox, readPolicy);
+
+    expect(result).toMatchObject({
+      state: "present",
+      phase: "Ready",
+      policyObservationError: policyError,
+    });
+    expect(result.output).toContain("Live effective policy was not observed.");
+    expect(result.output).toContain("OpenShell could not reach the selected gateway.");
+    expect(result.output).toContain("nemoclaw beta policy get");
+    expect(result.output).toContain("Phase: Ready");
+    expect(result.output).not.toContain("schema-stub");
+  });
+
   it("rejects endpoint routing before a status RPC can bypass the owner", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://sibling.invalid");
     const syncCapture = vi.spyOn(openshellRuntime, "captureOpenshell");

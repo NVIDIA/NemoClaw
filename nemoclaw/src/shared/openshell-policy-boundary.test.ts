@@ -6,6 +6,7 @@ import YAML from "yaml";
 
 import {
   assertPolicyRequirementContainment,
+  buildOpenShellSandboxPolicyReadArgs,
   classifyOpenShellGlobalPolicyHistory,
   parseActiveGlobalPolicyMetadata,
   parseOpenShellPolicy,
@@ -15,6 +16,21 @@ import {
 } from "./openshell-policy-boundary.cjs";
 
 describe("OpenShell policy boundary", () => {
+  it.each([
+    [
+      "named base",
+      { sandboxName: "alpha", gatewayName: "nemoclaw", scope: "base" as const },
+      ["policy", "get", "-g", "nemoclaw", "--base", "alpha"],
+    ],
+    [
+      "selected effective",
+      { sandboxName: "alpha", scope: "effective" as const },
+      ["policy", "get", "--full", "alpha"],
+    ],
+  ])("builds %s policy read arguments", (_label, input, expected) => {
+    expect(buildOpenShellSandboxPolicyReadArgs(input)).toEqual(expected);
+  });
+
   it("parses sandbox policy metadata without assigning an owner", () => {
     expect(
       parseSandboxPolicyMetadata(
@@ -139,9 +155,7 @@ describe("OpenShell policy boundary", () => {
         ),
       ),
     ).toEqual({ version: 1, network_policies: { npm: {} } });
-    expect(() => stripProviderComposedPolicies("version: [unterminated")).toThrow(
-      /invalid YAML/,
-    );
+    expect(() => stripProviderComposedPolicies("version: [unterminated")).toThrow(/invalid YAML/);
   });
 
   it("classifies the OpenShell global history absence contract", () => {

@@ -15,6 +15,7 @@ const shieldsModulePath = "./index.js";
 
 export const livePolicyMutationContext = {
   gatewayName: "nemoclaw",
+  basePolicyDocument: "version: 1\nnetwork_policies:\n  test: {}\n",
   inspection: {
     policySource: "sandbox" as const,
     effectivePolicy: { version: 1, network_policies: {} },
@@ -310,14 +311,6 @@ export function createShieldsFlowHarness(
       };
     });
   }
-  vi.spyOn(policy, "buildPolicyGetCommand").mockImplementation(
-    (_sandboxName: unknown, gatewayName: unknown) => [
-      "openshell",
-      "policy",
-      "get",
-      ...(typeof gatewayName === "string" ? ["-g", gatewayName] : []),
-    ],
-  );
   vi.spyOn(policy, "buildPolicySetCommand").mockImplementation(
     (file: unknown, _sandbox, gateway) => {
       recordPolicySetBody(policySetBodies, file);
@@ -354,25 +347,29 @@ export function createShieldsFlowHarness(
         },
   );
   vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+  const livePolicyYaml = options.livePolicyYaml ?? "version: 1\nnetwork_policies:\n  test: {}\n";
   const policyInspection = options.policyInspection ?? {
     policySource: "sandbox" as const,
-    effectivePolicy: YAML.parse(
-      options.livePolicyYaml ?? "version: 1\nnetwork_policies:\n  test: {}\n",
-    ) as Record<string, unknown>,
+    effectivePolicy: YAML.parse(livePolicyYaml) as Record<string, unknown>,
     policyIdentity: { hash: "managed-policy-hash", activeVersion: 1 },
   };
   vi.spyOn(policyState, "inspectSandboxPolicy").mockReturnValue(policyInspection);
-  const policyMutationAuthority = {
-    gatewayName: options.sandboxEntry?.gatewayName ?? "nemoclaw",
+  const gatewayName = options.sandboxEntry?.gatewayName ?? "nemoclaw";
+  const sandboxName = options.sandboxName ?? "openclaw";
+  const policyMutationAuthority = () => ({
+    gatewayName,
+    basePolicyDocument: String(
+      runner.runCapture(["policy", "get", "-g", gatewayName, "--base", sandboxName]),
+    ),
     inspection: policyInspection,
-  };
+  });
   const policyStateSpy = vi
     .spyOn(policy, "inspectPolicyMutationContext")
-    .mockReturnValue(policyMutationAuthority);
+    .mockImplementation(policyMutationAuthority);
   const policyRecoveryAuthoritySpy = vi
     .spyOn(policy, "inspectPolicyMutationContext")
-    .mockReturnValue(policyMutationAuthority);
-  vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(policyMutationAuthority);
+    .mockImplementation(policyMutationAuthority);
+  vi.spyOn(policy, "recheckPolicyMutationContext").mockImplementation(policyMutationAuthority);
   const policyVerificationSpy = vi
     .spyOn(policy, "verifyAppliedPolicyDocument")
     .mockImplementation(() => undefined);
