@@ -13,6 +13,7 @@ import { retryUntilAsync } from "../../core/retry";
 
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import {
+  buildGatewayInferenceGetArgs,
   type GatewayInference,
   parseGatewayInference,
   planInferenceRouteReconcile,
@@ -29,15 +30,10 @@ import {
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
-import { getBaselineExclusionRuntimeStatus } from "../../policy";
-import type { BaselineExclusionRuntimeStatus } from "../../policy/baseline-exclusion";
+import { getGatewayPresets } from "../../policy";
 import { redact } from "../../security/redact";
-import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
-import {
-  buildGatewayInferenceGetArgs,
-  canSandboxGatewayRouteRealign,
-} from "./connect-inference-gateway";
+import { canSandboxGatewayRouteRealign } from "./connect-inference-gateway";
 import { getSandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
 import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
@@ -178,15 +174,8 @@ export interface SandboxStatusReport {
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
-  /** Baseline network policy keys the operator has excluded, replayed on rebuild. */
-  baselineExclusions: string[];
-  /** Observed enforcement state for each recorded baseline exclusion. */
-  baselineExclusionStates: Array<{ key: string; status: BaselineExclusionRuntimeStatus }>;
-  /** Interrupted cross-system policy mutation that must be reconciled before rebuild. */
-  baselineExclusionTransition: {
-    operation: registry.BaselineExclusionTransitionOperation;
-    key: string;
-  } | null;
+  /** False when the live OpenShell policy could not be read or parsed. */
+  policiesAvailable: boolean;
   failureLayer: SandboxStatusFailureLayer | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
   /**
@@ -269,7 +258,7 @@ export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatus
 type ReconcileSandboxGatewayState = (sandboxName: string) => Promise<SandboxGatewayState>;
 type ProbeTerminalRuntimeHealth = (sandboxName: string) => TerminalRuntimeOomProbeResult;
 type RecoverSandboxProcesses =
-  typeof import("./status/process-recovery")["checkAndRecoverSandboxProcesses"];
+  (typeof import("./status/process-recovery"))["checkAndRecoverSandboxProcesses"];
 type SandboxProcessRecoveryResult = ReturnType<RecoverSandboxProcesses>;
 
 type SandboxProcessRecoveryFailure = {
@@ -304,7 +293,7 @@ interface CollectSandboxStatusSnapshotDeps {
   recoverSandboxProcesses?: RecoverSandboxProcesses;
   reconcile?: ReconcileSandboxGatewayState;
   getSandboxStatusPreflightImpl?: typeof getSandboxStatusPreflight;
-  getBaselineExclusionRuntimeStatus?: typeof getBaselineExclusionRuntimeStatus;
+  getGatewayPresets?: typeof getGatewayPresets;
 }
 
 function sanitizedStatusDetail(error: unknown): string {
@@ -435,7 +424,7 @@ export async function collectSandboxStatusSnapshot(
     lookup.state === "present" &&
     sb?.openshellDriver === "docker" &&
     (sb.agent ?? "openclaw") === "openclaw" &&
-    parseSandboxPhase(lookup.output || "") === "Ready" &&
+    lookup.phase === "Ready" &&
     !opts.preflight?.failure;
   let recoveredManagedGateway = false;
   if (
@@ -535,13 +524,13 @@ export async function collectSandboxStatusSnapshot(
           recorded: routeDriftPlan.recorded,
           canConnect: Boolean(
             sb &&
-              gatewayName &&
-              canSandboxGatewayRouteRealign(
-                sandboxName,
-                sb,
-                gatewayName,
-                (opts.deps?.listSandboxes ?? registry.listSandboxes)().sandboxes,
-              ),
+            gatewayName &&
+            canSandboxGatewayRouteRealign(
+              sandboxName,
+              sb,
+              gatewayName,
+              (opts.deps?.listSandboxes ?? registry.listSandboxes)().sandboxes,
+            ),
           ),
         }
       : null;
@@ -608,12 +597,14 @@ export async function collectSandboxStatusSnapshot(
       const attempts = recoveredManagedGateway ? RECOVERED_INFERENCE_PROBE_ATTEMPTS : 1;
       await retryUntilAsync(
         async () => {
-          gatewayChain = await probe(sandboxName);
+          gatewayChain = gatewayName ? await probe(sandboxName, { gatewayName }) : null;
           invocation =
             gatewayChain?.ok && canProbeInvocation
               ? runSandboxInferenceInvocationProbe(
                   {
                     sandboxName,
+                    gatewayName: gatewayName ?? undefined,
+                    ...(sb?.agent === "langchain-deepagents-code" ? { agentName: sb.agent } : {}),
                     provider: invocationProvider,
                     model: invocationModel,
                     preferredInferenceApi: invocationRoute.preferredInferenceApi,
@@ -645,7 +636,10 @@ export async function collectSandboxStatusSnapshot(
       gatewayChain = null;
       invocation = null;
     }
-    inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation);
+    inferenceHealth = buildSandboxInferenceRouteHealth(gatewayChain, providerHealth, invocation, {
+      agentName: sb?.agent ?? null,
+      provider: invocationRoute.provider ?? null,
+    });
   }
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   const terminalRuntimeHealth =
@@ -717,32 +711,14 @@ async function buildSandboxStatusReport(
     terminalRuntimeHealth,
   } = snapshot;
   const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
-  const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
+  const phase = lookup.state === "present" ? (lookup.phase ?? null) : null;
   const effectivePreflight = withoutTerminalPhasePreflight(
     snapshot.postRecoveryPreflight ?? preflight,
     phase,
   );
   const sandboxGpuEnabled = sb ? (sb.sandboxGpuEnabled ?? sb.gpuEnabled === true) : false;
   const hostMounts = normalizeSandboxStatusHostMounts(sb?.hostMounts);
-  const policies =
-    sb && Array.isArray(sb.policies)
-      ? sb.policies.filter((policy): policy is string => typeof policy === "string")
-      : [];
-  const baselineExclusions = sb?.baselineExclusions?.map((exclusion) => exclusion.key) ?? [];
-  const baselineExclusionStates =
-    sb?.baselineExclusions?.map((exclusion) => ({
-      key: exclusion.key,
-      status: (deps.getBaselineExclusionRuntimeStatus ?? getBaselineExclusionRuntimeStatus)(
-        sandboxName,
-        exclusion,
-      ),
-    })) ?? [];
-  const baselineExclusionTransition = sb?.baselineExclusionTransition
-    ? {
-        operation: sb.baselineExclusionTransition.operation,
-        key: sb.baselineExclusionTransition.exclusion.key,
-      }
-    : null;
+  const livePolicies = sb ? (deps.getGatewayPresets ?? getGatewayPresets)(sandboxName) : [];
   const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   return {
     schemaVersion: 1,
@@ -775,10 +751,8 @@ async function buildSandboxStatusReport(
     hostMounts,
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
-    policies,
-    baselineExclusions,
-    baselineExclusionStates,
-    baselineExclusionTransition,
+    policies: livePolicies ?? [],
+    policiesAvailable: livePolicies !== null,
     failureLayer: effectivePreflight.failureLayer,
     terminalRuntimeHealth,
     dockerPaused: !!dockerRuntime?.paused,

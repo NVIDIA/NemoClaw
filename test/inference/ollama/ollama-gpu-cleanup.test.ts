@@ -1,21 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import childProcess, { type SpawnSyncReturns } from "node:child_process";
-import path from "node:path";
+import type { SpawnSyncReturns } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
-const modulePath = path.join(
-  import.meta.dirname,
-  "../../..",
-  "src",
-  "lib",
-  "inference",
-  "ollama",
-  "proxy.ts",
-);
+import { unloadOllamaModels as unloadOllamaModelsImpl } from "../../../src/lib/inference/ollama/proxy.js";
 
 type SpawnCall = { command: string; args: readonly string[] };
+type SpawnSync = (typeof import("node:child_process"))["spawnSync"];
+type OllamaModules = {
+  unloadOllamaModels: (typeof import("../../../src/lib/inference/ollama/proxy.ts"))["unloadOllamaModels"];
+};
 
 function ok(stdout = ""): SpawnSyncReturns<string> {
   return {
@@ -41,31 +36,33 @@ function fail(stderr = "couldn't connect"): SpawnSyncReturns<string> {
 
 function withMockedSpawnSync<T>(
   responder: (call: SpawnCall) => SpawnSyncReturns<string>,
-  fn: (calls: SpawnCall[]) => T,
-): T {
+  fn: (calls: SpawnCall[], modules: OllamaModules) => T | Promise<T>,
+  ollamaHost = "127.0.0.1",
+): T | Promise<T> {
   const calls: SpawnCall[] = [];
-  const original = childProcess.spawnSync;
-  // @ts-expect-error — partial mock signature is intentional.
-  childProcess.spawnSync = (command: string, args: readonly string[]) => {
+  const spawnSync = ((command: string, args: readonly string[]) => {
     const call = { command, args };
     calls.push(call);
     return responder(call);
-  };
-  try {
-    delete require.cache[require.resolve(modulePath)];
-    return fn(calls);
-  } finally {
-    childProcess.spawnSync = original;
-    delete require.cache[require.resolve(modulePath)];
-  }
+  }) as SpawnSync;
+  const unloadOllamaModels: typeof unloadOllamaModelsImpl = (onlyModels, options) =>
+    unloadOllamaModelsImpl(onlyModels, {
+      ...options,
+      getResolvedOllamaHost: () => ollamaHost,
+      spawnSync,
+    });
+  return fn(calls, { unloadOllamaModels });
 }
 
-/** Answer /api/ps with the named models loaded, and every other call with an empty 200. */
+/** Report the named models until their keep_alive:0 request succeeds. */
 function respondWithLoadedModels(...names: string[]) {
+  const loaded = new Set(names);
   return ({ args }: SpawnCall): SpawnSyncReturns<string> =>
-    args.some((a) => a.endsWith("/api/ps"))
-      ? ok(JSON.stringify({ models: names.map((name) => ({ name })) }))
-      : ok();
+    args.some((arg) => arg.endsWith("/api/ps"))
+      ? ok(JSON.stringify({ models: [...loaded].map((name) => ({ name })) }))
+      : (args.includes("POST") &&
+          loaded.delete((JSON.parse(args[args.indexOf("-d") + 1]) as { model: string }).model),
+        ok());
 }
 
 /** The endpoint path and POST body of each unload request, in the order issued. */
@@ -83,20 +80,43 @@ function unloadOf(model: string) {
 }
 
 describe("Ollama GPU cleanup", () => {
-  it("calls curl synchronously to unload every running model via /api/generate", () => {
-    withMockedSpawnSync(
-      ({ args }) => {
-        if (args.some((a) => a.endsWith("/api/ps"))) {
-          return ok(JSON.stringify({ models: [{ name: "llama3.1:8b" }, { name: "qwen:7b" }] }));
-        }
-        return ok();
-      },
-      (calls) => {
-        const { unloadOllamaModels } = require(modulePath);
-        unloadOllamaModels();
+  it("uses the resolved local Ollama host for discovery, release, and verification (#10074)", async () => {
+    await withMockedSpawnSync(
+      respondWithLoadedModels("llama3.2:1b"),
+      (calls, { unloadOllamaModels }) => {
+        const result = unloadOllamaModels(["llama3.2:1b"], { sleep: () => {} });
 
+        expect(result).toMatchObject({
+          ok: true,
+          outcome: "released",
+          endpoint: "http://host.docker.internal:11434",
+        });
+        expect(
+          calls.filter(({ command }) => command === "curl").map(({ args }) => args.at(-1)),
+        ).toEqual([
+          "http://host.docker.internal:11434/api/ps",
+          "http://host.docker.internal:11434/api/generate",
+          "http://host.docker.internal:11434/api/ps",
+        ]);
+      },
+      "host.docker.internal",
+    );
+  });
+
+  it("unloads every running model through the Ollama API", async () => {
+    await withMockedSpawnSync(
+      respondWithLoadedModels("llama3.1:8b", "qwen:7b"),
+      (calls, { unloadOllamaModels }) => {
+        const result = unloadOllamaModels();
+
+        expect(result).toMatchObject({
+          ok: true,
+          outcome: "released",
+          endpoint: "http://127.0.0.1:11434",
+          selectedModels: ["llama3.1:8b", "qwen:7b"],
+        });
         const curlCalls = calls.filter(({ command }) => command === "curl");
-        expect(curlCalls).toHaveLength(3);
+        expect(curlCalls).toHaveLength(4);
 
         expect(curlCalls[0].args).toContain("--max-time");
         expect(curlCalls[0].args[curlCalls[0].args.length - 1]).toMatch(/\/api\/ps$/);
@@ -113,59 +133,67 @@ describe("Ollama GPU cleanup", () => {
     );
   });
 
-  it("returns silently when /api/ps fails (Ollama not running)", () => {
-    withMockedSpawnSync(
+  it("returns bounded discovery failure evidence when /api/ps is unreachable (#10074)", async () => {
+    await withMockedSpawnSync(
       () => fail(),
-      (calls) => {
-        const { unloadOllamaModels } = require(modulePath);
-        expect(() => unloadOllamaModels()).not.toThrow();
-        expect(calls).toHaveLength(1);
+      (calls, { unloadOllamaModels }) => {
+        const result = unloadOllamaModels(["llama3.2:1b"], { sleep: () => {} });
+
+        expect(result).toMatchObject({
+          ok: false,
+          outcome: "discovery-failed",
+          endpoint: "http://127.0.0.1:11434",
+          selectedModels: ["llama3.2:1b"],
+        });
+        expect(result.discoveries).toHaveLength(3);
+        expect(result.discoveries[2]).toMatchObject({ attempt: 3, status: 7 });
+        expect(calls).toHaveLength(3);
         expect(calls[0].args[calls[0].args.length - 1]).toMatch(/\/api\/ps$/);
       },
     );
   });
 
-  it("does not unload anything when Ollama reports no loaded models", () => {
-    withMockedSpawnSync(
+  it("does not unload anything when Ollama reports no loaded models", async () => {
+    await withMockedSpawnSync(
       ({ args }) => {
         if (args.some((a) => a.endsWith("/api/ps"))) {
           return ok(JSON.stringify({ models: [] }));
         }
         return ok();
       },
-      (calls) => {
-        const { unloadOllamaModels } = require(modulePath);
-        unloadOllamaModels();
+      (calls, { unloadOllamaModels }) => {
+        expect(unloadOllamaModels()).toMatchObject({ ok: true, outcome: "not-resident" });
         expect(calls).toHaveLength(1);
       },
     );
   });
 
-  it("ignores malformed JSON from /api/ps without throwing", () => {
-    withMockedSpawnSync(
-      ({ args }) => {
-        if (args.some((a) => a.endsWith("/api/ps"))) {
-          return ok("not-json");
-        }
-        return ok();
-      },
-      (calls) => {
-        const { unloadOllamaModels } = require(modulePath);
-        expect(() => unloadOllamaModels()).not.toThrow();
+  it.each([
+    ["malformed JSON", "not-json"],
+    ["a missing models array", "{}"],
+    ["a malformed model row", JSON.stringify({ models: [{}] })],
+  ])("returns discovery failure evidence for %s from /api/ps (#10074)", async (_label, body) => {
+    await withMockedSpawnSync(
+      ({ args }) => (args.some((a) => a.endsWith("/api/ps")) ? ok(body) : ok()),
+      (calls, { unloadOllamaModels }) => {
+        const result = unloadOllamaModels(["llama3.2:1b"]);
+
+        expect(result).toMatchObject({ ok: false, outcome: "discovery-failed" });
+        expect(result.discoveries[0].error).toContain("Ollama /api/ps");
         expect(calls).toHaveLength(1);
       },
     );
   });
 
-  it("unloads only the named models when a filter is supplied (#9110)", () => {
-    withMockedSpawnSync(
+  it("unloads only the named models when a filter is supplied (#9110)", async () => {
+    await withMockedSpawnSync(
       respondWithLoadedModels("keep-me:7b", "drop-me:7b"),
-      (calls) => {
-        const { unloadOllamaModels } = require(modulePath);
-        unloadOllamaModels(["drop-me:7b"]);
+      (calls, { unloadOllamaModels }) => {
+        const result = unloadOllamaModels(["drop-me:7b"]);
 
+        expect(result).toMatchObject({ ok: true, outcome: "released" });
         const curlCalls = calls.filter(({ command }) => command === "curl");
-        expect(curlCalls).toHaveLength(2);
+        expect(curlCalls).toHaveLength(3);
         expect(unloadRequests(curlCalls)).toEqual([unloadOf("drop-me:7b")]);
       },
     );
@@ -174,25 +202,131 @@ describe("Ollama GPU cleanup", () => {
   it.each([
     ["an untagged filter against a tagged daemon entry", "llama3", "llama3:latest"],
     ["a tagged filter against an untagged daemon entry", "llama3:latest", "llama3"],
-  ])("matches %s (#9110)", (_label, filterRef, loadedRef) => {
-    withMockedSpawnSync(respondWithLoadedModels(loadedRef), (calls) => {
-      const { unloadOllamaModels } = require(modulePath);
-      unloadOllamaModels([filterRef]);
+  ])("matches %s (#9110)", async (_label, filterRef, loadedRef) => {
+    await withMockedSpawnSync(
+      respondWithLoadedModels(loadedRef),
+      (calls, { unloadOllamaModels }) => {
+        unloadOllamaModels([filterRef]);
 
-      expect(unloadRequests(calls)).toEqual([unloadOf(loadedRef)]);
-    });
+        expect(unloadRequests(calls)).toEqual([unloadOf(loadedRef)]);
+      },
+    );
   });
 
-  it("unloads every loaded model when the filter is empty (#9110)", () => {
-    withMockedSpawnSync(
+  it("unloads every loaded model when the filter is empty (#9110)", async () => {
+    await withMockedSpawnSync(
       respondWithLoadedModels("one:7b", "two:7b"),
-      (calls) => {
-        const { unloadOllamaModels } = require(modulePath);
-        unloadOllamaModels([]);
+      (calls, { unloadOllamaModels }) => {
+        const result = unloadOllamaModels([]);
 
+        expect(result).toMatchObject({ ok: true, outcome: "released" });
         const curlCalls = calls.filter(({ command }) => command === "curl");
-        expect(curlCalls).toHaveLength(3);
+        expect(curlCalls).toHaveLength(4);
         expect(unloadRequests(curlCalls)).toEqual([unloadOf("one:7b"), unloadOf("two:7b")]);
+      },
+    );
+  });
+
+  it("does not turn a blank scoped filter into a host-wide unload (#10074)", async () => {
+    await withMockedSpawnSync(
+      respondWithLoadedModels("keep-me:7b"),
+      (calls, { unloadOllamaModels }) => {
+        const result = unloadOllamaModels(["   "]);
+
+        expect(result).toMatchObject({ ok: true, outcome: "not-resident", selectedModels: [] });
+        expect(unloadRequests(calls)).toEqual([]);
+      },
+    );
+  });
+
+  it("surfaces a rejected unload POST without retrying a non-transient response (#10074)", async () => {
+    await withMockedSpawnSync(
+      ({ args }) =>
+        args.some((arg) => arg.endsWith("/api/ps"))
+          ? ok(JSON.stringify({ models: [{ name: "llama3.2:1b" }] }))
+          : { ...fail("HTTP 500"), status: 22 },
+      (calls, { unloadOllamaModels }) => {
+        const result = unloadOllamaModels(["llama3.2:1b"], { sleep: () => {} });
+
+        expect(result).toMatchObject({
+          ok: false,
+          outcome: "unload-request-failed",
+          message: "HTTP 500",
+        });
+        expect(result.requests).toEqual([
+          expect.objectContaining({ attempt: 1, model: "llama3.2:1b", status: 22 }),
+        ]);
+        expect(calls).toHaveLength(2);
+      },
+    );
+  });
+
+  it("retries a transient unload failure within the bounded attempt count (#10074)", async () => {
+    let postCount = 0;
+    let loaded = true;
+    await withMockedSpawnSync(
+      ({ args }) =>
+        args.some((arg) => arg.endsWith("/api/ps"))
+          ? ok(JSON.stringify({ models: loaded ? [{ name: "llama3.2:1b" }] : [] }))
+          : ((postCount += 1),
+            postCount === 1 ? fail("connection reset") : ((loaded = false), ok())),
+      (_calls, { unloadOllamaModels }) => {
+        const result = unloadOllamaModels(["llama3.2:1b"], { sleep: () => {} });
+
+        expect(result).toMatchObject({ ok: true, outcome: "released" });
+        expect(
+          result.requests.map(
+            ({ attempt, status }: { attempt: number; status: number | null }) => ({
+              attempt,
+              status,
+            }),
+          ),
+        ).toEqual([
+          { attempt: 1, status: 7 },
+          { attempt: 2, status: 0 },
+        ]);
+      },
+    );
+  });
+
+  it("fails after bounded verification while the selected model remains resident (#10074)", async () => {
+    await withMockedSpawnSync(
+      ({ args }) =>
+        args.some((arg) => arg.endsWith("/api/ps"))
+          ? ok(JSON.stringify({ models: [{ name: "llama3.2:1b" }] }))
+          : ok(),
+      (_calls, { unloadOllamaModels }) => {
+        const result = unloadOllamaModels(["llama3.2:1b"], { sleep: () => {} });
+
+        expect(result).toMatchObject({
+          ok: false,
+          outcome: "still-resident",
+          message: "Ollama still reports: llama3.2:1b",
+        });
+        expect(result.requests).toHaveLength(3);
+        expect(result.discoveries.at(-1)).toMatchObject({
+          attempt: 3,
+          matchedModels: ["llama3.2:1b"],
+        });
+      },
+    );
+  });
+
+  it("surfaces malformed post-release /api/ps verification (#10074)", async () => {
+    let discoveryCount = 0;
+    await withMockedSpawnSync(
+      ({ args }) =>
+        !args.some((arg) => arg.endsWith("/api/ps"))
+          ? ok()
+          : ((discoveryCount += 1),
+            discoveryCount === 1
+              ? ok(JSON.stringify({ models: [{ name: "llama3.2:1b" }] }))
+              : ok("not-json")),
+      (_calls, { unloadOllamaModels }) => {
+        const result = unloadOllamaModels(["llama3.2:1b"], { sleep: () => {} });
+
+        expect(result).toMatchObject({ ok: false, outcome: "discovery-failed" });
+        expect(result.discoveries.at(-1)?.error).toContain("malformed JSON");
       },
     );
   });

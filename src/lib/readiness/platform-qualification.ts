@@ -164,7 +164,7 @@ function parseStationRelease(contents: string): StationProfile {
   const noOtaPrettyName = values.get("DGX_PRETTY_NAME")?.[0];
   const noOtaVersion = values.get("DGX_SWBUILD_VERSION")?.[0];
   if (
-    noOtaPrettyName === "NVIDIA DGX GB300WS" &&
+    (noOtaPrettyName === "NVIDIA DGX GB300WS" || noOtaPrettyName === "NVIDIA DGX Server") &&
     /^7\.6\.[0-9]+$/u.test(noOtaVersion ?? "") &&
     values.has("DGX_SWBUILD_DATE")
   ) {
@@ -241,8 +241,9 @@ export function collectPlatformIdentity(
       fastOsReleasePath: options.fastOsReleasePath,
       pciDevicesPath: options.pciDevicesPath,
     });
-    if (n1xIdentity.qualified) nvidiaPlatform = "n1x";
-    if (n1xIdentity.candidate) {
+    if (n1xIdentity.fastOsPlatform === "spark") nvidiaPlatform = "spark";
+    else if (n1xIdentity.qualified) nvidiaPlatform = "n1x";
+    if (n1xIdentity.candidate && n1xIdentity.fastOsPlatform !== "spark") {
       return {
         nvidiaPlatform,
         productName,

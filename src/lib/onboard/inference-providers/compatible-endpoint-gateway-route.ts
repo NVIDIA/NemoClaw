@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { VLLM_PORT } from "../../core/vllm-port";
-import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import {
   checkOpenAiInferenceProviderProfile,
   OPENAI_GATEWAY_PROVIDER_TYPE,
-} from "./provider-profile";
+} from "../../adapters/openshell/provider-profile";
+import { LLAMA_CPP_PORT } from "../../inference/llama-cpp/contract";
 import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types";
 
 // Keep this list aligned with the materialized host.openshell.internal endpoints

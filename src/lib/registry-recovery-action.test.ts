@@ -50,10 +50,6 @@ vi.mock("./state/onboard-session.js", () => ({
   loadSession: vi.fn(),
 }));
 
-vi.mock("./runtime-recovery.js", () => ({
-  parseLiveSandboxEntries: vi.fn(() => [] as Array<{ name: string; phase: string | null }>),
-}));
-
 vi.mock("./runner.js", () => ({
   validateName: (name: string) => {
     if (!/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
@@ -70,7 +66,6 @@ import {
   recoverNamedGatewayRuntime,
 } from "./gateway-runtime-action.js";
 import { recoverRegistryEntries } from "./registry-recovery-action.js";
-import { parseLiveSandboxEntries } from "./runtime-recovery.js";
 import { loadSession } from "./state/onboard-session.js";
 
 function resetRegistryRecoveryDependencyMocks(): void {
@@ -84,8 +79,7 @@ function resetRegistryRecoveryDependencyMocks(): void {
     .mockReturnValue({ state: "missing_named" } as never);
   vi.mocked(captureOpenshell)
     .mockReset()
-    .mockReturnValue({ output: "", status: 0 } as never);
-  vi.mocked(parseLiveSandboxEntries).mockReset().mockReturnValue([]);
+    .mockReturnValue({ output: "No sandboxes found.", status: 0 } as never);
 }
 
 describe("recoverRegistryEntries seed-time guard (#2753)", () => {
@@ -104,7 +98,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       sandboxName: "interrupt-test",
       provider: "nvidia",
       model: "nemotron",
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
@@ -123,7 +116,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       sandboxName: "alpha",
       provider: "nvidia",
       model: "nemotron",
-      policyPresets: ["npm"],
       nimContainer: null,
       observabilityEnabled: true,
       agent: "langchain-deepagents-code",
@@ -137,7 +129,7 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
     expect(result.recoveredFromSession).toBe(true);
     const recovered = result.sandboxes.find((s) => s.name === "alpha");
     expect(recovered).toBeDefined();
-    expect(recovered?.policies).toEqual(["npm"]);
+    expect(recovered).not.toHaveProperty("policies");
     expect(recovered?.observabilityEnabled).toBe(true);
   });
 
@@ -149,7 +141,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       endpointUrl: "https://inference.example.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -177,7 +168,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       endpointUrl: null,
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: null,
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -213,7 +203,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
       gpuEnabled: false,
-      policies: ["npm", "pypi"],
       nimContainer: null,
       agent: "hermes",
       agentVersion: "2026.5.16",
@@ -222,7 +211,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       sandboxName: "my-hermes",
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
-      policyPresets: ["npm", "pypi"],
       nimContainer: null,
       agent: "hermes",
       steps: {
@@ -244,7 +232,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
       gpuEnabled: false,
-      policies: [],
       nimContainer: null,
       agent: "hermes",
     };
@@ -252,7 +239,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       sandboxName: "my-hermes",
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -270,7 +256,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
       gpuEnabled: false,
-      policies: [],
       nimContainer: null,
       agent: "langchain-deepagents-code",
       observabilityEnabled: true,
@@ -279,7 +264,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       sandboxName: "alpha",
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
-      policyPresets: [],
       nimContainer: null,
       agent: "langchain-deepagents-code",
       steps: {
@@ -303,7 +287,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       provider: "nvidia",
       model: "nemotron",
       gpuEnabled: false,
-      policies: [],
       nimContainer: null,
       agent: null,
     };
@@ -311,7 +294,6 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
       sandboxName: "alpha",
       provider: "nvidia",
       model: "nemotron",
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
@@ -346,7 +328,10 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
     // is not an authoritative agent source; the real agent is reconciled by a
     // follow-up `nemoclaw <name> status`.
     vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "dcode-station", phase: "Ready" }]);
+    vi.mocked(captureOpenshell).mockReturnValue({
+      output: "dcode-station Ready",
+      status: 0,
+    } as never);
 
     const result = await recoverRegistryEntries();
 
@@ -380,7 +365,6 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
       provider: "nvidia",
       model: "nemotron",
       gpuEnabled: false,
-      policies: [],
       nimContainer: null,
       agent: "openclaw",
     };
@@ -388,14 +372,13 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
       sandboxName: "phantom",
       provider: "nvidia",
       model: "nemotron",
-      policyPresets: [],
       nimContainer: null,
       steps: {
         sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
       },
     } as never);
     vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "live-x", phase: "Ready" }]);
+    vi.mocked(captureOpenshell).mockReturnValue({ output: "live-x Ready", status: 0 } as never);
 
     const result = await recoverRegistryEntries();
 
@@ -413,7 +396,10 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
     // and permanently misclassify a Deep Agents/Hermes sandbox. Recovery is
     // display-only: the on-disk registry must stay empty.
     vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "dcode-station", phase: "Ready" }]);
+    vi.mocked(captureOpenshell).mockReturnValue({
+      output: "dcode-station Ready",
+      status: 0,
+    } as never);
 
     await recoverRegistryEntries();
 
@@ -430,7 +416,10 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
       state: "connected_other",
       activeGateway: "nemoclaw-8092",
     } as never);
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "dcode-station", phase: "Ready" }]);
+    vi.mocked(captureOpenshell).mockReturnValue({
+      output: "dcode-station Ready",
+      status: 0,
+    } as never);
 
     const result = await recoverRegistryEntries();
 
@@ -446,7 +435,6 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
       output: "transport error: connection reset",
       status: 1,
     } as never);
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "transport", phase: null }]);
 
     const result = await recoverRegistryEntries();
 
@@ -462,7 +450,10 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
       state: "connected_other",
       activeGateway: "some-other-project",
     } as never);
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "foreign-sbox", phase: "Ready" }]);
+    vi.mocked(captureOpenshell).mockReturnValue({
+      output: "foreign-sbox Ready",
+      status: 0,
+    } as never);
 
     const result = await recoverRegistryEntries();
 
@@ -475,7 +466,10 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
     // effect of listing: it inspects the lifecycle directly and never calls
     // the mutating recoverNamedGatewayRuntime path.
     vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "dcode-station", phase: "Ready" }]);
+    vi.mocked(captureOpenshell).mockReturnValue({
+      output: "dcode-station Ready",
+      status: 0,
+    } as never);
 
     await recoverRegistryEntries();
 

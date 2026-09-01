@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { BaselineExclusionEntry } from "../state/registry";
 import type { SandboxHostMount } from "../state/registry/types";
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { InitialSandboxPolicy } from "./initial-policy";
@@ -31,7 +30,6 @@ export type SandboxCreatePolicyRequest = {
     readonly hostLocalInferenceRouteOnly?: true;
     readonly agentName?: string | null;
     readonly policyTier: string | null;
-    readonly baselineExclusions: readonly BaselineExclusionEntry[];
   };
 };
 
@@ -88,19 +86,25 @@ export type ResolveSandboxCreateIntentInput = {
   sandboxGpuLogMessage: string | null;
   extraPlaceholderKeys?: readonly string[];
   agentName?: string | null;
-  policyTier: string | null;
-  baselineExclusions?: readonly BaselineExclusionEntry[];
+  policyTier?: string | null;
 };
 
 export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   fromRef: string;
+  policylessCreate?: boolean;
+  /** Keep provider mutations and attachments behind the exact post-create identity gate. */
+  deferSandboxEffectsUntilIdentityVerification?: boolean;
   managedStateMount?: ManagedHermesStateVolumeMount | null;
   messagingTokenDefs: MessagingTokenDef[];
-  runProviderPreDeleteCleanup(): void;
+  runProviderPreDeleteCleanup(revalidateSandboxIdentity?: (operation: string) => void): void;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],
-    options: { replaceExisting: true; allowedSandboxes: readonly [string] },
+    options: {
+      replaceExisting: true;
+      allowedSandboxes: readonly [string];
+      revalidateSandboxIdentity?(operation: string): void;
+    },
   ): string[];
   getHermesToolGatewayProviderName(sandboxName: string): string;
   discloseInitialSandboxPolicy?(policy: InitialSandboxPolicy): void;

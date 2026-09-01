@@ -151,7 +151,7 @@ describe("onboard dashboard helpers", () => {
     );
   });
 
-  it("deletes the built sandbox and exits 1 when the committed port becomes occupied (#8798)", async () => {
+  it("reports gateway-scoped cleanup when the committed port becomes occupied (#8798)", async () => {
     const listener = createServer();
     await new Promise<void>((resolve, reject) => {
       listener.once("error", reject);
@@ -187,19 +187,19 @@ describe("onboard dashboard helpers", () => {
       expect(() =>
         helpers.ensureDashboardForward("my-sandbox", `http://127.0.0.1:${String(targetPort)}`, {
           rollbackSandboxOnFailure: true,
+          gatewayName: "nemoclaw-18080",
         }),
       ).toThrow("process.exit(1)");
       expect(openshellArgv).not.toHaveBeenCalled();
-      expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "my-sandbox"], {
-        ignoreError: true,
-      });
+      expect(runOpenshell).not.toHaveBeenCalledWith(
+        expect.arrayContaining(["sandbox", "delete"]),
+        expect.anything(),
+      );
       const errorOutput = errorSpy.mock.calls.map(([line]) => String(line)).join("\n");
       expect(errorOutput).toContain(
         `Dashboard port ${String(targetPort)} became host-bound during sandbox build`,
       );
-      expect(errorOutput).toContain(
-        "The orphaned sandbox has been removed. Resolve the error above before retrying.",
-      );
+      expect(errorOutput).toContain('openshell sandbox delete -g "nemoclaw-18080" "my-sandbox"');
     } finally {
       exitSpy.mockRestore();
       errorSpy.mockRestore();

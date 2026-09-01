@@ -4,11 +4,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  decideMcpLifecycleAcquisition,
+  decideMcpLifecycleDeadlineRecovery,
   decideMcpLifecycleLock,
   decideMcpLifecycleGate,
   decideMcpLifecycleTakeover,
   type CorruptGenerationState,
   type DecideMcpLifecycleLockInput,
+  type McpLifecycleLockDecision,
 } from "./decisions";
 import type { LockObservation, McpLifecycleLockOwner } from "../mcp-lifecycle-lock-identity";
 
@@ -141,6 +144,7 @@ describe("lifecycle lock decisions", () => {
     ["open", null, false, "proceed"],
     ["timer deadline", null, true, "wait"],
     ["committed containment", observation(owner()), false, "refuse"],
+    ["containment over an expired timer", observation(owner()), true, "refuse"],
   ] as const)("maps the %s gate to %s", (_name, containment, timerExpired, kind) => {
     expect(decideMcpLifecycleGate(containment, timerExpired).kind).toBe(kind);
   });
@@ -163,4 +167,244 @@ describe("lifecycle lock decisions", () => {
   ] as const)("maps %s takeover authority to %s", (_name, expected, observed, kind) => {
     expect(decideMcpLifecycleTakeover(expected, observed).kind).toBe(kind);
   });
+
+  it.each([
+    ["proceed", "an open containment gate", { phase: "committed-containment", present: false }],
+    ["refuse", "committed containment", { phase: "committed-containment", present: true }],
+    [
+      "publish",
+      "unchanged publication authority",
+      {
+        phase: "publication",
+        authorityCurrent: true,
+        existingSelfToken: null,
+      },
+    ],
+    [
+      "resume",
+      "recovered self publication",
+      {
+        phase: "publication",
+        authorityCurrent: true,
+        existingSelfToken: "owner-a",
+      },
+    ],
+    [
+      "refuse",
+      "changed publication authority",
+      {
+        phase: "publication",
+        authorityCurrent: false,
+        existingSelfToken: "owner-a",
+      },
+    ],
+  ] as const)("deadline recovery returns %s for %s", (kind, _name, input) => {
+    expect(decideMcpLifecycleDeadlineRecovery(input).kind).toBe(kind);
+  });
+
+  const activeOwnerDecision = {
+    kind: "wait",
+    disposition: "active",
+    ownerPid: 100,
+    corruptGeneration: EMPTY_CORRUPT_GENERATION,
+  } satisfies McpLifecycleLockDecision;
+  const staleOwnerDecision = {
+    kind: "reap",
+    observation: observation(owner()),
+    timerBound: true,
+    corruptGeneration: EMPTY_CORRUPT_GENERATION,
+  } satisfies McpLifecycleLockDecision;
+  const staleDeadlineDecision = {
+    kind: "contain",
+    observation: observation(owner()),
+    reason: "deadline-owner",
+    corruptGeneration: EMPTY_CORRUPT_GENERATION,
+  } satisfies McpLifecycleLockDecision;
+
+  it.each([
+    [
+      "stale deadline owner",
+      { phase: "deadline-owner", lock: staleDeadlineDecision },
+      { kind: "contain" },
+    ],
+    [
+      "verified live protected owner",
+      {
+        phase: "protected-owner",
+        lock: activeOwnerDecision,
+        exactLocalOwner: true,
+        exactCurrentOwner: true,
+        syncProcessIdentity: "not-current",
+      },
+      { kind: "wait", verifiedLive: true },
+    ],
+    [
+      "stale protected owner",
+      {
+        phase: "protected-owner",
+        lock: staleOwnerDecision,
+        exactLocalOwner: true,
+        exactCurrentOwner: false,
+        syncProcessIdentity: "not-current",
+      },
+      { kind: "contain" },
+    ],
+    [
+      "same-process sibling owner",
+      {
+        phase: "protected-owner",
+        lock: activeOwnerDecision,
+        exactLocalOwner: true,
+        exactCurrentOwner: true,
+        syncProcessIdentity: "match",
+      },
+      { kind: "refuse", reason: "sync-reentrant-owner" },
+    ],
+    [
+      "unverifiable same-process owner",
+      {
+        phase: "protected-owner",
+        lock: activeOwnerDecision,
+        exactLocalOwner: true,
+        exactCurrentOwner: false,
+        syncProcessIdentity: "unverifiable",
+      },
+      { kind: "refuse", reason: "sync-reentrant-owner" },
+    ],
+    [
+      "stale unverifiable same-process owner",
+      {
+        phase: "protected-owner",
+        lock: staleOwnerDecision,
+        exactLocalOwner: true,
+        exactCurrentOwner: false,
+        syncProcessIdentity: "unverifiable",
+      },
+      { kind: "contain" },
+    ],
+    [
+      "foreign unverifiable owner",
+      {
+        phase: "protected-owner",
+        lock: activeOwnerDecision,
+        exactLocalOwner: false,
+        exactCurrentOwner: false,
+        syncProcessIdentity: "not-current",
+      },
+      { kind: "wait", verifiedLive: false },
+    ],
+  ] as const)("deadline recovery returns the expected action for %s", (_name, input, expected) => {
+    expect(decideMcpLifecycleDeadlineRecovery(input)).toMatchObject(expected);
+  });
+
+  it.each([
+    [
+      "committed containment",
+      { phase: "containment", observation: observation(owner()) },
+      "refuse",
+    ],
+    ["open containment gate", { phase: "containment", observation: null }, "publish"],
+    ["expired timer", { phase: "timer", deadlineExpired: true }, "wait"],
+    ["future timer", { phase: "timer", deadlineExpired: false }, "publish"],
+  ] as const)("maps the %s acquisition state to %s", (_name, input, kind) => {
+    expect(decideMcpLifecycleAcquisition(input).kind).toBe(kind);
+  });
+
+  it.each([
+    [
+      "active main owner",
+      "main-owner",
+      {
+        kind: "wait",
+        disposition: "active",
+        ownerPid: 100,
+        corruptGeneration: EMPTY_CORRUPT_GENERATION,
+      } satisfies McpLifecycleLockDecision,
+      "wait",
+    ],
+    [
+      "stale main owner",
+      "main-owner",
+      {
+        kind: "reap",
+        observation: observation(owner()),
+        timerBound: false,
+        corruptGeneration: EMPTY_CORRUPT_GENERATION,
+      } satisfies McpLifecycleLockDecision,
+      "reap",
+    ],
+    [
+      "unverifiable main owner",
+      "main-owner",
+      {
+        kind: "contain",
+        observation: observation(owner({ sandboxName: "sandbox-b" })),
+        reason: "unverifiable-main-owner",
+        corruptGeneration: { generation: "20:30:10", firstSeenAt: 500 },
+      } satisfies McpLifecycleLockDecision,
+      "contain",
+    ],
+    [
+      "stale deadline owner",
+      "deadline",
+      {
+        kind: "contain",
+        observation: observation(owner()),
+        reason: "deadline-owner",
+        corruptGeneration: EMPTY_CORRUPT_GENERATION,
+      } satisfies McpLifecycleLockDecision,
+      "contain",
+    ],
+    [
+      "active reaper",
+      "reaper",
+      {
+        kind: "wait",
+        disposition: "active",
+        ownerPid: 100,
+        corruptGeneration: EMPTY_CORRUPT_GENERATION,
+      } satisfies McpLifecycleLockDecision,
+      "wait",
+    ],
+  ] as const)("maps the %s generation to %s", (_name, phase, lock, kind) => {
+    expect(decideMcpLifecycleAcquisition({ phase, lock }).kind).toBe(kind);
+  });
+
+  it.each([
+    ["unchanged authority", false, false, false, false, "owner", "owner", "a", "a", "enter"],
+    ["replacement owner", false, false, false, false, "owner", "replacement", "a", "a", "release"],
+    ["containment", true, false, false, false, "owner", "owner", "a", "a", "release"],
+    ["deadline generation", false, true, false, false, "owner", "owner", "a", "a", "release"],
+    ["reaper generation", false, false, true, false, "owner", "owner", "a", "a", "release"],
+    ["expired timer", false, false, false, true, "owner", "owner", "a", "a", "release"],
+    ["changed authority", false, false, false, false, "owner", "owner", "a", "b", "release"],
+  ] as const)(
+    "maps published %s to %s",
+    (
+      _name,
+      containmentPresent,
+      deadlinePresent,
+      reaperPresent,
+      timerDeadlineExpired,
+      expectedOwnerToken,
+      observedOwnerToken,
+      expectedTakeoverToken,
+      observedTakeoverToken,
+      kind,
+    ) => {
+      expect(
+        decideMcpLifecycleAcquisition({
+          phase: "published",
+          containmentPresent,
+          deadlinePresent,
+          reaperPresent,
+          timerDeadlineExpired,
+          expectedOwnerToken,
+          observedOwnerToken,
+          expectedTakeoverToken,
+          observedTakeoverToken,
+        }).kind,
+      ).toBe(kind);
+    },
+  );
 });

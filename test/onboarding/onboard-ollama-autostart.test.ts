@@ -87,21 +87,18 @@ function runOllamaAutostartScenario(opts: ScenarioOptions): WizardResult {
   // body for any request (validation in selectAndValidateOllamaModel requires
   // a successful tool-call response). The /api/tags response is shaped like
   // ollama's daemon and is consulted by validation helpers in inference/local.
-  // For the "stopped" case, the runner.runCapture stub returns "" for tags,
-  // which is what gates the wizard — the curl stub itself stays permissive.
+  // The fake curl and runner stub below return the same scenario inventory.
+  // This keeps direct spawn and injected capture paths aligned.
   const toolCallBody =
     '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
   // /api/generate body — validateOllamaModel parses this and looks for an
   // `error` key. A healthy default; #4365 scenarios override with a runner-
   // crash payload to drive the daemonFailure path.
   const generateBody = opts.ollamaGenerateBody ?? '{"response":"hello"}';
-  // /api/tags body. local.ts destructures `runCapture` at module load time,
-  // BEFORE the test mutates runner.runCapture — so `getOllamaModelOptions`
-  // (in local.ts) still calls through to the real spawnSync and lands on
-  // this fake curl. Returning a tag matching the bootstrap fallback
-  // (smallest registry entry) keeps the menu deterministic with gpu=null
-  // and ensures the picked model is already-installed (no pull prompt).
-  const tagsBody = '{"models":[{"name":"qwen3.5:9b"}]}';
+  const ollamaInventory = {
+    models: opts.ollamaRunning ? [{ name: "qwen3.5:9b" }] : [],
+  };
+  const tagsBody = JSON.stringify(ollamaInventory);
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
     `#!/usr/bin/env bash
@@ -171,6 +168,7 @@ child_process.spawnSync = (cmd, args, opts) => {
 };
 
 const ollamaRunning = ${JSON.stringify(opts.ollamaRunning)};
+const ollamaInventory = ${JSON.stringify(ollamaInventory)};
 const shellCommands = [];
 const waitForHttpCalls = [];
 const lines = [];
@@ -210,11 +208,13 @@ runner.runCapture = (command) => {
     return cmd.includes("ollama") ? "/usr/bin/ollama" : "";
   }
   if (cmd.includes("127.0.0.1:11434/api/tags")) {
-    return ollamaRunning ? JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] }) : "";
+    return JSON.stringify(ollamaInventory);
   }
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("ollama list")) {
-    return ollamaRunning ? "nemotron-3-nano:30b  abc  24 GB  now" : "";
+    return ollamaInventory.models.length > 0
+      ? ollamaInventory.models[0].name + "  abc  24 GB  now"
+      : "";
   }
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("ps")) return "node ollama-auth-proxy.js";

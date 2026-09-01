@@ -21,6 +21,7 @@ process.env.FIRST_MCP_TOKEN = "first-host-only-secret";
 process.env.SECOND_MCP_TOKEN = "second-host-only-secret";
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
@@ -62,6 +63,8 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   after: { state: "healthy_named" },
 });
 providerCommands.runOpenshellProviderCommand = (args) => {
+  const profileResult = mockManagedEndpointlessProviderProfileRun(args);
+  if (profileResult) return profileResult;
   if (args.join(" ") === "status --output json") {
     return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw" }), stderr: "" };
   }
@@ -120,15 +123,6 @@ registry.registerSandbox({
   gatewayName: "nemoclaw",
   mcp: { bridges: entries },
 });
-for (const entry of Object.values(entries)) {
-  registry.addCustomPolicy("alpha", {
-    name: entry.policyName,
-    content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
-      addresses: [new URL(entry.url).hostname],
-    }, entry.providerName),
-    sourcePath: "generated:nemoclaw-mcp-bridge",
-  });
-}
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 const restart = require("./src/lib/actions/sandbox/mcp-bridge-restart.js");
@@ -176,6 +170,7 @@ process.env.HOME = ${JSON.stringify(home)};
 process.env.MCP_TOKEN = "host-only-secret";
 const registry = require("./src/lib/state/registry.js");
 const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
+const { mockManagedEndpointlessProviderProfileRun } = require("./test/helpers/onboard-script-mocks.cjs");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
@@ -205,6 +200,8 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   after: { state: "healthy_named" },
 });
 providerCommands.runOpenshellProviderCommand = (args) => {
+  const profileResult = mockManagedEndpointlessProviderProfileRun(args);
+  if (profileResult) return profileResult;
   const command = args.join(" ");
   if (command === "status --output json") {
     return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw" }), stderr: "" };
@@ -267,13 +264,6 @@ registry.registerSandbox({
   mcp: { bridges: { example: entry } },
 });
 registry.addExtraProvider("foreign-registered");
-registry.addCustomPolicy("alpha", {
-  name: entry.policyName,
-  content: generated.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, {
-    addresses: ["8.8.8.8"],
-  }, entry.providerName),
-  sourcePath: "generated:nemoclaw-mcp-bridge",
-});
 
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.restartMcpBridge("alpha", "example").then(
@@ -296,13 +286,13 @@ bridge.restartMcpBridge("alpha", "example").then(
       providerCalls: string[];
       registeredProviderGets: number;
     };
-    expect(payload.observations).toEqual(["v1", "v3"]);
+    expect(payload.observations).toEqual(["v1", "v3", "v3", "v3", "v3", "v3"]);
     expect(payload.providerCalls).toEqual([
       "provider update alpha-mcp-example --credential MCP_TOKEN",
       "provider update alpha-mcp-example",
     ]);
     expect(payload.registeredProviderGets).toBe(1);
-    expect(payload.proofScripts).toHaveLength(2);
+    expect(payload.proofScripts).toHaveLength(6);
     expect(payload.proofScripts.join("\n")).not.toMatch(/\/tmp|snapshot/);
   });
 });

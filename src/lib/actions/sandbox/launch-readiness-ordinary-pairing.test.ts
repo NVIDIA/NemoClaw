@@ -5,7 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry } from "../../state/registry";
-import { type LaunchReadinessDeps, resolveOrdinaryOpenClawPairingTarget } from "./launch-readiness";
+import {
+  buildLaunchReadinessRegistryProjection,
+  type LaunchReadinessDeps,
+  launchReadinessDigest,
+  resolveOrdinaryOpenClawPairingTarget,
+} from "./launch-readiness";
 
 const SANDBOX_NAME = "alpha";
 const GATEWAY_NAME = "nemoclaw";
@@ -24,9 +29,6 @@ function openClawEntry(): SandboxEntry {
     agentVersion: "1.0.0",
     nemoclawVersion: "2.0.0",
     imageTag: "example@sha256:immutable",
-    policyPresetsFinalized: true,
-    policies: ["managed_inference"],
-    policyTier: "standard",
     provider: null,
     model: null,
     endpointUrl: null,
@@ -60,7 +62,6 @@ describe("ordinary OpenClaw pairing target", () => {
   it("resolves ordinary pairing after a supported policy-skip onboarding (#9817)", () => {
     vi.mocked(deps.getSandbox!).mockReturnValue({
       ...openClawEntry(),
-      policyPresetsFinalized: undefined,
     });
 
     expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
@@ -70,6 +71,33 @@ describe("ordinary OpenClaw pairing target", () => {
       stateDirectory: "/sandbox/.openclaw",
       version: "1.0.0",
     });
+  });
+
+  it("resolves a published runtime that retains its route transaction receipt", () => {
+    vi.mocked(deps.getSandbox!).mockReturnValue({
+      ...openClawEntry(),
+      reservationSessionId: "session-owner",
+    });
+
+    expect(resolveOrdinaryOpenClawPairingTarget(SANDBOX_NAME, deps)).toEqual({
+      gatewayName: GATEWAY_NAME,
+      lifecycleGeneration: "generation-1",
+      lifecycleLiveIdentityFingerprint: FINGERPRINT,
+      stateDirectory: "/sandbox/.openclaw",
+      version: "1.0.0",
+    });
+  });
+
+  it("keeps a published route receipt outside the readiness identity", () => {
+    const agent = loadAgent("openclaw");
+    expect(
+      launchReadinessDigest(
+        buildLaunchReadinessRegistryProjection(
+          { ...openClawEntry(), reservationSessionId: "session-owner" },
+          agent,
+        ),
+      ),
+    ).toBe(launchReadinessDigest(buildLaunchReadinessRegistryProjection(openClawEntry(), agent)));
   });
 
   it("resolves a custom Dockerfile without inventing a managed agent version", () => {

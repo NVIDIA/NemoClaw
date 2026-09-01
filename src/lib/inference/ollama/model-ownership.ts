@@ -7,30 +7,80 @@ import { ollamaModelRefsMatch } from "./model-discovery";
 /** The registry fields an Ollama GPU-release decision reads. */
 export type OllamaModelHolder = Pick<SandboxEntry, "name" | "provider" | "model">;
 
+export type OllamaModelOwnershipDecision =
+  | { readonly kind: "missing-model" }
+  | {
+      readonly kind: "exclusive";
+      readonly model: string;
+      readonly stalePeers: readonly string[];
+    }
+  | {
+      readonly kind: "shared-active";
+      readonly model: string;
+      readonly activePeers: readonly string[];
+      readonly stalePeers: readonly string[];
+    };
+
 /**
- * The Ollama model this sandbox alone is holding, or null when there is
- * nothing safe to release.
+ * Decide whether this sandbox's Ollama model has another active owner.
  *
- * The Ollama daemon is host-global, so unloading everything would evict a
- * model a sibling sandbox is still using. Release only this sandbox's own
- * model, and only when no other Ollama-backed sandbox is registered against
- * the same one. Peers are compared with Ollama's implicit `latest` tag
- * semantics, so a sibling recorded as `llama3` still protects `llama3:latest`.
+ * Registry rows persist after a sandbox stops and can also contain incomplete
+ * onboarding reservations. Callers must supply the sandbox names that a live
+ * runtime probe found in Ready or Running phase. A matching registry row that
+ * is not in that set is evidence to report, not an owner that blocks release.
  */
-export function exclusivelyHeldOllamaModel(
+export function matchingOllamaModelPeers<T extends OllamaModelHolder>(
   sandbox: OllamaModelHolder,
-  peers: readonly OllamaModelHolder[],
-): string | null {
+  peers: readonly T[],
+): T[] {
   const model = sandbox.model?.trim();
-  if (!model) return null;
-  const sharedWithPeer = peers.some(
+  if (!model) return [];
+  return peers.filter(
     (peer) =>
       peer.name !== sandbox.name &&
       !!peer.provider?.includes("ollama") &&
       !!peer.model &&
       ollamaModelRefsMatch(peer.model, model),
   );
-  return sharedWithPeer ? null : model;
+}
+
+export function decideOllamaModelOwnership(
+  sandbox: OllamaModelHolder,
+  peers: readonly OllamaModelHolder[],
+  activeSandboxNames: ReadonlySet<string>,
+): OllamaModelOwnershipDecision {
+  const model = sandbox.model?.trim();
+  if (!model) return { kind: "missing-model" };
+
+  const matchingPeers = matchingOllamaModelPeers(sandbox, peers);
+  const activePeers = matchingPeers
+    .filter((peer) => activeSandboxNames.has(peer.name))
+    .map((peer) => peer.name)
+    .sort();
+  const stalePeers = matchingPeers
+    .filter((peer) => !activeSandboxNames.has(peer.name))
+    .map((peer) => peer.name)
+    .sort();
+
+  return activePeers.length > 0
+    ? { kind: "shared-active", model, activePeers, stalePeers }
+    : { kind: "exclusive", model, stalePeers };
+}
+
+/**
+ * Conservative compatibility helper for callers that do not probe live state.
+ * Every matching registry peer remains protected on those paths.
+ */
+export function exclusivelyHeldOllamaModel(
+  sandbox: OllamaModelHolder,
+  peers: readonly OllamaModelHolder[],
+): string | null {
+  const decision = decideOllamaModelOwnership(
+    sandbox,
+    peers,
+    new Set(peers.map((peer) => peer.name)),
+  );
+  return decision.kind === "exclusive" ? decision.model : null;
 }
 
 /**

@@ -345,12 +345,11 @@ alpha-mcp-slack   generic  1                 0
     ).toThrow(/Could not observe the current OpenShell credential revision/);
   });
 
-  it("uses native multiline OpenShell exec for attachment readiness", () => {
-    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
-      status: 0,
-      stdout: "canonical",
-      stderr: "",
-    });
+  it("waits for native multiline OpenShell exec to expose an attached revision", () => {
+    const exec = vi
+      .spyOn(processRecovery, "executeSandboxExecCommand")
+      .mockReturnValueOnce({ status: 0, stdout: "canonical", stderr: "" })
+      .mockReturnValue({ status: 0, stdout: "v11", stderr: "" });
     const refreshAfterObservedAbsence = vi.fn();
 
     const revision = waitForAttachedMcpCredential(
@@ -375,10 +374,108 @@ alpha-mcp-slack   generic  1                 0
     expect(proofCommand).toContain("GITHUB_TOKEN");
     expect(proofCommand).not.toContain("base64 -d");
     expect(refreshAfterObservedAbsence).not.toHaveBeenCalled();
-    expect(revision).toBe("canonical");
+    expect(exec).toHaveBeenCalledTimes(3);
+    expect(revision).toBe("v11");
   });
 
-  it("refreshes once after a fresh exec reports the credential absent (#9764)", () => {
+  it("waits for a post-policy credential revision to settle before returning", () => {
+    const entry: McpBridgeEntry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://mcp.example.test/mcp",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github-0123456789abcdef",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+      addedAt: "2026-06-01T00:00:00.000Z",
+    };
+    const exec = vi
+      .spyOn(processRecovery, "executeSandboxExecCommand")
+      .mockReturnValueOnce({ status: 0, stdout: "v11", stderr: "" })
+      .mockReturnValue({ status: 0, stdout: "v12", stderr: "" });
+
+    expect(waitForAttachedMcpCredential("alpha", entry)).toBe("v12");
+    expect(exec).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects a stable pre-update revision until the opaque provider mutation is projected", () => {
+    const entry: McpBridgeEntry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://mcp.example.test/mcp",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github-0123456789abcdef",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+      addedAt: "2026-06-01T00:00:00.000Z",
+    };
+    const exec = vi
+      .spyOn(processRecovery, "executeSandboxExecCommand")
+      .mockReturnValueOnce({ status: 0, stdout: "v15566468742889590075", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "v15566468742889590075", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "v7480654703696766813", stderr: "" })
+      .mockReturnValue({ status: 0, stdout: "v7480654703696766813", stderr: "" });
+
+    expect(
+      waitForAttachedMcpCredential("alpha", entry, {
+        previousRevision: "v15566468742889590075",
+      }),
+    ).toBe("v7480654703696766813");
+    expect(exec).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not accept an identityless placeholder as attachment readiness", () => {
+    vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
+    vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+      status: 0,
+      stdout: "canonical",
+      stderr: "",
+    });
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
+
+    expect(() =>
+      waitForAttachedMcpCredential("alpha", {
+        server: "github",
+        agent: "deepagents-code",
+        adapter: "deepagents-config",
+        url: "https://mcp.example.test/mcp",
+        env: ["GITHUB_TOKEN"],
+        providerName: "alpha-mcp-github-0123456789abcdef",
+        providerId: "11111111-2222-4333-8444-555555555555",
+        policyName: "mcp-bridge-github",
+        addedAt: "2026-06-01T00:00:00.000Z",
+      }),
+    ).toThrow(/last bounded observation: canonical/);
+  });
+
+  it("reports an absent attached credential without attempting policy recovery", () => {
+    vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+      status: 0,
+      stdout: "absent",
+      stderr: "",
+    });
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
+
+    expect(() =>
+      waitForAttachedMcpCredential("alpha", {
+        server: "github",
+        agent: "openclaw",
+        adapter: "mcporter",
+        url: "https://mcp.example.test/mcp",
+        env: ["GITHUB_TOKEN"],
+        providerName: "alpha-mcp-github-0123456789abcdef",
+        providerId: "11111111-2222-4333-8444-555555555555",
+        policyName: "mcp-bridge-github",
+        addedAt: "2026-06-01T00:00:00.000Z",
+      }),
+    ).toThrow(/last bounded observation: absent/);
+    expect(exec).toHaveBeenCalledOnce();
+  });
+
+  it("runs one provider-owned refresh after a fresh exec reports the credential absent", () => {
     const entry: McpBridgeEntry = {
       server: "github",
       agent: "openclaw",
@@ -393,19 +490,17 @@ alpha-mcp-slack   generic  1                 0
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
       .mockReturnValueOnce({ status: 0, stdout: "absent", stderr: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "v12", stderr: "" });
+      .mockReturnValue({ status: 0, stdout: "v12", stderr: "" });
     const refreshAfterObservedAbsence = vi.fn();
 
-    const revision = waitForAttachedMcpCredential("alpha", entry, {
-      refreshAfterObservedAbsence,
-    });
-
-    expect(refreshAfterObservedAbsence).toHaveBeenCalledTimes(1);
-    expect(exec).toHaveBeenCalledTimes(2);
-    expect(revision).toBe("v12");
+    expect(waitForAttachedMcpCredential("alpha", entry, { refreshAfterObservedAbsence })).toBe(
+      "v12",
+    );
+    expect(refreshAfterObservedAbsence).toHaveBeenCalledOnce();
+    expect(exec).toHaveBeenCalledTimes(3);
   });
 
-  it("does not repeat the refresh when the credential remains absent (#9764)", () => {
+  it("does not repeat the provider refresh when the credential remains absent", () => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
     const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
       status: 0,
@@ -431,8 +526,8 @@ alpha-mcp-slack   generic  1                 0
         },
         { refreshAfterObservedAbsence },
       ),
-    ).toThrow(/last bounded observation: absent; post-policy refresh attempted: yes/);
-    expect(refreshAfterObservedAbsence).toHaveBeenCalledTimes(1);
+    ).toThrow(/post-absence provider refresh attempted: yes/u);
+    expect(refreshAfterObservedAbsence).toHaveBeenCalledOnce();
     expect(exec).toHaveBeenCalledTimes(2);
   });
 
@@ -440,7 +535,7 @@ alpha-mcp-slack   generic  1                 0
     ["unavailable", null, "transport-unavailable"],
     ["malformed", { status: 0, stdout: "raw-secret", stderr: "" }, "invalid-bounded-output"],
     ["rejected", { status: 1, stdout: "", stderr: "" }, "proof-command-exit-1"],
-  ])("does not refresh when a credential observation is %s (#9764)", (_case, result, diagnostic) => {
+  ])("does not refresh when a credential observation is %s", (_case, result, diagnostic) => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
     vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(result);
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
@@ -467,21 +562,19 @@ alpha-mcp-slack   generic  1                 0
       failure = error;
     }
     expect(failure).toBeInstanceOf(Error);
-    expect((failure as Error).message).toContain(
-      `last bounded observation: ${diagnostic}; post-policy refresh attempted: no`,
-    );
+    expect((failure as Error).message).toContain(`last bounded observation: ${diagnostic}`);
     expect((failure as Error).message).not.toContain("raw-secret");
     expect(refreshAfterObservedAbsence).not.toHaveBeenCalled();
   });
 
-  it("propagates a credential refresh failure after observed absence (#9764)", () => {
+  it("propagates a provider refresh failure after observed absence", () => {
     vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
       status: 0,
       stdout: "absent",
       stderr: "",
     });
     const refreshAfterObservedAbsence = vi.fn(() => {
-      throw new Error("credential-free refresh failed");
+      throw new Error("provider refresh failed");
     });
 
     expect(() =>
@@ -500,11 +593,11 @@ alpha-mcp-slack   generic  1                 0
         },
         { refreshAfterObservedAbsence },
       ),
-    ).toThrow("credential-free refresh failed");
-    expect(refreshAfterObservedAbsence).toHaveBeenCalledTimes(1);
+    ).toThrow("provider refresh failed");
+    expect(refreshAfterObservedAbsence).toHaveBeenCalledOnce();
   });
 
-  it("does not accept a stale revision after the absence refresh (#9764)", () => {
+  it("does not accept a stale revision after the provider refresh", () => {
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
     const exec = vi
       .spyOn(processRecovery, "executeSandboxExecCommand")
@@ -529,8 +622,8 @@ alpha-mcp-slack   generic  1                 0
         },
         { previousRevision: "v11", refreshAfterObservedAbsence },
       ),
-    ).toThrow(/last bounded observation: v11; post-policy refresh attempted: yes/);
-    expect(refreshAfterObservedAbsence).toHaveBeenCalledTimes(1);
+    ).toThrow(/last bounded observation: v11; post-absence provider refresh attempted: yes/u);
+    expect(refreshAfterObservedAbsence).toHaveBeenCalledOnce();
     expect(exec).toHaveBeenCalledTimes(2);
   });
 
@@ -580,7 +673,7 @@ alpha-mcp-slack   generic  1                 0
     });
 
     expect(waitForAttachedMcpCredential("alpha", entry, { previousRevision: "v11" })).toBe("v12");
-    expect(exec).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledTimes(2);
 
     vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
     exec.mockClear();
@@ -591,4 +684,5 @@ alpha-mcp-slack   generic  1                 0
     );
     expect(exec).toHaveBeenCalledTimes(1);
   });
+
 });

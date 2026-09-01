@@ -985,8 +985,11 @@ export async function prepareRuntimeIdentity(
         `Failed to create runtime identity provider '${config.provider_name}': ${deps.formatError(commandOutput(providerCreate))}`,
       );
     }
-    providerAcquired = true;
     deps.persistReceipt(receipt);
+    // Cleanup authority begins only after the ownership receipt is durable. If
+    // persistence fails, preserve the provider instead of deleting a resource
+    // that the next process cannot prove this run created.
+    providerAcquired = true;
 
     const refreshArgs = [
       "openshell",

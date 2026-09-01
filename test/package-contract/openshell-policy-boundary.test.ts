@@ -64,10 +64,19 @@ describe("OpenShell policy boundary package contract", () => {
 
   it("routes the CommonJS CLI and ESM plugin through one canonical CJS boundary", async () => {
     const cliPolicy = require("../../dist/lib/policy/merge.js") as {
+      assertPolicyRequirementContainment: (...args: unknown[]) => void;
       parseOpenShellPolicy: (raw: string) => {
         yamlBody: string;
         policy: Record<string, unknown>;
       };
+      parseActiveGlobalPolicyMetadata: (raw: string) => {
+        state: string;
+        inspection?: { policySource: string };
+      };
+      parseSandboxPolicyMetadata: (
+        raw: string,
+        sandboxName: string,
+      ) => { policySource: string; effectivePolicy: Record<string, unknown> };
       withoutProviderComposedPolicies: (
         policies: Record<string, unknown>,
       ) => Record<string, unknown>;
@@ -82,10 +91,13 @@ describe("OpenShell policy boundary package contract", () => {
         path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.cjs"),
       ).href
     )) as {
+      assertPolicyRequirementContainment: typeof cliPolicy.assertPolicyRequirementContainment;
       parseOpenShellPolicy: (raw: string) => {
         yamlBody: string;
         policy: Record<string, unknown>;
       };
+      parseActiveGlobalPolicyMetadata: typeof cliPolicy.parseActiveGlobalPolicyMetadata;
+      parseSandboxPolicyMetadata: typeof cliPolicy.parseSandboxPolicyMetadata;
       withoutProviderComposedPolicies: (
         policies: Record<string, unknown>,
       ) => Record<string, unknown>;
@@ -93,7 +105,10 @@ describe("OpenShell policy boundary package contract", () => {
     };
     const canonicalBoundary =
       require("../../nemoclaw/dist/shared/openshell-policy-boundary.cjs") as {
+        assertPolicyRequirementContainment: typeof cliPolicy.assertPolicyRequirementContainment;
+        parseActiveGlobalPolicyMetadata: typeof cliPolicy.parseActiveGlobalPolicyMetadata;
         parseOpenShellPolicy: typeof cliPolicy.parseOpenShellPolicy;
+        parseSandboxPolicyMetadata: typeof cliPolicy.parseSandboxPolicyMetadata;
         stripProviderComposedPolicies: typeof cliPolicy.stripProviderComposedPolicies;
       };
     expect(
@@ -118,6 +133,36 @@ describe("OpenShell policy boundary package contract", () => {
     expect(cliPolicy.parseOpenShellPolicy).toBe(canonicalBoundary.parseOpenShellPolicy);
     expect(cliPolicy.stripProviderComposedPolicies).toBe(
       canonicalBoundary.stripProviderComposedPolicies,
+    );
+    expect(cliPolicy.parseActiveGlobalPolicyMetadata).toBe(
+      canonicalBoundary.parseActiveGlobalPolicyMetadata,
+    );
+    expect(cliPolicy.parseSandboxPolicyMetadata).toBe(canonicalBoundary.parseSandboxPolicyMetadata);
+    expect(cliPolicy.assertPolicyRequirementContainment).toBe(
+      canonicalBoundary.assertPolicyRequirementContainment,
+    );
+    const sandboxMetadata = JSON.stringify({
+      scope: "sandbox",
+      sandbox: "alpha",
+      status: "effective",
+      policy_source: "global",
+      hash: "sha256:sandbox",
+      active_version: 1,
+      policy: { version: 1, network_policies: {} },
+    });
+    expect(pluginBoundary.parseSandboxPolicyMetadata(sandboxMetadata, "alpha")).toEqual(
+      canonicalBoundary.parseSandboxPolicyMetadata(sandboxMetadata, "alpha"),
+    );
+    const globalMetadata = JSON.stringify({
+      scope: "global",
+      status: "loaded",
+      policy_source: "global",
+      hash: "sha256:global",
+      active_version: 1,
+      policy: { version: 1, network_policies: {} },
+    });
+    expect(pluginBoundary.parseActiveGlobalPolicyMetadata(globalMetadata)).toEqual(
+      canonicalBoundary.parseActiveGlobalPolicyMetadata(globalMetadata),
     );
 
     const pluginRunner = await import(
@@ -250,10 +295,7 @@ describe("OpenShell policy boundary package contract", () => {
 
   it("ships the complete repository-owned NemoCUA agent definition (#9649)", () => {
     expect(packageFiles(repoRoot)).toEqual(
-      expect.arrayContaining([
-        "agents/nemocua/Dockerfile",
-        "agents/nemocua/policy-additions.yaml",
-      ]),
+      expect.arrayContaining(["agents/nemocua/Dockerfile", "agents/nemocua/policy-additions.yaml"]),
     );
     expect(packedPaths).toContain("agents/nemocua/manifest.yaml");
     expect(packedPaths).toContain("agents/nemocua/Dockerfile");
@@ -385,7 +427,7 @@ process.stdout.write("validated");
       "openshell-policy-boundary.cjs",
     );
     expect(auditOpenShellPolicyBoundaryDependencies(fs.readFileSync(boundaryPath, "utf8"))).toEqual(
-      ["yaml"],
+      ["node:util", "yaml"],
     );
 
     expect(() =>

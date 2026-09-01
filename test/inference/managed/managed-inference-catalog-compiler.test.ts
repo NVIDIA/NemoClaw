@@ -199,7 +199,7 @@ describe("managed inference YAML profile contract", () => {
     });
   });
 
-  it("compiles Muse Glimmer as the highest-priority Experimental DGX Spark llama.cpp profile", () => {
+  it("compiles Muse Glimmer as an explicit-only Experimental DGX Spark llama.cpp profile (#10239)", () => {
     const catalog = compile(catalogSources());
     const preset = catalog.presets.find(
       ({ metadata }) => metadata.id === MUSE_LLAMA_CPP_PROFILE_ID,
@@ -210,7 +210,7 @@ describe("managed inference YAML profile contract", () => {
 
     expect(preset?.metadata.supportState).toBe("experimental");
     expect(preset?.spec).toMatchObject({
-      selection: "automatic",
+      selection: "explicit-only",
       priority: 500,
       plan: { backend: "install-llama-cpp", recipeRef: MUSE_LLAMA_CPP_RECIPE_ID },
     });

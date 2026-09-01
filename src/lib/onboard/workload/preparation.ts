@@ -5,6 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
+import { getBuildIdentity } from "../../core/version";
 import {
   ManagedImageCatalogUnavailableError,
   normalizeManagedImageRelease,
@@ -35,6 +37,9 @@ type ResolveManagedImageCatalog = (options: {
   readonly revision?: string;
 }) => Promise<ManagedImageContractCatalog>;
 
+const EXACT_SOURCE_REVISION_PATTERN = /^[0-9a-f]{40}$/u;
+const SOURCE_REVISION_REF_PATTERN = /^[0-9A-Fa-f]{39,64}$/u;
+
 export interface PrepareSandboxWorkloadSourceInput {
   readonly agentName: string;
   readonly legacyDockerfilePath: string;
@@ -53,6 +58,57 @@ export function liveE2eManagedImageRevision(environment: NodeJS.ProcessEnv): str
   if (environment.GITHUB_ACTIONS !== "true") return null;
   const revision = environment.E2E_MANAGED_IMAGE_REVISION?.trim();
   return revision ? revision : null;
+}
+
+function hasMatchingReleaseStamp(rootDir: string, version: string): boolean {
+  let stampedVersion: string;
+  try {
+    stampedVersion = fs.readFileSync(path.join(rootDir, ".version"), "utf8").trim();
+  } catch {
+    return false;
+  }
+  if (!stampedVersion) return false;
+  try {
+    return normalizeManagedImageRelease(stampedVersion) === normalizeManagedImageRelease(version);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Select the installed source revision for an untagged or exact-SHA install.
+ * Tagged release installs retain the release catalog alias written by the
+ * installer. The build identity, not the caller-provided ref, remains the
+ * source of revision authority.
+ */
+export function installedManagedImageCatalogRevision(
+  environment: NodeJS.ProcessEnv,
+  rootDir: string,
+): string | null {
+  const identity = getBuildIdentity({ rootDir });
+  const installRef = environment.NEMOCLAW_INSTALL_REF?.trim() ?? "";
+  if (EXACT_SOURCE_REVISION_PATTERN.test(installRef)) {
+    if (installRef !== identity.sourceRevision) {
+      throw new SandboxWorkloadPreparationError(
+        "the exact install ref does not match the installed build identity",
+      );
+    }
+    return identity.sourceRevision;
+  }
+  if (SOURCE_REVISION_REF_PATTERN.test(installRef)) {
+    throw new SandboxWorkloadPreparationError(
+      "the exact install ref is not a supported lowercase 40-character source revision",
+    );
+  }
+
+  if (hasMatchingReleaseStamp(rootDir, identity.nemoclawVersion)) return null;
+  if (!EXACT_SOURCE_REVISION_PATTERN.test(identity.sourceRevision)) {
+    throw new SandboxWorkloadPreparationError(
+      "the installed build identity does not contain an exact managed-image source revision",
+    );
+  }
+
+  return identity.sourceRevision;
 }
 
 export interface LiveE2eManagedImageCatalog {
@@ -92,24 +148,16 @@ export function liveE2eManagedImageCatalog(
 }
 
 function readExactManagedImageCatalog(catalogPath: string): ManagedImageContractCatalog {
-  let descriptor: number | null = null;
+  let catalog: OpenRegularFile | null = null;
   try {
-    descriptor = fs.openSync(catalogPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-    const metadata = fs.fstatSync(descriptor);
-    const pathMetadata = fs.lstatSync(catalogPath);
-    if (
-      pathMetadata.isSymbolicLink() ||
-      !metadata.isFile() ||
-      metadata.dev !== pathMetadata.dev ||
-      metadata.ino !== pathMetadata.ino ||
-      metadata.size < 2 ||
-      metadata.size > 64 * 1024
-    ) {
+    catalog = openRegularFileNoFollow(catalogPath);
+    const metadata = catalog.stat();
+    if (metadata.size < 2 || metadata.size > 64 * 1024) {
       throw new SandboxWorkloadPreparationError(
         "managed image catalog file must be a bounded regular file",
       );
     }
-    const parsed: unknown = JSON.parse(fs.readFileSync(descriptor, "utf8"));
+    const parsed: unknown = JSON.parse(catalog.readBytes(64 * 1024).toString("utf8"));
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       throw new SandboxWorkloadPreparationError(
         "managed image catalog file must contain an object",
@@ -127,7 +175,7 @@ function readExactManagedImageCatalog(catalogPath: string): ManagedImageContract
       cause: error,
     });
   } finally {
-    if (descriptor !== null) fs.closeSync(descriptor);
+    catalog?.close();
   }
 }
 
@@ -231,7 +279,7 @@ function requireCompleteManagedImageCatalog(
   }
   if (expectedRevision !== null && cohortRevision !== expectedRevision) {
     throw new SandboxWorkloadPreparationError(
-      "managed image catalog source revision does not match the live E2E candidate revision",
+      "managed image catalog source revision does not match the trusted catalog revision",
     );
   }
   return { release: cohortRelease!, revision: cohortRevision! };
@@ -318,6 +366,22 @@ export async function prepareSandboxWorkloadSource(
     );
   }
 
+  const trustedCatalogRevision = input.expectedCatalogRevision ?? input.catalogRevision ?? null;
+  if (
+    input.expectedCatalogRevision &&
+    input.catalogRevision &&
+    input.expectedCatalogRevision !== input.catalogRevision
+  ) {
+    throw new SandboxWorkloadPreparationError(
+      "managed image catalog has conflicting trusted revision authorities",
+    );
+  }
+  if (trustedCatalogRevision !== null && !/^[0-9a-f]{40}$/u.test(trustedCatalogRevision)) {
+    throw new SandboxWorkloadPreparationError(
+      "managed image catalog trusted revision must be a lowercase 40-character SHA",
+    );
+  }
+
   let release: string;
   try {
     release = normalizeManagedImageRelease(input.version);
@@ -365,9 +429,6 @@ export async function prepareSandboxWorkloadSource(
       acceptedCandidateContract,
     );
   } else {
-    const trustedCatalogRevision = input.catalogPath
-      ? (input.expectedCatalogRevision ?? null)
-      : (input.catalogRevision ?? null);
     const catalogIdentity = requireCompleteManagedImageCatalog(
       catalog,
       release,

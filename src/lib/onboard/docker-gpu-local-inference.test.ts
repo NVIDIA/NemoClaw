@@ -449,6 +449,34 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
     ).rejects.toThrow("durable commit acknowledgement failed");
     expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
   });
+
+  it("rechecks sandbox identity after verification and before GPU commit (#9833)", async () => {
+    const runtimePatch = {
+      commitAfterReady: vi.fn(),
+      rollbackManagedStartupAfterCreateFailure: vi.fn(),
+    };
+    const log = vi.fn();
+
+    await expect(
+      verifyGpuSandboxLocalInferenceAndCommitAfterReady(
+        GPU_CONFIG,
+        "ollama-local",
+        {
+          ...options(),
+          log,
+          deps: { execInSandbox: execEmitting("HTTP_200"), sleep: vi.fn() },
+        },
+        runtimePatch,
+        () => {
+          throw new Error("sandbox identity changed");
+        },
+      ),
+    ).rejects.toThrow("sandbox identity changed");
+
+    expect(runtimePatch.commitAfterReady).not.toHaveBeenCalled();
+    expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("reached local inference"));
+  });
 });
 
 describe("printDockerGpuSandboxInferenceVerificationFailure", () => {

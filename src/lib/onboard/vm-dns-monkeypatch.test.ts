@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { applyOpenShellVmDnsMonkeypatch } from "../actions/sandbox/vm-dns-monkeypatch";
 import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
@@ -9,16 +9,17 @@ import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 describe("applyOnboardVmDnsMonkeypatch", () => {
   it("logs applied only when the onboard VM DNS monkeypatch changes files", () => {
     const changedLogs: string[] = [];
+    const applyChanged = vi.fn(() => ({
+      attempted: true,
+      changed: true,
+      ok: true,
+      status: "applied" as const,
+    }));
     applyOnboardVmDnsMonkeypatch(
       "demo",
-      { openshellDriver: "vm" },
+      { gatewayPort: 9123, openshellDriver: "vm" },
       {
-        apply: () => ({
-          attempted: true,
-          changed: true,
-          ok: true,
-          status: "applied",
-        }),
+        apply: applyChanged,
         log: (message) => changedLogs.push(message),
         warn: (message) => changedLogs.push(message),
       },
@@ -41,8 +42,37 @@ describe("applyOnboardVmDnsMonkeypatch", () => {
     );
 
     expect(changedLogs).toEqual(["  ✓ Applied OpenShell VM DNS monkeypatch"]);
+    expect(applyChanged).toHaveBeenCalledWith(
+      "demo",
+      { gatewayPort: 9123, openshellDriver: "vm" },
+      expect.any(Object),
+    );
     expect(unchangedLogs).toEqual(["  OpenShell VM DNS monkeypatch already present"]);
     expect(unchangedLogs.join("\n")).not.toContain("Applied");
+  });
+
+  it("withholds VM DNS success when authority changes after the helper returns (#9833)", () => {
+    const log = vi.fn();
+    const apply = vi.fn(() => ({
+      attempted: true,
+      changed: true,
+      ok: true,
+      status: "applied" as const,
+    }));
+    const revalidateSandboxIdentity = vi.fn(() => {
+      throw new Error("sandbox identity changed");
+    });
+
+    expect(() =>
+      applyOnboardVmDnsMonkeypatch(
+        "demo",
+        { openshellDriver: "vm" },
+        { apply, log, revalidateSandboxIdentity },
+      ),
+    ).toThrow("sandbox identity changed");
+
+    expect(apply).toHaveBeenCalledOnce();
+    expect(log).not.toHaveBeenCalled();
   });
 
   it("logs skipped VM DNS monkeypatch state for VM sandboxes", () => {

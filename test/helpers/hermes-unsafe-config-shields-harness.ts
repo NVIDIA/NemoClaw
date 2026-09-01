@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { expect, type MockInstance, vi } from "vitest";
+import { livePolicyMutationContext } from "./shields-flow-harness";
 
 type RequireSource = NodeJS.Require;
 
@@ -280,6 +281,16 @@ export function createHermesUnsafeConfigHarness(
       );
       vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw));
       vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(permissivePolicyPath);
+      vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(
+        livePolicyMutationContext,
+      );
+      vi.spyOn(policy, "inspectPolicyMutationContext").mockReturnValue(
+        livePolicyMutationContext,
+      );
+      vi.spyOn(policy, "recheckPolicyMutationContext").mockReturnValue(
+        livePolicyMutationContext,
+      );
+      vi.spyOn(policy, "verifyAppliedPolicyDocument").mockImplementation(() => undefined);
       vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue(hermesTarget);
       vi.spyOn(registry, "getSandbox").mockImplementation((name: unknown) => ({
         name: String(name),

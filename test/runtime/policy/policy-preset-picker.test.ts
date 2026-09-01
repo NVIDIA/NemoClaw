@@ -14,9 +14,9 @@ import { describe, expect, it, vi } from "vitest";
 const requireForTest = createRequire(import.meta.url);
 const readline = requireForTest("node:readline") as typeof import("node:readline");
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
-const policies = requireForTest(
-  path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"),
-) as typeof import("../../../src/lib/policy");
+const policyModulePath = path.join(REPO_ROOT, "src", "lib", "policy", "index.ts");
+const brandingModulePath = path.join(REPO_ROOT, "src", "lib", "cli", "branding.ts");
+const policies = requireForTest(policyModulePath) as typeof import("../../../src/lib/policy");
 
 const SELECT_FROM_LIST_ITEMS = [
   { name: "npm", description: "npm and Yarn registry access", file: "npm.yaml" },
@@ -24,6 +24,7 @@ const SELECT_FROM_LIST_ITEMS = [
 ];
 type AppliedOptions = {
   applied?: string[];
+  policyModule?: typeof policies;
 };
 
 type SelectionFunction = "selectFromList" | "selectForRemoval";
@@ -31,7 +32,7 @@ type SelectionFunction = "selectFromList" | "selectForRemoval";
 async function runSelectionPrompt(
   functionName: SelectionFunction,
   input: string,
-  { applied = [] }: AppliedOptions = {},
+  { applied = [], policyModule = policies }: AppliedOptions = {},
 ) {
   const originalExitCode = process.exitCode;
   process.exitCode = undefined;
@@ -86,7 +87,7 @@ async function runSelectionPrompt(
   };
 
   try {
-    const selected = await policies[functionName](SELECT_FROM_LIST_ITEMS, { applied });
+    const selected = await policyModule[functionName](SELECT_FROM_LIST_ITEMS, { applied });
     return {
       selected,
       stderr: stderr.join(""),
@@ -256,6 +257,27 @@ describe("policy preset pickers", () => {
 
       expect(result.stderr).toMatch(/already applied\.[\s\S]*policy add npm'/);
       expect(result.selected).toBeNull();
+    });
+
+    it("uses the invoked CLI brand in the policy recovery command", async () => {
+      vi.stubEnv("NEMOCLAW_INVOKED_AS", "nemohermes");
+      delete require.cache[requireForTest.resolve(policyModulePath)];
+      delete require.cache[requireForTest.resolve(brandingModulePath)];
+      const brandedPolicies = requireForTest(policyModulePath) as typeof policies;
+
+      try {
+        const result = await runSelectionPrompt("selectFromList", "1\n", {
+          applied: ["npm"],
+          policyModule: brandedPolicies,
+        });
+
+        expect(result.stderr).toContain("'nemohermes <sandbox> policy add npm'");
+        expect(result.stderr).not.toContain("'nemoclaw <sandbox> policy add npm'");
+      } finally {
+        vi.unstubAllEnvs();
+        delete require.cache[requireForTest.resolve(policyModulePath)];
+        delete require.cache[requireForTest.resolve(brandingModulePath)];
+      }
     });
 
     it("rejects out-of-range preset number with a failure status (#9742)", async () => {

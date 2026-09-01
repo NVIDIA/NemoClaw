@@ -1255,7 +1255,6 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     const workspace = onboardProcessWorkspace("nemoclaw-onboard-ollama-validation-");
     const { root: tmpDir } = workspace;
     const fakeBin = workspace.binDir;
-
     writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
 
     const script = String.raw`
@@ -1312,6 +1311,7 @@ reportChildScenario(async () => {
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_CONTEXT_WINDOW: "",
+        NEMOCLAW_TEST_NO_SLEEP: "1",
       },
     });
 
@@ -3426,7 +3426,7 @@ const runner = require(${runnerPath});
 
 // Mock nim module before onboard.js requires it
 const nimMod = require(${nimPath});
-nimMod.listModels = () => [{ name: "nvidia/nemotron-3-nano", image: "fake", minGpuMemoryMB: 8000 }];
+nimMod.getNimModelOptions = () => ({ models: [{ name: "nvidia/nemotron-3-nano", image: "fake", minGpuMemoryMB: 8000 }], usableMemoryMB: 16000 });
 nimMod.pullNimImage = () => {};
 nimMod.containerName = () => "nemoclaw-nim-test";
 nimMod.startNimContainerByName = () => "container-123";
@@ -4124,8 +4124,8 @@ if (args[0] === "inference" && args[1] === "set") {
   fs.writeFileSync(stateFile, JSON.stringify(state));
   process.exit(0);
 }
-// provider get: exit 1 so upsertProvider uses "create"
-if (args[0] === "provider" && args[1] === "get") { process.exit(1); }
+if (args[0] === "provider" && args[1] === "profile" && args.includes("export")) { process.stdout.write(JSON.stringify({ id: "openai", credentials: [], endpoints: [], binaries: [], inference_capable: true })); process.exit(0); }
+if (args[0] === "provider" && args[1] === "get") { process.exit(1); } // Force provider creation.
 process.exit(0);
 `,
       { mode: 0o755 },

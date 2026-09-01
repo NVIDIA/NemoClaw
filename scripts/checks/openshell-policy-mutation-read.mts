@@ -52,6 +52,10 @@ function unclassifiedBase(site: string): DiscoveredPolicyRead {
   return { site, view: "base", failureHandling: "unclassified" };
 }
 
+function unclassifiedFull(site: string): DiscoveredPolicyRead {
+  return { site, view: "full", failureHandling: "unclassified" };
+}
+
 function ignoredFull(site: string): DiscoveredPolicyRead {
   return { site, view: "full", failureHandling: "ignore-error" };
 }
@@ -63,31 +67,45 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
   },
   {
     relativePath: "src/lib/policy/index.ts",
-    expectedReads: [
-      ignoredBase("removePreset"),
-      ignoredBase("readCurrentSandboxPolicy"),
-      ignoredBase("applyPresetContent"),
-      ignoredBase("applyPresets"),
-      preservingBase("customPresetOwnsNetworkPolicyKey"),
-      ignoredFull("getGatewayPresets/readPolicy"),
-      preservingBase("getPresetContentGatewayState/readPolicy"),
-    ],
+    // Every round-trippable base-policy read is owned by the bounded
+    // captureSandboxBasePolicy adapter. This remaining --full read is a
+    // diagnostic preset inventory and never feeds a mutation.
+    expectedReads: [ignoredFull("getGatewayPresets/readPolicy")],
   },
   {
     relativePath: "nemoclaw/src/blueprint/runner.ts",
-    expectedReads: [unclassifiedBase("actionApply")],
+    expectedReads: [
+      unclassifiedBase("readBlueprintBasePolicy"),
+      unclassifiedFull("inspectBlueprintPolicy"),
+      unclassifiedFull("inspectBlueprintPolicy"),
+    ],
   },
   {
     relativePath: "src/lib/shields/index.ts",
     expectedReads: [
-      preservingBase("resolveExactManagedMcpPolicies"),
-      ignoredBase("resolveProvableManagedMcpPoliciesForDeadline"),
+      preservingBase("applyShieldsPolicySnapshot"),
       ignoredBase("shieldsDownWithoutHostLock"),
     ],
   },
 ];
 
 const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
+  {
+    relativePath: "src/lib/adapters/openshell/policy-state.ts",
+    expectedReads: [
+      unclassifiedBase("captureSandboxBasePolicy"),
+      unclassifiedBase("captureSandboxBasePolicyRevision"),
+      unclassifiedFull("inspectSandboxPolicy"),
+    ],
+  },
+  {
+    relativePath: "src/lib/actions/sandbox/snapshot.ts",
+    expectedReads: [preservingBase("prepareSnapshotClonePolicy")],
+  },
+  {
+    relativePath: "src/lib/onboard/experimental/hermes-portable-policy-state.ts",
+    expectedReads: [unclassifiedBase("proveHermesPortableLivePolicy")],
+  },
   {
     relativePath: "src/lib/actions/sandbox/gateway-state.ts",
     expectedReads: [
@@ -96,18 +114,25 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
     ],
   },
   {
+    relativePath: "src/lib/actions/sandbox/launch-readiness.ts",
+    expectedReads: [unclassifiedFull("validateLivePolicy")],
+  },
+  {
     relativePath: "src/lib/policy/commands.ts",
     expectedReads: [
+      unclassifiedFull("buildGlobalPolicyGetFullJsonArgs"),
       {
-        site: "buildPolicyGetCommand",
+        site: "buildPolicyGetArgs",
         view: "base",
         failureHandling: "unclassified",
       },
+      unclassifiedBase("buildPolicyGetRevisionArgs"),
       {
         site: "buildPolicyGetFullCommand",
         view: "full",
         failureHandling: "unclassified",
       },
+      unclassifiedFull("buildPolicyGetFullJsonArgs"),
     ],
   },
 ] as const;
@@ -120,7 +145,10 @@ export interface DiscoveredPolicyReadSite {
 
 const POLICY_GET_BUILDERS = new Map<string, PolicyReadView>([
   ["buildPolicyGetCommand", "base"],
+  ["buildPolicyGetArgs", "base"],
+  ["buildPolicyGetRevisionArgs", "base"],
   ["buildPolicyGetFullCommand", "full"],
+  ["buildPolicyGetFullJsonArgs", "full"],
 ]);
 
 interface PolicyBuilderBindings {
@@ -418,8 +446,12 @@ function directPolicyReadView(
     ts.isExpression(element) ? literalText(element) : null,
   );
   if (values[offset] !== "policy" || values[offset + 1] !== "get") return null;
-  if (values[offset + 2] === "--base") return "base";
-  if (values[offset + 2] === "--full") return "full";
+  const readArguments = values.slice(offset + 2);
+  const hasBase = readArguments.includes("--base");
+  const hasFull = readArguments.includes("--full");
+  if (hasBase === hasFull) return null;
+  if (hasBase) return "base";
+  if (hasFull) return "full";
   return null;
 }
 

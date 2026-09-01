@@ -6,7 +6,14 @@ import { pathToFileURL } from "node:url";
 
 import YAML from "yaml";
 
-import * as policyBoundaryModule from "../../../nemoclaw/src/shared/openshell-policy-boundary.cts";
+// Import the tsc-compiled output, not the .cts source: a standalone `node
+// --import tsx` child process (this fixture's execution mode) hits a Node/tsx
+// loader conflict on newer Node versions where Node's own native .cts
+// handling intercepts the file before tsx's transform runs, producing
+// "Cannot use import statement outside a module". Every other consumer in
+// this repo already imports the compiled .cjs for the same reason.
+// sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
+import * as policyBoundaryModule from "../../../nemoclaw/dist/shared/openshell-policy-boundary.cjs";
 
 const policyBoundary = (
   "default" in policyBoundaryModule ? policyBoundaryModule.default : policyBoundaryModule
@@ -18,7 +25,7 @@ export function bindHermesDiscordPolicyEndpoint(
   providerName: string,
   host: string,
   port: number,
-  protocol?: string,
+  protocol: string,
 ): void {
   const source = fs.readFileSync(policyFile, "utf8");
   const policy = parseOpenShellPolicy(source).policy;
@@ -35,7 +42,7 @@ export function bindHermesDiscordPolicyEndpoint(
     return (
       value.host === host &&
       value.port === port &&
-      (protocol === undefined || value.protocol === protocol)
+      value.protocol === protocol
     );
   }) as Record<string, unknown> | undefined;
   if (!endpoint) throw new Error("fake Discord endpoint is missing from the base policy");
@@ -47,8 +54,10 @@ export function bindHermesDiscordPolicyEndpoint(
 
 function main(): void {
   const [policyFile, providerName, host, rawPort, protocol] = process.argv.slice(2);
-  if (!policyFile || !providerName || !host || !rawPort) {
-    throw new Error("usage: hermes-discord-policy-binding <policy-file> <provider> <host> <port>");
+  if (!policyFile || !providerName || !host || !rawPort || !protocol) {
+    throw new Error(
+      "usage: hermes-discord-policy-binding <policy-file> <provider> <host> <port> <protocol>",
+    );
   }
   bindHermesDiscordPolicyEndpoint(policyFile, providerName, host, Number(rawPort), protocol);
 }

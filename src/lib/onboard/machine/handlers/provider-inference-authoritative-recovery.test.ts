@@ -64,6 +64,7 @@ describe("authoritative provider inference recovery", () => {
       expect.any(Function),
       expect.any(Function),
       session.sessionId,
+      expect.any(Function),
     );
     expect(calls.setupInference).toHaveBeenCalledWith(
       "my-assistant",

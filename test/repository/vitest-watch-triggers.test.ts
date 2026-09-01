@@ -12,6 +12,8 @@ import {
 } from "../helpers/vitest-watch-triggers";
 
 const E2E_WORKFLOW_CONTRACTS = [
+  "test/e2e/support/base-image-publication-workflow-boundary.test.ts",
+  "test/e2e/support/cli-artifact-workflow-boundary.test.ts",
   "test/e2e/support/dcode-profile-import-gate-workflow-boundary.test.ts",
   "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
   "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
@@ -27,6 +29,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
+  "test/e2e/support/native-runtime-qualification-producer-workflow.test.ts",
   "test/e2e/support/openclaw-plugin-runtime-exdev-workflow-boundary.test.ts",
   "test/e2e/support/onboard-timeout-contract.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
@@ -66,6 +69,8 @@ const OPAQUE_INPUTS = [
   "agents/hermes/runtime-config-guard.py",
   "agents/hermes/mcp-config-transaction.py",
   "test/e2e/lib/ci-compatible-inference.sh",
+  "nemoclaw/src/shared/openshell-policy-boundary.cts",
+  "nemoclaw/tsconfig.shared.json",
   "scripts/setup-jetson.sh",
   "tools/e2e/contracts/v1/jetson-dispatch.json",
   ".github/workflows/base-image.yaml",
@@ -84,6 +89,7 @@ const OPAQUE_INPUTS = [
   ".github/actions/docker-auth-cleanup/action.yaml",
   ".github/scripts/docker-auth-setup.sh",
   ".github/scripts/docker-auth-cleanup.sh",
+  ".github/workflows/pr-self-hosted.yaml",
   ".github/workflows/sandbox-images-and-e2e.yaml",
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/post-merge-docs.yaml",
@@ -110,17 +116,30 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
-  it("maps the onboard child-process preload to its managed-image fixtures", () => {
-    expect(triggeredBy("test/helpers/onboard-script-mocks.cjs")).toEqual([
-      "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
-      "test/onboarding/onboard-installer-restore-intent.test.ts",
-      "test/onboarding/onboard-messaging.test.ts",
-      "test/onboarding/onboard-reservation-recreate.test.ts",
-      "test/onboarding/onboard-sandbox-build.test.ts",
-      "test/onboarding/onboard-sandbox-recreation.test.ts",
-      "test/onboarding/onboard-terminal-dashboard.test.ts",
-    ]);
-  });
+  it.each(["test/helpers/onboard-fixture-contract.json", "test/helpers/onboard-script-mocks.cjs"])(
+    "maps %s to every sandbox identity consumer (#10463)",
+    (fixturePath) => {
+      expect(triggeredBy(fixturePath)).toEqual([
+        "test/helpers/onboard-created-sandbox-fixture.test.ts",
+        "test/onboarding/onboard-custom-dockerfile.test.ts",
+        "test/onboarding/onboard-extra-provider-reconciliation.test.ts",
+        "test/onboarding/onboard-fresh-create-identity.test.ts",
+        "test/onboarding/onboard-installer-restore-intent.test.ts",
+        "test/onboarding/onboard-managed-image-buildless-e2e.test.ts",
+        "test/onboarding/onboard-mcp-observability-redirect.test.ts",
+        "test/onboarding/onboard-messaging.test.ts",
+        "test/onboarding/onboard-prepared-build-context.test.ts",
+        "test/onboarding/onboard-reservation-recreate.test.ts",
+        "test/onboarding/onboard-sandbox-build.test.ts",
+        "test/onboarding/onboard-sandbox-recreation.test.ts",
+        "test/onboarding/onboard-script-mocks-contract.test.ts",
+        "test/onboarding/onboard-terminal-dashboard.test.ts",
+        "test/onboarding/onboard.test.ts",
+        "test/security/shellquote-sandbox.test.ts",
+        "test/repository/source-require-loader.test.ts",
+      ]);
+    },
+  );
 
   it.each([".github/workflows/pr.yaml", ".github/workflows/pr.yml"])(
     "maps YAML workflow files to the shared display-name contract [%s]",
@@ -133,13 +152,17 @@ describe("Vitest opaque-input watch triggers", () => {
     ".github/workflows/release-daily-brev-image.yaml",
     "scripts/release-daily-brev-image.sh",
   ])("maps each daily image caller input to its contract test [%s] (#9799)", (inputPath) => {
-    expect(triggeredBy(inputPath)).toEqual(["test/automation/releases/release-daily-brev-image.test.ts"]);
+    expect(triggeredBy(inputPath)).toEqual([
+      "test/automation/releases/release-daily-brev-image.test.ts",
+    ]);
   });
 
   it.each([".github/workflows/release-lkg-brev-image.yaml", "scripts/release-lkg-brev-image.sh"])(
     "maps each LKG image caller input to its contract test [%s] (#9798)",
     (inputPath) => {
-      expect(triggeredBy(inputPath)).toEqual(["test/automation/releases/release-lkg-brev-image.test.ts"]);
+      expect(triggeredBy(inputPath)).toEqual([
+        "test/automation/releases/release-lkg-brev-image.test.ts",
+      ]);
     },
   );
 
@@ -149,6 +172,15 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e-runtime/brev-launchable-gateway-diagnostics.test.ts",
     ]);
   });
+
+  it.each(["nemoclaw/src/shared/openshell-policy-boundary.cts", "nemoclaw/tsconfig.shared.json"])(
+    "maps each policy compiler input to its spawned fixture contract [%s] (#10016)",
+    (inputPath) => {
+      expect(triggeredBy(inputPath)).toEqual([
+        "test/e2e/support/hermes-discord-policy-binding.test.ts",
+      ]);
+    },
+  );
 
   it.each([
     ".github/actions/docker-auth-setup/action.yaml",
@@ -172,9 +204,7 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/actions/resolve-hermes-base-image/action.yaml")).toEqual([
       "test/platform/images/base-image-resolver-helper.test.ts",
     ]);
-    expect(
-      triggeredBy(".github/actions/resolve-reviewed-hermes-platform/action.yaml"),
-    ).toEqual([
+    expect(triggeredBy(".github/actions/resolve-reviewed-hermes-platform/action.yaml")).toEqual([
       "test/agents/hermes/reviewed-hermes-platform-action.test.ts",
       "test/platform/images/protected-managed-image-contract.test.ts",
       "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
@@ -218,6 +248,7 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("agents/hermes/mcp-config-transaction.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
+      "test/agents/hermes/hermes-mcp-credential-revision.test.ts",
     ]);
     expect(triggeredBy("test/e2e/lib/ci-compatible-inference.sh")).toEqual([
       "test/e2e/support/hosted-inference.test.ts",
@@ -227,13 +258,11 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/jetson-dispatch-client.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/base-image.yaml")).toEqual([
-      "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts",
       "test/inference/managed/managed-base-image-contract.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/managed-images.yaml")).toEqual([
-      "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/e2e-runtime/pull-public-exact-digest.test.ts",
     ]);
@@ -248,12 +277,16 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/actions/build-base-image-platform/action.yaml")).toEqual([
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/agents/openclaw/openclaw-dependency-review.test.ts",
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
+    ]);
+    expect(triggeredBy(".github/actions/publish-base-image-manifest/action.yaml")).toEqual([
+      "test/inference/managed/managed-image-publication-workflow.test.ts",
+      "test/platform/images/publish-base-image-manifest.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/base-image-platform.yaml")).toEqual([
       "test/agents/deepagents/dcode-base-image-workflow.test.ts",
       "test/inference/managed/managed-image-publication-workflow.test.ts",
       "test/install/perl-critical-cve-remediation.test.ts",
-      "test/agents/openclaw/runtime/pi-candidate-runtime-artifacts.test.ts",
     ]);
     expect(triggeredBy("scripts/checks/validate-managed-base-index.sh")).toEqual([
       "test/inference/managed/validate-managed-base-index.test.ts",
@@ -298,6 +331,9 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/sandbox-images-and-e2e.yaml")).toEqual([
       "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
     ]);
+    expect(triggeredBy(".github/workflows/pr-self-hosted.yaml")).toEqual([
+      "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/repository/code-scanning-workflow.test.ts",
     ]);
@@ -311,11 +347,10 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/generation/post-merge-docs.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
-      "test/automation/pull-requests/pr-review-advisor-workflow-boundary.test.ts",
-      "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test/e2e/support/e2e-operations-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy("tools/pr-review-advisor/openshell-policy.yaml")).toEqual([
-      "test/automation/pull-requests/pr-review-advisor-openshell-workflow-boundary.test.ts",
+      "test/automation/pull-requests/pr-review-advisor-openshell.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/hosted-runner-recovery.yaml")).toEqual([
       "test/automation/pull-requests/hosted-runner-recovery-workflow.test.ts",

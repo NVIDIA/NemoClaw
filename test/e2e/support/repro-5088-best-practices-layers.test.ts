@@ -42,4 +42,31 @@ describe("best-practices.mdx security-layer consistency (#5088)", () => {
     );
     expect(glance).toContain("Gateway Authentication");
   });
+
+  it("does not present a preset-free diagram as the post-onboarding default", () => {
+    const glance = text.slice(
+      text.indexOf("## Protection Layers at a Glance"),
+      text.indexOf("## Network Controls"),
+    );
+
+    expect(glance).toContain("does not show onboarding tier presets");
+    expect(glance).not.toMatch(
+      /default posture(?: immediately)? after onboarding|(?:the )?default after onboarding|(?:the )?post-onboarding default/i,
+    );
+  });
+
+  it("routes Locked-Down through Restricted with web search disabled", () => {
+    const profile = text.slice(text.indexOf("### Locked-Down"), text.indexOf("### Development"));
+
+    expect(text).toMatch(/^### Locked-Down$/m);
+    expect(text).not.toMatch(/^### Locked-Down \(Default\)$/m);
+    expect(profile).toContain("Select the Restricted tier during onboarding.");
+    expect(profile).toContain(
+      "Onboarding defaults to the Balanced tier, which selects the `npm`, `pypi`, `huggingface`, and `brew` presets.",
+    );
+    expect(profile).toContain("Choose no web search when prompted.");
+    expect(profile).toContain(
+      "Enabling web search adds the selected `brave` or `tavily` preset even with the Restricted tier.",
+    );
+  });
 });

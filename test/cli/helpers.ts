@@ -316,8 +316,8 @@ export function writeHealthyDockerStub(localBin: string): void {
 
 /**
  * Answer the agent-request readiness probe inside an `openshell sandbox exec`
- * stub. The probe posts a completion over the same transport as the route
- * probe, and that transport trusts stdout only after the exec marker.
+ * stub. The general sandbox transport writes an exec marker before the HTTP
+ * response. The managed DCode launcher returns the HTTP response directly.
  */
 export function inferenceInvocationStubLines(httpStatus = "200", exitCode = 0): string[] {
   const bodyLines =
@@ -344,7 +344,10 @@ export function inferenceInvocationStubLines(httpStatus = "200", exitCode = 0): 
   return [
     '  case "$*" in',
     "    *chat/completions*|*/v1/responses*|*/v1/messages*)",
-    `      printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'`,
+    '      case "$*" in',
+    "        */usr/local/lib/nemoclaw/dcode-managed-exec*) ;;",
+    `        *) printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}' ;;`,
+    "      esac",
     `      printf '%s\\n' ${JSON.stringify(httpStatus)}`,
     ...bodyLines,
     `      exit ${String(exitCode)}`,
@@ -505,14 +508,14 @@ export function createCloudflaredServiceDir(prefix: string): {
 export function createDebugCommandTestEnv(
   resources: OwnedTestResources,
   prefix: string,
-  options: { extraSandboxNames?: string[] } = {},
+  options: { extraSandboxNames?: string[]; gatewayPort?: number; openshellArgsLog?: string } = {},
 ): Record<string, string> {
   const { home, bin: localBin } = resources.home(prefix);
   const sandboxName = `${prefix}${process.pid.toString(36)}-${Date.now().toString(36)}`;
   fs.mkdirSync(localBin, { recursive: true });
   // Register the env-sourced sandbox plus any extra names supplied via the
   // --sandbox flag so the validation gate accepts them.
-  writeSandboxRegistry(home, sandboxName);
+  writeSandboxRegistry(home, sandboxName, options.gatewayPort ? { gatewayPort: options.gatewayPort } : {});
   if (options.extraSandboxNames && options.extraSandboxNames.length > 0) {
     const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
     const current = JSON.parse(fs.readFileSync(registryPath, "utf-8")) as {
@@ -536,6 +539,9 @@ export function createDebugCommandTestEnv(
     path.join(localBin, "openshell"),
     [
       "#!/bin/sh",
+      ...(options.openshellArgsLog
+        ? [`printf '%s\n' "$*" >> ${JSON.stringify(options.openshellArgsLog)}`]
+        : []),
       'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
       ...listLines.map((line) => `  echo ${JSON.stringify(line)}`),
       "  exit 0",

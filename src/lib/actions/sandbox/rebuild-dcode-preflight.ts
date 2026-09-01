@@ -219,7 +219,11 @@ function requireInferenceRoute(
   target: ResolvedDcodeRebuildTarget,
   bail: DcodeRebuildPreflightBail,
 ): void {
-  const result = probeSandboxInferenceInvocation({ sandboxName, ...target });
+  const result = probeSandboxInferenceInvocation({
+    sandboxName,
+    agentName: target.agent,
+    ...target,
+  });
   if (!result.ok) {
     fail(
       `recorded inference credentials or route were rejected: ${result.detail}`,

@@ -188,9 +188,6 @@ export function createInitialOnboardFlowPhases<
   const gatewayPhase: OnboardSequencePhase<Context> = {
     state: "gateway",
     async run(context) {
-      // Resolve authority before the managed-only reuse helper can select a
-      // gateway or mutate OPENSHELL_GATEWAY. External attachment revalidates
-      // the same owner again at the effect edge.
       const owner = options.gatewayDeps.resolveGatewayOwner();
       await options.assertGatewayReadiness();
       const gatewayResult = await handleGatewayState({

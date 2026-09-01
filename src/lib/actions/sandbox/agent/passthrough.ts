@@ -116,7 +116,6 @@ import { CLI_NAME } from "../../../cli/branding";
 import { isStdinTty } from "../../../core/stdin";
 import { resolveSandboxHermesApiPort } from "../../../onboard/hermes-api-port";
 import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
-import { parseSandboxPhase } from "../../../state/gateway";
 import * as registry from "../../../state/registry";
 import {
   buildOpenshellExecArgs,
@@ -541,7 +540,7 @@ export async function runAgentPassthrough(
   if (!command) return;
   const ensureLive = deps.ensureLive ?? ensureLiveSandboxOrExit;
   const state = await ensureLive(sandboxName, { allowNonReadyPhase: true });
-  const phase = parseSandboxPhase(state?.output ?? "");
+  const phase = state?.phase ?? null;
   if (!phase) {
     rejectUnparseablePhase(sandboxName, proc);
   }

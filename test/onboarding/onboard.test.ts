@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { getBuildIdentity } from "../../src/lib/core/version.js";
 import { appendHostProxyEnvArgs } from "../../src/lib/onboard/host-proxy-env.js";
 import {
   isValidInferenceInputsOverride,
@@ -531,7 +532,6 @@ startGateway(null).catch((error) => {
         messaging: true,
         resourceProfile: true,
       },
-      policyPresets: ["nous-web", "brave"],
       lastCompletedStep: "policies",
       lastStepStarted: "policies",
       steps: {
@@ -569,7 +569,6 @@ startGateway(null).catch((error) => {
       messaging: false,
       resourceProfile: true,
     });
-    expect(cleared.policyPresets).toBeNull();
     expect(cleared.steps.gateway.status).toBe("complete");
     expect(cleared.steps.provider_selection.status).toBe("pending");
     expect(cleared.steps.sandbox.status).toBe("pending");
@@ -672,29 +671,41 @@ startGateway(null).catch((error) => {
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
     const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+    const onboardScriptMocksPath = JSON.stringify(
+      path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+    );
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
 
     const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-const childProcess = require("node:child_process");
+	const runner = require(${runnerPath});
+	const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+	const registry = require(${registryPath});
+	const fixtureMocks = require(${onboardScriptMocksPath});
+	const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const commands = [];
+const existingSandbox = fixtureMocks.createCreatedSandboxFixture({ lifecycleState: "created" });
+existingSandbox.installRuntimeObservation();
+const sandboxCommand = (command) => Array.isArray(command) ? command : _n(command).split(/\s+/u);
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
+	  const profileResult = fixtureMocks.mockEndpointlessProviderProfileRun(command, "nemoclaw-mcp-v1", false);
+  if (profileResult !== null) return profileResult;
+  return existingSandbox.run(sandboxCommand(command)) ?? { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return ["my-assistant", "Id: sbx-4f2a91c0d7"].join(String.fromCharCode(10));
-  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  const sandboxResult = existingSandbox.run(sandboxCommand(command));
+  if (sandboxResult !== null) return sandboxResult.status === 0 ? sandboxResult.stdout.toString() : "";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
+	registry.getSandbox = () => fixtureMocks.sandboxLifecycleFixture({
+	  name: "my-assistant",
+	  toolDisclosure: "progressive",
+	}, { sandboxId: existingSandbox.state.sandboxId });
 
 childProcess.spawn = (...args) => {
   const child = new EventEmitter();
@@ -748,6 +759,10 @@ const { createSandbox } = require(${onboardPath});
       payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox create")),
       "did not expect sandbox create when reusing existing sandbox",
     );
+    assert.match(
+      result.stdout,
+      /Existing provider\/model selection is unreadable; reusing sandbox\./,
+    );
   });
 
   it("accepts gateway inference when system inference is separately not configured", async () => {
@@ -782,10 +797,10 @@ const { createSandbox } = require(${onboardPath});
         "OPENAI_API_KEY",
       );
 
-      // openai provider profile import + provider get + provider update + inference set
-      assert.match(
+      // openai provider profile validation + provider get + provider update + inference set
+      assert.equal(
         harness.commands[0].command,
-        /^provider profile -g nemoclaw import --file .*openai\.yaml$/u,
+        "provider profile -g nemoclaw export openai --output json",
       );
       assert.equal(harness.commands.length, 4);
     });
@@ -821,10 +836,10 @@ const { createSandbox } = require(${onboardPath});
         "OPENAI_API_KEY",
       );
 
-      // openai provider profile import + provider get + provider update + inference set
-      assert.match(
+      // openai provider profile validation + provider get + provider update + inference set
+      assert.equal(
         harness.commands[0].command,
-        /^provider profile -g nemoclaw import --file .*openai\.yaml$/u,
+        "provider profile -g nemoclaw export openai --output json",
       );
       assert.equal(harness.commands.length, 4);
     });
@@ -936,6 +951,7 @@ const { createSandbox } = require(${onboardPath});
 
   it("rejects portable managed bootstrap before recreate state mutation (#9068)", () => {
     const repoRoot = path.join(import.meta.dirname, "../..");
+    const catalogRevision = getBuildIdentity({ rootDir: repoRoot }).sourceRevision;
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-managed-recreate-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "portable-managed-recreate.js");
@@ -1005,7 +1021,7 @@ catalog.resolveManagedImageCatalogFromGhcr = async ({ release, platform }) =>
       reference: image + "@" + digest,
       source: {
         repository: contract.MANAGED_IMAGE_SOURCE_REPOSITORY,
-        revision: "a".repeat(40),
+        revision: ${JSON.stringify(catalogRevision)},
         release,
         cohort: "ghrun-9068-1",
       },
@@ -1106,7 +1122,6 @@ const { createSandboxWithTemporaryManagedRuntime } = require(${onboardPath});
       NEMOCLAW_RECREATE_SANDBOX: "1",
     };
     delete env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
-    delete env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK;
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf-8",

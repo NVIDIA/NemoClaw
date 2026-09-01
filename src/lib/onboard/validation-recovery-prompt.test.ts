@@ -147,4 +147,25 @@ describe("validation recovery credential prompt", () => {
     );
     expectHelpBeforeSelectionReturn(log);
   });
+
+  it("rechecks sandbox identity after recovery input before credential persistence (#9833)", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "sk-existing");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { helpers, prompt } = createRecoveryPrompt(["retry", "sk-replacement"]);
+
+    await expect(
+      helpers.promptValidationRecovery(
+        "OpenAI",
+        CREDENTIAL_RECOVERY,
+        "OPENAI_API_KEY",
+        null,
+        () => {
+          throw new Error("live sandbox identity changed before the selected route");
+        },
+      ),
+    ).rejects.toThrow(/live sandbox identity changed before/u);
+
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(process.env.OPENAI_API_KEY).toBe("sk-existing");
+  });
 });

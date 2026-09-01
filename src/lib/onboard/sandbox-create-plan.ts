@@ -16,6 +16,7 @@ export type {
 export type { SandboxCreatePlan } from "./sandbox-create-plan-materialization";
 export {
   materializeSandboxCreatePlan,
+  prepareSandboxCreatePolicy,
   validateSandboxCreateIntentBindings,
 } from "./sandbox-create-plan-materialization";
 
@@ -27,10 +28,8 @@ export {
 // the create-time policy decision.
 const KNOWN_POLICY_TIER_NAMES = new Set(["restricted", "balanced", "open", "personal"]);
 
-export function resolveSandboxCreatePolicyTier(
-  authoritativePolicyTier?: string | null,
-): string | null {
-  if (authoritativePolicyTier !== undefined) return authoritativePolicyTier;
+export function resolveSandboxCreatePolicyTier(requestedPolicyTier?: string | null): string | null {
+  if (requestedPolicyTier !== undefined) return requestedPolicyTier;
   // Only trust the env value in non-interactive mode. Interactive flows let the
   // operator override the tier via the selector after sandbox creation; if the
   // env said balanced but the operator picks restricted, an interactive trust

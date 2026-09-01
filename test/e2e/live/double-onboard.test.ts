@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parseOpenShellSandboxId } from "../../../src/lib/adapters/openshell/sandbox-identity.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -446,16 +447,17 @@ async function prerequisiteOrSkip(
   skip(message);
 }
 
-test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers stale registry", {
+test("double-onboard: reuses gateway, preserves sibling sandbox, and replaces stale registry", {
   timeout: TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
       "validate double-onboard lifecycle prerequisites",
       "onboard first sandbox",
       "re-onboard same sandbox on existing gateway",
+      "recreate same sandbox on existing gateway",
       "onboard sibling sandbox with isolated dashboard",
       "stop sibling sandbox without disturbing the first forward",
-      "recover sandbox from stale registry",
+      "replace sandbox after stale registry refusal",
       "validate gateway-stop lifecycle guidance",
       "remove double-onboard resources",
     ],
@@ -529,10 +531,11 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
     contract: [
       "first onboard creates a sandbox and NemoClaw gateway",
       "OpenShell status reports the managed gateway through its Server endpoint line",
-      "same-name recreate reuses the healthy gateway without port conflicts",
+      "same-name re-onboard reuses the healthy gateway and sandbox without port conflicts",
+      "explicit same-name recreation preserves the healthy gateway",
       "different-name onboard preserves the first sandbox and allocates distinct dashboard forwards",
       "stopping one sandbox releases only its dashboard forward and reports the container stopped",
-      "stale OpenShell deletion preserves registry metadata through status/connect and rebuild recovers it",
+      "stale OpenShell deletion preserves registry metadata through status/connect and rebuild directs a clean replacement",
       "status after gateway stop gives explicit lifecycle guidance without deleting registry state",
     ],
   });
@@ -578,19 +581,24 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
     timeoutMs: 30_000,
   });
   expect(sandboxAAfterFirst.exitCode, resultText(sandboxAAfterFirst)).toBe(0);
+  const sandboxAIdAfterFirst = parseOpenShellSandboxId(resultText(sandboxAAfterFirst));
+  expect(sandboxAIdAfterFirst, resultText(sandboxAAfterFirst)).not.toBeNull();
   expect(registryHas(SANDBOX_A), `${REGISTRY_FILE} missing ${SANDBOX_A}`).toBe(true);
   assertRegistryInferenceMetadata(SANDBOX_A, fake.baseUrl);
 
   progress.phase("re-onboard same sandbox on existing gateway");
   // Phase 3: second onboard with the same name must reuse the healthy gateway.
   const gatewayBeforeSecond = await gatewayRuntimeId(host, "phase-3-gateway-id-before");
-  const second = await runOnboard(host, SANDBOX_A, fake.baseUrl, "phase-3-second-onboard", true);
+  await artifacts.writeJson("phase-3-registry-before-second.json", registryEntry(SANDBOX_A));
+  const second = await runOnboard(host, SANDBOX_A, fake.baseUrl, "phase-3-second-onboard");
+  await artifacts.writeJson("phase-3-registry-after-second.json", registryEntry(SANDBOX_A));
   const secondText = resultText(second);
   expect(second.exitCode, secondText).toBe(0);
   const gatewayAfterSecond = await gatewayRuntimeId(host, "phase-3-gateway-id-after");
   expect(gatewayBeforeSecond, "gateway runtime id before second onboard").not.toBe("");
   expect(gatewayAfterSecond).toBe(gatewayBeforeSecond);
   expect(secondText).toContain("Reusing healthy NemoClaw gateway.");
+  expect(secondText).toContain(`[reuse] Skipping sandbox (${SANDBOX_A})`);
   expect(secondText).not.toContain("Port 8080 is not available");
   expect(secondText).not.toContain("Port 18789 is not available");
   const sandboxAAfterSecond = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
@@ -599,9 +607,38 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
     timeoutMs: 30_000,
   });
   expect(sandboxAAfterSecond.exitCode, resultText(sandboxAAfterSecond)).toBe(0);
+  expect(parseOpenShellSandboxId(resultText(sandboxAAfterSecond))).toBe(sandboxAIdAfterFirst);
+  const sandboxARegistryAfterSecond = registryEntry(SANDBOX_A);
+  expect(sandboxARegistryAfterSecond, `${REGISTRY_FILE} missing ${SANDBOX_A}`).toBeTruthy();
+  expect(hasOwn(sandboxARegistryAfterSecond!, "pendingRouteReservation")).toBe(false);
+  expect(typeof sandboxARegistryAfterSecond!.reservationSessionId).toBe("string");
+  const listAfterSecond = await command(host, ["list"], {
+    artifactName: "phase-3-nemoclaw-list",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(listAfterSecond.exitCode, resultText(listAfterSecond)).toBe(0);
+  expect(stripAnsi(listAfterSecond.stdout)).toContain(SANDBOX_A);
+
+  progress.phase("recreate same sandbox on existing gateway");
+  const gatewayBeforeRecreate = await gatewayRuntimeId(host, "phase-3-recreate-gateway-id-before");
+  const recreated = await runOnboard(
+    host,
+    SANDBOX_A,
+    fake.baseUrl,
+    "phase-3-recreate-onboard",
+    true,
+  );
+  const recreatedText = resultText(recreated);
+  expect(recreated.exitCode, recreatedText).toBe(0);
+  expect(await gatewayRuntimeId(host, "phase-3-recreate-gateway-id-after")).toBe(
+    gatewayBeforeRecreate,
+  );
+  expect(recreatedText).not.toContain("Port 8080 is not available");
+  expect(recreatedText).not.toContain("Port 18789 is not available");
 
   progress.phase("onboard sibling sandbox with isolated dashboard");
-  // Phase 4: third onboard with a different name must not destroy A.
+  // Phase 4: a different-name onboard must not destroy A.
   await sandbox.openshell(
     ["gateway", "add", "--local", "--name", ALT_GATEWAY_NAME, gatewayAliasEndpoint()],
     {
@@ -757,9 +794,10 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   );
   expect(restoredForwardBAfterStart.owner, restoredForwardBAfterStart.output).toBe(SANDBOX_B);
 
-  progress.phase("recover sandbox from stale registry");
+  progress.phase("replace sandbox after stale registry refusal");
   // Phase 5: direct OpenShell deletion leaves a stale registry entry that
-  // status/connect preserve and rebuild can recover.
+  // status/connect preserve the stale record; rebuild refuses to invent its
+  // missing policy and directs an explicit clean replacement.
   await sandbox.openshell(["sandbox", "delete", SANDBOX_A], {
     artifactName: "phase-5-delete-sandbox-a-directly",
     env: commandEnv(),
@@ -791,7 +829,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   expect(registryHas(SANDBOX_A), "connect removed stale registry entry").toBe(true);
 
   const rebuild = await command(host, [SANDBOX_A, "rebuild", "--yes"], {
-    artifactName: "phase-5-stale-rebuild-recovery",
+    artifactName: "phase-5-stale-rebuild-refusal",
     env: staleRebuildEnv(SANDBOX_A, fake.baseUrl),
     timeoutMs: PHASE_TIMEOUT_MS,
   });
@@ -800,9 +838,27 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   expect(rebuildText).not.toContain("Cannot back up state");
   expect(rebuildText).not.toContain("does not exist");
   expect(rebuildText).toContain("absent from the live OpenShell gateway");
-  expect(rebuildText).toContain("No live workspace state to back up");
-  expect(rebuildText).toContain("Creating new sandbox with current image");
-  expect(rebuild.exitCode, rebuildText).toBe(0);
+  expect(rebuildText).toContain("Rebuild cannot recover its missing OpenShell policy");
+  expect(rebuildText).toContain(`nemoclaw ${SANDBOX_A} destroy --yes`);
+  expect(rebuildText).toContain("nemoclaw onboard");
+  expect(rebuildText).not.toContain("Creating new sandbox with current image");
+  expect(rebuild.exitCode, rebuildText).not.toBe(0);
+
+  const removeStale = await command(host, [SANDBOX_A, "destroy", "--yes"], {
+    artifactName: "phase-5-remove-stale-registry-a",
+    env: commandEnv(),
+    timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+  });
+  expect(removeStale.exitCode, resultText(removeStale)).toBe(0);
+  expect(registryHas(SANDBOX_A), "destroy kept stale sandbox A registry entry").toBe(false);
+
+  const cleanReplacement = await runOnboard(
+    host,
+    SANDBOX_A,
+    fake.baseUrl,
+    "phase-5-clean-replacement-onboard",
+  );
+  expect(cleanReplacement.exitCode, resultText(cleanReplacement)).toBe(0);
 
   const sandboxAAfterRebuild = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
     artifactName: "phase-5-openshell-sandbox-a-after-rebuild",

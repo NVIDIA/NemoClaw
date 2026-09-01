@@ -26,15 +26,21 @@ export interface ConnectShieldsRelockWatcher {
   stop(): void;
 }
 
-function formatConnectShieldsRelockNotice(
+// - The connect child runs `ssh -tt`, which puts this terminal in raw mode. ONLCR is off, so a bare LF staircases (#9710).
+// - Raw mode belongs to the child and is not observable here. `process.stderr.isTTY` stands in for it.
+// - CR before LF is a no-op on a cooked terminal. This check keeps carriage returns out of a redirected file or pipe.
+// - The one-shot `nemoclaw <name> agent` warning prints before dispatch, while the terminal is still cooked.
+export function formatConnectShieldsRelockNotice(
   sandboxName: string,
   timeoutSeconds: number | null,
+  stderrIsTty: boolean = process.stderr.isTTY === true,
 ): string {
   const safeTimeout = normalizeShieldsRelockTimeoutSeconds(timeoutSeconds);
   const afterPart = safeTimeout === null ? "" : ` after ${String(safeTimeout)}s`;
+  const eol = stderrIsTty ? "\r\n" : "\n";
   return (
-    `\n  ⚠ Shields auto-relocked${afterPart}. This connected session remains open, but restricted operations may now fail.\n` +
-    `  Run \`${formatShieldsDownRecoveryCommand(sandboxName, safeTimeout)}\` on the host to lower Shields again.\n`
+    `${eol}  ⚠ Shields auto-relocked${afterPart}. This connected session remains open, but restricted operations may now fail.${eol}` +
+    `  Run \`${formatShieldsDownRecoveryCommand(sandboxName, safeTimeout)}\` on the host to lower Shields again.${eol}`
   );
 }
 
@@ -96,14 +102,16 @@ export function startConnectShieldsRelockWatcher(
   }
 }
 
+// - Shields relock any sandbox that lowered them, so every connect session needs the warning (#9710).
+// - NemoClaw ships openclaw, hermes, and langchain-deepagents-code; each declares shields files.
+// - #9508 watched OpenClaw sessions only. That scope came from #9453, not from a runtime limit.
 export async function runConnectChildWithShieldsRelockNotice(
   binary: string,
   args: readonly string[],
   options: SandboxExecChildOptions,
   sandboxName: string,
-  watchShields: boolean,
 ): Promise<SpawnLikeResult> {
-  const watcher = watchShields ? startConnectShieldsRelockWatcher(sandboxName) : null;
+  const watcher = startConnectShieldsRelockWatcher(sandboxName);
   try {
     return await runSandboxExecChild(binary, args, options);
   } finally {

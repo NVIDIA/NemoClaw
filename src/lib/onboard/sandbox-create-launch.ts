@@ -138,6 +138,9 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // permits for host-side processes but that must not enter the sandbox.
   delete sandboxEnv.KUBECONFIG;
   delete sandboxEnv.SSH_AUTH_SOCK;
+  if (!input.createArgs.includes("--policy")) {
+    delete sandboxEnv.OPENSHELL_SANDBOX_POLICY;
+  }
 
   // Run without piping through awk; the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline

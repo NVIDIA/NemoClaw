@@ -3,7 +3,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { stripAnsi } from "../../adapters/openshell/client";
+import {
+  createCliOpenShellSandboxObserver,
+  stripOpenShellCliAnsi,
+} from "../../adapters/openshell/sandbox-observer-cli";
+import {
+  namedOpenShellGateway,
+  type OpenShellSandboxError,
+} from "../../adapters/openshell/sandbox-observer";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
@@ -15,7 +22,7 @@ import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
-import { parseGatewayInference } from "../../inference/config";
+import { buildGatewayInferenceGetArgs, parseGatewayInference } from "../../inference/config";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
@@ -25,13 +32,7 @@ import {
   resolveCurrentRuntimeProviderBundle,
 } from "../../onboard/runtime-provider/access";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
-import { getBaselineExclusionRuntimeStatus } from "../../policy";
-import {
-  BASELINE_EXCLUSION_SUPPORT_IMPACT,
-  type BaselineExclusionRuntimeStatus,
-} from "../../policy/baseline-exclusion";
 import { ROOT } from "../../runner";
-import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import type { SandboxEntry } from "../../state/registry";
@@ -59,8 +60,6 @@ import {
 import {
   cloudflaredDoctorCheck,
   dockerInspectGateway,
-  findSandboxListLine,
-  inferSandboxReadyFromLine,
   inspectSandboxDoctorPortableAuthority,
   ollamaDoctorCheck,
   oneLine,
@@ -208,7 +207,23 @@ async function collectGatewayChecks(
   openshellBin: ReturnType<typeof resolveOpenshell>,
   recoverGateway: boolean,
 ): Promise<GatewayProbe> {
-  const checks: DoctorCheck[] = [];
+  // #10223: the fail-only branch at the call site emits this label when the
+  // registered gateway binding cannot be resolved. This branch runs both
+  // when it resolved from a real sandbox entry and when the caller falls
+  // back to the ambient default gateway for an unregistered sandbox name
+  // (resolveDoctorGatewayName). Only the former is an actual registered
+  // binding, so gate the ok check on a real sandbox entry, or an
+  // unregistered sandbox name would misreport one that does not exist.
+  const checks: DoctorCheck[] = sb
+    ? [
+        {
+          group: "Gateway",
+          label: "Registered gateway binding",
+          status: "ok",
+          detail: `resolved to '${gatewayName}'`,
+        },
+      ]
+    : [];
   const gateway = openshellBin
     ? await probeOpenShellGateway(gatewayName, recoverGateway)
     : { check: null, connected: false };
@@ -242,7 +257,7 @@ async function probeOpenShellGateway(
   connected: boolean;
 }> {
   const lifecycle = await gatewayLifecycle(gatewayName, recoverGateway);
-  const cleanStatus = stripAnsi(lifecycle?.status || "");
+  const cleanStatus = stripOpenShellCliAnsi(lifecycle?.status || "");
   const connected = lifecycle?.state === "healthy_named";
   return {
     connected,
@@ -262,11 +277,11 @@ function liveSandboxDetail(
   sandboxName: string,
   present: boolean,
   ready: boolean | null,
-  line: string | null,
+  phase: string | null,
 ): string {
   if (!present) return `${sandboxName} not present in live OpenShell sandbox list`;
   if (ready) return `${sandboxName} present (Ready)`;
-  return `${sandboxName} present${line ? ` (${oneLine(line)})` : ""}`;
+  return `${sandboxName} present${phase ? ` (${oneLine(phase)})` : ""}`;
 }
 
 function liveSandboxHint(
@@ -281,15 +296,52 @@ function liveSandboxHint(
   return `run \`${CLI_NAME} ${sandboxName} status\` or \`${CLI_NAME} ${sandboxName} logs --follow\``;
 }
 
-function liveSandboxCheck(sandboxName: string): SandboxProbe {
-  const list = captureOpenshell(["sandbox", "list"], {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+function liveSandboxObservationFailureHint(
+  sandboxName: string,
+  gatewayName: string,
+  error: OpenShellSandboxError,
+): string {
+  switch (error.kind) {
+    case "authentication":
+      return `restore OpenShell authentication for gateway '${gatewayName}', then retry`;
+    case "transport":
+      return error.reason === "identity_mismatch"
+        ? `run \`${CLI_NAME} ${sandboxName} status\` to inspect the recorded gateway identity, then retry`
+        : `run \`openshell status\`, restore gateway '${gatewayName}', then retry`;
+    case "schema":
+      return "use matching supported OpenShell CLI and gateway versions, then retry";
+    case "timeout":
+      return `check that gateway '${gatewayName}' responds, then retry`;
+    case "command":
+      return `run \`openshell sandbox list -g ${gatewayName}\` and correct the reported command failure`;
+  }
+}
+
+async function liveSandboxCheck(sandboxName: string, gatewayName: string): Promise<SandboxProbe> {
+  const list = await createCliOpenShellSandboxObserver({
+    capture: captureOpenshell,
+    defaultTimeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+  }).listSandboxes({
+    target: namedOpenShellGateway(gatewayName),
+    timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
   });
-  const liveNames = parseLiveSandboxNames(list.output || "");
-  const present = list.status === 0 && liveNames.has(sandboxName);
-  const line = findSandboxListLine(list.output || "", sandboxName);
-  const ready = inferSandboxReadyFromLine(line);
+  if (!list.ok) {
+    return {
+      reachable: false,
+      checks: [
+        {
+          group: "Sandbox",
+          label: "Live sandbox",
+          status: "fail",
+          detail: `OpenShell sandbox observation failed: ${oneLine(list.error.message)}`,
+          hint: liveSandboxObservationFailureHint(sandboxName, gatewayName, list.error),
+        },
+      ],
+    };
+  }
+  const observed = list.value.sandboxes.find((sandbox) => sandbox.name === sandboxName) ?? null;
+  const present = observed !== null;
+  const ready = observed ? observed.readiness === "ready" : null;
   const reachable = present && ready === true;
   return {
     reachable,
@@ -298,19 +350,22 @@ function liveSandboxCheck(sandboxName: string): SandboxProbe {
         group: "Sandbox",
         label: "Live sandbox",
         status: reachable ? "ok" : "fail",
-        detail: liveSandboxDetail(sandboxName, present, ready, line),
+        detail: liveSandboxDetail(sandboxName, present, ready, observed?.phase ?? null),
         hint: liveSandboxHint(sandboxName, present, ready),
       },
     ],
   };
 }
 
-function collectSandboxReadinessChecks(
+async function collectSandboxReadinessChecks(
   sandboxName: string,
+  gatewayName: string | null,
   openshellBin: ReturnType<typeof resolveOpenshell>,
   openshellConnected: boolean,
-): SandboxProbe {
-  if (openshellBin && openshellConnected) return liveSandboxCheck(sandboxName);
+): Promise<SandboxProbe> {
+  if (gatewayName && openshellBin && openshellConnected) {
+    return liveSandboxCheck(sandboxName, gatewayName);
+  }
   if (!openshellBin) return { checks: [], reachable: false };
   return {
     reachable: false,
@@ -330,11 +385,12 @@ function resolveInferenceRoute(
   sb: SandboxEntry | null | undefined,
   openshellBin: ReturnType<typeof resolveOpenshell>,
   openshellConnected: boolean,
+  gatewayName: string | null,
 ): DoctorInferenceRoute {
   const live =
-    openshellBin && openshellConnected
+    openshellBin && openshellConnected && gatewayName
       ? parseGatewayInference(
-          captureOpenshell(["inference", "get"], {
+          captureOpenshell(buildGatewayInferenceGetArgs(gatewayName), {
             ignoreError: true,
             timeout: OPENSHELL_PROBE_TIMEOUT_MS,
           }).output,
@@ -407,86 +463,6 @@ function shieldsDoctorCheck(sandboxName: string): DoctorCheck {
   };
 }
 
-function baselineExclusionCheckFields(
-  sandboxName: string,
-  key: string,
-  runtimeStatus: BaselineExclusionRuntimeStatus,
-): Pick<DoctorCheck, "status" | "detail" | "hint"> {
-  const restoreCommand = `${CLI_NAME} ${sandboxName} policy restore ${key}`;
-  if (runtimeStatus === "excluded") {
-    return {
-      status: "info",
-      detail: `Baseline entry '${key}' excluded. ${BASELINE_EXCLUSION_SUPPORT_IMPACT}`,
-      hint: `restore with \`${restoreCommand}\``,
-    };
-  }
-  if (runtimeStatus === "no-longer-in-baseline") {
-    return {
-      status: "warn",
-      detail: `Baseline entry '${key}' no longer exists; rebuild fails closed until the stale exclusion is cleared.`,
-      hint: `key no longer exists in the baseline; run \`${restoreCommand}\` to clear the stale record`,
-    };
-  }
-  if (runtimeStatus === "agent-changed") {
-    return {
-      status: "warn",
-      detail: `Baseline exclusion '${key}' belongs to a different agent; rebuild fails closed until the stale approval is cleared.`,
-      hint: `run \`${restoreCommand}\`, then review and approve the current agent baseline if needed`,
-    };
-  }
-  if (runtimeStatus === "baseline-unreadable") {
-    return {
-      status: "warn",
-      detail: "Current agent baseline is unreadable; exclusion scope could not be verified.",
-      hint: `inspect \`${CLI_NAME} ${sandboxName} policy list\` before rebuilding`,
-    };
-  }
-  if (runtimeStatus === "live-policy-unreadable") {
-    return {
-      status: "warn",
-      detail: `Live policy for '${key}' is unreadable; exclusion enforcement could not be verified.`,
-      hint: `restore gateway access, then rerun \`${CLI_NAME} ${sandboxName} doctor\``,
-    };
-  }
-  if (runtimeStatus === "live-policy-mismatch") {
-    return {
-      status: "fail",
-      detail: `Live policy still contains excluded baseline entry '${key}'; the recorded exclusion is not enforced.`,
-      hint: `inspect \`${CLI_NAME} ${sandboxName} policy list\`, remove the colliding source, then re-run the exclusion`,
-    };
-  }
-  return {
-    status: "warn",
-    detail: `Baseline entry '${key}' changed since exclusion was approved; rebuild fails closed until re-approved.`,
-    hint: `run \`${restoreCommand}\`, review with \`${CLI_NAME} ${sandboxName} policy exclude ${key} --dry-run\`, then re-approve`,
-  };
-}
-
-function baselineExclusionDoctorChecks(sandboxName: string): DoctorCheck[] {
-  const transition = registry.getBaselineExclusionTransition(sandboxName);
-  const checks: DoctorCheck[] = [];
-  for (const exclusion of registry.getBaselineExclusions(sandboxName)) {
-    if (transition?.exclusion.key === exclusion.key) continue;
-    const runtimeStatus = getBaselineExclusionRuntimeStatus(sandboxName, exclusion);
-    checks.push({
-      group: "Sandbox",
-      label: `Baseline exclusion: ${exclusion.key}`,
-      ...baselineExclusionCheckFields(sandboxName, exclusion.key, runtimeStatus),
-    });
-  }
-  if (transition) {
-    const key = transition.exclusion.key;
-    checks.push({
-      group: "Sandbox",
-      label: `Baseline exclusion: ${key}`,
-      status: "warn",
-      detail: `Baseline policy ${transition.operation} for '${key}' was interrupted; rebuild is blocked until live and durable state are reconciled.`,
-      hint: `re-run \`${CLI_NAME} ${sandboxName} policy ${transition.operation} ${key}\``,
-    });
-  }
-  return checks;
-}
-
 function collectRegisteredSandboxChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
@@ -511,7 +487,6 @@ function collectRegisteredSandboxChecks(
   });
   if (permsCheck) checks.push(permsCheck);
   checks.push(...collectMessagingDoctorChecks(sandboxName, sb, sandboxReachable));
-  checks.push(...baselineExclusionDoctorChecks(sandboxName));
   return checks;
 }
 
@@ -563,13 +538,19 @@ async function collectDoctorChecks(
           },
         ],
       };
-  const sandbox = collectSandboxReadinessChecks(sandboxName, host.openshellBin, gateway.connected);
-  const route = resolveInferenceRoute(sb, host.openshellBin, gateway.connected);
+  const sandbox = await collectSandboxReadinessChecks(
+    sandboxName,
+    gatewayName,
+    host.openshellBin,
+    gateway.connected,
+  );
+  const route = resolveInferenceRoute(sb, host.openshellBin, gateway.connected, gatewayName);
   return [
     ...host.checks,
     ...gateway.checks,
     ...sandbox.checks,
     ...(await collectInferenceChecks(sandboxName, route, sandbox.reachable, {
+      gatewayName,
       includeServingProcessCheck: shouldReportServingProcessHealth(sb?.agent),
     })),
     ...collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix, sandbox.reachable),

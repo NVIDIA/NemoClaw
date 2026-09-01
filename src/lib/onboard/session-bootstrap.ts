@@ -3,6 +3,7 @@
 
 import path from "node:path";
 
+import { normalizeProcessExitCode } from "../core/process-exit";
 import type { ServingProfileProvenance } from "../inference/serving/types";
 import { NEMOCLAW_VLLM_GPU_DEVICE_ENV, parseVllmGpuDevice } from "../inference/vllm-models";
 import { PERSONAL_POLICY_TIER_NAME } from "../policy/tiers";
@@ -199,8 +200,8 @@ export function wrapOnboardDeferredExit<TOptions extends DeferredExitOptions>(
     const resolvedOptions = options ?? ({} as TOptions);
     const originalProcessExit = process.exit;
     let deferredExit: OnboardDeferredExitError | null = null;
-    process.exit = ((code?: number): never => {
-      throw new OnboardDeferredExitError(code ?? 0);
+    process.exit = ((code?: number | string | null): never => {
+      throw new OnboardDeferredExitError(normalizeProcessExitCode(code));
     }) as typeof process.exit;
     try {
       await run(resolvedOptions);
@@ -321,6 +322,7 @@ export function createPortableOnboardEnvironmentScope(
 export interface OnboardSessionBootstrapInput {
   resume: boolean;
   fresh: boolean;
+  recreateSandboxRequested?: boolean;
   requestedFromDockerfile: string | null;
   requestedSandboxName: string | null;
   cannotPrompt: boolean;
@@ -330,6 +332,7 @@ export interface OnboardSessionBootstrapInput {
   envAgent?: string | null;
   requestedToolDisclosure?: ToolDisclosure | null;
   requestedObservabilityEnabled?: boolean | null;
+  apfInterceptorRequested?: boolean | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
   requestedHostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
   servingProfileProvenance?: ServingProfileProvenance | null;
@@ -445,6 +448,23 @@ function reportLegacyResumeCheckpoint(deps: OnboardSessionBootstrapDeps): never 
   deps.exitProcess(1);
 }
 
+function reportUnsupportedApfLifecycle(
+  reason: "resume" | "recreate" | "portable",
+  deps: OnboardSessionBootstrapDeps,
+): never {
+  deps.error(
+    reason === "resume"
+      ? "  APF interceptor selection cannot resume an onboarding session."
+      : reason === "recreate"
+        ? "  APF interceptor selection cannot recreate a sandbox."
+        : "  APF interceptor selection cannot use the Portable experimental profile.",
+  );
+  deps.error(
+    `  Start a new sandbox with a new name: ${deps.cliName()} onboard --fresh --apf-interceptor --name <sandbox>`,
+  );
+  deps.exitProcess(1);
+}
+
 function guardResumeCheckpoint(deps: OnboardSessionBootstrapDeps): void {
   const result = deps.resolveResumeCheckpoint();
   if (result?.status === "unsupported_future") {
@@ -547,6 +567,9 @@ async function prepareResumeSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   let session = deps.loadSession();
+  if (input.apfInterceptorRequested === true || session?.apfInterceptorRequested === true) {
+    reportUnsupportedApfLifecycle("resume", deps);
+  }
   deps.requireHostMountRuntimeSupport(
     input.requestedHostMounts?.length ? input.requestedHostMounts : session?.metadata?.hostMounts,
     input.checkpointProfile,
@@ -597,6 +620,12 @@ function prepareFreshSession(
   input: OnboardSessionBootstrapInput,
   deps: OnboardSessionBootstrapDeps,
 ): OnboardSessionBootstrapResult {
+  if (input.apfInterceptorRequested === true && input.recreateSandboxRequested === true) {
+    reportUnsupportedApfLifecycle("recreate", deps);
+  }
+  if (input.apfInterceptorRequested === true && input.checkpointProfile === "portable") {
+    reportUnsupportedApfLifecycle("portable", deps);
+  }
   deps.requireHostMountRuntimeSupport(input.requestedHostMounts, input.checkpointProfile);
   if (input.fresh) {
     deps.clearSession();
@@ -609,6 +638,7 @@ function prepareFreshSession(
     toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.requestedObservabilityEnabled === true,
     observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
+    apfInterceptorRequested: input.apfInterceptorRequested === true,
     stationExpressIntent: input.stationExpressIntent ?? null,
     servingProfileProvenance: input.servingProfileProvenance ?? null,
     vllmGpuDevice: parseVllmGpuDevice(process.env[NEMOCLAW_VLLM_GPU_DEVICE_ENV]),

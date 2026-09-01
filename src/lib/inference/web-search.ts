@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const WEB_SEARCH_PROVIDERS = ["brave", "tavily"] as const;
+import { isWebSearchProvider, type WebSearchProvider } from "./web-search/provider";
 
-export type WebSearchProvider = (typeof WEB_SEARCH_PROVIDERS)[number];
+export {
+  isWebSearchProvider,
+  WEB_SEARCH_PROVIDERS,
+  type WebSearchProvider,
+} from "./web-search/provider";
 
 export interface WebSearchConfig {
   fetchEnabled: boolean;
@@ -19,10 +23,6 @@ export const DEFAULT_WEB_SEARCH_PROVIDER: WebSearchProvider = "brave";
 export const WEB_SEARCH_PROVIDER_ENV = "NEMOCLAW_WEB_SEARCH_PROVIDER";
 export const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
 export const TAVILY_API_KEY_ENV = "TAVILY_API_KEY";
-
-export function isWebSearchProvider(value: unknown): value is WebSearchProvider {
-  return value === "brave" || value === "tavily";
-}
 
 export type ExplicitWebSearchProviderSelection =
   | { specified: false; provider: null }

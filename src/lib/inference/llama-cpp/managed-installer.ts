@@ -56,10 +56,10 @@ export interface ManagedLlamaCppInstallOptions {
   readonly gatewayPort?: number;
   readonly homeDir?: string;
   readonly env?: NodeJS.ProcessEnv;
-  readonly pullImage?: ManagedLlamaCppImagePull;
   readonly acquireGguf?: typeof acquireVerifiedLlamaCppGguf;
   readonly verifyGguf?: typeof verifyLlamaCppGgufCacheEntry;
   readonly checkPort?: typeof checkPortAvailable;
+  readonly revalidateSandboxIdentity?: (operation: string) => void;
   readonly log?: (message: string) => void;
 }
 
@@ -79,6 +79,7 @@ export interface ManagedLlamaCppResumeOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly verifyGguf?: typeof verifyLlamaCppGgufCacheEntry;
   readonly checkPort?: typeof checkPortAvailable;
+  readonly revalidateSandboxIdentity?: (operation: string) => void;
 }
 
 export interface ManagedLlamaCppExactInspectionOptions {
@@ -112,19 +113,77 @@ interface DockerNetworkInspection {
   readonly id?: string;
 }
 
-interface ManagedLlamaCppImagePullResult {
-  readonly status: number | null;
-  readonly error?: Error;
+type ManagedLlamaCppImagePullFailureLayer =
+  | "authentication"
+  | "daemon behavior"
+  | "invalid dependency"
+  | "registry availability"
+  | "runner network"
+  | "storage"
+  | "unclassified";
+
+const IMAGE_PULL_LAYER_PATTERNS: ReadonlyArray<{
+  readonly code: string;
+  readonly layer: ManagedLlamaCppImagePullFailureLayer;
+  readonly pattern: RegExp;
+}> = [
+  {
+    code: "authentication-failure",
+    layer: "authentication",
+    pattern:
+      /(?:authentication required|unauthorized|pull access denied|requested access .* denied|credential helper|credentials? store)/iu,
+  },
+  {
+    code: "runner-storage-exhaustion",
+    layer: "storage",
+    pattern: /(?:no space left on device|disk quota exceeded|insufficient disk space)/iu,
+  },
+  {
+    code: "container-runtime-failure",
+    layer: "daemon behavior",
+    pattern:
+      /(?:cannot connect to the (?:docker|container) daemon|daemon is not running|error during connect|docker pull failed to start)/iu,
+  },
+  {
+    code: "runner-network-failure",
+    layer: "runner network",
+    pattern:
+      /(?:dial tcp|no such host|temporary failure in name resolution|network is unreachable|connection (?:refused|reset)|tls handshake timeout|i\/o timeout|context deadline exceeded|client\.timeout|certificate signed by unknown authority)/iu,
+  },
+  {
+    code: "image-manifest-unavailable",
+    layer: "invalid dependency",
+    pattern:
+      /(?:manifest unknown|manifest .* not found|no matching manifest|no match for platform)/iu,
+  },
+  {
+    code: "registry-availability-failure",
+    layer: "registry availability",
+    pattern:
+      /(?:too many requests|rate limit|service unavailable|bad gateway|gateway timeout|status(?: code)?:? 5\d\d|unexpected status.*5\d\d)/iu,
+  },
+];
+
+function classifyImagePullFailure(diagnostic: string): {
+  readonly code: string;
+  readonly layer: ManagedLlamaCppImagePullFailureLayer;
+} {
+  return (
+    IMAGE_PULL_LAYER_PATTERNS.find(({ pattern }) => pattern.test(diagnostic)) ?? {
+      code: "unclassified-pull-failure",
+      layer: "unclassified",
+    }
+  );
 }
 
-type ManagedLlamaCppImagePull = (
-  image: string,
-  options: {
-    readonly env: Record<string, string>;
-    readonly maxTimeoutMs: number;
-    readonly logLine: (line: string) => void;
-  },
-) => Promise<ManagedLlamaCppImagePullResult>;
+function imagePullFailureDiagnostic(result: ReturnType<ContainerEngine["capture"]>): string {
+  const sources = [result.stdout, result.stderr, result.error?.message].filter(
+    (value): value is string => typeof value === "string" && value.trim().length > 0,
+  );
+  const diagnostic = sources.join("\n");
+  const classification = classifyImagePullFailure(diagnostic);
+  return `Failure classification: ${classification.layer}. Diagnostic code: ${classification.code}. Exit status: ${String(result.status)}. Raw pull output suppressed.`;
+}
 
 function requireSuccess(label: string, result: ReturnType<ContainerEngine["capture"]>): string {
   if (result.error || result.status !== 0) {
@@ -333,8 +392,6 @@ function launchContract(
 async function pullExactImages(
   images: readonly string[],
   engine: ContainerEngine,
-  pull: ManagedLlamaCppImagePull | undefined,
-  dockerEnv: Record<string, string>,
   log: (message: string) => void,
 ): Promise<void> {
   for (const image of new Set(images)) {
@@ -348,15 +405,11 @@ async function pullExactImages(
       throw new Error(`Managed llama.cpp could not prove local image availability for ${image}.`);
     }
     log(`  Pulling pinned managed-inference image ${image}`);
-    const result = pull
-      ? await pull(image, {
-          env: dockerEnv,
-          maxTimeoutMs: IMAGE_PULL_TIMEOUT_MS,
-          logLine: (line) => log(`  ${line}`),
-        })
-      : engine.capture(["pull", image], IMAGE_PULL_TIMEOUT_MS);
-    if (result.status !== 0 || ("error" in result && result.error !== undefined)) {
-      throw new Error(`Pinned managed-inference image pull failed for ${image}.`);
+    const result = engine.capture(["pull", image], IMAGE_PULL_TIMEOUT_MS);
+    if (result.status !== 0 || result.error !== undefined) {
+      throw new Error(
+        `Pinned managed-inference image pull failed for ${image}. ${imagePullFailureDiagnostic(result)}`,
+      );
     }
     const after = engine.capture(["image", "inspect", image], DOCKER_INSPECT_TIMEOUT_MS);
     if (after.error || after.status !== 0) {
@@ -565,7 +618,6 @@ export async function installManagedLlamaCpp(
   const env = options.env ?? process.env;
   const homeDir = fs.realpathSync(options.homeDir ?? os.homedir());
   const paths = managedLlamaCppStatePaths(homeDir, options.gatewayPort);
-  const pull = options.pullImage;
   const acquire = options.acquireGguf ?? acquireVerifiedLlamaCppGguf;
   const verify = options.verifyGguf ?? verifyLlamaCppGgufCacheEntry;
   const checkPort = options.checkPort ?? checkPortAvailable;
@@ -584,6 +636,7 @@ export async function installManagedLlamaCpp(
       { env },
     );
     engine = operation.engine;
+    options.revalidateSandboxIdentity?.("reserve the managed llama.cpp runtime");
     const reservation = claimManagedLlamaCppOwner(paths, {
       schemaVersion: 1,
       sandboxName: options.sandboxName,
@@ -643,8 +696,6 @@ export async function installManagedLlamaCpp(
         recipe.spec.readiness.probeImage,
       ],
       engine,
-      pull,
-      dockerEnv,
       log,
     );
     if (acquireModel) {
@@ -670,6 +721,7 @@ export async function installManagedLlamaCpp(
     if (artifact === null) {
       throw new Error("Managed llama.cpp could not verify its exact GGUF artifact.");
     }
+    options.revalidateSandboxIdentity?.("activate the managed llama.cpp runtime");
     loadOrCreateManagedLlamaCppApiKey(paths);
     const lifecycle = lifecycleFor({
       selection,
@@ -690,6 +742,7 @@ export async function installManagedLlamaCpp(
 
     let receipt = loadManagedLlamaCppReceipt(paths);
     if (receipt !== null) {
+      options.revalidateSandboxIdentity?.("resume the managed llama.cpp runtime");
       receipt = lifecycle.resume(receipt);
     } else {
       const port = await checkPort(hostPort);
@@ -698,9 +751,11 @@ export async function installManagedLlamaCpp(
           `Managed llama.cpp port ${String(hostPort)} is unavailable: ${port.reason}`,
         );
       }
+      options.revalidateSandboxIdentity?.("start the managed llama.cpp runtime");
       const transactionId = randomBytes(32).toString("hex");
       receipt = lifecycle.start(createManagedLlamaCppReceiptWriter(paths, transactionId));
     }
+    options.revalidateSandboxIdentity?.("report successful managed llama.cpp runtime activation");
     const apiKey = loadOrCreateManagedLlamaCppApiKey(paths);
     env[LLAMA_CPP_CREDENTIAL_ENV] = apiKey;
     return { ok: true, apiKey, model: recipe.spec.model.servedName, receipt };
@@ -745,6 +800,7 @@ export async function resumeManagedLlamaCppRuntime(
     "llama-cpp",
     { env },
   );
+  options.revalidateSandboxIdentity?.("inspect the managed llama.cpp runtime");
   const engine = operation.engine;
   const verify = options.verifyGguf ?? verifyLlamaCppGgufCacheEntry;
   const checkPort = options.checkPort ?? checkPortAvailable;
@@ -781,6 +837,7 @@ export async function resumeManagedLlamaCppRuntime(
     artifact,
     operation,
   });
+  options.revalidateSandboxIdentity?.("recover the managed llama.cpp runtime");
   if (pending.length === 1) {
     const recovery = lifecycle.recoverUnfinished(
       createManagedLlamaCppReceiptWriter(paths, pending[0]!.transactionId),
@@ -795,12 +852,15 @@ export async function resumeManagedLlamaCppRuntime(
     if (!port.ok) {
       throw new Error(`Managed llama.cpp port ${String(hostPort)} is unavailable: ${port.reason}`);
     }
+    options.revalidateSandboxIdentity?.("start the managed llama.cpp runtime");
     loadOrCreateManagedLlamaCppApiKey(paths);
     const transactionId = randomBytes(32).toString("hex");
     lifecycle.start(createManagedLlamaCppReceiptWriter(paths, transactionId));
   } else {
+    options.revalidateSandboxIdentity?.("resume the managed llama.cpp runtime");
     lifecycle.resume(receipt);
   }
+  options.revalidateSandboxIdentity?.("report successful managed llama.cpp runtime recovery");
   const apiKey = loadManagedLlamaCppApiKey(paths);
   if (apiKey === null) throw new Error("Managed llama.cpp API-key authority is missing.");
   env[LLAMA_CPP_CREDENTIAL_ENV] = apiKey;

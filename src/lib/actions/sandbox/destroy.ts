@@ -38,6 +38,7 @@ import { validateName } from "../../runner";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
+import type { RetainedSandboxRecoveryRecord } from "../../state/onboard-session/retained-sandbox-recovery";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import {
@@ -54,8 +55,10 @@ import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import {
   assertUnambiguousDestroyContainerIdentity,
+  classifyDestroyContainerIdentity,
   classifyDestroySandboxPresence,
   isSameDestroyContainerIdentityProof,
+  observeDestroyContainerIdentity,
 } from "./destroy-presence";
 import {
   prepareSandboxDestroy,
@@ -82,6 +85,58 @@ type RemoveSandboxRegistryEntryWithReceiptDeps = {
   removeImage?: (sandboxName: string) => RuntimeProviderWorkloadCleanupResult | void;
   removeSandboxWithReceipt?: typeof registry.removeSandboxWithReceipt;
 };
+
+function selectRetainedSandboxRecoveryAuthority(
+  sandboxName: string,
+  sandbox: registry.SandboxEntry | null,
+  records: readonly RetainedSandboxRecoveryRecord[],
+): RetainedSandboxRecoveryRecord | null {
+  const candidates = records.filter(
+    (record) => record.sandboxName === sandboxName && record.sandboxIdentityFingerprint !== null,
+  );
+  if (!sandbox) {
+    // Once resource cleanup has removed the registry row, a retry must still
+    // select the lone durable record so the later Docker proof can confirm
+    // absence and retire it. Multiple records continue to require immutable
+    // Docker evidence so the mutable name never chooses between authorities.
+    if (candidates.length === 1) return candidates[0]!;
+    if (candidates.length === 0) return null;
+    const observation = observeDestroyContainerIdentity(sandboxName);
+    const observedMatches = candidates.filter((record) => {
+      const verdict = classifyDestroyContainerIdentity(
+        sandboxName,
+        observation,
+        record.sandboxIdentityFingerprint!,
+      );
+      return (
+        verdict.status === "recovery" || (verdict.status === "clear" && verdict.identity !== null)
+      );
+    });
+    return observedMatches.length === 1 ? observedMatches[0]! : null;
+  }
+
+  const matchesRegistryAuthority = (record: RetainedSandboxRecoveryRecord): boolean => {
+    const pending = sandbox.pendingCreateIdentity;
+    if (pending) {
+      return (
+        record.gatewayName === pending.gatewayName &&
+        record.gatewayPort === pending.gatewayPort &&
+        record.lifecycleGeneration === pending.lifecycleGeneration &&
+        record.sandboxIdentityFingerprint === pending.sandboxIdentityFingerprint &&
+        (pending.createAttemptNonce === undefined ||
+          record.createAttemptNonce === pending.createAttemptNonce)
+      );
+    }
+    return (
+      record.gatewayName === sandbox.gatewayName &&
+      record.gatewayPort === sandbox.gatewayPort &&
+      record.lifecycleGeneration === sandbox.lifecycleGeneration &&
+      record.sandboxIdentityFingerprint === sandbox.lifecycleLiveIdentityFingerprint
+    );
+  };
+  const matching = candidates.filter(matchesRegistryAuthority);
+  return matching.length === 1 ? matching[0]! : null;
+}
 
 export type RemoveSandboxRegistryEntryOutcome =
   | {
@@ -277,11 +332,10 @@ export function cleanupSandboxServices(
 }
 
 /**
- * Remove host-side shields state files for a sandbox.
+ * Remove host-side Shields state and recovery artifacts for a sandbox.
  *
- * Without this cleanup a stale shields-<name>.json from a previous
- * `shields up` survives destroy → re-onboard and causes
- * `deriveShieldsMode` to report "locked" on a fresh sandbox.
+ * Without this cleanup, stale state or an external policy handoff from a
+ * previous sandbox can survive destroy → re-onboard under the same name.
  *
  * See: https://github.com/NVIDIA/NemoClaw/issues/3114
  */
@@ -293,8 +347,14 @@ export function removeShieldsState(
   const rmSync = deps.rmSync ?? fs.rmSync;
   const warn = deps.warn ?? ((message: string) => console.warn(`  ${YW}⚠${R} ${message}`));
   const resolvedStateDir = path.resolve(stateDir);
-  for (const prefix of ["shields-", "shields-timer-"]) {
-    const filePath = path.resolve(resolvedStateDir, `${prefix}${sandboxName}.json`);
+  const recoveryArtifactName = `shields-external-policy-${sandboxName}.yaml`;
+  const artifactNames = [
+    recoveryArtifactName,
+    `shields-${sandboxName}.json`,
+    `shields-timer-${sandboxName}.json`,
+  ];
+  for (const artifactName of artifactNames) {
+    const filePath = path.resolve(resolvedStateDir, artifactName);
     if (!filePath.startsWith(`${resolvedStateDir}${path.sep}`)) {
       // Defense-in-depth: sandbox names are validated to [a-z0-9-] at
       // all entry points, but reject traversal attempts just in case.
@@ -303,12 +363,18 @@ export function removeShieldsState(
     try {
       rmSync(filePath, { force: true });
     } catch (error) {
-      // force: true already suppresses ENOENT; warn on real failures
-      // (e.g. EPERM) so stale state doesn't silently survive.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        const message = error instanceof Error ? error.message : String(error);
-        warn(`Failed to remove shields cleanup artifact '${filePath}': ${message}`);
+      // force: true already suppresses ENOENT. A recovery handoff must not
+      // become unbound under a reusable sandbox name, so preserve Shields
+      // state and stop cleanup when that artifact cannot be removed.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      const message = error instanceof Error ? error.message : String(error);
+      if (artifactName === recoveryArtifactName) {
+        throw new Error(
+          `Could not remove external Shields policy recovery artifact '${filePath}': ${message}. Shields state was preserved for retry.`,
+          { cause: error },
+        );
       }
+      warn(`Failed to remove Shields cleanup artifact '${filePath}': ${message}`);
     }
   }
 }
@@ -497,6 +563,24 @@ async function destroySandboxUnlocked(
   const normalized = normalizeDestroySandboxOptions(options);
   if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
   const destroySession = onboardSession.loadSession();
+  const registeredSandbox = registry.getSandbox(sandboxName);
+  const retainedRecoveryRecords = onboardSession.listRetainedSandboxRecoveryRecords();
+  const retainedRecoveryAuthority = selectRetainedSandboxRecoveryAuthority(
+    sandboxName,
+    registeredSandbox,
+    retainedRecoveryRecords,
+  );
+  if (
+    !retainedRecoveryAuthority &&
+    retainedRecoveryRecords.some((record) => record.sandboxName === sandboxName)
+  ) {
+    console.error(
+      `  Refusing to destroy retained sandbox '${sandboxName}': NemoClaw could not select exactly one recovery record from the current immutable registry and Docker identities. No sandbox resources were removed. Resolve the identity conflict, then rerun '${CLI_NAME} ${sandboxName} destroy'.`,
+    );
+    requestSandboxDestroyExit(1);
+  }
+  const retainedSandboxIdentityFingerprint =
+    retainedRecoveryAuthority?.sandboxIdentityFingerprint ?? undefined;
   let portableContainerAuthority: ReturnType<typeof preparePortableDemoSandboxDestroyAuthority>;
   try {
     portableContainerAuthority = preparePortableDemoSandboxDestroyAuthority(sandboxName, () => {
@@ -522,13 +606,14 @@ async function destroySandboxUnlocked(
         registry.getSandbox(sandboxName)?.openshellDriver,
       ),
       redact: redactDestroyError,
+      ...(retainedSandboxIdentityFingerprint ? { retainedSandboxIdentityFingerprint } : {}),
     });
   const initialIdentity = portableContainerAuthority ? null : inspectContainerIdentity();
   if (initialIdentity === false) {
     requestSandboxDestroyExit(1);
   }
+  const initialContainerIdentities = initialIdentity?.identities;
 
-  const registeredSandbox = registry.getSandbox(sandboxName);
   let preparedManagedLlamaCppCleanup: ReturnType<
     typeof prepareManagedLlamaCppRuntimeCleanupForSandbox
   > = null;
@@ -581,8 +666,20 @@ async function destroySandboxUnlocked(
     }
   };
   let destroyPreflight: ReturnType<typeof prepareSandboxDestroy>;
-  destroyPreflight = abortPreparedCleanupOnError(() => prepareSandboxDestroy(sandboxName));
+  destroyPreflight = abortPreparedCleanupOnError(() =>
+    prepareSandboxDestroy(sandboxName, {
+      force: normalized.force === true,
+      retainedRecoveryGatewayName: retainedRecoveryAuthority?.gatewayName,
+    }),
+  );
   const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } = destroyPreflight;
+  if (retainedRecoveryAuthority && !sandboxConfirmedAbsent) {
+    console.error(
+      `  Refusing to automatically delete retained sandbox '${sandboxName}': OpenShell still reports it present, but its delete command accepts only the mutable sandbox name. NemoClaw cannot bind that deletion to the retained immutable identity. No sandbox resources were removed. Ask an OpenShell administrator to resolve create-attempt label '${retainedRecoveryAuthority.createAttemptNonce}' to the exact sandbox and use an identity-bound removal procedure. After OpenShell confirms the retained sandbox is absent, rerun '${CLI_NAME} ${sandboxName} destroy --yes' to reconcile its verified Docker containers and recovery record.`,
+    );
+    preparedManagedLlamaCppCleanup?.abort();
+    requestSandboxDestroyExit(1);
+  }
   // Recheck identity after pre-delete qualification and recoverable journal
   // publication reconciliation, before any sandbox runtime mutation.
   if (portableContainerAuthority) {
@@ -616,6 +713,7 @@ async function destroySandboxUnlocked(
   try {
     destructiveResult = await executeSandboxDestroy({
       cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
+      cliName: CLI_NAME,
       force: normalized.force === true,
       getSandbox: registry.getSandbox,
       listSandboxes: registry.listSandboxes,
@@ -623,7 +721,10 @@ async function destroySandboxUnlocked(
       sandbox,
       sandboxConfirmedAbsent,
       sandboxName,
-      expectedContainerIdentity: initialIdentity?.identity,
+      expectedContainerIdentities: initialContainerIdentities,
+      ...(retainedSandboxIdentityFingerprint
+        ? { expectedContainerIdentityFingerprint: retainedSandboxIdentityFingerprint }
+        : {}),
       ...(portableContainerAuthority ? { portableContainerAuthority } : {}),
       stopInferenceResources: () => stopSandboxInferenceResources(sandboxName, sandbox),
     });
@@ -886,7 +987,17 @@ async function destroySandboxUnlocked(
       );
     }
   }
-  if (!routedSessionCleanupHandled && destroySession?.sandboxName === sandboxName) {
+  const retainedRecoveryOwnsDestroySession = retainedRecoveryAuthority
+    ? onboardSession.retainedSandboxRecoveryMatchesSession(
+        retainedRecoveryAuthority,
+        destroySession,
+      )
+    : false;
+  if (
+    !retainedRecoveryOwnsDestroySession &&
+    !routedSessionCleanupHandled &&
+    destroySession?.sandboxName === sandboxName
+  ) {
     const cleanupResult = onboardSession.compareAndSwapSession(
       (current) =>
         current.sessionId === destroySession.sessionId &&
@@ -905,6 +1016,27 @@ async function destroySandboxUnlocked(
       defaultDestroyWarn(
         "Another onboarding run owns the session lock. Keeping its replacement session unchanged.",
       );
+    }
+  }
+  if (deleteSucceededOrAlreadyGone && retainedRecoveryAuthority) {
+    let recoveryResolved: boolean;
+    try {
+      recoveryResolved = onboardSession.resolveRetainedSandboxRecovery(retainedRecoveryAuthority);
+    } catch (error) {
+      console.error(
+        `  Sandbox '${sandboxName}' resources are gone, but NemoClaw could not clear its retained recovery record: ${redactDestroyError(error)}`,
+      );
+      console.error(`  Re-run '${CLI_NAME} ${sandboxName} destroy --yes' to finish local cleanup.`);
+      requestSandboxDestroyExit(1);
+    }
+    if (!recoveryResolved) {
+      console.error(
+        `  Sandbox '${sandboxName}' resources are gone, but its retained recovery authority was no longer current, so local recovery cleanup was not confirmed.`,
+      );
+      console.error(
+        `  NemoClaw preserved any current recovery state. Resolve the recovery record conflict, then re-run '${CLI_NAME} ${sandboxName} destroy --yes'.`,
+      );
+      requestSandboxDestroyExit(1);
     }
   }
   if (

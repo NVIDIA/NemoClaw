@@ -74,7 +74,7 @@ describe("Deep Agents managed MCP projection safety", () => {
     );
   });
 
-  it("keeps status inspection nonblocking and no-follow for hostile projection paths", () => {
+  it("fails status inspection closed without following hostile projection paths", () => {
     const statusCommand = buildDeepAgentsMcpStatusCommand(baseEntry);
     expect(statusCommand).toContain("os.O_NONBLOCK | os.O_NOFOLLOW");
     expect(statusCommand).not.toContain("config_path.read_text");
@@ -86,15 +86,17 @@ describe("Deep Agents managed MCP projection safety", () => {
       0o600,
       { symlink: true },
     );
-    expect(symlink.status, symlink.stderr).toBe(0);
-    expect(symlink.stdout.trim()).toBe("absent");
+    expect(symlink.status).toBe(2);
+    expect(symlink.stdout.trim()).toBe("");
+    expect(symlink.stderr).toContain("Could not inspect managed Deep Agents MCP state");
     expect(symlink.managedSymlinkTargetText).toBe(`${JSON.stringify(emptyProjection, null, 2)}\n`);
 
     const fifo = runDeepAgentsConfigCommand(statusCommand, undefined, "v2", undefined, 0o600, {
       fifo: true,
     });
-    expect(fifo.status, fifo.stderr).toBe(0);
-    expect(fifo.stdout.trim()).toBe("absent");
+    expect(fifo.status).toBe(2);
+    expect(fifo.stdout.trim()).toBe("");
+    expect(fifo.stderr).toContain("Could not inspect managed Deep Agents MCP state");
   });
 
   it.each([

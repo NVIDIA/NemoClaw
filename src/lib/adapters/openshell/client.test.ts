@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncReturns } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -17,6 +20,7 @@ import {
   stripAnsi,
   versionGte,
 } from "./client";
+import { processTreeBoundedOpenshellInvocation } from "./process-tree-timeout";
 
 interface SpawnResultSpec {
   status: number | null;
@@ -51,6 +55,21 @@ function exitWithCode(code: number): never {
 }
 
 describe("openshell helpers", () => {
+  it("wraps a synchronous Linux probe in a process-group timeout (#10238)", () => {
+    expect(
+      processTreeBoundedOpenshellInvocation(
+        "/opt/openshell",
+        ["sandbox", "list"],
+        { killProcessTreeOnTimeout: true, timeout: 1000 },
+        { platform: "linux", timeoutExecutableExists: () => true },
+      ),
+    ).toEqual({
+      binary: "/usr/bin/timeout",
+      args: ["--signal=KILL", "0.75s", "/opt/openshell", "sandbox", "list"],
+      killSignal: "SIGKILL",
+    });
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -136,6 +155,41 @@ describe("openshell helpers", () => {
       }),
     });
     expect(result.status).toBe(0);
+  });
+
+  it("lets a detached background mutation return without waiting on inherited output pipes", () => {
+    const fixtureDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-openshell-background-"));
+    const fixturePath = join(fixtureDirectory, "openshell");
+    const childMarkerPath = join(fixtureDirectory, "child-started");
+    writeFileSync(
+      fixturePath,
+      `#!${process.execPath}\n` +
+        `const { spawn } = require("node:child_process");\n` +
+        `const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 600)"], { stdio: "inherit" });\n` +
+        `require("node:fs").writeFileSync(${JSON.stringify(childMarkerPath)}, String(child.pid));\n` +
+        `child.unref();\n`,
+      { mode: 0o500 },
+    );
+    chmodSync(fixturePath, 0o500);
+    try {
+      const captured = captureOpenshellCommand(fixturePath, ["forward", "start", "--background"], {
+        ignoreError: true,
+        timeout: 200,
+      });
+
+      const detached = runOpenshellCommand(fixturePath, ["forward", "start", "--background"], {
+        ignoreError: true,
+        stdio: "ignore",
+        timeout: 1_000,
+      });
+
+      expect((captured.error as NodeJS.ErrnoException | undefined)?.code).toBe("ETIMEDOUT");
+      expect(existsSync(childMarkerPath)).toBe(true);
+      expect(detached.status).toBe(0);
+      expect(detached.error).toBeUndefined();
+    } finally {
+      rmSync(fixtureDirectory, { force: true, recursive: true });
+    }
   });
 
   it("redirects inherited stdout while the JSONL stdout guard is active", async () => {

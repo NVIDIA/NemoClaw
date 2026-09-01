@@ -3,13 +3,23 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import {
+  decideOllamaModelOwnership,
+  matchingOllamaModelPeers,
+} from "../../inference/ollama/model-ownership";
+import type { OllamaUnloadResult } from "../../inference/ollama/proxy";
+import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
 } from "../../onboard/runtime-provider/access";
+import { parseLiveSandboxEntries } from "../../runtime-recovery";
 import * as registry from "../../state/registry";
 import { stopSandboxChannels } from "../../tunnel/sandbox-gateway-stop";
 import { teardownSandboxDashboardForward } from "./forward-recovery";
-import { withSandboxLifecycleLockSync } from "./gateway-state";
+import {
+  captureSandboxOwnershipPhases,
+  resolvePersistedSandboxOwnershipGateway,
+  withSandboxLifecycleLockSync,
+} from "./gateway-state";
 import {
   resolveSandboxLifecycleProvider,
   type SandboxLifecycleResult,
@@ -28,41 +38,188 @@ function teardownDashboardForwardBestEffort(
   }
 }
 
-function defaultUnloadOllamaModels(onlyModels: readonly string[]): void {
+function defaultUnloadOllamaModels(onlyModels: readonly string[]): OllamaUnloadResult {
   const { unloadOllamaModels } = require("../../inference/ollama/proxy") as {
-    unloadOllamaModels: (onlyModels?: readonly string[]) => void;
+    unloadOllamaModels: (onlyModels?: readonly string[]) => OllamaUnloadResult;
   };
-  unloadOllamaModels(onlyModels);
+  return unloadOllamaModels(onlyModels);
 }
 
-/**
- * Release the GPU memory an Ollama-backed sandbox left resident (#9110).
- *
- * `stopAll()` and `destroySandbox()` already unload; a plain stop did not, so
- * the model stayed loaded until Ollama's own idle TTL expired. Best-effort:
- * the sandbox is already stopped by this point, so GPU cleanup must never
- * change the exit code.
- */
-function unloadOllamaModelsBestEffort(sandbox: registry.SandboxEntry, deps: SandboxStopDeps): void {
-  if (!sandbox.provider?.includes("ollama")) return;
+export type OllamaActiveOwnershipDiscovery =
+  | {
+      readonly ok: true;
+      readonly activeSandboxNames: ReadonlySet<string>;
+      readonly gatewayChecks: readonly {
+        readonly activeSandboxes: readonly string[];
+        readonly gateway: string;
+      }[];
+    }
+  | { readonly ok: false; readonly message: string };
+
+type OllamaStopReleaseResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly message: string };
+
+type OllamaOwnershipDiscoveryDeps = {
+  readonly captureSandboxOwnershipPhases?: typeof captureSandboxOwnershipPhases;
+  readonly parseLiveSandboxEntries?: typeof parseLiveSandboxEntries;
+  readonly resolvePersistedSandboxOwnershipGateway?: typeof resolvePersistedSandboxOwnershipGateway;
+};
+
+export function discoverActiveOllamaSandboxNames(
+  peers: readonly registry.SandboxEntry[],
+  environment: NodeJS.ProcessEnv,
+  deps: OllamaOwnershipDiscoveryDeps = {},
+): OllamaActiveOwnershipDiscovery {
+  const capturePhases = deps.captureSandboxOwnershipPhases ?? captureSandboxOwnershipPhases;
+  const parseEntries = deps.parseLiveSandboxEntries ?? parseLiveSandboxEntries;
+  const resolveGateway =
+    deps.resolvePersistedSandboxOwnershipGateway ?? resolvePersistedSandboxOwnershipGateway;
+  if (peers.length === 0) {
+    return { ok: true, activeSandboxNames: new Set(), gatewayChecks: [] };
+  }
+
+  const peersByGateway = new Map<string, Set<string>>();
+  try {
+    for (const peer of peers) {
+      const gateway = resolveGateway(peer);
+      const names = peersByGateway.get(gateway) ?? new Set<string>();
+      names.add(peer.name);
+      peersByGateway.set(gateway, names);
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, message: `could not resolve a sibling gateway: ${detail}` };
+  }
+
+  const activeSandboxNames = new Set<string>();
+  const gatewayChecks: Array<{ activeSandboxes: string[]; gateway: string }> = [];
+  for (const [gateway, peerNames] of peersByGateway) {
+    let result;
+    try {
+      result = capturePhases(gateway, environment);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return { ok: false, message: `OpenShell could not list gateway '${gateway}': ${detail}` };
+    }
+    if (result.status !== 0) {
+      const detail = result.output.trim().replace(/\s+/g, " ").slice(0, 300);
+      return {
+        ok: false,
+        message: `OpenShell could not list sandbox phases on gateway '${gateway}'${
+          detail ? `: ${detail}` : ""
+        }`,
+      };
+    }
+    const phases = new Map(
+      parseEntries(result.output).map((entry) => [entry.name, entry.phase]),
+    );
+    const activeSandboxes: string[] = [];
+    for (const peerName of peerNames) {
+      const phase = phases.get(peerName);
+      if (phase === undefined || phase === "Error" || phase === "Failed" || phase === "Evicted") {
+        continue;
+      }
+      if (phase === null || phase === "Unknown") {
+        return {
+          ok: false,
+          message: `OpenShell returned no usable phase for sibling '${peerName}' on gateway '${gateway}'`,
+        };
+      }
+      activeSandboxNames.add(peerName);
+      activeSandboxes.push(peerName);
+    }
+    gatewayChecks.push({ activeSandboxes, gateway });
+  }
+  return { ok: true, activeSandboxNames, gatewayChecks };
+}
+
+function releaseStoppedSandboxOllamaModel(
+  sandbox: registry.SandboxEntry,
+  deps: SandboxStopDeps,
+  log: (message: string) => void,
+): OllamaStopReleaseResult {
+  if (!sandbox.provider?.includes("ollama")) return { ok: true };
+
   try {
     const withOwnershipLock =
       deps.withOllamaModelOwnershipLock ??
       (require("../../inference/ollama/proxy") as typeof import("../../inference/ollama/proxy"))
         .withOllamaModelOwnershipLock;
-    const exclusivelyHeldOllamaModel =
-      deps.exclusivelyHeldOllamaModel ??
-      (
-        require("../../inference/ollama/model-ownership") as typeof import("../../inference/ollama/model-ownership")
-      ).exclusivelyHeldOllamaModel;
-    withOwnershipLock(() => {
+    return withOwnershipLock(() => {
       const { sandboxes } = (deps.listSandboxes ?? registry.listSandboxes)();
-      const model = exclusivelyHeldOllamaModel(sandbox, sandboxes);
-      if (!model) return;
-      (deps.unloadOllamaModels ?? defaultUnloadOllamaModels)([model]);
+      const matchingPeers = matchingOllamaModelPeers(sandbox, sandboxes);
+      const discovery = (
+        deps.discoverActiveOllamaSandboxNames ?? discoverActiveOllamaSandboxNames
+      )(matchingPeers, deps.environment ?? process.env);
+      if (!discovery.ok) {
+        return {
+          ok: false,
+          message:
+            `Sandbox '${sandbox.name}' stopped, but Ollama model ownership could not be verified: ` +
+            `${discovery.message}. No model was unloaded; verify sibling sandbox state and retry ` +
+            `'${CLI_NAME} ${sandbox.name} stop'.`,
+        };
+      }
+
+      const ownership = (deps.decideOllamaModelOwnership ?? decideOllamaModelOwnership)(
+        sandbox,
+        sandboxes,
+        discovery.activeSandboxNames,
+      );
+      if (ownership.kind === "missing-model") {
+        log("  Ollama model release skipped: the sandbox registry has no model.");
+        return { ok: true };
+      }
+      if (ownership.kind === "shared-active") {
+        log(
+          `  Ollama model '${ownership.model}' remains loaded for active sandbox${
+            ownership.activePeers.length === 1 ? "" : "es"
+          }: ${ownership.activePeers.join(", ")}.`,
+        );
+        return { ok: true };
+      }
+      if (ownership.stalePeers.length > 0) {
+        log(
+          `  Ollama ownership ignored stopped or incomplete registry row${
+            ownership.stalePeers.length === 1 ? "" : "s"
+          }: ${ownership.stalePeers.join(", ")}.`,
+        );
+      }
+
+      const unload = (deps.unloadOllamaModels ?? defaultUnloadOllamaModels)([ownership.model]);
+      if (!unload.ok) {
+        const attempts = Math.max(
+          unload.discoveries.reduce((maximum, evidence) => Math.max(maximum, evidence.attempt), 0),
+          unload.requests.reduce((maximum, evidence) => Math.max(maximum, evidence.attempt), 0),
+        );
+        return {
+          ok: false,
+          message:
+            `Sandbox '${sandbox.name}' stopped, but Ollama model '${ownership.model}' was not ` +
+            `released from ${unload.endpoint} after ${String(attempts)} bounded attempt${
+              attempts === 1 ? "" : "s"
+            } (${unload.outcome}: ${unload.message ?? "no detail"}). ` +
+            `Run 'ollama stop ${ownership.model}' or repair host Ollama, then retry ` +
+            `'${CLI_NAME} ${sandbox.name} stop'.`,
+        };
+      }
+      log(
+        unload.outcome === "not-resident"
+          ? `  Ollama model '${ownership.model}' was not resident in ${unload.endpoint}/api/ps.`
+          : `  Ollama model release verified: '${ownership.model}' is absent from ` +
+              `${unload.endpoint}/api/ps.`,
+      );
+      return { ok: true };
     });
-  } catch {
-    /* Best-effort: a failed unload must not fail the stop. */
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      message:
+        `Sandbox '${sandbox.name}' stopped, but Ollama model release failed: ${detail}. ` +
+        `Verify host Ollama and retry '${CLI_NAME} ${sandbox.name} stop'.`,
+    };
   }
 }
 
@@ -75,8 +232,12 @@ export interface SandboxStopDeps {
   stopSandboxChannels?: typeof stopSandboxChannels;
   teardownSandboxDashboardForward?: typeof teardownSandboxDashboardForward;
   listSandboxes?: typeof registry.listSandboxes;
-  unloadOllamaModels?: (onlyModels: readonly string[]) => void;
-  exclusivelyHeldOllamaModel?: typeof import("../../inference/ollama/model-ownership").exclusivelyHeldOllamaModel;
+  discoverActiveOllamaSandboxNames?: (
+    peers: readonly registry.SandboxEntry[],
+    environment: NodeJS.ProcessEnv,
+  ) => OllamaActiveOwnershipDiscovery;
+  unloadOllamaModels?: (onlyModels: readonly string[]) => OllamaUnloadResult;
+  decideOllamaModelOwnership?: typeof decideOllamaModelOwnership;
   withOllamaModelOwnershipLock?: typeof import("../../inference/ollama/proxy").withOllamaModelOwnershipLock;
   withLifecycleLockSync?: typeof withSandboxLifecycleLockSync;
   log?: (message: string) => void;
@@ -138,7 +299,18 @@ function stopSandboxWithinLifecycleFence(
     },
   });
   if (outcome.exitCode !== 0) return outcome;
-  if ("hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true) {
+  const hermesPortableVerified =
+    "hermesPortableVerified" in outcome && outcome.hermesPortableVerified === true;
+  const ollamaRelease = releaseStoppedSandboxOllamaModel(resolved.sandbox, deps, log);
+  if (!hermesPortableVerified) {
+    teardownDashboardForwardBestEffort(
+      sandboxName,
+      deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
+      warn,
+    );
+  }
+  if (!ollamaRelease.ok) return { exitCode: 1, message: ollamaRelease.message };
+  if (hermesPortableVerified) {
     log(
       outcome.state === "already-stopped"
         ? `  Sandbox '${sandboxName}' is already stopped.`
@@ -148,24 +320,12 @@ function stopSandboxWithinLifecycleFence(
     return { exitCode: 0 };
   }
 
-  unloadOllamaModelsBestEffort(resolved.sandbox, deps);
-
   if (outcome.state === "already-stopped") {
     log(`  Sandbox '${sandboxName}' is already stopped.`);
-    teardownDashboardForwardBestEffort(
-      sandboxName,
-      deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
-      warn,
-    );
     log(`  Start it again with '${CLI_NAME} ${sandboxName} start'.`);
     return { exitCode: 0 };
   }
 
-  teardownDashboardForwardBestEffort(
-    sandboxName,
-    deps.teardownSandboxDashboardForward ?? teardownSandboxDashboardForward,
-    warn,
-  );
   log(`  Sandbox '${sandboxName}' stopped. Workspace state is preserved.`);
   log(`  Start it again with '${CLI_NAME} ${sandboxName} start'.`);
   return { exitCode: 0 };

@@ -811,7 +811,16 @@ describe("config set nested URL SSRF enforcement", () => {
       loaded: true,
       // provider update succeeds, so rotation never falls into the create path.
       exports: {
-        captureOpenshellCommand: () => ({ status: 0, output: "" }),
+        captureOpenshellCommand: () => ({
+          status: 0,
+          stdout: JSON.stringify({
+            id: "openai",
+            credentials: [],
+            endpoints: [],
+            binaries: [],
+            inference_capable: true,
+          }),
+        }),
         runOpenshellCommand: () => ({ status: 0 }),
       },
     } as any;

@@ -4,6 +4,7 @@
 import { type MockInstance, vi } from "vitest";
 import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
+import type { OpenShellSandboxInventory } from "../../src/lib/adapters/openshell/sandbox-observer";
 import type {
   finalizePreparedRebuildImageMessagingPlan,
   RebuildImagePreflightResult,
@@ -80,7 +81,7 @@ export type RebuildFlowOverrides = {
   sandboxEntry?: Record<string, unknown>;
   sandboxBaseImageLabelsOutput?: string;
   sessionSandboxName?: string;
-  sandboxListOutput?: string;
+  sandboxInventory?: OpenShellSandboxInventory;
   defaultSandbox?: string | null;
   preDeleteSandboxEntry?: Record<string, unknown>;
   preDeleteDefaultSandbox?: string | null;
@@ -95,6 +96,9 @@ export type RebuildFlowOverrides = {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
     scrubbedAdapterEntries?: Array<Record<string, unknown>>;
+    policyHandoff?: string;
+    revalidateBeforeDelete?: () => Promise<void>;
+    assertDeleteEdgeUnchanged?: () => void;
   };
   runOpenshell?: (args: string[]) =>
     | {
@@ -114,7 +118,6 @@ export type RebuildFlowOverrides = {
     stderr?: string;
     error?: Error;
   };
-  backupPolicyPresets?: string[];
   backupPreservedEnv?: PreservedEnvFile[];
   ensureValidatedBraveSearchCredential?: () => Promise<unknown>;
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
@@ -131,6 +134,7 @@ export type RebuildFlowOverrides = {
   clearShieldsState?: () => void;
 };
 export type RebuildFlowHarness = {
+  backupPath: string;
   rebuildSandbox: RebuildSandbox;
   applyPresetSpy: MockInstance;
   backupSandboxStateSpy: MockInstance;

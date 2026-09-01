@@ -79,16 +79,17 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: expect.any(String) },
+      expect.objectContaining({ sessionId: expect.any(String), selection: expect.any(Object) }),
       {
         resolved: expect.any(Object),
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
-        endpointSource: "onboard",
+        endpointSource: null,
         extraProviders: [],
       },
     );
+    expect(calls.finalizeRouteReservation).not.toHaveBeenCalled();
     expect(calls.updateSandbox).toHaveBeenCalledWith(
       "my-assistant",
       expect.objectContaining({ model: "model", provider: "provider" }),
@@ -232,28 +233,22 @@ describe("handleSandboxState", () => {
       ...baseOptions(deps),
       agent: { name: "langchain-deepagents-code" },
       authoritativeResumeConfig: true,
-      authoritativePolicyTier: "restricted",
     });
 
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
-      policyTier: "restricted",
-    });
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({});
   });
 
-  it("preserves an authoritative null tier in the sandbox create intent", async () => {
+  it("does not persist an authoritative policy tier in sandbox create state", async () => {
     const { deps, calls } = createDeps();
 
     await handleSandboxState({
       ...baseOptions(deps),
       agent: { name: "langchain-deepagents-code" },
       authoritativeResumeConfig: true,
-      authoritativePolicyTier: null,
     });
 
-    expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
-      expect.objectContaining({ policyTier: null }),
-    );
-    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toHaveProperty("policyTier", null);
+    expect(calls.resolveCreateIntent.mock.calls[0]?.[0]).not.toHaveProperty("policyTier");
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).not.toHaveProperty("policyTier");
   });
 
   it("rejects observability for a selected non-DCode agent", async () => {
@@ -554,7 +549,7 @@ describe("handleSandboxState", () => {
       null,
       ["nous-audio"],
       null,
-      { sessionId: expect.any(String) },
+      expect.objectContaining({ sessionId: expect.any(String), selection: expect.any(Object) }),
       {
         resolved: expect.any(Object),
         recreate: false,
@@ -613,11 +608,11 @@ describe("handleSandboxState", () => {
 
     expect(readMessagingPlanFromEnv).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(calls.updateSandbox).toHaveBeenCalledWith("saved", {
-      pendingRouteReservation: undefined,
-      reservationSessionId: undefined,
-    });
-    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
+    expect(calls.finalizeRouteReservation).toHaveBeenCalledExactlyOnceWith(
+      "saved",
+      session.sessionId,
+    );
+    expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved", "reuse");
     expect(recordStateSkipped).toHaveBeenCalledWith("sandbox", {
       reason: "resume",
       sandboxName: "saved",
@@ -842,7 +837,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
       {
         resolved: expect.any(Object),
         recreate: true,
@@ -1010,7 +1005,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,
@@ -1143,7 +1138,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { sessionId: session.sessionId },
+      expect.objectContaining({ sessionId: session.sessionId, selection: expect.any(Object) }),
       expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,

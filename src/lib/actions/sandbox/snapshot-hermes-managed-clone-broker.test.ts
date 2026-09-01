@@ -100,11 +100,40 @@ function providerMetadata(name: string, type: string, credential: string): strin
   ].join("\n");
 }
 
-function providerRunner() {
+function providerRunner(profileState: "valid" | "missing" | "import-failed" = "valid") {
   const live = new Map<string, { type: string; credential: string }>();
   const createCredentials = new Map<string, string>();
+  let currentProfileState = profileState;
   const run = vi.fn((args: string[], options: { env?: NodeJS.ProcessEnv } = {}) => {
     switch (args.slice(0, 2).join(" ")) {
+      case "provider profile": {
+        switch (args[2]) {
+          case "export":
+            return currentProfileState === "valid"
+              ? {
+                  status: 0,
+                  stdout: JSON.stringify({
+                    id: "openai",
+                    credentials: [],
+                    endpoints: [],
+                    binaries: [],
+                    inference_capable: true,
+                  }),
+                  stderr: "",
+                }
+              : { status: 1, stdout: "", stderr: "provider profile 'openai' not found" };
+          case "import":
+            switch (currentProfileState) {
+              case "import-failed":
+                return { status: 1, stdout: "", stderr: "profile import rejected" };
+              default:
+                currentProfileState = "valid";
+                return { status: 0, stdout: "", stderr: "" };
+            }
+          default:
+            return { status: 1, stdout: "", stderr: "unsupported profile command" };
+        }
+      }
       case "provider get": {
         const name = args[2] ?? "";
         const binding = live.get(name);
@@ -272,6 +301,76 @@ describe("Hermes managed clone broker transaction", () => {
     );
     expect(hostBroker.activateHermesToolGatewayCloneBinding).toHaveBeenCalledOnce();
     expect(receipt.phase).toBe("activated");
+  });
+
+  it("imports the OpenAI profile before provider creation and broker activation (#10155)", () => {
+    const profile = hermesProfile();
+    const source = sourceEntry(profile);
+    const runner = providerRunner("missing");
+    const hostBroker = broker();
+    const prepared = prepareHermesManagedCloneBrokerTransaction({
+      handoff: handoff(profile),
+      destination: null,
+      environment: environment(),
+      runOpenshell: runner.run,
+      broker: hostBroker,
+      transactionId: "4".repeat(32),
+    });
+
+    provisionHermesManagedCloneBrokerTransaction(prepared, {
+      ...authority(source),
+      environment: environment(),
+      runOpenshell: runner.run,
+      broker: hostBroker,
+    });
+
+    const profileExportIndex = runner.run.mock.calls.findIndex(
+      ([args]) => args.slice(0, 3).join(" ") === "provider profile export",
+    );
+    const profileImportIndex = runner.run.mock.calls.findIndex(
+      ([args]) => args.slice(0, 3).join(" ") === "provider profile import",
+    );
+    const inferenceCreateIndex = runner.run.mock.calls.findIndex(
+      ([args]) =>
+        args[0] === "provider" &&
+        args[1] === "create" &&
+        args[3] === "destination-hermes-inference",
+    );
+    expect(profileExportIndex).toBeGreaterThanOrEqual(0);
+    expect(profileImportIndex).toBeGreaterThan(profileExportIndex);
+    expect(inferenceCreateIndex).toBeGreaterThan(profileImportIndex);
+    expect(
+      runner.run.mock.invocationCallOrder[inferenceCreateIndex],
+    ).toBeLessThan(hostBroker.activateHermesToolGatewayCloneBinding.mock.invocationCallOrder[0]);
+  });
+
+  it("blocks providers and broker mutation when the OpenAI profile import fails (#10155)", () => {
+    const profile = hermesProfile();
+    const source = sourceEntry(profile);
+    const runner = providerRunner("import-failed");
+    const hostBroker = broker();
+    const prepared = prepareHermesManagedCloneBrokerTransaction({
+      handoff: handoff(profile),
+      destination: null,
+      environment: environment(),
+      runOpenshell: runner.run,
+      broker: hostBroker,
+      transactionId: "5".repeat(32),
+    });
+
+    expect(() =>
+      provisionHermesManagedCloneBrokerTransaction(prepared, {
+        ...authority(source),
+        environment: environment(),
+        runOpenshell: runner.run,
+        broker: hostBroker,
+      }),
+    ).toThrow("could not import the checked-in 'openai' inference provider profile");
+    expect(
+      runner.run.mock.calls.some(([args]) => args.slice(0, 2).join(" ") === "provider create"),
+    ).toBe(false);
+    expect(hostBroker.stageHermesToolGatewayCloneBinding).not.toHaveBeenCalled();
+    expect(hostBroker.activateHermesToolGatewayCloneBinding).not.toHaveBeenCalled();
   });
 
   it("preserves exact providers when activation outcome is unknown", () => {

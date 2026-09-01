@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { McpBridgeEntry } from "../../state/registry";
+import type { McpScrubbedAdapterEntry } from "./mcp-bridge-adapter-teardown";
 import { addMcpBridge as addMcpBridgeLifecycle } from "./mcp-bridge-add-restart";
 import {
   type McpBridgeAddOptions,
@@ -14,6 +15,7 @@ import {
   prepareMcpBridgesForDestroy as prepareMcpBridgesForDestroyLifecycle,
   restoreMcpBridgesAfterDestroyAbort as restoreMcpBridgesAfterDestroyAbortLifecycle,
 } from "./mcp-bridge-destroy";
+import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import {
   type McpRebuildPreparation,
@@ -80,18 +82,9 @@ export {
   validateMcpCredentialEnvName,
   validateMcpServerName,
 } from "./mcp-bridge-validation";
+export type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 export type { McpRebuildPreparation };
 export { statusMcpBridge };
-
-export interface McpDestroyPreparation {
-  entries: McpBridgeEntry[];
-  detachedProviderEntries: McpBridgeEntry[];
-  scrubbedAdapterEntries: McpBridgeEntry[];
-  /** True when phase one was completed by an earlier destroy process. */
-  destroyAlreadyPrepared: boolean;
-  /** True when a previous destroy already confirmed the sandbox was absent. */
-  destroyAlreadyPending: boolean;
-}
 
 export async function addMcpBridge(
   sandboxName: string,
@@ -121,8 +114,9 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
 
 export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
+  options: { force?: boolean } = {},
 ): Promise<McpDestroyPreparation> {
-  return prepareMcpBridgesForDestroyLifecycle(sandboxName);
+  return prepareMcpBridgesForDestroyLifecycle(sandboxName, options);
 }
 
 export async function restoreMcpBridgesAfterDestroyAbort(
@@ -155,7 +149,7 @@ export async function prepareMcpBridgesForRebuild(
 export async function reattachMcpProvidersAfterRebuildAbort(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
-  scrubbedAdapterEntries: readonly McpBridgeEntry[] = [],
+  scrubbedAdapterEntries: readonly McpScrubbedAdapterEntry[] = [],
 ): Promise<void> {
   return reattachMcpProvidersAfterRebuildAbortLifecycle(
     sandboxName,

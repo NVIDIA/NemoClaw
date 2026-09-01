@@ -37,7 +37,6 @@ export type RecorderOverrides = {
       sandboxName?: string | null;
       provider?: string | null;
       model?: string | null;
-      policyPresets?: string[] | null;
     },
   ) => Promise<void>;
   recordStepComplete?: (stepName: string, updates?: SessionUpdates) => Promise<Session>;
@@ -57,6 +56,15 @@ export type RecorderOverrides = {
     nimContainer: string | null,
     agent: Agent | null,
   ) => void;
+  reportDeploymentReadiness?: (healthy: boolean) => void;
+  getActiveSandbox?: PoliciesStateOptions<
+    Agent | null,
+    WebSearchConfig
+  >["deps"]["getActiveSandbox"];
+  setupPoliciesWithSelection?: PoliciesStateOptions<
+    Agent | null,
+    WebSearchConfig
+  >["deps"]["setupPoliciesWithSelection"];
 };
 
 function cloneSession(session: Session): Session {
@@ -201,7 +209,7 @@ export function createPhases(
       setupOpenclaw: vi.fn(async () => {
         order.push("openclaw");
       }),
-      syncNemoClawConfigInSandbox: vi.fn(),
+      configureOpenclawSandbox: vi.fn(async () => undefined),
       recordStepComplete:
         recorders.recordStepComplete ??
         vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
@@ -211,14 +219,14 @@ export function createPhases(
     },
     policiesDeps: {
       loadSession: recorders.loadSession ?? (() => createSession()),
-      getActiveSandbox: () => null,
+      getActiveSandbox: recorders.getActiveSandbox ?? (() => null),
       mergePolicyMessagingChannels:
         recorders.mergePolicyMessagingChannels ?? ((selected) => selected),
       detectUnconfiguredMessagingChannels: () => [],
       verifyCompatibleEndpointSandboxSmoke: vi.fn(),
       preparePolicyPresetResumeSelection: () => ({
         policyPresets: ["balanced"],
-        recordedPolicyPresetsNeedReconcile: false,
+        livePolicyPresetsNeedUpdate: false,
         disabledMessagingPolicyPresetApplied: false,
         suppressedAgentRequiredPresetsLive: false,
       }),
@@ -226,19 +234,18 @@ export function createPhases(
       skippedStepMessage: vi.fn(),
       recordStateSkipped: recorders.recordStateSkipped ?? vi.fn(async () => createSession()),
       startRecordedStep: recorders.startRecordedStep ?? vi.fn(async () => undefined),
-      setupPoliciesWithSelection: vi.fn(async () => {
-        order.push("policies");
-        return ["balanced"];
-      }),
-      updateSession:
-        recorders.updateSession ?? vi.fn((mutator) => mutator(createSession()) ?? createSession()),
+      setupPoliciesWithSelection:
+        recorders.setupPoliciesWithSelection ??
+        vi.fn(async () => {
+          order.push("policies");
+          return ["balanced"];
+        }),
       recordStepComplete:
         recorders.recordStepComplete ??
         vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
           sessionWithUpdates(updates),
         ),
       toSessionUpdates: (updates) => updates as SessionUpdates,
-      persistAppliedPolicyPresets: vi.fn(),
     },
     finalization: {
       stagedLegacyKeys: [],
@@ -269,7 +276,7 @@ export function createPhases(
       ),
       isDeploymentHealthy:
         recorders.isDeploymentHealthy ?? ((result: VerifyDeploymentResult) => result.healthy),
-      reportDeploymentReadiness: vi.fn(),
+      reportDeploymentReadiness: recorders.reportDeploymentReadiness ?? vi.fn(),
       getChatUiUrl: () => "http://127.0.0.1:45123",
       buildVerifyChain: (): DashboardDeliveryChain => ({
         accessUrl: "http://127.0.0.1:45123",

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -15,6 +15,10 @@ const SHA_PUBLISHED = `sha256:${"d".repeat(64)}`;
 const helper = resolve(
   import.meta.dirname,
   "../../../.github/actions/publish-base-image-manifest/publish.sh",
+);
+const tagHelper = resolve(
+  import.meta.dirname,
+  "../../../.github/actions/publish-base-image-manifest/tags.sh",
 );
 const temporaryRoots: string[] = [];
 
@@ -122,7 +126,51 @@ printf '{"containerimage.descriptor":{"digest":"%s"}}\n' "$digest" > "$metadata"
   });
 }
 
+function runTagHelper(ref: string, revision = "e".repeat(40)) {
+  const root = mkdtempSync(join(tmpdir(), "nemoclaw-base-tags-"));
+  temporaryRoots.push(root);
+  const output = join(root, "github-output");
+  const result = spawnSync("bash", [tagHelper], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      GITHUB_OUTPUT: output,
+      IMAGE: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+      REF: ref,
+      REVISION: revision,
+    },
+  });
+  return {
+    ...result,
+    output: result.status === 0 ? readFileSync(output, "utf8") : "",
+  };
+}
+
 describe("base-image manifest publication", () => {
+  it("generates main and immutable SHA tags without a GitHub API request", () => {
+    const result = runTagHelper("refs/heads/main");
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("ghcr.io/nvidia/nemoclaw/sandbox-base:latest\n");
+    expect(result.output).toContain("ghcr.io/nvidia/nemoclaw/sandbox-base:eeeeeeee\n");
+  });
+
+  it("generates release and immutable SHA tags without a GitHub API request", () => {
+    const result = runTagHelper("refs/tags/v0.0.114");
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.114\n");
+    expect(result.output).toContain("ghcr.io/nvidia/nemoclaw/sandbox-base:eeeeeeee\n");
+    expect(result.output).toContain("ghcr.io/nvidia/nemoclaw/sandbox-base:latest\n");
+  });
+
+  it("rejects a malformed publication revision", () => {
+    const result = runTagHelper("refs/heads/main", "not-a-commit");
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("base-image revision must be an exact commit SHA");
+  });
+
   it("rejects a malformed platform digest artifact", () => {
     const result = runManifest({ digestFiles: ["amd64-invalid", `arm64-${SHA_ARM64}`] });
 

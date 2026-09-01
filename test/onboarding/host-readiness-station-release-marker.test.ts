@@ -50,7 +50,10 @@ const STATION_RELEASE = [
 
 const fixtures: string[] = [];
 
-function createStationFixture(marker: "regular-file" | "symbolic-link"): string {
+function createStationFixture(
+  marker: "regular-file" | "symbolic-link",
+  release = STATION_RELEASE,
+): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-marker-"));
   fixtures.push(root);
   const device = path.join(root, "pci", "0000:01:00.0");
@@ -61,7 +64,7 @@ function createStationFixture(marker: "regular-file" | "symbolic-link"): string 
   fs.writeFileSync(path.join(device, "device"), "0x31c2\n");
   fs.writeFileSync(path.join(device, "class"), "0x030000\n");
   const target = path.join(root, "dgx-release-target");
-  fs.writeFileSync(target, STATION_RELEASE);
+  fs.writeFileSync(target, release);
   const publish = {
     "regular-file": () => fs.copyFileSync(target, path.join(root, "dgx-release")),
     "symbolic-link": () => fs.symlinkSync(target, path.join(root, "dgx-release")),
@@ -92,7 +95,7 @@ function reportForStationHost(root: string) {
         statFileDescriptor: () => ({
           isFile: () => true,
           isSymbolicLink: () => false,
-          size: Buffer.byteLength(STATION_RELEASE),
+          size: fs.statSync(path.join(root, "dgx-release-target")).size,
           uid: 0,
           gid: 0,
           mode: 0o100644,
@@ -127,13 +130,17 @@ describe("DGX Station release marker readiness", () => {
     expect(report.exitCode).toBe(2);
   });
 
-  it("reports the same marker content in a trusted regular file as a qualified Station", () => {
-    const report = reportForStationHost(createStationFixture("regular-file"));
-    const findings = report.findings.map(({ id }) => id);
+  it.each(["NVIDIA DGX GB300WS", "NVIDIA DGX Server"])(
+    "reports a trusted marker with the %s display name as a qualified Station (#9898)",
+    (prettyName) => {
+      const release = STATION_RELEASE.replace("NVIDIA DGX GB300WS", prettyName);
+      const report = reportForStationHost(createStationFixture("regular-file", release));
+      const findings = report.findings.map(({ id }) => id);
 
-    expect(stationQualification(report)).toBe("qualified");
-    expect(stationCapability(report)).toBe("present");
-    expect(findings).not.toContain("host.platform.dgx_station_unqualified");
-    expect(findings).not.toContain("host.platform.dgx_station_inconclusive");
-  });
+      expect(stationQualification(report)).toBe("qualified");
+      expect(stationCapability(report)).toBe("present");
+      expect(findings).not.toContain("host.platform.dgx_station_unqualified");
+      expect(findings).not.toContain("host.platform.dgx_station_inconclusive");
+    },
+  );
 });

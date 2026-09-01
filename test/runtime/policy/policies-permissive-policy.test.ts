@@ -9,6 +9,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import {
+  livePolicyMetadata,
+  managedRegistrationSource,
+  SANDBOX_ID,
+} from "../../helpers/live-policy-fixture";
+
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"));
@@ -35,13 +41,29 @@ function runHermesPermissivePolicy(policySetStatus: number): {
   const script = String.raw`
 const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
-registry.registerSandbox({ name: "hermes-sandbox", agent: "hermes", policies: [] });
+${managedRegistrationSource("hermes-sandbox", "hermes")}
 policies.applyPermissivePolicy("hermes-sandbox");
 `;
   fs.writeFileSync(
     fakeOpenshell,
     `#!/usr/bin/env bash
 set -euo pipefail
+if [ "$1 $2" = "sandbox get" ]; then
+  printf 'Name: hermes-sandbox\nId: ${SANDBOX_ID}\nPhase: Ready\n'
+  exit 0
+fi
+if [ "$1 $2" = "policy get" ]; then
+  if [[ " $* " == *" --output json "* ]]; then
+    printf '%s\n' ${JSON.stringify(livePolicyMetadata("hermes-sandbox"))}
+    exit 0
+  fi
+  if [ -f ${JSON.stringify(policyOut)} ]; then
+    cat ${JSON.stringify(policyOut)}
+  else
+    printf 'Version: 1\nHash: fixture-policy\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  fi
+  exit 0
+fi
 if [ "$1 $2" = "policy set" ]; then
   policy_file=""
   while [ "$#" -gt 0 ]; do
@@ -58,7 +80,7 @@ if [ "$1 $2" = "policy set" ]; then
     printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
     exit 0
   fi
-  printf 'message: fixture rejection\n' >&2
+  printf "Error: code: 'Failed precondition', message: 'fixture rejection'\n" >&2
   exit "${policySetStatus}"
 fi
 exit 1

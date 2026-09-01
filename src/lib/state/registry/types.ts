@@ -6,52 +6,22 @@ import type { ServingProfileProvenance } from "../../inference/serving/types";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
 import type { NativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
-import type { TrustedPrivatePolicyPinReceipt } from "../../policy/trusted-private-endpoints";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import type { OpenClawImagePluginInstall } from "../openclaw-plugin-restore";
 import type { SandboxMcpState } from "../registry-mcp";
 import type { SandboxMessagingState } from "../registry-messaging";
 
-export interface CustomPolicyEntry {
-  name: string;
-  content: string;
-  /** Desired content reserved before a crash-safe generated-policy transition. */
-  pendingContent?: string;
-  sourcePath?: string;
-  appliedAt?: string;
-  /** Content-bound authority for generated exact destination pins. */
-  trustedPrivatePins?: TrustedPrivatePolicyPinReceipt;
-}
-
-export interface BaselineExclusionEntry {
-  /** Persistence schema version for this reviewed exclusion intent. */
-  version: 1;
-  /** Agent baseline that supplied the reviewed entry. */
-  agent: string;
-  /** Exact baseline network policy key excluded, e.g. "nous_research". */
-  key: string;
-  /** Digest of the reviewed baseline entry content the approval was bound to. */
-  digest: string;
-  /** When the exclusion was acknowledged. */
-  acknowledgedAt?: string;
-  /** Agent build/version recorded when the exclusion was last applied. */
-  appliedAgentVersion?: string | null;
-}
-
-export type BaselineExclusionTransitionOperation = "exclude" | "restore";
-
-/**
- * Durable journal for the one cross-system baseline mutation that is in flight.
- * `baselineExclusions` remains the last committed operator intent until this
- * transaction is published after the live OpenShell mutation succeeds.
- */
-export interface BaselineExclusionTransition {
-  id: string;
-  operation: BaselineExclusionTransitionOperation;
-  exclusion: BaselineExclusionEntry;
-  /** Exact live-entry digest that completes the transition; null means absent. */
-  targetLiveDigest: string | null;
-  startedAt: string;
+/** Bounded identity checkpoint for one incomplete sandbox create. */
+export interface PendingSandboxCreateIdentity {
+  readonly schemaVersion: 1;
+  readonly state: "verified-create";
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly sandboxName: string;
+  readonly lifecycleGeneration: string;
+  readonly sandboxIdentityFingerprint: string;
+  readonly createAttemptNonce?: string;
+  readonly route: "none" | "native" | "compatibility";
 }
 
 // Outcome of the last live sandbox GPU proof run during onboarding/recovery.
@@ -105,7 +75,7 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
   /** Route-only placeholder created before sandbox creation; never eligible as the default. */
   pendingRouteReservation?: true;
-  /** Onboard session that owns a pending reservation, so resume preserves its own row while abandoned reservations stay reconcilable. */
+  /** Onboard session that owns this route transaction, retained after publication for exact idempotence. */
   reservationSessionId?: string;
   createdAt?: string;
   /** Immutable catalog provenance for an explicitly selected serving profile. */
@@ -119,19 +89,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hostMounts?: SandboxHostMount[];
   openshellDriver?: string | null;
   openshellVersion?: string | null;
-  policies?: string[];
-  customPolicies?: CustomPolicyEntry[];
-  /** Operator exclusions from the agent baseline policy, replayed on rebuild. */
-  baselineExclusions?: BaselineExclusionEntry[];
-  /** Crash-recoverable journal for an exclusion/restore live-policy mutation. */
-  baselineExclusionTransition?: BaselineExclusionTransition;
-  policyTier?: string | null;
-  // True once the onboard policy step has fully completed and reconciled the
-  // effective preset selection (set by the post-policy registry write). Absent
-  // on a sandbox whose registration recorded only boot-time presets but whose
-  // policy step never finished — so re-onboard knows whether `policies`
-  // represents a final selection it can carry forward. See #4621.
-  policyPresetsFinalized?: boolean;
+  /** Verified create boundary retained until final registration publishes atomically. */
+  pendingCreateIdentity?: PendingSandboxCreateIdentity;
   webSearchEnabled?: boolean;
   /** Selected disclosure preference; model compatibility safeguards may downgrade runtime behavior. */
   toolDisclosure?: ToolDisclosure;

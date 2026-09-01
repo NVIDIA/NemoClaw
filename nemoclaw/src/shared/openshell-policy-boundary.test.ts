@@ -5,162 +5,255 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import {
+  assertPolicyRequirementContainment,
+  classifyOpenShellGlobalPolicyHistory,
+  parseActiveGlobalPolicyMetadata,
   parseOpenShellPolicy,
+  parseSandboxPolicyMetadata,
   stripProviderComposedPolicies,
   withoutProviderComposedPolicies,
 } from "./openshell-policy-boundary.cjs";
 
-type PolicyDecision = "accepted" | "rejected";
-
-function parseDecision(raw: string): PolicyDecision {
-  try {
-    parseOpenShellPolicy(raw);
-    return "accepted";
-  } catch {
-    return "rejected";
-  }
-}
-
-const POLICY_CASES = [
-  {
-    name: "valid marked policy",
-    raw: "Version: 1\n---\nversion: 1\nnetwork_policies:\n  safe: {}",
-    decision: "accepted",
-  },
-  {
-    name: "unmarked mapping without a policy root",
-    raw: "future_policy:\n  keep: true",
-    decision: "rejected",
-  },
-  {
-    name: "versionless network policy",
-    raw: "network_policies:\n  safe: {}",
-    decision: "accepted",
-  },
-  { name: "missing document", raw: "", decision: "rejected" },
-  {
-    name: "diagnostic output",
-    raw: "error: gateway unavailable",
-    decision: "rejected",
-  },
-  {
-    name: "diagnostic message mapping",
-    raw: "message: gateway unavailable\ndetails: connection refused",
-    decision: "rejected",
-  },
-  {
-    name: "arbitrary lowercase diagnostic mapping",
-    raw: "reason: gateway unavailable\nretryable: true",
-    decision: "rejected",
-  },
-  {
-    name: "malformed YAML",
-    raw: "version: [unterminated",
-    decision: "rejected",
-  },
-  { name: "scalar document", raw: "---\nscalar", decision: "rejected" },
-  {
-    name: "sequence document",
-    raw: "---\n- item",
-    decision: "rejected",
-  },
-  {
-    name: "null network policies",
-    raw: "version: 1\nnetwork_policies: null",
-    decision: "rejected",
-  },
-  {
-    name: "string version",
-    raw: 'version: "1"\nnetwork_policies: {}',
-    decision: "rejected",
-  },
-  {
-    name: "fractional version",
-    raw: "version: 1.5\nnetwork_policies: {}",
-    decision: "rejected",
-  },
-] as const;
-
-describe("canonical OpenShell policy boundary", () => {
-  it("parses marked output and versionless network policies", () => {
-    const body = "version: 1\nnetwork_policies:\n  safe: {}";
-    expect(parseOpenShellPolicy(`Version: 1\n---\n${body}`)).toEqual({
-      yamlBody: body,
-      policy: YAML.parse(body),
-    });
-
-    const versionless = "network_policies:\n  safe: {}";
-    expect(parseOpenShellPolicy(versionless).yamlBody).toBe(versionless);
-
-    const inlineSeparator = 'version: 1\nmetadata:\n  marker: "a---b"\nnetwork_policies: {}';
-    expect(parseOpenShellPolicy(inlineSeparator).yamlBody).toBe(inlineSeparator);
-
-    const markedFuturePolicy = "Version: 1\n---\nfuture_policy:\n  keep: true";
-    expect(parseOpenShellPolicy(markedFuturePolicy).policy).toEqual({
-      future_policy: { keep: true },
+describe("OpenShell policy boundary", () => {
+  it("parses sandbox policy metadata without assigning an owner", () => {
+    expect(
+      parseSandboxPolicyMetadata(
+        JSON.stringify({
+          scope: "sandbox",
+          sandbox: "alpha",
+          status: "effective",
+          policy_source: "sandbox",
+          hash: "sha256:one",
+          active_version: 3,
+          policy: { version: 1, network_policies: { npm: { endpoints: [] } } },
+        }),
+        "alpha",
+      ),
+    ).toEqual({
+      policySource: "sandbox",
+      effectivePolicy: { version: 1, network_policies: { npm: { endpoints: [] } } },
+      policyIdentity: { hash: "sha256:one", activeVersion: 3 },
     });
   });
 
-  it.each(["", "Version: 1\n---", "error: gateway unavailable"])(
-    "rejects output without a policy: %j",
-    (raw) => {
-      expect(() => parseOpenShellPolicy(raw)).toThrow(/does not contain a policy/);
-    },
-  );
+  it("parses active global policy as OpenShell state", () => {
+    expect(
+      parseActiveGlobalPolicyMetadata(
+        JSON.stringify({
+          scope: "global",
+          status: "loaded",
+          policy_source: "global",
+          hash: "sha256:global",
+          active_version: 2,
+          policy: { version: 1, network_policies: {} },
+        }),
+      ),
+    ).toEqual({
+      state: "active",
+      inspection: {
+        policySource: "global",
+        effectivePolicy: { version: 1, network_policies: {} },
+        policyIdentity: { hash: "sha256:global", activeVersion: 2 },
+      },
+    });
+  });
 
-  it("rejects malformed and scalar policy output", () => {
-    expect(() => parseOpenShellPolicy("version: [unterminated")).toThrow(/not valid YAML/);
-    expect(() => parseOpenShellPolicy("---\nscalar")).toThrow(/must be a YAML mapping/);
+  it("rejects invalid sandbox identity metadata", () => {
+    expect(() =>
+      parseSandboxPolicyMetadata(
+        JSON.stringify({
+          scope: "sandbox",
+          sandbox: "alpha",
+          status: "effective",
+          policy_source: "sandbox",
+          hash: "invalid hash",
+          active_version: 0,
+          policy: {},
+        }),
+        "alpha",
+      ),
+    ).toThrow(/invalid sandbox policy identity metadata/);
   });
 
   it.each([
-    "version: 1\nnetwork_policies: invalid",
-    "version: 1\nnetwork_policies: []",
-    "version: 1\nnetwork_policies: null",
-  ])("rejects a non-mapping network_policies value: %j", (raw) => {
-    expect(() => parseOpenShellPolicy(raw)).toThrow(/network_policies must be a YAML mapping/);
+    ["empty global metadata", "", /empty global policy metadata/],
+    [
+      "invalid global fields",
+      JSON.stringify({ scope: "sandbox", status: "loaded", policy_source: "global" }),
+      /invalid global policy metadata/,
+    ],
+    [
+      "non-mapping global policy",
+      JSON.stringify({
+        scope: "global",
+        status: "loaded",
+        policy_source: "global",
+        policy: [],
+      }),
+      /invalid global policy metadata/,
+    ],
+  ])("rejects %s", (_name, raw, expected) => {
+    expect(() => parseActiveGlobalPolicyMetadata(raw)).toThrow(expected);
   });
 
-  it.each(['version: "1"\nnetwork_policies: {}', "version: 1.5\nnetwork_policies: {}"])(
-    "rejects a non-integer policy version: %j",
-    (raw) => {
-      expect(() => parseOpenShellPolicy(raw)).toThrow(/version must be a positive integer/);
-    },
-  );
-
-  it("rejects unmarked future output", () => {
-    expect(() => parseOpenShellPolicy("FutureKey: value")).toThrow(/does not contain a policy/);
+  it("allows unrelated live entries but rejects missing or drifted requirements", () => {
+    const inspection = {
+      policySource: "sandbox" as const,
+      policyIdentity: { hash: "sha256:one", activeVersion: 1 },
+      effectivePolicy: {
+        version: 1,
+        network_policies: { npm: { endpoints: ["registry.npmjs.org"] }, host: { endpoints: [] } },
+      },
+    };
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        network_policies: { npm: { endpoints: ["registry.npmjs.org"] } },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        network_policies: { npm: { endpoints: ["different.example"] } },
+      }),
+    ).toThrow(/drifted entries/);
   });
 
-  it.each(POLICY_CASES)("returns $decision for $name", ({ raw, decision }) => {
-    expect(parseDecision(raw)).toBe(decision);
+  it("parses base YAML and removes only provider-composed entries", () => {
+    expect(parseOpenShellPolicy("---\nversion: 1\nnetwork_policies: {}\n").policy).toEqual({
+      version: 1,
+      network_policies: {},
+    });
+    expect(withoutProviderComposedPolicies({ npm: 1, _provider_token: 2 })).toEqual({ npm: 1 });
   });
 
-  it("removes provider-composed policies without mutating other policy fields", () => {
+  it("filters provider-composed entries from serialized policy only when present", () => {
+    const unchanged = "version: 1\nfilesystem_policy:\n  read_only: true\n";
+    expect(stripProviderComposedPolicies(unchanged)).toBe(unchanged);
+
+    const withoutProviderEntry = "version: 1\nnetwork_policies:\n  npm: {}\n";
+    expect(stripProviderComposedPolicies(withoutProviderEntry)).toBe(withoutProviderEntry);
+
     expect(
-      withoutProviderComposedPolicies({ safe: { allow: true }, _provider_generated: {} }),
-    ).toEqual({ safe: { allow: true } });
-
-    const policy = YAML.stringify({
-      version: 1,
-      future_policy: { keep: true },
-      network_policies: { safe: {}, _provider_generated: {} },
-    });
-    expect(YAML.parse(stripProviderComposedPolicies(policy))).toEqual({
-      version: 1,
-      future_policy: { keep: true },
-      network_policies: { safe: {} },
-    });
+      YAML.parse(
+        stripProviderComposedPolicies(
+          "version: 1\nnetwork_policies:\n  npm: {}\n  _provider_token: {}\n",
+        ),
+      ),
+    ).toEqual({ version: 1, network_policies: { npm: {} } });
+    expect(() => stripProviderComposedPolicies("version: [unterminated")).toThrow(
+      /invalid YAML/,
+    );
   });
 
-  it.each(["version: 1", "version: 1\nnetwork_policies:\n  safe: {}"])(
-    "leaves the non-composed mapping %j unchanged",
-    (policy) => {
-      expect(stripProviderComposedPolicies(policy)).toBe(policy);
-    },
-  );
+  it("classifies the OpenShell global history absence contract", () => {
+    expect(classifyOpenShellGlobalPolicyHistory("", "No global policy history found\n")).toBe(
+      "absent",
+    );
+  });
 
-  it("rejects malformed YAML while stripping composed policies", () => {
-    expect(() => stripProviderComposedPolicies("version: [unterminated")).toThrow(/invalid YAML/);
+  it.each([
+    ["marked policy", "Version: 1\n---\nversion: 1\nnetwork_policies:\n  safe: {}", true],
+    ["versionless network policy", "network_policies:\n  safe: {}", true],
+    ["missing document", "", false],
+    ["diagnostic mapping", "error: gateway unavailable", false],
+    ["arbitrary mapping", "future_policy:\n  keep: true", false],
+    ["malformed YAML", "version: [unterminated", false],
+    ["scalar document", "---\nscalar", false],
+    ["sequence document", "---\n- item", false],
+    ["null network policies", "version: 1\nnetwork_policies: null", false],
+    ["string version", 'version: "1"\nnetwork_policies: {}', false],
+    ["fractional version", "version: 1.5\nnetwork_policies: {}", false],
+  ] as const)("validates $0", (_name, raw, accepted) => {
+    let actual = true;
+    try {
+      parseOpenShellPolicy(raw);
+    } catch {
+      actual = false;
+    }
+    expect(actual).toBe(accepted);
+  });
+
+  it.each([
+    ["active revision", "VERSION STATUS\n1 loaded\n", "", "present"],
+    ["fresh history", "", "No global policy history found\n", "absent"],
+    ["empty output", "", "", "invalid"],
+    ["unexpected diagnostic", "", "gateway warning", "invalid"],
+  ] as const)("classifies $0", (_name, stdout, stderr, expected) => {
+    expect(classifyOpenShellGlobalPolicyHistory(stdout, stderr)).toBe(expected);
+  });
+
+  it("treats a superseded global revision as absent without an identity", () => {
+    expect(
+      parseActiveGlobalPolicyMetadata(
+        JSON.stringify({
+          scope: "global",
+          status: "superseded",
+          policy_source: "global",
+        }),
+      ),
+    ).toEqual({ state: "absent" });
+  });
+
+  it("requires requested sections while allowing unrelated live policy", () => {
+    const inspection = {
+      policySource: "global" as const,
+      policyIdentity: { activeVersion: 7, hash: "sha256:effective" },
+      effectivePolicy: {
+        version: 9,
+        filesystem_policy: { read_only: true },
+        extra_section: { keep: true },
+        network_policies: { required: { allow: true }, extra: { allow: true } },
+      },
+    };
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        filesystem_policy: { read_only: true },
+        network_policies: { required: { allow: true } },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        filesystem_policy: { read_only: false },
+      }),
+    ).toThrow(/drifted sections/);
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        process_policy: { run_as_user: true },
+      }),
+    ).toThrow(/missing sections/);
+  });
+
+  it("accepts OpenShell-enriched policy values while retaining requirements", () => {
+    const inspection = {
+      policySource: "sandbox" as const,
+      policyIdentity: { activeVersion: 8, hash: "sha256:gpu-enriched" },
+      effectivePolicy: {
+        filesystem_policy: {
+          read_only: ["/etc/ssl", "/proc/driver/nvidia"],
+          devices: { allow: ["/dev/nvidia0"] },
+        },
+        network_policies: {
+          required: {
+            endpoints: [{ host: "example.test", tls: "passthrough" }],
+            openshell_metadata: { source: "gpu" },
+          },
+        },
+      },
+    };
+
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        filesystem_policy: { read_only: ["/etc/ssl"] },
+        network_policies: { required: { endpoints: [{ host: "example.test" }] } },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertPolicyRequirementContainment(inspection, {
+        filesystem_policy: { read_only: ["/missing"] },
+      }),
+    ).toThrow(/drifted sections/);
+  });
+
+  it.each(["", "{", "[]"])("rejects malformed sandbox metadata [case %#]", (raw) => {
+    expect(() => parseSandboxPolicyMetadata(raw, "alpha")).toThrow();
   });
 });

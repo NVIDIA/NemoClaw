@@ -37,12 +37,8 @@ export function createPolicyHandlerDeps(
           >["deps"]["preparePolicyPresetResumeSelection"]
         >[1],
       ) => ({
-        policyPresets: (options.recordedPolicyPresets ?? []).filter(
-          (name) => name !== "unsupported",
-        ),
-        recordedPolicyPresetsNeedReconcile: (options.recordedPolicyPresets ?? []).includes(
-          "unsupported",
-        ),
+        policyPresets: [],
+        livePolicyPresetsNeedUpdate: false,
         disabledMessagingPolicyPresetApplied: false,
         suppressedAgentRequiredPresetsLive: false,
       }),
@@ -57,7 +53,6 @@ export function createPolicyHandlerDeps(
       return session;
     }),
     complete: vi.fn(async () => session),
-    persistPolicies: vi.fn((_sandboxName: string, _appliedPolicyPresets: string[]) => undefined),
   };
   return {
     calls,
@@ -76,7 +71,6 @@ export function createPolicyHandlerDeps(
       updateSession: calls.updateSession,
       recordStepComplete: calls.complete,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
-      persistAppliedPolicyPresets: calls.persistPolicies,
       ...overrides,
     },
     setSession(next: Session) {

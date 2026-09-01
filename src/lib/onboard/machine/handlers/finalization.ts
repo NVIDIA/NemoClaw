@@ -198,7 +198,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     portableAgent === "ordinary" &&
     selectedAgentName(agent) === "openclaw" &&
     recreateJournalHandoff !== true;
-
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).
   deps.setDefaultSandbox(sandboxName);
@@ -270,15 +269,12 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     portableAgent === "ordinary" &&
     selectedAgentName(agent) === "openclaw" &&
     recreateJournalHandoff !== true;
-
   let verificationDiagnostics: string[] = [];
   let deploymentHealthy = true;
   if (portableAgent !== "ordinary") {
     const pairing =
       portableAgent === "strict-openclaw"
-        ? await deps.settlePortablePairing(sandboxName, {
-            portableRequired: true,
-          })
+        ? await deps.settlePortablePairing(sandboxName, { portableRequired: true })
         : ({
             kind: "incomplete",
             reason: "portable-runtime-identity-invalid",
@@ -333,7 +329,9 @@ export async function handlePostVerifyState<Agent, VerifyChain, VerificationResu
     if (manageDashboard) {
       deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
       const dashboardPort = await deps.ensureAgentDashboardForward(sandboxName, agent);
-      if (dashboardPort > 0) deps.persistDashboardPort(sandboxName, dashboardPort);
+      if (dashboardPort > 0) {
+        deps.persistDashboardPort(sandboxName, dashboardPort);
+      }
     }
   }
   if (manageDashboard) {

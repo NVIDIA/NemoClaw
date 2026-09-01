@@ -7,6 +7,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+import type { OpenShellSandboxObserver } from "../../adapters/openshell/sandbox-observer";
 import {
   createDockerRuntimeProviderBundle,
   createKubernetesRuntimeProviderBundle,
@@ -115,12 +116,12 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
 }
 
 describe("startSandbox", () => {
-  it("restores sealed access before recovering sandbox processes (#8112)", () => {
+  it("restores sealed access before recovering sandbox processes (#8112)", async () => {
     const restoreAccess = vi.fn();
     const recovery = SUCCESSFUL_RECOVERY;
     const restoreProcesses = vi.fn(() => recovery);
 
-    const result = restoreStoppedSandboxStartupState("my-sandbox", {
+    const result = await restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "openclaw",
       restoreLockedStartupAccess: restoreAccess,
       waitForSandboxReady: vi.fn(),
@@ -135,11 +136,11 @@ describe("startSandbox", () => {
     expect(result).toBe(recovery);
   });
 
-  it("keeps Hermes sealed state untouched while recovering sandbox processes (#8112)", () => {
+  it("keeps Hermes sealed state untouched while recovering sandbox processes (#8112)", async () => {
     const restoreAccess = vi.fn();
     const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
 
-    restoreStoppedSandboxStartupState("my-sandbox", {
+    await restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "hermes",
       restoreLockedStartupAccess: restoreAccess,
       waitForSandboxReady: vi.fn(),
@@ -150,12 +151,12 @@ describe("startSandbox", () => {
     expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox");
   });
 
-  it("waits for OpenShell readiness after restoring sealed access and before recovering sandbox processes (#8978)", () => {
+  it("waits for OpenShell readiness after restoring sealed access and before recovering sandbox processes (#8978)", async () => {
     const restoreAccess = vi.fn();
     const waitForSandboxReady = vi.fn();
     const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
 
-    restoreStoppedSandboxStartupState("my-sandbox", {
+    await restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "openclaw",
       restoreLockedStartupAccess: restoreAccess,
       waitForSandboxReady,
@@ -171,11 +172,11 @@ describe("startSandbox", () => {
     );
   });
 
-  it("waits for OpenShell readiness before recovering Hermes sandbox processes (#8978)", () => {
+  it("waits for OpenShell readiness before recovering Hermes sandbox processes (#8978)", async () => {
     const waitForSandboxReady = vi.fn();
     const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
 
-    restoreStoppedSandboxStartupState("my-sandbox", {
+    await restoreStoppedSandboxStartupState("my-sandbox", {
       agent: "hermes",
       restoreLockedStartupAccess: vi.fn(),
       waitForSandboxReady,
@@ -221,17 +222,32 @@ describe("startSandbox", () => {
     async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-readiness-"));
       vi.stubEnv("HOME", home);
+      vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
       const listOutputs = ["my-sandbox Error", "my-sandbox Provisioning", "my-sandbox Ready"];
-      const captureSandboxList = vi.fn(() => ({
-        status: 0,
-        output: listOutputs.shift() ?? "my-sandbox Ready",
-        stdout: "",
-        stderr: "",
-      }));
+      const listSandboxes = vi.fn<OpenShellSandboxObserver["listSandboxes"]>(async () => {
+        const output = listOutputs.shift() ?? "my-sandbox Ready";
+        const phase = output.split(/\s+/u)[1] ?? null;
+        return {
+          ok: true,
+          value: {
+            sandboxes: [
+              {
+                name: "my-sandbox",
+                phase,
+                readiness:
+                  phase === "Ready" ? "ready" : phase === "Error" ? "terminal" : "not_ready",
+              },
+            ],
+          },
+        };
+      });
+      const observer: OpenShellSandboxObserver = {
+        listSandboxes,
+      };
       const restoreProcesses = vi.fn(() => SUCCESSFUL_RECOVERY);
       const h = harness({
         allowDockerRuntimeInspection: false,
-        captureSandboxList,
+        observer,
         environment: { ...process.env, HOME: home },
         restoreLockedStartupAccess: vi.fn(),
         restoreProcessState: restoreProcesses,
@@ -242,10 +258,10 @@ describe("startSandbox", () => {
         const result = await startSandbox("my-sandbox", h.deps);
 
         expect(result.exitCode).toBe(0);
-        expect(captureSandboxList).toHaveBeenCalledTimes(3);
+        expect(listSandboxes).toHaveBeenCalledTimes(3);
         expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox");
         expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
-        expect(captureSandboxList.mock.invocationCallOrder[2]).toBeLessThan(
+        expect(listSandboxes.mock.invocationCallOrder[2]).toBeLessThan(
           restoreProcesses.mock.invocationCallOrder[0],
         );
         expect(restoreProcesses.mock.invocationCallOrder[0]).toBeLessThan(
@@ -443,17 +459,20 @@ describe("startSandbox", () => {
       },
       /did not become ready in OpenShell/iu,
     ],
-  ] as const)("propagates an actionable %s %s failure (#8662)", async (agent, _layer, recovery, expected) => {
-    const h = harness();
-    h.getSandbox.mockReturnValue(sandbox({ agent }));
-    h.restoreStartupState.mockReturnValue(recovery);
+  ] as const)(
+    "propagates an actionable %s %s failure (#8662)",
+    async (agent, _layer, recovery, expected) => {
+      const h = harness();
+      h.getSandbox.mockReturnValue(sandbox({ agent }));
+      h.restoreStartupState.mockReturnValue(recovery);
 
-    const failure = await startSandbox("my-sandbox", h.deps).catch((error) => String(error));
-    expect(failure).toMatch(expected);
-    expect(failure).toMatch(/nemoclaw my-sandbox recover/iu);
-    expect(failure).not.toContain(REDACTED_TOKEN);
-    expect(h.verifyGateway).not.toHaveBeenCalled();
-  });
+      const failure = await startSandbox("my-sandbox", h.deps).catch((error) => String(error));
+      expect(failure).toMatch(expected);
+      expect(failure).toMatch(/nemoclaw my-sandbox recover/iu);
+      expect(failure).not.toContain(REDACTED_TOKEN);
+      expect(h.verifyGateway).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not claim preservation when startup recovery reports a failed rollback (#9364)", async () => {
     const h = harness();
@@ -676,24 +695,24 @@ describe("startSandbox", () => {
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "unknown-runtime",
-    "mxc-not-installed",
-  ])("fails closed for unregistered provider %s without lifecycle side effects", async (providerId) => {
-    const h = harness();
-    h.getSandbox.mockReturnValue(sandbox({ openshellDriver: providerId }));
+  it.each(["unknown-runtime", "mxc-not-installed"])(
+    "fails closed for unregistered provider %s without lifecycle side effects",
+    async (providerId) => {
+      const h = harness();
+      h.getSandbox.mockReturnValue(sandbox({ openshellDriver: providerId }));
 
-    const result = await startSandbox("my-sandbox", h.deps);
+      const result = await startSandbox("my-sandbox", h.deps);
 
-    expect(result.exitCode).toBe(1);
-    expect(result.message).toContain(providerId);
-    expect(result.message).toContain("has no registered lifecycle provider");
-    expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
-    expect(h.dockerUnpause).not.toHaveBeenCalled();
-    expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
-    expect(h.restoreStartupState).not.toHaveBeenCalled();
-    expect(h.verifyGateway).not.toHaveBeenCalled();
-  });
+      expect(result.exitCode).toBe(1);
+      expect(result.message).toContain(providerId);
+      expect(result.message).toContain("has no registered lifecycle provider");
+      expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
+      expect(h.dockerUnpause).not.toHaveBeenCalled();
+      expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+      expect(h.restoreStartupState).not.toHaveBeenCalled();
+      expect(h.verifyGateway).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ["null driver", sandbox({ openshellDriver: null })],
@@ -715,11 +734,13 @@ describe("startSandbox", () => {
     await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("probe exploded");
   });
 
-  it("reports the recorded route as ready only after it serves an agent request", async () => {
+  it("pins a Deep Agents Code start probe to its recorded gateway and managed launcher identity (#10080)", async () => {
     const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
     const h = harness({ probeInferenceInvocation });
     h.getSandbox.mockReturnValue(
       sandbox({
+        agent: "langchain-deepagents-code",
+        gatewayName: "nemoclaw-19080",
         provider: "ollama-local",
         model: "nemotron-3-nano:30b",
         preferredInferenceApi: "openai-completions",
@@ -732,6 +753,8 @@ describe("startSandbox", () => {
     expect(probeInferenceInvocation).toHaveBeenCalledWith(
       {
         sandboxName: "my-sandbox",
+        gatewayName: "nemoclaw-19080",
+        agentName: "langchain-deepagents-code",
         provider: "ollama-local",
         model: "nemotron-3-nano:30b",
         preferredInferenceApi: "openai-completions",
@@ -739,6 +762,40 @@ describe("startSandbox", () => {
       {},
       30_000,
     );
+    expect(probeInferenceInvocation).toHaveBeenCalledOnce();
+    expect(probeInferenceInvocation.mock.invocationCallOrder[0]).toBeGreaterThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("pins a Hermes start probe to its recorded OpenShell gateway (#10302)", async () => {
+    const probeInferenceInvocation = vi.fn(() => ({ ok: true }) as const);
+    const h = harness({ probeInferenceInvocation });
+    h.getSandbox.mockReturnValue(
+      sandbox({
+        agent: "hermes",
+        gatewayName: "nemoclaw-19080",
+        provider: "ollama-local",
+        model: "nemotron-3-nano:30b",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(probeInferenceInvocation).toHaveBeenCalledWith(
+      {
+        sandboxName: "my-sandbox",
+        gatewayName: "nemoclaw-19080",
+        provider: "ollama-local",
+        model: "nemotron-3-nano:30b",
+        preferredInferenceApi: "openai-completions",
+      },
+      {},
+      30_000,
+    );
+    expect(probeInferenceInvocation).toHaveBeenCalledOnce();
     expect(probeInferenceInvocation.mock.invocationCallOrder[0]).toBeGreaterThan(
       h.verifyGateway.mock.invocationCallOrder[0],
     );

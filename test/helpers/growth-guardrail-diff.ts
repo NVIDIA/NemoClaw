@@ -5,7 +5,11 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { assertRepositoryName, createPrBlobClient, type PullRequestFile } from "./pr-blob-client";
+export type PullRequestFile = {
+  readonly filename: string;
+  readonly previous_filename?: string | null;
+  readonly status?: string;
+};
 
 export type GrowthGuardrailDiff = {
   readonly files: readonly PullRequestFile[];
@@ -57,11 +61,16 @@ function readWorktreeFile(file: string): string | null {
   return existsSync(absolute) ? readFileSync(absolute, "utf8") : null;
 }
 
-function readFiles(
+function readFilesCached(
   paths: readonly string[],
+  cache: Map<string, string | null>,
   read: (file: string) => string | null,
 ): ReadonlyMap<string, string | null> {
-  return new Map([...new Set(paths)].map((file) => [file, read(file)]));
+  const uniquePaths = [...new Set(paths)];
+  uniquePaths
+    .filter((file) => !cache.has(file))
+    .forEach((file) => cache.set(file, read(file)));
+  return new Map(uniquePaths.map((file) => [file, cache.get(file) ?? null]));
 }
 
 function selectLocalComparisonBase(
@@ -126,14 +135,16 @@ function loadLocalDiff(): GrowthGuardrailDiff {
   for (const filename of untracked.split("\0").filter(Boolean)) {
     if (!known.has(filename)) files.push({ filename, status: "added" });
   }
+  const baseCache = new Map<string, string | null>();
+  const headCache = new Map<string, string | null>();
 
   return {
     files,
     async readBase(paths) {
-      return readFiles(paths, (file) => readGitFile(comparisonBase, file));
+      return readFilesCached(paths, baseCache, (file) => readGitFile(comparisonBase, file));
     },
     async readHead(paths) {
-      return readFiles(paths, readWorktreeFile);
+      return readFilesCached(paths, headCache, readWorktreeFile);
     },
   };
 }
@@ -144,33 +155,59 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
-async function loadPullRequestDiff(): Promise<GrowthGuardrailDiff> {
-  const token = requiredEnvironment("GH_TOKEN");
-  const repository = requiredEnvironment("REPO");
+function assertPullNumber(value: string): void {
+  if (!/^[1-9][0-9]*$/.test(value)) throw new Error("PR_NUMBER must be a positive integer");
+}
+
+function assertCommitSha(sha: string, label: string): void {
+  if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error(`${label} must be a full commit SHA`);
+}
+
+function fetchPullHead(prNumber: string, expectedHeadSha: string): void {
+  execFileSync("git", ["fetch", "--no-tags", "--depth=1", "origin", `refs/pull/${prNumber}/head`], {
+    cwd: REPO_ROOT,
+    stdio: "ignore",
+  });
+  const fetchedHead = execFileSync("git", ["rev-parse", "FETCH_HEAD"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  }).trim();
+  if (fetchedHead !== expectedHeadSha) throw new Error("Fetched PR head does not match HEAD_SHA");
+}
+
+function loadPullRequestDiff(): GrowthGuardrailDiff {
   const prNumber = requiredEnvironment("PR_NUMBER");
   const baseSha = requiredEnvironment("BASE_SHA");
-  const headRepository = requiredEnvironment("HEAD_REPO");
   const headSha = requiredEnvironment("HEAD_SHA");
-  assertRepositoryName(repository, "REPO");
-  assertRepositoryName(headRepository, "HEAD_REPO");
-  const client = createPrBlobClient({ token });
-  const files = await client.getPullFiles(repository, prNumber);
+  assertPullNumber(prNumber);
+  assertCommitSha(baseSha, "BASE_SHA");
+  assertCommitSha(headSha, "HEAD_SHA");
+  fetchPullHead(prNumber, headSha);
+  const changed = execFileSync("git", ["diff", "--name-status", "-z", "-M", baseSha, headSha, "--"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  });
+  const baseCache = new Map<string, string | null>();
+  const headCache = new Map<string, string | null>();
 
   return {
-    files,
-    readBase(paths) {
-      return client.fetchBlobs(repository, baseSha, paths);
+    files: parseChangedFiles(changed),
+    async readBase(paths) {
+      return readFilesCached(paths, baseCache, (file) => readGitFile(baseSha, file));
     },
-    readHead(paths) {
-      return client.fetchBlobs(headRepository, headSha, paths);
+    async readHead(paths) {
+      return readFilesCached(paths, headCache, (file) => readGitFile(headSha, file));
     },
   };
 }
 
 export function loadGrowthGuardrailDiff(): Promise<GrowthGuardrailDiff> {
-  return process.env.NEMOCLAW_GROWTH_PR === "1"
-    ? loadPullRequestDiff()
-    : Promise.resolve(loadLocalDiff());
+  return Promise.resolve(process.env.PR_NUMBER ? loadPullRequestDiff() : loadLocalDiff());
 }
 
-export const testOnly = { parseAncestorProbe, parseChangedFiles, selectLocalComparisonBase };
+export const testOnly = {
+  parseAncestorProbe,
+  parseChangedFiles,
+  readFilesCached,
+  selectLocalComparisonBase,
+};

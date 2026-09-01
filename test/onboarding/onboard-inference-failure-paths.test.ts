@@ -72,13 +72,10 @@ function stubMissingBedrockAuth(): void {
 function expectNoPostFailureSideEffects(
   harness: DirectSetupInferenceHarness,
   expectedCommands: string[] = [],
-  expectOpenAiProfileImport = false,
+  expectOpenAiProfileValidation = false,
 ): void {
-  const expected = expectOpenAiProfileImport
-    ? [
-        expect.stringMatching(/^provider profile -g nemoclaw import --file .*openai\.yaml$/u),
-        ...expectedCommands,
-      ]
+  const expected = expectOpenAiProfileValidation
+    ? ["provider profile -g nemoclaw export openai --output json", ...expectedCommands]
     : expectedCommands;
   expect(harness.commands.map(({ command }) => command)).toEqual(expected);
   expect(harness.verifyInferenceRoute).not.toHaveBeenCalled();
@@ -200,6 +197,7 @@ describe("setupInference dependency failures", () => {
       expect.any(String),
       { OPENAI_API_KEY: "openai-secret" },
       "nemoclaw",
+      { revalidateSandboxIdentity: expect.any(Function) },
     );
     expect(promptValidationRecovery).not.toHaveBeenCalled();
     expect(exitProcess).toHaveBeenCalledOnce();
@@ -991,6 +989,7 @@ describe("setupInference dependency failures", () => {
       "http://host.openshell.internal:4000/v1",
       { NVIDIA_INFERENCE_API_KEY: "test-secret" },
       "nemoclaw",
+      { revalidateSandboxIdentity: expect.any(Function) },
     );
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(29);

@@ -112,7 +112,7 @@ describe("CLI dispatch", () => {
         'case "$*" in',
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        '  "sandbox list") printf "NAME STATUS\\nalpha Creating\\n"; exit 0 ;;',
+        '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Creating\\n"; exit 0 ;;',
         '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ]);
@@ -141,7 +141,7 @@ describe("CLI dispatch", () => {
         'case "$*" in',
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+        '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
         '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ]);
@@ -205,7 +205,7 @@ describe("CLI dispatch", () => {
       'case "$*" in',
       '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw-8090\\n  Status: Connected\\n"; exit 0 ;;',
       '  "gateway info -g nemoclaw-8090") printf "Gateway: nemoclaw-8090\\n"; exit 0 ;;',
-      '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+      '  "sandbox list -g nemoclaw-8090") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
       '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
       "esac",
     ]);
@@ -242,7 +242,7 @@ describe("CLI dispatch", () => {
         'case "$*" in',
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+        '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
         '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ]);
@@ -272,7 +272,7 @@ describe("CLI dispatch", () => {
         'case "$*" in',
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+        '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
         '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ]);
@@ -325,7 +325,7 @@ describe("CLI dispatch", () => {
           '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
           '  "gateway select nemoclaw") exit 1 ;;',
           '  "gateway start --name nemoclaw --port 8080") exit 1 ;;',
-          '  "sandbox list") echo "should not query sandbox list" >> "$marker_file"; exit 0 ;;',
+          '  "sandbox list -g nemoclaw") echo "should not query sandbox list" >> "$marker_file"; exit 0 ;;',
           "esac",
         ],
       );
@@ -365,7 +365,7 @@ describe("CLI dispatch", () => {
           'case "$*" in',
           '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
           '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-          '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+          '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
           '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
           "esac",
         ],
@@ -407,7 +407,7 @@ describe("CLI dispatch", () => {
         'case "$*" in',
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+        '  "sandbox list -g nemoclaw") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
         '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ]);
@@ -438,7 +438,7 @@ describe("CLI dispatch", () => {
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
         '  "gateway select nemoclaw") exit 1 ;;',
         '  "gateway start --name nemoclaw --port 8080") exit 1 ;;',
-        '  "sandbox list") echo "queried wrong gateway sandbox list" >> "$marker_file"; exit 0 ;;',
+        '  "sandbox list -g nemoclaw") echo "queried wrong gateway sandbox list" >> "$marker_file"; exit 0 ;;',
         "esac",
       ]);
 
@@ -464,7 +464,7 @@ describe("CLI dispatch", () => {
           'case "$*" in',
           '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
           '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-          `  "sandbox list") printf "NAME STATUS\\n${sandboxName} Ready\\n"; exit 0 ;;`,
+          `  "sandbox list -g nemoclaw") printf "NAME STATUS\\n${sandboxName} Ready\\n"; exit 0 ;;`,
           '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
           "esac",
         ],
@@ -506,7 +506,7 @@ describe("CLI dispatch", () => {
         'case "$*" in',
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        `  "sandbox list") printf "NAME STATUS\\n${sandboxName} Ready\\n"; exit 0 ;;`,
+        `  "sandbox list -g nemoclaw") printf "NAME STATUS\\n${sandboxName} Ready\\n"; exit 0 ;;`,
         '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
         "esac",
       ],

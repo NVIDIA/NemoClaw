@@ -53,7 +53,7 @@ function probeStdout(
 
 describe("MCP credential-resolution probe command security", () => {
   it("validates and silences proxy env before framing nonce-bound runtime curls (#6379)", () => {
-    const built = buildCredentialResolutionProbeCommand(baseEntry, "mcporter");
+    const built = buildCredentialResolutionProbeCommand(baseEntry, "mcporter", "v11");
     expect(built).not.toBeNull();
     const command = built?.command ?? "";
     const validationIndex = command.indexOf('[ -L "$proxy_env" ]');
@@ -70,7 +70,8 @@ describe("MCP credential-resolution probe command security", () => {
     expect(frameIndex).toBeGreaterThan(unsetIndex);
     expect(firstChildIndex).toBeGreaterThan(frameIndex);
     expect(command).toContain("nemoclaw-start node -e");
-    expect(command).toContain("'authorization: Bearer openshell:resolve:env:GITHUB_TOKEN'");
+    expect(command).toContain("'authorization: Bearer openshell:resolve:env:v11_GITHUB_TOKEN'");
+    expect(command).not.toContain("'authorization: Bearer openshell:resolve:env:GITHUB_TOKEN'");
     expect(command).toContain(`'authorization: Bearer ${MCP_PROBE_CONTROL_BEARER}'`);
     expect(command).toContain('"method":"initialize"');
     expect(command).toContain(`${MCP_PROBE_HTTP_MARKER}${built?.resultMarker}:`);
@@ -85,7 +86,8 @@ describe("MCP credential-resolution probe command security", () => {
   ])(
     "uses the $adapter runtime without capturing endpoint bodies (#6379)",
     ({ adapter, runtime }) => {
-      const command = buildCredentialResolutionProbeCommand(baseEntry, adapter)?.command ?? "";
+      const command =
+        buildCredentialResolutionProbeCommand(baseEntry, adapter, "v11")?.command ?? "";
 
       expect(command).toContain(runtime);
       expect(command).toContain("'/dev/null'");
@@ -95,23 +97,27 @@ describe("MCP credential-resolution probe command security", () => {
   );
 
   it("refuses missing credentials and unsafe persisted endpoints (#6379)", () => {
-    expect(buildCredentialResolutionProbeCommand({ ...baseEntry, env: [] }, "mcporter")).toBeNull();
+    expect(
+      buildCredentialResolutionProbeCommand({ ...baseEntry, env: [] }, "mcporter", "v11"),
+    ).toBeNull();
     expect(
       buildCredentialResolutionProbeCommand(
         { ...baseEntry, url: "http://api.githubcopilot.com/mcp/" },
         "mcporter",
+        "v11",
       ),
     ).toBeNull();
     expect(
       buildCredentialResolutionProbeCommand(
         { ...baseEntry, url: "https://host.openshell.internal:31337/mcp" },
         "mcporter",
+        "v11",
       ),
     ).toBeNull();
   });
 
   it("rejects duplicate and out-of-order result markers (#6379)", () => {
-    const built = buildCredentialResolutionProbeCommand(baseEntry, "mcporter");
+    const built = buildCredentialResolutionProbeCommand(baseEntry, "mcporter", "v11");
     expect(built).not.toBeNull();
     const resultMarker = built?.resultMarker ?? "missing-result-marker";
     const duplicated = classifyCredentialResolutionProbe(
@@ -154,7 +160,7 @@ describe("MCP credential-resolution probe command security", () => {
   });
 
   it("accepts only fresh nonce-bound markers after the trusted result frame (#6379)", () => {
-    const built = buildCredentialResolutionProbeCommand(baseEntry, "mcporter");
+    const built = buildCredentialResolutionProbeCommand(baseEntry, "mcporter", "v11");
     expect(built).not.toBeNull();
     const resultMarker = built?.resultMarker ?? "missing-result-marker";
     const probe = classifyCredentialResolutionProbe(

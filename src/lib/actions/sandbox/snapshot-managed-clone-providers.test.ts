@@ -153,6 +153,18 @@ function providerMetadata(binding: LiveBinding): string {
   ].join("\n");
 }
 
+const EXACT_MESSAGING_PROFILE = {
+  status: 0,
+  stdout: JSON.stringify({
+    id: "nemoclaw-mcp-v1",
+    credentials: [],
+    endpoints: [],
+    binaries: [],
+    inference_capable: false,
+  }),
+  stderr: "",
+};
+
 function providerRunner(initial: readonly LiveBinding[] = []) {
   const live = new Map(initial.map((binding) => [binding.providerName, { ...binding }] as const));
   const commands: string[] = [];
@@ -160,7 +172,7 @@ function providerRunner(initial: readonly LiveBinding[] = []) {
     | ((binding: LiveBinding) => { readonly materialize?: LiveBinding; readonly status: number })
     | undefined;
   let profileImportResult = { status: 0, stdout: "", stderr: "" };
-  let profileExportResult = { status: 0, stdout: "", stderr: "" };
+  let profileExportResult = EXACT_MESSAGING_PROFILE;
   let failDelete = false;
   const run = vi.fn((args: string[]) => {
     commands.push(args.join(" "));
@@ -304,6 +316,11 @@ describe("managed clone provider transaction", () => {
     const profile = managedStartupE2eProfile("openclaw");
     const source = entry("source", profile);
     const runner = providerRunner();
+    runner.setProfileExportResult({
+      status: 1,
+      stdout: "",
+      stderr: "provider profile not found",
+    });
     const prepared = prepareManagedCloneProviderTransaction({
       handoff: handoff(profile, source, messagingPlan("destination")),
       destination: null,
@@ -370,6 +387,11 @@ describe("managed clone provider transaction", () => {
     const profile = managedStartupE2eProfile("openclaw");
     const source = entry("source", profile);
     const runner = providerRunner();
+    runner.setProfileExportResult({
+      status: 1,
+      stdout: "",
+      stderr: "provider profile not found",
+    });
     runner.setProfileImportResult({ status: 1, stdout: "", stderr: "gateway unavailable" });
     const prepared = prepareManagedCloneProviderTransaction({
       handoff: handoff(profile, source, messagingPlan("destination")),

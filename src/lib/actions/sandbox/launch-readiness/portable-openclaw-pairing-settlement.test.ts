@@ -43,7 +43,6 @@ const ENTRY = {
   name: "alpha",
   agent: "openclaw",
   agentVersion: "2026.7.1",
-  policyPresetsFinalized: true,
   lifecycleGeneration: "generation-1",
   lifecycleLiveIdentityFingerprint: "fingerprint-1",
   gatewayName: "nemoclaw",
@@ -194,39 +193,6 @@ describe("Portable OpenClaw pairing settlement", () => {
     expect(scope.runApproval).not.toHaveBeenCalled();
   });
 
-  it("performs zero pairing writes for pre-finalization pairing-only state (#9207)", async () => {
-    const scope = settlementDeps({
-      getSandbox: vi.fn(() => ({ ...ENTRY, policyPresetsFinalized: undefined })),
-    });
-
-    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
-      kind: "incomplete",
-      reason: "portable-policy-incomplete",
-    });
-    expect(scope.calls).toEqual(["sandbox-lock"]);
-    expect(scope.observePairing).not.toHaveBeenCalled();
-    expect(scope.runProducer).not.toHaveBeenCalled();
-    expect(scope.runApproval).not.toHaveBeenCalled();
-  });
-
-  it("fails closed when Portable policy finalization changes inside the gateway lock (#9207)", async () => {
-    const getSandbox = vi
-      .fn()
-      .mockReturnValueOnce(ENTRY)
-      .mockReturnValue({ ...ENTRY, policyPresetsFinalized: undefined });
-    const scope = settlementDeps({ getSandbox });
-
-    await expect(settlePortableOpenClawPairing("alpha", {}, scope.deps)).resolves.toEqual({
-      kind: "incomplete",
-      reason: "portable-policy-incomplete",
-    });
-    expect(scope.calls).toEqual(["sandbox-lock", "gateway-lock"]);
-    expect(getSandbox).toHaveBeenCalledTimes(2);
-    expect(scope.observePairing).not.toHaveBeenCalled();
-    expect(scope.runProducer).not.toHaveBeenCalled();
-    expect(scope.runApproval).not.toHaveBeenCalled();
-  });
-
   it("leaves a current Portable receipt on the ordinary non-OpenClaw path (#9207)", async () => {
     const scope = settlementDeps({
       getSandbox: vi.fn(() => ({ ...ENTRY, agent: "hermes" })),
@@ -298,6 +264,37 @@ describe("Portable OpenClaw pairing settlement", () => {
     expect(scope.runApproval).not.toHaveBeenCalled();
   });
 
+  it("does not repair a legacy registry row when authority changes while acquiring the lifecycle lock (#9833)", async () => {
+    let revalidateSandboxIdentity = () => undefined;
+    const updateSandbox = vi.fn(() => true);
+    const scope = settlementDeps({
+      getSandbox: vi.fn(() => ({ ...ENTRY, agent: null })),
+      updateSandbox,
+      withSandboxLock: vi.fn(async (_name, operation) => {
+        revalidateSandboxIdentity = () => {
+          throw new Error("sandbox identity changed");
+        };
+        return operation();
+      }),
+    });
+
+    await expect(
+      settlePortableOpenClawPairing(
+        "alpha",
+        {
+          portableRequired: true,
+          revalidateSandboxIdentity: () => revalidateSandboxIdentity(),
+        },
+        scope.deps,
+      ),
+    ).rejects.toThrow("sandbox identity changed");
+
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(scope.observePairing).not.toHaveBeenCalled();
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+  });
+
   it.each<[string, boolean]>([
     ["registry update fails", false],
     ["registry readback remains unchanged", true],
@@ -321,7 +318,7 @@ describe("Portable OpenClaw pairing settlement", () => {
     expect(scope.runApproval).not.toHaveBeenCalled();
   });
 
-  it("does not repair a legacy OpenClaw row without exact receipt and policy authority (#9207)", async () => {
+  it("does not repair a legacy OpenClaw row without exact receipt and sandbox identity (#9207)", async () => {
     const updateSandbox = vi.fn(() => true);
     const scope = settlementDeps({
       getSandbox: vi.fn(() => ({
@@ -577,6 +574,128 @@ describe("Portable OpenClaw pairing settlement", () => {
     expect(scope.runProducer).not.toHaveBeenCalled();
     expect(scope.runApproval).toHaveBeenCalledOnce();
     expect(scope.observeFinalPairing).toHaveBeenCalledOnce();
+  });
+
+  it("does not produce or approve a request when authority changes during initial observation (#9833)", async () => {
+    let revalidateSandboxIdentity = () => undefined;
+    const scope = settlementDeps();
+    scope.observePairing.mockImplementationOnce(() => {
+      revalidateSandboxIdentity = () => {
+        throw new Error("sandbox identity changed");
+      };
+      return {
+        state: "pairing-only",
+        deviceIdentitySha256: "b".repeat(64),
+      };
+    });
+
+    await expect(
+      settlePortableOpenClawPairing(
+        "alpha",
+        {
+          revalidateSandboxIdentity: () => revalidateSandboxIdentity(),
+        },
+        scope.deps,
+      ),
+    ).rejects.toThrow("sandbox identity changed");
+
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+    expect(scope.observePairing).toHaveBeenCalledOnce();
+  });
+
+  it("does not approve a request when authority changes during request production (#9833)", async () => {
+    let revalidateSandboxIdentity = () => undefined;
+    const scope = settlementDeps({
+      runPortablePairingProducer: vi.fn(() => {
+        revalidateSandboxIdentity = () => {
+          throw new Error("sandbox identity changed");
+        };
+      }),
+    });
+    scope.observePairing.mockReturnValueOnce({
+      state: "pairing-only",
+      deviceIdentitySha256: "b".repeat(64),
+    });
+
+    await expect(
+      settlePortableOpenClawPairing(
+        "alpha",
+        {
+          revalidateSandboxIdentity: () => revalidateSandboxIdentity(),
+        },
+        scope.deps,
+      ),
+    ).rejects.toThrow("sandbox identity changed");
+
+    expect(scope.deps.runPortablePairingProducer).toHaveBeenCalledOnce();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+    expect(scope.observePairing).toHaveBeenCalledOnce();
+  });
+
+  it("does not publish settled pairing when authority changes during initial observation (#9833)", async () => {
+    let revalidateSandboxIdentity = () => undefined;
+    const scope = settlementDeps();
+    scope.observePairing.mockImplementationOnce(() => {
+      revalidateSandboxIdentity = () => {
+        throw new Error("sandbox identity changed");
+      };
+      return {
+        state: "settled",
+        deviceIdentitySha256: "b".repeat(64),
+      };
+    });
+
+    await expect(
+      settlePortableOpenClawPairing(
+        "alpha",
+        {
+          revalidateSandboxIdentity: () => revalidateSandboxIdentity(),
+        },
+        scope.deps,
+      ),
+    ).rejects.toThrow("sandbox identity changed");
+
+    expect(scope.runProducer).not.toHaveBeenCalled();
+    expect(scope.runApproval).not.toHaveBeenCalled();
+    expect(scope.observePairing).toHaveBeenCalledOnce();
+  });
+
+  it("does not publish settled pairing when authority changes during final observation (#9833)", async () => {
+    let revalidateSandboxIdentity = () => undefined;
+    const scope = settlementDeps();
+    scope.observeFinalPairing.mockReturnValueOnce({
+      state: "settled",
+      deviceIdentitySha256: "b".repeat(64),
+    });
+    scope.observePairing
+      .mockReturnValueOnce({
+        state: "pairing-only",
+        deviceIdentitySha256: "b".repeat(64),
+      })
+      .mockImplementationOnce(() => {
+        revalidateSandboxIdentity = () => {
+          throw new Error("sandbox identity changed");
+        };
+        return {
+          state: "settled",
+          deviceIdentitySha256: "b".repeat(64),
+        };
+      });
+
+    await expect(
+      settlePortableOpenClawPairing(
+        "alpha",
+        {
+          revalidateSandboxIdentity: () => revalidateSandboxIdentity(),
+        },
+        scope.deps,
+      ),
+    ).rejects.toThrow("sandbox identity changed");
+
+    expect(scope.runProducer).toHaveBeenCalledOnce();
+    expect(scope.runApproval).toHaveBeenCalledOnce();
+    expect(scope.observePairing).toHaveBeenCalledTimes(2);
   });
 
   it.each(["ambiguous", "no-request", "rejected", "unavailable"] as const)(

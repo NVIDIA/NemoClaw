@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
-
 import YAML from "yaml";
 
 export type PresetContentSource = { name: string; content: string | null };

@@ -119,14 +119,6 @@ function assertPreparedMcpAddResourcesAbsent(
     );
   }
 
-  const existingPolicy = registry
-    .getCustomPolicies(sandboxName)
-    .find((policy) => policy.name === entry.policyName);
-  if (existingPolicy) {
-    throw new McpBridgeError(
-      `MCP add preflight for '${entry.server}' found an existing policy ownership record '${entry.policyName}'. The durable add manifest was preserved without claiming it.`,
-    );
-  }
   const policyContent = buildMcpBridgePolicyYaml(
     entry.server,
     entry.url,
@@ -273,10 +265,10 @@ async function addMcpBridgeUnlocked(
     adapter,
     url: normalizedUrl,
     env: envNames,
+    allowedIps: [...target.addresses],
     ...(target.trustedPrivateHost
       ? {
           trustedPrivateHost: target.trustedPrivateHost,
-          allowedIps: [...target.addresses],
         }
       : {}),
     ...(providerName ? { providerName } : {}),
@@ -435,18 +427,8 @@ async function addMcpBridgeUnlocked(
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
     applyGeneratedPolicy(sandboxName, entry, target);
-    if (Object.hasOwn(adapterEnvValues, entry.env[0])) {
-      // OpenShell 0.0.106 can miss a credential update published before the
-      // bound policy generation. Republish while that policy is active and
-      // before the first readiness exec; the exact provider identity is
-      // rechecked before and after this update-only mutation.
-      upsertMcpProvider(entry.providerName ?? "", options.env, {
-        allowExisting: true,
-        expectedProviderId: entry.providerId,
-        requireExisting: true,
-      });
-    }
-    const credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
+    let refreshedAfterObservedAbsence = false;
+    let credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? {
             previousRevision: previousCredentialRevision,
@@ -456,6 +438,7 @@ async function addMcpBridgeUnlocked(
       // If the credential remains available, republish it after observing an
       // absence; otherwise, a hostless recovery advances the provider revision.
       refreshAfterObservedAbsence: () => {
+        refreshedAfterObservedAbsence = true;
         // invalidState: OpenShell 0.0.106 can coalesce a no-field provider
         // refresh without publishing the credential into fresh sandbox execs.
         // sourceBoundary: OpenShell owns provider revision projection.
@@ -476,14 +459,30 @@ async function addMcpBridgeUnlocked(
         if (republished.action !== "updated") refreshMcpProviderEnvironment(entry);
       },
     });
+    if (Object.hasOwn(adapterEnvValues, entry.env[0]) && !refreshedAfterObservedAbsence) {
+      // OpenShell 0.0.106 polls provider state every ten seconds. First prove
+      // the pre-republish generation is installed, then republish while the
+      // bound policy is active and require a different observed revision.
+      // This prevents a quick series of reads from accepting an intermediate
+      // generation while the final credential-bearing update is still queued.
+      upsertMcpProvider(entry.providerName ?? "", options.env, {
+        allowExisting: true,
+        expectedProviderId: entry.providerId,
+        requireExisting: true,
+      });
+      credentialRevision = waitForAttachedMcpCredential(sandboxName, entry, {
+        previousRevision: credentialRevision,
+      });
+    }
     // The adapter was proven absent above, so cleanup is safe even when a
     // command commits config and then fails during its runtime reload.
     adapterMutationAttempted = true;
     registerAgentAdapter(sandboxName, adapter, entry, adapterEnvValues, {
       // An exact adapter entry is evidence of a post-commit process death.
       // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
-      // Mcporter must project the same live revision OpenShell will recognize
-      // at egress; its canonical, unversioned placeholder is not sufficient.
+      // The wait above already proved the same revision stable in consecutive
+      // fresh execs, so repeating reconciliation here can outlive the caller's
+      // bounded provider-synchronization contract.
       replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
       credentialRevision,
     });

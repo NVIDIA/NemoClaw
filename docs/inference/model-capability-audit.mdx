@@ -41,13 +41,13 @@ If a field is not applicable, write `n/a` and explain why in the evidence notes.
 
 | Field | Required content |
 |---|---|
-| Model ID | Exact model identifier used by onboarding or runtime config. |
+| Model ID | Model identifier used by onboarding or runtime config. |
 | Provider path | Provider class and route, such as NVIDIA Endpoints, OpenAI, Anthropic, Gemini, Local Ollama, Local vLLM, or another compatible endpoint. |
-| Agent surface | Exact agent path, such as OpenClaw primary agent, OpenClaw CLI prompt path, OpenClaw browser or gateway path, OpenClaw sub-agent delegation, Hermes sandbox API, Deep Agents interactive `dcode`, Deep Agents headless `dcode -n`, or auxiliary model path. |
+| Agent surface | Agent path, such as OpenClaw primary agent, OpenClaw CLI prompt path, OpenClaw browser or gateway path, OpenClaw sub-agent delegation, Hermes sandbox API, Deep Agents interactive `dcode`, Deep Agents headless `dcode -n`, or auxiliary model path. |
 | NemoClaw commit SHA | Full commit SHA for the repo state used during validation. |
 | Runtime versions | OpenShell, OpenClaw, Hermes, Deep Agents Code, provider server, and local serving versions when available. |
 | Endpoint/API path selected | Concrete API path, base URL class, and provider key selected by NemoClaw. |
-| Workflow used | Exact command sequence or CI workflow used to run the scenario. |
+| Workflow used | Complete command sequence or CI workflow used to run the scenario. |
 | State | One result state from this page. |
 | Evidence | Trajectory file path, session log path, request dump path, or CI artifact link. |
 | Observed tool-call count | Count and names of structured tool calls observed in the scenario. |
@@ -102,7 +102,7 @@ Do not infer the active state of a TUI thread from the host-side configured mode
 | Evidence case | Required checks |
 |---|---|
 | Default-disabled interactive | Host status reports `disabled`, the TUI auto-approval choice and `dcode -y` fail closed, and ordinary interactive tool requests still prompt. |
-| Capability configuration | A named rebuild with `--dcode-auto-approval thread-opt-in` succeeds, host status reports `thread-opt-in`, and the operation records the exact NemoClaw commit and Deep Agents Code version. |
+| Capability configuration | A named rebuild with `--dcode-auto-approval thread-opt-in` succeeds, host status reports `thread-opt-in`, and the operation records the NemoClaw commit and Deep Agents Code version. |
 | Explicit thread activation | The operator selects **Auto-approve for this thread** or launches `dcode -y`, the TUI shows the active-state indicator and warning, and more than one tool call completes without another prompt in that same thread. |
 | Thread reset | A new process, `/clear`, `/force-clear`, a thread switch or resume, and an agent switch each return to manual approval before another explicit opt-in. |
 | Residual controls | Enabled-mode evidence repeats network-policy denial and credential non-disclosure checks and confirms that managed inference, MCP, filesystem, and process restrictions remain active. |
@@ -112,13 +112,14 @@ Do not infer the active state of a TUI thread from the host-side configured mode
 
 These seed rows come from current repo source files, not from live benchmark claims.
 Keep them as `not-yet-run` until the row has evidence that satisfies the schema above.
-When importing a completed row from an issue comment, preserve the exact commit SHA, workflow, evidence paths, and observed behavior.
+When importing a completed row from an issue comment, preserve the commit SHA, workflow, evidence paths, and observed behavior.
 
 | Agent surface | Provider class | Model or route | API path | State | Evidence | Required affordance | Follow-up | Source |
 |---|---|---|---|---|---|---|---|---|
 | OpenClaw primary agent | NVIDIA Endpoints | `nvidia/nemotron-3-super-120b-a12b` | Managed `inference.local` OpenAI-compatible completions | `not-yet-run` | Add trajectory and session evidence before changing state. | Existing setup keeps Tool Search disabled and preserves direct structured tool calls, overriding the generated `tools.toolSearch.mode: tools` default for this route. | Verify `tool_search`, `tool_describe`, `tool_call`, and final execution before replacing the safeguard. | `scripts/generate-openclaw-config.mts`, `nemoclaw-blueprint/model-specific-setup/openclaw/nemotron-3-super-120b-managed-inference.json`. |
 | OpenClaw existing configuration | NVIDIA Endpoints (retired route) | `moonshotai/kimi-k2.6` | Managed `inference.local` OpenAI-compatible completions | `unsupported` | NVIDIA's catalogs still advertised K2.6 while the [live Kimi compatibility job](https://github.com/NVIDIA/NemoClaw/actions/runs/28953873907/job/85907646487) failed route validation with HTTP 404. | The OpenClaw setup manifest remains for existing or custom compatible routes that still serve K2.6. | Select a supported NVIDIA Endpoints model; do not promote K2.7 until its production model ID and chat route are live. | `nemoclaw-blueprint/model-specific-setup/openclaw/kimi-k2.6-managed-inference.json`. |
 | OpenClaw primary agent | NVIDIA Endpoints (retired route) | `deepseek-ai/deepseek-v4-pro` | Managed `inference.local` OpenAI-compatible completions | `unsupported` | The featured-model feed still listed this model after the NVIDIA Endpoints model catalog removed it. NemoClaw excludes it from featured selections. | The retirement exclusion applies to NVIDIA Endpoints featured selections. It does not determine whether another compatible endpoint serves the same model ID. | Select a supported NVIDIA Endpoints model. | `src/lib/inference/nvidia-featured-models.ts`, `src/lib/inference/nvidia-featured-models.test.ts`. |
+| OpenClaw primary agent | NVIDIA Endpoints (retired route) | `z-ai/glm-5.2` | Managed `inference.local` OpenAI-compatible completions | `unsupported` | [Issue #10222](https://github.com/NVIDIA/NemoClaw/issues/10222) records authenticated NVIDIA Endpoints `/v1/models` results from WSL and DGX Spark with no GLM model IDs. NemoClaw excludes this model from featured selections. | The retirement exclusion applies to NVIDIA Endpoints featured selections. It does not determine whether another compatible endpoint serves the same model ID. | Select a supported NVIDIA Endpoints model. | `src/lib/inference/nvidia-featured-models.ts`, `src/lib/inference/nvidia-featured-models.test.ts`. |
 | OpenClaw primary agent | NVIDIA Endpoints | Any model from `CLOUD_MODEL_OPTIONS` | Managed `inference.local` OpenAI-compatible completions unless config selects another API. | `not-yet-run` | Add one evidence row per model before changing state. | Record `none`, model-specific setup, or provider-class transport behavior. | Expand into per-model rows as evidence lands. | `src/lib/inference/config.ts`. |
 | OpenClaw primary agent | OpenAI | Any model from `REMOTE_MODEL_OPTIONS.openai` | `openai` provider through `https://inference.local/v1`. | `not-yet-run` | Add one evidence row per model before changing state. | Record Responses or Chat Completions behavior explicitly. | Expand into per-model rows as evidence lands. | `src/lib/inference/model-prompts.ts`, `src/lib/inference/config.ts`. |
 | OpenClaw primary agent | Anthropic | Any model from `REMOTE_MODEL_OPTIONS.anthropic` | `anthropic` provider through `https://inference.local` with `anthropic-messages`. | `not-yet-run` | Add one evidence row per model before changing state. | Record native Anthropic Messages behavior explicitly. | Expand into per-model rows as evidence lands. | `src/lib/inference/model-prompts.ts`, `src/lib/inference/config.ts`. |
@@ -144,7 +145,7 @@ Do not leave placeholder text in a completed row.
 | NemoClaw commit SHA | `<full SHA>`. |
 | Runtime versions | `<OpenShell version, OpenClaw version, Hermes version, Deep Agents Code version, local server version, or n/a>`. |
 | Endpoint/API path selected | `<provider key, base URL class, API mode, and endpoint path>`. |
-| Workflow used | `<exact commands or CI workflow>`. |
+| Workflow used | `<commands or CI workflow>`. |
 | State | `<pass, pass-with-affordance, degraded, blocked, unsupported, or not-yet-run>`. |
 | Evidence | `<trajectory, session log, request dump, CI artifact, or n/a>`. |
 | Observed tool-call count | `<count, names, and shape>`. |

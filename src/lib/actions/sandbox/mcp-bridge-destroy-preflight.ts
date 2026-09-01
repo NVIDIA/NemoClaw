@@ -3,6 +3,7 @@
 
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import type { McpScrubbedAdapterEntry } from "./mcp-bridge-adapter-teardown";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
   assertGeneratedPolicyRegistrationMutationSafe,
@@ -25,11 +26,13 @@ import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridg
 export interface McpDestroyPreparation {
   entries: McpBridgeEntry[];
   detachedProviderEntries: McpBridgeEntry[];
-  scrubbedAdapterEntries: McpBridgeEntry[];
+  scrubbedAdapterEntries: McpScrubbedAdapterEntry[];
   /** True when phase one was completed by an earlier destroy process. */
   destroyAlreadyPrepared: boolean;
   /** True when a previous destroy already confirmed the sandbox was absent. */
   destroyAlreadyPending: boolean;
+  /** True when `--force` continued without scrubbing the retained-volume adapter entry. */
+  adapterScrubSkipped?: true;
 }
 
 export function cloneMcpBridgeEntry(entry: McpBridgeEntry): McpBridgeEntry {
@@ -88,8 +91,7 @@ export async function discardSafeIncompleteMcpAdds(
   if (Object.keys(remaining).length === Object.keys(bridges).length) return sandbox;
   for (const entry of providerlessPreflighted) {
     if (options.sandboxAbsent) {
-      const ownedRegistration = assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
-      if (ownedRegistration) registry.removeCustomPolicyByName(sandboxName, entry.policyName);
+      assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
     } else {
       removeGeneratedPolicy(sandboxName, entry);
     }

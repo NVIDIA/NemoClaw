@@ -1509,10 +1509,7 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
     fs.mkdirSync(portableControllerBin);
     fs.writeFileSync(
       path.join(portableControllerBin, "openclaw"),
-      [
-        "#!/bin/sh",
-        'exec "$NEMOCLAW_PROOF_NODE" "$NEMOCLAW_PROOF_OPENCLAW" "$@"',
-      ].join("\n"),
+      ["#!/bin/sh", 'exec "$NEMOCLAW_PROOF_NODE" "$NEMOCLAW_PROOF_OPENCLAW" "$@"'].join("\n"),
       { mode: 0o700 },
     );
     const controllerEnv: NodeJS.ProcessEnv = {
@@ -1539,7 +1536,6 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
       name: "portable-controller-proof",
       agent: "openclaw",
       agentVersion: options.version,
-      policyPresetsFinalized: true,
       lifecycleGeneration: "portable-controller-generation",
       lifecycleLiveIdentityFingerprint: "portable-controller-live-identity",
       gatewayName: resolveGatewayName(port),
@@ -1616,11 +1612,7 @@ fs.statSync = function nemoclawProofStatSync(candidate, ...args) {
             ),
           runPortablePairingProducer: (sandboxName, gatewayName) => {
             producerCalls += 1;
-            runPortableOpenClawPairingRequestProducer(
-              sandboxName,
-              gatewayName,
-              controllerExecDeps,
-            );
+            runPortableOpenClawPairingRequestProducer(sandboxName, gatewayName, controllerExecDeps);
           },
           runPortablePairingApproval: (_sandboxName, _gatewayName, _expectedIdentity) => {
             approvalCalls += 1;

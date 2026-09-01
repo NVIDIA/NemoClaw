@@ -36,6 +36,10 @@ describe("onboard recovered remote-provider credential reuse", () => {
         "openshell",
         `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$OPENSHELL_FAKE_COMMAND_LOG"
+if [ "$1 $2 $3 $5 $6" = "provider profile -g export openai" ]; then
+  printf '%s\\n' '{"id":"openai","credentials":[],"endpoints":[],"binaries":[],"inference_capable":true}'
+  exit 0
+fi
 if [ "$1" = "inference" ] && [ "$2" = "get" ]; then
   cat <<'EOF'
 Gateway inference:
@@ -89,6 +93,7 @@ const registryRoute = {
   preferredInferenceApi: "openai-completions",
   source: "registry",
 };
+registry.removeSandbox("recovered-custom");
 registry.registerSandbox({
   name: "recovered-custom",
   ...registryRoute,
@@ -121,6 +126,7 @@ const { setupNim, setupInference } = require(${onboardPath});
     selected.hermesToolGateways,
     {
       preferredInferenceApi: selected.preferredInferenceApi,
+      revalidateSandboxIdentity: () => {},
       skipHostInferenceSmoke: selected.skipHostInferenceSmoke,
       reuseGatewayCredentialWithoutLocalKey:
         process.env.NEMOCLAW_TEST_OMIT_REUSE_AUTHORIZATION === "1"

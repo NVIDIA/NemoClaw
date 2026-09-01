@@ -1,19 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import { getSandboxInferenceConfig } from "../../inference/config";
 import { validateInferenceResponseBody } from "../../inference/health";
 import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "../../inference/max-tokens-field";
 import { shellQuote } from "../../runner";
+import { DCODE_MANAGED_EXEC_LAUNCHER } from "./connect-inference-route-probe";
 import {
   executeSandboxExecCommand,
   type SandboxCommandResult,
   type SandboxExecCommandOptions,
 } from "./process-recovery";
+import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 
 export type SandboxInferenceInvocationInput = {
   sandboxName: string;
   gatewayName?: string;
+  agentName?: string | null;
   provider: string;
   model: string;
   preferredInferenceApi: string | null;
@@ -24,6 +28,7 @@ export type SandboxInferenceInvocationResult =
   | { ok: false; detail: string; httpStatus: number | null };
 
 export type SandboxInferenceInvocationDeps = {
+  runOpenshell?: typeof runOpenshellProviderCommand;
   execute?: (
     sandboxName: string,
     command: string,
@@ -103,6 +108,60 @@ export function buildSandboxInferenceInvocationCommand(
   ].join("; ");
 }
 
+export function buildDcodeSandboxInferenceInvocationArgs(
+  input: SandboxInferenceInvocationInput,
+): string[] {
+  return [
+    "sandbox",
+    "exec",
+    "--name",
+    input.sandboxName,
+    ...(input.gatewayName ? ["-g", input.gatewayName] : []),
+    "--no-tty",
+    "--env",
+    "HOME=/usr/local/lib/nemoclaw",
+    "--env",
+    "BASH_ENV=",
+    "--env",
+    "ENV=",
+    "--",
+    DCODE_MANAGED_EXEC_LAUNCHER,
+    "/bin/sh",
+    "-c",
+    buildSandboxInferenceInvocationCommand(input),
+  ];
+}
+
+function executeDcodeSandboxInferenceInvocation(
+  input: SandboxInferenceInvocationInput,
+  deps: SandboxInferenceInvocationDeps,
+  timeoutMs: number,
+): SandboxCommandResult | null {
+  const runOpenshell = deps.runOpenshell ?? runOpenshellProviderCommand;
+  try {
+    const result = runOpenshell(buildDcodeSandboxInferenceInvocationArgs(input), {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: timeoutMs,
+    });
+    if (
+      result.error ||
+      typeof result.stdout !== "string" ||
+      typeof result.stderr !== "string" ||
+      result.stderr.trim()
+    ) {
+      return null;
+    }
+    return {
+      status: result.status ?? 1,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Send one minimal agent request over the configured gateway route from the
  * still-running sandbox. The request uses OpenShell's stored provider
@@ -114,16 +173,21 @@ export function probeSandboxInferenceInvocation(
   deps: SandboxInferenceInvocationDeps = {},
   timeoutMs: number = REBUILD_INFERENCE_INVOCATION_TIMEOUT_MS,
 ): SandboxInferenceInvocationResult {
-  const execute = deps.execute ?? executeSandboxExecCommand;
-  const execOptions: SandboxExecCommandOptions = input.gatewayName
-    ? { gatewayName: input.gatewayName, allowLocalDockerFallback: false }
-    : {};
-  const result = execute(
-    input.sandboxName,
-    buildSandboxInferenceInvocationCommand(input),
-    timeoutMs,
-    execOptions,
-  );
+  let result: SandboxCommandResult | null;
+  if (input.agentName === DCODE_AGENT_NAME) {
+    result = executeDcodeSandboxInferenceInvocation(input, deps, timeoutMs);
+  } else {
+    const execute = deps.execute ?? executeSandboxExecCommand;
+    const execOptions: SandboxExecCommandOptions = input.gatewayName
+      ? { gatewayName: input.gatewayName, allowLocalDockerFallback: false }
+      : {};
+    result = execute(
+      input.sandboxName,
+      buildSandboxInferenceInvocationCommand(input),
+      timeoutMs,
+      execOptions,
+    );
+  }
   if (!result) {
     return {
       ok: false,

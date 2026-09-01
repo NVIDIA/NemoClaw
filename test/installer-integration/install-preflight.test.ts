@@ -390,9 +390,9 @@ exit 0
     );
 
     expect(result.status).toBe(0);
-    const output = `${result.stdout}${result.stderr}`;
-    expect(output).toMatch(/NemoClaw Installer/);
-    expect(output).not.toMatch(/0\.1\.0/);
+    expect(`${result.stdout}${result.stderr}`).toMatch(
+      /^(?![\s\S]*0\.1\.0)[\s\S]*NemoClaw Installer[\s\S]*--defer-onboarding[\s\S]*NEMOCLAW_AGENT=hermes[\s\S]*no registered sandboxes[\s\S]*no local model profile[\s\S]*build, cloud, or routed NVIDIA hosted provider[\s\S]*NEMOCLAW_DEFER_ONBOARDING=1[\s\S]*NEMOCLAW_AGENT=hermes[\s\S]*no registered sandboxes[\s\S]*no local model profile[\s\S]*build, cloud, or routed NVIDIA hosted provider/,
+    );
   });
 
   it("piped --version omits the placeholder installer version", () => {

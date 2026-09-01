@@ -4,12 +4,14 @@
 import type { StdioOptions } from "node:child_process";
 import childProcess, { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { redact, runCapture } from "../../src/lib/runner";
 
+const require = createRequire(import.meta.url);
 const runnerPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "runner.ts");
 const platformPath = path.join(import.meta.dirname, "..", "..", "src", "lib", "platform.ts");
 const PINNED_OPEN_SHELL_SHA256 = {
@@ -790,6 +792,39 @@ describe("regression guards", () => {
       expect(stdoutSpy).toHaveBeenCalledWith("token ghp_********************\n");
       expect(stderrSpy).toHaveBeenCalledWith('export SERVICE_KEY="supe*****************"\n');
       expect(errorSpy).toHaveBeenCalledWith("  Command failed (exit 1): echo fail");
+    } finally {
+      childProcess.spawnSync = originalSpawnSync;
+      process.exit = originalExit;
+      stdoutSpy.mockRestore();
+      stderrSpy.mockRestore();
+      errorSpy.mockRestore();
+      delete require.cache[require.resolve(runnerPath)];
+    }
+  });
+
+  it("run shows the OpenShell runtime hint for a failing bash -c openshell command (#10247)", () => {
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalExit = process.exit;
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = () => ({ status: 1, stdout: "", stderr: "" });
+    process.exit = (code) => {
+      throw new Error(`exit:${code}`);
+    };
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { run } = require(runnerPath);
+      expect(() => run(["bash", "-c", "openshell sandbox create foo"])).toThrow("exit:1");
+      // The equivalent runShell("openshell sandbox create foo") path already shows
+      // this hint (spawnAndHandle passes the real renderedCommand); run() through
+      // runArrayCmd must show it too, not silently drop it.
+      expect(errorSpy).toHaveBeenCalledWith(
+        "  This error originated from the OpenShell runtime layer.",
+      );
     } finally {
       childProcess.spawnSync = originalSpawnSync;
       process.exit = originalExit;

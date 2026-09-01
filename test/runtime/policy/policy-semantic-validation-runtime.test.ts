@@ -6,11 +6,34 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { runCapture } = vi.hoisted(() => ({ runCapture: vi.fn() }));
+import {
+  livePolicyInspection,
+  managedSandboxEntry,
+  SANDBOX_IDENTITY,
+} from "../../helpers/live-policy-fixture";
 
-vi.mock("../../../src/lib/runner", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../../src/lib/runner")>()),
-  runCapture,
+const {
+  captureSandboxBasePolicy,
+  getSandbox,
+  inspectOpenShellSandboxIdentityFingerprint,
+  inspectSandboxPolicy,
+} = vi.hoisted(() => ({
+    captureSandboxBasePolicy: vi.fn(),
+    getSandbox: vi.fn(),
+    inspectOpenShellSandboxIdentityFingerprint: vi.fn(),
+    inspectSandboxPolicy: vi.fn(),
+  }));
+
+vi.mock("../../../src/lib/adapters/openshell/policy-state", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/adapters/openshell/policy-state")>()),
+  captureSandboxBasePolicy,
+  inspectOpenShellSandboxIdentityFingerprint,
+  inspectSandboxPolicy,
+}));
+
+vi.mock("../../../src/lib/state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../src/lib/state/registry")>()),
+  getSandbox,
 }));
 
 import { applyPresetContent, loadPreset, loadPresetFromFile } from "../../../src/lib/policy";
@@ -28,7 +51,13 @@ network_policies:
 `;
 
 beforeEach(() => {
-  runCapture.mockReset();
+  getSandbox.mockReset();
+  getSandbox.mockImplementation((name: string) => managedSandboxEntry(name));
+  inspectSandboxPolicy.mockReset();
+  inspectSandboxPolicy.mockReturnValue(livePolicyInspection());
+  inspectOpenShellSandboxIdentityFingerprint.mockReset();
+  inspectOpenShellSandboxIdentityFingerprint.mockReturnValue(SANDBOX_IDENTITY);
+  captureSandboxBasePolicy.mockReset();
 });
 
 afterEach(() => {
@@ -56,7 +85,7 @@ describe("custom policy semantic validation", () => {
         ),
       ).toBe(false);
       expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("*:443"));
-      expect(runCapture).not.toHaveBeenCalled();
+      expect(captureSandboxBasePolicy).not.toHaveBeenCalled();
     } finally {
       errSpy.mockRestore();
     }
@@ -92,7 +121,7 @@ describe("custom policy semantic validation", () => {
 
 describe("Personal policy mutation validation", () => {
   it("returns false for non-fatal application when the reserved Personal entry drifts", () => {
-    runCapture.mockReturnValue(DRIFTED_PERSONAL_POLICY);
+    captureSandboxBasePolicy.mockReturnValue(DRIFTED_PERSONAL_POLICY);
     const weatherPreset = loadPreset("weather");
     expect(weatherPreset).not.toBeNull();
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -112,7 +141,7 @@ describe("Personal policy mutation validation", () => {
   });
 
   it("throws for ordinary application when the reserved Personal entry drifts", () => {
-    runCapture.mockReturnValue(DRIFTED_PERSONAL_POLICY);
+    captureSandboxBasePolicy.mockReturnValue(DRIFTED_PERSONAL_POLICY);
     const weatherPreset = loadPreset("weather");
     expect(weatherPreset).not.toBeNull();
 

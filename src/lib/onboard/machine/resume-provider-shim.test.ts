@@ -39,6 +39,7 @@ describe("createResumeProviderShim", () => {
       expect.any(String),
       null,
       expect.any(Function),
+      undefined,
     );
   });
 
@@ -68,8 +69,8 @@ describe("createResumeProviderShim", () => {
     );
 
     expect(resumeManagedLlamaCppRuntime).toHaveBeenCalledTimes(2);
-    expect(resumeManagedLlamaCppRuntime).toHaveBeenNthCalledWith(1, "spark-agent");
-    expect(resumeManagedLlamaCppRuntime).toHaveBeenNthCalledWith(2, "operator-attached");
+    expect(resumeManagedLlamaCppRuntime).toHaveBeenNthCalledWith(1, "spark-agent", undefined);
+    expect(resumeManagedLlamaCppRuntime).toHaveBeenNthCalledWith(2, "operator-attached", undefined);
   });
 
   it("propagates a conflicting managed llama.cpp owner instead of reusing its provider", async () => {

@@ -10,15 +10,28 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  assertDiscordGatewayCapture,
+  DISCORD_GATEWAY_CLIENT_SOURCE,
+} from "../live/messaging-providers-helpers.ts";
+import {
+  closeServer,
+  createRejectedSlackForwardProxy,
+  createSlackSocketClient,
+  createSuccessfulSlackForwardProxy,
+  listenOnLoopback,
+} from "./fixtures/slack-forward-proxy.ts";
+import {
   buildPairingApproveCommand,
   buildPairingPendingCommand,
-  DISCORD_GATEWAY_PROOF_SOURCE,
   LOAD_CONVERSATION_RUNTIME_SOURCE,
+  SLACK_PAIRING_SCRIPT,
   SLACK_PROBE_INPUT_VALIDATION_SOURCE,
 } from "../live/openclaw-pairing-helpers.ts";
 import { sandboxNode } from "../live/phase6-messaging-helpers.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
+const REVISIONED_DISCORD_PLACEHOLDER = "openshell:resolve:env:v2_DISCORD_BOT_TOKEN";
+const GATEWAY_ASSERTION_SENTINEL = "test-sentinel-discord-token";
 
 let child: ChildProcess | undefined;
 
@@ -124,7 +137,58 @@ async function sendDiscordIdentify(port: number, token: string): Promise<void> {
   });
 }
 
+function localDiscordGatewayClientSource(): string {
+  const remoteHost = 'const host = "host.openshell.internal";';
+  const localHost = 'const host = "127.0.0.1";';
+  const source = DISCORD_GATEWAY_CLIENT_SOURCE.replace(remoteHost, localHost);
+  expect(source, "Discord Gateway client host declaration changed").not.toBe(
+    DISCORD_GATEWAY_CLIENT_SOURCE,
+  );
+  return source;
+}
+
 describe("OpenClaw Discord pairing helper contracts", () => {
+  it("sends an absolute-form fake Slack WebSocket upgrade through the proxy", async () => {
+    const targetPort = 4443;
+    const envelope = { payload: { event: { type: "message" } } };
+    const proxy = createSuccessfulSlackForwardProxy(envelope);
+    const proxyPort = await listenOnLoopback(proxy.server);
+
+    try {
+      await expect(createSlackSocketClient(proxyPort, targetPort)()).resolves.toEqual(envelope);
+      await vi.waitFor(() => expect(proxy.websocketMessages()).not.toHaveLength(0), {
+        interval: 10,
+        timeout: 1_000,
+      });
+      expect(proxy.requests).toHaveLength(1);
+      expect(proxy.requests[0]).toMatch(
+        new RegExp(
+          `^GET http://host\\.openshell\\.internal:${targetPort}/socket-mode HTTP/1\\.1`,
+          "u",
+        ),
+      );
+      expect(JSON.parse(proxy.websocketMessages()[0] ?? "{}")).toEqual({
+        type: "socket_mode_client_hello",
+        token: "openshell:resolve:env:v42_SLACK_APP_TOKEN",
+      });
+    } finally {
+      await closeServer(proxy.server);
+    }
+  });
+
+  it("rejects a non-101 fake Slack WebSocket proxy response", async () => {
+    const proxy = createRejectedSlackForwardProxy();
+    const proxyPort = await listenOnLoopback(proxy);
+
+    try {
+      await expect(createSlackSocketClient(proxyPort, 4443)()).rejects.toThrow(
+        "fake Slack websocket upgrade failed: HTTP/1.1 502 Bad Gateway",
+      );
+    } finally {
+      await closeServer(proxy);
+    }
+  });
+
   it("shell-quotes pairing code and user without command substitution", () => {
     const code = "abc$(touch /tmp/e2e-should-not-run)";
     const user = "user`touch /tmp/e2e-should-not-run`";
@@ -250,7 +314,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     },
   ])("fails closed on invalid Slack probe input before network access: $name", ({ env, error }) => {
     const result = spawnSync(process.execPath, ["--input-type=module"], {
-      input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false;\ntry { parseFakeSlackPort(); parseProxyTarget(); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
+      input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false;\ntry { parseFakeSlackPort("FAKE_SLACK_API_PORT"); parseProxyTarget(); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
       encoding: "utf8",
       env: { ...process.env, ...env },
     });
@@ -260,15 +324,189 @@ describe("OpenClaw Discord pairing helper contracts", () => {
     expect(result.stderr).toEqual(expect.stringContaining("NETWORK_ATTEMPTED=false"));
   });
 
-  it("keeps Discord Gateway proof source valid for sandbox node heredoc", () => {
+  it.each(["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"])(
+    "accepts the revision-scoped OpenShell credential reference for %s",
+    (name) => {
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nparseManagedCredentialReference(${JSON.stringify(name)}); console.log("VALID");\n`,
+        encoding: "utf8",
+        env: { ...process.env, [name]: `openshell:resolve:env:v42_${name}` },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("VALID\n");
+      expect(result.stdout).not.toContain("openshell:resolve:env:");
+    },
+  );
+
+  it.each([
+    { name: "missing", value: "" },
+    { name: "raw secret", value: "xapp-raw-secret" },
+    { name: "identityless canonical reference", value: "openshell:resolve:env:SLACK_APP_TOKEN" },
+    {
+      name: "identityless provider alias",
+      value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    },
+    {
+      name: "wrong credential key",
+      value: "openshell:resolve:env:v42_SLACK_BOT_TOKEN",
+    },
+  ])(
+    "rejects an invalid Slack app credential reference before network access: $name",
+    ({ value }) => {
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false; try { parseManagedCredentialReference("SLACK_APP_TOKEN"); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
+        encoding: "utf8",
+        env: { ...process.env, SLACK_APP_TOKEN: value },
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "SLACK_APP_TOKEN must be the revision-scoped OpenShell credential reference issued to the sandbox",
+      );
+      expect(result.stderr).toContain("NETWORK_ATTEMPTED=false");
+      expect(result.stderr).not.toContain(value || "xapp-raw-secret");
+    },
+  );
+
+  it("keeps the shared Discord Gateway client valid for sandbox node heredoc", () => {
     const result = spawnSync(process.execPath, ["--input-type=module", "--check"], {
-      input: DISCORD_GATEWAY_PROOF_SOURCE,
+      input: DISCORD_GATEWAY_CLIENT_SOURCE,
       encoding: "utf8",
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(DISCORD_GATEWAY_PROOF_SOURCE).toContain('"\\r\\n"');
-    expect(DISCORD_GATEWAY_PROOF_SOURCE).toContain("IDENTIFY_SENT_PLACEHOLDER");
+    expect(DISCORD_GATEWAY_CLIENT_SOURCE).toContain('"\\r\\n"');
+    expect(DISCORD_GATEWAY_CLIENT_SOURCE).toContain("IDENTIFY_SENT_PLACEHOLDER");
+  });
+
+  it("uses distinct ports on the OpenShell host for Slack REST and websocket traffic", () => {
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'function receiveSlackSocketEvent() {\n  const host = "host.openshell.internal";',
+    );
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'function postPairingReply(text, channel) {\n  const host = "host.openshell.internal";',
+    );
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseFakeSlackPort("FAKE_SLACK_WEBSOCKET_PORT")',
+    );
+  });
+
+  it("uses the revision-scoped Slack credential references issued to the sandbox", () => {
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseManagedCredentialReference("SLACK_APP_TOKEN")',
+    );
+    expect(SLACK_PAIRING_SCRIPT).toContain(
+      'parseManagedCredentialReference("SLACK_BOT_TOKEN")',
+    );
+    expect(SLACK_PAIRING_SCRIPT).not.toContain(
+      "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    );
+    expect(SLACK_PAIRING_SCRIPT).not.toContain(
+      "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    );
+  });
+
+  it.each([
+    { name: "missing", value: "" },
+    { name: "unscoped", value: "openshell:resolve:env:SLACK_APP_TOKEN" },
+    { name: "wrong credential", value: "openshell:resolve:env:v2_SLACK_BOT_TOKEN" },
+    { name: "raw token", value: "xapp-raw-slack-token" },
+  ])("rejects a $name Slack app credential before network access", ({ value }) => {
+    const result = spawnSync(process.execPath, ["--input-type=module"], {
+      input: `${SLACK_PROBE_INPUT_VALIDATION_SOURCE}\nlet networkAttempted = false;\ntry { parseManagedCredentialReference("SLACK_APP_TOKEN"); networkAttempted = true; } catch (error) { console.error(error.message); console.error("NETWORK_ATTEMPTED=" + networkAttempted); process.exit(1); }\n`,
+      encoding: "utf8",
+      env: { ...process.env, SLACK_APP_TOKEN: value },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "SLACK_APP_TOKEN must be the revision-scoped OpenShell credential reference",
+    );
+    expect(result.stderr).toContain("NETWORK_ATTEMPTED=false");
+    expect(result.stderr).not.toContain("xapp-raw-slack-token");
+  });
+
+  it("sends the revision-scoped Discord placeholder through the shared gateway client (#10155)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "discord-gateway-proof-revision-"));
+    const captureFile = path.join(tmp, "capture.jsonl");
+    const portFile = path.join(tmp, "port");
+    try {
+      child = spawn(
+        process.execPath,
+        [path.join(REPO_ROOT, "test/e2e/lib/fake-discord-gateway.cjs")],
+        {
+          env: {
+            ...process.env,
+            FAKE_DISCORD_GATEWAY_HOST: "127.0.0.1",
+            FAKE_DISCORD_GATEWAY_PORT: "0",
+            FAKE_DISCORD_GATEWAY_PORT_FILE: portFile,
+            FAKE_DISCORD_GATEWAY_CAPTURE_FILE: captureFile,
+            FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: REVISIONED_DISCORD_PLACEHOLDER,
+          },
+          stdio: "ignore",
+        },
+      );
+      const port = await waitForPort(portFile);
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: localDiscordGatewayClientSource(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DISCORD_BOT_TOKEN: REVISIONED_DISCORD_PLACEHOLDER,
+          FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env",
+          FAKE_DISCORD_GATEWAY_PORT: String(port),
+          HTTP_PROXY: "",
+          http_proxy: "",
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("IDENTIFY_SENT_PLACEHOLDER");
+      expect(result.stdout).toContain("READY");
+      expect(result.stdout).toContain("HEARTBEAT_ACK");
+
+      const identify = fs
+        .readFileSync(captureFile, "utf8")
+        .trim()
+        .split(/\n+/)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find((row) => row.event === "identify");
+      expect(identify).not.toHaveProperty("token");
+      expect(identify?.tokenMatchesExpected).toBe(true);
+      expect(identify?.tokenLooksPlaceholder).toBe(true);
+    } finally {
+      child?.kill("SIGTERM");
+      child = undefined;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { name: "missing", value: "" },
+    { name: "canonical", value: "openshell:resolve:env:DISCORD_BOT_TOKEN" },
+    { name: "wrong credential", value: "openshell:resolve:env:v2_SLACK_BOT_TOKEN" },
+    { name: "raw token", value: "raw-discord-token" },
+  ])("rejects a $name Discord proof credential before network access (#10155)", ({ value }) => {
+    const result = spawnSync(process.execPath, ["--input-type=module"], {
+      input: localDiscordGatewayClientSource(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DISCORD_BOT_TOKEN: value,
+        FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env",
+        FAKE_DISCORD_GATEWAY_PORT: "12345",
+        HTTP_PROXY: "",
+        http_proxy: "",
+      },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "Discord Gateway proof requires the revision-scoped DISCORD_BOT_TOKEN placeholder",
+    );
+    expect(result.stderr).not.toContain("ECONNREFUSED");
+    expect(result.stderr).not.toContain("raw-discord-token");
   });
 
   it.each([
@@ -292,20 +530,26 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       env: { HTTP_PROXY: "http://127.0.0.1:3128", http_proxy: "" },
       error: "unexpected HTTP proxy for Discord Gateway proof",
     },
-  ])("fails closed on invalid Discord Gateway proxy input before network access: $name", ({
-    env,
-    error,
-  }) => {
-    const result = spawnSync(process.execPath, ["--input-type=module"], {
-      input: `${DISCORD_GATEWAY_PROOF_SOURCE}\n`,
-      encoding: "utf8",
-      env: { ...process.env, FAKE_DISCORD_GATEWAY_PORT: "12345", ...env },
-    });
+  ])(
+    "fails closed on invalid Discord Gateway proxy input before network access: $name",
+    ({ env, error }) => {
+      const result = spawnSync(process.execPath, ["--input-type=module"], {
+        input: `${DISCORD_GATEWAY_CLIENT_SOURCE}\n`,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DISCORD_BOT_TOKEN: REVISIONED_DISCORD_PLACEHOLDER,
+          FAKE_DISCORD_IDENTIFY_MODE: "revisioned-discord-env",
+          FAKE_DISCORD_GATEWAY_PORT: "12345",
+          ...env,
+        },
+      });
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toEqual(expect.stringContaining(error));
-    expect(result.stderr).not.toContain("ECONNREFUSED");
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toEqual(expect.stringContaining(error));
+      expect(result.stderr).not.toContain("ECONNREFUSED");
+    },
+  );
 
   it("rejects malformed sandboxNode env keys before sandbox execution", async () => {
     const execShell = vi.fn(async () => {
@@ -349,6 +593,7 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       await sendDiscordIdentify(port, sentinel);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
+      assertDiscordGatewayCapture(captureFile, sentinel);
       const serialized = fs.readFileSync(captureFile, "utf8");
       const identify = serialized
         .trim()
@@ -367,4 +612,52 @@ describe("OpenClaw Discord pairing helper contracts", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    {
+      caseName: "IDENTIFY includes a token field",
+      expectedMessage: "persisted token field",
+      rows: [
+        {
+          event: "identify",
+          token: GATEWAY_ASSERTION_SENTINEL,
+          tokenMatchesExpected: true,
+          tokenLooksPlaceholder: false,
+        },
+      ],
+    },
+    {
+      caseName: "another capture row includes the raw token",
+      expectedMessage: "persisted raw token",
+      rows: [
+        { event: "identify", tokenMatchesExpected: true, tokenLooksPlaceholder: false },
+        { event: "diagnostic", value: GATEWAY_ASSERTION_SENTINEL },
+      ],
+    },
+  ])(
+    "does not include the Discord token in gateway assertion failures when $caseName",
+    (testCase) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fake-discord-gateway-failure-"));
+      const captureFile = path.join(tmp, "capture.jsonl");
+
+      try {
+        fs.writeFileSync(
+          captureFile,
+          `${testCase.rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+        );
+        let failure: unknown;
+        try {
+          assertDiscordGatewayCapture(captureFile, GATEWAY_ASSERTION_SENTINEL);
+        } catch (error) {
+          failure = error;
+        }
+
+        expect(failure).toBeInstanceOf(Error);
+        expect((failure as Error).message).toContain(testCase.expectedMessage);
+        expect((failure as Error).message).not.toContain(GATEWAY_ASSERTION_SENTINEL);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 });

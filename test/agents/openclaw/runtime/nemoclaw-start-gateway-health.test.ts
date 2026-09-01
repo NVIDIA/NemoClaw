@@ -595,6 +595,8 @@ describe("gateway launch wiring (#4710)", () => {
       safeTmpHelpers(src),
       gatewayMarkerFunction(src, "mark_in_container_gateway", markerPath),
       gatewayMarkerFunction(src, "clear_in_container_gateway_marker", markerPath),
+      extractShellFunction(src, "_nemoclaw_capture_epoch_realtime"),
+      "record_portable_openclaw_gateway_startup_timing() { :; }",
       extractShellFunction(src, "launch_openclaw_gateway_non_root").replaceAll(
         "/tmp/gateway.log",
         gatewayLog,
@@ -942,6 +944,8 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         safeTmpHelpers(src),
         gatewayMarkerFunction(src, "mark_in_container_gateway", markerPath),
         gatewayMarkerFunction(src, "clear_in_container_gateway_marker", markerPath),
+        extractShellFunction(src, "_nemoclaw_capture_epoch_realtime"),
+        "record_portable_openclaw_gateway_startup_timing() { :; }",
         // Stub PID recording and the serving watchdog; each has focused tests
         // elsewhere in this suite (#4710).
         "record_gateway_pid() { :; }",

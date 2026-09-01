@@ -19,10 +19,7 @@ import {
   withModelRouterPortLifecycleLock,
 } from "../inference/gateway-route-mutation-lock";
 import { getManagedVllmProviderBinding } from "../inference/local";
-import {
-  type OllamaModelHolder,
-  supersededOllamaModel,
-} from "../inference/ollama/model-ownership";
+import { type OllamaModelHolder, supersededOllamaModel } from "../inference/ollama/model-ownership";
 import {
   getOllamaProxyToken,
   persistAndProbeOllamaProxy,
@@ -39,6 +36,10 @@ import type { Session } from "../state/onboard-session";
 import { createSandboxHostLocalInferenceProvenance } from "../state/registry/host-local-inference";
 import { shouldFrontOllamaWithProxy } from "./local-inference-topology";
 import { resolveModelRouterPort } from "./model-router";
+import {
+  type RoutedProviderDeps,
+  upsertRoutedProvider as upsertRoutedInferenceProvider,
+} from "./routed-inference";
 
 export { assertNoOpenShellGatewayEndpointOverride };
 
@@ -207,6 +208,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
     baseUrl: string | null,
     env: NodeJS.ProcessEnv | undefined,
     gatewayName: string,
+    options?: { revalidateSandboxIdentity?(operation: string): void },
   ) => ReturnType<CommonDeps["upsertProvider"]>;
   verifyInferenceRoute: (gatewayName: string, provider: string, model: string) => void;
   providerExistsInGateway: (name: string, gatewayName: string) => boolean;
@@ -283,9 +285,14 @@ export function createGatewayScopedOpenshellRunner<Rest extends unknown[], Resul
 export function bindGatewayUpsertProvider(
   upsertProvider: SetupInferenceDeps["upsertProvider"],
   gatewayName: string,
+  revalidateSandboxIdentity?: (operation: string) => void,
 ): CommonDeps["upsertProvider"] {
   return (name, type, credentialEnv, baseUrl, env) =>
-    upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName);
+    revalidateSandboxIdentity
+      ? upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName, {
+          revalidateSandboxIdentity,
+        })
+      : upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName);
 }
 
 export function bindOpenAiProviderProfile(
@@ -303,6 +310,37 @@ export function bindOpenAiProviderProfile(
       });
     }
     return upsertProvider(name, type, ...rest);
+  };
+}
+
+export function createRoutedResumeProviderUpsert(deps: {
+  upsertProvider: SetupInferenceDeps["upsertProvider"];
+  runGatewayOpenshell: InferenceProviderProfileDeps["runOpenshell"];
+  hydrateCredentialEnv: RoutedProviderDeps["hydrateCredentialEnv"];
+  error?: CommonDeps["error"];
+  exitProcess?: CommonDeps["exitProcess"];
+}) {
+  return (
+    gatewayName: string,
+    provider: string,
+    endpointUrl: string | null,
+    credentialEnv: string | null,
+  ) => {
+    const result = upsertRoutedInferenceProvider(provider, endpointUrl, credentialEnv, {
+      upsertProvider: bindOpenAiProviderProfile(
+        bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
+        deps.runGatewayOpenshell,
+        deps.error ?? console.error,
+        deps.exitProcess ?? ((code) => process.exit(code)),
+      ),
+      hydrateCredentialEnv: deps.hydrateCredentialEnv,
+    });
+    return {
+      ok: result.ok,
+      endpointUrl: result.endpointUrl,
+      message: result.result.message,
+      status: result.result.status,
+    };
   };
 }
 
@@ -324,13 +362,21 @@ export function selectGatewayForFollowupOrExit(
 function resolveLocalInferenceRouteApplier(
   deps: SetupInferenceDeps,
   runOpenshell: SetupInferenceDeps["runOpenshell"],
+  revalidateSandboxIdentity?: (operation: string) => void,
 ) {
   return (
     deps.applyLocalInferenceRoute ??
     createLocalInferenceRouteApplier({
       runOpenshell,
       isNonInteractive: deps.isNonInteractive,
-      promptValidationRecovery: deps.promptValidationRecovery,
+      promptValidationRecovery: (label, recovery, credentialEnv, helpUrl) =>
+        deps.promptValidationRecovery(
+          label,
+          recovery,
+          credentialEnv,
+          helpUrl,
+          revalidateSandboxIdentity,
+        ),
       classifyApplyFailure: deps.classifyApplyFailure,
       compactText: deps.compactText,
       redact: deps.redact,
@@ -503,22 +549,30 @@ function releaseSupersededOllamaModel(
   nextModel: string,
   result: SetupInferenceResult,
   deps: SetupInferenceDeps,
+  revalidateSandboxIdentity?: (operation: string) => void,
 ): void {
   // A reselection retry left the recorded route untouched, so the sandbox
   // still owns its model.
   if (!previous || result.retry) return;
+  let authorityRefusal: unknown;
   try {
-    const withOwnershipLock =
-      deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
+    const withOwnershipLock = deps.withOllamaModelOwnershipLock ?? withOllamaModelOwnershipLock;
     withOwnershipLock(() => {
       const peers = deps.listSandboxes?.().sandboxes ?? [];
       const superseded = supersededOllamaModel(previous, nextModel, peers);
       if (!superseded) return;
+      try {
+        revalidateSandboxIdentity?.("release the superseded Ollama model");
+      } catch (error) {
+        authorityRefusal = error;
+        return;
+      }
       deps.unloadOllamaModels?.([superseded]);
     });
   } catch {
     /* Best-effort: a failed unload must not fail an onboarding that already committed its route. */
   }
+  if (authorityRefusal) throw authorityRefusal;
 }
 
 export function createSetupInference(
@@ -537,10 +591,16 @@ export function createSetupInference(
     hermesToolGateways: string[] = [],
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
+    const revalidateSandboxIdentity = sandboxName
+      ? options.revalidateSandboxIdentity
+      : undefined;
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const endpointSource =
       options.endpointSource === undefined ? "onboard" : options.endpointSource;
     const routedProvider = deps.isRoutedInferenceProvider?.(provider) === true;
+    const usesBedrockRuntimeAdapter =
+      provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
+    let shouldLogSuccessfulRoute = false;
     const withInferenceMutationLocks = <T>(operation: () => Promise<T> | T): Promise<T> =>
       deps.withGatewayRouteMutationLock(gatewayName, () => {
         if (!routedProvider) return operation();
@@ -552,6 +612,7 @@ export function createSetupInference(
     const mutateGatewayRoute = (): Promise<SetupInferenceResult> =>
       // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: provider onboarding centralizes route and two-phase transaction ordering.
       withInferenceMutationLocks(async () => {
+        revalidateSandboxIdentity?.("change the inference provider route");
         if (
           options.isRecordedProviderRecoveryAuthorized &&
           !options.isRecordedProviderRecoveryAuthorized()
@@ -586,8 +647,6 @@ export function createSetupInference(
         // SigV4/bearer adapter rather than the generic curl probe path. Their
         // hostname is constrained to AWS-owned suffixes by the classifier, so
         // do not apply the custom-origin curl pinning contract here.
-        const usesBedrockRuntimeAdapter =
-          provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
         const usesOnboardEndpoint = matchesOnboardEndpoint(
           provider,
           endpointUrl,
@@ -618,11 +677,16 @@ export function createSetupInference(
           }
           endpointPinnedAddresses = preflight.addresses;
           endpointTrustedPrivateCapability = preflight.trustedPrivateCapability;
+          revalidateSandboxIdentity?.("change the inference provider route after DNS validation");
         }
-        const runGatewayOpenshell = createGatewayScopedOpenshellRunner(
+        const runExactGatewayOpenshell = createGatewayScopedOpenshellRunner(
           deps.runOpenshell,
           gatewayName,
         );
+        const runGatewayOpenshell: typeof runExactGatewayOpenshell = (...args) => {
+          revalidateSandboxIdentity?.("change the OpenShell inference provider route");
+          return runExactGatewayOpenshell(...args);
+        };
         let hostLocalRoute: HostLocalInferenceStartupRoute | null = null;
         let hostLocalGatewayMutation: HostLocalInferenceGatewayMutation | null = null;
         let hostLocalRollbackAttempted = false;
@@ -638,6 +702,7 @@ export function createSetupInference(
         let hostLocalInferenceRuntimeProviderId: string | undefined;
         const reserveRoute = (name: string, selectedProvider: string, selectedModel: string) => {
           if (routeReserved) return true;
+          revalidateSandboxIdentity?.("reserve the sandbox inference route");
           const reserved = deps.updateSandbox(name, {
             provider: selectedProvider,
             model: selectedModel,
@@ -660,7 +725,11 @@ export function createSetupInference(
           return reserved;
         };
 
-        const defaultUpsertProvider = bindGatewayUpsertProvider(deps.upsertProvider, gatewayName);
+        const defaultUpsertProvider = bindGatewayUpsertProvider(
+          deps.upsertProvider,
+          gatewayName,
+          revalidateSandboxIdentity,
+        );
         const providerExitProcess: CommonDeps["exitProcess"] = hostLocalSelection
           ? (code: number): never => {
               throw new HostLocalInferenceBranchExit(code);
@@ -673,6 +742,7 @@ export function createSetupInference(
           : deps.error;
         const profiledUpsertProvider = bindOpenAiProviderProfile(
           (...args) => {
+            revalidateSandboxIdentity?.("register the inference provider");
             const selectedUpsertProvider =
               hostLocalGatewayMutation?.upsertProvider ?? defaultUpsertProvider;
             return selectedUpsertProvider(...args);
@@ -710,6 +780,7 @@ export function createSetupInference(
 
         if (options.hostLocalInference) {
           try {
+            revalidateSandboxIdentity?.("prepare the host-local inference runtime");
             hostLocalRoute = resolveHostLocalInferenceRoute(
               sandboxName,
               model,
@@ -731,6 +802,7 @@ export function createSetupInference(
               );
               hostLocalInferenceRuntimeProviderId = options.hostLocalInference.runtimeProviderId;
             }
+            revalidateSandboxIdentity?.("prepare the host-local inference provider route");
             hostLocalGatewayMutation = await options.hostLocalInference.prepareGatewayMutation({
               gatewayName,
               sandboxName: sandboxName!,
@@ -820,7 +892,14 @@ export function createSetupInference(
                 ...commonDeps,
                 REMOTE_PROVIDER_CONFIG: deps.REMOTE_PROVIDER_CONFIG,
                 hydrateCredentialEnv: deps.hydrateCredentialEnv,
-                promptValidationRecovery: deps.promptValidationRecovery,
+                promptValidationRecovery: (label, recovery, selectedCredentialEnv, helpUrl) =>
+                  deps.promptValidationRecovery(
+                    label,
+                    recovery,
+                    selectedCredentialEnv,
+                    helpUrl,
+                    revalidateSandboxIdentity,
+                  ),
                 classifyApplyFailure: deps.classifyApplyFailure,
                 LOCAL_INFERENCE_TIMEOUT_SECS: deps.localInferenceTimeoutSecs,
                 bedrockRuntimeOnboard: deps.bedrockRuntimeOnboard,
@@ -854,6 +933,7 @@ export function createSetupInference(
                       }
                     : deps,
                   runGatewayOpenshell,
+                  revalidateSandboxIdentity,
                 ),
                 run: deps.run,
                 VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
@@ -904,6 +984,7 @@ export function createSetupInference(
                       }
                     : deps,
                   runGatewayOpenshell,
+                  revalidateSandboxIdentity,
                 ),
                 getOllamaWarmupCommand: deps.getOllamaWarmupCommand,
                 run: deps.run,
@@ -998,6 +1079,7 @@ export function createSetupInference(
               }
             };
             validatePreparedReceipt();
+            revalidateSandboxIdentity?.("commit the host-local inference provider route");
             await hostLocalGatewayMutation.commit();
             // The awaited gateway commit is the only async gap between provider
             // proof and publication. Close it before registry or receipt entry.
@@ -1014,6 +1096,7 @@ export function createSetupInference(
                 throw new Error("Host-local inference lost sandbox route reservation authority.");
               }
             }
+            revalidateSandboxIdentity?.("publish the host-local inference provider receipt");
             const committed = normalizeHostLocalInferenceReceipt(hostLocalRoute.prepared.commit());
             if (
               serializeHostLocalInferenceReceipt(committed) !==
@@ -1024,7 +1107,8 @@ export function createSetupInference(
               );
             }
           }
-          deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
+          revalidateSandboxIdentity?.("report successful inference provider setup");
+          shouldLogSuccessfulRoute = true;
           return { ok: true as const };
         } catch (error) {
           if (!hostLocalRoute || !hostLocalSelection) throw error;
@@ -1068,18 +1152,26 @@ export function createSetupInference(
     // happens before the lock opens, so a serialized re-onboard can neither
     // replace the row under the read nor select the captured model before
     // this cleanup runs.
-    const mutateGatewayRouteAndReleaseSupersededModel =
-      async (): Promise<SetupInferenceResult> => {
-        let previousSandbox: OllamaModelHolder | null = null;
-        try {
-          previousSandbox = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
-        } catch {
-          /* An unreadable registry skips GPU release; it must not fail onboarding. */
-        }
-        const result = await mutateGatewayRoute();
-        releaseSupersededOllamaModel(previousSandbox, model, result, deps);
-        return result;
-      };
+    const mutateGatewayRouteAndReleaseSupersededModel = async (): Promise<SetupInferenceResult> => {
+      let previousSandbox: OllamaModelHolder | null = null;
+      try {
+        previousSandbox = sandboxName ? (deps.getSandbox?.(sandboxName) ?? null) : null;
+      } catch {
+        /* An unreadable registry skips GPU release; it must not fail onboarding. */
+      }
+      const result = await mutateGatewayRoute();
+      releaseSupersededOllamaModel(
+        previousSandbox,
+        model,
+        result,
+        deps,
+        revalidateSandboxIdentity,
+      );
+      if (shouldLogSuccessfulRoute && "ok" in result) {
+        deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
+      }
+      return result;
+    };
     return sandboxName
       ? deps.withSandboxMutationLock(sandboxName, mutateGatewayRouteAndReleaseSupersededModel)
       : mutateGatewayRouteAndReleaseSupersededModel();

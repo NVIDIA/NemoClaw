@@ -6,6 +6,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import YAML from "yaml";
+
+import {
+  livePolicyMetadata,
+  managedRegistrationSource,
+  SANDBOX_ID,
+} from "../../helpers/live-policy-fixture";
 
 const repoRoot = path.join(import.meta.dirname, "../../..");
 const policyModulePath = path.join(repoRoot, "src", "lib", "policy", "index.ts");
@@ -96,15 +103,50 @@ interface PolicySetBehavior {
  * round-trippable base policy so the driven mutation reaches its submission;
  * the `policy set --wait` result is what each scenario varies.
  */
-function buildOpenshellStub(policySet: PolicySetBehavior, basePolicy: string): string {
+function buildOpenshellStub(
+  policySet: PolicySetBehavior,
+  basePolicy: string,
+  appliedPolicyPath: string,
+): string {
+  const policyMetadata = {
+    ...JSON.parse(livePolicyMetadata(SANDBOX_NAME)),
+    policy: YAML.parse(basePolicy),
+  };
   return `#!/bin/sh
+if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then
+  printf 'Name: ${SANDBOX_NAME}\nId: ${SANDBOX_ID}\nPhase: Ready\n'
+  exit 0
+fi
 if [ "$1" = "policy" ] && [ "$2" = "get" ]; then
+  case " $* " in
+    *" --output json "*)
+      cat <<'JSON'
+${JSON.stringify(policyMetadata)}
+JSON
+      exit 0
+      ;;
+  esac
+  if [ -f ${JSON.stringify(appliedPolicyPath)} ]; then
+    cat ${JSON.stringify(appliedPolicyPath)}
+    exit 0
+  fi
   cat <<'YAML'
 ${basePolicy}
 YAML
   exit 0
 fi
 if [ "$1" = "policy" ] && [ "$2" = "set" ]; then
+  ${
+    policySet.exitCode === 0
+      ? `while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      cp "$2" ${JSON.stringify(appliedPolicyPath)}
+      break
+    fi
+    shift
+  done`
+      : ":"
+  }
   cat >&2 <<'POLICY_SET_STDERR'
 ${policySet.stderr}
 POLICY_SET_STDERR
@@ -129,19 +171,22 @@ console.log(${JSON.stringify(RETURN_MARKER)} + String(returned));
 
 const APPLY_PRESETS_DRIVER =
   `const registry = require(${JSON.stringify(registryModulePath)});\n` +
-  `registry.registerSandbox({ name: ${JSON.stringify(SANDBOX_NAME)}, agent: "openclaw", policies: [] });\n` +
+  `${managedRegistrationSource(SANDBOX_NAME)}\n` +
   buildDriver(`applyPresets(${JSON.stringify(SANDBOX_NAME)}, [${JSON.stringify(PRESET_NAME)}])`);
 
 /**
  * `removePreset` and `applyPreset` bypass the batch path that `applyPresets`
  * takes, and each composes its own policy document through its own temp file.
  */
-const REMOVE_PRESET_DRIVER = buildDriver(
-  `removePreset(${JSON.stringify(SANDBOX_NAME)}, ${JSON.stringify(PRESET_NAME)})`,
-);
-const APPLY_PRESET_DRIVER = buildDriver(
-  `applyPreset(${JSON.stringify(SANDBOX_NAME)}, ${JSON.stringify(PRESET_NAME)})`,
-);
+const REMOVE_PRESET_DRIVER =
+  `const registry = require(${JSON.stringify(registryModulePath)});\n` +
+  `${managedRegistrationSource(SANDBOX_NAME)}\n` +
+  `registry.updateSandbox(${JSON.stringify(SANDBOX_NAME)}, { policies: [${JSON.stringify(PRESET_NAME)}] });\n` +
+  buildDriver(`removePreset(${JSON.stringify(SANDBOX_NAME)}, ${JSON.stringify(PRESET_NAME)})`);
+const APPLY_PRESET_DRIVER =
+  `const registry = require(${JSON.stringify(registryModulePath)});\n` +
+  `${managedRegistrationSource(SANDBOX_NAME)}\n` +
+  buildDriver(`applyPreset(${JSON.stringify(SANDBOX_NAME)}, ${JSON.stringify(PRESET_NAME)})`);
 
 interface ChildRun {
   readonly result: SpawnSyncReturns<string>;
@@ -199,10 +244,15 @@ function runPolicyMutation({ driver, policySet, basePolicy }: PolicyMutationRun)
   fs.mkdirSync(homeDir);
 
   const openshellStubPath = path.join(scratchDir, "openshell");
-  fs.writeFileSync(openshellStubPath, buildOpenshellStub(policySet, basePolicy), {
-    encoding: "utf-8",
-    mode: 0o755,
-  });
+  const appliedPolicyPath = path.join(scratchDir, "applied-policy.yaml");
+  fs.writeFileSync(
+    openshellStubPath,
+    buildOpenshellStub(policySet, basePolicy, appliedPolicyPath),
+    {
+      encoding: "utf-8",
+      mode: 0o755,
+    },
+  );
 
   const driverPath = path.join(scratchDir, "driver.js");
   fs.writeFileSync(driverPath, driver, "utf-8");
@@ -261,7 +311,7 @@ const POLICY_SET_FAILURES: ReadonlyArray<PolicySetFailureScenario> = [
     policySetExitCode: UNPARSEABLE_FAILURE_EXIT_CODE,
     policySetStderr: TRANSPORT_RESET_STDERR,
     expectedOperatorMessage: `Could not confirm the policy update for sandbox '${SANDBOX_NAME}'`,
-    expectedGuidance: "read the current policy back before retrying",
+    expectedGuidance: "The current live policy differs from the requested document",
   },
 ];
 
@@ -304,12 +354,12 @@ describe.each(POLICY_SET_FAILURES)(
       const registry = JSON.parse(
         fs.readFileSync(path.join(run.homeDir, ".nemoclaw", "sandboxes.json"), "utf-8"),
       ) as { sandboxes: Record<string, { policies?: string[] }> };
-      expect(registry.sandboxes[SANDBOX_NAME]?.policies).toEqual([]);
+      expect(registry.sandboxes[SANDBOX_NAME]).not.toHaveProperty("policies");
     });
   },
 );
 
-describe("applyPresets when openshell policy set succeeds", () => {
+describe("applyPresets when OpenShell policy set succeeds", () => {
   let run: ChildRun;
 
   beforeAll(() => {
@@ -373,7 +423,7 @@ const SINGLE_PRESET_MUTATIONS: ReadonlyArray<SinglePresetMutationScenario> = [
     basePolicy: BASE_POLICY_WITHOUT_PRESET,
     policySet: { exitCode: UNPARSEABLE_FAILURE_EXIT_CODE, stderr: UNPARSEABLE_FAILURE_STDERR },
     expectedOperatorMessage: `Could not confirm the policy update for sandbox '${SANDBOX_NAME}'`,
-    expectedGuidance: "read the current policy back before retrying",
+    expectedGuidance: "The current live policy differs from the requested document",
     expectedExitCode: UNPARSEABLE_FAILURE_EXIT_CODE,
   },
 ];

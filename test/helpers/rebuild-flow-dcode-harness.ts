@@ -3,11 +3,13 @@
 
 import { type MockInstance, vi } from "vitest";
 import type { GatewayRestartResult } from "../../src/lib/actions/sandbox/gateway-restart";
+import type { OpenShellSandboxInventory } from "../../src/lib/adapters/openshell/sandbox-observer";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import {
   agentDefs,
   agentOnboard,
   agentRuntime,
+  createHarnessTempDir,
   createRebuildFlowSession,
   destroy,
   dockerImage,
@@ -17,6 +19,7 @@ import {
   gatewayState,
   gatewayTeardownAuthority,
   installTerminalStepFailureMock,
+  listHarnessRebuildBackups,
   loadRebuildSandbox,
   mcpBridge,
   messaging,
@@ -26,6 +29,7 @@ import {
   onboardSession,
   openshellRuntime,
   policies,
+  policyGet,
   processRecovery,
   purgeRebuildModule,
   type RebuildFlowSession,
@@ -40,6 +44,7 @@ import {
   rebuildShields,
   registry,
   registryPersistence,
+  registerHarnessRebuildBackup,
   resolve,
   sandboxList,
   sandboxSession,
@@ -94,8 +99,7 @@ export type RebuildFlowOverrides = {
   sandboxEntry?: Record<string, unknown>;
   sandboxEntryReads?: Array<Record<string, unknown> | null>;
   sessionSandboxName?: string;
-  sandboxListOutput?: string;
-  backupPolicyPresets?: string[];
+  sandboxInventory?: OpenShellSandboxInventory;
   gatewayPresets?: string[];
   verificationUnavailableAfterPresetRemoval?: boolean;
   preDeleteSandboxEntry?: Record<string, unknown>;
@@ -125,10 +129,14 @@ export type RebuildFlowOverrides = {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
     scrubbedAdapterEntries: Array<Record<string, unknown>>;
+    policyHandoff?: string;
+    revalidateBeforeDelete?: () => Promise<void>;
+    assertDeleteEdgeUnchanged?: () => void;
   };
 };
 
 export type RebuildFlowHarness = {
+  backupPath: string;
   rebuildSandbox: RebuildSandbox;
   applyPresetSpy: MockInstance;
   applyPresetContentSpy: MockInstance;
@@ -175,6 +183,9 @@ export type RebuildFlowHarness = {
 
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
   purgeRebuildModule();
+  vi.spyOn(policyGet, "getSandboxPolicy").mockReturnValue({
+    yaml: "version: 1\nnetwork_policies:\n  host_preserved: {}\n",
+  });
 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -239,7 +250,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     resolveGatewayAuthority,
   );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
-    result: { status: 0, output: overrides.sandboxListOutput ?? "alpha Ready" },
+    result: {
+      ok: true,
+      value: overrides.sandboxInventory ?? {
+        sandboxes: [{ name: "alpha", phase: "Ready", readiness: "ready" }],
+      },
+    },
+    recoveryAttempted: false,
+    recoverySucceeded: false,
   });
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(dockerImage, "dockerBuild").mockReturnValue({ status: 0 });
@@ -468,31 +486,51 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       window.relocked = true;
       return true;
     });
+  const backupPath = createHarnessTempDir("nemoclaw-rebuild-backup-");
+  const backupManifest = {
+    agentType: overrides.agentName ?? "openclaw",
+    backupPath,
+    timestamp: "2026-06-01T00:00:00.000Z",
+  };
+  registerHarnessRebuildBackup(
+    backupManifest as ReturnType<typeof sandboxState.listBackups>[number],
+  );
   const backupSandboxStateSpy = vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue({
     success: true,
     backedUpDirs: ["workspace"],
     backedUpFiles: ["user.md"],
     failedDirs: [],
     failedFiles: [],
-    manifest: {
-      agentType: overrides.agentName ?? "openclaw",
-      backupPath: "/tmp/nemoclaw-rebuild-backup",
-      timestamp: "2026-06-01T00:00:00.000Z",
-      policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
-    },
+    manifest: backupManifest,
   });
+  let latestValidatedRecoveryManifest: Record<string, unknown> | null = null;
   vi.spyOn(sandboxState, "validateRebuildRecoveryManifest").mockImplementation(
     (...args: unknown[]) => {
       const manifest = args[2] as Record<string, unknown>;
-      return overrides.recoveryManifestValidation?.(manifest) ?? { ok: true as const, manifest };
+      const result = overrides.recoveryManifestValidation?.(manifest) ?? {
+        ok: true as const,
+        manifest,
+      };
+      if (result.ok) {
+        latestValidatedRecoveryManifest = result.manifest;
+        registerHarnessRebuildBackup(
+          result.manifest as ReturnType<typeof sandboxState.listBackups>[number],
+        );
+      }
+      return result;
     },
   );
-  vi.spyOn(sandboxState, "getLatestBackup").mockImplementation(
-    () =>
-      (overrides.preDeleteLatestManifest === undefined
-        ? makePreparedRecoveryManifest()
-        : overrides.preDeleteLatestManifest) as ReturnType<typeof sandboxState.getLatestBackup>,
-  );
+  vi.spyOn(sandboxState, "getLatestBackup").mockImplementation(() => {
+    const manifest =
+      overrides.preDeleteLatestManifest === undefined
+        ? latestValidatedRecoveryManifest
+        : overrides.preDeleteLatestManifest;
+    if (manifest) {
+      registerHarnessRebuildBackup(manifest as ReturnType<typeof sandboxState.listBackups>[number]);
+    }
+    return manifest as ReturnType<typeof sandboxState.getLatestBackup>;
+  });
+  vi.spyOn(sandboxState, "listBackups").mockImplementation(listHarnessRebuildBackups);
   vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(
     overrides.managedImageEvidence ?? true,
   );
@@ -734,6 +772,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   warnSpy.mockClear();
 
   return {
+    backupPath,
     rebuildSandbox: loadRebuildSandbox(),
     applyPresetSpy,
     applyPresetContentSpy,

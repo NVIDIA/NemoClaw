@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
+import type { OpenShellSandboxObserver } from "../adapters/openshell/sandbox-observer";
+import { NEMOCLAW_CREATE_ATTEMPT_LABEL } from "../adapters/openshell/sandbox-identity";
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
 import type { CheckpointPortableRuntimeAuthority } from "../state/onboard-checkpoint-types";
@@ -32,6 +34,7 @@ import { installPortableDemoSandboxLifecycle } from "./experimental/portable-dem
 import {
   buildHermesPortableCommandAuthority,
   buildHermesPortableOnboardingCommandAuthority,
+  inspectPortableAgentReceiptDisposition,
 } from "./experimental/portable-agent-lifecycle";
 import { isPortableExperimentalProfile } from "./experimental/portable-profile";
 import {
@@ -48,8 +51,8 @@ import { assertPortableManagedBootstrapNotSelected } from "./managed-workload/on
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 import type {
-  RuntimeProviderBootstrapSurface,
   RuntimeProviderBundle,
+  RuntimeProviderManagedImageBootstrapSurface,
 } from "./runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
@@ -77,6 +80,7 @@ export {
   runHermesPortableOnboardingTransaction,
   shouldManageHermesPortableDashboard,
   buildHermesPortableCommandAuthority,
+  inspectPortableAgentReceiptDisposition,
 };
 export type HermesPortableReadyCapture = ReturnType<typeof createHermesPortableReadyCapture>;
 export type HermesPortableReadyRunner = ReturnType<typeof createHermesPortableReadyRunner>;
@@ -101,16 +105,28 @@ export function createSandboxCreateSourceCleanup(
   source: { readonly cleanup?: () => boolean; readonly cleanupExact?: () => boolean },
   requireExact: boolean,
 ): () => boolean {
-  return () =>
-    cleanupSandboxCreateSource(source.cleanup, { exactCleanup: source.cleanupExact, requireExact });
+  let completed = false;
+  return () => {
+    if (completed) return true;
+    completed = cleanupSandboxCreateSource(source.cleanup, {
+      exactCleanup: source.cleanupExact,
+      requireExact,
+    });
+    return completed;
+  };
 }
 
 /** Bind cleanup for the one staged build context owned by this create attempt. */
 export function createSandboxBuildContextCleanup(
   context: { readonly cleanupBuildCtx?: () => boolean } | null,
-): () => void {
+): () => boolean {
+  let completed = false;
   return () => {
-    if (context?.cleanupBuildCtx?.()) process.removeListener("exit", context.cleanupBuildCtx);
+    if (completed) return true;
+    if (!context?.cleanupBuildCtx) return true;
+    completed = context.cleanupBuildCtx();
+    if (completed) process.removeListener("exit", context.cleanupBuildCtx);
+    return completed;
   };
 }
 
@@ -195,12 +211,27 @@ type LifecycleRegistrationFields = Pick<SandboxEntry, "lifecycleGeneration">;
 
 export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
+  /** Resume the exact sandbox retained after its verified-create checkpoint was persisted. */
+  resumeVerifiedCreate?: {
+    readonly route: SelectedDockerGpuRoute;
+    readonly liveIdentityFingerprint: string;
+    readonly createAttemptNonce?: string;
+  };
+  /** Reject every initial or fallback create attempt that carries a caller policy. */
+  requirePolicylessCreate?: true;
+  /** Durably retain exact create-attempt recovery evidence before identity-bound recovery stops. */
+  persistRetainedSandboxRecovery?: (
+    message: string,
+    sandboxIdentityFingerprint?: string,
+    createAttemptNonce?: string,
+  ) => boolean;
   provider: string;
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;
   initialGpuRoute: SelectedDockerGpuRoute;
   compatibilityPolicyPath: string | null;
   dockerDriverGateway: boolean;
+  gatewayName: string;
   gatewayPort: number;
   sandboxReadyTimeoutSecs: number;
   createArgv: string[];
@@ -222,7 +253,7 @@ export interface SandboxGpuCreateFlowInput {
     readonly bootstrapIdentity: string;
     readonly stateRoot: string;
     readonly runtimeProvider: RuntimeProviderBundle & {
-      readonly bootstrap: Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
+      readonly bootstrap: RuntimeProviderManagedImageBootstrapSurface;
     };
     readonly authorityStore: ManagedBootstrapAuthorityStore;
     readonly request: ManagedStartupRootApplyRequest;
@@ -232,11 +263,37 @@ export interface SandboxGpuCreateFlowInput {
     readonly expectedSupervisorArgv: readonly string[];
   } | null;
   requiredUlimits?: readonly DockerUlimit[] | null;
+  /**
+   * Verify the exact sandbox created by each attempt before runtime activation,
+   * readiness, GPU, service, dashboard, or registry effects continue.
+   */
+  verifyCreatedSandboxBeforeEffects?: (identity: CreatedSandboxIdentity) => void | Promise<void>;
+  /** Re-read the exact pending create identity before each post-create effect. */
+  revalidateVerifiedSandboxBeforeEffect?: (operation: string) => void;
+}
+
+export interface CreatedSandboxIdentity {
+  readonly sandboxId: string;
+  readonly liveIdentityFingerprint: string;
+  readonly createAttemptNonce: string;
+  readonly route: SelectedDockerGpuRoute;
+}
+
+/** Refuse APF fallback when OpenShell can remove the failed sandbox only by mutable name. */
+export function refuseApfMutableNameFallbackCleanup(sandboxName: string) {
+  return {
+    safe: false,
+    reason: `APF-selected sandbox '${sandboxName}' cannot be deleted by mutable name for a compatibility retry`,
+    deleteStatus: null,
+    sandboxPresent: null,
+    containerIds: null,
+  } as const;
 }
 
 export interface SandboxGpuCreateFlowDeps {
   runOpenshell: RunOpenshell;
   runCaptureOpenshell: RunCaptureOpenshell;
+  sandboxObserver: OpenShellSandboxObserver;
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
@@ -250,15 +307,23 @@ export interface SandboxGpuCreateFlowDeps {
   createManagedBootstrapAdapter?: (stateRoot: string) => ManagedBootstrapAdapter;
 }
 
-export interface SandboxGpuCreateFlowResult {
-  createResult: StreamSandboxCreateResult;
+interface SandboxGpuCreateFlowResultCommon {
   runtimePatch: ManagedBootstrapRuntimePatch;
   route: SelectedDockerGpuRoute;
-  firstCreateOutput: string;
   /** Mutable tag/reference retained only for registry and image-GC bookkeeping. */
   registryImageRef: string | null;
   lifecycleRegistrationFields: LifecycleRegistrationFields;
 }
+
+export type SandboxGpuCreateFlowResult = SandboxGpuCreateFlowResultCommon &
+  (
+    | {
+        readonly origin: "created";
+        readonly createResult: StreamSandboxCreateResult;
+        readonly firstCreateOutput: string;
+      }
+    | { readonly origin: "resumed" }
+  );
 
 /** Bind only the schema-5 GPU proof child to its admitted command authorities. */
 export function createHermesPortableGpuProofAuthority(input: {
@@ -307,6 +372,19 @@ export async function runSandboxGpuCreateFlow(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
 ): Promise<SandboxGpuCreateFlowResult> {
+  if (
+    input.requirePolicylessCreate &&
+    (!input.verifyCreatedSandboxBeforeEffects ||
+      !input.revalidateVerifiedSandboxBeforeEffect ||
+      !input.persistRetainedSandboxRecovery)
+  ) {
+    throw new Error(
+      "APF interceptor sandbox creation requires exact post-create verification and durable fallback recovery.",
+    );
+  }
+  if (input.verifyCreatedSandboxBeforeEffects && !input.persistRetainedSandboxRecovery) {
+    throw new Error("Verified sandbox creation requires durable create-attempt recovery evidence.");
+  }
   const hermesPortableLifecycle = input.hermesPortableLifecycle === true;
   assertPortableManagedBootstrapNotSelected(
     input.portableLifecycle === true,
@@ -332,8 +410,9 @@ export async function runSandboxGpuCreateFlow(
         }
       : deps,
   );
-  const gpuCreateOutcome = await sandboxGpuCreateAttempt
-    .executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
+  const gpuCreateOutcome = await (input.resumeVerifiedCreate
+    ? attemptRunner.runAttempt(input.resumeVerifiedCreate.route)
+    : sandboxGpuCreateAttempt.executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
       runAttempt: attemptRunner.runAttempt,
       captureNativeFailure: (failure) => {
         const routeAdapter = adaptDockerGpuRouteForPatch(failure.route);
@@ -348,6 +427,9 @@ export async function runSandboxGpuCreateFlow(
         if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
       },
       cleanupNativeFailure: (failure) => {
+        if (input.requirePolicylessCreate) {
+          return refuseApfMutableNameFallbackCleanup(input.sandboxName);
+        }
         return sandboxGpuCreateAttempt.cleanupNativeGpuFailureForFallback(
           input.sandboxName,
           failure,
@@ -376,11 +458,9 @@ export async function runSandboxGpuCreateFlow(
             ),
           ];
           const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
-            createArgs: managedBootstrapCreateArgs(
-              input.prebuild.createArgs,
-              bootstrapIdentity,
-            ),
+            createArgs: managedBootstrapCreateArgs(input.prebuild.createArgs, bootstrapIdentity),
             currentRegistryImageRef: registryImageRef,
+            managedImageReference: `${managedBootstrap.image.repository}@${managedBootstrap.image.manifestDigest}`,
             prebuildImageId: input.prebuild.imageId,
             allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
             compatibilityPolicyPath: input.compatibilityPolicyPath,
@@ -441,7 +521,7 @@ export async function runSandboxGpuCreateFlow(
         input.sandboxGpuConfig.sandboxGpuProof = null;
       },
       traceEvent: addTraceEvent,
-    })
+      }))
     .catch((error: unknown) => {
       if (error instanceof ManagedBootstrapRecoveryBlockedError) {
         exitForManagedBootstrapRecovery(error);
@@ -449,30 +529,83 @@ export async function runSandboxGpuCreateFlow(
       throw error;
     });
   if (!gpuCreateOutcome.ok) {
+    const preparationRefused =
+      "preparationRefused" in gpuCreateOutcome
+        ? gpuCreateOutcome.preparationRefused
+        : undefined;
+    const cleanupRefused =
+      "cleanupRefused" in gpuCreateOutcome ? gpuCreateOutcome.cleanupRefused : undefined;
+    const nativeCleanupHandoff =
+      "nativeCleanupHandoff" in gpuCreateOutcome
+        ? gpuCreateOutcome.nativeCleanupHandoff
+        : undefined;
     console.error("");
     console.error("  Operator-authorized GPU fallback stopped before compatibility retry.");
-    if (gpuCreateOutcome.preparationRefused) {
-      console.error(
-        `  Compatibility retry could not be prepared: ${gpuCreateOutcome.preparationRefused}`,
-      );
+    if (preparationRefused) {
+      console.error(`  Compatibility retry could not be prepared: ${preparationRefused}`);
     }
-    if (gpuCreateOutcome.cleanupRefused) {
-      console.error(
-        `  Cleanup could not be proven safe: ${redactFull(gpuCreateOutcome.cleanupRefused)}`,
-      );
+    if (cleanupRefused) {
+      console.error(`  Cleanup could not be proven safe: ${redactFull(cleanupRefused)}`);
     }
     console.error(
-      gpuCreateOutcome.nativeCleanupHandoff
+      nativeCleanupHandoff
         ? `  Managed bootstrap retained exact owner-cleanup authority for sandbox '${input.sandboxName}'. Do not delete a runtime by mutable sandbox name; preserve it for identity-bound recovery.`
         : hermesPortableLifecycle
-        ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
-        : `  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`,
+          ? `  Hermes portable sandbox '${input.sandboxName}' did not complete receipt-owned creation. Preserve its lifecycle receipt and resume onboarding after correcting the reported failure.`
+          : `  Sandbox '${input.sandboxName}' may still exist. Verify its durable identity before manual cleanup; do not act by mutable name alone.`,
     );
+    if (input.requirePolicylessCreate) {
+      const persistRetainedSandboxRecovery = input.persistRetainedSandboxRecovery;
+      if (!persistRetainedSandboxRecovery) {
+        throw new Error("APF interceptor sandbox creation requires durable fallback recovery.");
+      }
+      const evidence = gpuCreateOutcome.retainedSandboxRecovery;
+      if (!evidence) {
+        console.error(
+          "  APF recovery is blocked because the create attempt returned no durable identity or create-attempt label.",
+        );
+      } else {
+        const identityGuidance = evidence.liveIdentityFingerprint
+          ? "Use that fingerprint only to compare the surviving sandbox with this create attempt."
+          : "OpenShell did not return one exact durable sandbox identity for this create attempt. Recovery is blocked until an OpenShell administrator resolves the create-attempt label to one sandbox.";
+        const message =
+          `Create-attempt label: ${NEMOCLAW_CREATE_ATTEMPT_LABEL}=${evidence.createAttemptNonce}. ` +
+          `${evidence.liveIdentityFingerprint ? `Durable sandbox identity fingerprint: ${evidence.liveIdentityFingerprint}. ` : ""}` +
+          `APF sandbox '${input.sandboxName}' may have been retained after native GPU fallback stopped. ` +
+          `Gateway '${input.gatewayName}'. ${identityGuidance} ` +
+          "Do not delete a sandbox by mutable name; use an identity-bound administrator recovery procedure.";
+        let persisted = false;
+        try {
+          persisted = evidence.liveIdentityFingerprint
+            ? persistRetainedSandboxRecovery(
+                message,
+                evidence.liveIdentityFingerprint,
+                evidence.createAttemptNonce,
+              )
+            : persistRetainedSandboxRecovery(message, undefined, evidence.createAttemptNonce);
+        } catch {
+          persisted = false;
+        }
+        console.error(`  ${message}`);
+        if (!persisted) {
+          console.error(
+            "  APF recovery is blocked because NemoClaw could not save this create-attempt evidence. Preserve the terminal output for an OpenShell administrator.",
+          );
+        }
+      }
+    }
     process.exit(1);
   }
 
   let portableLifecycleGeneration = attemptRunner.state.portableLifecycleGeneration;
   if (!input.portableLifecycle && !input.hermesPortableLifecycle && !portableLifecycleGeneration) {
+    if (input.verifyCreatedSandboxBeforeEffects) {
+      const revalidate = input.revalidateVerifiedSandboxBeforeEffect;
+      if (!revalidate) {
+        throw new Error("Verified sandbox creation has no post-create effect revalidation.");
+      }
+      revalidate(`record portable lifecycle for sandbox '${input.sandboxName}'`);
+    }
     try {
       portableLifecycleGeneration =
         (deps.installPortableDemoLifecycle ?? installPortableDemoSandboxLifecycle)(
@@ -493,14 +626,25 @@ export async function runSandboxGpuCreateFlow(
     }
   }
 
-  return {
-    ...gpuCreateOutcome.value,
+  const common = {
+    runtimePatch: gpuCreateOutcome.value.runtimePatch,
     route: gpuCreateOutcome.route,
-    firstCreateOutput: attemptRunner.state.firstCreateOutput,
     registryImageRef,
     lifecycleRegistrationFields: {
       ...(input.lifecycleGeneration ? { lifecycleGeneration: input.lifecycleGeneration } : {}),
       ...(portableLifecycleGeneration ? { lifecycleGeneration: portableLifecycleGeneration } : {}),
     },
+  };
+  if (input.resumeVerifiedCreate) return { ...common, origin: "resumed" };
+  const createResult =
+    "createResult" in gpuCreateOutcome.value ? gpuCreateOutcome.value.createResult : null;
+  if (!createResult) {
+    throw new Error("Sandbox create completed without its create result.");
+  }
+  return {
+    ...common,
+    origin: "created",
+    createResult,
+    firstCreateOutput: attemptRunner.state.firstCreateOutput,
   };
 }

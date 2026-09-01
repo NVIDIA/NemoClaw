@@ -9,7 +9,7 @@ import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-m
 import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
 import type { CheckpointSandboxRecreateTransaction } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
-import type { BaselineExclusionEntry, SandboxRemovalReceipt } from "../../../state/registry";
+import type { SandboxRemovalReceipt } from "../../../state/registry";
 import {
   advanceSandboxRecreateTransaction,
   fingerprintSandboxRecreateValue,
@@ -197,7 +197,6 @@ export function createDeps(
         inferenceProvider?: string | null;
         extraProviders: readonly string[];
         staleExtraProviders: readonly string[];
-        baselineExclusions?: readonly BaselineExclusionEntry[];
       }) => ({
         sandboxName: input.sandboxName,
         inferenceProvider: input.inferenceProvider ?? null,
@@ -214,8 +213,6 @@ export function createDeps(
             directGpu: false,
             additionalPresets: [],
             policyTier: null,
-            baselineExclusions:
-              input.baselineExclusions?.map((exclusion) => ({ ...exclusion })) ?? [],
           },
         },
         gpuCreateArgs: [],
@@ -227,6 +224,7 @@ export function createDeps(
       }),
     ),
     createSandbox: vi.fn(async () => "my-assistant"),
+    finalizeRouteReservation: vi.fn(() => true),
     retireReplacedSandboxWorkload: vi.fn(() => ({
       status: "skipped" as const,
       reason: "replacement-unproven" as const,
@@ -317,6 +315,7 @@ export function createDeps(
       resolveSandboxCreateIntent: calls.resolveCreateIntent,
       createSandbox: calls.createSandbox,
       retireReplacedSandboxWorkload: calls.retireReplacedSandboxWorkload,
+      finalizeSandboxRouteReservation: calls.finalizeRouteReservation,
       updateSandboxRegistry: calls.updateSandbox,
       getSandboxAgentRegistryFields: () => ({ agent: null }),
       recordStepComplete: calls.complete,

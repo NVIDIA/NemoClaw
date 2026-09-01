@@ -11,17 +11,28 @@ def sorted_deep(value):
     return value
 
 
-def render_merged_config(merged, header_lines):
-    try:
-        rendered = tomli_w.dumps(sorted_deep(merged))
-    except Exception:
-        fail("merged config could not be serialized safely")
-    if not isinstance(rendered, str):
-        fail("merged config serializer returned invalid output")
-    if header_lines:
-        text = "\n".join(header_lines) + "\n\n" + rendered.rstrip() + "\n"
+def render_merged_config(merged, header_lines, config_format):
+    if config_format == "json":
+        if header_lines:
+            fail("JSON config cannot preserve generated comment headers")
+        try:
+            text = json.dumps(
+                sorted_deep(merged), ensure_ascii=False, allow_nan=False, indent=2
+            ) + "\n"
+        except Exception:
+            fail("merged config could not be serialized safely")
     else:
-        text = rendered.rstrip() + "\n"
+        try:
+            import tomli_w
+            rendered = tomli_w.dumps(sorted_deep(merged))
+        except Exception:
+            fail("merged config could not be serialized safely")
+        if not isinstance(rendered, str):
+            fail("merged config serializer returned invalid output")
+        if header_lines:
+            text = "\n".join(header_lines) + "\n\n" + rendered.rstrip() + "\n"
+        else:
+            text = rendered.rstrip() + "\n"
     payload = text.encode("utf-8")
     if len(payload) > MAX_CONFIG_BYTES:
         fail("merged config exceeds the restore size limit")
@@ -88,7 +99,7 @@ def unlink_staged_if_owned(parent_fd, staged_name, staged_metadata):
         pass
 
 
-def write_staged_and_replace(parent_fd, current_name, current_metadata, payload):
+def write_staged_and_replace(parent_fd, current_name, current_metadata, payload, file_mode):
     staged_name = ""
     staged_fd = -1
     staged_metadata = None
@@ -99,19 +110,29 @@ def write_staged_and_replace(parent_fd, current_name, current_metadata, payload)
             written = 0
             while written < len(payload):
                 written += os.write(staged_fd, payload[written:])
-            os.fchmod(staged_fd, 0o660)
+            os.fchmod(staged_fd, file_mode)
             os.fsync(staged_fd)
             staged_metadata = os.fstat(staged_fd)
         finally:
             if staged_metadata is None and staged_fd >= 0:
                 staged_metadata = os.fstat(staged_fd)
 
-        try:
-            latest_current = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)
-        except OSError:
-            fail("current config changed before atomic restore")
-        if not same_file_version(current_metadata, latest_current):
-            fail("current config changed before atomic restore")
+        if current_metadata is None:
+            try:
+                os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                fail("current config changed before atomic restore")
+            else:
+                fail("current config changed before atomic restore")
+        else:
+            try:
+                latest_current = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)
+            except OSError:
+                fail("current config changed before atomic restore")
+            if not same_file_version(current_metadata, latest_current):
+                fail("current config changed before atomic restore")
 
         try:
             latest_staged = os.stat(staged_name, dir_fd=parent_fd, follow_symlinks=False)

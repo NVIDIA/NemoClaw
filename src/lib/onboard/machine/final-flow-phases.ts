@@ -31,7 +31,7 @@ export interface FinalOnboardFlowPhaseOptions<
   VerificationResult = unknown,
 > {
   branchState: "agent_setup" | "openclaw";
-  authoritativePolicyTier?: string | null;
+  preserveRebuildLivePolicy?: boolean;
   agentSetupDeps: AgentSetupStateOptions<Context["agent"]>["deps"];
   policiesDeps: PoliciesStateOptions<Context["agent"], WebSearchConfig>["deps"];
   finalization: {
@@ -71,6 +71,7 @@ export function createFinalOnboardFlowPhases<
       sandboxName: context.sandboxName,
       model: context.model,
       provider: context.provider,
+      webSearchConfig: context.webSearchConfig,
       resume: context.resume,
       session: context.session,
       hermesAuthMethod: context.hermesAuthMethod,
@@ -87,7 +88,7 @@ export function createFinalOnboardFlowPhases<
     assertSandboxCreatedContext(context, "policies");
     const policiesResult = await handlePoliciesState({
       resume: context.resume,
-      authoritativePolicyTier: options.authoritativePolicyTier,
+      preserveRebuildLivePolicy: options.preserveRebuildLivePolicy,
       sandboxName: context.sandboxName,
       provider: context.provider,
       hostLocalInferenceRouteOnly: context.hostLocalInferenceRouteOnly === true,

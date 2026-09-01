@@ -37,11 +37,7 @@ import type {
   SessionResourceProfile,
   SessionUpdates,
 } from "../../../state/onboard-session";
-import {
-  type BaselineExclusionEntry,
-  type SandboxEntry,
-  type SandboxRemovalReceipt,
-} from "../../../state/registry";
+import { type SandboxEntry, type SandboxRemovalReceipt } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import {
@@ -94,16 +90,14 @@ import {
   type SandboxRecreateObservation,
   sandboxRecreatePhaseReached,
   sandboxRecreateSourceWorkloadEntry,
+  selectSandboxRecreateTargetIntentFingerprint,
   selectedGatewayForSandboxRecreate,
 } from "../../sandbox-recreate-transaction";
-import {
-  assertBaselineExclusionsMatchCreateIntent,
-  baselineExclusionsForCreate,
-} from "../../sandbox-registration";
+import { sandboxCreateInferenceSelection } from "../../sandbox-registration";
 
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { InferenceRouteReservationAuthority, SandboxCreateIntent } from "../../types";
-import { branchTo, type OnboardStateTransitionResult } from "../result";
+import { branchTo, completeOnboardMachine, type OnboardStateResult } from "../result";
 import * as dcodeResume from "./sandbox-dcode-resume";
 import {
   hasMessagingCredentialDrift,
@@ -173,6 +167,7 @@ function shouldApplyCheckpointCrashRecovery(
   return (
     !recreateRequested &&
     decision.kind === "create" &&
+    decision.continueHermesPortableLifecycle !== true &&
     decision.validateMessagingCredentialsBeforeMutation !== true
   );
 }
@@ -189,10 +184,13 @@ export interface SandboxStateOptions<
   fresh: boolean;
   /** Exact schema-5 lifecycle selection owned by the locked portable runtime. */
   hermesPortableLifecycle?: boolean;
+  /** Explicit fresh-create mode that lets APF supply the sandbox-scoped policy. */
+  apfInterceptorRequested?: boolean;
   /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
   authoritativeResumeConfig?: boolean;
   /** Internal rebuild tier that must govern create-time and resumed policy selection. */
-  authoritativePolicyTier?: string | null;
+  /** Keep provider and credential effects behind the exact post-create identity gate. */
+  deferSandboxEffectsUntilIdentityVerification?: boolean;
   /** Endpoint source to preserve during an authoritative rebuild. */
   endpointSource?: InferenceEndpointSource | null;
   /** Internal rebuild target fingerprint recorded by the journal opened before deletion. */
@@ -201,7 +199,7 @@ export interface SandboxStateOptions<
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
   rebuildPreservedEnv?: readonly import("../../../state/preserved-env").PreservedEnvFile[];
-  rebuildPolicyPresets?: readonly string[];
+  rebuildPolicySourcePath?: string;
   hostMounts?: readonly import("../../../state/registry/types").SandboxHostMount[];
   recreateSandbox: (requested?: boolean) => boolean;
   gatewayName: string;
@@ -284,7 +282,7 @@ export interface SandboxStateOptions<
     ): Promise<WebSearchConfig | null>;
     startRecordedStep(
       stepName: string,
-      updates: { sandboxName?: string | null; provider: string; model: string },
+      updates: { sandboxName?: string | null; provider?: string | null; model?: string | null },
     ): Promise<void>;
     getRecordedMessagingChannelsForResume(
       resume: boolean,
@@ -311,6 +309,8 @@ export interface SandboxStateOptions<
       webSearchConfig: WebSearchConfig | null;
       agent: Agent;
       requiredBindings: readonly CheckpointProviderBinding[];
+      replaceExisting?: boolean;
+      revalidateSandboxIdentity?(operation: string): void;
     }): Promise<readonly CheckpointProviderBinding[]>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
@@ -332,7 +332,6 @@ export interface SandboxStateOptions<
       extraProviders: readonly string[];
       staleExtraProviders: readonly string[];
       policyTier?: string | null;
-      baselineExclusions?: readonly BaselineExclusionEntry[];
       reuseRegisteredCredentials?: boolean;
       hostMounts?: readonly import("../../../state/registry/types").SandboxHostMount[];
     }): Promise<ResolvedSandboxCreateIntent>;
@@ -353,7 +352,9 @@ export interface SandboxStateOptions<
       hermesAuthMethod: HermesAuthMethod | null,
       inferenceRouteReservationAuthority: InferenceRouteReservationAuthority | null,
       createIntent: CompleteSandboxCreateIntent,
+      runVerifiedSandboxCreateEffects?: import("../../types").VerifiedSandboxCreateEffects,
     ): Promise<string>;
+    finalizeSandboxRouteReservation(sandboxName: string, sessionId: string): boolean;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(
       agent: Agent,
@@ -361,7 +362,7 @@ export interface SandboxStateOptions<
     ): Record<string, unknown>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
-    skippedStepMessage(stepName: string, detail?: string | null): void;
+    skippedStepMessage(stepName: string, detail?: string | null, reason?: "resume" | "reuse"): void;
     recordStateSkipped(
       state: "sandbox",
       metadata?: Record<string, unknown> | null,
@@ -386,7 +387,7 @@ export interface SandboxStateResult<WebSearchConfig> {
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
   session: Session | null;
-  stateResult: OnboardStateTransitionResult;
+  stateResult: OnboardStateResult;
 }
 
 interface SandboxStepState<WebSearchConfig> {
@@ -468,59 +469,41 @@ function hasResourceProfileEnvOverride(env: NodeJS.ProcessEnv): boolean {
   return Boolean(env.NEMOCLAW_RESOURCE_PROFILE || env.NEMOCLAW_CPU || env.NEMOCLAW_RAM);
 }
 
-function endpointSourceForCreateIntent(
-  fresh: boolean,
-  endpointSource: InferenceEndpointSource | null | undefined,
-  preserveSelectedEndpointSource: boolean,
-): InferenceEndpointSource | null {
-  return fresh && !preserveSelectedEndpointSource ? "onboard" : (endpointSource ?? null);
-}
-
 function compatibleEndpointReasoningForCreateIntent(
   value: string | null,
 ): Pick<SandboxCreateIntent, "compatibleEndpointReasoning"> {
   return value === "true" || value === "false" ? { compatibleEndpointReasoning: value } : {};
 }
 
-function rebuildPolicyPresetsForCreateIntent(
-  value: readonly string[] | undefined,
-  session: Session | null,
-  sandboxName: string,
-): Pick<SandboxCreateIntent, "rebuildPolicyPresets"> {
-  // A later `onboard --resume` no longer has the outer rebuild's in-memory
-  // options. The matching recreate journal makes its filtered session value
-  // the durable replacement target instead of the preserved source row.
-  const journaledValue =
-    session?.checkpoint?.sandboxRecreate?.sandboxName === sandboxName &&
-    Array.isArray(session.policyPresets)
-      ? session.policyPresets
-      : undefined;
-  const selectedValue = Array.isArray(value) ? value : journaledValue;
-  return Array.isArray(selectedValue) ? { rebuildPolicyPresets: [...selectedValue] } : {};
-}
-
-/** Replace a resumed create-plan snapshot with the outer rebuild's normalized built-ins. */
-function applyAuthoritativeRebuildPolicyPresets(
-  intent: ResolvedSandboxCreateIntent,
-  rebuildPolicyPresets: readonly string[] | undefined,
-): ResolvedSandboxCreateIntent {
-  if (!Array.isArray(rebuildPolicyPresets)) return intent;
-  return {
-    ...intent,
-    policy: {
-      ...intent.policy,
-      options: {
-        ...intent.policy.options,
-        additionalPresets: [...rebuildPolicyPresets],
-      },
-    },
-  };
+function deferredSandboxEffectsIntent(enabled: boolean): {
+  readonly deferSandboxEffectsUntilIdentityVerification?: true;
+} {
+  return enabled ? { deferSandboxEffectsUntilIdentityVerification: true } : {};
 }
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
 type CompleteSandboxCreateIntent = SandboxCreateIntent & {
   readonly resolved: ResolvedSandboxCreateIntent;
 };
+
+/** Add APF-owned fields to an exact-gated fresh create intent. */
+export function apfCreateIntentFields(
+  requested: boolean,
+): Pick<
+  CompleteSandboxCreateIntent,
+  "apfInterceptorRequested" | "deferSandboxEffectsUntilIdentityVerification"
+> {
+  return requested
+    ? {
+        apfInterceptorRequested: true,
+        deferSandboxEffectsUntilIdentityVerification: true,
+      }
+    : {};
+}
+
+export function apfCreateFingerprintFields(requested: boolean): readonly string[] {
+  return requested ? ["apf-interceptor"] : [];
+}
 
 type SandboxRecreateRepairMetadata = {
   readonly repair: "recorded-sandbox-cleanup";
@@ -634,6 +617,25 @@ class SandboxStateFlow<
   private get resumesSandboxPrompts(): boolean {
     const agentName = (this.options.agent as { name?: string } | null)?.name;
     return !agentName || agentName === "openclaw";
+  }
+
+  private assertProviderlessApfInput(): void {
+    if (this.options.apfInterceptorRequested !== true) return;
+    const explicitWebSearch = parseExplicitWebSearchProvider(
+      this.options.env[WEB_SEARCH_PROVIDER_ENV],
+    ).provider;
+    const hasProviderIntent =
+      this.options.provider.trim().length > 0 ||
+      this.options.model.trim().length > 0 ||
+      this.options.webSearchConfig !== null ||
+      explicitWebSearch !== null ||
+      this.options.selectedMessagingChannels.length > 0 ||
+      this.options.hermesToolGateways.length > 0 ||
+      Boolean(this.options.session?.messagingPlan);
+    if (!hasProviderIntent) return;
+    throw new Error(
+      "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
+    );
   }
 
   private prepareWebSearchSupport(): SandboxStepState<WebSearchConfig> {
@@ -777,6 +779,16 @@ class SandboxStateFlow<
       ),
       recreateSandboxRequested: this.options.recreateSandbox(false),
       recreateJournalHandoff: Boolean(this.options.recreateJournalTargetIntentFingerprint),
+      activeRecreateJournal: Boolean(
+        state.session?.checkpoint?.sandboxRecreate &&
+        this.options.recreateJournalTargetIntentFingerprint &&
+        state.session.checkpoint.sandboxRecreate.sandboxName === state.sandboxName &&
+        state.session.checkpoint.sandboxRecreate.targetIntentFingerprint ===
+          this.options.recreateJournalTargetIntentFingerprint,
+      ),
+      hermesPortableLifecyclePending:
+        this.options.hermesPortableLifecycle === true &&
+        registryEntry?.pendingRouteReservation === true,
       messagingChannelConfigChanged: !this.deps.messagingChannelConfigsEqual(
         effectiveMessagingConfig,
         storedMessagingConfig,
@@ -868,10 +880,9 @@ class SandboxStateFlow<
       this.options.agent,
       !this.options.fromDockerfile,
     );
-    const policyFingerprint = this.options.authoritativePolicyTier ?? "default";
     const lightFingerprint = [
       typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
-      policyFingerprint,
+      ...apfCreateFingerprintFields(this.options.apfInterceptorRequested === true),
       this.options.provider,
       this.options.model,
       this.options.preferredInferenceApi ?? "default",
@@ -890,6 +901,7 @@ class SandboxStateFlow<
     const {
       extraProviders: _extraProviders,
       staleExtraProviders: _staleExtraProviders,
+      policy: _policy,
       ...durableCreateIntent
     } = createIntent;
     return `${lightFingerprint}|${JSON.stringify(durableCreateIntent)}`;
@@ -1076,6 +1088,28 @@ class SandboxStateFlow<
         `  Error: sandbox route reservation '${sandboxName ?? "unknown"}' disappeared while onboarding was in progress. Retry onboarding.`,
       );
     }
+    if (this.options.apfInterceptorRequested === true) {
+      const reservationSessionId = this.options.session?.sessionId;
+      const isExactProviderlessReservation =
+        typeof reservationSessionId === "string" &&
+        reservationSessionId.length > 0 &&
+        targetEntry.pendingRouteReservation === true &&
+        targetEntry.reservationSessionId === reservationSessionId &&
+        resolveSandboxGatewayName(targetEntry) === this.options.gatewayName &&
+        (targetEntry.provider ?? null) === null &&
+        (targetEntry.model ?? null) === null &&
+        (targetEntry.endpointUrl ?? null) === null &&
+        (targetEntry.endpointSource ?? null) === null &&
+        (targetEntry.credentialEnv ?? null) === null &&
+        (targetEntry.preferredInferenceApi ?? null) === null &&
+        (targetEntry.compatibleEndpointReasoning ?? null) === null &&
+        (targetEntry.compatibleEndpointReasoningEffort ?? null) === null &&
+        (targetEntry.nimContainer ?? null) === null;
+      if (isExactProviderlessReservation) return;
+      this.failGatewayRouteCheck(
+        `  Error: providerless APF sandbox '${sandboxName}' lost its exact route reservation while onboarding was in progress. Retry onboarding.`,
+      );
+    }
     if (getSandboxEntryInference(targetEntry).kind !== "configured") {
       this.failGatewayRouteCheck(
         `  Error: sandbox '${sandboxName}' has incomplete route metadata, so its shared-gateway compatibility cannot be proven. Remove and re-onboard that sandbox.`,
@@ -1107,6 +1141,21 @@ class SandboxStateFlow<
     this.deps.error(message);
     this.deps.exitProcess(1);
     throw new Error("exitProcess returned while aborting an incompatible gateway route");
+  }
+
+  private finalizeInferenceRouteReservation(
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxName: string,
+  ): void {
+    const entry = this.deps.getSandboxRegistryEntry(sandboxName);
+    if (entry?.pendingRouteReservation !== true) return;
+    const sessionId = state.session?.sessionId;
+    if (sessionId && this.deps.finalizeSandboxRouteReservation(sandboxName, sessionId)) return;
+    this.deps.error(
+      `  Error: sandbox '${sandboxName}' inference route reservation changed while onboarding was in progress. Retry onboarding.`,
+    );
+    this.deps.exitProcess(1);
+    throw new Error("exitProcess returned after route reservation ownership changed");
   }
 
   private assertRegistryMessagingPlanUnchanged(
@@ -1157,13 +1206,7 @@ class SandboxStateFlow<
         });
       }
       this.backfillReusedSandboxFidelity(state);
-      if (state.sandboxName) {
-        this.deps.updateSandboxRegistry(state.sandboxName, {
-          pendingRouteReservation: undefined,
-          reservationSessionId: undefined,
-        });
-      }
-      this.deps.skippedStepMessage("sandbox", state.sandboxName);
+      this.deps.skippedStepMessage("sandbox", state.sandboxName, "reuse");
       const skippedSession = await this.deps.recordStateSkipped("sandbox", {
         reason: "resume",
         sandboxName: state.sandboxName,
@@ -1172,6 +1215,7 @@ class SandboxStateFlow<
         skippedSession,
         state.sandboxName,
       );
+      if (state.sandboxName) this.finalizeInferenceRouteReservation(state, state.sandboxName);
       return {
         ...state,
         session: recordedSession,
@@ -1265,12 +1309,20 @@ class SandboxStateFlow<
     providerName: string,
   ): boolean {
     if (state.session?.stagedCredentialProviders.includes(providerName)) return true;
+    if (!state.sandboxName) return false;
+    return this.ownsDeletedSandboxRecreate(state, state.sandboxName);
+  }
+
+  private ownsDeletedSandboxRecreate(
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxName: string,
+  ): boolean {
     const handoff = this.options.recreateJournalTargetIntentFingerprint;
     const recreate = state.session?.checkpoint?.sandboxRecreate;
     return Boolean(
       handoff &&
       recreate &&
-      recreate.sandboxName === state.sandboxName &&
+      recreate.sandboxName === sandboxName &&
       recreate.targetIntentFingerprint === handoff &&
       sandboxRecreatePhaseReached(recreate.phase, "deleted"),
     );
@@ -1439,11 +1491,15 @@ class SandboxStateFlow<
   private async registerCompletedCredentialProviders(
     sandboxName: string,
     enabledChannels: readonly string[],
+    selectedMessagingChannels: readonly string[],
     webSearchConfig: WebSearchConfig | null,
     requiredBindings: readonly CheckpointProviderBinding[],
     group: ProviderEffectGroupName,
     checkpoint: OnboardCheckpoint | null,
+    session: Session | null,
     force = false,
+    replaceExisting = false,
+    verifiedIdentityRevalidation?: (operation: string) => void,
   ): Promise<void> {
     if (
       !this.resumesSandboxPrompts ||
@@ -1481,12 +1537,19 @@ class SandboxStateFlow<
     const registeredProviders = await this.deps.withGatewayRouteMutationLock(
       this.options.gatewayName,
       async () => {
+        verifiedIdentityRevalidation?.(
+          `register credential providers for sandbox ${JSON.stringify(sandboxName)}`,
+        );
         const staged = await this.deps.stageSandboxCredentialProviders({
           sandboxName,
           enabledChannels,
           webSearchConfig,
           agent: this.options.agent,
           requiredBindings,
+          ...(replaceExisting ? { replaceExisting: true } : {}),
+          ...(verifiedIdentityRevalidation
+            ? { revalidateSandboxIdentity: verifiedIdentityRevalidation }
+            : {}),
         });
         const stagedProviderNames = new Set<string>();
         for (const binding of staged) {
@@ -1528,6 +1591,8 @@ class SandboxStateFlow<
     requiredBindings: readonly CheckpointProviderBinding[],
     registryAuthoritySnapshot: RegistryMessagingAuthority,
     force: boolean,
+    replaceExisting: boolean,
+    verifiedIdentityRevalidation?: (operation: string) => void,
   ): Promise<void> {
     if (state.selectedMessagingChannels.length === 0) return;
     const stage = async () => {
@@ -1535,11 +1600,15 @@ class SandboxStateFlow<
       await this.registerCompletedCredentialProviders(
         sandboxName,
         state.selectedMessagingChannels,
+        state.selectedMessagingChannels,
         null,
         requiredBindings,
         "messaging_providers",
         state.session?.checkpoint ?? null,
+        state.session,
         force,
+        replaceExisting,
+        verifiedIdentityRevalidation,
       );
     };
     if (this.deps.withSandboxMutationLock) {
@@ -1547,6 +1616,61 @@ class SandboxStateFlow<
     } else {
       await stage();
     }
+  }
+
+  private async activateCredentialProvidersForCreate(
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxName: string,
+    webSearchProviderBindings: readonly CheckpointProviderBinding[],
+    messagingProviderBindings: readonly CheckpointProviderBinding[],
+    registryMessagingAuthority: RegistryMessagingAuthority,
+    forceMessagingProviderRegistration: boolean,
+    replaceExistingMessagingProviders: boolean,
+    verifiedIdentityRevalidation?: (operation: string) => void,
+  ): Promise<SandboxStepState<WebSearchConfig>> {
+    await this.registerCompletedCredentialProviders(
+      sandboxName,
+      [],
+      state.selectedMessagingChannels,
+      state.webSearchConfig,
+      webSearchProviderBindings,
+      "web_search_provider",
+      state.session?.checkpoint ?? null,
+      state.session,
+      false,
+      false,
+      verifiedIdentityRevalidation,
+    );
+    let nextState = this.checkpointProviderEffectGroup(
+      state,
+      "web_search_provider",
+      webSearchProviderBindings,
+    );
+    await this.stageMessagingProvidersForCreate(
+      sandboxName,
+      nextState,
+      messagingProviderBindings,
+      registryMessagingAuthority,
+      forceMessagingProviderRegistration,
+      replaceExistingMessagingProviders,
+      verifiedIdentityRevalidation,
+    );
+    nextState = this.checkpointProviderEffectGroup(
+      nextState,
+      "messaging_providers",
+      messagingProviderBindings,
+    );
+    if (this.resumesSandboxPrompts) {
+      const session = this.deps.updateSession((current) => {
+        recordCheckpointProviderEffectGroups(current, {
+          webSearch: webSearchProviderBindings,
+          messaging: messagingProviderBindings,
+        });
+        return current;
+      });
+      nextState = { ...nextState, session };
+    }
+    return nextState;
   }
 
   private async resolveResourceProfile(state: SandboxStepState<WebSearchConfig>): Promise<{
@@ -1593,49 +1717,34 @@ class SandboxStateFlow<
     staleExtraProviders: readonly string[],
     resourceProfile: ResourceProfile | null,
     hermesToolGateways: readonly string[],
+    deferSandboxEffectsUntilIdentityVerification: boolean,
   ): Promise<CompleteSandboxCreateIntent> {
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
-    const rebuildPolicyPresetSelection = rebuildPolicyPresetsForCreateIntent(
-      this.options.rebuildPolicyPresets,
-      state.session,
+    const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
-    );
-    const resolved = applyAuthoritativeRebuildPolicyPresets(
-      await this.deps.resolveSandboxCreateIntent({
-        sandboxName,
-        inferenceProvider: this.options.provider,
-        hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
-        enabledChannels: state.selectedMessagingChannels,
-        webSearchConfig: state.webSearchConfig,
-        agent: this.options.agent,
-        sandboxGpuConfig: this.options.sandboxGpuConfig,
-        resourceProfile,
-        hermesToolGateways,
-        extraProviders,
-        staleExtraProviders,
-        hostMounts: this.options.hostMounts,
-        baselineExclusions: baselineExclusionsForCreate(sandboxName),
-        ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
-        ...(this.options.authoritativePolicyTier !== undefined
-          ? { policyTier: this.options.authoritativePolicyTier }
-          : {}),
-      }),
-      rebuildPolicyPresetSelection.rebuildPolicyPresets,
-    );
+      inferenceProvider: this.options.provider,
+      hostLocalInferenceRouteOnly: this.options.hostLocalInferenceRouteOnly === true,
+      enabledChannels: state.selectedMessagingChannels,
+      webSearchConfig: state.webSearchConfig,
+      agent: this.options.agent,
+      sandboxGpuConfig: this.options.sandboxGpuConfig,
+      resourceProfile,
+      hermesToolGateways,
+      extraProviders,
+      staleExtraProviders,
+      hostMounts: this.options.hostMounts,
+      ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
+    });
     return {
       resolved,
       recreate: requiresSandboxRecreation(decision, this.options.recreateSandbox(false)),
+      ...apfCreateIntentFields(this.options.apfInterceptorRequested === true),
       toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
       ...compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
-      endpointSource: endpointSourceForCreateIntent(
-        this.options.fresh,
-        this.options.endpointSource,
-        this.options.hostLocalInferenceRouteOnly === true ||
-          this.options.hermesPortableLifecycle === true,
-      ),
+      endpointSource: this.options.endpointSource ?? null,
       ...(state.session?.observabilityRequestedExplicitly === true
         ? { observabilityRequestedExplicitly: true as const }
         : {}),
@@ -1643,17 +1752,74 @@ class SandboxStateFlow<
       isDcodeAgent((this.options.agent as { name?: string } | null)?.name)
         ? { dcodeAutoApprovalMode: this.dcodeAutoApprovalMode }
         : {}),
-      ...(this.options.authoritativePolicyTier !== undefined
-        ? { policyTier: this.options.authoritativePolicyTier }
-        : {}),
+      ...deferredSandboxEffectsIntent(deferSandboxEffectsUntilIdentityVerification),
       ...(this.options.rebuildPreservedEnv
         ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
         : {}),
       recreateJournalTargetIntentFingerprint:
         this.options.recreateJournalTargetIntentFingerprint ?? undefined,
-      ...rebuildPolicyPresetSelection,
+      ...(this.options.rebuildPolicySourcePath
+        ? { rebuildPolicySourcePath: this.options.rebuildPolicySourcePath }
+        : {}),
       extraProviders,
     };
+  }
+
+  private assertProviderlessApfCreatePlan(createIntent: CompleteSandboxCreateIntent): void {
+    if (this.options.apfInterceptorRequested !== true) return;
+    const resolved = createIntent.resolved;
+    const hasProviderPlan =
+      Boolean(resolved.inferenceProvider?.trim()) ||
+      resolved.activeMessagingChannels.length > 0 ||
+      resolved.messagingProviderRequests.length > 0 ||
+      resolved.reusableMessagingProviders.length > 0 ||
+      resolved.extraProviders.length > 0 ||
+      resolved.staleExtraProviders.length > 0 ||
+      resolved.hermesToolGateways.length > 0;
+    if (!hasProviderPlan) return;
+    throw new Error(
+      "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
+    );
+  }
+
+  private assertApfFreshCreate(sandboxName: string, decision: SandboxCreationDecision): void {
+    if (this.options.apfInterceptorRequested !== true) return;
+    if (this.options.resume || this.options.recreateSandbox(false) || decision.kind !== "create") {
+      throw new Error(
+        "APF interceptor selection requires a new sandbox and cannot resume, reuse, repair, or recreate one.",
+      );
+    }
+    const registered = this.deps.getSandboxRegistryEntry(sandboxName);
+    const sessionId = this.options.session?.sessionId;
+    const ownsProviderlessReservation =
+      registered?.pendingRouteReservation === true &&
+      typeof sessionId === "string" &&
+      registered.reservationSessionId === sessionId &&
+      registered.gatewayName === this.options.gatewayName &&
+      registered.provider == null &&
+      registered.model == null &&
+      registered.endpointUrl == null &&
+      registered.endpointSource == null &&
+      registered.credentialEnv == null &&
+      registered.preferredInferenceApi == null;
+    if (registered && !ownsProviderlessReservation) {
+      throw new Error(
+        `APF interceptor selection cannot adopt registered sandbox '${sandboxName}'. Choose a new sandbox name.`,
+      );
+    }
+    const observed = this.deps.getSandboxRecreateObservation(sandboxName);
+    if (observed.state !== "missing") {
+      throw new Error(
+        `APF interceptor selection cannot adopt live sandbox '${sandboxName}'. Choose a new sandbox name.`,
+      );
+    }
+  }
+
+  private deferSandboxEffectsUntilIdentityVerification(): boolean {
+    return (
+      this.options.deferSandboxEffectsUntilIdentityVerification === true ||
+      this.options.apfInterceptorRequested === true
+    );
   }
 
   private beginSandboxRecreateJournal(
@@ -1663,7 +1829,12 @@ class SandboxStateFlow<
     sourceEntry: SandboxEntry | null,
   ): CheckpointSandboxRecreateTransaction | null {
     const existing = state.session?.checkpoint?.sandboxRecreate ?? null;
-    if (!this.options.resume && !existing) return null;
+    const ownsPendingCreateReservation =
+      sourceEntry?.pendingRouteReservation === true &&
+      sourceEntry.reservationSessionId === state.session?.sessionId;
+    if (!this.options.resume && !existing && sourceEntry && !ownsPendingCreateReservation) {
+      return null;
+    }
     const gateway = selectedGatewayForSandboxRecreate(
       state.session?.checkpoint,
       this.options.gatewayName,
@@ -1679,7 +1850,6 @@ class SandboxStateFlow<
       );
     }
     if (!gateway) return null;
-    if (!existing && !sourceEntry) return null;
     const observation = this.deps.getSandboxRecreateObservation(sandboxName);
     const updated = this.deps.updateSession((current) => {
       beginSandboxRecreateTransaction(current, {
@@ -1688,9 +1858,10 @@ class SandboxStateFlow<
         gatewayPort: gateway.gatewayPort,
         sourceEntry,
         observation,
-        targetIntentFingerprint: this.sandboxRecreateTargetIntentFingerprint(
-          sandboxName,
-          createIntent,
+        targetIntentFingerprint: selectSandboxRecreateTargetIntentFingerprint(
+          existing,
+          this.sandboxRecreateTargetIntentFingerprint(sandboxName, createIntent),
+          this.options.recreateJournalTargetIntentFingerprint,
         ),
       });
       return current;
@@ -1733,12 +1904,11 @@ class SandboxStateFlow<
     decision: SandboxCreationDecision,
   ): Promise<SandboxRecreatePreparation> {
     const sourceEntry = this.deps.getSandboxRegistryEntry(requestedSandboxName);
-    const transaction = this.beginSandboxRecreateJournal(
-      state,
-      requestedSandboxName,
-      createIntent,
-      sourceEntry,
-    );
+    const continueHermesPortableLifecycle =
+      decision.kind === "create" && decision.continueHermesPortableLifecycle === true;
+    const transaction = continueHermesPortableLifecycle
+      ? null
+      : this.beginSandboxRecreateJournal(state, requestedSandboxName, createIntent, sourceEntry);
     const repairMetadata: SandboxRecreateRepairMetadata | null =
       decision.kind === "repair-and-recreate"
         ? { repair: "recorded-sandbox-cleanup", sandboxName: state.sandboxName }
@@ -1879,9 +2049,14 @@ class SandboxStateFlow<
     messagingPlan: SandboxMessagingPlan | null,
     registryMessagingAuthoritySnapshot: RegistryMessagingAuthority,
     decision: SandboxCreationDecision,
+    deferSandboxEffectsUntilIdentityVerification: boolean,
+    activateVerifiedCredentialProviders?: (
+      state: SandboxStepState<WebSearchConfig>,
+      revalidateSandboxIdentity: (operation: string) => void,
+    ) => Promise<SandboxStepState<WebSearchConfig>>,
   ): Promise<SandboxStepState<WebSearchConfig>> {
     const resourceSelection = await this.resolveResourceProfile(initialState);
-    const state = resourceSelection.state;
+    let state = resourceSelection.state;
     const resourceProfile = resourceSelection.resourceProfile;
     const effectiveHermesToolGateways = effectiveHermesToolGatewaysForWebSearch(
       this.options.agent as { name?: string } | null,
@@ -1894,6 +2069,16 @@ class SandboxStateFlow<
         requestedSandboxName,
         registryMessagingAuthoritySnapshot,
       );
+      if (
+        this.options.apfInterceptorRequested === true &&
+        (extraProviderPlan.extraProviders.length > 0 ||
+          extraProviderPlan.staleExtraProviders.length > 0 ||
+          effectiveHermesToolGateways.length > 0)
+      ) {
+        throw new Error(
+          "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
+        );
+      }
       // Build the complete create plan after acquiring the sandbox lock. A
       // baseline transaction may have started while onboarding waited, and a
       // pre-lock snapshot must never survive a destructive recreate.
@@ -1905,7 +2090,13 @@ class SandboxStateFlow<
         extraProviderPlan.staleExtraProviders,
         resourceProfile,
         effectiveHermesToolGateways,
+        deferSandboxEffectsUntilIdentityVerification,
       );
+      this.assertProviderlessApfCreatePlan(createIntent);
+      const providerlessApf =
+        this.options.apfInterceptorRequested === true &&
+        this.options.provider.trim().length === 0 &&
+        this.options.model.trim().length === 0;
       this.assertGatewayRouteCompatible(requestedSandboxName);
       this.assertCheckpointBindingsStillLive(state);
       this.assertCheckpointCreateInputsStillMatch(
@@ -1915,26 +2106,18 @@ class SandboxStateFlow<
       );
       await this.deps.startRecordedStep("sandbox", {
         sandboxName: requestedSandboxName,
-        provider: this.options.provider,
-        model: this.options.model,
+        ...(providerlessApf ? {} : { provider: this.options.provider, model: this.options.model }),
       });
       this.deps.updateSession((current) => {
         current.messagingPlan = messagingPlan;
         return current;
       });
-      // Re-read at the destructive edge. The lock prevents cooperating
-      // writers from changing this state; the equality check also catches a
-      // direct registry writer that bypassed the lock.
-      assertBaselineExclusionsMatchCreateIntent(
-        requestedSandboxName,
-        createIntent.resolved.policy.options.baselineExclusions,
-      );
       const { transaction, sourceEntry, effectiveCreateIntent, repairMetadata } =
         await this.prepareSandboxRecreate(state, requestedSandboxName, createIntent, decision);
 
       let sandboxName: string;
       try {
-        if (this.options.fresh) {
+        if (this.options.fresh && !deferSandboxEffectsUntilIdentityVerification) {
           this.deps.stopStaleDashboardListenersForSandbox(
             this.deps.listRegistrySandboxes().sandboxes,
             requestedSandboxName,
@@ -1961,23 +2144,57 @@ class SandboxStateFlow<
               resourceProfile,
               effectiveHermesToolGateways,
               this.options.hermesAuthMethod,
-              this.options.session ? { sessionId: this.options.session.sessionId } : null,
+              this.options.session
+                ? {
+                    sessionId: this.options.session.sessionId,
+                    selection: sandboxCreateInferenceSelection({
+                      provider: this.options.provider,
+                      model: this.options.model,
+                      endpointUrl: this.options.endpointUrl,
+                      endpointSource: this.options.endpointSource,
+                      credentialEnv: this.options.credentialEnv,
+                      preferredInferenceApi: this.options.preferredInferenceApi,
+                      compatibleEndpointReasoning: this.options.compatibleEndpointReasoning,
+                      compatibleEndpointReasoningEffort: null,
+                      nimContainer: this.options.nimContainer,
+                    }),
+                  }
+                : null,
               effectiveCreateIntent,
+              ...(activateVerifiedCredentialProviders
+                ? [
+                    async (
+                      verifiedContext: import("../../types").VerifiedSandboxCreateEffectsContext,
+                    ) => {
+                      if (this.options.fresh) {
+                        this.deps.stopStaleDashboardListenersForSandbox(
+                          this.deps.listRegistrySandboxes().sandboxes,
+                          requestedSandboxName,
+                        );
+                      }
+                      state = await activateVerifiedCredentialProviders(
+                        state,
+                        verifiedContext.revalidateSandboxIdentity,
+                      );
+                    },
+                  ]
+                : []),
             ),
         );
       } catch (error) {
         await this.recordSandboxRecreateRepairFailure(transaction, repairMetadata, error);
         throw error;
       }
+      let recordedTransaction: CheckpointSandboxRecreateTransaction | null;
       try {
-        const recordedTransaction = this.reloadSandboxRecreateTransaction(transaction);
+        recordedTransaction = this.reloadSandboxRecreateTransaction(transaction);
         this.retireSandboxRecreateSourceWorkload(recordedTransaction, sourceEntry, sandboxName);
         await this.recordSandboxRecreateRepairSuccess(recordedTransaction, repairMetadata);
-        this.recordSandboxRecreateRegistryCommit(recordedTransaction);
       } catch (error) {
         await this.recordSandboxRecreateRepairFailure(transaction, repairMetadata, error);
         throw error;
       }
+      this.recordSandboxRecreateRegistryCommit(recordedTransaction);
       // createSandbox() owns the build fingerprint. In particular, reusing an
       // image must not stamp it with the current version and hide build drift.
       const {
@@ -1987,13 +2204,17 @@ class SandboxStateFlow<
       } = this.deps.getSandboxAgentRegistryFields(this.options.agent, !this.options.fromDockerfile);
       // Preserve the validated route and credential env-var name, never a credential value.
       this.deps.updateSandboxRegistry(sandboxName, {
-        model: this.options.model,
-        provider: this.options.provider,
-        endpointUrl: this.options.endpointUrl,
-        endpointSource: createIntent.endpointSource ?? null,
-        credentialEnv: this.options.credentialEnv,
-        nimContainer: this.options.nimContainer,
-        preferredInferenceApi: this.options.preferredInferenceApi,
+        ...(providerlessApf
+          ? {}
+          : {
+              model: this.options.model,
+              provider: this.options.provider,
+              endpointUrl: this.options.endpointUrl,
+              endpointSource: createIntent.endpointSource ?? null,
+              credentialEnv: this.options.credentialEnv,
+              nimContainer: this.options.nimContainer,
+              preferredInferenceApi: this.options.preferredInferenceApi,
+            }),
         ...agentRegistryFields,
       });
       // Finalization marks the default so a cancelled onboarding cannot leave a
@@ -2002,8 +2223,9 @@ class SandboxStateFlow<
         "sandbox",
         this.deps.toSessionUpdates({
           sandboxName,
-          provider: this.options.provider,
-          model: this.options.model,
+          ...(providerlessApf
+            ? {}
+            : { provider: this.options.provider, model: this.options.model }),
           nimContainer: this.options.nimContainer,
           webSearchConfig: state.webSearchConfig,
           messagingPlan,
@@ -2106,10 +2328,33 @@ class SandboxStateFlow<
       : state;
     const requestedSandboxName =
       nextState.sandboxName ?? (await this.deps.promptValidatedSandboxName(this.options.agent));
+    this.assertApfFreshCreate(requestedSandboxName, decision);
     if (!nextState.sandboxName) {
       nextState = this.checkpointSandboxName(nextState, requestedSandboxName);
     }
     nextState = this.recordSandboxIdentityForCreate(nextState, requestedSandboxName);
+    if (this.options.apfInterceptorRequested === true) {
+      const registryMessagingAuthority =
+        this.deps.getRegistrySandboxMessagingAuthority(requestedSandboxName);
+      if (registryMessagingAuthority.plan !== null) {
+        throw new Error(
+          "Interceptor onboarding supports providerless sandbox creation only. No sandbox or provider was created.",
+        );
+      }
+      return this.createAndRecordSandbox(
+        nextState,
+        requestedSandboxName,
+        null,
+        registryMessagingAuthority,
+        decision,
+        true,
+        async (state) =>
+          this.checkpointMessaging(this.checkpointWebSearch(state, null), {
+            plan: null,
+            selectedChannels: [],
+          }),
+      );
+    }
     const webSearchConfig = await this.resolveWebSearchForCreation(nextState);
     const webSearchConfigChanged =
       nextState.webSearchConfigChanged ||
@@ -2158,44 +2403,35 @@ class SandboxStateFlow<
       messagingProviderBindings,
     );
     nextState = this.checkpointMessaging(nextState, messaging);
-    await this.registerCompletedCredentialProviders(
-      requestedSandboxName,
-      [],
-      nextState.webSearchConfig,
-      webSearchProviderBindings,
-      "web_search_provider",
-      nextState.session?.checkpoint ?? null,
-    );
-    nextState = this.checkpointProviderEffectGroup(
-      nextState,
-      "web_search_provider",
-      webSearchProviderBindings,
-    );
-    await this.stageMessagingProvidersForCreate(
-      requestedSandboxName,
-      nextState,
-      messagingProviderBindings,
-      registryMessagingAuthority,
-      shouldForceMessagingProviderRegistration(
-        messagingCredentialChanged,
-        messagingCredentialBaseline,
-        messaging.plan,
-      ),
-    );
-    nextState = this.checkpointProviderEffectGroup(
-      nextState,
-      "messaging_providers",
-      messagingProviderBindings,
-    );
-    if (this.resumesSandboxPrompts) {
-      const session = this.deps.updateSession((current) => {
-        recordCheckpointProviderEffectGroups(current, {
-          webSearch: webSearchProviderBindings,
-          messaging: messagingProviderBindings,
-        });
-        return current;
-      });
-      nextState = { ...nextState, session };
+    const activateCredentialProviders = (
+      state: SandboxStepState<WebSearchConfig>,
+      verifiedIdentityRevalidation?: (operation: string) => void,
+    ) =>
+      this.activateCredentialProvidersForCreate(
+        state,
+        requestedSandboxName,
+        webSearchProviderBindings,
+        messagingProviderBindings,
+        registryMessagingAuthority,
+        shouldForceMessagingProviderRegistration(
+          messagingCredentialChanged,
+          messagingCredentialBaseline,
+          messaging.plan,
+        ),
+        this.ownsDeletedSandboxRecreate(nextState, requestedSandboxName),
+        verifiedIdentityRevalidation,
+      );
+    // A create-time policy with credential bindings cannot be installed before
+    // those providers are attached. For ordinary managed creation, register the
+    // required providers first and let `sandbox create --provider` attach them
+    // atomically with that policy. Keep APF-selected creation behind its strict
+    // post-create boundary because APF contributes to the initial policy.
+    const hasCreateTimeCredentialBindings =
+      webSearchProviderBindings.length > 0 || messagingProviderBindings.length > 0;
+    const deferCredentialProviderEffects =
+      this.deferSandboxEffectsUntilIdentityVerification() && !hasCreateTimeCredentialBindings;
+    if (!deferCredentialProviderEffects) {
+      nextState = await activateCredentialProviders(nextState);
     }
     return this.createAndRecordSandbox(
       nextState,
@@ -2203,6 +2439,8 @@ class SandboxStateFlow<
       messaging.plan,
       registryMessagingAuthority,
       decision,
+      deferCredentialProviderEffects,
+      deferCredentialProviderEffects ? activateCredentialProviders : undefined,
     );
   }
 
@@ -2224,6 +2462,11 @@ class SandboxStateFlow<
         "  Tavily Search replaces Hermes managed Web search/extract and removes the conflicting nous-web selection.",
       );
     }
+    const metadata = {
+      state: "sandbox",
+      sandboxName: state.sandboxName,
+      agent: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
+    };
     return {
       sandboxName: state.sandboxName,
       webSearchConfig: state.webSearchConfig,
@@ -2232,17 +2475,15 @@ class SandboxStateFlow<
       selectedMessagingChannels: state.selectedMessagingChannels,
       webSearchSupported: state.webSearchSupported,
       session: state.session,
-      stateResult: branchTo(this.options.agent ? "agent_setup" : "openclaw", {
-        metadata: {
-          state: "sandbox",
-          sandboxName: state.sandboxName,
-          agent: (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
-        },
-      }),
+      stateResult:
+        this.options.apfInterceptorRequested === true
+          ? completeOnboardMachine({}, metadata)
+          : branchTo(this.options.agent ? "agent_setup" : "openclaw", { metadata }),
     };
   }
 
   async run(): Promise<SandboxStateResult<WebSearchConfig>> {
+    this.assertProviderlessApfInput();
     if (this.options.session?.checkpoint) {
       this.replayableCheckpointProviderBindings(this.options.session.checkpoint);
     }

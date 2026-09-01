@@ -1,20 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isDeepStrictEqual } from "node:util";
-
 import type { AgentDefinition } from "../agent/defs";
-import type { InferenceEndpointSource, InferenceSelection } from "../inference/selection";
-import { inferenceSelectionRegistryFields } from "../inference/selection";
+import type {
+  InferenceEndpointSource,
+  InferenceSelection,
+  InferenceSelectionInput,
+} from "../inference/selection";
+import {
+  inferenceSelectionRegistryFields,
+  normalizeInferenceSelection,
+} from "../inference/selection";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
 import type { OpenClawImagePluginInstall } from "../state/openclaw-plugin-restore";
-import type {
-  BaselineExclusionEntry,
-  SandboxEntry,
-  SandboxMcpState,
-  SandboxMessagingState,
-} from "../state/registry";
+import type { SandboxEntry, SandboxMcpState, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
 import {
   cloneSandboxHostLocalInferenceProvenance,
@@ -68,12 +68,9 @@ export interface CreatedSandboxRegistryEntryInput {
   hostLocalInferenceReceipt?: SandboxEntry["hostLocalInferenceReceipt"];
   hostLocalInferenceProvenance?: SandboxEntry["hostLocalInferenceProvenance"];
   openclawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
-  appliedPolicies: string[];
   toolDisclosure?: ToolDisclosure;
   observabilityEnabled?: boolean;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
-  policyTier?: SandboxEntry["policyTier"];
-  baselineExclusions?: readonly BaselineExclusionEntry[];
   webSearchEnabled?: boolean;
   webSearchProvider?: SandboxEntry["webSearchProvider"];
   fromDockerfile?: string | null;
@@ -101,12 +98,17 @@ export interface CreatedSandboxRegistryEntryInput {
 
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
   portableLifecycle?: boolean;
+  reservationSessionId?: string;
   environment?: NodeJS.ProcessEnv;
   classifyPortableLifecycleReceipt?: typeof classifyPortableLifecycleReceipt;
   inferenceRouteReservation?: QualifiedSandboxInferenceRouteReservation;
+  verifiedCreate?: NonNullable<
+    NonNullable<Parameters<typeof registry.registerSandbox>[2]>["verifiedCreate"]
+  >;
   registerSandbox?(
     entry: SandboxEntry,
     routeReservation?: QualifiedSandboxInferenceRouteReservation,
+    options?: Parameters<typeof registry.registerSandbox>[2],
   ): SandboxEntry | void;
   runtimeProviders?: RuntimeProviderBundleRegistry;
 }
@@ -116,7 +118,6 @@ export function creationFidelity(
   fromDockerfile: string | null,
   hermesAuthMethod: "oauth" | "api_key" | null,
   dashboardRemoteBindPrepared?: boolean,
-  baselineExclusions?: readonly BaselineExclusionEntry[],
 ): Pick<
   SandboxEntry,
   | "webSearchEnabled"
@@ -124,7 +125,6 @@ export function creationFidelity(
   | "fromDockerfile"
   | "hermesAuthMethod"
   | "dashboardRemoteBindPrepared"
-  | "baselineExclusions"
 > {
   return {
     webSearchEnabled: webSearchConfig?.fetchEnabled === true,
@@ -132,39 +132,7 @@ export function creationFidelity(
     fromDockerfile,
     hermesAuthMethod,
     dashboardRemoteBindPrepared: dashboardRemoteBindPrepared === true,
-    baselineExclusions: baselineExclusions?.map((exclusion) => ({ ...exclusion })),
   };
-}
-
-/** Snapshot complete exclusion records before a destructive create removes registry state. */
-export function baselineExclusionsForCreate(sandboxName: string): BaselineExclusionEntry[] {
-  const transition = registry.getBaselineExclusionTransition(sandboxName);
-  if (transition) {
-    const key = transition.exclusion.key;
-    throw new Error(
-      `Baseline policy ${transition.operation} for '${key}' needs repair before sandbox creation. Re-run 'policy ${transition.operation} ${key}' first.`,
-    );
-  }
-  return registry.getBaselineExclusions(sandboxName).map((exclusion) => ({ ...exclusion }));
-}
-
-/**
- * Re-read exclusion intent at the destructive create edge and prove it still
- * matches the already-resolved policy plan. The sandbox mutation lock is the
- * caller's serialization boundary; this comparison catches stale plans and
- * any direct registry writer that bypassed that lock.
- */
-export function assertBaselineExclusionsMatchCreateIntent(
-  sandboxName: string,
-  planned: readonly BaselineExclusionEntry[],
-): BaselineExclusionEntry[] {
-  const current = baselineExclusionsForCreate(sandboxName);
-  if (!isDeepStrictEqual(current, [...planned])) {
-    throw new Error(
-      `Baseline policy exclusions for '${sandboxName}' changed while sandbox creation was being prepared. Retry so the replacement policy uses current registry intent.`,
-    );
-  }
-  return current;
 }
 
 export function selection(
@@ -196,6 +164,13 @@ export function selection(
   });
 }
 
+/** Normalize the exact provider-phase route carried into sandbox creation. */
+export function sandboxCreateInferenceSelection(
+  input: InferenceSelectionInput,
+): InferenceSelection {
+  return normalizeInferenceSelection(input);
+}
+
 export function buildCreatedSandboxRegistryEntry(
   input: CreatedSandboxRegistryEntryInput,
 ): SandboxEntry {
@@ -204,10 +179,13 @@ export function buildCreatedSandboxRegistryEntry(
     session?.sandboxName === input.sandboxName
       ? (session.servingProfileProvenance ?? undefined)
       : undefined;
-  const messagingState =
+  const plannedMessagingState =
     input.plannedMessagingState?.plan.sandboxName === input.sandboxName
       ? input.plannedMessagingState
       : undefined;
+  // A pending removal is command-owned recovery state. Registration must
+  // preserve it until post-restore config cleanup and the registry update both succeed.
+  const messagingState = plannedMessagingState;
   const workload = cloneSandboxWorkloadReceipt(input.workload);
   if (input.workload !== undefined && workload === undefined) {
     throw new RuntimeProviderSelectionError(
@@ -271,14 +249,11 @@ export function buildCreatedSandboxRegistryEntry(
           })),
         }
       : {}),
-    policies: input.appliedPolicies,
-    baselineExclusions: input.baselineExclusions?.map((exclusion) => ({ ...exclusion })),
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     observabilityEnabled: input.observabilityEnabled === true,
     ...(input.dcodeAutoApprovalMode !== undefined
       ? { dcodeAutoApprovalMode: input.dcodeAutoApprovalMode }
       : {}),
-    ...(input.policyTier !== undefined ? { policyTier: input.policyTier } : {}),
     webSearchEnabled: input.webSearchEnabled === true,
     webSearchProvider:
       input.webSearchEnabled === true ? (input.webSearchProvider ?? "brave") : null,
@@ -327,6 +302,10 @@ export function loadOnboardCommandResumeSession(): {
 
 export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): SandboxEntry {
   const pending = input.inferenceRouteReservation?.entry ?? registry.getSandbox(input.sandboxName);
+  const pendingRoute =
+    input.reservationSessionId && pending
+      ? registry.normalizeSandboxInferenceRouteSelection(normalizeInferenceSelection(pending))
+      : null;
   const pendingHostLocalInferenceReceipt =
     input.hostLocalInferenceReceipt !== undefined
       ? input.hostLocalInferenceReceipt
@@ -337,6 +316,9 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
       : pending?.hostLocalInferenceProvenance;
   const entry = buildCreatedSandboxRegistryEntry({
     ...input,
+    inferenceSelection: pendingRoute
+      ? { ...input.inferenceSelection, ...pendingRoute }
+      : input.inferenceSelection,
     ...(pendingHostLocalInferenceReceipt === undefined
       ? {}
       : { hostLocalInferenceReceipt: pendingHostLocalInferenceReceipt }),
@@ -372,8 +354,19 @@ export function registerCreatedSandbox(input: CreatedSandboxRegistrationInput): 
     );
   }
   const writeRegistry = input.registerSandbox ?? registry.registerSandbox;
-  const registered = input.inferenceRouteReservation
-    ? writeRegistry(entry, input.inferenceRouteReservation)
-    : writeRegistry(entry);
+  const pendingOptions =
+    input.reservationSessionId && !input.verifiedCreate
+      ? {
+          pending: true as const,
+          reservationSessionId: input.reservationSessionId,
+        }
+      : undefined;
+  const registrationOptions = input.verifiedCreate
+    ? { verifiedCreate: input.verifiedCreate }
+    : pendingOptions;
+  const registered =
+    input.inferenceRouteReservation || registrationOptions
+      ? writeRegistry(entry, input.inferenceRouteReservation, registrationOptions)
+      : writeRegistry(entry);
   return registered ?? entry;
 }

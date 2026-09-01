@@ -23,7 +23,6 @@ export interface OnboardSessionUpdateInput {
   webSearchConfig?: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure | string;
   observabilityEnabled?: boolean;
-  policyPresets?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
   hermesToolGateways?: string[] | null;
   /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
@@ -87,7 +86,6 @@ export function toSessionUpdates(updates: OnboardSessionUpdateInput = {}): Sessi
   if (typeof updates.observabilityEnabled === "boolean") {
     normalized.observabilityEnabled = updates.observabilityEnabled;
   }
-  if (updates.policyPresets !== undefined) normalized.policyPresets = updates.policyPresets;
   if (updates.messagingPlan !== undefined) normalized.messagingPlan = updates.messagingPlan;
   if (updates.hermesToolGateways !== undefined)
     normalized.hermesToolGateways = updates.hermesToolGateways;

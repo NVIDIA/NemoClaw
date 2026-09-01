@@ -124,6 +124,9 @@ wrong_owner = module.Identity(
 )
 print(json.dumps({
     "devices-unlock": verify("/sandbox/.openclaw", "devices", "unlock"),
+    "identity-unlock": verify(
+        "/sandbox/.openclaw", "identity", "unlock", root_mode=0o700
+    ),
     "devices-private-directory": verify(
         "/sandbox/.openclaw", "devices", "unlock", root_mode=0o700
     ),
@@ -161,7 +164,7 @@ describe("state directory guard verification", () => {
     expect(modes["0750"]).toBeNull();
   });
 
-  it("accepts native OpenClaw devices modes only while restoring mutable state (#8112)", () => {
+  it("accepts native OpenClaw private runtime modes only while restoring mutable state (#8112)", () => {
     const result = spawnSync(
       "python3",
       ["-I", "-c", VERIFY_OPENCLAW_NATIVE_MUTABLE_MODES, GUARD_PATH],
@@ -171,6 +174,7 @@ describe("state directory guard verification", () => {
     expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
     const outcomes = JSON.parse(result.stdout) as Record<string, Array<{ code: string }> | null>;
     expect(outcomes["devices-unlock"]).toEqual([]);
+    expect(outcomes["identity-unlock"]).toEqual([]);
     expect(outcomes["devices-private-directory"]).toEqual([]);
     expect(outcomes["devices-nested-private-directory"]).toEqual([]);
     expect(outcomes["devices-normal-directory"]).toBeNull();

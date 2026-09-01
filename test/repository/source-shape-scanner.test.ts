@@ -155,6 +155,27 @@ describe("source-shape scanner", () => {
     expect(cases).toEqual(["mirrors blueprint keys", "mirrors an E2E manifest"]);
   });
 
+  it("detects protected reviewed runtime artifact assertions", () => {
+    const cases = detectedCaseNames(`
+      import fs from "node:fs";
+      import path from "node:path";
+      import { expect, it } from "vitest";
+
+      it("pins reviewed runtime bytes", () => {
+        const source = fs.readFileSync(
+          path.join(
+            process.cwd(),
+            "tools/mcp-tool-discovery-runtime/reviewed-runtime-bundle/managed-startup-image-runtime.bundle",
+          ),
+          "utf8",
+        );
+        expect(source).toContain("reviewed runtime implementation detail");
+      });
+    `);
+
+    expect(cases).toEqual(["pins reviewed runtime bytes"]);
+  });
+
   it("detects Node assertions and source-derived expected arguments", () => {
     const cases = detectedCaseNames(`
       import assert from "node:assert/strict";
@@ -260,7 +281,7 @@ describe("source-shape scanner", () => {
       import { expect, it } from "vitest";
 
       it("reads a deep config path", () => {
-        const raw = readFileSync("../../nemoclaw-blueprint/blueprint.yaml", "utf8");
+        const raw = readFileSync("../../../nemoclaw-blueprint/blueprint.yaml", "utf8");
         expect(raw).toContain("version:");
       });
 
@@ -335,7 +356,7 @@ describe("source-shape scanner", () => {
       });
 
       it("ignores a required fixture", () => {
-        expect(require("../fixtures/package.json").name).toBe("fixture");
+        expect(require("./fixtures/package.json").name).toBe("fixture");
       });
     `);
 

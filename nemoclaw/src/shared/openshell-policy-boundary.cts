@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import YAML from "yaml";
 
 export type OpenShellPolicyMapping = Record<string, unknown>;
@@ -15,6 +17,38 @@ export interface ParsedOpenShellPolicy {
   readonly policy: ValidatedOpenShellPolicyMapping;
 }
 
+export interface OpenShellPolicyIdentity {
+  readonly hash: string;
+  readonly activeVersion: number;
+}
+
+export interface OpenShellPolicyInspection {
+  readonly policySource: "sandbox" | "global";
+  readonly effectivePolicy: OpenShellPolicyMapping;
+  readonly policyIdentity: OpenShellPolicyIdentity;
+}
+
+/** Result of checking whether a verified active global policy exists. */
+export type ActiveGlobalPolicyInspection =
+  | { readonly state: "absent" }
+  | {
+      readonly state: "active";
+      readonly inspection: OpenShellPolicyInspection & { readonly policySource: "global" };
+    };
+
+export type OpenShellGlobalPolicyHistoryState = "absent" | "present" | "invalid";
+
+const OPENSHELL_GLOBAL_POLICY_HISTORY_ABSENT = "No global policy history found";
+
+/** Classify the exact OpenShell 0.0.106 global-policy history output contract. */
+export function classifyOpenShellGlobalPolicyHistory(
+  stdout: string,
+  stderr: string,
+): OpenShellGlobalPolicyHistoryState {
+  if (stdout.trim().length > 0) return "present";
+  return stderr.trim() === OPENSHELL_GLOBAL_POLICY_HISTORY_ABSENT ? "absent" : "invalid";
+}
+
 const MISSING_POLICY_DOCUMENT =
   "Current policy from openshell policy get --base does not contain a policy YAML document";
 
@@ -22,14 +56,201 @@ function isMapping(value: unknown): value is OpenShellPolicyMapping {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const POLICY_HASH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$/u;
+
+function positiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function parsePolicyIdentity(
+  metadata: OpenShellPolicyMapping,
+  invalidMessage: string,
+): OpenShellPolicyIdentity {
+  if (
+    typeof metadata.hash !== "string" ||
+    !POLICY_HASH_PATTERN.test(metadata.hash) ||
+    !positiveInteger(metadata.active_version)
+  ) {
+    throw new Error(invalidMessage);
+  }
+  return { hash: metadata.hash, activeVersion: metadata.active_version };
+}
+
+function parseJsonMapping(source: string, invalidMessage: string): OpenShellPolicyMapping {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    throw new Error(invalidMessage);
+  }
+  if (!isMapping(parsed)) {
+    throw new Error(invalidMessage);
+  }
+  return parsed;
+}
+
+/** Parse machine-readable effective policy metadata for one sandbox. */
+export function parseSandboxPolicyMetadata(
+  raw: string,
+  sandboxName: string,
+): OpenShellPolicyInspection {
+  if (raw.trim().length === 0) {
+    throw new Error("OpenShell returned empty sandbox policy metadata");
+  }
+  const metadata = parseJsonMapping(raw, "OpenShell returned malformed sandbox policy metadata");
+  if (
+    metadata.scope !== "sandbox" ||
+    metadata.sandbox !== sandboxName ||
+    metadata.status !== "effective" ||
+    (metadata.policy_source !== "sandbox" && metadata.policy_source !== "global") ||
+    !isMapping(metadata.policy)
+  ) {
+    throw new Error("OpenShell returned invalid sandbox policy metadata");
+  }
+  return {
+    policySource: metadata.policy_source,
+    effectivePolicy: metadata.policy,
+    policyIdentity: parsePolicyIdentity(
+      metadata,
+      "OpenShell returned invalid sandbox policy identity metadata",
+    ),
+  };
+}
+
+/** Parse one global policy revision without treating absence as NemoClaw ownership. */
+export function parseActiveGlobalPolicyMetadata(raw: string): ActiveGlobalPolicyInspection {
+  if (raw.trim().length === 0) {
+    throw new Error("OpenShell returned empty global policy metadata");
+  }
+  const metadata = parseJsonMapping(raw, "OpenShell returned malformed global policy metadata");
+  if (
+    metadata.scope !== "global" ||
+    (metadata.status !== "loaded" && metadata.status !== "superseded") ||
+    metadata.policy_source !== "global" ||
+    Object.hasOwn(metadata, "sandbox")
+  ) {
+    throw new Error("OpenShell returned invalid global policy metadata");
+  }
+  if (metadata.status === "superseded") return { state: "absent" };
+  if (!isMapping(metadata.policy)) {
+    throw new Error("OpenShell returned invalid global policy metadata");
+  }
+  return {
+    state: "active",
+    inspection: {
+      policySource: "global",
+      effectivePolicy: metadata.policy,
+      policyIdentity: parsePolicyIdentity(
+        metadata,
+        "OpenShell returned invalid global policy metadata",
+      ),
+    },
+  };
+}
+
+function policyMapping(value: unknown, invalidMessage: string): OpenShellPolicyMapping {
+  if (!isMapping(value)) throw new Error(invalidMessage);
+  return value;
+}
+
+function formatPolicyKeys(keys: readonly string[]): string {
+  return keys.map((key) => JSON.stringify(key)).join(", ");
+}
+
+function policyValueContains(observed: unknown, required: unknown): boolean {
+  if (isMapping(required)) {
+    return (
+      isMapping(observed) &&
+      Object.entries(required).every(
+        ([key, value]) =>
+          Object.hasOwn(observed, key) && policyValueContains(observed[key], value),
+      )
+    );
+  }
+  if (Array.isArray(required)) {
+    return (
+      Array.isArray(observed) &&
+      required.every((requiredValue) =>
+        observed.some((observedValue) => policyValueContains(observedValue, requiredValue)),
+      )
+    );
+  }
+  return isDeepStrictEqual(observed, required);
+}
+
+function assertPolicyRequirementContainmentForOwner(
+  inspection: OpenShellPolicyInspection,
+  requiredPolicy: OpenShellPolicyMapping,
+  owner: string,
+): void {
+  const effectivePolicy = policyMapping(
+    inspection.effectivePolicy,
+    "the observed effective policy is invalid",
+  );
+  const required = policyMapping(requiredPolicy, "the required policy input is invalid");
+  const requiredNetwork =
+    required.network_policies === undefined
+      ? {}
+      : policyMapping(required.network_policies, "the required network policy input is invalid");
+  const observedNetwork = isMapping(effectivePolicy.network_policies)
+    ? effectivePolicy.network_policies
+    : null;
+  const missing: string[] = [];
+  const drifted: string[] = [];
+  for (const key of Object.keys(requiredNetwork).sort()) {
+    if (!observedNetwork || !Object.hasOwn(observedNetwork, key)) {
+      missing.push(key);
+    } else if (!policyValueContains(observedNetwork[key], requiredNetwork[key])) {
+      drifted.push(key);
+    }
+  }
+  const requiredSections = Object.keys(required)
+    .filter((key) => key !== "network_policies" && key !== "version")
+    .sort();
+  const missingSections: string[] = [];
+  const driftedSections: string[] = [];
+  for (const key of requiredSections) {
+    if (!Object.hasOwn(effectivePolicy, key)) {
+      missingSections.push(key);
+    } else if (!policyValueContains(effectivePolicy[key], required[key])) {
+      driftedSections.push(key);
+    }
+  }
+  if (
+    missing.length === 0 &&
+    drifted.length === 0 &&
+    missingSections.length === 0 &&
+    driftedSections.length === 0
+  ) {
+    return;
+  }
+  const differences = [
+    ...(missing.length > 0 ? [`missing entries ${formatPolicyKeys(missing)}`] : []),
+    ...(drifted.length > 0 ? [`drifted entries ${formatPolicyKeys(drifted)}`] : []),
+    ...(missingSections.length > 0
+      ? [`missing sections ${formatPolicyKeys(missingSections)}`]
+      : []),
+    ...(driftedSections.length > 0
+      ? [`drifted sections ${formatPolicyKeys(driftedSections)}`]
+      : []),
+  ].join("; ");
+  throw new Error(`the ${owner} has ${differences}`);
+}
+
+/** Require a policy to contain the requested entries and sections. */
+export function assertPolicyRequirementContainment(
+  inspection: OpenShellPolicyInspection,
+  requiredPolicy: OpenShellPolicyMapping,
+): void {
+  assertPolicyRequirementContainmentForOwner(inspection, requiredPolicy, "observed policy");
+}
+
 function assertValidatedPolicyFields(
   policy: OpenShellPolicyMapping,
 ): asserts policy is ValidatedOpenShellPolicyMapping {
   if (
     policy.version !== undefined &&
-    (typeof policy.version !== "number" ||
-      !Number.isInteger(policy.version) ||
-      policy.version < 1)
+    (typeof policy.version !== "number" || !Number.isInteger(policy.version) || policy.version < 1)
   ) {
     throw new Error(
       "Current policy from openshell policy get --base version must be a positive integer",
@@ -93,8 +314,8 @@ export function parseOpenShellPolicy(raw: string): ParsedOpenShellPolicy {
 
 // invalidState: OpenShell `policy get --base` unexpectedly includes a
 // provider-composed `_provider_*` entry that `policy set` must never receive.
-// sourceBoundary: OpenShell owns base-policy composition; NemoClaw owns every
-// read-modify-write payload it submits.
+// sourceBoundary: OpenShell owns base-policy composition; NemoClaw is responsible
+// only for the exact read-modify-write payload of the current command.
 // whyNotSourceFix: the upstream formatter cannot be fixed from this repository,
 // so filter defensively until the supported contract guarantees their absence.
 // regressionTest: the root policy round-trip and plugin runner policy tests.
