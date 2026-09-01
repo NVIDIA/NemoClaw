@@ -154,6 +154,13 @@ jobs:
           name: pr-conflict-resolution-${{ matrix.item.pr_number }}-${{ matrix.item.head_sha }}-${{ matrix.item.base_sha }}
           path: ${{ env.ARTIFACT_DIR }}
 
+      - name: Explain missing resolution patch
+        if: ${{ steps.download.outcome == 'failure' }}
+        env:
+          PR_URL: ${{ github.server_url }}/${{ github.repository }}/pull/${{ matrix.item.pr_number }}
+        run: |
+          echo "::warning title=Conflict resolution was not published::The trusted publisher could not download the resolution patch for ${PR_URL}. No pull request branch was modified. Inspect the matching Resolve PR job and artifact download error before retrying."
+
       - name: Validate and publish the merge commit
         if: ${{ steps.download.outcome == 'success' }}
         env:

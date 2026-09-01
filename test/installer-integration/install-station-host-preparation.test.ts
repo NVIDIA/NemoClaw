@@ -515,17 +515,12 @@ check_vllm_container_conflicts
   it("blocks only the user's active agent before offering a vLLM container handoff (#7287, #10649)", () => {
     const active = runSourced(
       STATION_PREPARE,
-      `
-MODE=--check
+      `MODE=--check
 ps() { printf '%s 999 1 openshell openshell gateway\n%s 1000 1 node node /home/other/.nemoclaw/openshell gateway\n' "$EUID" "$((EUID + 1))"; }
 ss() { :; }
-docker() {
-  printf '1234567890abcdef|nvcr.io/nvidia/vllm:station|vllm serve hidden-model-name\n'
-}
-check_initial_workload_quiescence
-`,
+docker() { printf '1234567890abcdef|nvcr.io/nvidia/vllm:station|vllm serve hidden-model-name\n'; }
+check_initial_workload_quiescence`,
     );
-
     expect(active.result.status, active.output).toBe(1);
     expect(active.output).toContain("Agent workload is active: pid=999 process=openshell");
     expect(active.output).not.toMatch(/pid=1000|container_id=1234567890ab|hidden-model-name/);
