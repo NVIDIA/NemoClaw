@@ -73,6 +73,11 @@ type SandboxForwardRecoveryOptions = {
   isWsl?: boolean;
 };
 
+export type DeclaredAgentForwardRecoveryFailure = {
+  ports: number[];
+  observedRows: string[];
+};
+
 type DashboardForwardStopRunner = (
   args: string[],
   options: { ignoreError: true; stdio: "ignore"; timeout: number },
@@ -466,9 +471,33 @@ function resolveDeclaredAgentForwardPorts(
  * recorded API port, or recovery demands a port that belongs to a sibling
  * sandbox and reports a failure the sandbox cannot repair.
  */
+function observeForwardRowsForPorts(ports: readonly number[]): string[] {
+  const result = captureOpenshell(["forward", "list"], {
+    ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  if (!result || isCommandTimeout(result) || result.status !== 0) {
+    return ["<OpenShell forward list unavailable>"];
+  }
+  const selectedPorts = new Set(ports.map(String));
+  const rows = (parseForwardList(result.output) as SandboxForwardListEntry[])
+    .filter((entry) => selectedPorts.has(entry.port))
+    .map((entry) =>
+      JSON.stringify({
+        sandboxName: entry.sandboxName,
+        bind: entry.bind ?? null,
+        port: entry.port,
+        pid: entry.pid ?? null,
+        status: entry.status,
+      }),
+    );
+  return rows.length > 0 ? rows : ["<no matching OpenShell forward rows>"];
+}
+
 export function ensureDeclaredAgentForwardPortsHealthy(
   sandboxName: string,
   primaryPort: number,
+  options: { onFailure?: (failure: DeclaredAgentForwardRecoveryFailure) => void } = {},
 ): boolean | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   if (!agent) return null;
@@ -481,19 +510,21 @@ export function ensureDeclaredAgentForwardPortsHealthy(
     hermesDashboard?.publicPort ?? null,
   );
   if (ports.length === 0) return null;
-  let allHealthy = true;
+  const failedPorts: number[] = [];
   for (const port of ports) {
     const health = isSandboxPortForwardHealthy(sandboxName, port);
     if (health === true) continue;
-    if (health === "occupied") {
-      allHealthy = false;
-      continue;
-    }
-    if (!ensureSandboxPortForwardForPort(sandboxName, port)) {
-      allHealthy = false;
+    if (health === "occupied" || !ensureSandboxPortForwardForPort(sandboxName, port)) {
+      failedPorts.push(port);
     }
   }
-  return allHealthy;
+  if (failedPorts.length > 0) {
+    options.onFailure?.({
+      ports: failedPorts,
+      observedRows: observeForwardRowsForPorts(failedPorts),
+    });
+  }
+  return failedPorts.length === 0;
 }
 
 /**
@@ -568,11 +599,22 @@ export function resolveSandboxLaunchForwardPorts(sandboxName: string): number[] 
 export function recoverDeclaredAgentForwardPorts(
   sandboxName: string,
   recoveryPort: number,
-  { quiet }: { quiet: boolean },
+  options: {
+    quiet: boolean;
+    onFailure?: (failure: DeclaredAgentForwardRecoveryFailure) => void;
+  },
 ): boolean | null {
-  const recovered = ensureDeclaredAgentForwardPortsHealthy(sandboxName, recoveryPort);
-  if (!quiet && recovered === false) {
-    console.error("  One or more agent-declared port forwards could not be re-established.");
+  let failure: DeclaredAgentForwardRecoveryFailure | undefined;
+  const recovered = ensureDeclaredAgentForwardPortsHealthy(sandboxName, recoveryPort, {
+    onFailure: (value) => {
+      failure = value;
+      options.onFailure?.(value);
+    },
+  });
+  if (!options.quiet && recovered === false && failure) {
+    console.error(
+      `  Agent-declared port forward${failure.ports.length === 1 ? "" : "s"} ${failure.ports.join(", ")} could not be re-established.`,
+    );
   }
   return recovered;
 }

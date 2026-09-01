@@ -7,6 +7,7 @@ export type SandboxForwardListEntry = {
   sandboxName: string;
   bind?: string;
   port: string;
+  pid?: number | null;
   status: string;
 };
 
@@ -24,6 +25,14 @@ function liveEntriesForPort(
   return entries.filter((entry) => entry.port === port && isLiveSandboxForwardStatus(entry.status));
 }
 
+function matchesForwardBind(bind: string | undefined, expectedBind: string | undefined): boolean {
+  return (
+    expectedBind === undefined ||
+    bind === expectedBind ||
+    (expectedBind === "0.0.0.0" && ["::", "[::]", "*"].includes(bind ?? ""))
+  );
+}
+
 export function classifySandboxForwardHealth(
   entries: SandboxForwardListEntry[],
   sandboxName: string,
@@ -33,22 +42,18 @@ export function classifySandboxForwardHealth(
   const liveEntries = liveEntriesForPort(entries, port);
   if (liveEntries.some((entry) => entry.sandboxName !== sandboxName)) return "occupied";
   return liveEntries.some(
-    (entry) =>
-      entry.sandboxName === sandboxName &&
-      (expectedBind === undefined ||
-        entry.bind === expectedBind ||
-        (expectedBind === "0.0.0.0" && ["::", "[::]", "*"].includes(entry.bind ?? ""))),
+    (entry) => entry.sandboxName === sandboxName && matchesForwardBind(entry.bind, expectedBind),
   );
 }
 
 /**
  * Like {@link classifySandboxForwardHealth} but accepts a reachability
  * callback that probes whether the local forwarded port actually answers.
- * OpenShell's exact live owner metadata remains authoritative: reachability
- * cannot prove which process owns a local listener, so it must never upgrade a
- * missing or non-running entry. A target-owned running row is necessary but not
- * sufficient; it must also answer the local transport probe so stale list data
- * cannot make recovery report a dead forward as healthy.
+ * OpenShell's owner receipt remains authoritative: reachability cannot prove
+ * which process owns a local listener, so it must never upgrade a missing or
+ * ambiguous entry. A target-owned row with OpenShell's positive PID receipt is
+ * necessary but not sufficient. Live and stale-status rows must both answer
+ * the local transport probe.
  */
 export function classifyForwardHealthWithReachability(
   entries: SandboxForwardListEntry[],
@@ -58,7 +63,19 @@ export function classifyForwardHealthWithReachability(
   expectedBind?: string,
 ): Exclude<SandboxForwardHealth, null> {
   const ownership = classifySandboxForwardHealth(entries, sandboxName, port, expectedBind);
-  if (ownership !== true) return ownership;
+  if (ownership === "occupied") return ownership;
+  if (ownership === true) return isReachable();
+
+  const portEntries = entries.filter((entry) => entry.port === port);
+  const targetOwnsReceipt = portEntries.some(
+    (entry) =>
+      entry.sandboxName === sandboxName &&
+      Number.isInteger(entry.pid) &&
+      Number(entry.pid) > 0 &&
+      matchesForwardBind(entry.bind, expectedBind),
+  );
+  const receiptOwnerIsAmbiguous = portEntries.some((entry) => entry.sandboxName !== sandboxName);
+  if (!targetOwnsReceipt || receiptOwnerIsAmbiguous) return false;
   return isReachable();
 }
 

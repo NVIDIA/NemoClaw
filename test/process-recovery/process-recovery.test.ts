@@ -962,11 +962,10 @@ hermes-box  127.0.0.1  8642  12346  running`;
       agent: "hermes",
       dashboardPort: 18789,
     });
-    let port9100Started = false;
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation((port: unknown) => {
       if (Number(port) === 18789) return true;
       if (Number(port) === 8642) return true;
-      if (Number(port) === 9100) return port9100Started;
+      if (Number(port) === 9100) return false;
       return false;
     });
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
@@ -980,19 +979,19 @@ hermes-box  127.0.0.1  8642  12346  running`;
       }
       return { status: 0 } as never;
     });
-
     const result = withFakeOpenshellBinary(() =>
       checkAndRecoverSandboxProcesses("hermes-box", {
         quiet: true,
         requestGatewaySupervisorAction,
       }),
     );
-    void port9100Started;
-    expect(result.checked).toBe(true);
     expect(result.wasRunning).toBe(true);
     expect(result.forwardRecovered).toBe(false);
-    expect(result.forwardRecoveryFailed).toBe(true);
-    expect(result.forwardRecoveryFailureDetail).toContain("agent-declared host forwards");
+    expect(result).toMatchObject({
+      forwardRecoveryFailed: true,
+      forwardRecoveryFailurePorts: [9100],
+    });
+    expect(JSON.stringify(result)).toContain("agent-declared host forwards");
     expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
   });
 

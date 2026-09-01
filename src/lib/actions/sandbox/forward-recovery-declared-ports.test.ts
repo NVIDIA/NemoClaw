@@ -106,4 +106,27 @@ describe("ensureDeclaredAgentForwardPortsHealthy", () => {
     expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18789)).toBe(true);
     expect(mocks.runOpenshell).not.toHaveBeenCalled();
   });
+
+  it("does not restart a reachable target-owned forward with stale list status (#10496)", async () => {
+    mocks.getSandbox.mockReturnValue({ agent: "hermes", dashboardPort: 18789 });
+    mocks.captureOpenshell.mockReturnValue(
+      forwardList(["beta 127.0.0.1 18789 101 running", "beta 127.0.0.1 8642 999 dead"]),
+    );
+    const { ensureDeclaredAgentForwardPortsHealthy } = await import("./forward-recovery");
+
+    expect(ensureDeclaredAgentForwardPortsHealthy("beta", 18789)).toBe(true);
+    expect(mocks.isLocalForwardReachable).toHaveBeenCalledWith(8642);
+    expect(mocks.runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("reports the declared port that recovery could not restore (#10496)", async () => {
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    mocks.getSandbox.mockReturnValue({ agent: "hermes", dashboardPort: 18789 });
+    mocks.captureOpenshell.mockReturnValue(forwardList(["beta 127.0.0.1 18789 101 running"]));
+    const { recoverDeclaredAgentForwardPorts } = await import("./forward-recovery");
+    const onFailure = vi.fn();
+
+    expect(recoverDeclaredAgentForwardPorts("beta", 18789, { quiet: true, onFailure })).toBe(false);
+    expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({ ports: [8642] }));
+  });
 });

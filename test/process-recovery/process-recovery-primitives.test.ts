@@ -605,7 +605,32 @@ describe("classifyForwardHealthWithReachability", () => {
     expect(probed).toBe(true);
   });
 
-  it("does not trust an arbitrary local listener for a non-running owned entry", () => {
+  it("accepts a reachable forward when the target-owned receipt has stale status (#10496)", () => {
+    let probed = false;
+    const result = classifyForwardHealthWithReachability(
+      [
+        {
+          sandboxName: "beta",
+          bind: "127.0.0.1",
+          port: "18790",
+          pid: 12345,
+          status: "dead",
+        },
+      ],
+      "beta",
+      "18790",
+      () => {
+        probed = true;
+        return true;
+      },
+      "127.0.0.1",
+    );
+
+    expect(result).toBe(true);
+    expect(probed).toBe(true);
+  });
+
+  it("does not trust a reachable non-running row without an OpenShell PID receipt", () => {
     let probed = false;
     const result = classifyForwardHealthWithReachability(
       [{ sandboxName: "beta", port: "18790", status: "dead" }],
@@ -649,6 +674,38 @@ describe("classifyForwardHealthWithReachability", () => {
     );
     expect(result).toBe(false);
     expect(probed).toBe(true);
+  });
+
+  it("does not accept a reachable stale receipt when another sandbox also claims the port (#10496)", () => {
+    let probed = false;
+    const result = classifyForwardHealthWithReachability(
+      [
+        {
+          sandboxName: "beta",
+          bind: "127.0.0.1",
+          port: "18790",
+          pid: 12345,
+          status: "dead",
+        },
+        {
+          sandboxName: "alpha",
+          bind: "127.0.0.1",
+          port: "18790",
+          pid: 54321,
+          status: "dead",
+        },
+      ],
+      "beta",
+      "18790",
+      () => {
+        probed = true;
+        return true;
+      },
+      "127.0.0.1",
+    );
+
+    expect(result).toBe(false);
+    expect(probed).toBe(false);
   });
 
   it("returns occupied even when the port answers if another sandbox owns it", () => {

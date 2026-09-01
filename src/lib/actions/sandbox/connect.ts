@@ -275,16 +275,23 @@ export function parseSandboxConnectArgs(
 function exitOnForwardRecoveryFailure(
   sandboxName: string,
   agentName: string,
-  port: number,
+  ports: number[],
   detail?: string,
+  observedRows: string[] = [],
 ): never {
   console.error("");
   console.error(
     `  Probe failed: ${agentName} gateway is running in '${sandboxName}', but ${detail ?? "the dashboard/API host forward could not be restored"}.`,
   );
-  console.error(
-    `  Run \`openshell forward start --background ${port} ${sandboxName}\` manually and re-run \`nemoclaw ${sandboxName} recover\`.`,
-  );
+  if (observedRows.length > 0) {
+    console.error("  OpenShell forward rows for the failed declared port(s):");
+    for (const row of observedRows) console.error(`    ${row}`);
+  }
+  for (const port of ports) {
+    console.error(
+      `  Run \`openshell forward start --background ${port} ${sandboxName}\` manually and re-run \`nemoclaw ${sandboxName} recover\`.`,
+    );
+  }
   process.exit(1);
 }
 
@@ -422,12 +429,18 @@ async function runSandboxConnectProbe(
       "forwardRecoveryFailureDetail" in processCheck
         ? String(processCheck.forwardRecoveryFailureDetail)
         : undefined;
-    exitOnForwardRecoveryFailure(
-      sandboxName,
-      agentName,
-      resolveSandboxDashboardPort(sandboxName),
-      detail,
-    );
+    const failurePorts =
+      "forwardRecoveryFailurePorts" in processCheck &&
+      Array.isArray(processCheck.forwardRecoveryFailurePorts) &&
+      processCheck.forwardRecoveryFailurePorts.length > 0
+        ? processCheck.forwardRecoveryFailurePorts
+        : [resolveSandboxDashboardPort(sandboxName)];
+    const observedRows =
+      "forwardRecoveryObservedRows" in processCheck &&
+      Array.isArray(processCheck.forwardRecoveryObservedRows)
+        ? processCheck.forwardRecoveryObservedRows.map(String)
+        : [];
+    exitOnForwardRecoveryFailure(sandboxName, agentName, failurePorts, detail, observedRows);
   }
   if ("recoveryFailureDetail" in processCheck && processCheck.recoveryFailureDetail) {
     probeTiming?.markFailureStage("processes");

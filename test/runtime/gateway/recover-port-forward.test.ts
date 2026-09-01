@@ -324,7 +324,7 @@ function runRecover(fixture: Fixture) {
 
 describe("nemoclaw <name> recover", () => {
   it(
-    "re-establishes the dashboard port-forward when the gateway is alive but the forward is dead",
+    "keeps a reachable target-owned forward when OpenShell reports stale status (#10496)",
     testTimeoutOptions(20_000),
     () => {
       const fixture = setupFixture({
@@ -335,16 +335,9 @@ describe("nemoclaw <name> recover", () => {
       const result = runRecover(fixture);
       expect(result.status).toBe(0);
 
-      const combined = (result.stdout || "") + (result.stderr || "");
-      expect(combined).toContain(
-        "gateway is running in 'alive-sandbox'; restored dashboard port forward",
-      );
-
       const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-      const stopIdx = calls.findIndex((l) => l.startsWith("forward stop "));
-      const startIdx = calls.findIndex((l) => l.startsWith("forward start "));
-      expect(stopIdx).toBeGreaterThanOrEqual(0);
-      expect(startIdx).toBeGreaterThan(stopIdx);
+      expect(calls.some((line) => line.startsWith("forward stop "))).toBe(false);
+      expect(calls.some((line) => line.startsWith("forward start "))).toBe(false);
     },
   );
 
@@ -355,7 +348,7 @@ describe("nemoclaw <name> recover", () => {
       const fixture = setupFixture({
         sandboxName: "delayed-owner-sb",
         gatewayProbe: "RUNNING",
-        forwardListStatus: "dead",
+        forwardListStatus: "missing",
         forwardStartDelayPolls: 3,
         recoveryWaitMs: "2000",
       });
