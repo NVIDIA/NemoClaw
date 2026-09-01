@@ -1161,7 +1161,13 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
-    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", { force: false });
+    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha", {
+      force: false,
+      runtimeSelection: expect.objectContaining({
+        gatewayName: "nemoclaw-19080",
+        workspace: "default",
+      }),
+    });
   });
 
   it("does not require mutable Hermes config for absent-sandbox cleanup", async () => {
@@ -1175,6 +1181,10 @@ describe("destroySandbox flow", () => {
 
     expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
       force: false,
+      runtimeSelection: expect.objectContaining({
+        gatewayName: "nemoclaw-19080",
+        workspace: "default",
+      }),
     });
   });
 
@@ -1437,6 +1447,10 @@ describe("destroySandbox flow", () => {
 
     expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
       force: false,
+      runtimeSelection: expect.objectContaining({
+        gatewayName: "nemoclaw-19080",
+        workspace: "default",
+      }),
     });
     expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).toHaveBeenCalledTimes(2);
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
@@ -1444,7 +1458,7 @@ describe("destroySandbox flow", () => {
     expect(harness.updateSessionSpy).not.toHaveBeenCalled();
     expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
       "nemoclaw-19080",
-      harness.runOpenshellSpy,
+      expect.any(Function),
     );
   });
 });
