@@ -24,6 +24,24 @@ function withFirmwareModel(model: string, fn: () => void): void {
 }
 
 describe("N1x NVIDIA platform detection", () => {
+  it("classifies a trusted DGX Spark FastOS marker on an OEM ARM64 host (#10717)", () => {
+    withFirmwareModel("OEM GB10 system", () => {
+      expect(
+        detectNvidiaPlatform({
+          hostPlatform: "linux",
+          architecture: "arm64",
+          collectN1xIdentityImpl: () => ({
+            candidate: true,
+            fastOsMarker: false,
+            fastOsPlatform: "spark",
+            pciGpu: undefined,
+            qualified: false,
+          }),
+        }),
+      ).toBe("spark");
+    });
+  });
+
   it("requires a qualified identity instead of generic SKU 1 firmware (#8574)", () => {
     withFirmwareModel("SKU 1", () => {
       const qualified = () => ({

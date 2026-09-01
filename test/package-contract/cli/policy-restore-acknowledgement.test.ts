@@ -36,8 +36,6 @@ const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
 registry.getSandbox = (name) => (name === "test-sandbox" ? { name, agent: "hermes" } : null);
 registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
-registry.getBaselineExclusions = () => [{ key: "npm_registry", digest: "digest-1" }];
-registry.getBaselineExclusionTransition = () => null;
 policies.resolveSandboxBaselinePolicy = () => ({
   agent: "hermes",
   policyPath: "/policy-additions.yaml",

@@ -31,6 +31,8 @@ export interface McpDestroyPreparation {
   destroyAlreadyPrepared: boolean;
   /** True when a previous destroy already confirmed the sandbox was absent. */
   destroyAlreadyPending: boolean;
+  /** True when `--force` continued without scrubbing the retained-volume adapter entry. */
+  adapterScrubSkipped?: true;
 }
 
 export function cloneMcpBridgeEntry(entry: McpBridgeEntry): McpBridgeEntry {
@@ -89,8 +91,7 @@ export async function discardSafeIncompleteMcpAdds(
   if (Object.keys(remaining).length === Object.keys(bridges).length) return sandbox;
   for (const entry of providerlessPreflighted) {
     if (options.sandboxAbsent) {
-      const ownedRegistration = assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
-      if (ownedRegistration) registry.removeCustomPolicyByName(sandboxName, entry.policyName);
+      assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
     } else {
       removeGeneratedPolicy(sandboxName, entry);
     }

@@ -2,21 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  assertExternalPolicyRequirementContainment as assertCanonicalExternalPolicyRequirementContainment,
   assertPolicyRequirementContainment as assertCanonicalPolicyRequirementContainment,
-  assertMatchingPolicyAuthority as assertCanonicalMatchingPolicyAuthority,
-  assertNemoClawPolicyCreationReceiptMatches as assertCanonicalNemoClawPolicyCreationReceiptMatches,
-  parseActiveGlobalPolicyAuthorityMetadata as parseCanonicalActiveGlobalPolicyAuthorityMetadata,
-  parseNemoClawPolicyCreationReceipt as parseCanonicalNemoClawPolicyCreationReceipt,
-  openShellPolicyValuesEqual as canonicalOpenShellPolicyValuesEqual,
+  classifyOpenShellGlobalPolicyHistory as classifyCanonicalOpenShellGlobalPolicyHistory,
+  parseActiveGlobalPolicyMetadata as parseCanonicalActiveGlobalPolicyMetadata,
   parseOpenShellPolicy as parseCanonicalOpenShellPolicy,
-  parseSandboxPolicyAuthorityMetadata as parseCanonicalSandboxPolicyAuthorityMetadata,
+  parseSandboxPolicyMetadata as parseCanonicalSandboxPolicyMetadata,
   stripProviderComposedPolicies as stripCanonicalProviderComposedPolicies,
-  type NemoClawPolicyCreationReceipt,
   type ActiveGlobalPolicyInspection,
-  type OpenShellPolicyAuthority,
   type OpenShellPolicyIdentity,
-  type SandboxPolicyAuthorityInspection,
+  type OpenShellGlobalPolicyHistoryState,
+  type OpenShellPolicyInspection,
   withoutProviderComposedPolicies as withoutCanonicalProviderComposedPolicies,
 } from "../../../nemoclaw/dist/shared/openshell-policy-boundary.cjs";
 
@@ -26,24 +21,16 @@ import type { JsonObject } from "../core/json-types";
 // generatedBoundary: build:cli emits the canonical .cjs/.d.cts before this
 // CommonJS wrapper is compiled. Keep this file implementation-free.
 export const parseOpenShellPolicy = parseCanonicalOpenShellPolicy;
-export const openShellPolicyValuesEqual = canonicalOpenShellPolicyValuesEqual;
-export const parseNemoClawPolicyCreationReceipt = parseCanonicalNemoClawPolicyCreationReceipt;
-export const parseActiveGlobalPolicyAuthorityMetadata =
-  parseCanonicalActiveGlobalPolicyAuthorityMetadata;
-export const assertNemoClawPolicyCreationReceiptMatches =
-  assertCanonicalNemoClawPolicyCreationReceiptMatches;
+export const classifyOpenShellGlobalPolicyHistory = classifyCanonicalOpenShellGlobalPolicyHistory;
+export const parseActiveGlobalPolicyMetadata = parseCanonicalActiveGlobalPolicyMetadata;
 export const stripProviderComposedPolicies = stripCanonicalProviderComposedPolicies;
-export const parseSandboxPolicyAuthorityMetadata = parseCanonicalSandboxPolicyAuthorityMetadata;
-export const assertMatchingPolicyAuthority = assertCanonicalMatchingPolicyAuthority;
-export const assertExternalPolicyRequirementContainment =
-  assertCanonicalExternalPolicyRequirementContainment;
+export const parseSandboxPolicyMetadata = parseCanonicalSandboxPolicyMetadata;
 export const assertPolicyRequirementContainment = assertCanonicalPolicyRequirementContainment;
 export type {
   ActiveGlobalPolicyInspection,
-  NemoClawPolicyCreationReceipt,
-  OpenShellPolicyAuthority,
   OpenShellPolicyIdentity,
-  SandboxPolicyAuthorityInspection,
+  OpenShellGlobalPolicyHistoryState,
+  OpenShellPolicyInspection,
 };
 
 export function withoutProviderComposedPolicies(policies: JsonObject): JsonObject {

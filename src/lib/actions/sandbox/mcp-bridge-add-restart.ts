@@ -119,14 +119,6 @@ function assertPreparedMcpAddResourcesAbsent(
     );
   }
 
-  const existingPolicy = registry
-    .getCustomPolicies(sandboxName)
-    .find((policy) => policy.name === entry.policyName);
-  if (existingPolicy) {
-    throw new McpBridgeError(
-      `MCP add preflight for '${entry.server}' found an existing policy ownership record '${entry.policyName}'. The durable add manifest was preserved without claiming it.`,
-    );
-  }
   const policyContent = buildMcpBridgePolicyYaml(
     entry.server,
     entry.url,
@@ -273,10 +265,10 @@ async function addMcpBridgeUnlocked(
     adapter,
     url: normalizedUrl,
     env: envNames,
+    allowedIps: [...target.addresses],
     ...(target.trustedPrivateHost
       ? {
           trustedPrivateHost: target.trustedPrivateHost,
-          allowedIps: [...target.addresses],
         }
       : {}),
     ...(providerName ? { providerName } : {}),

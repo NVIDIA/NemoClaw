@@ -33,7 +33,6 @@ Some older modules are still too large or coupled to split directly into actions
 src/lib/agent/**        agent definition, agent-specific onboarding, runtime helpers
 src/lib/credentials/**  credential storage and credential command support
 src/lib/dashboard/**    dashboard contract, health, and recovery helpers
-src/lib/deploy/**       deploy/build-image support that is not yet action-shaped
 src/lib/diagnostics/**  debug collection and diagnostic report helpers
 src/lib/inference/**    inference config, health probes, local runtime helpers
 src/lib/inventory/**    list/status inventory shaping and presentation models

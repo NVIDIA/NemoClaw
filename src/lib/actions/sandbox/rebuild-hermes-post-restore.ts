@@ -4,7 +4,12 @@
 import { CLI_NAME } from "../../cli/branding";
 import { isDirectSandboxFallbackUnavailableError } from "../../sandbox/privileged-exec";
 import type { GatewayRestartResult } from "./gateway-restart";
-import * as processRecovery from "./process-recovery";
+import {
+  checkAndRecoverSandboxProcesses,
+  executePrivilegedSandboxCommand,
+  restartSandboxGateway,
+  type SandboxCommandResult,
+} from "./runtime/hermes-lifecycle";
 
 const HERMES_CRON_CONTROL = "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
@@ -163,7 +168,7 @@ export function restartHermesGatewayAfterStateRestore(
   deps: HermesPostRestoreGatewayDeps = {},
 ): HermesPostRestoreGatewayRestartState {
   if (agentName !== "hermes") return "not-applicable";
-  const restart = deps.restartSandboxGateway ?? processRecovery.restartSandboxGateway;
+  const restart = deps.restartSandboxGateway ?? restartSandboxGateway;
   const result = restart(sandboxName, { quiet: true });
   if (result.ok) return "restarted";
   const mcpRestoreCanSupersede =
@@ -216,7 +221,7 @@ function verifyHermesGatewayAfterStateRestoreImpl(
   if (agentName !== "hermes") return { state: "not-applicable" };
   const restarted = restartState === "restarted";
   const checkAndRecover =
-    deps.checkAndRecoverSandboxProcesses ?? processRecovery.checkAndRecoverSandboxProcesses;
+    deps.checkAndRecoverSandboxProcesses ?? checkAndRecoverSandboxProcesses;
   const observeReplacement = deps.observeHermesCronReplacement ?? observeHermesCronReplacement;
   const maxAttempts = originalIdentity
     ? HERMES_GATEWAY_RECHECK_ATTEMPTS + 1
@@ -533,9 +538,9 @@ function executeCronRestoreControl(
       String(replacementIdentity.start_time),
     );
   }
-  let result: processRecovery.SandboxCommandResult | null;
+  let result: SandboxCommandResult | null;
   try {
-    result = processRecovery.executePrivilegedSandboxCommand(
+    result = executePrivilegedSandboxCommand(
       sandboxName,
       command,
       action === "begin" || action === "observe"

@@ -88,6 +88,55 @@ describe("CLI layer import boundaries (#6245)", () => {
     );
   });
 
+  it("blocks packaged bin shims outside protected layer directories (#6245)", () => {
+    const violations = scanFixture(
+      fixturePath("src/lib", "bin-lib-shim"),
+      'import "../../bin/lib/ports.js";\n',
+    );
+
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail:
+            "src must import implementation modules directly instead of packaged shim bin/lib/ports.js",
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    ["CommonJS require", 'export const ports = require("../../bin/lib/ports.js");\n'],
+    ["dynamic import", 'export const ports = import("../../bin/lib/ports.js");\n'],
+  ])("blocks packaged bin shims loaded through %s (#6245)", (_case, source) => {
+    const violations = scanFixture(fixturePath("src/lib", "bin-lib-call"), source);
+
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: "src-no-bin-lib-shims" }),
+      ]),
+    );
+  });
+
+  it("classifies a bin shim imported through a source-tree symlink (#6245)", () => {
+    const importer = fixturePath("src/lib", "bin-lib-alias-importer");
+    const alias = fixturePath("src/lib", "bin-lib-alias", ".js");
+    const relativeAlias = `./${path.basename(alias)}`;
+    try {
+      fs.symlinkSync(path.join(REPO_ROOT, "bin/lib/ports.js"), alias, "file");
+      fs.writeFileSync(importer, `import "${relativeAlias}";\n`);
+
+      expect(findLayerImportBoundaryViolations(importer)).toEqual([
+        expect.objectContaining({
+          detail:
+            "src must import implementation modules directly instead of packaged shim bin/lib/ports.js",
+        }),
+      ]);
+    } finally {
+      fs.rmSync(importer, { force: true });
+      fs.rmSync(alias, { force: true });
+    }
+  });
+
   it("counts only classes that extend Command as oclif command classes (#6245)", () => {
     const violations = scanFixture(
       fixturePath("src/commands", "implements"),
@@ -198,6 +247,47 @@ describe("CLI layer import boundaries (#6245)", () => {
       fs.rmSync(target, { force: true });
     }
   });
+
+  it.each([
+    { emittedExtension: ".js", sourceExtension: ".ts" },
+    { emittedExtension: ".mjs", sourceExtension: ".mts" },
+    { emittedExtension: ".cjs", sourceExtension: ".cts" },
+  ])(
+    "resolves $emittedExtension output specifiers to $sourceExtension source modules (#6245)",
+    ({ emittedExtension, sourceExtension }) => {
+      const target = fixturePath(
+        "src/lib/adapters",
+        `emitted-specifier-target-${sourceExtension.slice(1)}`,
+        sourceExtension,
+      );
+      const importer = fixturePath(
+        "src/lib/domain",
+        `emitted-specifier-importer-${sourceExtension.slice(1)}`,
+      );
+    const specifier = path
+      .relative(path.dirname(importer), target)
+      .split(path.sep)
+        .join("/");
+      const emittedSpecifier =
+        specifier.slice(0, -sourceExtension.length) + emittedExtension;
+      try {
+        fs.writeFileSync(target, "export const value = true;\n");
+        fs.writeFileSync(
+          importer,
+          `import { value } from "${emittedSpecifier}";\nexport { value };\n`,
+        );
+
+        expect(findLayerImportBoundaryViolations(importer)).toEqual([
+          expect.objectContaining({
+            detail: `domain must not import ${path.relative(REPO_ROOT, target)}`,
+          }),
+        ]);
+      } finally {
+        fs.rmSync(importer, { force: true });
+        fs.rmSync(target, { force: true });
+      }
+    },
+  );
 
   it("resolves an extensionless directory import to its index module (#6245)", () => {
     const targetDir = fs.mkdtempSync(

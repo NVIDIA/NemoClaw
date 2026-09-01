@@ -327,10 +327,11 @@ export function detectNvidiaPlatform(options: DetectNvidiaPlatformOptions = {}):
   }
   if (
     (options.hostPlatform ?? process.platform) === "linux" &&
-    (options.architecture ?? process.arch) === "arm64" &&
-    (options.collectN1xIdentityImpl ?? collectN1xIdentity)().qualified
+    (options.architecture ?? process.arch) === "arm64"
   ) {
-    return "n1x";
+    const fastOsIdentity = (options.collectN1xIdentityImpl ?? collectN1xIdentity)();
+    if (fastOsIdentity.fastOsPlatform === "spark") return "spark";
+    if (fastOsIdentity.qualified) return "n1x";
   }
   return "linux";
 }

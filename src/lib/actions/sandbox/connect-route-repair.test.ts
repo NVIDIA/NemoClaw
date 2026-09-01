@@ -39,7 +39,6 @@ vi.mock("./gateway-state", () => ({
 
 import {
   type ManagedInferenceRouteResetDeps,
-
   probeSandboxInferenceRoute,
   repairSandboxInferenceRouteWithDeps,
   resetManagedInferenceRouteWithDeps,
@@ -65,7 +64,6 @@ function sandbox(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
     model: "nvidia/nemotron-3-super-120b-a12b",
     provider: "nvidia-prod",
     gpuEnabled: false,
-    policies: [],
     ...overrides,
   };
 }
@@ -395,7 +393,6 @@ describe("managed inference route reset unit flow", () => {
     expect(calls.unrecoverable).toEqual([{ sandboxName: "demo", detail: "BROKEN 503 still down" }]);
   });
 });
-
 
 describe("connect inference route retries", () => {
   it("returns the third healthy probe result after two unhealthy probe results (#9218)", () => {

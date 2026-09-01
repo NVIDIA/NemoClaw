@@ -58,18 +58,6 @@ describe("runSandboxSnapshot restore: clone port identity", () => {
             gatewayPort: 18080,
             lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
             lifecycleLiveIdentityFingerprint: "a".repeat(64),
-            policyAuthority: "nemoclaw-managed",
-            policyCreationReceipt: {
-              schemaVersion: 1,
-              origin: "sandbox-create",
-              gatewayName: "nemoclaw-18080",
-              gatewayPort: 18080,
-              sandboxName: "alpha",
-              lifecycleGeneration: "00000000-0000-4000-8000-000000000001",
-              sandboxIdentityFingerprint: "a".repeat(64),
-              policyHash: "policy-alpha",
-              policyVersion: 1,
-            },
           }
         : registeredClone,
     );

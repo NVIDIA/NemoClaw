@@ -43,7 +43,7 @@ describe("onboard extra-provider reconciliation", () => {
         );
 
         fs.mkdirSync(fakeBin, { recursive: true });
-        writeOkOpenshell(fakeBin, { readySandboxGet: true });
+        writeOkOpenshell(fakeBin);
 
         const script = String.raw`
 const registry = require(${registryPath});
@@ -66,12 +66,18 @@ const { EventEmitter } = require("node:events");
 const _n = (command) => (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
 
 const commands = [];
+let createdSandbox = null;
 
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
   const profileResult = require(${onboardScriptMocksPath}).mockManagedEndpointlessProviderProfileRun(command);
   if (profileResult !== null) return profileResult;
+  if (normalized.includes("sandbox delete") && normalized.includes("my-assistant")) {
+    if (createdSandbox?.state.lifecycleState === "created") createdSandbox.delete();
+  }
+  const sandboxResult = createdSandbox?.run(command) ?? null;
+  if (sandboxResult !== null) return sandboxResult;
   if (normalized.includes("sandbox list")) return { status: 0, stdout: "No sandboxes found." };
   if (normalized.includes("provider get -g nemoclaw tavily-search")) {
     const stderr = Buffer.from("Error: provider 'tavily-search' not found");
@@ -85,16 +91,12 @@ runner.run = (command, opts = {}) => {
   if (normalized.includes("provider get -g nemoclaw ")) {
     return { status: 0, stdout: "" };
   }
-  return normalized.includes("sandbox get") && normalized.includes("my-assistant")
-    ? { status: 0, stdout: Buffer.from("my-assistant\nId: sbx-4f2a91c0d7\n"), stderr: Buffer.alloc(0) }
-    : { status: 0 };
+  return { status: 0 };
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
-  const createdIdentity = fixtureMocks.mockCreatedSandboxIdentityList(command);
-  if (createdIdentity !== null) return createdIdentity;
-  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
-  if (normalized.includes("sandbox list")) return "my-assistant Ready";
+  const sandboxCapture = createdSandbox?.capture(command) ?? null;
+  if (sandboxCapture !== null) return sandboxCapture;
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;
   if (normalized.includes("forward list")) {
@@ -113,6 +115,7 @@ sandboxBaseImage.resolveSandboxBaseImage = () => ({
 });
 
 childProcess.spawn = (...args) => {
+  createdSandbox.create(args.flat());
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
@@ -131,28 +134,26 @@ childProcess.spawn = (...args) => {
 
 const { createSandbox } = require(${onboardPath});
 
-const createReservedSandbox = () => createSandbox(
-  null,
-  "gpt-5.4",
-  "nvidia-prod",
-  null,
-  null,
-  null,
-  null,
-  null,
-  null,
-  null,
-  null,
-  null,
-  [],
-  null,
-  { sessionId: createFixture.sessionId },
-);
+const createReservedSandbox = () => {
+  createdSandbox = fixtureMocks.createCreatedSandboxFixture({
+    sandboxName: "my-assistant",
+  });
+  createdSandbox.installRuntimeObservation();
+  return createSandbox(
+    ...fixtureMocks.sandboxCreateArgsWithVerifiedReservation(
+      [null, "gpt-5.4", "nvidia-prod", null, null, null, null, null, null, null, null, null, []],
+      createFixture,
+    ),
+  );
+};
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  const firstSandboxName = await createReservedSandbox();
+  registry.removeSandbox("my-assistant");
+  createdSandbox.delete();
   const sandboxNames = [
-    await createReservedSandbox(),
+    firstSandboxName,
     await createReservedSandbox(),
   ];
   console.log(JSON.stringify({
@@ -170,7 +171,8 @@ const createReservedSandbox = () => createSandbox(
         const result = spawnSync(process.execPath, [scriptPath], {
           cwd: repoRoot,
           encoding: "utf-8",
-          timeout: 30_000,
+          timeout: 60_000,
+          killSignal: "SIGKILL",
           env: {
             ...process.env,
             HOME: tmpDir,

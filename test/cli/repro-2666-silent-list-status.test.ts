@@ -44,7 +44,6 @@ function buildDepsWithThrowingRecovery(): ListSandboxesCommandDeps {
         model: "stored-model",
         provider: "stored-provider",
         gpuEnabled: false,
-        policies: ["pypi"],
         agent: "openclaw",
       },
     ],
@@ -128,7 +127,6 @@ describe("list-command-deps resilience wrapper (#2666)", () => {
           model: "test-model",
           provider: "test-provider",
           gpuEnabled: false,
-          policies: [],
         },
       ],
       defaultSandbox: "my-assist",
@@ -290,7 +288,6 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
             model,
             provider: "nvidia-prod",
             gpuEnabled: false,
-            policies: [],
             ...(gatewayPort === undefined
               ? {}
               : { gatewayName: resolveGatewayName(gatewayPort), gatewayPort }),

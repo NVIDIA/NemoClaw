@@ -2,6 +2,31 @@
   "schemaVersion": 2,
   "nodeVersion": "22.23.2",
   "registryOrigin": "https://registry.npmjs.org/",
+  "sourceRegistryPackage": {
+    "artifactName": "nvidia-openshell-sdk-0.0.106.tgz",
+    "label": "OpenShell TypeScript SDK 0.0.106",
+    "packageSpec": "@nvidia/openshell-sdk@0.0.106",
+    "integrity": "sha512-dB4mLex23Pnw61caGMR2CMHQihy9bj7IK2elJJd718k3yevm+fOt/vG6dJg8/5us4la2BwcOdRwLvOia3tdwFw==",
+    "tarballUrl": "https://npm.pkg.github.com/download/@nvidia/openshell-sdk/0.0.106/dc32180ba1d658fc4ec309bdf89d2b162196928d"
+  },
+  "sourceNestedShrinkwrapPackages": ["@earendil-works/pi-coding-agent@0.80.6"],
+  "sourceRegistryPackagesWithoutIntegrity": [
+    {
+      "label": "Pi agent core 0.80.6 nested shrinkwrap entry",
+      "packageSpec": "@earendil-works/pi-agent-core@0.80.6",
+      "tarballUrl": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-0.80.6.tgz"
+    },
+    {
+      "label": "Pi AI 0.80.6 nested shrinkwrap entry",
+      "packageSpec": "@earendil-works/pi-ai@0.80.6",
+      "tarballUrl": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.80.6.tgz"
+    },
+    {
+      "label": "Pi TUI 0.80.6 nested shrinkwrap entry",
+      "packageSpec": "@earendil-works/pi-tui@0.80.6",
+      "tarballUrl": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-0.80.6.tgz"
+    }
+  ],
   "severityThreshold": "high",
   "exceptionFile": "ci/npm-audit-exceptions.json",
   "archiveGraphId": "reviewed-archive-graph",

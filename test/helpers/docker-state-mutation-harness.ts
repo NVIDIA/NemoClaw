@@ -146,13 +146,16 @@ export interface DockerStateMutationHarnessOptions {
   readonly afterHelper?: (action: string, state: DockerStateMutationHarnessState) => void;
   readonly deferAcquireOnce?: boolean;
   readonly failAcquire?: boolean;
+  readonly failReleaseCleanupInspectionOnce?: boolean;
   readonly failReleaseOnce?: boolean;
+  readonly failReleaseCleanupProbeOnce?: boolean;
   readonly failResumeOnce?: boolean;
   readonly lifecycleGeneration?: string;
   readonly loseAcquireResponseOnce?: boolean;
   readonly loseReleaseResponseOnce?: boolean;
   readonly signalHelperOnce?: boolean;
   readonly stateMountType?: "bind" | "volume";
+  readonly timeoutResponseCopyOnce?: boolean;
 }
 
 export interface DockerStateMutationHarnessState {
@@ -197,9 +200,12 @@ function createContainerStateMutationHarness(
   let acquireDeferralsRemaining = options.deferAcquireOnce ? 1 : 0;
   let lostAcquireResponsesRemaining = options.loseAcquireResponseOnce ? 1 : 0;
   let releaseFailuresRemaining = options.failReleaseOnce ? 1 : 0;
+  let releaseCleanupInspectionFailuresRemaining = options.failReleaseCleanupInspectionOnce ? 1 : 0;
+  let releaseCleanupProbeFailuresRemaining = options.failReleaseCleanupProbeOnce ? 1 : 0;
   let resumeFailuresRemaining = options.failResumeOnce ? 1 : 0;
   let lostReleaseResponsesRemaining = options.loseReleaseResponseOnce ? 1 : 0;
   let signalledHelpersRemaining = options.signalHelperOnce ? 1 : 0;
+  let responseCopyTimeoutsRemaining = options.timeoutResponseCopyOnce ? 1 : 0;
   let marker: Record<string, unknown> | null = null;
   let releasedMarker: Record<string, unknown> | null = null;
   let deferredAcquireRequest: string | null = null;
@@ -207,6 +213,17 @@ function createContainerStateMutationHarness(
   let brokerReleased = false;
   let brokerTransactionId: string | null = null;
   const transportFiles = new Map<string, Buffer>();
+
+  const inspectTransportSession = (session: string) => {
+    if (releaseCleanupInspectionFailuresRemaining > 0) {
+      releaseCleanupInspectionFailuresRemaining -= 1;
+      return { status: 76, stdout: "", stderr: "" };
+    }
+    const exists =
+      brokerActive ||
+      [...transportFiles.keys()].some((file) => file === session || file.startsWith(`${session}/`));
+    return { status: exists ? 75 : 0, stdout: "", stderr: "" };
+  };
 
   const acquireMarker = (request: Record<string, unknown>) => {
     const candidate = {
@@ -349,6 +366,7 @@ function createContainerStateMutationHarness(
                     : action === "release"
                       ? 5 * 60_000
                       : 15 * 60_000;
+              const helperDeadline = Date.now() + helperTimeout;
               let helperResult = capture(
                 "docker",
                 [
@@ -363,19 +381,33 @@ function createContainerStateMutationHarness(
                 request,
               );
               if (helperResult.status !== null && helperResult.status < 0) {
-                helperResult = capture(
-                  "docker",
-                  [
-                    "container",
-                    "exec",
-                    "--nemoclaw-broker",
-                    DOCKER_STATE_MUTATION_RUNTIME_ID,
-                    "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
-                    action,
-                  ],
-                  helperTimeout,
-                  request,
-                );
+                const remainingTimeout = helperDeadline - Date.now();
+                if (remainingTimeout <= 0) {
+                  helperResult = {
+                    status: 1,
+                    stdout: "",
+                    stderr: `${JSON.stringify({
+                      schemaVersion: 1,
+                      action,
+                      status: "failed",
+                      code: "helper-timeout",
+                    })}\n`,
+                  };
+                } else {
+                  helperResult = capture(
+                    "docker",
+                    [
+                      "container",
+                      "exec",
+                      "--nemoclaw-broker",
+                      DOCKER_STATE_MUTATION_RUNTIME_ID,
+                      "/usr/local/lib/nemoclaw/runtime-state-mutation-control.py",
+                      action,
+                    ],
+                    remainingTimeout,
+                    request,
+                  );
+                }
               }
               transportFiles.set(
                 `${path.posix.dirname(containerPath)}/${identity}.response`,
@@ -422,6 +454,25 @@ function createContainerStateMutationHarness(
       }
       if (source.startsWith(containerPrefix)) {
         const containerPath = source.slice(containerPrefix.length);
+        if (
+          containerPath.endsWith("/ready") &&
+          brokerReleased &&
+          releaseCleanupProbeFailuresRemaining > 0
+        ) {
+          releaseCleanupProbeFailuresRemaining -= 1;
+          return { status: 1, stdout: "", stderr: "transport readiness unavailable" };
+        }
+        if (containerPath.endsWith(".response") && responseCopyTimeoutsRemaining > 0) {
+          responseCopyTimeoutsRemaining -= 1;
+          return {
+            error: Object.assign(new Error("transport response copy timed out"), {
+              code: "ETIMEDOUT",
+            }),
+            status: 1,
+            stdout: "",
+            stderr: "",
+          };
+        }
         const payload = transportFiles.get(containerPath);
         if (!payload) return { status: 1, stdout: "", stderr: "transport file unavailable" };
         fs.writeFileSync(destination, payload, { mode: 0o600 });
@@ -431,6 +482,12 @@ function createContainerStateMutationHarness(
     }
     if (command[0] !== "container" || command[1] !== "exec") {
       return { status: 1, stdout: "", stderr: "unexpected command" };
+    }
+    if (
+      command[7] === "-c" &&
+      command.at(-1)?.startsWith("/run/nemoclaw/runtime-state-mutation/")
+    ) {
+      return inspectTransportSession(command.at(-1) as string);
     }
     if (command[2] === "--detach") {
       const transactionId = command.at(-1) ?? "";
@@ -619,6 +676,15 @@ function createContainerStateMutationHarness(
     if (conflict) throw new Error(conflict.stderr);
     return marker;
   };
+  const releaseProviderWithoutTransportCleanup = () => {
+    if (!brokerActive || brokerTransactionId === null || marker === null) {
+      throw new Error("No active provider release transport exists.");
+    }
+    releasedMarker = marker;
+    marker = null;
+    brokerReleased = true;
+    state.supervisorStopped = false;
+  };
   return {
     acquireRequests,
     authority,
@@ -628,10 +694,16 @@ function createContainerStateMutationHarness(
     helperActions,
     supervisorSignals,
     transportBrokerActive: () => brokerActive,
+    transportBrokerSessionExists: (transactionId = brokerTransactionId) =>
+      transactionId !== null &&
+      [...transportFiles.keys()].some((file) =>
+        file.startsWith(`/run/nemoclaw/runtime-state-mutation/${transactionId}/`),
+      ),
     transportCopySourceModes,
     lifecycleStore,
     lifecycleGeneration,
     owner,
+    releaseProviderWithoutTransportCleanup,
     replayDeferredAcquire,
     root,
     state,

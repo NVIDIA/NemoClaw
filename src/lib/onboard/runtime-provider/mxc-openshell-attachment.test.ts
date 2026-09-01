@@ -5,18 +5,23 @@ import { describe, expect, it } from "vitest";
 
 import {
   MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
+  MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE,
+  MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
   MxcOpenShellAttachmentError,
-  createMxcOpenShellAttachmentAuthority,
+  createMxcOpenShellDistributionAuthority,
   qualifyMxcOpenShellAttachment,
+  resolveMxcOpenShellDistributionAuthority,
   type MxcOpenShellAttachmentObservation,
+  type MxcOpenShellDistributionProfileId,
 } from "./mxc-openshell-attachment";
 import {
   MXC_OPENSHELL_ATTACHMENT_TEST_DIGESTS as DIGESTS,
   mxcOpenShellAttachmentFixture,
+  mxcOpenShellDistributionTestFixture,
 } from "./mxc-openshell-attachment-test-fixture";
 
 describe("inactive OpenShell MXC installation attachment", () => {
-  it("binds one accepted distribution and gateway configuration without installing it (#8178)", () => {
+  it("binds one qualified development checkpoint without installing it (#10583)", () => {
     const { authority, observation } = mxcOpenShellAttachmentFixture();
     const receipt = qualifyMxcOpenShellAttachment(authority, observation);
 
@@ -24,17 +29,23 @@ describe("inactive OpenShell MXC installation attachment", () => {
       contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
       providerId: "mxc",
       mode: "attach-existing",
+      acceptance: "qualification",
+      distributionProfileId: MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
       acceptedIdentitySha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
     });
     expect(Object.isFrozen(authority)).toBe(true);
     expect(receipt).toEqual({
-      contractVersion: 1,
+      contractVersion: MXC_OPENSHELL_ATTACHMENT_CONTRACT_VERSION,
       providerId: "mxc",
       mode: "attach-existing",
+      acceptance: "qualification",
+      distributionProfileId: MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
       authoritySha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
       distribution: {
-        version: "0.0.21",
-        revision: "a".repeat(40),
+        version: "0.0.24",
+        revision:
+          MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE.expectation.distribution
+            .revision,
         sha256: DIGESTS.distribution,
         root: "C:\\OpenShell",
       },
@@ -48,7 +59,8 @@ describe("inactive OpenShell MXC installation attachment", () => {
           sha256: DIGESTS.gateway,
         },
         wxcExec: {
-          path: "C:\\OpenShell\\mxc\\wxc-exec.exe",
+          root: "C:\\mxc-kit",
+          path: "C:\\mxc-kit\\bin\\wxc-exec.exe",
           sha256: DIGESTS.wxcExec,
         },
       },
@@ -61,6 +73,36 @@ describe("inactive OpenShell MXC installation attachment", () => {
     });
     expect(Object.isFrozen(receipt)).toBe(true);
     expect(Object.isFrozen(receipt.components.gateway)).toBe(true);
+  });
+
+  it("creates qualification authority only from the provider-owned checkpoint (#10583)", () => {
+    const authority = createMxcOpenShellDistributionAuthority(
+      MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
+    );
+
+    expect(authority).toMatchObject({
+      acceptance: "qualification",
+      profileId: MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
+    });
+    expect(resolveMxcOpenShellDistributionAuthority(authority)).toMatchObject({
+      acceptance: "qualification",
+      distributionProfileId: MXC_OPENSHELL_V0_0_24_MXC_V0_7_0_RC1_QUALIFICATION_PROFILE_ID,
+    });
+  });
+
+  it("rejects an unknown distribution profile before observation (#10583)", () => {
+    expect(() =>
+      createMxcOpenShellDistributionAuthority(
+        "openshell-observed-locally" as MxcOpenShellDistributionProfileId,
+      ),
+    ).toThrow(/distribution profile is not provider-owned/u);
+  });
+
+  it("rejects caller-constructed distribution authority before observation (#10583)", () => {
+    const authority = mxcOpenShellDistributionTestFixture().authority;
+    expect(() => resolveMxcOpenShellDistributionAuthority({ ...authority })).toThrow(
+      /distribution authority is not provider-owned/u,
+    );
   });
 
   it.each([
@@ -120,17 +162,44 @@ describe("inactive OpenShell MXC installation attachment", () => {
     );
   });
 
-  it("rejects an unsupported backend before attachment (#8178)", () => {
-    const { observation } = mxcOpenShellAttachmentFixture();
-    const accepted = {
-      distribution: observation.distribution,
-      components: observation.components,
-      gateway: { ...observation.gateway, backend: "isolation_session" },
-    };
+  it("rejects wxc-exec from outside the observed MXC root (#8178)", () => {
+    const { authority, observation: fixtureObservation } = mxcOpenShellAttachmentFixture();
+    const observation = structuredClone(fixtureObservation);
+    const observed = observation as unknown as { wxcExecPath: string };
+    observed.wxcExecPath = "C:\\OtherMxc\\wxc-exec.exe";
 
-    expect(() => createMxcOpenShellAttachmentAuthority(accepted)).toThrow(
-      /backend must be 'process_container'/u,
+    expect(() => qualifyMxcOpenShellAttachment(authority, observation)).toThrow(
+      /wxc-exec path must remain inside the observed MXC root/u,
     );
+  });
+
+  it.each([
+    ["distribution root", "distributionRoot"],
+    ["MXC root", "mxcRoot"],
+    ["OpenShell CLI", "cliPath"],
+    ["OpenShell gateway", "gatewayPath"],
+    ["wxc-exec", "wxcExecPath"],
+    ["gateway configuration", "gatewayConfigPath"],
+  ] as const)("rejects a network %s before attachment qualification (#8178)", (_label, field) => {
+    const source = mxcOpenShellAttachmentFixture();
+
+    expect(() =>
+      qualifyMxcOpenShellAttachment(source.authority, {
+        ...source.observation,
+        [field]: "\\\\host\\share\\component.bin",
+      }),
+    ).toThrow(/local-drive Windows path/u);
+  });
+
+  it("rejects an unsupported observed backend before attachment (#8178)", () => {
+    const { authority, observation } = mxcOpenShellAttachmentFixture();
+
+    expect(() =>
+      qualifyMxcOpenShellAttachment(authority, {
+        ...observation,
+        gateway: { ...observation.gateway, backend: "isolation_session" },
+      }),
+    ).toThrow(/backend must be 'process_container'/u);
   });
 
   it("rejects credential-bearing fields instead of copying them into the receipt (#8178)", () => {
@@ -157,29 +226,13 @@ describe("inactive OpenShell MXC installation attachment", () => {
     );
   });
 
-  it("retains an owned accepted identity after the caller mutates its input (#8178)", () => {
-    const { observation } = mxcOpenShellAttachmentFixture();
-    const accepted = {
-      distribution: { ...observation.distribution },
-      components: { ...observation.components },
-      gateway: { ...observation.gateway },
-    };
-    const authority = createMxcOpenShellAttachmentAuthority(accepted);
-
-    accepted.components.gatewaySha256 = "6".repeat(64);
-
-    expect(qualifyMxcOpenShellAttachment(authority, observation).components.gateway.sha256).toBe(
-      DIGESTS.gateway,
-    );
-  });
-
   it.each(["0.0.21-rc.1+build.2", "1.0.0-alpha.0", "1.0.0+build.2"])(
-    "accepts complete SemVer identity %s (#8178)",
+    "parses complete SemVer identity %s before rejecting version drift (#8178)",
     (version) => {
       const { authority, observation } = mxcOpenShellAttachmentFixture(version);
 
-      expect(qualifyMxcOpenShellAttachment(authority, observation).distribution.version).toBe(
-        version,
+      expect(() => qualifyMxcOpenShellAttachment(authority, observation)).toThrow(
+        /observed distribution identity does not match/u,
       );
     },
   );
@@ -187,7 +240,10 @@ describe("inactive OpenShell MXC installation attachment", () => {
   it.each(["01.0.0", "1.01.0", "1.0.01", "1.0.0-01", "1.0.0-", "1.0.0+"])(
     "rejects noncanonical SemVer identity %s (#8178)",
     (version) => {
-      expect(() => mxcOpenShellAttachmentFixture(version)).toThrow(/version is invalid/u);
+      const { authority, observation } = mxcOpenShellAttachmentFixture(version);
+      expect(() => qualifyMxcOpenShellAttachment(authority, observation)).toThrow(
+        /version is invalid/u,
+      );
     },
   );
 });

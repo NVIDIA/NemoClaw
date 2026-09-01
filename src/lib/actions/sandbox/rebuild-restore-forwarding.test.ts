@@ -28,8 +28,6 @@ describe("rebuild restore target forwarding", () => {
       targetAgentType: "langchain-deepagents-code",
       targetImageIsCustom: true,
       backupManifest: { agentType: "openclaw", backupPath: "/tmp/rebuild-backup" } as never,
-      policyPresets: [],
-      customPolicies: [],
       reconcileManagedDcodeObservability: false,
       log: vi.fn(),
     });

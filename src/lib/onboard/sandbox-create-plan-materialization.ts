@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { InitialSandboxPolicy } from "./initial-policy";
-import type { SandboxPolicyAuthority } from "../adapters/openshell/policy-authority";
-import type { MessagingTokenDef } from "./messaging-prep";
+import { hasConfiguredMessagingCredential, type MessagingTokenDef } from "./messaging-prep";
 import { filterMessagingProvidersForSandboxCreate } from "./sandbox-create-intent";
 import type {
   MaterializeSandboxCreatePlanInput,
@@ -74,9 +73,6 @@ function buildSandboxDriverConfig(
 export type SandboxCreatePlan = {
   activeMessagingChannels: string[];
   initialSandboxPolicy: InitialSandboxPolicy;
-  /** Tier resolved before create, persisted with the registry entry for safe resume. */
-  policyTier: string | null;
-  policyAuthority: SandboxPolicyAuthority;
   createArgs: string[];
   messagingProviders: string[];
   gpuRoutePlan: SandboxCreateIntent["gpuRoutePlan"];
@@ -84,7 +80,7 @@ export type SandboxCreatePlan = {
   sandboxGpuLogMessage: string | null;
   /** One-shot provider activation owned by the post-create verification boundary. */
   activateDeferredProviderEffects:
-    | ((revalidatePolicyRequirements: (operation: string) => void) => readonly string[])
+    | ((revalidateSandboxIdentity: (operation: string) => void) => readonly string[])
     | null;
 };
 
@@ -164,10 +160,10 @@ export function prepareSandboxCreatePolicy(
         ? intent.policy.options.additionalPresets.filter((name) => name !== "local-inference")
         : [...intent.policy.options.additionalPresets],
       agentName: intent.policy.options.agentName,
+      // Channel presets bind `{sandboxName}-<channel>-bridge`; without the name,
+      // composing them throws.
+      sandboxName: intent.sandboxName,
       policyTier: intent.policy.options.policyTier,
-      baselineExclusions: intent.policy.options.baselineExclusions.map((exclusion) => ({
-        ...exclusion,
-      })),
     },
     intent.gpuRoutePlan,
     prepareInitialSandboxCreatePolicy,
@@ -218,7 +214,7 @@ export function validateSandboxCreateIntentBindings(
         `Cannot materialize sandbox create intent; missing credential binding '${request.envKey}' for provider '${request.name}'.`,
       );
     }
-    if (Boolean(tokenDef.token) !== request.credentialConfigured) {
+    if (hasConfiguredMessagingCredential(tokenDef) !== request.credentialConfigured) {
       throw new Error(
         `Cannot materialize sandbox create intent; credential availability changed for provider '${request.name}'.`,
       );
@@ -263,12 +259,29 @@ function buildCreateProviderSet(
   );
 }
 
+function assertDeferredProviderPlanSupported(
+  intent: SandboxCreateIntent,
+  messagingProviders: readonly string[],
+  initialSandboxPolicy: InitialSandboxPolicy,
+): void {
+  const requiresProviderAttachment =
+    Boolean(intent.inferenceProvider) ||
+    messagingProviders.length > 0 ||
+    intent.extraProviders.length > 0 ||
+    intent.hermesToolGateways.length > 0;
+  if (!requiresProviderAttachment) return;
+  initialSandboxPolicy.cleanup?.();
+  throw new Error(
+    `Cannot create sandbox '${intent.sandboxName}' with deferred providers because OpenShell cannot bind provider attachment to a verified immutable sandbox identity. No sandbox was created; use an OpenShell release with identity-bound provider attachment before retrying.`,
+  );
+}
+
 /** Materialize policy, route metadata, resources, and providers from a secretless intent. */
 export function materializeSandboxCreatePlan({
   intent,
   fromRef,
-  policyAuthority,
-  deferSandboxEffectsUntilPolicyVerification = false,
+  policylessCreate = false,
+  deferSandboxEffectsUntilIdentityVerification = false,
   managedStateMount,
   messagingTokenDefs,
   runProviderPreDeleteCleanup,
@@ -291,9 +304,6 @@ export function materializeSandboxCreatePlan({
       agentName: intent.policy.options.agentName,
       sandboxName: intent.sandboxName,
       policyTier: intent.policy.options.policyTier,
-      baselineExclusions: intent.policy.options.baselineExclusions.map((exclusion) => ({
-        ...exclusion,
-      })),
     },
     intent.gpuRoutePlan,
     prepareInitialSandboxCreatePolicy,
@@ -303,9 +313,7 @@ export function materializeSandboxCreatePlan({
     fromRef,
     "--name",
     intent.sandboxName,
-    ...(policyAuthority === "nemoclaw-managed"
-      ? ["--policy", initialSandboxPolicy.policyPath]
-      : []),
+    ...(!policylessCreate ? ["--policy", initialSandboxPolicy.policyPath] : []),
     ...(driverConfig ? ["--driver-config-json", driverConfig] : []),
     ...intent.gpuCreateArgs,
     ...intent.resourceCreateArgs,
@@ -322,14 +330,17 @@ export function materializeSandboxCreatePlan({
   };
   const plannedMessagingProviders = filterMessagingProvidersForSandboxCreate(
     [
-      ...enabledMessagingTokenDefs.filter(({ token }) => Boolean(token)).map(({ name }) => name),
+      ...enabledMessagingTokenDefs.filter(hasConfiguredMessagingCredential).map(({ name }) => name),
       ...intent.reusableMessagingProviders,
     ],
     intent.messagingProviderRequests,
     intent.policy.activeMessagingChannels,
     intent.disabledChannelNames,
   );
-  if (policyAuthority === "nemoclaw-managed") {
+  if (deferSandboxEffectsUntilIdentityVerification) {
+    assertDeferredProviderPlanSupported(intent, plannedMessagingProviders, initialSandboxPolicy);
+  }
+  if (!policylessCreate) {
     assertCredentialBindingProvidersAttached(
       initialSandboxPolicy,
       buildCreateProviderSet(intent, plannedMessagingProviders, resolveHermesToolGatewayProvider()),
@@ -343,15 +354,15 @@ export function materializeSandboxCreatePlan({
   }
 
   const activateProviderEffects = (
-    revalidatePolicyRequirements?: (operation: string) => void,
+    revalidateSandboxIdentity?: (operation: string) => void,
   ): readonly string[] => {
-    runProviderPreDeleteCleanup(revalidatePolicyRequirements);
+    runProviderPreDeleteCleanup(revalidateSandboxIdentity);
     const activatedMessagingProviders = filterMessagingProvidersForSandboxCreate(
       [
         ...upsertMessagingProviders(enabledMessagingTokenDefs, {
           replaceExisting: true,
           allowedSandboxes: [intent.sandboxName],
-          ...(revalidatePolicyRequirements ? { revalidatePolicyRequirements } : {}),
+          ...(revalidateSandboxIdentity ? { revalidateSandboxIdentity } : {}),
         }),
         ...intent.reusableMessagingProviders,
       ],
@@ -364,7 +375,7 @@ export function materializeSandboxCreatePlan({
       activatedMessagingProviders,
       resolveHermesToolGatewayProvider(),
     );
-    if (policyAuthority === "nemoclaw-managed") {
+    if (!policylessCreate) {
       assertCredentialBindingProvidersAttached(initialSandboxPolicy, createProviders);
     }
     if (!sameProviderNames(activatedMessagingProviders, plannedMessagingProviders)) {
@@ -374,7 +385,7 @@ export function materializeSandboxCreatePlan({
     }
     return [...createProviders];
   };
-  if (!deferSandboxEffectsUntilPolicyVerification) {
+  if (!deferSandboxEffectsUntilIdentityVerification) {
     for (const provider of activateProviderEffects()) {
       createArgs.push("--provider", provider);
     }
@@ -383,14 +394,12 @@ export function materializeSandboxCreatePlan({
   return {
     activeMessagingChannels: [...intent.policy.activeMessagingChannels],
     initialSandboxPolicy,
-    policyTier: intent.policy.options.policyTier,
-    policyAuthority,
     createArgs,
     messagingProviders: plannedMessagingProviders,
     gpuRoutePlan: intent.gpuRoutePlan,
     compatibilityPolicyPath,
     sandboxGpuLogMessage: intent.sandboxGpuLogMessage,
-    activateDeferredProviderEffects: deferSandboxEffectsUntilPolicyVerification
+    activateDeferredProviderEffects: deferSandboxEffectsUntilIdentityVerification
       ? activateProviderEffects
       : null,
   };
@@ -400,12 +409,8 @@ export function materializeSandboxCreatePlan({
 export function materializeHermesPortableCreatePlan(input: {
   readonly intent: SandboxCreateIntent;
   readonly fromRef: string;
-  readonly policyAuthority: SandboxPolicyAuthority;
 }): SandboxCreatePlan {
-  const { intent, fromRef, policyAuthority } = input;
-  if (policyAuthority !== "nemoclaw-managed") {
-    throw new Error("Hermes portable sandbox creation requires NemoClaw-managed policy authority.");
-  }
+  const { intent, fromRef } = input;
   if (
     intent.policy.options.agentName !== "hermes" ||
     !["none", "native-only"].includes(intent.gpuRoutePlan) ||
@@ -432,7 +437,6 @@ export function materializeHermesPortableCreatePlan(input: {
         : [...intent.policy.options.additionalPresets],
       agentName: "hermes",
       policyTier: intent.policy.options.policyTier,
-      baselineExclusions: intent.policy.options.baselineExclusions.map((entry) => ({ ...entry })),
     },
   );
   const driverConfig = buildSandboxDriverConfig(intent, null);
@@ -451,8 +455,6 @@ export function materializeHermesPortableCreatePlan(input: {
   return {
     activeMessagingChannels: [],
     initialSandboxPolicy,
-    policyTier: intent.policy.options.policyTier,
-    policyAuthority,
     createArgs,
     messagingProviders: [],
     gpuRoutePlan: intent.gpuRoutePlan,

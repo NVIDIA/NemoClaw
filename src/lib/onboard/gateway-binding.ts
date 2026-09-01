@@ -19,13 +19,23 @@
  * ports never collide.
  */
 
-import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import type { GatewayReuseState } from "../state/gateway";
+import { DEFAULT_GATEWAY_PORT } from "./gateway/state-dir";
+
+export {
+  assertManagedGatewayStateDirectoryParentTrusted,
+  BASE_GATEWAY_STATE_DIR_NAME,
+  ensureManagedGatewayStateRoot,
+  isManagedGatewayStateRootReservation,
+  managedGatewayStateRootOwnershipFailure,
+  MANAGED_GATEWAY_STATE_ROOT_MARKER,
+  resolveGatewayStateDirForPort,
+  resolveGatewayStateDirName,
+  UnsafeGatewayStateDirectoryError,
+} from "./gateway/state-dir";
 
 /** Gateway registration name used for the default gateway port. */
 export const BASE_GATEWAY_NAME = "nemoclaw";
-/** Docker-driver gateway state directory leaf name for the default port. */
-export const BASE_GATEWAY_STATE_DIR_NAME = "openshell-docker-gateway";
 /** Docker-driver gateway compatibility container name for the default port. */
 export const BASE_GATEWAY_COMPAT_CONTAINER_NAME = "nemoclaw-openshell-gateway";
 
@@ -154,18 +164,6 @@ export function resolveCoreOnboardGatewayBinding(options: {
   const port = resolveGatewayPortFromName(name);
   if (port === null) throw new Error(`Invalid resolved onboarding gateway name: ${name}`);
   return { name, port };
-}
-
-/**
- * Resolve the Docker-driver gateway state directory leaf name for a gateway
- * port. The state dir holds the gateway pid file and runtime marker, so a
- * per-port leaf keeps each sandbox's marker isolated — a second onboard cannot
- * overwrite the first sandbox's marker or clobber its pid file.
- */
-export function resolveGatewayStateDirName(port: number): string {
-  return isDefaultGatewayPort(port)
-    ? BASE_GATEWAY_STATE_DIR_NAME
-    : `${BASE_GATEWAY_STATE_DIR_NAME}-${port}`;
 }
 
 /**

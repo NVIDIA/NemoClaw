@@ -18,7 +18,6 @@ import {
   accountBool,
   accountString,
   applyRestRewritePolicy,
-  applyWebSocketRewritePolicy,
   CLI_ENTRYPOINT,
   channelAccount,
   channelEnabled,
@@ -39,7 +38,6 @@ import {
   REBUILD_TIMEOUT_MS,
   rawTokenSurfaceProbe,
   readOpenClawConfig,
-  runDiscordGatewayClient,
   runHost,
   runSandboxShell,
   runSecondaryCleanup,
@@ -54,6 +52,7 @@ import {
 } from "./messaging-providers-helpers.ts";
 import { runInstalledSlackRuntimeProof } from "./messaging-providers-slack-runtime-proof.ts";
 import { runInstalledTelegramRuntimeProof } from "./messaging-providers-telegram-runtime-proof.ts";
+import { runInstalledWechatRuntimeProof } from "./messaging-providers-wechat-runtime-proof.ts";
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
@@ -68,8 +67,7 @@ test(
         "add WhatsApp and prove rebuild persistence",
         "inspect providers placeholders and credential isolation",
         "probe Telegram and Discord policy rewrites",
-        "exercise installed Slack and Telegram runtimes",
-        "prove Discord websocket credential rewrite",
+        "exercise installed Slack, Telegram, and WeChat runtimes",
         "inspect gateway health and optional live sends",
       ],
     },
@@ -268,6 +266,30 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "M-WA3: WhatsApp policy preset applied before rebuild",
     );
 
+    const hostPolicyEdit = await runHost(
+      host,
+      "openshell",
+      [
+        "policy",
+        "update",
+        SANDBOX_NAME,
+        "--add-endpoint",
+        "host-edit-messaging.example.com:443:read-only:rest:enforce",
+        "--rule-name",
+        "messaging_host_edit_e2e",
+        "--binary",
+        "/usr/bin/curl",
+        "--wait",
+      ],
+      {
+        artifactName: "host-policy-edit-before-messaging-rebuild",
+        env: state.env,
+        redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
+    expectExitZero(hostPolicyEdit, "M-WA3a: direct OpenShell policy edit before rebuild");
+
     const whatsappRebuild = await runHost(
       host,
       "node",
@@ -282,7 +304,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     expectExitZero(whatsappRebuild, "M-WA4: rebuild completed after WhatsApp channel add");
     const whatsappRebuildText = stripAnsi(outputText(whatsappRebuild));
     check(
-      whatsappRebuildText.includes(`Sandbox '${SANDBOX_NAME}' rebuilt successfully`),
+      whatsappRebuildText.includes(`Sandbox '${SANDBOX_NAME}' rebuild completed`),
       "M-WA4a: rebuild reports complete post-restore success",
     );
     check(
@@ -313,6 +335,10 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
         /\/usr\/local\/bin\/node|\/usr\/bin\/node/.test(whatsappPolicyPostText),
       "M-WA5: WhatsApp policy preset survived rebuild with Node binary scope",
     );
+    check(
+      whatsappPolicyPostText.includes("messaging_host_edit_e2e"),
+      "M-WA5a: unrelated host policy edit survived messaging rebuild",
+    );
 
     progress.phase("inspect providers placeholders and credential isolation");
     const providerList = await runHost(host, "openshell", ["provider", "list"], {
@@ -335,8 +361,9 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "M-W1: WeChat provider exists in gateway",
     );
     check(
-      providerListText.includes(`${SANDBOX_NAME}-extra-telegram-bot-token-agent-a`),
-      "X1: provider registered for TELEGRAM_BOT_TOKEN_AGENT_A",
+      !providerListText.includes(`${SANDBOX_NAME}-extra-telegram-bot-token-agent-a`) &&
+        !providerListText.includes(`${SANDBOX_NAME}-extra-telegram-bot-token-agent-b`),
+      "X1: Telegram extension keys do not create standalone providers",
     );
     check(
       !providerListText.includes(`${SANDBOX_NAME}-extra-telegram-bot-token-agent-missing`),
@@ -345,6 +372,27 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     check(
       !providerListText.includes(`${SANDBOX_NAME}-extra-github-token`),
       "X3: GITHUB_TOKEN refused by parser; no provider row registered",
+    );
+    const telegramProvider = await runHost(
+      host,
+      "openshell",
+      ["provider", "get", `${SANDBOX_NAME}-telegram-bridge`],
+      {
+        artifactName: "telegram-provider-messaging-providers",
+        env: state.env,
+        redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
+    const telegramProviderText = outputText(telegramProvider);
+    expectExitZero(telegramProvider, "X1a: inspect canonical Telegram provider");
+    check(
+      telegramProviderText.includes("TELEGRAM_BOT_TOKEN") &&
+        telegramProviderText.includes("TELEGRAM_BOT_TOKEN_AGENT_A") &&
+        telegramProviderText.includes("TELEGRAM_BOT_TOKEN_AGENT_B") &&
+        !telegramProviderText.includes("TELEGRAM_BOT_TOKEN_AGENT_MISSING") &&
+        !telegramProviderText.includes("GITHUB_TOKEN"),
+      "X1a/X2/X3a: canonical Telegram provider owns only the requested credential keys",
     );
 
     const envDump = await sandboxOutput(
@@ -365,8 +413,11 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const placeholderChecks: Array<[string, string, string]> = [
       ["M3", "TELEGRAM_BOT_TOKEN", state.tokens.telegram],
       ["M4", "DISCORD_BOT_TOKEN", state.tokens.discord],
+      ["M-S3", "SLACK_BOT_TOKEN", state.tokens.slackBot],
+      ["M-S4", "SLACK_APP_TOKEN", state.tokens.slackApp],
       ["M-W3", "WECHAT_BOT_TOKEN", state.tokens.wechat],
     ];
+    const credentialPlaceholders = new Map<string, string>();
     for (const [assertionId, key, token] of placeholderChecks) {
       const value = await sandboxOutput(
         sandbox,
@@ -389,6 +440,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
           value.startsWith("openshell:resolve:env:"),
           `${assertionId}: ${key} uses OpenShell resolve placeholder`,
         );
+        credentialPlaceholders.set(key, value);
       }
     }
 
@@ -430,12 +482,12 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       redactionValues,
     );
     check(
-      extraA.startsWith("openshell:resolve:env:"),
-      "X4a: TELEGRAM_BOT_TOKEN_AGENT_A is canonical resolve placeholder",
+      /^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN_AGENT_A$/u.test(extraA),
+      "X4a: TELEGRAM_BOT_TOKEN_AGENT_A is a revision-scoped resolve placeholder",
     );
     check(
-      extraB.startsWith("openshell:resolve:env:"),
-      "X4b: TELEGRAM_BOT_TOKEN_AGENT_B is canonical resolve placeholder",
+      /^openshell:resolve:env:v[0-9]+_TELEGRAM_BOT_TOKEN_AGENT_B$/u.test(extraB),
+      "X4b: TELEGRAM_BOT_TOKEN_AGENT_B is a revision-scoped resolve placeholder",
     );
     check(extraA !== extraB, "X4b: extension keys resolve to distinct placeholders");
 
@@ -472,12 +524,6 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const whatsappAccount = channelAccount(config, "whatsapp");
     const wechatAccount = channelAccount(config, "openclaw-weixin", state.wechatAccount);
 
-    const telegramBotToken = accountString(telegramAccount, "botToken");
-    check(telegramBotToken.length > 0, "M6: Telegram botToken present in openclaw.json");
-    check(
-      telegramBotToken !== state.tokens.telegram,
-      "M7: Telegram botToken is not the host token",
-    );
     check(
       !Object.prototype.hasOwnProperty.call(discordAccount, "token"),
       "M8: Discord token is omitted from openclaw.json",
@@ -554,9 +600,9 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       redactionValues,
     );
     check(
-      wechatCredentialFile.includes("openshell:resolve:env:WECHAT_BOT_TOKEN") &&
+      /"token"\s*:\s*"openshell:resolve:env:v[0-9]+_WECHAT_BOT_TOKEN"/.test(wechatCredentialFile) &&
         !wechatCredentialFile.includes(state.tokens.wechat),
-      "M-W9: WeChat account file uses L7-resolved placeholder",
+      "M-W9: WeChat account file uses the revision-scoped L7-resolved placeholder",
     );
     const wechatIndex = await sandboxOutput(
       sandbox,
@@ -593,6 +639,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       ["M6e", "telegram", "default"],
       ["M6f", "discord", "default"],
       ["M6g", "slack", "default"],
+      ["M6i", "openclaw-weixin", state.wechatAccount],
     ] as const).forEach(([assertionId, channel, accountId]) => {
       const entry = parsedRuntime.chat?.[channel];
       check(
@@ -822,7 +869,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       check(false, `M17: unexpected Discord response (${discordApi.slice(0, 200)})`);
     }
 
-    progress.phase("exercise installed Slack and Telegram runtimes");
+    progress.phase("exercise installed Slack, Telegram, and WeChat runtimes");
     const fakeSlack = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
       kind: "slack",
       imageScript: "fake-slack-api.cjs",
@@ -860,16 +907,34 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       `${SANDBOX_NAME}-slack-app`,
     );
 
+    const slackBotPlaceholder = await sandboxOutput(
+      sandbox,
+      "printenv SLACK_BOT_TOKEN 2>/dev/null || true",
+      "placeholder-slack_bot_token-after-binding",
+      redactionValues,
+    );
+    const slackAppPlaceholder = await sandboxOutput(
+      sandbox,
+      "printenv SLACK_APP_TOKEN 2>/dev/null || true",
+      "placeholder-slack_app_token-after-binding",
+      redactionValues,
+    );
+    check(
+      /^openshell:resolve:env:v[0-9]+_SLACK_BOT_TOKEN$/u.test(slackBotPlaceholder) &&
+        /^openshell:resolve:env:v[0-9]+_SLACK_APP_TOKEN$/u.test(slackAppPlaceholder),
+      "M11j: Slack bindings expose revision-scoped OpenShell credential placeholders",
+    );
+
     const slackAuth = await runSlackApiRequest(
       sandbox,
       fakeSlack.port,
       "/api/auth.test",
-      "Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      `Bearer ${slackBotPlaceholder}`,
       redactionValues,
     );
     check(
       /^200\b/.test(slackAuth) && /invalid_auth|not_authed|ok":true/.test(slackAuth),
-      `M-S15: Slack auth.test exercised alias rewrite (${slackAuth.slice(0, 200)})`,
+      `M-S15: Slack auth.test exercised revision-scoped placeholder rewrite (${slackAuth.slice(0, 200)})`,
     );
     const slackAuthCapture = lastJsonLine(
       fakeSlack.captureFile,
@@ -884,17 +949,6 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       "M-S15a: fake Slack saw host-side bot token without raw capture leakage",
     );
 
-    const slackCanonical = await runSlackApiRequest(
-      sandbox,
-      fakeSlack.port,
-      "/api/auth.test",
-      "Bearer openshell:resolve:env:SLACK_BOT_TOKEN",
-      redactionValues,
-    );
-    check(
-      /^200\b/.test(slackCanonical) && /invalid_auth|not_authed|ok":true/.test(slackCanonical),
-      "M-S15b: L7 proxy substitutes canonical SLACK_BOT_TOKEN placeholder",
-    );
     const slackUnset = await runSlackApiRequest(
       sandbox,
       fakeSlack.port,
@@ -912,13 +966,13 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       sandbox,
       fakeSlackApp.port,
       "/api/apps.connections.open",
-      "Bearer xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+      `Bearer ${slackAppPlaceholder}`,
       redactionValues,
     );
     check(
       /^200\b/.test(slackApp) &&
         /invalid_auth|not_authed|not_allowed_token_type|ok":true/.test(slackApp),
-      "M-S16: Slack Socket Mode HTTPS leg exercised xapp alias rewrite",
+      "M-S16: Slack Socket Mode HTTPS leg exercised revision-scoped placeholder rewrite",
     );
     const slackAppCapture = lastJsonLine(
       fakeSlack.captureFile,
@@ -1022,59 +1076,68 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
         !telegramCaptureText.includes("OPENSHELL-RESOLVE-ENV-"),
       "M18/M19: installed Telegram send reached the fake API without placeholder leakage",
     );
-    await artifacts.writeJson("installed-messaging-runtime-proofs.json", {
-      slack: installedSlackProof,
-      telegram: installedTelegramProof,
-    });
 
-    progress.phase("prove Discord websocket credential rewrite");
-    const fakeGateway = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
-      kind: "discord-gateway",
-      imageScript: "fake-discord-gateway.cjs",
-      containerPrefix: "nemoclaw-fake-discord-gateway",
-      portEnv: "FAKE_DISCORD_GATEWAY_PORT",
-      portFileEnv: "FAKE_DISCORD_GATEWAY_PORT_FILE",
-      captureFileEnv: "FAKE_DISCORD_GATEWAY_CAPTURE_FILE",
+    const wechatMockTarget = "e2e-user@im.wechat";
+    const wechatMockText = "NemoClaw OpenClaw WeChat plugin mock E2E";
+    const fakeWechat = await startFakeDockerApi(host, cleanup.add.bind(cleanup), {
+      kind: "wechat",
+      imageScript: "fake-wechat-api.mts",
+      nodeArgs: ["--experimental-strip-types"],
+      containerPrefix: "nemoclaw-fake-wechat",
+      portEnv: "FAKE_WECHAT_API_PORT",
+      portFileEnv: "FAKE_WECHAT_API_PORT_FILE",
+      captureFileEnv: "FAKE_WECHAT_API_CAPTURE_FILE",
       expectedEnv: {
-        FAKE_DISCORD_GATEWAY_EXPECTED_TOKEN: state.tokens.discord,
+        FAKE_WECHAT_API_EXPECTED_TOKEN: state.tokens.wechat,
+        FAKE_WECHAT_API_EXPECTED_TARGET: wechatMockTarget,
+        FAKE_WECHAT_API_EXPECTED_TEXT: wechatMockText,
       },
       env: state.env,
       redactionValues,
     });
-    await applyWebSocketRewritePolicy(host, fakeGateway, state.env, redactionValues);
-    const gatewayProof = await runDiscordGatewayClient(sandbox, {
-      port: fakeGateway.port,
-      identifyToken: {
-        kind: "explicit",
-        value: "openshell:resolve:env:DISCORD_BOT_TOKEN",
-      },
+    await applyRestRewritePolicy(
+      host,
+      fakeWechat,
+      state.env,
       redactionValues,
+      `${SANDBOX_NAME}-wechat-bridge`,
+    );
+    const installedWechatProof = await runInstalledWechatRuntimeProof(
+      sandbox,
+      fakeWechat,
+      state.wechatAccount,
+      state.env.WECHAT_BASE_URL ?? "https://ilinkai.wechat.com",
+      wechatMockTarget,
+      wechatMockText,
+      redactionValues,
+    );
+    check(
+      installedWechatProof.proof === "openclaw-weixin-runtime-send" &&
+        installedWechatProof.accountId === state.wechatAccount &&
+        installedWechatProof.pluginVersion === "2.4.3",
+      "M-W11: installed WeChat runtime loaded the configured post-rebuild account",
+    );
+    const wechatRuntimeCapture = lastJsonLine(
+      fakeWechat.captureFile,
+      (row) => row.event === "request" && row.path === "/ilink/bot/sendmessage",
+    );
+    const wechatCaptureText = fs.readFileSync(fakeWechat.captureFile, "utf8");
+    check(
+      wechatRuntimeCapture?.tokenMatchesExpected === true &&
+        wechatRuntimeCapture.tokenLooksPlaceholder !== true &&
+        wechatRuntimeCapture.tokenRedacted === true &&
+        wechatRuntimeCapture.authorizationType === "ilink_bot_token" &&
+        wechatRuntimeCapture.targetMatchesExpected === true &&
+        wechatRuntimeCapture.textMatchesExpected === true &&
+        !wechatCaptureText.includes(state.tokens.wechat) &&
+        !wechatCaptureText.includes("openshell:resolve:env:"),
+      "M-W12: installed WeChat send crossed the credential-bound iLink API without token leakage",
+    );
+    await artifacts.writeJson("installed-messaging-runtime-proofs.json", {
+      slack: installedSlackProof,
+      telegram: installedTelegramProof,
+      wechat: installedWechatProof,
     });
-    check(
-      gatewayProof.includes("UPGRADE"),
-      "M13d: native WebSocket upgrade reached fake Discord Gateway",
-    );
-    check(
-      gatewayProof.includes("HELLO") &&
-        gatewayProof.includes("IDENTIFY_SENT_PLACEHOLDER") &&
-        gatewayProof.includes("READY") &&
-        gatewayProof.includes("HEARTBEAT_ACK"),
-      "M13e: Discord HELLO, placeholder IDENTIFY, READY, heartbeat ACK completed",
-    );
-    const gatewayIdentify = lastJsonLine(
-      fakeGateway.captureFile,
-      (row) => row.event === "identify",
-    );
-    check(fs.existsSync(fakeGateway.captureFile), "M13f: fake Gateway capture file exists");
-    const gatewayCaptureText = fs.readFileSync(fakeGateway.captureFile, "utf8");
-    check(
-      gatewayIdentify?.tokenMatchesExpected === true &&
-        gatewayIdentify?.tokenLooksPlaceholder === false &&
-        !Object.prototype.hasOwnProperty.call(gatewayIdentify, "token") &&
-        !gatewayCaptureText.includes(state.tokens.discord) &&
-        !gatewayCaptureText.includes("openshell:resolve:env:"),
-      "M13f: fake Gateway proved placeholder-to-token rewrite without logging the raw token",
-    );
 
     const gatewayPort = await sandboxOutput(
       sandbox,

@@ -86,7 +86,7 @@ async function runPolicyScenario({
     step: () => undefined,
     note: () => undefined,
     isNonInteractive: () => true,
-    waitForSandboxReady: () => true,
+    waitForSandboxReady: async () => ({ ready: true, reason: "ready", error: null }),
     waitForSandboxControlPlaneReady: () => true,
     syncPresetSelection: (_sandboxName, current, selected) => {
       const currentSet = new Set(current);
@@ -155,17 +155,19 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
       `expected chosen to preserve local-inference, got ${JSON.stringify(payload.chosen)}`,
     );
 
-    // User-added extras stay additive, but built-in Brave is no longer
-    // preserved after Brave search was declined.
+    // User-added extras stay additive, and built-in Brave stays too: it is the
+    // Balanced tier's own egress default, not a stale web-search leftover, so
+    // declining Brave search does not narrow it (#10404).
     assert.deepEqual(
       payload.removedCalls,
-      ["brave"],
-      `expected only stale built-in Brave to be removed, got ${JSON.stringify(payload.removedCalls)}`,
+      [],
+      `expected no preset to be removed, got ${JSON.stringify(payload.removedCalls)}`,
     );
 
-    // Final state should still contain every non-Brave previously-applied preset.
+    // Final state should still contain every previously-applied preset.
     const finalSorted = payload.finalApplied.slice().sort();
     assert.deepEqual(finalSorted, [
+      "brave",
       "brew",
       "huggingface",
       "local-inference",
@@ -193,8 +195,8 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     );
     assert.deepEqual(
       payload.removedCalls,
-      ["brave"],
-      `expected only stale built-in Brave to be removed, got ${JSON.stringify(payload.removedCalls)}`,
+      [],
+      `expected no preset to be removed, got ${JSON.stringify(payload.removedCalls)}`,
     );
   });
 
@@ -318,11 +320,10 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied, ["npm", "googlechat"]);
   });
 
-  // Regression for #5967: these channels are not `requiredAtCreate`, so their
-  // policy presets are absent from the create-time boot policy. Finalization
-  // must still apply enabled presets and remove disabled presets through the
-  // shared channel-to-preset registry path.
-  const nonCreateTimeChannelPresets = [
+  // Regression for #5967: finalization must apply every enabled channel's
+  // egress policy and remove it when the channel is disabled, including
+  // create-time-required channels whose presets bind credentials.
+  const messagingChannelPresets = [
     "discord",
     "telegram",
     "teams",
@@ -331,7 +332,7 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     "googlechat",
   ].map((channel) => ({ channel }));
 
-  it.each(nonCreateTimeChannelPresets)(
+  it.each(messagingChannelPresets)(
     "resume selection applies the $channel policy required by a configured $channel channel (#5967)",
     async ({ channel }) => {
       const payload = await runPolicyScenario({
@@ -350,7 +351,7 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     },
   );
 
-  it.each(nonCreateTimeChannelPresets)(
+  it.each(messagingChannelPresets)(
     "custom non-interactive selection removes disabled $channel while honoring the explicit preset list (#5967)",
     async ({ channel }) => {
       const payload = await runPolicyScenario({

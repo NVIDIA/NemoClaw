@@ -13,6 +13,7 @@ import type { OnboardFlowContext } from "./flow-context";
 import { createResumeProviderShim, type ResumeProviderShimDeps } from "./resume-provider-shim";
 
 export {
+  isCoreFlowCompleteBeforeFinalization,
   prepareCoreOnboardFlowContext,
   prepareFinalOnboardFlowContext,
   runCoreOnboardFlowSlice,

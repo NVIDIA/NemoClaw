@@ -66,7 +66,7 @@ During `inference set`, NemoClaw recomputes the context window for the target mo
 It writes `model.context_length` when it resolves a value and omits the field when Hermes must use endpoint auto-discovery.
 When NemoClaw starts Local Ollama on macOS or Linux, it requests at least `64000` tokens.
 Fresh onboarding then verifies the loaded model's actual `context_length` through `/api/ps`.
-Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and repeat this verification before reusing its route.
+Resumed onboarding and sandbox rebuilds warm the recorded Ollama model and repeat this verification before reusing its route.
 When `NEMOCLAW_CONTEXT_WINDOW` is larger than `64000`, the Ollama runtime must provide at least that larger value.
 When Ollama reports a smaller runtime value, NemoClaw queries `/api/show` for the selected model's native context window.
 If the model's native context window is below the requirement, onboarding stops and tells you to select a model that meets the reported requirement.

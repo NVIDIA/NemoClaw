@@ -52,7 +52,6 @@ function setupFixture(sandboxName: string, mode: "healthy" | "identity_drift" | 
           model: "nvidia/test-model",
           provider: "nvidia-prod",
           gpuEnabled: false,
-          policies: [],
         },
       },
     }),

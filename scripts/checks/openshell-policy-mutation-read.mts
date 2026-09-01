@@ -67,29 +67,23 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
   },
   {
     relativePath: "src/lib/policy/index.ts",
-    expectedReads: [
-      ignoredBase("removePreset"),
-      ignoredBase("readCurrentSandboxPolicy"),
-      ignoredBase("applyPresetContent"),
-      ignoredBase("applyPresets"),
-      preservingBase("customPresetOwnsNetworkPolicyKey"),
-      ignoredFull("getGatewayPresets/readPolicy"),
-      preservingBase("getPresetContentGatewayState/readPolicy"),
-    ],
+    // Every round-trippable base-policy read is owned by the bounded
+    // captureSandboxBasePolicy adapter. This remaining --full read is a
+    // diagnostic preset inventory and never feeds a mutation.
+    expectedReads: [ignoredFull("getGatewayPresets/readPolicy")],
   },
   {
     relativePath: "nemoclaw/src/blueprint/runner.ts",
     expectedReads: [
-      unclassifiedBase("actionApply"),
-      unclassifiedFull("inspectBlueprintPolicyAuthority"),
-      unclassifiedFull("inspectBlueprintPolicyAuthority"),
+      unclassifiedBase("readBlueprintBasePolicy"),
+      unclassifiedFull("inspectBlueprintPolicy"),
+      unclassifiedFull("inspectBlueprintPolicy"),
     ],
   },
   {
     relativePath: "src/lib/shields/index.ts",
     expectedReads: [
-      preservingBase("resolveExactManagedMcpPolicies"),
-      ignoredBase("resolveProvableManagedMcpPoliciesForDeadline"),
+      preservingBase("applyShieldsPolicySnapshot"),
       ignoredBase("shieldsDownWithoutHostLock"),
     ],
   },
@@ -97,11 +91,20 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
 
 const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
   {
-    relativePath: "src/lib/adapters/openshell/policy-authority.ts",
+    relativePath: "src/lib/adapters/openshell/policy-state.ts",
     expectedReads: [
       unclassifiedBase("captureSandboxBasePolicy"),
-      unclassifiedFull("inspectSandboxPolicyAuthority"),
+      unclassifiedBase("captureSandboxBasePolicyRevision"),
+      unclassifiedFull("inspectSandboxPolicy"),
     ],
+  },
+  {
+    relativePath: "src/lib/actions/sandbox/snapshot.ts",
+    expectedReads: [preservingBase("prepareSnapshotClonePolicy")],
+  },
+  {
+    relativePath: "src/lib/onboard/experimental/hermes-portable-policy-state.ts",
+    expectedReads: [unclassifiedBase("proveHermesPortableLivePolicy")],
   },
   {
     relativePath: "src/lib/actions/sandbox/gateway-state.ts",
@@ -112,7 +115,7 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
   },
   {
     relativePath: "src/lib/actions/sandbox/launch-readiness.ts",
-    expectedReads: [unclassifiedFull("captureLivePolicy")],
+    expectedReads: [unclassifiedFull("validateLivePolicy")],
   },
   {
     relativePath: "src/lib/policy/commands.ts",
@@ -123,6 +126,7 @@ const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
         view: "base",
         failureHandling: "unclassified",
       },
+      unclassifiedBase("buildPolicyGetRevisionArgs"),
       {
         site: "buildPolicyGetFullCommand",
         view: "full",
@@ -142,6 +146,7 @@ export interface DiscoveredPolicyReadSite {
 const POLICY_GET_BUILDERS = new Map<string, PolicyReadView>([
   ["buildPolicyGetCommand", "base"],
   ["buildPolicyGetArgs", "base"],
+  ["buildPolicyGetRevisionArgs", "base"],
   ["buildPolicyGetFullCommand", "full"],
   ["buildPolicyGetFullJsonArgs", "full"],
 ]);
