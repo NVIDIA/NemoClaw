@@ -127,6 +127,27 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     ]);
   });
 
+  it("holds model ownership while final host-wide cleanup runs", () => {
+    const harness = buildDeps({ provider: "ollama-local" });
+    let ownershipHeld = false;
+    harness.deps.withOllamaModelOwnershipLock = vi.fn((operation) => {
+      ownershipHeld = true;
+      try {
+        return operation();
+      } finally {
+        ownershipHeld = false;
+      }
+    });
+    vi.mocked(harness.deps.stopAll).mockImplementation(() => {
+      expect(ownershipHeld).toBe(true);
+    });
+
+    cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
+
+    expect(harness.deps.stopAll).toHaveBeenCalledOnce();
+    expect(ownershipHeld).toBe(false);
+  });
+
   it("calls unloadOllamaModels() exactly once for an Ollama sandbox when stopHostServices=false", () => {
     const harness = buildDeps({ provider: "ollama-local" });
 

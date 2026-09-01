@@ -340,12 +340,14 @@ export function cleanupSandboxServices(
     // `stopAll()` owns the host-wide unload when this sandbox has an Ollama
     // route or retained cleanup work. Don't probe an unrelated daemon for a
     // sandbox with no Ollama ownership, and don't double-call cleanup here.
-    const cleanupOllamaModels = withOllamaModelOwnershipLock(() => {
+    ollamaCleanup = withOllamaModelOwnershipLock(() => {
       const sandbox = getSandbox(validatedSandboxName);
       const pending = loadPendingOllamaModelCleanup(validatedSandboxName);
-      return Boolean(sandbox?.provider?.includes("ollama") || pending.length > 0);
+      const cleanupOllamaModels = Boolean(
+        sandbox?.provider?.includes("ollama") || pending.length > 0,
+      );
+      return stopAll({ sandboxName: validatedSandboxName, cleanupOllamaModels });
     });
-    ollamaCleanup = stopAll({ sandboxName: validatedSandboxName, cleanupOllamaModels });
   } else {
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
     // models for this sandbox if its provider used Ollama. Without this

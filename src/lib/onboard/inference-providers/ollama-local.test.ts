@@ -331,4 +331,26 @@ describe("Ollama local provider sandbox-facing model gate", () => {
 
     expect(rollbackPersistedOllamaHost).toHaveBeenCalledOnce();
   });
+
+  it("restores the prior cleanup route when model warm-up throws", async () => {
+    const rollbackPersistedOllamaHost = vi.fn();
+
+    await expect(
+      setupOllamaLocalInference(
+        { model: "llama3.2:1b", provider: "ollama-local", allowToolsIncompatible: false },
+        deps({
+          localInference: {
+            runOllamaWarmup: () => {
+              throw new Error("warm-up transport failed");
+            },
+            validateOllamaModelWithToolsOverride: () => ({ ok: true }),
+            validateSandboxFacingOllamaModel: () => ({ ok: true }),
+            persistResolvedOllamaHost: () => rollbackPersistedOllamaHost,
+          },
+        }),
+      ),
+    ).rejects.toThrow("warm-up transport failed");
+
+    expect(rollbackPersistedOllamaHost).toHaveBeenCalledOnce();
+  });
 });

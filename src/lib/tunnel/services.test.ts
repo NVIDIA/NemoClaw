@@ -596,7 +596,7 @@ describe("stopAll", () => {
 
   it("logs stop messages", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAll({ pidDir });
+    stopAll({ pidDir, unloadOllamaModels: () => undefined });
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("All services stopped");
     logSpy.mockRestore();
