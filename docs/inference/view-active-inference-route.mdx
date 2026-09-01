@@ -16,6 +16,7 @@ This command reports configuration state and does not authenticate a model reque
 ## Read the Live Route
 
 Run the direct route command when you only need the active provider and model.
+The direct form reads the gateway that `NEMOCLAW_GATEWAY_PORT` selects.
 
 ```bash
 $$nemoclaw inference get
@@ -43,8 +44,12 @@ Expected output:
 }
 ```
 
-The command exits non-zero with `OpenShell inference route is not configured.` when the gateway has no registered inference route.
+The command exits non-zero with `OpenShell inference route is not configured for gateway '<gateway-name>'.` when the selected gateway has no configured inference route.
 Run `$$nemoclaw onboard` to configure one.
+For lookup failures, the error names the gateway without rendering command output.
+It reports a timeout, a nonzero exit status, no exit status, or output NemoClaw cannot interpret after a command exits successfully.
+Run `$$nemoclaw status` after a direct lookup fails.
+Run `$$nemoclaw <name> status` after a sandbox-first lookup fails.
 
 ## Use the Sandbox-First Form
 
@@ -54,7 +59,9 @@ Use the sandbox-first form when you are already working with a named sandbox.
 $$nemoclaw <name> inference get
 ```
 
-The command resolves the gateway recorded for that sandbox and reads its gateway-wide route.
+`NEMOCLAW_GATEWAY_PORT` first selects the sandbox registry and fallback gateway.
+When that registry contains the named sandbox, the command resolves its recorded gateway and reads that gateway-wide route.
+The command does not search registries for other gateway ports.
 OpenShell exposes one inference route to every sandbox registered on the same gateway.
 
 ## Include Sandbox Health

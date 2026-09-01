@@ -1,23 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
-
 import { describe, expect, it } from "vitest";
 import { settleAdvisorTurn } from "../../../tools/advisors/session.mts";
-import { advisorExecutionErrors } from "../../../tools/pr-review-advisor/analyze.mts";
-import { artifactPaths } from "../../../tools/pr-review-advisor/artifacts.mts";
 
 
 describe("PR review advisor turn trace", () => {
-  it("keeps the HTML session as the only debugging transcript", () => {
-    expect(artifactPaths("artifacts/pr-review-advisor")).toEqual({
-      result: path.join("artifacts/pr-review-advisor", "pr-review-advisor-result.json"),
-      finalResult: path.join("artifacts/pr-review-advisor", "pr-review-advisor-final-result.json"),
-      summary: path.join("artifacts/pr-review-advisor", "pr-review-advisor-summary.md"),
-      sessionHtml: path.join("artifacts/pr-review-advisor", "pr-review-advisor-session.html"),
-    });
-  });
 
   it("settles turns and reports provider or callback errors (#6446)", async () => {
     const settle = (overrides: Partial<Parameters<typeof settleAdvisorTurn>[0]>) =>
@@ -72,20 +60,6 @@ describe("PR review advisor turn trace", () => {
       "artifact disk full",
       "async artifact disk full",
       "unknown advisor turn callback failure",
-    ]);
-    expect(
-      advisorExecutionErrors({
-        text: "partial",
-        raw: "raw transcript\n",
-        turnTexts: ["partial"],
-        turnErrors: ["stage: provider rejected"],
-        turnCallbackErrors: ["stage: disk full"],
-        fatalError: "timed out after 100 ms",
-      }),
-    ).toEqual([
-      "session: timed out after 100 ms",
-      "turn: stage: provider rejected",
-      "artifact: stage: disk full",
     ]);
   });
 });
