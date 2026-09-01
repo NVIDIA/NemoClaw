@@ -319,7 +319,7 @@ bridge.restartMcpBridge("alpha", "example").then(
       },
     },
     {
-      title: "reuses a stored credential that verifies on the wire",
+      title: "reuses a stored credential when credential status reports success",
       statusResponse: {
         kind: "probe",
         value: { ok: true, httpStatus: 200, controlHttpStatus: 401 },
