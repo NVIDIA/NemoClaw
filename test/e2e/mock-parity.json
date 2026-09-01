@@ -536,6 +536,7 @@
         "test/e2e/live/mcp-bridge-cleanup.ts",
         "test/e2e/live/mcp-bridge-hermes-lifecycle.ts",
         "test/e2e/live/mcp-bridge-phases.ts",
+        "test/e2e/live/mcp-bridge-reliability.ts",
         "test/e2e/live/mcp-bridge-sandbox.ts",
         "test/e2e/live/openshell-allowed-ips-rebinding.ts",
         "test/e2e/live/openshell-exact-main-runtime-contracts.ts"

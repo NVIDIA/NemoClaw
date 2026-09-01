@@ -32,6 +32,7 @@ import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
 import { gatewayStartGuidance } from "../../gateway-start-guidance";
 import {
+  buildGatewayInferenceGetArgs,
   formatInferenceRouteDriftForDisplay,
   parseGatewayInference,
   planInferenceRouteReconcile,
@@ -67,7 +68,6 @@ import {
 import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
-  buildGatewayInferenceGetArgs,
   buildGatewayInferenceSetArgs,
 } from "./connect-inference-gateway";
 import {

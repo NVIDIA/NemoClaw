@@ -14,6 +14,7 @@ import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openroute
 
 export { isSafeModelId };
 export { OLLAMA_LOCAL_CREDENTIAL_ENV };
+export { buildGatewayInferenceGetArgs } from "./gateway/command-args";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const NOUS_RECOMMENDED_MODELS_URL =
