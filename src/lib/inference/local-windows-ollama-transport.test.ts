@@ -194,14 +194,14 @@ describe("Windows-host Ollama transport", () => {
   it("validates a Windows-host model through Docker Desktop (#10553)", () => {
     setResolvedOllamaHost(OLLAMA_HOST_DOCKER_INTERNAL);
     const capture = vi.fn((command: readonly string[]) =>
-      command.includes("http://host.docker.internal:11434/api/show")
+      command.at(-1) === "http://host.docker.internal:11434/api/show"
         ? JSON.stringify({ capabilities: ["tools"] })
         : "",
     );
     const captureEx = vi.fn((command: readonly string[]) => ({
       stdout:
         command[0] === "docker" &&
-        command.includes("http://host.docker.internal:11434/api/generate")
+        command.at(-1) === "http://host.docker.internal:11434/api/generate"
           ? JSON.stringify({ done: true, response: "ready" })
           : "",
       stderr: "",
