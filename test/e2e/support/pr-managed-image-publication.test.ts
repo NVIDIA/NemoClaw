@@ -21,6 +21,7 @@ import {
 import { githubRequest } from "../../../tools/e2e/base-image-publication.mts";
 import {
   assembleManagedImageCatalog,
+  main,
   resolvePrManagedImageCatalog,
   selectManagedImagePublicationRun,
   writeManagedImageCatalog,
@@ -272,35 +273,62 @@ describe("exact PR managed-image publication", () => {
   });
 
   it("keeps artifact download evidence out of the machine-readable selection", async () => {
-    const standardOutput = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const standardError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const input = resolverInput();
+    const apiRequest = candidateRequest({ imageChanged: true });
+    const artifactResponses = new Map(
+      SHIPPED_MANAGED_IMAGE_AGENTS.map((agent, index) => {
+        const archive = contractArchive(agent, index);
+        return [
+          `/repos/${CANONICAL_REPOSITORY}/actions/artifacts/${index + 100}/zip`,
+          new Response(new Uint8Array(archive), {
+            status: 200,
+            headers: { "content-length": String(archive.length) },
+          }),
+        ] as const;
+      }),
+    );
+    let standardOutput = "";
+    let standardError = "";
+    vi.spyOn(process.stdout, "write").mockImplementation(((chunk: string | Uint8Array) => {
+      standardOutput += chunk.toString();
+      return true;
+    }) as typeof process.stdout.write);
+    vi.spyOn(console, "log").mockImplementation((...values: unknown[]) => {
+      standardOutput += `${values.map(String).join(" ")}\n`;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation(((chunk: string | Uint8Array) => {
+      standardError += chunk.toString();
+      return true;
+    }) as typeof process.stderr.write);
+    vi.spyOn(console, "error").mockImplementation((...values: unknown[]) => {
+      standardError += `${values.map(String).join(" ")}\n`;
+    });
     vi.stubGlobal(
       "fetch",
       vi.fn(async (request: string | URL | Request) => {
-        const match = String(request).match(/\/artifacts\/([1-9][0-9]*)\/zip$/u);
-        expect(match, `unexpected artifact request ${String(request)}`).not.toBeNull();
-        const index = Number(match![1]) - 100;
-        const agent = SHIPPED_MANAGED_IMAGE_AGENTS[index];
-        expect(agent, `unexpected artifact index ${index}`).toBeDefined();
-        const archive = contractArchive(agent!, index);
-        return new Response(new Uint8Array(archive), {
-          status: 200,
-          headers: { "content-length": String(archive.length) },
-        });
+        const url = new URL(String(request));
+        return (
+          artifactResponses.get(url.pathname) ??
+          Response.json(await apiRequest(`${url.pathname}${url.search}`))
+        );
       }),
     );
 
-    await expect(
-      resolvePrManagedImageCatalog(resolverInput(), candidateRequest({ imageChanged: true })),
-    ).resolves.toBe("candidate-catalog");
-    expect(standardOutput).not.toHaveBeenCalled();
-    expect(standardError).toHaveBeenCalledTimes(SHIPPED_MANAGED_IMAGE_AGENTS.length);
-    expect(standardError.mock.calls.flat()).toEqual(
-      Array.from(
-        { length: SHIPPED_MANAGED_IMAGE_AGENTS.length },
-        () => "artifact-content-read attempt=1 outcome=passed-first-attempt",
-      ),
-    );
+    await main([input.outputPath], {
+      BASE_SHA,
+      CANDIDATE_REPOSITORY: CANONICAL_REPOSITORY,
+      CANDIDATE_SHA,
+      GITHUB_TOKEN: "test-token",
+      PR_NUMBER: String(PR_NUMBER),
+    });
+
+    const artifactEvidence = Array.from(
+      { length: SHIPPED_MANAGED_IMAGE_AGENTS.length },
+      () => "artifact-content-read attempt=1 outcome=passed-first-attempt\n",
+    ).join("");
+    expect(standardOutput).toBe("candidate-catalog\n");
+    expect(standardOutput).not.toContain("artifact-content-read");
+    expect(standardError).toBe(artifactEvidence);
   });
 
   it("selects a candidate catalog when only managed-image onboarding runtime changes", async () => {
