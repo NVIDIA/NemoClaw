@@ -15,6 +15,8 @@ ACP packaging review date: August 20, 2026.
 
 OpenSSL base pin refresh date: August 28, 2026.
 
+Gateway lazy-dependency trust-boundary review date: August 31, 2026.
+
 ## Decision
 
 Pin the NemoClaw Hermes runtime to the published, non-draft, non-prerelease `v2026.7.20` release, whose package version is `0.19.0`.
@@ -34,6 +36,23 @@ The checks run when `NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION` is `0` or `1`.
 The Hermes sandbox image build fails if any selected dependency or import is unavailable.
 The base image also replaces the published `python-multipart==0.0.27` lock resolution with the hash-verified and attested `python-multipart==0.0.32`.
 The base image overlays checksum-pinned Node.js `24.18.1` archives for both supported architectures and installs exact uv `0.11.33`; build-time assertions reject version drift before Hermes is installed.
+
+Hermes activates `HERMES_LAZY_INSTALL_TARGET` with `site.addsitedir`, which executes Python statements from `.pth` files before the requested backend import.
+The sandbox-owned durable lazy-package directory therefore cannot be an input to the separated gateway: a mode change does not make sandbox-authored Python trusted.
+Root-separated startup now prepares `/run/nemoclaw/hermes-gateway-lazy-packages` beneath a root-owned runtime parent as `gateway:gateway` mode `0700`, installs the exact supported Hindsight client there as the gateway identity, and launches the gateway with only that target.
+Same-identity startup retains the sandbox target because that topology has no distinct gateway execution identity.
+The sandbox target remains available to interactive commands and captured state, but no code is promoted from it into the gateway target.
+The patched lazy installer also uses a fixed uv binary, trusted working directory, and locally sanitized environment for every uv, pip, and ensurepip subprocess, so sandbox `uv.toml`, pip-module shadowing, and interpreter startup variables cannot redirect the gateway install.
+Gateway dotenv reload preserves the launch-time interpreter, installer, proxy, certificate, home, and plugin controls; the startup validator rejects those controls in the mutable `.env` as an actionable configuration error.
+
+The same execution boundary applies to Hermes plugins.
+The managed NemoClaw plugin now ships as a root-owned bundled plugin under `/opt/hermes/plugins/nemoclaw`.
+An identity-proven root-runtime marker makes the separated gateway hardcode that bundled root and skip general user, project, and entry-point plugins plus the independent user memory, cron, and model-provider loaders.
+The sandbox-owned plugin tree remains state for same-identity Hermes compatibility, but it is inert in the separated gateway; custom images use the image-owned bundled-plugin tree for behavior that must work in both topologies.
+
+The base build downloads the checksum-pinned `hindsight-client==0.6.1` and `aiohttp-retry==2.9.1` wheels, installs them only into a temporary compatibility probe, imports them, and deletes both artifacts and the probe in the same layer.
+The final image uses a generated build-only fixture to test the real lazy installer, removes the gateway probe target, and resets the sandbox target to an empty directory before publication.
+The official Hindsight client is retrieved at runtime when the operator selects it; it is not distributed in the NemoClaw image.
 
 The ACP decision in this change is limited to installing Hermes' existing `acp` extra and proving the pinned SDK and adapter imports are available.
 `hermes acp --check` is an import-readiness check; it does not validate protocol sessions, editor compatibility, workspace or current-working-directory mapping, file and terminal permissions, or transport and authorization behavior.

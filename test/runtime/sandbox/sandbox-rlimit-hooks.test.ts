@@ -620,10 +620,6 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const safetyNet = path.join(preloadDir, "sandbox-safety-net.js");
     const ciaoGuard = path.join(preloadDir, "ciao-network-guard.js");
     const gatewaySupervisor = path.join(localLib, "gateway-supervisor.sh");
-    const lazyPackagePermissions = path.join(
-      localLib,
-      "normalize-hermes-lazy-package-permissions.py",
-    );
     const managedGatewayControl = path.join(localLib, "managed-gateway-control.py");
     const hermesCronRestoreControl = path.join(localLib, "hermes-cron-restore-control.py");
     const startBin = path.join(tmp, "nemoclaw-start");
@@ -660,7 +656,6 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.chmodSync(safetyNet, 0o666);
       fs.chmodSync(ciaoGuard, 0o666);
       fs.writeFileSync(gatewaySupervisor, "# gateway supervisor fixture\n");
-      fs.writeFileSync(lazyPackagePermissions, "# lazy-package permissions fixture\n");
       fs.writeFileSync(managedGatewayControl, "# managed gateway control fixture\n");
       fs.writeFileSync(hermesCronRestoreControl, "# Hermes cron restore control fixture\n");
       fs.writeFileSync(startBin, "#!/usr/bin/env bash\n");
@@ -718,10 +713,6 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js", safetyNet)
         .replaceAll("/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js", ciaoGuard)
         .replaceAll("/usr/local/lib/nemoclaw/preloads", preloadDir)
-        .replaceAll(
-          "/usr/local/lib/nemoclaw/normalize-hermes-lazy-package-permissions.py",
-          lazyPackagePermissions,
-        )
         .replaceAll("/opt/hermes/.venv/bin/python3", "python3")
         .replaceAll("/usr/local/lib/nemoclaw/managed-gateway-control.py", managedGatewayControl)
         .replaceAll(
@@ -754,7 +745,6 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(fs.statSync(langfuseCredentialPatcher).mode & 0o777).toBe(0o444);
       expect(fs.statSync(mcpCredentialBoundary).mode & 0o777).toBe(0o444);
       expect(fs.statSync(buildMcpDigest).mode & 0o777).toBe(0o444);
-      expect(fs.statSync(lazyPackagePermissions).mode & 0o777).toBe(0o444);
       expect(fs.statSync(hermesCronRestoreControl).mode & 0o777).toBe(0o700);
       expect(hardenedDir.uid).toBe(fixtureOwner.uid);
       expect(hardenedDir.gid).toBe(fixtureOwner.gid);

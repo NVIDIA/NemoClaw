@@ -11,19 +11,12 @@ import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { extractShellFunction } from "../../support/hermes-shell-harness";
 
 const START_SCRIPT = path.join(import.meta.dirname, "../../..", "agents", "hermes", "start.sh");
-const PERMISSIONS_NORMALIZER = path.join(
-  import.meta.dirname,
-  "../../..",
-  "agents",
-  "hermes",
-  "normalize-lazy-package-permissions.py",
-);
 
-function fileMode(target: string): number {
-  return fs.statSync(target).mode & 0o7777;
-}
-
-function runLazyDependencyPreparation(root: boolean, provider = "hindsight") {
+function runLazyDependencyPreparation(
+  root: boolean,
+  provider = "hindsight",
+  envOverrides: Record<string, string> = {},
+) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-lazy-prep-"));
   const pythonPath = path.join(tmpDir, "python3");
   const pythonHarnessPath = path.join(tmpDir, "python-harness.py");
@@ -64,16 +57,6 @@ function runLazyDependencyPreparation(root: boolean, provider = "hindsight") {
       "sys.modules['tools'] = tools",
       "sys.modules['tools.lazy_deps'] = lazy_deps",
       "",
-      "runpy = types.ModuleType('runpy')",
-      "def normalize_lazy_package_permissions(target):",
-      "    print(f'permissions=normalized:{target}')",
-      "def run_path(path, run_name=None):",
-      "    if path != '/usr/local/lib/nemoclaw/normalize-hermes-lazy-package-permissions.py':",
-      "        raise AssertionError(f'unexpected normalizer path: {path}')",
-      "    return {'normalize_lazy_package_permissions': normalize_lazy_package_permissions}",
-      "runpy.run_path = run_path",
-      "sys.modules['runpy'] = runpy",
-      "",
       "program = sys.argv[1]",
       "exec(compile(program, '<prepare_hermes_lazy_dependencies>', 'exec'), {'__name__': '__main__'})",
     ].join("\n"),
@@ -87,6 +70,10 @@ function runLazyDependencyPreparation(root: boolean, provider = "hindsight") {
       'printf "identity=%s\\n" "${NEMOCLAW_INSTALL_IDENTITY:-current}"',
       'printf "home=%s\\n" "$HOME"',
       'printf "target=%s\\n" "$HERMES_LAZY_INSTALL_TARGET"',
+      'printf "cache=%s\\n" "$UV_CACHE_DIR"',
+      "while IFS= read -r name; do",
+      '  case "$name" in UV_*|PIP_*|PYTHON*|LD_*|DYLD_*|BASH_ENV|ENV|PATH|VIRTUAL_ENV) printf "managed-env=%s=%s\\n" "$name" "${!name}" ;; esac',
+      "done < <(compgen -e | LC_ALL=C sort)",
       'program="${@: -1}"',
       `exec ${shellQuote(process.env.PYTHON || "python3")} -I ${shellQuote(pythonHarnessPath)} "$program"`,
     ].join("\n"),
@@ -94,7 +81,7 @@ function runLazyDependencyPreparation(root: boolean, provider = "hindsight") {
   );
   fs.writeFileSync(
     handoffPath,
-    ["#!/usr/bin/env sh", "export NEMOCLAW_INSTALL_IDENTITY=sandbox", 'exec "$@"'].join("\n"),
+    ["#!/usr/bin/env sh", "export NEMOCLAW_INSTALL_IDENTITY=gateway", 'exec "$@"'].join("\n"),
     { mode: 0o700 },
   );
   fs.writeFileSync(
@@ -104,9 +91,12 @@ function runLazyDependencyPreparation(root: boolean, provider = "hindsight") {
       "set -euo pipefail",
       extractShellFunction(source, "prepare_hermes_lazy_dependencies"),
       `id() { [ "\${1:-}" = "-u" ] && printf "${root ? "0" : "1000"}\\n" || command id "$@"; }`,
+      'prepare_hermes_gateway_lazy_install_target() { printf "gateway-target=prepared\\n"; }',
       `HERMES_DIR=${shellQuote(hermesDir)}`,
+      "HERMES_SANDBOX_LAZY_INSTALL_TARGET=/sandbox/.hermes/lazy-packages",
+      "HERMES_GATEWAY_LAZY_INSTALL_TARGET=/run/nemoclaw/hermes-gateway-lazy-packages",
       `_HERMES_PYTHON=${shellQuote(pythonPath)}`,
-      `STEP_DOWN_PREFIX_SANDBOX=(${shellQuote(handoffPath)})`,
+      `STEP_DOWN_PREFIX_GATEWAY=(${shellQuote(handoffPath)})`,
       "prepare_hermes_lazy_dependencies",
     ].join("\n"),
     { mode: 0o700 },
@@ -116,29 +106,55 @@ function runLazyDependencyPreparation(root: boolean, provider = "hindsight") {
     return spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
       timeout: 5000,
-      env: process.env,
+      env: { ...process.env, ...envOverrides },
     });
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 
+function managedEnvironment(stdout: string): Record<string, string> {
+  return Object.fromEntries(
+    stdout
+      .split("\n")
+      .filter((line) => line.startsWith("managed-env="))
+      .map((line) => {
+        const assignment = line.slice("managed-env=".length);
+        const separator = assignment.indexOf("=");
+        return [assignment.slice(0, separator), assignment.slice(separator + 1)];
+      }),
+  );
+}
+
 describe("Hermes lazy dependency lifecycle", () => {
   it.each([
-    ["root-separated", true, "sandbox"],
-    ["same-identity", false, "current"],
+    [
+      "root-separated",
+      true,
+      "gateway",
+      "/run/nemoclaw/hermes-gateway-lazy-packages",
+      "/run/nemoclaw/hermes-gateway-lazy-packages/.uv-cache",
+    ],
+    [
+      "same-identity",
+      false,
+      "current",
+      "/sandbox/.hermes/lazy-packages",
+      "/sandbox/.hermes/cache/uv",
+    ],
   ] as const)(
-    "runs approved preparation under the sandbox owner (%s) (#8613)",
-    (_mode, root, identity) => {
+    "runs approved preparation under the consuming identity (%s) (#8613)",
+    (_mode, root, identity, target, cache) => {
       const result = runLazyDependencyPreparation(root);
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain(`identity=${identity}`);
       expect(result.stdout).toContain("home=/sandbox");
-      expect(result.stdout).toContain("target=/sandbox/.hermes/lazy-packages");
+      expect(result.stdout).toContain(`target=${target}`);
+      expect(result.stdout).toContain(`cache=${cache}`);
       expect(result.stdout).toContain("activated=durable");
       expect(result.stdout).toContain("installer=reviewed");
-      expect(result.stdout).toContain("permissions=normalized:/sandbox/.hermes/lazy-packages");
+      expect(result.stdout.includes("gateway-target=prepared")).toBe(root);
     },
   );
 
@@ -149,110 +165,47 @@ describe("Hermes lazy dependency lifecycle", () => {
     expect(result.stdout).toContain("identity=current");
     expect(result.stdout).not.toContain("activated=durable");
     expect(result.stdout).not.toContain("installer=reviewed");
-    expect(result.stdout).not.toContain("permissions=normalized");
   });
 
-  it("normalizes only sandbox-owned regular entries without following symlinks", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-lazy-perms-"));
-    const target = path.join(tmpDir, "lazy-packages");
-    const packageDir = path.join(target, "hindsight_client");
-    const packageFile = path.join(packageDir, "__init__.py");
-    const executable = path.join(target, "reviewed-tool");
-    const outside = path.join(tmpDir, "outside-secret");
-    const outsideLink = path.join(target, "outside-link");
-    fs.mkdirSync(packageDir, { recursive: true, mode: 0o700 });
-    fs.chmodSync(target, 0o700);
-    fs.writeFileSync(packageFile, "fixture\n", { mode: 0o600 });
-    fs.writeFileSync(executable, "#!/bin/sh\n", { mode: 0o700 });
-    fs.writeFileSync(outside, "secret\n", { mode: 0o600 });
-    fs.symlinkSync(outside, outsideLink);
+  it("scrubs inherited package-manager and Python inputs only for root-separated preparation", () => {
+    const hostileEnvironment = {
+      UV_CONFIG_FILE: "/sandbox/uv.toml",
+      UV_INDEX_URL: "file:///sandbox/wheels",
+      UV_NO_CONFIG: "0",
+      PIP_CONFIG_FILE: "/sandbox/pip.conf",
+      PIP_INDEX_URL: "file:///sandbox/wheels",
+      PIP_DISABLE_PIP_VERSION_CHECK: "0",
+      PYTHONPATH: "/sandbox/python",
+      PYTHONHOME: "/sandbox/python-home",
+      PYTHONSAFEPATH: "0",
+      PYTHONNOUSERSITE: "0",
+      PYTHONUTF8: "0",
+      VIRTUAL_ENV: "/sandbox/venv",
+    };
+    const rootSeparated = runLazyDependencyPreparation(true, "hindsight", hostileEnvironment);
+    const sameIdentity = runLazyDependencyPreparation(false, "hindsight", hostileEnvironment);
 
-    try {
-      const result = spawnSync(
-        process.env.PYTHON || "python3",
-        ["-I", PERMISSIONS_NORMALIZER, target],
-        {
-          encoding: "utf8",
-          env: { ...process.env, HERMES_LAZY_INSTALL_TARGET: target },
-        },
-      );
+    expect(rootSeparated.status, rootSeparated.stderr).toBe(0);
+    expect(managedEnvironment(rootSeparated.stdout)).toEqual({
+      PIP_CONFIG_FILE: "/dev/null",
+      PIP_DISABLE_PIP_VERSION_CHECK: "1",
+      PATH: "/usr/local/bin:/opt/hermes/.venv/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      PYTHONNOUSERSITE: "1",
+      PYTHONSAFEPATH: "1",
+      PYTHONUTF8: "1",
+      UV_CACHE_DIR: "/run/nemoclaw/hermes-gateway-lazy-packages/.uv-cache",
+      UV_NO_CACHE: "1",
+      UV_NO_CONFIG: "1",
+    });
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(fileMode(target)).toBe(0o750);
-      expect(fileMode(packageDir)).toBe(0o750);
-      expect(fileMode(packageFile)).toBe(0o640);
-      expect(fileMode(executable)).toBe(0o750);
-      expect(fs.lstatSync(outsideLink).isSymbolicLink()).toBe(true);
-      expect(fileMode(outside)).toBe(0o600);
-      expect(fileMode(packageFile) & 0o200).toBe(0o200);
-      expect(fileMode(packageFile) & 0o020).toBe(0);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects hardlinks instead of broadening another sandbox-owned path", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-lazy-hardlink-"));
-    const target = path.join(tmpDir, "lazy-packages");
-    const outside = path.join(tmpDir, "outside-secret");
-    fs.mkdirSync(target, { mode: 0o700 });
-    fs.writeFileSync(outside, "secret\n", { mode: 0o600 });
-    fs.linkSync(outside, path.join(target, "a-hardlink"));
-
-    try {
-      const result = spawnSync(
-        process.env.PYTHON || "python3",
-        ["-I", PERMISSIONS_NORMALIZER, target],
-        {
-          encoding: "utf8",
-          env: { ...process.env, HERMES_LAZY_INSTALL_TARGET: target },
-        },
-      );
-
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("hardlinked file: a-hardlink");
-      expect(fileMode(outside)).toBe(0o600);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("bounds directory enumeration before sorting or changing entry modes", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-lazy-budget-"));
-    const target = path.join(tmpDir, "lazy-packages");
-    fs.mkdirSync(target, { mode: 0o700 });
-    fs.writeFileSync(path.join(target, "a"), "a\n", { mode: 0o600 });
-    fs.writeFileSync(path.join(target, "b"), "b\n", { mode: 0o600 });
-    fs.writeFileSync(path.join(target, "c"), "c\n", { mode: 0o600 });
-
-    try {
-      const result = spawnSync(
-        process.env.PYTHON || "python3",
-        [
-          "-I",
-          "-c",
-          [
-            "import runpy, sys",
-            "module = runpy.run_path(sys.argv[1], run_name='nemoclaw_lazy_budget_test')",
-            "normalizer = module['normalize_lazy_package_permissions']",
-            "normalizer.__globals__['MAX_ENTRIES'] = 2",
-            "normalizer(sys.argv[2])",
-          ].join("; "),
-          PERMISSIONS_NORMALIZER,
-          target,
-        ],
-        {
-          encoding: "utf8",
-          env: { ...process.env, HERMES_LAZY_INSTALL_TARGET: target },
-        },
-      );
-
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("lazy-package tree exceeds entry limit");
-      expect(fileMode(target)).toBe(0o700);
-      expect(fileMode(path.join(target, "a"))).toBe(0o600);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+    expect(sameIdentity.status, sameIdentity.stderr).toBe(0);
+    const sameIdentityEnvironment = managedEnvironment(sameIdentity.stdout);
+    expect(sameIdentityEnvironment.UV_CONFIG_FILE).toBe("/sandbox/uv.toml");
+    expect(sameIdentityEnvironment.UV_INDEX_URL).toBe("file:///sandbox/wheels");
+    expect(sameIdentityEnvironment.PIP_CONFIG_FILE).toBe("/sandbox/pip.conf");
+    expect(sameIdentityEnvironment.PIP_INDEX_URL).toBe("file:///sandbox/wheels");
+    expect(sameIdentityEnvironment.PYTHONPATH).toBe("/sandbox/python");
+    expect(sameIdentityEnvironment.PYTHONHOME).toBe("/sandbox/python-home");
+    expect(sameIdentityEnvironment.VIRTUAL_ENV).toBe("/sandbox/venv");
   });
 });
