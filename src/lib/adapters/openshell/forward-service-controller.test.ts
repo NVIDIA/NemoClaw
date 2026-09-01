@@ -108,7 +108,7 @@ describe("OpenShell ForwardTcp controller pending cleanup", () => {
     expect(readForwardServicePendingReceipt(siblingTarget, { stateDirectory, uid })).toBeNull();
   });
 
-  it("refuses mutable-name cleanup across same-gateway sandbox generations", () => {
+  it("cleans stale same-gateway historical generations by exact receipt identity", () => {
     const priorTarget = {
       ...target,
       sandboxIdentityFingerprint: "c".repeat(64),
@@ -116,7 +116,19 @@ describe("OpenShell ForwardTcp controller pending cleanup", () => {
     const receipt = pending(2_147_483_647, priorTarget);
     writeForwardServicePendingReceipt(receipt, { stateDirectory, uid });
 
-    expect(() => controller().stopAll(authority)).toThrow(/disagrees with sandbox authority/u);
+    expect(controller().stopAll(authority)).toBe(1);
+    expect(readForwardServicePendingReceipt(priorTarget, { stateDirectory, uid })).toBeNull();
+  });
+
+  it("retains a live unidentified historical generation without signaling it", () => {
+    const priorTarget = {
+      ...target,
+      sandboxIdentityFingerprint: "c".repeat(64),
+    };
+    const receipt = pending(process.pid, priorTarget);
+    writeForwardServicePendingReceipt(receipt, { stateDirectory, uid });
+
+    expect(() => controller().stopAll(authority)).toThrow(/pending process is unknown/u);
     expect(readForwardServicePendingReceipt(priorTarget, { stateDirectory, uid })).toEqual(receipt);
   });
 });

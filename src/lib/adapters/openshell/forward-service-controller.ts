@@ -152,22 +152,31 @@ export function createForwardServiceController(
         const allPending = listForwardServicePendingReceipts({
           stateDirectory: deps.stateDirectory,
         });
-        if (
-          [...allReceipts, ...allPending].some(
-            (receipt) =>
-              receipt.sandboxName === authority.sandboxName &&
-              receipt.gatewayName === authority.gatewayName &&
-              !matchesAuthority(receipt, authority),
-          )
-        ) {
-          throw new Error("OpenShell forward service state disagrees with sandbox authority");
-        }
-        const receipts = allReceipts.filter((receipt) => matchesAuthority(receipt, authority));
-        const pending = allPending.filter((receipt) => matchesAuthority(receipt, authority));
+        // Lifecycle-wide teardown owns the current sandbox name on its recorded
+        // gateway and must converge receipts left by earlier same-name
+        // generations. Each receipt remains its own signal authority: process
+        // cleanup revalidates its PID, UID, argv, host, PID namespace, and
+        // process-start identity before signaling. Other gateways stay out of
+        // scope, and live unidentified pending children still fail closed.
+        const matchesSandboxGateway = (
+          receipt: Pick<ForwardServiceTarget, "gatewayName" | "sandboxName">,
+        ) =>
+          receipt.sandboxName === authority.sandboxName &&
+          receipt.gatewayName === authority.gatewayName;
+        const receipts = allReceipts.filter(matchesSandboxGateway);
+        const pending = allPending.filter(matchesSandboxGateway);
         const lifecycleTargets = [
           ...pending,
           ...receipts.filter(
-            (receipt) => !pending.some((candidate) => candidate.localPort === receipt.localPort),
+            (receipt) =>
+              !pending.some(
+                (candidate) =>
+                  candidate.sandboxIdentityFingerprint === receipt.sandboxIdentityFingerprint &&
+                  candidate.localHost === receipt.localHost &&
+                  candidate.localPort === receipt.localPort &&
+                  candidate.targetHost === receipt.targetHost &&
+                  candidate.targetPort === receipt.targetPort,
+              ),
           ),
         ];
         for (const receipt of lifecycleTargets) {
